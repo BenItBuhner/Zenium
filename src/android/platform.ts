@@ -26,6 +26,7 @@ import type { ZenWindow } from '@core/window'
 import type {
   AgentTransport,
   AppHost,
+  AutofillHost,
   BlockingHost,
   BundledFilterList,
   ClipboardHost,
@@ -47,6 +48,7 @@ import type {
   SessionHost,
   ShellHost,
   StoreIO,
+  SystemAutofillStatus,
   UpdateHost,
   WindowHost,
   WindowHostFactory
@@ -187,6 +189,54 @@ class AndroidReauth implements ReauthHost {
 
   verify(reason: string): Promise<boolean> {
     return this.bridge.call<boolean>('reauth.verify', { reason })
+  }
+}
+
+/**
+ * The system Autofill Framework (`AutofillManager`): whether the user has an autofill service,
+ * and whether the page WebViews take part in it. Android has no callback for the service
+ * changing, so the status is probed again whenever the Activity returns to the foreground.
+ */
+class AndroidAutofillHost implements AutofillHost {
+  private listener: ((status: SystemAutofillStatus) => void) | null = null
+  private last: SystemAutofillStatus | null = null
+
+  constructor(private readonly bridge: Bridge) {}
+
+  async systemStatus(): Promise<SystemAutofillStatus> {
+    const status = statusFrom(await this.bridge.call<unknown>('autofill.status'))
+    this.last = status
+    return status
+  }
+
+  setProvider(provider: 'system' | 'zenium'): void {
+    this.bridge.send('autofill.setProvider', { provider })
+  }
+
+  onSystemStatusChanged(listener: (status: SystemAutofillStatus) => void): void {
+    this.listener = listener
+  }
+
+  /** The app is back in front: the user may have set or removed a service meanwhile. */
+  refresh(): void {
+    if (!this.listener) return
+    const before = this.last
+    void this.systemStatus()
+      .then((status) => {
+        if (before && before.enabled === status.enabled && before.service === status.service) return
+        this.listener?.(status)
+      })
+      .catch(() => undefined)
+  }
+}
+
+/** Kotlin's `autofill.status` reply, checked field by field. */
+export function statusFrom(raw: unknown): SystemAutofillStatus {
+  if (!raw || typeof raw !== 'object') return { enabled: false, service: null }
+  const o = raw as Record<string, unknown>
+  return {
+    enabled: o.enabled === true,
+    service: typeof o.service === 'string' && o.service ? o.service : null
   }
 }
 
@@ -711,6 +761,7 @@ export class AndroidPlatform implements Platform {
   readonly siteData: AndroidSiteData
   readonly externalProtocols: ExternalProtocolHost
   readonly passwords: PasswordsHost
+  readonly autofill: AndroidAutofillHost
   readonly blocking: BlockingHost
   readonly privacy: PrivacyHost
   readonly translate: AndroidTranslateHost
@@ -767,9 +818,13 @@ export class AndroidPlatform implements Platform {
       saveTextFile: (options) => bridge.call<boolean>('dialog.saveText', options)
     }
     this.passwords = { keys: new AndroidKeyWrap(bridge), reauth: new AndroidReauth(bridge) }
+    this.autofill = new AndroidAutofillHost(bridge)
     this.clipboard = {
-      writeText: (text) => bridge.send('clipboard.writeText', { text }),
-      writeImageFromUrl: (url) => bridge.call<boolean>('clipboard.writeImage', { url })
+      // `sensitive` becomes ClipDescription.EXTRA_IS_SENSITIVE (Android 13+): no preview of the secret.
+      writeText: (text, sensitive) =>
+        bridge.send('clipboard.writeText', { text, sensitive: sensitive === true }),
+      writeImageFromUrl: (url) => bridge.call<boolean>('clipboard.writeImage', { url }),
+      clearText: (expected) => bridge.call('clipboard.clearText', { expected })
     }
     this.shell = {
       openExternal: (url) => bridge.send('app.openExternal', { url }),
@@ -838,6 +893,10 @@ export class AndroidPlatform implements Platform {
       clearContainerData: (containerId) => bridge.call('profile.clear', { containerId }),
       clearPrivate: () => bridge.call('profile.clear', { containerId: PRIVATE_CONTAINER_ID }),
       clearAuthCache: () => bridge.call('security.forgetSession', {}),
+      // The WebView decides certificate errors on its own side: the core's exception is mirrored
+      // to Kotlin (`Security.certificateExceptions`) before the address is asked for again.
+      allowCertificate: (containerId, url, fingerprint) =>
+        bridge.call('security.allowCertificate', { containerId, url, fingerprint }),
       clearBrowsingData: (containerIds, kinds) =>
         bridge.call('profile.clearBrowsingData', { containerIds, kinds }),
       browsingDataCounts: (containerIds) =>
@@ -938,6 +997,8 @@ export class AndroidPlatform implements Platform {
         // The activity resumed: a gesture cut short by whatever was in front (a pointer that
         // never lifted for the chrome) is ended by whoever holds it (`zen-resume`).
         if (focused) window.dispatchEvent(new Event('zen-resume'))
+        // Back from the system settings, the autofill service may be another one (or none).
+        if (focused) this.autofill.refresh()
         if (!this.windowHost) return
         this.windowHost.focused = focused
         if (focused) this.window.onFocused()

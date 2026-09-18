@@ -4,6 +4,7 @@ import {
   hostOf,
   inferHttpOnly,
   otherSites,
+  refusedCertificate,
   type SiteCertificate,
   type SiteCookie,
   type SiteInfo,
@@ -11,6 +12,7 @@ import {
   type SitePermission,
   type ThirdPartyCookies
 } from '../shared/siteInfo'
+import type { CertificateError } from '../shared/types'
 import type { Browser } from './browser'
 import type { SiteStorageReading, TabView } from './platform'
 
@@ -93,6 +95,8 @@ export interface ComposeInput {
   certificate: SiteCertificate | null
   probe: PageProbe
   permissions: SitePermission[]
+  /** The tab's certificate error (interstitial showing, or proceeded past), if any. */
+  certificateError?: CertificateError | null
 }
 
 /** Pure assembly of the readings into what the chrome shows. */
@@ -102,8 +106,12 @@ export function composeSiteInfo(input: ComposeInput): SiteInfo {
   const storageOrigins = new Set(input.storage?.origins ?? [])
   const usage = input.storage?.usageBytes ?? input.probe.estimate?.usage ?? null
   const quota = input.storage?.quotaBytes ?? input.probe.estimate?.quota ?? null
+  // An https connection over a certificate that failed verification is not secure, whether the
+  // interstitial is showing or the user proceeded; the certificate shown is the refused one.
+  const certificateError =
+    site.state === 'secure' && input.certificateError ? input.certificateError : null
   const mixedContent =
-    site.state === 'secure' && input.probe.documentCookies !== null
+    site.state === 'secure' && !certificateError && input.probe.documentCookies !== null
       ? input.probe.httpResources > 0
       : null
   return {
@@ -114,9 +122,14 @@ export function composeSiteInfo(input: ComposeInput): SiteInfo {
     origin: site.origin,
     containerId: input.containerId,
     security: {
-      state: site.state,
-      certificate: site.state === 'secure' ? input.certificate : null,
-      mixedContent
+      state: certificateError ? 'insecure' : site.state,
+      certificate: certificateError
+        ? refusedCertificate(certificateError)
+        : site.state === 'secure'
+          ? input.certificate
+          : null,
+      mixedContent,
+      ...(certificateError ? { certificateError } : {})
     },
     cookies: { items: cookies, thirdParty: input.thirdParty },
     storage: {
@@ -150,6 +163,7 @@ export class SiteInfoService {
     const permissions = site.origin
       ? this.browser.permissions.listForOrigin(site.origin)
       : ([] as SitePermission[])
+    const certificateError = tab.certificateError ?? null
     if (!site.web) {
       return composeSiteInfo({
         tabId,
@@ -160,14 +174,16 @@ export class SiteInfoService {
         storage: null,
         certificate: null,
         probe: EMPTY_PROBE,
-        permissions
+        permissions,
+        certificateError
       })
     }
     const pageUrl = `${site.scheme}://${site.host}${site.path}`
     const [cookies, storage, certificate, probe] = await Promise.all([
       host ? quiet(host.cookies(tab.containerId, pageUrl)) : Promise.resolve(null),
       host ? quiet(host.storage(tab.containerId, site.site)) : Promise.resolve(null),
-      site.state === 'secure' && view?.certificate
+      // The refused certificate is already known; the engine's reading would be of the error page.
+      site.state === 'secure' && !certificateError && view?.certificate
         ? quiet(view.certificate())
         : Promise.resolve(null),
       view && sameDocument(view, url) ? this.probe(view) : Promise.resolve(EMPTY_PROBE)
@@ -185,7 +201,8 @@ export class SiteInfoService {
       storage,
       certificate: certificate ?? null,
       probe,
-      permissions
+      permissions,
+      certificateError
     })
   }
 

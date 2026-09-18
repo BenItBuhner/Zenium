@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { HINT_PALETTE } from '@shared/fullscreenHint'
 
 /**
  * The design-language v2 tokens live in one block of main.css (docs/design-language-v2-draft.md).
@@ -37,6 +38,8 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   ['[data-drop-into] {', '.zen-panel {'],
   // The bookmark chrome: bar, panels, star bubble, dialogs, manager (components/bookmarks/*).
   ['.zen-bm-bar {', '/*\n * Fading scroll edges'],
+  // Find in page, zoom and fullscreen: the docked find bar (components/content/FindBar.tsx).
+  ['.zen-find-bar {', '/*\n * Settings → Default Browser and the'],
   // Settings → Default Browser and the default-browser strip (components/overlays/
   // DefaultBrowserSection.tsx, content/DefaultBrowserBanner.tsx): the flat card and its inks.
   ['.zen-default-browser-card {', '\n@media (prefers-reduced-motion: reduce) {']
@@ -272,5 +275,27 @@ describe('the v2 button', () => {
     // And no `@layer` block anywhere restates the class.
     for (const match of bare.matchAll(/\.zen-v2-button[^{]*\{/g))
       expect(nesting(match.index), `"${match[0].trim()}" is layered`).toBe(0)
+  })
+})
+
+describe('the fullscreen hint palette', () => {
+  /** The value a token is declared with in the first `selector {` block after `from`. */
+  const value = (selector: string, from: number, name: string): string => {
+    const match = block(selector, from).match(new RegExp(`${name}:\\s*([^;]+);`))
+    expect(match, `${name} in ${selector}`).not.toBeNull()
+    return match?.[1].trim() ?? ''
+  }
+
+  it('is the v2 panel, border, text and fill by value, one family per scheme (the page script cannot read main.css)', () => {
+    const schemes = [
+      [HINT_PALETTE.light, ':root', lightBlockStart],
+      [HINT_PALETTE.dark, ":root[data-theme='dark']", lightStart]
+    ] as const
+    for (const [palette, selector, from] of schemes) {
+      expect(palette.panel).toBe(value(selector, from, '--v2-panel'))
+      expect(palette.border).toBe(value(selector, from, '--v2-border'))
+      expect(palette.text).toBe(value(selector, from, '--v2-text'))
+      expect(palette.fill).toBe(value(selector, from, '--v2-fill'))
+    }
   })
 })

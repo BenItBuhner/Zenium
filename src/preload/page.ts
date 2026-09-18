@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { PageMessage } from '../core/platform'
+import type { PageHint } from '../shared/fullscreenHint'
 import {
   installPageScript,
   type PageScriptFlags,
@@ -13,13 +14,15 @@ import {
   type PrivacySignals
 } from '../shared/privacySignals'
 import { installLeaveSite, installPageDialogs } from './pageDialogs'
+import { installFormsScript } from '../shared/formsScript'
+import type { FormsCommand } from '../shared/forms'
 
 /**
  * Runs inside every web page (isolated world). The behaviours – Glance, pinned-tab link rules,
- * the Boost "zap element" picker – live in `shared/pageScript`; this file only supplies
- * Electron's IPC as the transport. No page-visible globals are created by them, except that
- * `alert`, `confirm` and `prompt` are Zenium's own (tab-modal dialogs in the chrome;
- * `pageDialogs.ts`).
+ * the Boost "zap element" picker, the fullscreen hints – live in `shared/pageScript`, the login /
+ * address / card form handling in `shared/formsScript`; this file only supplies Electron's IPC as
+ * the transport. No page-visible globals are created by them, except that `alert`, `confirm` and
+ * `prompt` are Zenium's own (tab-modal dialogs in the chrome; `pageDialogs.ts`).
  *
  * Tabs enable `nodeIntegrationInSubFrames` so the extension API preload reaches extension
  * iframes; the page behaviours stay with the top document, as before. Two things every frame
@@ -43,7 +46,9 @@ if (process.isMainFrame) {
     send,
     onFlags: (listener) =>
       ipcRenderer.on('zen:page-flags', (_event, next: PageScriptFlags) => listener(next)),
-    onZap: (listener) => ipcRenderer.on('zen:zap', (_event, on: boolean) => listener(on))
+    onZap: (listener) => ipcRenderer.on('zen:zap', (_event, on: boolean) => listener(on)),
+    onHint: (listener) =>
+      ipcRenderer.on('zen:page-hint', (_event, hint: PageHint | null) => listener(hint))
   })
   installLeaveSite(send)
   // Web notifications are a web-site matter; the browser's own pages have none.
@@ -59,4 +64,9 @@ if (process.isMainFrame) {
         contextBridge.executeInMainWorld({ func: installNotificationShim, args: [events] })
     })
   }
+  installFormsScript({
+    send: (forms) => ipcRenderer.send('zen:page', { type: 'forms', forms }),
+    onCommand: (listener) =>
+      ipcRenderer.on('zen:forms', (_event, command: FormsCommand) => listener(command))
+  })
 }

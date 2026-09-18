@@ -53,9 +53,13 @@ import { ModService } from './mods'
 import { SiteInfoService } from './siteInfo'
 import { TranslateService } from './translate/service'
 import { PageControls } from './pageControls'
+import { FindMemory } from './find'
+import { FullscreenService } from './fullscreen'
 import { UpdateService } from './updates'
 import { ExternalProtocolService } from './externalProtocols'
 import { PasswordService } from './credentials/service'
+import { AutofillService } from './autofill'
+import { addressFormat, countries } from './credentials/address'
 import { DefaultBrowserService } from './defaultBrowser'
 import { BlockingService } from './blocking/service'
 import { ProtectionService } from './protection/service'
@@ -81,7 +85,12 @@ import { routeSharedIntent, type SharedIntent } from '../shared/shareTarget'
 import { copyConfirmation } from '../shared/clipboard'
 import { IMAGE_URL_PREFIX } from '../shared/zenPages'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
-import { ONBOARDING_ESSENTIALS, sanitizePasswordSettings, spaceLabel } from '../shared/defaults'
+import {
+  ONBOARDING_ESSENTIALS,
+  sanitizeAutofillSettings,
+  sanitizePasswordSettings,
+  spaceLabel
+} from '../shared/defaults'
 import { sanitizePhoneBar } from '../shared/phoneBar'
 import { PRIVATE_THEME, captionColors, resolveTheme, rgbToHex } from '../shared/theme'
 import { newId } from '../shared/ids'
@@ -170,6 +179,8 @@ export class Browser {
   readonly externalProtocols: ExternalProtocolService
   /** The encrypted credential vault and everything the password manager does with it. */
   readonly passwords: PasswordService
+  /** In-page autofill: save / update prompts, the account picker, addresses, cards, passkey records. */
+  readonly autofill: AutofillService
   /** The system's browser role: are we the default, and should we be asking to become it. */
   readonly defaultBrowser: DefaultBrowserService
   /** Ad and tracker blocking: the rule engine, its lists and the blocked-request counters. */
@@ -180,6 +191,10 @@ export class Browser {
   readonly translate: TranslateService
   /** Desktop site, dark theme for sites and page zoom, remembered per site (Chrome's page controls). */
   readonly pageControls: PageControls
+  /** The last find-in-page query per tab and profile-wide (what the bar reopens with). */
+  readonly find = new FindMemory()
+  /** Fullscreen hints (F11, a page's element) and the Esc hold that leaves the window's fullscreen. */
+  readonly fullscreen: FullscreenService
   readonly windows = new Map<string, ZenWindow>()
   /** Set by `shutdown()`: the app is going away, windows close without further questions. */
   quitting = false
@@ -246,6 +261,7 @@ export class Browser {
     this.pageDialogs = new PageDialogService(this)
     this.windowPrompts = new WindowPrompts(this)
     this.pageControls = new PageControls(this)
+    this.fullscreen = new FullscreenService(this)
     this.tabs = new TabManager(this)
     this.tabDrag = new TabDragController(this)
     this.session = new SessionService(this)
@@ -271,6 +287,7 @@ export class Browser {
     this.siteInfo = new SiteInfoService(this)
     this.externalProtocols = new ExternalProtocolService(this)
     this.passwords = new PasswordService(this, platform.passwords)
+    this.autofill = new AutofillService(this)
     this.defaultBrowser = new DefaultBrowserService(this)
     this.blocking = new BlockingService(this)
     this.protection = new ProtectionService(this)
@@ -295,6 +312,7 @@ export class Browser {
       securityPrompts: this.security.list(),
       pageDialogs: this.pageDialogs.list(),
       crashRestore: this.session.crashRestoreOffer(),
+      autofill: this.autofill.uiState(),
       blocking: this.blocking.status(),
       privacy: this.protection.status(),
       translate: this.translate.uiState()
@@ -564,6 +582,7 @@ export class Browser {
   onWindowClosed(win: ZenWindow): void {
     this.windows.delete(win.id)
     this.tabDrag.onWindowClosed(win)
+    this.fullscreen.onWindowClosed(win)
     for (const w of this.allWindows()) w.selection.delete(win.localSpace?.id ?? '')
     if (win.isPrivate) this.endPrivateSessionIfOver()
     if (this.allWindows().length === 0) {
@@ -588,6 +607,8 @@ export class Browser {
     if (this.allWindows().some((w) => w.isPrivate)) return
     if (this.tabs.privateTabs().length > 0) return
     this.downloads.endPrivateSession()
+    // Certificates proceeded past in private windows are forgotten with the session, as in Chrome.
+    this.security.certificateExceptions.forgetContainer(PRIVATE_CONTAINER_ID)
     void this.platform.sessions.clearPrivate()
   }
 
@@ -671,6 +692,7 @@ export class Browser {
     this.agents.start()
     this.updates.start()
     this.passwords.start()
+    this.autofill.start()
     this.defaultBrowser.start()
     this.translate.start()
     this.syncShortcuts()
@@ -728,6 +750,7 @@ export class Browser {
     this.boosts.apply(tabId)
     void this.reader.detect(tabId)
     this.translate.onPageReady(tabId)
+    this.autofill.onPageReady(tabId)
   }
 
   onNavigated(tabId: string): void {
@@ -735,6 +758,8 @@ export class Browser {
     if (tab) tab.readerable = false
     this.extensions.closePopup()
     this.translate.onNavigated(tabId)
+    this.autofill.onNavigated(tabId)
+    this.fullscreen.onNavigated(tabId)
   }
 
   updateMedia(): void {
@@ -1305,6 +1330,7 @@ export class Browser {
     this.protection.stop()
     this.blocking.stop()
     this.translate.stop()
+    this.passwords.shutdown()
     // The pages on screen have scrolled since their stacks were last read.
     this.tabs.rememberAllNavigation()
     this.state.markExiting()
@@ -1468,9 +1494,22 @@ export class Browser {
       this.revealTab(tabId)
       return
     }
+    if (message.type === 'forms') {
+      if (
+        message.forms &&
+        typeof message.forms === 'object' &&
+        typeof message.forms.type === 'string'
+      )
+        this.autofill.handleEvent(tabId, message.forms)
+      return
+    }
     if (message.type === 'interstitial') {
-      if (typeof message.action === 'string' && typeof message.url === 'string')
-        this.protection.handleInterstitial(tabId, message.action, message.url)
+      if (typeof message.action === 'string' && typeof message.url === 'string') {
+        // The certificate interstitial's tab answers first; the other warning pages are the
+        // protection service's.
+        if (!this.tabs.handleCertificateInterstitial(tabId, message.action, message.url))
+          this.protection.handleInterstitial(tabId, message.action, message.url)
+      }
       return
     }
     if (message.type === 'media') {
@@ -1547,6 +1586,25 @@ export class Browser {
         this.security.forgetSession()
         void platform.sessions.clearAuthCache?.()
       },
+      'autofill.respond': ({ id, response }) => this.autofill.respond(id, response),
+      'autofill.pick': ({ id, itemId, passphrase }, win) =>
+        this.autofill.pick(id, itemId, passphrase, win),
+      'autofill.listAddresses': () => this.autofill.listAddresses(),
+      'autofill.addAddress': ({ address }) => this.autofill.addAddress(address),
+      'autofill.updateAddress': ({ id, patch }) => this.autofill.updateAddress(id, patch),
+      'autofill.removeAddress': ({ id }) => this.autofill.removeAddress(id),
+      'autofill.addressFormat': ({ country }) => addressFormat(country),
+      'autofill.countries': () => countries(),
+      'autofill.listCards': () => this.autofill.listCards(),
+      'autofill.addCard': ({ card }) => this.autofill.addCard(card),
+      'autofill.updateCard': ({ id, patch }) => this.autofill.updateCard(id, patch),
+      'autofill.removeCard': ({ id }) => this.autofill.removeCard(id),
+      'autofill.revealCard': ({ id, passphrase }, win) =>
+        this.autofill.revealCard(id, passphrase, win),
+      'autofill.copyCardNumber': ({ id, passphrase }, win) =>
+        this.autofill.copyCardNumber(id, passphrase, win),
+      'autofill.listPasskeys': () => this.autofill.listPasskeys(),
+      'autofill.removePasskey': ({ id }) => this.autofill.removePasskey(id),
       'app.openExternal': ({ url }) => {
         if (/^(https?|mailto):/.test(url)) platform.shell.openExternal(url)
       },
@@ -1615,8 +1673,8 @@ export class Browser {
       'tab.goToIndex': ({ tabId, index }) => tabs.goToIndex(tabId, index),
       'tab.navigationMenu': ({ tabId }, win) => this.menus.showNavigationMenu(tabId, win),
       'tab.setZoom': ({ tabId, delta }) =>
-        delta === null ? tabs.setZoom(tabId, 1) : tabs.adjustZoom(tabId, delta),
-      'tab.setZoomFactor': ({ tabId, factor }) => this.pageControls.setZoomFactor(tabId, factor),
+        delta === null ? tabs.resetZoom(tabId) : tabs.adjustZoom(tabId, delta),
+      'tab.setZoomFactor': ({ tabId, factor }) => tabs.setZoom(tabId, factor),
       'tab.setDesktopSite': ({ tabId, on }) => this.pageControls.setDesktopSite(tabId, on),
       'tab.setDarkenSite': ({ tabId, on }) => this.pageControls.setDarkenSite(tabId, on),
       'pageControls.forgetSite': ({ kind, domain }) => this.pageControls.forgetSite(kind, domain),
@@ -1706,7 +1764,12 @@ export class Browser {
       'glance.split': (_a, win) => tabs.splitGlance(win),
 
       'compact.toggle': (_a, win) => this.toggleCompactMode(win),
-      'compact.setRevealed': ({ revealed }, win) => {
+      'compact.setRevealed': ({ revealed, edge }, win) => {
+        if (edge === 'toolbar') {
+          // Main's cursor tracking alone reads it; nothing in the snapshot changes.
+          win.compactToolbarRevealed = revealed
+          return
+        }
         if (win.compactSidebarRevealed === revealed) return
         win.compactSidebarRevealed = revealed
         state.commitVolatile()
@@ -1728,7 +1791,7 @@ export class Browser {
       'urlbar.deleteSuggestion': ({ input }, win) =>
         this.extensions.omniboxDeleteSuggestion(input, win),
 
-      'overlay.snapshot': ({ tabId }, win) => win.snapshot(tabId),
+      'overlay.snapshot': ({ tabId, fresh }, win) => win.snapshot(tabId, fresh),
 
       'site.info': ({ tabId }) => this.siteInfo.info(tabId),
       'siteInfo.snapshot': ({ tabId }) => this.siteInfo.snapshot(tabId),
@@ -1786,7 +1849,11 @@ export class Browser {
       'session.restoreClosed': ({ id }, win) => this.session.restoreClosed(id, win),
       'session.clearRecentlyClosed': () => this.session.clearRecentlyClosed(),
 
-      'clipboard.writeText': ({ text }) => platform.clipboard.writeText(text),
+      'clipboard.writeText': ({ text, sensitive }) => {
+        if (sensitive)
+          this.passwords.clipboard.copy(text, state.settings.passwords.clipboardClearSeconds)
+        else platform.clipboard.writeText(text)
+      },
 
       'bookmark.toggle': ({ tabId }, win) => this.toggleBookmark(tabId, win),
       'bookmark.star': ({ tabId }, win) => this.starTab(tabId, win),
@@ -1836,6 +1903,7 @@ export class Browser {
           state.commitVolatile()
           return
         }
+        this.find.remember(tabId, text)
         view.findInPage(text, forward, newSession)
       },
       'find.stop': ({ tabId, keepSelection }, win) => {
@@ -1864,6 +1932,7 @@ export class Browser {
         for (const tab of Object.values(state.model.tabs))
           if (tab.containerId === id) tab.containerId = DEFAULT_CONTAINER_ID
         void platform.sessions.clearContainerData(id)
+        this.security.certificateExceptions.forgetContainer(id)
         state.commit()
       },
       'container.reorder': ({ id, index }) => {
@@ -1876,6 +1945,7 @@ export class Browser {
         win.host.isMaximized() ? win.host.unmaximize() : win.host.maximize(),
       'window.close': (_a, win) => void this.requestWindowClose(win),
       'window.toggleFullscreen': (_a, win) => this.toggleFullscreen(win),
+      'window.fullscreenInset': ({ bottom }, win) => win.setFullscreenInset(bottom),
       'window.formFactor': ({ formFactor }, win) => {
         win.formFactor = formFactor
       },
@@ -2082,7 +2152,8 @@ export class Browser {
       agents: JSON.stringify(s.agents),
       updates: JSON.stringify(s.updates),
       blocking: s.blocking,
-      privacy: JSON.stringify(s.privacy)
+      privacy: JSON.stringify(s.privacy),
+      autofill: `${JSON.stringify(s.passwords)}${JSON.stringify(s.autofill)}`
     }
     for (const [key, value] of Object.entries(patch)) {
       if (value === undefined) continue
@@ -2113,6 +2184,11 @@ export class Browser {
         s.passwords = sanitizePasswordSettings({
           ...s.passwords,
           ...(value as Partial<Settings['passwords']>)
+        })
+      } else if (key === 'autofill' && value && typeof value === 'object') {
+        s.autofill = sanitizeAutofillSettings({
+          ...s.autofill,
+          ...(value as Partial<Settings['autofill']>)
         })
       } else if (key === 'defaultBrowserPromo' && value && typeof value === 'object') {
         s.defaultBrowserPromo = sanitizePromoState({
@@ -2166,6 +2242,8 @@ export class Browser {
     if (before.appIcon !== s.appIcon) this.platform.app.setAppIcon?.(s.appIcon)
     if (before.blocking !== s.blocking) this.blocking.onSettingsChanged()
     if (before.privacy !== JSON.stringify(s.privacy)) this.protection.onSettingsChanged()
+    if (before.autofill !== `${JSON.stringify(s.passwords)}${JSON.stringify(s.autofill)}`)
+      this.autofill.onSettingsChanged()
     this.state.commit()
   }
 

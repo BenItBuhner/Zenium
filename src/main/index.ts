@@ -162,10 +162,6 @@ function main(): void {
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit()
   })
-
-  // Deny insecure certificates like Chrome does; the error page explains the failure.
-  app.on('certificate-error', (event, _wc, _url, _error, _cert, callback) => {
-    event.preventDefault()
-    callback(false)
-  })
+  // Certificate errors are decided with the other security prompts (`platform/security.ts`):
+  // denied like Chrome does, unless the user proceeded past the interstitial this session.
 }

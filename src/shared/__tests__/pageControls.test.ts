@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_PAGE_CONTROLS,
   ZOOM_LEVELS,
+  ZOOM_PRESETS,
   clampZoom,
   desktopByDefault,
   formatZoom,
@@ -41,7 +42,7 @@ describe('page controls settings', () => {
       darkenSiteExceptions: { 'github.com': false },
       zoom: 9,
       zoomIncludesOsFontSize: 0,
-      siteZooms: { 'a.com': 1.5, 'b.com': 'x', 'c.com': Number.NaN, 'd.com': 0.1 },
+      siteZooms: { 'a.com': 1.5, 'b.com': 'x', 'c.com': Number.NaN, 'd.com': 0.1, 'e.com': 4 },
       forceZoom: true
     } as unknown as Partial<PageControlsSettings>
     expect(sanitizePageControls(raw)).toEqual({
@@ -49,17 +50,18 @@ describe('page controls settings', () => {
       desktopSites: { 'example.com': true },
       darkenSites: false,
       darkenSiteExceptions: { 'github.com': false },
-      zoom: 3,
+      zoom: 5,
       zoomIncludesOsFontSize: true,
-      siteZooms: { 'a.com': 1.5, 'd.com': 0.5 },
+      // A desktop's 400 percent survives a read on the phone, whose sheet stops at 300.
+      siteZooms: { 'a.com': 1.5, 'd.com': 0.25, 'e.com': 4 },
       forceZoom: true
     })
   })
 
-  it('keeps zoom factors to two decimals within the sheet range', () => {
+  it("keeps zoom factors to two decimals within Chrome's presets", () => {
     expect(clampZoom(1.2345)).toBe(1.23)
-    expect(clampZoom(0.1)).toBe(0.5)
-    expect(clampZoom(10)).toBe(3)
+    expect(clampZoom(0.1)).toBe(0.25)
+    expect(clampZoom(10)).toBe(5)
     expect(clampZoom(Number.NaN)).toBe(1)
   })
 })
@@ -138,6 +140,39 @@ describe('zoom', () => {
     expect(stepZoom(1.05, -1)).toBe(1)
     expect(stepZoom(2.7, 1)).toBe(3)
     expect(stepZoom(0.4, -1)).toBe(0.5)
+  })
+
+  it("walks Chrome's full preset ladder on the desktop", () => {
+    // Ctrl+plus six times from 100: 110, 125, 150, 175, 200, 250 (Chrome's steps, not Zen's).
+    const up: number[] = []
+    let z = 1
+    for (let i = 0; i < 6; i++) up.push((z = stepZoom(z, 1, ZOOM_PRESETS)))
+    expect(up).toEqual([1.1, 1.25, 1.5, 1.75, 2, 2.5])
+    expect(stepZoom(1, -1, ZOOM_PRESETS)).toBe(0.9)
+    expect(stepZoom(0.5, -1, ZOOM_PRESETS)).toBe(0.33)
+    expect(stepZoom(0.25, -1, ZOOM_PRESETS)).toBe(0.25)
+    expect(stepZoom(3, 1, ZOOM_PRESETS)).toBe(4)
+    expect(stepZoom(5, 1, ZOOM_PRESETS)).toBe(5)
+    expect(stepZoom(4.2, -1, ZOOM_PRESETS)).toBe(4)
+    expect(ZOOM_PRESETS.map((p) => formatZoom(p))).toEqual([
+      '25%',
+      '33%',
+      '50%',
+      '67%',
+      '75%',
+      '80%',
+      '90%',
+      '100%',
+      '110%',
+      '125%',
+      '150%',
+      '175%',
+      '200%',
+      '250%',
+      '300%',
+      '400%',
+      '500%'
+    ])
   })
 
   it('maps a factor to the nearest slider position and back', () => {

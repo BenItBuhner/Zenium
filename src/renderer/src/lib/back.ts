@@ -8,10 +8,10 @@ import { createStore } from './store'
 import {
   browserStore,
   closeDrawer,
+  closeFindBar,
   closeMenu,
   closeOverlay,
   closeUrlbar,
-  returnFocusToPage,
   uiStore,
   type UiState
 } from './ui'
@@ -177,9 +177,7 @@ export function handleSystemBack(): boolean {
     return true
   }
   if (ui.findOpen && ui.findTabId) {
-    run('find.stop', { tabId: ui.findTabId, keepSelection: true })
-    uiStore.set({ findOpen: false, findTabId: null })
-    returnFocusToPage()
+    closeFindBar()
     return true
   }
   const tab = state ? activeTab(state) : null

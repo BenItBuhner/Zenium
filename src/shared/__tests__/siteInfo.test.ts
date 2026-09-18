@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  certificateErrorDetail,
   cookieBytes,
   cookieHosts,
   describeSite,
@@ -8,9 +9,11 @@ import {
   isCertificateError,
   otherSites,
   permissionLabel,
+  refusedCertificate,
   securityIndicator,
   type SiteCookie
 } from '../siteInfo'
+import type { CertificateError } from '../types'
 import { errorPageUrl, httpsOnlyPageUrl, safeBrowsingPageUrl } from '../url'
 
 const cookie = (name: string, extra: Partial<SiteCookie> = {}): SiteCookie => ({
@@ -141,6 +144,71 @@ describe('securityIndicator', () => {
     expect(securityIndicator('zen://reader?url=https%3A%2F%2Fexample.com%2F', null).state).toBe(
       'secure'
     )
+  })
+
+  it('reads the certificate interstitial at the https address itself, and the page proceeded to, as "Not secure"', () => {
+    const error: CertificateError = {
+      code: -201,
+      url: 'https://expired.example/',
+      certificate: null,
+      bypassed: false
+    }
+    // The desktop writes the interstitial into the failed entry: the tab's URL is the site's.
+    expect(securityIndicator('https://expired.example/', -201, error)).toMatchObject({
+      state: 'certificate-error',
+      label: 'Not secure'
+    })
+    // Proceeded past: the page loads over the broken certificate and stays "Not secure".
+    expect(
+      securityIndicator('https://expired.example/', null, { ...error, bypassed: true })
+    ).toMatchObject({
+      state: 'certificate-error',
+      label: 'Not secure'
+    })
+    // Without an error the https page is secure as ever; an http page cannot hold one.
+    expect(securityIndicator('https://expired.example/', null, null).state).toBe('secure')
+    expect(securityIndicator('http://plain.example/', null, error).state).toBe('insecure')
+  })
+})
+
+describe('certificate errors in site information', () => {
+  const error: CertificateError = {
+    code: -202,
+    url: 'https://self-signed.example/',
+    certificate: {
+      subjectName: 'self-signed.example',
+      issuerName: 'self-signed.example',
+      validStart: 1_700_000_000_000,
+      validExpiry: 1_800_000_000_000,
+      fingerprint: 'sha256/abc'
+    },
+    bypassed: false
+  }
+
+  it('explains the refusal, and the choice to proceed once made', () => {
+    expect(certificateErrorDetail(error)).toContain('could not be verified')
+    expect(certificateErrorDetail(error)).toContain('Zenium')
+    expect(certificateErrorDetail({ ...error, bypassed: true })).toContain(
+      'proceed past a certificate warning'
+    )
+  })
+
+  it('lists the refused certificate as the card does, and nothing when the host could not describe it', () => {
+    expect(refusedCertificate(error)).toEqual({
+      subject: 'self-signed.example',
+      issuer: 'self-signed.example',
+      validFrom: 1_700_000_000_000,
+      validTo: 1_800_000_000_000,
+      protocol: null
+    })
+    // Unknown dates (0) read as unknown, not as 1970.
+    expect(
+      refusedCertificate({
+        ...error,
+        certificate: { ...error.certificate!, validStart: 0, validExpiry: 0 }
+      })
+    ).toMatchObject({ validFrom: null, validTo: null })
+    expect(refusedCertificate({ ...error, certificate: null })).toBeNull()
   })
 })
 

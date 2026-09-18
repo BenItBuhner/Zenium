@@ -14,18 +14,16 @@ export function formatBytes(bytes: number): string {
 }
 
 /**
- * The find bar's match counter: nothing while the field is empty; on a phone a compact `n/m`
- * (`0/0` when nothing matches) that fits inside the field; on desktop `n of m` or the phrase.
+ * The find bar's match counter, Chrome's `n/m` inside the field: nothing while the field is
+ * empty, `0/0` when nothing matches or before the first result arrives.
  */
 export function findCounter(
   text: string,
-  result: { activeMatchOrdinal: number; matches: number } | null,
-  phone: boolean
+  result: { activeMatchOrdinal: number; matches: number } | null
 ): string {
   if (!text) return ''
   const found = result !== null && result.matches > 0
-  if (phone) return `${found ? result.activeMatchOrdinal : 0}/${found ? result.matches : 0}`
-  return found ? `${result.activeMatchOrdinal} of ${result.matches}` : 'Phrase not found'
+  return `${found ? result.activeMatchOrdinal : 0}/${found ? result.matches : 0}`
 }
 
 export function relativeTime(ts: number): string {

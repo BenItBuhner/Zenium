@@ -239,7 +239,21 @@ export function createPreviewBridge(): NativeBridge {
       return true
     },
     'clipboard.writeText': ({ text }) => void navigator.clipboard?.writeText(String(text)),
+    // Like Kotlin: only a clipboard still holding the copied secret is emptied.
+    'clipboard.clearText': async ({ expected }) => {
+      const current = await navigator.clipboard?.readText().catch(() => null)
+      if (current === String(expected)) await navigator.clipboard?.writeText('')
+    },
     'clipboard.writeImage': () => false,
+    // `?autofill=system` stands in for a device whose user has set an autofill service.
+    'autofill.status': () =>
+      new URLSearchParams(location.search).get('autofill') === 'system'
+        ? { enabled: true, service: 'com.example.preview/.AutofillService' }
+        : { enabled: false, service: null },
+    'autofill.setProvider': ({ provider }) =>
+      console.info('[zen preview] autofill provider', provider),
+    // The pages are cross-origin iframes here: no forms script to talk to.
+    'view.forms': () => undefined,
     'app.openExternal': ({ url }) => void window.open(String(url), '_blank'),
     // The browser's own share sheet where there is one; otherwise the share is just logged.
     'app.share': async ({ title, text, url, imageUrl }) => {

@@ -8,6 +8,7 @@ import type {
   UrlbarOpenMode
 } from '@shared/types'
 import { cmd, onEvent, run } from './api'
+import { afterKeyRelease } from './keyRelease'
 import { createStore } from './store'
 import { rememberThumbnail, thumbnailOf } from './thumbnails'
 
@@ -74,6 +75,17 @@ export interface Insets {
   left: number
 }
 
+/**
+ * What the last opening of the find bar asked of it: `text` for the field (the tab's last
+ * query, the page's selection; '' keeps what is typed) and, for F3 / Ctrl+G, the match to step
+ * to. `seq` tells one request from the next, so Ctrl+F on an open bar re-selects the query.
+ */
+export interface FindRequest {
+  seq: number
+  text: string
+  again: 'next' | 'prev' | null
+}
+
 export interface UiState {
   overlay: OverlayKind
   overlaySpaceId: string | null
@@ -84,15 +96,19 @@ export interface UiState {
   urlbar: UrlbarState
   findOpen: boolean
   findTabId: string | null
-  /** Text the find bar starts with when it opens next (the page selection); consumed on mount. */
-  findSeed: string | null
+  /** The query in the find bar's field (kept here so the bar survives a remount, e.g. into HTML fullscreen). */
+  findText: string
+  findRequest: FindRequest | null
   /** Data URL of the active tab, shown dimmed behind overlays. */
   snapshot: string | null
   snapshotTabId: string | null
   toasts: Toast[]
   statusText: string
   drag: DragState | null
+  /** The hidden sidebar (compact mode, fullscreen) is out over a picture of the page. */
   compactHover: boolean
+  /** The hidden top toolbar (compact mode, fullscreen) is out over a picture of the page. */
+  toolbarHover: boolean
   renamingTabId: string | null
   renamingFolderId: string | null
   /** Tab whose pinned URL is being edited in the small prompt. */
@@ -117,6 +133,13 @@ export interface UiState {
     anchor: Rect | null
     pill: Rect | null
   } | null
+  /**
+   * The zoom bubble (Chrome's): up for the tab whose page was just zoomed, or opened from the
+   * pill's zoom chip. `factor` is the page's zoom as the last change reported it; `seq` counts
+   * the changes so the bubble restarts its clock on each; `source` says how it opened – a zoom
+   * step puts it away by itself, the chip keeps it until the user does.
+   */
+  zoomBubble: { tabId: string; factor: number; seq: number; source: 'auto' | 'chip' } | null
   /** A bookmark the manager should edit, or create (`id: null`) inside `parentId`. */
   bookmarkEdit: { id: string | null; parentId: string; type: BookmarkNodeType } | null
   /** "Bookmark all tabs": the pages to file and the folder name Chrome would suggest. */
@@ -170,13 +193,15 @@ export const uiStore = createStore<UiState>(
     urlbar: { open: false, mode: 'new-tab', tabId: null, initialText: undefined, attached: false },
     findOpen: false,
     findTabId: null,
-    findSeed: null,
+    findText: '',
+    findRequest: null,
     snapshot: null,
     snapshotTabId: null,
     toasts: [],
     statusText: '',
     drag: null,
     compactHover: false,
+    toolbarHover: false,
     renamingTabId: null,
     renamingFolderId: null,
     editingPinnedUrlTabId: null,
@@ -185,6 +210,7 @@ export const uiStore = createStore<UiState>(
     pageDialogOpen: false,
     windowPromptOpen: false,
     starDialog: null,
+    zoomBubble: null,
     bookmarkEdit: null,
     bookmarkAllTabs: null,
     barMenuOpen: false,
@@ -275,6 +301,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.pageDialogOpen &&
     !ui.windowPromptOpen &&
     !ui.stageActive &&
+    !ui.zoomBubble &&
     !bookmarkChromeOpen(ui)
   )
 }
@@ -292,6 +319,7 @@ export function invalidateSnapshot(): void {
     !ui.urlbar.open &&
     !ui.drag &&
     !ui.compactHover &&
+    !ui.toolbarHover &&
     !ui.drawerOpen &&
     !ui.menu &&
     !ui.siteInfoOpen &&
@@ -303,6 +331,7 @@ export function invalidateSnapshot(): void {
     !ui.pageDialogOpen &&
     !ui.windowPromptOpen &&
     !ui.stageActive &&
+    !ui.zoomBubble &&
     !bookmarkChromeOpen(ui)
   ) {
     uiStore.set({ snapshot: null, snapshotTabId: null })
@@ -382,6 +411,43 @@ export function closeUrlbar(): void {
   uiStore.set((s) => ({ urlbar: { ...s.urlbar, open: false } }))
   invalidateSnapshot()
   returnFocusToPage()
+}
+
+// ---------------------------------------------------------------------------
+// Find in page
+// ---------------------------------------------------------------------------
+
+let findSeq = 0
+
+/**
+ * Show the find bar for `tabId` (or hand a request to the open one): `text` goes into the field
+ * when there is any, `again` steps to the next or previous match at once. A bar open for another
+ * tab moves over, its query left behind.
+ */
+export function openFindBar(tabId: string, text = '', again: 'next' | 'prev' | null = null): void {
+  const ui = uiStore.get()
+  const moving = ui.findOpen && ui.findTabId !== tabId
+  if (moving && ui.findTabId) run('find.stop', { tabId: ui.findTabId, keepSelection: true })
+  uiStore.set({
+    findOpen: true,
+    findTabId: tabId,
+    findText: text || (moving ? '' : ui.findText),
+    findRequest: { seq: ++findSeq, text, again }
+  })
+}
+
+/**
+ * Esc, the X, Back: the bar goes, the active match stays selected and the page has the keyboard.
+ * Closed by a key (`release: 'afterKey'`), the page gets the keyboard once that key is up: a
+ * page in HTML fullscreen leaves it on any Escape event the engine hands it, the release too.
+ */
+export function closeFindBar(release: 'now' | 'afterKey' = 'now'): void {
+  const ui = uiStore.get()
+  if (!ui.findOpen) return
+  if (ui.findTabId) run('find.stop', { tabId: ui.findTabId, keepSelection: true })
+  uiStore.set({ findOpen: false, findTabId: null, findRequest: null })
+  if (release === 'afterKey') afterKeyRelease(returnFocusToPage)
+  else returnFocusToPage()
 }
 
 // ---------------------------------------------------------------------------
@@ -481,6 +547,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.pageDialogOpen ||
     ui.windowPromptOpen ||
     ui.stageActive ||
+    ui.zoomBubble !== null ||
     bookmarkChromeOpen(ui)
   )
 }
@@ -525,15 +592,70 @@ export function closeTabsMenu(): void {
 }
 
 /**
- * Only anchored bookmark panels are up: a bar panel, the star bubble. The page behind them is
- * captured all the same (they overlap the live view), but panels draw no scrim, so the capture
- * shows undimmed; dialogs dim it.
+ * Only anchored panels are up: a bar panel, the star bubble, the zoom bubble. The page behind
+ * them is captured all the same (they overlap the live view), but panels draw no scrim, so the
+ * capture shows undimmed; dialogs dim it.
  */
 export function panelAloneOverContent(ui: UiState): boolean {
   return (
-    (ui.barMenuOpen || ui.starDialog !== null) &&
-    !overlayCoversContent({ ...ui, barMenuOpen: false, starDialog: null })
+    (ui.barMenuOpen || ui.starDialog !== null || ui.zoomBubble !== null) &&
+    !overlayCoversContent({ ...ui, barMenuOpen: false, starDialog: null, zoomBubble: null })
   )
+}
+
+// ---------------------------------------------------------------------------
+// The zoom bubble over the page
+// ---------------------------------------------------------------------------
+
+/**
+ * A page was zoomed (`zoom.changed`): the bubble comes up for it over a picture of the page –
+ * the live view gives way under chrome that overlaps it, as under the star bubble – and, while
+ * it is up, takes a fresh picture at every step so the page is seen at its new zoom. The
+ * keyboard is left where it is: a zoom step opens the bubble as feedback, not as a place to be.
+ */
+export async function showZoomBubble(tabId: string, factor: number): Promise<void> {
+  const bubbleFor = (id: string): UiState['zoomBubble'] => {
+    const open = uiStore.get().zoomBubble
+    return open && open.tabId === id ? open : null
+  }
+  if (!bubbleFor(tabId)) {
+    await captureActiveTab(tabId)
+    // Two quick steps race here: the first to come back opens the bubble, the second finds it
+    // open and, like any later step, takes a fresh picture (the first one may predate it).
+    if (!bubbleFor(tabId)) {
+      uiStore.set({ zoomBubble: { tabId, factor, seq: 0, source: 'auto' } })
+      return
+    }
+  }
+  const open = bubbleFor(tabId)
+  if (open) uiStore.set({ zoomBubble: { ...open, factor, seq: open.seq + 1 } })
+  await refreshSnapshot(tabId)
+}
+
+/** The pill's zoom chip was pressed: the bubble opens and stays, and the keyboard goes into it. */
+export async function openZoomBubble(tabId: string, factor: number): Promise<void> {
+  await captureActiveTab(tabId)
+  run('focus.chrome', undefined)
+  uiStore.set({ zoomBubble: { tabId, factor, seq: 0, source: 'chip' } })
+}
+
+/**
+ * Put the bubble away. Focus goes back to the page unless the caller keeps it in the chrome
+ * (`keepFocus`: Escape hands it to the chip the bubble hung from, §9.22).
+ */
+export function closeZoomBubble(opts: { keepFocus?: boolean } = {}): void {
+  if (!uiStore.get().zoomBubble) return
+  uiStore.set({ zoomBubble: null })
+  invalidateSnapshot()
+  if (!opts.keepFocus) returnFocusToPage()
+}
+
+/** The page changed under the chrome (a zoom step): its picture is taken again. */
+async function refreshSnapshot(tabId: string): Promise<void> {
+  const data = await cmd('overlay.snapshot', { tabId, fresh: true }).catch(() => null)
+  if (!data || uiStore.get().snapshotTabId !== tabId) return
+  rememberThumbnail(tabId, data)
+  uiStore.set({ snapshot: data })
 }
 
 // The system back gesture (registry of dismissable surfaces, legacy chain) lives in `back.ts`.

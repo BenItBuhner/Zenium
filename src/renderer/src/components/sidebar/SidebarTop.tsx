@@ -31,6 +31,7 @@ import { useBookmarkTree } from '../bookmarks/tree'
 import { useLongPress } from '../phone/useLongPress'
 import { PillChip } from '../urlbar/PillChip'
 import { WindowControls } from '../WindowControls'
+import { ZoomChip } from '../zoom/ZoomChip'
 
 interface Props {
   state: UIState
@@ -84,7 +85,11 @@ export function NavRow({
   const shown = tab ? (state.settings.showFullUrls || revealed ? fullUrl(tab.url) : url) : ''
   const address = addressParts(shown)
   // What the site icon says (derived in the core's site-information module, drawn here).
-  const indicator = securityIndicator(tab?.url ?? '', tab?.errorCode ?? null)
+  const indicator = securityIndicator(
+    tab?.url ?? '',
+    tab?.errorCode ?? null,
+    tab?.certificateError ?? null
+  )
   const isPrivate = isPrivateWindow(state)
   const isWebPage = Boolean(tab && /^https?:/.test(tab.url))
   const isReader = Boolean(tab?.url.startsWith('zen://reader'))
@@ -309,6 +314,7 @@ export function NavRow({
                 <Copy className="h-3 w-3" />
               </PillChip>
             )}
+            {tab && <ZoomChip state={state} tab={tab} />}
             {tab && isWebPage && (
               <StarChip
                 tab={tab}

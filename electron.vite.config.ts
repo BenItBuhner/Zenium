@@ -9,6 +9,11 @@ export default defineConfig({
       alias: {
         '@shared': resolve('src/shared')
       }
+    },
+    define: {
+      // The Apple team id of the signing identity (release builds); it names the keychain access
+      // group of Touch ID passkeys. Empty for unsigned builds.
+      __ZENIUM_APPLE_TEAM_ID__: JSON.stringify(process.env.APPLE_TEAM_ID ?? '')
     }
   },
   preload: {

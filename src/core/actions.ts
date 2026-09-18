@@ -2,7 +2,11 @@ import type { ShortcutAction } from '../shared/types'
 import { pathToFileUrl } from '../shared/launchArgs'
 import { BLANK_URL } from '../shared/url'
 import type { Browser } from './browser'
+import { selectionQuery } from './find'
 import type { ZenWindow } from './window'
+
+/** How long Ctrl+F waits for the page to report its selection before the bar opens without it. */
+const SELECTION_GRACE_MS = 150
 
 export type AnyAction =
   | ShortcutAction
@@ -163,16 +167,16 @@ export class Actions {
         void this.browser.pasteAndGo(target?.id ?? null, true, win)
         return
       case 'find.open':
-        if (target) this.browser.emit('find.open', { tabId: target.id }, win)
+        if (target) void this.openFind(target.id, win)
         return
       case 'find.next':
-        if (target) this.browser.emit('find.open', { tabId: target.id, again: 'next' }, win)
+        if (target) this.openFindAgain(target.id, 'next', win)
         return
       case 'find.prev':
-        if (target) this.browser.emit('find.open', { tabId: target.id, again: 'prev' }, win)
+        if (target) this.openFindAgain(target.id, 'prev', win)
         return
       case 'find.useSelection':
-        if (target) void this.findSelection(target.id, win)
+        if (target) void this.useSelectionForFind(target.id, win)
         return
 
       // --- page operations ---
@@ -225,7 +229,7 @@ export class Actions {
         if (target) tabs.adjustZoom(target.id, -1)
         return
       case 'zoom.reset':
-        if (target) tabs.setZoom(target.id, 1)
+        if (target) tabs.resetZoom(target.id)
         return
 
       // --- history & bookmarks ---
@@ -312,6 +316,48 @@ export class Actions {
     }
   }
 
+  // --- find in page -----------------------------------------------------------------
+
+  /**
+   * Ctrl+F: the bar opens with a short selection from the page, else the last query (Chrome's
+   * prepopulate order). Reading the selection asks the page, so the bar waits for its answer or
+   * the grace period, whichever comes first.
+   */
+  private async openFind(tabId: string, win: ZenWindow): Promise<void> {
+    const selection = await this.pageSelection(tabId)
+    if (!win.alive) return
+    const text = selection || this.browser.find.queryFor(tabId)
+    this.browser.emit('find.open', { tabId, text }, win)
+  }
+
+  /** F3 / Ctrl+G with the bar open or closed: search on with the last query at once. */
+  private openFindAgain(tabId: string, again: 'next' | 'prev', win: ZenWindow): void {
+    const text = this.browser.find.queryFor(tabId)
+    this.browser.emit('find.open', { tabId, text, again }, win)
+  }
+
+  /**
+   * macOS "Use Selection for Find" (Cmd+E): the selection becomes the query Find Next searches
+   * for, without the bar opening; an open bar takes the text over. Nothing selected: no change.
+   */
+  private async useSelectionForFind(tabId: string, win: ZenWindow): Promise<void> {
+    const selection = await this.pageSelection(tabId)
+    if (!selection || !win.alive) return
+    this.browser.find.remember(tabId, selection)
+    this.browser.emit('find.selection', { tabId, text: selection }, win)
+  }
+
+  /** The page's selection as a find query ('' when there is none, it is a passage, or the page does not answer). */
+  private async pageSelection(tabId: string): Promise<string> {
+    const view = this.browser.tabs.view(tabId)
+    if (!view || view.isDestroyed()) return ''
+    const raw = await Promise.race([
+      view.executeJavaScript('String(window.getSelection())').catch(() => ''),
+      new Promise<string>((resolve) => setTimeout(() => resolve(''), SELECTION_GRACE_MS))
+    ])
+    return selectionQuery(raw)
+  }
+
   private async savePage(tabId: string, win: ZenWindow): Promise<void> {
     const tab = this.browser.tabs.tab(tabId)
     const view = this.browser.tabs.view(tabId)
@@ -328,22 +374,6 @@ export class Actions {
     } catch (error) {
       this.browser.toast(`Could not save page: ${(error as Error).message}`, 'error', win)
     }
-  }
-
-  /** Chrome's "Use Selection for Find" (Cmd+E): the find bar opens on what the page has selected. */
-  private async findSelection(tabId: string, win: ZenWindow): Promise<void> {
-    const view = this.browser.tabs.view(tabId)
-    if (!view) return
-    let text = ''
-    try {
-      const selected = await view.executeJavaScript(`String(window.getSelection() ?? '')`)
-      if (typeof selected === 'string') text = selected
-    } catch {
-      text = ''
-    }
-    // One line, like Chrome: a selection spanning paragraphs searches for its first line.
-    text = text.split('\n')[0].trim().slice(0, 1000)
-    this.browser.emit('find.open', { tabId, text }, win)
   }
 
   /** Chrome's Ctrl+O: a local file opens in the current tab (a new one where there is none). */

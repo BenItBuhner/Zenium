@@ -66,9 +66,13 @@ export class ZenWindow {
   glance: GlanceState | null = null
   findResult: FindResult | null = null
   compactSidebarRevealed = false
+  /** The hidden top toolbar is out (compact mode or the window's fullscreen); the chrome's word. */
+  compactToolbarRevealed = false
   compactEnabled: boolean
   compactSidebarPersistent = false
   htmlFullscreenTabId: string | null = null
+  /** Window pixels under the HTML fullscreen view kept for chrome docked there (the find bar). */
+  private fullscreenBottomInset = 0
   /**
    * The layout the chrome is showing, as it reports it (`window.formFactor`); the desktop layout
    * until the chrome says otherwise. The app menu and the command list are built for it.
@@ -230,6 +234,7 @@ export class ZenWindow {
   /** Maximised / fullscreen / focus flags changed. */
   onWindowStateChanged(): void {
     if (!this.alive) return
+    this.browser.fullscreen.onWindowStateChanged(this)
     this.browser.state.commitVolatile()
   }
 
@@ -291,6 +296,25 @@ export class ZenWindow {
     if (this.lastLayout) this.applyLayout(this.lastLayout)
   }
 
+  /** Where the chrome last placed a tab's view (window coordinates), or null when it is not shown. */
+  viewRect(tabId: string): Rect | null {
+    const layout = this.lastLayout
+    if (!layout || layout.contentHidden) return null
+    if (layout.glance?.tabId === tabId) return layout.glance.rect
+    return layout.placements.find((p) => p.tabId === tabId)?.rect ?? null
+  }
+
+  /**
+   * The find bar opened (or closed) under a page in HTML fullscreen: the view gives up (or takes
+   * back) that strip at the bottom, the only chrome a fullscreen page shares the window with.
+   */
+  setFullscreenInset(bottom: number): void {
+    const next = Math.max(0, Math.round(bottom))
+    if (next === this.fullscreenBottomInset) return
+    this.fullscreenBottomInset = next
+    if (this.htmlFullscreenTabId) this.relayout()
+  }
+
   /** Position tab views exactly where the renderer laid the content area out. */
   applyLayout(report: LayoutReport): void {
     this.lastLayout = report
@@ -299,9 +323,11 @@ export class ZenWindow {
     const owned = tabs.viewsOwnedBy(this)
     const fullscreenTabId = this.htmlFullscreenTabId
     if (fullscreenTabId && owned.has(fullscreenTabId)) {
-      // An element in HTML fullscreen covers the whole window, chrome included.
+      // An element in HTML fullscreen covers the whole window, chrome included, save for the
+      // strip a docked find bar asked for.
       this.browser.extensions.placeSidePanel(this, null)
-      const { width, height } = this.host.contentSize()
+      const { width, height: full } = this.host.contentSize()
+      const height = Math.max(0, full - this.fullscreenBottomInset)
       for (const [tabId, view] of owned) {
         if (view.isDestroyed()) continue
         if (tabId === fullscreenTabId) {
@@ -426,11 +452,13 @@ export class ZenWindow {
 
   /**
    * Snapshot of a tab, used to keep a dimmed preview behind overlays (URL bar, Glance) and for
-   * tabs whose live page is shown in another window.
+   * tabs whose live page is shown in another window. A page hidden under the chrome has none,
+   * unless `fresh` asks for it as it is now (it changed under the zoom bubble); Electron paints
+   * a hidden view on request, a host that cannot answers null and the chrome keeps its picture.
    */
-  async snapshot(tabId: string): Promise<string | null> {
+  async snapshot(tabId: string, fresh = false): Promise<string | null> {
     const view = this.browser.tabs.view(tabId)
-    if (!view || !view.isVisible()) return null
+    if (!view || (!fresh && !view.isVisible())) return null
     return view.snapshot()
   }
 }
