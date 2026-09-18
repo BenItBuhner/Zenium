@@ -46,6 +46,13 @@ class Storage(private val dir: File) {
 
     fun exists(name: String): Boolean = fileFor(name)?.isFile == true
 
+    /** The documents under one directory level (`safebrowsing`), as names (`safebrowsing/urlhaus.json`). */
+    fun list(dir: String): List<String> {
+        val folder = fileFor(dir) ?: return emptyList()
+        if (folder == this.dir || !folder.isDirectory) return emptyList()
+        return folder.listFiles { f -> f.isFile && !f.name.endsWith(".tmp") }?.map { "${folder.name}/${it.name}" } ?: emptyList()
+    }
+
     /** The file a document name resolves to (null for names that escape the storage directory). */
     fun fileFor(name: String): File? {
         val parts = name.split('/').filter { it.isNotEmpty() }

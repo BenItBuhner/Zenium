@@ -38,6 +38,12 @@ import type {
 import type { ZenWindow } from '../../core/window'
 import { DEFAULT_CONTAINER_ID } from '../../shared/types'
 import { resolveDownloadSettings } from '../../shared/downloads'
+import {
+  DISMISSED_ANSWER,
+  PAGE_DIALOG_CHANNEL,
+  sanitizeDialogCall,
+  type PageDialogAnswer
+} from '../../shared/pageDialogIpc'
 import { FileStoreIO } from './storeIo'
 import { SessionManager, buildUserAgent } from './sessions'
 import { installZenProtocol } from './protocol'
@@ -70,6 +76,7 @@ import {
 } from './security'
 import { ElectronBlocking, ElectronBundledLists, bundledListsDirectory } from './blocking'
 import { supportsWindowMaterial } from './appShell'
+import { ElectronPrivacy } from './privacy'
 
 export const ELECTRON_CAPABILITIES: HostCapabilities = {
   windowControls: true,
@@ -100,7 +107,8 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   reducedExtensionIsolation: false,
   pageControls: false,
   // Private browsing is a window of its own on desktop (`windows`).
-  privateTabs: false
+  privateTabs: false,
+  secureDns: true
 }
 
 /**
@@ -125,6 +133,7 @@ export class ElectronPlatform implements Platform {
   readonly siteData: ElectronSiteData
   readonly passwords: PasswordsHost
   readonly blocking: ElectronBundledLists
+  readonly privacy: ElectronPrivacy
   /** The webRequest multiplexer and text matcher; created with the browser in `start`. */
   requestBlocking!: ElectronBlocking
   readonly translate: ElectronTranslateHost
@@ -149,6 +158,10 @@ export class ElectronPlatform implements Platform {
     })
     // The views hand "Save … As…" downloads to the downloads host, which then asks where to save.
     this.views = new ElectronTabViewHost(this.sessions, this.downloads)
+    // The core's Safe Browsing service exists once the browser does (`start`); no request runs before.
+    this.privacy = new ElectronPrivacy(this.views, {
+      lookup: (url) => (this.browser ? this.browser.protection.safeBrowsing.lookup(url) : null)
+    })
     this.siteData = new ElectronSiteData(this.sessions)
     this.menus = new ElectronMenus()
     this.dialogs = {
@@ -251,7 +264,12 @@ export class ElectronPlatform implements Platform {
             : options.headers,
           cache: 'no-store'
         })
-        return { ok: res.ok, status: res.status, text: res.ok ? await res.text() : '' }
+        const headers: Record<string, string> = {}
+        for (const name of ['etag', 'last-modified', 'content-type']) {
+          const value = res.headers.get(name)
+          if (value) headers[name] = value
+        }
+        return { ok: res.ok, status: res.status, text: res.ok ? await res.text() : '', headers }
       },
       resolveHost: async (host, options) => {
         if (options.signal?.aborted) return false
@@ -398,6 +416,9 @@ export class ElectronPlatform implements Platform {
     // session's one onBeforeSendHeaders slot; persistent sessions only, like the store preload.
     this.requestBlocking.registerHeaderRewrite(webstoreClientHints, { persistentOnly: true })
     this.requestBlocking.registerHeaderRewrite(edgeStoreUserAgent, { persistentOnly: true })
+    // Safe Browsing ahead of the rules, the cookie and signal edits after them; the upgrade
+    // observer and the page preload's signals IPC.
+    this.privacy.attach(this.requestBlocking)
     this.sessions.configure((ses: Session, containerId: string) => {
       installZenProtocol(ses, (id) => browser.reader.pageHtml(id))
       extensionResources.install(ses)
@@ -457,6 +478,27 @@ export class ElectronPlatform implements Platform {
     })
     ipcMain.on('zen:page', (event, message: PageMessage) => {
       this.views.viewForWebContents(event.sender)?.dispatchPageMessage(message)
+    })
+    // A page's `alert` / `confirm` / `prompt`: the renderer blocks on `sendSync` until
+    // `returnValue` is set, which happens once the chrome's dialog is answered. Every path must
+    // set it, or the page would hang.
+    ipcMain.on(PAGE_DIALOG_CHANNEL, (event, raw: unknown) => {
+      const answer = (value: PageDialogAnswer): void => {
+        try {
+          event.returnValue = value
+        } catch {
+          // The page went away while its dialog was up.
+        }
+      }
+      const view = this.views.viewForWebContents(event.sender)
+      const call = sanitizeDialogCall(raw)
+      if (!view || !call) {
+        answer(DISMISSED_ANSWER)
+        return
+      }
+      view
+        .askDialog(call, event.senderFrame?.url ?? '')
+        .then(answer, () => answer(DISMISSED_ANSWER))
     })
     this.attachNotificationStatus(browser)
   }

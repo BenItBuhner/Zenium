@@ -87,6 +87,9 @@ export function createPreviewBridge(): NativeBridge {
     // The preview has no request engine and ships no filter-list snapshot.
     'blocking.bundled': () => [],
     'blocking.install': () => null,
+    // Nor a privacy host: the policy has nowhere to go and there is no Safe Browsing snapshot.
+    'privacy.apply': () => null,
+    'privacy.bundledFeed': () => null,
     'view.create': ({ tabId }) => {
       const frame = document.createElement('iframe')
       frame.className = 'zen-preview-view'

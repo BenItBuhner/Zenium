@@ -4,6 +4,7 @@ import android.view.View
 import android.webkit.WebChromeClient
 import app.zen.chromium.ext.Extensions
 import app.zen.chromium.blocking.Blocking
+import app.zen.chromium.privacy.Privacy
 import org.json.JSONObject
 
 /**
@@ -24,6 +25,8 @@ interface PageHost {
     val pageRules: PageRules get() = PageRules.NONE
     /** The same rules as the core sent them, handed to every page's document-start script. */
     val pageRulesJson: JSONObject get() = JSONObject()
+    /** The privacy policy the pages apply (cookies, signals, Safe Browsing's word ahead of the engine). */
+    val privacy: Privacy
     val keys: Keys
     val downloads: Downloads
     val permissions: Permissions

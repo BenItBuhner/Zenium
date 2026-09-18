@@ -101,6 +101,10 @@ export interface UiState {
   iconPickerTabId: string | null
   /** An HTTP sign-in or certificate dialog is up over the page (the page waits for it). */
   securityPromptOpen: boolean
+  /** A page's `alert` / `confirm` / `prompt` or "Leave site?" dialog is up (the page waits for it). */
+  pageDialogOpen: boolean
+  /** A window-modal question ("Close N tabs?", "Quit Zenium?") is up over the whole window. */
+  windowPromptOpen: boolean
   /**
    * The star bubble (Ctrl+D): the tab that was starred, its bookmark, and where the star it
    * hangs from and the address pill around it were when it opened (null when the pill is not
@@ -178,6 +182,8 @@ export const uiStore = createStore<UiState>(
     editingPinnedUrlTabId: null,
     iconPickerTabId: null,
     securityPromptOpen: false,
+    pageDialogOpen: false,
+    windowPromptOpen: false,
     starDialog: null,
     bookmarkEdit: null,
     bookmarkAllTabs: null,
@@ -266,6 +272,8 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.tabsMenu &&
     !ui.securityPromptOpen &&
     !ui.permissionPromptOpen &&
+    !ui.pageDialogOpen &&
+    !ui.windowPromptOpen &&
     !ui.stageActive &&
     !bookmarkChromeOpen(ui)
   )
@@ -292,6 +300,8 @@ export function invalidateSnapshot(): void {
     !ui.tabsMenu &&
     !ui.securityPromptOpen &&
     !ui.permissionPromptOpen &&
+    !ui.pageDialogOpen &&
+    !ui.windowPromptOpen &&
     !ui.stageActive &&
     !bookmarkChromeOpen(ui)
   ) {
@@ -468,6 +478,8 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.tabsMenu !== null ||
     ui.securityPromptOpen ||
     ui.permissionPromptOpen ||
+    ui.pageDialogOpen ||
+    ui.windowPromptOpen ||
     ui.stageActive ||
     bookmarkChromeOpen(ui)
   )

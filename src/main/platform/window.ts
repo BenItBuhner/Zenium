@@ -13,9 +13,13 @@ import type {
 } from '../../core/platform'
 import { TitleThrottle } from '../../shared/windowTitle'
 import { windowIcon } from './appIcon'
+import { placeWindow, type DisplayArea } from './windowPlacement'
 
 const MIN_WIDTH = 640
 const MIN_HEIGHT = 420
+/** A first window's size (within the display). */
+const DEFAULT_WIDTH = 1280
+const DEFAULT_HEIGHT = 820
 /** Popups are as small as the page asked for, within reason. */
 const POPUP_MIN_WIDTH = 320
 const POPUP_MIN_HEIGHT = 200
@@ -46,11 +50,14 @@ export class ElectronWindow implements WindowHost {
     init: WindowCreateInit
   ) {
     let initial = init.bounds
+    let displayId = init.displayId
     if (!initial && init.cascadeFrom?.alive) {
-      const b = (init.cascadeFrom.host as ElectronWindow).win.getNormalBounds()
+      const from = (init.cascadeFrom.host as ElectronWindow).win
+      const b = from.getNormalBounds()
       initial = { x: b.x + 28, y: b.y + 28, width: b.width, height: b.height }
+      displayId = screen.getDisplayMatching(b).id
     }
-    const bounds = sanitizeBounds(initial, init.chrome)
+    const bounds = sanitizeBounds(initial, displayId, init.chrome)
     const isMac = process.platform === 'darwin'
     const mica = init.material === 'mica' && process.platform === 'win32'
     this.captionColors = init.captionColors
@@ -121,10 +128,23 @@ export class ElectronWindow implements WindowHost {
       else if (command === 'browser-forward')
         browser.actions.run('nav.forward', { sourceTabId: null, win: zen })
     })
-    win.on('close', () => {
+    win.on('close', (event) => {
+      // The caption button, Alt+F4 and the window manager arrive here first: the browser runs
+      // its checks (the tab-count warning, every page's "Leave site?") and closes again once
+      // they pass. Windows the browser closes itself, and every window while quitting, go.
+      if (!zen.closeApproved && !browser.quitting) {
+        event.preventDefault()
+        // Off the event: the checks may pass at once and close again, which must not re-enter
+        // the close that is being cancelled here.
+        setImmediate(() => void browser.requestWindowClose(zen))
+        return
+      }
       if (this.boundsTimer) clearTimeout(this.boundsTimer)
       zen.onClosing()
     })
+    // Windows: the user logs off or the system shuts down and the process is about to be ended.
+    // Persist (with the clean-exit marker) and go without questions.
+    win.on('session-end', () => browser.shutdown())
     win.on('closed', () => {
       this.stopCompactTracking()
       this.titles.cancel()
@@ -288,6 +308,10 @@ export class ElectronWindow implements WindowHost {
       : null
   }
 
+  displayId(): number | null {
+    return this.alive ? screen.getDisplayMatching(this.win.getBounds()).id : null
+  }
+
   setCaptionColors(colors: CaptionColors): void {
     if (!CAPTION_OVERLAY || !this.alive) return
     const current = this.captionColors
@@ -378,32 +402,24 @@ export class ElectronWindowFactory implements WindowHostFactory {
   }
 }
 
-function sanitizeBounds(saved: Rect | null, chrome: WindowChrome): Rect {
-  const primary = screen.getPrimaryDisplay().workArea
-  const fallback: Rect = {
-    width: Math.min(1280, primary.width - 40),
-    height: Math.min(820, primary.height - 40),
-    x:
-      primary.x + Math.max(0, Math.round((primary.width - Math.min(1280, primary.width - 40)) / 2)),
-    y:
-      primary.y + Math.max(0, Math.round((primary.height - Math.min(820, primary.height - 40)) / 2))
-  }
-  if (!saved) return fallback
-  const minWidth = chrome === 'popup' ? POPUP_MIN_WIDTH : MIN_WIDTH
-  const minHeight = chrome === 'popup' ? POPUP_MIN_HEIGHT : MIN_HEIGHT
-  const width = Math.max(minWidth, Math.min(saved.width, primary.width))
-  const height = Math.max(minHeight, Math.min(saved.height, primary.height))
-  // Make sure the window is visible on some display.
-  const visibleOnSomeDisplay = screen.getAllDisplays().some((d) => {
-    const a = d.workArea
-    return (
-      saved.x + 100 < a.x + a.width &&
-      saved.x + width - 100 > a.x &&
-      saved.y + 50 < a.y + a.height &&
-      saved.y >= a.y - 20
-    )
-  })
-  return visibleOnSomeDisplay
-    ? { x: saved.x, y: saved.y, width, height }
-    : { ...fallback, width, height }
+/**
+ * Saved bounds go back onto the display they were saved on (or the one they lie on, or the
+ * primary), fitted into its work area; see `placeWindow`.
+ */
+function sanitizeBounds(saved: Rect | null, displayId: number | null, chrome: WindowChrome): Rect {
+  const primary = screen.getPrimaryDisplay()
+  const displays: DisplayArea[] = [
+    primary,
+    ...screen.getAllDisplays().filter((d) => d.id !== primary.id)
+  ].map((d) => ({ id: d.id, workArea: d.workArea }))
+  return placeWindow(
+    {
+      saved,
+      displayId,
+      minWidth: chrome === 'popup' ? POPUP_MIN_WIDTH : MIN_WIDTH,
+      minHeight: chrome === 'popup' ? POPUP_MIN_HEIGHT : MIN_HEIGHT,
+      defaultSize: { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT }
+    },
+    displays
+  )
 }

@@ -7,3 +7,5 @@ tsconfig.*.json
 android/**/build
 android/.gradle
 android/app/src/main/assets
+# Generated snapshot of the Safe Browsing feeds (npm run safebrowsing:snapshot).
+resources/safebrowsing

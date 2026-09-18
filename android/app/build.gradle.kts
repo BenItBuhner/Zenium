@@ -34,6 +34,16 @@ val copyBlockingSnapshot = tasks.register<Copy>("copyBlockingSnapshot") {
     into(projectDir.resolve("src/main/assets/blocking"))
 }
 
+// The bundled snapshot of the Safe Browsing feeds (resources/safebrowsing, refreshed with
+// `npm run safebrowsing:snapshot`): one prefix-table document per feed, seeded into the profile
+// by the core on first run and read by the Kotlin guard (privacy/Privacy.kt, `bundledFeed`).
+val copySafeBrowsingSnapshot = tasks.register<Copy>("copySafeBrowsingSnapshot") {
+    group = "build"
+    description = "Copies the bundled Safe Browsing snapshot into app/src/main/assets/safebrowsing"
+    from(webRoot.resolve("resources/safebrowsing"))
+    into(projectDir.resolve("src/main/assets/safebrowsing"))
+}
+
 val versionProps = Properties().apply {
     // Mirror the npm package version so About shows the same number on every platform.
     val pkg = webRoot.resolve("package.json").readText()
@@ -203,14 +213,15 @@ base {
     archivesName.set("zenium-$appVersion")
 }
 
-tasks.named("preBuild") { dependsOn(buildWeb, copyBlockingSnapshot) }
+tasks.named("preBuild") { dependsOn(buildWeb, copyBlockingSnapshot, copySafeBrowsingSnapshot) }
 
 dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.activity:activity-ktx:1.9.3")
     // 1.13 adds WebStorageCompat.deleteBrowsingDataForSite (the site-information sheet's "clear all site data");
-    // 1.17 adds JS_INJECTION_IN_FRAME_AND_WORLD (isolated worlds for the extension layer, Chromium 146+ WebView).
+    // 1.17 adds JS_INJECTION_IN_FRAME_AND_WORLD (isolated worlds for the extension layer, Chromium 146+ WebView)
+    // and names the origin-matched request headers Profile.addCustomHeader (GPC / DNT on every request, privacy/Privacy.kt).
     implementation("androidx.webkit:webkit:1.17.0")
     implementation("com.google.android.material:material:1.12.0")
     // Custom Tabs provider: the service other apps bind and the intent extras they send

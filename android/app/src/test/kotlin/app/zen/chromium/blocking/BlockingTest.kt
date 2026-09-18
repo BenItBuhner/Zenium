@@ -15,6 +15,8 @@ class BlockingTest {
         var blocked = 0
         val documentsBlocked = ArrayList<String>()
         val redirects = ArrayList<String>()
+        val unsafe = ArrayList<Pair<String, SafeBrowsingHit>>()
+        val upgrades = ArrayList<Pair<String, String>>()
 
         override fun onRequestsBlocked(count: Int) {
             blocked += count
@@ -24,9 +26,30 @@ class BlockingTest {
             documentsBlocked.add(url)
         }
 
+        override fun onDocumentUnsafe(url: String, hit: SafeBrowsingHit) {
+            unsafe.add(url to hit)
+        }
+
         override fun onDocumentRedirected(url: String) {
             redirects.add(url)
         }
+
+        override fun onDocumentUpgraded(from: String, to: String) {
+            upgrades.add(from to to)
+        }
+    }
+
+    /** A policy that lists `listed.example` (and its subdomains) and allows `plain.example` over plaintext. */
+    private class FakePolicy : RequestPolicy {
+        val asked = ArrayList<String>()
+
+        override fun unsafe(url: String): SafeBrowsingHit? {
+            asked.add(url)
+            val host = Domains.hostnameOf(url) ?: return null
+            return if (host == "listed.example" || host.endsWith(".listed.example")) SafeBrowsingHit("urlhaus", "malware", "listed.example") else null
+        }
+
+        override fun plaintextAllowed(url: String): Boolean = Domains.hostnameOf(url) == "plain.example"
     }
 
     private val snapshot = EngineSnapshot(
@@ -111,6 +134,91 @@ class BlockingTest {
         val nav = Blocking.decideNavigation(snapshot, tab, "http://upgrade.example/")
         assertEquals(Decision.Action.UPGRADE, nav.action)
         assertEquals("https://upgrade.example/", nav.redirectUrl)
+    }
+
+    @Test
+    fun `the policy's Safe Browsing word comes first, on documents and frames only`() {
+        val tab = FakeTab()
+        val policy = FakePolicy()
+        // A listed document: dropped, and the tab hears why (the warning page), not "blocked".
+        val document = Blocking.evaluate(snapshot, tab, "https://listed.example/landing", true, "text/html", "GET", policy)
+        assertTrue(document is Verdict.Empty)
+        assertEquals(204, (document as Verdict.Empty).status)
+        assertEquals(1, tab.unsafe.size)
+        assertEquals("https://listed.example/landing", tab.unsafe[0].first)
+        assertEquals("urlhaus", tab.unsafe[0].second.feedId)
+        assertEquals("malware", tab.unsafe[0].second.threat)
+        assertTrue(tab.documentsBlocked.isEmpty())
+        assertEquals(0, tab.blocked)
+        // A listed frame: an empty 403, counted like a blocked subresource.
+        val frame = Blocking.evaluate(snapshot, tab, "https://ads.listed.example/frame", false, "text/html", "GET", policy)
+        assertTrue(frame is Verdict.Empty)
+        assertEquals(403, (frame as Verdict.Empty).status)
+        assertEquals(1, tab.blocked)
+        assertEquals(1, tab.unsafe.size)
+        // Other subresources of a listed host are not the guard's business (the document never loaded).
+        assertSame(Verdict.Pass, Blocking.evaluate(snapshot, tab, "https://listed.example/a.js", false, "*/*", "GET", policy))
+        assertEquals(2, policy.asked.size)
+        // The guard runs even without rule sets, and ahead of them: an unlisted host is the engine's as before.
+        assertTrue(Blocking.evaluate(EngineSnapshot.EMPTY, tab, "https://listed.example/", true, "text/html", "GET", policy) is Verdict.Empty)
+        assertSame(Verdict.Pass, Blocking.evaluate(EngineSnapshot.EMPTY, tab, "https://news.example/", true, "text/html", "GET", policy))
+        assertTrue(Blocking.evaluate(snapshot, tab, "https://malware.example/landing", true, "text/html", "GET", policy) is Verdict.Empty)
+        assertEquals(listOf("https://malware.example/landing"), tab.documentsBlocked)
+        // Not http(s): never asked.
+        assertSame(Verdict.Pass, Blocking.evaluate(snapshot, tab, "about:blank", true, null, "GET", policy))
+        assertSame(Verdict.Pass, Blocking.evaluate(snapshot, tab, "data:text/html,<p>hi", true, null, "GET", policy))
+        assertEquals(5, policy.asked.size)
+        // The JSON the core receives names the feed, the threat and the expression.
+        val json = tab.unsafe[0].second.toJson()
+        assertEquals("urlhaus", json.getString("feedId"))
+        assertEquals("malware", json.getString("threat"))
+        assertEquals("listed.example", json.getString("expression"))
+        assertEquals(false, json.getBoolean("remote"))
+    }
+
+    @Test
+    fun `HTTPS-only mode's upgrade is reported as one, and skipped for a site the user allowed over plaintext`() {
+        val httpsOnly = EngineSnapshot(
+            listOf(
+                RuleSetInfo.parse(
+                    JSONObject(
+                        """{"id":"${Blocking.HTTPS_ONLY_SET}","source":"builtin","priority":1500,"enabled":true,"rules":[
+                            {"id":1,"action":{"type":"upgradeScheme"},"condition":{"regexFilter":"^http://[^/?#]*\\.[^/?#]*","resourceTypes":["main_frame"],"excludedRequestDomains":["localhost","127.0.0.1"]}}
+                        ]}"""
+                    )
+                )!!
+            ),
+            TextEngine.parse(emptyList())
+        )
+        val tab = FakeTab()
+        val policy = FakePolicy()
+        // The upgrade: the tab remembers the plaintext URL (for the fallback) rather than following a redirect.
+        val upgraded = Blocking.evaluate(httpsOnly, tab, "http://legacy.example/page?x=1", true, "text/html", "GET", policy)
+        assertTrue(upgraded is Verdict.Empty)
+        assertEquals(listOf("http://legacy.example/page?x=1" to "https://legacy.example/page?x=1"), tab.upgrades)
+        assertTrue(tab.redirects.isEmpty())
+        // The site the user allowed over plaintext, before the engine reloaded the rule without it: left alone.
+        assertSame(Verdict.Pass, Blocking.evaluate(httpsOnly, tab, "http://plain.example/", true, "text/html", "GET", policy))
+        assertEquals(1, tab.upgrades.size)
+        // The same through the navigation path (shouldOverrideUrlLoading).
+        val nav = Blocking.decideNavigation(httpsOnly, tab, "http://legacy.example/")
+        assertEquals(Decision.Action.UPGRADE, nav.action)
+        assertTrue(Blocking.applyUpgrade(policy, tab, "http://legacy.example/", nav))
+        assertEquals("http://legacy.example/" to "https://legacy.example/", tab.upgrades.last())
+        val allowed = Blocking.decideNavigation(httpsOnly, tab, "http://plain.example/")
+        assertEquals(Decision.Action.UPGRADE, allowed.action)
+        assertEquals(false, Blocking.applyUpgrade(policy, tab, "http://plain.example/", allowed))
+        // Without a policy every upgrade of the mode's set is reported; other sets' upgrades stay plain redirects.
+        assertTrue(Blocking.applyUpgrade(null, tab, "http://plain.example/", allowed))
+        assertEquals("http://plain.example/" to "https://plain.example/", tab.upgrades.last())
+        val other = Blocking.decideNavigation(snapshot, tab, "http://upgrade.example/")
+        assertTrue(Blocking.applyUpgrade(policy, tab, "http://upgrade.example/", other))
+        assertEquals(listOf("https://upgrade.example/"), tab.redirects)
+        // Hosts without a dot and the excluded ones are not upgraded by the rule itself.
+        assertEquals(Decision.Action.ALLOW, Blocking.decideNavigation(httpsOnly, tab, "http://intranet/").action)
+        assertEquals(Decision.Action.ALLOW, Blocking.decideNavigation(httpsOnly, tab, "http://localhost:3000/").action)
+        assertEquals(Decision.Action.ALLOW, Blocking.decideNavigation(httpsOnly, tab, "http://127.0.0.1/").action)
+        assertEquals(Decision.Action.ALLOW, Blocking.decideNavigation(httpsOnly, tab, "https://legacy.example/").action)
     }
 
     @Test

@@ -34,7 +34,10 @@ import {
   BLANK_URL,
   ERROR_URL_PREFIX,
   errorPageUrl,
+  httpsOnlyPageUrl,
+  interstitialKindOf,
   isNavigableUrl,
+  safeBrowsingPageUrl,
   titleForUrl
 } from '../shared/url'
 import type { Browser } from './browser'
@@ -60,10 +63,16 @@ export type { PageFlags } from './platform'
 export class TabManager {
   private readonly views = new Map<string, TabView>()
   private readonly owners = new Map<string, ZenWindow>()
-  /** Tabs whose current load came from typed input we upgraded to https:// (eligible for http fallback). */
+  /**
+   * Tabs whose current load is an https:// upgrade – of typed input without a scheme, or of an
+   * http:// navigation HTTPS-only mode's rule upgraded – keyed to the plaintext URL to fall back
+   * to (or to ask about) when the secure load fails.
+   */
   private readonly httpsUpgraded = new Map<string, string>()
   /** Back/forward stacks to replay when a reopened tab's page is created. */
   private readonly pendingNavigation = new Map<string, NavigationSnapshot>()
+  /** Tabs under a window's or the app's unload check: a page that goes is unloaded, not closed. */
+  private readonly unloadChecks = new Set<string>()
   /** How the next committed navigation of a tab came about (for the history record). */
   private readonly pendingTransition = new Map<string, HistoryTransition>()
 
@@ -202,12 +211,24 @@ export class TabManager {
       }
       tab.url = url
     }
-    const snapshot = this.pendingNavigation.get(tabId)
-    if (snapshot) {
-      // A reopened tab: give it its back/forward stack back instead of a bare load.
+    const snapshot =
+      this.pendingNavigation.get(tabId) ?? this.browser.state.tabNavigation.get(tabId)
+    if (snapshot && snapshot.entries.length > 0) {
+      // A reopened, restored or unloaded tab: give it its back/forward stack (and, through the
+      // entries' page state, its scroll position) back instead of a bare load.
       this.pendingNavigation.delete(tabId)
-      this.pendingTransition.set(tabId, 'restored')
-      void view.restoreNavigation(snapshot)
+      const index = Math.min(Math.max(snapshot.index, 0), snapshot.entries.length - 1)
+      if (url === '' || url === BLANK_URL || url === snapshot.entries[index].url) {
+        this.pendingTransition.set(tabId, 'restored')
+        void view.restoreNavigation({ entries: snapshot.entries, index })
+      } else {
+        // Asked to go somewhere else meanwhile (typed into the pill while unloaded): the new
+        // page goes on top of the stack and the forward entries go, as in Chrome.
+        void view.restoreNavigation({
+          entries: [...snapshot.entries.slice(0, index + 1), { url, title: tab.title }],
+          index: index + 1
+        })
+      }
       return view
     }
     view.loadURL(url || BLANK_URL)
@@ -223,12 +244,31 @@ export class TabManager {
   navigationEntries(tabId: string): NavigationSnapshot {
     const view = this.view(tabId)
     if (view) return view.navigationEntries()
-    const pending = this.pendingNavigation.get(tabId)
+    const pending = this.pendingNavigation.get(tabId) ?? this.browser.state.tabNavigation.get(tabId)
     if (pending) return pending
     const tab = this.tab(tabId)
     return tab
       ? { entries: [{ url: tab.url, title: tab.title }], index: 0 }
       : { entries: [], index: -1 }
+  }
+
+  /**
+   * Record the tab's back/forward stack in the profile (`BrowserState.tabNavigation`), so the
+   * tab comes back with it – and with each entry's page state, its scroll position – after an
+   * unload, a relaunch or a crash. Private tabs leave nothing behind.
+   */
+  rememberNavigation(tabId: string, view: TabView | undefined = this.view(tabId)): void {
+    const tab = this.tab(tabId)
+    if (!tab || !view || view.isDestroyed() || this.isPrivate(tab)) return
+    // A host without a stack to report (a page still blank) leaves the record alone.
+    const snapshot: NavigationSnapshot | null = view.navigationEntries() ?? null
+    if (!snapshot || snapshot.entries.length === 0) return
+    this.browser.state.tabNavigation.set(tabId, snapshot)
+  }
+
+  /** The stacks of every loaded page, read once more before the pages go (a graceful quit). */
+  rememberAllNavigation(): void {
+    for (const [tabId, view] of this.views) this.rememberNavigation(tabId, view)
   }
 
   /** Jump to an entry of the back/forward stack (the long-press list on the back button). */
@@ -391,19 +431,39 @@ export class TabManager {
         const v = view()
         if (code === -3 || !v) return
         this.browser.governor.onLoadFinished(tabId)
-        const upgradedFrom = this.httpsUpgraded.get(tabId)
-        if (upgradedFrom && url.startsWith('https://') && HTTP_FALLBACK_CODES.has(code)) {
+        const failed = (): void =>
+          update((t) => {
+            t.errorCode = code
+            t.loading = false
+          })
+        // The host's request engine refused the navigation on Safe Browsing's word.
+        const unsafe = this.browser.protection.safeBrowsing.takePendingBlock(tabId, url)
+        if (unsafe) {
           this.httpsUpgraded.delete(tabId)
-          v.loadURL(`http://${upgradedFrom}`)
+          failed()
+          v.loadURL(safeBrowsingPageUrl(url, unsafe.threat))
+          return
+        }
+        const plaintext = this.httpsUpgraded.get(tabId)
+        if (plaintext && url.startsWith('https://') && HTTP_FALLBACK_CODES.has(code)) {
+          this.httpsUpgraded.delete(tabId)
+          const { protection } = this.browser
+          if (protection.httpsOnly !== 'off' && !protection.allowsPlaintext(plaintext)) {
+            // HTTPS-only mode asks before loading the page over plaintext.
+            failed()
+            v.loadURL(httpsOnlyPageUrl(plaintext, code))
+            return
+          }
+          v.loadURL(plaintext)
           return
         }
         this.httpsUpgraded.delete(tabId)
-        update((t) => {
-          t.errorCode = code
-          t.loading = false
-        })
+        failed()
         v.loadURL(errorPageUrl(code, description || describeNetError(code, ''), url))
       },
+      onUpgraded: (from, to) => this.noteUpgrade(tabId, from, to),
+      onUnsafeNavigation: (url, hit) =>
+        this.browser.protection.safeBrowsing.notePendingBlock(tabId, url, hit),
       onCrashed: (reason) => {
         if (reason === 'clean-exit') return
         const tab = this.tab(tabId)
@@ -517,8 +577,32 @@ export class TabManager {
           }
         }
       },
-      onPageMessage: (message) => this.browser.handlePageMessage(tabId, message)
+      onPageMessage: (message) => this.browser.handlePageMessage(tabId, message),
+      onDialog: (request) => this.browser.pageDialogs.ask(tabId, request),
+      onLeaveSite: async (reload) => {
+        const leave = await this.browser.pageDialogs.confirmLeave(tabId, reload)
+        if (!leave) this.stayedOnPage(tabId)
+        return leave
+      }
     }
+  }
+
+  /**
+   * The user chose to stay on a page that objected to leaving. `navigate` writes the destination
+   * into the tab as soon as it is asked for (the pill shows where the tab is going, as Chrome's
+   * omnibox does); with the navigation refused, the tab goes back to the page that is still
+   * there.
+   */
+  private stayedOnPage(tabId: string): void {
+    const tab = this.tab(tabId)
+    const view = this.view(tabId)
+    if (!tab || !view || view.isDestroyed()) return
+    const url = view.getURL()
+    this.pendingTransition.delete(tabId)
+    if (!url || tab.url === url) return
+    tab.url = url
+    tab.title = view.getTitle() || titleForUrl(url)
+    this.browser.state.commit()
   }
 
   isPrivate(tab: Tab): boolean {
@@ -548,9 +632,70 @@ export class TabManager {
       this.browser.history.visit(url, tab.title, tab.favicon, { transition, tabId })
     for (const w of this.browser.allWindows())
       if (w.findResult?.tabId === tabId) w.findResult = null
+    this.rememberNavigation(tabId, view)
     this.sendPageFlags(tabId)
     this.browser.onNavigated(tabId)
+    this.browser.protection.onNavigated(tabId, url)
     this.browser.state.commit()
+  }
+
+  /**
+   * The host's request engine upgraded a main-frame navigation of `tabId` from `from` (http) to
+   * `to` (HTTPS-only mode): should `to` fail, the tab falls back to – or asks about – `from`.
+   */
+  noteUpgrade(tabId: string, from: string, to: string): void {
+    if (!this.tab(tabId) || !/^http:\/\//i.test(from) || !/^https:\/\//i.test(to)) return
+    this.httpsUpgraded.set(tabId, from)
+  }
+
+  /** The page an error page (or interstitial) of `tabId` stands in for, or null off one. */
+  errorPageTarget(tabId: string): string | null {
+    const tab = this.tab(tabId)
+    if (!tab || !tab.url.startsWith(ERROR_URL_PREFIX)) return null
+    return safeParam(tab.url, 'url')
+  }
+
+  /**
+   * The URLs history may hold for the page an error page of `tabId` stands in for: the page
+   * itself and, under HTTPS-only mode's question, the upgrade whose failure raised it. The
+   * engine's upgrade is a scheme swap (see `upgradeScheme`), so the entry the failed load left
+   * behind is the `https://` twin of the `http://` page the user asked for.
+   */
+  private errorPageTargets(tabId: string): ReadonlySet<string> {
+    const failed = this.errorPageTarget(tabId)
+    if (failed === null) return new Set()
+    const targets = new Set([failed])
+    const tab = this.tab(tabId)
+    if (tab && interstitialKindOf(tab.url) === 'https-only' && /^http:\/\//i.test(failed)) {
+      targets.add(`https://${failed.slice(7)}`)
+    }
+    return targets
+  }
+
+  /**
+   * "Back to safety": leave an error page for the last entry of the tab's history that is not
+   * the failed page itself (nor another error page), or for a blank tab when there is none. A
+   * host whose snapshot is the current entry alone (Android) goes back one step when it can:
+   * the refused navigation never committed there, so the step lands on the page before it.
+   */
+  leaveErrorPage(tabId: string): void {
+    const view = this.view(tabId)
+    if (!view) return
+    const failed = this.errorPageTargets(tabId)
+    const { entries, index } = view.navigationEntries()
+    for (let i = index - 1; i >= 0; i--) {
+      const url = entries[i]?.url
+      if (!url || failed.has(url) || url.startsWith(ERROR_URL_PREFIX)) continue
+      this.thawForNavigation(tabId)
+      view.goToIndex(i)
+      return
+    }
+    if (entries.length <= 1 && view.canGoBack()) {
+      this.thawForNavigation(tabId)
+      view.goBack()
+      return
+    }
+    this.navigate(tabId, BLANK_URL)
   }
 
   sendPageFlags(tabId: string): void {
@@ -584,12 +729,14 @@ export class TabManager {
     if (!view) return
     this.views.delete(tabId)
     this.httpsUpgraded.delete(tabId)
+    this.browser.protection.safeBrowsing.forgetTab(tabId)
     this.browser.externalProtocols.cancelForTab(tabId)
     this.pendingTransition.delete(tabId)
     this.browser.popups.onTabGone(tabId)
     this.browser.security.cancelForTab(tabId)
     this.browser.permissionPrompts.cancelForTab(tabId)
     this.browser.permissions.onTabGone(tabId)
+    this.browser.pageDialogs.cancelForTab(tabId)
     if (this.owners.has(tabId)) view.detach()
     this.owners.delete(tabId)
     if (!view.isDestroyed()) {
@@ -611,6 +758,8 @@ export class TabManager {
     const saved = this.view(tabId) ? this.browser.governor.memoryOf?.(tabId) : null
     if (saved !== null && saved !== undefined && saved > 0) tab.sleepSavedMb = Math.round(saved)
     else delete tab.sleepSavedMb
+    // The page goes, its history stays: the tab picks the stack up again when it is loaded.
+    this.rememberNavigation(tabId)
     this.destroyView(tabId)
     tab.discarded = true
     tab.frozen = false
@@ -623,8 +772,12 @@ export class TabManager {
     this.browser.state.commit()
   }
 
-  /** A frozen page cannot navigate; wake it before touching its history or URL. */
+  /**
+   * A frozen page cannot navigate; wake it before touching its history or URL. A page waiting in
+   * one of its own dialogs cannot either: like Chrome, the navigation dismisses the dialog.
+   */
   private thawForNavigation(tabId: string): void {
+    this.browser.pageDialogs.cancelForTab(tabId)
     const tab = this.tab(tabId)
     if (!tab || !this.view(tabId) || !tab.frozen) return
     void this.browser.governor.thaw(tabId)
@@ -704,7 +857,7 @@ export class TabManager {
     tab.bookmarked = this.browser.bookmarks.has(tab.url)
     // Set before the load below so an active tab's single activation load (or a background load)
     // is eligible for the http fallback straight away.
-    if (opts.upgradedFrom) this.httpsUpgraded.set(tab.id, opts.upgradedFrom)
+    if (opts.upgradedFrom) this.httpsUpgraded.set(tab.id, `http://${opts.upgradedFrom}`)
     if (opts.active !== false) {
       this.activateTab(tab.id, win)
     } else if (opts.load !== false && tab.url !== BLANK_URL) {
@@ -772,16 +925,113 @@ export class TabManager {
     this.browser.externalProtocols.cancelForTab(tabId)
     this.browser.popups.onTabGone(tabId)
     this.browser.security.cancelForTab(tabId)
+    this.browser.pageDialogs.cancelForTab(tabId)
     this.browser.governor.onViewDestroyed(tabId, view)
     this.browser.state.devtoolsOpenFor.delete(tabId)
     const tab = this.tab(tabId)
     if (!tab) return
-    if (tab.pinned || tab.essential) {
-      // Pinned tabs survive their page: they simply show as unloaded until clicked again.
+    if (tab.pinned || tab.essential || this.unloadChecks.has(tabId)) {
+      // Pinned tabs survive their page: they simply show as unloaded until clicked again. So does
+      // a tab whose page went under a window's or the app's unload check – the window may yet stay
+      // open (another page's "Stay"), and the tab is then simply unloaded, its stack kept.
       this.discard(tabId)
       return
     }
     this.closeTab(tabId, true, owner)
+  }
+
+  // ---------------------------------------------------------------------------
+  // beforeunload
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Whether the page of `tabId` may be unloaded: its `beforeunload` handlers run and, when one
+   * objects, the chrome asks "Leave site?". Resolves true when the page may go – or is gone by
+   * then: a page that does not object is closed by the check itself, and its tab with it (with
+   * `keepTab`, the tab stays and shows as unloaded, for checks that may not end in a close).
+   * Its back/forward stack is kept for a reload or "Recently closed" either way.
+   */
+  async confirmUnload(tabId: string, keepTab = false): Promise<boolean> {
+    const view = this.view(tabId)
+    const tab = this.tab(tabId)
+    if (!view || !tab || !view.confirmUnload || view.isDestroyed()) return true
+    // A page waiting in one of its own dialogs cannot run its handlers; the close dismisses it.
+    this.browser.pageDialogs.cancelForTab(tabId)
+    this.pendingNavigation.set(tabId, view.navigationEntries())
+    this.rememberNavigation(tabId, view)
+    if (keepTab) this.unloadChecks.add(tabId)
+    try {
+      // A frozen page cannot run its handlers.
+      if (tab.frozen) {
+        await this.browser.governor.thaw(tabId, true)
+        tab.frozen = false
+      }
+      // Only an explicit "stay" keeps the page (a host that answers nothing does not object).
+      const leave = (await view.confirmUnload()) !== false
+      if (!leave && this.view(tabId) === view) this.pendingNavigation.delete(tabId)
+      return leave
+    } finally {
+      this.unloadChecks.delete(tabId)
+    }
+  }
+
+  /**
+   * Close a tab the way the user asks for it (Ctrl+W, the tab's X, the menu): a page whose
+   * `beforeunload` handler objects gets to ask "Leave site?" first, and the tab stays when the
+   * user says so. Resolves true once the tab is closed.
+   */
+  async requestClose(tabId: string, force = false, win?: ZenWindow): Promise<boolean> {
+    if (!(await this.confirmUnload(tabId))) return false
+    this.closeTab(tabId, force, win)
+    return true
+  }
+
+  /**
+   * Pages destroyed when `win` closes: those of its own tabs, and every page it holds when no
+   * other synced window remains to take them (`releaseWindow`).
+   */
+  viewsClosingWith(win: ZenWindow): string[] {
+    const others = this.browser
+      .allWindows()
+      .filter((w) => w !== win && w.kind === 'synced' && w.alive)
+    const out: string[] = []
+    for (const [tabId, view] of this.viewsOwnedBy(win)) {
+      if (view.isDestroyed()) continue
+      const tab = this.tab(tabId)
+      if (!tab || tab.windowId === win.id || others.length === 0) out.push(tabId)
+    }
+    return out
+  }
+
+  /**
+   * How many tabs close with `win`, as the user sees it: the tabs of a blank or private window,
+   * a synced window's own tabs, or every tab when it is the last synced window (they come back
+   * with the next session, but the window they are in closes).
+   */
+  closingTabCount(win: ZenWindow): number {
+    const m = this.model
+    const glance = win.glance?.tabId
+    if (win.localSpace) return win.localSpace.tabIds.filter((id) => m.tabs[id]).length
+    const others = this.browser
+      .allWindows()
+      .filter((w) => w !== win && w.kind === 'synced' && w.alive)
+    let n = 0
+    for (const tab of Object.values(m.tabs)) {
+      if (tab.id === glance || (tab.spaceId && m.localSpaces[tab.spaceId])) continue
+      if (others.length === 0 || tab.windowId === win.id) n += 1
+    }
+    return n
+  }
+
+  /** How many tabs close when the app quits: every tab of every window (Glance previews aside). */
+  openTabCount(): number {
+    const glances = new Set(
+      this.browser
+        .allWindows()
+        .map((w) => w.glance?.tabId)
+        .filter((id): id is string => Boolean(id))
+    )
+    return Object.keys(this.model.tabs).filter((id) => !glances.has(id)).length
   }
 
   /** Which window a tab belongs to under the current window-sync mode (null = shared). */
@@ -948,6 +1198,7 @@ export class TabManager {
     removeTabFromSplit(m, tabId)
     removeTabFromLists(m, tabId)
     delete m.tabs[tabId]
+    this.browser.state.tabNavigation.delete(tabId)
     this.destroyView(tabId)
     this.browser.governor.onTabRemoved(tabId)
     this.browser.agents.onTabRemoved(tabId)
@@ -1082,7 +1333,7 @@ export class TabManager {
     tab.url = url
     tab.title = titleForUrl(url)
     tab.errorCode = null
-    if (opts.upgradedFrom) this.httpsUpgraded.set(tabId, opts.upgradedFrom)
+    if (opts.upgradedFrom) this.httpsUpgraded.set(tabId, `http://${opts.upgradedFrom}`)
     else this.httpsUpgraded.delete(tabId)
     this.pendingTransition.set(tabId, opts.transition ?? 'typed')
     const hadView = this.view(tabId) !== undefined
@@ -2114,6 +2365,7 @@ export class TabManager {
         view.attachTo(others[0].host)
         others[0].relayout()
       } else {
+        if (tab) this.rememberNavigation(tabId, view)
         this.destroyView(tabId)
         if (tab) {
           tab.discarded = true

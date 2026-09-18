@@ -34,6 +34,8 @@ import { PrivacyService } from './privacy'
 import { PopupBlocker } from './popups'
 import { ExternalLaunches } from './external'
 import { SecurityPromptService } from './security'
+import { PageDialogService } from './pageDialogs'
+import { WindowPrompts } from './windowPrompts'
 import { TabManager } from './tabs'
 import { TabDragController } from './tabDrag'
 import { ZenWindow } from './window'
@@ -56,6 +58,7 @@ import { ExternalProtocolService } from './externalProtocols'
 import { PasswordService } from './credentials/service'
 import { DefaultBrowserService } from './defaultBrowser'
 import { BlockingService } from './blocking/service'
+import { ProtectionService } from './protection/service'
 import { NoExtensions, NoSync, NoUpdateHost, NoopGovernor } from './hostDefaults'
 import {
   activeSpace,
@@ -87,6 +90,7 @@ import { sanitizeUpdateSettings } from '../shared/updates'
 import { sanitizePromoState } from '../shared/defaultBrowser'
 import { sanitizeBlockingSettings } from '../shared/blocking'
 import { isShortcutPreset } from '../shared/shortcuts'
+import { sanitizePrivacySettings } from '../shared/privacy'
 import type { ExtensionHost, Governor, PageMessage, Platform, SyncHost } from './platform'
 
 type CommandHandlers = {
@@ -136,6 +140,10 @@ export class Browser {
   readonly external: ExternalLaunches
   /** HTTP authentication and client-certificate prompts. */
   readonly security: SecurityPromptService
+  /** `alert` / `confirm` / `prompt` and "Leave site?" dialogs of pages, shown by the chrome. */
+  readonly pageDialogs: PageDialogService
+  /** Window-modal questions ("Close N tabs?", "Quit Zenium?"), shown by a window's chrome. */
+  readonly windowPrompts: WindowPrompts
   readonly tabs: TabManager
   /** A sidebar tab drag in flight, followed across windows (drops into them, tear-offs). */
   readonly tabDrag: TabDragController
@@ -166,13 +174,19 @@ export class Browser {
   readonly defaultBrowser: DefaultBrowserService
   /** Ad and tracker blocking: the rule engine, its lists and the blocked-request counters. */
   readonly blocking: BlockingService
+  /** Safe Browsing, HTTPS-only mode, secure DNS, third-party cookies and the GPC / DNT signals. */
+  readonly protection: ProtectionService
   /** Offline page translation: detection, offers, the engine and its models. */
   readonly translate: TranslateService
   /** Desktop site, dark theme for sites and page zoom, remembered per site (Chrome's page controls). */
   readonly pageControls: PageControls
   readonly windows = new Map<string, ZenWindow>()
+  /** Set by `shutdown()`: the app is going away, windows close without further questions. */
   quitting = false
   private readonly handlers: CommandHandlers
+  /** Close checks in flight per window, so a second request joins the first instead of asking twice. */
+  private readonly closeChecks = new Map<string, Promise<boolean>>()
+  private quitCheck: Promise<boolean> | null = null
   /** Images shared into the browser, shown by `zen://image?id=…` while the app runs. */
   private readonly sharedImages = new Map<string, string>()
   /** Windows whose chrome should come up with the URL bar open (fresh windows with a blank tab). */
@@ -229,6 +243,8 @@ export class Browser {
     this.popups = new PopupBlocker(this)
     this.external = new ExternalLaunches(this)
     this.security = new SecurityPromptService(this)
+    this.pageDialogs = new PageDialogService(this)
+    this.windowPrompts = new WindowPrompts(this)
     this.pageControls = new PageControls(this)
     this.tabs = new TabManager(this)
     this.tabDrag = new TabDragController(this)
@@ -257,6 +273,7 @@ export class Browser {
     this.passwords = new PasswordService(this, platform.passwords)
     this.defaultBrowser = new DefaultBrowserService(this)
     this.blocking = new BlockingService(this)
+    this.protection = new ProtectionService(this)
     this.translate = new TranslateService(this)
     this.privacy = new PrivacyService(this)
     this.state.extras = (win) => ({
@@ -276,7 +293,10 @@ export class Browser {
       permissionRules: this.permissions.rules(),
       permissionPrompts: this.permissionPrompts.list(),
       securityPrompts: this.security.list(),
+      pageDialogs: this.pageDialogs.list(),
+      crashRestore: this.session.crashRestoreOffer(),
       blocking: this.blocking.status(),
+      privacy: this.protection.status(),
       translate: this.translate.uiState()
     })
     this.handlers = this.commandHandlers()
@@ -368,6 +388,7 @@ export class Browser {
         ? this.state.settings.windowMaterial
         : 'none',
       bounds: opts.persisted?.bounds ?? opts.bounds ?? null,
+      displayId: opts.persisted?.displayId ?? null,
       maximized: opts.persisted?.maximized ?? false,
       activeSpaceId,
       selection: opts.persisted?.selection ?? {},
@@ -384,6 +405,7 @@ export class Browser {
     const theme = resolveTheme(win.activeSpace().theme, this.darkScheme())
     win.host = this.platform.windows.create(win, {
       bounds: win.initialBounds,
+      displayId: win.initialDisplayId,
       maximized: win.initialMaximized,
       cascadeFrom: win.cascadeFrom,
       title: win.isPrivate ? 'Zenium (Private Browsing)' : 'Zenium',
@@ -421,7 +443,8 @@ export class Browser {
 
   /** The chrome of `win` finished loading for the first time. */
   onChromeReady(win: ZenWindow): void {
-    if (this.state.settings.onboardingDone) this.tabs.claimVisible(win)
+    if (this.state.settings.onboardingDone && !this.session.holdsPages())
+      this.tabs.claimVisible(win)
     if (this.urlbarOnReady.delete(win.id))
       setTimeout(() => this.emit('urlbar.toggle', { mode: 'new-tab' }, win), 150)
     // Whatever loading the profile changed under the user is said once, in the first window.
@@ -431,12 +454,111 @@ export class Browser {
   }
 
   onWindowFocused(win: ZenWindow): void {
-    if (this.state.settings.onboardingDone) this.tabs.claimVisible(win)
+    if (this.state.settings.onboardingDone && !this.session.holdsPages())
+      this.tabs.claimVisible(win)
     this.defaultBrowser.onForeground()
   }
 
+  /**
+   * `win` comes up on a fresh empty tab with the URL bar open – how a session that starts over
+   * begins ("restore previous session" off, or the last session's pages declined after a crash).
+   */
+  openFreshTab(win: ZenWindow): void {
+    this.tabs.createTab({ active: true, load: false }, win)
+    if (win.chromeReady) setTimeout(() => this.emit('urlbar.toggle', { mode: 'new-tab' }, win), 150)
+    else this.urlbarOnReady.add(win.id)
+  }
+
   onWindowClosing(win: ZenWindow): void {
+    this.windowPrompts.cancelForWindow(win)
     this.tabs.releaseWindow(win, this.quitting)
+  }
+
+  // ---------------------------------------------------------------------------
+  // Closing windows and quitting, the way the user asks for it
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Close a window as the user asked (Ctrl+Shift+W, the caption button, the menu): first the
+   * warning about its tabs (when more than one closes and the setting is on), then every page
+   * whose `beforeunload` objects gets to ask "Leave site?", one after the other. The window
+   * closes once everything agreed; resolves true then. Hosts route their native close request
+   * here and close for real only once `win.closeApproved` is set.
+   */
+  async requestWindowClose(win: ZenWindow): Promise<boolean> {
+    if (!win.alive || win.isClosing) return false
+    if (win.closeApproved || this.quitting) {
+      win.closeApproved = true
+      win.host.close()
+      return true
+    }
+    let check = this.closeChecks.get(win.id)
+    if (!check) {
+      check = this.confirmWindowClose(win).finally(() => this.closeChecks.delete(win.id))
+      this.closeChecks.set(win.id, check)
+    }
+    if (!(await check) || !win.alive) return false
+    win.closeApproved = true
+    win.host.close()
+    return true
+  }
+
+  private async confirmWindowClose(win: ZenWindow): Promise<boolean> {
+    const count = this.tabs.closingTabCount(win)
+    if (this.state.settings.warnOnCloseWindow && count > 1) {
+      if (!(await this.windowPrompts.ask(win, 'close-tabs', count))) return false
+    }
+    if (this.quitting) return true
+    return this.confirmUnloadAll(this.tabs.viewsClosingWith(win), [win])
+  }
+
+  /**
+   * Quit as the user asked (Ctrl+Q, the app menu, the Dock): the warning about the open tabs
+   * (the window setting applies – closing the last window is quitting), then every objecting
+   * page's "Leave site?". The app quits once everything agreed. Hosts route their own quit
+   * requests here and quit for real only once `quitting` is set (`shutdown`).
+   */
+  async requestQuit(from?: ZenWindow): Promise<boolean> {
+    if (this.quitting) return true
+    if (!this.quitCheck) {
+      this.quitCheck = this.confirmQuit(from).finally(() => {
+        this.quitCheck = null
+      })
+    }
+    if (!(await this.quitCheck)) return false
+    // Every request that waited on the same check quits once.
+    if (this.quitting) return true
+    this.shutdown()
+    this.platform.app.quit()
+    return true
+  }
+
+  private async confirmQuit(from?: ZenWindow): Promise<boolean> {
+    const windows = this.allWindows()
+    if (windows.length === 0) return true
+    const win = from?.alive ? from : this.focusedWindow()
+    const count = this.tabs.openTabCount()
+    if (this.state.settings.warnOnCloseWindow && count > 1) {
+      if (!(await this.windowPrompts.ask(win, 'quit', count))) return false
+    }
+    if (this.quitting) return true
+    const tabIds = windows.flatMap((w) => [...this.tabs.viewsOwnedBy(w).keys()])
+    return this.confirmUnloadAll(tabIds, windows)
+  }
+
+  /**
+   * Whether every page of `tabIds` may be unloaded: each one that objects asks "Leave site?" in
+   * turn (Chrome's order). The first "Stay" ends it – the pages that went by then stay unloaded
+   * in their tabs, and the ones on screen come back.
+   */
+  private async confirmUnloadAll(tabIds: string[], windows: ZenWindow[]): Promise<boolean> {
+    for (const tabId of tabIds) {
+      if (this.quitting) return true
+      if (await this.tabs.confirmUnload(tabId, true)) continue
+      for (const win of windows) if (win.alive) this.tabs.claimVisible(win)
+      return false
+    }
+    return true
   }
 
   onWindowClosed(win: ZenWindow): void {
@@ -519,6 +641,8 @@ export class Browser {
     })
     // Rule sets load synchronously so the first page is protected.
     this.blocking.start()
+    // After the blocking store is attached: HTTPS-only mode's set is persisted like the others.
+    this.protection.start()
     // Zen restores every synced window (and the space each one was in). With "restore previous
     // session" off, the last session's tabs are forgotten and one window starts fresh.
     const { restoreSession } = this.state.settings
@@ -531,10 +655,11 @@ export class Browser {
     for (const persisted of restore) this.createWindow({ kind: 'synced', persisted })
     if (!restoreSession) {
       const win = this.allWindows()[0]
-      if (win) {
-        this.tabs.createTab({ active: true, load: false }, win)
-        this.urlbarOnReady.add(win.id)
-      }
+      if (win) this.openFreshTab(win)
+    } else if (this.state.uncleanExit && this.state.platform !== 'android') {
+      // The last run crashed (or was killed): its pages are offered, not loaded. Android ends
+      // most runs by killing the process – that is its normal exit, and the pages just come back.
+      this.session.onUncleanStart()
     }
     // The host may have come up under another icon (a fresh install with a restored profile,
     // a launcher alias flipped back by an update); the persisted choice wins.
@@ -1166,14 +1291,23 @@ export class Browser {
     else this.toast('Link handling is set in the system settings on this device.', 'info', win)
   }
 
+  /**
+   * The app is going away for good (every check passed, or the system is shutting down): stop
+   * the services, write the profile one last time – with the clean-exit marker – and freeze it.
+   * Windows closing after this ask nothing and write nothing.
+   */
   shutdown(): void {
     if (this.quitting) return
     this.quitting = true
     void this.agents.stop()
     this.updates.stop()
     this.downloads.shutdown()
+    this.protection.stop()
     this.blocking.stop()
     this.translate.stop()
+    // The pages on screen have scrolled since their stacks were last read.
+    this.tabs.rememberAllNavigation()
+    this.state.markExiting()
     this.flushSync()
     this.state.freeze()
   }
@@ -1334,6 +1468,11 @@ export class Browser {
       this.revealTab(tabId)
       return
     }
+    if (message.type === 'interstitial') {
+      if (typeof message.action === 'string' && typeof message.url === 'string')
+        this.protection.handleInterstitial(tabId, message.action, message.url)
+      return
+    }
     if (message.type === 'media') {
       if (!this.tabs.view(tabId)) return
       tab.audible = Boolean(message.playing)
@@ -1401,6 +1540,9 @@ export class Browser {
       'privacy.clearBrowsingDataCounts': ({ range }) => this.privacy.counts(range),
       'privacy.safetyCheck': () => this.privacy.safetyCheck(),
       'security.respond': ({ id, response }) => this.security.respond(id, response),
+      'pageDialog.respond': ({ id, response }) => this.pageDialogs.respond(id, response),
+      'window.respondPrompt': ({ id, accepted }) => this.windowPrompts.respond(id, accepted),
+      'session.crashRestore': ({ restore }) => this.session.crashRestore(restore),
       'security.forgetSession': () => {
         this.security.forgetSession()
         void platform.sessions.clearAuthCache?.()
@@ -1408,7 +1550,7 @@ export class Browser {
       'app.openExternal': ({ url }) => {
         if (/^(https?|mailto):/.test(url)) platform.shell.openExternal(url)
       },
-      'app.quit': () => platform.app.quit(),
+      'app.quit': () => void this.requestQuit(),
       'app.share': (payload, win) => this.share(payload, win),
       'app.openAppLinkSettings': (_a, win) => this.openAppLinkSettings(win),
       'externalProtocol.respond': ({ requestId, allow, always }) =>
@@ -1418,7 +1560,7 @@ export class Browser {
       'tab.new': (_a, win) => this.openNewTab(win),
       'tab.create': (opts, win) => tabs.createTab(opts, win).id,
       'tab.activate': ({ tabId }, win) => tabs.activateTab(tabId, win),
-      'tab.close': ({ tabId, force }, win) => tabs.closeTab(tabId, force, win),
+      'tab.close': ({ tabId, force }, win) => void tabs.requestClose(tabId, force, win),
       'tab.newPrivate': ({ url }, win) => tabs.newPrivateTab(url, win),
       'tab.closePrivate': (_a, win) => tabs.closePrivateTabs(win),
       'tab.closeOthers': ({ tabId }, win) => tabs.closeOthers(tabId, win),
@@ -1732,7 +1874,7 @@ export class Browser {
       'window.minimize': (_a, win) => win.host.minimize(),
       'window.toggleMaximize': (_a, win) =>
         win.host.isMaximized() ? win.host.unmaximize() : win.host.maximize(),
-      'window.close': (_a, win) => win.host.close(),
+      'window.close': (_a, win) => void this.requestWindowClose(win),
       'window.toggleFullscreen': (_a, win) => this.toggleFullscreen(win),
       'window.formFactor': ({ formFactor }, win) => {
         win.formFactor = formFactor
@@ -1939,7 +2081,8 @@ export class Browser {
       unload: `${s.unloadEnabled}:${s.unloadTimeoutMinutes}:${s.unloadExcludedDomains.join(',')}`,
       agents: JSON.stringify(s.agents),
       updates: JSON.stringify(s.updates),
-      blocking: s.blocking
+      blocking: s.blocking,
+      privacy: JSON.stringify(s.privacy)
     }
     for (const [key, value] of Object.entries(patch)) {
       if (value === undefined) continue
@@ -1985,6 +2128,11 @@ export class Browser {
         this.pageControls.update(value as Partial<Settings['pageControls']>)
       } else if (key === 'shortcutPreset') {
         if (isShortcutPreset(value)) s.shortcutPreset = value
+      } else if (key === 'privacy' && value && typeof value === 'object') {
+        s.privacy = sanitizePrivacySettings({
+          ...s.privacy,
+          ...(value as Partial<Settings['privacy']>)
+        })
       } else {
         ;(s as unknown as Record<string, unknown>)[key] = value
       }
@@ -2017,6 +2165,7 @@ export class Browser {
     if (before.updates !== JSON.stringify(s.updates)) this.updates.onSettingsChanged()
     if (before.appIcon !== s.appIcon) this.platform.app.setAppIcon?.(s.appIcon)
     if (before.blocking !== s.blocking) this.blocking.onSettingsChanged()
+    if (before.privacy !== JSON.stringify(s.privacy)) this.protection.onSettingsChanged()
     this.state.commit()
   }
 

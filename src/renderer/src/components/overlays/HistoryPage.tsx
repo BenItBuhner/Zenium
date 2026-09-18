@@ -1,5 +1,5 @@
 import type { JSX, MouseEvent, ReactNode } from 'react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   AppWindow,
   ExternalLink,
@@ -18,6 +18,9 @@ import { useViewport } from '@renderer/lib/formFactor'
 import { activeTab } from '@renderer/lib/selectors'
 import { closeOverlay, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { FrameDialogHost, POPOVER_WIDTH, useFrameDialog } from '@renderer/lib/portals'
+import { useEscapeTrap } from '../bookmarks/escape'
+import { wrapTab } from '../bookmarks/popover'
 import { OverlayShell } from './OverlayShell'
 
 /** Visits fetched per page; "Show more" adds another page. */
@@ -38,11 +41,19 @@ export function HistoryPage({ state }: { state: UIState }): JSX.Element {
   const [hasVisits, setHasVisits] = useState(true)
   // On a phone the keyboard would cover half the list and take the first back for itself.
   const phone = useViewport().formFactor === 'phone'
+  /** "Clear all" asks first: the number of visits about to go, while the question is up. */
+  const [clearing, setClearing] = useState<number | null>(null)
 
   useEffect(() => {
     const timer = setTimeout(() => setText(query.trim()), SEARCH_DEBOUNCE_MS)
     return () => clearTimeout(timer)
   }, [query])
+
+  const askClear = (): void => {
+    void cmd('history.count', { fromMs: 0, toMs: Number.MAX_SAFE_INTEGER })
+      .then((count) => setClearing(count))
+      .catch(() => setClearing(0))
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -68,68 +79,148 @@ export function HistoryPage({ state }: { state: UIState }): JSX.Element {
   }
 
   return (
-    <OverlayShell
-      title="History"
-      variant="full"
-      className="zen-history"
-      actions={
-        <button
-          type="button"
-          className="zen-history-btn"
-          onClick={() => run('history.clear', undefined)}
-          disabled={!hasVisits}
-        >
-          Clear all
-        </button>
-      }
-    >
-      <div className="zen-history flex min-h-full flex-col">
-        <div className="flex items-center gap-3 px-6 pt-4 pb-2">
-          <label className="relative block min-w-0 flex-1">
-            <Search
-              className="zen-history-soft pointer-events-none absolute top-1/2 left-2.5 h-4 w-4 -translate-y-1/2"
-              aria-hidden
-            />
-            <input
-              autoFocus={!phone}
-              className="zen-history-input"
-              placeholder="Search history"
-              aria-label="Search history"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Escape' && query) {
-                  e.stopPropagation()
-                  setQuery('')
-                }
-              }}
-            />
-          </label>
-          {hostFilter && (
-            <button
-              type="button"
-              className="zen-history-btn"
-              title="Show all sites"
-              onClick={() => uiStore.set({ overlaySection: null })}
-            >
-              {hostFilter}
-              <X className="h-4 w-4" aria-hidden />
-            </button>
-          )}
+    <>
+      <OverlayShell
+        title="History"
+        variant="full"
+        className="zen-history"
+        actions={
+          <button
+            type="button"
+            className="zen-history-btn"
+            onClick={askClear}
+            disabled={!hasVisits}
+          >
+            Clear all
+          </button>
+        }
+      >
+        <div className="zen-history flex min-h-full flex-col">
+          <div className="flex items-center gap-3 px-6 pt-4 pb-2">
+            <label className="relative block min-w-0 flex-1">
+              <Search
+                className="zen-history-soft pointer-events-none absolute top-1/2 left-2.5 h-4 w-4 -translate-y-1/2"
+                aria-hidden
+              />
+              <input
+                autoFocus={!phone}
+                className="zen-history-input"
+                placeholder="Search history"
+                aria-label="Search history"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape' && query) {
+                    e.stopPropagation()
+                    setQuery('')
+                  }
+                }}
+              />
+            </label>
+            {hostFilter && (
+              <button
+                type="button"
+                className="zen-history-btn"
+                title="Show all sites"
+                onClick={() => uiStore.set({ overlaySection: null })}
+              >
+                {hostFilter}
+                <X className="h-4 w-4" aria-hidden />
+              </button>
+            )}
+          </div>
+
+          {closed.length > 0 && !text && !hostFilter && <RecentlyClosed entries={closed} />}
+
+          <VisitList
+            // A new search or site filter starts over: first page, nothing selected.
+            key={`${text}\u0000${hostFilter ?? ''}`}
+            text={text}
+            host={hostFilter}
+            onOpen={open}
+            onCount={setHasVisits}
+          />
         </div>
+      </OverlayShell>
+      {/* The page's own question, over it in the frame's box, on its own host. */}
+      <FrameDialogHost>
+        {clearing !== null && (
+          <ClearAllDialog
+            count={clearing}
+            onCancel={() => setClearing(null)}
+            onConfirm={() => {
+              setClearing(null)
+              run('history.clear', undefined)
+            }}
+          />
+        )}
+      </FrameDialogHost>
+    </>
+  )
+}
 
-        {closed.length > 0 && !text && !hostFilter && <RecentlyClosed entries={closed} />}
-
-        <VisitList
-          // A new search or site filter starts over: first page, nothing selected.
-          key={`${text}\u0000${hostFilter ?? ''}`}
-          text={text}
-          host={hostFilter}
-          onOpen={open}
-          onCount={setHasVisits}
-        />
+/**
+ * "Clear all" asks before it wipes the history, with the count of what goes (Chrome's "Clear
+ * browsing data" confirms as well; this is the page's own, smaller question). A v2 dialog
+ * (draft §9.23) on a `FrameDialogHost` whose scrim dims the page: Escape, the scrim and Cancel
+ * keep the history, Enter and the primary clear it; focus starts on Cancel so a stray Enter
+ * does no harm.
+ */
+function ClearAllDialog({
+  count,
+  onCancel,
+  onConfirm
+}: {
+  count: number
+  onCancel: () => void
+  onConfirm: () => void
+}): JSX.Element {
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const cancelRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    cancelRef.current?.focus()
+  }, [])
+  useEscapeTrap(true, onCancel)
+  useFrameDialog({ onScrimPress: onCancel })
+  const visits = count === 1 ? '1 visit' : `${count} visits`
+  return (
+    <div
+      ref={dialogRef}
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="zen-history-clear-title"
+      aria-describedby="zen-history-clear-desc"
+      className="zen-animate-pop zen-bm-dialog flex max-w-[calc(100%-24px)] flex-col"
+      style={{ width: POPOVER_WIDTH.form }}
+      onMouseDown={(e) => e.stopPropagation()}
+      onKeyDown={(e) => wrapTab(e, dialogRef.current)}
+    >
+      <div className="zen-bm-title-block">
+        <h2 id="zen-history-clear-title" className="zen-bm-title">
+          Clear all history?
+        </h2>
+        <p id="zen-history-clear-desc" className="zen-bm-title-desc">
+          {visits} will be removed from Zenium&apos;s history. Recently closed tabs and windows
+          stay.
+        </p>
       </div>
-    </OverlayShell>
+      <form
+        className="zen-bm-form"
+        onSubmit={(e) => {
+          e.preventDefault()
+          onConfirm()
+        }}
+      >
+        <div className="zen-bm-footer justify-end">
+          <button ref={cancelRef} type="button" className="zen-button" onClick={onCancel}>
+            Cancel
+          </button>
+          <button type="submit" className="zen-button" data-variant="primary">
+            Clear all
+          </button>
+        </div>
+      </form>
+    </div>
   )
 }
 

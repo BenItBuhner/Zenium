@@ -78,7 +78,7 @@ export class Actions {
         return this.browser.openNewTab(win)
       case 'tab.close':
         if (glance && ctx.sourceTabId === glance.tabId) return tabs.closeGlance(win)
-        if (active) tabs.closeTab(active.id, false, win)
+        if (active) void tabs.requestClose(active.id, false, win)
         return
       case 'tab.reopenClosed':
         return tabs.reopenClosed(win)
@@ -282,7 +282,7 @@ export class Actions {
         this.browser.openWindow('private', win)
         return
       case 'window.close':
-        win.host.close()
+        void this.browser.requestWindowClose(win)
         return
       case 'window.minimize':
         win.host.minimize()
@@ -292,7 +292,7 @@ export class Actions {
         this.browser.emit('menu.app', undefined, win)
         return
       case 'app.quit':
-        this.browser.platform.app.quit()
+        void this.browser.requestQuit()
         return
 
       default: {

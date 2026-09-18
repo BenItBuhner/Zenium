@@ -1,4 +1,4 @@
-import { app, Menu, systemPreferences } from 'electron'
+import { app, Menu, powerMonitor, systemPreferences } from 'electron'
 import { join } from 'node:path'
 import { optimizer } from '@electron-toolkit/utils'
 import { registerZenScheme } from './platform/protocol'
@@ -138,9 +138,26 @@ function main(): void {
     app.on('activate', () => {
       if (browser && browser.allWindows().length === 0) browser.ensureWindow()
     })
+
+    // Linux and macOS: the system is shutting down or the user logs off. Persist (with the
+    // clean-exit marker) and exit at once; the dialogs would only hold the shutdown up.
+    powerMonitor.on('shutdown', () => {
+      browser?.shutdown()
+      app.quit()
+    })
   })
 
-  app.on('before-quit', () => browser?.shutdown())
+  // Every quit request (Cmd+Q on the app menu, the Dock, `app.quit()` from anywhere) goes
+  // through the browser's checks – the open-tabs warning, every page's "Leave site?" – and quits
+  // for real once they pass (`requestQuit` calls `shutdown`, then `app.quit()` again).
+  app.on('before-quit', (event) => {
+    const b = browser
+    if (!b || b.quitting) return
+    event.preventDefault()
+    // Off the event: the checks may pass at once and quit again, which must not re-enter the
+    // quit that is being cancelled here.
+    setImmediate(() => void b.requestQuit())
+  })
 
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit()

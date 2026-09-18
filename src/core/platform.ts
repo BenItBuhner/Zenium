@@ -18,6 +18,7 @@ import type {
   HostCapabilities,
   KeyBinding,
   NavigationSnapshot,
+  PageDialogResponse,
   PageRules,
   PermissionPrompt,
   PermissionPromptAnswer,
@@ -45,6 +46,8 @@ import type {
   EngineTransport
 } from '../shared/translateEngine'
 import type { UpdateAsset, UpdateProgress, UpdateRelease, UpdateTarget } from '../shared/updates'
+import type { InterstitialAction } from '../shared/interstitial'
+import type { PrivacyFlags, SafeBrowsingHit } from '../shared/privacy'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
 import type { AgentHttpRequest, AgentHttpResponse } from './agent/http'
@@ -60,13 +63,24 @@ export interface PlatformInfo {
 // ---------------------------------------------------------------------------
 
 /** Raw text storage for the JSON stores (one document per name). */
+/** How a document is written. */
+export interface StoreWriteOptions {
+  /**
+   * Keep the previous version as `<name>.bak` (rolling: every write moves the document that was
+   * there aside). For the profile's core documents, whose loss would be the loss of the session.
+   * Hosts that cannot leave this out; the core reads the backup when the document is gone or
+   * unreadable.
+   */
+  backup?: boolean
+}
+
 export interface StoreIO {
   /** Synchronous read at startup; `null` when the document does not exist. */
   readSync(name: string): string | null
   /** Atomic write; the promise settles once the document is durable. */
-  write(name: string, text: string): Promise<void>
+  write(name: string, text: string, options?: StoreWriteOptions): Promise<void>
   /** Synchronous write used when the process is about to go away. */
-  writeSync(name: string, text: string): void
+  writeSync(name: string, text: string, options?: StoreWriteOptions): void
   /** Delete a document (missing documents are not an error). Hosts without it get a `{}` tombstone. */
   remove?(name: string): Promise<void>
   /** Whether a document exists without reading it (large documents such as filter lists). */
@@ -85,6 +99,20 @@ export interface PageFlags {
   thirdParty: 'new-tab' | 'glance' | 'same-tab' | null
 }
 
+/**
+ * How a page is about to navigate itself (its Navigation API `navigate` event), reported just
+ * before its `beforeunload` handlers run. A host whose engine answers `beforeunload` at once
+ * (Electron) keeps the page and asks the user asynchronously; the record tells it what the
+ * page was doing (a reload is asked about differently) and that the page can redo it.
+ */
+export interface NavigationIntent {
+  /** Where the page is going. */
+  url: string
+  navigationType: 'push' | 'replace' | 'reload' | 'traverse'
+  /** A form submission with a body. */
+  post: boolean
+}
+
 /** Messages the page script sends back to the browser. */
 export interface PageMessage {
   type:
@@ -97,6 +125,8 @@ export interface PageMessage {
     | 'popup-blocked'
     /** The page called `window.focus()` with a gesture (a notification was clicked): show its tab. */
     | 'focus'
+    | 'interstitial'
+    | 'navigate-intent'
   url?: string
   x?: number
   y?: number
@@ -105,6 +135,22 @@ export interface PageMessage {
   playing?: boolean
   /** `zap`: CSS selector of the element the user picked in Boost zap mode. */
   selector?: string
+  /** `interstitial`: the button pressed on a Zenium warning page (see `shared/zenPages`). */
+  action?: InterstitialAction
+  /** `navigate-intent`: the navigation the page is starting (consumed by the host, not the core). */
+  intent?: NavigationIntent
+}
+
+/** What a host reports when a page calls `alert`, `confirm` or `prompt`. */
+export interface PageDialogRequest {
+  kind: 'alert' | 'confirm' | 'prompt'
+  message: string
+  /** `prompt`: the second argument, already a string ('' when absent). */
+  defaultValue: string
+  /** URL of the frame that called; the dialog is titled after its site. */
+  frameUrl: string
+  /** URL of the top document, to tell an embedded page's dialog from the page's own. */
+  pageUrl: string
 }
 
 export interface PageContextParams {
@@ -253,6 +299,16 @@ export interface TabViewEvents {
   onFaviconUpdated(favicons: string[]): void
   /** Main-frame load failure (Chromium `net::` error code; hosts map their own codes). */
   onFailLoad(code: number, description: string, url: string): void
+  /**
+   * The host's request engine upgraded a main-frame navigation from `from` (http) to `to`
+   * (HTTPS-only mode's rule); if `to` then fails, the tab offers `from`.
+   */
+  onUpgraded(from: string, to: string): void
+  /**
+   * The host's request engine refused a main-frame navigation to `url` on Safe Browsing's word
+   * (Android, whose guard reads the tables itself); `onFailLoad` follows with the same URL.
+   */
+  onUnsafeNavigation(url: string, hit: SafeBrowsingHit): void
   onCrashed(reason: CrashReason): void
   onAudioStateChanged(audible: boolean): void
   onMediaStateChanged(playing: boolean): void
@@ -288,6 +344,16 @@ export interface TabViewEvents {
   /** A trusted input event (click, key, tap) was delivered to the page. */
   onUserActivation(): void
   onPageMessage(message: PageMessage): void
+  /**
+   * The page called `alert`, `confirm` or `prompt`; resolves with the chrome's answer. The
+   * page's renderer waits for it, as in Chrome.
+   */
+  onDialog(request: PageDialogRequest): Promise<PageDialogResponse>
+  /**
+   * The page's `beforeunload` handler objects to it going away – under a navigation, a reload,
+   * or the close the host is carrying out. Resolves true when the user leaves anyway.
+   */
+  onLeaveSite(reload: boolean): Promise<boolean>
 }
 
 /**
@@ -360,6 +426,14 @@ export interface TabView {
   isFocused?(): boolean
   isDestroyed(): boolean
   destroy(): void
+  /**
+   * Whether the page may be unloaded: runs its `beforeunload` handlers and, when one objects,
+   * has the chrome ask ("Leave site?"). Resolves true when the page can go – no objection, the
+   * user chose to leave, or the page is gone already – and false when it stays. A page with no
+   * objection may be destroyed by the check itself (its close simply goes ahead). Hosts whose
+   * engine cannot run the handlers without unloading leave this out.
+   */
+  confirmUnload?(): Promise<boolean>
 
   // Placement (driven by the renderer's layout reports). A view belongs to one window at a time.
   attachTo(host: WindowHost): void
@@ -476,6 +550,8 @@ export interface WindowHost {
    * into chrome coordinates; hosts without movable windows leave this out.
    */
   contentBounds?(): Rect | null
+  /** The display the window is on (the host's id), remembered with its bounds; hosts with one display leave this out. */
+  displayId?(): number | null
   /** Brief vibration for a gesture landmark; hosts without haptics leave this out. */
   haptic?(kind: HapticKind): void
   /** Recolour the native caption buttons drawn over the chrome (hosts with an overlay). */
@@ -489,6 +565,8 @@ export interface WindowHost {
 
 export interface WindowCreateInit {
   bounds: Rect | null
+  /** The display `bounds` were saved on; the window goes back to it when it is still there. */
+  displayId: number | null
   maximized: boolean
   /** Offset the new window from this one (new windows cascade like Firefox). */
   cascadeFrom: ZenWindow | null
@@ -686,6 +764,22 @@ export interface ExternalProtocolHost {
   respond(requestId: string, allow: boolean): void
 }
 
+/**
+ * What the host does with the privacy settings the core cannot enforce from inside the request
+ * engine's rule sets: the third-party cookie policy, the `Sec-GPC` / `DNT` headers and their
+ * `navigator` flags, the plaintext exemptions of HTTPS-only mode (applied at once, before the
+ * rule set catches up on hosts that compile it asynchronously) and, on desktop, secure DNS.
+ * `apply` runs once the browser is up and again after every change; the host keeps the copy.
+ */
+export interface PrivacyHost {
+  apply(flags: PrivacyFlags): void
+  /**
+   * The Safe Browsing feed table this build ships for `id` (the JSON document
+   * `SafeBrowsingService` persists, as text), or null when the build has no snapshot of it.
+   */
+  bundledSafeBrowsingFeed?(id: string): Promise<string | null>
+}
+
 export interface NetHost {
   fetchText(
     url: string,
@@ -695,7 +789,13 @@ export interface NetHost {
       /** Overall time limit; hosts default to a few seconds (suggestions, Live Folders). */
       timeoutMs?: number
     }
-  ): Promise<{ ok: boolean; status: number; text: string }>
+  ): Promise<{
+    ok: boolean
+    status: number
+    text: string
+    /** Response headers the caller may condition a later fetch on (`etag`, `last-modified`), lowercase names. */
+    headers?: Record<string, string>
+  }>
   /**
    * Whether `host` resolves in DNS (Chrome's intranet probe behind "Did you mean to go to
    * http://host/?"). Resolves false on any failure; hosts without a resolver leave it out and
@@ -1177,6 +1277,11 @@ export interface Platform {
   readonly passwords?: PasswordsHost
   /** Bundled filter-list snapshots; hosts without it start unprotected until the lists download. */
   readonly blocking?: BlockingHost
+  /**
+   * The privacy policy the host enforces itself (cookies, GPC / DNT, HTTPS-only exemptions, secure
+   * DNS) and the Safe Browsing snapshot it ships; hosts without it get none of those.
+   */
+  readonly privacy?: PrivacyHost
   /** Source of Mozilla's Readability library for Reader View, or null when unavailable. */
   readabilitySource(file: 'Readability.js' | 'Readability-readerable.js'): string | null
   /** Offline page translation; hosts without it report the feature as unavailable. */

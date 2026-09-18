@@ -17,6 +17,7 @@ import { DEFAULT_UPDATE_SETTINGS } from './updates'
 import { DEFAULT_PROMO_STATE } from './defaultBrowser'
 import { DEFAULT_BLOCKING_SETTINGS } from './blocking'
 import { DEFAULT_PAGE_CONTROLS } from './pageControls'
+import { DEFAULT_PRIVACY_SETTINGS } from './privacy'
 
 /**
  * Off until the user turns it on in Settings → AI Agents; loopback only, approval required.
@@ -178,6 +179,8 @@ export const DEFAULT_SETTINGS: Settings = {
   essentialsMax: 12,
   newTabPosition: 'end',
   restoreSession: true,
+  warnOnCloseWindow: true,
+  crashRestore: 'ask',
   askWhereToSave: false,
   onboardingDone: false,
   showTabSeparator: true,
@@ -194,7 +197,8 @@ export const DEFAULT_SETTINGS: Settings = {
   blocking: structuredClone(DEFAULT_BLOCKING_SETTINGS),
   pageControls: structuredClone(DEFAULT_PAGE_CONTROLS),
   bookmarksBar: 'newtab',
-  shortcutPreset: 'chrome'
+  shortcutPreset: 'chrome',
+  privacy: structuredClone(DEFAULT_PRIVACY_SETTINGS)
 }
 
 /** Firefox's four default containers plus "No Container". */
