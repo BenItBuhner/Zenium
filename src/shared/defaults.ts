@@ -188,6 +188,7 @@ export const DEFAULT_SETTINGS: Settings = {
   externalProtocols: {},
   passwords: structuredClone(DEFAULT_PASSWORD_SETTINGS),
   defaultBrowserPromo: structuredClone(DEFAULT_PROMO_STATE),
+  defaultBrowserPromptDismissed: null,
   blocking: structuredClone(DEFAULT_BLOCKING_SETTINGS),
   pageControls: structuredClone(DEFAULT_PAGE_CONTROLS),
   bookmarksBar: 'newtab'

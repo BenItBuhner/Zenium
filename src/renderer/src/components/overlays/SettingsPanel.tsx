@@ -35,6 +35,7 @@ import { Switch } from '../ui/switch'
 import { AgentsSection } from './AgentsSection'
 import { AppIconGroup } from './AppIconPicker'
 import { ExtensionsSection, ModsSection } from './AddonsPanel'
+import { DefaultBrowserSection } from './DefaultBrowserSection'
 import { OverlayShell } from './OverlayShell'
 import { AccessibilitySection, SitesGroups } from './PageControlsSettings'
 import { ResourcesSection } from './ResourcesSection'
@@ -58,6 +59,7 @@ export type SettingsSection =
   | 'agents'
   | 'sync'
   | 'shortcuts'
+  | 'default-browser'
   | 'updates'
   | 'about'
 
@@ -76,6 +78,7 @@ const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
   { id: 'agents', label: 'AI Agents' },
   { id: 'sync', label: 'Sync' },
   { id: 'shortcuts', label: 'Keyboard Shortcuts' },
+  { id: 'default-browser', label: 'Default Browser' },
   { id: 'updates', label: 'Updates' },
   { id: 'about', label: 'About' }
 ]
@@ -87,11 +90,21 @@ const SECTION_CAPABILITY: Partial<Record<SettingsSection, keyof HostCapabilities
   extensions: 'extensions',
   agents: 'agents',
   sync: 'sync',
+  'default-browser': 'defaultBrowser',
   updates: 'updates'
 }
 
-function availableSections(caps: HostCapabilities): typeof SECTIONS {
+/**
+ * The browser role has its own section on the desktop OSes (registration, status and the way to
+ * Windows Settings need the room); Android keeps the one row under About.
+ */
+function hasDefaultBrowserSection(platform: Platform): boolean {
+  return platform !== 'android'
+}
+
+function availableSections(caps: HostCapabilities, platform: Platform): typeof SECTIONS {
   return SECTIONS.filter((s) => {
+    if (s.id === 'default-browser' && !hasDefaultBrowserSection(platform)) return false
     const cap = SECTION_CAPABILITY[s.id]
     return !cap || caps[cap]
   })
@@ -131,7 +144,7 @@ export function SettingsPanel({
   // The open section lives in the UI store so main-process events can retarget the panel while
   // it stays mounted (e.g. "Resource Settings…" from a menu).
   const stored = uiStore.use((u) => u.overlaySection)
-  const sections = availableSections(state.capabilities)
+  const sections = availableSections(state.capabilities, state.platform)
   const section = resolveSection(stored ?? initialSection, sections)
   const setSection = (id: SettingsSection): void => uiStore.set({ overlaySection: id })
   const s = state.settings
@@ -186,6 +199,7 @@ export function SettingsPanel({
             {section === 'agents' && <AgentsSection state={state} set={set} />}
             {section === 'sync' && <SyncSection state={state} />}
             {section === 'shortcuts' && <ShortcutsSection state={state} />}
+            {section === 'default-browser' && <DefaultBrowserSection state={state} />}
             {section === 'updates' && <UpdatesSection state={state} set={set} />}
             {section === 'about' && <AboutSection state={state} setSection={setSection} />}
           </div>
@@ -937,7 +951,7 @@ function AboutSection({
           <span />
         )}
       </Row>
-      {state.capabilities.defaultBrowser && (
+      {state.capabilities.defaultBrowser && !hasDefaultBrowserSection(state.platform) && (
         <DefaultBrowserRow isDefault={state.defaultBrowser.isDefault} />
       )}
       <Row

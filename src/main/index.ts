@@ -4,13 +4,17 @@ import { electronApp, optimizer } from '@electron-toolkit/utils'
 import { registerZenScheme } from './platform/protocol'
 import { ElectronPlatform } from './platform'
 import { moveLegacyDirectory } from './platform/legacyPaths'
-import { NEW_WINDOW_FLAG, PRIVATE_WINDOW_FLAG } from './platform/appShell'
 import { applyResourceSwitches } from './platform/resources/startup'
 import { installShellTasks } from './platform/shellTasks'
 import { runStdioShim } from './agent/shim'
+import { LINUX_DESKTOP_ID } from './platform/defaultBrowser'
+import { parseLaunchArgs, pathToFileUrl, type LaunchArgs } from '../shared/launchArgs'
 import type { Browser } from '../core/browser'
 
 app.setName('Zenium')
+// The desktop entry electron-builder installs; Electron uses it for the Wayland app id, and
+// desktop environments match it to the window (StartupWMClass in the .desktop file).
+if (process.platform === 'linux') app.setDesktopName(LINUX_DESKTOP_ID)
 /** The product name up to v0.2.0; its userData directory is taken over on the first launch. */
 const LEGACY_APP_NAME = 'Zen'
 
@@ -61,30 +65,57 @@ function main(): void {
     return
   }
   let browser: Browser | null = null
+  /** Handoffs that arrived before the browser existed (macOS delivers open-url before `ready`). */
+  const queued: LaunchArgs[] = []
 
   /**
-   * `zenium [--new-window|--blank-window|--private-window] [url]` (Zen Browser ships the same
-   * `--blank-window` flag; the other two are the taskbar jump list's tasks).
+   * `zenium [--new-window|--blank-window|--private-window] [urls|files]`, from the command line,
+   * a second instance, a file association or a protocol launch. URLs open as tabs in the window
+   * the flags ask for (Zen Browser ships the same `--blank-window` flag); a bare flag just opens
+   * the window.
    */
-  const openFromArgv = (argv: string[]): void => {
-    if (!browser) return
-    const url = argv.find((a) => /^https?:\/\//.test(a))
-    const kind = argv.includes(PRIVATE_WINDOW_FLAG)
-      ? 'private'
-      : argv.includes('--blank-window')
-        ? 'unsynced'
-        : argv.includes(NEW_WINDOW_FLAG)
-          ? 'synced'
-          : null
-    const win = kind ? browser.createWindow({ kind }) : browser.ensureWindow()
-    if (!kind) {
-      win.host.show()
-      win.host.focus()
+  const openLaunch = (launch: LaunchArgs): void => {
+    const b = browser
+    if (!b) {
+      queued.push(launch)
+      return
     }
-    if (url) browser.tabs.createTab({ url, active: true }, win)
+    // `--make-default-browser` is the ReinstallCommand Windows runs from its Default apps page.
+    if (launch.makeDefault) void b.defaultBrowser.request('settings')
+    if (launch.urls.length === 0 && launch.window === 'current') return
+    const win =
+      launch.window === 'private'
+        ? b.createWindow({ kind: 'private' })
+        : launch.window === 'blank'
+          ? b.createWindow({ kind: 'unsynced' })
+          : launch.window === 'new'
+            ? b.createWindow({ kind: 'synced' })
+            : b.ensureWindow()
+    // Blank and private windows start with one empty tab: the first URL goes there.
+    const starter = win.localSpace ? win.selectedTabIn(win.localSpace) : null
+    launch.urls.forEach((url, index) => {
+      if (index === 0 && starter) b.tabs.navigate(starter, url)
+      else b.openExternalUrl(url, win)
+    })
+    win.host.show()
+    win.host.focus()
   }
 
-  app.on('second-instance', (_event, argv) => openFromArgv(argv))
+  // `electron .` in development carries the app path as its second argument.
+  const argvOffset = app.isPackaged ? 1 : 2
+  const openArgv = (argv: string[], cwd: string): void =>
+    openLaunch(parseLaunchArgs(argv.slice(argvOffset), cwd))
+
+  app.on('second-instance', (_event, argv, workingDirectory) => openArgv(argv, workingDirectory))
+  // macOS: links from other apps and documents from the Finder (also the initial launch).
+  app.on('open-url', (event, url) => {
+    event.preventDefault()
+    openLaunch(parseLaunchArgs([url], process.cwd()))
+  })
+  app.on('open-file', (event, path) => {
+    event.preventDefault()
+    openLaunch({ urls: [pathToFileUrl(path)], window: 'current', makeDefault: false })
+  })
 
   app.whenReady().then(() => {
     // Must equal electron-builder's appId: the installer stamps it on the shortcuts, and Windows
@@ -95,8 +126,8 @@ function main(): void {
     const platform = new ElectronPlatform(app.getPath('userData'))
     browser = platform.start()
     installShellTasks((kind) => void browser?.createWindow({ kind }))
-    if (process.argv.slice(1).some((a) => /^https?:\/\//.test(a) || a.startsWith('--')))
-      openFromArgv(process.argv.slice(1))
+    openArgv(process.argv, process.cwd())
+    for (const launch of queued.splice(0)) openLaunch(launch)
 
     app.on('activate', () => {
       if (browser && browser.allWindows().length === 0) browser.ensureWindow()

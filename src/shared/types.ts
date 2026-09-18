@@ -1060,6 +1060,11 @@ export interface Settings {
   passwords: PasswordSettings
   /** Session counter and cooldowns of the "make Zenium your default browser" prompts. */
   defaultBrowserPromo: DefaultBrowserPromoState
+  /**
+   * Desktop: the app version in which the user answered "Not now" to the "Make Zenium your
+   * default browser" strip; it stays away until the next feature release (`major.minor`).
+   */
+  defaultBrowserPromptDismissed: string | null
   /** Ad and tracker blocking (Settings → Privacy and security). */
   blocking: BlockingSettings
   /** How pages are presented: desktop site, dark theme for sites, page zoom (Chrome's page controls). */
