@@ -12,8 +12,10 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import type { Rect } from '@shared/types'
+import { useBackSurface } from './back'
 import { useViewport } from './formFactor'
 import { registerRecedeLayer, type RecedeHandle, type RecedeLayerFrame } from './motion/recede'
+import { sheetBackPosition } from './motion/sheet'
 import { SPRING_GENTLE, SpringAnimation, type SpringConfig } from './motion/spring'
 import { closeAllPopovers } from './popoverStore'
 import { coverPageUnderSheet, type SheetCover } from './ui'
@@ -69,9 +71,16 @@ interface FrameDialogEntry {
   onScrimPress: () => void
   /**
    * The dialog draws the stack's one scrim itself – a sheet whose scrim fades with its own
-   * motion (§9.24, §9.28) – so the host draws none while it is on top.
+   * motion (§9.24, §9.28) – so the host draws none while it is on top, and on a phone keeps its
+   * own chassis down for it (the sheet is on the chassis already).
    */
   ownScrim: boolean
+  /**
+   * Whether the dialog gave a scrim handler at all: a dialog that did is light-dismissable, and
+   * on a phone the sheet chassis answers the system back gesture for it the way the scrim
+   * press does. A prompt without one keeps its own back handling (`useBackSurface`).
+   */
+  dismissable: boolean
 }
 
 interface FrameDialogHostApi {
@@ -198,8 +207,14 @@ interface SheetChassis {
  * is written straight to the three elements the returned refs are put on; React renders none of
  * it. While anything of the sheet shows the host carries `data-sheet-up` (main.css: it takes
  * the pointer, so a press during the way down lands on the scrim and not on the page under it).
+ *
+ * The system back gesture (#24) drives the same `p` while the dialog on top is dismissable: the
+ * finger peeks the sheet down its track (`sheetBackPosition`, as `SheetMotion` does), the page
+ * coming back with it; letting go before the threshold springs it back to 1, and a commit – or
+ * the back button – is the scrim press, so the same spring runs everything down from where the
+ * finger left it. A prompt that gave no scrim handler is left to its own `useBackSurface`.
  */
-function useSheetChassis(active: boolean, open: boolean): SheetChassis {
+function useSheetChassis(active: boolean, open: boolean, top?: FrameDialogEntry): SheetChassis {
   const hostRef = useRef<HTMLDivElement>(null)
   const scrimRef = useRef<HTMLDivElement>(null)
   const slotRef = useRef<HTMLDivElement>(null)
@@ -212,6 +227,8 @@ function useSheetChassis(active: boolean, open: boolean): SheetChassis {
   const spring = useRef<SpringAnimation | null>(null)
   /** Whether the chassis is wanted up (the latest `open`, for the spring's rest). */
   const up = useRef(false)
+  /** Where the back gesture caught the sheet; null while no finger holds it. */
+  const backOrigin = useRef<number | null>(null)
 
   const paint = (): void => {
     const host = hostRef.current
@@ -270,6 +287,46 @@ function useSheetChassis(active: boolean, open: boolean): SheetChassis {
       }
     ))
 
+  /**
+   * Run `p` to `target` on the spring from wherever it is: a motion in flight keeps its
+   * velocity, a value a finger left (the spring stopped) starts from rest there.
+   */
+  const settleTo = (target: number): void => {
+    const m = motion()
+    if (m.running) m.retarget(target)
+    else m.start(p.current, 0, target)
+  }
+
+  // The back gesture over a dismissable dialog: the finger holds `p` where the spring is
+  // frozen, cancel springs it back, commit is the scrim press (the close path runs the spring
+  // down from where the finger left it).
+  useBackSurface(
+    active && open && top?.dismissable
+      ? {
+          name: 'frame-sheet',
+          onStart: () => {
+            motion().stop()
+            backOrigin.current = p.current
+          },
+          onProgress: (progress) => {
+            motion().stop()
+            backOrigin.current ??= p.current
+            p.current = sheetBackPosition(backOrigin.current, progress)
+            recede.current?.progress(p.current)
+            paint()
+          },
+          onCancel: () => {
+            backOrigin.current = null
+            settleTo(1)
+          },
+          onCommit: () => {
+            backOrigin.current = null
+            top.onScrimPress()
+          }
+        }
+      : null
+  )
+
   const clear = (): void => {
     spring.current?.stop()
     recede.current?.release()
@@ -279,6 +336,7 @@ function useSheetChassis(active: boolean, open: boolean): SheetChassis {
     leaving.current?.release()
     leaving.current = null
     p.current = 0
+    backOrigin.current = null
     layer.current = LAYER_AT_REST
     reset()
     // Not a sheet (or gone): the scrim, if any, is the desktop's, drawn as rendered.
@@ -307,19 +365,20 @@ function useSheetChassis(active: boolean, open: boolean): SheetChassis {
       cover.current = c
       void c.promise.then(() => {
         if (cover.current !== c) return
-        motion().retarget(1)
+        settleTo(1)
       })
       return
     }
     // The last dialog went: the same spring runs the scrim and the recede back to 0, from
-    // wherever they are, and lets the page back when it lands (a host still waiting for its
-    // cover lands at once).
+    // wherever they are – mid-rise, or where a back gesture left the sheet – and lets the page
+    // back when it lands (a host still waiting for its cover lands at once).
     if (cover.current) {
       leaving.current?.release()
       leaving.current = cover.current
       cover.current = null
     }
-    if (recede.current) motion().retarget(0)
+    backOrigin.current = null
+    if (recede.current) settleTo(0)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only refs besides `active` and `open`
   }, [active, open])
 
@@ -407,9 +466,13 @@ export function FrameDialogHost({
   }, [count])
   const sheet = useViewport().formFactor === 'phone'
   // The host's own chassis runs for a dialog that has none; a sheet on the chassis already
-  // (`ownScrim`) recedes the page and draws the scrim itself.
+  // (`ownScrim`) recedes the page, draws the scrim and answers the back gesture itself.
   const chassisOpen = dialogs.some((d) => !d.ownScrim)
-  const { hostRef, scrimRef, slotRef } = useSheetChassis(sheet, chassisOpen)
+  const { hostRef, scrimRef, slotRef } = useSheetChassis(
+    sheet,
+    chassisOpen,
+    top && !top.ownScrim ? top : undefined
+  )
   return (
     <FrameDialogHostContext.Provider value={api}>
       <div
@@ -447,10 +510,14 @@ export function FrameDialogHost({
  * Place the calling dialog through the nearest `FrameDialogHost`: while `active` the host shows
  * its scrim, makes the window chrome inert and takes the pointer, and a press on the scrim – on
  * `pointerdown`, mouse, touch or pen alike – runs `onScrimPress` of the dialog on top (omit it
- * for a prompt the page waits on, which only its buttons and Escape answer). Renders nothing
- * itself: the dialog returns its panel, which the host centres above the scrim. `ownScrim` is
- * for a sheet that draws the stack's one scrim itself, fading with its motion: the host then
- * draws none while that sheet is on top, and the sheet's scrim takes the press.
+ * for a prompt the page waits on, which only its buttons and Escape answer). On a phone the
+ * host's sheet answers the system back gesture for a dialog that gave one, the same way (#24):
+ * the finger peeks the sheet and un-recedes the page, a commit runs `onScrimPress`; a prompt
+ * without one registers its own `useBackSurface`. Renders nothing itself: the dialog returns
+ * its panel, which the host centres above the scrim. `ownScrim` is for a sheet that draws the
+ * stack's one scrim itself, fading with its motion (`BottomSheet` placed `hosted`): the host
+ * then draws none while that sheet is on top, keeps its own chassis and back surface down for
+ * it, and the sheet's scrim takes the press.
  *
  * Modal dialogs render in the content frame through FrameDialogHost (scrim dims the frame only).
  * Popovers, menus, toasts and anything anchored to chrome outside the frame render through
@@ -466,10 +533,11 @@ export function useFrameDialog({
   useLayoutEffect(() => {
     latest.current = onScrimPress
   }, [onScrimPress])
+  const dismissable = onScrimPress !== undefined
   useLayoutEffect(() => {
     if (!active || !host) return
-    return host.register({ onScrimPress: () => latest.current?.(), ownScrim })
-  }, [active, host, ownScrim])
+    return host.register({ onScrimPress: () => latest.current?.(), ownScrim, dismissable })
+  }, [active, host, ownScrim, dismissable])
 }
 
 /**

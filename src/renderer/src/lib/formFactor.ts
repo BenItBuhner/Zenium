@@ -29,7 +29,17 @@ export function formFactorFor(metrics: ViewportMetrics, chrome: WindowChrome | n
   return classifyViewport(metrics)
 }
 
+/** Loaded without a window (a pure-logic test importing a module that imports this one): a desktop, unwatched. */
+const NO_WINDOW: ViewportInfo = {
+  formFactor: 'desktop',
+  width: 0,
+  height: 0,
+  coarse: false,
+  hover: true
+}
+
 function compute(): ViewportInfo {
+  if (typeof window === 'undefined') return NO_WINDOW
   const width = window.innerWidth
   const height = window.innerHeight
   const hover = window.matchMedia('(hover: hover)').matches
@@ -63,7 +73,7 @@ function refresh(): void {
 }
 
 const flags = globalThis as unknown as { __zenViewportWatched?: boolean }
-if (!flags.__zenViewportWatched) {
+if (!flags.__zenViewportWatched && typeof window !== 'undefined') {
   flags.__zenViewportWatched = true
   refresh()
   window.addEventListener('resize', refresh)

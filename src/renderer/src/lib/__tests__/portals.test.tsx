@@ -5,8 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, useEffect, useRef, type JSX, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { Rect } from '@shared/types'
+import { dispatchBackEvent, topBackSurface } from '../back'
 import { viewportStore } from '../formFactor'
 import { registerRecedeLayer } from '../motion/recede'
+import { BACK_PEEK, sheetBackPosition } from '../motion/sheet'
 import { uiStore } from '../ui'
 import {
   ChromePortal,
@@ -584,6 +586,66 @@ describe('FrameDialogHost on a phone (the sheet chassis, §11)', () => {
     }
     expect(slot().hasAttribute('inert')).toBe(false)
     expect(opacity(scrim())).toBe(1)
+  })
+
+  it('the back gesture over a dismissable dialog peeks the sheet with the finger, springs back on cancel and dismisses on commit (#24)', async () => {
+    const onScrimPress = vi.fn()
+    render(
+      <FrameDialogHost>
+        <Dialog name="picker" onScrimPress={onScrimPress} />
+      </FrameDialogHost>
+    )
+    await settle()
+    frames(60)
+    expect(recedeVar()).toBe('1.0000')
+    expect(topBackSurface()?.name).toBe('frame-sheet')
+
+    // The finger: the sheet follows it down its track and the page comes back with it.
+    expect(dispatchBackEvent('start', { edge: 'left' })).toBe(true)
+    dispatchBackEvent('progress', { progress: 0.5 })
+    expect(Number(recedeVar())).toBeCloseTo(sheetBackPosition(1, 0.5), 4)
+    expect(opacity(scrim())).toBeCloseTo(sheetBackPosition(1, 0.5), 4)
+    dispatchBackEvent('progress', { progress: 1 })
+    expect(Number(recedeVar())).toBeCloseTo(1 - BACK_PEEK, 4)
+    expect(scheduled()).toBe(false)
+
+    // Let go before the threshold: back up to 1 on the spring, from where the finger left it.
+    dispatchBackEvent('cancel')
+    expect(scheduled()).toBe(true)
+    frames(1)
+    expect(Number(recedeVar())).toBeGreaterThan(1 - BACK_PEEK)
+    expect(Number(recedeVar())).toBeLessThan(0.85)
+    frames(60)
+    expect(recedeVar()).toBe('1.0000')
+    expect(onScrimPress).not.toHaveBeenCalled()
+
+    // Through: the commit is the scrim press, and the close runs down from the peeked position.
+    dispatchBackEvent('start', { edge: 'left' })
+    dispatchBackEvent('progress', { progress: 1 })
+    expect(dispatchBackEvent('commit')).toBe(true)
+    expect(onScrimPress).toHaveBeenCalledTimes(1)
+    rerender(<FrameDialogHost />)
+    frames(1)
+    const first = Number(recedeVar())
+    expect(first).toBeLessThan(1 - BACK_PEEK)
+    expect(first).toBeGreaterThan(0.4)
+    frames(60)
+    expect(recedeVar()).toBe('')
+    expect(topBackSurface()).toBeNull()
+  })
+
+  it('leaves the back gesture to a prompt that gave no scrim handler', async () => {
+    render(
+      <FrameDialogHost>
+        <Dialog name="prompt" />
+      </FrameDialogHost>
+    )
+    await settle()
+    frames(60)
+    expect(topBackSurface()).toBeNull()
+    expect(dispatchBackEvent('start', { edge: 'left' })).toBe(false)
+    dispatchBackEvent('cancel')
+    expect(recedeVar()).toBe('1.0000')
   })
 
   it('leaves the desktop host alone: no sheet, the §9.5 scrim animating in', () => {
