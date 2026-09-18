@@ -1,6 +1,7 @@
 import type {
   AgentInfo,
   AgentServerStatus,
+  AutofillUIState,
   BlockedPopup,
   Bookmark,
   BookmarkNode,
@@ -47,8 +48,10 @@ import {
   DEFAULT_CONTAINERS,
   DEFAULT_SETTINGS,
   emptyAgentServerStatus,
+  emptyAutofillUIState,
   emptyPasswordsStatus,
   emptyResourceSnapshot,
+  sanitizeAutofillSettings,
   sanitizePasswordSettings
 } from '../shared/defaults'
 import { sanitizePhoneBar } from '../shared/phoneBar'
@@ -163,6 +166,7 @@ export interface StateExtras {
   securityPrompts: SecurityPrompt[]
   pageDialogs: PageDialog[]
   crashRestore: CrashRestoreOffer | null
+  autofill: AutofillUIState
   blocking: BlockingStatus
   privacy: PrivacyStatus
   translate: TranslateUIState
@@ -279,6 +283,7 @@ export class BrowserState {
     securityPrompts: [],
     pageDialogs: [],
     crashRestore: null,
+    autofill: emptyAutofillUIState(),
     blocking: emptyBlockingStatus(),
     privacy: emptyPrivacyStatus(),
     translate: emptyTranslateState()
@@ -366,6 +371,7 @@ export class BrowserState {
     this.settings.updates = sanitizeUpdateSettings(data.settings?.updates)
     this.settings.phoneBar = sanitizePhoneBar(data.settings?.phoneBar)
     this.settings.passwords = sanitizePasswordSettings(data.settings?.passwords)
+    this.settings.autofill = sanitizeAutofillSettings(data.settings?.autofill)
     this.settings.defaultBrowserPromo = sanitizePromoState(data.settings?.defaultBrowserPromo)
     this.settings.blocking = sanitizeBlockingSettings(data.settings?.blocking)
     this.settings.pageControls = sanitizePageControls(data.settings?.pageControls)
