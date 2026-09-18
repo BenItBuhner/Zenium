@@ -3,11 +3,13 @@ package app.zen.chromium
 import android.accessibilityservice.AccessibilityService
 import android.app.DownloadManager
 import android.content.Intent
+import android.graphics.Rect
 import android.net.Uri
 import android.os.Build
 import android.os.SystemClock
 import android.provider.MediaStore
 import android.util.Log
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.annotation.RequiresApi
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.json.JSONObject
@@ -27,6 +29,12 @@ import org.junit.runner.RunWith
  * files come from a small Node server on the runner (`.github/scripts/downloads-demo-server.mjs`,
  * reached at `10.0.2.2:18923` from inside the emulator), which generates every byte from the same
  * formula as [expectedByte], so a resumed file is checked byte for byte.
+ *
+ * The panel on screen is the shared downloads page (`DownloadRow`): each row is one focusable
+ * node labelled `<name>. <status>` on the accessibility tree, so the driver reads a row's state
+ * from that label ([rowReads]) and presses its controls through the tree when they are exposed,
+ * else through the engine command the control runs ([press]); the engine's own list is checked
+ * over `app.getState()` either way.
  *
  * Run from the dispatch-only workflow `.github/workflows/android-downloads-demo.yml`, a caller of
  * the shared `android-emulator-demo.yml` that starts the server from `setup-script` and hands the
@@ -52,20 +60,25 @@ class DownloadsDemo : DemoHarness("downloads-demo-state.json", "downloads", "dow
     }
 
     override fun demo() {
-        // 1. A throttled download: the panel opens, Pause holds the bytes, Resume completes the file.
+        // 1. A throttled download: the panel opens on the transfer, Pause holds the bytes, Resume
+        //    completes the file. The running row reads "<speed> · <received> of 3.0 MB · <left>".
         click(LINK_SLOW)
-        if (waitFor("Pause", 15_000) == null) fail("the downloads panel with a running transfer never showed")
-        SystemClock.sleep(2_500)
+        val slowId = awaitRow("slow.bin", 15_000) { it.optString("state") == "progressing" }?.optString("id").orEmpty()
+        if (waitForRow(15_000) { rowReads(it, "slow.bin") && it.contains(" of ") } == null) {
+            fail("the downloads panel with a running transfer never showed")
+        }
+        logTree("the panel with a running transfer")
+        SystemClock.sleep(2_000)
         shot("01-in-progress")
-        click("Pause")
-        if (waitFor("Resume", 8_000) == null) fail("pause did not take")
+        press("Pause", "download.pause", slowId)
+        if (waitForRow(8_000) { rowReads(it, "slow.bin", "Paused") } == null) fail("pause did not take")
         val atPause = pendingSize("slow.bin")
         SystemClock.sleep(2_500)
         val later = pendingSize("slow.bin")
         check(atPause > 0 && later == atPause, "a paused transfer kept moving ($atPause -> $later bytes)")
         Log.i(tag, "paused at $atPause bytes")
         shot("02-paused")
-        click("Resume")
+        press("Resume", "download.resume", slowId)
         val slow = awaitPublished("slow.bin", SLOW_SIZE, 60_000)
         check(slow != null && intact(slow, SLOW_SIZE), "slow.bin did not complete intact after pause and resume")
         SystemClock.sleep(1_500)
@@ -99,9 +112,9 @@ class DownloadsDemo : DemoHarness("downloads-demo-state.json", "downloads", "dow
         SystemClock.sleep(1_500)
         shot("06-data-and-blob")
 
-        // 4. The server dies on every dead.bin response (one more time than the downloader resumes
-        //    on its own), so the row fails with the reason the engine mapped the failure to and
-        //    Chrome's wording for it; Retry gets the seventh response, which is served whole.
+        // 4. The server dies on every dead.bin response until the downloader has used its five
+        //    resumes, so the row fails with the reason the engine mapped the failure to and
+        //    Chrome's wording for it; Retry gets the eighth response, which is served whole.
         closePanel()
         click(LINK_DEAD)
         val failed = awaitRow("dead.bin", 120_000) { it.optString("state") == "interrupted" }
@@ -110,9 +123,9 @@ class DownloadsDemo : DemoHarness("downloads-demo-state.json", "downloads", "dow
                 failed.optString("errorMessage") == "Check internet connection",
             "dead.bin did not fail as network-failed / Check internet connection: $failed"
         )
-        if (waitFor(FAILED_NETWORK, 8_000) == null) fail("no row reads \"$FAILED_NETWORK\"")
+        if (waitForRow(8_000) { rowReads(it, "dead.bin", FAILED_NETWORK) } == null) fail("no row reads \"$FAILED_NETWORK\"")
         shot("07-failed-network")
-        click("Retry")
+        press("Retry", "download.retry", failed?.optString("id").orEmpty())
         val dead = awaitPublished("dead.bin", DEAD_SIZE, 60_000)
         check(dead != null && intact(dead, DEAD_SIZE), "dead.bin did not complete intact on Retry")
         val retried = awaitRow("dead.bin", 10_000) { it.optString("state") == "completed" }
@@ -130,11 +143,11 @@ class DownloadsDemo : DemoHarness("downloads-demo-state.json", "downloads", "dow
         check(publishedRow("flaky.bin") == null, "flaky.bin is still in MediaStore.Downloads after download.deleteFile")
         check(downloadCommand("download.deleteFile", flakyId) == "missing", "a second download.deleteFile did not answer missing")
         check(rowFor("flaky.bin")?.optBoolean("fileMissing") == true, "flaky.bin's row is not marked fileMissing")
-        val slowId = rowFor("slow.bin")?.optString("id").orEmpty()
         check(slow != null && app.contentResolver.delete(slow, null, null) == 1, "could not delete slow.bin behind the browser's back")
         check(downloadCommand("download.exists", slowId) == false, "download.exists still finds the deleted slow.bin")
         check(rowFor("slow.bin")?.optBoolean("fileMissing") == true, "slow.bin's row is not marked fileMissing")
-        if (waitFor("Deleted", 8_000) == null) fail("no row reads \"Deleted\"")
+        if (waitForRow(8_000) { rowReads(it, "flaky.bin", "Deleted") } == null) fail("flaky.bin's row does not read \"Deleted\"")
+        if (waitForRow(8_000) { rowReads(it, "slow.bin", "Deleted") } == null) fail("slow.bin's row does not read \"Deleted\"")
         SystemClock.sleep(1_000)
         shot("09-deleted")
         downloadCommand("download.retry", slowId)
@@ -168,6 +181,61 @@ class DownloadsDemo : DemoHarness("downloads-demo-state.json", "downloads", "dow
             return
         }
         Finger().tap(where.exactCenterX(), where.exactCenterY())
+    }
+
+    /**
+     * Press a row's control (Pause, Resume, Retry) through the accessibility tree when the tree
+     * carries it; a row is one focusable node labelled `<name>. <status>`, and Chromium on
+     * Android may fold such a node's children into it, in which case the control is not there
+     * to press and the engine command the control runs (`download.pause`, ...) stands in for it.
+     */
+    private fun press(label: String, command: String, id: String) {
+        if (clickByLabel(label)) {
+            Log.i(tag, "$label: pressed the row's control")
+            return
+        }
+        Log.i(tag, "$label: not on the accessibility tree; running $command for the row instead")
+        downloadCommand(command, id)
+    }
+
+    /** Whether an accessibility label is the row for `name` reading `status` (a row is labelled `<name>. <status>`). */
+    private fun rowReads(label: String, name: String, status: String = ""): Boolean = label.startsWith("$name. $status")
+
+    /** Poll for a node whose label satisfies `matches`, for up to `timeoutMs`. */
+    private fun waitForRow(timeoutMs: Long, matches: (String) -> Boolean): Rect? {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            findNode(matches)?.let { node -> return Rect().also { node.getBoundsInScreen(it) } }
+            SystemClock.sleep(200)
+        }
+        return null
+    }
+
+    /**
+     * The labelled nodes of the active window, breadth first, in the run's log: how the panel's
+     * rows and their controls reach the accessibility tree (what [press] finds or does not).
+     */
+    private fun logTree(why: String) {
+        val root = ui.rootInActiveWindow ?: return
+        val queue = ArrayDeque<Pair<AccessibilityNodeInfo, Int>>()
+        queue.add(root to 0)
+        var lines = 0
+        Log.i(tag, "accessibility tree, $why:")
+        while (queue.isNotEmpty() && lines < 80) {
+            val (node, depth) = queue.removeFirst()
+            val label = node.contentDescription?.toString() ?: node.text?.toString()
+            if (!label.isNullOrEmpty()) {
+                val bounds = Rect().also { node.getBoundsInScreen(it) }
+                val flags = listOfNotNull(
+                    "clickable".takeIf { node.isClickable },
+                    "focusable".takeIf { node.isFocusable },
+                    "${node.childCount} children".takeIf { node.childCount > 0 }
+                ).joinToString(" ")
+                Log.i(tag, "  ${"  ".repeat(depth)}${node.className?.toString()?.substringAfterLast('.')} \"$label\" $flags $bounds")
+                lines++
+            }
+            for (i in 0 until node.childCount) node.getChild(i)?.let { queue.add(it to depth + 1) }
+        }
     }
 
     /** The panel fills the content area on a phone; it must go before the next link can be tapped. */

@@ -4,9 +4,10 @@
 // .github/workflows/android-downloads-demo.yml starts it from `setup-script` before the emulator
 // boots and runs DownloadsDemo against it. slow.bin is throttled so Pause and Resume have something
 // to hold; flaky.bin drops every full response at 1 MiB so only a Range resume can finish it;
-// dead.bin dies on its first six responses (one more than the downloader's five automatic
-// resumes) so the failure reaches the user as `network-failed`, and is served whole from the
-// seventh (Retry); the data: and blob: links are named from their anchors.
+// dead.bin dies on its first seven responses – the WebView's own navigation response (it hands
+// the transfer to the downloader and drops its request), the downloader's first attempt and its
+// five automatic resumes – so the failure reaches the user as `network-failed`, and is served
+// whole from the eighth (Retry); the data: and blob: links are named from their anchors.
 import http from 'node:http'
 // Every payload byte comes from this formula; DownloadsDemo.expectedByte is the same one.
 const byteAt = (i) => (i * 31 + (i >> 8)) & 0xff
@@ -15,8 +16,12 @@ const FLAKY = 2 * 1024 * 1024
 const CUT_AT = 1024 * 1024
 const DEAD = 1024 * 1024
 const DEAD_CUT_AT = 256 * 1024
-const DEAD_FAILURES = 6
+// The navigation response, the downloader's first attempt and MAX_AUTO_RESUMES (5) resumes.
+const DEAD_FAILURES = 7
 let deadResponses = 0
+// 3 MiB at this rate runs about twelve seconds: long enough for the panel to open on the
+// transfer, the recorder to catch it moving and Pause to have bytes to hold.
+const SLOW_RATE = 256 * 1024
 const dataText = Buffer.from('Hello from a Zenium data: link\n').toString('base64')
 const page = `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Zenium download test</title>
@@ -27,7 +32,7 @@ const page = `<!doctype html><meta name="viewport" content="width=device-width,i
   a { display: block; margin: 14px 0; padding: 20px; border-radius: 16px; background: #4f6bed; color: #fff; text-decoration: none; font-weight: 600 }
 </style>
 <h1>Zenium download test</h1>
-<p>Files served from the runner. slow.bin is throttled, flaky.bin loses its connection once, dead.bin six times.</p>
+<p>Files served from the runner. slow.bin is throttled, flaky.bin loses its connection once, dead.bin seven times.</p>
 <a href="/slow.bin">Download slow.bin</a>
 <a href="/flaky.bin">Download flaky.bin</a>
 <a href="/dead.bin">Download dead.bin</a>
@@ -106,11 +111,11 @@ http
       return res.end(page)
     }
     if (path === '/slow.bin')
-      return serve(req, res, 'slow.bin', SLOW, { rate: 350 * 1024, disposition: true })
+      return serve(req, res, 'slow.bin', SLOW, { rate: SLOW_RATE, disposition: true })
     if (path === '/flaky.bin') return serve(req, res, 'flaky.bin', FLAKY, { cutAt: CUT_AT })
     if (path === '/dead.bin') {
-      // The full response dies after 256 KiB and the Range resumes before their first byte (a
-      // resume that moves resets the downloader's retry budget); the seventh response is whole.
+      // The full responses die after 256 KiB and the Range resumes before their first byte (a
+      // resume that moves resets the downloader's retry budget); the eighth response is whole.
       deadResponses++
       if (deadResponses <= DEAD_FAILURES) {
         console.log(`dead.bin: response ${deadResponses} of ${DEAD_FAILURES} will die`)
