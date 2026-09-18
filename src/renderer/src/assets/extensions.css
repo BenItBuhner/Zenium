@@ -776,67 +776,12 @@
   }
 
   /*
-   * A v2 sheet (§9.25): one gutter of 16 from the sheet's outer edge to every text and control
-   * edge inside it. The sheet carries no side padding of its own – the shipped `.zen-sheet`'s 12
-   * goes – so its rows run edge to edge with their press fill bleeding to the sheet's edge and
-   * their text inset 16, and the title block, body rows and footer sit at their own 16.
+   * The phone sheets are the chassis' (`.zen-sheet`, `.zen-sheet-title`, `.zen-sheet-item`,
+   * `.zen-sheet-sep`, `.zen-sheet-footer` in main.css: §6, §9.11, §9.16, §9.25). A menu's danger
+   * row draws in the danger ink (§6), which the chassis row does not know yet.
    */
-  .zen-sheet.zen-v2-sheet {
-    padding-left: 0;
-    padding-right: 0;
-  }
-  /* The phone's sheet rows (§6): 44 at 15/400 with 20 glyphs, groups parted by a hairline. */
-  .zen-v2-sheet-row {
-    display: flex;
-    width: 100%;
-    height: var(--v2-row);
-    align-items: center;
-    gap: 12px;
-    padding: 0 16px;
-    color: var(--v2-text);
-    text-align: left;
-    font-size: var(--v2-font-body);
-    line-height: var(--v2-line-body);
-    transition: background 120ms var(--zen-ease);
-  }
-  .zen-v2-sheet-row .lucide {
-    width: var(--v2-icon);
-    height: var(--v2-icon);
-    flex-shrink: 0;
-  }
-  .zen-v2-sheet-row:active:not(:disabled) {
-    background: var(--v2-fill);
-  }
-  .zen-v2-sheet-row:disabled {
-    opacity: 0.4;
-  }
-  .zen-v2-sheet-row[data-danger] {
+  .zen-v2 .zen-sheet-item[data-danger] {
     color: var(--v2-danger);
-  }
-  .zen-v2-sheet-separator {
-    height: 1px;
-    margin: 4px 16px;
-    background: var(--v2-border);
-  }
-  /*
-   * A phone sheet's header (§9.16): 48 under the 20 grip strip, the title 17/600 at line-height
-   * 22 and centred, with an optional 16 glyph before it; the first row then starts at 68.
-   */
-  .zen-v2-sheet-title {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    height: 48px;
-    padding: 0 16px;
-    font-size: var(--v2-font-heading);
-    font-weight: var(--v2-weight-heading);
-    line-height: 22px;
-  }
-  .zen-v2-sheet-title > :first-child:not(:last-child) {
-    flex-shrink: 0;
-    width: var(--v2-icon);
-    height: var(--v2-icon);
   }
 
   /* --- Extensions: the management page ---------------------------------------------------- */
@@ -1168,10 +1113,9 @@
     padding: var(--v2-card-padding);
   }
   /*
-   * The phone sheet variant: the sheet's own header and scroll, so the dialog is plain flow
-   * under it. Its footer fills the width (§9.11): the two peers split it equally with the 8
-   * gap, the primary trailing, each 40 tall, at the sheet's 16 gutter with 16 above the bottom
-   * inset, which the sheet itself adds (§9.25).
+   * The phone sheet variant: the sheet's own scroll, so the dialog is plain flow inside it, its
+   * title block first; its footer is the chassis' `.zen-sheet-footer` (§9.11: the two peers
+   * split the width at the 8 gap, the primary trailing, each 40 tall, at the sheet's 16 gutter).
    */
   [data-form-factor='phone'] .zen-ext-dialog {
     width: auto;
@@ -1181,9 +1125,6 @@
   }
   [data-form-factor='phone'] .zen-ext-dialog-body {
     overflow: visible;
-  }
-  [data-form-factor='phone'] .zen-ext-dialog-buttons > .zen-v2-button {
-    flex: 1 1 0;
   }
 }
 

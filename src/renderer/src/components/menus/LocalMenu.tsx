@@ -152,27 +152,26 @@ function SheetMenu({ items, title, onClose }: Props): JSX.Element {
   return (
     <BottomSheet
       ref={sheet}
-      className="zen-v2-sheet"
       onDismissed={onClose}
       handleLabel="Resize menu"
-      header={title ? <div className="zen-v2 zen-v2-sheet-title">{title}</div> : undefined}
+      header={title ? <span className="zen-sheet-title">{title}</span> : undefined}
     >
-      <div className="zen-v2 flex flex-col pb-2">
+      <div className="zen-v2 flex flex-col pb-1">
         {items.map((entry) =>
           isSeparator(entry) ? (
-            <div key={entry.id} className="zen-v2-sheet-separator" role="separator" />
+            <div key={entry.id} className="zen-sheet-sep" role="separator" />
           ) : (
             <button
               key={entry.id}
               type="button"
               disabled={entry.disabled}
-              className="zen-v2-sheet-row"
+              className="zen-sheet-item"
               data-danger={entry.danger || undefined}
               onClick={() => sheet.current?.dismiss(() => entry.onSelect())}
             >
               {withIcons && (
                 <span className="flex h-5 w-5 shrink-0 items-center justify-center">
-                  {entry.icon && <entry.icon />}
+                  {entry.icon && <entry.icon className="h-5 w-5" />}
                 </span>
               )}
               <span className="min-w-0 flex-1 truncate">{entry.label}</span>

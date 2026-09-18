@@ -162,12 +162,11 @@ function MenulistSheet<T extends string>({
   return createPortal(
     <BottomSheet
       ref={sheet}
-      className="zen-v2-sheet"
       onDismissed={onClose}
       handleLabel="Resize"
-      header={<div className="zen-v2 zen-v2-sheet-title">{label}</div>}
+      header={<span className="zen-sheet-title">{label}</span>}
     >
-      <div className="zen-v2 flex flex-col pb-2" role="listbox" aria-label={label}>
+      <div className="zen-v2 flex flex-col pb-1" role="listbox" aria-label={label}>
         {options.map((option) => {
           const selected = option.value === value
           return (
@@ -176,7 +175,7 @@ function MenulistSheet<T extends string>({
               type="button"
               role="option"
               aria-selected={selected}
-              className="zen-v2-sheet-row"
+              className="zen-sheet-item"
               onClick={() => sheet.current?.dismiss(() => onPick(option.value))}
             >
               <V2Radio checked={selected} />

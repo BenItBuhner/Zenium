@@ -75,15 +75,21 @@ function copyFor(prompt: ExtensionPromptRequest): Copy {
   }
 }
 
-/** What the extension will be able to do, then the two buttons (§9.11). */
+/**
+ * What the extension will be able to do, then the two buttons (§9.11): hugging and right-aligned
+ * in the desktop dialog, splitting the width in the phone sheet's footer (the sheet chassis'
+ * `.zen-sheet-footer`, main.css).
+ */
 function PromptBody({
   prompt,
   onAnswer,
-  onScroll
+  onScroll,
+  phone = false
 }: {
   prompt: ExtensionPromptRequest
   onAnswer: (accept: boolean) => void
   onScroll?: (scrolled: boolean) => void
+  phone?: boolean
 }): JSX.Element {
   const copy = copyFor(prompt)
   return (
@@ -109,7 +115,7 @@ function PromptBody({
           )}
         </div>
       </div>
-      <div className="zen-ext-dialog-buttons">
+      <div className={phone ? 'zen-sheet-footer' : 'zen-ext-dialog-buttons'}>
         <V2Button onClick={() => onAnswer(false)}>Cancel</V2Button>
         <V2Button variant="primary" data-accept onClick={() => onAnswer(true)}>
           {copy.accept}
@@ -160,8 +166,10 @@ function PanelPrompt({ prompt }: { prompt: ExtensionPromptRequest }): JSX.Elemen
 }
 
 /**
- * On a phone the prompt is a sheet: with a description it opens with a title block (§9.23),
- * without one it keeps the sheet's 48 header with the title centred (§9.16).
+ * On a phone the prompt is a sheet that opens on a title block (§9.23), as the chassis' other
+ * prompt sheets do – the block is the body's first content, since the sheet's `header` slot is
+ * its 48 bar header (§9.16) – with the footer splitting the width between the two buttons
+ * (§9.11, `.zen-sheet-footer`).
  */
 function SheetPrompt({ prompt }: { prompt: ExtensionPromptRequest }): JSX.Element {
   const sheet = useRef<BottomSheetHandle>(null)
@@ -179,23 +187,7 @@ function SheetPrompt({ prompt }: { prompt: ExtensionPromptRequest }): JSX.Elemen
   return (
     <BottomSheet
       ref={sheet}
-      className="zen-v2-sheet"
       handleLabel="Resize"
-      header={
-        copy.subtitle ? (
-          <V2TitleBlock
-            className="zen-v2"
-            title={copy.title}
-            description={copy.subtitle}
-            glyph={glyph}
-          />
-        ) : (
-          <div className="zen-v2 zen-v2-sheet-title">
-            {glyph}
-            <span className="min-w-0">{copy.title}</span>
-          </div>
-        )
-      }
       onDismissed={() => {
         // Dragged or flung away without a choice: that is a no.
         if (!answered.current) {
@@ -205,7 +197,8 @@ function SheetPrompt({ prompt }: { prompt: ExtensionPromptRequest }): JSX.Elemen
       }}
     >
       <div className="zen-v2 zen-ext-dialog">
-        <PromptBody prompt={prompt} onAnswer={answer} />
+        <V2TitleBlock title={copy.title} description={copy.subtitle} glyph={glyph} />
+        <PromptBody prompt={prompt} onAnswer={answer} phone />
       </div>
     </BottomSheet>
   )
