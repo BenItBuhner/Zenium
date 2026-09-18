@@ -13,6 +13,7 @@ import {
   type PrivacyStatus,
   type SecureDnsMode
 } from '../../shared/privacy'
+import { isNonUniqueHost } from '../../shared/nonUniqueHost'
 import { interstitialKindOf, safeBrowsingPageUrl } from '../../shared/url'
 import { BLOCKED_BY_CLIENT_CODE } from '../../shared/zenPages'
 
@@ -169,10 +170,14 @@ export class ProtectionService {
     return [...new Set([...this.sessionPlaintext, ...this.storedPlaintextSites()])].sort()
   }
 
-  /** Whether HTTPS-only mode lets `url` load without the upgrade: its host is an allowed site. */
+  /**
+   * Whether HTTPS-only mode lets `url` load without the upgrade: its host is non-unique (the
+   * rule never upgrades those, and should a stale rule set have, the fallback is silent) or an
+   * allowed site.
+   */
   allowsPlaintext(url: string): boolean {
     const host = hostnameOf(url)
-    return host !== null && hostInSites(host, this.plaintextSites())
+    return host !== null && (isNonUniqueHost(host) || hostInSites(host, this.plaintextSites()))
   }
 
   /**
@@ -271,22 +276,24 @@ export class ProtectionService {
   }
 }
 
-/** Hosts HTTPS-only mode never upgrades: the loopback names have no certificates to upgrade to. */
-export const HTTPS_ONLY_EXEMPT_HOSTS: readonly string[] = ['localhost', '127.0.0.1']
-
 /**
- * HTTPS-only mode's rule: `http://` requests of hosts with a dot are upgraded (single-label
- * intranet names have no certificates to upgrade to), except on the sites the user allowed over
- * plaintext (`allowed`, subdomains included). `ask` upgrades documents only; `always`
- * everything a page loads.
+ * HTTPS-only mode's rule: `http://` requests are upgraded, except on the sites the user allowed
+ * over plaintext (`allowed`, subdomains included) and to non-unique hosts (`isNonUniqueHost`:
+ * loopback, private and other non-routable IP literals, single-label and other names without a
+ * registrable suffix), which no public certificate can name, so Chrome's HTTPS-First mode leaves
+ * them alone too. The exemption is the condition's `excludedNonUniqueHosts` flag: a domain list
+ * cannot name an IP range and a `regexFilter` (RE2, no lookaround) cannot say "every host but
+ * these", so both engines evaluate the predicate instead. `ask` upgrades documents only;
+ * `always` everything a page loads.
  */
 export function httpsOnlyRule(mode: 'ask' | 'always', allowed: readonly string[] = []): Rule {
   const rule: Rule = {
     id: 1,
     action: { type: 'upgradeScheme' },
     condition: {
-      regexFilter: '^http://[^/?#]*\\.[^/?#]*',
-      excludedRequestDomains: [...HTTPS_ONLY_EXEMPT_HOSTS, ...allowed]
+      urlFilter: '|http://',
+      excludedRequestDomains: [...allowed],
+      excludedNonUniqueHosts: true
     }
   }
   if (mode === 'ask') rule.condition.resourceTypes = ['main_frame']

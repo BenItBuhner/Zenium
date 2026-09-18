@@ -199,8 +199,13 @@ export function installPageScript(transport: PageScriptTransport): void {
  * Tells the browser when the user interacts with the page, so a `window.open` that follows can be
  * told apart from one the page fired on its own. Trusted events only; `navigator.userActivation`
  * (where the engine has it) is consulted as well so a gesture the listeners missed still counts.
+ *
+ * Exported for frames: a click inside a cross-origin iframe reaches that frame's own widget, which
+ * the desktop host never hears about (Electron reports input for the top document's widget only),
+ * so the frame reports its gestures itself – "Sign in with Google" lives in such an iframe and
+ * opens its pop-up from there.
  */
-function installActivationReporter(transport: PageScriptTransport): void {
+export function installActivationReporter(transport: Pick<PageScriptTransport, 'send'>): void {
   let lastSent = -Infinity
   const report = (): void => {
     const now = Date.now()

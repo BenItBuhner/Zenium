@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
+  BASELINE_DISABLED_FEATURES,
   deriveStartupProfile,
   profilesDiffer,
   sanitizeResourceSettings,
-  serializeProfile
+  serializeProfile,
+  startupSwitches
 } from '../switches'
 import { DEFAULT_RESOURCE_SETTINGS } from '../../../shared/defaults'
 import type { ResourceSettings } from '../../../shared/types'
@@ -122,5 +124,77 @@ describe('sanitizeResourceSettings', () => {
     expect(s.process.rendererHeapMb).toBe(0)
     expect(s.process.lowEndDeviceMode).toBe(true)
     expect(s.process.disablePrerender).toBe(DEFAULT_RESOURCE_SETTINGS.process.disablePrerender)
+  })
+})
+
+describe('automation switches', () => {
+  /**
+   * Chromium turns `navigator.webdriver` on for `--enable-automation`, `--headless` and
+   * `--remote-debugging-*`, and Google's sign-in refuses such a browser as "not secure". No
+   * resource profile may put any of them on the command line.
+   */
+  const AUTOMATION = new Set([
+    'enable-automation',
+    'headless',
+    'remote-debugging-port',
+    'remote-debugging-pipe',
+    'remote-allow-origins',
+    'test-type',
+    'enable-blink-features'
+  ])
+
+  it('are never derived, whatever the resource settings', () => {
+    const extremes: Array<Partial<ResourceSettings>> = [
+      {},
+      { enabled: false },
+      {
+        enforcement: 'extreme',
+        gpuMode: 'off',
+        process: {
+          rendererProcessLimit: 1,
+          rendererHeapMb: 256,
+          lowEndDeviceMode: true,
+          disableSpareRenderer: true,
+          disableBackForwardCache: true,
+          disablePrerender: true,
+          rasterThreads: 1,
+          v8OptimizeForSize: true
+        }
+      }
+    ]
+    for (const overrides of extremes) {
+      const profile = deriveStartupProfile(settings(overrides))
+      for (const sw of profile.switches) {
+        expect(AUTOMATION.has(sw.name), sw.name).toBe(false)
+        if (sw.name === 'disable-features' || sw.name === 'js-flags')
+          expect(sw.value ?? '').not.toMatch(/AutomationControlled|webdriver/i)
+      }
+    }
+  })
+})
+
+describe('startupSwitches', () => {
+  it('switches FedCM off whatever the resource settings: Electron cannot serve its dialogs', () => {
+    expect(BASELINE_DISABLED_FEATURES).toContain('FedCm')
+    const off = startupSwitches(deriveStartupProfile(settings({ enabled: false })))
+    expect(off).toEqual([{ name: 'disable-features', value: 'FedCm' }])
+  })
+
+  it('merges the baseline into the profile’s one disable-features switch, once', () => {
+    const profile = deriveStartupProfile(settings())
+    const own = profile.switches.find((sw) => sw.name === 'disable-features')
+    expect(own?.value).toBe('SpareRendererForSitePerProcess,BackForwardCache,Prerender2')
+    const applied = startupSwitches(profile)
+    const disable = applied.filter((sw) => sw.name === 'disable-features')
+    expect(disable).toHaveLength(1)
+    expect(disable[0].value).toBe(
+      'SpareRendererForSitePerProcess,BackForwardCache,Prerender2,FedCm'
+    )
+    // Everything else passes through in order, and the profile itself is untouched.
+    expect(applied.filter((sw) => sw.name !== 'disable-features')).toEqual(
+      profile.switches.filter((sw) => sw.name !== 'disable-features')
+    )
+    expect(profile.switches.find((sw) => sw.name === 'disable-features')?.value).toBe(own?.value)
+    expect(startupSwitches(profile, ['FedCm', 'BackForwardCache'])).toEqual(applied)
   })
 })

@@ -41,14 +41,16 @@ class PrivacyFlags(
     }
 
     /**
-     * Whether HTTPS-only mode leaves an `http://` request of `url` alone: the mode is off, or the
-     * host is on (or under) a site the user allowed over plaintext. The engine's own rule already
-     * excludes those sites; this answers ahead of a rule set the engine has yet to reload.
+     * Whether HTTPS-only mode leaves an `http://` request of `url` alone: the mode is off, the
+     * host is non-unique ([NonUniqueHost]: loopback, private addresses, names without a
+     * registrable suffix), or it is on (or under) a site the user allowed over plaintext. The
+     * engine's own rule already excludes both; this answers ahead of a rule set the engine has
+     * yet to reload.
      */
     fun plaintextAllowed(url: String): Boolean {
         if (httpsOnly == "off") return true
         val host = Domains.hostnameOf(url) ?: return false
-        return hostInSites(host, httpsOnlyAllowed)
+        return NonUniqueHost.isNonUnique(host) || hostInSites(host, httpsOnlyAllowed)
     }
 
     /**

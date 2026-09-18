@@ -5,6 +5,7 @@ import { JsonStore } from '../../../core/store/JsonStore'
 import {
   deriveStartupProfile,
   sanitizeResourceSettings,
+  startupSwitches,
   type StartupProfile
 } from '../../../core/resources/switches'
 import { FileStoreIO } from '../storeIo'
@@ -13,12 +14,13 @@ let applied: StartupProfile | null = null
 
 /**
  * Read the persisted resource settings and put the derived Chromium / V8 switches on the command
- * line. Must run before `app.whenReady()` resolves – Chromium reads them while starting up.
+ * line, together with the platform's baseline (`BASELINE_DISABLED_FEATURES`). Must run before
+ * `app.whenReady()` resolves – Chromium reads them while starting up.
  */
 export function applyResourceSwitches(userDataDir: string): StartupProfile {
   const settings = readPersistedResourceSettings(userDataDir)
   const profile = deriveStartupProfile(settings)
-  for (const sw of profile.switches) {
+  for (const sw of startupSwitches(profile)) {
     if (sw.value === undefined) app.commandLine.appendSwitch(sw.name)
     else app.commandLine.appendSwitch(sw.name, sw.value)
   }

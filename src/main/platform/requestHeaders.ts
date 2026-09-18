@@ -16,8 +16,8 @@
  * `User-Agent`) rather than setting constants, so they are not `modifyHeaders` rules for the
  * engine's rule-set registry. Each is a {@link RequestHeaderHandler}:
  * `{ id, urls, rewrite(headers, details) }` with a pure `rewrite`. The platform registers
- * {@link webstoreClientHints} and {@link edgeStoreUserAgent} for persistent sessions in
- * `index.ts`.
+ * {@link navigationClientHints} for every session and {@link webstoreClientHints} and
+ * {@link edgeStoreUserAgent} for persistent sessions in `index.ts`.
  */
 import {
   EDGE_ADD_ONS_URL_PATTERNS as EDGE_URL_PATTERNS,
@@ -25,6 +25,7 @@ import {
   withChromeClientHints,
   withEdgeIdentity
 } from '../../core/extensions/webstorePrivate'
+import { hasClientHints, lowEntropyClientHints } from '../../shared/browserIdentity'
 
 /** A builtin participant in the `onBeforeSendHeaders` phase for the requests `urls` select. */
 export interface RequestHeaderHandler {
@@ -39,11 +40,36 @@ export interface RequestHeaderHandler {
   ): Record<string, string>
 }
 
+/** Every http and https URL. */
+export const WEB_URL_PATTERNS: readonly string[] = ['http://*/*', 'https://*/*']
+
 /** The Chrome Web Store origins (the legacy host on its webstore path only). */
 export const WEBSTORE_URL_PATTERNS: readonly string[] = STORE_URL_PATTERNS
 
 /** The Edge Add-ons origin. */
 export const EDGE_ADD_ONS_URL_PATTERNS: readonly string[] = EDGE_URL_PATTERNS
+
+/** The request types that are navigations: the browser process makes these, not the renderer. */
+const NAVIGATION_TYPES: ReadonlySet<string> = new Set(['mainFrame', 'subFrame'])
+
+/**
+ * Puts Chrome's low-entropy client hints (`Sec-CH-UA`, `Sec-CH-UA-Mobile`, `Sec-CH-UA-Platform`)
+ * on navigation requests that carry none. Chromium adds them to navigations through the
+ * embedder's client-hints delegate, which Electron does not provide, so its document and frame
+ * requests go out without any while every subresource request (made by the renderer) has them –
+ * a shape no Chrome since 89 produces and one identity providers read as an embedded browser.
+ * The values are the ones the renderer sends, computed with Chromium's own brand algorithm from
+ * the running Chromium version. Requests that already carry hints, and every other request
+ * type, pass through untouched; the private window's navigations get them too, as in Chrome.
+ */
+export const navigationClientHints: RequestHeaderHandler = {
+  id: 'navigation-client-hints',
+  urls: WEB_URL_PATTERNS,
+  rewrite(headers, details): Record<string, string> {
+    if (!NAVIGATION_TYPES.has(details.resourceType) || hasClientHints(headers)) return headers
+    return { ...headers, ...lowEntropyClientHints(process.versions.chrome, process.platform) }
+  }
+}
 
 /**
  * Presents the browser to the store's servers as Chrome. The page request's client hints decide
