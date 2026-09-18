@@ -35,14 +35,18 @@ import kotlin.math.roundToInt
  *  - screenshots land next to them as `<shotPrefix>-<name>.png`.
  *
  * `stateAsset` is the profile to seed; `null` leaves the profile empty (the first run).
+ * `uiAutomationFlags` go to [android.app.Instrumentation.getUiAutomation]: by default connecting
+ * suspends every other accessibility service for the run, and a demo that wants TalkBack to stay
+ * up passes [UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES].
  */
 abstract class DemoHarness(
     private val stateAsset: String?,
     private val shotPrefix: String,
-    handshakeDir: String
+    handshakeDir: String,
+    uiAutomationFlags: Int = 0
 ) {
     protected val instrumentation = InstrumentationRegistry.getInstrumentation()
-    protected val ui: UiAutomation = instrumentation.uiAutomation
+    protected val ui: UiAutomation = instrumentation.getUiAutomation(uiAutomationFlags)
     protected val app: Context = instrumentation.targetContext
     protected val out = File(app.filesDir, handshakeDir)
     protected val density = app.resources.displayMetrics.density
@@ -66,6 +70,9 @@ abstract class DemoHarness(
     /** A chance to edit the seeded profile's JSON (a colour scheme from the `theme` argument, say). */
     protected open fun patchState(json: String): String = json
 
+    /** A chance to prepare the device once the profile is seeded and before the app starts. */
+    protected open fun beforeLaunch() {}
+
     /** Seed, launch, warm up, hand over to the recorder, run the sequence. */
     protected fun runDemo() {
         val info = ui.serviceInfo
@@ -75,6 +82,7 @@ abstract class DemoHarness(
         ui.serviceInfo = info
 
         seedProfile()
+        beforeLaunch()
         launch()
         measure()
         warmUp()
@@ -265,7 +273,24 @@ abstract class DemoHarness(
     /** Every node in the active window labelled `label`, breadth first. */
     private fun findNodes(label: String): List<AccessibilityNodeInfo> = findNodes { it == label }
 
-    private fun findNodes(matches: (String) -> Boolean): List<AccessibilityNodeInfo> {
+    private fun findNodes(matches: (String) -> Boolean): List<AccessibilityNodeInfo> = findNodesWhere { node ->
+        val description = node.contentDescription?.toString()
+        val text = node.text?.toString()
+        (description != null && matches(description)) || (text != null && matches(text))
+    }
+
+    /**
+     * The first node (breadth-first) that `accept`s, with its state: a row's label and the switch
+     * labelled after it both answer to the label, only one of them is checkable.
+     */
+    protected fun findNodeWhere(accept: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? =
+        findNodesWhere(firstOnly = true, accept).firstOrNull()
+
+    /** Every node in the active window that `accept`s, breadth first (just the first with `firstOnly`). */
+    private fun findNodesWhere(
+        firstOnly: Boolean = false,
+        accept: (AccessibilityNodeInfo) -> Boolean
+    ): List<AccessibilityNodeInfo> {
         val root = ui.rootInActiveWindow ?: return emptyList()
         val queue = ArrayDeque<AccessibilityNodeInfo>()
         val found = ArrayList<AccessibilityNodeInfo>()
@@ -274,9 +299,10 @@ abstract class DemoHarness(
         while (queue.isNotEmpty() && visited < 6_000) {
             val node = queue.removeFirst()
             visited++
-            val description = node.contentDescription?.toString()
-            val text = node.text?.toString()
-            if ((description != null && matches(description)) || (text != null && matches(text))) found += node
+            if (accept(node)) {
+                found += node
+                if (firstOnly) return found
+            }
             for (i in 0 until node.childCount) node.getChild(i)?.let(queue::add)
         }
         return found

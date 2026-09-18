@@ -46,7 +46,7 @@ jobs:
       artifact-name: android-ext-prototype-modern-webview
       artifact-path: artifacts/android-ext-prototype/
       target: default
-      extra-emulator-options: -writable-system
+      emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
       script-env: |
         WEBVIEW_APK=artifacts/webview/SystemWebView.apk
         SOFT_FAIL=1

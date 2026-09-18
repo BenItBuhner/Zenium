@@ -8,6 +8,7 @@ import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
@@ -138,6 +139,25 @@ class MainActivity : BrowserActivity() {
 
     fun currentInsets(): JSONObject = insets
 
+    /**
+     * What the page controls need to know about the device (`PageEnvironment` in the core): a
+     * large screen or a keyboard and mouse make "desktop site" the automatic default, and the
+     * system font scale can be folded into the default zoom.
+     */
+    fun environment(): JSONObject {
+        val c = resources.configuration
+        val keyboard = c.keyboard != Configuration.KEYBOARD_NOKEYS && c.hardKeyboardHidden != Configuration.HARDKEYBOARDHIDDEN_YES
+        val mouse = InputDevice.getDeviceIds().any { id ->
+            val device = InputDevice.getDevice(id)
+            device != null && !device.isVirtual && device.supportsSource(InputDevice.SOURCE_MOUSE)
+        }
+        return json(
+            "largeScreen" to (c.smallestScreenWidthDp >= 600),
+            "pointerAndKeyboard" to (keyboard && mouse),
+            "fontScale" to c.fontScale.toDouble()
+        )
+    }
+
     /** Tell the chrome how far the status bar, cutout, gesture bar and keyboard reach in CSS px. */
     private fun applyInsets(windowInsets: WindowInsetsCompat) {
         val bars = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
@@ -238,6 +258,8 @@ class MainActivity : BrowserActivity() {
         super.onConfigurationChanged(newConfig)
         // The chrome re-measures itself; nothing to do but let WebViews relayout.
         root.requestLayout()
+        // A dock, a keyboard, a fold or a font-size change may move the page controls' defaults.
+        host.chrome.hostEvent("environment", environment())
     }
 
     override fun onTrimMemory(level: Int) {

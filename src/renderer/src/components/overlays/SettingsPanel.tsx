@@ -35,6 +35,7 @@ import { AgentsSection } from './AgentsSection'
 import { AppIconGroup } from './AppIconPicker'
 import { ExtensionsSection, ModsSection } from './AddonsPanel'
 import { OverlayShell } from './OverlayShell'
+import { AccessibilitySection, SitesGroups } from './PageControlsSettings'
 import { ResourcesSection } from './ResourcesSection'
 import { Choice, Group, Row, Segmented } from './SettingsPrimitives'
 import { ShortcutsSection } from './ShortcutsSection'
@@ -43,6 +44,7 @@ import { UpdatesSection } from './UpdatesSection'
 
 export type SettingsSection =
   | 'look'
+  | 'accessibility'
   | 'compact'
   | 'tabs'
   | 'resources'
@@ -60,6 +62,7 @@ export type SettingsSection =
 
 const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
   { id: 'look', label: 'Look and Feel' },
+  { id: 'accessibility', label: 'Accessibility' },
   { id: 'compact', label: 'Compact Mode' },
   { id: 'tabs', label: 'Tab Management' },
   { id: 'resources', label: 'Resources' },
@@ -78,6 +81,7 @@ const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
 
 /** Sections that only make sense on hosts with the matching feature. */
 const SECTION_CAPABILITY: Partial<Record<SettingsSection, keyof HostCapabilities>> = {
+  accessibility: 'pageControls',
   resources: 'resourceGovernor',
   extensions: 'extensions',
   agents: 'agents',
@@ -166,6 +170,7 @@ export function SettingsPanel({
                 activeTabId={activeTab(state)?.id ?? null}
               />
             )}
+            {section === 'accessibility' && <AccessibilitySection state={state} set={set} />}
             {section === 'compact' && <CompactSection s={s} set={set} />}
             {section === 'tabs' && (
               <TabsSection s={s} set={set} windows={state.capabilities.windows} />
@@ -255,6 +260,7 @@ function LookSection({
           <Switch checked={s.borderless} onCheckedChange={(v) => set({ borderless: v })} />
         </Row>
       </Group>
+      {caps.pageControls && <SitesGroups s={s} set={set} />}
       <AppIconGroup value={s.appIcon} platform={platform} onChange={(id) => set({ appIcon: id })} />
       <Group title="URL Bar">
         <Row label="Floating behaviour">

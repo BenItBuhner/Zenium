@@ -24,6 +24,7 @@ import android.view.inputmethod.InputMethodManager
 import android.webkit.WebChromeClient
 import android.widget.FrameLayout
 import android.widget.Toast
+import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.FileProvider
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -66,6 +67,12 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     override val pageScript: String = activity.assets.open("page.js").bufferedReader().readText().replace("__ZEN_TOKEN__", pageToken)
     /** The extension runtime's Kotlin half: created before the tabs so their WebViews can attach. */
     override val extensions: Extensions = Extensions(this)
+    /** The core's page-controls policy (desktop site, dark theme for sites, zoom), mirrored per navigation. */
+    override var pageRules: PageRules = PageRules.NONE
+        private set
+    /** The same rules as the core sent them, handed to every page's document-start script. */
+    override var pageRulesJson: JSONObject = JSONObject()
+        private set
     private val io = Executors.newCachedThreadPool { r -> Thread(r, "zen-io") }
     private val main = Handler(Looper.getMainLooper())
     /** The share sheet, in both directions (after `io`: it fetches on it). */
@@ -127,7 +134,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             // Whether content scripts get real isolated worlds (decided once, when the runtime was built).
             "isolatedWorlds" to extensions.isolatedWorlds,
             "insets" to activity.currentInsets(),
-            "fullscreen" to immersive
+            "fullscreen" to immersive,
+            "environment" to activity.environment()
         )
         "storage.writeSync" -> {
             storage.writeSync(args.str("name"), args.str("text"))
@@ -168,6 +176,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "view.stop" -> { tab?.stopLoading(); reply(null) }
             "view.setMuted" -> { tab?.setMuted(args.bool("muted")); reply(null) }
             "view.setZoom" -> { tab?.setZoom(args.num("factor", 1.0)); reply(null) }
+            "view.setDesktopMode" -> { tab?.setDesktopMode(args.bool("on")); reply(null) }
+            "view.setDarkening" -> { tab?.setDarkening(args.bool("on")); reply(null) }
+            "view.setPageRules" -> { setPageRules(args); reply(null) }
             "view.find" -> { tab?.find(args.str("text"), args.bool("forward", true), args.bool("newSession", true)); reply(null) }
             "view.stopFind" -> { tab?.stopFind(); reply(null) }
             "view.eval" -> {
@@ -226,7 +237,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 reply(null)
             }
             "chrome.haptic" -> { haptic(args.str("kind")); reply(null) }
-            "chrome.setTheme" -> { applyTheme(args.bool("dark"), args.str("background"), args.str("scrim")); reply(null) }
+            "chrome.setTheme" -> { applyTheme(args.bool("dark"), args.str("scheme", "system"), args.str("background"), args.str("scrim")); reply(null) }
             "chrome.setPullToRefresh" -> {
                 pullToRefresh = args.bool("enabled", true)
                 for (view in tabs.all()) view.applyPullToRefreshMode()
@@ -454,7 +465,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         chrome.performHapticFeedback(constant)
     }
 
-    private fun applyTheme(dark: Boolean, background: String, scrim: String) {
+    private fun applyTheme(dark: Boolean, scheme: String, background: String, scrim: String) {
         themeDark = dark
         if (scrim.isNotEmpty()) themeScrim = parseColor(scrim)
         val color = parseColor(background.ifEmpty { if (dark) "#16161b" else "#f2f1f5" })
@@ -463,6 +474,22 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         val controller = WindowInsetsControllerCompat(activity.window, root)
         controller.isAppearanceLightStatusBars = !dark
         controller.isAppearanceLightNavigationBars = !dark
+        // Pages see Zenium's colour scheme, not only the system's: the app's night mode drives
+        // `prefers-color-scheme` and the algorithmic darkening in every page WebView (the manifest
+        // handles `uiMode` in place, so nothing reloads).
+        val night = when (scheme) {
+            "dark" -> AppCompatDelegate.MODE_NIGHT_YES
+            "light" -> AppCompatDelegate.MODE_NIGHT_NO
+            else -> AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM
+        }
+        if (AppCompatDelegate.getDefaultNightMode() != night) AppCompatDelegate.setDefaultNightMode(night)
+    }
+
+    /** The core's page-controls policy: every tab re-registers its document-start script. */
+    private fun setPageRules(rules: JSONObject) {
+        pageRulesJson = rules
+        pageRules = PageRules.fromJson(rules)
+        for (tab in tabs.all()) tab.onPageRulesChanged()
     }
 
     private fun print(tab: TabWebView) {

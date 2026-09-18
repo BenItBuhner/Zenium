@@ -1,4 +1,4 @@
-import type { KeyBinding, NavigationSnapshot, Rect, Tab } from '@shared/types'
+import type { KeyBinding, NavigationSnapshot, PageRules, Rect, Tab } from '@shared/types'
 import type { SiteCertificate } from '@shared/siteInfo'
 import { zenPageHtml, type ImagePageLookup, type ReaderPageLookup } from '@shared/zenPages'
 import type {
@@ -28,6 +28,12 @@ export interface ViewNavState {
 /** Events Kotlin raises for one view (`__zenHost.viewEvent(tabId, name, payload)`). */
 export interface ViewEventPayloads {
   startLoading: void
+  /**
+   * The document's DOM is ready (Electron's `dom-ready`): Kotlin raises it once per document at
+   * the page script's DOMContentLoaded, before `stopLoading`. The core injects the page's Boost,
+   * runs Reader View and language detection on it (`browser.onPageReady`).
+   */
+  domReady: void
   stopLoading: ViewNavState
   navigated: ViewNavState & { inPage: boolean }
   title: { title: string }
@@ -74,6 +80,9 @@ export class AndroidTabView implements TabView {
     switch (name) {
       case 'startLoading':
         ev.onStartLoading()
+        return
+      case 'domReady':
+        ev.onDomReady()
         return
       case 'stopLoading':
         this.nav = { ...this.nav, ...(payload as ViewNavState) }
@@ -254,6 +263,10 @@ export class AndroidTabView implements TabView {
     return this.audible
   }
 
+  /**
+   * The effective page zoom. Kotlin hands it to the page script, which narrows the layout
+   * viewport by the factor (a real reflow, like Chrome's page zoom); text zoom stays at 100.
+   */
   setZoom(factor: number): void {
     this.zoom = factor
     this.bridge.send('view.setZoom', { tabId: this.tabId, factor })
@@ -261,6 +274,16 @@ export class AndroidTabView implements TabView {
 
   getZoom(): number {
     return this.zoom
+  }
+
+  /** Desktop user agent, client hints and layout width from the next load on. */
+  setDesktopMode(on: boolean): void {
+    this.bridge.send('view.setDesktopMode', { tabId: this.tabId, on })
+  }
+
+  /** Algorithmic darkening (only takes effect while the chrome is dark; see TabWebView.kt). */
+  setDarkening(on: boolean): void {
+    this.bridge.send('view.setDarkening', { tabId: this.tabId, on })
   }
 
   findInPage(text: string, forward: boolean, newSession: boolean): void {
@@ -477,5 +500,10 @@ export class AndroidTabViewHost implements TabViewHost {
 
   setShortcuts(bindings: KeyBinding[]): void {
     this.bridge.send('keys.setShortcuts', { bindings })
+  }
+
+  /** Kotlin keeps the policy so a navigation gets its user agent and viewport before it starts. */
+  setPageRules(rules: PageRules): void {
+    this.bridge.send('view.setPageRules', rules)
   }
 }
