@@ -46,6 +46,7 @@ import {
   postPreviewManifest,
   previewVoiceScript
 } from './preview'
+import { clearAutofill, stageAutofill } from './previewAutofill'
 import { PREVIEW_DOWNLOAD_EVENT } from './previewDownloads'
 import {
   parsePreviewSeed,
@@ -81,8 +82,10 @@ const VOICE_EVENT_MARGIN_MS = 250
  * `page=settings`; `show=<text>` scrolls the row with that text into view, `expand` rests a
  * sheet on its expanded detent), `menu=app` (the app menu sheet; `show=<text>` scrolls an item
  * into view), `prompt=<permission>` (the active page asks for that permission: the prompt sheet
- * is up), `private=new` or `private=<url>` (a private tab, blank or on that page), `find=<text>`
- * (the find bar with that text typed), `pull=<n>` (the page held pulled down at n percent of the
+ * is up), `private=new` or `private=<url>` (a private tab, blank or on that page),
+ * `autofill=<surface>` (a save prompt, the passkey chooser, a picker strip or the vault
+ * passphrase dialog staged with sample data; see `PREVIEW_AUTOFILL`), `find=<text>` (the find
+ * bar with that text typed), `pull=<n>` (the page held pulled down at n percent of the
  * refresh threshold; `pull=refresh` lets go past it), `zoom=<factor>` (the page zoom sheet at
  * that factor), `error=<code>` (the active tab's load failed with that Chromium `net::` code,
  * `url=<target>` naming the URL that failed: the zen://error page is up), the message surfaces
@@ -102,7 +105,8 @@ const VOICE_EVENT_MARGIN_MS = 250
  * `.github/scripts/android-preview-shots.mjs` is one.
  *
  * The seeds go through the core the way the host would: a prompt is the permission service asked
- * by the active page, a private tab is `tab.newPrivate`.
+ * by the active page, a private tab is `tab.newPrivate`, and the core (`browser`) stages what the
+ * chrome cannot reach through its own state: the autofill surfaces.
  */
 export function installPreviewStates(browser: Browser): void {
   window.addEventListener('hashchange', () => apply(browser, location.hash.slice(1)))
@@ -140,7 +144,12 @@ function apply(browser: Browser, spec: string): void {
     const securityAtRest = tab ? resetSecurity(browser, tab) : Promise.resolve()
     const seed = parsePreviewSeed(spec)
     if (seed.rules !== null) seedRules(browser, seed.rules)
-    void dissolveGroup().then(() => closeSheets(() => reach(browser, spec, securityAtRest)))
+    // The autofill surfaces are the core's: cleared before the sheets close, so a staged prompt
+    // or picker of the previous state is gone with them – and before the group goes, since
+    // they hang from the tab that was active in it.
+    void clearAutofill(browser)
+      .then(dissolveGroup)
+      .then(() => closeSheets(() => reach(browser, spec, securityAtRest)))
   })
 }
 
@@ -278,7 +287,12 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
     done(spec)
   }
 
-  if (target.kind === 'page') {
+  if (target.kind === 'autofill') {
+    void stageAutofill(browser, target.surface, tab).then(() => {
+      // The surface mounts on the next render; the sheets take a moment to rise.
+      requestAnimationFrame(() => requestAnimationFrame(() => done(spec)))
+    })
+  } else if (target.kind === 'page') {
     // The page tab is the state: reached once the active tab is a page tab and the page has its
     // rows (its chunk loads on the first open), then a moment for its drill-in's slide to settle
     // before the search is typed, a row shown or a step taken.

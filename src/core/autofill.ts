@@ -52,7 +52,9 @@ import {
 import {
   anchorInChrome,
   decideSave,
+  estimatePickerHeight,
   orderLoginsForPicker,
+  placePickerSurface,
   type LoginCandidate
 } from './credentials/fill'
 import { domainOf, normalizeOrigin, siteLabel } from './credentials/origins'
@@ -91,6 +93,8 @@ interface FocusContext {
   rect: Rect
   hasValue: boolean
   fields: FormFieldInfo[]
+  /** The field still has the page's focus (false after its blur). */
+  fieldFocused: boolean
 }
 
 interface PendingLogin extends LoginCandidate {
@@ -117,8 +121,14 @@ interface PendingPrompt {
  * `autofill.*` commands of the managers. On Android it also decides whether the system autofill
  * service or Zenium is in charge of the pages.
  *
- * Prompts live in `UIState.autofill.prompts` for the chrome to render; until a chrome does,
- * `nativePrompts` shows them through the host's confirm dialog so saving works everywhere.
+ * Prompts live in `UIState.autofill.prompts` for the chrome to render (the save / update
+ * popover under the URL bar, the phone sheets, the passkey account dialog); `nativePrompts`
+ * shows them through the host's confirm dialog instead, for a host whose chrome does not.
+ *
+ * The picker is `UIState.autofill.picker`. A host with a popup surface (desktop) gets it drawn
+ * in a second chrome document floated above the page, which this service places from the
+ * field's anchor and the height that document reports (`surfaceSize`); other hosts draw it in
+ * the chrome's own document.
  */
 export class AutofillService {
   private readonly pending: PendingPrompt[] = []
@@ -134,14 +144,20 @@ export class AutofillService {
   private revision = 0
   /** The first password fill of a session goes through re-authentication; later ones do not. */
   private fillAuthorized = false
-  /** Engine surface: prompts open as host dialogs. The chrome sets this false once it renders the queue. */
-  nativePrompts = true
+  /** Prompts open as host dialogs instead of in the chrome (hosts whose chrome does not render them). */
+  nativePrompts = false
   private nativeQueue: Promise<void> = Promise.resolve()
   /** The fire-and-forget work page events started that has not finished yet (see `whenSettled`). */
   private readonly inflight = new Set<Promise<unknown>>()
   /** How many of `inflight` sit at a prompt waiting for the user (nothing to wait for). */
   private parkedCount = 0
   private settleWaiters: (() => void)[] = []
+  /** The window whose popup surface carries the picker, while one does. */
+  private surfaceWindow: ZenWindow | null = null
+  /** The height the picker's document asked for (null until it has reported one). */
+  private surfaceHeight: number | null = null
+  /** The popup surface holds the keyboard (a press on a row blurs the page field first). */
+  private surfaceFocused = false
 
   constructor(private readonly browser: Browser) {}
 
@@ -251,7 +267,10 @@ export class AutofillService {
       void view.executeJavaScript(PASSKEY_OBSERVER_SOURCE).catch(() => undefined)
   }
 
-  /** The tab committed a navigation: a submitted login is judged now, the picker is moot. */
+  /**
+   * The tab committed a navigation: a submitted login is judged now, the picker is moot, and a
+   * save prompt the user left unanswered goes once the tab has left the site it was about.
+   */
   onNavigated(tabId: string): void {
     this.focus.delete(tabId)
     for (const key of this.autoFilled) if (key.startsWith(`${tabId}|`)) this.autoFilled.delete(key)
@@ -261,6 +280,9 @@ export class AutofillService {
       .view(tabId)
       ?.sendFormsCommand?.({ type: 'config', enabled: this.pagesEnabled() })
     this.evaluateCandidate(tabId)
+    const origin = normalizeOrigin(this.browser.tabs.tab(tabId)?.url ?? '')
+    for (const p of this.pending.filter((p) => p.prompt.tabId === tabId))
+      if ('origin' in p.prompt && p.prompt.origin !== origin) this.respond(p.prompt.id, null)
   }
 
   onTabGone(tabId: string): void {
@@ -289,6 +311,7 @@ export class AutofillService {
         if (this.picker && this.picker.tabId === tabId && this.pickerContext) {
           this.pickerContext.rect = event.rect
           this.picker = { ...this.picker, anchor: this.anchorFor(tabId, event.rect) }
+          this.placeSurface()
           this.browser.state.commitVolatile()
         }
         return
@@ -320,7 +343,8 @@ export class AutofillService {
       group: event.group,
       rect: event.rect,
       hasValue: event.hasValue,
-      fields: event.fields
+      fields: event.fields,
+      fieldFocused: true
     }
     this.focus.set(tabId, context)
     this.cancelPickerClose()
@@ -364,6 +388,13 @@ export class AutofillService {
 
   private onBlur(tabId: string): void {
     if (this.picker?.tabId !== tabId) return
+    if (this.pickerContext) this.pickerContext.fieldFocused = false
+    // The keyboard went to the picker's own document: its press or Escape ends the picker.
+    if (this.surfaceFocused) return
+    this.schedulePickerClose()
+  }
+
+  private schedulePickerClose(): void {
     this.cancelPickerClose()
     this.pickerCloseTimer = setTimeout(() => {
       this.pickerCloseTimer = null
@@ -374,6 +405,52 @@ export class AutofillService {
   private cancelPickerClose(): void {
     if (this.pickerCloseTimer) clearTimeout(this.pickerCloseTimer)
     this.pickerCloseTimer = null
+  }
+
+  /**
+   * The popup surface took or lost the keyboard. While it holds it the page field's blur does
+   * not end the picker; once it lets go with the field no longer focused (a click on the page
+   * elsewhere, Escape answered by the chrome), the picker closes after the same grace.
+   */
+  surfaceFocus(id: string, focused: boolean): void {
+    if (!this.picker || this.picker.id !== id) return
+    this.surfaceFocused = focused
+    if (focused) {
+      this.cancelPickerClose()
+      return
+    }
+    if (!this.pickerContext?.fieldFocused) this.schedulePickerClose()
+  }
+
+  /** The picker's document measured the height its content wants; the surface follows. */
+  surfaceSize(id: string, height: number): void {
+    if (!this.picker || this.picker.id !== id) return
+    if (!Number.isFinite(height) || height <= 0) return
+    this.surfaceHeight = height
+    this.placeSurface()
+  }
+
+  /**
+   * Show the popup surface under the picker's field on the window that has it, sized to the
+   * height its document reported – estimated from the rows until it has – or leave the picker to
+   * the chrome's own document on a host without one.
+   */
+  private placeSurface(): void {
+    const picker = this.picker
+    if (!picker) return
+    const win = this.windowOf(picker.tabId)
+    if (!win || !win.hasPopupSurface) return
+    const twoLine = picker.items.some((item) => item.subtitle !== '')
+    const height = this.surfaceHeight ?? estimatePickerHeight(picker.items.length, twoLine)
+    win.setPopupSurface(placePickerSurface(picker.anchor, win.viewportSize(), height))
+    this.surfaceWindow = win
+  }
+
+  private dropSurface(): void {
+    this.surfaceWindow?.setPopupSurface(null)
+    this.surfaceWindow = null
+    this.surfaceHeight = null
+    this.surfaceFocused = false
   }
 
   /** The store entries that can fill the focused form, in picker order. */
@@ -459,6 +536,9 @@ export class AutofillService {
             ? 'Manage addresses'
             : 'Manage payment methods'
     }
+    // A new picker starts from the estimate: its document reports the real height once drawn.
+    this.surfaceHeight = null
+    this.placeSurface()
     this.browser.state.commitVolatile()
   }
 
@@ -476,7 +556,45 @@ export class AutofillService {
     this.picker = null
     this.pickerEntries = new Map()
     this.pickerContext = null
+    this.dropSurface()
     this.browser.state.commitVolatile()
+  }
+
+  /**
+   * The picker's "Manage…" row: the picker goes and Settings opens on its Autofill section in
+   * the window the picker was for (`win` is the caller's, the popup surface's window on desktop).
+   */
+  manage(win?: ZenWindow): void {
+    const target = this.picker ? this.windowOf(this.picker.tabId) : undefined
+    if (this.picker) {
+      const restoreFocus = this.surfaceFocused ? this.surfaceWindow : null
+      this.closePicker()
+      restoreFocus?.focusContent()
+    }
+    this.browser.emit('overlay.open', { kind: 'settings', section: 'autofill' }, target ?? win)
+  }
+
+  /**
+   * Show a picker the caller built, with no entries behind its rows: a pick closes it and fills
+   * nothing. For the Android preview host, which stages the chrome's surfaces without pages
+   * (`previewStates.ts`); the engine's own pickers come from the focused field.
+   */
+  presentPicker(picker: AutofillPicker): void {
+    this.closePicker()
+    this.pickerEntries = new Map()
+    this.pickerContext = null
+    this.picker = picker
+    this.surfaceHeight = null
+    this.placeSurface()
+    this.browser.state.commitVolatile()
+  }
+
+  /**
+   * Queue a prompt the caller built and resolve with the user's answer, the way the engine's own
+   * prompts do (`respond`). For the Android preview host's staged surfaces; saving nothing.
+   */
+  present(prompt: AutofillPrompt, win?: ZenWindow): Promise<AutofillPromptResponse | null> {
+    return this.show(prompt, win)
   }
 
   // ---------------------------------------------------------------------------
@@ -491,20 +609,30 @@ export class AutofillService {
     win?: ZenWindow
   ): Promise<ReauthOutcome<null>> {
     if (!this.picker || this.picker.id !== id) return { status: 'denied' }
+    // The popup surface took the keyboard for the press: the page gets it back with the picker gone.
+    const restoreFocus = this.surfaceFocused ? this.surfaceWindow : null
     if (itemId === null) {
       this.closePicker()
+      restoreFocus?.focusContent()
       return { status: 'ok', value: null }
     }
     const entry = this.pickerEntries.get(itemId)
     const context = this.pickerContext
     if (!entry || !context) {
       this.closePicker()
+      restoreFocus?.focusContent()
       return { status: 'denied' }
     }
     this.cancelPickerClose()
     const result = await this.fillEntry(context, entry, passphrase, win)
-    // A passphrase step keeps the picker so the chrome can ask and call again with the answer.
-    if (result.status !== 'passphrase') this.closePicker()
+    // A passphrase step keeps the picker so the chrome can ask and call again with the answer;
+    // so does a refused passphrase, which the chrome reports in its field and asks again.
+    const asking =
+      result.status === 'passphrase' || (result.status === 'denied' && passphrase !== undefined)
+    if (!asking) {
+      this.closePicker()
+      restoreFocus?.focusContent()
+    }
     return result
   }
 

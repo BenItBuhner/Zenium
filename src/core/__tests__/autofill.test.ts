@@ -68,6 +68,8 @@ interface World {
   toast: ReturnType<typeof vi.fn>
   tabs: Map<string, Tab>
   views: Map<string, FakeView>
+  /** The window's popup surface (a host with one): where the picker was placed, focus calls. */
+  win: { setPopupSurface: ReturnType<typeof vi.fn>; focusContent: ReturnType<typeof vi.fn> }
   addTab: (id: string, url: string, containerId?: string) => FakeView
   /** Deliver a forms event from the page of `tabId`. */
   event: (tabId: string, event: FormsEvent) => void
@@ -81,6 +83,8 @@ function setup(
     locales?: string[]
     io?: MemoryIO
     keys?: FakeKeyWrap
+    /** The window can float the popup surface (desktop). */
+    popupSurface?: boolean
   } = {}
 ): World {
   const io = options.io ?? new MemoryIO()
@@ -95,7 +99,13 @@ function setup(
   }
   const confirm = vi.fn(async () => true)
   const toast = vi.fn()
-  const win = { viewRect: () => VIEW_RECT }
+  const win = {
+    viewRect: () => VIEW_RECT,
+    hasPopupSurface: options.popupSurface === true,
+    viewportSize: () => ({ width: 1280, height: 800 }),
+    setPopupSurface: vi.fn(),
+    focusContent: vi.fn()
+  }
   const browser = {
     platform: {
       io,
@@ -151,6 +161,7 @@ function setup(
     toast,
     tabs,
     views,
+    win,
     addTab,
     event: (tabId, event) => autofill.handleEvent(tabId, event),
     settle
@@ -1013,6 +1024,117 @@ describe('AutofillService: page lifecycle', () => {
     await vi.advanceTimersByTimeAsync(31_000)
     w.autofill.onNavigated('t1')
     await vi.advanceTimersByTimeAsync(10)
+    expect(w.autofill.uiState().prompts).toEqual([])
+  })
+})
+
+describe('AutofillService: the popup surface (desktop)', () => {
+  it('floats the picker under the field on a host with a popup surface and follows its reported height', async () => {
+    const w = setup({ popupSurface: true })
+    await w.passwords.unlock()
+    w.passwords.add({ url: 'https://example.com/login', username: 'ada', password: 'pw-a' })
+    w.addTab('t1', 'https://example.com/login')
+
+    w.event('t1', focusLogin())
+    const picker = w.autofill.uiState().picker
+    expect(picker).not.toBeNull()
+    // Opened at the estimate for one one-line row (a login of the site itself has no subtitle).
+    expect(w.win.setPopupSurface).toHaveBeenLastCalledWith({
+      x: 100 - 8,
+      y: 284 + 32 - 8,
+      width: 320 + 16,
+      height: 105 + 16
+    })
+    // The document measured itself: the surface follows.
+    w.autofill.surfaceSize(picker!.id, 140)
+    expect(w.win.setPopupSurface).toHaveBeenLastCalledWith(
+      expect.objectContaining({ height: 140 + 16 })
+    )
+    // Nonsense heights and stale ids change nothing.
+    const calls = w.win.setPopupSurface.mock.calls.length
+    w.autofill.surfaceSize(picker!.id, Number.NaN)
+    w.autofill.surfaceSize('other', 200)
+    expect(w.win.setPopupSurface.mock.calls.length).toBe(calls)
+    // The field moved (page scroll): the surface moves with it, at the reported height.
+    w.event('t1', { type: 'moved', fieldId: 'f2', rect: { ...FIELD, y: 20 } })
+    expect(w.win.setPopupSurface).toHaveBeenLastCalledWith(
+      expect.objectContaining({ y: 104 + 32 - 8, height: 140 + 16 })
+    )
+    // Closing takes the surface down.
+    w.autofill.onNavigated('t1')
+    expect(w.win.setPopupSurface).toHaveBeenLastCalledWith(null)
+  })
+
+  it('keeps the picker while the surface holds the keyboard and gives it back to the page after a pick', async () => {
+    const w = setup({ popupSurface: true })
+    w.reauth.enabled = true
+    w.passwords.start()
+    await w.settle()
+    await w.passwords.unlock()
+    w.passwords.add({ url: 'https://example.com/login', username: 'ada', password: 'pw-a' })
+    const view = w.addTab('t1', 'https://example.com/login')
+    w.event('t1', focusLogin())
+    vi.useFakeTimers()
+    const picker = w.autofill.uiState().picker!
+
+    // A press on a row: the field blurs first, then the surface reports it took the keyboard.
+    w.event('t1', { type: 'blur' })
+    w.autofill.surfaceFocus(picker.id, true)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(w.autofill.uiState().picker).not.toBeNull()
+
+    const result = await w.autofill.pick(picker.id, picker.items[0]!.id)
+    expect(result).toEqual({ status: 'ok', value: null })
+    expect(view.fills()).toHaveLength(1)
+    expect(w.autofill.uiState().picker).toBeNull()
+    expect(w.win.focusContent).toHaveBeenCalledTimes(1)
+    expect(w.win.setPopupSurface).toHaveBeenLastCalledWith(null)
+  })
+
+  it('closes the picker after the grace once the surface lets the keyboard go with the field unfocused', async () => {
+    vi.useFakeTimers()
+    const w = setup({ popupSurface: true })
+    await w.passwords.unlock()
+    w.passwords.add({ url: 'https://example.com/login', username: 'ada', password: 'pw-a' })
+    w.addTab('t1', 'https://example.com/login')
+    w.event('t1', focusLogin())
+    const picker = w.autofill.uiState().picker!
+
+    w.event('t1', { type: 'blur' })
+    w.autofill.surfaceFocus(picker.id, true)
+    // The user clicked the page elsewhere: the surface blurs, the field is not focused.
+    w.autofill.surfaceFocus(picker.id, false)
+    expect(w.autofill.uiState().picker).not.toBeNull()
+    await vi.advanceTimersByTimeAsync(500)
+    expect(w.autofill.uiState().picker).toBeNull()
+
+    // Dismissing from the surface (Escape) hands the keyboard back to the page too.
+    w.event('t1', focusLogin())
+    const again = w.autofill.uiState().picker!
+    w.autofill.surfaceFocus(again.id, true)
+    await w.autofill.pick(again.id, null)
+    expect(w.autofill.uiState().picker).toBeNull()
+    expect(w.win.focusContent).toHaveBeenCalledTimes(1)
+  })
+
+  it('draws no surface on a host without one and drops a stale save prompt when the tab leaves the site', async () => {
+    const w = setup()
+    await w.passwords.unlock()
+    w.passwords.add({ url: 'https://example.com/login', username: 'ada', password: 'pw-a' })
+    w.addTab('t1', 'https://example.com/login')
+    w.event('t1', focusLogin())
+    expect(w.autofill.uiState().picker).not.toBeNull()
+    expect(w.win.setPopupSurface).not.toHaveBeenCalled()
+
+    // A save prompt left unanswered goes once the tab is on another site.
+    w.event('t1', loginSubmit({ username: 'grace', password: 'pw-g' }))
+    w.tabs.set('t1', { ...w.tabs.get('t1')!, url: 'https://example.com/home' })
+    w.autofill.onNavigated('t1')
+    await w.settle()
+    expect(w.autofill.uiState().prompts.map((p) => p.kind)).toEqual(['save-login'])
+    w.tabs.set('t1', { ...w.tabs.get('t1')!, url: 'https://elsewhere.org/' })
+    w.autofill.onNavigated('t1')
+    await w.settle()
     expect(w.autofill.uiState().prompts).toEqual([])
   })
 })

@@ -41,7 +41,8 @@ const DESKTOP: HostCapabilities = {
   pinShortcuts: false,
   translate: true,
   voiceSearch: false,
-  selectionToolbar: false
+  selectionToolbar: false,
+  popupSurface: true
 }
 
 const ANDROID: HostCapabilities = {
@@ -67,7 +68,8 @@ const ANDROID: HostCapabilities = {
   secureDns: false,
   newTabPage: false,
   pageTabs: true,
-  selectionToolbar: true
+  selectionToolbar: true,
+  popupSurface: false
 }
 
 function state(capabilities: HostCapabilities, platform: UIState['platform']): UIState {

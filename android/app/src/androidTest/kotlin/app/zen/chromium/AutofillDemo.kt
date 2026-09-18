@@ -32,19 +32,22 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 /**
- * Passwords in pages on a phone with a device PIN, for the emulator recording of the
- * `services-password-fill` engine PR: a sign-in typed into a demo shop served from the
- * instrumentation is offered for saving (the engine's host dialog, since the chrome's prompt
- * belongs to the UI PR), the saved login fills the form again through the account picker
- * (state-only in the engine PR, so the pick is made through the command API behind the system
- * PIN), a checkout's card and address are offered for saving one after the other and filled back,
- * a password copy reaches the clipboard marked sensitive (the value hidden from the preview), and
- * the Android autofill provider setting moves the page WebViews in and out of the system framework.
+ * Passwords in pages on a phone with a device PIN, for the emulator recordings of the
+ * `services-password-fill` PRs: a sign-in typed into a demo shop served from the instrumentation
+ * is offered for saving (the chrome's prompt sheet; the engine PR showed the host's dialog), the
+ * saved login fills the form again from the account picker's strip above the keyboard (a tap on
+ * its row, behind the system PIN; the engine PR picked through the command API, which stands in
+ * when the row is not in the accessibility tree), a checkout's card and address are offered for
+ * saving one after the other and filled back from their strips, Settings > Autofill shows the
+ * Passwords rows, the clipboard menu sheet, the managers and the address editor, a password copy
+ * reaches the clipboard marked sensitive (the value hidden from the preview), and the Android
+ * autofill provider setting moves the page WebViews in and out of the system framework.
  *
  * Asserts what the engine answers (the login round-trips, the fills land in the fields, the card
  * and address round-trip, the password clip is the sensitive one, the vault document holds no
  * plaintext) and writes what it observes (system autofill status, WebAuthn support, clipboard
- * descriptions) next to the screenshots.
+ * descriptions, which surfaces the tree exposed) next to the screenshots. The Settings tour is
+ * photographed, not asserted: the tree of the software-rendered emulator trails the screen.
  */
 @RunWith(AndroidJUnit4::class)
 class AutofillDemo : DemoHarness("autofill-demo-state.json", "services-password-fill-android", "autofill-demo") {
@@ -93,7 +96,8 @@ class AutofillDemo : DemoHarness("autofill-demo-state.json", "services-password-
         snap("login-page")
 
         // 1. Sign in by hand: the forms script sees the submit, the navigation confirms it and the
-        //    engine offers to save (creating the vault first, behind the PIN when the key asks).
+        //    chrome offers to save in its prompt sheet (the vault is created first, behind the PIN
+        //    when the key asks).
         tapSelector("#email")
         type(EMAIL)
         pressKey(KeyEvent.KEYCODE_TAB)
@@ -102,7 +106,7 @@ class AutofillDemo : DemoHarness("autofill-demo-state.json", "services-password-
         pressKey(KeyEvent.KEYCODE_ENTER)
         assertTrue("welcome page after sign-in", awaitPath("/welcome", 20_000))
         assertTrue("save prompt", awaitText("Save password for", 30_000, "pin-prompt-create-vault"))
-        SystemClock.sleep(900)
+        SystemClock.sleep(1_200)
         snap("save-password-prompt")
         tapButton("Save")
         toast("Password saved")
@@ -113,8 +117,9 @@ class AutofillDemo : DemoHarness("autofill-demo-state.json", "services-password-
         assertEquals(EMAIL, login.getString("username"))
         note("saved login: $login")
 
-        // 2. Back at the sign-in form the focused field has a match: the account picker opens in
-        //    the UI state, and picking the row fills both fields behind a re-authentication.
+        // 2. Back at the sign-in form the focused field has a match: the account picker's strip
+        //    comes up above the keyboard, and a tap on its row fills both fields behind a
+        //    re-authentication.
         tapSelector("header a")
         assertTrue("login page again", awaitPath("/login", 20_000))
         SystemClock.sleep(1_500)
@@ -122,16 +127,11 @@ class AutofillDemo : DemoHarness("autofill-demo-state.json", "services-password-
         val picker = awaitPicker("login")
         note("login picker: $picker")
         assertEquals(1, picker.getJSONArray("items").length())
-        val item = picker.getJSONArray("items").getJSONObject(0)
-        assertEquals(EMAIL, item.getString("title"))
+        assertEquals(EMAIL, picker.getJSONArray("items").getJSONObject(0).getString("title"))
+        SystemClock.sleep(900)
         snap("picker-open")
-        val pick = zen(
-            "autofill.pick",
-            JSONObject().put("id", picker.getString("id")).put("itemId", item.getString("id")),
-            promptShot = "pin-prompt-fill-password"
-        )
-        assertEquals("pick: $pick", "ok", pick.getString("status"))
-        SystemClock.sleep(1_200)
+        pickInChrome(picker, EMAIL, "#password", PASSWORD, "pin-prompt-fill-password")
+        SystemClock.sleep(600)
         assertEquals(EMAIL, pageString("document.getElementById('email').value"))
         assertEquals(PASSWORD, pageString("document.getElementById('password').value"))
         snap("login-filled")
@@ -154,7 +154,7 @@ class AutofillDemo : DemoHarness("autofill-demo-state.json", "services-password-
         snap("checkout-typed")
         pressKey(KeyEvent.KEYCODE_ENTER)
         assertTrue("thanks page", awaitPath("/thanks", 20_000))
-        // The engine shows the two host dialogs one after the other (the card's first as the
+        // The chrome shows the two prompt sheets one after the other (the card's first as the
         // forms script reports it first; either order is accepted here).
         val titles = listOf("Save card?", "Save address?")
         val first = awaitAnyText(titles, 30_000, "pin-prompt-checkout")
@@ -162,7 +162,7 @@ class AutofillDemo : DemoHarness("autofill-demo-state.json", "services-password-
         for (title in listOf(first, titles.first { it != first })) {
             val card = title.startsWith("Save card")
             assertTrue("prompt '$title'", awaitText(title, 15_000))
-            SystemClock.sleep(900)
+            SystemClock.sleep(1_200)
             snap(if (card) "save-card-prompt" else "save-address-prompt")
             tapButton("Save")
             toast(if (card) "Card saved" else "Address saved")
@@ -181,7 +181,7 @@ class AutofillDemo : DemoHarness("autofill-demo-state.json", "services-password-
         note("saved card: ${cards.getJSONObject(0)}")
         note("saved address: $address")
 
-        // 4. Ordering again: the address fills from its picker without a prompt, the card behind
+        // 4. Ordering again: the address fills from its strip without a prompt, the card behind
         //    the store's re-authentication (inside the grace period after the PIN, silently).
         tapSelector("header a")
         assertTrue("checkout page again", awaitPath("/checkout", 20_000))
@@ -189,14 +189,10 @@ class AutofillDemo : DemoHarness("autofill-demo-state.json", "services-password-
         tapSelector("#name")
         val addressPicker = awaitPicker("address")
         note("address picker: $addressPicker")
-        val addressItem = addressPicker.getJSONArray("items").getJSONObject(0)
-        val addressPick = zen(
-            "autofill.pick",
-            JSONObject().put("id", addressPicker.getString("id")).put("itemId", addressItem.getString("id"))
-        )
-        assertEquals("address pick: $addressPick", "ok", addressPick.getString("status"))
-        SystemClock.sleep(1_200)
-        assertEquals(STREET, pageString("document.getElementById('street').value"))
+        SystemClock.sleep(900)
+        snap("picker-address")
+        pickInChrome(addressPicker, NAME, "#street", STREET, "pin-prompt-fill-address")
+        SystemClock.sleep(600)
         assertEquals(CITY, pageString("document.getElementById('city').value"))
         assertEquals(ZIP, pageString("document.getElementById('zip').value"))
         snap("address-filled")
@@ -205,20 +201,21 @@ class AutofillDemo : DemoHarness("autofill-demo-state.json", "services-password-
         note("card picker: $cardPicker")
         val cardItem = cardPicker.getJSONArray("items").getJSONObject(0)
         assertTrue(cardItem.getString("title").contains("4242"))
-        val cardPick = zen(
-            "autofill.pick",
-            JSONObject().put("id", cardPicker.getString("id")).put("itemId", cardItem.getString("id")),
-            promptShot = "pin-prompt-fill-card"
-        )
-        assertEquals("card pick: $cardPick", "ok", cardPick.getString("status"))
-        SystemClock.sleep(1_200)
-        assertEquals(CARD_NUMBER, pageString("document.getElementById('cardnumber').value"))
+        SystemClock.sleep(900)
+        snap("picker-card")
+        pickInChrome(cardPicker, cardItem.getString("title").substringBefore(' '), "#cardnumber", CARD_NUMBER, "pin-prompt-fill-card")
+        SystemClock.sleep(600)
         assertEquals(NAME, pageString("document.getElementById('cardname').value"))
         note("expiry filled as: ${pageString("document.getElementById('expiry').value")}")
         assertEquals("", pageString("document.getElementById('cvc').value"))
         snap("card-filled")
 
-        // 5. Copies: a username in the clear, a password marked sensitive so the system's
+        // 5. Settings > Autofill in the chrome: the Passwords rows (offer to save, sign in
+        //    automatically, Zenium as the Android provider, the clipboard clear timeout as a value
+        //    row whose sheet picks the time), the address and card managers, the address editor.
+        settingsTour()
+
+        // 6. Copies: a username in the clear, a password marked sensitive so the system's
         //    clipboard preview hides it (Android 13+). The preview is SystemUI's own window, which
         //    the screenshot may miss, so the clip's description is what is noted and checked.
         val copyUser = zen("passwords.copy", JSONObject().put("id", login.getString("id")).put("field", "username"))
@@ -242,7 +239,7 @@ class AutofillDemo : DemoHarness("autofill-demo-state.json", "services-password-
             assertTrue("password copy marked sensitive: $description", description.contains("sensitive=true"))
         }
 
-        // 6. The provider setting: under `system` the page WebViews rejoin the autofill framework.
+        // 7. The provider setting: under `system` the page WebViews rejoin the autofill framework.
         zen("settings.update", JSONObject().put("passwords", JSONObject().put("androidProvider", "system")))
         SystemClock.sleep(800)
         val systemImportance = importance()
@@ -253,7 +250,7 @@ class AutofillDemo : DemoHarness("autofill-demo-state.json", "services-password-
         SystemClock.sleep(800)
         assertEquals(View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS, importance())
 
-        // 7. The vault document on disk carries the entries as ciphertext only.
+        // 8. The vault document on disk carries the entries as ciphertext only.
         zen("passwords.lock")
         val vault = File(app.filesDir, "zen/passwords.json").takeIf { it.exists() }?.readText() ?: ""
         note("vault document: ${vault.length} characters")
@@ -334,6 +331,145 @@ class AutofillDemo : DemoHarness("autofill-demo-state.json", "services-password-
             SystemClock.sleep(300)
         }
         error("no $group picker opened")
+    }
+
+    // --- the chrome's surfaces: the picker strip, the prompt sheets, Settings ---------------------
+
+    /**
+     * Pick the first row of `picker` the way a user does – a tap on the strip's row in the chrome –
+     * and wait for the fill to land in the page's `selector`, answering the credential prompt the
+     * fill may raise on the way. The command API stands in when the tree does not expose the row
+     * (noted, so the recording says which path it shows).
+     */
+    private fun pickInChrome(picker: JSONObject, rowPrefix: String, selector: String, expected: String, promptShot: String) {
+        val item = picker.getJSONArray("items").getJSONObject(0)
+        val tapped = tapText(rowPrefix)
+        if (!tapped) {
+            val pick = zen(
+                "autofill.pick",
+                JSONObject().put("id", picker.getString("id")).put("itemId", item.getString("id")),
+                promptShot = promptShot
+            )
+            assertEquals("pick: $pick", "ok", pick.getString("status"))
+        }
+        assertTrue("$selector filled after the pick of '$rowPrefix'", awaitValue(selector, expected, promptShot))
+        note("pick of '$rowPrefix': ${if (tapped) "the strip's row, tapped" else "the command API (the row was not in the tree)"}")
+    }
+
+    /** Poll for the page's `selector` to hold `expected`, answering a credential prompt on the way. */
+    private fun awaitValue(selector: String, expected: String, promptShot: String, timeoutMs: Long = 40_000): Boolean {
+        val script = "document.querySelector(${JSONObject.quote(selector)}).value"
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (pageString(script) == expected) return true
+            answerPin(promptShot)
+            SystemClock.sleep(250)
+        }
+        note("$selector never held '$expected'; it holds '${pageString(script)}'")
+        return false
+    }
+
+    /**
+     * A real touch on the lowest visible node whose text or description starts with `prefix` (a
+     * row of the picker's strip, a Settings row, a sheet's button – a sheet in front of the
+     * Settings repeats text the tree still lists behind it), or the accessibility click on its
+     * clickable ancestor when the tree reports no usable bounds; false when nothing shows within
+     * the time.
+     */
+    private fun tapText(prefix: String, timeoutMs: Long = 8_000): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (true) {
+            // The app's own windows only: the keyboard's suggestion strip may echo what was typed.
+            val matches = nodes { node ->
+                node.isVisibleToUser && node.packageName?.toString() == app.packageName &&
+                    listOf(node.text, node.contentDescription).any {
+                        it?.toString()?.trim()?.startsWith(prefix) == true
+                    }
+            }
+            // The lowest match on screen: the chrome's sheets and strips rise from the bottom
+            // over what they cover, and the tree does not know one hides the other.
+            val rect = matches.map { Rect().also(it::getBoundsInScreen) }
+                .filter { it.width() > 0 && it.height() > 0 }
+                .maxByOrNull { it.centerY() }
+            if (rect != null) {
+                Finger().tap(rect.exactCenterX(), rect.exactCenterY())
+                SystemClock.sleep(900)
+                return true
+            }
+            for (match in matches) {
+                var node: AccessibilityNodeInfo? = match
+                while (node != null && !node.isClickable) node = node.parent
+                if (node != null && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                    SystemClock.sleep(900)
+                    return true
+                }
+            }
+            if (SystemClock.uptimeMillis() >= deadline) {
+                note("nothing on screen starts with '$prefix'")
+                return false
+            }
+            SystemClock.sleep(300)
+        }
+    }
+
+    /**
+     * Settings > Autofill through `autofill.manage`: the Passwords rows, the clipboard menu sheet
+     * (its pick lands in the settings), the Addresses group, the address editor sheet, the Payment
+     * methods group; then the panel closes. Photographed and noted, never fatal: the tree of the
+     * software-rendered emulator trails the screen by seconds after each transition.
+     */
+    private fun settingsTour() {
+        zen("autofill.manage")
+        if (!awaitText("Offer to save passwords", 15_000)) {
+            note("Settings > Autofill did not show its rows; skipping the tour")
+            closeSettings()
+            return
+        }
+        SystemClock.sleep(1_500)
+        snap("settings-passwords")
+        if (tapText("Clear copied passwords") && awaitText("After 30 seconds", 6_000)) {
+            SystemClock.sleep(1_200)
+            snap("settings-clipboard-menu")
+            tapText("After 30 seconds")
+            SystemClock.sleep(800)
+            val seconds = zen("app.getState").getJSONObject("settings").getJSONObject("passwords").opt("clipboardClearSeconds")
+            note("clipboard clear timeout after the pick of 30 seconds: $seconds")
+        } else {
+            note("the clipboard menu sheet was not reached")
+        }
+        if (reveal("Addresses") != null) {
+            SystemClock.sleep(1_200)
+            snap("settings-addresses")
+        } else {
+            note("the Addresses heading was not in the tree")
+        }
+        if (tapText("Add address") && awaitText("Country", 6_000)) {
+            SystemClock.sleep(1_200)
+            snap("editor-address")
+            tapText("Cancel")
+            SystemClock.sleep(800)
+        } else {
+            note("the address editor was not reached")
+        }
+        if (reveal("Payment methods") != null) {
+            SystemClock.sleep(1_200)
+            snap("settings-payment-methods")
+        } else {
+            note("the Payment methods heading was not in the tree")
+        }
+        closeSettings()
+    }
+
+    /** Close the Settings panel: its close button, then the system back for anything left over it. */
+    private fun closeSettings() {
+        val open = { chrome("!!document.querySelector('.zen-settings')") == "true" }
+        if (open()) tapText("Close (Esc)", 3_000)
+        for (i in 0 until 3) {
+            SystemClock.sleep(1_000)
+            if (!open()) return
+            back()
+        }
+        note("Settings still open after the close button and back")
     }
 
     // --- the page in the shown tab ---------------------------------------------------------------

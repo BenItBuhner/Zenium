@@ -75,6 +75,12 @@ interface Props {
    * (`absolute`) instead of the viewport (`fixed`), and the host orders the stack.
    */
   hosted?: boolean
+  /**
+   * Measure the detents again whenever the header or the body changes size – a form that
+   * arrives after the sheet is up, a country with more lines, a validation line – so the sheet
+   * follows its content instead of holding the height it opened at (the scroll offset stays).
+   */
+  fitContent?: boolean
 }
 
 type Zone = 'grip' | 'body' | 'scrim'
@@ -174,12 +180,15 @@ export function BottomSheet({
   fadeEdges = true,
   labelledBy,
   className,
-  hosted = false
+  hosted = false,
+  fitContent = false
 }: Props): JSX.Element {
   const layerRef = useRef<HTMLDivElement>(null)
   const sheetRef = useRef<HTMLDivElement>(null)
   const scrimRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const gripRef = useRef<HTMLDivElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
   const fadeRef = useFadeEdges<HTMLDivElement>({ axis: 'y' })
   /**
    * The body's ref, one for the life of the sheet. A ref that changes identity is detached and
@@ -528,6 +537,26 @@ export function BottomSheet({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the observer reads the latest refs
   }, [])
 
+  // `fitContent`: the grip (with the header) and the body's content are measured again when
+  // they change size, so a sheet whose content arrives or grows after it is up follows it.
+  useEffect(() => {
+    const grip = gripRef.current
+    const content = contentRef.current
+    if (!fitContent || !grip || !content || typeof ResizeObserver !== 'function') return
+    const heightOf = (): number => grip.offsetHeight + content.offsetHeight
+    let last = heightOf()
+    const observer = new ResizeObserver(() => {
+      const height = heightOf()
+      if (height === last) return
+      last = height
+      measure()
+    })
+    observer.observe(grip)
+    observer.observe(content)
+    return () => observer.disconnect()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the observer reads the latest refs
+  }, [fitContent])
+
   // The WebView must not turn a pull on the body into a scroll once the sheet has taken it.
   useEffect(() => {
     const layer = layerRef.current
@@ -757,6 +786,7 @@ export function BottomSheet({
     // A page surface (design language v2 §9.29): the sheet's controls draw in the page family.
     <div
       ref={layerRef}
+      data-sheet-layer
       className={hosted ? 'absolute inset-0' : 'fixed inset-0 z-[90]'}
       data-surface="page"
       data-sheet-layer="true"
@@ -789,7 +819,7 @@ export function BottomSheet({
         data-locked="true"
         data-surface="page"
       >
-        <div data-sheet-grip className="zen-sheet-grip shrink-0">
+        <div ref={gripRef} data-sheet-grip className="zen-sheet-grip shrink-0">
           <button
             type="button"
             className="zen-sheet-handle-hit"
@@ -801,7 +831,7 @@ export function BottomSheet({
           {header && <div className="zen-sheet-header">{header}</div>}
         </div>
         <div ref={bodyRef} className="zen-sheet-scroll min-h-0 flex-1 overflow-y-auto">
-          {children}
+          {fitContent ? <div ref={contentRef}>{children}</div> : children}
         </div>
         {footer && <div className="zen-sheet-footer shrink-0">{footer}</div>}
       </div>

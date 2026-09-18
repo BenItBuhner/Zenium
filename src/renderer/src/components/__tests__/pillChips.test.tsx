@@ -2,14 +2,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, createElement, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import type { BookmarkNode, Space, Tab, UIState } from '@shared/types'
+import type { AutofillPrompt, BookmarkNode, Space, Tab, UIState } from '@shared/types'
 
 /*
  * The chips inside the URL pill (design language v2 §9.22): the address first, then every chip
  * as a real button in the tab order with its own label, `aria-haspopup` and `aria-expanded`
  * where it opens something, `aria-pressed` where it toggles. Rendered for real, on both the
  * desktop pill (`NavRow`) and the phone pill (`PillContent`), collapsed and expanded. The
- * desktop pill ends in the bookmark star, whose popup is the star bubble.
+ * desktop pill ends in the bookmark star, whose popup is the star bubble; the autofill key
+ * sits just before it while a save prompt is pending for the page, and its popup is the prompt.
  */
 
 const invoke = vi.fn<(name: string, args?: unknown) => Promise<null>>(async () => null)
@@ -70,7 +71,11 @@ const space: Space = {
   pinnedCollapsed: false
 }
 
-function state(t: Tab | null, bookmarks: BookmarkNode[] = []): UIState {
+function state(
+  t: Tab | null,
+  bookmarks: BookmarkNode[] = [],
+  prompts: AutofillPrompt[] = []
+): UIState {
   return {
     platform: 'linux',
     capabilities: { windowControls: false },
@@ -89,8 +94,21 @@ function state(t: Tab | null, bookmarks: BookmarkNode[] = []): UIState {
     shortcuts: defaultShortcuts('linux', 'chrome'),
     blockedPopups: {},
     // The host runs the translation engine (every desktop build); no tab has left idle.
-    translate: { available: true, tabs: {} }
+    translate: { available: true, tabs: {} },
+    securityPrompts: [],
+    autofill: { prompts, picker: null }
   } as unknown as UIState
+}
+
+/** A pending offer to save the password just used on the page. */
+const savePrompt: AutofillPrompt = {
+  id: 'p1',
+  kind: 'save-login',
+  tabId: 't1',
+  origin: 'https://example.com',
+  site: 'example.com',
+  username: 'ada@example.com',
+  existingId: null
 }
 
 /** A bookmark of `url` on the bookmarks bar. */
@@ -415,6 +433,67 @@ describe('desktop pill (NavRow)', () => {
     const order = focusable(pill)
     expect(order.length).toBe(1)
     expect(order[0].textContent).toBe('Search or enter address')
+  })
+
+  it('shows the key chip before the star only while a save prompt is pending for the page', () => {
+    const el = render(<NavRow state={state(page)} tab={page} compact={false} />)
+    expect(el.querySelector('[data-af-chip]')).toBeNull()
+
+    act(() =>
+      root!.render(<NavRow state={state(page, [], [savePrompt])} tab={page} compact={false} />)
+    )
+    const pill = el.querySelector<HTMLElement>('[role="group"]')!
+    const chips = focusable(pill).slice(1)
+    expect(labels(chips).slice(-2)).toEqual(['Save password', 'Bookmark this tab'])
+    const key = el.querySelector<HTMLElement>('[data-af-chip]')!
+    expectChip(key, 'Save password')
+    expect(key.hasAttribute('data-pill-chip')).toBe(true)
+    // Its popup is the prompt, up by default and put away behind the chip by Escape.
+    expect(key.getAttribute('aria-haspopup')).toBe('dialog')
+    expect(key.getAttribute('aria-expanded')).toBe('true')
+    expect(key.getAttribute('data-open')).toBe('true')
+    act(() => uiStore.set({ autofillPromptCollapsed: 'p1' }))
+    expect(key.getAttribute('aria-expanded')).toBe('false')
+    expect(key.getAttribute('data-open')).toBe('false')
+
+    // The chip brings the prompt back, and puts it away again.
+    act(() => key.click())
+    expect(uiStore.get().autofillPromptCollapsed).toBeNull()
+    expect(key.getAttribute('aria-expanded')).toBe('true')
+    act(() => key.click())
+    expect(uiStore.get().autofillPromptCollapsed).toBe('p1')
+
+    // A prompt for another tab is not this pill's.
+    act(() =>
+      root!.render(
+        <NavRow
+          state={state(page, [], [{ ...savePrompt, tabId: 't2' }])}
+          tab={page}
+          compact={false}
+        />
+      )
+    )
+    expect(el.querySelector('[data-af-chip]')).toBeNull()
+  })
+
+  it('names the key chip after the prompt it stands for', () => {
+    const update = { ...savePrompt, kind: 'update-login' as const, existingId: 'c1' }
+    const el = render(<NavRow state={state(page, [], [update])} tab={page} compact={false} />)
+    expectChip(el.querySelector<HTMLElement>('[data-af-chip]')!, 'Update password')
+    const card: AutofillPrompt = {
+      id: 'p2',
+      kind: 'save-card',
+      tabId: 't1',
+      origin: 'https://example.com',
+      site: 'example.com',
+      last4: '4242',
+      network: 'visa',
+      expMonth: 12,
+      expYear: 2031,
+      name: 'Ada Lovelace'
+    }
+    act(() => root!.render(<NavRow state={state(page, [], [card])} tab={page} compact={false} />))
+    expectChip(el.querySelector<HTMLElement>('[data-af-chip]')!, 'Save card')
   })
 
   // Design language v2 §9.29: a chip takes the token family of the surface it sits on, read from
