@@ -127,7 +127,7 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
         settleUp()
         SystemClock.sleep(1_000)
         ui.takeScreenshot()?.let {
-            dark = measure(it, band()).luminance
+            dark = measureBand(it, band()).luminance
             finding("menu up: --zen-recede ${recedeValue()}, swatch p %.3f, band %.1f".format(progress(it), dark))
             save(it, "warmup-menu-up")
             it.recycle()
@@ -138,14 +138,14 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
         settleUp()
         SystemClock.sleep(1_000)
         ui.takeScreenshot()?.let {
-            finding("site information up: --zen-recede ${recedeValue()}, swatch p %.3f, band %.1f".format(progress(it), measure(it, band()).luminance))
+            finding("site information up: --zen-recede ${recedeValue()}, swatch p %.3f, band %.1f".format(progress(it), measureBand(it, band()).luminance))
             it.recycle()
         }
         back()
         settleDown()
         SystemClock.sleep(1_500)
         ui.takeScreenshot()?.let {
-            bright = measure(it, band()).luminance
+            bright = measureBand(it, band()).luminance
             finding("no sheet: --zen-recede ${recedeValue()}, swatch p %.3f, band %.1f".format(progress(it), bright))
             save(it, "warmup-no-sheet")
             it.recycle()
@@ -500,7 +500,7 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
      */
     private fun probe(name: String, kind: Kind, probeMs: Long = PROBE_MS, action: () -> Unit) {
         val before = ui.takeScreenshot()
-        val reference = before?.let { Frame(0, measure(it, band()), progress(it)) }
+        val reference = before?.let { Frame(0, measureBand(it, band()), progress(it)) }
         before?.let { save(it, "$name-before") }
         before?.recycle()
         val t0 = SystemClock.uptimeMillis()
@@ -511,7 +511,7 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
             val started = SystemClock.uptimeMillis()
             val shot = ui.takeScreenshot() ?: continue
             val at = (started + SystemClock.uptimeMillis()) / 2 - t0
-            frames += Frame(at, measure(shot, band()), progress(shot))
+            frames += Frame(at, measureBand(shot, band()), progress(shot))
             save(shot, "$name-${at}ms")
             shot.recycle()
         }
@@ -545,7 +545,7 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
      * whose right neighbour differs by more than 40 in luminance) and the share of page-like
      * pixels (bright and grey) over `rect`, sampled every third pixel.
      */
-    private fun measure(bitmap: Bitmap, rect: Rect): Metrics {
+    private fun measureBand(bitmap: Bitmap, rect: Rect): Metrics {
         val r = Rect(rect)
         r.intersect(0, 0, bitmap.width, bitmap.height)
         if (r.isEmpty) return Metrics(0.0, 0.0, 0.0, 0.0)
