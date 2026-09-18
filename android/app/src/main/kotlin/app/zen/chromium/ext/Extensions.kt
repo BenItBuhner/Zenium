@@ -14,6 +14,7 @@ import androidx.webkit.ScriptHandler
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import app.zen.chromium.Host
+import app.zen.chromium.Profiles
 import app.zen.chromium.TabWebView
 import app.zen.chromium.arr
 import app.zen.chromium.bool
@@ -100,6 +101,12 @@ class Extensions(private val host: Host) {
         /** The record's directory (`<root>/<id>/<version>`), where every file is read from. */
         val dir: File,
         val allowFileAccess: Boolean,
+        /**
+         * Whether the extension runs in private tabs (Chrome's "allow in Incognito"): without it
+         * no unit is injected there, its origin is not served to them and its rules do not
+         * apply to their requests.
+         */
+        val allowPrivate: Boolean,
         /** `web_accessible_resources` globs (tab pages may only fetch these). */
         val webAccessible: List<Regex>,
         /** The generated background page, or null when the extension has none / an MV2 page. */
@@ -142,7 +149,10 @@ class Extensions(private val host: Host) {
     @Volatile private var served: Map<String, Served> = emptyMap()
     /** Per extension, the units currently installed on every tab (main thread). */
     private val units = LinkedHashMap<String, List<ScriptUnit>>()
+    /** Every extension's rules, for the requests of ordinary tabs and of extension pages. */
     @Volatile private var rules: NetRules? = null
+    /** The rules of the extensions allowed in private tabs, for those tabs' requests. */
+    @Volatile private var privateRules: NetRules? = null
     @Volatile private var observeRequests = false
     @Volatile var debug = true
         private set
@@ -258,11 +268,11 @@ class Extensions(private val host: Host) {
     }
 
     /**
-     * `ext.configure { id, version, path, allowFileAccess, units: [{ key, origins, world, config,
-     * groups: [{ ext, index, js, isolation }], css: [{ ext, path }] }], served: { webAccessible,
-     * backgroundHtml, backgroundUrl, page, late }, debug }` → `{ units: [{ key, chars, cached }],
-     * ms }`. Reading the sources is file IO, so the units are compiled off the main thread and
-     * installed on it, on every tab, in place of this extension's earlier units only.
+     * `ext.configure { id, version, path, allowFileAccess, allowPrivate, units: [{ key, origins,
+     * world, config, groups: [{ ext, index, js, isolation }], css: [{ ext, path }] }], served:
+     * { webAccessible, backgroundHtml, backgroundUrl, page, late }, debug }` → `{ units: [{ key,
+     * chars, cached }], ms }`. Reading the sources is file IO, so the units are compiled off the
+     * main thread and installed on it, on every tab, in place of this extension's earlier units only.
      */
     private fun configure(args: JSONObject, reply: (Any?) -> Unit) {
         val id = args.str("id")
@@ -284,6 +294,7 @@ class Extensions(private val host: Host) {
                 version = args.str("version"),
                 dir = dir,
                 allowFileAccess = args.bool("allowFileAccess"),
+                allowPrivate = args.bool("allowPrivate"),
                 webAccessible = s.arr("webAccessible").let { a -> List(a.length()) { i -> globToRegex(a.optString(i, "")) } },
                 backgroundHtml = s.strOrNull("backgroundHtml"),
                 backgroundUrl = s.strOrNull("backgroundUrl"),
@@ -359,13 +370,16 @@ class Extensions(private val host: Host) {
         worldSlots.clear()
         configureStats.clear()
         rules = null
+        privateRules = null
         observeRequests = false
     }
 
     /**
-     * `{ static: [{ ext, paths: [ruleset json paths] }], dynamic: [normalised rules] }`. Static
-     * rulesets are Chrome's rule format read from the extension directory; dynamic and session
-     * rules arrive normalised from the core's translator.
+     * `{ extensions: [{ ext, allowPrivate, paths: [ruleset json paths], dynamic: [normalised
+     * rules] }] }`, one entry per declarativeNetRequest extension. Static rulesets are Chrome's
+     * rule format read from the extension directory; dynamic and session rules arrive normalised
+     * from the core's translator. Two sets come out: everyone's rules, and those of the
+     * extensions allowed in private tabs (a private tab's requests see only the latter).
      */
     private fun setRules(args: JSONObject, reply: (Any?) -> Unit) {
         // Its own thread: tens of thousands of rules parse in the hundreds of milliseconds, and
@@ -373,14 +387,18 @@ class Extensions(private val host: Host) {
         rulesIo.execute {
             val started = System.nanoTime()
             val all = ArrayList<NetRules.Rule>()
-            val statics = args.arr("static")
+            val private = ArrayList<NetRules.Rule>()
+            var privateExtensions = 0
+            val extensions = args.arr("extensions")
             var files = 0
             var cached = 0
             val wanted = HashSet<String>()
-            for (i in 0 until statics.length()) {
-                val s = statics.optJSONObject(i) ?: continue
-                val ext = s.str("ext")
-                val paths = s.arr("paths")
+            for (i in 0 until extensions.length()) {
+                val entry = extensions.optJSONObject(i) ?: continue
+                val ext = entry.str("ext")
+                val allowPrivate = entry.bool("allowPrivate")
+                val mine = ArrayList<NetRules.Rule>()
+                val paths = entry.arr("paths")
                 for (j in 0 until paths.length()) {
                     val file = fileFor(ext, paths.optString(j, "")) ?: continue
                     if (!file.isFile) continue
@@ -388,22 +406,43 @@ class Extensions(private val host: Host) {
                     val loaded = loadStaticRuleset(ext, file) ?: continue
                     files++
                     if (loaded.second) cached++
-                    all.addAll(loaded.first)
+                    mine.addAll(loaded.first)
+                }
+                val dynamic = entry.arr("dynamic")
+                for (j in 0 until dynamic.length()) {
+                    val o = dynamic.optJSONObject(j) ?: continue
+                    runCatching { NetRules.parse(o) }.getOrNull()?.let(mine::add)
+                }
+                all.addAll(mine)
+                if (allowPrivate) {
+                    private.addAll(mine)
+                    privateExtensions++
                 }
             }
             // Rulesets no longer wanted (a disabled ruleset, a detached extension) leave memory.
             staticRules.keys.retainAll(wanted)
-            val dynamic = args.arr("dynamic")
-            for (i in 0 until dynamic.length()) {
-                val o = dynamic.optJSONObject(i) ?: continue
-                runCatching { NetRules.parse(o) }.getOrNull()?.let(all::add)
-            }
             val compiled = if (all.isEmpty()) null else NetRules(all)
+            // Every extension allowed in private tabs: the one set serves both kinds of tab.
+            val compiledPrivate = when {
+                private.isEmpty() -> null
+                private.size == all.size -> compiled
+                else -> NetRules(private)
+            }
             val ms = (System.nanoTime() - started) / 1_000_000
             main.post {
                 rules = compiled
-                Log.i(TAG, "rules: ${compiled?.rules?.size ?: 0} from $files file(s) ($cached cached) in $ms ms")
-                reply(json("rules" to (compiled?.rules?.size ?: 0), "files" to files, "cached" to cached, "ms" to ms))
+                privateRules = compiledPrivate
+                Log.i(
+                    TAG,
+                    "rules: ${compiled?.rules?.size ?: 0} from $files file(s) ($cached cached), " +
+                        "${private.size} of $privateExtensions extension(s) in private tabs, in $ms ms"
+                )
+                reply(
+                    json(
+                        "rules" to (compiled?.rules?.size ?: 0), "privateRules" to private.size,
+                        "files" to files, "cached" to cached, "ms" to ms
+                    )
+                )
             }
         }
     }
@@ -650,10 +689,15 @@ class Extensions(private val host: Host) {
         for ((id, list) in units) served[id]?.let { installExtension(view, it, list) }
     }
 
-    /** One extension's handlers on one view: the previous ones go, the current units come. */
+    /**
+     * One extension's handlers on one view: the previous ones go, the current units come. A
+     * private tab gets nothing from an extension not allowed there (documents already running
+     * its script keep it, as in Chrome, until they navigate).
+     */
     private fun installExtension(view: WebView, ext: Served, list: List<ScriptUnit>) {
         val mine = handlers[view] ?: return
         removeExtension(view, ext.id)
+        if (view.isPrivateTab && !ext.allowPrivate) return
         val added = ArrayList<ScriptHandler>()
         // Extension pages opened as tabs (options pages, a changelog the background opens with
         // `tabs.create`): the page bootstrap on the extension's own origin.
@@ -740,6 +784,9 @@ class Extensions(private val host: Host) {
             val claimed = if (known != null) known.extensionId else message.str("ext")
             if (worldSlots.owner(slot) != claimed || (known != null && known.slot != slot)) return
         }
+        // A private tab's document still running the script of an extension no longer allowed
+        // there (the toggle flipped after the document started) has no bridge.
+        if (view.isPrivateTab && served[endpoints[ep]?.extensionId ?: message.str("ext")]?.allowPrivate != true) return
         if (debug) recordCall(ep, message)
         when (message.str("t")) {
             "hello" -> {
@@ -831,6 +878,8 @@ class Extensions(private val host: Host) {
         if (hostName.endsWith(ORIGIN_SUFFIX)) {
             val id = hostName.removeSuffix(ORIGIN_SUFFIX)
             val ext = served[id] ?: return notFound()
+            // Chrome does not load a chrome-extension:// URL in incognito for an extension not allowed there.
+            if (tab?.isPrivateTab == true && !ext.allowPrivate) return notFound()
             val path = (url.path ?: "/").trimStart('/')
             val origin = "https://$hostName/"
             val ownPage = tab != null && (
@@ -845,7 +894,7 @@ class Extensions(private val host: Host) {
             return serve(ext, path)
         }
         if (extensionPage != null) return null
-        val rules = this.rules
+        val rules = if (tab?.isPrivateTab == true) privateRules else this.rules
         val observe = observeRequests
         if (rules == null && !observe) return null
         val initiator = tab?.currentUrl
@@ -1093,6 +1142,10 @@ class Extensions(private val host: Host) {
         val VALID_ID = Regex("^[a-p]{32}$")
         /** `_locales/<dir>`: a language tag with underscores, nothing that could leave the directory. */
         val LOCALE_DIR = Regex("^[A-Za-z0-9_]{1,16}$")
+
+        /** A tab view of the private container (extension WebViews and ordinary tabs are not). */
+        val WebView.isPrivateTab: Boolean
+            get() = (this as? TabWebView)?.containerId == Profiles.PRIVATE_CONTAINER
 
         /** `web_accessible_resources` glob → regex (`*` spans path separators, as in Chrome). */
         fun globToRegex(glob: String): Regex {

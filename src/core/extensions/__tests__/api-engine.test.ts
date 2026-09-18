@@ -14,7 +14,8 @@ const primordials: Primordials = {
   parse: JSON.parse,
   setTimeout: (cb, ms) => setTimeout(cb, ms) as unknown as number,
   queueMicrotask: (cb) => queueMicrotask(cb),
-  error: () => undefined
+  error: () => undefined,
+  warn: () => undefined
 }
 
 type Ns = Record<string, unknown>

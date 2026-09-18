@@ -584,6 +584,7 @@ class ExtensionDemo {
         trustedTypesPage()
         instrumentation.runOnMainSync { results.put("lateOnPageStarted", host.extensions.lateOnPageStarted) }
         lateInjection()
+        privateTabs()
 
         // Background pages: console output and errors of every extension.
         val backgrounds = JSONObject()
@@ -598,15 +599,29 @@ class ExtensionDemo {
         results.put("backgrounds", backgrounds)
 
         // Memory with everything running, then with every extension disabled (backgrounds gone).
+        // Page milestones three ways: the six extensions, the probe alone (one 77 KB unit, so the
+        // fixed cost of a world and the bootstrap reads apart from the megabytes of the others'
+        // content scripts), and none.
         results.put("memoryWithExtensions", meminfo())
         val timingWith = timing(3)
         val ids = listOf(PROBE_ID, DARK_READER, VIMIUM, RYD, STYLUS, UBOL)
-        for (id in ids) chromeInvoke("extension.setEnabled", """{"id":${JSONObject.quote(id)},"enabled":false}""")
+        for (id in ids) if (id != PROBE_ID) chromeInvoke("extension.setEnabled", """{"id":${JSONObject.quote(id)},"enabled":false}""")
+        val probeUnits = waitFor(30_000, 500) { scriptUnitsCount().takeIf { it <= 1 } }
+        SystemClock.sleep(2_000)
+        val timingProbeOnly = timing(3)
+        chromeInvoke("extension.setEnabled", """{"id":${JSONObject.quote(PROBE_ID)},"enabled":false}""")
         waitFor(30_000, 500) { if (scriptUnitsCount() == 0) true else null }
         SystemClock.sleep(3_000)
         results.put("memoryWithoutExtensions", meminfo())
         val timingWithout = timing(3)
-        results.put("pageTiming", JSONObject().put("withExtensions", timingWith).put("withoutExtensions", timingWithout))
+        results.put(
+            "pageTiming",
+            JSONObject()
+                .put("withExtensions", timingWith)
+                .put("probeOnly", timingProbeOnly)
+                .put("probeOnlyUnits", probeUnits ?: JSONObject.NULL)
+                .put("withoutExtensions", timingWithout)
+        )
         for (id in ids) chromeInvoke("extension.setEnabled", """{"id":${JSONObject.quote(id)},"enabled":true}""")
         SystemClock.sleep(3_000)
     }
@@ -693,6 +708,67 @@ class ExtensionDemo {
         stage(PROBE_ID, "lateInjection", verdict, report.toString().take(500))
         chromeInvoke("tab.close", """{"tabId":${JSONObject.quote(lateTab)},"force":true}""")
         SystemClock.sleep(800)
+    }
+
+    /**
+     * Private tabs: Chrome keeps an extension the user did not allow in incognito out of
+     * incognito tabs, and those tabs out of its `tabs` API. A private tab opens on the probe
+     * page: no unit of the probe runs there (its CSS variable is absent from the document, in
+     * whichever world the scripts would run) and the probe's background does not find the tab
+     * with `tabs.query`. Allowed in private tabs (`extension.setAllowPrivate`, the record change
+     * the runtime's `reconfigure` hook reads), a reload brings the probe's units and the query
+     * lists the tab; the toggle goes back afterwards.
+     */
+    private fun privateTabs() {
+        val report = JSONObject()
+        val url = "$BASE/probe.html?private=1"
+        val tab = chromeInvoke("tab.create", """{"url":${JSONObject.quote(url)},"active":true,"containerId":"private"}""").trim('"')
+        val view = waitForView(tab)
+        waitFor(30_000) { if (tabEval(view, "document.readyState") == "complete") true else null }
+        SystemClock.sleep(1_500)
+        report.put("containerId", state().optJSONObject("tabs")?.optJSONObject(tab)?.optString("containerId"))
+        report.put("cssWhileDisallowed", tabEval(view, PROBE_CSS))
+        var verdict = "FAIL"
+        val bg = backgroundView(PROBE_ID)
+        if (bg == null) {
+            report.put("error", "no probe background")
+        } else {
+            report.put("listedWhileDisallowed", queryTabs(bg, url))
+            chromeInvoke("extension.setAllowPrivate", """{"id":${JSONObject.quote(PROBE_ID)},"allowed":true}""")
+            SystemClock.sleep(1_500)
+            chromeInvoke("tab.reload", """{"tabId":${JSONObject.quote(tab)}}""")
+            SystemClock.sleep(400)
+            val reloaded = waitForView(tab)
+            waitFor(30_000) { if (tabEval(reloaded, "document.readyState") == "complete") true else null }
+            SystemClock.sleep(1_500)
+            report.put("cssWhenAllowed", tabEval(reloaded, PROBE_CSS))
+            report.put("listedWhenAllowed", queryTabs(bg, url))
+            chromeInvoke("extension.setAllowPrivate", """{"id":${JSONObject.quote(PROBE_ID)},"allowed":false}""")
+            SystemClock.sleep(1_000)
+            val kept = report.optString("cssWhileDisallowed") == "" && report.optInt("listedWhileDisallowed", -1) == 0
+            val admitted = report.optString("cssWhenAllowed") == "injected" && report.optInt("listedWhenAllowed", -1) == 1
+            verdict = when {
+                kept && admitted -> "PASS"
+                kept || admitted -> "PARTIAL"
+                else -> "FAIL"
+            }
+        }
+        results.put("privateTabs", report)
+        stage(PROBE_ID, "privateTabs", verdict, report.toString().take(500))
+        chromeInvoke("tab.close", """{"tabId":${JSONObject.quote(tab)},"force":true}""")
+        SystemClock.sleep(800)
+    }
+
+    /** How many tabs with exactly `url` the extension's background sees through `tabs.query({})`; -1 when the call failed. */
+    private fun queryTabs(bg: WebView, url: String): Int {
+        tabEval(
+            bg,
+            "(function(){window.__query=null;chrome.tabs.query({},function(tabs){window.__query=JSON.stringify(" +
+                "{count:(tabs||[]).filter(function(t){return t.url===${JSONObject.quote(url)}}).length,error:chrome.runtime.lastError?chrome.runtime.lastError.message:null})})})()"
+        )
+        val raw = waitFor(10_000, 200) { val v = tabEval(bg, "window.__query"); if (v == "null") null else v } ?: return -1
+        val result = json(raw)
+        return if (result.isNull("error")) result.optInt("count", -1) else -1
     }
 
     /** Reload the probe tab `n` times and report navigation timing plus the bootstrap's own numbers. */
@@ -1076,6 +1152,8 @@ class ExtensionDemo {
         const val UBOL = "ddkjiahejlhfcafbddmgiahcphecmpfh"
 
         private const val PROBE_DONE = "String(document.documentElement.getAttribute('data-zen-probe-done') === '1')"
+        /** The probe's `probe.css` on the document (`injected`), whichever world its scripts run in; empty without it. */
+        private const val PROBE_CSS = "getComputedStyle(document.documentElement).getPropertyValue('--zen-probe-css').trim()"
         private const val PROBE_REPORT =
             "JSON.stringify({start: document.__zenProbeStart || null, idle: document.__zenProbeIdle || null, page: window.__page || null, pageScript: window.__pageScript || null, stats: window.__zenExtStats || null, readyState: document.readyState, url: location.href})"
         /** What one extension's world sees: the probe's document expandos, the bootstrap's stats, and the world/page boundary. */

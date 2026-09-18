@@ -137,12 +137,13 @@ interface Harness {
   saved: (name: string) => Record<string, unknown>
 }
 
-function makeTab(id: string, url: string): Tab {
+function makeTab(id: string, url: string, containerId = 'default'): Tab {
   return {
     id,
     url,
     title: url,
-    loading: false
+    loading: false,
+    containerId
   } as unknown as Tab
 }
 
@@ -193,7 +194,7 @@ function harness(
       tab: (id: string) => tabs[id],
       activeTabFor: () => (active.id ? tabs[active.id] : undefined),
       model: { tabs, spaces: [] },
-      isPrivate: () => false,
+      isPrivate: (tab: Tab) => tab.containerId === 'private',
       createTab: (opts: { url: string }) => {
         const id = `t${Object.keys(tabs).length + 1}`
         tabs[id] = makeTab(id, opts.url)
@@ -454,7 +455,9 @@ describe('AndroidExtensionRuntime: attaching records', () => {
     await until(() => h.kt.heldRules.length === 1)
     expect(h.kt.calledWith('ext.setRules')).toHaveLength(2)
     // The second push carries the state as it is now, not as it was when a change asked.
-    expect(h.kt.calledWith('ext.setRules')[1].static).toEqual([{ ext: ID, paths: ['rules.json'] }])
+    expect(h.kt.calledWith('ext.setRules')[1].extensions).toEqual([
+      { ext: ID, allowPrivate: false, paths: ['rules.json'], dynamic: [] }
+    ])
     h.kt.releaseRules()
     await Promise.all([attaching, ...changes])
     expect(h.kt.calledWith('ext.setRules')).toHaveLength(2)
@@ -462,7 +465,43 @@ describe('AndroidExtensionRuntime: attaching records', () => {
     h.kt.holdRules = false
     await h.runtime.setRules(ID, { dynamic: [], session: [], enabledRulesets: [] })
     expect(h.kt.calledWith('ext.setRules')).toHaveLength(3)
-    expect(h.kt.calledWith('ext.setRules')[2].static).toEqual([])
+    expect(h.kt.calledWith('ext.setRules')[2].extensions).toEqual([
+      { ext: ID, allowPrivate: false, paths: [], dynamic: [] }
+    ])
+  })
+
+  it('a record toggle alone re-sends the configuration; the private toggle re-pushes a rule set', async () => {
+    const h = harness()
+    const dnr = manifest({
+      permissions: ['declarativeNetRequest'],
+      declarative_net_request: {
+        rule_resources: [{ id: 'r1', enabled: true, path: 'rules.json' }]
+      }
+    })
+    const rec = record(h, {}, dnr)
+    await h.runtime.attach(rec)
+    expect(h.kt.calledWith('ext.configure')).toHaveLength(1)
+    expect(h.kt.calledWith('ext.configure')[0]).toMatchObject({
+      allowFileAccess: false,
+      allowPrivate: false
+    })
+    expect(h.kt.calledWith('ext.setRules')).toHaveLength(1)
+    // The same record again: nothing changed, nothing sent.
+    await h.runtime.reconfigure({ ...rec })
+    expect(h.kt.calledWith('ext.configure')).toHaveLength(1)
+    // File access: the plan is the same, the toggle travels.
+    await h.runtime.reconfigure({ ...rec, allowFileAccess: true })
+    expect(h.kt.calledWith('ext.configure')).toHaveLength(2)
+    expect(h.kt.calledWith('ext.configure')[1]).toMatchObject({ allowFileAccess: true })
+    expect(h.kt.calledWith('ext.setRules')).toHaveLength(1)
+    // Private tabs: the toggle travels and the rules are pushed again with it.
+    await h.runtime.reconfigure({ ...rec, allowFileAccess: true, allowPrivate: true })
+    expect(h.kt.calledWith('ext.configure')).toHaveLength(3)
+    expect(h.kt.calledWith('ext.configure')[2]).toMatchObject({ allowPrivate: true })
+    expect(h.kt.calledWith('ext.setRules')).toHaveLength(2)
+    expect(h.kt.calledWith('ext.setRules')[1].extensions).toEqual([
+      { ext: ID, allowPrivate: true, paths: ['rules.json'], dynamic: [] }
+    ])
   })
 
   it('does not send a plan that changed nothing, and re-plans when registered scripts change', async () => {
@@ -772,14 +811,18 @@ describe('AndroidExtensionRuntime: chrome.storage on the shared helpers', () => 
     expect(h.files.has(`ext-storage-${ID}.json`)).toBe(false)
   })
 
-  it('chrome.extension reads the file-access toggle from the record and denies private access', async () => {
+  it('chrome.extension reads the file-access and private toggles from the record', async () => {
     const h = harness()
-    await h.runtime.attach(record(h, { allowFileAccess: true }))
+    const rec = record(h, { allowFileAccess: true })
+    await h.runtime.attach(rec)
     backgroundUp(h, 'bg1')
     const files = await call(h, 'bg1', 'extension', 'isAllowedFileSchemeAccess', [])
     expect(files.result).toBe(true)
     const incognito = await call(h, 'bg1', 'extension', 'isAllowedIncognitoAccess', [])
     expect(incognito.result).toBe(false)
+    await h.runtime.reconfigure({ ...rec, allowPrivate: true })
+    const allowed = await call(h, 'bg1', 'extension', 'isAllowedIncognitoAccess', [])
+    expect(allowed.result).toBe(true)
   })
 
   it('managed is read-only and empty', async () => {
@@ -862,6 +905,77 @@ describe('AndroidExtensionRuntime: tab and navigation events', () => {
       tabId: h.runtime.api.tabs.chromeIdFor('t2'),
       windowId: 1
     })
+  })
+
+  it('keeps private tabs from an extension not allowed in them: no events, unknown to tabs.*', async () => {
+    const h = harness()
+    const rec = record(h)
+    await h.runtime.attach(rec)
+    backgroundUp(h, 'bg1', [
+      'tabs.onCreated',
+      'tabs.onUpdated',
+      'tabs.onActivated',
+      'tabs.onRemoved',
+      'webNavigation.onCommitted',
+      'webRequest.onBeforeRequest'
+    ])
+    h.tabs.p1 = makeTab('p1', 'https://secret.example/', 'private')
+    h.active.id = 'p1'
+    h.notifyState()
+    expect(events(h, 'bg1', 'tabs.onCreated')).toHaveLength(0)
+    expect(events(h, 'bg1', 'tabs.onActivated')).toHaveLength(0)
+    h.runtime.onViewEvent('p1', 'navigated', {
+      url: 'https://secret.example/page',
+      title: '',
+      inPage: false,
+      canGoBack: true,
+      canGoForward: false
+    })
+    expect(events(h, 'bg1', 'webNavigation.onCommitted')).toHaveLength(0)
+    expect(events(h, 'bg1', 'tabs.onUpdated')).toHaveLength(0)
+    h.runtime.onRequest({
+      tabId: 'p1',
+      url: 'https://secret.example/asset.js',
+      type: 'script',
+      method: 'GET',
+      initiator: 'https://secret.example',
+      decision: 'allow',
+      micros: 1
+    })
+    expect(events(h, 'bg1', 'webRequest.onBeforeRequest')).toHaveLength(0)
+    // The tabs API: the query does not list it, get does not know it, the window has one tab.
+    const privateId = h.runtime.api.tabs.chromeIdFor('p1')
+    const query = await call(h, 'bg1', 'tabs', 'query', [{}])
+    expect((query.result as Array<Record<string, unknown>>).map((t) => t.id)).toEqual([
+      h.runtime.api.tabs.chromeIdFor('t1')
+    ])
+    const active = await call(h, 'bg1', 'tabs', 'query', [{ active: true }])
+    expect(active.result).toEqual([])
+    const get = await call(h, 'bg1', 'tabs', 'get', [privateId])
+    expect(String(get.error)).toContain(`No tab with id: ${privateId}`)
+    const win = await call(h, 'bg1', 'windows', 'getCurrent', [])
+    expect((win.result as { tabs: unknown[] }).tabs).toHaveLength(1)
+    const inject = await call(h, 'bg1', 'scripting', 'executeScript', [
+      { target: { tabId: privateId }, funcSource: '() => 1' }
+    ])
+    expect(String(inject.error)).toContain('No tab with id')
+    expect(h.kt.calledWith('ext.exec')).toHaveLength(0)
+    // Closed while unseen: no onRemoved either, though the tab is gone from the model by then.
+    delete h.tabs.p1
+    h.active.id = 't1'
+    h.notifyState()
+    expect(events(h, 'bg1', 'tabs.onRemoved')).toHaveLength(0)
+    expect(events(h, 'bg1', 'tabs.onActivated')).toHaveLength(1)
+    // Allowed in private tabs: the same extension sees the next one.
+    await h.runtime.reconfigure({ ...rec, allowPrivate: true })
+    h.tabs.p2 = makeTab('p2', 'https://secret.example/two', 'private')
+    h.notifyState()
+    expect(events(h, 'bg1', 'tabs.onCreated')).toHaveLength(1)
+    const seen = await call(h, 'bg1', 'tabs', 'get', [h.runtime.api.tabs.chromeIdFor('p2')])
+    expect(seen.result).toMatchObject({ incognito: true, url: 'https://secret.example/two' })
+    delete h.tabs.p2
+    h.notifyState()
+    expect(events(h, 'bg1', 'tabs.onRemoved')).toHaveLength(1)
   })
 
   it('a navigation drops the frame endpoints of the tab', async () => {

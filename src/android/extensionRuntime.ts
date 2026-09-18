@@ -1,4 +1,4 @@
-import type { ExtensionInfo, Rect } from '@shared/types'
+import type { ExtensionInfo } from '@shared/types'
 import type { Browser } from '@core/browser'
 import type { ZenWindow } from '@core/window'
 import { JsonStore } from '@core/store/JsonStore'
@@ -71,11 +71,12 @@ import type { ViewEventPayloads } from './views'
  * Kotlin protocol (runtime → Kotlin), every call keyed by extension id:
  *  ext.env                                  → { token, uiLanguage, isolatedWorlds, worldSlots }
  *  ext.open { id, path }                    → { manifest, locales: { <locale>: <messages.json> } }
- *  ext.configure { id, version, path, units, served, debug } → { units: [{ key, chars, cached }], ms }
+ *  ext.configure { id, version, path, allowFileAccess, allowPrivate, units, served, debug }
+ *                                           → { units: [{ key, chars, cached }], ms }
  *  ext.detach { id }
  *  ext.background.start / stop { id }, ext.popup.open { id, url, context }, ext.popup.close
  *  ext.send { ep, message }, ext.exec {…}, ext.readFile { id, path }, ext.cookies.get / set
- *  ext.setRules { static, dynamic }, ext.observeRequests { on }
+ *  ext.setRules { extensions: [{ ext, allowPrivate, paths, dynamic }] }, ext.observeRequests { on }
  * Kotlin → runtime (host events): ext.message, ext.gone, ext.popupClosed, ext.request.
  */
 
@@ -107,6 +108,17 @@ interface OpenedExtension {
 export interface ConfigureStats {
   units: Array<{ key: string; chars: number; cached: boolean }>
   ms: number
+}
+
+/** One declarativeNetRequest extension's share of an `ext.setRules`. */
+export interface RulesOfExtension {
+  ext: string
+  /** Whether its rules apply to requests of private tabs too. */
+  allowPrivate: boolean
+  /** Enabled static rulesets, as paths in the record's directory (Kotlin reads and caches them). */
+  paths: string[]
+  /** Dynamic and session rules, normalised. */
+  dynamic: NetRule[]
 }
 
 export interface ExtMessageEvent {
@@ -155,7 +167,13 @@ interface StorageEntry {
 interface Attached extends AttachedExtension {
   /** The last plan Kotlin was given, to skip a configure that would change nothing. */
   units: ExtensionUnits | null
+  /** The record toggles Kotlin was given with that plan (`allowFileAccess`, `allowPrivate`). */
+  configuredAccess: string | null
   configureStats: ConfigureStats | null
+}
+
+function accessKey(record: ExtensionRecord): string {
+  return `${record.allowFileAccess === true}/${record.allowPrivate === true}`
 }
 
 /** The store, as far as the runtime needs it (`runtime.reload`, `management.uninstallSelf`). */
@@ -280,7 +298,8 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
   private observing = false
   private subscribed = false
   private activeTabId: string | null = null
-  private knownTabIds = new Set<string>()
+  /** The tabs of the last state snapshot and whether each is private (a closed tab is still one). */
+  private knownTabs = new Map<string, boolean>()
   private readonly debug: boolean
   private readonly now: () => number
   private readonly timers: {
@@ -390,7 +409,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
   private subscribe(): void {
     if (this.subscribed) return
     this.subscribed = true
-    this.knownTabIds = new Set(Object.keys(this.browser.tabs.model.tabs))
+    this.knownTabs = this.snapshotTabs()
     this.activeTabId = this.browser.tabs.activeTabFor(this.windowOf())?.id ?? null
     this.browser.state.subscribe(() => this.onStateChanged())
   }
@@ -421,6 +440,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
       manifest,
       messages,
       units: previous?.units ?? null,
+      configuredAccess: previous?.configuredAccess ?? null,
       configureStats: previous?.configureStats ?? null
     }
     this.extensions.set(record.id, ext)
@@ -469,8 +489,15 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
   async reconfigure(record: ExtensionRecord): Promise<void> {
     const ext = this.extensions.get(record.id)
     if (!ext) return
+    const privateBefore = ext.record.allowPrivate === true
     ext.record = record
     await this.configure(ext)
+    // Its rules apply in private tabs only while it is allowed there.
+    if (
+      privateBefore !== (record.allowPrivate === true) &&
+      ext.manifest.permissions.includes('declarativeNetRequest')
+    )
+      await this.pushRules()
   }
 
   /** The extension was uninstalled: its persisted runtime state and `chrome.storage` go too. */
@@ -518,7 +545,8 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
       )
       units = plan(false)
     }
-    if (sameUnits(ext.units, units)) return
+    const access = accessKey(ext.record)
+    if (sameUnits(ext.units, units) && ext.configuredAccess === access) return
     // A late boot: the bootstrap evaluated into a document that predates the extension's world
     // (or on a WebView without worlds), so `scripting.executeScript` has a scope to run in.
     const late: ContentBootConfig = {
@@ -533,7 +561,8 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
       id,
       version: ext.manifest.version,
       path: ext.record.path,
-      allowFileAccess: ext.record.allowFileAccess,
+      allowFileAccess: ext.record.allowFileAccess === true,
+      allowPrivate: ext.record.allowPrivate === true,
       units: units.units.map((unit) => ({
         key: unit.key,
         origins: unit.origins,
@@ -546,6 +575,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
       debug: this.debug
     })
     ext.units = units
+    ext.configuredAccess = access
     ext.configureStats = stats
   }
 
@@ -587,9 +617,12 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
     return this.rulesPush
   }
 
-  private rulesPayload(): { static: Array<{ ext: string; paths: string[] }>; dynamic: NetRule[] } {
-    const statics: Array<{ ext: string; paths: string[] }> = []
-    const dynamic: NetRule[] = []
+  /**
+   * Per declarativeNetRequest extension: its enabled static rulesets (paths Kotlin reads), its
+   * dynamic and session rules, and whether its rules apply to private tabs' requests.
+   */
+  private rulesPayload(): { extensions: RulesOfExtension[] } {
+    const extensions: RulesOfExtension[] = []
     for (const ext of this.extensions.values()) {
       const manifest = ext.manifest
       if (!manifest.permissions.includes('declarativeNetRequest')) continue
@@ -597,11 +630,14 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
       const enabled = new Set(
         rules.enabledRulesets ?? manifest.rulesets.filter((r) => r.enabled).map((r) => r.id)
       )
-      const paths = manifest.rulesets.filter((r) => enabled.has(r.id)).map((r) => r.path)
-      if (paths.length > 0) statics.push({ ext: ext.record.id, paths })
-      dynamic.push(...rules.dynamic, ...rules.session)
+      extensions.push({
+        ext: ext.record.id,
+        allowPrivate: ext.record.allowPrivate === true,
+        paths: manifest.rulesets.filter((r) => enabled.has(r.id)).map((r) => r.path),
+        dynamic: [...rules.dynamic, ...rules.session]
+      })
     }
-    return { static: statics, dynamic }
+    return { extensions }
   }
 
   private save(): void {
@@ -700,8 +736,28 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
       )
   }
 
-  private emitAll(ns: string, name: string, args: unknown[]): void {
-    for (const id of this.extensions.keys()) this.emit(id, ns, name, args)
+  /**
+   * An event about one tab: to the extensions that may see the tab. Chrome keeps an incognito
+   * tab from an extension the user did not allow in incognito: no `tabs.*` or `webNavigation`
+   * event about it, no `webRequest` details of its requests. A tab the model no longer has (an
+   * `onRemoved`) is judged by what it was in the last snapshot.
+   */
+  private emitForTab(tabId: string | null, ns: string, name: string, args: unknown[]): void {
+    for (const [id, ext] of this.extensions) {
+      if (tabId === null || this.sees(ext, tabId)) this.emit(id, ns, name, args)
+    }
+  }
+
+  private sees(ext: Attached, tabId: string): boolean {
+    if (ext.record.allowPrivate === true) return true
+    const tab = this.browser.tabs.tab(tabId)
+    const isPrivate = tab ? this.browser.tabs.isPrivate(tab) : this.knownTabs.get(tabId) === true
+    return !isPrivate
+  }
+
+  private snapshotTabs(): Map<string, boolean> {
+    const tabs = this.browser.tabs
+    return new Map(Object.values(tabs.model.tabs).map((tab) => [tab.id, tabs.isPrivate(tab)]))
   }
 
   readFile(id: string, path: string): Promise<string | null> {
@@ -729,12 +785,13 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
     return this.bridge.call('ext.cookies.set', { url, cookie })
   }
 
-  openPopup(id: string, win: ZenWindow = this.windowOf()): void {
+  openPopup(id: string): void {
     const ext = this.extensions.get(id)
     if (!ext) return
     const action = this.api.actionFor(id)
     if (!action.popup) {
-      const tab = this.browser.tabs.activeTabFor(win)
+      // A private tab the extension may not see is no tab (Chrome hides the action there).
+      const tab = this.api.tabs.activeTabFor(ext)
       const ns = ext.manifest.manifestVersion === 3 ? 'action' : 'browserAction'
       this.emit(id, ns, 'onClicked', [tab ? this.api.tabs.chromeTab(tab) : null])
       return
@@ -1066,13 +1123,12 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
       timeStamp: now,
       initiator: event.initiator ?? undefined
     }
-    for (const id of this.extensions.keys()) {
-      this.emit(id, 'webRequest', 'onBeforeRequest', [details])
-      if (event.decision === 'block')
-        this.emit(id, 'webRequest', 'onErrorOccurred', [
-          { ...details, error: 'net::ERR_BLOCKED_BY_CLIENT', fromCache: false }
-        ])
-    }
+    const tab = event.tabId ?? null
+    this.emitForTab(tab, 'webRequest', 'onBeforeRequest', [details])
+    if (event.decision === 'block')
+      this.emitForTab(tab, 'webRequest', 'onErrorOccurred', [
+        { ...details, error: 'net::ERR_BLOCKED_BY_CLIENT', fromCache: false }
+      ])
   }
 
   /** Tab view events, forwarded by the platform: `tabs.onUpdated` and `webNavigation`. */
@@ -1085,7 +1141,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
     const tab = this.browser.tabs.tab(tabId)
     const chromeTabId = this.api.tabs.chromeIdFor(tabId)
     const nav = (event: string, url: string, extra: Record<string, unknown> = {}): void =>
-      this.emitAll('webNavigation', event, [
+      this.emitForTab(tabId, 'webNavigation', event, [
         {
           tabId: chromeTabId,
           url,
@@ -1097,7 +1153,11 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
       ])
     const updated = (change: Record<string, unknown>): void => {
       if (tab)
-        this.emitAll('tabs', 'onUpdated', [chromeTabId, change, this.api.tabs.chromeTab(tab)])
+        this.emitForTab(tabId, 'tabs', 'onUpdated', [
+          chromeTabId,
+          change,
+          this.api.tabs.chromeTab(tab)
+        ])
     }
     switch (name) {
       case 'navigated': {
@@ -1152,25 +1212,25 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
     const win = this.windowOf()
     const active = this.browser.tabs.activeTabFor(win)?.id ?? null
     const tabs = Object.values(this.browser.tabs.model.tabs)
-    const ids = new Set(tabs.map((t) => t.id))
+    const now = this.snapshotTabs()
     for (const tab of tabs) {
-      if (!this.knownTabIds.has(tab.id))
-        this.emitAll('tabs', 'onCreated', [this.api.tabs.chromeTab(tab)])
+      if (!this.knownTabs.has(tab.id))
+        this.emitForTab(tab.id, 'tabs', 'onCreated', [this.api.tabs.chromeTab(tab)])
     }
-    for (const id of this.knownTabIds) {
-      if (ids.has(id)) continue
+    for (const id of this.knownTabs.keys()) {
+      if (now.has(id)) continue
       // Every tab has an id in Chrome, seen by the extension or not; a closed one keeps its number.
-      this.emitAll('tabs', 'onRemoved', [
+      this.emitForTab(id, 'tabs', 'onRemoved', [
         this.api.tabs.chromeIdFor(id),
         { windowId: 1, isWindowClosing: false }
       ])
       this.router.unregisterTab(id)
     }
-    this.knownTabIds = ids
+    this.knownTabs = now
     if (active !== this.activeTabId) {
       this.activeTabId = active
       if (active)
-        this.emitAll('tabs', 'onActivated', [
+        this.emitForTab(active, 'tabs', 'onActivated', [
           { tabId: this.api.tabs.chromeIdFor(active), windowId: 1 }
         ])
     }
@@ -1456,8 +1516,9 @@ export class AndroidExtensionHost extends AndroidExtensions {
     this.runtime.openOptions(id, win)
   }
 
-  override openPopup(id: string, _anchor: Rect, win: ZenWindow): void {
-    this.runtime.openPopup(id, win)
+  /** The popup is a sheet over the one window; the toolbar anchor and window play no part. */
+  override openPopup(id: string): void {
+    this.runtime.openPopup(id)
   }
 
   override closePopup(): void {

@@ -15,6 +15,8 @@ import androidx.webkit.WebViewFeature
  */
 object Profiles {
     const val DEFAULT_CONTAINER = "default"
+    /** The core's `PRIVATE_CONTAINER_ID`: private tabs run in this container. */
+    const val PRIVATE_CONTAINER = "private"
 
     val supported: Boolean
         get() = WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)

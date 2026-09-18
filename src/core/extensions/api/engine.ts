@@ -84,6 +84,8 @@ export interface Primordials {
   setTimeout: (callback: () => void, ms: number) => number
   queueMicrotask: (callback: () => void) => void
   error: (...args: unknown[]) => void
+  /** Notices that are not failures (a member the engine deliberately does nothing for). */
+  warn: (...args: unknown[]) => void
 }
 
 export function capturePrimordials(): Primordials {
@@ -93,12 +95,14 @@ export function capturePrimordials(): Primordials {
   const timeout = g.setTimeout
   const micro = g.queueMicrotask ?? ((cb: () => void) => void Promise.resolve().then(cb))
   const error = console.error
+  const warn = console.warn
   return {
     stringify: (value) => stringify(value),
     parse: (text) => parse(text),
     setTimeout: (cb, ms) => timeout(cb, ms) as unknown as number,
     queueMicrotask: (cb) => micro(cb),
-    error: (...args) => error(...args)
+    error: (...args) => error(...args),
+    warn: (...args) => warn(...args)
   }
 }
 
@@ -576,7 +580,7 @@ export function createEmulatedEngine(
       if (ENGINE_NOOPS.has(key)) {
         if (!warned.has(key)) {
           warned.add(key)
-          primordials.error(`[Zenium] chrome.${key} is a no-op on Zenium for Android`)
+          primordials.warn(`[Zenium] chrome.${key} is a no-op on Zenium for Android`)
         }
         return Promise.resolve({ ok: true, value: undefined })
       }

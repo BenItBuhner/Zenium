@@ -178,7 +178,33 @@ export class TabIds {
     return tab
   }
 
-  chromeWindow(): Record<string, unknown> {
+  /**
+   * Chrome keeps incognito tabs from an extension the user did not allow in incognito: they are
+   * absent from `tabs.query`, unknown to `tabs.get`, silent in every tab event.
+   */
+  visibleTo(ext: AttachedExtension, tab: Tab): boolean {
+    return ext.record.allowPrivate === true || !this.browser.tabs.isPrivate(tab)
+  }
+
+  /** The tabs `ext` may see, in the model's order. */
+  visibleTabs(ext: AttachedExtension): Tab[] {
+    return Object.values(this.browser.tabs.model.tabs).filter((tab) => this.visibleTo(ext, tab))
+  }
+
+  /** `tabByChromeId` as `ext` sees it: a private tab it may not see is "no tab with id". */
+  tabFor(ext: AttachedExtension, value: unknown): Tab {
+    const tab = this.tabByChromeId(value)
+    if (!this.visibleTo(ext, tab)) throw new Error(`No tab with id: ${asNumber(value)}.`)
+    return tab
+  }
+
+  /** The active tab, unless `ext` may not see it. */
+  activeTabFor(ext: AttachedExtension): Tab | undefined {
+    const tab = this.browser.tabs.activeTabFor(this.windowOf())
+    return tab && this.visibleTo(ext, tab) ? tab : undefined
+  }
+
+  chromeWindow(ext: AttachedExtension): Record<string, unknown> {
     const win = this.windowOf()
     const size = win.host.contentSize()
     return {
@@ -192,7 +218,7 @@ export class TabIds {
       type: 'normal',
       state: win.host.isFullScreen() ? 'fullscreen' : 'maximized',
       alwaysOnTop: false,
-      tabs: Object.values(this.browser.tabs.model.tabs).map((t) => this.chromeTab(t))
+      tabs: this.visibleTabs(ext).map((t) => this.chromeTab(t))
     }
   }
 }
@@ -241,7 +267,7 @@ export class ExtensionApi {
       case 'tabs':
         return this.tabsCall(ext, endpoint, method, args)
       case 'windows':
-        return this.windowsCall(method, args)
+        return this.windowsCall(ext, method, args)
       case 'action':
       case 'browserAction':
       case 'pageAction':
@@ -282,9 +308,9 @@ export class ExtensionApi {
         if (method === 'queryState') return 'active'
         break
       case 'extension':
-        // The store's record carries the file-access toggle; private windows carry no extensions yet.
+        // The store's record carries both toggles (the runtime scopes tabs, events and rules by them).
         if (method === 'isAllowedFileSchemeAccess') return ext.record.allowFileAccess === true
-        if (method === 'isAllowedIncognitoAccess') return false
+        if (method === 'isAllowedIncognitoAccess') return ext.record.allowPrivate === true
         break
       case 'offscreen':
         if (method === 'hasDocument') return false
@@ -314,12 +340,13 @@ export class ExtensionApi {
     const tabs = this.host.browser.tabs
     const ids = this.tabs
     const targetOrActive = (value: unknown): Tab | undefined =>
-      asNumber(value) !== null ? ids.tabByChromeId(value) : tabs.activeTabFor(win)
+      asNumber(value) !== null ? ids.tabFor(ext, value) : ids.activeTabFor(ext)
     switch (method) {
       case 'query': {
         const q = asRecord(args[0])
         const active = tabs.activeTabFor(win)?.id
-        return Object.values(tabs.model.tabs)
+        return ids
+          .visibleTabs(ext)
           .filter((tab) => {
             if (q.active !== undefined && (tab.id === active) !== Boolean(q.active)) return false
             if (q.pinned !== undefined && (tab.pinned || tab.essential) !== Boolean(q.pinned))
@@ -344,7 +371,7 @@ export class ExtensionApi {
           .map((tab) => ids.chromeTab(tab))
       }
       case 'get':
-        return ids.chromeTab(ids.tabByChromeId(args[0]))
+        return ids.chromeTab(ids.tabFor(ext, args[0]))
       case 'getCurrent': {
         // Extension pages have no tab of their own; content scripts get theirs.
         if (endpoint.context === 'content' && endpoint.tabId) {
@@ -380,7 +407,7 @@ export class ExtensionApi {
       }
       case 'remove': {
         const list = Array.isArray(args[0]) ? args[0] : [args[0]]
-        for (const id of list) tabs.closeTab(ids.tabByChromeId(id).id, true, win)
+        for (const id of list) tabs.closeTab(ids.tabFor(ext, id).id, true, win)
         return undefined
       }
       case 'reload': {
@@ -389,7 +416,7 @@ export class ExtensionApi {
         return undefined
       }
       case 'duplicate': {
-        const copy = tabs.duplicate(ids.tabByChromeId(args[0]).id, win)
+        const copy = tabs.duplicate(ids.tabFor(ext, args[0]).id, win)
         return copy ? ids.chromeTab(copy) : undefined
       }
       case 'getZoom':
@@ -397,12 +424,12 @@ export class ExtensionApi {
       case 'setZoom': {
         const [first, second] = args
         const factor = asNumber(second ?? first) ?? 1
-        const target = asNumber(second) !== null ? ids.tabByChromeId(first) : tabs.activeTabFor(win)
+        const target = asNumber(second) !== null ? ids.tabFor(ext, first) : ids.activeTabFor(ext)
         if (target) tabs.setZoom(target.id, factor)
         return undefined
       }
       case 'discard': {
-        const target = asNumber(args[0]) !== null ? ids.tabByChromeId(args[0]) : undefined
+        const target = asNumber(args[0]) !== null ? ids.tabFor(ext, args[0]) : undefined
         if (target) tabs.discard(target.id)
         return target ? ids.chromeTab(tabs.tab(target.id) ?? target) : undefined
       }
@@ -465,23 +492,23 @@ export class ExtensionApi {
     })
   }
 
-  private windowsCall(method: string, args: unknown[]): unknown {
+  private windowsCall(ext: AttachedExtension, method: string, args: unknown[]): unknown {
     switch (method) {
       case 'get':
       case 'getCurrent':
       case 'getLastFocused':
-        return this.tabs.chromeWindow()
+        return this.tabs.chromeWindow(ext)
       case 'getAll':
-        return [this.tabs.chromeWindow()]
+        return [this.tabs.chromeWindow(ext)]
       case 'create': {
         const props = asRecord(args[0])
         const url = Array.isArray(props.url) ? props.url[0] : props.url
         if (typeof url === 'string')
           this.host.browser.tabs.createTab({ url, active: true }, this.host.window())
-        return this.tabs.chromeWindow()
+        return this.tabs.chromeWindow(ext)
       }
       case 'update':
-        return this.tabs.chromeWindow()
+        return this.tabs.chromeWindow(ext)
     }
     throw new Error(`chrome.windows.${method} ${NOT_IMPLEMENTED}`)
   }
@@ -554,8 +581,8 @@ export class ExtensionApi {
     const injection = asRecord(args[0])
     const target = asRecord(injection.target)
     const resolveTab = (): Tab => {
-      if (target.tabId !== undefined) return this.tabs.tabByChromeId(target.tabId)
-      const tab = this.host.browser.tabs.activeTabFor(this.host.window())
+      if (target.tabId !== undefined) return this.tabs.tabFor(ext, target.tabId)
+      const tab = this.tabs.activeTabFor(ext)
       if (!tab) throw new Error('No active tab.')
       return tab
     }
