@@ -137,7 +137,8 @@ const SURFACE = [
   'urlpill',
   'nav-active',
   'window-fill',
-  'window-fill-hover'
+  'window-fill-hover',
+  'selected'
 ].map((n) => `--v2-${n}`)
 
 const SCALE = [
@@ -154,6 +155,8 @@ const SCALE = [
   'font-heading',
   'font-body',
   'font-small',
+  'line-title',
+  'line-heading',
   'line-body',
   'line-small',
   'weight-body',
@@ -224,12 +227,13 @@ describe('design language v2 tokens', () => {
     }
     expect(outside.match(/var\(--v2-/g) ?? []).toHaveLength(0)
     const inside = css.slice(lightBlockStart, blockEnd)
-    // Inside: the ring and selection derive from the accent, the shared focus-ring rule reads the
-    // ring, the chassis scrim alias `--zen-scrim` reads the v2 scrim (§9.28), and the two §9.29
-    // family blocks map the tokens onto the control roles.
+    // Inside: the ring, selection and the selected-row fill (light and dark) derive from the
+    // accent, the shared focus-ring rule reads the ring, the chassis scrim alias `--zen-scrim`
+    // reads the v2 scrim (§9.28), and the two §9.29 family blocks map the tokens onto the control
+    // roles.
     const familyReads = FAMILIES.map((f) => block(f).match(/var\(--v2-/g)?.length ?? 0)
     expect((inside.match(/var\(--v2-/g) ?? []).length).toBe(
-      4 + familyReads.reduce((a, b) => a + b, 0)
+      6 + familyReads.reduce((a, b) => a + b, 0)
     )
     expect(inside).toMatch(/--zen-scrim: var\(--v2-scrim\)/)
     expect(inside).toMatch(/\[class\^='zen-v2-'\]:focus-visible/)
