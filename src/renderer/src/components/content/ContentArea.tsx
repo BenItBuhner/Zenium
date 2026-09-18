@@ -8,7 +8,7 @@ import { wantsDefaultBrowserBanner } from '@renderer/lib/defaultBrowser'
 import { useViewport } from '@renderer/lib/formFactor'
 import { activeTab, isForeignTab } from '@renderer/lib/selectors'
 import { captureActiveTab, panelAloneOverContent, uiStore, type UiState } from '@renderer/lib/ui'
-import { extensionChromeScrim } from '@renderer/lib/extensions/scrim'
+import { extensionChromeAloneOverContent } from '@renderer/lib/extensions/scrim'
 import { cn } from '@renderer/lib/utils'
 import { dropStore } from '@renderer/lib/drag'
 import { Urlbar } from '../urlbar/Urlbar'
@@ -68,17 +68,6 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
     (contentHidden || glanceActive) && Boolean(tab) && !staged && !(phone && ui.urlbar.open)
   const dropKey = dropStore.use((s) => s.key)
   const foreign = isForeignTab(state, tab?.id)
-  // Only the extensions' own chrome over the page: no scrim behind a popover or the popup
-  // frame, the v2 dialog scrim (the sheet's on a phone) behind an install or permission prompt.
-  const extensionScrim = extensionChromeScrim(ui)
-  const dim =
-    extensionScrim === null
-      ? cn('bg-black/35', ui.drag && 'bg-black/20')
-      : extensionScrim === 'dialog'
-        ? phone
-          ? 'zen-ext-scrim-sheet'
-          : 'zen-ext-scrim-modal'
-        : 'bg-transparent'
   // The "Make Zenium your default browser" strip sits above the page, inside the frame, so the
   // layout reporter's viewport (and the tab view under it) shrink by its height.
   const banner = !phone && wantsDefaultBrowserBanner(state)
@@ -113,9 +102,18 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
                   className="h-full w-full object-cover object-top"
                 />
               ) : null}
-              {/* Panels draw no scrim: a bar panel or the star bubble leaves the capture undimmed. */}
-              {!panelAloneOverContent(ui) && (
-                <div className={cn('absolute inset-0 transition-opacity', dim)} />
+              {/*
+               * Panels draw no scrim: a bar panel, the star bubble, the puzzle panel, a local
+               * menu or the popup frame leaves the capture undimmed; an extension prompt's
+               * scrim is the frame dialog host's (the sheet's on a phone).
+               */}
+              {!panelAloneOverContent(ui) && !extensionChromeAloneOverContent(ui) && (
+                <div
+                  className={cn(
+                    'absolute inset-0 bg-black/35 transition-opacity',
+                    ui.drag && 'bg-black/20'
+                  )}
+                />
               )}
             </div>
           )}

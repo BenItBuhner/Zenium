@@ -1125,34 +1125,19 @@
   }
 
   /*
-   * Behind a prompt (§9.5, §6): the content frame alone dims with the dialog scrim on a desktop
-   * and the sheet scrim on a phone; the sidebar and toolbar stay as they are. The dim fades in
-   * over the dialog's own 180ms, whether the layer mounts with the class or takes it later.
-   */
-  .zen-ext-scrim-modal,
-  .zen-ext-scrim-sheet {
-    animation: zen-v2-fade 180ms var(--zen-ease);
-  }
-  .zen-ext-scrim-modal {
-    background: var(--v2-scrim-modal);
-  }
-  .zen-ext-scrim-sheet {
-    background: var(--v2-scrim);
-  }
-
-  /*
    * Install and permission prompts: a 400 dialog (§9.20's width for a description that wraps
    * and two footer buttons) at radius 12, opening with a title block (§9.23) – the extension's
    * icon at 16, the title 17/600, the source as its description – then what it can do as 32
    * rows with a glyph, and two buttons, the primary last. The title block and the footer stay
-   * put; between them the body scrolls when the window is short (§9.7's hairline on the title).
+   * put; between them the body scrolls when the frame is short (§9.7's hairline on the title).
+   * It sits in the frame dialog host (lib/portals.tsx), 16 inside the frame at the least.
    */
   .zen-ext-dialog {
     display: flex;
     flex-direction: column;
     width: 400px;
-    max-width: calc(100vw - 32px);
-    max-height: calc(100vh - 32px);
+    max-width: calc(100% - 32px);
+    max-height: calc(100% - 32px);
     overflow: hidden;
   }
   .zen-ext-dialog-body {

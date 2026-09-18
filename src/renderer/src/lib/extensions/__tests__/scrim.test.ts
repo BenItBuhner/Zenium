@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ExtensionPromptRequest } from '@shared/types'
 import type { ExtensionPopupState } from '@renderer/lib/ui'
-import { extensionChromeScrim, type ScrimInput } from '../scrim'
+import { extensionChromeAloneOverContent, type ScrimInput } from '../scrim'
 
 const quiet: ScrimInput = {
   overlay: 'none',
@@ -40,50 +40,42 @@ const popup: ExtensionPopupState = {
   shown: true
 }
 
-describe('extensionChromeScrim', () => {
+describe('extensionChromeAloneOverContent', () => {
   it('leaves the frame alone when nothing of the extensions is up', () => {
-    expect(extensionChromeScrim(quiet)).toBeNull()
+    expect(extensionChromeAloneOverContent(quiet)).toBe(false)
   })
 
-  it('asks for no scrim behind the popup frame or the puzzle panel (§9.5)', () => {
-    expect(extensionChromeScrim({ ...quiet, extensionPopup: popup })).toBe('none')
-    expect(extensionChromeScrim({ ...quiet, floatingChrome: 1 })).toBe('none')
+  it('takes the dim off behind the popup frame or a popover, which have no scrim (§9.5)', () => {
+    expect(extensionChromeAloneOverContent({ ...quiet, extensionPopup: popup })).toBe(true)
+    expect(extensionChromeAloneOverContent({ ...quiet, floatingChrome: 1 })).toBe(true)
   })
 
-  it('asks for the dialog scrim behind an install or permission prompt', () => {
-    expect(extensionChromeScrim({ ...quiet, extensionPrompts: [prompt] })).toBe('dialog')
-    // A prompt wins over a popup or panel that is still open underneath it.
+  it("takes the dim off behind a prompt, whose scrim is its host's", () => {
+    expect(extensionChromeAloneOverContent({ ...quiet, extensionPrompts: [prompt] })).toBe(true)
     expect(
-      extensionChromeScrim({
+      extensionChromeAloneOverContent({
         ...quiet,
         extensionPrompts: [prompt],
         extensionPopup: popup,
         floatingChrome: 1
       })
-    ).toBe('dialog')
+    ).toBe(true)
   })
 
   it('defers to the shipped overlays when one of them is up as well', () => {
     const withPanel: ScrimInput = { ...quiet, floatingChrome: 1 }
-    expect(extensionChromeScrim({ ...withPanel, overlay: 'settings' })).toBeNull()
-    expect(extensionChromeScrim({ ...withPanel, drawerOpen: true })).toBeNull()
-    expect(extensionChromeScrim({ ...withPanel, siteInfoOpen: true })).toBeNull()
-    expect(extensionChromeScrim({ ...withPanel, stageActive: true })).toBeNull()
-    expect(extensionChromeScrim({ ...withPanel, drag: { tabId: 't', x: 0, y: 0 } })).toBeNull()
-    expect(
-      extensionChromeScrim({ ...withPanel, urlbar: { ...quiet.urlbar, open: true } })
-    ).toBeNull()
-    expect(extensionChromeScrim({ ...withPanel, barEditorOpen: true })).toBeNull()
-    expect(extensionChromeScrim({ ...withPanel, securityPromptOpen: true })).toBeNull()
-    expect(extensionChromeScrim({ ...withPanel, barMenuOpen: true })).toBeNull()
-    expect(
-      extensionChromeScrim({ ...withPanel, bookmarkAllTabs: { tabIds: [], defaultTitle: '' } })
-    ).toBeNull()
-    expect(
-      extensionChromeScrim({ ...withPanel, tabsMenu: { x: 0, y: 0, width: 44, height: 44 } })
-    ).toBeNull()
-    expect(
-      extensionChromeScrim({ ...quiet, extensionPrompts: [prompt], overlay: 'settings' })
-    ).toBeNull()
+    const alone = extensionChromeAloneOverContent
+    expect(alone({ ...withPanel, overlay: 'settings' })).toBe(false)
+    expect(alone({ ...withPanel, drawerOpen: true })).toBe(false)
+    expect(alone({ ...withPanel, siteInfoOpen: true })).toBe(false)
+    expect(alone({ ...withPanel, stageActive: true })).toBe(false)
+    expect(alone({ ...withPanel, drag: { tabId: 't', x: 0, y: 0 } })).toBe(false)
+    expect(alone({ ...withPanel, urlbar: { ...quiet.urlbar, open: true } })).toBe(false)
+    expect(alone({ ...withPanel, barEditorOpen: true })).toBe(false)
+    expect(alone({ ...withPanel, securityPromptOpen: true })).toBe(false)
+    expect(alone({ ...withPanel, barMenuOpen: true })).toBe(false)
+    expect(alone({ ...withPanel, bookmarkAllTabs: { tabIds: [], defaultTitle: '' } })).toBe(false)
+    expect(alone({ ...withPanel, tabsMenu: { x: 0, y: 0, width: 44, height: 44 } })).toBe(false)
+    expect(alone({ ...quiet, extensionPrompts: [prompt], overlay: 'settings' })).toBe(false)
   })
 })

@@ -14,6 +14,11 @@ export function claimPopover(close: () => void): () => void {
   }
 }
 
+/** Close the open popover without taking the slot: a modal dialog is going up over it. */
+export function closePopover(): void {
+  current?.()
+}
+
 /**
  * Whether the popover about to open was reached with the keyboard: the control that has focus
  * shows its focus ring (`:focus-visible`), which a pointer click on it would not have given it.

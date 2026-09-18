@@ -27,7 +27,6 @@ import { BookmarksBar } from './components/bookmarks/BookmarksBar'
 import { captionBandInMain } from '@renderer/lib/layout'
 import { ContentArea } from './components/content/ContentArea'
 import { DragGhost } from './components/DragGhost'
-import { ExtensionPromptDialog } from './components/extensions/ExtensionPromptDialog'
 import { PopupFrame } from './components/extensions/PopupFrame'
 import { ModStyles } from './components/ModStyles'
 import { Onboarding } from './components/overlays/Onboarding'
@@ -57,8 +56,8 @@ export function App(): JSX.Element {
       ) : (
         <DesktopShell state={state} theme={theme} />
       )}
+      {/* The extension popup's frame is a popover: it renders through the chrome layer. */}
       <PopupFrame />
-      <ExtensionPromptDialog />
     </>
   )
 }

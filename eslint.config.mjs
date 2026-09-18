@@ -72,7 +72,8 @@ export default defineConfig(
       'src/renderer/src/components/TabDialogs.tsx',
       'src/renderer/src/components/security/SecurityPromptDialog.tsx',
       'src/renderer/src/components/bookmarks/EditBookmarkDialog.tsx',
-      'src/renderer/src/components/bookmarks/BookmarkAllTabsDialog.tsx'
+      'src/renderer/src/components/bookmarks/BookmarkAllTabsDialog.tsx',
+      'src/renderer/src/components/extensions/ExtensionPromptDialog.tsx'
     ],
     rules: {
       'no-restricted-syntax': [

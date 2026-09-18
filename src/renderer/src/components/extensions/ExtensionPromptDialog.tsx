@@ -7,7 +7,8 @@ import { usePopover } from '@renderer/hooks/usePopover'
 import { answerExtensionPrompt } from '@renderer/lib/extensions/popup'
 import { fromSource } from '@renderer/lib/extensions/storeInput'
 import { useViewport } from '@renderer/lib/formFactor'
-import { contentAreaStore, uiStore } from '@renderer/lib/ui'
+import { useFrameDialog } from '@renderer/lib/portals'
+import { uiStore } from '@renderer/lib/ui'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 import { ExtensionIcon } from './ExtensionIcon'
 import { V2Button, V2Row, V2TitleBlock } from './v2'
@@ -15,28 +16,27 @@ import { WarningRow } from './WarningRow'
 
 /**
  * Install, update and `permissions.request` prompts as a v2 dialog (§1–§3: the panel colour,
- * radius 12, the dialog shadow; §9.5: only the content frame dims, the sidebar and toolbar stay
- * undimmed and inert; §9.23: a title block with the extension's icon, no bar and no X). Main
- * asks, the renderer shows what it will be able to do as rows with a glyph per kind, and two
- * buttons. One prompt at a time, oldest first; Escape, a click outside and Cancel all answer
- * no. On a finger it is a bottom sheet.
+ * radius 12, the dialog shadow; §9.23: a title block with the extension's icon, no bar and no
+ * X). Main asks, the renderer shows what it will be able to do as rows with a glyph per kind,
+ * and two buttons. One prompt at a time, oldest first; Escape, a press on the scrim and Cancel
+ * all answer no.
  *
- * While a prompt is queued the content frame counts as covered (`overlayCoversContent`): the
- * page's view is hidden and the frame shows its dimmed capture, the way every chrome overlay
- * does, so the dialog itself draws no tint.
+ * Rendered inside TabDialogs' `FrameDialogHost` (lib/portals.tsx), which centres the dialog in
+ * the content frame over its §9.5 scrim – the frame alone dims; the sidebar and toolbar stay
+ * undimmed. While a prompt is queued the content frame counts as covered
+ * (`overlayCoversContent`): the page's view is hidden and the frame shows its capture, the way
+ * every chrome overlay does; the dialog draws no tint of its own. On a finger the prompt is a
+ * bottom sheet, on the body with the other sheets (whose §9.24 stack is their mount order
+ * there), with the sheet's own scrim.
  */
 export function ExtensionPromptDialog(): JSX.Element | null {
   const prompt = uiStore.use((s) => s.extensionPrompts[0] ?? null)
   const viewport = useViewport()
   if (!prompt) return null
-  return createPortal(
-    viewport.coarse ? (
-      <SheetPrompt key={prompt.requestId} prompt={prompt} />
-    ) : (
-      <PanelPrompt key={prompt.requestId} prompt={prompt} />
-    ),
-    document.body
-  )
+  if (viewport.coarse) {
+    return createPortal(<SheetPrompt key={prompt.requestId} prompt={prompt} />, document.body)
+  }
+  return <PanelPrompt key={prompt.requestId} prompt={prompt} />
 }
 
 interface Copy {
@@ -119,56 +119,43 @@ function PromptBody({
   )
 }
 
+/**
+ * The desktop dialog: its panel in flow in the frame dialog host, which centres it and takes
+ * the pointer over the frame; a press on the host's scrim answers no. Focus lands on the
+ * accepting button, as Firefox's install prompt has it; Tab wraps inside; nothing in the chrome
+ * opened it, so there is no control to return focus to (§9.22). A modal, not a popover: it
+ * closes the popover open when it appears, a resize re-centres rather than closes it, and a
+ * popover opening later does not dismiss it.
+ */
 function PanelPrompt({ prompt }: { prompt: ExtensionPromptRequest }): JSX.Element {
   const answer = (accept: boolean): void => answerExtensionPrompt(prompt, accept)
-  const area = contentAreaStore.use((s) => s.area)
   const ref = useRef<HTMLDivElement>(null)
   const [scrolled, setScrolled] = useState(false)
-  // Focus lands on the accepting button, as Firefox's install prompt has it; Tab wraps inside;
-  // nothing in the chrome opened it, so there is no control to return focus to (§9.22). It is
-  // centred, not anchored: a resize re-centres it rather than closing it.
+  useFrameDialog({ onScrimPress: () => answer(false) })
   usePopover(ref, {
     onClose: () => answer(false),
     anchored: false,
+    claim: false,
     initial: (root) => root.querySelector<HTMLElement>('[data-accept]'),
     returnTo: null
   })
   const copy = copyFor(prompt)
-  // The dialog is centred on the content frame; the transparent layer over the whole window
-  // keeps the sidebar and toolbar inert until the prompt is answered, and a press outside the
-  // dialog answers no on pointerdown and goes no further (§9.20).
-  const frame = area ?? { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight }
   return (
     <div
-      className="zen-v2 fixed inset-0 z-[95]"
-      data-surface="page"
-      onPointerDown={(e) => {
-        e.stopPropagation()
-        answer(false)
-      }}
+      ref={ref}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="zen-ext-dialog-title"
+      className="zen-v2 zen-v2-dialog zen-ext-dialog zen-animate-pop"
     >
-      <div
-        className="absolute flex items-center justify-center"
-        style={{ left: frame.x, top: frame.y, width: frame.width, height: frame.height }}
-      >
-        <div
-          ref={ref}
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="zen-ext-dialog-title"
-          className="zen-v2-dialog zen-ext-dialog zen-animate-pop"
-          onPointerDown={(e) => e.stopPropagation()}
-        >
-          <V2TitleBlock
-            id="zen-ext-dialog-title"
-            title={copy.title}
-            description={copy.subtitle}
-            glyph={<ExtensionIcon icon={prompt.icon} size={16} box={16} />}
-            scrolled={scrolled}
-          />
-          <PromptBody prompt={prompt} onAnswer={answer} onScroll={setScrolled} />
-        </div>
-      </div>
+      <V2TitleBlock
+        id="zen-ext-dialog-title"
+        title={copy.title}
+        description={copy.subtitle}
+        glyph={<ExtensionIcon icon={prompt.icon} size={16} box={16} />}
+        scrolled={scrolled}
+      />
+      <PromptBody prompt={prompt} onAnswer={answer} onScroll={setScrolled} />
     </div>
   )
 }

@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
-import { claimPopover, focusableIn } from '@renderer/lib/popover'
+import { claimPopover, closePopover, focusableIn } from '@renderer/lib/popover'
 import { useEscape } from './useEscape'
 
 type Initial = 'first' | 'container' | ((root: HTMLElement) => HTMLElement | null)
@@ -13,6 +13,9 @@ type Initial = 'first' | 'container' | ((root: HTMLElement) => HTMLElement | nul
  * element of the caller's choosing; Tab wraps inside it; and when it goes while focus is still
  * inside, focus returns to the control that opened it (what had focus when it mounted). A close
  * by an outside press leaves focus where the press landed, since the press moved it first.
+ *
+ * The chrome layer and the frame dialog host (lib/portals.tsx) place a surface; this is what
+ * happens inside it, which neither supplies yet.
  */
 export function usePopover(
   ref: RefObject<HTMLElement | null>,
@@ -20,6 +23,7 @@ export function usePopover(
     onClose,
     active = true,
     anchored = true,
+    claim = true,
     initial = 'first',
     returnTo
   }: {
@@ -31,6 +35,12 @@ export function usePopover(
      * dialog passes false and stays through both.
      */
     anchored?: boolean
+    /**
+     * Holds the one popover slot (§9.20): another popover opening closes it. A modal dialog
+     * passes false – it closes the popover that is open when it appears, and a popover opening
+     * later does not dismiss it.
+     */
+    claim?: boolean
     initial?: Initial
     /**
      * Where focus goes back to – the anchor, as an element or a ref to one; defaults to the
@@ -44,7 +54,11 @@ export function usePopover(
     latestClose.current = onClose
   })
   useEscape(onClose)
-  useEffect(() => claimPopover(() => latestClose.current()), [])
+  useEffect(() => {
+    if (claim) return claimPopover(() => latestClose.current())
+    closePopover()
+    return undefined
+  }, [claim])
 
   useEffect(() => {
     if (!anchored) return
