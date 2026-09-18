@@ -30,6 +30,7 @@ import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
 import android.webkit.SslErrorHandler
 import android.webkit.ValueCallback
+import android.webkit.WebBackForwardList
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -133,11 +134,20 @@ class TabWebView(
      * the page's title, "Webpage not available", through `onReceivedTitle`) by the time the core
      * hears of the failure and replaces it with `zen://error`. Neither is the page the user asked
      * for: the commit is not reported as a navigation and the title is dropped, so nothing of the
-     * interstitial reaches history. Cleared by the next `onPageStarted`.
+     * interstitial reaches history. The core is quick to answer, and its `zen://error` page can
+     * start before WebView's own has committed (it still commits first: Chromium does not cancel
+     * a commit already under way for a later load), so the start of the core's error page keeps
+     * this; the next commit of any page, or the start of any other load, clears it.
      */
     private var failedUrl: String? = null
     /** WebView's built-in error page is the committed document, until another commit replaces it. */
     private var interstitial = false
+    /**
+     * The URL WebView's built-in error page last committed under. The entry stays in the
+     * back-forward list behind the core's `zen://error` page, and going back onto it would run
+     * the failed load again: [goBack] steps over it.
+     */
+    private var interstitialUrl: String? = null
     /** A certificate `onReceivedSslError` refused; the request's own failure follows and is the same news. */
     private var refusedCertificateUrl: String? = null
 
@@ -754,9 +764,25 @@ class TabWebView(
         super.reload()
     }
 
+    /**
+     * The entry [goBack] lands on, or -1 when there is none: the one behind, except from the
+     * core's error page when that is WebView's own error page for the load the core's page stands
+     * in for (see [interstitialUrl]) – then the one before it, as on the desktop, where the failed
+     * load never made an entry. The core's page is told by the view's URL: the entry's own is the
+     * `data:` URL `loadHtml` gave it, the history URL is what [getUrl] shows.
+     */
+    fun backIndex(history: WebBackForwardList = copyBackForwardList()): Int = backIndexOf(
+        history.currentIndex,
+        { history.getItemAtIndex(it)?.url },
+        onErrorPage = url?.startsWith(ERROR_PAGE_PREFIX) == true,
+        skipped = interstitialUrl
+    )
+
     override fun goBack() {
         rememberCurrentPage()
-        super.goBack()
+        val history = copyBackForwardList()
+        val steps = backIndex(history) - history.currentIndex
+        if (steps == -1) super.goBack() else if (steps < 0) super.goBackOrForward(steps)
     }
 
     override fun goForward() {
@@ -1065,7 +1091,9 @@ class TabWebView(
             rememberCurrentPage()
             backTransition?.onNavigation(PageBackTransition.NavigationEvent.STARTED)
             awaitingCommit = true
-            failedUrl = null
+            // The core's error page is the answer to the failure, and WebView's own error page
+            // for the failed load may commit only after this (see failedUrl).
+            if (!url.startsWith(ERROR_PAGE_PREFIX)) failedUrl = null
             currentDocument = url
             applyCookiePolicy(host.privacy.flags, url)
             // Without document-start scripts the signals arrive late, but they arrive.
@@ -1089,21 +1117,27 @@ class TabWebView(
          * a visit to a page that never loaded.
          */
         override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
-            currentDocument = url
             onHistoryCommitted()
             backTransition?.onNavigation(PageBackTransition.NavigationEvent.HISTORY_UPDATED)
+            if (failedUrl != null && url == failedUrl) {
+                // WebView's own error page, committing under the failed URL while the core's
+                // `zen://error` page is on its way or already loading (see failedUrl). The
+                // `onPageStarted` it may follow belongs to the core's page, whose commit is next.
+                failedUrl = null
+                interstitial = true
+                interstitialUrl = url
+                host.backChanged()
+                return
+            }
+            currentDocument = url
             // pushState / hash navigations have no onPageStarted of their own.
             val inPage = !awaitingCommit
             awaitingCommit = false
-            if (failedUrl != null && url == failedUrl) {
-                // WebView's own error page, committing under the failed URL while the core's
-                // `zen://error` page is on its way (see failedUrl).
-                interstitial = true
-            } else {
-                interstitial = false
-                refusedCertificateUrl = null
-                host.viewEvent(tabId, "navigated", navState().put("url", url).put("inPage", inPage))
-            }
+            // Another page committed: the failed load's own error page is not coming any more.
+            failedUrl = null
+            interstitial = false
+            refusedCertificateUrl = null
+            host.viewEvent(tabId, "navigated", navState().put("url", url).put("inPage", inPage))
             host.backChanged()
         }
 
@@ -1257,9 +1291,23 @@ class TabWebView(
 
     companion object {
         private const val PULL_TAG = "ZenPull"
+        /** The core's error pages and interstitials (`ERROR_URL_PREFIX` in `src/shared/url.ts`). */
+        private const val ERROR_PAGE_PREFIX = "zen://error"
         /** The object the page script posts to (and the wrappers in [evaluate] and [postToPage] name). */
         private const val PAGE_BRIDGE = "__zenPageBridge"
         private val encoder = Executors.newSingleThreadExecutor { r -> Thread(r, "zen-encode") }
+
+        /**
+         * The pure half of [backIndex]: the entry behind `currentIndex` (`entryUrlAt` reads the
+         * list's actual URLs), or the one before it when the view is on the core's error page and
+         * that entry is WebView's own error page for the failed load (`skipped`). -1 with nothing behind.
+         */
+        fun backIndexOf(currentIndex: Int, entryUrlAt: (Int) -> String?, onErrorPage: Boolean, skipped: String?): Int {
+            val behind = currentIndex - 1
+            if (behind < 0) return -1
+            if (onErrorPage && behind >= 1 && skipped != null && entryUrlAt(behind) == skipped) return behind - 1
+            return behind
+        }
 
         /** Longer than any tool budget (browser_wait_for allows 30 s) but shorter than the socket's. */
         private const val EVAL_TIMEOUT_MS = 45_000L

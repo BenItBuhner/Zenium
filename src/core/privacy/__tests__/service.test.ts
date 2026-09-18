@@ -281,6 +281,17 @@ describe('PrivacyService: HTTPS-only mode', () => {
     view.commit(warning.href)
     expect(f.browser.tabs.tab(view.tabId)?.errorCode).toBe(-102)
 
+    // "Back to safety" steps over the entry the failed https load left behind (the upgrade,
+    // not the http page the warning names) to the last good page.
+    view.history = ['https://start.example/', 'https://old.example/news', warning.href]
+    f.browser.handlePageMessage(view.tabId, {
+      type: 'interstitial',
+      action: 'back',
+      url: 'http://old.example/news'
+    })
+    expect(view.jumps).toEqual([0])
+    view.history = ['https://start.example/']
+
     // "Continue to site" for this session.
     f.browser.handlePageMessage(view.tabId, {
       type: 'interstitial',

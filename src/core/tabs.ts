@@ -35,6 +35,7 @@ import {
   ERROR_URL_PREFIX,
   errorPageUrl,
   httpsOnlyPageUrl,
+  interstitialKindOf,
   isNavigableUrl,
   safeBrowsingPageUrl,
   titleForUrl
@@ -597,6 +598,23 @@ export class TabManager {
   }
 
   /**
+   * The URLs history may hold for the page an error page of `tabId` stands in for: the page
+   * itself and, under HTTPS-only mode's question, the upgrade whose failure raised it. The
+   * engine's upgrade is a scheme swap (see `upgradeScheme`), so the entry the failed load left
+   * behind is the `https://` twin of the `http://` page the user asked for.
+   */
+  private errorPageTargets(tabId: string): ReadonlySet<string> {
+    const failed = this.errorPageTarget(tabId)
+    if (failed === null) return new Set()
+    const targets = new Set([failed])
+    const tab = this.tab(tabId)
+    if (tab && interstitialKindOf(tab.url) === 'https-only' && /^http:\/\//i.test(failed)) {
+      targets.add(`https://${failed.slice(7)}`)
+    }
+    return targets
+  }
+
+  /**
    * "Back to safety": leave an error page for the last entry of the tab's history that is not
    * the failed page itself (nor another error page), or for a blank tab when there is none. A
    * host whose snapshot is the current entry alone (Android) goes back one step when it can:
@@ -605,11 +623,11 @@ export class TabManager {
   leaveErrorPage(tabId: string): void {
     const view = this.view(tabId)
     if (!view) return
-    const failed = this.errorPageTarget(tabId)
+    const failed = this.errorPageTargets(tabId)
     const { entries, index } = view.navigationEntries()
     for (let i = index - 1; i >= 0; i--) {
       const url = entries[i]?.url
-      if (!url || url === failed || url.startsWith(ERROR_URL_PREFIX)) continue
+      if (!url || failed.has(url) || url.startsWith(ERROR_URL_PREFIX)) continue
       this.thawForNavigation(tabId)
       view.goToIndex(i)
       return

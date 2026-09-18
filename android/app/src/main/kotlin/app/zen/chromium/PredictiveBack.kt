@@ -461,7 +461,8 @@ class PageBackTransition private constructor(
             }
             if (!tab.isShown || tab.width <= 0 || tab.parent !is ViewGroup) return null
             val history = tab.copyBackForwardList()
-            val index = history.currentIndex - 1
+            // The entry back lands on (not always the one behind: see TabWebView.backIndex).
+            val index = tab.backIndex(history)
             if (index < 0) return null
             val item = history.getItemAtIndex(index) ?: return null
             val entry = host.snapshots.get(tab.tabId, index, item.url)

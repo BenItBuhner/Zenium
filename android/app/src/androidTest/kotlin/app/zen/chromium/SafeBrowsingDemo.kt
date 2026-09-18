@@ -283,6 +283,7 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
      * which way it went.
      */
     private fun pressInterstitial(f: Finger, label: String, action: String, url: String) {
+        val warning = state().getJSONObject("tabs").optJSONObject("tab_demo")?.optString("url") ?: ""
         val tapped = tapLabel(f, label, 8_000)
         if (!tapped) note("  (no node labelled '$label'; clicking through the tree)")
         if (!tapped && !clickByLabel(label)) {
@@ -290,10 +291,12 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
             postInterstitial(action, url)
             return
         }
+        // Left the warning page: for any other page, another error page of the core's included
+        // (a plain one for the same site would mean back landed on the failed load itself).
         val deadline = SystemClock.uptimeMillis() + 8_000
         while (SystemClock.uptimeMillis() < deadline) {
             val current = state().getJSONObject("tabs").optJSONObject("tab_demo")?.optString("url") ?: ""
-            if (!current.startsWith("zen://error")) return
+            if (current != warning) return
             SystemClock.sleep(300)
         }
         note("  (the tab stayed on the warning page after '$label'; posting the page's message)")
