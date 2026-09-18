@@ -25,7 +25,6 @@
   --zen-accent: #6264dc;
   --zen-accent-rgb: 98 100 220;
   --zen-panel-rgb: 251 251 252;
-  --zen-scrim-rgb: 73 72 74;
   --zen-texture: 0;
 
   /* Ink and fills: alphas of the foreground. */
@@ -51,9 +50,9 @@
   --zen-danger: #c43434;
   --zen-danger-rgb: 196 52 52;
 
-  /* Surfaces over the window: the space-tinted panel colour, blurred; a tinted scrim under them. */
+  /* Surfaces over the window: the space-tinted panel colour, blurred. The scrim under them is
+     the v2 one, aliased in the v2 token block below. */
   --zen-panel-bg: rgb(var(--zen-panel-rgb) / 0.8);
-  --zen-scrim: rgb(var(--zen-scrim-rgb) / 0.28);
   --zen-blur-panel: blur(24px) saturate(1.2);
   --zen-blur-hero: blur(40px) saturate(1.1);
   /* Elevation: 1 a resting card, 2 an active or dragged one, --zen-shadow (3) a panel. */
@@ -82,7 +81,6 @@
 
 :root[data-theme='dark'] {
   --zen-panel-rgb: 23 23 25;
-  --zen-scrim-rgb: 8 8 10;
   --zen-on-accent: #101010;
   --zen-ok: #6fd39a;
   --zen-ok-rgb: 111 211 154;
@@ -91,7 +89,6 @@
   --zen-danger: #ff8080;
   --zen-danger-rgb: 255 128 128;
   --zen-panel-bg: rgb(var(--zen-panel-rgb) / 0.86);
-  --zen-scrim: rgb(var(--zen-scrim-rgb) / 0.45);
   /* Dark elevation: the light opacities times 2.2, plus a one-pixel inner light hairline. */
   --zen-shadow-1:
     0 1px 2px rgb(0 0 0 / 0.2), 0 8px 24px rgb(0 0 0 / 0.32),
@@ -128,6 +125,12 @@
   --v2-on-accent: #fff;
   /* Behind a sheet: black, never the gradient's tint. */
   --v2-scrim: rgb(0 0 0 / 0.4);
+  /*
+   * The chassis scrim (`.zen-sheet-scrim`, `.zen-overview-scrim`, the Android host's native dim)
+   * is the v2 scrim (design language v2 §9.28): flat black, one tone under every sheet and
+   * drawer, no longer the space's tinted dark. Dark redefines `--v2-scrim`; the alias follows.
+   */
+  --zen-scrim: var(--v2-scrim);
   /* Elevation: panels and menus, dialogs and phone sheets, the floating URL bar (no border). */
   --v2-shadow-panel: 0 2px 6px rgb(0 0 0 / 0.2);
   --v2-shadow-sheet: 0 10px 8px rgb(0 0 0 / 0.15);
@@ -757,10 +760,7 @@
   }
   .zen-tab-ghost-row {
     background-color: var(--zen-bg-solid);
-    background-image: linear-gradient(
-      var(--v2-control-fill-hover),
-      var(--v2-control-fill-hover)
-    );
+    background-image: linear-gradient(var(--v2-control-fill-hover), var(--v2-control-fill-hover));
     box-shadow: var(--zen-shadow-2);
     transform: scale(1.02);
     opacity: 0.9;
