@@ -15,7 +15,7 @@ import java.util.concurrent.Executors
  * Android unit-test compile classpath, so this stands in.
  */
 class TinyHttpServer : AutoCloseable {
-    class Request(val method: String, val path: String, val headers: Map<String, String>) {
+    class Request(val method: String, val path: String, val headers: Map<String, String>, val body: ByteArray = ByteArray(0)) {
         fun header(name: String): String? = headers[name.lowercase(Locale.ROOT)]
     }
 
@@ -51,7 +51,8 @@ class TinyHttpServer : AutoCloseable {
 
     private fun serve(client: Socket) {
         client.use {
-            val reader = BufferedReader(InputStreamReader(client.getInputStream(), Charsets.ISO_8859_1))
+            val input = client.getInputStream()
+            val reader = BufferedReader(InputStreamReader(input, Charsets.ISO_8859_1), 1)
             val requestLine = reader.readLine() ?: return
             val parts = requestLine.split(' ')
             if (parts.size < 2) return
@@ -62,7 +63,16 @@ class TinyHttpServer : AutoCloseable {
                 val colon = line.indexOf(':')
                 if (colon > 0) headers[line.substring(0, colon).trim().lowercase(Locale.ROOT)] = line.substring(colon + 1).trim()
             }
-            val request = Request(parts[0], parts[1], headers)
+            // A body of the announced length (the reader is unbuffered past the line it returned).
+            val length = headers["content-length"]?.toIntOrNull() ?: 0
+            val body = ByteArray(length)
+            var read = 0
+            while (read < length) {
+                val ch = reader.read()
+                if (ch < 0) break
+                body[read++] = ch.toByte()
+            }
+            val request = Request(parts[0], parts[1], headers, body)
             val response = routes[request.path]?.invoke(request) ?: Response(404, "not found".toByteArray())
             val head = StringBuilder()
             head.append("HTTP/1.1 ").append(response.status).append(' ').append(reason(response.status)).append("\r\n")

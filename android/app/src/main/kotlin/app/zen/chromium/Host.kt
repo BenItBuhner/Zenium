@@ -251,7 +251,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "view.savePage" -> if (tab == null) reply(null) else savePage(tab, args.str("name"), reply)
             "view.snapshot" -> if (tab == null) reply(null) else tab.snapshot(reply)
             "view.screenshot" -> if (tab == null) reply(null) else tab.screenshot { png -> saveToDownloads(args.str("name"), "image/png", png, reply) }
-            "view.capture" -> if (tab == null) reply(null) else tab.capture(args.str("mode", "viewport"), args.optJSONObject("region"), args.str("format", "jpeg"), reply)
+            "view.capture" -> if (tab == null) reply(null) else tab.capture(args.str("mode", "viewport"), args.optJSONObject("region"), args.str("format", "jpeg"), args.optInt("quality", -1), reply)
             "view.certificate" -> reply(tab?.certificateInfo())
 
             // --- site information (cookies and storage of a site, per container) -------------------
