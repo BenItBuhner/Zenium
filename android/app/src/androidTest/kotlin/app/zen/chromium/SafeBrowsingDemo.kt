@@ -296,6 +296,8 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
             note("  (the Privacy and Security section never came up)")
             return
         }
+        // The tree has the section's rows before the screen does (software rendering).
+        beat()
         shot("17-settings-security")
         beat()
 
@@ -340,8 +342,7 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
                 SystemClock.sleep(1_800)
             } else {
                 note("  (the picker sheet never showed '$always')")
-                back()
-                SystemClock.sleep(1_000)
+                closeSheetIfOpen()
             }
             note("  httpsOnly=${privacySetting("httpsOnly")}")
             shot("21-settings-https-only-always")
@@ -387,8 +388,7 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
                 SystemClock.sleep(1_800)
             } else {
                 note("  (the picker sheet never showed '$COOKIES_BLOCK_LABEL')")
-                back()
-                SystemClock.sleep(1_000)
+                closeSheetIfOpen()
             }
             note("  thirdPartyCookies=${privacySetting("thirdPartyCookies")}")
         } else {
@@ -458,17 +458,39 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
     }
 
     /**
-     * Click the row that carries `label`: the nearest clickable ancestor of a node reading the
-     * label (see [rowWords]). False when no such row is in the tree.
+     * Click the row that carries `label` (see [rowWords]): the node itself or a clickable within
+     * three levels above it – a row's button or its radio, never the pane behind a heading. A
+     * node the WebView reads as label and description together (a button row) is tried before
+     * a bare label, which is as often the group's heading as the row. False when no row took
+     * the click.
      */
     private fun pressRow(label: String): Boolean {
-        if (clickByLabel(label)) return true
-        val match = findNode(rowWords(label)) ?: return false
-        var node: AccessibilityNodeInfo? = match
-        while (node != null && !node.isClickable) node = node.parent
-        val clicked = node?.performAction(AccessibilityNodeInfo.ACTION_CLICK) ?: false
-        if (!clicked) note("  (a node reads '$label…' but nothing above it is clickable)")
-        return clicked
+        val candidates = findNodes(rowWords(label)).sortedBy { node ->
+            val words = node.text?.toString() ?: node.contentDescription?.toString()
+            if (words == label) 1 else 0
+        }
+        for (match in candidates) {
+            var node: AccessibilityNodeInfo? = match
+            var hops = 0
+            while (node != null && !node.isClickable && hops < 3) {
+                node = node.parent
+                hops++
+            }
+            if (node != null && node.isClickable && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
+        }
+        if (candidates.isNotEmpty()) note("  (a node reads '$label…' but nothing close above it is clickable)")
+        return false
+    }
+
+    /**
+     * Back out of a picker sheet that is up – the chrome behind it is inert, so its chips leave
+     * the tree – and nothing when none is; Settings is reopened should back have taken it too.
+     */
+    private fun closeSheetIfOpen() {
+        if (findNode { it == "Privacy and Security" } != null) return
+        back()
+        SystemClock.sleep(1_000)
+        if (findNode { it == "Privacy and Security" } == null) openPrivacySettings()
     }
 
     /** Poll for the row labelled `label` (see [rowWords]) for up to `timeoutMs`. */
