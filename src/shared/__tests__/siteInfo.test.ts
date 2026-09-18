@@ -11,7 +11,7 @@ import {
   securityIndicator,
   type SiteCookie
 } from '../siteInfo'
-import { errorPageUrl } from '../url'
+import { errorPageUrl, httpsOnlyPageUrl, safeBrowsingPageUrl } from '../url'
 
 const cookie = (name: string, extra: Partial<SiteCookie> = {}): SiteCookie => ({
   name,
@@ -119,6 +119,19 @@ describe('securityIndicator', () => {
     expect(isCertificateError(-299)).toBe(true)
     expect(isCertificateError(-105)).toBe(false)
     expect(isCertificateError(null)).toBe(false)
+  })
+
+  it('reads the interstitials the way Chrome does: "Dangerous" and "Not secure"', () => {
+    const blocked = safeBrowsingPageUrl('https://evil.example/login', 'phishing')
+    expect(securityIndicator(blocked, -20)).toMatchObject({
+      state: 'dangerous',
+      label: 'Dangerous'
+    })
+    const question = httpsOnlyPageUrl('http://old.example/', -107)
+    expect(securityIndicator(question, -107)).toMatchObject({
+      state: 'insecure',
+      label: 'Not secure'
+    })
   })
 
   it('describes a Reader View page by the page it stands in for', () => {
