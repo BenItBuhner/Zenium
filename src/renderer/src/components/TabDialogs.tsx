@@ -4,6 +4,7 @@ import type { Tab, UIState } from '@shared/types'
 import { SPACE_ICONS } from '@shared/defaults'
 import { inputToUrl } from '@shared/url'
 import { run } from '@renderer/lib/api'
+import { FrameDialogHost, useFrameDialog } from '@renderer/lib/portals'
 import { activeTab, tabTitle } from '@renderer/lib/selectors'
 import { uiStore, type UiState } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
@@ -31,11 +32,13 @@ const TAB_ICONS = [
 ]
 
 /**
-/**
- * Small dialogs over the window, shown by every layout: the star bubble, "Bookmark all tabs", a
- * bookmark or folder edit requested outside the manager (the manager hosts its own), the
- * pinned-URL editor and the icon picker, and the security prompts (HTTP sign-in, certificate
- * choice) the page's requests wait on.
+ * Small dialogs shown by every layout: the star bubble, "Bookmark all tabs", a bookmark or
+ * folder edit requested outside the manager (the manager hosts its own), the pinned-URL editor
+ * and the icon picker, and the security prompts (HTTP sign-in, certificate choice) the page's
+ * requests wait on. The modal ones render through the `FrameDialogHost` this mounts, so they
+ * centre in the box it is placed in – the content frame on desktop, the shell on phones – over
+ * a scrim that dims only that box (lib/portals.tsx). The star bubble is a popover: on desktop
+ * it portals to the chrome layer, anchored under the star; on phones it is a sheet in the host.
  */
 export function TabDialogs({ state }: { state: UIState }): JSX.Element {
   const pinnedTabId = uiStore.use((s) => s.editingPinnedUrlTabId)
@@ -47,7 +50,7 @@ export function TabDialogs({ state }: { state: UIState }): JSX.Element {
   const pinnedTab = pinnedTabId ? state.tabs[pinnedTabId] : undefined
   const iconTab = iconTabId ? state.tabs[iconTabId] : undefined
   return (
-    <>
+    <FrameDialogHost>
       <BookmarkDialog
         state={state}
         star={star}
@@ -58,7 +61,7 @@ export function TabDialogs({ state }: { state: UIState }): JSX.Element {
         iconTab={iconTab}
       />
       <SecurityPrompts state={state} />
-    </>
+    </FrameDialogHost>
   )
 }
 
@@ -102,6 +105,7 @@ function BookmarkDialog({
   return null
 }
 
+/** The panel of a small frame dialog: the host's scrim and Escape both close it. */
 function Backdrop({
   onClose,
   children
@@ -109,6 +113,7 @@ function Backdrop({
   onClose: () => void
   children: React.ReactNode
 }): JSX.Element {
+  useFrameDialog({ onScrimPress: onClose })
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') {
@@ -120,16 +125,8 @@ function Backdrop({
     return () => window.removeEventListener('keydown', onKey, true)
   }, [onClose])
   return (
-    <div
-      className="absolute inset-0 z-50 flex items-center justify-center bg-black/25"
-      onMouseDown={onClose}
-    >
-      <div
-        className="zen-panel zen-animate-pop w-[420px] max-w-[calc(100%-32px)] p-4"
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        {children}
-      </div>
+    <div className="zen-panel zen-animate-pop w-[420px] max-w-[calc(100%-32px)] p-4">
+      {children}
     </div>
   )
 }

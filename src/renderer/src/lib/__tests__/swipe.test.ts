@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { dragPosition, rubberBand, settleTarget } from '../gestures/swipe'
+import {
+  SWIPE_THRESHOLDS,
+  dragPosition,
+  rubberBand,
+  settleTarget,
+  tabSwipeThresholds
+} from '../gestures/swipe'
 
 const extent = 400
 const track = { extent, min: 0, max: 4, origin: 1 }
@@ -66,6 +72,43 @@ describe('settleTarget', () => {
     // Pushing the open overview down by less than half brings it back.
     expect(settleTarget({ ...sheet, origin: 1, position: 0.6, velocity: 0 })).toBe(1)
     expect(settleTarget({ ...sheet, origin: 1, position: 0.5, velocity: 0 })).toBe(0)
+  })
+})
+
+describe('tabSwipeThresholds', () => {
+  // A 412 px wide phone: cards advance by the width plus the 16 px gap.
+  const width = 412
+  const advance = width + 16
+  const tabs = { extent: advance, min: 0, max: 2, origin: 1 }
+
+  it('commits after 90 px of travel on a phone, a third of the width on a narrow one', () => {
+    expect(tabSwipeThresholds(width, advance).commitFraction * advance).toBeCloseTo(90)
+    expect(tabSwipeThresholds(240, 256).commitFraction * 256).toBeCloseTo(80)
+    expect(tabSwipeThresholds(width, 0)).toBe(SWIPE_THRESHOLDS)
+  })
+
+  it('keeps the fling rules of the shared thresholds', () => {
+    const t = tabSwipeThresholds(width, advance)
+    expect(t.flingVelocity).toBe(SWIPE_THRESHOLDS.flingVelocity)
+    expect(t.projectionSeconds).toBe(SWIPE_THRESHOLDS.projectionSeconds)
+  })
+
+  it('a swipe across 45 % of the screen commits in both directions even with no velocity', () => {
+    // The emulator bug hunt's swipe: 185 px in either direction with the release velocity lost.
+    const travelled = (0.45 * width) / advance
+    const thresholds = tabSwipeThresholds(width, advance)
+    expect(settleTarget({ ...tabs, position: 1 + travelled, velocity: 0 }, thresholds)).toBe(2)
+    expect(settleTarget({ ...tabs, position: 1 - travelled, velocity: 0 }, thresholds)).toBe(0)
+    // The page-fraction rule tuned for the overview snapped the same swipe back.
+    expect(settleTarget({ ...tabs, position: 1 + travelled, velocity: 0 })).toBe(1)
+  })
+
+  it('a short nudge still returns to the tab it started from', () => {
+    const thresholds = tabSwipeThresholds(width, advance)
+    expect(settleTarget({ ...tabs, position: 1 + 60 / advance, velocity: 0 }, thresholds)).toBe(1)
+    expect(settleTarget({ ...tabs, position: 1 - 60 / advance, velocity: 0 }, thresholds)).toBe(1)
+    // …unless it is a fling.
+    expect(settleTarget({ ...tabs, position: 1 + 60 / advance, velocity: 600 }, thresholds)).toBe(2)
   })
 })
 

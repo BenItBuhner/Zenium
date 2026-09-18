@@ -172,6 +172,7 @@ export const DEFAULT_SETTINGS: Settings = {
   unloadExcludedDomains: [],
   searchEngineId: 'google',
   searchSuggestions: true,
+  showFullUrls: false,
   containerSpecificEssentials: true,
   essentialsMax: 12,
   newTabPosition: 'end',
