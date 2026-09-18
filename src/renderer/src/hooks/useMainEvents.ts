@@ -6,6 +6,7 @@ import { remoteDragOver } from '@renderer/lib/drag'
 import { startDownloadsUi } from '@renderer/lib/downloads'
 import { isPhone } from '@renderer/lib/formFactor'
 import { APP_MENU_EVENT } from '@renderer/lib/shortcuts'
+import { openSettings } from '@renderer/lib/pages'
 import {
   cancelExternalProtocol,
   closeMenu,
@@ -68,6 +69,16 @@ export function useMainEvents(): void {
       }),
       onEvent('overlay.open', ({ kind, folderId, section }) => {
         const ui = uiStore.get()
+        // Settings is a tab where the host has page tabs; the Shortcuts and Sync overlays are
+        // its sections. The core routes its own callers, this covers a host's stray request.
+        if (
+          (kind === 'settings' || kind === 'shortcuts' || kind === 'sync') &&
+          browserStore.get().state?.capabilities.pageTabs
+        ) {
+          closeUrlbar()
+          openSettings(kind === 'settings' ? (section ?? null) : kind)
+          return
+        }
         if (ui.overlay === kind && !folderId) {
           // Re-opening the same overlay toggles it, unless a specific section was requested.
           if (section) uiStore.set({ overlaySection: section })

@@ -251,14 +251,14 @@ describe('page controls in the browser', () => {
 
   it('ignores internal pages', () => {
     const { browser, platform, win } = start()
+    // An internal page is drawn by the chrome: the tab never gets a view to zoom or reload.
     const tab = browser.tabs.createTab({ url: 'zen://settings', active: true }, win)
-    const record = platform.records.get(tab.id)!
+    expect(platform.records.get(tab.id)).toBeUndefined()
     browser.handleCommand(win, 'tab.setZoomFactor', { tabId: tab.id, factor: 2 })
     browser.handleCommand(win, 'tab.setDesktopSite', { tabId: tab.id, on: true })
     expect(browser.state.settings.pageControls.siteZooms).toEqual({})
     expect(browser.state.settings.pageControls.desktopSites).toEqual({})
-    expect(record.zoom.every((z) => z === 1)).toBe(true)
-    expect(record.reloads).toBe(0)
+    expect(platform.records.get(tab.id)).toBeUndefined()
   })
 })
 

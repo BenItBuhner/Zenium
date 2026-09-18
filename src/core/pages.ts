@@ -135,16 +135,24 @@ export class PageService {
     this.open(ref.id, ref.section, tab ? this.browser.tabs.windowFor(tabId) : undefined, tabId)
   }
 
-  /** Move a page tab to a section of its page; a new history entry (no-op when already there). */
-  navigate(tabId: string, section: string | null): void {
+  /**
+   * Move a page tab to a section of its page: a new history entry, or with `replace` the current
+   * entry rewritten (the two-pane layout's nav, v2 §10.5). A move to the section already shown
+   * records nothing.
+   */
+  navigate(tabId: string, section: string | null, replace = false): void {
     const tab = this.browser.tabs.tab(tabId)
     const ref = tab ? parseInternalPageUrl(tab.url) : null
     if (!tab || !ref) return
     const url = internalPageUrl({ id: ref.id, section })
     if (url === tab.url) return
     const history = this.historyOf(tab)
-    history.entries = [...history.entries.slice(0, history.index + 1), url]
-    history.index = history.entries.length - 1
+    if (replace) {
+      history.entries[history.index] = url
+    } else {
+      history.entries = [...history.entries.slice(0, history.index + 1), url]
+      history.index = history.entries.length - 1
+    }
     this.apply(tab, history)
     this.browser.state.commit()
   }

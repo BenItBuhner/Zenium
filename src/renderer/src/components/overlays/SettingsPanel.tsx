@@ -23,7 +23,7 @@ import type {
   WindowSyncMode
 } from '@shared/types'
 import { DEFAULT_CONTAINER_ID } from '@shared/types'
-import { CONTAINER_COLORS, spaceLabel } from '@shared/defaults'
+import { CONTAINER_COLORS, CONTAINER_ICONS, spaceLabel } from '@shared/defaults'
 import { resolveDownloadSettings } from '@shared/downloads'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { run } from '@renderer/lib/api'
@@ -133,22 +133,6 @@ function resolveSection(
   return sections.some((s) => s.id === value) ? (value as SettingsSection) : 'look'
 }
 
-const CONTAINER_ICONS: ContainerIconName[] = [
-  'fingerprint',
-  'briefcase',
-  'dollar',
-  'cart',
-  'circle',
-  'gift',
-  'vacation',
-  'food',
-  'fruit',
-  'pet',
-  'tree',
-  'chill',
-  'fence'
-]
-
 export function SettingsPanel({
   state,
   initialSection
@@ -160,70 +144,93 @@ export function SettingsPanel({
   // The open section lives in the UI store so main-process events can retarget the panel while
   // it stays mounted (e.g. "Resource Settings…" from a menu).
   const stored = uiStore.use((u) => u.overlaySection)
+  return (
+    <OverlayShell title="Settings" variant="full" className="zen-settings" testId="settings-panel">
+      <SettingsBody
+        state={state}
+        section={stored ?? initialSection}
+        onSection={(id) => uiStore.set({ overlaySection: id })}
+      />
+    </OverlayShell>
+  )
+}
+
+/**
+ * The panel's nav and content, without the overlay around them: the desktop overlay's body, and
+ * what the Settings tab shows inside the content area where two panes fit (`pages/settings`).
+ * `section` may name a section this host lacks (a page-tab section id): the first one shows.
+ */
+export function SettingsBody({
+  state,
+  section: wanted,
+  onSection
+}: {
+  state: UIState
+  section: string | null | undefined
+  onSection: (id: SettingsSection) => void
+}): JSX.Element {
   const sections = availableSections(state.capabilities, state.platform)
-  const section = resolveSection(stored ?? initialSection, sections)
-  const setSection = (id: SettingsSection): void => uiStore.set({ overlaySection: id })
+  const section = resolveSection(wanted, sections)
+  const setSection = onSection
   const s = state.settings
   const set = (patch: Partial<Settings>): void => run('settings.update', patch)
   // The section list scrolls down on desktop and sideways as a row of chips on phones.
   const fadeNav = useFadeEdges<HTMLElement>({ axis: 'auto', size: 24 })
   const fadeContent = useFadeEdges<HTMLDivElement>({ axis: 'y' })
   return (
-    <OverlayShell title="Settings" variant="full" className="zen-settings" testId="settings-panel">
-      <div className="flex h-full">
-        <nav
-          ref={fadeNav}
-          className="w-52 shrink-0 overflow-y-auto border-r border-[var(--zen-border)] p-2"
-        >
-          {sections.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className={cn(
-                'zen-squircle flex h-9 w-full items-center rounded-lg px-3 text-left text-[13px] hover:bg-[var(--zen-element-bg)]',
-                section === item.id && 'bg-[var(--zen-element-bg-active)] font-medium'
-              )}
-              onClick={() => setSection(item.id)}
-            >
-              {item.label}
-            </button>
-          ))}
-        </nav>
-        <div ref={fadeContent} className="min-w-0 flex-1 overflow-y-auto p-6">
-          <div className="mx-auto flex max-w-2xl flex-col gap-6">
-            {section === 'look' && (
-              <LookSection
-                s={s}
-                set={set}
-                platform={state.platform}
-                caps={state.capabilities}
-                activeTabId={activeTab(state)?.id ?? null}
-              />
+    <div className="flex h-full">
+      <nav
+        ref={fadeNav}
+        className="w-52 shrink-0 overflow-y-auto border-r border-[var(--zen-border)] p-2"
+      >
+        {sections.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            className={cn(
+              'zen-squircle flex h-9 w-full items-center rounded-lg px-3 text-left text-[13px] hover:bg-[var(--zen-element-bg)]',
+              section === item.id && 'bg-[var(--zen-element-bg-active)] font-medium'
             )}
-            {section === 'accessibility' && <AccessibilitySection state={state} set={set} />}
-            {section === 'compact' && <CompactSection s={s} set={set} />}
-            {section === 'newtab' && <NewTabSection state={state} set={set} />}
-            {section === 'tabs' && (
-              <TabsSection s={s} set={set} windows={state.capabilities.windows} />
-            )}
-            {section === 'downloads' && <DownloadsSection state={state} set={set} />}
-            {section === 'resources' && <ResourcesSection state={state} set={set} />}
-            {section === 'search' && <SearchSection state={state} set={set} />}
-            {section === 'spaces' && <SpaceRoutingSection state={state} set={set} />}
-            {section === 'containers' && <ContainersSection state={state} />}
-            {section === 'boosts' && <BoostsSection state={state} />}
-            {section === 'mods' && <ModsSection state={state} />}
-            {section === 'extensions' && <ExtensionsSection state={state} />}
-            {section === 'agents' && <AgentsSection state={state} set={set} />}
-            {section === 'sync' && <SyncSection state={state} />}
-            {section === 'shortcuts' && <ShortcutsSection state={state} />}
-            {section === 'default-browser' && <DefaultBrowserSection state={state} />}
-            {section === 'updates' && <UpdatesSection state={state} set={set} />}
-            {section === 'about' && <AboutSection state={state} setSection={setSection} />}
-          </div>
+            onClick={() => setSection(item.id)}
+          >
+            {item.label}
+          </button>
+        ))}
+      </nav>
+      <div ref={fadeContent} className="min-w-0 flex-1 overflow-y-auto p-6">
+        <div className="mx-auto flex max-w-2xl flex-col gap-6">
+          {section === 'look' && (
+            <LookSection
+              s={s}
+              set={set}
+              platform={state.platform}
+              caps={state.capabilities}
+              activeTabId={activeTab(state)?.id ?? null}
+            />
+          )}
+          {section === 'accessibility' && <AccessibilitySection state={state} set={set} />}
+          {section === 'compact' && <CompactSection s={s} set={set} />}
+          {section === 'newtab' && <NewTabSection state={state} set={set} />}
+          {section === 'tabs' && (
+            <TabsSection s={s} set={set} windows={state.capabilities.windows} />
+          )}
+          {section === 'downloads' && <DownloadsSection state={state} set={set} />}
+          {section === 'resources' && <ResourcesSection state={state} set={set} />}
+          {section === 'search' && <SearchSection state={state} set={set} />}
+          {section === 'spaces' && <SpaceRoutingSection state={state} set={set} />}
+          {section === 'containers' && <ContainersSection state={state} />}
+          {section === 'boosts' && <BoostsSection state={state} />}
+          {section === 'mods' && <ModsSection state={state} />}
+          {section === 'extensions' && <ExtensionsSection state={state} />}
+          {section === 'agents' && <AgentsSection state={state} set={set} />}
+          {section === 'sync' && <SyncSection state={state} />}
+          {section === 'shortcuts' && <ShortcutsSection state={state} />}
+          {section === 'default-browser' && <DefaultBrowserSection state={state} />}
+          {section === 'updates' && <UpdatesSection state={state} set={set} />}
+          {section === 'about' && <AboutSection state={state} setSection={setSection} />}
         </div>
       </div>
-    </OverlayShell>
+    </div>
   )
 }
 

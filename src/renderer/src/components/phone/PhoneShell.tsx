@@ -13,6 +13,7 @@ import {
 } from '@renderer/lib/gestures/dock'
 import { closeOverview, overviewIsOpen, stageStore } from '@renderer/lib/gestures/stage'
 import { closeSpacesDrawer } from '@renderer/lib/gestures/drawer'
+import { isPageTab } from '@renderer/lib/pages'
 import { activeSpace, activeTab } from '@renderer/lib/selectors'
 import { openSiteInfo } from '@renderer/lib/siteInfo'
 import {
@@ -372,6 +373,9 @@ export function PillContent({
   // No lock over a certificate that failed verification (the interstitial, or the page the user
   // proceeded to): the connection is not secure, as site information says.
   const secure = shown?.url.startsWith('https://') && !shown.certificateError
+  // An internal page (Settings): the gear in the favicon slot and the page's name, no lock and
+  // no site-information chip – there is no site (v2 §10.1).
+  const page = isPageTab(shown)
   const Control = interactive ? 'button' : 'span'
   const controlProps = interactive ? { type: 'button' as const } : {}
   return (
@@ -391,7 +395,14 @@ export function PillContent({
           {url || 'Search or enter address'}
         </span>
       </Control>
-      {shown ? (
+      {shown && page ? (
+        <span
+          className="order-first -ml-1.5 -mr-2 flex h-8 w-8 shrink-0 items-center justify-center"
+          aria-hidden="true"
+        >
+          <Favicon tab={shown} size={16} />
+        </span>
+      ) : shown ? (
         <PillChip
           inert={!interactive}
           label="Site information"
@@ -405,7 +416,7 @@ export function PillContent({
       ) : (
         <Search className="order-first h-4 w-4 shrink-0 opacity-60" />
       )}
-      {url && secure && (
+      {url && secure && !page && (
         <PillChip
           inert={!interactive}
           label="Connection is secure"

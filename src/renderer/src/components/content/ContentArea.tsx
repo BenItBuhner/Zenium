@@ -6,6 +6,7 @@ import { cmd, run } from '@renderer/lib/api'
 import { chromeUnderPages } from '@renderer/lib/cover'
 import { wantsDefaultBrowserBanner } from '@renderer/lib/defaultBrowser'
 import { useViewport } from '@renderer/lib/formFactor'
+import { isPageTab } from '@renderer/lib/pages'
 import { activeTab, isForeignTab } from '@renderer/lib/selectors'
 import { useChord } from '@renderer/lib/shortcuts'
 import { captureActiveTab, panelAloneOverContent, uiStore, type UiState } from '@renderer/lib/ui'
@@ -14,6 +15,7 @@ import { cn } from '@renderer/lib/utils'
 import { dropStore } from '@renderer/lib/drag'
 import { Urlbar } from '../urlbar/Urlbar'
 import { OverlayHost } from '../overlays/OverlayHost'
+import { InternalPageHost } from '../pages/InternalPageHost'
 import { CoverImage } from './CoverImage'
 import { CrashRestoreBanner } from './CrashRestoreBanner'
 import { DefaultBrowserBanner } from './DefaultBrowserBanner'
@@ -75,8 +77,15 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
   // The phone's gesture stage draws its own cards where the page was; nothing to dim behind it.
   // Its URL bar covers the frame completely, so there is nothing to dim behind that either.
   const staged = ui.stageActive && !overlayCoversContentBesidesStage(ui)
+  // An internal page (Settings) is chrome: it has no view to snapshot and stays drawn under a
+  // sheet's own scrim, so nothing dims it from here.
+  const pageTab = isPageTab(tab)
   const showSnapshot =
-    (contentHidden || glanceActive) && Boolean(tab) && !staged && !(phone && ui.urlbar.open)
+    (contentHidden || glanceActive) &&
+    Boolean(tab) &&
+    !pageTab &&
+    !staged &&
+    !(phone && ui.urlbar.open)
   const dropKey = dropStore.use((s) => s.key)
   const foreign = isForeignTab(state, tab?.id)
   // The "Make Zenium your default browser" and "Restore pages?" strips sit above the page,
@@ -115,6 +124,7 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
           <div ref={viewportRef} className="relative min-h-0 flex-1 overflow-hidden" data-tear-zone>
             {state.capabilities.pullToRefresh && <PullIndicator />}
             {!tab && !ui.urlbar.open && ui.overlay === 'none' && !staged && <EmptyState />}
+            {tab && pageTab && <InternalPageHost state={state} tab={tab} />}
             {tab && foreign && !contentHidden && !glanceActive && (
               <ForeignTabPreview tabId={tab.id} />
             )}

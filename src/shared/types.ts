@@ -3072,8 +3072,15 @@ export interface Commands {
     args: { id: InternalPageId; section?: string | null; openerTabId?: string | null }
     result: string | null
   }
-  /** Move a page tab to a section of its page (a history entry; `null` is the landing page). */
-  'page.navigate': { args: { tabId: string; section: string | null }; result: void }
+  /**
+   * Move a page tab to a section of its page (`null` is the landing page): a new history entry,
+   * or with `replace` the current one rewritten – the two-pane layout's nav switches categories
+   * without stacking them (v2 §10.5, Firefox's `about:preferences#category`).
+   */
+  'page.navigate': {
+    args: { tabId: string; section: string | null; replace?: boolean }
+    result: void
+  }
   /**
    * System back inside a page tab: steps back through the page's own history first; at its
    * start, returns to the tab's opener (closing the page tab, as Chrome does) or, without one,

@@ -1962,7 +1962,8 @@ export class Browser {
 
       'page.open': ({ id, section, openerTabId }, win) =>
         this.pages.open(id, section, win, openerTabId),
-      'page.navigate': ({ tabId, section }) => this.pages.navigate(tabId, section),
+      'page.navigate': ({ tabId, section, replace }) =>
+        this.pages.navigate(tabId, section, replace ?? false),
       'page.back': ({ tabId }, win) => this.pages.back(tabId, win),
 
       'history.contextMenu': ({ visitId, url }, win) =>

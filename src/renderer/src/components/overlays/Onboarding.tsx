@@ -7,6 +7,7 @@ import { THEME_PRESETS, resolveTheme } from '@shared/theme'
 import { formatBinding } from '@shared/shortcuts'
 import { run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
+import { openSettings } from '@renderer/lib/pages'
 import {
   isTouchOnly,
   tourFeatures,
@@ -14,7 +15,6 @@ import {
   type TourFeature,
   type TourStep
 } from '@renderer/lib/onboarding'
-import { openOverlay } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { Button } from '../ui/button'
 import { PhoneOnboarding } from './PhoneOnboarding'
@@ -96,7 +96,7 @@ function DesktopOnboarding({
       patch: { theme: THEME_PRESETS[presetIndex].theme }
     })
     run('onboarding.complete', { searchEngineId: engine, colorScheme: scheme, essentials: picked })
-    if (sync && setupSync) setTimeout(() => void openOverlay('sync', null), 400)
+    if (sync && setupSync) setTimeout(() => openSettings('sync'), 400)
   }
 
   const highlights = state.shortcuts.filter((s) =>
