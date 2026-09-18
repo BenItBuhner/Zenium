@@ -367,11 +367,30 @@ class SettingsTabDemo : DemoHarness("settings-tab-demo-state.json", "android-set
                 finding("  the confirmation never came up")
                 return@step
             }
-            SystemClock.sleep(1_500)
-            val sheets = sheetCount()
-            val recede = chromeValue("getComputedStyle(document.documentElement).getPropertyValue('--zen-stack-recede').trim()")
+            // The chassis stack (BottomSheet.tsx, §9.24 / §11.2): the upper sheet writes the lower
+            // one's recede onto the lower sheet itself (`--zen-sheet-recede`, scale .97, inert,
+            // data-recessed) and, on the same progress, takes over the scrim – the lower sheet's
+            // fades out as the upper's fades in, so one scrim is lit over page and lower sheet.
+            // The upper sheet's spring is waited out (64 ms a frame at most, long frames here).
+            awaitChrome("(function(){var s=document.querySelectorAll('.zen-sheet');return s.length===2&&+s[0].style.getPropertyValue('--zen-sheet-recede')>0.9})()", 8_000)
+            SystemClock.sleep(600)
+            val stackJson = chromeValue(
+                "(function(){var s=Array.from(document.querySelectorAll('.zen-sheet'));var l=s[0];" +
+                    "var scrims=Array.from(document.querySelectorAll('.zen-sheet-scrim')).map(function(e){return Math.round(+getComputedStyle(e).opacity*100)/100});" +
+                    "return JSON.stringify({sheets:s.length,recede:l?l.style.getPropertyValue('--zen-sheet-recede').trim():''," +
+                    "recessed:!!(l&&l.dataset.recessed==='true'&&l.inert),scrims:scrims,lit:scrims.filter(function(o){return o>0.05}).length})})()"
+            )
+            val stack = runCatching { JSONObject(stackJson) }.getOrNull()
+            val sheets = stack?.optInt("sheets", -1) ?: sheetCount()
+            val recede = stack?.optString("recede", "") ?: ""
+            val recessed = stack?.optBoolean("recessed", false) ?: false
+            val lit = stack?.optInt("lit", -1) ?: -1
             shot("13-stacked-sheet")
-            finding("  sheets up: $sheets; --zen-stack-recede on the root: '$recede' ${verdict(sheets == 2 && recede.toDoubleOrNull()?.let { it > 0.9 } == true)}")
+            finding(
+                "  sheets up: $sheets; the lower sheet's --zen-sheet-recede '$recede', recessed and inert $recessed; " +
+                    "scrims lit ${if (lit >= 0) lit else "?"} of ${stack?.optJSONArray("scrims")?.length() ?: "?"} (opacities ${stack?.optJSONArray("scrims") ?: "?"}) " +
+                    verdict(sheets == 2 && recede.toDoubleOrNull()?.let { it > 0.9 } == true && recessed && lit == 1)
+            )
             // A dismissed sheet stays mounted until its spring has carried it out, and the spring
             // advances at most 64 ms per frame (lib/motion/spring.ts): under the emulator's software
             // GPU a frame is long, so the close takes seconds and is waited for, never slept over.
@@ -410,10 +429,14 @@ class SettingsTabDemo : DemoHarness("settings-tab-demo-state.json", "android-set
             SystemClock.sleep(1_200)
             val pillNow = findByLabelPrefix(PILL_LABEL) ?: pill
             Finger().tap(pillNow.exactCenterX(), pillNow.exactCenterY())
-            SystemClock.sleep(2_000)
-            val text = chromeValue("(document.querySelector('input[aria-label=\"Search or enter address\"]')||{}).value||''")
+            // The phone's editor field carries no aria-label (its placeholder names it); it is the
+            // one `urlbar-input` in the chrome. Its value arrives with the editor's first render.
+            val editing = awaitChrome("((document.querySelector('$URLBAR_FIELD')||{}).value||'')!==''", 6_000)
+            SystemClock.sleep(1_200)
+            val text = chromeValue("(document.querySelector('$URLBAR_FIELD')||{}).value||''")
+            val focused = chromeValue("String(document.activeElement===document.querySelector('$URLBAR_FIELD'))") == "true"
             shot("14-pill-editing")
-            finding("  pill text '$text' ${verdict(text == "zenium://settings/look")}")
+            finding("  editor ${if (editing) "up" else "NOT UP"}, field focused $focused; pill text '$text' ${verdict(text == "zenium://settings/look")}")
             // The keyboard, then the editor: two backs at most. This tab came from the deep link
             // (fromIntent), so a back at its landing would hand the user to the sender and leave
             // the app – the editor is closed by count, never by a loop that looks for the pill.
@@ -510,7 +533,7 @@ class SettingsTabDemo : DemoHarness("settings-tab-demo-state.json", "android-set
 
     /** The chrome's address editor is up (its field is mounted only while editing). */
     private fun urlbarOpen(): Boolean =
-        chromeValue("String(!!document.querySelector('input[aria-label=\"Search or enter address\"]'))") == "true"
+        chromeValue("String(!!document.querySelector('$URLBAR_FIELD'))") == "true"
 
     /** The browser's own window is the one in front (not the launcher, not a system dialog). */
     private fun appInFront(): Boolean = ui.rootInActiveWindow?.packageName?.toString() == app.packageName
@@ -744,6 +767,7 @@ class SettingsTabDemo : DemoHarness("settings-tab-demo-state.json", "android-set
         private const val SETTINGS_URL = "zen://settings"
         /** The landing's Find in Settings field, in the chrome's DOM. */
         private const val SEARCH_FIELD = ".zen-settings-search-field"
+        private const val URLBAR_FIELD = "input[data-testid=\"urlbar-input\"]"
         /** Inside the system's back-gesture inset on any density. */
         private const val EDGE_X = 2f
     }
