@@ -8,6 +8,7 @@ import { useViewport } from '@renderer/lib/formFactor'
 import { closeBookmarkChrome } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { FolderField } from './FolderField'
+import { POPOVER_WIDTH, useScrolled, wrapTab } from './popover'
 import { useBookmarkTree } from './tree'
 import { useEscapeTrap } from './escape'
 
@@ -23,7 +24,8 @@ export interface EditRequest {
 /**
  * Chrome's "Edit bookmark" / "Add bookmark" dialog (name and URL) and, for folders, "Rename
  * folder" / "New folder" (name only). `prefill` seeds a new bookmark with the current page, as
- * "Add page…" on the bar does.
+ * "Add page…" on the bar does. A v2 dialog (draft §9.23): a title block and no X; Escape, the
+ * scrim and the footer close it; the name field takes focus and Tab wraps (§9.22).
  */
 export function EditBookmarkDialog({
   state,
@@ -43,6 +45,9 @@ export function EditBookmarkDialog({
   const [folderId, setFolderId] = useState(node?.parentId ?? edit.parentId)
   const [nested, setNested] = useState(false)
   const nameRef = useRef<HTMLInputElement>(null)
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const bodyRef = useRef<HTMLFormElement>(null)
+  const scrolled = useScrolled(bodyRef)
 
   useEffect(() => {
     nameRef.current?.focus()
@@ -90,72 +95,85 @@ export function EditBookmarkDialog({
       )}
       onMouseDown={close}
     >
-      <form
+      <div
+        ref={dialogRef}
         role="dialog"
-        aria-label={title}
+        aria-labelledby="zen-bm-edit-title"
         className={cn(
-          'zen-animate-pop zen-bm-dialog flex flex-col gap-3',
-          phone ? 'mx-2 mb-[calc(8px+var(--zen-inset-bottom,0px))] w-auto flex-1' : 'w-[400px]'
+          'zen-animate-pop zen-bm-dialog flex max-h-[calc(100%-24px)] flex-col',
+          phone && 'mx-2 mb-[calc(8px+var(--zen-inset-bottom,0px))] w-auto flex-1'
         )}
+        style={phone ? undefined : { width: POPOVER_WIDTH.form }}
         onMouseDown={(e) => e.stopPropagation()}
         onKeyDown={(e) => {
           if (e.key === 'Escape') {
             e.preventDefault()
             e.stopPropagation()
-            close()
+            if (!nested) close()
+            return
           }
-        }}
-        onSubmit={(e) => {
-          e.preventDefault()
-          save()
+          wrapTab(e, dialogRef.current)
         }}
       >
-        <h2 className="zen-bm-dialog-title">{title}</h2>
-        <label className="zen-bm-label">
-          Name
-          <input
-            ref={nameRef}
-            className="zen-field"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            spellCheck={false}
-            autoComplete="off"
-          />
-        </label>
-        {!folder && (
+        <div className="zen-bm-title-block" data-scrolled={scrolled || undefined}>
+          <h2 id="zen-bm-edit-title" className="zen-bm-title">
+            {title}
+          </h2>
+        </div>
+        <form
+          ref={bodyRef}
+          className="zen-bm-popover-body zen-bm-form"
+          onSubmit={(e) => {
+            e.preventDefault()
+            save()
+          }}
+        >
           <label className="zen-bm-label">
-            URL
+            Name
             <input
+              ref={nameRef}
               className="zen-field"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
               spellCheck={false}
               autoComplete="off"
-              inputMode="url"
-              placeholder="https://"
             />
           </label>
-        )}
-        {!(node && isBookmarkRoot(node.id)) && (
-          <div className="zen-bm-label min-h-0">
-            Folder
-            <FolderField
-              tree={tree}
-              value={tree.get(folderId) ? folderId : edit.parentId}
-              onChange={setFolderId}
-              onNestedChange={setNested}
-            />
+          {!folder && (
+            <label className="zen-bm-label">
+              URL
+              <input
+                className="zen-field"
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                spellCheck={false}
+                autoComplete="off"
+                inputMode="url"
+                placeholder="https://"
+              />
+            </label>
+          )}
+          {!(node && isBookmarkRoot(node.id)) && (
+            <div className="zen-bm-label min-h-0">
+              Folder
+              <FolderField
+                tree={tree}
+                value={tree.get(folderId) ? folderId : edit.parentId}
+                onChange={setFolderId}
+                onNestedChange={setNested}
+              />
+            </div>
+          )}
+          <div className="zen-bm-footer justify-end">
+            <button type="button" className="zen-button" onClick={close}>
+              Cancel
+            </button>
+            <button type="submit" className="zen-button" data-variant="primary" disabled={!valid}>
+              Save
+            </button>
           </div>
-        )}
-        <div className="mt-1 flex justify-end gap-2">
-          <button type="button" className="zen-button" onClick={close}>
-            Cancel
-          </button>
-          <button type="submit" className="zen-button" data-variant="primary" disabled={!valid}>
-            Save
-          </button>
-        </div>
-      </form>
+        </form>
+      </div>
     </div>
   )
 }

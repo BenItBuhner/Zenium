@@ -91,9 +91,16 @@ export interface UiState {
   securityPromptOpen: boolean
   /**
    * The star bubble (Ctrl+D): the tab that was starred, its bookmark, and where the star it
-   * hangs from was when it opened (null when the pill is not on screen).
+   * hangs from and the address pill around it were when it opened (null when the pill is not
+   * on screen).
    */
-  starDialog: { tabId: string; nodeId: string; created: boolean; anchor: Rect | null } | null
+  starDialog: {
+    tabId: string
+    nodeId: string
+    created: boolean
+    anchor: Rect | null
+    pill: Rect | null
+  } | null
   /** A bookmark the manager should edit, or create (`id: null`) inside `parentId`. */
   bookmarkEdit: { id: string | null; parentId: string; type: BookmarkNodeType } | null
   /** "Bookmark all tabs": the pages to file and the folder name Chrome would suggest. */
@@ -293,20 +300,34 @@ export function bookmarkChromeOpen(ui: UiState): boolean {
   )
 }
 
-/** Like a menu: the page behind is captured first, then the chrome takes the keyboard. */
+/**
+ * Like a menu: the page behind is captured first, then the chrome takes the keyboard. One
+ * popover at a time (design-language-v2-draft §9.20): the star bubble and a bar panel replace
+ * each other rather than stacking.
+ */
 export async function openBookmarkChrome(
   patch: Partial<BookmarkChrome>,
   activeTabId: string | null
 ): Promise<void> {
   await captureActiveTab(activeTabId)
   run('focus.chrome', undefined)
-  uiStore.set(patch)
+  const exclusive: Partial<BookmarkChrome> = {}
+  if (patch.starDialog) exclusive.barMenuOpen = false
+  if (patch.barMenuOpen) exclusive.starDialog = null
+  uiStore.set({ ...exclusive, ...patch })
 }
 
-export function closeBookmarkChrome(patch: Partial<BookmarkChrome>): void {
+/**
+ * Put bookmark chrome away. Focus goes back to the page unless the caller keeps it in the
+ * chrome (`keepFocus`: Escape hands it to the anchor the popover hung from, §9.22).
+ */
+export function closeBookmarkChrome(
+  patch: Partial<BookmarkChrome>,
+  opts: { keepFocus?: boolean } = {}
+): void {
   uiStore.set(patch)
   invalidateSnapshot()
-  returnFocusToPage()
+  if (!opts.keepFocus) returnFocusToPage()
 }
 
 export async function openUrlbar(

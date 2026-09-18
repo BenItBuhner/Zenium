@@ -30,16 +30,21 @@ export function StarChip({ tab, filled }: { tab: Tab; filled: boolean }): JSX.El
   }, [filled, tab.id])
 
   const open = uiStore.use((s) => s.starDialog?.tabId === tab.id)
+  // A 28px icon button (v2 draft §9.3) that keeps its pressed fill while its bubble is open
+  // (§9.20). Its tab stop is the pill's business: every chip in the pill is `tabIndex -1` today
+  // and §9.22 makes them real buttons in one pass over the pill.
   return (
     <span
       role="button"
       tabIndex={-1}
       data-bm-star
       data-filled={filled}
+      data-open={open}
       aria-label={filled ? 'Edit bookmark' : 'Bookmark this tab'}
       aria-pressed={filled}
+      aria-haspopup="dialog"
       aria-expanded={open}
-      className="zen-bm-star -mr-2 flex h-7 w-7 shrink-0 items-center justify-center rounded-full opacity-70 hover:bg-[var(--zen-element-bg-hover)] hover:opacity-100"
+      className="zen-bm-star -mr-2 flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px]"
       title={filled ? 'Edit bookmark (Ctrl+D)' : 'Bookmark this tab (Ctrl+D)'}
       onClick={(e) => {
         e.stopPropagation()

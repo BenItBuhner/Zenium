@@ -2,7 +2,7 @@ import type { JSX } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ChevronRight } from 'lucide-react'
-import type { BookmarkNode, Tab, UIState } from '@shared/types'
+import type { BookmarkNode, Rect, Tab, UIState } from '@shared/types'
 import { BOOKMARKS_BAR_ID, MOBILE_BOOKMARKS_ID, OTHER_BOOKMARKS_ID } from '@shared/bookmarks'
 import { inputToUrl } from '@shared/url'
 import { cmd, run } from '@renderer/lib/api'
@@ -12,6 +12,7 @@ import { cn } from '@renderer/lib/utils'
 import { BarMenu, type BarMenuRoot } from './BarMenu'
 import { BookmarkIcon } from './BookmarkRow'
 import { ChipMotion } from './chipMotion'
+import { toRect } from './popover'
 import { nodeLabel, useBookmarkTree } from './tree'
 import { useBarDrag } from './useBarDrag'
 
@@ -88,11 +89,13 @@ export function BookmarksBar({
   // Panels: a folder chip's contents, or the chips that did not fit
   // ---------------------------------------------------------------------------
 
-  const [menu, setMenu] = useState<{ anchorId: string; anchor: DOMRect } | null>(null)
+  const [menu, setMenu] = useState<{ anchorId: string; anchor: Rect; bar: Rect } | null>(null)
   // Mirrors the `barMenuOpen` chrome flag this component holds, so the handlers can decide
-  // synchronously whether the page behind still has to be captured or released.
-  const holdsChrome = useRef(false)
+  // synchronously whether the page behind still has to be captured or released: `opening` while
+  // the page behind is being captured and the flag is not yet set, `open` once it is.
+  const holdsChrome = useRef<'opening' | 'open' | null>(null)
   const chipEls = useRef(new Map<string, HTMLElement>())
+  const barRef = useRef<HTMLDivElement>(null)
   // The overflow panel follows the chips it stands in for.
   const menuRoot = useMemo((): BarMenuRoot | null => {
     if (!menu) return null
@@ -101,29 +104,55 @@ export function BookmarksBar({
       : { kind: 'folder', id: menu.anchorId }
   }, [hidden, menu])
 
-  const closeMenu = useCallback((): void => {
-    if (!holdsChrome.current) return
-    holdsChrome.current = false
-    setMenu(null)
-    closeBookmarkChrome({ barMenuOpen: false })
-  }, [])
+  const menuAnchorId = menu?.anchorId ?? null
+  const closeMenu = useCallback(
+    (opts?: { focusAnchor: boolean }): void => {
+      if (!holdsChrome.current) return
+      holdsChrome.current = null
+      setMenu(null)
+      // Escape hands focus back to the chip the panel hung from (§9.22); a click leaves it be.
+      closeBookmarkChrome({ barMenuOpen: false }, { keepFocus: Boolean(opts?.focusAnchor) })
+      if (opts?.focusAnchor && menuAnchorId) chipEls.current.get(menuAnchorId)?.focus()
+    },
+    [menuAnchorId]
+  )
 
+  // The chip a panel was last asked for, so a capture that finishes late does not show a stale one.
+  const wantedAnchor = useRef<string | null>(null)
   const openMenu = useCallback(
     (anchorId: string): void => {
       const el = chipEls.current.get(anchorId)
-      if (!el) return
-      const anchor = el.getBoundingClientRect()
+      const barEl = barRef.current
+      if (!el || !barEl) return
+      const anchor = toRect(el.getBoundingClientRect())
+      const bar = toRect(barEl.getBoundingClientRect())
+      wantedAnchor.current = anchorId
       if (holdsChrome.current) {
-        setMenu({ anchorId, anchor })
+        setMenu({ anchorId, anchor, bar })
         return
       }
-      holdsChrome.current = true
+      holdsChrome.current = 'opening'
       // The page behind is captured first so the panel is not hidden under the live view.
       void openBookmarkChrome({ barMenuOpen: true }, tabId).then(() => {
-        if (holdsChrome.current) setMenu({ anchorId, anchor })
+        if (holdsChrome.current !== 'opening') return
+        holdsChrome.current = 'open'
+        // The pointer may have moved on to another chip while the page was being captured.
+        if (wantedAnchor.current === anchorId) setMenu({ anchorId, anchor, bar })
       })
     },
     [tabId]
+  )
+
+  // One popover at a time (§9.20): another surface taking the chrome flag (the star bubble
+  // opening, a dialog) puts the panel away without a hand-off.
+  useEffect(
+    () =>
+      uiStore.subscribe(() => {
+        if (uiStore.get().barMenuOpen || holdsChrome.current !== 'open') return
+        holdsChrome.current = null
+        setMenu(null)
+      }),
+    []
   )
 
   // Nothing left to show: the panel goes.
@@ -135,7 +164,12 @@ export function BookmarksBar({
     if (menu && menu.anchorId !== OVERFLOW_ANCHOR && !items.some((n) => n.id === menu.anchorId))
       closeMenu()
   }, [closeMenu, items, menu])
-  useEffect(() => () => closeMenu(), [closeMenu])
+  // The bar going away (compact mode, the setting) releases the chrome it holds.
+  const closeMenuRef = useRef(closeMenu)
+  useEffect(() => {
+    closeMenuRef.current = closeMenu
+  }, [closeMenu])
+  useEffect(() => () => closeMenuRef.current(), [])
 
   const toggleMenu = (anchorId: string): void => {
     if (menu?.anchorId === anchorId) closeMenu()
@@ -388,6 +422,7 @@ export function BookmarksBar({
 
   return (
     <div
+      ref={barRef}
       role="toolbar"
       aria-label="Bookmarks bar"
       className={cn('zen-bm-bar zen-no-drag', className)}
@@ -428,6 +463,8 @@ export function BookmarksBar({
             data-target={dropFolderId === node.id}
             data-icon-only={node.type === 'url' && !node.title ? true : undefined}
             aria-label={node.type === 'url' && !node.title ? nodeLabel(node) : undefined}
+            aria-haspopup={node.type === 'folder' ? 'menu' : undefined}
+            aria-expanded={node.type === 'folder' ? menu?.anchorId === node.id : undefined}
             aria-hidden={i >= visibleCount || undefined}
             tabIndex={i === focusIndex && i < visibleCount ? 0 : -1}
             className="zen-bm-chip"
@@ -535,6 +572,7 @@ export function BookmarksBar({
           tree={tree}
           root={menuRoot}
           anchor={menu.anchor}
+          bar={menu.bar}
           tabId={tabId}
           dropTarget={target}
           liftedId={liftedId}

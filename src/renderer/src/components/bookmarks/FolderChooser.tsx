@@ -18,7 +18,12 @@ interface Props {
   className?: string
 }
 
-/** The nested folder chooser of the star dialog and the edit dialog (Chrome's "Choose another folder"). */
+/**
+ * The nested folder chooser of the star bubble and the dialogs (Chrome's "Choose another
+ * folder"): a tree of folders in place of the menulist. Keyboard (v2 draft §9.22): the current
+ * folder's row takes focus when the tree appears; Up and Down walk the rows on screen, Right
+ * opens a folder or steps into it, Left closes one or steps out, Enter or Space picks.
+ */
 export function FolderChooser({
   tree,
   selectedId,
@@ -34,11 +39,15 @@ export function FolderChooser({
     return open
   })
   const [renaming, setRenaming] = useState<string | null>(null)
+  const treeRef = useRef<HTMLUListElement>(null)
   const selectedRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     selectedRef.current?.scrollIntoView({ block: 'nearest' })
   }, [selectedId])
+  useEffect(() => {
+    selectedRef.current?.querySelector<HTMLElement>('[data-pick-name]')?.focus()
+  }, [])
 
   const toggle = (id: string): void =>
     setExpanded((prev) => {
@@ -58,6 +67,49 @@ export function FolderChooser({
     setExpanded((prev) => new Set(prev).add(selectedId))
     onSelect(node.id)
     setRenaming(node.id)
+  }
+
+  const onKeyDown = (e: React.KeyboardEvent): void => {
+    if (renaming) return
+    const rows = [...(treeRef.current?.querySelectorAll<HTMLElement>('[data-pick-name]') ?? [])]
+    const at = rows.findIndex((r) => r === document.activeElement)
+    if (at === -1) return
+    const row = rows[at]
+    const id = row?.dataset.pickName ?? ''
+    const open = expanded.has(id)
+    const hasChildren = tree.children(id).some((c) => c.type === 'folder')
+    switch (e.key) {
+      case 'ArrowDown':
+        rows[Math.min(at + 1, rows.length - 1)]?.focus()
+        break
+      case 'ArrowUp':
+        rows[Math.max(at - 1, 0)]?.focus()
+        break
+      case 'Home':
+        rows[0]?.focus()
+        break
+      case 'End':
+        rows[rows.length - 1]?.focus()
+        break
+      case 'ArrowRight':
+        if (hasChildren && !open) toggle(id)
+        else if (hasChildren) rows[at + 1]?.focus()
+        break
+      case 'ArrowLeft': {
+        if (hasChildren && open) {
+          toggle(id)
+          break
+        }
+        const parentId = tree.get(id)?.parentId
+        const parent = parentId ? rows.find((r) => r.dataset.pickName === parentId) : undefined
+        parent?.focus()
+        break
+      }
+      default:
+        return
+    }
+    e.preventDefault()
+    e.stopPropagation()
   }
 
   const renderFolder = (node: BookmarkNode, depth: number): JSX.Element => {
@@ -103,6 +155,8 @@ export function FolderChooser({
             <button
               type="button"
               disabled={off}
+              tabIndex={selected ? 0 : -1}
+              data-pick-name={node.id}
               className="min-w-0 flex-1 truncate py-1 text-left"
               onClick={() => onSelect(node.id)}
               onDoubleClick={() => children.length && toggle(node.id)}
@@ -118,7 +172,12 @@ export function FolderChooser({
 
   return (
     <div className={cn('flex min-h-0 flex-col', className)}>
-      <ul role="tree" className="min-h-0 flex-1 overflow-y-auto p-1">
+      <ul
+        ref={treeRef}
+        role="tree"
+        className="min-h-0 flex-1 overflow-y-auto p-1"
+        onKeyDown={onKeyDown}
+      >
         {tree.roots().map((r) => renderFolder(r, 0))}
       </ul>
       {allowCreate && (

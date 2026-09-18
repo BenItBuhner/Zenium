@@ -6,8 +6,8 @@ import type { BookmarkTree } from '@shared/bookmarks'
 import { run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
 import { browserStore, closeBookmarkChrome, openBookmarkChrome } from '@renderer/lib/ui'
-import { cn } from '@renderer/lib/utils'
 import { FolderField } from './FolderField'
+import { POPOVER_MARGIN, POPOVER_WIDTH, placePopover, useScrolled, wrapTab } from './popover'
 import { useBookmarkTree } from './tree'
 import { useEscapeTrap } from './escape'
 
@@ -17,14 +17,20 @@ export interface StarTarget {
   created: boolean
   /** The star chip the bubble hangs from; null when the pill is not on screen. */
   anchor: Rect | null
+  /** The address pill the chip sits in: the bubble's top edge is the pill's bottom edge. */
+  pill: Rect | null
 }
 
-const WIDTH = 340
-const MARGIN = 8
+const WIDTH = POPOVER_WIDTH.list
 /** How long a bubble waits for the node its event names before giving up on it. */
 const ARRIVAL_GRACE_MS = 2000
 
 const close = (): void => closeBookmarkChrome({ starDialog: null })
+/** Escape: the bubble goes and the star it hung from takes the focus back (§9.22). */
+const closeToAnchor = (): void => {
+  closeBookmarkChrome({ starDialog: null }, { keepFocus: true })
+  document.querySelector<HTMLElement>('[data-bm-star]')?.focus({ preventScroll: true })
+}
 
 /**
  * Chrome's star bubble: the page was bookmarked the moment the star was pressed; this names and
@@ -64,6 +70,11 @@ export function StarDialog({
   return <StarBubble tree={tree} node={node} star={star} />
 }
 
+/**
+ * A desktop popover (v2 draft §9.20): 320 wide, its top border on the pill's bottom edge,
+ * end-aligned with the star (the star sits in the pill's trailing half), clamped 8px inside the
+ * window, no taller than 60% of it; a §9.23 title block over a body that scrolls under it.
+ */
 function StarBubble({
   tree,
   node,
@@ -78,9 +89,11 @@ function StarBubble({
   const [nested, setNested] = useState(false)
   const nameRef = useRef<HTMLInputElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
+  const bodyRef = useRef<HTMLFormElement>(null)
+  const scrolled = useScrolled(bodyRef)
   const removed = useRef(false)
 
-  useEscapeTrap(!nested, close)
+  useEscapeTrap(!nested, phone ? close : closeToAnchor)
 
   useEffect(() => {
     nameRef.current?.focus()
@@ -105,12 +118,17 @@ function StarBubble({
   )
 
   // A click anywhere else keeps the bookmark and puts the bubble away; the star chip toggles
-  // the bubble itself.
+  // the bubble itself, and the folder field's popup is part of the bubble though portalled out.
   useEffect(() => {
     if (phone) return
     const onDown = (e: PointerEvent): void => {
       const target = e.target as Element | null
-      if (!target || panelRef.current?.contains(target) || target.closest('[data-bm-star]')) return
+      if (
+        !target ||
+        panelRef.current?.contains(target) ||
+        target.closest('[data-bm-star], [data-bm-listbox]')
+      )
+        return
       close()
     }
     window.addEventListener('pointerdown', onDown, true)
@@ -137,16 +155,24 @@ function StarBubble({
   }
 
   const onKeyDown = (e: React.KeyboardEvent): void => {
-    if (e.key !== 'Escape') return
-    e.preventDefault()
-    e.stopPropagation()
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      e.stopPropagation()
+      return
+    }
+    wrapTab(e, panelRef.current)
   }
 
   const body = (
     <>
-      <h2 className="zen-bm-dialog-title">{title}</h2>
+      <div className="zen-bm-title-block" data-scrolled={scrolled || undefined}>
+        <h2 id="zen-bm-star-title" className="zen-bm-title">
+          {title}
+        </h2>
+      </div>
       <form
-        className="mt-3 flex min-h-0 flex-col gap-3"
+        ref={bodyRef}
+        className="zen-bm-popover-body zen-bm-form"
         onSubmit={(e) => {
           e.preventDefault()
           close()
@@ -172,7 +198,7 @@ function StarBubble({
             onNestedChange={setNested}
           />
         </div>
-        <div className="mt-1 flex items-center gap-2">
+        <div className="zen-bm-footer">
           <button
             type="button"
             className="zen-button mr-auto"
@@ -201,7 +227,7 @@ function StarBubble({
         <div
           ref={panelRef}
           role="dialog"
-          aria-label={title}
+          aria-labelledby="zen-bm-star-title"
           className="zen-animate-pop zen-bm-dialog mx-2 mb-[calc(8px+var(--zen-inset-bottom,0px))] flex max-h-[calc(100%-24px)] w-auto flex-1 flex-col"
           onMouseDown={(e) => e.stopPropagation()}
           onKeyDown={onKeyDown}
@@ -212,25 +238,22 @@ function StarBubble({
     )
   }
 
-  // 8px under the star, the star's centre inside the panel's first 40px – or its last 40px when
-  // the panel would otherwise leave the window on the right.
-  const a = star.anchor
-  const centre = a ? a.x + a.width / 2 : window.innerWidth - MARGIN - 20
-  let left = centre - 32
-  if (left + WIDTH > window.innerWidth - MARGIN) left = centre + 32 - WIDTH
-  left = Math.min(Math.max(MARGIN, left), window.innerWidth - WIDTH - MARGIN)
-  const top = a ? a.y + a.height + 8 : 56
+  // With no pill on screen (compact mode) the bubble stands in the window's top trailing corner.
+  const anchor = star.anchor ?? {
+    x: window.innerWidth - POPOVER_MARGIN - 28,
+    y: 28,
+    width: 28,
+    height: 28
+  }
+  const box = placePopover(anchor, star.pill ?? anchor, WIDTH)
 
   return createPortal(
     <div
       ref={panelRef}
       role="dialog"
-      aria-label={title}
-      className={cn(
-        'zen-animate-pop zen-bm-bubble fixed z-[70] flex flex-col',
-        'max-h-[calc(100vh-72px)]'
-      )}
-      style={{ left, top, width: WIDTH }}
+      aria-labelledby="zen-bm-star-title"
+      className="zen-animate-pop zen-bm-popover fixed z-[70] flex flex-col"
+      style={{ left: box.left, top: box.top, width: box.width, maxHeight: box.maxHeight }}
       onKeyDown={onKeyDown}
     >
       {body}

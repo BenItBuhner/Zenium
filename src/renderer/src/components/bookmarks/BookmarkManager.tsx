@@ -738,13 +738,13 @@ export function BookmarkManager({ state }: { state: UIState }): JSX.Element {
               {rows.length === 0 ? (
                 <EmptyNote>
                   {searching
-                    ? 'No matching bookmarks.'
+                    ? 'No matching bookmarks'
                     : current && isBookmarkRoot(current.id) && tree.size <= 3
-                      ? 'Press Ctrl+D on any page to bookmark it.'
-                      : 'This folder is empty.'}
+                      ? 'Press Ctrl+D on any page to bookmark it'
+                      : 'This folder is empty'}
                 </EmptyNote>
               ) : (
-                <div className="flex flex-col gap-px">
+                <div className="flex flex-col">
                   {rows.map((node) => (
                     <BookmarkRow
                       key={node.id}
@@ -925,19 +925,25 @@ function OverflowMenu({
   onImport,
   onExport
 }: OverflowProps): JSX.Element {
-  const [open, setOpen] = useState(false)
+  // Open, and whether the keyboard opened it: then the first item takes focus; a pointer leaves
+  // focus on the menu itself so the arrows start from the top (v2 draft §9.22).
+  const [open, setOpen] = useState<'keyboard' | 'pointer' | null>(null)
   const ref = useRef<HTMLDivElement>(null)
-  const close = (): void => setOpen(false)
-  useEscapeTrap(open, close)
+  const buttonRef = useRef<HTMLButtonElement>(null)
+  const close = (): void => {
+    setOpen(null)
+    buttonRef.current?.focus()
+  }
+  useEscapeTrap(open !== null, close)
 
   useEffect(() => {
     if (!open) return
-    const menu = ref.current?.querySelector<HTMLElement>(
-      '[role="menuitem"], [role="menuitemradio"]'
-    )
-    menu?.focus()
+    const menu = ref.current?.querySelector<HTMLElement>('[role="menu"]')
+    const first = menu?.querySelector<HTMLElement>('[role="menuitem"], [role="menuitemradio"]')
+    if (open === 'keyboard') first?.focus()
+    else menu?.focus()
     const onDown = (e: MouseEvent): void => {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false)
+      if (!ref.current?.contains(e.target as Node)) setOpen(null)
     }
     window.addEventListener('mousedown', onDown, true)
     return () => window.removeEventListener('mousedown', onDown, true)
@@ -955,7 +961,7 @@ function OverflowMenu({
       aria-checked={checked}
       className="zen-bm-menu-row"
       onClick={() => {
-        setOpen(false)
+        close()
         onSelect()
       }}
     >
@@ -965,32 +971,38 @@ function OverflowMenu({
     </button>
   )
 
-  // Arrow keys walk the rows; Escape is trapped above so it closes the menu, not the manager.
+  // Arrow keys walk the rows (from the top when the menu itself has focus) and Tab wraps through
+  // them; Escape is trapped above so it closes the menu, not the manager.
   const onMenuKeyDown = (e: React.KeyboardEvent): void => {
-    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Tab') return
     const rows = [...(ref.current?.querySelectorAll<HTMLElement>('[role^="menuitem"]') ?? [])]
     const at = rows.indexOf(document.activeElement as HTMLElement)
-    const step = e.key === 'ArrowDown' ? 1 : -1
-    rows[(at + step + rows.length) % rows.length]?.focus()
+    const back = e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey)
+    const next =
+      at === -1 ? (back ? rows.length - 1 : 0) : (at + (back ? -1 : 1) + rows.length) % rows.length
+    rows[next]?.focus()
     e.preventDefault()
   }
 
   return (
     <div ref={ref} className="relative">
       <button
+        ref={buttonRef}
         type="button"
         className={cn('zen-toolbar-button h-7 w-7', open && 'bg-[var(--zen-element-bg-active)]')}
         aria-label="More options"
         aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open !== null}
+        // A click's `detail` is its count; Enter and Space report 0.
+        onClick={(e) => setOpen((v) => (v ? null : e.detail === 0 ? 'keyboard' : 'pointer'))}
       >
         <Ellipsis className="h-4 w-4" />
       </button>
       {open && (
         <div
           role="menu"
-          className="zen-bm-menu zen-animate-pop absolute top-[calc(100%+6px)] right-0 z-20"
+          tabIndex={-1}
+          className="zen-bm-menu zen-animate-pop absolute top-[calc(100%+6px)] right-0 z-20 outline-none"
           onKeyDown={onMenuKeyDown}
         >
           {item('Add New Bookmark…', <Plus className="h-4 w-4" />, onAddBookmark)}

@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import type { UIState } from '@shared/types'
+import type { Rect, UIState } from '@shared/types'
 import { onEvent } from '@renderer/lib/api'
 import { isPhone } from '@renderer/lib/formFactor'
 import {
@@ -76,11 +76,17 @@ export function useMainEvents(): void {
       onEvent('tab.pickIcon', ({ tabId }) => uiStore.set({ iconPickerTabId: tabId })),
       onEvent('bookmark.star', (star) => {
         closeUrlbar()
-        // The bubble hangs from the star in the address pill, measured as the request arrives.
+        // The bubble hangs from the pill's bottom edge, end-aligned with the star in it (v2
+        // draft §9.20); both are measured as the request arrives.
         const chip = document.querySelector('[data-bm-star]')
-        const r = chip?.getBoundingClientRect()
-        const anchor = r ? { x: r.left, y: r.top, width: r.width, height: r.height } : null
-        void openBookmarkChrome({ starDialog: { ...star, anchor } }, currentActiveTabId())
+        const rect = (el: Element | null | undefined): Rect | null => {
+          const r = el?.getBoundingClientRect()
+          return r ? { x: r.left, y: r.top, width: r.width, height: r.height } : null
+        }
+        void openBookmarkChrome(
+          { starDialog: { ...star, anchor: rect(chip), pill: rect(chip?.closest('.zen-pill')) } },
+          currentActiveTabId()
+        )
       }),
       onEvent('bookmark.edit', (edit) => {
         // Inside the manager the request is handled in place; anywhere else it is a dialog.

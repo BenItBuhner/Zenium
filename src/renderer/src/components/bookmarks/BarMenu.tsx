@@ -2,11 +2,12 @@ import type { JSX } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
-import type { BookmarkNode } from '@shared/types'
+import type { BookmarkNode, Rect } from '@shared/types'
 import { BOOKMARKS_BAR_ID, type BookmarkTree } from '@shared/bookmarks'
 import { run } from '@renderer/lib/api'
 import { SPRING_SNAPPY, SpringAnimation, reducedMotion } from '@renderer/lib/motion/spring'
 import { BookmarkIcon } from './BookmarkRow'
+import { POPOVER_WIDTH, placePopover, useScrolled } from './popover'
 import { nodeLabel } from './tree'
 import type { BarDropTarget } from './useBarDrag'
 
@@ -19,17 +20,18 @@ export type BarMenuRoot =
 interface Props {
   tree: BookmarkTree
   root: BarMenuRoot
-  /** The chip the panel hangs from. */
-  anchor: DOMRect
+  /** The chip the panel hangs from, and the bar it sits in (the panel's top edge is the bar's bottom). */
+  anchor: Rect
+  bar: Rect
   tabId: string | null
   /** A bar drag's target, so the row or folder about to take the drop is marked. */
   dropTarget: BarDropTarget | null
   liftedId: string | null
-  onClose: () => void
+  /** `focusAnchor`: the keyboard closed the panel, so the chip it hung from takes focus back. */
+  onClose: (opts?: { focusAnchor: boolean }) => void
 }
 
-const WIDTH = 240
-const MARGIN = 8
+const WIDTH = POPOVER_WIDTH.list
 
 interface Nav {
   rootKey: string
@@ -38,15 +40,19 @@ interface Nav {
 }
 
 /**
- * A folder's panel on the bookmarks bar (and the overflow panel): a desktop menu of the
- * folder's contents. Subfolders push in from the right with a back chevron and the folder's
- * name; going back slides the same way in reverse. Keyboard: arrows, Enter, Right to push,
- * Left or Backspace to come back, Escape to close.
+ * A folder's panel on the bookmarks bar (and the overflow panel): a desktop popover of the
+ * folder's contents (design-language-v2-draft §9.20: 320 wide, flush with the bar's bottom edge,
+ * start-aligned with its chip or end-aligned from the trailing half, 60% of the window at most).
+ * Subfolders push in from the right under a bar header with a back chevron and the folder's
+ * name; going back slides the same way in reverse. Keyboard (§9.22): focus lands on the first
+ * row, arrows and Tab move it and wrap, Enter opens, Right pushes, Left or Backspace comes back,
+ * Escape closes and hands focus back to the chip.
  */
 export function BarMenu({
   tree,
   root,
   anchor,
+  bar,
   tabId,
   dropTarget,
   liftedId,
@@ -104,13 +110,9 @@ export function BarMenu({
     })
   }, [levelId, path, root, rootKey, tree])
 
-  const left = Math.min(Math.max(MARGIN, anchor.left), window.innerWidth - WIDTH - MARGIN)
-  const top = anchor.bottom + 6
-
-  // The panel takes the keyboard while open.
-  useEffect(() => {
-    panelRef.current?.focus({ preventScroll: true })
-  }, [rootKey])
+  const box = placePopover(anchor, bar, WIDTH)
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const scrolled = useScrolled(bodyRef)
 
   // Outside click closes; the chips decide for themselves (a click toggles, a hover switches).
   useEffect(() => {
@@ -125,7 +127,7 @@ export function BarMenu({
       e.preventDefault()
       e.stopPropagation()
       if (path.length) pop()
-      else onClose()
+      else onClose({ focusAnchor: true })
     }
     window.addEventListener('pointerdown', onDown, true)
     window.addEventListener('keydown', onKey, true)
@@ -157,6 +159,8 @@ export function BarMenu({
   useLayoutEffect(() => {
     const prev = shown.current
     shown.current = { key: levelKey, rootKey, depth: path.length, items, title }
+    // A level starts at its top; the sticky header's hairline follows the body's scroll.
+    if (bodyRef.current) bodyRef.current.scrollTop = 0
     if (!prev || prev.key === levelKey || prev.rootKey !== rootKey || reducedMotion()) return
     const dir = path.length > prev.depth ? 1 : -1
     setLeaving({ items: prev.items, title: prev.title })
@@ -185,6 +189,15 @@ export function BarMenu({
     },
     []
   )
+
+  // The panel takes the keyboard while open: focus rests on the highlighted row (the first one
+  // when a level opens) so the row's name is read out, and the panel hears the keys it bubbles.
+  useEffect(() => {
+    const rows = enteringRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]')
+    const row = rows?.[active] ?? rows?.[0]
+    if (row) row.focus({ preventScroll: true })
+    else panelRef.current?.focus({ preventScroll: true })
+  }, [active, levelKey, rootKey])
 
   // ---------------------------------------------------------------------------
   // Actions
@@ -225,7 +238,7 @@ export function BarMenu({
       case 'ArrowLeft':
       case 'Backspace':
         if (path.length) pop()
-        else onClose()
+        else onClose({ focusAnchor: true })
         break
       case 'Enter':
       case ' ':
@@ -235,8 +248,9 @@ export function BarMenu({
         if (current) run('bookmark.remove', { ids: [current.id] })
         break
       case 'Tab':
-        onClose()
-        return
+        // Tab wraps inside the popover (§9.22): it walks the rows like the arrows do.
+        if (n) setActive((a) => (a + (e.shiftKey ? n - 1 : 1)) % n)
+        break
       default:
         return
     }
@@ -263,10 +277,10 @@ export function BarMenu({
   ): JSX.Element => (
     <>
       {heading !== null && (
-        <div className="zen-bm-menu-title">
+        <div className="zen-bm-popover-header" data-scrolled={(live && scrolled) || undefined}>
           <button
             type="button"
-            className="zen-toolbar-button h-7 w-7"
+            className="zen-toolbar-button"
             aria-label="Back"
             tabIndex={-1}
             onClick={pop}
@@ -277,14 +291,14 @@ export function BarMenu({
         </div>
       )}
       <div
-        className="relative flex flex-col overflow-y-auto"
-        style={{ maxHeight: window.innerHeight - top - MARGIN - 12 - (heading !== null ? 28 : 0) }}
+        ref={live ? bodyRef : undefined}
+        className="zen-bm-popover-body zen-bm-popover-list relative flex flex-col"
         data-bar-drop={live ? `list:${folderId}` : undefined}
         onContextMenu={(e) => {
           if (e.target === e.currentTarget) contextMenu(e, null)
         }}
       >
-        {list.length === 0 && <div className="zen-bm-menu-row opacity-40">Empty</div>}
+        {list.length === 0 && <div className="zen-bm-empty-row">Empty</div>}
         {list.map((node, i) => {
           // One highlight, native-menu style: the active row follows the pointer (also when a
           // level slides in under a resting pointer), and the keyboard moves it from there.
@@ -301,7 +315,7 @@ export function BarMenu({
               data-active={live && i === active}
               data-target={dropTarget?.kind === 'folder' && dropTarget.folderId === node.id}
               data-lifted={node.id === liftedId}
-              className="zen-bm-menu-row"
+              className="zen-bm-popover-row"
               title={node.url ?? undefined}
               onPointerEnter={follow}
               onPointerMove={follow}
@@ -334,18 +348,18 @@ export function BarMenu({
       tabIndex={-1}
       data-bar-panel
       data-append-target={dropTarget?.kind === 'append' && dropTarget.parentId === folderId}
-      className="zen-bm-menu zen-animate-pop fixed z-[80] outline-none"
-      style={{ left, top, width: WIDTH }}
+      className="zen-bm-popover zen-animate-pop fixed z-[80] flex flex-col outline-none"
+      style={{ left: box.left, top: box.top, width: box.width, maxHeight: box.maxHeight }}
       onKeyDown={onKeyDown}
     >
-      <div ref={enteringRef} className="zen-bm-menu-level">
+      <div ref={enteringRef} className="zen-bm-menu-level flex min-h-0 flex-col">
         {renderLevel(items, title, true)}
       </div>
       {leaving && (
         <div
           ref={leavingRef}
           aria-hidden
-          className="zen-bm-menu-level pointer-events-none absolute inset-[6px]"
+          className="zen-bm-menu-level pointer-events-none absolute inset-0 flex flex-col"
         >
           {renderLevel(leaving.items, leaving.title, false)}
         </div>
@@ -355,7 +369,10 @@ export function BarMenu({
   )
 }
 
-/** The insertion line between two rows of the panel, a 2px accent line with pill ends. */
+/**
+ * The insertion line between two rows of the panel: a 2px accent line, 8px short of the rows'
+ * either end (the rows sit inside the list's 16px padding).
+ */
 function RowInsertLine({
   target
 }: {
@@ -376,7 +393,7 @@ function RowInsertLine({
       aria-hidden
       className="zen-bm-insert"
       data-axis="y"
-      style={{ top: 0, left: 8, right: 8 }}
+      style={{ top: 0, left: 24, right: 24 }}
     />
   )
 }
