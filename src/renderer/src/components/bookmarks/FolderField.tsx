@@ -1,12 +1,11 @@
 import type { JSX } from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { Check, ChevronDown, Folder } from 'lucide-react'
 import type { BookmarkTree } from '@shared/bookmarks'
 import { recentFolders } from '@shared/bookmarks'
+import { ChromePortal, POPOVER_MARGIN } from '@renderer/lib/portals'
 import { cn } from '@renderer/lib/utils'
 import { FolderChooser } from './FolderChooser'
-import { POPOVER_MARGIN } from './popover'
 import { useEscapeTrap } from './escape'
 
 interface Props {
@@ -37,8 +36,8 @@ interface PopupBox {
  * Chrome's folder control of the star bubble and the bookmark dialogs: a menulist showing the
  * folder's name whose popup (v2 draft §9.13: a panel under the trigger, 28px rows, the current
  * option checked) lists the recently used folders and a "Choose another folder…" row that swaps
- * the menulist for the whole folder tree (with "New folder"). The popup is portalled so the
- * dialog's scrolling body cannot clip it.
+ * the menulist for the whole folder tree (with "New folder"). The popup renders through the
+ * chrome layer (`ChromePortal`) so the dialog's scrolling body cannot clip it.
  */
 export function FolderField({
   tree,
@@ -170,8 +169,8 @@ export function FolderField({
         <span className="min-w-0 flex-1 truncate text-left">{current?.title ?? ''}</span>
         <ChevronDown className="h-4 w-4 shrink-0 opacity-60" />
       </button>
-      {popup &&
-        createPortal(
+      {popup && (
+        <ChromePortal>
           <ul
             ref={listRef}
             role="listbox"
@@ -212,9 +211,9 @@ export function FolderField({
                 Choose another folder…
               </button>
             </li>
-          </ul>,
-          document.body
-        )}
+          </ul>
+        </ChromePortal>
+      )}
     </div>
   )
 }

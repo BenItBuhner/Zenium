@@ -641,6 +641,38 @@
   }
 
   /*
+   * Where dialogs and popovers render (lib/portals.tsx). The frame dialog host lies over the
+   * content frame's box (the whole shell on phones): one grid cell, so dialogs open at once stack
+   * centred rather than sit side by side, and a phone sheet aligns itself to the bottom edge. It
+   * is inert until a dialog registers; then its scrim dims only the frame (§9.5). The chrome
+   * layer is the window-wide home of popovers, menus and toasts: above everything, catching no
+   * pointer of its own (each portal turns pointer events back on for its subtree).
+   */
+  .zen-frame-dialogs {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    place-items: center;
+    isolation: isolate;
+    pointer-events: none;
+  }
+  .zen-frame-dialogs[data-open] {
+    pointer-events: auto;
+  }
+  .zen-frame-dialogs > * {
+    grid-area: 1 / 1;
+  }
+  .zen-frame-scrim {
+    background: var(--v2-scrim-modal);
+  }
+  .zen-chrome-layer {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    pointer-events: none;
+  }
+
+  /*
    * Pull-to-refresh: the disc that comes down under the frame's top edge as the page is pulled
    * (touch hosts move the page WebView itself; see `lib/pull.ts`). A v2 panel – neutral, opaque,
    * its hairline border the edge – round because it is an indicator, not a control. Position,
@@ -1734,10 +1766,7 @@
     opacity: 1;
   }
 
-  /* The dialogs sit over a scrim that dims only the content frame (§9.5); the manager is a page. */
-  .zen-bm-scrim {
-    background: var(--v2-scrim-modal);
-  }
+  /* The dialogs sit in the frame dialog host, over its scrim (§9.5); the manager is a page. */
   .zen-bm-dialog {
     border-radius: 12px;
     corner-shape: var(--zen-corner);

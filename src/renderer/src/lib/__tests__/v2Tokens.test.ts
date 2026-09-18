@@ -15,6 +15,8 @@ const css = readFileSync(fileURLToPath(new URL('../../assets/main.css', import.m
  * it is moved to v2 on purpose; anything else reading a v2 token fails the last test.
  */
 const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
+  // The frame dialog host's scrim (lib/portals.tsx), which dims only the content frame (§9.5).
+  ['.zen-frame-dialogs {', '.zen-chrome-layer {'],
   // The pull-to-refresh disc (components/content/PullIndicator.tsx).
   ['.zen-ptr-disc {', '.zen-space-strip {'],
   // The v2 button, shared by every v2 surface (today the Settings > Look and Feel > Navigation bar

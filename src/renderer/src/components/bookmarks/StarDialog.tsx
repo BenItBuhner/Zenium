@@ -1,13 +1,20 @@
 import type { JSX } from 'react'
 import { useEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
 import type { BookmarkNode, Rect, UIState } from '@shared/types'
 import type { BookmarkTree } from '@shared/bookmarks'
 import { run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
+import {
+  ChromePortal,
+  POPOVER_MARGIN,
+  POPOVER_WIDTH,
+  placePopover,
+  useFrameDialog,
+  viewportSize
+} from '@renderer/lib/portals'
 import { browserStore, closeBookmarkChrome, openBookmarkChrome } from '@renderer/lib/ui'
 import { FolderField } from './FolderField'
-import { POPOVER_MARGIN, POPOVER_WIDTH, placePopover, useScrolled, wrapTab } from './popover'
+import { useScrolled, wrapTab } from './popover'
 import { useBookmarkTree } from './tree'
 import { useEscapeTrap } from './escape'
 
@@ -73,7 +80,9 @@ export function StarDialog({
 /**
  * A desktop popover (v2 draft §9.20): 320 wide, its top border on the pill's bottom edge,
  * end-aligned with the star (the star sits in the pill's trailing half), clamped 8px inside the
- * window, no taller than 60% of it; a §9.23 title block over a body that scrolls under it.
+ * window, no taller than 60% of it; a §9.23 title block over a body that scrolls under it. It
+ * renders through the chrome layer (`ChromePortal`), never inside the frame. On phones it is a
+ * sheet placed through the `FrameDialogHost` TabDialogs mounts, over that host's scrim.
  */
 function StarBubble({
   tree,
@@ -94,6 +103,7 @@ function StarBubble({
   const removed = useRef(false)
 
   useEscapeTrap(!nested, phone ? close : closeToAnchor)
+  useFrameDialog({ onScrimPress: close, active: phone })
 
   useEffect(() => {
     nameRef.current?.focus()
@@ -221,43 +231,39 @@ function StarBubble({
   if (phone) {
     return (
       <div
-        className="zen-animate-in zen-bm-scrim absolute inset-0 z-50 flex items-end"
-        onMouseDown={close}
+        ref={panelRef}
+        role="dialog"
+        aria-labelledby="zen-bm-star-title"
+        className="zen-animate-pop zen-bm-dialog mx-2 mb-[calc(8px+var(--zen-inset-bottom,0px))] flex max-h-[calc(100%-24px)] w-auto flex-col self-end justify-self-stretch"
+        onKeyDown={onKeyDown}
       >
-        <div
-          ref={panelRef}
-          role="dialog"
-          aria-labelledby="zen-bm-star-title"
-          className="zen-animate-pop zen-bm-dialog mx-2 mb-[calc(8px+var(--zen-inset-bottom,0px))] flex max-h-[calc(100%-24px)] w-auto flex-1 flex-col"
-          onMouseDown={(e) => e.stopPropagation()}
-          onKeyDown={onKeyDown}
-        >
-          {body}
-        </div>
+        {body}
       </div>
     )
   }
 
   // With no pill on screen (compact mode) the bubble stands in the window's top trailing corner.
+  const viewport = viewportSize()
   const anchor = star.anchor ?? {
-    x: window.innerWidth - POPOVER_MARGIN - 28,
+    x: viewport.width - POPOVER_MARGIN - 28,
     y: 28,
     width: 28,
     height: 28
   }
-  const box = placePopover(anchor, star.pill ?? anchor, WIDTH)
+  const box = placePopover(anchor, star.pill ?? anchor, viewport, WIDTH)
 
-  return createPortal(
-    <div
-      ref={panelRef}
-      role="dialog"
-      aria-labelledby="zen-bm-star-title"
-      className="zen-animate-pop zen-bm-popover fixed z-[70] flex flex-col"
-      style={{ left: box.left, top: box.top, width: box.width, maxHeight: box.maxHeight }}
-      onKeyDown={onKeyDown}
-    >
-      {body}
-    </div>,
-    document.body
+  return (
+    <ChromePortal>
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-labelledby="zen-bm-star-title"
+        className="zen-animate-pop zen-bm-popover fixed z-[70] flex flex-col"
+        style={{ left: box.left, top: box.top, width: box.width, maxHeight: box.maxHeight }}
+        onKeyDown={onKeyDown}
+      >
+        {body}
+      </div>
+    </ChromePortal>
   )
 }
