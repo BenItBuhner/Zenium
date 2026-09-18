@@ -541,6 +541,111 @@
   outline-offset: 2px;
   border-radius: var(--v2-radius-checkbox);
 }
+/*
+ * The interstitials (`zen://error?kind=safebrowsing` and `kind=https-only`, written by the same
+ * module; design-language-v2-draft §9.11, §9.23, §9.30): the neutral page above with a title
+ * block – the 16 / 20 px glyph in status ink 8 before the 22/600 title, centred on its 28 line,
+ * the description 15 at 69% 4 under it – and the actions 24 below it: Back to safety as the
+ * page's one primary, trailing, Details and the way on beside it as secondaries. On a phone two
+ * peers split the width and three or more stack, primary first (§9.11). Under Details the
+ * reason, the address at 13 and the secondary that goes on regardless, in danger ink where it
+ * goes to a dangerous site. A pressed action turns busy – full opacity, its label swapped for
+ * the 16 px spinner at the same width, `aria-busy` – while the others wait at .4 (disabled) for
+ * the browser's answer.
+ */
+.zen-interstitial-title {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.zen-interstitial-title > svg {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  flex-shrink: 0;
+  margin-top: calc((28px - var(--v2-icon)) / 2);
+  stroke-width: var(--v2-icon-stroke);
+}
+.zen-interstitial-title[data-tone='danger'] > svg {
+  color: var(--v2-danger);
+}
+.zen-interstitial-title[data-tone='warn'] > svg {
+  color: var(--v2-warn);
+}
+.zen-interstitial-title > div {
+  min-width: 0;
+  flex: 1;
+}
+.zen-interstitial-title h1 {
+  margin: 0;
+}
+.zen-interstitial-title p {
+  margin: 4px 0 0;
+  color: var(--v2-text-deemphasized);
+}
+.zen-interstitial-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 24px;
+}
+:root[data-form-factor='phone'] .zen-interstitial-actions > .zen-interstitial-action {
+  flex: 1;
+}
+:root[data-form-factor='phone'] .zen-interstitial-actions:has(> :nth-child(3)) {
+  flex-direction: column-reverse;
+}
+:root[data-form-factor='phone']
+  .zen-interstitial-actions:has(> :nth-child(3))
+  > .zen-interstitial-action {
+  flex: none;
+  width: 100%;
+}
+.zen-interstitial-details {
+  margin-top: 24px;
+}
+.zen-interstitial-details[hidden] {
+  display: none;
+}
+.zen-interstitial-details .zen-interstitial-actions {
+  margin-top: 16px;
+}
+.zen-interstitial-address {
+  margin: 0 0 8px;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-body);
+  overflow-wrap: anywhere;
+}
+.zen-interstitial-action {
+  position: relative;
+}
+.zen-interstitial-action[aria-busy='true'] > .zen-interstitial-label {
+  visibility: hidden;
+}
+.zen-interstitial-spinner {
+  position: absolute;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+.zen-interstitial-action[aria-busy='true'] > .zen-interstitial-spinner {
+  display: flex;
+}
+.zen-interstitial-spinner > svg {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  stroke-width: var(--v2-icon-stroke);
+  animation: zen-interstitial-spin 900ms linear infinite;
+}
+@keyframes zen-interstitial-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.zen-interstitial-danger {
+  color: var(--v2-danger);
+}
 
 @layer base {
   html,
@@ -6476,6 +6581,778 @@
 }
 :root[data-form-factor='phone'] .zen-v2-blocked-chip {
   border-radius: var(--v2-radius-card);
+}
+
+/*
+ * Settings > Privacy and Security (design-language-v2-draft §1–§3, §6, §9, §10.3–10.4; motion per
+ * v1 §7): neutral surfaces with hairline borders, Proton checkboxes and plain radios, 32 px rows
+ * and controls (44 and 40 under a finger), buttons at 500, hierarchy by size. The pane's
+ * `.zen-privacy-*` vocabulary and the `.zen-v2-check` / `-radio` / `-field` / `-textarea` /
+ * `-icon-button` controls up to the icon button are the blocking groups' (#115), read here as
+ * they are so the two halves of the pane draw as one; whichever of the two lands second drops
+ * its copy. The `.zen-protection-*` rules after them are the protection groups' own
+ * (components/overlays/ProtectionSection.tsx, overlays/protection/*).
+ */
+.zen-privacy {
+  display: flex;
+  max-width: var(--v2-content-max);
+  flex-direction: column;
+  gap: 32px;
+  color: var(--v2-text);
+  font-size: var(--v2-font-body);
+  font-weight: var(--v2-weight-body);
+  line-height: var(--v2-line-body);
+}
+:root[data-form-factor='phone'] .zen-privacy {
+  gap: 24px;
+}
+.zen-privacy-title {
+  font-size: var(--v2-font-title);
+  font-weight: var(--v2-weight-heading);
+  line-height: 28px;
+  letter-spacing: -0.01em;
+}
+/* On a phone the chip strip names the pane and groups carry 15/600 headings: no 22 title (§9.26). */
+:root[data-form-factor='phone'] .zen-privacy-title {
+  display: none;
+}
+.zen-privacy-muted {
+  color: var(--v2-text-deemphasized);
+  font-variant-numeric: tabular-nums;
+}
+.zen-privacy-warn {
+  color: var(--v2-warn);
+}
+.zen-privacy-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.zen-privacy-heading {
+  font-size: var(--v2-font-body);
+  font-weight: var(--v2-weight-heading);
+  line-height: var(--v2-line-body);
+}
+/*
+ * A card (§3, §6): flat, one hairline, radius 8, 16 px padding; only where a group carries its
+ * own actions. Rows inside it bring their own 16 px sides and touch (§9.21): no dividers, the
+ * card's block padding is what the first and last rows' own 6 / 12 px leave of the 16.
+ */
+.zen-privacy-card {
+  padding: 10px 0;
+  border: 1px solid var(--v2-card-border);
+  border-radius: var(--v2-radius-card);
+  corner-shape: var(--zen-corner);
+  background: var(--v2-card);
+}
+:root[data-form-factor='phone'] .zen-privacy-card {
+  padding: 4px 0;
+}
+/*
+ * The status card (§6, §9.27): a 17/600 title on the 22 px line (§4) with a 16 px glyph (20 on
+ * phones) on its start after an 8 px gap, centred on the title's line; a 15 description at 69%
+ * under it; the button trailing, centred on the card (§9.18). Figures are tabular (§4).
+ */
+.zen-privacy-card-title {
+  font-size: var(--v2-font-heading);
+  font-weight: var(--v2-weight-heading);
+  font-variant-numeric: tabular-nums;
+  line-height: 22px;
+}
+.zen-privacy-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: var(--v2-card-padding);
+}
+.zen-privacy-status > svg {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin: calc((22px - var(--v2-icon)) / 2) -4px 0 0;
+  stroke-width: var(--v2-icon-stroke);
+}
+/*
+ * A phone's card has no room beside the headline: the text takes the line, the button follows
+ * it. The card's 16 padding is restated here because the phone card rule above outranks
+ * `.zen-privacy-status` and would leave the glyph on the border.
+ */
+:root[data-form-factor='phone'] .zen-privacy-status {
+  flex-wrap: wrap;
+  padding: var(--v2-card-padding);
+}
+:root[data-form-factor='phone'] .zen-privacy-status-text {
+  flex-basis: calc(100% - var(--v2-icon) - 8px);
+}
+:root[data-form-factor='phone'] .zen-privacy-status-action {
+  margin-left: calc(var(--v2-icon) + 8px);
+}
+/*
+ * Rows (§9.2, §9.18): 32 one line, 52 with a description (label and description each on a 20 px
+ * line, 6 px of padding), growing with content; 44 / 64 on phones. The row centres what it
+ * holds; a leading checkbox or radio opts out below and sits on the first text line, a trailing
+ * control stays centred on the row.
+ */
+.zen-privacy-rows {
+  display: flex;
+  flex-direction: column;
+}
+.zen-privacy-row {
+  display: flex;
+  min-height: var(--v2-row);
+  align-items: center;
+  gap: 12px;
+  padding: 6px 0;
+}
+.zen-privacy-row:has(.zen-privacy-row-desc) {
+  min-height: var(--v2-row-two-line);
+}
+/* A row whose control is off (the switch is off) dims its text with the control (v1 §8.8's 40%). */
+.zen-privacy-row:has(> input:disabled) .zen-privacy-row-text {
+  opacity: 0.4;
+}
+.zen-privacy-card > .zen-privacy-row {
+  padding-left: var(--v2-card-padding);
+  padding-right: var(--v2-card-padding);
+}
+:root[data-form-factor='phone'] .zen-privacy-row {
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+.zen-privacy-row-text {
+  min-width: 0;
+  flex: 1;
+}
+.zen-privacy-row-label {
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+  overflow-wrap: anywhere;
+}
+/*
+ * The description: 13 at 69% on the same 20 px line as the label (§9.2), two lines at most,
+ * figures tabular (§4).
+ */
+.zen-privacy-row-desc {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--v2-line-body);
+  overflow-wrap: anywhere;
+}
+/*
+ * Trailing icon buttons (§9.18, §9.21): the row grows around its control to the control plus 8 –
+ * 36 / 52 around a 28 / 44 button – and the 4 above and below are the row's own padding, so
+ * adjacent buttons sit 8 apart. The text (and a leading box) keep their 6 / 12 by carrying the
+ * other 2 / 8 themselves: two-line rows stay 52 / 64 and wrapped ones 72 / 84 beside rows
+ * without buttons, and the box stays on the first text line. The buttons are 4 px apart.
+ */
+.zen-privacy-row-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+}
+.zen-privacy-row:has(> .zen-privacy-row-actions) {
+  min-height: max(var(--v2-row), calc(var(--v2-icon-button) + 8px));
+  padding-block: 4px;
+}
+.zen-privacy-row:has(> .zen-privacy-row-actions) > .zen-privacy-row-text {
+  margin-block: 2px;
+}
+.zen-privacy-row:has(> .zen-privacy-row-actions) > .zen-v2-check {
+  margin-top: calc(2px + (var(--v2-line-body) - var(--v2-checkbox)) / 2);
+}
+:root[data-form-factor='phone'] .zen-privacy-row:has(> .zen-privacy-row-actions) {
+  padding-block: 4px;
+}
+:root[data-form-factor='phone']
+  .zen-privacy-row:has(> .zen-privacy-row-actions)
+  > .zen-privacy-row-text {
+  margin-block: 8px;
+}
+:root[data-form-factor='phone'] .zen-privacy-row:has(> .zen-privacy-row-actions) > .zen-v2-check {
+  margin-top: calc(8px + (var(--v2-line-body) - var(--v2-checkbox)) / 2);
+}
+/* Three text lines (the description wrapped): the controls centre on the label's line instead. */
+.zen-privacy-row[data-wrapped] > .zen-privacy-row-actions {
+  align-self: flex-start;
+  margin-top: calc(2px + (var(--v2-line-body) - var(--v2-icon-button)) / 2);
+}
+:root[data-form-factor='phone'] .zen-privacy-row[data-wrapped] > .zen-privacy-row-actions {
+  margin-top: calc(8px + (var(--v2-line-body) - var(--v2-icon-button)) / 2);
+}
+/*
+ * A form field in a card (§9.12, §9.21): its label above it, 15/400 on the 20 px line, 4 px to
+ * the field, the button beside the field; the 4 above and below are the row's own.
+ */
+.zen-privacy-add {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px var(--v2-card-padding);
+}
+.zen-privacy-add-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+/* A field on the page with its own lines under it (§9.12): description, validation, 4 px apart. */
+.zen-privacy-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.zen-privacy-field-desc {
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-body);
+}
+/* An action under a field hugs its label (§9.11): 88 px at least under a finger. */
+:root[data-form-factor='phone'] .zen-privacy-hug {
+  min-width: 88px;
+}
+/*
+ * Empty state inside a card (§9.17): one plain row – 32 / 44 tall, the sentence at 15 and 69%
+ * left-aligned at the card's 16 padding like a row's label, no top gap; the card's next row is
+ * its follow-up.
+ */
+.zen-privacy-empty {
+  padding: 6px var(--v2-card-padding);
+  color: var(--v2-text-deemphasized);
+  text-align: start;
+}
+:root[data-form-factor='phone'] .zen-privacy-empty {
+  padding-block: 12px;
+}
+/* Validation text (§9.12): 13 in the danger ink with a 16 px glyph, under the field it is about. */
+.zen-privacy-invalid {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--v2-danger);
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-body);
+}
+.zen-privacy-invalid svg {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  flex-shrink: 0;
+  margin-top: calc((var(--v2-line-body) - var(--v2-icon)) / 2);
+  stroke-width: var(--v2-icon-stroke);
+}
+.zen-privacy-card > .zen-privacy-invalid {
+  padding: 0 var(--v2-card-padding) 4px;
+}
+/*
+ * Checkbox (§6, §9.2): 16 at radius 2, accent fill with the on-accent check; on the first text
+ * line, (line − box) / 2 below its top – 2 px on desktop, 0 under a finger where box and line are
+ * both 20.
+ */
+.zen-v2-check {
+  display: grid;
+  width: var(--v2-checkbox);
+  height: var(--v2-checkbox);
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin: calc((var(--v2-line-body) - var(--v2-checkbox)) / 2) 0 0;
+  place-items: center;
+  border: 1px solid rgb(var(--v2-text-rgb) / 0.45);
+  border-radius: var(--v2-radius-checkbox);
+  background: var(--v2-page);
+  appearance: none;
+  -webkit-appearance: none;
+  transition:
+    background 120ms var(--zen-ease),
+    border-color 120ms var(--zen-ease);
+}
+/* Hovering the row hovers its control too (a label's control matches :hover); the checked fill stays. */
+.zen-v2-check:hover:not(:disabled):not(:checked) {
+  background: var(--v2-fill);
+}
+.zen-v2-check:checked {
+  border-color: var(--v2-accent);
+  background: var(--v2-accent);
+}
+.zen-v2-check:checked::after {
+  width: 76%;
+  height: 76%;
+  background: var(--v2-on-accent);
+  content: '';
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-7' fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-7' fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+}
+.zen-v2-check:disabled {
+  opacity: 0.4;
+}
+/* Plain radio (§9.14): a 16 / 20 circle, accent fill with a 6 px page-colour dot when chosen. */
+.zen-v2-radio {
+  display: grid;
+  width: var(--v2-checkbox);
+  height: var(--v2-checkbox);
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin: calc((var(--v2-line-body) - var(--v2-checkbox)) / 2) 0 0;
+  place-items: center;
+  border: 1px solid rgb(var(--v2-text-rgb) / 0.45);
+  border-radius: 50%;
+  background: var(--v2-page);
+  appearance: none;
+  -webkit-appearance: none;
+  transition:
+    background 120ms var(--zen-ease),
+    border-color 120ms var(--zen-ease);
+}
+.zen-v2-radio:hover:not(:disabled):not(:checked) {
+  background: var(--v2-fill);
+}
+.zen-v2-radio:checked {
+  border-color: var(--v2-accent);
+  background: var(--v2-accent);
+}
+.zen-v2-radio:checked::after {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--v2-page);
+  content: '';
+}
+.zen-v2-radio:disabled {
+  opacity: 0.4;
+}
+/* Fields (§5): 32 tall at radius 4 with a hairline, 40 and radius 6 under a finger. */
+.zen-v2-field {
+  min-width: 0;
+  height: var(--v2-control);
+  flex: 1;
+  padding: 0 12px;
+  border: 1px solid var(--v2-border);
+  border-radius: var(--v2-radius-control);
+  background: var(--v2-page);
+  color: var(--v2-text);
+  font-size: var(--v2-font-body);
+}
+.zen-v2-field::placeholder,
+.zen-v2-textarea::placeholder {
+  color: var(--v2-text-deemphasized);
+}
+/* The filters editor: the body face, not monospace (§4 reserves that for secrets). */
+.zen-v2-textarea {
+  width: 100%;
+  min-height: 128px;
+  padding: 8px 12px;
+  border: 1px solid var(--v2-border);
+  border-radius: var(--v2-radius-control);
+  background: var(--v2-page);
+  color: var(--v2-text);
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+  resize: vertical;
+}
+/* No resize grip under a finger: it cannot be dragged there and only crowds the corner. */
+:root[data-form-factor='phone'] .zen-v2-textarea {
+  resize: none;
+}
+/* Icon buttons (§9.3): 28 with a 16 glyph on desktop, 44 with 20 on phones, 40 on tablets. */
+.zen-v2-icon-button {
+  display: inline-flex;
+  width: var(--v2-icon-button);
+  height: var(--v2-icon-button);
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--v2-radius-inner);
+  color: var(--v2-text);
+  transition:
+    background 120ms var(--zen-ease),
+    transform 120ms var(--zen-ease),
+    opacity 120ms var(--zen-ease);
+}
+.zen-v2-icon-button svg {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  stroke-width: var(--v2-icon-stroke);
+}
+.zen-v2-icon-button:hover:not(:disabled) {
+  background: var(--v2-fill);
+}
+.zen-v2-icon-button:active:not(:disabled) {
+  transform: scale(0.98);
+}
+.zen-v2-icon-button:disabled {
+  opacity: 0.4;
+}
+:root[data-form-factor='phone'] .zen-v2-icon-button {
+  border-radius: var(--v2-radius-card);
+}
+/*
+ * From here on, the protection groups' own rules (components/overlays/ProtectionSection.tsx and
+ * overlays/protection/*). The pane's `.zen-privacy-*` vocabulary and the `.zen-v2-*` controls
+ * above are read as they are; these add the 22 section's title block, a sub-heading's
+ * description, a card's title block, the fields' disabled state, the phone's switch, value and
+ * action rows, the picker sheet, the busy button and the menulist.
+ *
+ * A 22/600 section of the pane (§9.26): title on the 28 line, its description 4 under it, 16 to
+ * the first group; the groups 32 apart (24 on phones, §10.3). The title block is a desktop
+ * composition (§10.3): on a phone the groups stand under their 15/600 headings alone.
+ */
+.zen-protection-part {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.zen-protection-part-title {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+:root[data-form-factor='phone'] .zen-protection-part-title {
+  display: none;
+}
+.zen-protection-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+:root[data-form-factor='phone'] .zen-protection-groups {
+  gap: 24px;
+}
+/* A sub-heading with its description 4 under it (§9.27); the section's 8 then leads to the rows. */
+.zen-protection-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+/*
+ * A card's title block (§9.23, §9.27): 16 from the card's edge to the title (the card's own 10
+ * plus 6), its 16 px glyph 8 before it on the 22 line, the description 15 at 69% under it, an
+ * action trailing and centred on the block (§9.18), then 16 to the first row's box.
+ */
+.zen-protection-card-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px var(--v2-card-padding) 16px;
+}
+.zen-protection-card-title > svg {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin: calc((22px - var(--v2-icon)) / 2) -4px 0 0;
+  stroke-width: var(--v2-icon-stroke);
+}
+/* A field in a card (§9.12, §9.21): the card's 16 sides, the 4 above and below the row's own. */
+.zen-privacy-card > .zen-protection-field {
+  padding: 4px var(--v2-card-padding) 6px;
+}
+/* A field or an add row whose parent is off (§10.4): its label and lines at .4 with the control. */
+.zen-protection-field[data-disabled] > label,
+.zen-protection-field[data-disabled] > .zen-privacy-field-desc,
+.zen-privacy-add[data-disabled] > label {
+  opacity: 0.4;
+}
+.zen-protection .zen-v2-field:disabled {
+  opacity: 0.4;
+}
+/* A dependent row (§10.4): its text at .4; its controls carry their own `disabled`. */
+.zen-privacy-row[data-disabled] > .zen-privacy-row-text {
+  opacity: 0.4;
+}
+/*
+ * Phone groups are rows with no card (§9.17, §10.3): the card-shaped pieces – the empty row, the
+ * add row, a field – lose the card's 16 sides and sit on the page's gutter with the rows.
+ */
+.zen-privacy-rows > .zen-privacy-empty,
+.zen-privacy-rows > .zen-privacy-add,
+.zen-privacy-rows > .zen-protection-field {
+  padding-left: 0;
+  padding-right: 0;
+}
+:root[data-form-factor='phone'] .zen-privacy-rows > .zen-protection-field {
+  padding-top: 4px;
+  padding-bottom: 8px;
+}
+/*
+ * The phone switch row (§10.4): the whole row is the control (`role="switch"`), its label on the
+ * text side and the 36 × 20 switch trailing, centred on the row (§9.18); the press fill is the
+ * row's, bleeding to the page's edge through the interim overlay's 12 px gutter (the §10 tab's
+ * rows run edge to edge with their own 16). Disabled is .4 on the row, text and switch together
+ * (§9.30).
+ */
+:root[data-form-factor='phone'] .zen-protection {
+  --zen-protection-gutter: 12px;
+}
+.zen-protection-switch-row,
+.zen-protection-action-row {
+  width: 100%;
+  text-align: start;
+  color: inherit;
+  transition: background 120ms var(--zen-ease);
+}
+:root[data-form-factor='phone'] .zen-protection-switch-row,
+:root[data-form-factor='phone'] .zen-protection-action-row {
+  width: auto;
+  margin-left: calc(-1 * var(--zen-protection-gutter, 0px));
+  margin-right: calc(-1 * var(--zen-protection-gutter, 0px));
+  padding-left: var(--zen-protection-gutter, 0px);
+  padding-right: var(--zen-protection-gutter, 0px);
+}
+.zen-protection-switch-row:active:not(:disabled),
+.zen-protection-action-row:active:not(:disabled) {
+  background: var(--v2-fill);
+}
+.zen-protection-switch-row:disabled,
+.zen-protection-action-row:disabled {
+  opacity: 0.4;
+}
+.zen-v2-switch {
+  position: relative;
+  display: block;
+  width: 36px;
+  height: 20px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  background: rgb(var(--v2-text-rgb) / 0.25);
+  transition: background 150ms var(--zen-ease);
+}
+.zen-v2-switch::after {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--v2-page);
+  content: '';
+  transition:
+    transform 150ms var(--zen-ease),
+    background 150ms var(--zen-ease);
+}
+[aria-checked='true'] > .zen-v2-switch {
+  background: var(--v2-accent);
+}
+[aria-checked='true'] > .zen-v2-switch::after {
+  transform: translateX(16px);
+  background: var(--v2-on-accent);
+}
+/*
+ * An action row (§10.4): the whole row is a button; a trailing 16 / 20 glyph only because it
+ * leaves the app (the system's Private DNS screen), the spinner while it works (§9.30).
+ */
+.zen-protection-action-row > svg {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  flex-shrink: 0;
+  color: var(--v2-text-deemphasized);
+  stroke-width: var(--v2-icon-stroke);
+}
+/* A secret string in a field (§4): the platform monospace at the field's size, no ligatures. */
+.zen-protection-secret {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+  font-variant-ligatures: none;
+}
+/* The 16 / 20 spinner (§9.30): the row glyph size. */
+.zen-protection-spinner {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  stroke-width: var(--v2-icon-stroke);
+}
+/* A busy button keeps its width and opacity; the spinner takes the label's place (§9.30). */
+.zen-protection-busy {
+  position: relative;
+}
+.zen-protection-busy-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.zen-protection-busy-spinner {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+/*
+ * The picker sheet (§9.13, §10.4; `PickerSheet`): the chassis `BottomSheet` as a v2 sheet – the
+ * dialog surface with a hairline edge at radius 12 in place of the tinted sheet, `--v2-scrim`
+ * on its own scrim element (§9.28) – with a 48 header (§9.16) or a title block (§9.23) after
+ * the grip strip, then radio rows 44 / 64 tall edge to edge, their text inset 16 (§9.25), the
+ * press fill bleeding to the border.
+ */
+.zen-protection-sheet-layer .zen-sheet-scrim {
+  background: var(--v2-scrim);
+}
+.zen-sheet.zen-protection-sheet {
+  padding-left: 0;
+  padding-right: 0;
+  border: 1px solid var(--v2-border);
+  border-bottom: 0;
+  border-radius: var(--v2-radius-sheet) var(--v2-radius-sheet) 0 0;
+  background: var(--v2-panel);
+  color: var(--v2-text);
+  backdrop-filter: none;
+  box-shadow: var(--v2-shadow-sheet);
+}
+:root[data-theme='dark'] .zen-sheet.zen-protection-sheet {
+  box-shadow: var(--v2-shadow-sheet);
+}
+.zen-protection-sheet .zen-sheet-handle {
+  background: rgb(var(--v2-text-rgb) / 0.25);
+}
+.zen-protection-sheet-header {
+  display: flex;
+  height: 48px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 16px;
+}
+.zen-protection-sheet-header > h2,
+.zen-protection-sheet-title > h2 {
+  margin: 0;
+  overflow: hidden;
+  font-size: var(--v2-font-heading);
+  font-weight: var(--v2-weight-heading);
+  line-height: 22px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.zen-protection-sheet-title {
+  padding: 16px;
+}
+.zen-protection-sheet-title > h2 {
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.zen-protection-sheet-title > p {
+  margin: 4px 0 0;
+  color: var(--v2-text-deemphasized);
+  line-height: 22px;
+  overflow-wrap: anywhere;
+}
+.zen-protection-sheet-rows {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 8px;
+}
+.zen-protection-sheet-row {
+  display: flex;
+  min-height: var(--v2-row);
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  transition: background 120ms var(--zen-ease);
+}
+.zen-protection-sheet-row:active {
+  background: var(--v2-fill);
+}
+/*
+ * The menulist (§6, §9.13): 32 tall at radius 4 with a hairline, the 10% fill, 15/500 and a
+ * 16 px chevron; lit while its list is open, .4 when disabled. A row holding one grows to the
+ * control plus 8 (§9.21). Scoped to the pane: the class is shared with the other v2 surfaces
+ * and each draws its own until the shell pass gives it one rule.
+ */
+.zen-protection .zen-v2-menulist {
+  display: inline-flex;
+  width: 220px;
+  height: var(--v2-control);
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 0 10px;
+  border: 1px solid var(--v2-border);
+  border-radius: var(--v2-radius-control);
+  background: var(--v2-fill);
+  color: var(--v2-text);
+  font-size: var(--v2-font-body);
+  font-weight: var(--v2-weight-button);
+  line-height: var(--v2-line-body);
+  text-align: start;
+  transition: background 120ms var(--zen-ease);
+}
+.zen-protection .zen-v2-menulist:hover:not(:disabled),
+.zen-protection .zen-v2-menulist[aria-expanded='true'] {
+  background: var(--v2-fill-hover);
+}
+.zen-protection .zen-v2-menulist:disabled {
+  opacity: 0.4;
+}
+.zen-protection .zen-v2-menulist > span {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.zen-protection .zen-v2-menulist > svg {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  flex-shrink: 0;
+  color: var(--v2-text-deemphasized);
+  stroke-width: var(--v2-icon-stroke);
+}
+.zen-privacy-row:has(> .zen-privacy-row-actions > .zen-v2-menulist) {
+  min-height: calc(var(--v2-control) + 8px);
+}
+/*
+ * Its list (§9.13, §9.20): a `--v2-panel` popover flush under the control at radius 12 and
+ * padding 6, 28 px rows at radius 6 in the body face, the current option with a trailing 16 px
+ * check; the panel shadow, no scrim. The layer under it takes the press that dismisses it.
+ */
+.zen-protection-menulist-layer {
+  position: fixed;
+  inset: 0;
+}
+.zen-protection-menulist-popup {
+  position: fixed;
+  display: flex;
+  width: 320px;
+  flex-direction: column;
+  padding: 6px;
+  margin: 0;
+  overflow-y: auto;
+  border: 1px solid var(--v2-border);
+  border-radius: var(--v2-radius-sheet);
+  background: var(--v2-panel);
+  color: var(--v2-text);
+  box-shadow: var(--v2-shadow-panel);
+  list-style: none;
+  outline: none;
+}
+.zen-protection-menulist-option {
+  display: flex;
+  height: 28px;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  border-radius: var(--v2-radius-inner);
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+}
+.zen-protection-menulist-option > span {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.zen-protection-menulist-option > svg {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  flex-shrink: 0;
+  stroke-width: var(--v2-icon-stroke);
+}
+.zen-protection-menulist-option.is-active {
+  background: var(--v2-fill);
 }
 
 /*
