@@ -35,6 +35,46 @@ export function wrapTab(e: React.KeyboardEvent, root: HTMLElement | null): void 
   }
 }
 
+/**
+ * Tab through a popover that opened by itself as a notice (§9.22) as if it stood right after
+ * its anchor in the document: Shift+Tab at its first tabbable element returns to the anchor,
+ * Tab at its last moves on to whatever follows the anchor in the tab order, and in between Tab
+ * runs as usual. A notice took no focus when it opened, so this is how the keyboard reaches it
+ * and leaves it again without a wrap. Call from the container's `onKeyDown`.
+ */
+export function hopTab(
+  e: React.KeyboardEvent,
+  root: HTMLElement | null,
+  anchor: HTMLElement | null
+): void {
+  if (e.key !== 'Tab' || !root || !anchor) return
+  const list = tabbables(root)
+  const current = document.activeElement
+  const inside = root.contains(current)
+  if (e.shiftKey) {
+    if (inside && list.length > 0 && current !== list[0]) return
+    e.preventDefault()
+    anchor.focus()
+    return
+  }
+  if (inside && list.length > 0 && current !== list[list.length - 1]) return
+  const next = tabbableAfter(anchor, root)
+  if (!next) return
+  e.preventDefault()
+  next.focus()
+}
+
+/** The first tabbable element after `anchor` in document order that is not inside `skip`. */
+export function tabbableAfter(anchor: HTMLElement, skip: HTMLElement): HTMLElement | null {
+  const follows = (el: HTMLElement): boolean =>
+    (anchor.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
+  return (
+    tabbables(document.body).find(
+      (el) => el !== anchor && follows(el) && !anchor.contains(el) && !skip.contains(el)
+    ) ?? null
+  )
+}
+
 /** Escape returns focus to the anchor a popover hung from (§9.22). */
 export function focusAnchor(selector: string): void {
   document.querySelector<HTMLElement>(selector)?.focus({ preventScroll: true })

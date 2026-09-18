@@ -16,8 +16,9 @@ import {
   type SessionInit,
   type SessionStore
 } from './http'
+import { TabFrames } from './frames'
 import { RpcError, UNAUTHORIZED } from './jsonrpc'
-import { pageCall, type PageCursorOptions } from './page'
+import { pageCall, pageDispose, type PageCursorOptions } from './page'
 import {
   McpProtocol,
   newSession,
@@ -78,6 +79,8 @@ export interface AgentSession extends McpSession {
   readonly tabIds: Set<string>
   /** Last cursor position per tab, so the cursor reappears where it was after a navigation. */
   readonly cursors: Map<string, { x: number; y: number }>
+  /** Per tab: which frame each ref came from and the frame tree of the last snapshot. */
+  readonly frames: Map<string, TabFrames>
 }
 
 interface StoredEndpoint {
@@ -371,7 +374,8 @@ export class AgentService implements SessionStore, McpHandlers {
       userAgent: init.userAgent,
       currentTabId: null,
       tabIds: new Set(),
-      cursors: new Map()
+      cursors: new Map(),
+      frames: new Map()
     }
     this.sessions.set(id, session)
     return session
@@ -687,14 +691,20 @@ export class AgentService implements SessionStore, McpHandlers {
   release(s: AgentSession, tabId: string, commit = true): void {
     if (!s.tabIds.delete(tabId)) return
     s.cursors.delete(tabId)
+    const frames = s.frames.get(tabId)
+    s.frames.delete(tabId)
     if (s.currentTabId === tabId) s.currentTabId = firstOf(s.tabIds)
     const view = this.browser.tabs.view(tabId)
     if (view) {
       view.setBackgroundThrottling?.(true)
-      void this.evalPage(
-        view,
-        pageCall('cursor', { id: s.id, name: s.name, color: s.color, x: 0, y: 0, action: 'hide' })
-      ).catch(() => undefined)
+      // The agent is done with the page: its cursor goes, and so does the runtime in every frame
+      // it was put into – the sub-frames' copies live in those frames' main world, and nothing of
+      // ours should stay there once no tool call needs it.
+      void this.evalPage(view, pageDispose(s.id)).catch(() => undefined)
+      for (const node of frames?.nodes ?? []) {
+        if (node.id === 0) continue
+        void view.executeJavaScript(pageDispose(s.id), node.id).catch(() => undefined)
+      }
     }
     if (commit) this.browser.state.commitVolatile()
   }
@@ -786,6 +796,16 @@ export class AgentService implements SessionStore, McpHandlers {
     return view.executeIsolatedJavaScript
       ? view.executeIsolatedJavaScript(code)
       : view.executeJavaScript(code)
+  }
+
+  /** What the agent knows about the frames of a tab (see `TabFrames`), created on first use. */
+  frameState(s: AgentSession, tabId: string): TabFrames {
+    let state = s.frames.get(tabId)
+    if (!state) {
+      state = new TabFrames()
+      s.frames.set(tabId, state)
+    }
+    return state
   }
 
   /** Move (or click with) the agent's cursor in the page and remember where it is. */

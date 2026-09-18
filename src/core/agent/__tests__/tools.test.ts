@@ -1,11 +1,16 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import type { AgentInputEvent, TabView } from '../../platform'
 import type { Tab } from '../../../shared/types'
 import { createTabRecord } from '../../model'
+import { TabFrames } from '../frames'
 import { RpcError } from '../jsonrpc'
+import type { ToolResult } from '../protocol'
 import { withUnknownArgsNote } from '../service'
+import { signInPage, type FakePage } from './fakePage'
 import {
   AGENT_TOOLS,
   ARG_ALIASES,
+  ON_SCREEN_WAIT_MS,
   acceptedArgs,
   agentInstructions,
   listTabs,
@@ -13,6 +18,7 @@ import {
   normalizeKey,
   orderedTabs,
   resolveTabRef,
+  setOnScreenWaitMsForTests,
   wrapScript,
   type ToolContext
 } from '../tools'
@@ -332,6 +338,352 @@ describe('wrapScript', () => {
     expect(looksLikeStatements("history.forward(); 'forwarded'")).toBe(true)
     expect(looksLikeStatements('document.title;')).toBe(false)
     expect(looksLikeStatements('if (a) b()')).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// A live page: the fake frames of `fakePage.ts` behind a tab view, driven by the page tools.
+// ---------------------------------------------------------------------------
+
+interface Live {
+  ctx: ToolContext
+  page: FakePage
+  input: AgentInputEvent[]
+  /** The tab a click "opened" through the cursor calls, to check the overlay stays in the top frame. */
+  cursor: Array<{ x: number; y: number; action: string }>
+  /** What the chrome shows: flip these to bring the page on screen or cover it mid-call. */
+  screen: { visible: boolean; covered: boolean; placed: boolean }
+  /** How often a tool asked whether the page is on screen. */
+  polls: () => number
+}
+
+interface LiveOptions {
+  /** The view is shown (Electron's `isVisible`); false for a hidden or covered view. */
+  visible?: boolean
+  /** The chrome's layout report says an overlay (URL bar, menu) covers the content area. */
+  covered?: boolean
+  /** The layout report has placed the tab's view. */
+  placed?: boolean
+  mode?: 'foreground' | 'background'
+  /** A host without real input (no `sendInput`). */
+  noInput?: boolean
+}
+
+function liveContext(page: FakePage, opts: LiveOptions = {}): Live {
+  const t = tab('tab_live', 'https://shop.example/checkout', 'space_a')
+  const input: AgentInputEvent[] = []
+  const cursor: Live['cursor'] = []
+  const screen = {
+    visible: opts.visible ?? true,
+    covered: opts.covered ?? false,
+    placed: opts.placed ?? true
+  }
+  let polls = 0
+  const view = {
+    executeJavaScript: (code: string, frameId?: number) => page.eval(frameId ?? 0, code),
+    frames: () => page.frames() ?? undefined,
+    sendInput: async (e: AgentInputEvent) => {
+      input.push(e)
+    },
+    isVisible: () => {
+      polls++
+      return screen.visible
+    },
+    isDestroyed: () => false
+  } as unknown as TabView
+  if (page.frames() === null) delete (view as { frames?: unknown }).frames
+  if (opts.noInput) delete (view as { sendInput?: unknown }).sendInput
+  const win = {
+    get contentHidden() {
+      return screen.covered
+    },
+    viewRect: () => (screen.placed ? { x: 0, y: 80, width: 1000, height: 800 } : null)
+  }
+  const session = {
+    id: page.agent,
+    name: 'Tester',
+    color: '#000',
+    mode: opts.mode ?? ('foreground' as const),
+    currentTabId: t.id,
+    tabIds: new Set([t.id])
+  }
+  const frames = new Map<string, TabFrames>()
+  const ctx = {
+    browser: {
+      state: { model: { tabs: { [t.id]: t }, essentialTabIds: [], spaces: [], folders: {} } },
+      tabs: {
+        tab: (id: string) => (id === t.id ? t : undefined),
+        view: () => view,
+        windowFor: () => win
+      }
+    },
+    agents: {
+      settings: { showCursor: true },
+      resolveTab: () => t,
+      prepare: async () => view,
+      evalPage: (v: TabView, code: string) => v.executeJavaScript(code),
+      frameState: (_s: unknown, tabId: string) => {
+        let state = frames.get(tabId)
+        if (!state) frames.set(tabId, (state = new TabFrames()))
+        return state
+      },
+      cursor: async (
+        _s: unknown,
+        _tab: string,
+        _v: unknown,
+        x: number,
+        y: number,
+        action: string
+      ) => {
+        cursor.push({ x, y, action })
+      },
+      waitForLoad: async () => true,
+      driver: () => session,
+      visibleTabs: () => [t],
+      agentWindow: () => ({ activeSpaceId: 'space_a' })
+    },
+    session
+  }
+  return { ctx: ctx as unknown as ToolContext, page, input, cursor, screen, polls: () => polls }
+}
+
+function textOf(result: ToolResult): string {
+  return (result.content[0] as { text: string }).text
+}
+
+function run(name: string, ctx: ToolContext, args: Record<string, unknown>): Promise<ToolResult> {
+  return AGENT_TOOLS.find((t) => t.definition.name === name)!.run(ctx, args)
+}
+
+describe('page tools and cross-origin frames', () => {
+  it('browser_snapshot lists the frame content under its iframe line', async () => {
+    const { ctx } = liveContext(signInPage())
+    const out = textOf(await run('browser_snapshot', ctx, { boxes: true }))
+    expect(out).toContain('- iframe "Sign in with Google" [box=100,150,400,300] [ref=e2]')
+    expect(out).toContain('  - button "Sign in with Google" [box=120,210,200,40] [ref=e4]')
+    expect(out).toContain('  - textbox "Email" [box=120,270,300,30] [ref=e5]')
+    expect(out).toContain('5 elements')
+  })
+
+  it("browser_click on a frame ref sends real input at the button's top-viewport point", async () => {
+    const live = liveContext(signInPage())
+    await run('browser_snapshot', live.ctx, {})
+    const out = textOf(await run('browser_click', live.ctx, { target: 'e4' }))
+    expect(out).toMatch(
+      /^Clicked button "Sign in with Google" \[ref=e4\] in frame "Sign in with Google"\./
+    )
+    expect(live.input).toEqual([
+      { type: 'click', x: 220, y: 230, button: 'left', clickCount: 1, modifiers: [] }
+    ])
+    // The cursor overlay is drawn in the top document at the same point.
+    expect(live.cursor).toEqual([
+      { x: 220, y: 230, action: 'move' },
+      { x: 220, y: 230, action: 'click' }
+    ])
+    // Nothing synthetic was dispatched inside the frame.
+    expect(live.page.frame(7).log.map((l) => l.method)).not.toContain('clickJs')
+  })
+
+  it('browser_click at coordinates inside the frame names what is there and clicks it', async () => {
+    const live = liveContext(signInPage())
+    const out = textOf(await run('browser_click', live.ctx, { x: 200, y: 230 }))
+    expect(out).toMatch(
+      /^Clicked button "Sign in with Google" \[ref=e\d+\] in frame "Sign in with Google" at \(200, 230\)\./
+    )
+    expect(live.input[0]).toMatchObject({ type: 'click', x: 200, y: 230 })
+  })
+
+  it("browser_type fills through the frame's own runtime after a real click focused the field", async () => {
+    const live = liveContext(signInPage())
+    await run('browser_snapshot', live.ctx, {})
+    const out = textOf(
+      await run('browser_type', live.ctx, { target: 'e5', text: 'me@example.com' })
+    )
+    expect(out).toMatch(/^Typed "me@example.com" into textbox "Email" \[ref=e5\] in frame/)
+    expect(live.input[0]).toMatchObject({ type: 'click', x: 270, y: 285 })
+    const fill = live.page.frame(7).log.find((l) => l.method === 'fill')
+    expect(fill?.args).toEqual([live.page.agent, 'e5', 'me@example.com', true])
+    expect(live.page.frame(0).log.map((l) => l.method)).not.toContain('fill')
+  })
+
+  it("browser_select_option runs in the option's frame", async () => {
+    const page = signInPage()
+    page.frame(7).spec.elements.push({
+      id: 'lang',
+      tag: 'select',
+      role: 'combobox',
+      name: 'Language',
+      box: { x: 20, y: 200, width: 100, height: 30 }
+    })
+    const live = liveContext(page)
+    await run('browser_snapshot', live.ctx, {})
+    const out = textOf(
+      await run('browser_select_option', live.ctx, { target: '#lang', values: 'de' })
+    )
+    expect(out).toMatch(/^Selected "de" in combobox "Language"/)
+    const sel = live.page.frame(7).log.find((l) => l.method === 'select')
+    expect(sel?.args).toEqual([live.page.agent, '#lang', ['de']])
+  })
+
+  it('background mode clicks synthetically inside the frame and says so, without waiting', async () => {
+    const live = liveContext(signInPage(), { visible: false, mode: 'background' })
+    await run('browser_snapshot', live.ctx, {})
+    const out = textOf(await run('browser_click', live.ctx, { target: 'e4' }))
+    expect(live.input).toEqual([])
+    const click = live.page.frame(7).log.find((l) => l.method === 'clickJs')
+    expect(click?.args).toEqual([live.page.agent, 'e4', 1])
+    expect(out).toMatch(/^Clicked button "Sign in with Google" \[ref=e4\] in frame .*\.\n/)
+    expect(out).toContain('input: synthetic – you are in background mode')
+    expect(out).toMatch(/untrusted \(isTrusted: false\) and armed no user gesture/)
+    // Background mode is synthetic by design: nothing polls the screen.
+    expect(live.polls()).toBe(0)
+  })
+
+  it('explains a ref whose frame has gone instead of failing obscurely', async () => {
+    const live = liveContext(signInPage())
+    await run('browser_snapshot', live.ctx, {})
+    live.page.detach(7)
+    await expect(run('browser_click', live.ctx, { target: 'e4' })).rejects.toThrow(
+      /frame that element was in is gone.*take a new browser_snapshot/
+    )
+  })
+
+  it('works as before on hosts without frame support: the iframe stays opaque', async () => {
+    const live = liveContext(signInPage(false))
+    const out = textOf(await run('browser_snapshot', live.ctx, {}))
+    expect(out).toContain('- iframe "Sign in with Google" [ref=e2]')
+    expect(out).not.toContain('Email')
+    const click = textOf(await run('browser_click', live.ctx, { x: 200, y: 230 }))
+    expect(click).toMatch(/^Clicked iframe "Sign in with Google" \[ref=e2\] at \(200, 230\)\./)
+    expect(live.input[0]).toMatchObject({ type: 'click', x: 200, y: 230 })
+  })
+})
+
+/**
+ * The input ruling: in the foreground a click, hover or typed text waits (bounded) for the page
+ * to be on screen – view shown, placed by the layout report, not under chrome – and goes out as
+ * real input; when the page never comes on screen the tool takes the synthetic path and says so
+ * in its result instead of pretending the click was a user gesture.
+ */
+describe('real input waits for the page to be on screen, and never degrades silently', () => {
+  beforeEach(() => setOnScreenWaitMsForTests(120))
+  afterEach(() => setOnScreenWaitMsForTests(ON_SCREEN_WAIT_MS))
+
+  it('waits for the first layout report to place the view, then sends real input', async () => {
+    const live = liveContext(signInPage(), { visible: false, placed: false })
+    await run('browser_snapshot', live.ctx, {})
+    // The chrome renderer's first layout arrives while the tool waits (a cold start).
+    setTimeout(() => {
+      live.screen.visible = true
+      live.screen.placed = true
+    }, 40)
+    const out = textOf(await run('browser_click', live.ctx, { target: 'e4' }))
+    expect(live.input).toEqual([
+      { type: 'click', x: 220, y: 230, button: 'left', clickCount: 1, modifiers: [] }
+    ])
+    expect(out).not.toContain('input: synthetic')
+    expect(live.polls()).toBeGreaterThan(1)
+    expect(live.page.frame(7).log.map((l) => l.method)).not.toContain('clickJs')
+  })
+
+  it('waits for chrome covering the page (the URL bar) to close', async () => {
+    const live = liveContext(signInPage(), { visible: false, covered: true })
+    setTimeout(() => {
+      live.screen.covered = false
+      live.screen.visible = true
+    }, 40)
+    const out = textOf(await run('browser_click', live.ctx, { x: 200, y: 230 }))
+    expect(live.input[0]).toMatchObject({ type: 'click', x: 200, y: 230 })
+    expect(out).not.toContain('input: synthetic')
+  })
+
+  it('a page that stays covered gets a synthetic click and an explicit warning', async () => {
+    const live = liveContext(signInPage(), { visible: false, covered: true })
+    await run('browser_snapshot', live.ctx, {})
+    const out = textOf(await run('browser_click', live.ctx, { target: 'e4' }))
+    // It kept asking until the bound passed, then gave up on real input.
+    expect(live.polls()).toBeGreaterThan(1)
+    expect(live.input).toEqual([])
+    expect(live.page.frame(7).log.find((l) => l.method === 'clickJs')?.args).toEqual([
+      live.page.agent,
+      'e4',
+      1
+    ])
+    const [headline, warning] = out.split('\n')
+    expect(headline).toBe(
+      'Clicked button "Sign in with Google" [ref=e4] in frame "Sign in with Google".'
+    )
+    expect(warning).toMatch(/^input: synthetic – the tab did not come on screen within \d+ s/)
+    expect(warning).toContain('chrome such as the URL bar covers the page')
+    expect(warning).toContain('isTrusted: false')
+    expect(warning).toMatch(/pop-up.*did not fire/)
+  })
+
+  it('a view the layout has not placed counts as off screen', async () => {
+    const live = liveContext(signInPage(), { visible: true, placed: false })
+    const out = textOf(await run('browser_hover', live.ctx, { x: 200, y: 230 }))
+    expect(live.input).toEqual([])
+    expect(out).toContain('input: synthetic – the tab did not come on screen')
+    expect(live.page.frame(7).log.map((l) => l.method)).toContain('hoverJs')
+  })
+
+  it('browser_hover and browser_type carry the warning too', async () => {
+    const live = liveContext(signInPage(), { visible: false })
+    await run('browser_snapshot', live.ctx, {})
+    const hover = textOf(await run('browser_hover', live.ctx, { target: 'e4' }))
+    expect(hover).toMatch(
+      /^Hovering button "Sign in with Google" \[ref=e4\] in frame .*\.\ninput: synthetic/
+    )
+    const typed = textOf(
+      await run('browser_type', live.ctx, { target: 'e5', text: 'me@example.com', submit: true })
+    )
+    expect(typed).toMatch(
+      /^Typed "me@example.com" into textbox "Email" .* and pressed Enter\.\ninput: synthetic/
+    )
+    expect(live.input).toEqual([])
+    // The value still lands (fill runs in the frame) and Enter goes through the frame's runtime.
+    const methods = live.page.frame(7).log.map((l) => l.method)
+    expect(methods).toContain('fill')
+    expect(methods).toContain('submit')
+    expect(methods).toContain('clickJs')
+  })
+
+  it('browser_press_key routes the same way', async () => {
+    const live = liveContext(signInPage(), { visible: false })
+    const out = textOf(await run('browser_press_key', live.ctx, { key: 'Escape' }))
+    expect(out).toMatch(/^Pressed Escape\.\ninput: synthetic/)
+    expect(live.input).toEqual([])
+    expect(live.page.frame(0).log.find((l) => l.method === 'keyJs')?.args).toEqual(['Escape', []])
+  })
+
+  it('an element covered by another one is clicked directly, with the warning', async () => {
+    const page = signInPage()
+    // The top document's hit test finds something else over the "Pay now" button.
+    const orig = page.frame(0).locate.bind(page.frame(0))
+    page.frame(0).locate = (agent, target, scroll, minSeq) => {
+      const loc = orig(agent, target, scroll, minSeq)
+      return 'error' in loc ? loc : { ...loc, covered: loc.name === 'Pay now' }
+    }
+    const live = liveContext(page)
+    const out = textOf(await run('browser_click', live.ctx, { target: 'text=Pay now' }))
+    expect(live.input).toEqual([])
+    expect(out).toContain('input: synthetic – another element covers this point')
+    // On screen all along: no waiting was needed for this one.
+    expect(live.polls()).toBe(1)
+  })
+
+  it('a host without real input says so once, without waiting', async () => {
+    const live = liveContext(signInPage(), { noInput: true })
+    const out = textOf(await run('browser_click', live.ctx, { x: 200, y: 230 }))
+    expect(out).toContain('input: synthetic – this browser cannot send real input')
+    expect(live.polls()).toBe(0)
+  })
+
+  it('on-screen pages are not slowed down: one look, then real input', async () => {
+    const live = liveContext(signInPage())
+    await run('browser_click', live.ctx, { x: 200, y: 230 })
+    expect(live.polls()).toBe(1)
+    expect(live.input).toHaveLength(1)
   })
 })
 

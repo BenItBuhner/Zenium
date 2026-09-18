@@ -24,6 +24,9 @@ import {
 import { ZOOM_CEILING, ZOOM_FLOOR, formatZoom, siteKey } from '../shared/pageControls'
 import { spaceLabel } from '../shared/defaults'
 import { bookmarkUrlCount, isBookmarkRoot } from '../shared/bookmarks'
+import { fileExtension, resolveDownloadSettings } from '../shared/downloads'
+import { canRetry, isInFlight, isQuarantined } from './downloads'
+import { mayAutoOpen } from './downloads/danger'
 import { applicationMenu, menuSignature, runFromMenuBar } from './menuBar'
 
 type Template = MenuItemTemplate[]
@@ -1672,6 +1675,84 @@ export class Menus {
       ],
       win,
       'history'
+    )
+  }
+
+  /**
+   * A download row's menu (Chrome's shelf menu with the bubble's Copy download link, parity row
+   * downloads-11): Open when done while the transfer runs and Open once the file is on disk,
+   * Always open files of this type for the types Chromium lets open by themselves (the engine's
+   * `autoOpenTypes`), Show in folder, Copy download link, then the transfer's own verb – Pause,
+   * Resume or Cancel while it runs, Retry once it failed or was cancelled – and Remove from list
+   * for anything settled. A flagged file waiting on Keep / Delete offers only its link and its
+   * removal (Delete on the row is what takes the file away). Deleting a finished file is not an
+   * engine command yet (`download.deleteFile`), so the menu has no such item.
+   */
+  showDownloadContextMenu(
+    id: string,
+    anchor: { x?: number; y?: number; keyboard?: boolean },
+    win: ZenWindow
+  ): void {
+    const { downloads, platform } = this.browser
+    const item = downloads.item(id)
+    if (!item) return
+    const inFlight = isInFlight(item.state)
+    const onDisk = item.state === 'completed' && !isQuarantined(item)
+    const resumable = item.state === 'paused' || (item.state === 'interrupted' && item.canResume)
+    const retryable = canRetry(item)
+    const name = item.finalName || item.filename
+    const ext = fileExtension(name)
+    const settings = resolveDownloadSettings(this.browser.state.settings)
+    const autoOpens = settings.autoOpenTypes.includes(ext)
+    const alwaysOpen: Template =
+      ext && mayAutoOpen(name, platform.info.os)
+        ? [
+            {
+              label: 'Always Open Files of This Type',
+              type: 'checkbox',
+              checked: autoOpens,
+              click: () =>
+                this.browser.handleCommand(win, 'settings.update', {
+                  downloads: {
+                    autoOpenTypes: autoOpens
+                      ? settings.autoOpenTypes.filter((t) => t !== ext)
+                      : [...settings.autoOpenTypes, ext]
+                  }
+                })
+            }
+          ]
+        : []
+    this.popup(
+      [
+        inFlight
+          ? {
+              label: 'Open When Done',
+              type: 'checkbox',
+              checked: item.openWhenDone,
+              click: () => downloads.setOpenWhenDone(id, !item.openWhenDone)
+            }
+          : { label: 'Open', enabled: onDisk, click: () => void downloads.open(id) },
+        ...alwaysOpen,
+        {
+          label: 'Show in Folder',
+          enabled: onDisk && Boolean(item.savePath),
+          click: () => downloads.showInFolder(id)
+        },
+        { type: 'separator' },
+        { label: 'Copy Download Link', click: () => platform.clipboard.writeText(item.url) },
+        { type: 'separator' },
+        ...(item.state === 'progressing'
+          ? [{ label: 'Pause', click: () => downloads.pause(id) }]
+          : []),
+        ...(resumable ? [{ label: 'Resume', click: () => downloads.resume(id) }] : []),
+        ...(!resumable && retryable ? [{ label: 'Retry', click: () => downloads.retry(id) }] : []),
+        ...(inFlight ? [{ label: 'Cancel', click: () => downloads.cancel(id) }] : []),
+        { type: 'separator' },
+        { label: 'Remove from List', enabled: !inFlight, click: () => downloads.remove(id) }
+      ],
+      win,
+      'download',
+      anchor
     )
   }
 
