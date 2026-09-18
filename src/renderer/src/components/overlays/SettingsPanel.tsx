@@ -6,6 +6,7 @@ import type {
   ColorScheme,
   ContainerColor,
   ContainerIcon as ContainerIconName,
+  CrashRestoreMode,
   GlanceTrigger,
   HostCapabilities,
   NewTabPosition,
@@ -475,6 +476,33 @@ function TabsSection({
         <Row label="Restore previous session on startup">
           <Switch checked={s.restoreSession} onCheckedChange={(v) => set({ restoreSession: v })} />
         </Row>
+        {windows && (
+          <Row
+            label="Restore pages after a crash"
+            hint="What happens to the open pages when Zenium did not shut down correctly."
+          >
+            <Choice<CrashRestoreMode>
+              value={s.crashRestore}
+              onChange={(v) => set({ crashRestore: v })}
+              options={[
+                { value: 'ask', label: 'Ask first' },
+                { value: 'always', label: 'Restore them' },
+                { value: 'never', label: 'Start fresh' }
+              ]}
+            />
+          </Row>
+        )}
+        {windows && (
+          <Row
+            label="Warn before closing a window with multiple tabs"
+            hint="Also asks before quitting with more than one tab open."
+          >
+            <Switch
+              checked={s.warnOnCloseWindow}
+              onCheckedChange={(v) => set({ warnOnCloseWindow: v })}
+            />
+          </Row>
+        )}
         <Row label="Always ask where to save downloads">
           <Switch checked={s.askWhereToSave} onCheckedChange={(v) => set({ askWhereToSave: v })} />
         </Row>

@@ -11,6 +11,7 @@ import type {
   WindowChrome,
   WindowKind,
   WindowMaterial,
+  WindowPrompt,
   WindowState
 } from '../shared/types'
 import type { Browser } from './browser'
@@ -31,6 +32,8 @@ export interface WindowInit {
   chrome: WindowChrome
   material: WindowMaterial
   bounds: Rect | null
+  /** The display `bounds` were saved on (null: unknown, or the host has one display). */
+  displayId: number | null
   maximized: boolean
   activeSpaceId: string
   selection: Record<string, string>
@@ -77,10 +80,20 @@ export class ZenWindow {
    */
   recordingShortcut = false
   lastFocusedAt = 0
+  /** The window-modal question the chrome is showing ("Close N tabs?"), owned by `WindowPrompts`. */
+  prompt: WindowPrompt | null = null
+  /**
+   * The user's request to close this window went through its checks (the tab-count warning,
+   * every page's `beforeunload`): the host may close it for real. Hosts whose native close
+   * request arrives first (the caption button, Alt+F4) hold it until this is set.
+   */
+  closeApproved = false
   readonly initialBounds: Rect | null
+  readonly initialDisplayId: number | null
   readonly initialMaximized: boolean
   readonly cascadeFrom: ZenWindow | null
   private savedBounds: Rect | null
+  private savedDisplayId: number | null
   private lastLayout: LayoutReport | null = null
   private pendingContentFocus = false
   private closing = false
@@ -101,6 +114,8 @@ export class ZenWindow {
       this.selection.set(spaceId, tabId)
     this.initialBounds = init.bounds
     this.savedBounds = init.bounds
+    this.initialDisplayId = init.displayId
+    this.savedDisplayId = init.displayId
     this.initialMaximized = init.maximized
     this.cascadeFrom = init.cascadeFrom ?? null
   }
@@ -115,6 +130,11 @@ export class ZenWindow {
 
   get isClosing(): boolean {
     return this.closing
+  }
+
+  /** Whether the chrome document has loaded (events reach it, the URL bar can be opened). */
+  get chromeReady(): boolean {
+    return this.chromeReadyOnce
   }
 
   /** Last known normal (non-maximised) bounds; what a reopened window comes back at. */
@@ -164,7 +184,8 @@ export class ZenWindow {
       maximized: alive ? this.host.isMaximized() : this.initialMaximized,
       fullscreen: alive ? this.host.isFullScreen() : false,
       focused: alive ? this.host.isFocused() : false,
-      htmlFullscreenTabId: this.htmlFullscreenTabId
+      htmlFullscreenTabId: this.htmlFullscreenTabId,
+      prompt: this.prompt
     }
   }
 
@@ -183,6 +204,7 @@ export class ZenWindow {
     return {
       id: this.id,
       bounds: this.savedBounds,
+      displayId: this.savedDisplayId,
       maximized: this.alive ? this.host.isMaximized() : this.initialMaximized,
       activeSpaceId: this.activeSpaceId,
       selection,
@@ -200,6 +222,8 @@ export class ZenWindow {
     if (!this.host.isMaximized() && !this.host.isFullScreen()) {
       this.savedBounds = this.host.normalBounds() ?? this.savedBounds
     }
+    // A maximised window keeps its normal bounds but may have moved to another display.
+    this.savedDisplayId = this.host.displayId?.() ?? this.savedDisplayId
     if (this.kind === 'synced') this.browser.state.commit()
   }
 
@@ -215,7 +239,10 @@ export class ZenWindow {
     this.onWindowStateChanged()
   }
 
-  /** The host window is about to close. */
+  /**
+   * The host window is about to close – for real: a host whose native close request comes first
+   * asks the browser (`requestWindowClose`) and closes once `closeApproved` is set.
+   */
   onClosing(): void {
     this.closing = true
     this.onBoundsChanged()

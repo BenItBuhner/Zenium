@@ -38,6 +38,12 @@ import type {
 import type { ZenWindow } from '../../core/window'
 import { DEFAULT_CONTAINER_ID } from '../../shared/types'
 import { resolveDownloadSettings } from '../../shared/downloads'
+import {
+  DISMISSED_ANSWER,
+  PAGE_DIALOG_CHANNEL,
+  sanitizeDialogCall,
+  type PageDialogAnswer
+} from '../../shared/pageDialogIpc'
 import { FileStoreIO } from './storeIo'
 import { SessionManager, buildUserAgent } from './sessions'
 import { installZenProtocol } from './protocol'
@@ -472,6 +478,27 @@ export class ElectronPlatform implements Platform {
     })
     ipcMain.on('zen:page', (event, message: PageMessage) => {
       this.views.viewForWebContents(event.sender)?.dispatchPageMessage(message)
+    })
+    // A page's `alert` / `confirm` / `prompt`: the renderer blocks on `sendSync` until
+    // `returnValue` is set, which happens once the chrome's dialog is answered. Every path must
+    // set it, or the page would hang.
+    ipcMain.on(PAGE_DIALOG_CHANNEL, (event, raw: unknown) => {
+      const answer = (value: PageDialogAnswer): void => {
+        try {
+          event.returnValue = value
+        } catch {
+          // The page went away while its dialog was up.
+        }
+      }
+      const view = this.views.viewForWebContents(event.sender)
+      const call = sanitizeDialogCall(raw)
+      if (!view || !call) {
+        answer(DISMISSED_ANSWER)
+        return
+      }
+      view
+        .askDialog(call, event.senderFrame?.url ?? '')
+        .then(answer, () => answer(DISMISSED_ANSWER))
     })
     this.attachNotificationStatus(browser)
   }

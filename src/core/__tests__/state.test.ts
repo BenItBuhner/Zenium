@@ -173,6 +173,60 @@ describe('recently closed persistence', () => {
   })
 })
 
+describe('tab navigation persistence', () => {
+  const stack = {
+    entries: [
+      { url: 'https://a.test/', title: 'A', pageState: 'c2Nyb2xs' },
+      { url: 'https://a.test/two', title: 'A two' }
+    ],
+    index: 1
+  }
+
+  it('writes the stacks of the open tabs with the page state and reads them back', async () => {
+    const { doc, ids } = profile()
+    const [, a] = ids
+    const { s, io } = stateFrom(doc)
+    expect(s.tabNavigation.size).toBe(0)
+    s.tabNavigation.set(a, stack)
+    s.commit()
+    await tick()
+    await s.flush()
+    const written = JSON.parse(io.writes[io.writes.length - 1]) as {
+      navigation: Record<string, unknown>
+    }
+    expect(written.navigation).toEqual({ [a]: stack })
+    const reloaded = stateFrom(written).s
+    expect(reloaded.tabNavigation.get(a)).toEqual(stack)
+  })
+
+  it('leaves out stacks whose tab is gone or private, and drops garbage on load', async () => {
+    const { doc, ids } = profile()
+    const [, a, b] = ids
+    const { s, io } = stateFrom({
+      ...doc,
+      version: 3,
+      navigation: {
+        [a]: stack,
+        [b]: { entries: [{ url: '' }, { title: 'no url' }, 7], index: 0 },
+        ghost: stack,
+        nonsense: 'oops'
+      }
+    })
+    expect([...s.tabNavigation.keys()]).toEqual([a, 'ghost'])
+    s.model.tabs[b].containerId = 'private'
+    s.tabNavigation.set(b, stack)
+    s.commit()
+    await tick()
+    await s.flush()
+    const written = JSON.parse(io.writes[io.writes.length - 1]) as {
+      navigation: Record<string, unknown>
+    }
+    expect(Object.keys(written.navigation)).toEqual([a])
+    expect(s.tabNavigation.has('ghost')).toBe(false)
+    expect(s.tabNavigation.has(b)).toBe(false)
+  })
+})
+
 describe('forgetSession', () => {
   it('drops regular tabs, keeps pinned tabs and essentials, and leaves one window without a selection', () => {
     const { doc, ids } = profile()

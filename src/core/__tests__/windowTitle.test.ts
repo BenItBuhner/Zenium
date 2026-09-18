@@ -162,6 +162,8 @@ describe('native window title', () => {
     expect(f.titles.get(win)?.at(-1)).toBe('Example Domain - Zenium')
 
     f.browser.handleCommand(win, 'tab.close', { tabId: first, force: true })
+    // The close runs the page's unload check first (a promise), then commits.
+    await tick()
     await tick()
     expect(f.titles.get(win)?.at(-1)).toBe('Renamed - Zenium')
   })

@@ -88,6 +88,10 @@ describe('FrameDialogHost', () => {
     const panel = host().querySelector<HTMLElement>('[data-dialog="edit"]')!
     expect(panel.parentElement).toBe(host())
     expect(scrim()!.nextElementSibling).toBe(panel)
+    // The scrim is in flow too (a positioned one would paint over the panels and take their
+    // clicks once their entrance animation is over): tree order puts it under them.
+    expect(scrim()!.classList.contains('absolute')).toBe(false)
+    expect(scrim()!.classList.contains('place-self-stretch')).toBe(true)
     rerender(<FrameDialogHost />)
     expect(host().hasAttribute('data-open')).toBe(false)
     expect(scrim()).toBeNull()
