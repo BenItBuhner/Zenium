@@ -315,7 +315,8 @@ export class TabManager {
     this.views.set(tab.id, view)
     this.owners.set(tab.id, win)
     if (tab.muted) view.setMuted(true)
-    if (tab.zoom !== 1) view.setZoom(tab.zoom)
+    if (this.browser.pageControls.enabled) this.browser.pageControls.onViewCreated(tab, view)
+    else if (tab.zoom !== 1) view.setZoom(tab.zoom)
     this.browser.governor.onViewCreated(tab.id, view)
     win.relayout()
     return view
@@ -510,7 +511,8 @@ export class TabManager {
     tab.canGoBack = view.canGoBack()
     tab.canGoForward = view.canGoForward()
     tab.bookmarked = this.browser.bookmarks.has(url)
-    tab.zoom = view.getZoom()
+    if (this.browser.pageControls.enabled) this.browser.pageControls.onNavigated(tab, view)
+    else tab.zoom = view.getZoom()
     view.setBackgroundColor(this.backgroundFor(url))
     view.setPopupsAllowed?.(this.browser.popups.siteAllowed(url))
     const transition = this.pendingTransition.get(tabId) ?? 'link'
@@ -1034,9 +1036,19 @@ export class TabManager {
     this.browser.state.commit()
   }
 
+  /**
+   * Zoom a tab's page. With page controls (Android) the factor is the site's, remembered in the
+   * settings; a plain reset (`factor` 1) returns the site to the default zoom. Otherwise it is
+   * Zen's per-tab zoom as on desktop.
+   */
   setZoom(tabId: string, factor: number): void {
     const tab = this.tab(tabId)
     if (!tab) return
+    if (this.browser.pageControls.enabled) {
+      if (factor === 1) this.browser.pageControls.resetZoom(tabId)
+      else this.browser.pageControls.setZoomFactor(tabId, factor)
+      return
+    }
     const clamped = Math.min(5, Math.max(0.25, Math.round(factor * 100) / 100))
     tab.zoom = clamped
     this.view(tabId)?.setZoom(clamped)
@@ -1046,6 +1058,10 @@ export class TabManager {
   adjustZoom(tabId: string, direction: number): void {
     const tab = this.tab(tabId)
     if (!tab) return
+    if (this.browser.pageControls.enabled) {
+      this.browser.pageControls.adjustZoom(tabId, direction)
+      return
+    }
     // Zen 1.21: finer zoom steps than Firefox's classic table.
     const steps = [0.3, 0.5, 0.67, 0.8, 0.9, 1, 1.1, 1.2, 1.33, 1.5, 1.7, 2, 2.4, 3, 4, 5]
     const current = this.view(tabId)?.getZoom() ?? tab.zoom
