@@ -5,7 +5,8 @@
  * (`src/main/platform/extensionStore.ts`) and Android (`src/android/extensionHost.ts`) both build
  * on this; the filesystem and the network primitive stay with the host.
  */
-import type { ExtensionSource } from '../../shared/types'
+import type { ExtensionPromptRequest, ExtensionSource } from '../../shared/types'
+import type { Browser } from '../browser'
 import type { ZenWindow } from '../window'
 import { base64Encode, utf8Encode } from './bytes'
 import {
@@ -178,6 +179,39 @@ export function installPromptText(request: InstallConfirmation): {
         ? 'Update extension'
         : 'Add extension'
   return { message, detail, okLabel }
+}
+
+/**
+ * The prompt as the chrome's own dialog (the desktop's dialog, the phone's sheet) instead of a
+ * native message box: install and update prompts raise `extensionInstallRequest`, permission
+ * prompts raise `extensionPermissionRequest`, and the renderer answers with
+ * `extension.confirmInstall` or `extension.respondPermissionRequest`, which the host passes on
+ * to `respond`. Hosts use it from `confirmInstall` whenever a live window can show the dialog.
+ */
+export class ChromePrompts {
+  /** Prompts waiting for the renderer's answer, by request id. */
+  private readonly pending = new Map<string, (accept: boolean) => void>()
+
+  constructor(private readonly browser: Pick<Browser, 'emit'>) {}
+
+  ask(prompt: Omit<ExtensionPromptRequest, 'requestId'>, win: ZenWindow): Promise<boolean> {
+    const event =
+      prompt.kind === 'permissions' || prompt.kind === 'request'
+        ? 'extensionPermissionRequest'
+        : 'extensionInstallRequest'
+    const requestId = `${event}:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`
+    return new Promise<boolean>((resolve) => {
+      this.pending.set(requestId, resolve)
+      this.browser.emit(event, { requestId, ...prompt }, win)
+    })
+  }
+
+  respond(requestId: string, accept: boolean): void {
+    const resolve = this.pending.get(requestId)
+    if (!resolve) return
+    this.pending.delete(requestId)
+    resolve(accept)
+  }
 }
 
 // ---------------------------------------------------------------------------
