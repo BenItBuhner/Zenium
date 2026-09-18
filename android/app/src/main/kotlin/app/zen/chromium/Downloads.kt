@@ -752,7 +752,6 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
     companion object {
         /** Raw bytes per blob slice; base64 grows it by a third, comfortably inside the bridge's limits. */
         private const val BLOB_CHUNK = 512 * 1024
-        /** The core's `PRIVATE_CONTAINER_ID`: tabs of a private window run in this container. */
-        const val PRIVATE_CONTAINER = "private"
+        const val PRIVATE_CONTAINER = Profiles.PRIVATE_CONTAINER
     }
 }

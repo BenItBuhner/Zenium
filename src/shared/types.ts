@@ -88,6 +88,12 @@ export interface HostCapabilities {
    */
   pageControls: boolean
   /**
+   * Extensions run, but their content scripts share the page's world (an Android WebView below
+   * Chromium 146 has no isolated worlds; the emulation layer falls back to a scope proxy). Pages
+   * can then observe the scripts' DOM work; the extensions UI says so.
+   */
+  reducedExtensionIsolation: boolean
+  /**
    * Private browsing as tabs inside the one window (`tab.newPrivate`): hosts without separate
    * windows. Desktop hosts offer private windows instead (`windows`).
    */

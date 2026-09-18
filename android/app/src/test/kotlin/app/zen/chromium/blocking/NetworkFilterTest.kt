@@ -64,6 +64,34 @@ class NetworkFilterTest {
         assertFalse(filter("||ads.example^\$subdocument").matches(unknown))
     }
 
+    /**
+     * EasyPrivacy's `*$ping,third-party`: with no pattern, host or site the type is its only
+     * condition, and on any shared bit it would match every third-party request of unknown type
+     * – every cross-origin `fetch` on the web. Such a filter is tested against `xmlhttprequest`,
+     * the type an unknown request most likely is; scoped by a host or a site, the list's judgement
+     * stands and any candidate type matches.
+     */
+    @Test
+    fun anUnscopedTypeOnlyFilterTakesAnUnknownRequestForAFetch() {
+        val beacons = filter("*\$ping,third-party")
+        val unknownFetch = req("https://api.example/votes?v=1", ResourceType.XMLHTTPREQUEST, typeMask = ResourceType.AMBIGUOUS_MASK)
+        assertFalse(beacons.matches(unknownFetch))
+        assertTrue(beacons.matches(req("https://api.example/collect", ResourceType.PING)))
+        assertTrue(filter("*\$xhr,third-party").matches(unknownFetch))
+        assertTrue(filter("*\$ping,xhr,3p").matches(unknownFetch))
+        // Scoped to a request host, a site or a URL: an unknown request may be the type named.
+        assertTrue(filter("||api.example^\$ping").matches(unknownFetch))
+        assertTrue(filter("*\$ping,3p,domain=news.example").matches(unknownFetch))
+        assertTrue(filter("*\$ping,3p,to=api.example").matches(unknownFetch))
+        assertTrue(filter("/votes?\$ping").matches(unknownFetch))
+        // Excluding sites or hosts does not scope the filter: it still names every page.
+        assertFalse(filter("*\$ping,3p,domain=~other.example").matches(unknownFetch))
+        assertFalse(filter("*\$ping,3p,denyallow=cdn.example").matches(unknownFetch))
+        // A first-party unknown request is a fetch as well.
+        assertFalse(filter("*\$ping").matches(req("https://news.example/api", ResourceType.XMLHTTPREQUEST, typeMask = ResourceType.AMBIGUOUS_MASK)))
+        assertTrue(filter("*\$ping").matches(req("https://news.example/api", ResourceType.PING)))
+    }
+
     @Test
     fun partyOptions() {
         val third = filter("||cdn.example^\$third-party")

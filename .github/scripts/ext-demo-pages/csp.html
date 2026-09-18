@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self'; connect-src 'self'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script>
+      window.__page = {
+        t0: performance.now(),
+        chrome: typeof chrome,
+        startReport: document.__zenProbeStart ? 'present' : 'absent',
+        images: {}
+      }
+      window.pageGlobal = 42
+    </script>
+    <title>Zenium probe page with a strict CSP</title>
+    <link rel="stylesheet" href="probe-page.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Strict Content-Security-Policy</h1>
+      <p>
+        <code>connect-src 'self'</code>: in the main world the probe's fetch() calls to the
+        extension origin and to example.com are subject to this policy; in Chrome's isolated world
+        they would not be.
+      </p>
+    </main>
+  </body>
+</html>

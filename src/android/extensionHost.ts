@@ -220,7 +220,7 @@ export class AndroidExtensions implements ExtensionHost {
   confirmInstall: ConfirmInstall = (request, win) => this.nativeConfirm(request, win)
 
   constructor(
-    private readonly browser: Browser,
+    protected readonly browser: Browser,
     private readonly io: AndroidExtensionStoreIo,
     options: AndroidExtensionsOptions = {}
   ) {

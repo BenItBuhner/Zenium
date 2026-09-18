@@ -53,6 +53,15 @@ export interface ShimDiagnostics {
   manifestVersion: 2 | 3
 }
 
+export interface ShimOptions {
+  /**
+   * The object whose `chrome` and `browser` properties are patched; `globalThis` by default. An
+   * emulated engine that runs content scripts in the page's own world (no isolated world to
+   * install into) hands over a private scope object here, so the page never sees `chrome.*`.
+   */
+  root?: object
+}
+
 /**
  * The engine's objects the shim patches in place (`globalThis`, `chrome`, its namespaces and
  * their native members). Nothing else is typed this way: values the shim builds or receives
@@ -86,8 +95,15 @@ interface ViewStub {
   postMessage(): void
 }
 
-export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnostics {
-  const g = globalThis as Any
+export function installExtensionApi(
+  host: ShimHost,
+  spec: ApiSpec,
+  options?: ShimOptions
+): ShimDiagnostics {
+  /** Where `chrome` and `browser` are installed (a private scope object under emulation). */
+  const g: Any = options?.root ?? globalThis
+  /** The real global: the document's `location`, and the `window` other views get. */
+  const real: Any = globalThis
   /** How long an event pushed before any listener exists waits for one (worker start-up). */
   const PENDING_TTL = 10_000
   const MARK = '__zeniumExtensionApi'
@@ -145,10 +161,11 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
   )
   const extensionUrl: string =
     safely(() => String(chrome.runtime.getURL(''))) ??
-    (typeof g.location === 'object' && g.location
-      ? `${g.location.protocol}//${g.location.host}/`
+    (typeof real.location === 'object' && real.location
+      ? `${real.location.protocol}//${real.location.host}/`
       : '')
-  const ownUrl: string = typeof g.location === 'object' && g.location ? String(g.location.href) : ''
+  const ownUrl: string =
+    typeof real.location === 'object' && real.location ? String(real.location.href) : ''
   const isBackgroundPage =
     host.kind === 'frame' &&
     manifestVersion === 2 &&
@@ -1387,7 +1404,7 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
             )
               continue
           }
-          out.push(view.self || view.url === ownUrl ? g : viewStub(view))
+          out.push(view.self || view.url === ownUrl ? real : viewStub(view))
         }
         return out
       })
@@ -1395,14 +1412,14 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
       // popup or options page has no JavaScript path to another document's global (Chrome's
       // binding gets it from the renderer's frame list), so it gets null and the extension falls
       // back to messaging, as it must under MV3 anyway.
-      define(extension, 'getBackgroundPage', (): unknown => (isBackgroundPage ? g : null))
+      define(extension, 'getBackgroundPage', (): unknown => (isBackgroundPage ? real : null))
       if (!isFunction(safely(() => runtime.getBackgroundPage))) {
         define(runtime, 'getBackgroundPage', function (...raw: unknown[]): unknown {
           const callback = takeCallback(raw)
           const qualified = 'runtime.getBackgroundPage(optional function callback)'
           const work =
             manifestVersion === 2 && background !== null
-              ? Promise.resolve(isBackgroundPage ? g : null)
+              ? Promise.resolve(isBackgroundPage ? real : null)
               : Promise.reject(new Error('You do not have a background page.'))
           return settle(qualified, work, callback)
         })

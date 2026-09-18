@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script>
+      // First script of the page: what the main world looks like after the emulation layer's
+      // document_start injection and before anything else.
+      window.__page = {
+        t0: performance.now(),
+        chrome: typeof chrome,
+        chromeRuntime:
+          typeof chrome === 'object' && chrome !== null ? typeof chrome.runtime : 'n/a',
+        probeVar: typeof probeVar,
+        probeFn: typeof probeFn,
+        probeExpando: typeof window.probeExpando,
+        implicitLeak: typeof implicitLeak,
+        bridge: typeof window.__zenExtBridge,
+        zenGlobals: Object.getOwnPropertyNames(window).filter(function (k) {
+          return k.indexOf('__zen') === 0
+        }),
+        startReport: document.__zenProbeStart ? 'present' : 'absent',
+        images: {}
+      }
+      window.pageGlobal = 42
+      // A page-side patch of a DOM method the extensions can observe (same realm) or not (own
+      // world). It delegates, so extensions that call it keep working: an earlier version
+      // returned a string and broke Dark Reader's theme detection on this page.
+      ;(function () {
+        var original = document.querySelector
+        var patched = function () {
+          return original.apply(this, arguments)
+        }
+        patched.pagePatched = true
+        document.querySelector = patched
+      })()
+    </script>
+    <title>Zenium extension probe page</title>
+    <link rel="stylesheet" href="probe-page.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Zenium extension probe</h1>
+      <p>
+        A plain white page with a few <a href="#one">links</a>, some <a href="#two">text</a> and two
+        images. The content scripts of the sideloaded extensions run here: Dark Reader should turn
+        it dark, Vimium should show <a href="#three">link hints</a> on <kbd>f</kbd>, and the probe
+        extension records timing and isolation data.
+      </p>
+      <p>
+        <a href="https://example.com/">Example</a> ·
+        <a href="https://developer.mozilla.org/">MDN</a> ·
+        <a href="https://en.wikipedia.org/">Wikipedia</a>
+      </p>
+      <div class="cards">
+        <section class="card">
+          <h2>Static rule</h2>
+          <p>pixel.png?ads=1 must not load.</p>
+        </section>
+        <section class="card">
+          <h2>Dynamic rule</h2>
+          <p>pixel.png?dyn=1 must not load.</p>
+        </section>
+        <section class="card">
+          <h2>Control</h2>
+          <p>pixel.png?ok=1 must load.</p>
+        </section>
+      </div>
+      <p id="pixels"></p>
+      <script>
+        // A fresh URL per load: the renderer's memory cache would otherwise answer a reload
+        // without asking shouldInterceptRequest, and the rules would never see the request.
+        ;(function () {
+          var token = '&t=' + Date.now()
+          var holder = document.getElementById('pixels')
+          ;['ads', 'dyn', 'ok'].forEach(function (name) {
+            var img = document.createElement('img')
+            img.alt = ''
+            img.width = 24
+            img.height = 24
+            img.onload = function () {
+              __page.images[name] = 'loaded'
+            }
+            img.onerror = function () {
+              __page.images[name] = 'error'
+            }
+            img.src = 'pixel.png?' + name + '=1' + token
+            holder.appendChild(img)
+          })
+        })()
+      </script>
+    </main>
+  </body>
+</html>
