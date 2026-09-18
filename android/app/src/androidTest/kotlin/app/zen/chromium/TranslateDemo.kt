@@ -18,6 +18,11 @@ import java.util.concurrent.TimeUnit
  * detect each, translates them (models downloaded on first use, then read from `files/translate/`),
  * checks the page DOM, waits for late content to be translated, reverts, translates a selection,
  * and writes what it measured to `translate-results.json` next to the screenshots.
+ *
+ * Two of its measurements are about the page's `domReady` reaching the core rather than about the
+ * engine: `esOnLoad`, the status the Spanish tab reaches with nothing asked of it (`offered` when
+ * detection ran at the document's DOMContentLoaded), and `esReaderableOnLoad`, Reader View's
+ * verdict on the same article from the same event. The run fails when either is missing.
  */
 @RunWith(AndroidJUnit4::class)
 class TranslateDemo : DemoHarness("translate-demo-state.json", "services-translate-android", "translate-demo") {
@@ -32,9 +37,15 @@ class TranslateDemo : DemoHarness("translate-demo-state.json", "services-transla
     override fun warmUp() {
         awaitCore()
         awaitLoaded(ES_TAB, "es.html")
+        // Nothing is asked of the tab here: whatever it reaches, it reaches from its own dom-ready.
+        val loadedAt = SystemClock.uptimeMillis()
+        val atLoad = tabState(ES_TAB)?.optString("status") ?: "none"
         val offered = awaitStatus(ES_TAB, 30_000) { it != "detecting" && it != "idle" }
-        results.put("esOffer", offered)
-        Log.i(tag, "es offer: $offered")
+        results.put("esOnLoad", offered?.optString("status") ?: atLoad)
+        results.put("esOnLoadMs", SystemClock.uptimeMillis() - loadedAt)
+        results.put("esOffer", offered ?: JSONObject.NULL)
+        results.put("esReaderableOnLoad", awaitReaderable(ES_TAB, 10_000))
+        Log.i(tag, "es on load: ${results.opt("esOnLoad")} (at load $atLoad, ${results.opt("esOnLoadMs")} ms), readerable ${results.opt("esReaderableOnLoad")}, offer $offered")
     }
 
     override fun demo() {
@@ -119,8 +130,23 @@ class TranslateDemo : DemoHarness("translate-demo-state.json", "services-transla
         beat()
         shot("08-de-translated-again")
 
+        // --- Reader View: the article the core saw at dom-ready is known readable, and opens
+        invoke("tab.activate", "{tabId:${JSONObject.quote(ES_TAB)}}")
+        beat()
+        val readable = awaitReaderable(ES_TAB, 10_000)
+        invoke("reader.toggle", "{tabId:${JSONObject.quote(ES_TAB)}}")
+        awaitLoaded(ES_TAB, "zen://reader")
+        settle()
+        results.put("esReader", JSONObject().put("readerable", readable).put("url", tabUrl(ES_TAB)))
+        Log.i(tag, "es reader view: ${results.getJSONObject("esReader")}")
+        shot("09-es-reader-view")
+
         File(out, "translate-results.json").writeText(results.toString(2))
         Log.i(tag, "results: $results")
+
+        // What the page's own dom-ready owes the core, with nothing asked of the tab (CT-08, CT-05).
+        check(results.optString("esOnLoad") == "offered") { "es was not offered on load: ${results.opt("esOnLoad")}" }
+        check(results.optBoolean("esReaderableOnLoad")) { "es was not detected readable on load" }
     }
 
     // --- translation with timing --------------------------------------------------------------
@@ -174,6 +200,17 @@ class TranslateDemo : DemoHarness("translate-demo-state.json", "services-transla
 
     private fun tabState(tabId: String): JSONObject? =
         await("window.zen.invoke('app.getState').then(function(s){return s.translate.tabs[${JSONObject.quote(tabId)}]||null})", 15_000)
+
+    /** Poll the core's tab for Reader View's verdict (`readerable`, decided at dom-ready). */
+    private fun awaitReaderable(tabId: String, timeoutMs: Long): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            val tab = await("window.zen.invoke('app.getState').then(function(s){return s.tabs[${JSONObject.quote(tabId)}]||null})", 15_000)
+            if (tab?.optBoolean("readerable") == true) return true
+            SystemClock.sleep(200)
+        }
+        return false
+    }
 
     private fun awaitLateContent(): String? {
         val deadline = SystemClock.uptimeMillis() + 40_000
@@ -271,16 +308,24 @@ class TranslateDemo : DemoHarness("translate-demo-state.json", "services-transla
 
     private fun pageInt(tabId: String, script: String): Int = page(tabId, script)?.toIntOrNull() ?: 0
 
+    /** The WebView's URL and load progress for a tab, read on the main thread. */
+    private fun tabLoad(tabId: String): Pair<String, Int> {
+        var url = ""
+        var progress = 0
+        instrumentation.runOnMainSync {
+            val tab = (activity as MainActivity).host.tabs.get(tabId)
+            url = tab?.url ?: ""
+            progress = tab?.progress ?: 0
+        }
+        return url to progress
+    }
+
+    private fun tabUrl(tabId: String): String = tabLoad(tabId).first
+
     private fun awaitLoaded(tabId: String, urlPart: String) {
         val deadline = SystemClock.uptimeMillis() + 30_000
         while (SystemClock.uptimeMillis() < deadline) {
-            var url = ""
-            var progress = 0
-            instrumentation.runOnMainSync {
-                val tab = (activity as MainActivity).host.tabs.get(tabId)
-                url = tab?.url ?: ""
-                progress = tab?.progress ?: 0
-            }
+            val (url, progress) = tabLoad(tabId)
             if (url.contains(urlPart) && progress == 100) {
                 Log.i(tag, "loaded $url")
                 return
