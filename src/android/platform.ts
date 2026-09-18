@@ -81,6 +81,8 @@ export function androidCapabilities({
 }: AndroidCapabilityInputs): HostCapabilities {
   return {
     windowControls: false,
+    windowControlsOverlay: false,
+    windowMaterial: false,
     nativeMenus: false,
     windowDrag: false,
     devtools: false,

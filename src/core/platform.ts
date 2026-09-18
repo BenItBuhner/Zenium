@@ -9,6 +9,7 @@
  * import from `electron`, `node:*` or the DOM.
  */
 import type {
+  ColorScheme,
   DownloadItem,
   EventName,
   Events,
@@ -24,9 +25,12 @@ import type {
   SharePayload,
   SyncScope,
   SyncStatus,
-  Tab
+  Tab,
+  WindowChrome,
+  WindowMaterial
 } from '../shared/types'
 import type { AppIconId } from '../shared/appIcon'
+import type { CaptionColors } from '../shared/theme'
 import type { KeyInput } from '../shared/shortcuts'
 import type { SiteCertificate, SiteCookie } from '../shared/siteInfo'
 import type {
@@ -205,20 +209,41 @@ export interface TabViewEvents {
   onKey(input: KeyEventInput): boolean
   onTargetUrl(url: string): void
   onDomReady(): void
+  /** The page went away underneath the tab (it called `window.close()`, or the host tore it down). */
   onDestroyed(): void
   /**
-   * `window.open` / `target=_blank`. Return how the host should proceed. `userGesture` is the
-   * host's own knowledge of whether the user asked for it (null when it has none: the core then
-   * relies on the activation it tracked through `onUserActivation`).
+   * `window.open` / Shift+click / `target=_blank`: how the core wants the new page placed, or
+   * null to refuse it (the pop-up blocker said no, or the URL cannot be opened). The host never
+   * shows Chromium's own bare window. `userGesture` is the host's own knowledge of whether the
+   * user asked for it (null when it has none: the core then relies on the activation it tracked
+   * through `onUserActivation`). `features` is the `window.open` features string (empty for
+   * Shift+click).
    */
   onOpenWindow(
     url: string,
     disposition: WindowOpenDisposition,
-    userGesture: boolean | null
-  ): 'deny' | 'tab' | 'popup'
+    userGesture: boolean | null,
+    features?: string
+  ): WindowOpenTicket | null
   /** A trusted input event (click, key, tap) was delivered to the page. */
   onUserActivation(): void
   onPageMessage(message: PageMessage): void
+}
+
+/**
+ * The core's answer to a page opening a window: a tab in the opener's window or a Zenium window
+ * (toolbar-only for a sized popup, full for Shift+click). The host completes it once by handing
+ * over the page that goes into the new tab: the opener-linked one Chromium already created for a
+ * script `window.open` (so `window.opener` and the call's return value keep working, as in
+ * Chrome), or a fresh page the host then points at `url` for a window opened from a link. The
+ * window and tab only exist once `adopt` runs, so a request Chromium abandons leaves nothing
+ * behind.
+ */
+export interface WindowOpenTicket {
+  action: 'tab' | 'window'
+  url: string
+  /** Register `view` as the new tab's page; returns the tab and the events to wire to the view. */
+  adopt(view: TabView): { tab: Tab; events: TabViewEvents }
 }
 
 /**
@@ -369,6 +394,8 @@ export interface WindowHost {
   normalBounds(): Rect | null
   /** Brief vibration for a gesture landmark; hosts without haptics leave this out. */
   haptic?(kind: HapticKind): void
+  /** Recolour the native caption buttons drawn over the chrome (hosts with an overlay). */
+  setCaptionColors?(colors: CaptionColors): void
 }
 
 export interface WindowCreateInit {
@@ -377,8 +404,12 @@ export interface WindowCreateInit {
   /** Offset the new window from this one (new windows cascade like Firefox). */
   cascadeFrom: ZenWindow | null
   title: string
+  chrome: WindowChrome
+  material: WindowMaterial
   /** Solid colour approximating the space gradient, painted before the chrome loads. */
   backgroundColor: string
+  /** Colours for native caption buttons drawn over the chrome. */
+  captionColors: CaptionColors
 }
 
 export interface WindowHostFactory {
@@ -596,6 +627,20 @@ export interface AppHost {
    * Unsupported hosts resolve null without doing anything.
    */
   requestDefaultBrowser(): Promise<boolean | null>
+}
+
+/**
+ * The OS colour scheme as the engine sees it. Desktop hosts read it from the native theme so the
+ * chrome follows a system-wide flip without waiting for the renderer's media query, which on
+ * Windows can lag behind or disagree with it; hosts without this leave the renderer to
+ * `prefers-color-scheme`.
+ */
+export interface ThemeHost {
+  /** Whether the engine resolves the scheme to dark right now. */
+  systemDark(): boolean
+  onChanged(listener: () => void): void
+  /** Which scheme pages and native UI use; `system` follows the OS. */
+  setSource(scheme: ColorScheme): void
 }
 
 // ---------------------------------------------------------------------------
@@ -897,6 +942,8 @@ export interface Platform {
   readonly downloads: DownloadHost
   readonly sessions: SessionHost
   readonly app: AppHost
+  /** The OS colour scheme; hosts without it leave the renderer to `prefers-color-scheme`. */
+  readonly theme?: ThemeHost
   /** Cookies and storage per site; hosts without it show a sheet with the connection only. */
   readonly siteData?: SiteDataHost
   /** Hosts that ask before a page may open another app (Android). */
