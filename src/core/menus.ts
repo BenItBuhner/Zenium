@@ -509,6 +509,7 @@ export class Menus {
     // The shortcuts act on the active tab: only its menu shows them.
     const key = (action: ShortcutAction): { action?: ShortcutAction } =>
       active?.id === tab.id ? { action } : {}
+    const otherWindows = tabs.windowsForMove(tabId, win)
 
     const template: Template = [
       {
@@ -526,6 +527,11 @@ export class Menus {
         label: tab.muted ? 'Unmute Tab' : 'Mute Tab',
         ...key('page.toggleMute'),
         click: () => tabs.toggleMute(tabId)
+      },
+      {
+        label: tabs.siteMuted(tab.url) ? 'Unmute Site' : 'Mute Site',
+        enabled: Boolean(domain),
+        click: () => tabs.toggleMuteSite(tabId)
       },
       { label: 'Duplicate Tab', ...key('tab.duplicate'), click: () => tabs.duplicate(tabId, win) },
       { label: 'Rename Tab…', click: () => this.browser.emit('tab.startRename', { tabId }, win) },
@@ -618,6 +624,22 @@ export class Menus {
               submenu: this.spaceSubmenu(null, (sid) => this.browser.addRouteForTab(tabId, sid))
             }
           ]),
+      ...(caps.windows
+        ? [
+            {
+              label: 'Move Tab to New Window',
+              click: () => void tabs.moveTabToNewWindow(tabId, null, win)
+            },
+            {
+              label: 'Move to Window',
+              enabled: otherWindows.length > 0,
+              submenu: otherWindows.map((w) => ({
+                label: this.windowLabel(w),
+                click: () => void tabs.moveTabToWindow(tabId, w, null, win)
+              }))
+            }
+          ]
+        : []),
       {
         label: 'Open in New Container Tab',
         enabled: !win.isPrivate,
@@ -906,6 +928,13 @@ export class Menus {
   private openSpaceInNewWindow(spaceId: string, from: ZenWindow): void {
     const win = this.browser.openWindow('synced', from)
     if (win) this.browser.tabs.switchSpace(spaceId, win)
+  }
+
+  /** How a window is named in "Move to Window": its active tab, like Chrome's submenu. */
+  private windowLabel(win: ZenWindow): string {
+    const title = this.browser.tabs.activeTitleFor(win)?.trim()
+    const label = title ? (title.length > 60 ? `${title.slice(0, 57)}…` : title) : 'Empty window'
+    return win.isPrivate ? `${label} (Private)` : label
   }
 
   showFolderContextMenu(folderId: string, win: ZenWindow): void {

@@ -406,6 +406,11 @@ export interface WindowHost {
   setTitle(title: string): void
   /** Bounds to remember for session restore (null when the host has no movable windows). */
   normalBounds(): Rect | null
+  /**
+   * Where the chrome's document sits on the screen right now (DIP), for turning a screen point
+   * into chrome coordinates; hosts without movable windows leave this out.
+   */
+  contentBounds?(): Rect | null
   /** Brief vibration for a gesture landmark; hosts without haptics leave this out. */
   haptic?(kind: HapticKind): void
   /** Recolour the native caption buttons drawn over the chrome (hosts with an overlay). */
@@ -789,6 +794,12 @@ export interface Governor {
   sample(): Promise<ResourceSnapshot>
   trim(): Promise<void>
   relaunch(): void
+  /**
+   * Memory (MB) attributed to a tab's page at the last sample, for the "memory saved" line of a
+   * tab put to sleep; null when the governor has no figure for it. Hosts that do not measure
+   * leave this out.
+   */
+  memoryOf?(tabId: string): number | null
 }
 
 /** Browser extensions (Chromium extension API); Electron only. */

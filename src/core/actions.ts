@@ -13,6 +13,8 @@ export type AnyAction =
   | 'downloads.open'
   | 'tab.freezeOthers'
   | 'tab.wakeAll'
+  | 'tab.moveToNewWindow'
+  | 'page.toggleMuteSite'
   | 'resources.trim'
   | 'resources.open'
 
@@ -209,6 +211,12 @@ export class Actions {
         return
       case 'page.toggleMute':
         if (target) tabs.toggleMute(target.id)
+        return
+      case 'page.toggleMuteSite':
+        if (target) tabs.toggleMuteSite(target.id)
+        return
+      case 'tab.moveToNewWindow':
+        if (active) tabs.moveTabToNewWindow(active.id, null, win)
         return
       case 'zoom.in':
         if (target) tabs.adjustZoom(target.id, 1)

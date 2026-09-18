@@ -35,6 +35,7 @@ import { PopupBlocker } from './popups'
 import { ExternalLaunches } from './external'
 import { SecurityPromptService } from './security'
 import { TabManager } from './tabs'
+import { TabDragController } from './tabDrag'
 import { ZenWindow } from './window'
 import { Actions, type AnyAction } from './actions'
 import { KeyboardHandler } from './keys'
@@ -136,6 +137,8 @@ export class Browser {
   /** HTTP authentication and client-certificate prompts. */
   readonly security: SecurityPromptService
   readonly tabs: TabManager
+  /** A sidebar tab drag in flight, followed across windows (drops into them, tear-offs). */
+  readonly tabDrag: TabDragController
   /** Recently closed tabs and windows (Ctrl+Shift+T, the app menu's submenu, the history page). */
   readonly session: SessionService
   readonly actions: Actions
@@ -228,6 +231,7 @@ export class Browser {
     this.security = new SecurityPromptService(this)
     this.pageControls = new PageControls(this)
     this.tabs = new TabManager(this)
+    this.tabDrag = new TabDragController(this)
     this.session = new SessionService(this)
     this.history.onChange((kind) => {
       for (const w of this.allWindows()) w.send('history.changed', { kind })
@@ -437,6 +441,7 @@ export class Browser {
 
   onWindowClosed(win: ZenWindow): void {
     this.windows.delete(win.id)
+    this.tabDrag.onWindowClosed(win)
     for (const w of this.allWindows()) w.selection.delete(win.localSpace?.id ?? '')
     if (win.isPrivate) this.endPrivateSessionIfOver()
     if (this.allWindows().length === 0) {
@@ -1425,6 +1430,7 @@ export class Browser {
       'tab.reload': ({ tabId, skipCache }) => tabs.reload(tabId, skipCache),
       'tab.stop': ({ tabId }) => tabs.stop(tabId),
       'tab.toggleMute': ({ tabId }) => tabs.toggleMute(tabId),
+      'tab.toggleMuteSite': ({ tabId }) => tabs.toggleMuteSite(tabId),
       'tab.togglePin': ({ tabId }, win) => tabs.togglePin(tabId, win),
       'tab.toggleEssential': ({ tabId }, win) => tabs.toggleEssential(tabId, win),
       'tab.resetPinned': ({ tabId }, win) => tabs.resetPinned(tabId, true, win),
@@ -1455,6 +1461,14 @@ export class Browser {
           )
       },
       'tab.moveToFolder': ({ tabId, folderId }) => tabs.moveToFolder(tabId, folderId),
+      'tab.drop': ({ tabId, key }, win) => void tabs.dropTab(tabId, key, win),
+      'tab.dragStart': ({ tabId }, win) => this.tabDrag.start(tabId, win),
+      'tab.dragMove': ({ tabId, x, y, inSidebar }, win) =>
+        this.tabDrag.move(tabId, x, y, inSidebar, win),
+      'tab.dragTarget': ({ tabId, key }, win) => this.tabDrag.setTarget(tabId, key, win),
+      'tab.dragEnd': ({ tabId, x, y, outcome }, win) =>
+        this.tabDrag.end(tabId, x, y, outcome, win),
+      'tab.moveToNewWindow': ({ tabId }, win) => void tabs.moveTabToNewWindow(tabId, null, win),
       'tab.reopenClosed': (_a, win) => this.session.reopenClosed(win),
       'tab.navigationEntries': ({ tabId }) => tabs.navigationEntries(tabId),
       'tab.goToIndex': ({ tabId, index }) => tabs.goToIndex(tabId, index),

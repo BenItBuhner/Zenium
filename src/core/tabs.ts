@@ -2,11 +2,13 @@ import type {
   ClosedTabEntry,
   HistoryTransition,
   NavigationSnapshot,
+  Point,
   Settings,
   Space,
   SplitLayout,
   Tab,
-  TabSection
+  TabSection,
+  WindowKind
 } from '../shared/types'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
 import {
@@ -20,6 +22,8 @@ import {
   moveTab,
   nextTabAfterClose,
   orderedTabsForSpace,
+  pinnedTabs,
+  regularTabs,
   removeTabFromLists,
   removeTabFromSplit,
   sectionIndexOf,
@@ -185,6 +189,7 @@ export class TabManager {
     const view = this.createView(tab, win ?? this.windowFor(tabId))
     this.browser.governor.trackLoad(tabId)
     tab.discarded = false
+    delete tab.sleepSavedMb
     tab.frozen = false
     tab.cpuThrottle = 1
     let url = tab.url
@@ -316,6 +321,7 @@ export class TabManager {
     view.setVisible(false)
     this.views.set(tab.id, view)
     this.owners.set(tab.id, win)
+    if (this.siteMuted(tab.url)) tab.muted = true
     if (tab.muted) view.setMuted(true)
     if (this.browser.pageControls.enabled) this.browser.pageControls.onViewCreated(tab, view)
     else if (tab.zoom !== 1) view.setZoom(tab.zoom)
@@ -525,6 +531,7 @@ export class TabManager {
       tab.errorCode = null
       this.httpsUpgraded.delete(tabId)
     }
+    this.followSiteMute(tab, view, tab.url, url)
     tab.url = url
     tab.title = view.getTitle() || titleForUrl(url)
     tab.canGoBack = view.canGoBack()
@@ -599,6 +606,10 @@ export class TabManager {
   discard(tabId: string): void {
     const tab = this.tab(tabId)
     if (!tab) return
+    // What the page held, for the sleeping row's "memory saved" line; read while it still runs.
+    const saved = this.view(tabId) ? this.browser.governor.memoryOf?.(tabId) : null
+    if (saved !== null && saved !== undefined && saved > 0) tab.sleepSavedMb = Math.round(saved)
+    else delete tab.sleepSavedMb
     this.destroyView(tabId)
     tab.discarded = true
     tab.frozen = false
@@ -662,7 +673,8 @@ export class TabManager {
       essential,
       folderId: opts.folderId ?? null,
       openerTabId: opts.openerTabId && m.tabs[opts.openerTabId] ? opts.openerTabId : null,
-      fromIntent: Boolean(opts.fromIntent)
+      fromIntent: Boolean(opts.fromIntent),
+      muted: this.siteMuted(opts.url ?? BLANK_URL)
     })
     tab.windowId = this.ownerWindowIdFor(tab, space, win)
     m.tabs[tab.id] = tab
@@ -735,6 +747,7 @@ export class TabManager {
     this.browser.governor.onViewCreated(tab.id, view)
     this.browser.governor.trackLoad(tab.id)
     tab.discarded = false
+    delete tab.sleepSavedMb
     if (opts.active) this.activateTab(tab.id, win)
     this.browser.state.commit()
     win.relayout()
@@ -1129,6 +1142,50 @@ export class TabManager {
     this.browser.state.commit()
   }
 
+  /** Whether the user chose "Mute Site" for the host of `url`. */
+  siteMuted(url: string): boolean {
+    const host = domainOf(url)
+    return host !== '' && this.settings.mutedHosts.includes(host)
+  }
+
+  /**
+   * Chrome's "Mute Site": every tab of the host goes quiet (and stays so on later visits) until
+   * the site is unmuted again. Tabs that leave the host regain their sound.
+   */
+  toggleMuteSite(tabId: string): void {
+    const tab = this.tab(tabId)
+    if (!tab) return
+    const host = domainOf(tab.url)
+    if (!host) return
+    const muted = !this.settings.mutedHosts.includes(host)
+    this.settings.mutedHosts = muted
+      ? [...this.settings.mutedHosts, host]
+      : this.settings.mutedHosts.filter((h) => h !== host)
+    for (const t of Object.values(this.model.tabs)) {
+      if (domainOf(t.url) !== host || t.muted === muted) continue
+      t.muted = muted
+      this.view(t.id)?.setMuted(muted)
+    }
+    this.browser.state.commit()
+  }
+
+  /** A navigation crossed a site boundary: pick up or drop the host's mute with it. */
+  private followSiteMute(tab: Tab, view: TabView, fromUrl: string, toUrl: string): void {
+    const from = domainOf(fromUrl)
+    const to = domainOf(toUrl)
+    if (from === to) return
+    const muted = this.settings.mutedHosts
+    if (to && muted.includes(to)) {
+      if (!tab.muted) {
+        tab.muted = true
+        view.setMuted(true)
+      }
+    } else if (from && muted.includes(from) && tab.muted) {
+      tab.muted = false
+      view.setMuted(false)
+    }
+  }
+
   /**
    * Zoom a tab's page. With page controls (Android) the factor is the site's, remembered in the
    * settings; a plain reset (`factor` 1) returns the site to the default zoom. Otherwise it is
@@ -1344,6 +1401,314 @@ export class TabManager {
     tab.folderId = folderId
     if (previous && previous !== folderId) this.browser.liveFolders.onTabLeftFolder(tabId, previous)
     this.browser.state.commit()
+  }
+
+  // ---------------------------------------------------------------------------
+  // Drag and drop, moving between windows
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Resolve a sidebar drop in `win`. `key` is the `data-drop` of the target the pointer let go
+   * over:
+   *   tab:<tabId>:before|after      insert relative to another tab (its section)
+   *   section:<section>:<spaceId>   append to a section (pinned | regular | essential)
+   *   folder:<folderId>             move into a folder
+   *   space:<spaceId>               move to another space
+   *   split:<left|right|top|bottom> split with the window's active tab (the content area)
+   *   bookmark:<folderId>:<index>   file the page on the bookmarks bar (the tab stays put)
+   * Returns false when the key names nothing the tab can be dropped on.
+   */
+  dropTab(tabId: string, key: string, win: ZenWindow = this.windowFor(tabId)): boolean {
+    const m = this.model
+    const tab = this.tab(tabId)
+    if (!tab) return false
+    const parts = key.split(':')
+    switch (parts[0]) {
+      case 'tab': {
+        const [, targetId, position] = parts
+        const target = this.tab(targetId)
+        if (!target || target.id === tabId) return false
+        const section: TabSection = target.essential
+          ? 'essential'
+          : target.pinned
+            ? 'pinned'
+            : 'regular'
+        const index = this.indexRelativeTo(target, position === 'after', tabId)
+        this.moveTab(
+          tabId,
+          {
+            spaceId: section === 'essential' ? undefined : (target.spaceId ?? win.activeSpace().id),
+            section,
+            index
+          },
+          win
+        )
+        if (section === 'regular' && target.folderId !== tab.folderId)
+          this.moveToFolder(tabId, target.folderId)
+        return true
+      }
+      case 'section': {
+        const [, section, spaceId] = parts
+        if (!isTabSection(section)) return false
+        this.moveTab(
+          tabId,
+          { spaceId: spaceId || undefined, section, index: Number.MAX_SAFE_INTEGER },
+          win
+        )
+        if (section === 'regular' && tab.folderId) this.moveToFolder(tabId, null)
+        return true
+      }
+      case 'folder': {
+        const folder = m.folders[parts[1]]
+        if (!folder) return false
+        if (tab.spaceId !== folder.spaceId || tab.pinned || tab.essential) {
+          this.moveTab(
+            tabId,
+            { spaceId: folder.spaceId, section: 'regular', index: Number.MAX_SAFE_INTEGER },
+            win
+          )
+        }
+        this.moveToFolder(tabId, folder.id)
+        return true
+      }
+      case 'space': {
+        if (tab.essential || !getSpace(m, parts[1])) return false
+        this.moveTab(
+          tabId,
+          {
+            spaceId: parts[1],
+            section: tab.pinned ? 'pinned' : 'regular',
+            index: Number.MAX_SAFE_INTEGER
+          },
+          win
+        )
+        return true
+      }
+      case 'split': {
+        const active = this.activeTabFor(win)
+        if (!active || active.id === tabId) return false
+        const side = parts[1]
+        const layout: SplitLayout = side === 'left' || side === 'right' ? 'vertical' : 'horizontal'
+        if (active.splitGroupId) this.addToSplit(active.splitGroupId, tabId)
+        else
+          this.createSplit(
+            side === 'left' || side === 'top' ? [tabId, active.id] : [active.id, tabId],
+            layout,
+            win
+          )
+        return true
+      }
+      case 'bookmark': {
+        if (!tab.url || tab.url.startsWith('zen://')) return false
+        const [, parentId, index] = parts
+        this.browser.bookmarks.create({
+          parentId,
+          index: index === '' ? undefined : Number(index),
+          title: tab.customTitle ?? tab.title,
+          url: tab.url,
+          favicon: tab.favicon,
+          type: 'url'
+        })
+        return true
+      }
+    }
+    return false
+  }
+
+  /** Index within the target's section once the dragged tab is taken out of that list. */
+  private indexRelativeTo(target: Tab, after: boolean, draggedId: string): number {
+    const m = this.model
+    let ids: string[]
+    if (target.essential) {
+      ids = m.essentialTabIds
+    } else {
+      const space = getSpace(m, target.spaceId)
+      if (!space) return Number.MAX_SAFE_INTEGER
+      ids = (target.pinned ? pinnedTabs(m, space) : regularTabs(m, space)).map((t) => t.id)
+    }
+    const idx = ids.filter((id) => id !== draggedId).indexOf(target.id)
+    if (idx === -1) return Number.MAX_SAFE_INTEGER
+    return after ? idx + 1 : idx
+  }
+
+  /**
+   * Whether a tab may move into `target` from `source`: another full window of the same privacy
+   * (Chrome keeps regular and Incognito tabs apart; a toolbar-only popup has no tab strip).
+   */
+  canMoveToWindow(tab: Tab, target: ZenWindow, source?: ZenWindow): boolean {
+    if (!target.alive || target.isClosing || target === source || target.chrome === 'popup')
+      return false
+    return this.isPrivate(tab) === target.isPrivate
+  }
+
+  /** Other windows a tab could be moved to, most recently focused first (the tab menu). */
+  windowsForMove(tabId: string, source: ZenWindow): ZenWindow[] {
+    const tab = this.tab(tabId)
+    if (!tab) return []
+    return this.browser
+      .allWindows()
+      .filter((w) => this.canMoveToWindow(tab, w, source))
+      .sort((a, b) => b.lastFocusedAt - a.lastFocusedAt)
+  }
+
+  /**
+   * Move a tab into another window and show it there. `key` is the drop target under the
+   * pointer in that window (see `dropTab`), null when it was let go anywhere else in the window:
+   * the tab then goes to the end of the window's current space. Under "sync all tabs" a synced
+   * window already lists the shared tab, so the move is a reorder plus showing it there; under
+   * "sync only pinned tabs" the tab changes hands; blank and private windows take it into their
+   * own space. The source window moves on to a neighbour when it was showing the tab.
+   */
+  moveTabToWindow(
+    tabId: string,
+    target: ZenWindow,
+    key: string | null = null,
+    source: ZenWindow = this.windowFor(tabId)
+  ): boolean {
+    const tab = this.tab(tabId)
+    if (!tab || target === source) return false
+    if (!this.canMoveToWindow(tab, target, source)) {
+      this.browser.toast(
+        this.isPrivate(tab) !== target.isPrivate
+          ? 'Tabs cannot move between private and regular windows.'
+          : 'This tab cannot be moved there.',
+        'info',
+        source
+      )
+      return false
+    }
+    // The bookmarks bar of the other window files the page; the tab itself stays where it is.
+    if (key?.startsWith('bookmark:')) return this.dropTab(tabId, key, target)
+    const leaving = this.leaving(tab, source)
+    // Where it lands when the pointer was not over a tab slot: the end of the window's space,
+    // keeping the section (an essential has no place in a blank window and becomes pinned there).
+    const targetSpace = target.activeSpace()
+    const section: TabSection = tab.essential
+      ? targetSpace.windowId
+        ? 'pinned'
+        : 'essential'
+      : tab.pinned
+        ? 'pinned'
+        : 'regular'
+    const fallback = `section:${section}:${section === 'essential' ? '' : targetSpace.id}`
+    // A remote drop key names slots of the target window; a tab slot of a shared list is as
+    // valid from another window as from this one.
+    const dropped = key !== null && !key.startsWith('split:') && this.dropTab(tabId, key, target)
+    if (!dropped && !this.dropTab(tabId, fallback, target)) return false
+    // "Sync only pinned tabs": an unpinned tab of a synced space belongs to one window.
+    const landed = getSpace(this.model, tab.spaceId)
+    if (landed && !landed.windowId && !tab.pinned && !tab.essential)
+      tab.windowId = this.settings.windowSync === 'pinned' ? target.id : null
+    if (key?.startsWith('split:')) this.dropTab(tabId, key, target)
+    this.activateTab(tabId, target)
+    this.showNeighbour(source, leaving, tabId)
+    this.browser.state.commit()
+    target.host.focus()
+    return true
+  }
+
+  /**
+   * What a window shows once one of its tabs goes to another window: the space it was selected
+   * in and the neighbour to select instead (Firefox: the next tab, else the previous one), or
+   * null when the window was not showing the tab.
+   */
+  private leaving(tab: Tab, source: ZenWindow): { space: Space; next: string | null } | null {
+    const space = tab.essential ? source.activeSpace() : getSpace(this.model, tab.spaceId)
+    if (!space || source.selectedTabIn(space) !== tab.id) return null
+    return {
+      space,
+      next: nextTabAfterClose(
+        this.model,
+        space,
+        tab.id,
+        this.settings.containerSpecificEssentials,
+        false,
+        source.id
+      )
+    }
+  }
+
+  /** Apply `leaving` unless the move itself already picked another tab for the window. */
+  private showNeighbour(
+    source: ZenWindow,
+    leaving: { space: Space; next: string | null } | null,
+    tabId: string
+  ): void {
+    if (!leaving || !source.alive) return
+    const { space, next } = leaving
+    const current = source.selectedTabIn(space)
+    if (current !== null && current !== tabId) return
+    source.select(space, next)
+    if (source.activeSpaceId !== space.id) return
+    if (next) this.activateTab(next, source)
+    else {
+      this.releaseHidden(source)
+      source.relayout()
+    }
+  }
+
+  /**
+   * Tear a tab off into a window of its own at `at` (screen point, the drop position), sized
+   * like the window it came from. Which kind of window depends on where the tab lives: a tab of
+   * a blank or private window gets another such window; under "sync only pinned tabs" an
+   * unpinned tab gets a synced window that owns it; every other tab (shared across synced
+   * windows) gets a blank window, the one kind that can hold it alone.
+   */
+  moveTabToNewWindow(
+    tabId: string,
+    at: Point | null = null,
+    source: ZenWindow = this.windowFor(tabId)
+  ): ZenWindow | null {
+    const tab = this.tab(tabId)
+    if (!tab) return null
+    if (!this.browser.state.capabilities.windows) {
+      this.browser.toast('Multiple windows are not available on this device.', 'info', source)
+      return null
+    }
+    const leaving = this.leaving(tab, source)
+    const from = getSpace(this.model, tab.spaceId)
+    const ownsAlone =
+      !tab.pinned &&
+      !tab.essential &&
+      !source.localSpace &&
+      this.settings.windowSync === 'pinned'
+    const kind: WindowKind = source.isPrivate ? 'private' : ownsAlone ? 'synced' : 'unsynced'
+    const size = source.bounds ?? source.host.normalBounds()
+    const bounds =
+      at && size
+        ? {
+            x: Math.round(at.x - Math.min(160, size.width / 4)),
+            y: Math.round(at.y - 24),
+            width: size.width,
+            height: size.height
+          }
+        : null
+    const win = this.browser.createWindow({ kind, from: source, bounds, empty: true })
+    if (win.localSpace) {
+      this.moveTab(
+        tabId,
+        {
+          spaceId: win.localSpace.id,
+          section: tab.pinned || tab.essential ? 'pinned' : 'regular',
+          index: Number.MAX_SAFE_INTEGER
+        },
+        win
+      )
+    } else {
+      tab.windowId = win.id
+      if (from) win.activeSpaceId = from.id
+    }
+    this.activateTab(tabId, win)
+    this.showNeighbour(source, leaving, tabId)
+    // Chrome closes a window whose only tab was torn off; a blank window with nothing left does
+    // the same here (deferred: the drag that asked for this may still be finishing).
+    if (source.localSpace && source.localSpace.tabIds.length === 0 && source.alive) {
+      defer(() => {
+        if (source.alive) source.host.close()
+      })
+    }
+    this.browser.state.commit()
+    return win
   }
 
   moveActiveTabBy(delta: number, win: ZenWindow): void {
@@ -1818,6 +2183,10 @@ export class TabManager {
 function pickFavicon(favicons: string[]): string | null {
   const usable = favicons.filter((f) => /^(https?:|data:)/.test(f))
   return usable[0] ?? null
+}
+
+function isTabSection(value: string): value is TabSection {
+  return value === 'pinned' || value === 'regular' || value === 'essential'
 }
 
 function safeParam(url: string, name: string): string | null {
