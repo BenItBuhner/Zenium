@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { PageMessage } from '../core/platform'
 import type { PageHint } from '../shared/fullscreenHint'
 import {
+  installActivationReporter,
   installPageScript,
   type PageScriptFlags,
   type PageScriptMessage
@@ -48,9 +49,18 @@ if (signals && (signals.gpc || signals.dnt))
   })
 installPageDialogs()
 
+const send = (message: PageScriptMessage | PageMessage): void =>
+  ipcRenderer.send('zen:page', message)
+
+if (!process.isMainFrame) {
+  // A gesture inside a cross-origin iframe never reaches the host's `input-event` (Electron
+  // observes the top document's widget only), so without this report the pop-up blocker would
+  // refuse the `window.open` such a frame makes on a click – the "Sign in with Google" button
+  // is an accounts.google.com iframe that opens its pop-up exactly that way.
+  installActivationReporter({ send })
+}
+
 if (process.isMainFrame) {
-  const send = (message: PageScriptMessage | PageMessage): void =>
-    ipcRenderer.send('zen:page', message)
   installPageScript({
     send,
     onFlags: (listener) =>
