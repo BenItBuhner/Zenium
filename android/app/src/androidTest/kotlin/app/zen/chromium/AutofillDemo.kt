@@ -1,7 +1,10 @@
 package app.zen.chromium
 
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.content.ClipDescription
+import android.content.ClipboardManager
 import android.graphics.Rect
+import android.os.Build
 import android.os.SystemClock
 import android.util.Log
 import android.view.InputDevice
@@ -35,12 +38,13 @@ import java.util.concurrent.TimeUnit
  * belongs to the UI PR), the saved login fills the form again through the account picker
  * (state-only in the engine PR, so the pick is made through the command API behind the system
  * PIN), a checkout's card and address are offered for saving one after the other and filled back,
- * a password copy hides its value in the clipboard preview, and the Android autofill provider
- * setting moves the page WebViews in and out of the system framework.
+ * a password copy reaches the clipboard marked sensitive (the value hidden from the preview), and
+ * the Android autofill provider setting moves the page WebViews in and out of the system framework.
  *
  * Asserts what the engine answers (the login round-trips, the fills land in the fields, the card
- * and address round-trip, the vault document holds no plaintext) and writes what it observes
- * (system autofill status, WebAuthn support, clipboard description) next to the screenshots.
+ * and address round-trip, the password clip is the sensitive one, the vault document holds no
+ * plaintext) and writes what it observes (system autofill status, WebAuthn support, clipboard
+ * descriptions) next to the screenshots.
  */
 @RunWith(AndroidJUnit4::class)
 class AutofillDemo : DemoHarness("autofill-demo-state.json", "services-password-fill-android", "autofill-demo") {
@@ -215,12 +219,14 @@ class AutofillDemo : DemoHarness("autofill-demo-state.json", "services-password-
         snap("card-filled")
 
         // 5. Copies: a username in the clear, a password marked sensitive so the system's
-        //    clipboard preview hides it (Android 13+).
+        //    clipboard preview hides it (Android 13+). The preview is SystemUI's own window, which
+        //    the screenshot may miss, so the clip's description is what is noted and checked.
         val copyUser = zen("passwords.copy", JSONObject().put("id", login.getString("id")).put("field", "username"))
         assertEquals("copy username: $copyUser", "ok", copyUser.getString("status"))
         SystemClock.sleep(1_800)
         snap("clipboard-username")
-        note("clipboard after the username: ${clipboardDescription()}")
+        val plainDescription = clipboardDescription()
+        note("clipboard after the username: $plainDescription")
         val copyPassword = zen(
             "passwords.copy",
             JSONObject().put("id", login.getString("id")).put("field", "password"),
@@ -228,9 +234,13 @@ class AutofillDemo : DemoHarness("autofill-demo-state.json", "services-password-
         )
         assertEquals("copy password: $copyPassword", "ok", copyPassword.getString("status"))
         SystemClock.sleep(1_800)
-        snap("clipboard-password-hidden")
+        snap("clipboard-password-copied")
         val description = clipboardDescription()
         note("clipboard after the password: $description")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            assertTrue("username copy in the clear: $plainDescription", plainDescription.contains("sensitive=false"))
+            assertTrue("password copy marked sensitive: $description", description.contains("sensitive=true"))
+        }
 
         // 6. The provider setting: under `system` the page WebViews rejoin the autofill framework.
         zen("settings.update", JSONObject().put("passwords", JSONObject().put("androidProvider", "system")))
@@ -543,10 +553,23 @@ class AutofillDemo : DemoHarness("autofill-demo-state.json", "services-password-
         return found
     }
 
-    /** The system's word on the primary clip (its description, with the extras that mark it sensitive). */
-    private fun clipboardDescription(): String =
-        shell("dumpsys clipboard").lines().filter { it.contains("Clip", ignoreCase = true) }
-            .joinToString(" | ") { it.trim() }.take(600)
+    /**
+     * The primary clip as the app itself sees it (the instrumentation shares the foreground app's
+     * process, so the read is allowed): whether it holds text and whether its description carries
+     * the flag that makes the system's clipboard preview hide the value.
+     */
+    private fun clipboardDescription(): String {
+        var description = ""
+        instrumentation.runOnMainSync {
+            val manager = app.getSystemService(ClipboardManager::class.java)
+            val clip = manager?.primaryClipDescription
+            description = if (clip == null) "no primary clip" else {
+                val sensitive = clip.extras?.getBoolean(ClipDescription.EXTRA_IS_SENSITIVE, false) ?: false
+                "hasText=${manager.hasPrimaryClip()} mime=${clip.getMimeType(0)} sensitive=$sensitive"
+            }
+        }
+        return description
+    }
 
     // --- the host's autofill wiring --------------------------------------------------------------
 
