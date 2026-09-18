@@ -911,23 +911,43 @@ export class ElectronTabView implements TabView {
     return out
   }
 
-  /** Run `fn` with the page's debugger attached, detaching again if it was attached here. */
+  /**
+   * Run `fn` with a DevTools session on the page, for the duration of the action only – the way
+   * the resource governor holds its sessions (`resources/lifecycle.ts`): attached on demand when
+   * the first action starts, detached when the last pending action ends, so no session lingers
+   * on a page between tool calls. A session another client already holds (DevTools, the
+   * governor's overrides) is used as is and left in place. Actions only send commands of the
+   * domain they need (`Input.*`, `Page.*`); nothing here enables `Runtime`, so the page sees no
+   * debugger-side script evaluation and nothing becomes attached to its JavaScript contexts.
+   */
   private async withDebugger<T>(fn: (dbg: Electron.Debugger) => Promise<T>): Promise<T> {
     const dbg = this.wc.debugger
-    const attachedHere = !dbg.isAttached()
-    if (attachedHere) dbg.attach('1.3')
+    if (this.cdpPending === 0 && !dbg.isAttached()) {
+      dbg.attach('1.3')
+      this.cdpAttachedHere = true
+    }
+    this.cdpPending++
     try {
       return await fn(dbg)
     } finally {
-      if (attachedHere) {
-        try {
-          dbg.detach()
-        } catch {
-          /* already detached */
+      this.cdpPending--
+      if (this.cdpPending === 0 && this.cdpAttachedHere) {
+        this.cdpAttachedHere = false
+        if (!this.wc.isDestroyed() && dbg.isAttached()) {
+          try {
+            dbg.detach()
+          } catch {
+            /* already detached */
+          }
         }
       }
     }
   }
+
+  /** Actions in flight that hold the debugger through `withDebugger`. */
+  private cdpPending = 0
+  /** Whether the current session was opened by `withDebugger` (and is ours to close). */
+  private cdpAttachedHere = false
 
   setBackgroundThrottling(allowed: boolean): void {
     if (!this.wc.isDestroyed()) this.wc.setBackgroundThrottling(allowed)
@@ -1025,15 +1045,11 @@ export class ElectronTabView implements TabView {
     }
   }
 
-  private async captureWithDevtools(
+  private captureWithDevtools(
     options: AgentCaptureOptions,
     mimeType: string
   ): Promise<AgentCapture> {
-    const wc = this.wc
-    const dbg = wc.debugger
-    const attachedHere = !dbg.isAttached()
-    if (attachedHere) dbg.attach('1.3')
-    try {
+    return this.withDebugger(async (dbg) => {
       const metrics = (await dbg.sendCommand('Page.getLayoutMetrics')) as {
         cssContentSize?: { width: number; height: number }
         contentSize?: { width: number; height: number }
@@ -1063,15 +1079,7 @@ export class ElectronTabView implements TabView {
         width: Math.round(clip.width),
         height: Math.round(clip.height)
       }
-    } finally {
-      if (attachedHere) {
-        try {
-          dbg.detach()
-        } catch {
-          /* already detached */
-        }
-      }
-    }
+    })
   }
 }
 
