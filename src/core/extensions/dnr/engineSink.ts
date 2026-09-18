@@ -42,11 +42,19 @@ export interface RuleSetRewriter {
   rewriteSet(set: EngineRuleSet): EngineRuleSet
 }
 
+/**
+ * The engine, or a getter for it: a host whose extension layer is built inside the `Browser`
+ * constructor (Android's `createExtensions`) has no `browser.blocking` yet at that point; the
+ * sink reads the getter at the first set, never before.
+ */
+export type EngineSource = RuleEngine | (() => RuleEngine)
+
 export function createDnrSink(
-  engine: RuleEngine,
+  engine: EngineSource,
   resources?: RuleSetRewriter,
   scope?: DnrSinkScope
 ): ScopedRuleSink {
+  const engineOf = typeof engine === 'function' ? engine : (): RuleEngine => engine
   const scoped = (set: EngineRuleSet): EngineRuleSet => {
     if (!scope) return set
     const parsed = parseEngineSetId(set.id)
@@ -56,15 +64,16 @@ export function createDnrSink(
   return {
     setRuleSet: (set) => {
       const own = scoped(set)
-      engine.setRuleSet(resources ? resources.rewriteSet(own) : own)
+      engineOf().setRuleSet(resources ? resources.rewriteSet(own) : own)
     },
-    removeRuleSet: (id) => engine.removeRuleSet(id),
+    removeRuleSet: (id) => engineOf().removeRuleSet(id),
     rescope: (extensionId) => {
       if (!scope) return
       const partitions = [...scope.partitionsOf(extensionId)]
-      for (const summary of engine.listRuleSets()) {
+      const target = engineOf()
+      for (const summary of target.listRuleSets()) {
         if (parseEngineSetId(summary.id)?.extensionId !== extensionId) continue
-        engine.setPartitions(summary.id, partitions)
+        target.setPartitions(summary.id, partitions)
       }
     }
   }

@@ -371,9 +371,11 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     this.identity = new AndroidIdentity(this, this.timers)
     // Extensions' rule sets go straight into the request-blocking engine, each scoped to the
     // containers the extension runs in (never the private one unless the user allowed it there).
+    // The engine is read when the first set arrives: this runtime is built by `createExtensions`
+    // inside the Browser constructor, before `browser.blocking` exists.
     this.dnr = new AndroidDeclarativeNetRequest(
       this,
-      createDnrSink(browser.blocking.engine, undefined, {
+      createDnrSink(() => this.browser.blocking.engine, undefined, {
         partitionsOf: (id) => this.partitionsOf(id)
       })
     )

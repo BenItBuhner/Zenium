@@ -372,7 +372,6 @@ export function harness(
   } as unknown as ZenWindow
   const browser = {
     platform: { io },
-    blocking: { engine },
     state: {
       model: { containers },
       subscribe: (fn: () => void) => {
@@ -424,6 +423,9 @@ export function harness(
       if (timer) timer.cleared = true
     }
   })
+  // As in the Browser constructor: `createExtensions` (this runtime) runs before the blocking
+  // service exists, so the engine is attached afterwards and must be read lazily.
+  ;(browser as unknown as { blocking: { engine: RuleEngine } }).blocking = { engine }
   const tick = (ms: number): void => {
     clock.now += ms
     for (;;) {
