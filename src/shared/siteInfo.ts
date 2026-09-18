@@ -5,6 +5,7 @@
  * feed their raw readings through.
  */
 import type { CertificateError } from './types'
+import { FILE_SITE } from './contentSettings'
 import {
   BLANK_URL,
   ERROR_URL_PREFIX,
@@ -158,7 +159,8 @@ export function describeSite(url: string): SiteDescription {
   }
   const scheme = parsed.protocol.replace(/:$/, '').toLowerCase()
   if (scheme === 'zen' || scheme === 'about' || scheme === 'chrome') return none(scheme, 'internal')
-  if (scheme === 'file') return none(scheme, 'local')
+  // Local files share one site for permissions (Chrome's `file:///`), so the sheet can list them.
+  if (scheme === 'file') return { ...none(scheme, 'local'), origin: FILE_SITE }
   if (scheme !== 'http' && scheme !== 'https') return none(scheme, 'unknown')
   const host = parsed.hostname.toLowerCase()
   const local =

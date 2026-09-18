@@ -20,7 +20,7 @@ import {
   type NotificationPermissionStatus
 } from '../../shared/notifications'
 import { Browser } from '../../core/browser'
-import { safeOrigin } from '../../core/permissions'
+import { permissionSite } from '../../core/permissions'
 import type {
   AppHost,
   ClipboardHost,
@@ -536,7 +536,7 @@ export class ElectronPlatform implements Platform {
       for (const view of this.views.all()) {
         if (view.isDestroyed()) continue
         const url = view.getURL()
-        if (change.origin !== null && safeOrigin(url) !== change.origin) continue
+        if (change.origin !== null && permissionSite(url) !== change.origin) continue
         view.webContents.send(NOTIFICATION_PERMISSION_CHANNEL, statusOf(url, view.webContents))
       }
     })
