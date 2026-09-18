@@ -3,13 +3,17 @@ package app.zen.chromium
 import android.Manifest
 import android.app.DownloadManager
 import android.content.ActivityNotFoundException
+import android.content.ContentResolver
+import android.content.ContentUris
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.provider.MediaStore
 import android.webkit.CookieManager
 import android.webkit.WebSettings
 import android.widget.Toast
@@ -715,9 +719,27 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
     private fun shareUri(savePath: String): Uri? = when {
         savePath.isEmpty() -> null
         savePath.startsWith("content:") -> Uri.parse(savePath)
-        savePath.startsWith("file:") -> Uri.parse(savePath).path?.let { fileProviderUri(File(it)) }
-        else -> fileProviderUri(File(savePath))
+        savePath.startsWith("file:") -> Uri.parse(savePath).path?.let { shareableUri(File(it)) }
+        else -> shareableUri(File(savePath))
     }
+
+    /**
+     * A URI another app may open `file` through: the MediaStore row of a file in the public
+     * Downloads (a screenshot; see `Host.saveToDownloads`), else the app's own FileProvider.
+     */
+    private fun shareableUri(file: File): Uri? {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) mediaStoreUri(file)?.let { return it }
+        return fileProviderUri(file)
+    }
+
+    @Suppress("DEPRECATION") // DATA: the one column that names the file on disk
+    private fun mediaStoreUri(file: File): Uri? = runCatching {
+        val collection = MediaStore.Downloads.EXTERNAL_CONTENT_URI
+        activity.contentResolver.query(
+            collection, arrayOf(MediaStore.MediaColumns._ID),
+            "${MediaStore.MediaColumns.DATA} = ?", arrayOf(file.absolutePath), null
+        )?.use { c -> if (c.moveToFirst()) ContentUris.withAppendedId(collection, c.getLong(0)) else null }
+    }.getOrNull()
 
     private fun fileProviderUri(file: File): Uri? = runCatching {
         FileProvider.getUriForFile(activity, "${activity.packageName}.files", file)
@@ -734,5 +756,22 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
         private const val BLOB_CHUNK = 512 * 1024
         /** The core's `PRIVATE_CONTAINER_ID`: tabs of a private window run in this container. */
         const val PRIVATE_CONTAINER = "private"
+
+        /**
+         * Where MediaStore put the file behind one of its Downloads rows: its `DATA` column (still
+         * filled in on Q+, where the row may have renamed the file to keep names unique), or the
+         * display name under the public Downloads folder; null when the row says neither.
+         */
+        @Suppress("DEPRECATION") // DATA, see above
+        fun pathOf(resolver: ContentResolver, uri: Uri): String? = runCatching {
+            val columns = arrayOf(MediaStore.MediaColumns.DATA, MediaStore.MediaColumns.DISPLAY_NAME)
+            resolver.query(uri, columns, null, null, null)?.use { c ->
+                if (!c.moveToFirst()) return@use null
+                c.getString(0)?.takeIf { it.isNotEmpty() }
+                    ?: c.getString(1)?.takeIf { it.isNotEmpty() }?.let { name ->
+                        File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), name).absolutePath
+                    }
+            }
+        }.getOrNull()
     }
 }

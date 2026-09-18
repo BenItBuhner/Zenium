@@ -486,7 +486,12 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         tab.saveWebArchive(file.absolutePath, false) { path -> reply(path) }
     }
 
-    /** Store bytes as a file in the public Downloads collection; resolves with a path or URI. */
+    /**
+     * Store bytes as a file in the public Downloads collection; resolves with the file's path. The
+     * core names the download after the last segment of what it gets back, so the path it is –
+     * the MediaStore row's URI ends in the row's id, and a screenshot listed as "1000000025" was
+     * that id. `Downloads.open` finds the row again from the path.
+     */
     fun saveToDownloads(name: String, mimeType: String, bytes: ByteArray?, reply: (Any?) -> Unit) {
         if (bytes == null) {
             reply(null)
@@ -506,7 +511,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                     values.clear()
                     values.put(MediaStore.Downloads.IS_PENDING, 0)
                     resolver.update(uri, values, null, null)
-                    uri.toString()
+                    Downloads.pathOf(resolver, uri) ?: uri.toString()
                 } else {
                     val dir = activity.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: activity.filesDir
                     val file = File(dir, name)
