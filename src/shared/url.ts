@@ -27,6 +27,7 @@ const KNOWN_SCHEMES = [
   'https',
   'file',
   'zen',
+  'zenium',
   'about',
   'ftp',
   'data',
@@ -34,6 +35,20 @@ const KNOWN_SCHEMES = [
   'chrome',
   'chrome-extension'
 ]
+
+/**
+ * The internal pages a user may type by another browser's name: `chrome://settings`,
+ * `about:preferences`, `zenium://newtab`. Each resolves to the canonical `zen://` address.
+ */
+const INTERNAL_PAGE_ALIASES: Record<string, string> = {
+  blank: BLANK_URL,
+  newtab: NEW_TAB_URL,
+  home: NEW_TAB_URL,
+  preferences: SETTINGS_URL,
+  settings: SETTINGS_URL,
+  history: HISTORY_URL,
+  bookmarks: BOOKMARKS_URL
+}
 /** `host:port[/path]` – looks like a scheme but is a bare host with a port (dev servers). */
 const HOST_PORT_RE =
   /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*:\d{1,5}([/?#].*)?$/i
@@ -105,12 +120,16 @@ export function inputToUrl(raw: string): string | null {
     const scheme = input.slice(0, input.indexOf(':')).toLowerCase()
     if (scheme === 'about') {
       const rest = input.slice('about:'.length).toLowerCase()
-      if (rest === 'blank') return BLANK_URL
-      if (rest === 'newtab' || rest === 'home') return NEW_TAB_URL
-      if (rest === 'preferences' || rest === 'settings') return SETTINGS_URL
-      if (rest === 'history') return HISTORY_URL
-      if (rest === 'bookmarks') return BOOKMARKS_URL
-      return BLANK_URL
+      return INTERNAL_PAGE_ALIASES[rest] ?? BLANK_URL
+    }
+    // `zenium://` is the name users see for `zen://`; `chrome://settings` and its siblings are
+    // the pages a Chrome user types – both resolve to the canonical `zen://` address.
+    if (scheme === 'zenium' || scheme === 'chrome') {
+      const rest = input.slice(`${scheme}://`.length)
+      const page = rest.split(/[/?#]/, 1)[0].toLowerCase()
+      const alias = INTERNAL_PAGE_ALIASES[page]
+      if (alias) return alias
+      if (scheme === 'zenium') return `zen://${rest}`
     }
     return input
   }
@@ -150,7 +169,9 @@ export function displayUrl(url: string): string {
  * scheme and `www.` kept, error and Reader View pages replaced by the address they stand in for.
  */
 export function fullUrl(url: string): string {
-  if (!url || url === BLANK_URL) return ''
+  // An empty tab (the blank page, the new tab page) has no address to show: `zen://newtab` is
+  // canonical inside and never appears in the UI, as Chrome's omnibox is empty on its NTP.
+  if (isEmptyTabUrl(url)) return ''
   if (url.startsWith(ERROR_URL_PREFIX) || url.startsWith(READER_URL_PREFIX)) {
     try {
       return new URL(url).searchParams.get('url') ?? ''

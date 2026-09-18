@@ -3,6 +3,7 @@ import type { CertificateDetails } from '../types'
 import {
   BLANK_URL,
   BOOKMARKS_URL,
+  HISTORY_URL,
   NEW_TAB_URL,
   SETTINGS_URL,
   addressParts,
@@ -78,9 +79,26 @@ describe('new tab and settings pages', () => {
     expect(inputToUrl('ABOUT:Preferences')).toBe(SETTINGS_URL)
   })
 
+  it('resolves the zenium:// name users see and Chrome’s chrome:// pages to zen://', () => {
+    expect(inputToUrl('zenium://newtab')).toBe(NEW_TAB_URL)
+    expect(inputToUrl('zenium://settings')).toBe(SETTINGS_URL)
+    expect(inputToUrl('zenium://settings/privacy')).toBe(SETTINGS_URL)
+    expect(inputToUrl('ZENIUM://Newtab/')).toBe(NEW_TAB_URL)
+    expect(inputToUrl('zenium://reader/?id=1')).toBe('zen://reader/?id=1')
+    expect(inputToUrl('chrome://settings')).toBe(SETTINGS_URL)
+    expect(inputToUrl('chrome://settings/')).toBe(SETTINGS_URL)
+    expect(inputToUrl('chrome://newtab')).toBe(NEW_TAB_URL)
+    expect(inputToUrl('chrome://history')).toBe(HISTORY_URL)
+    // A chrome:// page Zenium has no page for stays as typed (Chromium answers it).
+    expect(inputToUrl('chrome://gpu')).toBe('chrome://gpu')
+  })
+
   it('shows an empty address and the New Tab title for the new tab page', () => {
     expect(displayUrl(NEW_TAB_URL)).toBe('')
     expect(displayUrl(`${NEW_TAB_URL}/`)).toBe('')
+    // Chrome: the omnibox is empty on the new tab page even with "Always show full URLs".
+    expect(fullUrl(NEW_TAB_URL)).toBe('')
+    expect(fullUrl(`${NEW_TAB_URL}/`)).toBe('')
     expect(titleForUrl(NEW_TAB_URL)).toBe('New Tab')
   })
 })
