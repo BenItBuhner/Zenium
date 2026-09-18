@@ -38,6 +38,7 @@ export function Toolbar({
     >
       <div
         className="zen-drag flex h-10 items-center gap-1 px-1"
+        data-zen-nav-bar
         style={{
           ...(trailingInset > 0 ? { paddingRight: trailingInset + 4 } : {}),
           ...(leadingInset > 0 ? { paddingLeft: leadingInset } : {})

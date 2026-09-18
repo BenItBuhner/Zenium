@@ -283,6 +283,8 @@ export interface UiState {
   barEditorOpen: boolean
   /** Phone layout: the Tabs button's quick menu is up, anchored to the button (window px). */
   tabsMenu: Rect | null
+  /** The downloads bubble (anchored under the toolbar button) is up. */
+  downloadsOpen: boolean
   /** Safe-area insets of the host window (status bar, gesture bar, IME). */
   insets: Insets
   /**
@@ -354,6 +356,7 @@ export const uiStore = createStore<UiState>(
     externalProtocol: null,
     barEditorOpen: false,
     tabsMenu: null,
+    downloadsOpen: false,
     insets: { top: 0, right: 0, bottom: 0, left: 0 },
     stageActive: false,
     hoverCard: HOVER_CARD_HIDDEN,
@@ -638,6 +641,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.permissionPromptOpen &&
     !ui.pageDialogOpen &&
     !ui.windowPromptOpen &&
+    !ui.downloadsOpen &&
     !ui.stageActive &&
     !ui.zoomBubble &&
     !ui.newTabShortcutDialog &&
@@ -672,6 +676,7 @@ export function invalidateSnapshot(): void {
     !ui.permissionPromptOpen &&
     !ui.pageDialogOpen &&
     !ui.windowPromptOpen &&
+    !ui.downloadsOpen &&
     !ui.stageActive &&
     !ui.zoomBubble &&
     ui.hoverCard.tabId === null &&
@@ -1016,6 +1021,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.permissionPromptOpen ||
     ui.pageDialogOpen ||
     ui.windowPromptOpen ||
+    ui.downloadsOpen ||
     ui.stageActive ||
     ui.zoomBubble !== null ||
     ui.hoverCard.tabId !== null ||
@@ -1127,21 +1133,23 @@ export function closeTabsMenu(): void {
 
 /**
  * Only anchored panels are up: a bar panel, the star bubble, the zoom bubble, the tab hover
- * card. The page behind them is captured all the same (they overlap the live view), but panels
- * draw no scrim, so the capture shows undimmed; dialogs dim it.
+ * card, the downloads bubble. The page behind them is captured all the same (they overlap the
+ * live view), but panels draw no scrim, so the capture shows undimmed; dialogs dim it.
  */
 export function panelAloneOverContent(ui: UiState): boolean {
   return (
     (ui.barMenuOpen ||
       ui.starDialog !== null ||
       ui.zoomBubble !== null ||
-      ui.hoverCard.tabId !== null) &&
+      ui.hoverCard.tabId !== null ||
+      ui.downloadsOpen) &&
     !overlayCoversContent({
       ...ui,
       barMenuOpen: false,
       starDialog: null,
       zoomBubble: null,
-      hoverCard: HOVER_CARD_HIDDEN
+      hoverCard: HOVER_CARD_HIDDEN,
+      downloadsOpen: false
     })
   )
 }

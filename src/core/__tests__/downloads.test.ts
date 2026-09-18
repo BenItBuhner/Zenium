@@ -219,20 +219,21 @@ describe('DownloadService state machine', () => {
     expect(item.bytesPerSecond).toBe(0)
     expect(item.etaMs).toBeNull()
     expect(h.host.count('release')).toBe(1)
-    expect(h.host.releaseNotify).toEqual([true])
+    // By default the bubble is the notice: the host is told not to raise one of its own.
+    expect(h.host.releaseNotify).toEqual([false])
     expect(h.service.inFlight).toHaveLength(0)
     expect(h.changes.at(-1)).toEqual({ id: item.id, kind: 'done' })
     expect(h.dangers).toEqual([])
   })
 
   it('hands the notification setting to the host and opens when asked', async () => {
-    h.settings.notifyOnComplete = false
+    h.settings.notifyOnComplete = true
     const item = begin(h)
     h.service.setOpenWhenDone(item.id, true)
     expect(item.openWhenDone).toBe(true)
     h.service.finish(item.id, 'completed')
     await flush()
-    expect(h.host.releaseNotify).toEqual([false])
+    expect(h.host.releaseNotify).toEqual([true])
     expect(h.host.opened).toEqual([item.id])
   })
 

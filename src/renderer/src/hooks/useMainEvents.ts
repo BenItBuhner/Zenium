@@ -3,6 +3,7 @@ import type { Rect, UIState } from '@shared/types'
 import { onEvent, run } from '@renderer/lib/api'
 import { starredOnPhone } from '@renderer/lib/bookmarkEdit'
 import { remoteDragOver } from '@renderer/lib/drag'
+import { startDownloadsUi } from '@renderer/lib/downloads'
 import { isPhone } from '@renderer/lib/formFactor'
 import { APP_MENU_EVENT } from '@renderer/lib/shortcuts'
 import {
@@ -38,6 +39,8 @@ function currentActiveTabId(): string | null {
 export function useMainEvents(): void {
   useEffect(() => {
     const offs = [
+      // The downloads button and bubble follow the engine's list and the `downloads.reveal` event.
+      startDownloadsUi(),
       onEvent('urlbar.toggle', ({ mode, text }) => {
         const ui = uiStore.get()
         if (ui.urlbar.open && ui.urlbar.mode === mode && text === undefined) {

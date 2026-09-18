@@ -33,6 +33,8 @@ import { useLongPress } from '../phone/useLongPress'
 import { PillChip } from '../urlbar/PillChip'
 import { WindowControls } from '../WindowControls'
 import { ZoomChip } from '../zoom/ZoomChip'
+import { DownloadButton } from '../downloads/DownloadButton'
+import { downloadButtonVisible, downloadsUi } from '@renderer/lib/downloads'
 
 /** Back, forward, reload, the puzzle piece and the menu: always in the row, never folded. */
 const FIXED_BUTTONS = 5
@@ -102,6 +104,7 @@ export function NavRow({
   )
   const row = useRef<HTMLDivElement>(null)
   const rowWidth = useElementWidth(row)
+  const downloadsUiState = downloadsUi.use()
   // What the chips have open, for their `aria-expanded`.
   const siteInfoOpen = uiStore.use((s) => s.siteInfoOpen)
   const boostsOpen = uiStore.use((s) => s.overlay === 'boosts')
@@ -134,9 +137,11 @@ export function NavRow({
     <div
       ref={row}
       className={cn('zen-no-drag flex items-center gap-0.5', compact && 'flex-col', className)}
-      // The bar the extension popovers hang from (v2 §9.20): flush under it, aligned by half.
-      // (Its token family is the window's, from the `data-surface` on SidebarTop's root.)
+      // The bar the extension popovers and the downloads bubble hang from (v2 §9.20): flush
+      // under it, aligned by half. (Its token family is the window's, from the `data-surface`
+      // on SidebarTop's root.)
       data-bar={compact ? undefined : ''}
+      data-zen-nav-row
     >
       <NavigationButton
         tab={tab}
@@ -340,10 +345,12 @@ export function NavRow({
           </span>
         </div>
       )}
+      <DownloadButton state={state} activeTabId={tab?.id ?? null} />
       <ToolbarActions
         state={state}
         rowWidth={compact ? null : rowWidth}
-        fixedButtons={FIXED_BUTTONS}
+        // The downloads button joins the fixed set while it is in the row.
+        fixedButtons={FIXED_BUTTONS + (downloadButtonVisible(state, downloadsUiState) ? 1 : 0)}
         compact={compact}
       />
       <button

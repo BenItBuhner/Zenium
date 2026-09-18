@@ -40,6 +40,7 @@ import type { FormsCommand } from '../../shared/forms'
 import type {
   AgentCapture,
   AgentCaptureOptions,
+  AgentFrame,
   AgentInputEvent,
   InputModifier,
   KeyEventInput,
@@ -603,7 +604,9 @@ export class ElectronTabView implements TabView {
   executeJavaScript(code: string, frameId?: number): Promise<unknown> {
     if (frameId) {
       const frame = frameById(this.wc, frameId)
-      if (frame && !frame.detached) return frame.executeJavaScript(code, true)
+      if (!frame || frame.detached)
+        return Promise.reject(new Error(`Frame ${frameId} is no longer part of the page`))
+      return frame.executeJavaScript(code, true)
     }
     return this.wc.executeJavaScript(code, true)
   }
@@ -812,9 +815,24 @@ export class ElectronTabView implements TabView {
 
   // --- AI agents -------------------------------------------------------------------
 
-  /** Trusted input events; coordinates arrive in CSS pixels and become DIPs via the zoom factor. */
+  /**
+   * Trusted input for agents. It goes through the DevTools protocol's Input domain: unlike
+   * `webContents.sendInputEvent`, which hands events straight to the main frame's widget, CDP
+   * routes them through Chromium's input router, so a point inside a cross-origin iframe reaches
+   * the frame's own process – as a person's click would – and the keyboard goes to the focused
+   * frame. Coordinates are CSS pixels of the top viewport (CDP takes them as such at any zoom).
+   * When the debugger cannot be attached the widget-level API is the fallback (in DIPs, main
+   * frame only).
+   */
   async sendInput(event: AgentInputEvent): Promise<void> {
     const wc = this.wc
+    if (wc.isDestroyed()) return
+    try {
+      await this.withDebugger((dbg) => dispatchInputViaCdp(dbg, event))
+      return
+    } catch {
+      /* no debugger for this page: fall back to the widget */
+    }
     if (wc.isDestroyed()) return
     const zoom = wc.getZoomFactor()
     const px = (v: number): number => Math.round(v * zoom)
@@ -868,6 +886,68 @@ export class ElectronTabView implements TabView {
   executeIsolatedJavaScript(code: string): Promise<unknown> {
     return this.wc.executeJavaScriptInIsolatedWorld(ISOLATED_WORLD_ID, [{ code }], true)
   }
+
+  /**
+   * The page's frame tree for agents: the top frame first, then every sub-frame (parents before
+   * children, siblings in insertion order), each with Chrome's frame id (see `frameIdOf`).
+   */
+  frames(): AgentFrame[] {
+    const wc = this.wc
+    if (wc.isDestroyed()) return []
+    const focused = wc.focusedFrame
+    const out: AgentFrame[] = []
+    for (const frame of wc.mainFrame.framesInSubtree) {
+      if (frame.detached) continue
+      const parent = frame.parent
+      out.push({
+        id: frameIdOf(frame),
+        parentId: parent ? frameIdOf(parent) : null,
+        url: frame.url,
+        origin: frame.origin,
+        name: frame.name,
+        focused: focused !== null && focused.frameTreeNodeId === frame.frameTreeNodeId
+      })
+    }
+    return out
+  }
+
+  /**
+   * Run `fn` with a DevTools session on the page, for the duration of the action only – the way
+   * the resource governor holds its sessions (`resources/lifecycle.ts`): attached on demand when
+   * the first action starts, detached when the last pending action ends, so no session lingers
+   * on a page between tool calls. A session another client already holds (DevTools, the
+   * governor's overrides) is used as is and left in place. Actions only send commands of the
+   * domain they need (`Input.*`, `Page.*`); nothing here enables `Runtime`, so the page sees no
+   * debugger-side script evaluation and nothing becomes attached to its JavaScript contexts.
+   */
+  private async withDebugger<T>(fn: (dbg: Electron.Debugger) => Promise<T>): Promise<T> {
+    const dbg = this.wc.debugger
+    if (this.cdpPending === 0 && !dbg.isAttached()) {
+      dbg.attach('1.3')
+      this.cdpAttachedHere = true
+    }
+    this.cdpPending++
+    try {
+      return await fn(dbg)
+    } finally {
+      this.cdpPending--
+      if (this.cdpPending === 0 && this.cdpAttachedHere) {
+        this.cdpAttachedHere = false
+        if (!this.wc.isDestroyed() && dbg.isAttached()) {
+          try {
+            dbg.detach()
+          } catch {
+            /* already detached */
+          }
+        }
+      }
+    }
+  }
+
+  /** Actions in flight that hold the debugger through `withDebugger`. */
+  private cdpPending = 0
+  /** Whether the current session was opened by `withDebugger` (and is ours to close). */
+  private cdpAttachedHere = false
 
   setBackgroundThrottling(allowed: boolean): void {
     if (!this.wc.isDestroyed()) this.wc.setBackgroundThrottling(allowed)
@@ -965,15 +1045,11 @@ export class ElectronTabView implements TabView {
     }
   }
 
-  private async captureWithDevtools(
+  private captureWithDevtools(
     options: AgentCaptureOptions,
     mimeType: string
   ): Promise<AgentCapture> {
-    const wc = this.wc
-    const dbg = wc.debugger
-    const attachedHere = !dbg.isAttached()
-    if (attachedHere) dbg.attach('1.3')
-    try {
+    return this.withDebugger(async (dbg) => {
       const metrics = (await dbg.sendCommand('Page.getLayoutMetrics')) as {
         cssContentSize?: { width: number; height: number }
         contentSize?: { width: number; height: number }
@@ -1003,15 +1079,7 @@ export class ElectronTabView implements TabView {
         width: Math.round(clip.width),
         height: Math.round(clip.height)
       }
-    } finally {
-      if (attachedHere) {
-        try {
-          dbg.detach()
-        } catch {
-          /* already detached */
-        }
-      }
-    }
+    })
   }
 }
 
@@ -1048,6 +1116,165 @@ function electronModifiers(mods: InputModifier[]): Array<'shift' | 'control' | '
     else if (m === 'Meta') out.push('meta')
   }
   return out
+}
+
+/** CDP's `Input.*` modifier bit field: Alt=1, Ctrl=2, Meta=4, Shift=8. */
+function cdpModifiers(mods: InputModifier[]): number {
+  let bits = 0
+  for (const m of mods) {
+    if (m === 'Alt') bits |= 1
+    else if (m === 'Control') bits |= 2
+    else if (m === 'Meta') bits |= 4
+    else if (m === 'Shift') bits |= 8
+  }
+  return bits
+}
+
+/** Named keys agents press: DOM `code` and Windows virtual key code (what `keyCode` reports). */
+const CDP_NAMED_KEYS: Record<string, { code: string; vk: number; text?: string }> = {
+  Enter: { code: 'Enter', vk: 13, text: '\r' },
+  Tab: { code: 'Tab', vk: 9, text: '\t' },
+  Escape: { code: 'Escape', vk: 27 },
+  Backspace: { code: 'Backspace', vk: 8 },
+  Delete: { code: 'Delete', vk: 46 },
+  Insert: { code: 'Insert', vk: 45 },
+  ArrowUp: { code: 'ArrowUp', vk: 38 },
+  ArrowDown: { code: 'ArrowDown', vk: 40 },
+  ArrowLeft: { code: 'ArrowLeft', vk: 37 },
+  ArrowRight: { code: 'ArrowRight', vk: 39 },
+  Home: { code: 'Home', vk: 36 },
+  End: { code: 'End', vk: 35 },
+  PageUp: { code: 'PageUp', vk: 33 },
+  PageDown: { code: 'PageDown', vk: 34 },
+  Shift: { code: 'ShiftLeft', vk: 16 },
+  Control: { code: 'ControlLeft', vk: 17 },
+  Alt: { code: 'AltLeft', vk: 18 },
+  Meta: { code: 'MetaLeft', vk: 91 },
+  CapsLock: { code: 'CapsLock', vk: 20 },
+  ContextMenu: { code: 'ContextMenu', vk: 93 }
+}
+
+/** US layout: printable characters → DOM `code` and virtual key code (shifted ones share both). */
+const CDP_CHAR_KEYS: Record<string, { code: string; vk: number }> = {
+  ' ': { code: 'Space', vk: 32 },
+  '`': { code: 'Backquote', vk: 192 },
+  '~': { code: 'Backquote', vk: 192 },
+  '-': { code: 'Minus', vk: 189 },
+  _: { code: 'Minus', vk: 189 },
+  '=': { code: 'Equal', vk: 187 },
+  '+': { code: 'Equal', vk: 187 },
+  '[': { code: 'BracketLeft', vk: 219 },
+  '{': { code: 'BracketLeft', vk: 219 },
+  ']': { code: 'BracketRight', vk: 221 },
+  '}': { code: 'BracketRight', vk: 221 },
+  '\\': { code: 'Backslash', vk: 220 },
+  '|': { code: 'Backslash', vk: 220 },
+  ';': { code: 'Semicolon', vk: 186 },
+  ':': { code: 'Semicolon', vk: 186 },
+  "'": { code: 'Quote', vk: 222 },
+  '"': { code: 'Quote', vk: 222 },
+  ',': { code: 'Comma', vk: 188 },
+  '<': { code: 'Comma', vk: 188 },
+  '.': { code: 'Period', vk: 190 },
+  '>': { code: 'Period', vk: 190 },
+  '/': { code: 'Slash', vk: 191 },
+  '?': { code: 'Slash', vk: 191 },
+  '!': { code: 'Digit1', vk: 49 },
+  '@': { code: 'Digit2', vk: 50 },
+  '#': { code: 'Digit3', vk: 51 },
+  $: { code: 'Digit4', vk: 52 },
+  '%': { code: 'Digit5', vk: 53 },
+  '^': { code: 'Digit6', vk: 54 },
+  '&': { code: 'Digit7', vk: 55 },
+  '*': { code: 'Digit8', vk: 56 },
+  '(': { code: 'Digit9', vk: 57 },
+  ')': { code: 'Digit0', vk: 48 }
+}
+
+/** A DOM key name as the `Input.dispatchKeyEvent` fields Chromium wants. */
+function cdpKey(key: string): { key: string; code: string; vk: number; text: string | undefined } {
+  const named = CDP_NAMED_KEYS[key]
+  if (named) return { key, code: named.code, vk: named.vk, text: named.text }
+  const fn = /^F(\d{1,2})$/.exec(key)
+  if (fn && Number(fn[1]) >= 1 && Number(fn[1]) <= 24)
+    return { key, code: key, vk: 111 + Number(fn[1]), text: undefined }
+  if (key.length !== 1) return { key, code: key, vk: 0, text: undefined }
+  if (/[a-z]/i.test(key))
+    return { key, code: `Key${key.toUpperCase()}`, vk: key.toUpperCase().charCodeAt(0), text: key }
+  if (/\d/.test(key)) return { key, code: `Digit${key}`, vk: key.charCodeAt(0), text: key }
+  const punct = CDP_CHAR_KEYS[key]
+  return { key, code: punct?.code ?? '', vk: punct?.vk ?? 0, text: key }
+}
+
+/**
+ * Deliver an agent input event through the DevTools protocol (`Input.dispatchMouseEvent`,
+ * `Input.dispatchKeyEvent`, `Input.insertText`); each command resolves once the page has
+ * handled the event.
+ */
+async function dispatchInputViaCdp(dbg: Electron.Debugger, event: AgentInputEvent): Promise<void> {
+  switch (event.type) {
+    case 'mouseMove':
+      await dbg.sendCommand('Input.dispatchMouseEvent', {
+        type: 'mouseMoved',
+        x: event.x,
+        y: event.y,
+        button: 'none'
+      })
+      return
+    case 'click': {
+      const modifiers = cdpModifiers(event.modifiers)
+      const { x, y, button } = event
+      await dbg.sendCommand('Input.dispatchMouseEvent', {
+        type: 'mouseMoved',
+        x,
+        y,
+        button: 'none',
+        modifiers
+      })
+      for (let i = 1; i <= Math.max(1, event.clickCount); i++) {
+        await dbg.sendCommand('Input.dispatchMouseEvent', {
+          type: 'mousePressed',
+          x,
+          y,
+          button,
+          clickCount: i,
+          modifiers
+        })
+        await dbg.sendCommand('Input.dispatchMouseEvent', {
+          type: 'mouseReleased',
+          x,
+          y,
+          button,
+          clickCount: i,
+          modifiers
+        })
+      }
+      return
+    }
+    case 'key': {
+      const modifiers = cdpModifiers(event.modifiers)
+      const k = cdpKey(event.key)
+      // A keyDown that carries text is what produces the keypress/input; with Control, Alt or
+      // Meta held the key is a shortcut and types nothing (a bare rawKeyDown instead).
+      const shortcut = (modifiers & 7) !== 0
+      const base = {
+        key: k.key,
+        code: k.code,
+        windowsVirtualKeyCode: k.vk,
+        nativeVirtualKeyCode: k.vk,
+        modifiers
+      }
+      await dbg.sendCommand('Input.dispatchKeyEvent', {
+        ...base,
+        type: !shortcut && k.text ? 'keyDown' : 'rawKeyDown',
+        ...(!shortcut && k.text ? { text: k.text, unmodifiedText: k.text } : {})
+      })
+      await dbg.sendCommand('Input.dispatchKeyEvent', { ...base, type: 'keyUp' })
+      return
+    }
+    case 'text':
+      await dbg.sendCommand('Input.insertText', { text: event.text })
+  }
 }
 
 /** DOM key names → Electron accelerator key codes. */

@@ -37,6 +37,10 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // The sidebar tab drag – drop-into targets, the audio indicator, ghost, caret and tear-off card
   // (lib/drag.ts, components/DragLayer.tsx, components/sidebar/TabItem.tsx).
   ['[data-drop-into] {', '.zen-panel {'],
+  // The downloads bubble, toolbar button and zen://downloads page (components/downloads,
+  // overlays/DownloadsPanel.tsx). Its block sits between the bookmark chrome's rules and the
+  // comment that ends them, so it is taken out first.
+  ['.zen-dl-surface {', '@keyframes zen-dl-pop-out {'],
   // The bookmark chrome: bar, panels, star bubble, dialogs, manager (components/bookmarks/*).
   ['.zen-bm-bar {', '/*\n * Fading scroll edges'],
   // Find in page, zoom and fullscreen: the docked find bar (components/content/FindBar.tsx).
@@ -56,10 +60,15 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
 const V2_FILES: ReadonlyArray<string> = [
   // The phone history and bookmarks panels, their sheets and the bookmark editor.
   'components/phone/phonePanels.css',
+  // The extensions UI's own stylesheet, imported by main.css (components/extensions/*, #68):
+  // management page and details, toolbar actions and the puzzle panel, popup frame, prompts.
+  'assets/extensions.css',
   // The desktop bookmark manager's selection count pill (components/bookmarks/*, #90).
   'components/bookmarks/BookmarkManager.tsx',
   // The window prompts' checkbox accent (§9.5 modals, #129).
   'components/dialogs/WindowPromptDialog.tsx',
+  // The extension details page's error line in the danger ink (#68).
+  'components/extensions/ExtensionDetails.tsx',
   // The new tab page's shortcut dialog: its validation line in the danger ink (#148).
   'components/newtab/NewTabShortcutDialog.tsx',
   // The external-protocol sheet on the v2 sheet chassis (#140): its deemphasised host line.
@@ -216,6 +225,15 @@ describe('design language v2 tokens', () => {
     )
     expect(inside).toMatch(/--zen-scrim: var\(--v2-scrim\)/)
     expect(inside).toMatch(/\[class\^='zen-v2-'\]:focus-visible/)
+  })
+
+  it('gives the downloads surfaces no colour of their own', () => {
+    const from = css.indexOf('.zen-dl-surface {')
+    const to = css.indexOf('@keyframes zen-dl-pop-out {', from)
+    expect(from).toBeGreaterThanOrEqual(0)
+    expect(to).toBeGreaterThan(from)
+    // Every tone comes from the block (or Zen's accent and status inks); no literal colours.
+    expect(css.slice(from, to)).not.toMatch(/#[0-9a-f]{3,8}\b/i)
   })
 
   it('is read outside main.css only by the files deliberately moved to v2', () => {
