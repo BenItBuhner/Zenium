@@ -185,6 +185,14 @@ android {
     sourceSets["test"].java.srcDirs("src/test/kotlin")
     sourceSets["androidTest"].java.srcDirs("src/androidTest/kotlin")
 
+    testOptions {
+        unitTests.all {
+            // The JDK's HttpURLConnection silently drops `Origin` (a "restricted" header) unless told
+            // otherwise; Android's OkHttp-backed one sends it. The CORS proxy tests check the rewrite.
+            it.systemProperty("sun.net.http.allowRestrictedHeaders", "true")
+        }
+    }
+
     packaging {
         resources.excludes += setOf("META-INF/*.version", "META-INF/LICENSE*")
     }

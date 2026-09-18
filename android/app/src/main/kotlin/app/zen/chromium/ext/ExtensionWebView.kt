@@ -11,7 +11,9 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import app.zen.chromium.BuildConfig
 import app.zen.chromium.Host
+import app.zen.chromium.UserAgent
 
 /**
  * A WebView on an extension's origin: the hidden background page (`context = "background"`) or a
@@ -40,6 +42,9 @@ class ExtensionWebView(
             allowContentAccess = false
             mediaPlaybackRequiresUserGesture = false
         }
+        // Extension pages present as Zenium, as tab pages do; the CORS proxy sends the same string.
+        UserAgent.apply(settings, BuildConfig.VERSION_NAME)
+        extensions.userAgent = settings.userAgentString
         // Chrome paints popups white until the document says otherwise; the hidden background view has nothing to paint.
         setBackgroundColor(if (context == "background") Color.TRANSPARENT else Color.WHITE)
         webViewClient = Client()

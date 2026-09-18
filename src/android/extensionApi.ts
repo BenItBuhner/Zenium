@@ -82,6 +82,8 @@ export interface ApiHost {
   exec(request: ExecRequest): Promise<unknown>
   cookieHeader(url: string): Promise<string | null>
   setCookie(url: string, cookie: string): Promise<void>
+  /** The optional host permissions an extension holds right now (`permissions.request` / `remove`); Kotlin's CORS proxy reads them. */
+  hostsGranted(id: string, hosts: string[]): void
   openPopup(id: string): void
   openOptions(id: string): void
   /** `runtime.reload()` and `management.uninstallSelf()`: the store re-reads or removes the extension. */
@@ -240,6 +242,8 @@ export class ExtensionApi {
   readonly contextMenus: AndroidContextMenus
   readonly activeTab: ActiveTabGrants
   private readonly actions = new Map<string, ActionState>()
+  /** Optional host permissions granted this session, per extension (Chrome persists them; W2-3 may). */
+  private readonly grantedHosts = new Map<string, Set<string>>()
 
   constructor(private readonly host: ApiHost) {
     this.tabs = new TabIds(host.browser, () => host.window())
@@ -264,6 +268,13 @@ export class ExtensionApi {
     this.actions.delete(id)
     this.contextMenus.forget(id)
     this.activeTab.forget(id)
+    this.grantedHosts.delete(id)
+  }
+
+  /** The host patterns the extension may fetch across origins: its `host_permissions` plus what it was granted. */
+  hostPatterns(ext: AttachedExtension): string[] {
+    const granted = this.grantedHosts.get(ext.record.id)
+    return granted ? [...ext.manifest.hostPermissions, ...granted] : ext.manifest.hostPermissions
   }
 
   /** An endpoint reported gone: `onclick` handlers it held go with it. */
@@ -339,7 +350,7 @@ export class ExtensionApi {
       case 'bookmarks':
         return this.bookmarksCall(method, args)
       case 'permissions':
-        return this.permissionsCall(ext.manifest, method, args)
+        return this.permissionsCall(ext, method, args)
       case 'management':
         return this.managementCall(ext, method, args)
       case 'commands':
@@ -1189,24 +1200,26 @@ export class ExtensionApi {
     throw new Error(`chrome.bookmarks.${method} ${NOT_IMPLEMENTED}`)
   }
 
-  private permissionsCall(manifest: RuntimeManifest, method: string, args: unknown[]): unknown {
+  private permissionsCall(ext: AttachedExtension, method: string, args: unknown[]): unknown {
+    const { manifest } = ext
+    const id = ext.record.id
     const wanted = asRecord(args[0])
     const permissions = asStringArray(wanted.permissions)
     const origins = asStringArray(wanted.origins)
+    const granted = this.grantedHosts.get(id) ?? new Set<string>()
+    const hosts = (): string[] => [...manifest.hostPermissions, ...granted]
     const has = (): boolean =>
       permissions.every((p) => manifest.permissions.includes(p)) &&
-      origins.every(
-        (o) =>
-          manifest.hostPermissions.includes(o) || manifest.hostPermissions.includes('<all_urls>')
-      )
+      origins.every((o) => hosts().includes(o) || manifest.hostPermissions.includes('<all_urls>'))
     switch (method) {
       case 'contains':
         return has()
       case 'getAll':
-        return { permissions: manifest.permissions, origins: manifest.hostPermissions }
-      case 'request':
-        // Optional permissions declared in the manifest are granted without a prompt (W2-2 asks).
-        return (
+        return { permissions: manifest.permissions, origins: hosts() }
+      case 'request': {
+        // Optional permissions declared in the manifest are granted without a prompt (the prompt
+        // is the UI worker's); what is not declared is refused, as in Chrome.
+        const allowed =
           permissions.every(
             (p) => manifest.permissions.includes(p) || manifest.optionalPermissions.includes(p)
           ) &&
@@ -1214,9 +1227,24 @@ export class ExtensionApi {
             (o) =>
               manifest.hostPermissions.includes(o) || manifest.optionalHostPermissions.includes(o)
           )
+        if (!allowed) return false
+        const added = origins.filter(
+          (o) => !manifest.hostPermissions.includes(o) && !granted.has(o)
         )
-      case 'remove':
-        return false
+        if (added.length > 0) {
+          for (const o of added) granted.add(o)
+          this.grantedHosts.set(id, granted)
+          this.host.hostsGranted(id, [...granted])
+        }
+        return true
+      }
+      case 'remove': {
+        // Required permissions cannot be removed; optional ones granted here can.
+        if (origins.some((o) => manifest.hostPermissions.includes(o))) return false
+        const removed = origins.filter((o) => granted.delete(o))
+        if (removed.length > 0) this.host.hostsGranted(id, [...granted])
+        return true
+      }
     }
     throw new Error(`chrome.permissions.${method} ${NOT_IMPLEMENTED}`)
   }

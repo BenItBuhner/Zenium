@@ -20,6 +20,7 @@
  *  ready          {}                                              extension page finished loading
  *  popupSize      { width, height }                               popup document size changed
  *  closePopup     {}
+ *  proxyBody      { ticket, body }                                body (base64) of a ticketed CORS-proxied fetch (Android)
  *
  * Host → context: reply { id, ok, result | error }, deliver { id, data, sender, userScript? },
  * event { ns, name, args }, portConnect { portId, name, sender, userScript? }, portAccept

@@ -4,6 +4,7 @@ import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.util.Base64
 import android.util.Log
 import android.webkit.CookieManager
 import android.webkit.WebResourceRequest
@@ -109,6 +110,8 @@ class Extensions(private val host: Host) {
         val allowPrivate: Boolean,
         /** `web_accessible_resources` globs (tab pages may only fetch these). */
         val webAccessible: List<Regex>,
+        /** `host_permissions` (and MV2 origin permissions): the hosts the CORS proxy reaches for the extension's pages. */
+        val hosts: List<MatchPattern>,
         /** The generated background page, or null when the extension has none / an MV2 page. */
         val backgroundHtml: String?,
         val backgroundUrl: String?,
@@ -172,8 +175,21 @@ class Extensions(private val host: Host) {
     private val endpoints = HashMap<String, Endpoint>()
     private val backgrounds = HashMap<String, ExtensionWebView>()
     private var popup: ExtensionPopup? = null
+    /** The user agent extension pages send (set when the first extension view is built), for the CORS proxy's requests. */
+    @Volatile var userAgent: String? = null
+    /** Optional host permissions granted at runtime (`chrome.permissions.request`), per extension; read on request threads. */
+    @Volatile private var grantedHosts: Map<String, List<MatchPattern>> = emptyMap()
+    /** Cross-origin fetches of extension pages to permitted hosts (see [CorsProxy]). */
+    private val corsProxy = CorsProxy(
+        object : CorsProxy.Cookies {
+            override fun header(url: String): String? = CookieManager.getInstance().getCookie(url)
+            override fun store(url: String, setCookie: String) = CookieManager.getInstance().setCookie(url, setCookie)
+        }
+    ) { userAgent }
     /** Last request decisions ("allow|block|… type micros url"), kept while `debug` for instrumentation. */
     val decisions = ArrayDeque<String>()
+    /** While `debug`: the CORS proxy's last answers ("METHOD status url"), for instrumentation. */
+    val proxied = ArrayDeque<String>()
     /**
      * While `debug`: `"<ext> <ns>.<method>"` → `[calls, failed replies, unanswered]` over the
      * bridge, so the demo can grade messaging and storage per real extension (`msg` counts as
@@ -231,6 +247,12 @@ class Extensions(private val host: Host) {
                 val tabId = args.str("tabId")
                 val id = args.strOrNull("id")
                 authFlows = if (id == null) authFlows - tabId else authFlows + (tabId to id)
+                reply(null)
+            }
+            "ext.hosts" -> {
+                val id = args.str("id")
+                val hosts = args.arr("hosts").let { a -> MatchPattern.compileAll(List(a.length()) { i -> a.optString(i, "") }) }
+                grantedHosts = if (hosts.isEmpty()) grantedHosts - id else grantedHosts + (id to hosts)
                 reply(null)
             }
             "ext.exec" -> exec(args, reply)
@@ -308,6 +330,7 @@ class Extensions(private val host: Host) {
                 allowFileAccess = args.bool("allowFileAccess"),
                 allowPrivate = args.bool("allowPrivate"),
                 webAccessible = s.arr("webAccessible").let { a -> List(a.length()) { i -> globToRegex(a.optString(i, "")) } },
+                hosts = s.arr("hosts").let { a -> MatchPattern.compileAll(List(a.length()) { i -> a.optString(i, "") }) },
                 backgroundHtml = s.strOrNull("backgroundHtml"),
                 backgroundUrl = s.strOrNull("backgroundUrl"),
                 pageConfig = s.str("page", "{}"),
@@ -505,6 +528,13 @@ class Extensions(private val host: Host) {
         if (debug) recordReply(ep, message)
         val ok = runCatching { endpoint.proxy.postMessage(message) }.isSuccess
         if (!ok) gone(listOf(ep))
+    }
+
+    private fun recordProxy(request: CorsProxy.Request, status: Int) {
+        synchronized(proxied) {
+            if (proxied.size >= 200) proxied.removeFirst()
+            proxied.addLast("${request.method} $status ${request.url}")
+        }
     }
 
     private fun recordCall(ep: String, message: JSONObject) {
@@ -837,6 +867,12 @@ class Extensions(private val host: Host) {
                 popup?.resize(message.optInt("width"), message.optInt("height"))
                 return
             }
+            "proxyBody" -> {
+                // The body of a bodied cross-origin fetch, ahead of the request naming its ticket (CorsProxy).
+                val bytes = runCatching { Base64.decode(message.str("body"), Base64.DEFAULT) }.getOrNull() ?: return
+                corsProxy.putBody(message.str("ticket"), bytes)
+                return
+            }
             "closePopup" -> {
                 closePopup()
                 return
@@ -972,6 +1008,26 @@ class Extensions(private val host: Host) {
             val flow = authFlows[tab.tabId]
             if (flow != null && IdentityRedirect.isRedirectBack(flow, url.toString())) {
                 return response("text/html", 200, "OK", REDIRECT_LANDING)
+            }
+        }
+        // A fetch or XHR of an extension page to a host its permissions cover: Chrome skips CORS
+        // there, the proxy stands in (CorsProxy). The request's `Origin` names the extension, so
+        // a popup, a background view and an extension page opened in a tab are one case.
+        val corsOrigin = request.requestHeaders?.entries?.firstOrNull { it.key.equals("Origin", true) }?.value
+        if (corsOrigin != null && corsOrigin.startsWith("https://") && corsOrigin.endsWith(ORIGIN_SUFFIX)) {
+            val id = corsOrigin.removePrefix("https://").removeSuffix(ORIGIN_SUFFIX)
+            val ext = served[id]
+            if (ext != null && (tab?.isPrivateTab != true || ext.allowPrivate)) {
+                val proxied = CorsProxy.Request(request.method ?: "GET", url.toString(), request.requestHeaders ?: emptyMap())
+                val hosts = grantedHosts[id]?.let { ext.hosts + it } ?: ext.hosts
+                if (corsProxy.applies(proxied, corsOrigin, hosts)) {
+                    val reply = corsProxy.handle(proxied, id, corsOrigin)
+                    // A 3xx the proxy could not follow cannot be a WebResourceResponse; the WebView tries itself.
+                    if (reply != null && reply.status !in 300..399) {
+                        if (debug) recordProxy(proxied, reply.status)
+                        return WebResourceResponse(reply.mime, reply.charset, reply.status, reply.reason, reply.headers, reply.body)
+                    }
+                }
             }
         }
         if (extensionPage != null) return null

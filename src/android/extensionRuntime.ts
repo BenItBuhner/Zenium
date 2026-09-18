@@ -76,7 +76,8 @@ import type { ViewEventPayloads } from './views'
  *  ext.configure { id, version, path, allowFileAccess, allowPrivate, units, served, debug }
  *                                           → { units: [{ key, chars, cached }], ms }
  *  ext.detach { id }
- *  ext.background.start / stop { id }, ext.popup.open { id, url, context, title }, ext.popup.close
+ *  ext.background.start / stop { id }, ext.popup.open { id, url, context, title }, ext.popup.close,
+ *  ext.hosts { id, hosts } (optional host permissions granted at runtime)
  *  ext.send { ep, message }, ext.exec {…}, ext.readFile { id, path }, ext.cookies.get / set
  *  ext.setRules { extensions: [{ ext, allowPrivate, paths, dynamic }] }, ext.observeRequests { on }
  *  ext.authFlow { tabId, id | null }         the tab an identity.launchWebAuthFlow runs in
@@ -826,6 +827,10 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
   /** Kotlin cancels the flow tab's navigation back to `https://<id>.chromiumapp.org/` itself. */
   authFlowTab(tabId: string, extensionId: string | null): void {
     this.bridge.send('ext.authFlow', { tabId, id: extensionId })
+  }
+
+  hostsGranted(id: string, hosts: string[]): void {
+    this.bridge.send('ext.hosts', { id, hosts })
   }
 
   openPopup(id: string): void {

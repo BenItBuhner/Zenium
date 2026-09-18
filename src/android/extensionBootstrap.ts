@@ -34,6 +34,7 @@ import {
   type ServiceWorkerMessage
 } from './extensionServiceWorker'
 import type { ClaimedTransport, TransportJanitor } from './extensionTransport'
+import { installCorsProxy } from './extensionCorsProxy'
 
 /**
  * The extension bootstrap Kotlin injects at document start into tab WebViews (content mode) and
@@ -323,6 +324,16 @@ declare const __zenExtBoot: Boot
         : null
     const swSend = (message: ServiceWorkerMessage): void => engine.post({ t: 'sw', ...message })
     let lifecycle: (() => Promise<void>) | null = null
+
+    // Cross-origin fetch / XHR to the hosts the extension's permissions cover go through
+    // Kotlin's CORS proxy; bodied ones hand their body over first (extensionCorsProxy.ts).
+    let ticketSeq = 0
+    installCorsProxy(window, {
+      origin,
+      hostPermissions: ext.hostPermissions,
+      postBody: (ticket, body) => engine.post({ t: 'proxyBody', ticket, body }),
+      nextTicket: () => `${endpointId}:${++ticketSeq}`
+    })
 
     if (context === 'background' && workerScript) {
       // Service-worker globals the MV3 script expects; `importScripts` is synchronous by
