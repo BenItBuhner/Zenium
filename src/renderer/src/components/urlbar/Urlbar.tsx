@@ -1,6 +1,16 @@
 import type { JSX, RefObject } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowRight, Bookmark, Clock, Globe, Layers, Search, Terminal, X } from 'lucide-react'
+import {
+  ArrowRight,
+  Bookmark,
+  Clock,
+  Globe,
+  Layers,
+  Puzzle,
+  Search,
+  Terminal,
+  X
+} from 'lucide-react'
 import type { PhoneBarLayout, PhoneBarPosition, Rect, Suggestion, UIState } from '@shared/types'
 import {
   BAR_BUTTON,
@@ -127,6 +137,8 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
       const key = tab ? `${tab.id}|${tab.url}` : 'new'
       if (keepDraft && text.trim() && text !== tab?.url) drafts.set(key, text)
       else drafts.delete(key)
+      // An extension's omnibox session, if one was on, ends without an entry.
+      run('urlbar.cancel', undefined)
       closeUrlbar()
     },
     [tab, text]
@@ -174,6 +186,15 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
           break
         case 'command':
           if (item.targetId) run('urlbar.runCommand', { action: item.targetId })
+          break
+        case 'omnibox':
+          // The keyword-prefixed text goes back whole: the extension takes it from there.
+          run('urlbar.submit', {
+            input: item.fill,
+            newTab,
+            tabId: tab?.id ?? null,
+            background: opts.background
+          })
           break
         case 'bookmark':
           // Through the bookmark so its "last used" date is recorded.
@@ -246,14 +267,22 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
           background: e.altKey && e.shiftKey
         })
         return
-      case 'Delete':
-        if (selected >= 0 && results[selected]?.kind === 'history' && results[selected].url) {
+      case 'Delete': {
+        const row = selected >= 0 ? results[selected] : undefined
+        if (!row) return
+        if (row.kind === 'history' && row.url) {
           e.preventDefault()
-          run('history.delete', { url: results[selected].url! })
-          setResults((r) => r.filter((_, i) => i !== selected))
-          setSelected(-1)
+          run('history.delete', { url: row.url })
+        } else if (row.kind === 'omnibox' && row.deletable) {
+          e.preventDefault()
+          run('urlbar.deleteSuggestion', { input: row.fill })
+        } else {
+          return
         }
+        setResults((r) => r.filter((_, i) => i !== selected))
+        setSelected(-1)
         return
+      }
     }
   }
 
@@ -533,7 +562,9 @@ function SuggestionRow({
             ? Terminal
             : item.kind === 'space'
               ? Layers
-              : Globe
+              : item.kind === 'omnibox'
+                ? Puzzle
+                : Globe
   return (
     <li
       className={cn(

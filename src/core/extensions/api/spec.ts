@@ -612,6 +612,27 @@ export const API_SPEC: ApiSpec = {
     methods: { get: { params: [] } },
     events: {}
   },
+  // The keyword comes from the manifest; the URL bar asks through `onInputChanged(text, suggest)`.
+  omnibox: {
+    methods: {
+      setDefaultSuggestion: { params: [object('suggestion')] }
+    },
+    events: {
+      onInputStarted: {},
+      onInputChanged: {},
+      onInputEntered: {},
+      onInputCancelled: {},
+      onDeleteSuggestion: {}
+    },
+    constants: {
+      DescriptionStyleType: { URL: 'url', MATCH: 'match', DIM: 'dim' },
+      OnInputEnteredDisposition: {
+        CURRENT_TAB: 'currentTab',
+        NEW_FOREGROUND_TAB: 'newForegroundTab',
+        NEW_BACKGROUND_TAB: 'newBackgroundTab'
+      }
+    }
+  },
   // Only the web-auth flow has anything to stand on: there is no signed-in browser account.
   identity: {
     methods: {

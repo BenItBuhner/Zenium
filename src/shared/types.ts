@@ -1506,7 +1506,16 @@ export interface FindResult {
 // ---------------------------------------------------------------------------
 
 export type SuggestionKind =
-  'url' | 'search' | 'history' | 'bookmark' | 'tab' | 'space' | 'command' | 'engine'
+  | 'url'
+  | 'search'
+  | 'history'
+  | 'bookmark'
+  | 'tab'
+  | 'space'
+  | 'command'
+  | 'engine'
+  /** A `chrome.omnibox` row: the input belongs to an extension whose keyword starts it. */
+  | 'omnibox'
 
 export interface Suggestion {
   id: string
@@ -1520,6 +1529,8 @@ export interface Suggestion {
   targetId: string | null
   /** Text to place in the input when the suggestion is highlighted (for inline completion). */
   fill: string
+  /** The row's owner lets the user remove it (Delete; `omnibox.onDeleteSuggestion`). */
+  deletable?: boolean
 }
 
 export interface CommandDescriptor {
@@ -1766,6 +1777,10 @@ export interface Commands {
     result: void
   }
   'urlbar.runCommand': { args: { action: string }; result: void }
+  /** The URL bar closed without an entry (Escape, a click away): an omnibox session ends. */
+  'urlbar.cancel': { args: void; result: void }
+  /** Delete on a row its owner marked `deletable` (`omnibox.onDeleteSuggestion`). */
+  'urlbar.deleteSuggestion': { args: { input: string }; result: void }
 
   'overlay.snapshot': { args: { tabId: string }; result: string | null }
 

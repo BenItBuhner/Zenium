@@ -27,7 +27,9 @@ function setup(kind: 'synced' | 'private' = 'synced'): {
   state.settings.searchSuggestions = false
   const bookmarks = new BookmarkService(state)
   const history = new HistoryService(io)
-  const browser = { state, bookmarks, history } as unknown as Browser
+  // No extension holds an omnibox keyword: the URL bar's own sources answer.
+  const extensions = { omniboxSuggest: async () => null }
+  const browser = { state, bookmarks, history, extensions } as unknown as Browser
   const win = new ZenWindow(browser, {
     id: 'window_1',
     kind,

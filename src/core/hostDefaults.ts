@@ -4,6 +4,7 @@ import type {
   Rect,
   ResourceSnapshot,
   SidePanelInfo,
+  Suggestion,
   SyncScope,
   SyncStatus
 } from '../shared/types'
@@ -136,6 +137,14 @@ export class NoExtensions implements ExtensionHost {
   }
   closeSidePanel(): void {}
   placeSidePanel(): void {}
+  async omniboxSuggest(): Promise<Suggestion[] | null> {
+    return null
+  }
+  omniboxSubmit(): boolean {
+    return false
+  }
+  omniboxCancel(): void {}
+  omniboxDeleteSuggestion(): void {}
   pageContextMenuItems(): MenuItemTemplate[] {
     return []
   }

@@ -652,6 +652,18 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
     })
   }
 
+  /**
+   * `omnibox.onInputChanged(text, suggest)`: the URL bar is waiting for `suggest(results)`; each
+   * call answers the host for this change (the latest one wins), and functions cannot cross.
+   */
+  function omniboxInputChanged(args: unknown[]): void {
+    const token = args[1]
+    const suggest = (results?: unknown): void => {
+      host.notify('omnibox-suggest', { token, results: Array.isArray(results) ? results : [] })
+    }
+    deliver('omnibox.onInputChanged', [args[0], suggest])
+  }
+
   // ---------------------------------------------------------------------------
   // Generic namespaces from the table
   // ---------------------------------------------------------------------------
@@ -1047,6 +1059,10 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
     if (namespace === 'contextMenus' && event === 'onClicked') menuClicked(args)
     if (namespace === 'downloads' && event === 'onDeterminingFilename') {
       determineFilename(args)
+      return
+    }
+    if (namespace === 'omnibox' && event === 'onInputChanged') {
+      omniboxInputChanged(args)
       return
     }
     const names =

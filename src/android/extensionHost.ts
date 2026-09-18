@@ -3,7 +3,8 @@ import type {
   ExtensionSource,
   ExtensionUpdateState,
   Rect,
-  SidePanelInfo
+  SidePanelInfo,
+  Suggestion
 } from '@shared/types'
 import type { Browser } from '@core/browser'
 import type { ExtensionHost, MenuItemTemplate } from '@core/platform'
@@ -728,6 +729,23 @@ export class AndroidExtensions implements ExtensionHost {
 
   placeSidePanel(): void {
     // Nothing to place.
+  }
+
+  /** No omnibox keywords on the phone: the URL bar suggests as usual. */
+  async omniboxSuggest(): Promise<Suggestion[] | null> {
+    return null
+  }
+
+  omniboxSubmit(): boolean {
+    return false
+  }
+
+  omniboxCancel(): void {
+    // No session to end.
+  }
+
+  omniboxDeleteSuggestion(): void {
+    // No rows of an extension's to delete.
   }
 
   /** Stop and start again, re-reading the installed files. */

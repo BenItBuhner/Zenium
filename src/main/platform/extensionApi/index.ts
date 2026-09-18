@@ -17,7 +17,8 @@ import {
   type ExtensionCommandInfo,
   type ExtensionInfo,
   type Rect,
-  type SidePanelInfo
+  type SidePanelInfo,
+  type Suggestion
 } from '../../../shared/types'
 import type { StoreIO } from '../../../core/platform'
 import type { Browser } from '../../../core/browser'
@@ -56,6 +57,7 @@ import { electronAuthWindowHost } from './identityBridge'
 import { ManagementApi } from './management'
 import { ApiModel, type ModelSnapshot } from './model'
 import { NotificationsApi } from './notifications'
+import { OmniboxApi } from './omnibox'
 import { PermissionsApi } from './permissions'
 import { RuntimeApi } from './runtime'
 import { SessionsApi } from './sessions'
@@ -119,6 +121,11 @@ export interface ExtensionApiHooks {
   toggleSidePanel(extensionId: string, win: ZenWindow): void
   closeSidePanel(win: ZenWindow): void
   placeSidePanel(win: ZenWindow, rect: Rect | null): void
+  /** `chrome.omnibox` (see `ExtensionHost.omnibox*`). */
+  omniboxSuggest(input: string, win: ZenWindow): Promise<Suggestion[] | null>
+  omniboxSubmit(input: string, newTab: boolean, background: boolean, win: ZenWindow): boolean
+  omniboxCancel(win: ZenWindow): void
+  omniboxDeleteSuggestion(input: string): void
 }
 
 type FrameSender = Extract<Sender, { kind: 'frame' }>
@@ -160,6 +167,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   readonly tabGroups: TabGroupsApi
   readonly sidePanel: SidePanelApi
   readonly identity: IdentityApi
+  readonly omnibox: OmniboxApi
 
   private readonly namespaces: Record<string, NamespaceHandlers>
   private readonly extensions = new Map<string, LoadedExtension>()
@@ -221,6 +229,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.topSites = new TopSitesApi(this)
     this.tabGroups = new TabGroupsApi(this)
     this.identity = new IdentityApi(electronAuthWindowHost(this.model))
+    this.omnibox = new OmniboxApi(this)
     this.namespaces = {
       tabs: { ...this.tabs.handlers, ...this.tabGroups.tabHandlers },
       windows: this.windows.handlers,
@@ -244,7 +253,8 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       topSites: this.topSites.handlers,
       tabGroups: this.tabGroups.handlers,
       sidePanel: this.sidePanel.handlers,
-      identity: this.identity.handlers
+      identity: this.identity.handlers,
+      omnibox: this.omnibox.handlers
     }
     // A tab's outermost document changed: `activeTab` grants for another origin end and the
     // declarativeNetRequest action counts start over.
@@ -373,6 +383,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.alarms.load(ext.id)
     this.commands.load(loaded)
     this.sidePanel.load(loaded)
+    this.omnibox.load(loaded)
     // After the permissions: the state exists only for extensions holding the permission.
     this.declarativeNetRequest.load(loaded)
     // Existing tabs, bookmarks, downloads and folders are the baseline, not a burst of `onCreated`.
@@ -400,6 +411,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.commands.unload(ext.id)
     this.sidePanel.unload(ext.id)
     this.identity.unload(ext.id)
+    this.omnibox.unload(ext.id)
     this.declarativeNetRequest.unload(ext.id)
     this.contextMenus.forget(ext.id)
     this.notifications.forget(ext.id)
@@ -532,6 +544,9 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
         return
       case 'downloads-determined':
         this.downloads.determined(ctx, payload)
+        return
+      case 'omnibox-suggest':
+        this.omnibox.suggested(ctx, payload)
         return
       default:
         return
@@ -692,6 +707,22 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
 
   placeSidePanel(win: ZenWindow, rect: Rect | null): void {
     this.sidePanel.place(win, rect)
+  }
+
+  omniboxSuggest(input: string, win: ZenWindow): Promise<Suggestion[] | null> {
+    return this.omnibox.suggest(input, win)
+  }
+
+  omniboxSubmit(input: string, newTab: boolean, background: boolean, win: ZenWindow): boolean {
+    return this.omnibox.submit(input, newTab, background, win)
+  }
+
+  omniboxCancel(win: ZenWindow): void {
+    this.omnibox.cancel(win)
+  }
+
+  omniboxDeleteSuggestion(input: string): void {
+    this.omnibox.deleteSuggestion(input)
   }
 
   pageContextMenuItems(tabId: string, params: PageContextParams): MenuItemTemplate[] {

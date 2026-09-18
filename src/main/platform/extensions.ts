@@ -14,7 +14,8 @@ import type {
   ExtensionSource,
   ExtensionUpdateState,
   Rect,
-  SidePanelInfo
+  SidePanelInfo,
+  Suggestion
 } from '../../shared/types'
 import { JsonStore } from '../../core/store/JsonStore'
 import type { Browser } from '../../core/browser'
@@ -1119,6 +1120,26 @@ export class ExtensionService implements ExtensionHost {
 
   placeSidePanel(win: ZenWindow, rect: Rect | null): void {
     this.api?.placeSidePanel(win, rect)
+  }
+
+  // ---------------------------------------------------------------------------
+  // Omnibox keywords (the chrome.* layer's)
+  // ---------------------------------------------------------------------------
+
+  async omniboxSuggest(input: string, win: ZenWindow): Promise<Suggestion[] | null> {
+    return this.api ? this.api.omniboxSuggest(input, win) : null
+  }
+
+  omniboxSubmit(input: string, newTab: boolean, background: boolean, win: ZenWindow): boolean {
+    return this.api ? this.api.omniboxSubmit(input, newTab, background, win) : false
+  }
+
+  omniboxCancel(win: ZenWindow): void {
+    this.api?.omniboxCancel(win)
+  }
+
+  omniboxDeleteSuggestion(input: string): void {
+    this.api?.omniboxDeleteSuggestion(input)
   }
 
   // ---------------------------------------------------------------------------

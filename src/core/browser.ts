@@ -1010,6 +1010,7 @@ export class Browser {
   ): void {
     const text = input.trim()
     if (!text) return
+    if (!win.isPrivate && this.extensions.omniboxSubmit(input, newTab, background, win)) return
     const engines = this.state.searchEngines
     const keyword = matchEngineKeyword(text, engines)
     let url: string | null = null
@@ -1302,6 +1303,9 @@ export class Browser {
         this.submitUrlbar(input, newTab, tabId, Boolean(background), win),
       'urlbar.runCommand': ({ action }, win) =>
         this.actions.run(action as AnyAction, { sourceTabId: null, win }),
+      'urlbar.cancel': (_a, win) => this.extensions.omniboxCancel(win),
+      'urlbar.deleteSuggestion': ({ input }, win) =>
+        this.extensions.omniboxDeleteSuggestion(input, win),
 
       'overlay.snapshot': ({ tabId }, win) => win.snapshot(tabId),
 

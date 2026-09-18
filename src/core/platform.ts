@@ -22,6 +22,7 @@ import type {
   ResourceSnapshot,
   SharePayload,
   SidePanelInfo,
+  Suggestion,
   SyncScope,
   SyncStatus,
   Tab
@@ -650,6 +651,17 @@ export interface ExtensionHost {
   closeSidePanel(win: ZenWindow): void
   /** The chrome laid the side panel out here (null: it is not showing); place the panel's view. */
   placeSidePanel(win: ZenWindow, rect: Rect | null): void
+  /**
+   * `chrome.omnibox`: input starting with an extension's manifest keyword and a space belongs
+   * to that extension. `omniboxSuggest` answers the rows for such input (null: no keyword
+   * matched, the URL bar suggests as usual), `omniboxSubmit` hands an entered input over (true
+   * when an extension took it), `omniboxCancel` ends a session without an entry, and
+   * `omniboxDeleteSuggestion` reports a deleted row.
+   */
+  omniboxSuggest(input: string, win: ZenWindow): Promise<Suggestion[] | null>
+  omniboxSubmit(input: string, newTab: boolean, background: boolean, win: ZenWindow): boolean
+  omniboxCancel(win: ZenWindow): void
+  omniboxDeleteSuggestion(input: string, win: ZenWindow): void
   /**
    * The `chrome.contextMenus` items extensions add to a page's context menu, already grouped
    * per extension the way Chrome does; empty when nothing matches the click.
