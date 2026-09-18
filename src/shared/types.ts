@@ -1026,6 +1026,11 @@ export interface Settings {
   unloadExcludedDomains: string[]
   searchEngineId: string
   searchSuggestions: boolean
+  /**
+   * Chrome's "Always show full URLs": the address pill keeps the scheme and `www.` instead of
+   * eliding them at rest. Absent in profiles from before it existed (read as false).
+   */
+  showFullUrls?: boolean
   containerSpecificEssentials: boolean
   essentialsMax: number
   newTabPosition: NewTabPosition

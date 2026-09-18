@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest'
 import {
   BLANK_URL,
   BOOKMARKS_URL,
+  addressParts,
   displayHost,
   displayUrl,
   errorPageUrl,
+  fullUrl,
   getDomain,
   inputToUrl,
   isNavigableUrl,
@@ -60,6 +62,41 @@ describe('displayUrl', () => {
     expect(
       displayUrl('zen://reader/?id=article_1&url=https%3A%2F%2Fen.wikipedia.org%2Fwiki%2FZen')
     ).toBe('en.wikipedia.org/wiki/Zen')
+  })
+})
+
+describe('fullUrl / addressParts', () => {
+  it('keeps the scheme and www for "Always show full URLs" and for copying', () => {
+    expect(fullUrl('https://www.example.com/a?b#c')).toBe('https://www.example.com/a?b#c')
+    expect(fullUrl(BLANK_URL)).toBe('')
+    expect(fullUrl('')).toBe('')
+    expect(fullUrl(errorPageUrl(-105, 'ERR_NAME_NOT_RESOLVED', 'https://nope.invalid/'))).toBe(
+      'https://nope.invalid/'
+    )
+    expect(
+      fullUrl('zen://reader/?id=article_1&url=https%3A%2F%2Fen.wikipedia.org%2Fwiki%2FZen')
+    ).toBe('https://en.wikipedia.org/wiki/Zen')
+    expect(fullUrl('zen://settings')).toBe('zen://settings')
+  })
+
+  it('splits the site from the dimmed path, query and fragment', () => {
+    expect(addressParts('example.com/some/path')).toEqual({
+      site: 'example.com',
+      rest: '/some/path'
+    })
+    expect(addressParts('example.com?q=1')).toEqual({ site: 'example.com', rest: '?q=1' })
+    expect(addressParts('example.com')).toEqual({ site: 'example.com', rest: '' })
+    expect(addressParts('localhost:3000/app#x')).toEqual({
+      site: 'localhost:3000',
+      rest: '/app#x'
+    })
+    expect(addressParts('https://www.example.com/a')).toEqual({
+      site: 'https://www.example.com',
+      rest: '/a'
+    })
+    expect(addressParts('zen://settings')).toEqual({ site: 'zen://settings', rest: '' })
+    expect(addressParts('file:///tmp/a.html')).toEqual({ site: 'file://', rest: '/tmp/a.html' })
+    expect(addressParts('')).toEqual({ site: '', rest: '' })
   })
 })
 
