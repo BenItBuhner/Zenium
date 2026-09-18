@@ -177,6 +177,29 @@ describe('the desktop downloads shell', () => {
     expect(w.bars).toHaveLength(3)
   })
 
+  it('flashes once for a resumable interruption (a progress change), not on every later update', () => {
+    const w = fakeWindow()
+    const { browser, publish } = fakeBrowser([w])
+    new ElectronDownloadsShell(browser as never)
+    const a = progressing('a', 50)
+    const b = progressing('b', 50)
+    publish([a, b], a, 'started')
+    // The connection dropped: the host reports the row interrupted but resumable.
+    const bDropped = { ...b, state: 'interrupted' as const, canResume: true, error: 'interrupted' }
+    publish([a, bDropped], bDropped, 'progress')
+    expect(w.bars.at(-1)).toEqual({ value: 0.5, mode: 'error' })
+    vi.advanceTimersByTime(PROGRESS_ERROR_FLASH_MS / 2)
+    // The engine republishes the interrupted row (a rename, a persist): no second flash.
+    publish([a, bDropped], bDropped, 'progress')
+    vi.advanceTimersByTime(PROGRESS_ERROR_FLASH_MS / 2)
+    expect(w.bars.at(-1)).toEqual({ value: 0.5, mode: 'normal' })
+    // Resumed and dropped again: a new failure, a new flash.
+    const bAgain = { ...b, state: 'progressing' as const }
+    publish([a, bAgain], bAgain, 'progress')
+    publish([a, bDropped], bDropped, 'progress')
+    expect(w.bars.at(-1)).toEqual({ value: 0.5, mode: 'error' })
+  })
+
   it('clears the entry at once when the failed transfer was the last one', () => {
     const w = fakeWindow()
     const { browser, publish } = fakeBrowser([w])

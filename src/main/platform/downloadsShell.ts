@@ -35,10 +35,19 @@ export class ElectronDownloadsShell {
   private readonly notifications = new Set<Notification>()
   /** A transfer just failed: its list's entries paint the error tone until this fires. */
   private errorFlash: { timer: ReturnType<typeof setTimeout>; private: boolean } | null = null
+  /** Rows known to be interrupted, so a failure flashes once, not on every later update. */
+  private readonly interrupted = new Set<string>()
 
   constructor(private readonly browser: Browser) {
     browser.onDownloadChange((item, kind) => {
-      if (kind === 'done' && item.state === 'interrupted') this.flashError(item.private)
+      // A resumable interruption (the connection dropped) arrives as a progress change, a
+      // terminal one as done; both are the failure the taskbar shows for a moment.
+      if (item.state === 'interrupted' && kind !== 'removed') {
+        if (!this.interrupted.has(item.id)) this.flashError(item.private)
+        this.interrupted.add(item.id)
+      } else {
+        this.interrupted.delete(item.id)
+      }
       this.updateProgressBars()
       if (kind === 'done') this.onDone(item)
     })
