@@ -18,10 +18,6 @@ on:
         options:
           - light
           - dark
-  # TEMPORARY: the loading-feedback PR's final run; removed before the PR is marked ready.
-  push:
-    branches:
-      - cursor/android-loading-feedback-6b3e
 
 permissions:
   contents: read
