@@ -256,6 +256,7 @@ class SiteInfoDemo {
      */
     private fun tapUntil(f: Finger, label: String, expected: String): Boolean {
         repeat(3) { attempt ->
+            awaitRest()
             val target = findByLabel(label) ?: run {
                 Log.w(TAG, "no node labelled '$label'")
                 return false
@@ -273,7 +274,25 @@ class SiteInfoDemo {
         return false
     }
 
+    /**
+     * The chassis catches a touch that lands on a sheet in motion and swallows its click; the
+     * emulator's software GPU makes a spring take seconds. Wait until the grabber has held its
+     * place for two readings in a row before tapping anything inside the sheet.
+     */
+    private fun awaitRest() {
+        val deadline = SystemClock.uptimeMillis() + 6_000
+        var last = grabber()
+        while (SystemClock.uptimeMillis() < deadline) {
+            SystemClock.sleep(300)
+            val now = grabber()
+            if (now == last) return
+            last = now
+        }
+        Log.w(TAG, "sheet still moving after 6 s")
+    }
+
     private fun tapLabel(f: Finger, label: String): Boolean {
+        if (grabber() != null) awaitRest()
         val candidates = findAllByLabel(label)
         val target = candidates.firstOrNull() ?: run {
             Log.w(TAG, "no node labelled '$label'")
