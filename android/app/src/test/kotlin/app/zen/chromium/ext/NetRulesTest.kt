@@ -90,6 +90,24 @@ class NetRulesTest {
     }
 
     @Test
+    fun `request domain lists match the host and its parents, excluded ones win, and a list of thousands costs a few lookups`() {
+        val many = (0 until 5000).joinToString(",") { "\"site$it.test\"" }
+        val rules = rulesOf(
+            """{"id":1,"action":{"type":"block"},"condition":{"requestDomains":[$many,"ads.example"],"excludedRequestDomains":["safe.ads.example"],"resourceTypes":["image"]}}"""
+        )
+        assertEquals(NetRules.Decision.Block, rules.decide("https://ads.example/p.gif", null, "image", "GET"))
+        assertEquals(NetRules.Decision.Block, rules.decide("https://a.b.ads.example/p.gif", null, "image", "GET"))
+        assertEquals(NetRules.Decision.Block, rules.decide("https://site4999.test/p.gif", null, "image", "GET"))
+        assertNull(rules.decide("https://safe.ads.example/p.gif", null, "image", "GET"))
+        assertNull(rules.decide("https://x.safe.ads.example/p.gif", null, "image", "GET"))
+        assertNull(rules.decide("https://notads.example/p.gif", null, "image", "GET"))
+        assertNull(rules.decide("https://example/p.gif", null, "image", "GET"))
+        assertTrue(NetRules.hostIn("a.b.c", setOf("c")))
+        assertTrue(!NetRules.hostIn("", setOf("")))
+        assertTrue(!NetRules.hostIn("bc", setOf("c")))
+    }
+
+    @Test
     fun `redirect resolves extensionPath against the extension origin`() {
         val rules = rulesOf(
             """{"id":9,"action":{"type":"redirect","redirect":{"extensionPath":"/empty.js"}},"condition":{"urlFilter":"||analytics.test/lib.js","resourceTypes":["script"]}}"""

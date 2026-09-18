@@ -53,6 +53,16 @@ class NetRules(val rules: List<Rule>) {
         val urlRegex: Regex? by lazy(LazyThreadSafetyMode.PUBLICATION) {
             regexSource?.let { runCatching { Regex(it, if (caseSensitive) emptySet() else setOf(RegexOption.IGNORE_CASE)) }.getOrNull() }
         }
+
+        /**
+         * The domain lists as sets: a list rule (uBlock Origin Lite's carry thousands of
+         * `requestDomains`) is matched by looking up the host and each of its parent domains,
+         * a handful of lookups instead of a walk over the whole list per request.
+         */
+        val requestDomainSet: Set<String> = requestDomains.toHashSet()
+        val excludedRequestDomainSet: Set<String> = excludedRequestDomains.toHashSet()
+        val initiatorDomainSet: Set<String> = initiatorDomains.toHashSet()
+        val excludedInitiatorDomainSet: Set<String> = excludedInitiatorDomains.toHashSet()
     }
 
     sealed class Decision {
@@ -95,10 +105,10 @@ class NetRules(val rules: List<Rule>) {
         }
         if (rule.requestMethods.isNotEmpty() && method !in rule.requestMethods) return false
         if (method in rule.excludedRequestMethods) return false
-        if (rule.requestDomains.isNotEmpty() && rule.requestDomains.none { domainMatches(host, it) }) return false
-        if (rule.excludedRequestDomains.any { domainMatches(host, it) }) return false
-        if (rule.initiatorDomains.isNotEmpty() && rule.initiatorDomains.none { domainMatches(initiatorHost, it) }) return false
-        if (rule.excludedInitiatorDomains.any { domainMatches(initiatorHost, it) }) return false
+        if (rule.requestDomainSet.isNotEmpty() && !hostIn(host, rule.requestDomainSet)) return false
+        if (rule.excludedRequestDomainSet.isNotEmpty() && hostIn(host, rule.excludedRequestDomainSet)) return false
+        if (rule.initiatorDomainSet.isNotEmpty() && !hostIn(initiatorHost, rule.initiatorDomainSet)) return false
+        if (rule.excludedInitiatorDomainSet.isNotEmpty() && hostIn(initiatorHost, rule.excludedInitiatorDomainSet)) return false
         if (rule.domainType != null) {
             val firstParty = initiatorHost.isNotEmpty() && registrableDomain(initiatorHost) == registrableDomain(host)
             if (rule.domainType == "firstParty" && !firstParty) return false
@@ -241,6 +251,18 @@ class NetRules(val rules: List<Rule>) {
         fun hostOf(url: String): String = runCatching { URI(url).host?.lowercase(Locale.ROOT) ?: "" }.getOrDefault("")
 
         fun domainMatches(host: String, domain: String): Boolean = host == domain || host.endsWith(".$domain")
+
+        /** Whether `host` or one of its parent domains is in `domains` (`domainMatches` over a set). */
+        fun hostIn(host: String, domains: Set<String>): Boolean {
+            if (host.isEmpty()) return false
+            var from = 0
+            while (true) {
+                if (host.substring(from) in domains) return true
+                val dot = host.indexOf('.', from)
+                if (dot < 0) return false
+                from = dot + 1
+            }
+        }
 
         fun registrableDomain(host: String): String {
             val labels = host.split('.')
