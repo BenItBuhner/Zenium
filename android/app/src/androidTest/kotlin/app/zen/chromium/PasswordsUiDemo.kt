@@ -227,7 +227,10 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
         SystemClock.sleep(1_300)
         snap("prompt-sheet")
         answerPassphraseSheet()
-        if (waitFor("Password copied", 8_000) != null) step("password copied with the passphrase") else step("no 'Password copied' toast")
+        // The toast reads "Password copied" alone or "Password copied, clears in 60 s" with the
+        // clipboard timeout (#122), so it is matched as a prefix.
+        val copied = awaitLabelPrefix("Password copied", 8_000)
+        if (copied != null) step("password copied with the passphrase: '$copied'") else step("no 'Password copied' toast")
         SystemClock.sleep(700)
         snap("detail-copied")
 
@@ -758,6 +761,23 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
             SystemClock.sleep(200)
         }
         return false
+    }
+
+    /**
+     * Poll for a label that is `prefix` alone or `prefix` with a `, …` suffix (a toast that names
+     * how long the clipboard keeps what it copied); the label found, or null once the time is up.
+     */
+    private fun awaitLabelPrefix(prefix: String, timeoutMs: Long): String? {
+        val matches = { label: String -> label == prefix || label.startsWith("$prefix,") }
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            val node = findNode(matches)
+            if (node != null) {
+                return listOfNotNull(node.contentDescription?.toString(), node.text?.toString()).firstOrNull(matches) ?: prefix
+            }
+            SystemClock.sleep(200)
+        }
+        return null
     }
 
     /** Breadth-first search of every window on screen (the app, SystemUI's prompt). */
