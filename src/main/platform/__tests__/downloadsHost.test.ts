@@ -274,7 +274,7 @@ describe('ElectronDownloads interrupt reasons', () => {
     const record = h.service.items[0]!
     h.observer.fire('onErrorOccurred', {
       url: 'https://example.com/a.txt',
-      error: 'net::ERR_CONNECTION_REFUSED'
+      error: 'net::ERR_CONNECTION_FAILED'
     })
     item.state = 'interrupted'
     item.emit('updated', {}, 'interrupted')

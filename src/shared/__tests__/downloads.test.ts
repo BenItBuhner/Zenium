@@ -32,26 +32,35 @@ describe('interrupt reasons', () => {
   })
 
   it('reads Chromium’s net errors the way its download core does', () => {
+    // The cases of ConvertNetErrorToInterruptReason that land in the set.
     expect(interruptReasonFromNetError('net::ERR_TIMED_OUT')).toBe('network-timeout')
-    expect(interruptReasonFromNetError('ERR_CONNECTION_TIMED_OUT')).toBe('network-timeout')
     expect(interruptReasonFromNetError('net::ERR_INTERNET_DISCONNECTED')).toBe(
       'network-disconnected'
     )
-    expect(interruptReasonFromNetError('net::ERR_NETWORK_CHANGED')).toBe('network-disconnected')
-    expect(interruptReasonFromNetError('net::ERR_CONNECTION_REFUSED')).toBe('network-server-down')
-    expect(interruptReasonFromNetError('net::ERR_NAME_NOT_RESOLVED')).toBe('server-unreachable')
-    expect(interruptReasonFromNetError('net::ERR_CERT_DATE_INVALID')).toBe('server-failed')
-    expect(interruptReasonFromNetError('net::ERR_SSL_PROTOCOL_ERROR')).toBe('server-failed')
+    expect(interruptReasonFromNetError('ERR_CONNECTION_FAILED')).toBe('network-server-down')
+    expect(interruptReasonFromNetError('net::ERR_REQUEST_RANGE_NOT_SATISFIABLE')).toBe(
+      'server-no-range'
+    )
     expect(interruptReasonFromNetError('net::ERR_FILE_NO_SPACE')).toBe('file-no-space')
     expect(interruptReasonFromNetError('net::ERR_FILE_PATH_TOO_LONG')).toBe('file-name-too-long')
+    expect(interruptReasonFromNetError('net::ERR_FILE_TOO_BIG')).toBe('file-too-large')
+    expect(interruptReasonFromNetError('net::ERR_FILE_VIRUS_INFECTED')).toBe('file-virus-infected')
     expect(interruptReasonFromNetError('net::ERR_ACCESS_DENIED')).toBe('file-access-denied')
-    expect(interruptReasonFromNetError('net::ERR_BLOCKED_BY_ADMINISTRATOR')).toBe('file-blocked')
-    expect(interruptReasonFromNetError('net::ERR_FILE_EXISTS')).toBe('file-failed')
+    expect(interruptReasonFromNetError('net::ERR_BLOCKED_BY_CLIENT')).toBe('file-blocked')
+    // HandleRequestCompletionStatus: an aborted request is the user's doing.
     expect(interruptReasonFromNetError('net::ERR_ABORTED')).toBe('user-canceled')
-    // Anything else the stack reports (a reset, an empty response, a short body) is a network failure.
+    // Certificate and TLS errors: the site was not available (SERVER_CERT_PROBLEM's wording).
+    expect(interruptReasonFromNetError('net::ERR_CERT_DATE_INVALID')).toBe('server-failed')
+    expect(interruptReasonFromNetError('net::ERR_SSL_PROTOCOL_ERROR')).toBe('server-failed')
+    // Everything else the stack reports is NETWORK_FAILED, as in Chromium: a refused or reset
+    // connection, a name that does not resolve, an empty response, a short body, a network change.
+    expect(interruptReasonFromNetError('net::ERR_CONNECTION_REFUSED')).toBe('network-failed')
     expect(interruptReasonFromNetError('net::ERR_CONNECTION_RESET')).toBe('network-failed')
+    expect(interruptReasonFromNetError('net::ERR_NAME_NOT_RESOLVED')).toBe('network-failed')
     expect(interruptReasonFromNetError('net::ERR_EMPTY_RESPONSE')).toBe('network-failed')
     expect(interruptReasonFromNetError('net::ERR_CONTENT_LENGTH_MISMATCH')).toBe('network-failed')
+    expect(interruptReasonFromNetError('net::ERR_NETWORK_CHANGED')).toBe('network-failed')
+    expect(interruptReasonFromNetError('net::ERR_FILE_NOT_FOUND')).toBe('network-failed')
     expect(interruptReasonFromNetError('')).toBe('network-failed')
   })
 
@@ -80,7 +89,7 @@ describe('interrupt reasons', () => {
     expect(interruptReasonFrom('cancelled')).toBe('user-canceled')
     expect(interruptReasonFrom('NETWORK_TIMEOUT')).toBe('network-timeout')
     expect(interruptReasonFrom('DOWNLOAD_INTERRUPT_REASON_FILE_NO_SPACE')).toBe('file-no-space')
-    expect(interruptReasonFrom('net::ERR_NAME_NOT_RESOLVED')).toBe('server-unreachable')
+    expect(interruptReasonFrom('net::ERR_INTERNET_DISCONNECTED')).toBe('network-disconnected')
     expect(interruptReasonFrom('ERR_TIMED_OUT')).toBe('network-timeout')
     expect(interruptReasonFrom('interrupted')).toBe('network-failed')
     expect(interruptReasonFrom(undefined)).toBe('network-failed')

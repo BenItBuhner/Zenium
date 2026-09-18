@@ -388,26 +388,29 @@ object DownloadLogic {
     }
 
     /**
-     * The reason behind an exception out of the transfer: the socket and resolver classes for the
-     * network, errno text on the IOExceptions the file system throws (ENOSPC, EACCES, ENAMETOOLONG,
-     * EFBIG), `SecurityException` for a document whose permission is gone; anything else IO is
-     * the network giving up, anything else at all is the file side.
+     * The reason behind an exception out of the transfer, read the way Chromium's download core
+     * reads the `net::` error the same condition raises (`ConvertNetErrorToInterruptReason`): a
+     * timeout is `NETWORK_TIMEOUT`, the network being down (ENETDOWN, `ERR_INTERNET_DISCONNECTED`)
+     * `NETWORK_DISCONNECTED`, a certificate or TLS failure the site not being available, and a
+     * refused or reset connection, an unresolved name or an unreachable route the plain
+     * `NETWORK_FAILED` Chromium leaves them at. The file side is errno text on the IOExceptions
+     * the sinks throw (ENOSPC, EACCES, ENAMETOOLONG, EFBIG) and `SecurityException` for a
+     * document whose permission is gone; anything else IO is the network giving up, anything else
+     * at all the file side.
      */
     fun failureReason(e: Throwable): InterruptReason {
         val text = e.message.orEmpty()
         fun mentions(vararg needles: String) = needles.any { text.contains(it, ignoreCase = true) }
         return when {
-            e is UnknownHostException -> InterruptReason.SERVER_UNREACHABLE
             e is SocketTimeoutException -> InterruptReason.NETWORK_TIMEOUT
-            e is ConnectException -> InterruptReason.NETWORK_SERVER_DOWN
-            e is java.net.NoRouteToHostException -> InterruptReason.NETWORK_DISCONNECTED
+            e is UnknownHostException || e is ConnectException || e is java.net.NoRouteToHostException -> InterruptReason.NETWORK_FAILED
             e is javax.net.ssl.SSLException -> InterruptReason.SERVER_FAILED
             e is SecurityException -> InterruptReason.FILE_ACCESS_DENIED
             e is IOException && mentions("ENOSPC", "No space") -> InterruptReason.FILE_NO_SPACE
             e is IOException && mentions("EACCES", "EPERM", "EROFS", "Permission denied", "Read-only") -> InterruptReason.FILE_ACCESS_DENIED
             e is IOException && mentions("ENAMETOOLONG", "name too long") -> InterruptReason.FILE_NAME_TOO_LONG
             e is IOException && mentions("EFBIG", "File too large") -> InterruptReason.FILE_TOO_LARGE
-            e is IOException && mentions("ENETUNREACH", "ENETDOWN", "Network is unreachable", "Network is down") -> InterruptReason.NETWORK_DISCONNECTED
+            e is IOException && mentions("ENETDOWN", "Network is down") -> InterruptReason.NETWORK_DISCONNECTED
             e is java.io.FileNotFoundException -> InterruptReason.FILE_FAILED
             e is IOException -> InterruptReason.NETWORK_FAILED
             else -> InterruptReason.FILE_FAILED

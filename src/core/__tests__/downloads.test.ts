@@ -1155,7 +1155,7 @@ describe('persistence and migration', () => {
           row('none', {}),
           row('quit', { error: 'shutdown' }),
           row('disk', { error: 'file-error' }),
-          row('net', { error: 'net::ERR_CONNECTION_TIMED_OUT' }),
+          row('net', { error: 'net::ERR_TIMED_OUT' }),
           row('cert', { error: 'ERR_CERT_DATE_INVALID' }),
           row('chrome', { error: 'SERVER_NO_RANGE' }),
           row('member', { error: 'file-no-space' }),

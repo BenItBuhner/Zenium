@@ -281,11 +281,14 @@ class DownloadLogicTest {
 
     @Test
     fun exceptionsOutOfTheTransferAreNamed() {
-        assertEquals(R.SERVER_UNREACHABLE, DownloadLogic.failureReason(UnknownHostException("x")))
         assertEquals(R.NETWORK_TIMEOUT, DownloadLogic.failureReason(SocketTimeoutException("x")))
-        assertEquals(R.NETWORK_SERVER_DOWN, DownloadLogic.failureReason(ConnectException("Connection refused")))
-        assertEquals(R.NETWORK_DISCONNECTED, DownloadLogic.failureReason(NoRouteToHostException("x")))
-        assertEquals(R.NETWORK_DISCONNECTED, DownloadLogic.failureReason(IOException("connect failed: ENETUNREACH (Network is unreachable)")))
+        // Chromium leaves ERR_CONNECTION_REFUSED, ERR_NAME_NOT_RESOLVED and ERR_ADDRESS_UNREACHABLE
+        // at NETWORK_FAILED; their Java analogues read the same.
+        assertEquals(R.NETWORK_FAILED, DownloadLogic.failureReason(ConnectException("Connection refused")))
+        assertEquals(R.NETWORK_FAILED, DownloadLogic.failureReason(UnknownHostException("x")))
+        assertEquals(R.NETWORK_FAILED, DownloadLogic.failureReason(NoRouteToHostException("x")))
+        assertEquals(R.NETWORK_FAILED, DownloadLogic.failureReason(IOException("connect failed: ENETUNREACH (Network is unreachable)")))
+        assertEquals(R.NETWORK_DISCONNECTED, DownloadLogic.failureReason(IOException("connect failed: ENETDOWN (Network is down)")))
         assertEquals(R.SERVER_FAILED, DownloadLogic.failureReason(SSLHandshakeException("bad cert")))
         assertEquals(R.FILE_NO_SPACE, DownloadLogic.failureReason(IOException("write failed: ENOSPC (No space left on device)")))
         assertEquals(R.FILE_ACCESS_DENIED, DownloadLogic.failureReason(IOException("open failed: EACCES (Permission denied)")))

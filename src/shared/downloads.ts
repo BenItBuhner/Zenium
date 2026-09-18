@@ -45,49 +45,38 @@ export function isInterruptReason(value: unknown): value is DownloadInterruptRea
 }
 
 /**
- * Chromium's `net::` error names onto the interrupt reasons, as `ConvertNetErrorToInterruptReason`
- * reads them; everything else the network stack reports (`ERR_CONNECTION_RESET`,
- * `ERR_EMPTY_RESPONSE`, a closed connection short of the announced length) is a plain network
- * failure, and file-system errors without a closer reason fail as `file-failed`.
+ * Chromium's `net::` error names onto the interrupt reasons, exactly the cases of its download
+ * core's `ConvertNetErrorToInterruptReason` (components/download, `download_utils.cc`) that land
+ * in this set, plus `ERR_ABORTED`, which `HandleRequestCompletionStatus` reads as the user
+ * cancelling. Everything else the network stack reports (`ERR_CONNECTION_REFUSED`,
+ * `ERR_CONNECTION_RESET`, `ERR_NAME_NOT_RESOLVED`, `ERR_EMPTY_RESPONSE`, a connection closed
+ * short of the announced length) is Chromium's `NETWORK_FAILED`, the source's default.
  */
 const NET_ERRORS: Readonly<Record<string, DownloadInterruptReason>> = {
   ERR_TIMED_OUT: 'network-timeout',
-  ERR_CONNECTION_TIMED_OUT: 'network-timeout',
   ERR_INTERNET_DISCONNECTED: 'network-disconnected',
-  ERR_NETWORK_CHANGED: 'network-disconnected',
-  ERR_NETWORK_IO_SUSPENDED: 'network-disconnected',
-  ERR_CONNECTION_REFUSED: 'network-server-down',
-  ERR_NAME_NOT_RESOLVED: 'server-unreachable',
-  ERR_ADDRESS_UNREACHABLE: 'server-unreachable',
-  ERR_PROXY_CONNECTION_FAILED: 'server-unreachable',
-  ERR_HTTP_RESPONSE_CODE_FAILURE: 'server-failed',
-  ERR_INVALID_RESPONSE: 'server-bad-content',
-  ERR_INVALID_URL: 'server-bad-content',
-  ERR_UNSAFE_REDIRECT: 'server-failed',
-  ERR_UNSAFE_PORT: 'server-failed',
+  ERR_CONNECTION_FAILED: 'network-server-down',
+  ERR_REQUEST_RANGE_NOT_SATISFIABLE: 'server-no-range',
   ERR_ACCESS_DENIED: 'file-access-denied',
   ERR_FILE_NO_SPACE: 'file-no-space',
   ERR_FILE_PATH_TOO_LONG: 'file-name-too-long',
   ERR_FILE_TOO_BIG: 'file-too-large',
   ERR_FILE_VIRUS_INFECTED: 'file-virus-infected',
   ERR_BLOCKED_BY_CLIENT: 'file-blocked',
-  ERR_BLOCKED_BY_ADMINISTRATOR: 'file-blocked',
-  ERR_FILE_NOT_FOUND: 'file-failed',
-  ERR_FILE_EXISTS: 'file-failed',
   ERR_ABORTED: 'user-canceled'
 }
 
 /**
  * The reason behind a Chromium `net::` error name (`net::ERR_CONNECTION_RESET`, `ERR_TIMED_OUT`),
- * as the Electron host sees them on `webRequest.onErrorOccurred`; certificate errors read as
- * the site not being available, anything unknown as a network failure.
+ * as the Electron host sees them on `webRequest.onErrorOccurred`. Certificate and TLS errors read
+ * as the site not being available (Chromium's `SERVER_CERT_PROBLEM` is outside this set; its
+ * bubble words both the same way); anything unknown is a network failure, as in Chromium.
  */
 export function interruptReasonFromNetError(error: string): DownloadInterruptReason {
   const name = error.trim().replace(/^net::/, '')
   const known = NET_ERRORS[name]
   if (known) return known
   if (/^ERR_(CERT_|SSL_)/.test(name)) return 'server-failed'
-  if (/^ERR_FILE_/.test(name)) return 'file-failed'
   return 'network-failed'
 }
 
