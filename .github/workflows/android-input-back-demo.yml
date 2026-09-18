@@ -1,0 +1,37 @@
+name: Android input and back demo
+
+# Records the input and back checks of the emulator bug hunt on a hardware-accelerated Android
+# emulator and uploads the video, the screenshots and the driver's findings: pill swipes in both
+# directions (BH-08), the list panels opening without the keyboard (BH-16), the keyboard inset
+# for a page field (BH-03), a long press selecting page text (BH-09), Print… and back out of the
+# preview (BH-01), and back at a tab's first page – child tab, intent tab, ordinary tab (BH-07).
+# Dispatch-only, like the gesture demo: it says nothing about a change being correct beyond what
+# `input-back-findings.txt` in the artifact records. The build, the emulator and its caches live
+# in android-emulator-demo.yml; this file only picks the driver.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - cursor/android-input-back-fixes-7d5c
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-input-back-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Input and back demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.InputBackDemo
+        DEMO_DIR=input-back-demo
+        DEMO_OUT=artifacts/android-input-back-demo
+        DEMO_VIDEO=input-back-demo.mp4
+      artifact-name: android-input-back-demo
+      artifact-path: artifacts/android-input-back-demo/

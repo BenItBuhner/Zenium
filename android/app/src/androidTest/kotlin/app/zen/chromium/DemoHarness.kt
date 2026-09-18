@@ -17,7 +17,11 @@ import android.view.accessibility.AccessibilityNodeInfo
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.test.platform.app.InstrumentationRegistry
+import org.json.JSONObject
+import org.json.JSONTokener
 import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -78,7 +82,9 @@ abstract class DemoHarness(
         val info = ui.serviceInfo
         info.flags = info.flags or
             AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS or
-            AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
+            AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
+            // Popups (the text selection's floating toolbar) are windows of their own: findInWindows.
+            AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
         ui.serviceInfo = info
 
         seedProfile()
@@ -273,7 +279,11 @@ abstract class DemoHarness(
     /** Every node in the active window labelled `label`, breadth first. */
     private fun findNodes(label: String): List<AccessibilityNodeInfo> = findNodes { it == label }
 
-    private fun findNodes(matches: (String) -> Boolean): List<AccessibilityNodeInfo> = findNodesWhere { node ->
+    private fun findNodes(matches: (String) -> Boolean): List<AccessibilityNodeInfo> =
+        findNodesWhere(accept = labelled(matches))
+
+    /** Accepts a node whose content description or text satisfies `matches`. */
+    private fun labelled(matches: (String) -> Boolean): (AccessibilityNodeInfo) -> Boolean = { node ->
         val description = node.contentDescription?.toString()
         val text = node.text?.toString()
         (description != null && matches(description)) || (text != null && matches(text))
@@ -284,14 +294,28 @@ abstract class DemoHarness(
      * labelled after it both answer to the label, only one of them is checkable.
      */
     protected fun findNodeWhere(accept: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? =
-        findNodesWhere(firstOnly = true, accept).firstOrNull()
+        findNodesWhere(firstOnly = true, accept = accept).firstOrNull()
 
-    /** Every node in the active window that `accept`s, breadth first (just the first with `firstOnly`). */
+    /**
+     * The first labelled node in any window on screen, not just the active one: a popup such as
+     * the text selection's floating toolbar (Copy, Share, Select all) is a window of its own.
+     */
+    protected fun findInWindows(matches: (String) -> Boolean): AccessibilityNodeInfo? {
+        val accept = labelled(matches)
+        for (window in ui.windows) {
+            val root = window.root ?: continue
+            findNodesWhere(root, firstOnly = true, accept).firstOrNull()?.let { return it }
+        }
+        return null
+    }
+
+    /** Every node under `root` (the active window's by default) that `accept`s, breadth first (just the first with `firstOnly`). */
     private fun findNodesWhere(
+        root: AccessibilityNodeInfo? = ui.rootInActiveWindow,
         firstOnly: Boolean = false,
         accept: (AccessibilityNodeInfo) -> Boolean
     ): List<AccessibilityNodeInfo> {
-        val root = ui.rootInActiveWindow ?: return emptyList()
+        if (root == null) return emptyList()
         val queue = ArrayDeque<AccessibilityNodeInfo>()
         val found = ArrayList<AccessibilityNodeInfo>()
         queue.add(root)
@@ -405,6 +429,127 @@ abstract class DemoHarness(
         if (findByLabelPrefix(PILL_LABEL) == null) Log.w(tag, "the urlbar stayed open")
     }
 
+    // --- the keyboard ----------------------------------------------------------------------------
+
+    /** The keyboard's inset in px per the window's insets (what the chrome lays itself out with); 0 while it is down. */
+    protected fun imeInset(): Int {
+        var inset = 0
+        instrumentation.runOnMainSync {
+            val insets = ViewCompat.getRootWindowInsets(activity.window.decorView) ?: return@runOnMainSync
+            if (insets.isVisible(WindowInsetsCompat.Type.ime())) inset = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
+        }
+        return inset
+    }
+
+    protected fun imeShown(): Boolean = imeInset() > 0
+
+    /** Poll for the keyboard to be up (or down); it takes the emulator a moment either way. */
+    protected fun awaitIme(shown: Boolean, timeoutMs: Long = 6_000): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (imeShown() == shown) return true
+            SystemClock.sleep(200)
+        }
+        return imeShown() == shown
+    }
+
+    // --- the menu --------------------------------------------------------------------------------
+
+    /** A finger on the bar's Menu button: by label, else where the default bar has it (rightmost, on the pill's line). */
+    protected fun tapMenuButton() {
+        ensureForeground()
+        val button = findByLabel(MENU_LABEL) ?: computedMenuButton()
+        Finger().tap(button.exactCenterX(), button.exactCenterY())
+    }
+
+    private fun computedMenuButton(): Rect {
+        val half = 22 * density
+        val centerX = width - 30 * density
+        return Rect((centerX - half).roundToInt(), (pillY - half).roundToInt(), (centerX + half).roundToInt(), (pillY + half).roundToInt())
+    }
+
+    /**
+     * Open the menu, pull it to its full height so every item is in reach, and tap the item
+     * labelled `item` with a finger. False when the menu never opened or has no such item; the
+     * menu is left as it is then (a `back()` closes it).
+     */
+    protected fun openMenuItem(item: String): Boolean {
+        tapMenuButton()
+        if (waitFor(MENU_HANDLE_LABEL, 6_000) == null) {
+            Log.w(tag, "the menu never opened")
+            return false
+        }
+        SystemClock.sleep(1_200)
+        findByLabel(MENU_HANDLE_LABEL)?.let { handle ->
+            Finger().apply {
+                down(handle.exactCenterX(), handle.exactCenterY())
+                moveBy(0f, -0.4f * height, 130)
+                up()
+            }
+            SystemClock.sleep(2_000)
+        }
+        val target = reveal(item) ?: run {
+            Log.w(tag, "no $item in the menu")
+            return false
+        }
+        Finger().tap(target.exactCenterX(), target.exactCenterY())
+        return true
+    }
+
+    // --- the chrome's bridge ---------------------------------------------------------------------
+
+    /** Evaluate in the chrome WebView; the raw JSON-encoded result ("" when it never answered). */
+    protected fun chromeJs(code: String): String {
+        var result = ""
+        val latch = CountDownLatch(1)
+        instrumentation.runOnMainSync {
+            val chrome = (activity as? MainActivity)?.host?.chrome
+            if (chrome == null) {
+                latch.countDown()
+            } else {
+                chrome.evaluateJavascript(code) { value ->
+                    result = value ?: ""
+                    latch.countDown()
+                }
+            }
+        }
+        latch.await(10, TimeUnit.SECONDS)
+        return result
+    }
+
+    /** Run a core command through `window.zen.invoke` and wait for its promise; the result as JSON text. */
+    protected fun coreInvoke(name: String, args: String = "null"): String {
+        chromeJs(
+            "window.__demo=undefined;window.zen.invoke(${JSONObject.quote(name)},$args)" +
+                ".then(r=>{window.__demo=JSON.stringify(r===undefined?null:r)},e=>{window.__demo='ERR:'+(e&&e.message||e)})"
+        )
+        val deadline = SystemClock.uptimeMillis() + 15_000
+        while (SystemClock.uptimeMillis() < deadline) {
+            val raw = chromeJs("window.__demo===undefined?'':window.__demo")
+            val value = (JSONTokener(raw).nextValue() as? String).orEmpty()
+            if (value.startsWith("ERR:")) error("$name failed: ${value.removePrefix("ERR:")}")
+            if (value.isNotEmpty()) return value
+            SystemClock.sleep(100)
+        }
+        error("$name timed out")
+    }
+
+    /** The core's UI state (`app.getState`): tabs, spaces, settings, window. */
+    protected fun coreState(): JSONObject = JSONObject(coreInvoke("app.getState"))
+
+    /** The active tab of the active space per the core, null when there is none. */
+    protected fun activeCoreTab(state: JSONObject = coreState()): JSONObject? {
+        val spaces = state.getJSONArray("spaces")
+        val activeSpace = state.getString("activeSpaceId")
+        for (i in 0 until spaces.length()) {
+            val space = spaces.getJSONObject(i)
+            if (space.getString("id") != activeSpace) continue
+            val tabId = space.optString("activeTabId", "")
+            return state.getJSONObject("tabs").optJSONObject(tabId)
+        }
+        return null
+    }
+
     /**
      * One finger. Moves are interpolated and injected in real time (asynchronously, with their own
      * timestamps), so the velocity the chrome measures is the one asked for even when the WebView
@@ -482,6 +627,9 @@ abstract class DemoHarness(
     companion object {
         /** The pill's label carries the address after a comma (`Address, example.com`). */
         const val PILL_LABEL = "Address"
+        /** The bar's three-dot button, and the grabber of the menu sheet it opens. */
+        const val MENU_LABEL = "Menu"
+        const val MENU_HANDLE_LABEL = "Resize menu"
         private const val STEP_MS = 8L
         /** Past the 8 CSS px slop at any plausible density, hardly visible on the track. */
         const val NUDGE = 30f
