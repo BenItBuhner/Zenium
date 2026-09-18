@@ -9,6 +9,7 @@ import { useViewport } from '@renderer/lib/formFactor'
 import { activeTab, isForeignTab } from '@renderer/lib/selectors'
 import { useChord } from '@renderer/lib/shortcuts'
 import { captureActiveTab, panelAloneOverContent, uiStore, type UiState } from '@renderer/lib/ui'
+import { extensionChromeAloneOverContent } from '@renderer/lib/extensions/scrim'
 import { cn } from '@renderer/lib/utils'
 import { dropStore } from '@renderer/lib/drag'
 import { Urlbar } from '../urlbar/Urlbar'
@@ -130,8 +131,12 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
                     className="h-full w-full object-cover object-top"
                   />
                 ) : null}
-                {/* Panels draw no scrim: a bar panel or the star bubble leaves the capture undimmed. */}
-                {!panelAloneOverContent(ui) && (
+                {/*
+                 * Panels draw no scrim: a bar panel, the star bubble, the puzzle panel, a local
+                 * menu or the popup frame leaves the capture undimmed; an extension prompt's
+                 * scrim is the frame dialog host's (the sheet's on a phone).
+                 */}
+                {!panelAloneOverContent(ui) && !extensionChromeAloneOverContent(ui) && (
                   <div
                     className={cn(
                       'absolute inset-0 bg-black/35 transition-opacity',

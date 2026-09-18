@@ -1,10 +1,13 @@
 import type { JSX } from 'react'
 import { useState } from 'react'
-import { FolderOpen, Link2, Package, Plus, Puzzle, Store, Trash2 } from 'lucide-react'
+import { FolderOpen, Link2, Plus, Trash2 } from 'lucide-react'
 import type { Mod, UIState } from '@shared/types'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { run } from '@renderer/lib/api'
+import { useViewport } from '@renderer/lib/formFactor'
 import { cn } from '@renderer/lib/utils'
+import { ExtensionsPage } from '../extensions/ExtensionsPage'
+import { V2Menulist } from '../extensions/V2Menulist'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Switch } from '../ui/switch'
@@ -12,147 +15,66 @@ import { EmptyNote, OverlayShell } from './OverlayShell'
 
 type Tab = 'extensions' | 'mods'
 
-/** Zen's "Add-ons and Themes" (Ctrl+Shift+A): unpacked extensions and chrome CSS mods. */
+/**
+ * Zen's "Add-ons and Themes" (Ctrl+Shift+A): extensions and chrome CSS mods. The Extensions
+ * tab is an in-content page that owns its scrolling (components/extensions/ExtensionsPage); on
+ * a phone the category column becomes a menulist above the page (v2 draft §6) whose options
+ * open in a bottom sheet (§9.13).
+ */
 export function AddonsPanel({ state }: { state: UIState }): JSX.Element {
   const [tab, setTab] = useState<Tab>('extensions')
+  const phone = useViewport().formFactor === 'phone'
   const fade = useFadeEdges<HTMLDivElement>({ axis: 'y' })
+  const tabs: Array<{ id: Tab; label: string }> = [
+    { id: 'extensions', label: 'Extensions' },
+    { id: 'mods', label: 'Mods' }
+  ]
   return (
     <OverlayShell title="Add-ons and Themes" variant="full">
-      <div className="flex h-full">
-        <nav className="w-52 shrink-0 border-r border-[var(--zen-border)] p-2">
-          {(
-            [
-              { id: 'extensions', label: 'Extensions' },
-              { id: 'mods', label: 'Mods' }
-            ] as Array<{ id: Tab; label: string }>
-          ).map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className={cn(
-                'zen-squircle flex h-9 w-full items-center rounded-lg px-3 text-left text-[13px] hover:bg-[var(--zen-element-bg)]',
-                tab === item.id && 'bg-[var(--zen-element-bg-active)] font-medium'
-              )}
-              onClick={() => setTab(item.id)}
-            >
-              {item.label}
-            </button>
-          ))}
-        </nav>
-        <div ref={fade} className="min-w-0 flex-1 overflow-y-auto p-6">
-          <div className="mx-auto flex max-w-2xl flex-col gap-5">
-            {tab === 'extensions' ? (
-              <ExtensionsSection state={state} />
-            ) : (
-              <ModsSection state={state} />
-            )}
+      <div className={cn('flex h-full', phone && 'flex-col')}>
+        {phone ? (
+          <div className="zen-v2 zen-v2-page shrink-0 px-4 pt-3 pb-1">
+            <V2Menulist
+              label="Category"
+              value={tab}
+              options={tabs.map((item) => ({ value: item.id, label: item.label }))}
+              onChange={setTab}
+            />
           </div>
-        </div>
+        ) : (
+          <nav className="w-52 shrink-0 border-r border-[var(--zen-border)] p-2">
+            {tabs.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className={cn(
+                  'zen-squircle flex h-9 w-full items-center rounded-lg px-3 text-left text-[13px] hover:bg-[var(--zen-element-bg)]',
+                  tab === item.id && 'bg-[var(--zen-element-bg-active)] font-medium'
+                )}
+                onClick={() => setTab(item.id)}
+              >
+                {item.label}
+              </button>
+            ))}
+          </nav>
+        )}
+        {tab === 'extensions' ? (
+          <ExtensionsPage state={state} />
+        ) : (
+          <div ref={fade} className="min-w-0 flex-1 overflow-y-auto p-6">
+            <div className="mx-auto flex max-w-2xl flex-col gap-5">
+              <ModsSection state={state} />
+            </div>
+          </div>
+        )}
       </div>
     </OverlayShell>
   )
 }
 
+/** The Extensions section of Settings: the management page inside the Settings column. */
 export function ExtensionsSection({ state }: { state: UIState }): JSX.Element {
-  const [storeRef, setStoreRef] = useState('')
-  const installFromStore = (): void => {
-    const ref = storeRef.trim()
-    if (!ref) return
-    run('extension.installFromStore', { ref })
-    setStoreRef('')
-  }
-  return (
-    <>
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h3 className="text-[15px] font-semibold">Extensions</h3>
-          <p className="mt-1 text-[12.5px] text-[var(--zen-muted)]">
-            Load unpacked Chrome extensions (a folder with a <code>manifest.json</code>). Content
-            scripts, storage, webRequest, scripting and DevTools panels are supported; extensions
-            run in every container.
-          </p>
-        </div>
-        <div className="flex shrink-0 gap-2">
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={() => run('extension.installFromFile', undefined)}
-          >
-            <Package className="mr-1.5 h-3.5 w-3.5" /> Install from file…
-          </Button>
-          <Button size="sm" onClick={() => run('extension.add', undefined)}>
-            <FolderOpen className="mr-1.5 h-3.5 w-3.5" /> Load unpacked…
-          </Button>
-        </div>
-      </div>
-      <div className="flex items-center gap-2">
-        <Store className="h-4 w-4 shrink-0 opacity-60" />
-        <Input
-          placeholder="Extension id or Chrome Web Store / Edge Add-ons link"
-          value={storeRef}
-          onChange={(e) => setStoreRef(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') installFromStore()
-          }}
-        />
-        <Button
-          size="sm"
-          variant="secondary"
-          disabled={!storeRef.trim()}
-          onClick={installFromStore}
-        >
-          Install
-        </Button>
-      </div>
-      {state.extensions.length === 0 ? (
-        <EmptyNote>No extensions yet.</EmptyNote>
-      ) : (
-        <ul className="zen-squircle overflow-hidden rounded-xl border border-[var(--zen-border)]">
-          {state.extensions.map((ext) => (
-            <li
-              key={ext.id}
-              className="flex items-center gap-3 border-b border-[var(--zen-border)] px-4 py-3 last:border-b-0"
-            >
-              {ext.icon ? (
-                <img src={ext.icon} alt="" className="h-8 w-8 rounded-lg" draggable={false} />
-              ) : (
-                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--zen-element-bg)]">
-                  <Puzzle className="h-4 w-4 opacity-60" />
-                </span>
-              )}
-              <div className="min-w-0 flex-1">
-                <div className="flex items-baseline gap-2">
-                  <span className="truncate text-[13.5px] font-medium">{ext.name}</span>
-                  {ext.version && (
-                    <span className="text-[11px] text-[var(--zen-muted)]">v{ext.version}</span>
-                  )}
-                </div>
-                <div className="truncate text-[11.5px] text-[var(--zen-muted)]" title={ext.path}>
-                  {ext.error ? (
-                    <span className="text-red-500">{ext.error}</span>
-                  ) : (
-                    ext.description || ext.path
-                  )}
-                </div>
-              </div>
-              <Switch
-                checked={ext.enabled}
-                onCheckedChange={(v) => run('extension.setEnabled', { id: ext.id, enabled: v })}
-              />
-              <button
-                type="button"
-                className="zen-toolbar-button h-7 w-7"
-                title="Remove"
-                onClick={() => run('extension.remove', { id: ext.id })}
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </>
-  )
+  return <ExtensionsPage state={state} embedded />
 }
 
 export function ModsSection({ state }: { state: UIState }): JSX.Element {

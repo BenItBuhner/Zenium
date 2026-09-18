@@ -12,6 +12,7 @@ import { basename, extname, join } from 'node:path'
 import type {
   ExtensionInfo,
   ExtensionSource,
+  ExtensionUpdateCheck,
   ExtensionUpdateState,
   Rect,
   SidePanelInfo,
@@ -23,7 +24,8 @@ import type {
   ExtensionHost,
   KeyEventInput,
   MenuItemTemplate,
-  PageContextParams
+  PageContextParams,
+  PopupFrame
 } from '../../core/platform'
 import type { ZenWindow } from '../../core/window'
 import {
@@ -32,9 +34,19 @@ import {
   type ExtensionPackage,
   type UpdateCheckResult
 } from '../../core/extensions/install'
-import type { ConfirmInstall, InstallConfirmation } from '../../core/extensions/hostStore'
+import {
+  ChromePrompts,
+  type ConfirmInstall,
+  type InstallConfirmation
+} from '../../core/extensions/hostStore'
 import { isManagedPath } from '../../core/extensions/installLayout'
-import { stripJsonComments } from '../../core/extensions/manifest'
+import {
+  buildMessageCatalog,
+  localeFallbackChain,
+  localizeManifest,
+  stripJsonComments,
+  type LocaleMessages
+} from '../../core/extensions/manifest'
 import {
   newWarnings,
   permissionWarningLines,
@@ -81,14 +93,18 @@ interface Manifest {
   name?: string
   version?: string
   description?: string
+  default_locale?: string
   manifest_version?: number
   icons?: Record<string, string>
   action?: { default_popup?: string; default_icon?: string | Record<string, string> }
   browser_action?: { default_popup?: string; default_icon?: string | Record<string, string> }
 }
 
-const POPUP_WIDTH = 380
-const POPUP_MAX_HEIGHT = 600
+/** Chrome's popup limits: the document sizes the view between these, the frame follows. */
+const POPUP_MIN = { width: 25, height: 25 }
+const POPUP_MAX = { width: 800, height: 600 }
+/** Width and height of the popup view before its document has asked for a size. */
+const POPUP_INITIAL = { width: 380, height: 200 }
 
 /** Chrome checks about every five hours; the first check waits for the browser to settle. */
 const UPDATE_CHECK_STARTUP_DELAY_MS = 45_000
@@ -143,6 +159,14 @@ const NO_UPDATE_INFO: UpdateInfo = {
  * store on Chrome's schedule. Browser-action popups are shown from the toolbar since Electron has
  * no extension UI of its own.
  *
+ * The popup is a `WebContentsView` owned here, but the renderer draws the panel it sits in: it
+ * hands over the exact bounds for the view (`extension.openPopup`), this service reports the
+ * document's preferred size back (`extension.popupSize`) and moves or shows the view when the
+ * renderer answers with `extension.resizePopup`. The view stays hidden until the frame has popped
+ * in, so both appear as one surface. Install and permission prompts go to the renderer's dialog
+ * the same way (`extensionInstallRequest` / `extensionPermissionRequest`, answered through
+ * `respondPrompt`); the native message box is the fallback when no window can show one.
+ *
  * Hook points for the chrome.* API layer: `onLoaded` / `onUnloaded` fire per session, and
  * `loaded(id)` looks up a running extension.
  */
@@ -167,23 +191,29 @@ export class ExtensionService implements ExtensionHost {
   private readonly unloadedListeners = new Set<(id: string) => void>()
   private readonly changeListeners = new Set<(event: RegistryEvent) => void>()
   private readonly iconCache = new Map<string, string | null>()
-  private popup: { view: WebContentsView; win: ZenWindow } | null = null
+  /** The open action popup; `shown` once its view is visible (at once without a renderer frame). */
+  private popup: { id: string; view: WebContentsView; win: ZenWindow; shown: boolean } | null = null
   private checking: Promise<void> | null = null
   private updateTimer: ReturnType<typeof setInterval> | null = null
+  /** Install and permission prompts put to the renderer's dialog, waiting for its answer. */
+  private readonly prompts: ChromePrompts
   /** The chrome.* API layer (`platform/extensionApi`): toolbar state and click routing. */
   private api: ExtensionApiHooks | null = null
 
   /**
-   * Shows the install prompt and resolves with the user's decision. The default is a native
-   * message box; the chrome replaces it with its own panel without touching the install flow.
+   * Shows the install prompt and resolves with the user's decision: the chrome's dialog when a
+   * window can show it, else a native message box. Reassignable so a host can swap the prompt
+   * without touching the install flow.
    */
-  confirmInstall: ConfirmInstall = (request, win) => this.nativeConfirm(request, win)
+  confirmInstall: ConfirmInstall = (request, win) =>
+    win?.alive ? this.prompts.ask(request, win) : this.nativeConfirm(request, win)
 
   constructor(
     private readonly browser: Browser,
     private readonly sessions: SessionManager,
     userDataDir: string
   ) {
+    this.prompts = new ChromePrompts(browser)
     this.root = join(userDataDir, 'extensions')
     this.store = new JsonStore<ExtensionRegistry>(browser.platform.io, 'extensions.json', 300)
     this.registry = migrateRegistry(
@@ -346,6 +376,7 @@ export class ExtensionService implements ExtensionHost {
         installedAt: record.installedAt,
         updatedAt: record.updatedAt,
         pinned: record.pinned,
+        toolbarPinned: record.toolbarPinned,
         allowFileAccess: record.allowFileAccess,
         allowPrivate: record.allowPrivate,
         manifestVersion: record.manifestVersion,
@@ -429,13 +460,63 @@ export class ExtensionService implements ExtensionHost {
     await this.load(record)
     this.persist()
     const error = this.errors.get(record.id)
-    this.browser.toast(
-      error ? `Could not load extension: ${error}` : `Loaded ${record.name || 'extension'}`,
-      error ? 'error' : 'info',
-      win
-    )
+    if (error) this.browser.toast(`Could not load extension: ${error}`, 'error', win)
+    else this.announceInstalled(record, win)
     this.emit({ type: 'installed', id: record.id })
     this.browser.state.commitVolatile()
+  }
+
+  /**
+   * Dropped or picked paths: `.crx` and `.zip` packages install like a file pick; a folder with a
+   * manifest is confirmed like a store install (a drop is not the explicit intent a dialog is)
+   * and then loaded unpacked.
+   */
+  async installFromDrop(paths: string[], win: ZenWindow): Promise<void> {
+    for (const path of paths) {
+      const stat = await fs.stat(path).catch(() => null)
+      if (stat?.isDirectory()) {
+        if (this.registry.extensions.some((e) => e.path === path)) {
+          this.browser.toast('This extension is already installed.', 'info', win)
+          continue
+        }
+        const manifest = readManifest(path)
+        if (!manifest) {
+          this.browser.toast('That folder has no manifest.json.', 'error', win)
+          continue
+        }
+        const accepted = await this.confirmInstall(
+          {
+            kind: 'install',
+            name: manifest.name ?? basename(path) ?? 'Extension',
+            icon: iconDataUrl(path, manifest),
+            warnings: permissionWarningLines(manifest, warningPlatform()),
+            source: 'unpacked'
+          },
+          win
+        )
+        if (accepted) await this.add(path, win)
+        continue
+      }
+      const kind = extname(path).toLowerCase()
+      if (kind === '.crx' || kind === '.zip') await this.installFromFile(path, win)
+      else
+        this.browser.toast(
+          'Drop a .crx or .zip package, or an unpacked extension folder.',
+          'error',
+          win
+        )
+    }
+  }
+
+  /** "<name> was added to Zenium" with a Pin action, drawn by the renderer's toast. */
+  private announceInstalled(record: ExtensionRecord, win?: ZenWindow): void {
+    const payload = {
+      id: record.id,
+      name: record.name || 'Extension',
+      toolbarPinned: record.toolbarPinned
+    }
+    if (win?.alive) this.browser.emit('extension.installed', payload, win)
+    else this.browser.toast(`Added ${payload.name}`, 'info', win)
   }
 
   // ---------------------------------------------------------------------------
@@ -534,13 +615,13 @@ export class ExtensionService implements ExtensionHost {
       this.browser.toast(`${pkg.manifest.name} is already being installed.`, 'info', win)
     else if (outcome.status === 'installed') {
       const error = this.errors.get(outcome.record.id)
-      this.browser.toast(
-        error
-          ? `Installed ${pkg.manifest.name}, but it could not be loaded: ${error}`
-          : `Added ${pkg.manifest.name} ${pkg.version}`,
-        error ? 'error' : 'info',
-        win
-      )
+      if (error)
+        this.browser.toast(
+          `Installed ${pkg.manifest.name}, but it could not be loaded: ${error}`,
+          'error',
+          win
+        )
+      else this.announceInstalled(outcome.record, win)
     }
   }
 
@@ -649,6 +730,7 @@ export class ExtensionService implements ExtensionHost {
   async remove(id: string): Promise<void> {
     const record = this.record(id) ?? this.registry.extensions.find((r) => r.path === id)
     if (!record) return
+    if (this.popup?.id === record.id) this.closePopup()
     this.unload(record)
     this.registry.extensions = this.registry.extensions.filter((r) => r !== record)
     this.errors.delete(record.id)
@@ -681,7 +763,10 @@ export class ExtensionService implements ExtensionHost {
     }
     record.enabled = enabled
     if (enabled) await this.load(record)
-    else this.unload(record)
+    else {
+      if (this.popup?.id === record.id) this.closePopup()
+      this.unload(record)
+    }
     this.persist()
     this.emit({ type: enabled ? 'enabled' : 'disabled', id: record.id })
     this.browser.state.commitVolatile()
@@ -692,6 +777,28 @@ export class ExtensionService implements ExtensionHost {
     if (!record || record.pinned === pinned) return
     record.pinned = pinned
     this.persist()
+    this.browser.state.commitVolatile()
+  }
+
+  setToolbarPinned(id: string, pinned: boolean): void {
+    const record = this.record(id)
+    if (!record || record.toolbarPinned === pinned) return
+    record.toolbarPinned = pinned
+    this.persist()
+    this.browser.state.commitVolatile()
+  }
+
+  /** Chrome applies the file-URL toggle by reloading the extension; so does this. */
+  async setAllowFileAccess(id: string, allow: boolean): Promise<void> {
+    const record = this.record(id)
+    if (!record || record.allowFileAccess === allow) return
+    record.allowFileAccess = allow
+    this.persist()
+    if (record.enabled) {
+      if (this.popup?.id === record.id) this.closePopup()
+      this.unload(record)
+      await this.load(record)
+    }
     this.browser.state.commitVolatile()
   }
 
@@ -728,6 +835,7 @@ export class ExtensionService implements ExtensionHost {
   async reload(id: string): Promise<void> {
     const record = this.record(id)
     if (!record) return
+    if (this.popup?.id === record.id) this.closePopup()
     this.unload(record)
     if (record.source === 'unpacked') {
       const manifest = readManifest(record.path)
@@ -776,8 +884,14 @@ export class ExtensionService implements ExtensionHost {
     if (this.checking) return this.checking
     this.checking = this.runUpdateCheck(this.updatable(), win).finally(() => {
       this.checking = null
+      this.browser.state.commitVolatile()
     })
+    this.browser.state.commitVolatile()
     return this.checking
+  }
+
+  updateCheck(): ExtensionUpdateCheck {
+    return { lastCheckedAt: this.registry.lastUpdateCheck, checking: this.checking !== null }
   }
 
   /** Checks (and installs) an update for one extension. */
@@ -985,7 +1099,7 @@ export class ExtensionService implements ExtensionHost {
         return { error: 'This item is already being installed.' }
       const loadError = this.errors.get(id)
       if (loadError) return { error: loadError }
-      this.browser.toast(`Added ${pkg.manifest.name} ${pkg.version}`, 'info', win)
+      if (outcome.status === 'installed') this.announceInstalled(outcome.record, win)
       return {}
     } catch (error) {
       const message = (error as Error).message
@@ -1001,6 +1115,10 @@ export class ExtensionService implements ExtensionHost {
   // ---------------------------------------------------------------------------
   // Install prompt
   // ---------------------------------------------------------------------------
+
+  respondPrompt(requestId: string, accept: boolean): void {
+    this.prompts.respond(requestId, accept)
+  }
 
   private async nativeConfirm(request: InstallConfirmation, win?: ZenWindow): Promise<boolean> {
     const lines = request.warnings.map((w) => `\u2022 ${w}`)
@@ -1040,7 +1158,7 @@ export class ExtensionService implements ExtensionHost {
   // Browser-action popups
   // ---------------------------------------------------------------------------
 
-  openPopup(id: string, anchor: Rect, win: ZenWindow): void {
+  openPopup(id: string, anchor: Rect, win: ZenWindow, frame?: PopupFrame): void {
     this.closePopup()
     const record = this.record(id) ?? this.registry.extensions.find((r) => r.path === id)
     const ext = record ? this.loadedById.get(record.id) : undefined
@@ -1057,40 +1175,94 @@ export class ExtensionService implements ExtensionHost {
         contextIsolation: true,
         nodeIntegration: false,
         // The API layer's preload must reach iframes the popup embeds.
-        nodeIntegrationInSubFrames: true
+        nodeIntegrationInSubFrames: true,
+        // Chrome sizes a popup to its document; Chromium reports that as the preferred size.
+        enablePreferredSizeMode: true
       }
     })
     view.setBackgroundColor('#00000000')
-    view.setBorderRadius(12)
     const bw = (win.host as ElectronWindow).win
     const contentBounds = bw.getContentBounds()
-    const place = (height: number): void => {
-      const width = POPUP_WIDTH
+    if (frame) {
+      view.setBorderRadius(frame.radius)
+      view.setBounds(roundRect(frame.bounds))
+      // The renderer shows the view once its frame has popped in (extension.resizePopup).
+      view.setVisible(false)
+    } else {
+      // Legacy placement (no renderer frame): under the anchor, sized by the document height.
+      view.setBorderRadius(12)
       const x = Math.max(
         8,
-        Math.min(anchor.x + anchor.width - width, contentBounds.width - width - 8)
-      )
-      const y = Math.min(anchor.y + anchor.height + 6, contentBounds.height - height - 8)
-      view.setBounds({ x: Math.round(x), y: Math.round(y), width, height: Math.round(height) })
-    }
-    place(200)
-    bw.contentView.addChildView(view)
-    this.popup = { view, win }
-    const wc = view.webContents
-    wc.on('dom-ready', () => {
-      void wc
-        .executeJavaScript(
-          'Math.min(document.documentElement.scrollHeight, document.body.scrollHeight || 1e9)',
-          true
+        Math.min(
+          anchor.x + anchor.width - POPUP_INITIAL.width,
+          contentBounds.width - POPUP_INITIAL.width - 8
         )
-        .then((h) => {
-          if (this.popup?.view !== view) return
-          place(Math.max(80, Math.min(POPUP_MAX_HEIGHT, Number(h) + 8 || 200)))
+      )
+      view.setBounds({
+        x: Math.round(x),
+        y: Math.round(anchor.y + anchor.height + 6),
+        width: POPUP_INITIAL.width,
+        height: POPUP_INITIAL.height
+      })
+    }
+    bw.contentView.addChildView(view)
+    this.popup = { id: record.id, view, win, shown: !frame }
+    const wc = view.webContents
+    const report = (width: number, height: number): void => {
+      if (this.popup?.view !== view) return
+      const size = {
+        width: Math.round(Math.max(POPUP_MIN.width, Math.min(POPUP_MAX.width, width))),
+        height: Math.round(Math.max(POPUP_MIN.height, Math.min(POPUP_MAX.height, height)))
+      }
+      if (frame) this.browser.emit('extension.popupSize', { id: record.id, ...size }, win)
+      else {
+        const b = view.getBounds()
+        view.setBounds({
+          ...b,
+          width: POPUP_INITIAL.width,
+          height: Math.min(size.height, contentBounds.height - b.y - 8)
         })
-        .catch(() => undefined)
-      wc.focus()
+      }
+    }
+    // Chromium's preferred size is what Chrome sizes its popups by (the document's minimum width
+    // and its height); a document that never reports one is measured once instead, a moment
+    // after it is ready. The measurement must not overwrite a real report: `scrollWidth` is
+    // only ever the view's own width.
+    let preferredSeen = false
+    wc.on('preferred-size-changed', (_event, size) => {
+      preferredSeen = true
+      report(size.width, size.height)
     })
-    wc.on('blur', () => setTimeout(() => this.popup?.view === view && this.closePopup(), 120))
+    wc.on('dom-ready', () => {
+      wc.focus()
+      setTimeout(() => {
+        if (preferredSeen || this.popup?.view !== view || wc.isDestroyed()) return
+        void wc
+          .executeJavaScript(
+            '[document.body ? document.body.scrollWidth : 0, Math.min(document.documentElement.scrollHeight, (document.body && document.body.scrollHeight) || 1e9)]',
+            true
+          )
+          .then((size) => {
+            if (preferredSeen) return
+            const [w, h] = size as [number, number]
+            if (Number.isFinite(h) && h > 0) report(Number(w) || POPUP_INITIAL.width, Number(h))
+          })
+          .catch(() => undefined)
+      }, 400)
+    })
+    // A blur closes a popup the user can see and has clicked away from. While the framed view is
+    // still hidden the chrome takes focus on purpose (the layout that hides the page behind the
+    // frame's capture focuses it), and the renderer handles clicks outside the frame itself;
+    // `resizePopup` hands focus back when it shows the view. A popup focused again by the time
+    // the timer fires stays as well.
+    wc.on('blur', () =>
+      setTimeout(() => {
+        const popup = this.popup
+        if (!popup || popup.view !== view || !popup.shown) return
+        if (wc.isDestroyed() || wc.isFocused()) return
+        this.closePopup()
+      }, 120)
+    )
     wc.on('before-input-event', (event, input) => {
       if (input.type === 'keyDown' && input.key === 'Escape') {
         event.preventDefault()
@@ -1109,11 +1281,23 @@ export class ExtensionService implements ExtensionHost {
       .catch(() => undefined)
   }
 
+  resizePopup(bounds: Rect, visible: boolean): void {
+    const popup = this.popup
+    if (!popup || popup.view.webContents.isDestroyed()) return
+    popup.view.setBounds(roundRect(bounds))
+    popup.view.setVisible(visible)
+    popup.shown = visible
+    if (visible) popup.view.webContents.focus()
+  }
+
   closePopup(): void {
     if (!this.popup) return
-    const { view, win } = this.popup
+    const { id, view, win } = this.popup
     this.popup = null
-    if (win.alive) (win.host as ElectronWindow).win.contentView.removeChildView(view)
+    if (win.alive) {
+      ;(win.host as ElectronWindow).win.contentView.removeChildView(view)
+      this.browser.emit('extension.popupClosed', { id }, win)
+    }
     if (!view.webContents.isDestroyed()) view.webContents.close()
   }
 
@@ -1197,6 +1381,15 @@ function elapsed(from: number, to = Date.now()): string {
   return `${to - from} ms`
 }
 
+function roundRect(r: Rect): Rect {
+  return {
+    x: Math.round(r.x),
+    y: Math.round(r.y),
+    width: Math.round(r.width),
+    height: Math.round(r.height)
+  }
+}
+
 export function warningPlatform(): WarningPlatform {
   switch (process.platform) {
     case 'win32':
@@ -1215,11 +1408,26 @@ function browserWindowOf(win: ZenWindow | undefined): Electron.BrowserWindow | u
   return host?.alive ? host.win : undefined
 }
 
+/**
+ * The manifest with its `__MSG_` strings resolved from `_locales` (so a disabled extension still
+ * has its name), comments stripped like Chrome does.
+ */
 export function readManifest(path: string): Manifest | null {
   try {
-    return JSON.parse(
+    const raw = JSON.parse(
       stripJsonComments(readFileSync(join(path, 'manifest.json'), 'utf8'))
-    ) as Manifest
+    ) as Manifest & Record<string, unknown>
+    if (!raw.default_locale) return raw
+    const bundles = localeFallbackChain(null, raw.default_locale).map((locale) => {
+      try {
+        return JSON.parse(
+          readFileSync(join(path, '_locales', locale, 'messages.json'), 'utf8')
+        ) as LocaleMessages
+      } catch {
+        return null
+      }
+    })
+    return localizeManifest(raw, buildMessageCatalog(bundles)).manifest as Manifest
   } catch {
     return null
   }

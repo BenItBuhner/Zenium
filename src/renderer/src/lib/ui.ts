@@ -2,6 +2,7 @@ import type { LucideIcon } from 'lucide-react'
 import type {
   BookmarkNodeType,
   ContentCover,
+  ExtensionPromptRequest,
   ExternalProtocolRequest,
   MenuDescriptor,
   OverlayKind,
@@ -9,6 +10,8 @@ import type {
   UIState,
   UrlbarOpenMode
 } from '@shared/types'
+import type { Anchor } from './anchor'
+import type { PopoverAlignment } from './portals'
 import { cmd, onEvent, run } from './api'
 import { afterKeyRelease } from './keyRelease'
 import { createStore } from './store'
@@ -73,6 +76,25 @@ export interface Toast {
   duration: number
   /** Set once the toast is on its way out: the card animates off and then forgets itself. */
   leaving?: boolean
+}
+
+/** An extension popup the renderer is framing (the document itself is main's WebContentsView). */
+export interface ExtensionPopupState {
+  id: string
+  /**
+   * The toolbar button it hangs from, in window coordinates, with the bar it sits in: its box,
+   * not the element (the chrome layer's popover registry holds that, lib/extensions/popup.ts).
+   */
+  anchor: Omit<Anchor, 'element'>
+  /**
+   * The puzzle panel's alignment when the popup was opened from one of its rows: the frame
+   * keeps it while it fits (§9.20's continuity clause). Absent for a popup from a pinned button.
+   */
+  alignment?: PopoverAlignment
+  /** The document's preferred size once it reported one. */
+  content: { width: number; height: number } | null
+  /** The frame is up: the size arrived, or the wait for it ran out. */
+  shown: boolean
 }
 
 export type BannerDismissReason = 'swipe' | 'close' | 'timeout' | 'action' | 'replaced' | 'program'
@@ -258,6 +280,16 @@ export interface UiState {
   stageActive: boolean
   /** The tab hover card, up beside the sidebar over the page (hidden: `tabId` null). */
   hoverCard: HoverCardState
+  /** The open extension popup's frame, or null. */
+  extensionPopup: ExtensionPopupState | null
+  /** Install and permission prompts waiting for an answer, oldest first; the first is shown. */
+  extensionPrompts: ExtensionPromptRequest[]
+  /**
+   * Renderer-hosted popovers that can overhang the content frame (the extensions panel, local
+   * menus), counted while up. The page's view composites above the chrome, so while one is up
+   * the view is hidden and the frame shows its capture, as for the main-process menus.
+   */
+  floatingChrome: number
 }
 
 /** Where the content area is, in window coordinates (measured by the layout reporter). */
@@ -312,7 +344,10 @@ export const uiStore = createStore<UiState>(
     tabsMenu: null,
     insets: { top: 0, right: 0, bottom: 0, left: 0 },
     stageActive: false,
-    hoverCard: HOVER_CARD_HIDDEN
+    hoverCard: HOVER_CARD_HIDDEN,
+    extensionPopup: null,
+    extensionPrompts: [],
+    floatingChrome: 0
   },
   'ui'
 )
@@ -522,12 +557,22 @@ export async function captureActiveTab(tabId: string | null): Promise<void> {
     uiStore.set({ snapshot: null, snapshotTabId: null })
     return
   }
-  if (uiStore.get().snapshotTabId === tabId && uiStore.get().snapshot) return
+  if (snapshotHeld(tabId)) return
   const data = await cmd('overlay.snapshot', { tabId }).catch(() => null)
   if (data) rememberThumbnail(tabId, data)
   // A page that is already hidden (behind the gesture stage) cannot be captured: show what it
   // looked like the last time it was.
   uiStore.set({ snapshot: data ?? thumbnailOf(tabId), snapshotTabId: tabId })
+}
+
+/**
+ * `tabId`'s capture is already in place, held by whatever chrome is over the content:
+ * `captureActiveTab` would return at once, and a surface that opens out of that chrome can go
+ * up in the same turn, before the chrome's release looks for something still needing it.
+ */
+export function snapshotHeld(tabId: string | null): boolean {
+  const ui = uiStore.get()
+  return tabId !== null && ui.snapshotTabId === tabId && ui.snapshot !== null
 }
 
 export async function openOverlay(
@@ -571,6 +616,9 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.menu &&
     !ui.siteInfoOpen &&
     !ui.externalProtocol &&
+    ui.extensionPrompts.length === 0 &&
+    !ui.extensionPopup &&
+    ui.floatingChrome === 0 &&
     !ui.barEditorOpen &&
     !ui.tabsMenu &&
     !ui.securityPromptOpen &&
@@ -602,6 +650,9 @@ export function invalidateSnapshot(): void {
     !ui.menu &&
     !ui.siteInfoOpen &&
     !ui.externalProtocol &&
+    ui.extensionPrompts.length === 0 &&
+    !ui.extensionPopup &&
+    ui.floatingChrome === 0 &&
     !ui.barEditorOpen &&
     !ui.tabsMenu &&
     !ui.securityPromptOpen &&
@@ -628,7 +679,7 @@ type BookmarkChrome = Pick<
 >
 
 /** Whether any of it is up. The manager owns its own edit dialog while it is open. */
-export function bookmarkChromeOpen(ui: UiState): boolean {
+export function bookmarkChromeOpen(ui: BookmarkChrome & Pick<UiState, 'overlay'>): boolean {
   return (
     ui.starDialog !== null ||
     ui.bookmarkAllTabs !== null ||
@@ -867,6 +918,9 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.menu !== null ||
     ui.siteInfoOpen ||
     ui.externalProtocol !== null ||
+    ui.extensionPrompts.length > 0 ||
+    ui.extensionPopup !== null ||
+    ui.floatingChrome > 0 ||
     ui.barEditorOpen ||
     ui.tabsMenu !== null ||
     ui.securityPromptOpen ||
@@ -879,6 +933,42 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.newTabShortcutDialog !== null ||
     bookmarkChromeOpen(ui)
   )
+}
+
+/**
+ * Hold the content frame for a renderer-hosted popover: the page is captured, then the view is
+ * hidden behind the capture until `release`. `ready` resolves once the capture is in place (false
+ * when released first), so the popover can hold its first paint until the view no longer covers
+ * it. On release the page gets keyboard focus back only if it had it (v2 draft §9.22): a popover
+ * opened from a focused chrome control (`pageHadFocus` false) leaves focus in the chrome, on the
+ * control it returned to.
+ */
+export function holdFloatingChrome(
+  activeTabId: string | null,
+  { pageHadFocus = true }: { pageHadFocus?: boolean } = {}
+): {
+  ready: Promise<boolean>
+  release: () => void
+} {
+  let held = false
+  let released = false
+  const ready = captureActiveTab(activeTabId).then(() => {
+    if (released) return false
+    held = true
+    uiStore.set((s) => ({ floatingChrome: s.floatingChrome + 1 }))
+    return true
+  })
+  return {
+    ready,
+    release: () => {
+      released = true
+      if (!held) return
+      held = false
+      uiStore.set((s) => ({ floatingChrome: Math.max(0, s.floatingChrome - 1) }))
+      invalidateSnapshot()
+      if (pageHadFocus) returnFocusToPage()
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
