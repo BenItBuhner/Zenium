@@ -12,9 +12,6 @@ name: Android Settings tab demo
 # this file only picks the driver and the demo it runs.
 on:
   workflow_dispatch:
-  # TEMPORARY, for PR #134's one recorded run: removed before the PR is reported on.
-  push:
-    branches: [cursor/android-settings-tab-8259]
 
 permissions:
   contents: read
