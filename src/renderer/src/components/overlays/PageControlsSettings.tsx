@@ -1,17 +1,21 @@
 import type { JSX, ReactNode } from 'react'
 import { Trash2 } from 'lucide-react'
 import type { DesktopSiteDefault, PageControlsSettings, Settings, UIState } from '@shared/types'
-import { formatZoom } from '@shared/pageControls'
+import { formatZoom, zoomChoices, zoomKey } from '@shared/pageControls'
 import { run } from '@renderer/lib/api'
 import { Switch } from '../ui/switch'
 import { ZoomStepper } from '../ZoomStepper'
-import { Choice, Group, Row } from './SettingsPrimitives'
+import { Choice, Group, MENULIST_HEIGHT, Row } from './SettingsPrimitives'
 
 /**
  * Settings rows for the page controls (hosts with `capabilities.pageControls`): the site
  * defaults under Look and Feel, and the Accessibility section with the default zoom. Built from
  * the shared `Group` / `Row` primitives; the per-site lists show only real exceptions, which the
  * menu's Desktop Site, Dark Theme for This Site and Zoom items create.
+ *
+ * The desktop has zoom memory without the rest of the page controls: its default zoom is
+ * Chrome's "Page zoom" menulist under Appearance (`PageZoomRow`), and the sites that were
+ * zoomed away from it are listed under it (`SiteZoomsGroup`, shared with Accessibility).
  */
 
 type SetSettings = (patch: Partial<Settings>) => void
@@ -22,6 +26,46 @@ function patcher(s: Settings, set: SetSettings): (patch: Partial<PageControlsSet
 
 function sorted<T>(map: Record<string, T>): Array<[string, T]> {
   return Object.entries(map).sort(([a], [b]) => a.localeCompare(b))
+}
+
+/** Chrome's "Page zoom" menulist (Settings > Appearance): the zoom pages open at, 25 to 500 percent. */
+export function PageZoomRow({ s, set }: { s: Settings; set: SetSettings }): JSX.Element {
+  const pc = s.pageControls
+  const patch = patcher(s, set)
+  return (
+    <Row
+      label="Page zoom"
+      hint="Sites without a zoom of their own open at this size."
+      control={MENULIST_HEIGHT}
+    >
+      <Choice
+        value={zoomKey(pc.zoom)}
+        onChange={(v) => patch({ zoom: Number(v) / 100 })}
+        options={zoomChoices(pc.zoom)}
+      />
+    </Row>
+  )
+}
+
+/** The sites zoomed away from the default, each with its factor and a way to forget it. */
+export function SiteZoomsGroup({ s }: { s: Settings }): JSX.Element {
+  const zooms = sorted(s.pageControls.siteZooms)
+  return (
+    <Group title="Sites with their own zoom">
+      {zooms.length === 0 && (
+        <Empty>No sites yet. Zooming a page remembers the zoom for its site here.</Empty>
+      )}
+      {zooms.map(([domain, factor]) => (
+        <SiteRow
+          key={domain}
+          domain={domain}
+          value={formatZoom(factor)}
+          removeLabel="Remove zoom"
+          onRemove={() => run('pageControls.forgetSite', { kind: 'zoom', domain })}
+        />
+      ))}
+    </Group>
+  )
 }
 
 export function SitesGroups({ s, set }: { s: Settings; set: SetSettings }): JSX.Element {
@@ -100,7 +144,6 @@ export function AccessibilitySection({
   const patch = patcher(s, set)
   const fontScale = state.pageEnvironment.fontScale || 1
   const scale = pc.zoomIncludesOsFontSize ? fontScale : 1
-  const zooms = sorted(pc.siteZooms)
   const fontHint =
     fontScale === 1
       ? 'Follow the font size chosen in the system settings; it is at 100% now.'
@@ -142,22 +185,7 @@ export function AccessibilitySection({
           />
         </Row>
       </Group>
-      <Group title="Sites with their own zoom">
-        {zooms.length === 0 && (
-          <Empty>
-            No sites yet. Zoom In and Zoom Out in the menu remember a site&apos;s zoom here.
-          </Empty>
-        )}
-        {zooms.map(([domain, factor]) => (
-          <SiteRow
-            key={domain}
-            domain={domain}
-            value={formatZoom(factor)}
-            removeLabel="Remove zoom"
-            onRemove={() => run('pageControls.forgetSite', { kind: 'zoom', domain })}
-          />
-        ))}
-      </Group>
+      <SiteZoomsGroup s={s} />
     </>
   )
 }

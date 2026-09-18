@@ -21,7 +21,17 @@ export const DEFAULT_PAGE_CONTROLS: PageControlsSettings = {
   forceZoom: false
 }
 
-/** The zoom levels the sheet's slider and the minus / plus steps walk (Chrome's page zoom table). */
+/**
+ * Chrome's preset zoom factors (`blink::kPresetBrowserZoomFactors`), 25 to 500 percent: the
+ * ladder the desktop's Ctrl+plus / minus and Ctrl+wheel climb and the default-zoom menulist
+ * offers; their ends bound every factor that is stored, whichever host wrote it.
+ */
+export const ZOOM_PRESETS = [
+  0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5
+]
+export const ZOOM_FLOOR = ZOOM_PRESETS[0]
+export const ZOOM_CEILING = ZOOM_PRESETS[ZOOM_PRESETS.length - 1]
+/** The zoom levels the sheet's slider and the minus / plus steps walk (the presets from 50 to 300 percent). */
 export const ZOOM_LEVELS = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3]
 export const ZOOM_MIN = ZOOM_LEVELS[0]
 export const ZOOM_MAX = ZOOM_LEVELS[ZOOM_LEVELS.length - 1]
@@ -69,10 +79,14 @@ function zoomMap(raw: unknown): Record<string, number> {
   return out
 }
 
-/** Zoom factors are kept to two decimals within the sheet's range. */
+/**
+ * Zoom factors are kept to two decimals within Chrome's presets (25 to 500 percent): a factor
+ * the desktop stored stays as it is when the same settings are read on a phone, whose own
+ * controls only walk the middle of the range.
+ */
 export function clampZoom(factor: number): number {
   if (!Number.isFinite(factor)) return 1
-  return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(factor * 100) / 100))
+  return Math.min(ZOOM_CEILING, Math.max(ZOOM_FLOOR, Math.round(factor * 100) / 100))
 }
 
 /** Stored settings from any version come out complete and well-typed (migrations-safe reading). */
@@ -237,17 +251,21 @@ export function siteValue<T>(sites: Record<string, T>, url: string): T | undefin
 }
 
 /**
- * The next zoom level up (`direction` > 0) or down from `current`, along `ZOOM_LEVELS`: a factor
- * between two levels moves to the neighbouring one in that direction, the ends are sticky.
+ * The next zoom level up (`direction` > 0) or down from `current`, along `levels` (the sheet's
+ * `ZOOM_LEVELS` unless a host walks Chrome's full `ZOOM_PRESETS`): a factor between two levels
+ * moves to the neighbouring one in that direction, the ends are sticky.
  */
-export function stepZoom(current: number, direction: number): number {
-  const levels = ZOOM_LEVELS
+export function stepZoom(
+  current: number,
+  direction: number,
+  levels: readonly number[] = ZOOM_LEVELS
+): number {
   const idx = levels.findIndex((l) => Math.abs(l - current) < 0.005)
   if (idx !== -1) {
     return levels[Math.min(levels.length - 1, Math.max(0, idx + Math.sign(direction)))]
   }
-  if (direction > 0) return levels.find((l) => l > current) ?? ZOOM_MAX
-  return [...levels].reverse().find((l) => l < current) ?? ZOOM_MIN
+  if (direction > 0) return levels.find((l) => l > current) ?? levels[levels.length - 1]
+  return [...levels].reverse().find((l) => l < current) ?? levels[0]
 }
 
 /** The slider position (index into `ZOOM_LEVELS`) nearest to `factor`. */
@@ -261,6 +279,22 @@ export function zoomLevelIndex(factor: number): number {
 
 export function formatZoom(factor: number): string {
   return `${Math.round(factor * 100)}%`
+}
+
+/** A factor as a menulist key: "110" for 110 percent. */
+export function zoomKey(factor: number): string {
+  return String(Math.round(factor * 100))
+}
+
+/**
+ * The preset ladder as menulist choices (Settings > Appearance > Page zoom); a stored factor off
+ * the ladder is listed in its place so the menulist can show it.
+ */
+export function zoomChoices(current: number): Array<{ value: string; label: string }> {
+  const factors = ZOOM_PRESETS.some((p) => Math.abs(p - current) < 0.005)
+    ? ZOOM_PRESETS
+    : [...ZOOM_PRESETS, current].sort((a, b) => a - b)
+  return factors.map((f) => ({ value: zoomKey(f), label: formatZoom(f) }))
 }
 
 // ---------------------------------------------------------------------------

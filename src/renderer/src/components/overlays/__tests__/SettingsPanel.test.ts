@@ -130,4 +130,48 @@ describe('the Settings panel on hosts without page controls', () => {
     uiStore.set({ overlaySection: 'accessibility' })
     expect(render(state(ANDROID, 'android'))).toContain('Default zoom')
   })
+
+  it("keeps Chrome's Page zoom menulist and the per-site zooms under Appearance on the desktop", () => {
+    const s = state(DESKTOP, 'linux')
+    s.settings = {
+      ...DEFAULT_SETTINGS,
+      pageControls: { ...DEFAULT_SETTINGS.pageControls, siteZooms: { 'wikipedia.org': 1.25 } }
+    }
+    const markup = render(s)
+    expect(markup).toContain('Page zoom')
+    expect(markup).toContain('Sites with their own zoom')
+    expect(markup).toContain('wikipedia.org')
+    expect(markup).toContain('125%')
+    expect(markup).toContain('Remove zoom: wikipedia.org')
+    // The Android sheet's rows stay off the desktop.
+    expect(markup).not.toContain('Default zoom')
+    expect(markup).not.toContain('Desktop site')
+  })
+
+  it('leaves Page zoom to Accessibility on a host with page controls', () => {
+    const markup = render(state(ANDROID, 'android'))
+    expect(markup).not.toContain('Page zoom')
+    expect(markup).not.toContain('Sites with their own zoom')
+  })
+})
+
+describe('the Page zoom menulist', () => {
+  it("walks Chrome's presets from 25 to 500 percent", async () => {
+    const { zoomChoices } = await import('@shared/pageControls')
+    const labels = zoomChoices(1).map((c) => c.label)
+    expect(labels[0]).toBe('25%')
+    expect(labels[labels.length - 1]).toBe('500%')
+    expect(labels).toContain('100%')
+    expect(labels).toHaveLength(17)
+    expect(zoomChoices(1).find((c) => c.label === '110%')?.value).toBe('110')
+  })
+
+  it('lists a stored factor off the ladder in its place rather than showing nothing', async () => {
+    const { zoomChoices, zoomKey } = await import('@shared/pageControls')
+    const choices = zoomChoices(1.15)
+    expect(choices).toHaveLength(18)
+    const idx = choices.findIndex((c) => c.value === zoomKey(1.15))
+    expect(choices[idx - 1]?.label).toBe('110%')
+    expect(choices[idx + 1]?.label).toBe('125%')
+  })
 })

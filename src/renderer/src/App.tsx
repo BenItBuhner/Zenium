@@ -300,6 +300,7 @@ function useGlobalKeys(state: UIState): void {
       if (ui.menu) return // handled by the menu layer
       // Dialogs, choosers and overflow menus take Escape first (capture traps).
       if (ui.bookmarkEdit || ui.starDialog || ui.bookmarkAllTabs || ui.barMenuOpen) return
+      if (ui.zoomBubble) return
       if (ui.overlay !== 'none') {
         e.preventDefault()
         closeOverlay()

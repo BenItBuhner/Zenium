@@ -49,6 +49,7 @@ import { isCertificateError } from '../shared/siteInfo'
 import type { InterstitialAction } from '../shared/interstitial'
 import { closedTabEntry, closedWindowEntry } from './session'
 import { newId } from '../shared/ids'
+import { clampZoom, stepZoom } from '../shared/pageControls'
 import { defer, type PageFlags, type TabView, type TabViewEvents } from './platform'
 import { safeOrigin } from './permissions'
 import { certificateSiteOf } from './security'
@@ -369,8 +370,7 @@ export class TabManager {
     this.owners.set(tab.id, win)
     if (this.siteMuted(tab.url)) tab.muted = true
     if (tab.muted) view.setMuted(true)
-    if (this.browser.pageControls.enabled) this.browser.pageControls.onViewCreated(tab, view)
-    else if (tab.zoom !== 1) view.setZoom(tab.zoom)
+    this.browser.pageControls.onViewCreated(tab, view)
     this.browser.governor.onViewCreated(tab.id, view)
     win.relayout()
     return view
@@ -642,8 +642,7 @@ export class TabManager {
     tab.canGoBack = view.canGoBack()
     tab.canGoForward = view.canGoForward()
     tab.bookmarked = this.browser.bookmarks.has(url)
-    if (this.browser.pageControls.enabled) this.browser.pageControls.onNavigated(tab, view)
-    else tab.zoom = view.getZoom()
+    this.browser.pageControls.onNavigated(tab, view)
     view.setBackgroundColor(this.backgroundFor(url))
     view.setPopupsAllowed?.(this.browser.popups.siteAllowed(url))
     const transition = this.pendingTransition.get(tabId) ?? 'link'
@@ -1566,38 +1565,48 @@ export class TabManager {
   }
 
   /**
-   * Zoom a tab's page. With page controls (Android) the factor is the site's, remembered in the
-   * settings; a plain reset (`factor` 1) returns the site to the default zoom. Otherwise it is
-   * Zen's per-tab zoom as on desktop.
+   * Zoom a tab's page to an exact factor. A web page's factor is its site's, remembered in the
+   * settings and applied to every tab of the site (Chrome's per-host zoom); any other page
+   * (internal pages, files) zooms on its own on the desktop, the tab keeping the factor, and
+   * not at all under the full page controls (the sheet is about sites).
    */
   setZoom(tabId: string, factor: number): void {
     const tab = this.tab(tabId)
     if (!tab) return
-    if (this.browser.pageControls.enabled) {
-      if (factor === 1) this.browser.pageControls.resetZoom(tabId)
-      else this.browser.pageControls.setZoomFactor(tabId, factor)
+    if (this.browser.pageControls.remembersZoom(tab)) {
+      this.browser.pageControls.setZoomFactor(tabId, factor)
       return
     }
-    const clamped = Math.min(5, Math.max(0.25, Math.round(factor * 100) / 100))
-    tab.zoom = clamped
-    this.view(tabId)?.setZoom(clamped)
+    if (this.browser.pageControls.enabled) return
+    tab.zoom = clampZoom(factor)
+    this.view(tabId)?.setZoom(tab.zoom)
     this.browser.state.commitVolatile()
+    this.browser.emit(
+      'zoom.changed',
+      { tabId, factor: tab.zoom, siteKey: null },
+      this.windowFor(tabId)
+    )
   }
 
+  /** Zoom In / Zoom Out: one step along the host's ladder (Chrome's presets on the desktop). */
   adjustZoom(tabId: string, direction: number): void {
     const tab = this.tab(tabId)
     if (!tab) return
-    if (this.browser.pageControls.enabled) {
+    if (this.browser.pageControls.remembersZoom(tab)) {
       this.browser.pageControls.adjustZoom(tabId, direction)
       return
     }
-    // Zen 1.21: finer zoom steps than Firefox's classic table.
-    const steps = [0.3, 0.5, 0.67, 0.8, 0.9, 1, 1.1, 1.2, 1.33, 1.5, 1.7, 2, 2.4, 3, 4, 5]
+    if (this.browser.pageControls.enabled) return
     const current = this.view(tabId)?.getZoom() ?? tab.zoom
-    let idx = steps.findIndex((s) => Math.abs(s - current) < 0.01)
-    if (idx === -1) idx = steps.findIndex((s) => s > current) - (direction > 0 ? 1 : 0)
-    const next = steps[Math.min(steps.length - 1, Math.max(0, idx + direction))]
-    this.setZoom(tabId, next)
+    this.setZoom(tabId, stepZoom(current, direction, this.browser.pageControls.zoomLevels))
+  }
+
+  /** Ctrl+0: back to the default zoom (the site's exception goes away); other pages to 100 percent. */
+  resetZoom(tabId: string): void {
+    const tab = this.tab(tabId)
+    if (!tab) return
+    if (this.browser.pageControls.remembersZoom(tab)) this.browser.pageControls.resetZoom(tabId)
+    else this.setZoom(tabId, 1)
   }
 
   // ---------------------------------------------------------------------------

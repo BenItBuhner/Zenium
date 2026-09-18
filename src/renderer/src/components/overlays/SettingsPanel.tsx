@@ -39,7 +39,12 @@ import { AppIconGroup } from './AppIconPicker'
 import { ExtensionsSection, ModsSection } from './AddonsPanel'
 import { DefaultBrowserSection } from './DefaultBrowserSection'
 import { OverlayShell } from './OverlayShell'
-import { AccessibilitySection, SitesGroups } from './PageControlsSettings'
+import {
+  AccessibilitySection,
+  PageZoomRow,
+  SiteZoomsGroup,
+  SitesGroups
+} from './PageControlsSettings'
 import { ResourcesSection } from './ResourcesSection'
 import { Choice, Group, MENULIST_HEIGHT, Row, SWITCH_HEIGHT, Segmented } from './SettingsPrimitives'
 import { ShortcutsSection } from './ShortcutsSection'
@@ -288,7 +293,10 @@ function LookSection({
             />
           </Row>
         )}
+        {/* Chrome's Page zoom menulist; the host with the page-controls sheet has the zoom under Accessibility. */}
+        {!caps.pageControls && <PageZoomRow s={s} set={set} />}
       </Group>
+      {!caps.pageControls && <SiteZoomsGroup s={s} />}
       {caps.pageControls && <SitesGroups s={s} set={set} />}
       <AppIconGroup value={s.appIcon} platform={platform} onChange={(id) => set({ appIcon: id })} />
       <Group title="Bookmarks">

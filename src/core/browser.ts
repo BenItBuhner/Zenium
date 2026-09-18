@@ -1667,8 +1667,8 @@ export class Browser {
       'tab.goToIndex': ({ tabId, index }) => tabs.goToIndex(tabId, index),
       'tab.navigationMenu': ({ tabId }, win) => this.menus.showNavigationMenu(tabId, win),
       'tab.setZoom': ({ tabId, delta }) =>
-        delta === null ? tabs.setZoom(tabId, 1) : tabs.adjustZoom(tabId, delta),
-      'tab.setZoomFactor': ({ tabId, factor }) => this.pageControls.setZoomFactor(tabId, factor),
+        delta === null ? tabs.resetZoom(tabId) : tabs.adjustZoom(tabId, delta),
+      'tab.setZoomFactor': ({ tabId, factor }) => tabs.setZoom(tabId, factor),
       'tab.setDesktopSite': ({ tabId, on }) => this.pageControls.setDesktopSite(tabId, on),
       'tab.setDarkenSite': ({ tabId, on }) => this.pageControls.setDarkenSite(tabId, on),
       'pageControls.forgetSite': ({ kind, domain }) => this.pageControls.forgetSite(kind, domain),
@@ -1780,7 +1780,7 @@ export class Browser {
       'urlbar.deleteSuggestion': ({ input }, win) =>
         this.extensions.omniboxDeleteSuggestion(input, win),
 
-      'overlay.snapshot': ({ tabId }, win) => win.snapshot(tabId),
+      'overlay.snapshot': ({ tabId, fresh }, win) => win.snapshot(tabId, fresh),
 
       'site.info': ({ tabId }) => this.siteInfo.info(tabId),
       'siteInfo.snapshot': ({ tabId }) => this.siteInfo.snapshot(tabId),

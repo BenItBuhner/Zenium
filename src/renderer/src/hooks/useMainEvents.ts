@@ -15,6 +15,7 @@ import {
   pushToast,
   showExternalProtocol,
   showMenu,
+  showZoomBubble,
   uiStore
 } from '@renderer/lib/ui'
 import { activeTab } from '@renderer/lib/selectors'
@@ -80,6 +81,13 @@ export function useMainEvents(): void {
         // at the pointer, keyboard mode all the same.
         const claimed = !window.dispatchEvent(new CustomEvent(APP_MENU_EVENT, { cancelable: true }))
         if (!claimed) run('app.menu', { keyboard: true })
+      }),
+      onEvent('zoom.changed', ({ tabId, factor }) => {
+        // Chrome's bubble, for the page on screen. The host with the page-controls sheet
+        // (Android) shows the zoom there instead.
+        const state: UIState | null = browserStore.get().state
+        if (!state || state.capabilities.pageControls || tabId !== currentActiveTabId()) return
+        void showZoomBubble(tabId, factor)
       }),
       onEvent('toast', ({ message, kind }) => pushToast(message, kind)),
       onEvent('status', ({ text }) => uiStore.set({ statusText: text })),

@@ -129,6 +129,13 @@ export interface UiState {
     anchor: Rect | null
     pill: Rect | null
   } | null
+  /**
+   * The zoom bubble (Chrome's): up for the tab whose page was just zoomed, or opened from the
+   * pill's zoom chip. `factor` is the page's zoom as the last change reported it; `seq` counts
+   * the changes so the bubble restarts its clock on each; `source` says how it opened – a zoom
+   * step puts it away by itself, the chip keeps it until the user does.
+   */
+  zoomBubble: { tabId: string; factor: number; seq: number; source: 'auto' | 'chip' } | null
   /** A bookmark the manager should edit, or create (`id: null`) inside `parentId`. */
   bookmarkEdit: { id: string | null; parentId: string; type: BookmarkNodeType } | null
   /** "Bookmark all tabs": the pages to file and the folder name Chrome would suggest. */
@@ -198,6 +205,7 @@ export const uiStore = createStore<UiState>(
     pageDialogOpen: false,
     windowPromptOpen: false,
     starDialog: null,
+    zoomBubble: null,
     bookmarkEdit: null,
     bookmarkAllTabs: null,
     barMenuOpen: false,
@@ -288,6 +296,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.pageDialogOpen &&
     !ui.windowPromptOpen &&
     !ui.stageActive &&
+    !ui.zoomBubble &&
     !bookmarkChromeOpen(ui)
   )
 }
@@ -316,6 +325,7 @@ export function invalidateSnapshot(): void {
     !ui.pageDialogOpen &&
     !ui.windowPromptOpen &&
     !ui.stageActive &&
+    !ui.zoomBubble &&
     !bookmarkChromeOpen(ui)
   ) {
     uiStore.set({ snapshot: null, snapshotTabId: null })
@@ -526,6 +536,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.pageDialogOpen ||
     ui.windowPromptOpen ||
     ui.stageActive ||
+    ui.zoomBubble !== null ||
     bookmarkChromeOpen(ui)
   )
 }
@@ -570,15 +581,70 @@ export function closeTabsMenu(): void {
 }
 
 /**
- * Only anchored bookmark panels are up: a bar panel, the star bubble. The page behind them is
- * captured all the same (they overlap the live view), but panels draw no scrim, so the capture
- * shows undimmed; dialogs dim it.
+ * Only anchored panels are up: a bar panel, the star bubble, the zoom bubble. The page behind
+ * them is captured all the same (they overlap the live view), but panels draw no scrim, so the
+ * capture shows undimmed; dialogs dim it.
  */
 export function panelAloneOverContent(ui: UiState): boolean {
   return (
-    (ui.barMenuOpen || ui.starDialog !== null) &&
-    !overlayCoversContent({ ...ui, barMenuOpen: false, starDialog: null })
+    (ui.barMenuOpen || ui.starDialog !== null || ui.zoomBubble !== null) &&
+    !overlayCoversContent({ ...ui, barMenuOpen: false, starDialog: null, zoomBubble: null })
   )
+}
+
+// ---------------------------------------------------------------------------
+// The zoom bubble over the page
+// ---------------------------------------------------------------------------
+
+/**
+ * A page was zoomed (`zoom.changed`): the bubble comes up for it over a picture of the page –
+ * the live view gives way under chrome that overlaps it, as under the star bubble – and, while
+ * it is up, takes a fresh picture at every step so the page is seen at its new zoom. The
+ * keyboard is left where it is: a zoom step opens the bubble as feedback, not as a place to be.
+ */
+export async function showZoomBubble(tabId: string, factor: number): Promise<void> {
+  const bubbleFor = (id: string): UiState['zoomBubble'] => {
+    const open = uiStore.get().zoomBubble
+    return open && open.tabId === id ? open : null
+  }
+  if (!bubbleFor(tabId)) {
+    await captureActiveTab(tabId)
+    // Two quick steps race here: the first to come back opens the bubble, the second finds it
+    // open and, like any later step, takes a fresh picture (the first one may predate it).
+    if (!bubbleFor(tabId)) {
+      uiStore.set({ zoomBubble: { tabId, factor, seq: 0, source: 'auto' } })
+      return
+    }
+  }
+  const open = bubbleFor(tabId)
+  if (open) uiStore.set({ zoomBubble: { ...open, factor, seq: open.seq + 1 } })
+  await refreshSnapshot(tabId)
+}
+
+/** The pill's zoom chip was pressed: the bubble opens and stays, and the keyboard goes into it. */
+export async function openZoomBubble(tabId: string, factor: number): Promise<void> {
+  await captureActiveTab(tabId)
+  run('focus.chrome', undefined)
+  uiStore.set({ zoomBubble: { tabId, factor, seq: 0, source: 'chip' } })
+}
+
+/**
+ * Put the bubble away. Focus goes back to the page unless the caller keeps it in the chrome
+ * (`keepFocus`: Escape hands it to the chip the bubble hung from, §9.22).
+ */
+export function closeZoomBubble(opts: { keepFocus?: boolean } = {}): void {
+  if (!uiStore.get().zoomBubble) return
+  uiStore.set({ zoomBubble: null })
+  invalidateSnapshot()
+  if (!opts.keepFocus) returnFocusToPage()
+}
+
+/** The page changed under the chrome (a zoom step): its picture is taken again. */
+async function refreshSnapshot(tabId: string): Promise<void> {
+  const data = await cmd('overlay.snapshot', { tabId, fresh: true }).catch(() => null)
+  if (!data || uiStore.get().snapshotTabId !== tabId) return
+  rememberThumbnail(tabId, data)
+  uiStore.set({ snapshot: data })
 }
 
 // The system back gesture (registry of dismissable surfaces, legacy chain) lives in `back.ts`.

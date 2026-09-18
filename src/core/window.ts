@@ -449,11 +449,13 @@ export class ZenWindow {
 
   /**
    * Snapshot of a tab, used to keep a dimmed preview behind overlays (URL bar, Glance) and for
-   * tabs whose live page is shown in another window.
+   * tabs whose live page is shown in another window. A page hidden under the chrome has none,
+   * unless `fresh` asks for it as it is now (it changed under the zoom bubble); Electron paints
+   * a hidden view on request, a host that cannot answers null and the chrome keeps its picture.
    */
-  async snapshot(tabId: string): Promise<string | null> {
+  async snapshot(tabId: string, fresh = false): Promise<string | null> {
     const view = this.browser.tabs.view(tabId)
-    if (!view || !view.isVisible()) return null
+    if (!view || (!fresh && !view.isVisible())) return null
     return view.snapshot()
   }
 }
