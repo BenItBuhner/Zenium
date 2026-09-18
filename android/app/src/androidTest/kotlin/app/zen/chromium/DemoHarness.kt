@@ -470,10 +470,11 @@ abstract class DemoHarness(
 
     /**
      * Open the menu, pull it to its full height so every item is in reach, and tap the item
-     * labelled `item` with a finger. False when the menu never opened or has no such item; the
+     * labelled by `path` with a finger – every label but the last drills into a submenu first
+     * (`"Bookmarks", "Show Bookmarks"`). False when the menu never opened or has no such item; the
      * menu is left as it is then (a `back()` closes it).
      */
-    protected fun openMenuItem(item: String): Boolean {
+    protected fun openMenuItem(vararg path: String): Boolean {
         tapMenuButton()
         if (waitFor(MENU_HANDLE_LABEL, 6_000) == null) {
             Log.w(tag, "the menu never opened")
@@ -488,11 +489,15 @@ abstract class DemoHarness(
             }
             SystemClock.sleep(2_000)
         }
-        val target = reveal(item) ?: run {
-            Log.w(tag, "no $item in the menu")
-            return false
+        for ((index, item) in path.withIndex()) {
+            val target = reveal(item) ?: run {
+                Log.w(tag, "no $item in the menu")
+                return false
+            }
+            Finger().tap(target.exactCenterX(), target.exactCenterY())
+            // A submenu slides in; give it a moment before looking for its items.
+            if (index < path.lastIndex) SystemClock.sleep(1_200)
         }
-        Finger().tap(target.exactCenterX(), target.exactCenterY())
         return true
     }
 

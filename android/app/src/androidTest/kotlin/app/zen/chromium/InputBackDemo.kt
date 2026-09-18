@@ -126,11 +126,17 @@ class InputBackDemo : DemoHarness("input-back-demo-state.json", "input-back", "i
     /** The list panels open without the keyboard, so one back closes them. */
     private fun panelsWithoutKeyboard() {
         finding("\nBH-16 panels open without the keyboard; one back closes them")
-        for ((item, name) in listOf("History" to "02-history", "Bookmarks" to "03-bookmarks", "New Space…" to "04-new-space")) {
-            if (!openMenuItem(item)) {
+        val panels = listOf(
+            arrayOf("History") to "02-history",
+            // Bookmarks is a submenu since #90; the manager is behind "Show Bookmarks".
+            arrayOf("Bookmarks", "Show Bookmarks") to "03-bookmarks",
+            arrayOf("New Space…") to "04-new-space"
+        )
+        for ((path, name) in panels) {
+            val item = path.last()
+            if (!openMenuItem(*path)) {
                 finding("  $item: not reached in the menu")
-                back()
-                SystemClock.sleep(1_500)
+                closeSurfaces()
                 continue
             }
             SystemClock.sleep(1_000)
@@ -224,8 +230,7 @@ class InputBackDemo : DemoHarness("input-back-demo-state.json", "input-back", "i
         finding("\nBH-01 Print… and back out of the preview")
         if (!openMenuItem("Print…")) {
             finding("  Print… not reached in the menu")
-            back()
-            SystemClock.sleep(1_500)
+            closeSurfaces()
             return
         }
         val preview = awaitSystemWindow(20_000)
@@ -415,6 +420,15 @@ class InputBackDemo : DemoHarness("input-back-demo-state.json", "input-back", "i
     }
 
     private fun chromeSurfaceUp(): Boolean = onMain { host.back.chromeSurfaceUp }
+
+    /** Back out of whatever chrome surface is up (a menu, a submenu inside it), a few at most. */
+    private fun closeSurfaces() {
+        repeat(3) {
+            if (!chromeSurfaceUp()) return
+            back()
+            SystemClock.sleep(1_500)
+        }
+    }
 
     private fun topPackage(): String = ui.rootInActiveWindow?.packageName?.toString() ?: "?"
 
