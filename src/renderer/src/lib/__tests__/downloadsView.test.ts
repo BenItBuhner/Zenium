@@ -82,34 +82,68 @@ describe('downloadStatus', () => {
     ).toBe('Paused · 30.0 MB of 100 MB')
   })
 
-  it('words the engine failure reasons as Failed – <reason>, in Chrome’s words where it has them', () => {
+  it('words the engine failure reasons as Failed – <reason>, in the words of Chrome 112’s bubble', () => {
+    // The Electron host names no reason: a bare Failed, not a guess.
     expect(describeDownloadError(undefined)).toBe('Failed')
     expect(describeDownloadError('interrupted')).toBe('Failed')
-    expect(describeDownloadError('shutdown')).toBe('Interrupted when Zenium closed')
+    // The engine's own reasons read as Chrome's USER_SHUTDOWN and FILE_FAILED do.
+    expect(describeDownloadError('shutdown')).toBe('Failed – Couldn’t finish download')
     expect(describeDownloadError('file-error')).toBe('Failed – Something went wrong')
+    // Chrome's interrupt reasons, grouped as its BubbleStatusTextBuilder groups them.
+    expect(describeDownloadError('NETWORK_DISCONNECTED')).toBe('Failed – Check internet connection')
+    expect(describeDownloadError('NETWORK_TIMEOUT')).toBe('Failed – Check internet connection')
+    expect(describeDownloadError('NETWORK_SERVER_DOWN')).toBe('Failed – Site wasn’t available')
+    expect(describeDownloadError('SERVER_CERT_PROBLEM')).toBe('Failed – Site wasn’t available')
+    expect(describeDownloadError('SERVER_BAD_CONTENT')).toBe(
+      'Failed – File wasn’t available on site'
+    )
+    expect(describeDownloadError('SERVER_FORBIDDEN')).toBe('Failed – File wasn’t available on site')
+    expect(describeDownloadError('SERVER_CONTENT_LENGTH_MISMATCH')).toBe(
+      'Failed – Couldn’t finish download'
+    )
+    expect(describeDownloadError('FILE_NO_SPACE')).toBe('Failed – Out of storage space')
+    expect(describeDownloadError('DOWNLOAD_INTERRUPT_REASON_FILE_ACCESS_DENIED')).toBe(
+      'Failed – Needs permission to download'
+    )
+    expect(describeDownloadError('FILE_NAME_TOO_LONG')).toBe(
+      'Failed – File name or location is too long'
+    )
+    expect(describeDownloadError('FILE_TOO_LARGE')).toBe('Failed – File is too big for this device')
+    expect(describeDownloadError('FILE_BLOCKED')).toBe('Failed – Blocked by your organization')
+    expect(describeDownloadError('FILE_VIRUS_INFECTED')).toBe('Failed – Virus detected')
+    expect(describeDownloadError('FILE_SECURITY_CHECK_FAILED')).toBe('Failed – Virus scan failed')
+    expect(describeDownloadError('FILE_SAME_AS_SOURCE')).toBe('Failed – Already downloaded')
+    for (const wrong of [
+      'FILE_TOO_SHORT',
+      'FILE_HASH_MISMATCH',
+      'SERVER_NO_RANGE',
+      'CANNOT_DOWNLOAD'
+    ])
+      expect(describeDownloadError(wrong)).toBe('Failed – Something went wrong')
+    // Chromium net:: names go through the chrome.downloads bridge's reading of them.
     expect(describeDownloadError('net::ERR_CONNECTION_RESET')).toBe(
       'Failed – Check internet connection'
     )
     expect(describeDownloadError('net::ERR_INTERNET_DISCONNECTED')).toBe(
       'Failed – Check internet connection'
     )
-    expect(describeDownloadError('NETWORK_DISCONNECTED')).toBe('Failed – Check internet connection')
-    expect(describeDownloadError('SERVER_BAD_CONTENT')).toBe(
-      "Failed – File wasn't available on site"
+    expect(describeDownloadError('net::ERR_NAME_NOT_RESOLVED')).toBe(
+      'Failed – Site wasn’t available'
     )
+    expect(describeDownloadError('ERR_CERT_DATE_INVALID')).toBe('Failed – Site wasn’t available')
     expect(describeDownloadError('net::ERR_HTTP_RESPONSE_CODE_FAILURE')).toBe(
-      "Failed – Site wasn't available"
+      'Failed – Site wasn’t available'
+    )
+    expect(describeDownloadError('net::ERR_INVALID_RESPONSE')).toBe(
+      'Failed – File wasn’t available on site'
     )
     expect(describeDownloadError('net::ERR_CONTENT_LENGTH_MISMATCH')).toBe(
-      "Failed – Couldn't finish download"
+      'Failed – Couldn’t finish download'
     )
-    expect(describeDownloadError('FILE_NO_SPACE')).toBe('Failed – Out of storage space')
-    expect(describeDownloadError('DOWNLOAD_INTERRUPT_REASON_FILE_ACCESS_DENIED')).toBe(
-      'Failed – Needs permission to download'
-    )
-    expect(describeDownloadError('FILE_BLOCKED')).toBe('Failed – Blocked by your organization')
-    // Outside the table: the name, readable.
-    expect(describeDownloadError('net::ERR_UNEXPECTED_THING')).toBe('Failed – unexpected thing')
+    expect(describeDownloadError('net::ERR_FILE_NO_SPACE')).toBe('Failed – Out of storage space')
+    // Outside every table: Chrome's catch-all, never a raw name.
+    expect(describeDownloadError('net::ERR_UNEXPECTED_THING')).toBe('Failed – Something went wrong')
+    expect(describeDownloadError('SOMETHING_NEW')).toBe('Failed – Something went wrong')
   })
 
   it('words paused, cancelled, failed and done like Chrome', () => {
@@ -126,7 +160,7 @@ describe('downloadStatus', () => {
       tone: 'danger'
     })
     expect(downloadStatus(item({ id: 'a', state: 'interrupted', error: 'shutdown' })).text).toBe(
-      'Interrupted when Zenium closed'
+      'Failed – Couldn’t finish download'
     )
     expect(downloadStatus(item({ id: 'a', state: 'completed', receivedBytes: 100 * MB }))).toEqual({
       text: 'Done · 100 MB',
