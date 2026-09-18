@@ -30,10 +30,11 @@ import kotlin.math.roundToInt
  *  - BH-03: with the keyboard up for a page text field the page reaches down to the bar, which
  *    rests on the keyboard – the inset is not applied twice;
  *  - BH-09: a long press on page text selects a word and shows the floating toolbar;
- *  - BH-01: Print…, back out of the system preview, and the chrome still takes touches;
+ *  - BH-01: Print…, the system preview renders the page, back out of it, and the chrome still
+ *    takes touches;
  *  - BH-07: back over history, back on a `target=_blank` child tab returns to its opener, back
- *    on a tab another app sent (through LinkDispatchActivity) leaves to the caller and lands on
- *    the tab's strip neighbour when the app is next in front, back at an ordinary tab's first
+ *    on a tab another app sent (through LinkDispatchActivity) leaves to the caller and resumes
+ *    the tab the user was on when the app is next in front, back at an ordinary tab's first
  *    page starts it over as a new tab and once more closes it.
  *
  * The pages come from a loopback server inside this process ([DemoServer]), so nothing depends
@@ -230,7 +231,11 @@ class InputBackDemo : DemoHarness("input-back-demo-state.json", "input-back", "i
 
     // --- BH-01 -----------------------------------------------------------------------------------
 
-    /** Print…, back out of the system preview while it prepares, and the chrome still takes touches. */
+    /**
+     * Print…, wait for the system preview to render the page (its pages announce themselves as
+     * "Page 1 of N"; a document it could not read shows "Sorry, that didn't work"), back out of
+     * it, and the chrome still takes touches.
+     */
     private fun printAndBack() {
         finding("\nBH-01 Print… and back out of the preview")
         if (!openMenuItem("Print…")) {
@@ -239,9 +244,20 @@ class InputBackDemo : DemoHarness("input-back-demo-state.json", "input-back", "i
             return
         }
         val preview = awaitSystemWindow(20_000)
-        SystemClock.sleep(3_000)
+        val started = SystemClock.uptimeMillis()
+        val rendered = awaitPreviewOutcome(30_000)
+        val took = SystemClock.uptimeMillis() - started
+        SystemClock.sleep(1_500)
         shot("07-print-preview")
         finding("  system print preview ${if (preview) "opened (${topPackage()})" else "did NOT open"}")
+        finding(
+            "  preview ${
+                when (rendered) {
+                    null -> "showed neither a page nor an error in ${took} ms"
+                    else -> if (rendered.ok) "rendered the page: '${rendered.label}' after $took ms" else "FAILED: '${rendered.label}'"
+                }
+            } ${verdict(rendered?.ok == true)}"
+        )
         back()
         val returned = awaitForeground(15_000)
         SystemClock.sleep(2_500)
@@ -255,6 +271,30 @@ class InputBackDemo : DemoHarness("input-back-demo-state.json", "input-back", "i
             SystemClock.sleep(1_500)
         }
         finding("  page renderer answers 1+1: ${tabJs("1+1")}")
+    }
+
+    /** What the print preview came to show: a rendered page (ok) or the spooler's error. */
+    private class PreviewOutcome(val ok: Boolean, val label: String)
+
+    /**
+     * Poll the spooler's window for a rendered page – each one is described as "Page n of m"
+     * (PrintSpooler's `page_description_template`) and numbered "n/m" – or its "Sorry, that
+     * didn't work" error; null when neither has come in time (still "Preparing preview…").
+     */
+    private fun awaitPreviewOutcome(timeoutMs: Long): PreviewOutcome? {
+        val page = Regex("""^Page \d+\s+of\s+\d+$""")
+        val number = Regex("""^\d+/\d+$""")
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            val label = findInWindows { page.matches(it.trim()) || number.matches(it.trim()) }
+                ?.let { it.contentDescription?.toString() ?: it.text?.toString() }
+            if (label != null) return PreviewOutcome(true, label.trim())
+            val error = findInWindows { it.startsWith("Sorry, that didn") }
+                ?.let { it.text?.toString() ?: it.contentDescription?.toString() }
+            if (error != null) return PreviewOutcome(false, error)
+            SystemClock.sleep(500)
+        }
+        return null
     }
 
     // --- BH-07 -----------------------------------------------------------------------------------
@@ -300,9 +340,8 @@ class InputBackDemo : DemoHarness("input-back-demo-state.json", "input-back", "i
         awaitLoaded("$ORIGIN/intent.html")
         SystemClock.sleep(1_500)
         shot("13-intent-tab")
-        // The sent tab has no opener, so closing it lands on its strip neighbour, as in Chrome
-        // (the tab before it; the one after it when it is first). New tabs go to the end here.
-        val neighbour = sent?.optString("id")?.let(::stripNeighbourOf).orEmpty()
+        // The sent tab was an interruption of tab_demo (active before it): when the app is next
+        // in front, tab_demo is back, not the sent tab's strip neighbour.
         back()
         val left = awaitSystemWindow(10_000)
         SystemClock.sleep(2_000)
@@ -313,11 +352,12 @@ class InputBackDemo : DemoHarness("input-back-demo-state.json", "input-back", "i
         val afterIntent = activeTabId()
         finding(
             "  intent tab ${sent?.optString("id")} (fromIntent ${sent?.optBoolean("fromIntent")}): back → app ${if (left) "left to the caller" else "STAYED in front"}; " +
-                "back in front: active $afterIntent (its neighbour: $neighbour), tabs ${tabCount()} " +
-                verdict(left && neighbour.isNotEmpty() && afterIntent == neighbour && tabCount() == before)
+                "back in front: active $afterIntent (was on tab_demo), tabs ${tabCount()} " +
+                verdict(left && afterIntent == "tab_demo" && tabCount() == before)
         )
-        ensureActive("tab_demo")
         shot("15-returned-after-intent")
+        // Already active when (c) passed; keeps (d) on its tab when it did not.
+        ensureActive("tab_demo")
 
         // (d) An ordinary tab at its first page: it starts over as a new tab; back on that closes it to a neighbour.
         back()
@@ -420,24 +460,6 @@ class InputBackDemo : DemoHarness("input-back-demo-state.json", "input-back", "i
             SystemClock.sleep(250)
         }
         Log.w(tag, "no tab other than $not became active")
-        return null
-    }
-
-    /**
-     * The tab Chrome selects when `tabId` closes without an opener: the one before it in the
-     * active space's strip, or the one after it when it is first (`TabModelImpl.getNextTabIfClosed`).
-     */
-    private fun stripNeighbourOf(tabId: String): String? {
-        val state = coreState()
-        val spaces = state.getJSONArray("spaces")
-        for (i in 0 until spaces.length()) {
-            val space = spaces.getJSONObject(i)
-            if (space.getString("id") != state.getString("activeSpaceId")) continue
-            val ids = space.getJSONArray("tabIds").let { arr -> List(arr.length()) { arr.getString(it) } }
-            val index = ids.indexOf(tabId)
-            if (index < 0) return null
-            return ids.getOrNull(if (index == 0) 1 else index - 1)
-        }
         return null
     }
 
