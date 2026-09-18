@@ -18,6 +18,15 @@ export interface Sent {
   message: Record<string, unknown>
 }
 
+/** One `identity.launchWebAuthFlow` sheet as the fake Kotlin holds it. */
+export interface FakeAuthSheet {
+  id: string
+  url: string
+  title: string
+  shown: boolean
+  closed: boolean
+}
+
 export class FakeKotlin implements RuntimeBridge {
   isolatedWorlds = true
   worldSlots = 16
@@ -43,6 +52,8 @@ export class FakeKotlin implements RuntimeBridge {
   notificationsAllowed = true
   /** The notifications Kotlin shows right now: `<extension id>/<notification id>` → what it was given. */
   readonly notifications = new Map<string, Record<string, unknown>>()
+  /** The auth sheets Kotlin holds (`ext.auth.*`), by view id; `closed` ones stay for inspection. */
+  readonly authSheets = new Map<number, FakeAuthSheet>()
   /** What `view.capture` answers: the encoded pixels, or null for a view that cannot be copied. */
   capture: ((args: Record<string, unknown>) => Record<string, unknown> | null) | null = (args) => ({
     data: 'AAAA',
@@ -136,8 +147,26 @@ export class FakeKotlin implements RuntimeBridge {
       case 'ext.observeRequests':
       case 'ext.popup.open':
       case 'ext.popup.close':
-      case 'ext.authFlow':
         return undefined
+      case 'ext.auth.open':
+        this.authSheets.set(Number(args.viewId), {
+          id: String(args.id),
+          url: String(args.url),
+          title: String(args.title),
+          shown: false,
+          closed: false
+        })
+        return undefined
+      case 'ext.auth.show': {
+        const sheet = this.authSheets.get(Number(args.viewId))
+        if (sheet && !sheet.closed) sheet.shown = true
+        return undefined
+      }
+      case 'ext.auth.close': {
+        const sheet = this.authSheets.get(Number(args.viewId))
+        if (sheet) sheet.closed = true
+        return undefined
+      }
       case 'ext.cookies.read': {
         const jar = this.jar(String(args.container))
         return {

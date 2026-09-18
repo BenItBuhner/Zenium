@@ -62,7 +62,7 @@ import type { JarReading } from './extensionCookies'
 import { notificationEvent, type ShownNotification } from './extensionNotifications'
 import { AndroidWebNavigation, navigationReport, type DerivedEvent } from './extensionWebNavigation'
 import { AndroidExtensions, type AndroidExtensionsOptions } from './extensionHost'
-import { AndroidIdentity } from './extensionIdentity'
+import { AndroidIdentity, authSheetEvent } from './extensionIdentity'
 import type { ExtensionRuntimeHooks } from './extensionRuntimeHooks'
 import type { ClientInfo } from './extensionServiceWorker'
 import type { AndroidExtensionStoreIo } from './extensionStoreIo'
@@ -90,11 +90,11 @@ import type { ViewEventPayloads } from './views'
  *  ext.hosts { id, hosts } (optional host permissions granted at runtime)
  *  ext.send { ep, message }, ext.exec {…}, ext.readFile { id, path }, ext.cookies.read / write
  *  ext.setRules { extensions: [{ ext, allowPrivate, paths, dynamic }] }, ext.observeRequests { on }
- *  ext.authFlow { tabId, id | null }         the tab an identity.launchWebAuthFlow runs in
+ *  ext.auth.open { viewId, id, url, title } / show { viewId } / close { viewId }   identity.launchWebAuthFlow's sheet
  *  ext.notifications.show { id, notification } / hide { id, notificationId } / forget { id } / allowed
  *  view.capture { tabId, mode: 'viewport', format, quality }   tabs.captureVisibleTab
  * Kotlin → runtime (host events): ext.message, ext.gone, ext.popupClosed, ext.request,
- * ext.identityRedirect, ext.notification.
+ * ext.authView { viewId, event, url? }, ext.notification.
  */
 
 /** The bridge calls the runtime makes (`Bridge` satisfies it; tests pass a fake). */
@@ -894,9 +894,23 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
     return ok === true
   }
 
-  /** Kotlin cancels the flow tab's navigation back to `https://<id>.chromiumapp.org/` itself. */
-  authFlowTab(tabId: string, extensionId: string | null): void {
-    this.bridge.send('ext.authFlow', { tabId, id: extensionId })
+  /** `identity.launchWebAuthFlow`'s sheet: opened hidden, titled after the extension until a page names its host. */
+  openAuthSheet(viewId: number, extensionId: string, url: string): void {
+    const ext = this.extensions.get(extensionId)
+    this.bridge.send('ext.auth.open', {
+      viewId,
+      id: extensionId,
+      url,
+      title: ext?.manifest.name || extensionId
+    })
+  }
+
+  showAuthSheet(viewId: number): void {
+    this.bridge.send('ext.auth.show', { viewId })
+  }
+
+  closeAuthSheet(viewId: number): void {
+    this.bridge.send('ext.auth.close', { viewId })
   }
 
   hostsGranted(id: string, hosts: string[]): void {
@@ -1291,9 +1305,10 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
     this.popupOpen = null
   }
 
-  /** Kotlin cancelled a flow tab's navigation to `https://<id>.chromiumapp.org/…`: the flow's result. */
-  onIdentityRedirect(event: { tabId: string; url: string }): void {
-    this.identity.onRedirect(event.tabId, event.url)
+  /** An auth sheet's navigation (the way back ends the flow), load, failure or dismissal. */
+  onAuthView(raw: unknown): void {
+    const event = authSheetEvent(raw)
+    if (event) this.identity.onSheetEvent(event)
   }
 
   /** Observational `webRequest` from `shouldInterceptRequest` (only while someone listens). */
@@ -1326,7 +1341,6 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
     payload: ViewEventPayloads[K]
   ): void {
     if (this.extensions.size === 0) return
-    this.identity.onViewEvent(tabId, name, payload)
     const tab = this.browser.tabs.tab(tabId)
     const chromeTabId = this.api.tabs.chromeIdFor(tabId)
     const facts = { chromeTabId, committedUrl: tab?.url ?? '' }
@@ -1431,7 +1445,6 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
         { windowId: 1, isWindowClosing: false }
       ])
       this.router.unregisterTab(id)
-      this.identity.onTabRemoved(id)
       this.api.activeTab.tabRemoved(id)
       this.webNavigation.tabRemoved(id)
     }

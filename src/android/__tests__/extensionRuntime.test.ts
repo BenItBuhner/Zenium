@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { pickMessages } from '../extensionRuntime'
 import {
+  type FakeAuthSheet,
   type Harness,
   makeTab,
   harness,
@@ -816,87 +817,77 @@ describe('AndroidExtensionRuntime: chrome.identity', () => {
 
   async function withIdentity(): Promise<Harness> {
     const h = harness()
-    await h.runtime.attach(record(h, {}, manifest({ permissions: ['identity', 'storage'] })))
+    await h.runtime.attach(
+      record(h, {}, manifest({ name: 'Auth Demo', permissions: ['identity', 'storage'] }))
+    )
     backgroundUp(h, 'bg1')
     return h
   }
 
-  it('runs an interactive flow in a tab in front and resolves with the URL Kotlin cancelled on the way back', async () => {
+  /** The sheets Kotlin was told to open, in order. */
+  function sheets(h: Harness): Array<[number, FakeAuthSheet]> {
+    return [...h.kt.authSheets.entries()]
+  }
+
+  it('runs an interactive flow in a sheet shown once a page loads and resolves with the URL Kotlin cancelled on the way back', async () => {
     const h = await withIdentity()
     const flow = launch(h, { url: PROVIDER, interactive: true })
-    await until(() => h.created.length === 1)
-    const tabId = h.created[0].id
-    expect(h.created[0].active).toBe(true)
-    expect(h.tabs[tabId].url).toBe(PROVIDER)
-    expect(h.kt.calledWith('ext.authFlow')).toEqual([{ tabId, id: ID }])
+    await until(() => sheets(h).length === 1)
+    const [viewId, sheet] = sheets(h)[0]
+    expect(sheet).toMatchObject({ id: ID, url: PROVIDER, title: 'Auth Demo', shown: false })
     expect(h.runtime.identity.running(ID)).toBe(true)
-    expect(h.runtime.identity.flowTab(ID)).toBe(tabId)
+    expect(h.runtime.identity.flowSheet(ID)).toBe(viewId)
+    // No tab was involved.
+    expect(h.created).toHaveLength(0)
 
-    // The provider's pages come and go; only the way back ends the flow.
-    h.runtime.onViewEvent(tabId, 'navigated', {
-      url: 'https://auth.test/login',
-      title: '',
-      canGoBack: false,
-      canGoForward: false,
-      inPage: false
-    })
-    h.runtime.onViewEvent(tabId, 'stopLoading', {
-      url: 'https://auth.test/login',
-      title: '',
-      canGoBack: false,
-      canGoForward: false
-    })
+    // The provider's pages come and go; the first one loaded brings the sheet up.
+    h.runtime.onAuthView({ viewId, event: 'navigating', url: 'https://auth.test/login' })
+    expect(sheet.shown).toBe(false)
+    h.runtime.onAuthView({ viewId, event: 'loaded', url: 'https://auth.test/login' })
+    expect(sheet.shown).toBe(true)
     expect(flow.reply()).toBeUndefined()
-    h.runtime.onIdentityRedirect({ tabId, url: `${REDIRECT}cb#access_token=abc&state=s` })
+    h.runtime.onAuthView({
+      viewId,
+      event: 'navigating',
+      url: `${REDIRECT}cb#access_token=abc&state=s`
+    })
     await until(() => flow.reply() !== undefined)
     expect(flow.reply()).toMatchObject({
       ok: true,
       result: `${REDIRECT}cb#access_token=abc&state=s`
     })
-    // The tab is closed and Kotlin told the flow is over.
-    expect(h.tabs[tabId]).toBeUndefined()
-    expect(h.kt.calledWith('ext.authFlow')).toEqual([
-      { tabId, id: ID },
-      { tabId, id: null }
-    ])
+    // The sheet is closed by the flow and the runtime forgot it.
+    expect(sheet.closed).toBe(true)
+    expect(h.kt.calledWith('ext.auth.close')).toEqual([{ viewId }])
     expect(h.runtime.identity.running(ID)).toBe(false)
+    expect(h.runtime.identity.flowSheet(ID)).toBeNull()
   })
 
-  it("a redirect that committed anyway (a POST) ends the flow from the tab's navigation event", async () => {
-    const h = await withIdentity()
-    const flow = launch(h, { url: PROVIDER, interactive: true })
-    await until(() => h.created.length === 1)
-    const tabId = h.created[0].id
-    h.runtime.onViewEvent(tabId, 'navigated', {
-      url: `${REDIRECT}?code=posted`,
-      title: '',
-      canGoBack: false,
-      canGoForward: false,
-      inPage: false
-    })
-    await until(() => flow.reply() !== undefined)
-    expect(flow.reply()).toMatchObject({ ok: true, result: `${REDIRECT}?code=posted` })
-  })
-
-  it('a silent flow loads in the background and fails, tab closed unseen, once a page wants the user', async () => {
+  it('a silent flow never shows the sheet and fails once a page wants the user', async () => {
     const h = await withIdentity()
     const flow = launch(h, { url: PROVIDER })
-    await until(() => h.created.length === 1)
-    const tabId = h.created[0].id
-    expect(h.created[0].active).toBe(false)
-    expect(h.active.id).toBe('t1')
-    h.runtime.onViewEvent(tabId, 'stopLoading', {
-      url: 'https://auth.test/login',
-      title: '',
-      canGoBack: false,
-      canGoForward: false
-    })
+    await until(() => sheets(h).length === 1)
+    const [viewId, sheet] = sheets(h)[0]
+    h.runtime.onAuthView({ viewId, event: 'loaded', url: 'https://auth.test/login' })
     await until(() => flow.reply() !== undefined)
     expect(flow.reply()).toMatchObject({ ok: false, error: 'User interaction required.' })
-    expect(h.tabs[tabId]).toBeUndefined()
+    expect(sheet.shown).toBe(false)
+    expect(sheet.closed).toBe(true)
     expect(h.active.id).toBe('t1')
     // Its timeout was cleared with it.
     expect(h.timers.filter((t) => t.ms === 60_000 && !t.cleared)).toHaveLength(0)
+  })
+
+  it('a silent flow that redirects straight back resolves unseen', async () => {
+    const h = await withIdentity()
+    const flow = launch(h, { url: PROVIDER })
+    await until(() => sheets(h).length === 1)
+    const [viewId, sheet] = sheets(h)[0]
+    h.runtime.onAuthView({ viewId, event: 'navigating', url: `${REDIRECT}?code=silent` })
+    await until(() => flow.reply() !== undefined)
+    expect(flow.reply()).toMatchObject({ ok: true, result: `${REDIRECT}?code=silent` })
+    expect(sheet.shown).toBe(false)
+    expect(sheet.closed).toBe(true)
   })
 
   it('a silent flow that may load pages times out on the runtime clock', async () => {
@@ -906,55 +897,69 @@ describe('AndroidExtensionRuntime: chrome.identity', () => {
       abortOnLoadForNonInteractive: false,
       timeoutMsForNonInteractive: 5_000
     })
-    await until(() => h.created.length === 1)
+    await until(() => sheets(h).length === 1)
     h.tick(5_000)
     await until(() => flow.reply() !== undefined)
     expect(flow.reply()).toMatchObject({ ok: false, error: 'The flow timed out.' })
-    expect(Object.keys(h.tabs)).toEqual(['t1'])
+    expect(sheets(h)[0][1].closed).toBe(true)
   })
 
-  it('the user closing the tab cancels the flow; a failed page load fails it', async () => {
+  it('the user dismissing the sheet cancels the flow; a failed page load fails it', async () => {
     const h = await withIdentity()
     const cancelled = launch(h, { url: PROVIDER, interactive: true })
-    await until(() => h.created.length === 1)
-    delete h.tabs[h.created[0].id]
-    h.notifyState()
+    await until(() => sheets(h).length === 1)
+    const [first] = sheets(h)[0]
+    h.runtime.onAuthView({ viewId: first, event: 'closed' })
     await until(() => cancelled.reply() !== undefined)
     expect(cancelled.reply()).toMatchObject({
       ok: false,
       error: 'The user did not approve access.'
     })
-    expect(h.kt.calledWith('ext.authFlow').at(-1)).toEqual({ tabId: h.created[0].id, id: null })
+    // Kotlin took the sheet down itself: the runtime does not ask it to again.
+    expect(h.kt.calledWith('ext.auth.close')).toEqual([])
+    expect(h.runtime.identity.flowSheet(ID)).toBeNull()
 
     const failed = launch(h, { url: PROVIDER, interactive: true })
-    await until(() => h.created.length === 2)
-    h.runtime.onViewEvent(h.created[1].id, 'failLoad', {
-      code: -105,
-      description: 'ERR_NAME_NOT_RESOLVED',
-      url: PROVIDER
-    })
+    await until(() => sheets(h).length === 2)
+    const [second] = sheets(h)[1]
+    expect(second).not.toBe(first)
+    h.runtime.onAuthView({ viewId: second, event: 'failed', url: PROVIDER })
     await until(() => failed.reply() !== undefined)
     expect(failed.reply()).toMatchObject({
       ok: false,
       error: 'Authorization page could not be loaded.'
     })
+    expect(h.kt.calledWith('ext.auth.close')).toEqual([{ viewId: second }])
   })
 
   it('one flow per extension at a time; detaching the extension ends it', async () => {
     const h = await withIdentity()
     const first = launch(h, { url: PROVIDER, interactive: true })
-    await until(() => h.created.length === 1)
+    await until(() => sheets(h).length === 1)
     const second = launch(h, { url: PROVIDER, interactive: true })
     await until(() => second.reply() !== undefined)
     expect(second.reply()).toMatchObject({
       ok: false,
       error: 'A web auth flow is already running for this extension.'
     })
-    expect(h.created).toHaveLength(1)
+    expect(sheets(h)).toHaveLength(1)
     await h.runtime.detach(ID)
     await until(() => first.reply() !== undefined)
     expect(first.reply()).toMatchObject({ ok: false, error: 'The user did not approve access.' })
-    expect(h.tabs[h.created[0].id]).toBeUndefined()
+    expect(sheets(h)[0][1].closed).toBe(true)
+  })
+
+  it('ignores events of sheets it does not know and malformed ones', async () => {
+    const h = await withIdentity()
+    const flow = launch(h, { url: PROVIDER, interactive: true })
+    await until(() => sheets(h).length === 1)
+    h.runtime.onAuthView({ viewId: 999, event: 'closed' })
+    h.runtime.onAuthView({ viewId: '1', event: 'closed' })
+    h.runtime.onAuthView({ viewId: sheets(h)[0][0], event: 'exploded' })
+    h.runtime.onAuthView(null)
+    await Promise.resolve()
+    expect(flow.reply()).toBeUndefined()
+    expect(h.runtime.identity.running(ID)).toBe(true)
   })
 
   it('checks the details like Chrome and answers the account members without an account', async () => {
@@ -967,7 +972,7 @@ describe('AndroidExtensionRuntime: chrome.identity', () => {
       ok: false,
       error: 'Invalid details'
     })
-    expect(h.created).toHaveLength(0)
+    expect(sheets(h)).toHaveLength(0)
     expect(await call(h, 'bg1', 'identity', 'getProfileUserInfo', [{}])).toMatchObject({
       ok: true,
       result: { email: '', id: '' }
