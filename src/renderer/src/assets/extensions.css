@@ -163,6 +163,11 @@
     padding: var(--v2-card-padding);
     color: var(--v2-text);
   }
+  /*
+   * The card's title (§9.27): 17/600 on the fixed scale's 22 line (§4, the same line as a title
+   * block's), its 16 glyph 8 before it, and the first row's box 8 below the title's line box –
+   * the row's own 6 padding then puts its text 14 away (§5: box to box, never glyph ink).
+   */
   .zen-v2-card-title {
     display: flex;
     align-items: center;
@@ -170,7 +175,7 @@
     margin: 0 0 8px;
     font-size: var(--v2-font-heading);
     font-weight: var(--v2-weight-heading);
-    line-height: 24px;
+    line-height: 22px;
   }
   .zen-v2-card-title .lucide {
     width: var(--v2-icon);
@@ -808,6 +813,18 @@
   }
 
   /* --- Extensions: the management page ---------------------------------------------------- */
+
+  /*
+   * The details level's intro (§9.26): the description of the page's title (the extension's own
+   * line, 15 at 69%, or its error) with a caption 4 under it, then 16 from the block's last line
+   * box to the first card's box; the cards are 24 apart (§5).
+   */
+  .zen-ext-intro {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 16px;
+  }
 
   /* An extension is a card (Zen's add-on cards): icon 32 on the first line, name 17/600. */
   .zen-ext-card {
