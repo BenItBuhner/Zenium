@@ -1,16 +1,18 @@
 import type { JSX } from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Brush, ChevronDown, ChevronRight, Plus } from 'lucide-react'
 import type { Folder, Space, Tab, UIState } from '@shared/types'
 import { FOLDER_COLORS } from '@shared/defaults'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { run } from '@renderer/lib/api'
-import { dropStore } from '@renderer/lib/drag'
+import { dropStore, listMotions } from '@renderer/lib/drag'
+import { SlideMotion } from '@renderer/lib/motion/slide'
 import { pinnedOf, regularOf } from '@renderer/lib/selectors'
 import { useHint } from '@renderer/lib/shortcuts'
 import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { SpaceGlyph } from '../SpaceGlyph'
+import { ListMotionContext } from './listMotion'
 import { TabItem } from './TabItem'
 
 interface Props {
@@ -20,10 +22,14 @@ interface Props {
   compact: boolean
 }
 
+/** More rows than this arriving in one commit is a restore, placed without motion. */
+const ENTER_BATCH = 6
+
 /** One space's tab list: space header, pinned tabs, separator, folders + regular tabs, new tab. */
 export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Element {
   const drag = uiStore.use((s) => s.drag)
   const dropKey = dropStore.use((s) => s.key)
+  const zones = dropStore.use((s) => s.zones)
   const pinned = pinnedOf(state, space)
   const regular = regularOf(state, space)
   const folders = Object.values(state.folders).filter((f) => f.spaceId === space.id)
@@ -31,84 +37,120 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
   const showSeparator = state.settings.showTabSeparator && (pinned.length > 0 || regular.length > 0)
   const fade = useFadeEdges<HTMLDivElement>({ axis: 'y' })
 
+  // The rows' motion (design-language §7): neighbours slide open for a lifted row, rows whose
+  // slot moved spring there, new rows grow into their slot. One per panel, keyed by its scroller
+  // so lib/drag.ts finds it from a row.
+  const [motion] = useState(() => new SlideMotion('y', { enter: true, batch: ENTER_BATCH }))
+  useEffect(() => () => motion.dispose(), [motion])
+  const scroller = useCallback(
+    (el: HTMLDivElement | null) => {
+      const teardown = fade(el)
+      motion.setScroller(el)
+      if (el) listMotions.set(el, motion)
+      return () => {
+        if (typeof teardown === 'function') teardown()
+        motion.setScroller(null)
+      }
+    },
+    [fade, motion]
+  )
+  const orderKey = [
+    space.pinnedCollapsed ? 'c' : 'o',
+    ...pinned.map((t) => t.id),
+    ...folders.map((f) => `${f.id}${f.collapsed ? '-' : '+'}`),
+    ...regular.map((t) => `${t.id}${t.folderId ?? ''}`)
+  ].join('|')
+  useLayoutEffect(() => {
+    // The row whose ghost is still gliding into its slot is placed, not animated. The rows also
+    // glide when a drop zone above the panel takes its room (`zones`), rather than jumping.
+    motion.flip(uiStore.get().drag?.tabId ?? null, isActive)
+  }, [motion, orderKey, isActive, zones])
+
   return (
-    <div className="flex h-full w-full shrink-0 flex-col" aria-hidden={!isActive}>
-      <div
-        ref={fade}
-        className="flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden px-2 pb-1"
-        onDoubleClick={(e) => {
-          // Zen: double-clicking empty sidebar space opens a new tab.
-          if (e.target === e.currentTarget) window.dispatchEvent(new CustomEvent('zen-new-tab'))
-        }}
-      >
-        {(pinned.length > 0 || Boolean(drag)) && (
-          <>
-            <SpaceHeader space={space} compact={compact} />
-            {!space.pinnedCollapsed && (
-              <div className="relative flex flex-col gap-0.5">
-                {pinned.map((tab) => (
-                  <TabItem
-                    key={tab.id}
-                    tab={tab}
-                    active={tab.id === activeTabId}
-                    compact={compact}
-                  />
-                ))}
-                {drag && (
-                  <DropZone
-                    dropKey={`section:pinned:${space.id}`}
-                    activeKey={dropKey}
-                    label="Pin here"
-                  />
-                )}
-              </div>
-            )}
-          </>
-        )}
-        {showSeparator && (
-          <div className="group/sep relative my-1.5 flex items-center gap-2 px-1">
-            <div className="h-px flex-1 bg-[var(--zen-border)]" />
-            {regular.length > 0 && !compact && (
-              <button
-                type="button"
-                className="zen-toolbar-button h-5 w-5 opacity-0 group-hover/sep:opacity-70"
-                title="Clear unpinned tabs"
-                onClick={() => run('space.closeUnpinned', { spaceId: space.id })}
-              >
-                <Brush className="h-3 w-3" />
-              </button>
-            )}
-          </div>
-        )}
-        <div className="flex flex-col gap-0.5">
-          {folders.map((folder) => (
-            <FolderRow
-              key={folder.id}
-              folder={folder}
-              tabs={regular.filter((t) => t.folderId === folder.id)}
-              activeTabId={activeTabId}
-              compact={compact}
-              dropKey={dropKey}
-              dragging={Boolean(drag)}
-              live={Boolean(state.liveFolders[folder.id])}
-              liveError={state.liveFolders[folder.id]?.lastError ?? null}
-            />
-          ))}
-          {regular
-            .filter((t) => !t.folderId || !state.folders[t.folderId])
-            .map((tab) => (
-              <TabItem key={tab.id} tab={tab} active={tab.id === activeTabId} compact={compact} />
-            ))}
-          <NewTabButton compact={compact} />
-        </div>
+    <ListMotionContext.Provider value={motion}>
+      <div className="flex h-full w-full shrink-0 flex-col" aria-hidden={!isActive}>
         <div
-          className="relative min-h-6 flex-1"
-          onDoubleClick={() => window.dispatchEvent(new CustomEvent('zen-new-tab'))}
+          ref={scroller}
+          data-tab-scroller
+          data-active={isActive}
+          className="flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden px-2 pb-1"
+          onDoubleClick={(e) => {
+            // Zen: double-clicking empty sidebar space opens a new tab.
+            if (e.target === e.currentTarget) window.dispatchEvent(new CustomEvent('zen-new-tab'))
+          }}
         >
-          {drag && <DropZone dropKey={`section:regular:${space.id}`} activeKey={dropKey} tall />}
+          {pinned.length > 0 && (
+            <>
+              <SpaceHeader space={space} compact={compact} />
+              {!space.pinnedCollapsed && (
+                <div className="relative flex flex-col gap-0.5" data-tab-list="pinned">
+                  {pinned.map((tab) => (
+                    <TabItem
+                      key={tab.id}
+                      tab={tab}
+                      active={tab.id === activeTabId}
+                      compact={compact}
+                    />
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+          {showSeparator && (
+            <div className="group/sep relative my-1.5 flex items-center gap-2 px-1">
+              <div className="h-px flex-1 bg-[var(--zen-border)]" />
+              {regular.length > 0 && !compact && (
+                <button
+                  type="button"
+                  className="zen-toolbar-button h-5 w-5 opacity-0 group-hover/sep:opacity-70"
+                  title="Clear unpinned tabs"
+                  onClick={() => run('space.closeUnpinned', { spaceId: space.id })}
+                >
+                  <Brush className="h-3 w-3" />
+                </button>
+              )}
+              {/* Pinning by drag: the separator is the target, over its own margins, so nothing
+                  in the list moves when a drag starts (an appearing zone would shift the rows). */}
+              {drag && (
+                <DropZone
+                  dropKey={`section:pinned:${space.id}`}
+                  activeKey={dropKey}
+                  label="Pin here"
+                  overlay
+                />
+              )}
+            </div>
+          )}
+          <div className="flex flex-col gap-0.5" data-tab-list="regular">
+            {folders.map((folder) => (
+              <FolderRow
+                key={folder.id}
+                folder={folder}
+                tabs={regular.filter((t) => t.folderId === folder.id)}
+                activeTabId={activeTabId}
+                compact={compact}
+                dropKey={dropKey}
+                dragging={Boolean(drag)}
+                live={Boolean(state.liveFolders[folder.id])}
+                liveError={state.liveFolders[folder.id]?.lastError ?? null}
+              />
+            ))}
+            {regular
+              .filter((t) => !t.folderId || !state.folders[t.folderId])
+              .map((tab) => (
+                <TabItem key={tab.id} tab={tab} active={tab.id === activeTabId} compact={compact} />
+              ))}
+            <NewTabButton compact={compact} />
+          </div>
+          <div
+            className="relative min-h-6 flex-1"
+            onDoubleClick={() => window.dispatchEvent(new CustomEvent('zen-new-tab'))}
+          >
+            {drag && <DropZone dropKey={`section:regular:${space.id}`} activeKey={dropKey} tall />}
+          </div>
         </div>
       </div>
-    </div>
+    </ListMotionContext.Provider>
   )
 }
 
@@ -136,25 +178,33 @@ function SpaceHeader({ space, compact }: { space: Space; compact: boolean }): JS
   )
 }
 
+/**
+ * A drop target that takes no room of its own: `tall` fills the empty space under the rows,
+ * `overlay` covers the separator and its margins. Both light up (fill, inset outline, label)
+ * only while the pointer is over them.
+ */
 function DropZone({
   dropKey,
   activeKey,
   label,
-  tall
+  tall,
+  overlay
 }: {
   dropKey: string
   activeKey: string | null
   label?: string
   tall?: boolean
+  overlay?: boolean
 }): JSX.Element {
   const active = activeKey === dropKey
   return (
     <div
       data-drop={dropKey}
+      data-drop-into={active || undefined}
       className={cn(
-        'relative flex items-center justify-center rounded-lg text-[11px] text-[var(--zen-muted)] transition-colors',
-        tall ? 'absolute inset-0' : 'h-6',
-        active && 'bg-[var(--zen-accent)]/15 ring-1 ring-[var(--zen-accent)]/50'
+        'absolute z-10 flex items-center justify-center rounded-lg text-[11px] text-[var(--v2-control-text-deemphasized)]',
+        tall && 'inset-0',
+        overlay && 'inset-x-0 -inset-y-1.5'
       )}
     >
       {label && active ? label : null}
@@ -213,12 +263,9 @@ function FolderRow({
   return (
     <div className="flex flex-col gap-0.5">
       <div
-        className={cn(
-          'zen-tab h-8',
-          isDropTarget && 'ring-2 ring-[var(--zen-accent)]/60',
-          compact && 'justify-center px-0'
-        )}
+        className={cn('zen-tab h-8', compact && 'justify-center px-0')}
         data-active={containsActive && folder.collapsed}
+        data-drop-into={isDropTarget || undefined}
         onClick={() => {
           const now = performance.now()
           if (now - lastClick.current < 400) {

@@ -90,7 +90,8 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
       >
         {banner && <DefaultBrowserBanner state={state} />}
         <div className="flex min-h-0 flex-1 flex-row">
-          <div ref={viewportRef} className="relative min-h-0 flex-1 overflow-hidden">
+          {/* A tab dragged onto the page (past the split zones at its edges) tears off into a new window. */}
+          <div ref={viewportRef} className="relative min-h-0 flex-1 overflow-hidden" data-tear-zone>
             {state.capabilities.pullToRefresh && <PullIndicator />}
             {!tab && !ui.urlbar.open && ui.overlay === 'none' && !staged && <EmptyState />}
             {tab && foreign && !contentHidden && !glanceActive && (

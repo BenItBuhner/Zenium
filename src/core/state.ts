@@ -328,6 +328,9 @@ export class BrowserState {
     if (!BOOKMARKS_BAR_MODES.includes(this.settings.bookmarksBar)) {
       this.settings.bookmarksBar = DEFAULT_SETTINGS.bookmarksBar
     }
+    this.settings.mutedHosts = Array.isArray(this.settings.mutedHosts)
+      ? this.settings.mutedHosts.filter((h): h is string => typeof h === 'string' && h !== '')
+      : []
     this.shortcutOverrides = data.shortcutOverrides ?? {}
     const preset = migrateShortcutPreset(data.settings?.shortcutPreset, this.shortcutOverrides)
     this.settings.shortcutPreset = preset.preset

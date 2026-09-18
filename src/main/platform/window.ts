@@ -281,6 +281,13 @@ export class ElectronWindow implements WindowHost {
     return this.alive ? this.win.getNormalBounds() : null
   }
 
+  /** The chrome document's place on the screen (DIP); the frameless window has no frame to add. */
+  contentBounds(): Rect | null {
+    return this.alive && this.win.isVisible() && !this.win.isMinimized()
+      ? this.win.getContentBounds()
+      : null
+  }
+
   setCaptionColors(colors: CaptionColors): void {
     if (!CAPTION_OVERLAY || !this.alive) return
     const current = this.captionColors

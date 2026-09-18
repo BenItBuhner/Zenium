@@ -101,6 +101,11 @@ export interface Rect {
   height: number
 }
 
+export interface Point {
+  x: number
+  y: number
+}
+
 // ---------------------------------------------------------------------------
 // Containers (Firefox "Multi-Account Containers" → Chromium session partitions)
 // ---------------------------------------------------------------------------
@@ -216,6 +221,11 @@ export interface Tab {
   muted: boolean
   /** True when the tab has no live WebContents (Zen calls these "pending"/unloaded tabs). */
   discarded: boolean
+  /**
+   * Memory (MB) the page held when it was put to sleep, for the sleeping tab's tooltip; absent
+   * when the host could not tell (or the tab was never loaded this session).
+   */
+  sleepSavedMb?: number
   /** Page lifecycle frozen by the resource governor (no timers, no script) – Chromium tab freezing. */
   frozen: boolean
   /** CPU throttling factor the governor applied to the renderer (1 = none, 4 = four times slower). */
@@ -1061,6 +1071,11 @@ export interface Settings {
   unloadEnabled: boolean
   unloadTimeoutMinutes: number
   unloadExcludedDomains: string[]
+  /**
+   * Hosts the user chose "Mute Site" for (lower-case hostnames without `www.`): every tab on
+   * such a host is muted, new pages of the host start muted, and leaving the host lifts the mute.
+   */
+  mutedHosts: string[]
   searchEngineId: string
   searchSuggestions: boolean
   /**
@@ -1504,6 +1519,16 @@ export interface MediaState {
   playing: boolean
 }
 
+/** A tab from another window being dragged over this one (`tab.dragOver`). */
+export interface TabDragOver {
+  tabId: string
+  title: string
+  favicon: string | null
+  /** Pointer position in this window's chrome (CSS px). */
+  x: number
+  y: number
+}
+
 // ---------------------------------------------------------------------------
 // Security: blocked pop-ups, site rules, HTTP authentication, client certificates
 // ---------------------------------------------------------------------------
@@ -1823,6 +1848,8 @@ export interface CommandDescriptor {
     | 'downloads.open'
     | 'tab.freezeOthers'
     | 'tab.wakeAll'
+    | 'tab.moveToNewWindow'
+    | 'page.toggleMuteSite'
     | 'resources.trim'
     | 'resources.open'
   /** The host capability the command needs; not offered where it is false. */
@@ -1944,6 +1971,8 @@ export interface Commands {
   'tab.reload': { args: { tabId: string; skipCache?: boolean }; result: void }
   'tab.stop': { args: { tabId: string }; result: void }
   'tab.toggleMute': { args: { tabId: string }; result: void }
+  /** "Mute Site" / "Unmute Site": every tab of the host, remembered in `settings.mutedHosts`. */
+  'tab.toggleMuteSite': { args: { tabId: string }; result: void }
   'tab.togglePin': { args: { tabId: string }; result: void }
   'tab.toggleEssential': { args: { tabId: string }; result: void }
   'tab.resetPinned': { args: { tabId: string }; result: void }
@@ -1959,6 +1988,36 @@ export interface Commands {
   }
   'tab.moveToSpace': { args: { tabId: string; spaceId: string }; result: void }
   'tab.moveToFolder': { args: { tabId: string; folderId: string | null }; result: void }
+  /**
+   * A sidebar drag let go over a drop target of this window. `key` is the target's `data-drop`
+   * (`tab:<id>:before|after`, `section:<section>:<spaceId>`, `folder:<id>`, `space:<id>`,
+   * `split:<side>`, `bookmark:<folderId>:<index>`); the core resolves it against the model.
+   */
+  'tab.drop': { args: { tabId: string; key: string }; result: void }
+  /** A sidebar tab drag began in this window (the core tracks it across windows from here on). */
+  'tab.dragStart': { args: { tabId: string }; result: void }
+  /**
+   * The pointer moved during a tab drag. `x`/`y` are chrome coordinates of this window (they run
+   * past its edges while the pointer is outside it); `inSidebar` is true while the pointer is
+   * over this window's own sidebar, where no other window can be the target.
+   */
+  'tab.dragMove': {
+    args: { tabId: string; x: number; y: number; inSidebar: boolean }
+    result: void
+  }
+  /** The window a drag from another window hovers reports the drop target under the pointer. */
+  'tab.dragTarget': { args: { tabId: string; key: string | null }; result: void }
+  /**
+   * The drag ended outside this window's drop targets (chrome coordinates as for `tab.dragMove`):
+   * `release` moves the tab into the other Zenium window under the pointer or tears it off into
+   * a new window there; `cancel` (Escape) just ends the drag.
+   */
+  'tab.dragEnd': {
+    args: { tabId: string; x: number; y: number; outcome: 'release' | 'cancel' }
+    result: void
+  }
+  /** "Move Tab to New Window" from the tab menu: the new window opens beside this one. */
+  'tab.moveToNewWindow': { args: { tabId: string }; result: void }
   /** Restore the newest recently closed entry (a window entry as a whole window). */
   'tab.reopenClosed': { args: void; result: void }
   /** The tab's back/forward stack for the long-press list on the back / forward buttons. */
@@ -2585,6 +2644,11 @@ export interface Events {
   'theme.open': { spaceId: string }
   'space.new': void
   'tab.startRename': { tabId: string }
+  /**
+   * A tab dragged from another window hovers this one: show its ghost at the given chrome
+   * coordinates and light up the drop target under it (null once it leaves or the drag ends).
+   */
+  'tab.dragOver': TabDragOver | null
   'folder.startRename': { folderId: string }
   /** Open the pinned-URL editor for a pinned/essential tab. */
   'tab.editPinnedUrl': { tabId: string }

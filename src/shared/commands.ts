@@ -141,6 +141,12 @@ export const URLBAR_COMMANDS: CommandDescriptor[] = [
     action: 'page.toggleMute'
   },
   {
+    id: 'mute-site',
+    label: 'Mute / Unmute Site',
+    keywords: ['mute', 'site', 'audio', 'sound', 'host'],
+    action: 'page.toggleMuteSite'
+  },
+  {
     id: 'screenshot',
     label: 'Take Screenshot',
     keywords: ['screenshot', 'capture'],
@@ -233,6 +239,13 @@ export const URLBAR_COMMANDS: CommandDescriptor[] = [
     label: 'New Blank Window',
     keywords: ['window', 'blank', 'unsynced'],
     action: 'window.newUnsynced',
+    requires: 'windows'
+  },
+  {
+    id: 'move-tab-to-new-window',
+    label: 'Move Tab to New Window',
+    keywords: ['window', 'move', 'tab', 'tear', 'detach'],
+    action: 'tab.moveToNewWindow',
     requires: 'windows'
   },
   {

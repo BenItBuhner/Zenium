@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import type { Rect, UIState } from '@shared/types'
 import { onEvent, run } from '@renderer/lib/api'
+import { remoteDragOver } from '@renderer/lib/drag'
 import { isPhone } from '@renderer/lib/formFactor'
 import { APP_MENU_EVENT } from '@renderer/lib/shortcuts'
 import {
@@ -80,6 +81,7 @@ export function useMainEvents(): void {
       onEvent('toast', ({ message, kind }) => pushToast(message, kind)),
       onEvent('status', ({ text }) => uiStore.set({ statusText: text })),
       onEvent('sidebar.toggle', () => window.dispatchEvent(new CustomEvent('zen-sidebar-toggle'))),
+      onEvent('tab.dragOver', (over) => remoteDragOver(over)),
       onEvent('tab.startRename', ({ tabId }) => uiStore.set({ renamingTabId: tabId })),
       onEvent('folder.startRename', ({ folderId }) => uiStore.set({ renamingFolderId: folderId })),
       onEvent('tab.editPinnedUrl', ({ tabId }) => uiStore.set({ editingPinnedUrlTabId: tabId })),

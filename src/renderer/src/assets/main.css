@@ -571,12 +571,23 @@
     background: rgb(var(--zen-accent-rgb) / 0.16);
     box-shadow: inset 0 0 0 1.5px rgb(var(--zen-accent-rgb) / 0.7);
   }
-  .zen-tab[data-discarded='true'] .zen-tab-title {
-    opacity: 0.55;
+  /*
+   * Sleeping (discarded) pages fade like Edge's: glyph and label at the deemphasised 69%
+   * (design-language-v2-draft §4), no desaturation; the row wakes the page on click.
+   */
+  .zen-tab[data-discarded='true'] .zen-tab-title,
+  .zen-tab[data-discarded='true'] .zen-tab-favicon,
+  .zen-tab[data-discarded='true'] .zen-tab-sleeping {
+    opacity: 0.69;
   }
-  .zen-tab[data-discarded='true'] .zen-tab-favicon {
-    opacity: 0.55;
-    filter: grayscale(0.4);
+  /*
+   * The row in the hand: its slot stays open under the ghost (lib/drag.ts draws the ghost) and
+   * the ghost comes back to it on Escape, so the row itself must not show twice.
+   */
+  .zen-tab[data-lifted],
+  .zen-essential[data-lifted] {
+    opacity: 0;
+    transition: none;
   }
   /* Frozen (sleeping) pages: still loaded, but dimmed and cooled down. */
   .zen-tab[data-frozen='true'] .zen-tab-title {
@@ -645,8 +656,124 @@
     box-shadow: inset 0 0 0 1px rgb(var(--zen-fg-rgb) / 0.1);
   }
   .zen-essential[data-discarded='true'] img {
-    opacity: 0.5;
-    filter: grayscale(0.5);
+    opacity: 0.69;
+  }
+
+  /*
+   * Drop-into target (v2 draft §9.4): a folder row, a section, Essentials, a space keeps its
+   * size and gains the hover fill plus a 2 px inset outline in the accent at its own radius.
+   * Every one of them sits on a window surface (§9.29), so the control roles resolve to the
+   * window family: the theme's foreground and accent.
+   */
+  [data-drop-into] {
+    background: var(--v2-control-fill-hover);
+    box-shadow: inset 0 0 0 2px var(--v2-control-accent);
+  }
+  /* The audio indicator: the speaker glyph while a tab plays, the muted glyph deemphasised. */
+  .zen-tab-audio[data-muted] {
+    color: var(--v2-control-text-deemphasized);
+  }
+  /* Compact rows have no room for the glyph: a dot marks sound, a hollow one a muted tab. */
+  .zen-tab-audio-dot {
+    position: absolute;
+    right: 3px;
+    top: 3px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--v2-control-accent);
+    pointer-events: none;
+  }
+  .zen-tab-audio-dot[data-muted] {
+    background: transparent;
+    box-shadow: inset 0 0 0 1.5px var(--v2-control-text-deemphasized);
+  }
+  /*
+   * A tab drag (lib/drag.ts, components/DragLayer.tsx). The ghost is the lifted row, at v1
+   * level 2 with scale(1.02) and 90% opacity (v2 draft §9.4), on the window's solid colour so
+   * it reads over whatever it crosses; past the sidebar it becomes a small window card. Both
+   * layers are placed by transform from the drag code, never by React.
+   */
+  .zen-tab-ghost {
+    position: fixed;
+    left: 0;
+    top: 0;
+    z-index: 100;
+    pointer-events: none;
+    will-change: transform;
+    opacity: 1;
+  }
+  .zen-tab-ghost-row {
+    background-color: var(--zen-bg-solid);
+    background-image: linear-gradient(
+      var(--v2-control-fill-hover),
+      var(--v2-control-fill-hover)
+    );
+    box-shadow: var(--zen-shadow-2);
+    transform: scale(1.02);
+    opacity: 0.9;
+    transition:
+      transform 120ms var(--zen-ease),
+      opacity 120ms var(--zen-ease);
+  }
+  /* Over a drop-into target the row thins out: the target, not the row, shows where it goes. */
+  .zen-tab-ghost[data-into] .zen-tab-ghost-row {
+    transform: scale(0.96);
+    opacity: 0.6;
+  }
+  /* The insertion caret (v2 draft §9.4): 2 px accent, radius 1, on the spring between slots. */
+  .zen-tab-caret {
+    position: fixed;
+    left: 0;
+    top: 0;
+    z-index: 101;
+    height: 2px;
+    border-radius: 1px;
+    background: var(--v2-control-accent);
+    pointer-events: none;
+    opacity: 0;
+    will-change: transform;
+  }
+  /* Between grid tiles (Essentials) the caret turns vertical and is drawn by the tile. */
+  .zen-tab-caret-grid {
+    position: absolute;
+    top: 4px;
+    bottom: 4px;
+    width: 2px;
+    border-radius: 1px;
+    background: var(--v2-control-accent);
+    pointer-events: none;
+  }
+  .zen-tab-tearoff {
+    display: flex;
+    flex-direction: column;
+    height: 120px;
+    border-radius: var(--v2-radius-card);
+    background: var(--v2-panel);
+    box-shadow:
+      inset 0 0 0 1px var(--v2-border),
+      var(--zen-shadow-2);
+    overflow: hidden;
+    color: var(--v2-text);
+    font-size: var(--v2-font-small);
+  }
+  .zen-tab-tearoff-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: var(--v2-row);
+    padding: 0 10px;
+  }
+  .zen-tab-tearoff-page {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 6px 6px;
+    border-radius: var(--v2-radius-inner);
+    background: var(--v2-page);
+    box-shadow: inset 0 0 0 1px var(--v2-border);
+    color: var(--v2-text-deemphasized);
   }
 
   .zen-panel {

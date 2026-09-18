@@ -170,6 +170,7 @@ export const DEFAULT_SETTINGS: Settings = {
   unloadEnabled: true,
   unloadTimeoutMinutes: 20,
   unloadExcludedDomains: [],
+  mutedHosts: [],
   searchEngineId: 'google',
   searchSuggestions: true,
   showFullUrls: false,
