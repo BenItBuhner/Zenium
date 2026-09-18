@@ -18,7 +18,7 @@ import {
 } from './http'
 import { TabFrames } from './frames'
 import { RpcError, UNAUTHORIZED } from './jsonrpc'
-import { pageCall, type PageCursorOptions } from './page'
+import { pageCall, pageDispose, type PageCursorOptions } from './page'
 import {
   McpProtocol,
   newSession,
@@ -691,15 +691,20 @@ export class AgentService implements SessionStore, McpHandlers {
   release(s: AgentSession, tabId: string, commit = true): void {
     if (!s.tabIds.delete(tabId)) return
     s.cursors.delete(tabId)
+    const frames = s.frames.get(tabId)
     s.frames.delete(tabId)
     if (s.currentTabId === tabId) s.currentTabId = firstOf(s.tabIds)
     const view = this.browser.tabs.view(tabId)
     if (view) {
       view.setBackgroundThrottling?.(true)
-      void this.evalPage(
-        view,
-        pageCall('cursor', { id: s.id, name: s.name, color: s.color, x: 0, y: 0, action: 'hide' })
-      ).catch(() => undefined)
+      // The agent is done with the page: its cursor goes, and so does the runtime in every frame
+      // it was put into – the sub-frames' copies live in those frames' main world, and nothing of
+      // ours should stay there once no tool call needs it.
+      void this.evalPage(view, pageDispose(s.id)).catch(() => undefined)
+      for (const node of frames?.nodes ?? []) {
+        if (node.id === 0) continue
+        void view.executeJavaScript(pageDispose(s.id), node.id).catch(() => undefined)
+      }
     }
     if (commit) this.browser.state.commitVolatile()
   }

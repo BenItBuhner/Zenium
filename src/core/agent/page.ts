@@ -145,8 +145,20 @@ export interface PageRuntime {
   cursor(opts: PageCursorOptions): void
   info(): PageInfo
   text(maxChars: number): { title: string; text: string; truncated: boolean }
+  /**
+   * Forget everything held for `agent` (its refs, its cursor). Returns true when no agent is
+   * left, so the caller can drop the runtime itself (see `pageDispose`).
+   */
+  dispose(agent: string): boolean
 }
 
+/**
+ * Where a document keeps its runtime. The top document's lives in the preload's isolated world
+ * on hosts that have one; a cross-origin sub-frame's runs in the frame's main world (Electron
+ * has no isolated world on `WebFrameMain`), so there the property is defined non-enumerable:
+ * `Object.keys(window)` / `for…in` in the page do not list it, and it is created only when a
+ * tool call needs that frame and deleted when the agent releases the tab (`pageDispose`).
+ */
 export const PAGE_RUNTIME_GLOBAL = '__zenAgentRuntime_v1'
 
 export function zenAgentPageRuntime(): PageRuntime {
@@ -1392,6 +1404,18 @@ export function zenAgentPageRuntime(): PageRuntime {
     return { title: document.title, text: raw.slice(0, maxChars), truncated: raw.length > maxChars }
   }
 
+  function dispose(agent: string): boolean {
+    delete REF_STATES[agent]
+    document.getElementById(`zen-agent-cursor-${agent}`)?.remove()
+    // A state without refs holds nothing another agent would miss (a lookup creates one).
+    const empty = Object.values(REF_STATES).every((s) => s.byId.size === 0)
+    if (empty) {
+      for (const key of Object.keys(REF_STATES)) delete REF_STATES[key]
+      for (const el of Array.from(document.querySelectorAll(`[${MARK}]`))) el.remove()
+    }
+    return empty
+  }
+
   return {
     snapshot,
     locate,
@@ -1407,18 +1431,31 @@ export function zenAgentPageRuntime(): PageRuntime {
     waitFor,
     cursor,
     info,
-    text
+    text,
+    dispose
   }
 }
 
 /** Source of the runtime, ready to be evaluated in a page. */
 export const PAGE_RUNTIME_SOURCE = `(${zenAgentPageRuntime.toString()})`
 
+const GLOBAL_KEY = JSON.stringify(PAGE_RUNTIME_GLOBAL)
+
 /**
  * Build a script that (re)installs the runtime if the page does not have it yet and invokes one
- * of its methods with JSON-encoded arguments. The result is the method's return value.
+ * of its methods with JSON-encoded arguments. The result is the method's return value. The
+ * runtime is installed as a non-enumerable global (see `PAGE_RUNTIME_GLOBAL`).
  */
 export function pageCall(method: keyof PageRuntime, ...args: unknown[]): string {
   const argList = args.map((a) => JSON.stringify(a ?? null)).join(',')
-  return `(() => { const g = globalThis; const rt = g[${JSON.stringify(PAGE_RUNTIME_GLOBAL)}] || (g[${JSON.stringify(PAGE_RUNTIME_GLOBAL)}] = ${PAGE_RUNTIME_SOURCE}()); return rt.${method}(${argList}) })()`
+  return `(() => { const g = globalThis; let rt = g[${GLOBAL_KEY}]; if (!rt) { rt = ${PAGE_RUNTIME_SOURCE}(); Object.defineProperty(g, ${GLOBAL_KEY}, { value: rt, enumerable: false, configurable: true, writable: true }) } return rt.${method}(${argList}) })()`
+}
+
+/**
+ * Build a script that drops what the runtime holds for `agent` and, once no agent is left,
+ * removes the runtime from the document: nothing of it stays in a frame's main world after the
+ * agent is done with the tab. Does not install a runtime where there is none.
+ */
+export function pageDispose(agent: string): string {
+  return `(() => { const g = globalThis; const rt = g[${GLOBAL_KEY}]; if (!rt) return true; const empty = rt.dispose(${JSON.stringify(agent)}); if (empty) { try { delete g[${GLOBAL_KEY}] } catch { g[${GLOBAL_KEY}] = undefined } } return empty })()`
 }

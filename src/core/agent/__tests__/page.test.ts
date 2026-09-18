@@ -1,6 +1,13 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it } from 'vitest'
-import { PAGE_RUNTIME_SOURCE, pageCall, type PageLocation, type PageRuntime } from '../page'
+import {
+  PAGE_RUNTIME_GLOBAL,
+  PAGE_RUNTIME_SOURCE,
+  pageCall,
+  pageDispose,
+  type PageLocation,
+  type PageRuntime
+} from '../page'
 
 /**
  * The runtime is shipped as source text and evaluated inside pages; here it runs against
@@ -166,6 +173,75 @@ describe('page runtime', () => {
     expect(code).toContain('__zenAgentRuntime_v1')
     expect(code).toContain('rt.locateAt("agent",1,2)')
     expect(PAGE_RUNTIME_SOURCE).not.toMatch(/\brequire\(|\bimport\s/)
+  })
+
+  /**
+   * The footprint in a frame's main world (cross-origin sub-frames have no isolated world): the
+   * runtime is one non-enumerable global that a page cannot list, installed on the first call
+   * that needs the frame, reused by the calls after it, and gone after `pageDispose`.
+   */
+  describe('main-world footprint', () => {
+    const evaluate = (code: string): unknown => new Function(`return ${code}`)()
+    const NAME = PAGE_RUNTIME_GLOBAL as keyof typeof globalThis
+
+    beforeEach(() => {
+      delete (globalThis as Record<string, unknown>)[NAME]
+      for (const el of Array.from(document.querySelectorAll('[data-zen-agent]'))) el.remove()
+      document.body.innerHTML += `<button id="sub" data-box="40,500,100,30">Sub</button>`
+    })
+
+    it('installs one non-enumerable global that later calls reuse', () => {
+      const before = Object.keys(globalThis)
+      const snap = evaluate(pageCall('snapshot', { agent: 'a' })) as { tree: string }
+      expect(snap.tree).toContain('button "Sub"')
+      expect(NAME in globalThis).toBe(true)
+      expect(Object.keys(globalThis)).toEqual(before)
+      expect(Object.getOwnPropertyDescriptor(globalThis, NAME)).toMatchObject({
+        enumerable: false,
+        configurable: true
+      })
+      let listed = false
+      for (const key in globalThis) if (key === NAME) listed = true
+      expect(listed).toBe(false)
+      // The refs the snapshot issued resolve in the call after it: the same instance answers.
+      const ref = /button "Sub" \[ref=(e\d+)\]/.exec(snap.tree)![1]
+      const loc = evaluate(pageCall('locate', 'a', ref, false)) as PageLocation
+      expect(loc.name).toBe('Sub')
+      expect(document.querySelectorAll('[data-zen-agent]')).toHaveLength(0)
+    })
+
+    it('pageDispose forgets the agent, and removes the runtime once no agent is left', () => {
+      evaluate(pageCall('snapshot', { agent: 'a' }))
+      evaluate(pageCall('snapshot', { agent: 'b' }))
+      evaluate(
+        pageCall('cursor', { id: 'a', name: 'A', color: '#000', x: 1, y: 1, action: 'move' })
+      )
+      expect(document.getElementById('zen-agent-cursor-a')).not.toBeNull()
+      // "a" is forgotten; "b" still holds refs, so the runtime stays for it.
+      expect(evaluate(pageDispose('a'))).toBe(false)
+      expect(document.getElementById('zen-agent-cursor-a')).toBeNull()
+      expect(NAME in globalThis).toBe(true)
+      expect(evaluate(pageCall('locate', 'a', 'e1', false))).toMatchObject({
+        error: expect.stringMatching(/Unknown ref/)
+      })
+      // The lookup left "a" an empty state, which holds nothing: "b" leaving empties the page.
+      expect(evaluate(pageDispose('b'))).toBe(true)
+      expect(NAME in globalThis).toBe(false)
+      expect(document.querySelectorAll('[data-zen-agent]')).toHaveLength(0)
+      // Disposing where nothing was installed installs nothing.
+      expect(evaluate(pageDispose('a'))).toBe(true)
+      expect(NAME in globalThis).toBe(false)
+    })
+
+    it('the runtime creates no DOM of its own for snapshots and actions', () => {
+      evaluate(pageCall('snapshot', { agent: 'a' }))
+      evaluate(pageCall('locateAt', 'a', 50, 510))
+      evaluate(pageCall('clickJs', 'a', '#sub', 1))
+      evaluate(pageCall('hoverJs', 'a', '#sub', 50, 510))
+      evaluate(pageCall('frames', 'a'))
+      expect(document.querySelectorAll('[data-zen-agent]')).toHaveLength(0)
+      expect(document.querySelectorAll('style')).toHaveLength(0)
+    })
   })
 })
 
