@@ -19,6 +19,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsAnimationCompat
 import androidx.core.view.WindowInsetsCompat
+import app.zen.chromium.ext.ExtensionNotifications
 import app.zen.chromium.ext.ExtensionStore
 import org.json.JSONArray
 import org.json.JSONObject
@@ -207,6 +208,8 @@ class MainActivity : BrowserActivity() {
             Intent.ACTION_WEB_SEARCH -> host.share.onWebSearch(intent)
             // One of Zenium's own buttons in the system share sheet (Android 14).
             Share.ACTION_BROWSER_ACTION -> host.share.onBrowserAction(intent)
+            // A tap or a button on an extension's notification card (chrome.notifications).
+            ExtensionNotifications.ACTION_OPENED -> host.extensions.onNotificationIntent(intent)
         }
         // Consume so a configuration change does not re-open it.
         intent.action = null

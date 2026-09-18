@@ -39,6 +39,10 @@ export class FakeKotlin implements RuntimeBridge {
   readonly jars = new Map<string, FakeJar>()
   /** Whether the fake WebView lists cookies with attributes (`GET_COOKIE_INFO`). */
   detailedCookies = true
+  /** Whether the fake app may post notifications (`ext.notifications.allowed`). */
+  notificationsAllowed = true
+  /** The notifications Kotlin shows right now: `<extension id>/<notification id>` → what it was given. */
+  readonly notifications = new Map<string, Record<string, unknown>>()
   /** What `view.capture` answers: the encoded pixels, or null for a view that cannot be copied. */
   capture: ((args: Record<string, unknown>) => Record<string, unknown> | null) | null = (args) => ({
     data: 'AAAA',
@@ -149,6 +153,20 @@ export class FakeKotlin implements RuntimeBridge {
         return { ran: true }
       case 'view.capture':
         return this.capture ? this.capture(args) : null
+      case 'ext.notifications.show': {
+        const notification = args.notification as Record<string, unknown>
+        this.notifications.set(`${args.id}/${notification.notificationId}`, notification)
+        return undefined
+      }
+      case 'ext.notifications.hide':
+        this.notifications.delete(`${args.id}/${args.notificationId}`)
+        return undefined
+      case 'ext.notifications.forget':
+        for (const key of [...this.notifications.keys()])
+          if (key.startsWith(`${args.id}/`)) this.notifications.delete(key)
+        return undefined
+      case 'ext.notifications.allowed':
+        return this.notificationsAllowed
       default:
         throw new Error(`no such bridge method ${method}`)
     }

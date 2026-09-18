@@ -1,6 +1,9 @@
 package app.zen.chromium.ext
 
+import android.Manifest
+import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -181,6 +184,17 @@ class Extensions(private val host: Host) {
     @Volatile private var grantedHosts: Map<String, List<MatchPattern>> = emptyMap()
     /** The jar half of `chrome.cookies` (see [ExtensionCookies]). */
     private val cookies = ExtensionCookies()
+    /** The shade half of `chrome.notifications` (see [ExtensionNotifications]). */
+    private val notifications = ExtensionNotifications(host.activity, io) { id, notificationId, event, index ->
+        onNotificationEvent(id, notificationId, event, index)
+    }
+    /**
+     * Taps on cards of extensions not attached right now (the card outlived the process, or the
+     * chrome is still booting): delivered when `ext.configure` brings the extension back.
+     */
+    private val pendingNotificationEvents = HashMap<String, ArrayDeque<JSONObject>>()
+    /** The notification permission is asked for once per process, on the first card (Android 13+). */
+    private var askedNotifications = false
     /** Cross-origin fetches of extension pages to permitted hosts (see [CorsProxy]). */
     private val corsProxy = CorsProxy(
         object : CorsProxy.Cookies {
@@ -261,6 +275,10 @@ class Extensions(private val host: Host) {
             "ext.exec" -> exec(args, reply)
             "ext.cookies.read" -> reply(cookies.read(args.str("container", Profiles.DEFAULT_CONTAINER), args.str("url")))
             "ext.cookies.write" -> cookies.write(args.str("container", Profiles.DEFAULT_CONTAINER), args.str("url"), args.str("cookie"), reply)
+            "ext.notifications.show" -> { showNotification(args.str("id"), args.obj("notification")); reply(null) }
+            "ext.notifications.hide" -> { notifications.hide(args.str("id"), args.str("notificationId")); reply(null) }
+            "ext.notifications.forget" -> { notifications.forget(args.str("id")); reply(null) }
+            "ext.notifications.allowed" -> reply(notifications.allowed())
             "ext.readFile" -> {
                 val id = args.str("id")
                 val path = args.str("path")
@@ -366,6 +384,7 @@ class Extensions(private val host: Host) {
                 units[id] = unitsNow
                 for (view in host.tabs.all()) installExtension(view, servedNow, unitsNow)
                 configureStats[id] = stats
+                flushNotificationEvents(id)
                 Log.i(
                     TAG,
                     "configured ${id.take(8)} ${servedNow.version}: ${unitsNow.size} unit(s), " +
@@ -376,6 +395,40 @@ class Extensions(private val host: Host) {
             }
         }
     }
+
+    // --- notifications ---------------------------------------------------------------------------
+
+    /**
+     * `ext.notifications.show`: the card, once the app may post (Android 13+ asks the first time,
+     * as the downloader does; a refusal leaves the card unposted, `getPermissionLevel` says so).
+     */
+    private fun showNotification(id: String, notification: JSONObject) {
+        val dir = served[id]?.dir
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !askedNotifications && !notifications.allowed()) {
+            askedNotifications = true
+            host.activity.requestRuntimePermissions(listOf(Manifest.permission.POST_NOTIFICATIONS)) {
+                notifications.show(id, dir, notification)
+            }
+            return
+        }
+        notifications.show(id, dir, notification)
+    }
+
+    /** A tap or a button on a card: the activity intent [MainActivity] received. */
+    fun onNotificationIntent(intent: Intent): Boolean = notifications.onIntent(intent)
+
+    private fun onNotificationEvent(id: String, notificationId: String, event: String, index: Int) {
+        val payload = json("id" to id, "notificationId" to notificationId, "event" to event, "index" to index)
+        if (served.containsKey(id)) host.chrome.hostEvent("ext.notification", payload)
+        else pendingNotificationEvents.getOrPut(id) { ArrayDeque() }.addLast(payload)
+    }
+
+    private fun flushNotificationEvents(id: String) {
+        val queue = pendingNotificationEvents.remove(id) ?: return
+        for (payload in queue) host.chrome.hostEvent("ext.notification", payload)
+    }
+
+    // --- detach ----------------------------------------------------------------------------------
 
     /** `ext.detach { id }`: the extension's units leave every tab; its pages and cache go. */
     private fun detachExtension(id: String) {
@@ -391,6 +444,8 @@ class Extensions(private val host: Host) {
         worldSlots.releaseAll(id)
         io.execute { compiler.forget(id) }
         configureStats.remove(id)
+        notifications.forget(id)
+        pendingNotificationEvents.remove(id)
         Log.i(TAG, "detached ${id.take(8)}")
     }
 
@@ -1259,6 +1314,7 @@ class Extensions(private val host: Host) {
     fun destroy() {
         closePopup()
         for (id in backgrounds.keys.toList()) stopBackground(id)
+        notifications.destroy()
         io.shutdownNow()
         rulesIo.shutdownNow()
     }

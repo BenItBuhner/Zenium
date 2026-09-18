@@ -317,6 +317,8 @@ export interface HostEventPayloads {
    * `https://<id>.chromiumapp.org/…`: Kotlin cancelled the load and the URL is the flow's result.
    */
   'ext.identityRedirect': { tabId: string; url: string }
+  /** A tap, a button or a swipe on an extension's system notification (`ext/ExtensionNotifications.kt`). */
+  'ext.notification': { id: string; notificationId: string; event: string; index?: number }
   /** Bytes of a translation model file arriving (`translate.download` in flight). */
   'translate.progress': TranslateProgressEvent
 }
@@ -1114,6 +1116,9 @@ export class AndroidPlatform implements Platform {
         this.extensionRuntime?.onIdentityRedirect(
           payload as HostEventPayloads['ext.identityRedirect']
         )
+        return
+      case 'ext.notification':
+        this.extensionRuntime?.onNotification(payload)
         return
       case 'translate.progress':
         this.translate.onProgress(payload as HostEventPayloads['translate.progress'])

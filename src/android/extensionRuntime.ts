@@ -59,6 +59,7 @@ import {
   type ExtensionRules
 } from './extensionApi'
 import type { JarReading } from './extensionCookies'
+import { notificationEvent, type ShownNotification } from './extensionNotifications'
 import { AndroidWebNavigation, navigationReport, type DerivedEvent } from './extensionWebNavigation'
 import { AndroidExtensions, type AndroidExtensionsOptions } from './extensionHost'
 import { AndroidIdentity } from './extensionIdentity'
@@ -87,11 +88,13 @@ import type { ViewEventPayloads } from './views'
  *  ext.detach { id }
  *  ext.background.start / stop { id }, ext.popup.open { id, url, context, title }, ext.popup.close,
  *  ext.hosts { id, hosts } (optional host permissions granted at runtime)
- *  ext.send { ep, message }, ext.exec {…}, ext.readFile { id, path }, ext.cookies.get / set
+ *  ext.send { ep, message }, ext.exec {…}, ext.readFile { id, path }, ext.cookies.read / write
  *  ext.setRules { extensions: [{ ext, allowPrivate, paths, dynamic }] }, ext.observeRequests { on }
  *  ext.authFlow { tabId, id | null }         the tab an identity.launchWebAuthFlow runs in
+ *  ext.notifications.show { id, notification } / hide { id, notificationId } / forget { id } / allowed
+ *  view.capture { tabId, mode: 'viewport', format, quality }   tabs.captureVisibleTab
  * Kotlin → runtime (host events): ext.message, ext.gone, ext.popupClosed, ext.request,
- * ext.identityRedirect.
+ * ext.identityRedirect, ext.notification.
  */
 
 /** The bridge calls the runtime makes (`Bridge` satisfies it; tests pass a fake). */
@@ -898,6 +901,28 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
 
   hostsGranted(id: string, hosts: string[]): void {
     this.bridge.send('ext.hosts', { id, hosts })
+  }
+
+  showNotification(extensionId: string, notification: ShownNotification): void {
+    this.bridge.send('ext.notifications.show', { id: extensionId, notification })
+  }
+
+  hideNotification(extensionId: string, notificationId: string): void {
+    this.bridge.send('ext.notifications.hide', { id: extensionId, notificationId })
+  }
+
+  forgetNotifications(extensionId: string): void {
+    this.bridge.send('ext.notifications.forget', { id: extensionId })
+  }
+
+  async notificationsAllowed(): Promise<boolean> {
+    return (await this.bridge.call<unknown>('ext.notifications.allowed')) === true
+  }
+
+  /** Kotlin: a tap, a button or a swipe on an extension's notification (`ext.notification`). */
+  onNotification(payload: unknown): void {
+    const event = notificationEvent(payload)
+    if (event) this.api.notifications.onEvent(event)
   }
 
   /**

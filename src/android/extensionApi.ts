@@ -22,6 +22,7 @@ import { ActiveTabGrants } from './extensionActiveTab'
 import { AndroidContextMenus } from './extensionContextMenus'
 import { AndroidCookies, type JarReading } from './extensionCookies'
 import type { AndroidIdentity } from './extensionIdentity'
+import { AndroidNotifications, type ShownNotification } from './extensionNotifications'
 
 /**
  * The `chrome.*` calls the Android runtime answers itself, over the browser core: everything the
@@ -101,6 +102,14 @@ export interface ApiHost {
    * cannot be captured (hidden, not painted yet).
    */
   captureTab(tabId: string, format: 'jpeg' | 'png', quality: number): Promise<string | null>
+  /** `chrome.notifications`: show (or replace in place) one system notification of an extension. */
+  showNotification(extensionId: string, notification: ShownNotification): void
+  /** Take one down without an event. */
+  hideNotification(extensionId: string, notificationId: string): void
+  /** The extension's notifications and its channel go. */
+  forgetNotifications(extensionId: string): void
+  /** Whether the app may post notifications right now (`getPermissionLevel`). */
+  notificationsAllowed(): Promise<boolean>
   openPopup(id: string): void
   openOptions(id: string): void
   /** `runtime.reload()` and `management.uninstallSelf()`: the store re-reads or removes the extension. */
@@ -259,6 +268,7 @@ export class ExtensionApi {
   readonly contextMenus: AndroidContextMenus
   readonly activeTab: ActiveTabGrants
   readonly cookies: AndroidCookies
+  readonly notifications: AndroidNotifications
   private readonly actions = new Map<string, ActionState>()
   /** Optional host permissions granted this session, per extension (Chrome persists them; W2-3 may). */
   private readonly grantedHosts = new Map<string, Set<string>>()
@@ -291,6 +301,13 @@ export class ExtensionApi {
       chromeTabId: (tabId) => this.tabs.chromeIdFor(tabId),
       emit: (id, ns, name, args) => host.emit(id, ns, name, args)
     })
+    this.notifications = new AndroidNotifications({
+      show: (id, notification) => host.showNotification(id, notification),
+      hide: (id, notificationId) => host.hideNotification(id, notificationId),
+      forget: (id) => host.forgetNotifications(id),
+      allowed: () => host.notificationsAllowed(),
+      emit: (id, ns, name, args) => host.emit(id, ns, name, args)
+    })
   }
 
   /** The extension is going away: drop what this layer remembers about it. */
@@ -300,6 +317,7 @@ export class ExtensionApi {
     this.activeTab.forget(id)
     this.grantedHosts.delete(id)
     this.captureQuota.forget(id)
+    this.notifications.forget(id)
   }
 
   /** The host patterns the extension may fetch across origins: its `host_permissions` plus what it was granted. */
@@ -374,7 +392,7 @@ export class ExtensionApi {
       case 'declarativeNetRequest':
         return this.dnrCall(ext, method, args)
       case 'notifications':
-        return this.notificationsCall(method, args)
+        return this.notifications.call(ext, method, args)
       case 'contextMenus':
         return this.contextMenus.call(ext, endpoint.id, method, args)
       case 'webNavigation':
@@ -1051,28 +1069,6 @@ export class ExtensionApi {
   }
 
   // --- notifications / contextMenus / webNavigation ----------------------------
-
-  private notificationsCall(method: string, args: unknown[]): unknown {
-    switch (method) {
-      case 'create': {
-        const [first, second] = args
-        const id = typeof first === 'string' ? first : `n${Date.now()}`
-        const options = asRecord(typeof first === 'string' ? second : first)
-        const text = [options.title, options.message]
-          .filter((v) => typeof v === 'string' && v)
-          .join(': ')
-        if (text) this.host.browser.toast(text, 'info', this.host.window())
-        return id
-      }
-      case 'update':
-        return false
-      case 'clear':
-        return true
-      case 'getAll':
-        return {}
-    }
-    throw new Error(`chrome.notifications.${method} ${NOT_IMPLEMENTED}`)
-  }
 
   /**
    * `getFrame` / `getAllFrames`: the main frame from the tab (frame 0, its URL), the sub-frames
