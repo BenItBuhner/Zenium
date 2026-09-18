@@ -9,14 +9,25 @@ import {
 } from 'electron'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { existsSync, mkdirSync, renameSync, statSync } from 'node:fs'
-import { copyFile, rename, rm } from 'node:fs/promises'
-import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID, type DownloadItem } from '../../shared/types'
-import { PARTIAL_SUFFIX, finalName as stripPartial } from '../../shared/downloads'
+import { copyFile, rename, rm, stat } from 'node:fs/promises'
+import {
+  DEFAULT_CONTAINER_ID,
+  PRIVATE_CONTAINER_ID,
+  type DownloadInterruptReason,
+  type DownloadItem
+} from '../../shared/types'
+import {
+  PARTIAL_SUFFIX,
+  finalName as stripPartial,
+  interruptReasonFromHttpStatus,
+  interruptReasonFromNetError
+} from '../../shared/downloads'
 import type { DownloadHost } from '../../core/platform'
 import type { DownloadService } from '../../core/downloads'
 import type { ZenWindow } from '../../core/window'
 import { APP_ICON_DEFAULT, type AppIconId } from '../../shared/appIcon'
 import { openDownloadsFolder, startFileDrag } from './downloadsShell'
+import type { WebRequestEvent, WebRequestListener } from './webRequest'
 import { uniquePath } from './uniquePath'
 
 export { uniquePath } from './uniquePath'
@@ -57,6 +68,21 @@ export interface ElectronDownloadSettings {
 interface Live {
   item: ElectronDownloadItem
   session: Session
+  /**
+   * Why the transfer's request ended, from the session's `webRequest` events: the `net::` error
+   * of `onErrorOccurred` or a refusing HTTP status of `onCompleted`. Electron's item only says
+   * `interrupted`; this names the reason when the item settles.
+   */
+  reason?: DownloadInterruptReason
+}
+
+/** The one method of the `webRequest` multiplexer the host needs: observe-only listeners. */
+export interface RequestObserver {
+  addListener(
+    event: WebRequestEvent,
+    listener: WebRequestListener,
+    options: { registrant: string }
+  ): () => void
 }
 
 /** A name proposed for a new download's file (an extension's `download()` or `onDeterminingFilename`). */
@@ -95,6 +121,9 @@ interface PendingStart {
 
 /** How long a programmatic start waits for the engine to announce the transfer. */
 const START_TIMEOUT_MS = 60_000
+/** How long a refusal seen before its download item exists waits for `will-download`. */
+const PENDING_REASON_MS = 60_000
+const MAX_PENDING_REASONS = 64
 
 /**
  * Tracks Electron's download items and feeds the core's `DownloadService`. Files are written as
@@ -122,6 +151,8 @@ export class ElectronDownloads implements DownloadHost {
    * "Save Link / Image / Video As…", which always ask in Chrome. Each entry serves one download.
    */
   private readonly saveAsUrls: string[] = []
+  /** Refusals of requests no live item claimed yet (canonical URL → reason), see `observeRequests`. */
+  private readonly pendingReasons = new Map<string, { reason: DownloadInterruptReason; at: number }>()
   private readonly sessions = new Map<string, Session>()
   private service: DownloadService | null = null
   /** Set by `park`: Chromium's teardown of the live items is not to be reported as cancels. */
@@ -151,6 +182,78 @@ export class ElectronDownloads implements DownloadHost {
     this.service = service
     this.tabIdFor = hooks.tabIdFor
     this.parentWindow = hooks.parentWindow
+  }
+
+  /**
+   * Watch the sessions' requests for how a download's own request ends, so an interrupted item
+   * can name its reason the way Chromium's download core does: a refusing HTTP status read at
+   * `onHeadersReceived` (404 is `server-bad-content`, 403 `server-forbidden`, …) or the `net::`
+   * error of `onErrorOccurred` (which reaches us before the item settles). Requests are matched
+   * to the live items by URL (any URL of the redirect chain); a reason seen before the item
+   * exists (the first response of a transfer is judged before `will-download`) waits for it.
+   * Chromium's own abort of a loader it refused is `ERR_ABORTED`, which names nothing.
+   */
+  observeRequests(observer: RequestObserver): void {
+    const options = { registrant: 'zenium:downloads' }
+    observer.addListener(
+      'onHeadersReceived',
+      (details) => {
+        const reason =
+          details.statusCode === undefined ? null : interruptReasonFromHttpStatus(details.statusCode)
+        if (reason) this.noteReason(details.url, reason)
+      },
+      options
+    )
+    observer.addListener(
+      'onErrorOccurred',
+      (details) => {
+        const error = details.error
+        if (!error || /ERR_ABORTED$/.test(error)) return
+        this.noteReason(details.url, interruptReasonFromNetError(error))
+      },
+      options
+    )
+  }
+
+  private noteReason(url: string, reason: DownloadInterruptReason): void {
+    const live = this.liveFor(url)
+    if (live) {
+      live.reason = reason
+      return
+    }
+    const now = Date.now()
+    for (const [key, entry] of this.pendingReasons) {
+      if (now - entry.at > PENDING_REASON_MS) this.pendingReasons.delete(key)
+    }
+    if (this.pendingReasons.size >= MAX_PENDING_REASONS) {
+      const oldest = this.pendingReasons.keys().next().value
+      if (oldest !== undefined) this.pendingReasons.delete(oldest)
+    }
+    this.pendingReasons.set(canonical(url), { reason, at: now })
+  }
+
+  /** The live transfer whose request (any URL of its redirect chain) is `url`. */
+  private liveFor(url: string): Live | undefined {
+    const wanted = canonical(url)
+    for (const live of this.live.values()) {
+      const { item } = live
+      if (canonical(item.getURL()) === wanted) return live
+      if (item.getURLChain().some((u) => canonical(u) === wanted)) return live
+    }
+    return undefined
+  }
+
+  /** A new live entry, carrying the reason its request was refused with before it existed, if any. */
+  private newLive(item: ElectronDownloadItem, session: Session): Live {
+    const live: Live = { item, session }
+    for (const url of [item.getURL(), ...item.getURLChain()]) {
+      const key = canonical(url)
+      const pending = this.pendingReasons.get(key)
+      if (!pending) continue
+      this.pendingReasons.delete(key)
+      if (Date.now() - pending.at <= PENDING_REASON_MS) live.reason = pending.reason
+    }
+    return live
   }
 
   /** The next download of `url` (started right after this call) goes through the save dialog. */
@@ -207,7 +310,7 @@ export class ElectronDownloads implements DownloadHost {
         containerId,
         resumes: resuming.id
       })
-      this.live.set(record.id, { item, session: ses })
+      this.live.set(record.id, this.newLive(item, ses))
       this.finalPaths.set(record.id, join(dirname(resuming.savePath), resuming.finalName))
       this.wire(item, record)
       // Electron creates the item interrupted; it only starts once asked to resume.
@@ -249,7 +352,7 @@ export class ElectronDownloads implements DownloadHost {
       private: containerId === PRIVATE_CONTAINER_ID,
       resumes: retried?.id
     })
-    this.live.set(record.id, { item, session: ses })
+    this.live.set(record.id, this.newLive(item, ses))
     this.finalPaths.set(record.id, candidate)
     this.wire(item, record)
     started?.resolve(record)
@@ -339,20 +442,31 @@ export class ElectronDownloads implements DownloadHost {
       totalBytes: item.getTotalBytes(),
       savePath: item.getSavePath() || record.savePath
     })
+    // The reason the request ended with (see `observeRequests`); Electron's item names none
+    // itself, and the core reads a plain network failure into an interruption without one.
+    // Taken once per interruption: a resumed transfer's next failure gets its own.
+    const reason = (): DownloadInterruptReason | undefined => {
+      const live = this.live.get(record.id)
+      const known = live?.reason
+      if (live) delete live.reason
+      return known
+    }
     item.on('updated', (_e, state) => {
       if (this.quitting) return
+      const interrupted = state === 'interrupted'
       service.progress(record.id, {
         ...fields(),
         etag: item.getETag() || undefined,
         lastModified: item.getLastModifiedTime() || undefined,
-        canResume:
-          state === 'interrupted'
-            ? item.canResume()
-            : Boolean(item.getETag() || item.getLastModifiedTime()),
-        state: state === 'interrupted' ? 'interrupted' : item.isPaused() ? 'paused' : 'progressing'
+        canResume: interrupted
+          ? item.canResume()
+          : Boolean(item.getETag() || item.getLastModifiedTime()),
+        state: interrupted ? 'interrupted' : item.isPaused() ? 'paused' : 'progressing',
+        error: interrupted ? reason() : undefined
       })
     })
     item.once('done', (_e, state) => {
+      const error = reason()
       this.live.delete(record.id)
       // On quit Chromium cancels the item itself; the record was parked and persisted already.
       if (this.quitting) return
@@ -365,11 +479,7 @@ export class ElectronDownloads implements DownloadHost {
         if (partial.endsWith(PARTIAL_SUFFIX)) void rm(partial, { force: true })
         service.finish(record.id, 'cancelled', fields())
       } else {
-        service.finish(record.id, 'interrupted', {
-          ...fields(),
-          canResume: false,
-          error: 'interrupted'
-        })
+        service.finish(record.id, 'interrupted', { ...fields(), canResume: false, error })
       }
     })
   }
@@ -581,6 +691,34 @@ export class ElectronDownloads implements DownloadHost {
     this.forget(item.id)
     // Only ever delete what we wrote ourselves: partial and quarantined files carry the suffix.
     if (item.savePath.endsWith(PARTIAL_SUFFIX)) await rm(item.savePath, { force: true })
+  }
+
+  /** A stat: the file the row points at is there (a folder in its place does not count). */
+  async exists(item: DownloadItem): Promise<boolean> {
+    if (!item.savePath) return false
+    try {
+      return (await stat(item.savePath)).isFile()
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
+      // Unreadable (permissions, a detached volume): not known to be gone.
+      return true
+    }
+  }
+
+  /**
+   * Chrome's "Delete file": `fs.rm` on the released file. Only a plain file goes (never a folder
+   * that took its place); `missing` when nothing is there, `failed` when it stays (locked on
+   * Windows, no permission).
+   */
+  async deleteFile(item: DownloadItem): Promise<'deleted' | 'missing' | 'failed'> {
+    if (!item.savePath) return 'missing'
+    try {
+      if (!(await stat(item.savePath)).isFile()) return 'failed'
+      await rm(item.savePath)
+      return 'deleted'
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'failed'
+    }
   }
 
   /**
