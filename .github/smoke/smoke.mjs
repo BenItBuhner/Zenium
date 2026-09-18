@@ -4,7 +4,8 @@
 //
 //   node smoke.mjs --exe <executable> --label <name> --out <dir>
 //        [--scenarios boot,restore,walkthrough,crash,scale,dark] [--extra-args=--no-sandbox]
-//        [--allowlist known-failures.json] [--render-budget-ms 10000] [--quit-budget-ms 15000]
+//        [--allowlist known-failures.json] [--render-budget-ms 10000]
+//        [--first-launch-render-budget-ms 20000] [--quit-budget-ms 15000]
 //        [--step-timeout-ms 60000] [--evaluate-timeout-ms 30000] [--watchdog-min 15]
 //
 // Scenarios (each one launch of the executable, on profiles under one temporary root):
@@ -74,6 +75,14 @@ const scenarios = String(opts.scenarios ?? 'boot,restore')
 const EXTRA_ARGS =
   typeof opts['extra-args'] === 'string' ? opts['extra-args'].split(' ').filter(Boolean) : []
 const RENDER_BUDGET_MS = Number(opts['render-budget-ms'] ?? 10000)
+// The first time this run launches the executable is a cold launch: the build was packaged (or
+// installed) moments ago and nothing has mapped its pages yet. On macos-15-intel that first
+// paint took 10.4 s and 12.5 s (#165's first run, main at 36e0ae1) against 1.5–6 s for every
+// launch after it, so the first launch has its own bound. The warm one stays at 10 s: a
+// regression in what the chrome does before its first paint still shows on every later launch.
+const FIRST_LAUNCH_RENDER_BUDGET_MS = Number(opts['first-launch-render-budget-ms'] ?? 20000)
+// The longest a launch waits for the chrome page at all; past it the launch step fails outright.
+const RENDER_WAIT_MS = Math.max(RENDER_BUDGET_MS, FIRST_LAUNCH_RENDER_BUDGET_MS) * 3
 // From the quit chord (or the Quit button) to the process's exit event. The app itself quits
 // within a second; the rest is Electron's teardown after the last window closes, which took 6 s
 // on windows-11-arm (#148, #157) against the 5 s this used to be. Only a process still alive
@@ -108,7 +117,11 @@ const result = {
   arch: process.arch,
   osRelease: os.release(),
   startedAt: new Date().toISOString(),
-  budgets: { renderMs: RENDER_BUDGET_MS, quitMs: QUIT_BUDGET_MS },
+  budgets: {
+    renderMs: RENDER_BUDGET_MS,
+    firstLaunchRenderMs: FIRST_LAUNCH_RENDER_BUDGET_MS,
+    quitMs: QUIT_BUDGET_MS
+  },
   scenarios: {},
   screenshots: [],
   failures: [],
@@ -119,6 +132,7 @@ fs.writeFileSync(logFile, '')
 let currentSession = null
 let shotIndex = 0
 let displaySize = null
+let launchesSoFar = 0
 
 // ---------------------------------------------------------------------------------------------
 // Small utilities
@@ -647,6 +661,10 @@ class Session {
 
   async launch() {
     const t0 = Date.now()
+    // The run's first launch is the cold one (FIRST_LAUNCH_RENDER_BUDGET_MS); the counter moves
+    // whatever becomes of it, since the launch after a failed first one is a warm launch too.
+    this.renderBudgetMs = launchesSoFar === 0 ? FIRST_LAUNCH_RENDER_BUDGET_MS : RENDER_BUDGET_MS
+    launchesSoFar++
     log(`launching ${opts.exe} ${this.launchArgs().join(' ')} (${this.scenario})`)
     this.app = await electron.launch({
       executablePath: opts.exe,
@@ -676,10 +694,10 @@ class Session {
     for (const p of this.app.windows()) this.attachPage(p)
     this.hookResult = await this.app.evaluate(hookMain, { eventsFile: this.eventsFile })
     this.timings.launchMs = Date.now() - t0
-    this.chrome = await this.waitForChromePage(RENDER_BUDGET_MS * 3)
+    this.chrome = await this.waitForChromePage(RENDER_WAIT_MS)
     await this.chrome.locator('[data-testid="chrome-root"]').waitFor({
       state: 'attached',
-      timeout: RENDER_BUDGET_MS * 3
+      timeout: RENDER_WAIT_MS
     })
     this.timings.chromeRenderedMs = Date.now() - t0
     this.mainWindowId = await this.app.evaluate(({ BrowserWindow }) => {
@@ -1291,14 +1309,14 @@ async function runScenario(name, userData, sessionOptions, body) {
         if (!realPath(facts.userData).startsWith(realPath(profileRoot))) {
           throw new Error(`profile not isolated: userData is ${facts.userData}`)
         }
-        if (s.timings.chromeRenderedMs > RENDER_BUDGET_MS) {
+        if (s.timings.chromeRenderedMs > s.renderBudgetMs) {
           throw new Error(
-            `chrome rendered after ${s.timings.chromeRenderedMs} ms (budget ${RENDER_BUDGET_MS} ms)`
+            `chrome rendered after ${s.timings.chromeRenderedMs} ms (budget ${s.renderBudgetMs} ms${s.renderBudgetMs === RENDER_BUDGET_MS ? '' : ' for the first launch of the run'})`
           )
         }
-        return { ...s.timings, ...facts }
+        return { ...s.timings, renderBudgetMs: s.renderBudgetMs, ...facts }
       },
-      { timeoutMs: RENDER_BUDGET_MS * 3 + 90000, fatal: true }
+      { timeoutMs: RENDER_WAIT_MS + 90000, fatal: true }
     )
     await body(s, out)
   } catch (e) {
