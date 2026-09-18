@@ -391,12 +391,16 @@ class SettingsTabDemo : DemoHarness("settings-tab-demo-state.json", "android-set
                     "scrims lit ${if (lit >= 0) lit else "?"} of ${stack?.optJSONArray("scrims")?.length() ?: "?"} (opacities ${stack?.optJSONArray("scrims") ?: "?"}) " +
                     verdict(sheets == 2 && recede.toDoubleOrNull()?.let { it > 0.9 } == true && recessed && lit == 1)
             )
+            // The confirmation's Cancel, tapped where the chrome draws it (the top sheet's first
+            // footer button): its accessibility node still carried the bounds of the sheet's
+            // slide-in, so a tap by label went under the button (see chromePointOf).
+            val cancel = chromePointOf(TOP_SHEET_CANCEL)
+            if (cancel != null) Finger().tap(cancel.x, cancel.y) else tapText("Cancel", exact = true)
             // A dismissed sheet stays mounted until its spring has carried it out, and the spring
             // advances at most 64 ms per frame (lib/motion/spring.ts): under the emulator's software
             // GPU a frame is long, so the close takes seconds and is waited for, never slept over.
-            tapText("Cancel", exact = true)
             val cancelled = awaitSheets(1, 8_000)
-            finding("  Cancel: sheets up ${sheetCount()} ${verdict(cancelled)}")
+            finding("  Cancel${if (cancel == null) " (by label)" else ""}: sheets up ${sheetCount()} ${verdict(cancelled)}")
             // The item sheet by a back, then the section by the gesture: each dismissal settles first.
             back()
             if (!awaitSheets(0, 8_000) && sheetCount() > 0) {
@@ -664,9 +668,20 @@ class SettingsTabDemo : DemoHarness("settings-tab-demo-state.json", "android-set
     }
 
     /** Where the middle of the first chrome element matching `selector` is on screen, or null. */
-    private fun chromePoint(selector: String): PointF? {
+    private fun chromePoint(selector: String): PointF? =
+        chromePointOf("document.querySelector(${JSONObject.quote(selector)})")
+
+    /**
+     * Where the middle of the chrome element the expression `elementJs` evaluates to is on
+     * screen, or null when there is none. The frame's own rectangle, read the moment before the
+     * finger lands: the accessibility tree's bounds trail a sheet's motion by seconds on the
+     * emulator's software GPU (run 35397351416 tapped a confirm's Cancel 75 px under the button,
+     * where its node still said the sliding sheet had it – in the gesture-navigation zone, which
+     * swallowed the tap).
+     */
+    private fun chromePointOf(elementJs: String): PointF? {
         val raw = chromeJs(
-            "(function(){var e=document.querySelector(${JSONObject.quote(selector)});if(!e)return null;" +
+            "(function(){var e=($elementJs);if(!e)return null;" +
                 "var r=e.getBoundingClientRect();return [r.left+r.width/2,r.top+r.height/2]})()"
         )
         val point = runCatching { JSONArray(raw) }.getOrNull()?.takeIf { it.length() == 2 } ?: return null
@@ -768,6 +783,10 @@ class SettingsTabDemo : DemoHarness("settings-tab-demo-state.json", "android-set
         /** The landing's Find in Settings field, in the chrome's DOM. */
         private const val SEARCH_FIELD = ".zen-settings-search-field"
         private const val URLBAR_FIELD = "input[data-testid=\"urlbar-input\"]"
+        /** The top sheet's first footer button: a prompt sheet's Cancel (blocks.tsx, SheetActions). */
+        private const val TOP_SHEET_CANCEL =
+            "(function(){var s=document.querySelectorAll('.zen-sheet');" +
+                "return s.length?s[s.length-1].querySelector('.zen-settings-sheet-actions .zen-v2-button'):null})()"
         /** Inside the system's back-gesture inset on any density. */
         private const val EDGE_X = 2f
     }
