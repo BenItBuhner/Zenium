@@ -2537,56 +2537,11 @@
 
 @layer components {
   /*
-   * v2 controls (design language v2 draft, sections 2, 3 and 6): a phone sheet on the neutral
-   * dialog surface, rows that grow with their text, Proton's square checkbox and round radio,
-   * image radio cards and rectangular buttons. Built from the `--v2-*` tokens alone.
+   * v2 controls (design language v2 draft, sections 2, 3 and 6) inside the phone sheet chassis
+   * (`.zen-sheet` above, which is the v2 surface, header and grabber): rows that grow with their
+   * text, Proton's square checkbox and round radio, image radio cards. Built from the `--v2-*`
+   * tokens alone. Type: hierarchy by size, weights 400 and 600 only.
    */
-  /* The `BottomSheet` chassis in v2 clothes: neutral, opaque, a hairline for an edge, radius 12. */
-  .zen-v2-sheet {
-    padding-left: 0;
-    padding-right: 0;
-    border: 1px solid var(--v2-border);
-    border-bottom: 0;
-    border-radius: var(--v2-radius-sheet) var(--v2-radius-sheet) 0 0;
-    background: var(--v2-panel);
-    backdrop-filter: none;
-    box-shadow: var(--v2-shadow-sheet);
-    color: var(--v2-text);
-    font-size: 15px;
-  }
-  :root[data-theme='dark'] .zen-v2-sheet {
-    box-shadow: var(--v2-shadow-sheet);
-  }
-  /* The scrim is the sheet's sibling, so the sheet's variant is read off it with `:has`. */
-  .zen-sheet-scrim:has(+ .zen-v2-sheet) {
-    background: var(--v2-scrim);
-  }
-  .zen-v2-sheet .zen-sheet-handle,
-  .zen-v2-sheet[data-dragging='true'] .zen-sheet-handle {
-    background: rgb(var(--v2-text-rgb) / 0.25);
-  }
-  .zen-v2-sheet[data-dragging='true'] .zen-sheet-handle {
-    background: rgb(var(--v2-text-rgb) / 0.4);
-  }
-  /*
-   * The header (section 9.16): after the chassis's 20 px grip strip, 48 tall with the title
-   * centred, so the first row starts at 68; a trailing control would be 44 at 2 px margins.
-   */
-  .zen-v2-sheet-header {
-    display: flex;
-    height: 48px;
-    align-items: center;
-    justify-content: center;
-    padding: 0 16px;
-  }
-  /* Type: hierarchy by size, weights 400 and 600 only. */
-  .zen-v2-title {
-    font-size: 17px;
-    font-weight: 600;
-    line-height: 22px;
-    letter-spacing: -0.012em;
-    text-align: center;
-  }
   .zen-v2-heading {
     font-size: 15px;
     font-weight: 600;
@@ -2722,22 +2677,6 @@
   }
   .zen-v2-image-radio:active:not(:disabled) .zen-v2-image-radio-picture {
     transform: scale(0.98);
-  }
-  /* Focus rings: every `zen-v2-*` control (the shortcut tiles included) takes the shared v2 ring. */
-  /* Section 9.7: content scrolled under the header shows as a 1 px line at the grip's bottom edge. */
-  .zen-v2-sheet .zen-sheet-grip {
-    position: relative;
-    transition: box-shadow 120ms var(--zen-ease);
-  }
-  .zen-v2-sheet[data-scrolled] .zen-sheet-grip {
-    box-shadow: 0 1px 0 var(--v2-border);
-  }
-  /*
-   * The customise sheet's layer in the frame's dialog host: a v2 surface draws the stack's one
-   * scrim in `--v2-scrim` (section 9.28) until the scrim tokens are made one.
-   */
-  .zen-ntp-customize-layer .zen-sheet-scrim {
-    background: var(--v2-scrim);
   }
   /* The layout presets: image radio cards two to a row in the 16 gutter, 8 apart (section 10.4). */
   .zen-ntp-preset-grid {

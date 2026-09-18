@@ -73,9 +73,10 @@ export function NewTabCustomizeLayer(): JSX.Element | null {
  * the wallpaper source as radio rows. Every change is written to the settings at once, so the
  * page behind the sheet shows it as the sheet is used.
  *
- * A page surface (§9.29) registered with the host as a dialog that draws its own scrim, fading
- * with its motion (§9.28); the scrim's press, the system back and Escape dismiss it, and focus
- * returns to the gear that opened it once it is gone (§9.24).
+ * The chassis (`BottomSheet`) is the page surface (§9.29) with the v2 header and grabber; the
+ * sheet registers with the host as a dialog that draws its own scrim, fading with its motion
+ * (§9.28). The scrim's press, the system back and Escape dismiss it, and focus returns to the
+ * gear that opened it once it is gone (§9.24).
  */
 function CustomizeSheet({ state }: { state: UIState }): JSX.Element {
   const settings = state.settings.newTab
@@ -126,124 +127,117 @@ function CustomizeSheet({ state }: { state: UIState }): JSX.Element {
   }
 
   return (
-    <div className="zen-ntp-customize-layer absolute inset-0" data-surface="page">
-      <BottomSheet
-        ref={sheet}
-        hosted
-        className="zen-v2-sheet"
-        fadeEdges={false}
-        onDismissed={closeCustomize}
-        handleLabel="Resize sheet"
-        header={
-          <div className="zen-v2-sheet-header">
-            <h2 className="zen-v2-title min-w-0 truncate">New Tab Page</h2>
+    <BottomSheet
+      ref={sheet}
+      hosted
+      fadeEdges={false}
+      onDismissed={closeCustomize}
+      handleLabel="Resize sheet"
+      header={<h2 className="zen-sheet-title">New Tab Page</h2>}
+    >
+      <div className="flex flex-col gap-6 pb-4">
+        <Section title="Layout">
+          <div role="radiogroup" aria-label="Layout" className="zen-ntp-preset-grid">
+            {NEW_TAB_PRESETS.map((preset) => (
+              <PresetCard
+                key={preset}
+                preset={preset}
+                sections={newTabSections(pickNewTabPreset(settings, preset))}
+                active={settings.preset === preset}
+                disabled={!presetAvailable(preset)}
+                onSelect={() => update(pickNewTabPreset(settings, preset))}
+              />
+            ))}
           </div>
-        }
-      >
-        <div className="flex flex-col gap-6 pb-4">
-          <Section title="Layout">
-            <div role="radiogroup" aria-label="Layout" className="zen-ntp-preset-grid">
-              {NEW_TAB_PRESETS.map((preset) => (
-                <PresetCard
-                  key={preset}
-                  preset={preset}
-                  sections={newTabSections(pickNewTabPreset(settings, preset))}
-                  active={settings.preset === preset}
-                  disabled={!presetAvailable(preset)}
-                  onSelect={() => update(pickNewTabPreset(settings, preset))}
-                />
-              ))}
-            </div>
-            {!FEED_AVAILABLE && (
-              <p className="zen-v2-description px-4 pt-3">
-                Informational is not available: Zenium has no feed.
-              </p>
-            )}
-          </Section>
+          {!FEED_AVAILABLE && (
+            <p className="zen-v2-description px-4 pt-3">
+              Informational is not available: Zenium has no feed.
+            </p>
+          )}
+        </Section>
 
-          <Section title="Show">
-            {MODULE_LABELS.map(({ key, label }) => {
-              const unavailable = key === 'feed' && !FEED_AVAILABLE
-              return (
-                <CheckRow
-                  key={key}
-                  label={label}
-                  checked={sections[key]}
-                  disabled={unavailable}
-                  trailing={unavailable ? 'Not available' : undefined}
-                  onChange={(checked) => update(toggleNewTabModule(settings, key, checked))}
-                />
-              )
-            })}
-          </Section>
-
-          <Section title="Shortcuts">
-            <div role="radiogroup" aria-label="Shortcuts">
-              {SHORTCUT_STYLES.map(({ style, label, description }) => (
-                <RadioRow
-                  key={style}
-                  label={label}
-                  description={description}
-                  checked={settings.shortcutStyle === style}
-                  onSelect={() => update({ ...settings, shortcutStyle: style })}
-                />
-              ))}
-            </div>
-          </Section>
-
-          <Section title="Wallpaper">
-            <div role="radiogroup" aria-label="Wallpaper">
-              <RadioRow
-                label="Space colours"
-                checked={settings.wallpaper === 'space'}
-                onSelect={() => pickWallpaper('space')}
+        <Section title="Show">
+          {MODULE_LABELS.map(({ key, label }) => {
+            const unavailable = key === 'feed' && !FEED_AVAILABLE
+            return (
+              <CheckRow
+                key={key}
+                label={label}
+                checked={sections[key]}
+                disabled={unavailable}
+                trailing={unavailable ? 'Not available' : undefined}
+                onChange={(checked) => update(toggleNewTabModule(settings, key, checked))}
               />
+            )
+          })}
+        </Section>
+
+        <Section title="Shortcuts">
+          <div role="radiogroup" aria-label="Shortcuts">
+            {SHORTCUT_STYLES.map(({ style, label, description }) => (
               <RadioRow
-                label="Image"
-                description={image.dataUrl ? 'The picture you chose' : 'A picture from this device'}
-                checked={settings.wallpaper === 'image'}
-                onSelect={() => pickWallpaper('image')}
+                key={style}
+                label={label}
+                description={description}
+                checked={settings.shortcutStyle === style}
+                onSelect={() => update({ ...settings, shortcutStyle: style })}
               />
-            </div>
-            <div className="zen-v2-control-row">
+            ))}
+          </div>
+        </Section>
+
+        <Section title="Wallpaper">
+          <div role="radiogroup" aria-label="Wallpaper">
+            <RadioRow
+              label="Space colours"
+              checked={settings.wallpaper === 'space'}
+              onSelect={() => pickWallpaper('space')}
+            />
+            <RadioRow
+              label="Image"
+              description={image.dataUrl ? 'The picture you chose' : 'A picture from this device'}
+              checked={settings.wallpaper === 'image'}
+              onSelect={() => pickWallpaper('image')}
+            />
+          </div>
+          <div className="zen-v2-control-row">
+            <button
+              type="button"
+              className="zen-v2-button"
+              aria-busy={reading || undefined}
+              onClick={() => {
+                if (!reading) fileInput.current?.click()
+              }}
+            >
+              <span className="zen-v2-button-label">
+                {image.dataUrl ? 'Choose another image' : 'Choose an image'}
+              </span>
+              {reading && (
+                <Loader2 className="zen-v2-button-spinner h-4 w-4 animate-spin" aria-hidden />
+              )}
+            </button>
+            {image.dataUrl && (
               <button
                 type="button"
                 className="zen-v2-button"
-                aria-busy={reading || undefined}
-                onClick={() => {
-                  if (!reading) fileInput.current?.click()
-                }}
+                data-danger
+                disabled={reading}
+                onClick={() => void setWallpaperImage(null)}
               >
-                <span className="zen-v2-button-label">
-                  {image.dataUrl ? 'Choose another image' : 'Choose an image'}
-                </span>
-                {reading && (
-                  <Loader2 className="zen-v2-button-spinner h-4 w-4 animate-spin" aria-hidden />
-                )}
+                Remove
               </button>
-              {image.dataUrl && (
-                <button
-                  type="button"
-                  className="zen-v2-button"
-                  data-danger
-                  disabled={reading}
-                  onClick={() => void setWallpaperImage(null)}
-                >
-                  Remove
-                </button>
-              )}
-            </div>
-            <input
-              ref={fileInput}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={(e) => void onFile(e)}
-            />
-          </Section>
-        </div>
-      </BottomSheet>
-    </div>
+            )}
+          </div>
+          <input
+            ref={fileInput}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => void onFile(e)}
+          />
+        </Section>
+      </div>
+    </BottomSheet>
   )
 }
 
