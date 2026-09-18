@@ -1,0 +1,186 @@
+name: Desktop smoke (Windows, macOS)
+
+# Boots the packaged desktop app on GitHub-hosted Windows and macOS runners with Playwright for
+# Electron (.github/smoke/smoke.mjs) and keeps to the basics so the jobs stay short: first launch
+# and onboarding, one visible window titled Zenium, a tab on example.com through the URL bar, a
+# graceful quit that marks the profile cleanly exited, the profile coming back without a "Restore
+# pages?" bar, plus 1.5x DPI and OS dark mode screenshots. Windows additionally installs the NSIS
+# build silently, boots the installed executable and uninstalls it. Every JS error, crash and
+# blocking dialog fails the run unless .github/smoke/known-failures.json names it. Screenshots,
+# logs and result.json per build are uploaded as artifacts. The Linux smoke in ci.yml runs on
+# every push and pull request and carries the long walkthrough (Chrome-preset shortcuts, window
+# questions, the crash-restore pair).
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'src/main/**'
+      - 'electron-builder.yml'
+      - 'build/**'
+      - 'package.json'
+      - '.github/smoke/**'
+      - '.github/workflows/desktop-smoke.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-smoke-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: 22
+
+jobs:
+  windows:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-x64
+            os: windows-latest
+            arch: x64
+            sevenzip_filter: ''
+          - name: windows-arm64
+            os: windows-11-arm
+            arch: arm64
+            # Same as the Release workflow: the bundled 7-Zip's ARM64 branch filter produces a
+            # payload the NSIS extractor cannot decode (the installer exits 0 without zenium.exe).
+            sevenzip_filter: BCJ
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      SMOKE_OUT: ${{ github.workspace }}\smoke-out
+      SMOKE: ${{ github.workspace }}\.github\smoke
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Bundle main, preload and renderer
+        run: npx electron-vite build
+      - name: Package the NSIS installer (leaves the unpacked build in dist as well)
+        env:
+          ELECTRON_BUILDER_7Z_FILTER: ${{ matrix.sevenzip_filter }}
+        run: npx electron-builder --win nsis --${{ matrix.arch }} --publish never
+      - name: Make sure the session shows a desktop (windows-11-arm boots into OOBE)
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:SMOKE_OUT" | Out-Null
+          Get-ChildItem dist | Select-Object Name, Length | Format-Table -AutoSize | Out-String | Tee-Object -FilePath "$env:SMOKE_OUT\dist-listing.txt"
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:SMOKE\win-session.ps1" -Action dismiss-oobe | Tee-Object -FilePath "$env:SMOKE_OUT\session.json"
+      - name: Boot the unpacked build and walk through it
+        timeout-minutes: 15
+        run: |
+          $exe = Get-ChildItem dist -Directory -Filter '*unpacked*' | ForEach-Object { Join-Path $_.FullName 'zenium.exe' } | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $exe) { throw "no unpacked zenium.exe under dist ($((Get-ChildItem dist | Select-Object -ExpandProperty Name) -join ', '))" }
+          "unpacked exe: $exe"
+          node "$env:SMOKE\smoke.mjs" --exe "$exe" --label unpacked --out "$env:SMOKE_OUT" --scenarios boot,restore,scale,dark
+      - name: Windows and processes left behind by the unpacked build
+        if: always()
+        run: |
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:SMOKE\win-session.ps1" -Action dialogs | Tee-Object -FilePath "$env:SMOKE_OUT\unpacked-leftover-windows.json"
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:SMOKE\win-session.ps1" -Action processes | Tee-Object -FilePath "$env:SMOKE_OUT\unpacked-leftover-processes.json"
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:SMOKE\win-session.ps1" -Action kill
+      - name: Install the NSIS build silently (/S)
+        id: nsis
+        if: always()
+        run: |
+          $setup = Get-ChildItem dist -Filter '*-setup.exe' | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $setup) { throw "no *-setup.exe under dist ($((Get-ChildItem dist | Select-Object -ExpandProperty Name) -join ', '))" }
+          "installer: $setup"
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:SMOKE\win-install.ps1" -Action install -Installer "$setup" -Out "$env:SMOKE_OUT" -Label installed
+          $installExit = $LASTEXITCODE
+          $info = Get-Content "$env:SMOKE_OUT\installed-install.json" -Raw | ConvertFrom-Json
+          # The expected path even when the installer did not write it: the smoke names the miss.
+          "exe=$($info.exe)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          if ($installExit -ne 0) { throw "installer exited with code $installExit" }
+      - name: Boot the installed build and walk through it
+        if: always() && steps.nsis.outputs.exe != ''
+        timeout-minutes: 12
+        run: node "$env:SMOKE\smoke.mjs" --exe "${{ steps.nsis.outputs.exe }}" --label installed --out "$env:SMOKE_OUT" --scenarios boot,restore
+      - name: Windows and processes left behind by the installed build
+        if: always()
+        run: |
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:SMOKE\win-session.ps1" -Action dialogs | Tee-Object -FilePath "$env:SMOKE_OUT\installed-leftover-windows.json"
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:SMOKE\win-session.ps1" -Action processes | Tee-Object -FilePath "$env:SMOKE_OUT\installed-leftover-processes.json"
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:SMOKE\win-session.ps1" -Action kill
+      - name: Uninstall silently
+        if: always()
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:SMOKE\win-install.ps1" -Action uninstall -Out "$env:SMOKE_OUT" -Label installed
+      - name: Verdict (log and step summary)
+        if: always()
+        run: node "$env:SMOKE\verdict.mjs" --out "$env:SMOKE_OUT" --expect unpacked,installed --title ${{ matrix.name }}
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: desktop-smoke-${{ matrix.name }}
+          path: smoke-out
+          if-no-files-found: warn
+          retention-days: 7
+
+  macos:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos-arm64
+            os: macos-latest
+            arch: arm64
+          - name: macos-x64
+            os: macos-15-intel
+            arch: x64
+    env:
+      SMOKE_OUT: ${{ github.workspace }}/smoke-out
+      SMOKE: ${{ github.workspace }}/.github/smoke
+      # No certificate on CI: do not search the runner keychain; build/after-pack.mjs ad-hoc signs
+      # the bundle like the Release workflow does without a Developer ID.
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Bundle main, preload and renderer
+        run: npx electron-vite build
+      - name: Package the unpacked app bundle
+        run: npx electron-builder --mac --dir --${{ matrix.arch }} --publish never
+      - name: Locate the bundle
+        id: app
+        run: |
+          apps=(dist/mac*/Zenium.app)
+          app="${apps[0]}"
+          [[ -d "$app" ]] || { echo "::error::no Zenium.app under dist/mac*"; ls -la dist; exit 1; }
+          echo "app: $app"
+          echo "app=$app" >> "$GITHUB_OUTPUT"
+      - name: Bundle facts (code signature, Gatekeeper, quarantine)
+        run: bash "$SMOKE/mac-facts.sh" "${{ steps.app.outputs.app }}" "$SMOKE_OUT" bundle
+      - name: Boot the unpacked build and walk through it
+        timeout-minutes: 20
+        run: node "$SMOKE/smoke.mjs" --exe "${{ steps.app.outputs.app }}/Contents/MacOS/Zenium" --label unpacked --out "$SMOKE_OUT" --scenarios boot,restore,scale,dark
+      - name: Bundle facts and crash reports after the run
+        if: always()
+        run: bash "$SMOKE/mac-facts.sh" "${{ steps.app.outputs.app }}" "$SMOKE_OUT" after-run
+      - name: Verdict (log and step summary)
+        if: always()
+        run: node "$SMOKE/verdict.mjs" --out "$SMOKE_OUT" --expect unpacked --title ${{ matrix.name }}
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: desktop-smoke-${{ matrix.name }}
+          path: smoke-out
+          if-no-files-found: warn
+          retention-days: 7

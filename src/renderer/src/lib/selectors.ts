@@ -71,7 +71,7 @@ export function tabStateLines(tab: Tab, agentName: string | null = null): string
   const lines: string[] = []
   if (agentName) lines.push(`Driven by ${agentName}`)
   if (tab.discarded) {
-    lines.push('Sleeping - click to wake')
+    lines.push('Sleeping – click to wake')
     if (tab.sleepSavedMb) lines.push(`Memory saved: ${tab.sleepSavedMb} MB`)
   } else if (tab.frozen) lines.push('Frozen by the resource governor')
   return lines

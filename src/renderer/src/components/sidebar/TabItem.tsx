@@ -189,6 +189,7 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
       data-tab-id={tab.id}
       tabIndex={active ? 0 : -1}
       aria-describedby={cardUp ? 'zen-tab-hover-card' : undefined}
+      data-testid="tab"
       style={agent ? { boxShadow: `inset 0 0 0 1.5px ${agent.color}80` } : undefined}
       onPointerDown={onPointerDown}
       onPointerEnter={onPointerEnter}
@@ -237,7 +238,9 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
           {renaming ? (
             <RenameInput tab={tab} />
           ) : (
-            <span className="zen-tab-title min-w-0 flex-1 truncate">{title}</span>
+            <span className="zen-tab-title min-w-0 flex-1 truncate" data-testid="tab-title">
+              {title}
+            </span>
           )}
           {agent && !renaming && <AgentBadge agent={agent} tabId={tab.id} />}
           {foreign && active && (
@@ -251,7 +254,7 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
               type="button"
               className="zen-toolbar-button zen-tab-sleeping h-6 w-6 shrink-0"
               title={tabTooltip(tab)}
-              aria-label="Sleeping - click to wake"
+              aria-label="Sleeping – click to wake"
               onClick={(e) => {
                 e.stopPropagation()
                 run('tab.activate', { tabId: tab.id })

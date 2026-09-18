@@ -411,44 +411,51 @@ function SiteInfoBody({ tab }: { tab: Tab }): JSX.Element {
           >
             {info && <StorageRows info={info} />}
           </Card>
+        </>
+      )}
 
-          <Card title="Permissions">
-            {info && permissions.length === 0 && (
-              <Quiet>This site has not asked for any permissions.</Quiet>
-            )}
-            {permissions.map((p) => (
-              <div key={p.permission} className="flex h-9 items-center gap-3">
-                <span className="min-w-0 flex-1 truncate text-[13.5px]">
-                  {permissionLabel(p.permission)}
-                </span>
-                <span
-                  className={cn(
-                    'text-[12.5px]',
-                    p.decision === 'allow' ? 'text-[var(--zen-fg)]' : 'text-[var(--zen-muted)]'
-                  )}
-                >
-                  {p.decision === 'allow' ? 'Allowed' : 'Blocked'}
-                </span>
-                <TextButton
-                  aria-label={`Reset ${permissionLabel(p.permission)} permission`}
-                  disabled={busy}
-                  onClick={() => void resetPermission(p.permission)}
-                >
-                  {p.decision === 'allow' ? 'Revoke' : 'Reset'}
-                </TextButton>
-              </div>
-            ))}
-            {permissions.length > 1 && (
-              <TextButton
-                aria-label="Reset all permissions"
-                disabled={busy}
-                onClick={() => void resetPermission()}
+      {/* Local files share one permissions site, so a decision of theirs is listed here too. */}
+      {(site.web || permissions.length > 0) && (
+        <Card title="Permissions">
+          {info && permissions.length === 0 && (
+            <Quiet>This site has not asked for any permissions.</Quiet>
+          )}
+          {permissions.map((p) => (
+            <div key={p.permission} className="flex h-9 items-center gap-3">
+              <span className="min-w-0 flex-1 truncate text-[13.5px]">
+                {permissionLabel(p.permission)}
+              </span>
+              <span
+                className={cn(
+                  'text-[12.5px]',
+                  p.decision === 'allow' ? 'text-[var(--zen-fg)]' : 'text-[var(--zen-muted)]'
+                )}
               >
-                Reset all
+                {p.decision === 'allow' ? 'Allowed' : 'Blocked'}
+              </span>
+              <TextButton
+                aria-label={`Reset ${permissionLabel(p.permission)} permission`}
+                disabled={busy}
+                onClick={() => void resetPermission(p.permission)}
+              >
+                {p.decision === 'allow' ? 'Revoke' : 'Reset'}
               </TextButton>
-            )}
-          </Card>
+            </div>
+          ))}
+          {permissions.length > 1 && (
+            <TextButton
+              aria-label="Reset all permissions"
+              disabled={busy}
+              onClick={() => void resetPermission()}
+            >
+              Reset all
+            </TextButton>
+          )}
+        </Card>
+      )}
 
+      {site.web && (
+        <>
           <div className="flex gap-2.5">
             {confirming === 'data' ? (
               <Confirm

@@ -167,6 +167,7 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
       data-window-kind={state.window.kind}
       data-window-chrome={state.window.chrome}
       data-caption-overlay={overlay.width > 0 ? 'true' : 'false'}
+      data-testid="chrome-root"
     >
       <ModStyles mods={state.mods} />
       <div className="zen-texture" />
