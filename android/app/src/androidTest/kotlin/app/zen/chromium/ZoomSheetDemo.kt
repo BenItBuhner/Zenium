@@ -131,9 +131,10 @@ class ZoomSheetDemo : PageControlsDemo("zoom-demo-state.json", "zoom", "zoom-dem
         snap("page-125-after-reload")
         beat()
 
-        // 7. Settings > Accessibility lists the site with its own zoom.
+        // 7. Settings > Accessibility lists the site with its own zoom: its row, or the group's
+        //    title (the tree carries it as drawn, uppercase, so both casings are asked for).
         if (openSettings("Accessibility")) {
-            if (reveal(SITE_ZOOMS_GROUP) != null) {
+            if (reveal(HOST, SITE_ZOOMS_GROUP, SITE_ZOOMS_GROUP.uppercase()) != null) {
                 SystemClock.sleep(800)
                 snap("accessibility-sites-with-their-own-zoom")
             } else {

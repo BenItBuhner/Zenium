@@ -4292,8 +4292,11 @@
     background 120ms var(--zen-ease),
     transform 120ms var(--zen-ease);
 }
-.zen-zoom-reset:hover:not(:disabled) {
-  background: var(--v2-fill-hover);
+/* Only where a pointer can hover: on a phone the emulated hover would stay lit on the button after its tap. */
+@media (hover: hover) {
+  .zen-zoom-reset:hover:not(:disabled) {
+    background: var(--v2-fill-hover);
+  }
 }
 .zen-zoom-reset:active:not(:disabled) {
   transform: scale(0.98);
