@@ -51,16 +51,18 @@
   }
   /*
    * The page header (§9.7): the title 22/600 with 16 below, no line at rest; once content
-   * scrolls under it a hairline appears at its bottom edge. The 16 is 14 here plus 2 at the
-   * top of the column that follows, so a focused first control's 2px ring (offset 0 in light)
-   * has room below the header instead of painting under it.
+   * scrolls under it a hairline appears at its bottom edge. The 16 runs from the title's 28 line
+   * box (§5: box to box, never the 32 row its controls make around it) to the first content box:
+   * 2 of the row below the line, 12 here, and 2 at the top of the column that follows, so a
+   * focused first control's 2px ring (offset 0 in light) has room below the header instead of
+   * painting under it.
    */
   .zen-v2-header {
     position: sticky;
     top: 0;
     z-index: 2;
     background: var(--v2-page);
-    padding: 24px 0 14px;
+    padding: 24px 0 12px;
   }
   .zen-v2-header + .zen-v2-column {
     padding-top: 2px;
@@ -101,14 +103,17 @@
   .zen-v2-header[data-scrolled]::after {
     opacity: 1;
   }
-  /* Embedded in another page's column (Settings): its column and scrolling, a static header. */
+  /*
+   * Embedded in another page's column (Settings): its column and scrolling, a static header;
+   * the column has no 2 of its own here, so the 16 under the title's line box is 2 + 14.
+   */
   .zen-v2[data-embedded] .zen-v2-column {
     max-width: none;
     padding: 0;
   }
   .zen-v2[data-embedded] .zen-v2-header {
     position: static;
-    padding: 0 0 16px;
+    padding: 0 0 14px;
     background: transparent;
   }
   .zen-v2[data-embedded] .zen-v2-header::after {
