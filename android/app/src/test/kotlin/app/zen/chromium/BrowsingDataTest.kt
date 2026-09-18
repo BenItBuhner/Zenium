@@ -2,6 +2,7 @@ package app.zen.chromium
 
 import org.json.JSONArray
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class BrowsingDataTest {
@@ -41,6 +42,13 @@ class BrowsingDataTest {
         )
         assertEquals(3, BrowsingData.siteCount(origins))
         assertEquals(0, BrowsingData.siteCount(emptyList()))
+    }
+
+    @Test
+    fun anEmptyOriginListIsAnUnknownCountNotZero() {
+        assertEquals(2, BrowsingData.cookieSites(listOf("https://a.example", "https://b.example")))
+        assertNull(BrowsingData.cookieSites(emptyList()))
+        assertNull(BrowsingData.cookieSites(listOf("garbage")))
     }
 
     @Test

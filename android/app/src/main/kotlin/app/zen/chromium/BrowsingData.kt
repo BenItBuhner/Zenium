@@ -48,6 +48,14 @@ object BrowsingData {
     fun siteCount(origins: Iterable<String>): Int =
         origins.mapNotNull { CookieJar.Target.of(it)?.host }.map(CookieJar::registrableDomain).toSet().size
 
+    /**
+     * The count the preview shows for cookies and site data, or null for "unknown": the WebView
+     * cannot list cookies, and `WebStorage.getOrigins` names only quota-managed storage (the Web
+     * SQL and AppCache era – empty on current WebViews however many sites set cookies), so an
+     * empty answer is no answer, not "0 sites", while a non-empty one is a lower bound worth showing.
+     */
+    fun cookieSites(origins: Iterable<String>): Int? = siteCount(origins).takeIf { it > 0 }
+
     val oneShotDelete: Boolean
         get() = WebViewFeature.isFeatureSupported(WebViewFeature.DELETE_BROWSING_DATA)
 
@@ -123,8 +131,9 @@ object BrowsingData {
     }
 
     /**
-     * `{ cookieSites, cacheBytes }` across `containerIds`: sites with quota-managed storage, and
-     * null for the cache the WebView cannot measure. `reply` runs on the main thread.
+     * `{ cookieSites, cacheBytes }` across `containerIds`: sites with quota-managed storage (see
+     * [cookieSites]), and null for the cache the WebView cannot measure. `reply` runs on the main
+     * thread.
      */
     fun counts(containerIds: List<String>, reply: (JSONObject) -> Unit) {
         val ids = containerIds.toSet().toList()
@@ -134,16 +143,17 @@ object BrowsingData {
         }
         val origins = ArrayList<String>()
         var pending = ids.size
+        val answer = { reply(json("cookieSites" to (cookieSites(origins) ?: JSONObject.NULL), "cacheBytes" to JSONObject.NULL)) }
         for (containerId in ids) {
             val storage = Profiles.webStorage(containerId)
             val received = runCatching {
                 storage.getOrigins { raw ->
                     val entries = (raw as? Map<*, *>)?.values ?: emptyList<Any?>()
                     for (entry in entries) (entry as? WebStorage.Origin)?.let { origins += it.origin }
-                    main.post { if (--pending == 0) reply(json("cookieSites" to siteCount(origins), "cacheBytes" to JSONObject.NULL)) }
+                    main.post { if (--pending == 0) answer() }
                 }
             }
-            if (received.isFailure) main.post { if (--pending == 0) reply(json("cookieSites" to siteCount(origins), "cacheBytes" to JSONObject.NULL)) }
+            if (received.isFailure) main.post { if (--pending == 0) answer() }
         }
     }
 

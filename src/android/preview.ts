@@ -269,8 +269,8 @@ export function createPreviewBridge(): NativeBridge {
     'download.open': () => undefined,
     'profile.clear': () => undefined,
     'profile.clearBrowsingData': () => undefined,
-    // No jar or cache to measure in the preview: the dialog shows what the WebView says on a device.
-    'profile.browsingDataCounts': () => ({ cookieSites: 0, cacheBytes: null }),
+    // No jar or cache to measure in the preview, as on a device (the WebView cannot list cookies).
+    'profile.browsingDataCounts': () => ({ cookieSites: null, cacheBytes: null }),
     'keys.setShortcuts': () => undefined,
     'window.setFullscreen': ({ fullscreen }) => {
       if (fullscreen) void document.documentElement.requestFullscreen?.()
