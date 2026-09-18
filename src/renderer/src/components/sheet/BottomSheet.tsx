@@ -190,9 +190,10 @@ export function BottomSheet({
     // The sheet is promoted only while it stands recessed (main.css `data-recessed`).
     sheet.toggleAttribute('inert', layer.inert)
     sheet.toggleAttribute('data-recessed', layer.inert)
-    // The scrim's colour and full opacity are the token's; its share is the sheet's progress,
-    // fading out as a sheet above fades its own in, so the stack shows one scrim.
-    scrim.style.opacity = (frame.scrim * (1 - layer.recede)).toFixed(4)
+    // The scrim's colour and full opacity are the token's; its share is the sheet's progress as
+    // the stack hands it out – given up to a sheet above as that fades its own in, so the stack
+    // shows one scrim (the registry reports it from the presence the motion gave it above).
+    scrim.style.opacity = layer.scrim.toFixed(4)
     syncLock()
   }
   const motion = (): SheetMotion =>

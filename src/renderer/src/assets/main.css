@@ -124,8 +124,13 @@
   /* Zen's control accent: the space colour mixed towards black (light) or white (dark). */
   --v2-accent: color-mix(in srgb, var(--zen-accent) 40%, #000);
   --v2-on-accent: #fff;
-  /* Behind a sheet: black, never the gradient's tint. */
-  --v2-scrim: rgb(0 0 0 / 0.4);
+  /*
+   * Behind a sheet: black, never the gradient's tint. The alpha is a token of its own so the
+   * recede registry (lib/motion/recede.ts) can hand the one scrim over exactly between two
+   * stacked sheets – two scrims multiply, and it keeps the page at this alpha, never past it.
+   */
+  --zen-scrim-alpha: 0.4;
+  --v2-scrim: rgb(0 0 0 / var(--zen-scrim-alpha));
   /*
    * The chassis scrim (`.zen-sheet-scrim`, `.zen-overview-scrim`, the Android host's native dim)
    * is the v2 scrim (design language v2 §9.28): flat black, one tone under every sheet and
@@ -210,7 +215,8 @@
   --v2-fill-hover: rgb(251 251 254 / 0.16);
   --v2-accent: color-mix(in srgb, var(--zen-accent) 40%, #fff);
   --v2-on-accent: #15141a;
-  --v2-scrim: rgb(0 0 0 / 0.55);
+  --zen-scrim-alpha: 0.55;
+  --v2-scrim: rgb(0 0 0 / var(--zen-scrim-alpha));
   --v2-shadow-urlbar: 0 30px 140px -15px rgb(0 0 0 / 0.8);
   --v2-window-fill: rgb(var(--zen-fg-rgb) / 0.1);
   --v2-window-fill-hover: rgb(var(--zen-fg-rgb) / 0.16);
@@ -4233,7 +4239,7 @@
 /* The load bar and the messages sit on the frame's edges: they recede with it. */
 :root[data-form-factor='phone'] .zen-load-progress-layer,
 :root[data-form-factor='phone'] .zen-message-frame {
-  transform: scale(calc(1 - 0.03 * var(--zen-recede, 0)));
+  transform: scale(calc(1 - 0.03 * var(--zen-recede, 0) * var(--zen-recede-gain, 1)));
 }
 
 /*

@@ -237,8 +237,9 @@ function useSheetChassis(active: boolean, open: boolean, top?: FrameDialogEntry)
     const q = layer.current
     // The spring overshoots a hair: the rise shows it, the opacities stop at their ends.
     const share = Math.min(1, Math.max(0, p.current))
-    // The stack shows one scrim: this one's share gives way as a sheet above fades its own in.
-    if (scrim) scrim.style.opacity = (share * (1 - q.recede)).toFixed(4)
+    // The stack shows one scrim: this one's share (the registry's, from the same `p`) gives way
+    // as a sheet above fades its own in.
+    if (scrim) scrim.style.opacity = q.scrim.toFixed(4)
     if (slot) {
       slot.style.opacity = share.toFixed(4)
       slot.style.transform = `translate3d(0, ${((1 - p.current) * SHEET_RISE_PX).toFixed(2)}px, 0) scale(var(--zen-layer-scale, 1))`

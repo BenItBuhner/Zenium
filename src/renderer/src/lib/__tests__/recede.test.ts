@@ -22,6 +22,10 @@ import {
 const root = (): HTMLElement => document.documentElement
 const recedeVar = (): string => root().style.getPropertyValue('--zen-recede')
 
+/** What scrims of alpha `a` at these shares, one over the other, dim the page to. */
+const compound = (layers: readonly RecedeLayerFrame[], a: number): number =>
+  1 - layers.reduce((clear, l) => clear * (1 - a * l.scrim), 1)
+
 const handles: RecedeHandle[] = []
 const layer = (onFrame?: (frame: RecedeLayerFrame) => void): RecedeHandle => {
   const h = registerRecedeLayer(onFrame)
@@ -112,6 +116,41 @@ describe('recedeFrame: the stack rule (§11.2, §9.24)', () => {
     expect(upper.scrim).toBeCloseTo(0.5)
   })
 
+  it('given the token alpha, the handover is exact: the compound dim over the page never breathes', () => {
+    for (const a of [0.4, 0.55]) {
+      // A second sheet stacking over one at its detent, and one sheet leaving as the next
+      // arrives (the menu's row opening a picker): the page stays at the token throughout.
+      for (let hi = 0; hi <= 1; hi += 0.05) {
+        for (const lo of [1, 1 - hi]) {
+          const { layers } = recedeFrame([lo, hi], a)
+          expect(layers[1].scrim).toBeCloseTo(hi)
+          expect(compound(layers, a)).toBeCloseTo(a, 9)
+          // The linear rule would have let it lighten by up to a quarter of the alpha squared.
+          const linear = 1 - (1 - a * hi) * (1 - a * lo * (1 - hi))
+          if (hi > 0 && hi < 1 && lo === 1) expect(linear).toBeLessThan(a - 1e-6)
+        }
+      }
+      // In general: the token times the summed presence, capped at one full scrim.
+      for (let lo = 0; lo <= 1; lo += 0.25) {
+        for (let hi = 0; hi <= 1; hi += 0.25) {
+          const { layers } = recedeFrame([lo, hi], a)
+          expect(compound(layers, a)).toBeCloseTo(a * Math.min(1, lo + hi), 9)
+          for (const l of layers) {
+            expect(l.scrim).toBeGreaterThanOrEqual(0)
+            expect(l.scrim).toBeLessThanOrEqual(1 + 1e-9)
+          }
+        }
+      }
+      // Three deep too.
+      expect(compound(recedeFrame([1, 0.4, 0.9], a).layers, a)).toBeCloseTo(a, 9)
+    }
+    // Without an alpha the rule is the plain difference: the linear handover for a lower sheet
+    // at its detent, and nothing to hand over for a sheet a taller one already dims past.
+    expect(recedeFrame([1, 0.3]).layers[0].scrim).toBeCloseTo(0.7)
+    expect(recedeFrame([0.5, 0.5]).layers[0].scrim).toBeCloseTo(0.5)
+    expect(recedeFrame([0.5, 0.8]).layers[0].scrim).toBeCloseTo(0.2)
+  })
+
   it('as the upper sheet leaves, the lower one comes back and the page stays', () => {
     for (const hi of [1, 0.7, 0.3, 0]) {
       const frame = recedeFrame([1, hi])
@@ -167,6 +206,25 @@ describe('the registry', () => {
     upper.release()
     expect(lowerFrames.at(-1)).toEqual({ recede: 0, scrim: 1, inert: false })
     expect(recedeVar()).toBe('1.0000')
+  })
+
+  it('reads the scrim token alpha off the root when a layer registers, for the exact handover', () => {
+    root().style.setProperty('--zen-scrim-alpha', '0.4')
+    try {
+      const lowerFrames: RecedeLayerFrame[] = []
+      const lower = layer((f) => lowerFrames.push(f))
+      lower.progress(1)
+      const upper = layer()
+      upper.progress(0.5)
+      // (1 − .4 s)(1 − .4 · .5) = 1 − .4  →  s = .5 / .8
+      expect(lowerFrames.at(-1)!.scrim).toBeCloseTo(0.625)
+      upper.progress(1)
+      expect(lowerFrames.at(-1)!.scrim).toBe(0)
+      upper.release()
+      expect(lowerFrames.at(-1)!.scrim).toBe(1)
+    } finally {
+      root().style.removeProperty('--zen-scrim-alpha')
+    }
   })
 
   it('tells a layer of its own frame only when it changes, and never of a sheet below it', () => {
