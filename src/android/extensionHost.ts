@@ -12,6 +12,7 @@ import type { ZenWindow } from '@core/window'
 import { JsonStore } from '@core/store/JsonStore'
 import { base64Encode } from '@core/extensions/bytes'
 import { parseCrxHeader } from '@core/extensions/crx'
+import { ExtensionErrorRing } from '@core/extensions/errorConsole'
 import {
   checkForUpdates,
   installFromCrx,
@@ -196,6 +197,11 @@ export class AndroidExtensions implements ExtensionHost {
   /** Ids the runtime is running right now. */
   private readonly attached = new Set<string>()
   private readonly errors = new Map<string, string>()
+  /**
+   * `ExtensionInfo.errors`: the runtime's attach failures so far. What the extension's own code
+   * prints and throws inside the WebView runtime is the Android runtime's to feed here.
+   */
+  private readonly console = new Map<string, ExtensionErrorRing>()
   private readonly updates = new Map<string, UpdateInfo>()
   private readonly details = new Map<string, Details>()
   /** Ids whose details are being read from disk. */
@@ -327,8 +333,27 @@ export class AndroidExtensions implements ExtensionHost {
       await this.hooks.attach(record)
       this.attached.add(record.id)
     } catch (error) {
-      this.errors.set(record.id, (error as Error).message)
+      this.attachFailed(record, (error as Error).message)
     }
+  }
+
+  private attachFailed(record: ExtensionRecord, message: string): void {
+    this.errors.set(record.id, message)
+    let ring = this.console.get(record.id)
+    if (!ring) {
+      ring = new ExtensionErrorRing()
+      this.console.set(record.id, ring)
+    }
+    ring.push(
+      {
+        level: 'error',
+        source: 'load',
+        message,
+        url: `chrome-extension://${record.id}/manifest.json`,
+        context: record.path
+      },
+      Date.now()
+    )
   }
 
   private async detach(id: string): Promise<void> {
@@ -346,7 +371,7 @@ export class AndroidExtensions implements ExtensionHost {
     try {
       await this.hooks.reconfigure(record)
     } catch (error) {
-      this.errors.set(record.id, (error as Error).message)
+      this.attachFailed(record, (error as Error).message)
     }
   }
 
@@ -388,9 +413,17 @@ export class AndroidExtensions implements ExtensionHost {
         updateState: update.state,
         availableVersion: update.availableVersion,
         updateError: update.error,
-        updateCheckedAt: update.checkedAt
+        updateCheckedAt: update.checkedAt,
+        errors: this.console.get(record.id)?.list() ?? []
       }
     })
+  }
+
+  clearErrors(id: string): void {
+    const ring = this.console.get(id)
+    if (!ring || ring.size === 0) return
+    ring.clear()
+    this.browser.state.commitVolatile()
   }
 
   /** Reads an installed version's manifest and icon from disk; the list re-renders once they are in. */
@@ -681,6 +714,7 @@ export class AndroidExtensions implements ExtensionHost {
     await this.detach(record.id)
     this.registry.extensions = this.registry.extensions.filter((r) => r !== record)
     this.errors.delete(record.id)
+    this.console.delete(record.id)
     this.updates.delete(record.id)
     this.details.delete(record.id)
     if (isManagedPath(this.root, record.path))

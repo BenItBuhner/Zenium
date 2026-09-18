@@ -121,6 +121,7 @@ export class NoExtensions implements ExtensionHost {
   }
   setAllowPrivate(): void {}
   async reload(): Promise<void> {}
+  clearErrors(): void {}
   async checkForUpdates(): Promise<void> {}
   async update(): Promise<void> {}
   openOptions(_id: string, win: ZenWindow): void {

@@ -446,7 +446,7 @@ export class ElectronPlatform implements Platform {
       if (this.sessions.isPersistent(containerId)) {
         webstore.attach(ses)
         extensionApi.attachSession(ses, containerId)
-        void (browser.extensions as ExtensionService).attachSession()
+        void (browser.extensions as ExtensionService).attachSession(ses)
       }
     })
     this.sessions.get(DEFAULT_CONTAINER_ID)

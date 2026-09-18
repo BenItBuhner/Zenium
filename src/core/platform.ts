@@ -1074,6 +1074,8 @@ export interface ExtensionHost {
   /** Chrome's "Allow in Incognito": whether the extension's request rules reach private windows. */
   setAllowPrivate(id: string, allowed: boolean): void
   reload(id: string): Promise<void>
+  /** Empties the extension's error console (`ExtensionInfo.errors`). */
+  clearErrors(id: string): void
   checkForUpdates(win?: ZenWindow): Promise<void>
   update(id: string, win?: ZenWindow): Promise<void>
   openOptions(id: string, win: ZenWindow): void
