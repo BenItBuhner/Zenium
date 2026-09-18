@@ -60,6 +60,12 @@ export interface ShimOptions {
    * install into) hands over a private scope object here, so the page never sees `chrome.*`.
    */
   root?: object
+  /**
+   * Per-extension toggles the host knows at install time (`NamespaceSpec.toggle`): with
+   * `userScripts` false, `chrome.userScripts` throws on access until the host pushes the change
+   * (`__zen.toggles`). Absent: every toggled namespace is simply installed.
+   */
+  toggles?: Record<string, boolean>
 }
 
 /**
@@ -569,7 +575,12 @@ export function installExtensionApi(
   function createEvent(
     fullName: string,
     native: NativeEvent | undefined,
-    options: { nativeDelivers: boolean; nativeHandles?: (args: unknown[]) => boolean }
+    options: {
+      nativeDelivers: boolean
+      nativeHandles?: (args: unknown[]) => boolean
+      /** `EventSpec.filters`: the event takes URL filters; others ignore a second argument. */
+      filters?: boolean
+    }
   ): EventObject {
     const listeners = new Map<Listener, number | null>()
     const record: EventRecord = {
@@ -588,7 +599,7 @@ export function installExtensionApi(
       addListener(fn: unknown, ...rest: unknown[]): void {
         if (!isFunction(fn) || listeners.has(fn)) return
         if (record.nativeDelivers) safely(() => native?.addListener(fn, ...rest))
-        const filters = urlFilters(fullName, rest[0])
+        const filters = options.filters ? urlFilters(fullName, rest[0]) : null
         if (filters) {
           filterIds += 1
           listeners.set(fn, filterIds)
@@ -953,6 +964,268 @@ export function installExtensionApi(
   }
 
   // ---------------------------------------------------------------------------
+  // userScripts: the worlds' messaging arrives on runtime.onUserScriptMessage / onUserScriptConnect
+  // ---------------------------------------------------------------------------
+
+  const hasUserScripts = declaredPermissions.includes('userScripts')
+  // The notification kinds of `shared/userScripts.ts` (`USER_SCRIPTS_SHIM`), spelled out: this
+  // function is serialised into the extension's world and can reach no module binding.
+  const US_ANSWER = 'userScripts-answer'
+  const US_PORT = 'userScripts-port'
+  const NO_RECEIVER = 'Could not establish connection. Receiving end does not exist.'
+  const PORT_CLOSED = 'The message port closed before a response was received.'
+
+  /** An event of this side only (a `Port`'s): listeners, nothing registered with the host. */
+  function localEvent(): EventObject {
+    const listeners = new Set<Listener>()
+    const object: EventObject = {
+      addListener(fn: unknown): void {
+        if (isFunction(fn)) listeners.add(fn)
+      },
+      removeListener(fn: unknown): void {
+        if (isFunction(fn)) listeners.delete(fn)
+      },
+      hasListener(fn: unknown): boolean {
+        return isFunction(fn) && listeners.has(fn)
+      },
+      hasListeners(): boolean {
+        return listeners.size > 0
+      },
+      dispatch(...args: unknown[]): unknown[] {
+        const results: unknown[] = []
+        for (const fn of [...listeners]) callListener(fn, args, results)
+        return results
+      }
+    }
+    defineRuleMembers(object)
+    return object
+  }
+
+  /**
+   * `runtime.onUserScriptMessage(message, sender, sendResponse)`: a world's `runtime.sendMessage`,
+   * delivered under a token. The channel stays open for a listener that returns true (or a
+   * promise, which answers with its value); otherwise it closes when the listeners return, and
+   * the world hears that no response came.
+   */
+  function userScriptMessage(args: unknown[]): void {
+    const [message, sender, token] = args
+    let answered = false
+    const sendResponse = (result?: unknown): void => {
+      if (answered) return
+      answered = true
+      host.notify(US_ANSWER, { token, responded: true, result })
+    }
+    const close = (): void => {
+      if (answered) return
+      answered = true
+      host.notify(US_ANSWER, { token, responded: false })
+    }
+    deliver(
+      'runtime.onUserScriptMessage',
+      [message, sender, sendResponse],
+      undefined,
+      (results) => {
+        let waiting = false
+        for (const result of results) {
+          if (result === true) waiting = true
+          else if (isThenable(result)) {
+            waiting = true
+            result.then(sendResponse, (error: unknown) => {
+              close()
+              setTimeout(() => {
+                throw error
+              }, 0)
+            })
+          }
+        }
+        if (!waiting) close()
+      }
+    )
+  }
+
+  interface UserScriptPort {
+    port: Any
+    connected: boolean
+    onMessage: EventObject
+    onDisconnect: EventObject
+  }
+
+  /** The ports of user-script worlds this context accepted, by the host's port id. */
+  const userScriptPorts = new Map<string, UserScriptPort>()
+
+  function makeUserScriptPort(portId: string, name: string, sender: unknown): UserScriptPort {
+    const record: UserScriptPort = {
+      port: null,
+      connected: true,
+      onMessage: localEvent(),
+      onDisconnect: localEvent()
+    }
+    const port: Any = {
+      name,
+      sender,
+      onMessage: record.onMessage,
+      onDisconnect: record.onDisconnect,
+      postMessage(message: unknown): void {
+        if (!record.connected) throw new Error('Attempting to use a disconnected port object')
+        if (message === undefined) {
+          throw new TypeError(
+            'Error in invocation of runtime.Port.postMessage(any message): No matching signature.'
+          )
+        }
+        host.notify(US_PORT, { kind: 'message', portId, message })
+      },
+      disconnect(): void {
+        if (!record.connected) return
+        record.connected = false
+        userScriptPorts.delete(portId)
+        host.notify(US_PORT, { kind: 'disconnect', portId })
+      }
+    }
+    record.port = port
+    return record
+  }
+
+  /**
+   * `runtime.onUserScriptConnect(port)`: a world's `runtime.connect`. The host learns that this
+   * context holds an end of the port once listeners took it (`accept`; a message posted before
+   * that counts as one too).
+   */
+  function userScriptConnect(args: unknown[]): void {
+    const info = args[0]
+    if (!isObject(info) || typeof info.portId !== 'string') return
+    const portId = info.portId
+    const record = makeUserScriptPort(portId, String(info.name ?? ''), info.sender)
+    userScriptPorts.set(portId, record)
+    deliver('runtime.onUserScriptConnect', [record.port], undefined, () => {
+      if (record.connected) host.notify(US_PORT, { kind: 'accept', portId })
+    })
+  }
+
+  /** `__zen.us-port`: the world's side of a port this context accepted. */
+  function userScriptPortEvent(wire: unknown): void {
+    if (!isObject(wire) || typeof wire.portId !== 'string') return
+    const record = userScriptPorts.get(wire.portId)
+    if (!record) return
+    if (wire.kind === 'message') {
+      record.onMessage.dispatch(wire.message, record.port)
+      return
+    }
+    if (wire.kind !== 'disconnect') return
+    userScriptPorts.delete(wire.portId)
+    record.connected = false
+    const fire = (): void => {
+      record.onDisconnect.dispatch(record.port)
+    }
+    if (typeof wire.error === 'string') withLastError('runtime.Port.onDisconnect', wire.error, fire)
+    else fire()
+  }
+
+  type EngineOutcome = { kind: 'response'; value: unknown } | { kind: 'error'; message: string }
+  interface HostedOutcome {
+    handled: boolean
+    responded: boolean
+    result?: unknown
+  }
+
+  /**
+   * `tabs.sendMessage` for an extension holding `userScripts`: the engine delivers to the tab's
+   * content scripts, the host to its user-script worlds; the first response wins, as in Chrome.
+   * With no response from either, the error says whether anyone listened at all.
+   */
+  function combineTabMessage(
+    engine: Promise<EngineOutcome>,
+    hosted: Promise<HostedOutcome>
+  ): Promise<unknown> {
+    return new Promise((resolve, reject) => {
+      let settled = false
+      let engineDone: EngineOutcome | null = null
+      let hostedDone: HostedOutcome | null = null
+      const finish = (): void => {
+        if (settled || !engineDone || !hostedDone) return
+        settled = true
+        if (
+          engineDone.kind === 'error' &&
+          engineDone.message !== NO_RECEIVER &&
+          engineDone.message !== PORT_CLOSED
+        ) {
+          reject(new Error(engineDone.message))
+          return
+        }
+        const listened =
+          (engineDone.kind === 'error' && engineDone.message === PORT_CLOSED) || hostedDone.handled
+        reject(new Error(listened ? PORT_CLOSED : NO_RECEIVER))
+      }
+      engine.then((outcome) => {
+        if (settled) return
+        if (outcome.kind === 'response') {
+          settled = true
+          resolve(outcome.value)
+          return
+        }
+        engineDone = outcome
+        finish()
+      })
+      hosted.then((outcome) => {
+        if (settled) return
+        if (outcome.responded) {
+          settled = true
+          resolve(outcome.result)
+          return
+        }
+        hostedDone = outcome
+        finish()
+      })
+    })
+  }
+
+  function wrapTabsSendMessage(tabs: Any): void {
+    const native: unknown = safely(() => tabs.sendMessage)
+    if (!isFunction(native)) return
+    const qualified =
+      'tabs.sendMessage(integer tabId, any message, optional object options, optional function callback)'
+    define(tabs, 'sendMessage', function (...raw: unknown[]): unknown {
+      const callback = takeCallback(raw)
+      const [tabId, message, options] = raw
+      if (!matchesType(tabId, 'integer') || raw.length < 2) throw signatureError(qualified)
+      if (options !== undefined && options !== null && !isObject(options)) {
+        throw signatureError(qualified)
+      }
+      const engine = new Promise<EngineOutcome>((resolve) => {
+        const done = (response: unknown): void => {
+          const error: unknown = safely(() => chrome.runtime.lastError)
+          if (error) {
+            resolve({
+              kind: 'error',
+              message: String(isObject(error) && error.message ? error.message : error)
+            })
+          } else resolve({ kind: 'response', value: response })
+        }
+        try {
+          if (options === undefined || options === null) native.call(tabs, tabId, message, done)
+          else native.call(tabs, tabId, message, options, done)
+        } catch (error) {
+          resolve({
+            kind: 'error',
+            message: error instanceof Error ? error.message : String(error)
+          })
+        }
+      })
+      const hosted = invoke('userScripts', 'sendMessage', [tabId, message, options ?? null]).then(
+        (value: unknown): HostedOutcome =>
+          isObject(value)
+            ? {
+                handled: value.handled === true,
+                responded: value.responded === true,
+                result: value.result
+              }
+            : { handled: false, responded: false },
+        (): HostedOutcome => ({ handled: false, responded: false })
+      )
+      return settle(qualified, combineTabMessage(engine, hosted), callback)
+    })
+  }
+
+  // ---------------------------------------------------------------------------
   // Generic namespaces from the table
   // ---------------------------------------------------------------------------
 
@@ -963,9 +1236,56 @@ export function installExtensionApi(
     return isObject(safely(() => roots[0][namespace]))
   }
 
-  for (const [namespace, nsSpec] of Object.entries(spec)) {
-    if (nsSpec.manifestVersion && nsSpec.manifestVersion !== manifestVersion) continue
-    if (!namespaceAllowed(namespace, nsSpec)) continue
+  /** Permission-gated events (`runtime.onUserScriptMessage`) exist for extensions declaring one. */
+  function eventAllowed(eventSpec: EventSpec): boolean {
+    if (!eventSpec.permissions) return true
+    return eventSpec.permissions.some((p) => declaredPermissions.includes(p))
+  }
+
+  /** The toggles the host gave; a toggled namespace is installed only while its toggle is on. */
+  const toggles: Record<string, boolean> | undefined = options?.toggles
+  /** Toggled namespaces waiting for their toggle: reading `chrome.<name>` throws meanwhile. */
+  const toggledOff = new Map<string, NamespaceSpec>()
+  const installedNamespaces = new Set<string>()
+
+  function toggleOn(nsSpec: NamespaceSpec): boolean {
+    return !nsSpec.toggle || !toggles || toggles[nsSpec.toggle.key] === true
+  }
+
+  function defineToggledOff(namespace: string, nsSpec: NamespaceSpec): void {
+    const message = nsSpec.toggle?.error ?? `chrome.${namespace} is not available.`
+    toggledOff.set(namespace, nsSpec)
+    installedNamespaces.delete(namespace)
+    for (const root of roots) {
+      defineGetter(root, namespace, () => {
+        throw new Error(message)
+      })
+    }
+  }
+
+  /** The host flipped toggles (`__zen.toggles`): install what came on, take away what went off. */
+  function applyToggles(next: Record<string, unknown>): void {
+    if (!toggles) return
+    for (const [key, value] of Object.entries(next)) {
+      if (typeof value !== 'boolean') continue
+      toggles[key] = value
+      for (const [namespace, nsSpec] of Object.entries(spec)) {
+        if (nsSpec.toggle?.key !== key) continue
+        if (nsSpec.manifestVersion && nsSpec.manifestVersion !== manifestVersion) continue
+        if (!namespaceAllowed(namespace, nsSpec)) continue
+        if (value && toggledOff.has(namespace)) {
+          toggledOff.delete(namespace)
+          for (const root of roots) safely(() => Reflect.deleteProperty(root, namespace))
+          installNamespace(namespace, nsSpec)
+        } else if (!value && installedNamespaces.has(namespace)) {
+          defineToggledOff(namespace, nsSpec)
+        }
+      }
+    }
+  }
+
+  function installNamespace(namespace: string, nsSpec: NamespaceSpec): void {
+    installedNamespaces.add(namespace)
     const targets = roots.map((root) => namespaceOn(root, namespace))
     for (const [name, method] of Object.entries(nsSpec.methods)) {
       const fn = makeMethod(namespace, name, method)
@@ -976,6 +1296,7 @@ export function installExtensionApi(
       }
     }
     for (const [name, eventSpec] of Object.entries(nsSpec.events)) {
+      if (!eventAllowed(eventSpec)) continue
       if (nsSpec.eventStyle === 'webRequest') {
         // The engine's event objects never fire (see the spec); replaced, native or not.
         const object = webRequestEvent(namespace, name, eventSpec)
@@ -988,7 +1309,8 @@ export function installExtensionApi(
       const keepNative = eventSpec.keepNative || Boolean(nsSpec.shape)
       if (keepNative && native && typeof native.addListener === 'function') continue
       const object = createEvent(fullName, native, {
-        nativeDelivers: Boolean(eventSpec.nativeInFrames) && host.kind === 'frame'
+        nativeDelivers: Boolean(eventSpec.nativeInFrames) && host.kind === 'frame',
+        filters: eventSpec.filters === true
       })
       for (const target of targets) define(target, name, object)
     }
@@ -1004,6 +1326,23 @@ export function installExtensionApi(
         if (safely(() => target[name]) === undefined) define(target, name, value)
       }
     }
+  }
+
+  for (const [namespace, nsSpec] of Object.entries(spec)) {
+    if (nsSpec.manifestVersion && nsSpec.manifestVersion !== manifestVersion) continue
+    if (!namespaceAllowed(namespace, nsSpec)) continue
+    if (!toggleOn(nsSpec)) {
+      defineToggledOff(namespace, nsSpec)
+      continue
+    }
+    installNamespace(namespace, nsSpec)
+  }
+
+  // The engine's `tabs.sendMessage` never reaches the user-script worlds: for an extension that
+  // can have some, the call also goes to the host (whatever the toggle says; without worlds the
+  // host has nothing to deliver to).
+  if (hasUserScripts && spec.userScripts) {
+    for (const root of roots) wrapTabsSendMessage(namespaceOn(root, 'tabs'))
   }
 
   // ---------------------------------------------------------------------------
@@ -1445,10 +1784,20 @@ export function installExtensionApi(
   host.onEvent((namespace, event, args, delivery) => {
     if (namespace === '__zen') {
       if (event === 'views' && Array.isArray(args[0])) views = args[0] as ExtensionView[]
+      else if (event === 'toggles' && isObject(args[0])) applyToggles(args[0])
+      else if (event === 'us-port') userScriptPortEvent(args[0])
       return
     }
     if (namespace === 'webRequest') {
       webRequestDeliver(event, args, delivery)
+      return
+    }
+    if (namespace === 'runtime' && event === 'onUserScriptMessage') {
+      userScriptMessage(args)
+      return
+    }
+    if (namespace === 'runtime' && event === 'onUserScriptConnect') {
+      userScriptConnect(args)
       return
     }
     if (namespace === 'contextMenus' && event === 'onClicked') menuClicked(args)

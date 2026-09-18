@@ -39,6 +39,12 @@ export interface ExtensionRecord {
    * private windows. Off by default; the private session itself loads no extension yet.
    */
   allowPrivate: boolean
+  /**
+   * Chrome's "Allow user scripts" toggle: whether `chrome.userScripts` is available to the
+   * extension and its registered user scripts run. Off by default like Chrome; meaningless for an
+   * extension without the `userScripts` permission.
+   */
+  allowUserScripts: boolean
   manifestVersion: number
   name: string
   description: string
@@ -178,6 +184,7 @@ export interface NewRecordOptions {
   enabled?: boolean
   allowFileAccess?: boolean
   allowPrivate?: boolean
+  allowUserScripts?: boolean
 }
 
 export function newRecord(options: NewRecordOptions): ExtensionRecord {
@@ -196,6 +203,7 @@ export function newRecord(options: NewRecordOptions): ExtensionRecord {
     toolbarPinned: false,
     allowFileAccess: options.allowFileAccess ?? false,
     allowPrivate: options.allowPrivate ?? false,
+    allowUserScripts: options.allowUserScripts ?? false,
     manifestVersion: fields.manifestVersion,
     name: fields.name,
     description: fields.description,
@@ -328,6 +336,7 @@ function sanitizeRecord(entry: unknown, now: number): ExtensionRecord | null {
     toolbarPinned: r.toolbarPinned === true,
     allowFileAccess: r.allowFileAccess === true,
     allowPrivate: r.allowPrivate === true,
+    allowUserScripts: r.allowUserScripts === true,
     manifestVersion: typeof r.manifestVersion === 'number' ? r.manifestVersion : 2,
     name: str(r.name),
     description: str(r.description),

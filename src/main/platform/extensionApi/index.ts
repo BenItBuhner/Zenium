@@ -32,9 +32,11 @@ import {
   API_SPEC,
   PRIVACY_INTERNAL_METHODS,
   STORAGE_METHODS,
+  USER_SCRIPTS_INTERNAL_METHODS,
   WEB_REQUEST_INTERNAL_METHODS,
   isSpecMethod
 } from '../../../core/extensions/api/spec'
+import { USER_SCRIPTS_CHANNELS, USER_SCRIPTS_SHIM } from '../../../shared/userScripts'
 import { normalizeEventFilters, type UrlFilter } from '../../../core/extensions/api/urlFilter'
 import type { KeyEventInput, MenuItemTemplate, PageContextParams } from '../../../core/platform'
 import type { RegistryEvent } from '../extensions'
@@ -80,6 +82,7 @@ import { TabsApi } from './tabs'
 import { TopSitesApi } from './topSites'
 import { TtsApi } from './tts'
 import { electronSpeechEngine } from './ttsBridge'
+import { UserScriptsApi } from './userScripts'
 import {
   ApiError,
   extensionIdFromUrl,
@@ -185,6 +188,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   readonly omnibox: OmniboxApi
   readonly browsingData: BrowsingDataApi
   readonly tts: TtsApi
+  readonly userScripts: UserScriptsApi
 
   private readonly namespaces: Record<string, NamespaceHandlers>
   private readonly extensions = new Map<string, LoadedExtension>()
@@ -255,6 +259,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.omnibox = new OmniboxApi(this)
     this.browsingData = new BrowsingDataApi(this, electronDataClearer)
     this.tts = new TtsApi(this, electronSpeechEngine())
+    this.userScripts = new UserScriptsApi(this, this.webNavigation)
     this.namespaces = {
       tabs: { ...this.tabs.handlers, ...this.tabGroups.tabHandlers },
       windows: this.windows.handlers,
@@ -283,7 +288,8 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       identity: this.identity.handlers,
       omnibox: this.omnibox.handlers,
       browsingData: this.browsingData.handlers,
-      tts: this.tts.handlers
+      tts: this.tts.handlers,
+      userScripts: this.userScripts.handlers
     }
     // A tab's outermost document changed: `activeTab` grants for another origin end and the
     // declarativeNetRequest action counts start over.
@@ -305,12 +311,39 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     ipcMain.on(CHANNELS.notify, (event, kind, payload) =>
       this.notify(frameSender(event), kind, payload)
     )
+    // An extension document's preload asks for its toggles before the shim installs.
+    ipcMain.on(USER_SCRIPTS_CHANNELS.toggles, (event) => {
+      event.returnValue = this.togglesFor(frameSender(event))
+    })
+    // The page preload's side of `chrome.userScripts`, from every frame of every tab page:
+    // the plan (synchronous, at document start), the worlds' messaging, and the answers to
+    // deliveries and executions. `returnValue` is always set: the page blocks on it.
+    ipcMain.on(USER_SCRIPTS_CHANNELS.plan, (event, request) => {
+      let plan: unknown = []
+      try {
+        plan = this.userScripts.plan(event.sender, event.senderFrame, request)
+      } catch (error) {
+        console.warn('[zen] userScripts plan failed:', error)
+      }
+      event.returnValue = plan
+    })
+    ipcMain.handle(USER_SCRIPTS_CHANNELS.message, (event, message) =>
+      this.userScripts.worldMessage(event.sender, event.senderFrame, message)
+    )
+    ipcMain.on(USER_SCRIPTS_CHANNELS.port, (event, wire) =>
+      this.userScripts.worldPort(event.sender, event.senderFrame, wire)
+    )
+    ipcMain.on(USER_SCRIPTS_CHANNELS.answer, (event, answer) =>
+      this.userScripts.answer(event.sender, event.senderFrame, answer)
+    )
     this.browser.state.subscribe(() => this.scheduleTick())
     // Every tab view, the ones alive already included: `webNavigation.*` comes from their
-    // events, and the pages follow `privacy.network.webRTCIPHandlingPolicy`.
+    // events, the pages follow `privacy.network.webRTCIPHandlingPolicy`, and the user-script
+    // worlds' pending answers die with their documents.
     this.views.onViewCreated((view) => {
       this.webNavigation.attach(view)
       this.privacy.pageCreated(view.webContents, this.isPrivateView(view.webContents))
+      this.userScripts.pageCreated(view.webContents)
     })
     this.history.attach()
     this.downloads.attach()
@@ -350,11 +383,15 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
         this.declarativeNetRequest.sessionsChanged(event.id)
         this.privacy.privateAccessChanged()
         return
+      case 'allowUserScripts':
+        this.userScripts.setAllowed(event.id, event.allowed)
+        return
       case 'uninstalled':
         this.seen.delete(event.id)
         this.privateAllowed.delete(event.id)
         this.runtime.openUninstallUrl(event.id)
         this.privacy.forget(event.id)
+        this.userScripts.uninstalled(event.id)
         this.store.forget(event.id)
         this.declarativeNetRequest.uninstalled(event.id)
         this.registry.forget(event.id, { keepWorkerEvents: false })
@@ -406,6 +443,18 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     worker.ipc.on(CHANNELS.notify, (event, kind, payload) =>
       this.notify(workerSender(event, ses), kind, payload)
     )
+    worker.ipc.on(USER_SCRIPTS_CHANNELS.toggles, (event) => {
+      event.returnValue = this.togglesFor(workerSender(event, ses))
+    })
+  }
+
+  /** `ShimOptions.toggles` of the calling extension context (every toggle off for a stranger). */
+  private togglesFor(sender: Sender | null): Record<string, boolean> {
+    try {
+      return this.userScripts.togglesFor(this.contextFor(sender).extensionId)
+    } catch {
+      return { userScripts: false }
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -443,6 +492,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     // After the permissions: the state exists only for extensions holding the permission.
     this.declarativeNetRequest.load(loaded)
     this.privacy.load(ext.id)
+    this.userScripts.load(loaded, info?.allowUserScripts === true)
     // Existing tabs, bookmarks, downloads and folders are the baseline, not a burst of `onCreated`.
     if (!this.snapshot) {
       this.snapshot = this.model.snapshot()
@@ -476,6 +526,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.declarativeNetRequest.unload(ext.id)
     this.webRequest.unload(ext.id)
     this.privacy.unload(ext.id)
+    this.userScripts.unload(ext.id)
     this.contextMenus.forget(ext.id)
     this.notifications.forget(ext.id)
     this.activeTab.forget(ext.id)
@@ -560,7 +611,10 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
             ? (WEB_REQUEST_INTERNAL_METHODS as readonly string[]).includes(method)
             : routed === 'privacy'
               ? (PRIVACY_INTERNAL_METHODS as readonly string[]).includes(method)
-              : isSpecMethod(API_SPEC, namespace, method)
+              : routed === 'userScripts' &&
+                  (USER_SCRIPTS_INTERNAL_METHODS as readonly string[]).includes(method)
+                ? true
+                : isSpecMethod(API_SPEC, namespace, method)
       const handlers = this.namespaces[routed]
       if (!known || !handlers || !Object.prototype.hasOwnProperty.call(handlers, method)) {
         throw new ApiError(`${namespace}.${method} is not available in Zenium.`)
@@ -617,6 +671,12 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
         return
       case 'webRequest-answer':
         this.webRequest.answer(ctx, payload)
+        return
+      case USER_SCRIPTS_SHIM.answer:
+        this.userScripts.answerMessage(ctx, payload)
+        return
+      case USER_SCRIPTS_SHIM.port:
+        this.userScripts.shimPort(ctx, payload)
         return
       default:
         return

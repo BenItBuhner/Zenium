@@ -416,7 +416,9 @@ export class ContextRegistry {
   /**
    * Send `namespace.event` to every context of the extension that listens. A stopped worker is
    * woken when it registered the event before; `wake` forces that even without a registration
-   * (lifecycle events an extension only listens to once its script runs).
+   * (lifecycle events an extension only listens to once its script runs). Returns how many
+   * contexts the event went to (a queued wake counts as one): what a caller waiting for the
+   * contexts' answers (`runtime.onUserScriptMessage`) can expect at most.
    */
   dispatch(
     extensionId: string,
@@ -424,10 +426,11 @@ export class ContextRegistry {
     event: string,
     args: unknown[],
     options: DispatchOptions = {}
-  ): void {
+  ): number {
     const name = normalizeEventName(`${namespace}.${event}`)
     const remembered = this.workerEvents.get(extensionId)?.has(name) ?? false
     let background = false
+    let reached = 0
     for (const frame of this.framesOf(extensionId)) {
       if (options.session && !options.session(frame.session)) continue
       if (frame.isBackgroundPage) background = true
@@ -438,6 +441,7 @@ export class ContextRegistry {
       }
       try {
         frame.frame.send('zen-ext:event', namespace, event, args, delivery)
+        reached += 1
       } catch {
         /* frame went away */
       }
@@ -454,22 +458,25 @@ export class ContextRegistry {
         delivery = undefined
       }
       this.sendToWorker(worker, namespace, event, args, delivery)
+      reached += 1
     }
-    if (background) return
+    if (background) return reached
     // No background context is alive. A worker that registered the event before it stopped, or a
     // lifecycle event that must reach whichever background context comes up, waits in the queue
     // that `helloWorker` / the background page's `helloFrame` flush, and the worker is started.
-    if (!remembered && !options.wake) return
+    if (!remembered && !options.wake) return reached
     const primary = this.hooks.sessionsFor(extensionId)[0]
-    if (options.session && primary && !options.session(primary)) return
+    if (options.session && primary && !options.session(primary)) return reached
     const queue = this.pendingBackground.get(extensionId) ?? []
     if (queue.length < 100) {
       const pending: PendingEvent = { namespace, event, args, at: Date.now() }
       if (options.url !== undefined) pending.url = options.url
       queue.push(pending)
+      reached += 1
     }
     this.pendingBackground.set(extensionId, queue)
     void this.wake(extensionId)
+    return reached
   }
 
   private waking = new Set<string>()

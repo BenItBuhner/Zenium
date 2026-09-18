@@ -9,6 +9,7 @@
  * works), everything else replaces the engine's inert binding in place.
  */
 import { PRIVACY_METHODS, PRIVACY_SETTING_NAMES } from './privacy'
+import { USER_SCRIPTS_UNAVAILABLE_ERROR } from './userScripts'
 
 export type ParamType = 'integer' | 'number' | 'string' | 'boolean' | 'object' | 'array' | 'any'
 
@@ -38,6 +39,18 @@ export interface EventSpec {
   /** Documents keep receiving this event from the engine; the shim only adds the host's deliveries. */
   nativeInFrames?: boolean
   keepNative?: boolean
+  /**
+   * The event exists only for extensions declaring one of these permissions
+   * (`runtime.onUserScriptMessage` needs `userScripts`), like `NamespaceSpec.permissions`.
+   */
+  permissions?: readonly string[]
+  /**
+   * Chromium's `supportsFilters`: `addListener(callback, filters)` takes `events.UrlFilter`s
+   * under `filters.url` (`webNavigation`), validated on registration. Every other event ignores
+   * a second argument, whatever it is, as Chromium's binding does (Violentmonkey passes `false`
+   * to `tabs.onUpdated`).
+   */
+  filters?: boolean
   /**
    * `webRequest` events: the `extraInfoSpec` values the event accepts (`blocking` among them
    * for the events with a blocking variant). The shim validates registrations against the list.
@@ -82,6 +95,14 @@ export interface NamespaceSpec {
    * `<namespace>.<object>.<setting>.onChange`.
    */
   settings?: Readonly<Record<string, readonly string[]>>
+  /**
+   * `userScripts`: Chrome hides the namespace behind a per-extension toggle ("Allow user
+   * scripts"). While `ShimOptions.toggles[key]` is false, reading `chrome.<namespace>` throws
+   * `error` (extensions feature-detect it with `try { chrome.userScripts } catch {}`); the host
+   * pushes the toggle's changes (`__zen.toggles`) and the shim installs or removes the namespace
+   * then. Without a `toggles` option the namespace is simply there (emulated engines).
+   */
+  toggle?: { key: string; error: string }
 }
 
 export type ApiSpec = Record<string, NamespaceSpec>
@@ -206,7 +227,14 @@ export const API_SPEC: ApiSpec = {
       setUninstallURL: { params: [string('url')] },
       getContexts: { params: [object('filter')] }
     },
-    events: { onInstalled: {}, onStartup: {} },
+    events: {
+      onInstalled: {},
+      onStartup: {},
+      // A user-script world's `runtime.sendMessage` / `runtime.connect` arrive here, not on
+      // `onMessage` / `onConnect`; the shim builds the `sendResponse` and the `Port` (see `shim.ts`).
+      onUserScriptMessage: { permissions: ['userScripts'] },
+      onUserScriptConnect: { permissions: ['userScripts'] }
+    },
     constants: {
       ContextType: {
         TAB: 'TAB',
@@ -302,15 +330,15 @@ export const API_SPEC: ApiSpec = {
       getAllFrames: { params: [object('details')] }
     },
     events: {
-      onBeforeNavigate: {},
-      onCommitted: {},
-      onDOMContentLoaded: {},
-      onCompleted: {},
-      onErrorOccurred: {},
-      onCreatedNavigationTarget: {},
-      onReferenceFragmentUpdated: {},
-      onTabReplaced: {},
-      onHistoryStateUpdated: {}
+      onBeforeNavigate: { filters: true },
+      onCommitted: { filters: true },
+      onDOMContentLoaded: { filters: true },
+      onCompleted: { filters: true },
+      onErrorOccurred: { filters: true },
+      onCreatedNavigationTarget: { filters: true },
+      onReferenceFragmentUpdated: { filters: true },
+      onTabReplaced: { filters: true },
+      onHistoryStateUpdated: { filters: true }
     },
     constants: {
       TransitionType: {
@@ -862,6 +890,29 @@ export const API_SPEC: ApiSpec = {
     },
     permissions: ['tts']
   },
+  // Absent from Electron (Chrome's user-script worlds are the extension system's). The host
+  // keeps the registrations (`core/extensions/api/userScripts.ts` has the model) and runs them
+  // through the page preload in every frame: `USER_SCRIPT` registrations in an isolated world of
+  // their own per extension and `worldId`, `MAIN` ones in the page's world. A world with
+  // `messaging` on gets `runtime.sendMessage` / `runtime.connect`, which arrive on
+  // `runtime.onUserScriptMessage` / `onUserScriptConnect`; `tabs.sendMessage` reaches the
+  // worlds' `runtime.onMessage` through the internal `sendMessage` call (see `shim.ts`).
+  userScripts: {
+    methods: {
+      register: { params: [{ name: 'scripts', type: 'array' }] },
+      getScripts: { params: [object('filter', true)] },
+      unregister: { params: [object('filter', true)] },
+      update: { params: [{ name: 'scripts', type: 'array' }] },
+      configureWorld: { params: [object('properties')] },
+      getWorldConfigurations: { params: [] },
+      resetWorldConfiguration: { params: [string('worldId', true)] },
+      execute: { params: [object('injection')] }
+    },
+    events: {},
+    constants: { ExecutionWorld: { MAIN: 'MAIN', USER_SCRIPT: 'USER_SCRIPT' } },
+    permissions: ['userScripts'],
+    toggle: { key: 'userScripts', error: USER_SCRIPTS_UNAVAILABLE_ERROR }
+  },
   // Zenium's folders are the groups; `tabs.group` / `tabs.ungroup` are declared on `tabs`.
   tabGroups: {
     methods: {
@@ -900,6 +951,13 @@ export const WEB_REQUEST_INTERNAL_METHODS = ['addListener', 'removeListener'] as
  * not members of `chrome.privacy`, but routed like one (with the setting's names first).
  */
 export const PRIVACY_INTERNAL_METHODS = PRIVACY_METHODS
+
+/**
+ * The call the shim makes on behalf of `tabs.sendMessage` for an extension holding
+ * `userScripts`: the delivery to the tab's user-script worlds, beside the engine's own delivery
+ * to the content scripts. Not a member of `chrome.userScripts`, but routed like one.
+ */
+export const USER_SCRIPTS_INTERNAL_METHODS = ['sendMessage'] as const
 
 /** Storage areas the host implements; the engine's `local` and `session` stay native for data. */
 export const STORAGE_AREAS = ['local', 'sync', 'session', 'managed'] as const

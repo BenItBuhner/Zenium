@@ -385,6 +385,7 @@ export class AndroidExtensions implements ExtensionHost {
         toolbarPinned: record.toolbarPinned,
         allowFileAccess: record.allowFileAccess,
         allowPrivate: record.allowPrivate,
+        allowUserScripts: record.allowUserScripts,
         manifestVersion: record.manifestVersion,
         permissions: record.permissions,
         hostPermissions: record.hostPermissions,
@@ -809,6 +810,19 @@ export class AndroidExtensions implements ExtensionHost {
     record.allowPrivate = allowed
     this.persist()
     void this.reconfigure(record)
+    this.browser.state.commitVolatile()
+  }
+
+  /**
+   * Persists the "Allow user scripts" toggle. The Android runtime serves `chrome.userScripts`
+   * on its own (`extensionApi.ts`) and does not gate it on the toggle yet; the flag is kept so
+   * the extensions page shows one state on both platforms.
+   */
+  setAllowUserScripts(id: string, allowed: boolean): void {
+    const record = this.record(id)
+    if (!record || record.allowUserScripts === allowed) return
+    record.allowUserScripts = allowed
+    this.persist()
     this.browser.state.commitVolatile()
   }
 
