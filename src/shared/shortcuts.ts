@@ -658,6 +658,8 @@ const DEFS: Def[] = [
   },
   {
     // Firefox binds Ctrl+Shift+D here; Zen gave that to "Pin / Unpin Tab", so this ships unbound.
+    // The shortcut presets bind it to Ctrl+Shift+D in the Chrome preset and move Pin Tab to the
+    // Zen preset there.
     id: 'bookmarkAllTabsKb',
     action: 'bookmark.allTabs',
     group: 'historyAndBookmarks',
@@ -670,6 +672,14 @@ const DEFS: Def[] = [
     label: 'Show Bookmarks',
     key: 'b',
     mods: { accel: true }
+  },
+  {
+    id: 'viewBookmarksToolbarKb',
+    action: 'bookmark.toggleBar',
+    group: 'historyAndBookmarks',
+    label: 'Show / Hide Bookmarks Bar',
+    key: 'b',
+    mods: { accel: true, shift: true }
   },
   {
     id: 'manBookmarkKb',

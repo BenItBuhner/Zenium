@@ -2,6 +2,7 @@ import type { JSX } from 'react'
 import { useCallback, useEffect, useRef } from 'react'
 import type { UIState } from '@shared/types'
 import type { ResolvedTheme } from '@shared/theme'
+import { bookmarksBarVisible } from '@shared/bookmarkViews'
 import { run } from '@renderer/lib/api'
 import { isPhone, useFormFactorReport, useViewport } from '@renderer/lib/formFactor'
 import { activeTab } from '@renderer/lib/selectors'
@@ -20,6 +21,7 @@ import {
 import { cn } from '@renderer/lib/utils'
 import { useMainEvents } from '@renderer/hooks/useMainEvents'
 import { useTheme } from '@renderer/hooks/useTheme'
+import { BookmarksBar } from './components/bookmarks/BookmarksBar'
 import { ContentArea } from './components/content/ContentArea'
 import { DragGhost } from './components/DragGhost'
 import { ModStyles } from './components/ModStyles'
@@ -65,6 +67,9 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
     compact.enabled && compact.hideToolbar && settings.toolbarLayout !== 'single'
   const showToolbar = settings.toolbarLayout === 'multiple' && !toolbarHidden
   const sidebarRevealed = sidebarHidden && ui.compactHover
+  // The bookmarks bar sits under the toolbar and hides with it in compact mode.
+  const barWanted = bookmarksBarVisible(settings.bookmarksBar, tab?.url ?? null)
+  const showBar = barWanted && !(compact.enabled && compact.hideToolbar)
 
   // Compact mode: hovering the window edge reveals the sidebar on top of a frozen page snapshot.
   const revealTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -142,8 +147,11 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
         }}
       >
         {showToolbar && <Toolbar state={state} tab={tab} />}
+        {showBar && <BookmarksBar state={state} tab={tab} />}
         <div className="relative min-h-0 flex-1">
           <ContentArea state={state} ui={ui} />
+          {/* Bookmark dialogs dim only this frame; the star bubble portals to the window. */}
+          <TabDialogs state={state} />
         </div>
       </main>
 
@@ -174,18 +182,17 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
         </>
       )}
       {toolbarHidden && !showToolbar && settings.toolbarLayout === 'multiple' && (
-        <CompactToolbar state={state} />
+        <CompactToolbar state={state} showBar={barWanted} />
       )}
 
       {ui.drag && <DragGhost state={state} drag={ui.drag} />}
-      <TabDialogs state={state} />
       {onboarding && <Onboarding state={state} />}
     </div>
   )
 }
 
-/** Compact mode with the top toolbar hidden: hover the top edge to reveal it. */
-function CompactToolbar({ state }: { state: UIState }): JSX.Element {
+/** Compact mode with the top toolbar hidden: hover the top edge to reveal it (and the bar). */
+function CompactToolbar({ state, showBar }: { state: UIState; showBar: boolean }): JSX.Element {
   const tab = activeTab(state)
   const ref = useRef<HTMLDivElement>(null)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -205,7 +212,9 @@ function CompactToolbar({ state }: { state: UIState }): JSX.Element {
     >
       <div className="h-1.5" />
       <div className="px-2 opacity-0 transition-opacity group-data-[open=true]/ct:opacity-100 pointer-events-none group-data-[open=true]/ct:pointer-events-auto">
-        <Toolbar state={state} tab={tab} floating />
+        <Toolbar state={state} tab={tab} floating>
+          {showBar && <BookmarksBar state={state} tab={tab} className="px-1" />}
+        </Toolbar>
       </div>
     </div>
   )
@@ -219,6 +228,8 @@ function useGlobalKeys(state: UIState): void {
       const ui = uiStore.get()
       if (ui.urlbar.open) return // handled by the URL bar input
       if (ui.menu) return // handled by the menu layer
+      // Dialogs, choosers and overflow menus take Escape first (capture traps).
+      if (ui.bookmarkEdit || ui.starDialog || ui.bookmarkAllTabs || ui.barMenuOpen) return
       if (ui.overlay !== 'none') {
         e.preventDefault()
         closeOverlay()

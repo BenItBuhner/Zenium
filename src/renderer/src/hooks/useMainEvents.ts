@@ -1,11 +1,12 @@
 import { useEffect } from 'react'
-import type { UIState } from '@shared/types'
+import type { Rect, UIState } from '@shared/types'
 import { onEvent } from '@renderer/lib/api'
 import { isPhone } from '@renderer/lib/formFactor'
 import {
   cancelExternalProtocol,
   closeMenu,
   closeUrlbar,
+  openBookmarkChrome,
   openOverlay,
   openUrlbar,
   pushToast,
@@ -73,6 +74,29 @@ export function useMainEvents(): void {
       onEvent('folder.startRename', ({ folderId }) => uiStore.set({ renamingFolderId: folderId })),
       onEvent('tab.editPinnedUrl', ({ tabId }) => uiStore.set({ editingPinnedUrlTabId: tabId })),
       onEvent('tab.pickIcon', ({ tabId }) => uiStore.set({ iconPickerTabId: tabId })),
+      onEvent('bookmark.star', (star) => {
+        closeUrlbar()
+        // The bubble hangs from the pill's bottom edge, end-aligned with the star in it (v2
+        // draft §9.20); both are measured as the request arrives.
+        const chip = document.querySelector('[data-bm-star]')
+        const rect = (el: Element | null | undefined): Rect | null => {
+          const r = el?.getBoundingClientRect()
+          return r ? { x: r.left, y: r.top, width: r.width, height: r.height } : null
+        }
+        void openBookmarkChrome(
+          { starDialog: { ...star, anchor: rect(chip), pill: rect(chip?.closest('.zen-pill')) } },
+          currentActiveTabId()
+        )
+      }),
+      onEvent('bookmark.edit', (edit) => {
+        // Inside the manager the request is handled in place; anywhere else it is a dialog.
+        if (uiStore.get().overlay === 'bookmarks') uiStore.set({ bookmarkEdit: edit })
+        else void openBookmarkChrome({ bookmarkEdit: edit }, currentActiveTabId())
+      }),
+      onEvent('bookmark.allTabs', (request) => {
+        closeUrlbar()
+        void openBookmarkChrome({ bookmarkAllTabs: request }, currentActiveTabId())
+      }),
       onEvent('space.switched', ({ fromIndex, toIndex }) => {
         uiStore.set({ spaceSlideDirection: toIndex > fromIndex ? 1 : toIndex < fromIndex ? -1 : 0 })
       }),

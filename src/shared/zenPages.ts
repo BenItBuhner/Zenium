@@ -439,6 +439,7 @@ export function parseZenUrl(rawUrl: string): URL | null {
 
 /** `zen://` addresses that are chrome surfaces rather than documents, and the overlay each opens. */
 const OVERLAY_PAGES: Record<string, OverlayKind> = {
+  bookmarks: 'bookmarks',
   history: 'history',
   settings: 'settings'
 }
