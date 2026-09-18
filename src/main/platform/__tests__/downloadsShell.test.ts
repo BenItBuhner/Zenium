@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
-import type { DownloadChangeKind, DownloadItem, DownloadsProgress } from '../../../shared/types'
+import type {
+  DownloadChangeKind,
+  DownloadItem,
+  DownloadSettings,
+  DownloadsProgress
+} from '../../../shared/types'
 import type { DownloadChangeListener } from '../../../core/browser'
 import { downloadItem as item } from '../../../shared/__tests__/downloadFixtures'
 import { PROGRESS_ERROR_FLASH_MS } from '../../../shared/downloadsShell'
@@ -85,12 +90,18 @@ interface FakeBrowser {
   publish: (next: DownloadItem[], changed: DownloadItem, kind: DownloadChangeKind) => void
 }
 
-/** The slice of the core the shell drives: the windows, the engine's list and its aggregate. */
-function fakeBrowser(windows: FakeWindow[]): FakeBrowser {
+/**
+ * The slice of the core the shell drives: the windows, the engine's list and its aggregate. The
+ * settings block is the profile's partial one (empty: the defaults, no OS notification).
+ */
+function fakeBrowser(
+  windows: FakeWindow[],
+  downloads: Partial<DownloadSettings> = {}
+): FakeBrowser {
   const listeners = new Set<DownloadChangeListener>()
   let items: DownloadItem[] = []
   const browser = {
-    state: { settings: { downloads: {} } },
+    state: { settings: { downloads } },
     allWindows: () => windows.map((w) => w.win),
     ensureWindow: () => windows[0].win,
     onDownloadChange: (l: DownloadChangeListener) => {
@@ -227,16 +238,26 @@ describe('the desktop downloads shell', () => {
     expect(priv.bars.at(-1)).toEqual({ value: 0.5, mode: 'error' })
   })
 
-  it('notifies a completion only while no window is focused, and the click reveals the row', () => {
+  it('posts no notification by default: the bubble is the notice (Chrome)', () => {
+    const away = fakeWindow({ focused: false })
+    const { browser, publish } = fakeBrowser([away])
+    new ElectronDownloadsShell(browser as never)
+    const done = item({ id: 'a', filename: 'report.pdf' })
+    publish([done], done, 'done')
+    expect(FakeNotification.shown).toHaveLength(0)
+  })
+
+  it('with the switch on, notifies a completion only while no window is focused, and the click reveals the row', () => {
+    const notify = { notifyOnComplete: true }
     const w = fakeWindow({ focused: true })
-    const { browser, publish } = fakeBrowser([w])
+    const { browser, publish } = fakeBrowser([w], notify)
     new ElectronDownloadsShell(browser as never)
     const done = item({ id: 'a', filename: 'report.pdf' })
     publish([done], done, 'done')
     expect(FakeNotification.shown).toHaveLength(0)
 
     const away = fakeWindow({ focused: false })
-    const unfocused = fakeBrowser([away])
+    const unfocused = fakeBrowser([away], notify)
     new ElectronDownloadsShell(unfocused.browser as never)
     unfocused.publish([done], done, 'done')
     expect(FakeNotification.shown).toHaveLength(1)
@@ -251,7 +272,7 @@ describe('the desktop downloads shell', () => {
 
   it('holds the notification for a flagged file until Keep releases it', () => {
     const w = fakeWindow({ focused: false })
-    const { browser, publish } = fakeBrowser([w])
+    const { browser, publish } = fakeBrowser([w], { notifyOnComplete: true })
     new ElectronDownloadsShell(browser as never)
     const flagged = item({
       id: 'a',

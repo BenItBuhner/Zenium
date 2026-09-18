@@ -11,12 +11,14 @@ export const PARTIAL_SUFFIX = '.zeniumdownload'
 /**
  * Chrome's defaults: a download animates the toolbar button (`openPanelOnStart` off; the
  * Firefox-style panel-on-start is the switch's other position) and the bubble opens once the
- * last transfer finishes. `alwaysShowButton` is the desktop toolbar's own key.
+ * last transfer finishes – that bubble is the notice, so no OS notification unless asked for
+ * (`notifyOnComplete` off; Edge's position is the switch's other one). `alwaysShowButton` is the
+ * desktop toolbar's own key.
  */
 export const DEFAULT_DOWNLOAD_SETTINGS: DownloadSettings = {
   directory: null,
   askWhereToSave: false,
-  notifyOnComplete: true,
+  notifyOnComplete: false,
   openPanelOnStart: false,
   openPanelOnComplete: true,
   autoOpenTypes: [],
