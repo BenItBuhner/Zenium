@@ -4,6 +4,7 @@ import type { GlanceState, Rect, UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { glanceRect } from '@renderer/lib/layout'
 import { tabTitle } from '@renderer/lib/selectors'
+import { hint } from '@renderer/lib/shortcuts'
 import { Favicon } from '../sidebar/Favicon'
 
 interface Props {
@@ -58,7 +59,7 @@ export function GlanceFrame({ state, glance, area, ready }: Props): JSX.Element 
         <button
           type="button"
           className="zen-toolbar-button h-6 w-6"
-          title="Expand into a tab (Ctrl+O)"
+          title={hint('Expand into a tab', state, 'glance.expand')}
           onClick={() => run('glance.expand', undefined)}
         >
           <Maximize2 className="h-3.5 w-3.5" />

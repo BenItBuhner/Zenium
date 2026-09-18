@@ -20,8 +20,9 @@ const { NavRow, SidebarTop } = await import('../sidebar/SidebarTop')
 const { Toolbar } = await import('../Toolbar')
 const { PillContent } = await import('../phone/PhoneShell')
 const { PillChip } = await import('../urlbar/PillChip')
-const { openUrlbar, uiStore } = await import('@renderer/lib/ui')
+const { browserStore, openUrlbar, uiStore } = await import('@renderer/lib/ui')
 const { closeSiteInfo, siteInfoStore } = await import('@renderer/lib/siteInfo')
+const { defaultShortcuts } = await import('@shared/shortcuts')
 
 function tab(url: string, patch: Partial<Tab> = {}): Tab {
   return {
@@ -80,7 +81,9 @@ function state(t: Tab | null, bookmarks: BookmarkNode[] = []): UIState {
     window: { kind: 'normal', fullscreen: false, htmlFullscreenTabId: null },
     boosts: [],
     extensions: [],
-    bookmarks
+    bookmarks,
+    // Tooltips quote the chord from the active key table (the default Chrome set here).
+    shortcuts: defaultShortcuts('linux', 'chrome')
   } as unknown as UIState
 }
 
@@ -140,6 +143,8 @@ function expectChip(el: HTMLElement, label: string): void {
 }
 
 beforeEach(() => {
+  // The star reads its chord from the mirrored browser state, like every tooltip.
+  browserStore.set({ state: state(tab('https://example.com/')) })
   uiStore.set({ siteInfoOpen: false, overlay: 'none', starDialog: null })
   uiStore.set((s) => ({ urlbar: { ...s.urlbar, open: false } }))
   siteInfoStore.set({ tabId: null, anchor: null })

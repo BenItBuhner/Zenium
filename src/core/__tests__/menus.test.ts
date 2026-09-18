@@ -166,7 +166,7 @@ function labels(items: MenuItemTemplate[]): string[] {
 }
 
 function appMenu(h: Harness): string[] {
-  h.browser.handleCommand(h.win, 'app.menu', undefined)
+  h.browser.handleCommand(h.win, 'app.menu', {})
   return labels(h.shown())
 }
 

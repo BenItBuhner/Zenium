@@ -7,6 +7,7 @@ import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { run } from '@renderer/lib/api'
 import { dropStore } from '@renderer/lib/drag'
 import { pinnedOf, regularOf } from '@renderer/lib/selectors'
+import { useHint } from '@renderer/lib/shortcuts'
 import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { SpaceGlyph } from '../SpaceGlyph'
@@ -162,6 +163,7 @@ function DropZone({
 }
 
 function NewTabButton({ compact }: { compact: boolean }): JSX.Element {
+  const title = useHint('New Tab', 'tab.new')
   return (
     <button
       type="button"
@@ -169,7 +171,7 @@ function NewTabButton({ compact }: { compact: boolean }): JSX.Element {
         'zen-tab h-8 text-[var(--zen-muted)] hover:text-[var(--zen-fg)]',
         compact && 'justify-center px-0'
       )}
-      title="New Tab (Ctrl+T)"
+      title={title}
       onClick={() => window.dispatchEvent(new CustomEvent('zen-new-tab'))}
       onContextMenu={(e) => {
         e.preventDefault()

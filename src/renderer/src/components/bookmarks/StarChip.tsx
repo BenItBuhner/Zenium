@@ -4,6 +4,7 @@ import { Star } from 'lucide-react'
 import type { Tab } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { reducedMotion } from '@renderer/lib/motion/spring'
+import { useHint } from '@renderer/lib/shortcuts'
 import { closeBookmarkChrome, uiStore } from '@renderer/lib/ui'
 import { PillChip } from '../urlbar/PillChip'
 
@@ -31,6 +32,7 @@ export function StarChip({ tab, filled }: { tab: Tab; filled: boolean }): JSX.El
   }, [filled, tab.id])
 
   const open = uiStore.use((s) => s.starDialog?.tabId === tab.id)
+  const title = useHint(filled ? 'Edit bookmark' : 'Bookmark this tab', 'bookmark.add')
   // One of the pill's chips (`PillChip`, v2 draft §9.22): a real button in the tab order after
   // the address, whose popup is the bubble. A 28px icon button (§9.3) that keeps its pressed
   // fill and `aria-expanded` while the bubble is open (§9.20). Whether the page is bookmarked is
@@ -39,7 +41,7 @@ export function StarChip({ tab, filled }: { tab: Tab; filled: boolean }): JSX.El
   return (
     <PillChip
       label={filled ? 'Edit bookmark' : 'Bookmark this tab'}
-      title={filled ? 'Edit bookmark (Ctrl+D)' : 'Bookmark this tab (Ctrl+D)'}
+      title={title}
       popup="dialog"
       expanded={open}
       data-bm-star=""

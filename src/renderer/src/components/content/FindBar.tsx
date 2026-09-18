@@ -13,7 +13,12 @@ import { cn, findCounter } from '@renderer/lib/utils'
  * inside the field the way Chrome's does; the desktop layout is unchanged.
  */
 export function FindBar({ state, tabId }: { state: UIState; tabId: string }): JSX.Element {
-  const [text, setText] = useState('')
+  // "Use selection for find" opens the bar with the page's selection already in it.
+  const [text, setText] = useState(() => {
+    const seed = uiStore.get().findSeed
+    if (seed !== null) uiStore.set({ findSeed: null })
+    return seed ?? ''
+  })
   const inputRef = useRef<HTMLInputElement>(null)
   const result = state.findResult?.tabId === tabId ? state.findResult : null
   const phone = useViewport().formFactor === 'phone'
@@ -21,16 +26,32 @@ export function FindBar({ state, tabId }: { state: UIState; tabId: string }): JS
   useEffect(() => {
     inputRef.current?.focus()
     inputRef.current?.select()
+    if (text) run('find.start', { tabId, text, forward: true, newSession: true })
+    // Only on mount: the seed is what the bar opened with.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
-    const handler = (e: Event): void => {
+    const again = (e: Event): void => {
       const dir = (e as CustomEvent<'next' | 'prev'>).detail
       inputRef.current?.focus()
       if (text) run('find.start', { tabId, text, forward: dir === 'next', newSession: false })
     }
-    window.addEventListener('zen-find-again', handler)
-    return () => window.removeEventListener('zen-find-again', handler)
+    // The bar is already up and a new selection arrives: search for it afresh.
+    const seed = (e: Event): void => {
+      const value = (e as CustomEvent<string>).detail
+      uiStore.set({ findSeed: null })
+      setText(value)
+      inputRef.current?.focus()
+      inputRef.current?.select()
+      if (value) run('find.start', { tabId, text: value, forward: true, newSession: true })
+    }
+    window.addEventListener('zen-find-again', again)
+    window.addEventListener('zen-find-seed', seed)
+    return () => {
+      window.removeEventListener('zen-find-again', again)
+      window.removeEventListener('zen-find-seed', seed)
+    }
   }, [tabId, text])
 
   const close = (): void => {

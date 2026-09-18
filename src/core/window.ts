@@ -65,6 +65,11 @@ export class ZenWindow {
    * until the chrome says otherwise. The app menu and the command list are built for it.
    */
   formFactor: FormFactor = 'desktop'
+  /**
+   * The Settings recorder in this window's chrome is listening for a chord: key presses from the
+   * chrome are its to capture, and no shortcut runs off them until it stops.
+   */
+  recordingShortcut = false
   lastFocusedAt = 0
   readonly initialBounds: Rect | null
   readonly initialMaximized: boolean

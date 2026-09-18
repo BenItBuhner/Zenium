@@ -113,6 +113,14 @@ export class ElectronWindow implements WindowHost {
       if (direction === 'left') browser.actions.run('space.next', { sourceTabId: null, win: zen })
       if (direction === 'right') browser.actions.run('space.prev', { sourceTabId: null, win: zen })
     })
+    // The mouse's back and forward buttons (Windows: WM_APPCOMMAND; Linux: buttons 8 and 9),
+    // wherever in the window they are pressed, navigate the active tab like Chrome's do.
+    win.on('app-command', (_e, command) => {
+      if (command === 'browser-backward')
+        browser.actions.run('nav.back', { sourceTabId: null, win: zen })
+      else if (command === 'browser-forward')
+        browser.actions.run('nav.forward', { sourceTabId: null, win: zen })
+    })
     win.on('close', () => {
       if (this.boundsTimer) clearTimeout(this.boundsTimer)
       zen.onClosing()

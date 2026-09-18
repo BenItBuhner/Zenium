@@ -25,6 +25,7 @@ import type {
   Rect,
   ResourceSnapshot,
   SharePayload,
+  ShortcutAction,
   SidePanelInfo,
   Suggestion,
   SyncScope,
@@ -433,8 +434,33 @@ export interface WindowHostFactory {
 // Menus, dialogs, misc
 // ---------------------------------------------------------------------------
 
+/**
+ * Items the host implements itself. The editing roles work in every menu; the rest are the
+ * standard entries of a macOS menu bar (`window`, `help` and `services` mark a whole submenu as
+ * the system's Window, Help or Services menu).
+ */
 export type MenuRole =
-  'undo' | 'redo' | 'cut' | 'copy' | 'paste' | 'pasteAndMatchStyle' | 'delete' | 'selectAll'
+  | 'undo'
+  | 'redo'
+  | 'cut'
+  | 'copy'
+  | 'paste'
+  | 'pasteAndMatchStyle'
+  | 'delete'
+  | 'selectAll'
+  | 'startSpeaking'
+  | 'stopSpeaking'
+  | 'about'
+  | 'services'
+  | 'hide'
+  | 'hideOthers'
+  | 'unhide'
+  | 'quit'
+  | 'minimize'
+  | 'zoom'
+  | 'front'
+  | 'window'
+  | 'help'
 
 export interface MenuItemTemplate {
   type?: 'normal' | 'separator' | 'checkbox' | 'radio'
@@ -449,6 +475,17 @@ export interface MenuItemTemplate {
   icon?: string | null
   submenu?: MenuItemTemplate[]
   click?: () => void
+  /**
+   * The shortcut action the item stands for. The core fills `accelerator` from the active key
+   * table, and runs the action when the item has no `click` of its own.
+   */
+  action?: ShortcutAction
+  /**
+   * The chord shown after the label, in Electron's accelerator syntax (`Ctrl+Shift+N`; macOS
+   * draws it as glyphs). Display only: the key table handles the keys, so hosts must not
+   * register it.
+   */
+  accelerator?: string
 }
 
 export type MenuSource =
@@ -457,9 +494,14 @@ export type MenuSource =
 export interface MenuPopupOptions {
   source: MenuSource
   win: ZenWindow
-  /** Anchor in chrome CSS pixels (renderer-hosted menus); omitted for native menus. */
+  /**
+   * Where to open, in chrome CSS pixels: the anchor of renderer-hosted menus, and of native menus
+   * opened from a control rather than the pointer. Omitted: native menus open at the pointer.
+   */
   x?: number
   y?: number
+  /** Opened by the keyboard: the first item starts selected so the arrow keys take over at once. */
+  keyboard?: boolean
 }
 
 export interface MenuHost {
@@ -467,6 +509,12 @@ export interface MenuHost {
   /** Renderer-hosted menus report clicks/dismissals back through these. */
   activate?(menuId: string, itemId: string): void
   dismiss?(menuId: string): void
+  /**
+   * Hosts with a menu bar (macOS) show `menus` as the application menu: one entry per top-level
+   * menu, roles where the system provides the menu. Called at start and whenever what the menus
+   * show changed; hosts without a menu bar leave it out.
+   */
+  setApplicationMenu?(menus: MenuItemTemplate[]): void
 }
 
 export interface ConfirmOptions {
@@ -502,6 +550,11 @@ export interface DialogHost {
   ): Promise<PickedTextFile[]>
   /** Save text where the user chooses (bookmark export); false when cancelled or failed. */
   saveTextFile(options: SaveTextFileOptions, win?: ZenWindow): Promise<boolean>
+  /**
+   * Let the user pick files to open as pages ("Open File…"); resolves with their paths, empty
+   * when cancelled. Hosts whose pages cannot show local files leave it out.
+   */
+  pickFiles?(options: { title: string }, win?: ZenWindow): Promise<string[]>
 }
 
 /**

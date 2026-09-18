@@ -53,7 +53,8 @@ function main(): void {
   applyResourceSwitches(app.getPath('userData'))
 
   // Shortcuts are handled by Zenium's own table, not by menu accelerators. macOS still needs an
-  // application menu for the standard Edit roles (Cmd+C/V/X/A only work through them there).
+  // application menu for the standard Edit roles (Cmd+C/V/X/A only work through them there);
+  // this minimal one stands until the browser starts and hands the host the full menu bar.
   if (process.platform === 'darwin') {
     Menu.setApplicationMenu(Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }]))
   } else {

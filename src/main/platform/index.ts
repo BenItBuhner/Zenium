@@ -184,6 +184,17 @@ export class ElectronPlatform implements Platform {
           files.push({ name: basename(path), text: readFileSync(path, 'utf8') })
         return files
       },
+      pickFiles: async (options, win?: ZenWindow) => {
+        const bw = browserWindowOf(win)
+        const dialogOptions = {
+          title: options.title,
+          properties: ['openFile' as const, 'multiSelections' as const]
+        }
+        const result = bw
+          ? await dialog.showOpenDialog(bw, dialogOptions)
+          : await dialog.showOpenDialog(dialogOptions)
+        return result.canceled ? [] : result.filePaths
+      },
       saveTextFile: async (options, win?: ZenWindow) => {
         const bw = browserWindowOf(win)
         const dialogOptions = {

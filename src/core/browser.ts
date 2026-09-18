@@ -15,6 +15,7 @@ import type {
   Settings,
   ShareAction,
   SharePayload,
+  Shortcut,
   Space,
   Tab,
   WindowChrome,
@@ -84,6 +85,7 @@ import { sanitizeAppIcon } from '../shared/appIcon'
 import { sanitizeUpdateSettings } from '../shared/updates'
 import { sanitizePromoState } from '../shared/defaultBrowser'
 import { sanitizeBlockingSettings } from '../shared/blocking'
+import { isShortcutPreset } from '../shared/shortcuts'
 import type { ExtensionHost, Governor, PageMessage, Platform, SyncHost } from './platform'
 
 type CommandHandlers = {
@@ -105,6 +107,7 @@ const FOCUS_CHROME_EVENTS = new Set<EventName>([
   'tab.editPinnedUrl',
   'tab.pickIcon',
   'menu.show',
+  'menu.app',
   'bookmark.star',
   'bookmark.edit'
 ])
@@ -171,6 +174,8 @@ export class Browser {
   private readonly sharedImages = new Map<string, string>()
   /** Windows whose chrome should come up with the URL bar open (fresh windows with a blank tab). */
   private readonly urlbarOnReady = new Set<string>()
+  /** The shortcut table last handed to the host (`syncShortcuts`). */
+  private syncedShortcuts: Shortcut[] | null = null
 
   constructor(readonly platform: Platform) {
     this.state = new BrowserState(
@@ -415,6 +420,10 @@ export class Browser {
     if (this.state.settings.onboardingDone) this.tabs.claimVisible(win)
     if (this.urlbarOnReady.delete(win.id))
       setTimeout(() => this.emit('urlbar.toggle', { mode: 'new-tab' }, win), 150)
+    // Whatever loading the profile changed under the user is said once, in the first window.
+    const notices = this.state.migrationNotices.splice(0)
+    if (notices.length)
+      setTimeout(() => notices.forEach((message) => this.toast(message, 'info', win)), 600)
   }
 
   onWindowFocused(win: ZenWindow): void {
@@ -496,6 +505,12 @@ export class Browser {
         win.updateTitle()
       }
       this.syncCaptionColors()
+      // The table is rebuilt (a new array) when the preset or the overrides change, from
+      // Settings or from another device: hosts with their own copy get it then.
+      if (this.state.shortcuts !== this.syncedShortcuts) this.syncShortcuts()
+      // The menu bar (macOS) reflects the front window and the model: enabled states, the
+      // compact mode check, recently closed entries, the bookmarks bar.
+      this.menus.scheduleApplicationMenu()
     })
     // Rule sets load synchronously so the first page is protected.
     this.blocking.start()
@@ -1174,12 +1189,16 @@ export class Browser {
   }
 
   private syncShortcuts(): void {
+    const table = this.state.shortcuts
+    this.syncedShortcuts = table
     const bindings: KeyBinding[] = []
-    for (const s of this.state.shortcuts) {
+    for (const s of table) {
       if (s.binding) bindings.push(s.binding)
       bindings.push(...s.extraBindings)
     }
     this.platform.views.setShortcuts?.(bindings)
+    // The menu bar shows the chords: it changes with the table.
+    this.menus.syncApplicationMenu()
   }
 
   // ---------------------------------------------------------------------------
@@ -1501,7 +1520,8 @@ export class Browser {
       'folder.delete': ({ folderId, unpack }) => this.deleteFolder(folderId, unpack),
       'folder.contextMenu': ({ folderId }, win) => this.menus.showFolderContextMenu(folderId, win),
       'newtab.contextMenu': (_a, win) => this.menus.showNewTabContextMenu(win),
-      'app.menu': (_a, win) => this.menus.showAppMenu(win),
+      'app.menu': ({ anchor, keyboard }, win) =>
+        this.menus.showAppMenu(win, { anchor, keyboard: Boolean(keyboard) }),
       'focus.content': (_a, win) => win.focusContent(),
       'focus.chrome': (_a, win) => win.focusChrome(),
       haptic: ({ kind }, win) => win.haptic(kind),
@@ -1576,6 +1596,9 @@ export class Browser {
         state.resetShortcuts()
         this.syncShortcuts()
         state.commit()
+      },
+      'shortcuts.recording': ({ recording }, win) => {
+        win.recordingShortcut = recording
       },
       'sidebar.setWidth': ({ width }) => {
         state.settings.sidebarWidth = Math.max(160, Math.min(520, Math.round(width)))
@@ -1947,6 +1970,8 @@ export class Browser {
         })
       } else if (key === 'pageControls' && value && typeof value === 'object') {
         this.pageControls.update(value as Partial<Settings['pageControls']>)
+      } else if (key === 'shortcutPreset') {
+        if (isShortcutPreset(value)) s.shortcutPreset = value
       } else {
         ;(s as unknown as Record<string, unknown>)[key] = value
       }
