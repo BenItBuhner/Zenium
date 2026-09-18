@@ -138,6 +138,8 @@ export function NavRow({
         className="zen-toolbar-button"
         title={tab?.loading ? 'Stop (Esc)' : hint('Reload', state, 'nav.reload')}
         disabled={!tab}
+        data-zen-menu="reload"
+        data-zen-menu-tab={tab?.id}
         onClick={() =>
           tab &&
           (tab.loading ? run('tab.stop', { tabId: tab.id }) : run('tab.reload', { tabId: tab.id }))
@@ -159,6 +161,8 @@ export function NavRow({
           aria-label="Address"
           className="zen-squircle zen-pill group/pill mx-0.5 flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-[10px] bg-[var(--zen-element-bg)] px-2.5 text-left hover:bg-[var(--zen-element-bg-hover)]"
           title={tab?.url ?? 'Search or enter address'}
+          data-zen-menu="urlpill"
+          data-zen-menu-tab={tab?.id}
           onClick={openField}
         >
           <button

@@ -1,15 +1,22 @@
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
-import type { MenuItemTemplate, MenuSource, PageContextParams } from './platform'
+import type {
+  ChromeContextParams,
+  MenuItemTemplate,
+  MenuSource,
+  PageContextParams,
+  TabView
+} from './platform'
 import { buildSearchUrl } from '../shared/search'
 import { copyConfirmation } from '../shared/clipboard'
 import { bindingFor, toAccelerator } from '../shared/shortcuts'
-import { displayUrl, getDomain, isNavigableUrl } from '../shared/url'
+import { displayUrl, getDomain, inputToUrl, isNavigableUrl } from '../shared/url'
 import {
   DEFAULT_CONTAINER_ID,
   type BookmarkNode,
   type BookmarksBarMode,
   type Rect,
+  type Settings,
   type Shortcut,
   type ShortcutAction,
   type Tab
@@ -57,6 +64,11 @@ export function tidySeparators(template: Template): Template {
     return i > 0 && i < arr.length - 1 && prev?.type !== 'separator'
   })
 }
+
+/** Chrome clips the quoted selection in `Search … for "…"` at 50 characters. */
+const SELECTION_LABEL_MAX = 50
+/** Chrome lists at most five spelling suggestions. */
+const SPELLING_SUGGESTIONS_MAX = 5
 
 /**
  * Context menus. Zen (Firefox) uses native-styled menus everywhere; the core builds the templates
@@ -132,252 +144,584 @@ export class Menus {
   // Page
   // ---------------------------------------------------------------------------
 
+  /**
+   * Chrome's page context menu: one group per thing under the pointer (link, image, media,
+   * text field, selection; the page itself when none), then the extensions' items, then the
+   * developer group. Groups are joined by separators, three at most.
+   */
   showPageContextMenu(tabId: string, params: PageContextParams, win: ZenWindow): void {
     const { tabs, state } = this.browser
     const tab = tabs.tab(tabId)
     const view = tabs.view(tabId)
     if (!tab || !view) return
     const caps = state.capabilities
-    const engine =
-      state.searchEngines.find((e) => e.id === state.settings.searchEngineId) ??
-      state.searchEngines[0]
-    const template: Template = []
-    const hasLink = Boolean(params.linkURL) && isNavigableUrl(params.linkURL)
+    // `javascript:` links run script rather than lead anywhere: Chrome shows no link items.
+    const hasLink = Boolean(params.linkURL) && !/^javascript:/i.test(params.linkURL)
     const isImage = params.mediaType === 'image' && Boolean(params.srcURL)
     const isMedia =
       (params.mediaType === 'video' || params.mediaType === 'audio') && Boolean(params.srcURL)
     const selection = params.selectionText.trim()
-    const glanceAllowed = state.settings.glanceEnabled && !win.glance
+    const plainPage = !hasLink && !isImage && !isMedia && !params.isEditable && !selection
 
+    const groups: Template[] = []
     if (hasLink) {
-      template.push(
-        {
-          label: 'Open Link in New Tab',
-          click: () =>
-            tabs.createTab(
-              {
-                url: params.linkURL,
-                active: false,
-                afterTabId: tab.essential ? undefined : tab.id,
-                containerId: tab.containerId,
-                openerTabId: tab.id
-              },
-              win
-            )
-        },
+      const [open, transfer] = this.linkGroups(tab, view, params, win)
+      // Chrome keeps the link's open and copy items apart; when the link is not alone
+      // (a linked image, a selection) the two fold into one group to stay within budget.
+      if (isImage || isMedia || selection) groups.push([...open, ...transfer])
+      else groups.push(open, transfer)
+    }
+    if (isImage) groups.push(this.imageGroup(tab, view, params, win))
+    if (isMedia) groups.push(...this.mediaGroups(tab, view, params, win))
+    if (params.isEditable) {
+      if (params.misspelledWord) groups.push(this.spellingGroup(view, params))
+      // Chrome searches a field's selected text too; the item closes the editing group. A
+      // misspelled word is auto-selected on right-click, so skip the search there – its group is
+      // the spelling suggestions, as in Chrome.
+      const tail =
+        selection && !params.misspelledWord ? this.selectionGroup(tab, selection, win).slice(1) : []
+      groups.push(this.editGroup(params, { tail }))
+    } else if (selection) {
+      groups.push(this.selectionGroup(tab, selection, win))
+    }
+    if (plainPage) groups.push(this.navigationGroup(tab, view, win), this.pageGroup(tab, win))
+    // Extension items sit where Chrome puts them: after the browser's own entries, before the
+    // developer group.
+    const extensionItems = this.browser.extensions.pageContextMenuItems(tabId, params, win)
+    if (extensionItems.length > 0) groups.push(extensionItems)
+
+    const developer: Template = []
+    if (plainPage && params.frameId) developer.push(...this.frameItems(tab, view, params, win))
+    developer.push(...this.boostsSubmenu(tabId, win))
+    if (plainPage && caps.viewSource) {
+      developer.push({
+        label: 'View Page Source',
+        enabled: !tab.url.startsWith('zen://'),
+        action: 'page.viewSource',
+        click: () => this.browser.actions.run('page.viewSource', { sourceTabId: tabId, win })
+      })
+    }
+    if (caps.devtools) {
+      developer.push({
+        label: 'Inspect Element',
+        action: 'devtools.inspector',
+        click: () => this.inspectElement(view, params)
+      })
+    }
+    groups.push(developer)
+    this.popup(joinGroups(groups), win, 'page')
+  }
+
+  /** Chrome's "Inspect": the inspector opens on the node under the click, not the document. */
+  private inspectElement(view: TabView, params: PageContextParams): void {
+    if (view.inspectElementAt) view.inspectElementAt(params.x, params.y)
+    else view.openDevTools('inspect')
+  }
+
+  /** The link's open targets and its copy / save items, as two groups. */
+  private linkGroups(
+    tab: Tab,
+    view: TabView,
+    params: PageContextParams,
+    win: ZenWindow
+  ): [Template, Template] {
+    const { tabs, state } = this.browser
+    const caps = state.capabilities
+    const url = params.linkURL
+    const navigable = isNavigableUrl(url)
+    const glanceAllowed = state.settings.glanceEnabled && !win.glance
+    const open: Template = []
+    // `mailto:` and `tel:` links have nowhere to open in a tab: only their copy items (Chrome).
+    if (navigable) {
+      open.push({
+        label: 'Open Link in New Tab',
+        click: () =>
+          tabs.createTab(
+            {
+              url,
+              active: false,
+              afterTabId: tab.essential ? undefined : tab.id,
+              containerId: tab.containerId,
+              openerTabId: tab.id
+            },
+            win
+          )
+      })
+      if (caps.windows) {
+        open.push(
+          {
+            label: 'Open Link in New Window',
+            click: () =>
+              this.browser.openUrlInWindow(url, win.isPrivate ? 'private' : 'synced', win)
+          },
+          {
+            label: 'Open Link in New Private Window',
+            click: () => this.browser.openUrlInWindow(url, 'private', win)
+          }
+        )
+      }
+      open.push(
         {
           label: 'Open Link in Glance',
           enabled: glanceAllowed,
-          click: () => tabs.openGlance(params.linkURL, tabId, 0.5, 0.5, win)
+          click: () => tabs.openGlance(url, tab.id, 0.5, 0.5, win)
         },
-        {
-          label: 'Split Link in New Tab',
-          click: () => this.splitLink(tabId, params.linkURL, win)
-        },
+        { label: 'Open Link in Split View', click: () => this.splitLink(tab.id, url, win) },
         {
           label: 'Open Link in New Container Tab',
           enabled: !win.isPrivate,
           submenu: this.containerSubmenu((cid) =>
-            tabs.createTab({ url: params.linkURL, active: true, containerId: cid }, win)
+            tabs.createTab({ url, active: true, containerId: cid }, win)
           )
-        },
-        ...(caps.windows
-          ? [
-              {
-                label: 'Open Link in New Private Window',
-                click: () => {
-                  const pw = this.browser.openWindow('private', win)
-                  if (pw) tabs.createTab({ url: params.linkURL, active: true }, pw)
-                }
-              }
-            ]
-          : []),
-        { type: 'separator' },
-        {
-          label: 'Copy Link',
-          click: () => this.browser.copyText(params.linkURL, 'Link copied', win)
-        },
-        ...(caps.share
-          ? [
-              {
-                label: 'Share Link…',
-                click: () => void this.browser.share({ url: params.linkURL, tabId }, win)
-              }
-            ]
-          : []),
-        { label: 'Save Link As…', click: () => view.downloadURL(params.linkURL) },
-        { type: 'separator' }
+        }
       )
     }
-    if (isImage) {
-      template.push(
+    const transfer: Template = []
+    if (isDownloadable(url)) {
+      transfer.push({
+        label: 'Save Link As…',
+        click: () => view.downloadURL(url, { saveAs: true })
+      })
+    }
+    const copy = linkCopyItem(url)
+    transfer.push({
+      label: copy.label,
+      click: () => this.browser.copyText(copy.text, copy.confirmation, win)
+    })
+    const linkText = params.linkText?.trim() ?? ''
+    if (linkText && linkText !== url) {
+      transfer.push({
+        label: 'Copy Link Text',
+        click: () => this.browser.copyText(linkText, 'Text copied', win)
+      })
+    }
+    if (caps.share && navigable) {
+      transfer.push({
+        label: 'Share Link…',
+        click: () => void this.browser.share({ url, tabId: tab.id }, win)
+      })
+    }
+    return [open, transfer]
+  }
+
+  private imageGroup(tab: Tab, view: TabView, params: PageContextParams, win: ZenWindow): Template {
+    const { tabs, state } = this.browser
+    const src = params.srcURL
+    return [
+      {
+        label: 'Open Image in New Tab',
+        enabled: isNavigableUrl(src),
+        click: () =>
+          tabs.createTab(
+            {
+              url: src,
+              active: false,
+              afterTabId: tab.id,
+              containerId: tab.containerId,
+              openerTabId: tab.id
+            },
+            win
+          )
+      },
+      {
+        label: 'Save Image As…',
+        enabled: isDownloadable(src),
+        click: () => view.downloadURL(src, { saveAs: true })
+      },
+      {
+        label: 'Copy Image',
+        click: () => this.copyImage(src, tab.id, params.x, params.y, win)
+      },
+      {
+        label: 'Copy Image Address',
+        click: () => this.browser.copyText(src, 'Link copied', win)
+      },
+      ...(state.capabilities.share
+        ? [
+            {
+              label: 'Share Image…',
+              click: () => void this.browser.share({ imageUrl: src, tabId: tab.id }, win)
+            }
+          ]
+        : [])
+    ]
+  }
+
+  /**
+   * A `<video>` / `<audio>`: its playback controls (Chrome's checkable Loop and Show Controls,
+   * Play / Pause and Mute for good measure), then its save / copy / open items. The controls
+   * act on the clicked element itself through the page, so a page with several players gets
+   * the right one.
+   */
+  private mediaGroups(
+    tab: Tab,
+    view: TabView,
+    params: PageContextParams,
+    win: ZenWindow
+  ): Template[] {
+    const { tabs, state } = this.browser
+    const src = params.srcURL
+    const kind = params.mediaType === 'video' ? 'Video' : 'Audio'
+    const flags = params.mediaFlags
+    const act = (body: string): void => void this.runOnMedia(view, params, body)
+    const controls: Template = []
+    if (flags) {
+      controls.push(
         {
-          label: 'Open Image in New Tab',
+          label: flags.isPaused ? 'Play' : 'Pause',
+          enabled: !flags.inError,
+          click: () => act(flags.isPaused ? 'el.play().catch(() => {})' : 'el.pause()')
+        },
+        {
+          label: flags.isMuted ? 'Unmute' : 'Mute',
+          enabled: flags.hasAudio,
+          click: () => act(`el.muted = ${String(!flags.isMuted)}`)
+        },
+        {
+          label: 'Loop',
+          type: 'checkbox',
+          checked: flags.isLooping,
+          enabled: flags.canLoop,
+          click: () => act(`el.loop = ${String(!flags.isLooping)}`)
+        },
+        {
+          label: 'Show Controls',
+          type: 'checkbox',
+          checked: flags.isControlsVisible,
+          enabled: flags.canToggleControls,
+          click: () => act(`el.controls = ${String(!flags.isControlsVisible)}`)
+        }
+      )
+    }
+    if (params.mediaType === 'video' && state.capabilities.pictureInPicture) {
+      const showing = flags?.isShowingPictureInPicture ?? false
+      controls.push({
+        label: showing ? 'Exit Picture-in-Picture' : 'Picture-in-Picture',
+        enabled: !flags || showing || flags.canShowPictureInPicture,
+        action: 'page.pip',
+        click: () =>
+          act(
+            showing || !flags
+              ? 'if (document.pictureInPictureElement) document.exitPictureInPicture().catch(() => {}); else el.requestPictureInPicture().catch(() => {})'
+              : 'el.requestPictureInPicture().catch(() => {})'
+          )
+      })
+    }
+    const transfer: Template = [
+      {
+        label: `Save ${kind} As…`,
+        // Chrome greys the item for streams it cannot save (`blob:` MSE sources, live media).
+        enabled: (flags?.canSave ?? true) && isDownloadable(src),
+        click: () => view.downloadURL(src, { saveAs: true })
+      },
+      {
+        label: `Copy ${kind} Address`,
+        click: () => this.browser.copyText(src, 'Link copied', win)
+      },
+      {
+        label: `Open ${kind} in New Tab`,
+        enabled: isNavigableUrl(src),
+        click: () =>
+          tabs.createTab(
+            { url: src, active: false, afterTabId: tab.id, containerId: tab.containerId },
+            win
+          )
+      }
+    ]
+    return [controls, transfer]
+  }
+
+  /**
+   * Run `body` against the clicked media element (`el`): matched by source first, then by the
+   * click position (CSS pixels: the event's DIPs divided by the zoom factor), in the frame the
+   * click landed in.
+   */
+  private runOnMedia(view: TabView, params: PageContextParams, body: string): Promise<unknown> {
+    const zoom = view.getZoom() || 1
+    const x = Math.round(params.x / zoom)
+    const y = Math.round(params.y / zoom)
+    const code = `(() => {
+      const src = ${JSON.stringify(params.srcURL)};
+      const all = [...document.querySelectorAll('video, audio')];
+      let el = all.find((m) => m.currentSrc === src || m.src === src);
+      if (!el) {
+        const hit = document.elementFromPoint(${x}, ${y});
+        el = hit && (hit.closest('video, audio') || all.find((m) => m.contains(hit)));
+      }
+      if (!el) {
+        el = all.find((m) => {
+          const r = m.getBoundingClientRect();
+          return ${x} >= r.left && ${x} <= r.right && ${y} >= r.top && ${y} <= r.bottom;
+        });
+      }
+      if (!el) return false;
+      ${body};
+      return true;
+    })()`
+    return view.executeJavaScript(code, params.frameId).catch(() => false)
+  }
+
+  /** Chrome's spelling group: up to five suggestions (or a greyed placeholder), Add to Dictionary. */
+  private spellingGroup(view: TabView, params: PageContextParams): Template {
+    const suggestions = params.dictionarySuggestions.slice(0, SPELLING_SUGGESTIONS_MAX)
+    const items: Template = suggestions.map((suggestion) => ({
+      label: suggestion,
+      click: () => view.replaceMisspelling(suggestion)
+    }))
+    if (items.length === 0) items.push({ label: 'No Spelling Suggestions', enabled: false })
+    items.push({
+      label: 'Add to Dictionary',
+      click: () => view.addWordToDictionary(params.misspelledWord)
+    })
+    return items
+  }
+
+  /**
+   * Chrome's editing items, as one group: Undo / Redo, the clipboard trio with Paste as Plain
+   * Text, Delete, Select All, then `tail` (a selection's search item) and the OS emoji picker
+   * where the host has one (Windows, macOS). `afterPaste` is the omnibox's Paste and Go.
+   */
+  private editGroup(
+    params: Pick<ChromeContextParams, 'editFlags'>,
+    extra: { afterPaste?: Template; tail?: Template } = {}
+  ): Template {
+    const flags = params.editFlags
+    const { app } = this.browser.platform
+    return [
+      { label: 'Undo', role: 'undo', enabled: flags.canUndo },
+      { label: 'Redo', role: 'redo', enabled: flags.canRedo },
+      { label: 'Cut', role: 'cut', enabled: flags.canCut },
+      { label: 'Copy', role: 'copy', enabled: flags.canCopy },
+      { label: 'Paste', role: 'paste', enabled: flags.canPaste },
+      ...(extra.afterPaste ?? []),
+      { label: 'Paste as Plain Text', role: 'pasteAndMatchStyle', enabled: flags.canPaste },
+      { label: 'Delete', role: 'delete', enabled: flags.canDelete },
+      { label: 'Select All', role: 'selectAll', enabled: flags.canSelectAll },
+      ...(extra.tail ?? []),
+      ...(app.showEmojiPanel
+        ? [{ label: 'Emoji', click: () => this.browser.platform.app.showEmojiPanel?.() }]
+        : [])
+    ]
+  }
+
+  /**
+   * Selected text: Copy, then either "Go to <url>" when the selection reads as an address or
+   * `Search <engine> for "…"` (a new tab next to this one, like Chrome).
+   */
+  private selectionGroup(tab: Tab, selection: string, win: ZenWindow): Template {
+    const { tabs, state } = this.browser
+    const engine =
+      state.searchEngines.find((e) => e.id === state.settings.searchEngineId) ??
+      state.searchEngines[0]
+    const open = (url: string): void =>
+      void tabs.createTab(
+        { url, active: true, afterTabId: tab.id, containerId: tab.containerId },
+        win
+      )
+    const asUrl = selectionUrl(selection)
+    const items: Template = [{ label: 'Copy', role: 'copy' }]
+    if (asUrl) {
+      items.push({
+        label: `Go to ${clipLabel(displayUrl(asUrl), SELECTION_LABEL_MAX)}`,
+        click: () => open(asUrl)
+      })
+    } else if (engine) {
+      const short = clipLabel(selection, SELECTION_LABEL_MAX)
+      items.push({
+        label: `Search ${engine.name} for “${short}”`,
+        click: () => open(buildSearchUrl(engine, selection))
+      })
+    }
+    if (state.capabilities.share) {
+      items.push({
+        label: 'Share…',
+        click: () => void this.browser.share({ text: selection, tabId: tab.id }, win)
+      })
+    }
+    return items
+  }
+
+  /** Back, Forward, Reload / Stop – and the way out of fullscreen while the page is in it. */
+  private navigationGroup(tab: Tab, view: TabView, win: ZenWindow): Template {
+    const { tabs } = this.browser
+    const items: Template = []
+    if (win.htmlFullscreenTabId === tab.id) {
+      items.push({
+        label: 'Exit Full Screen',
+        click: () => void view.executeJavaScript('document.exitFullscreen()').catch(() => null)
+      })
+    } else if (win.host.isFullScreen()) {
+      items.push({
+        label: 'Exit Full Screen',
+        action: 'page.fullscreen',
+        click: () => this.browser.toggleFullscreen(win)
+      })
+    }
+    items.push(
+      {
+        label: 'Back',
+        enabled: tab.canGoBack,
+        action: 'nav.back',
+        click: () => tabs.goBack(tab.id)
+      },
+      {
+        label: 'Forward',
+        enabled: tab.canGoForward,
+        action: 'nav.forward',
+        click: () => tabs.goForward(tab.id)
+      },
+      tab.loading
+        ? { label: 'Stop', action: 'nav.stop', click: () => tabs.stop(tab.id) }
+        : { label: 'Reload', action: 'nav.reload', click: () => tabs.reload(tab.id) }
+    )
+    return items
+  }
+
+  /** The page's own actions: bookmark, save, print, screenshot, Reader View. */
+  private pageGroup(tab: Tab, win: ZenWindow): Template {
+    const { state, reader } = this.browser
+    const run = (action: 'page.savePage' | 'page.print' | 'page.screenshot'): void =>
+      this.browser.actions.run(action, { sourceTabId: tab.id, win })
+    const readerOpen = reader.isReaderUrl(tab.url)
+    return [
+      {
+        label: tab.bookmarked ? 'Remove Bookmark' : 'Bookmark Page',
+        action: 'bookmark.add',
+        click: () => this.browser.toggleBookmark(tab.id, win)
+      },
+      { label: 'Save Page As…', action: 'page.savePage', click: () => run('page.savePage') },
+      ...(state.capabilities.print
+        ? [{ label: 'Print…', action: 'page.print' as const, click: () => run('page.print') }]
+        : []),
+      { label: 'Take Screenshot', action: 'page.screenshot', click: () => run('page.screenshot') },
+      {
+        label: readerOpen ? 'Exit Reader View' : 'Enter Reader View',
+        enabled: readerOpen || reader.canRead(tab),
+        action: 'page.readerMode',
+        click: () => reader.toggle(tab.id, win)
+      }
+    ]
+  }
+
+  /** Chrome's frame items for a click inside a sub-frame: reload it, view its source. */
+  private frameItems(tab: Tab, view: TabView, params: PageContextParams, win: ZenWindow): Template {
+    const { tabs, state } = this.browser
+    const frameId = params.frameId ?? 0
+    const frameURL = params.frameURL ?? ''
+    const items: Template = []
+    if (view.reloadFrame) {
+      items.push({ label: 'Reload Frame', click: () => view.reloadFrame?.(frameId) })
+    }
+    if (state.capabilities.viewSource && /^https?:/i.test(frameURL)) {
+      items.push({
+        label: 'View Frame Source',
+        click: () =>
+          tabs.createTab({ url: `view-source:${frameURL}`, active: true, afterTabId: tab.id }, win)
+      })
+    }
+    return items
+  }
+
+  // ---------------------------------------------------------------------------
+  // Chrome (URL bar, toolbar, chrome text fields)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * A right-click in the chrome document: the URL bar's field and pill get Chrome's omnibox menu
+   * (Paste and Go / Paste and Search on top of the editing items), the reload button Chrome's
+   * reload choices while the tab's DevTools are open, any other text field the editing items,
+   * a selection elsewhere Copy. Plain chrome gets no menu, as in Chrome.
+   */
+  async showChromeContextMenu(params: ChromeContextParams, win: ZenWindow): Promise<void> {
+    const { tabs, state } = this.browser
+    const tab = params.tabId ? tabs.tab(params.tabId) : undefined
+    if (params.target === 'reload') {
+      if (!tab || !state.devtoolsOpenFor.has(tab.id)) return
+      this.popup(this.reloadItems(tab), win, 'urlbar')
+      return
+    }
+    if (params.target === 'urlbar' || params.target === 'urlpill') {
+      const clipboard = (await this.browser.platform.clipboard.readText?.().catch(() => '')) ?? ''
+      const pasted = clipboard.trim()
+      const targetTabId = tab?.id ?? null
+      // One item, as in Chrome's omnibox: it goes to an address and searches anything else.
+      const isAddress = Boolean(pasted && inputToUrl(pasted))
+      const pasteAndGo: MenuItemTemplate = {
+        label: isAddress ? 'Paste and Go' : 'Paste and Search',
+        enabled: pasted.length > 0,
+        action: isAddress ? 'urlbar.pasteAndGo' : 'urlbar.pasteAndSearch',
+        click: () => {
+          // An open bar closes, as a submit does.
+          this.browser.emit('urlbar.close', undefined, win)
+          void this.browser.pasteAndGo(targetTabId, !isAddress, win)
+        }
+      }
+      const groups: Template[] = []
+      if (params.target === 'urlbar') {
+        groups.push(this.editGroup(params, { afterPaste: [pasteAndGo] }))
+      } else {
+        // The pill is not a field: it copies the address and takes the clipboard.
+        groups.push([
+          {
+            label: 'Copy',
+            enabled: Boolean(tab && !tab.url.startsWith('zen://')),
+            action: 'tab.copyUrl',
+            click: () => tab && tabs.copyUrl(tab.id)
+          },
+          pasteAndGo
+        ])
+      }
+      groups.push([
+        this.fullUrlsItem(win),
+        {
+          label: 'Manage Search Engines…',
           click: () =>
-            tabs.createTab(
-              {
-                url: params.srcURL,
-                active: false,
-                afterTabId: tab.id,
-                containerId: tab.containerId,
-                openerTabId: tab.id
-              },
-              win
-            )
-        },
-        {
-          label: 'Copy Image',
-          click: () => this.copyImage(params.srcURL, tabId, params.x, params.y, win)
-        },
-        {
-          label: 'Copy Image Link',
-          click: () => this.browser.copyText(params.srcURL, 'Link copied', win)
-        },
-        ...(caps.share
-          ? [
-              {
-                label: 'Share Image…',
-                click: () => void this.browser.share({ imageUrl: params.srcURL, tabId }, win)
-              }
-            ]
-          : []),
-        { label: 'Save Image As…', click: () => view.downloadURL(params.srcURL) },
-        { type: 'separator' }
-      )
-    }
-    if (isMedia) {
-      template.push(
-        {
-          label: params.mediaType === 'video' ? 'Copy Video Link' : 'Copy Audio Link',
-          click: () => this.browser.copyText(params.srcURL, 'Link copied', win)
-        },
-        {
-          label: params.mediaType === 'video' ? 'Save Video As…' : 'Save Audio As…',
-          click: () => view.downloadURL(params.srcURL)
-        },
-        ...(params.mediaType === 'video'
-          ? [
-              {
-                label: 'Picture-in-Picture',
-                click: () => this.browser.actions.run('page.pip', { sourceTabId: tabId, win })
-              }
-            ]
-          : []),
-        { type: 'separator' }
-      )
+            this.browser.emit('overlay.open', { kind: 'settings', section: 'search' }, win)
+        }
+      ])
+      this.popup(joinGroups(groups), win, 'urlbar')
+      return
     }
     if (params.isEditable) {
-      if (params.misspelledWord) {
-        for (const suggestion of params.dictionarySuggestions.slice(0, 5)) {
-          template.push({ label: suggestion, click: () => view.replaceMisspelling(suggestion) })
-        }
-        template.push(
-          {
-            label: 'Add to Dictionary',
-            click: () => view.addWordToDictionary(params.misspelledWord)
-          },
-          { type: 'separator' }
-        )
+      this.popup(this.editGroup(params), win, 'urlbar')
+      return
+    }
+    if (params.selectionText.trim()) this.popup([{ label: 'Copy', role: 'copy' }], win, 'urlbar')
+  }
+
+  /** Chrome's "Always show full URLs": the address pill's elision setting (`showFullUrls`). */
+  private fullUrlsItem(win: ZenWindow): MenuItemTemplate {
+    const shown = Boolean(this.browser.state.settings.showFullUrls)
+    const patch: Partial<Settings> = { showFullUrls: !shown }
+    return {
+      label: 'Always Show Full URLs',
+      type: 'checkbox',
+      checked: shown,
+      click: () => this.browser.handleCommand(win, 'settings.update', patch)
+    }
+  }
+
+  /** Chrome's reload button menu (DevTools open): Normal Reload, Hard Reload, Empty Cache and Hard Reload. */
+  private reloadItems(tab: Tab): Template {
+    const { tabs } = this.browser
+    const view = tabs.view(tab.id)
+    return [
+      { label: 'Normal Reload', action: 'nav.reload', click: () => tabs.reload(tab.id) },
+      {
+        label: 'Hard Reload',
+        action: 'nav.reloadSkipCache',
+        click: () => tabs.reload(tab.id, true)
+      },
+      {
+        label: 'Empty Cache and Hard Reload',
+        enabled: Boolean(view?.clearCache),
+        click: () =>
+          void view
+            ?.clearCache?.()
+            .catch(() => null)
+            .then(() => tabs.reload(tab.id, true))
       }
-      template.push(
-        { label: 'Undo', role: 'undo', enabled: params.editFlags.canUndo },
-        { label: 'Redo', role: 'redo', enabled: params.editFlags.canRedo },
-        { type: 'separator' },
-        { label: 'Cut', role: 'cut', enabled: params.editFlags.canCut },
-        { label: 'Copy', role: 'copy', enabled: params.editFlags.canCopy },
-        { label: 'Paste', role: 'paste', enabled: params.editFlags.canPaste },
-        {
-          label: 'Paste as Plain Text',
-          role: 'pasteAndMatchStyle',
-          enabled: params.editFlags.canPaste
-        },
-        { label: 'Delete', role: 'delete', enabled: params.editFlags.canDelete },
-        { type: 'separator' },
-        { label: 'Select All', role: 'selectAll', enabled: params.editFlags.canSelectAll },
-        { type: 'separator' }
-      )
-    } else if (selection) {
-      const short = selection.length > 30 ? `${selection.slice(0, 30)}…` : selection
-      template.push(
-        { label: 'Copy', role: 'copy' },
-        {
-          // Zen opens search-selection results in Glance.
-          label: `Search ${engine.name} for “${short}”`,
-          click: () => {
-            const url = buildSearchUrl(engine, selection)
-            if (glanceAllowed) tabs.openGlance(url, tabId, 0.5, 0.5, win)
-            else tabs.createTab({ url, active: true, afterTabId: tab.id }, win)
-          }
-        },
-        { type: 'separator' }
-      )
-    }
-    if (!hasLink && !isImage && !isMedia && !params.isEditable && !selection) {
-      template.push(
-        {
-          label: 'Back',
-          action: 'nav.back',
-          enabled: tab.canGoBack,
-          click: () => tabs.goBack(tabId)
-        },
-        {
-          label: 'Forward',
-          action: 'nav.forward',
-          enabled: tab.canGoForward,
-          click: () => tabs.goForward(tabId)
-        },
-        {
-          label: tab.loading ? 'Stop' : 'Reload',
-          action: tab.loading ? 'nav.stop' : 'nav.reload',
-          click: () => (tab.loading ? tabs.stop(tabId) : tabs.reload(tabId))
-        },
-        { type: 'separator' },
-        {
-          label: tab.bookmarked ? 'Remove Bookmark' : 'Bookmark Page',
-          action: 'bookmark.add',
-          click: () => this.browser.toggleBookmark(tabId, win)
-        },
-        {
-          label: 'Save Page As…',
-          action: 'page.savePage',
-          click: () => this.browser.actions.run('page.savePage', { sourceTabId: tabId, win })
-        },
-        {
-          label: 'Take Screenshot',
-          action: 'page.screenshot',
-          click: () => this.browser.actions.run('page.screenshot', { sourceTabId: tabId, win })
-        },
-        {
-          label: this.browser.reader.isReaderUrl(tab.url)
-            ? 'Exit Reader View'
-            : 'Enter Reader View',
-          action: 'page.readerMode',
-          enabled: this.browser.reader.isReaderUrl(tab.url) || this.browser.reader.canRead(tab),
-          click: () => this.browser.reader.toggle(tabId, win)
-        },
-        { type: 'separator' },
-        { label: 'Select All', role: 'selectAll' },
-        { type: 'separator' },
-        {
-          label: 'View Page Source',
-          action: 'page.viewSource',
-          enabled: !tab.url.startsWith('zen://'),
-          click: () => this.browser.actions.run('page.viewSource', { sourceTabId: tabId, win })
-        }
-      )
-    }
-    template.push({ type: 'separator' }, ...this.boostsSubmenu(tabId, win), { type: 'separator' })
-    // Extension items sit where Chrome puts them: after the browser's own entries, before
-    // "Inspect Element".
-    const extensionItems = this.browser.extensions.pageContextMenuItems(tabId, params, win)
-    if (extensionItems.length > 0) template.push(...extensionItems, { type: 'separator' })
-    if (caps.devtools)
-      template.push({
-        label: 'Inspect Element',
-        action: 'devtools.inspector',
-        click: () => view.openDevTools('inspect')
-      })
-    this.popup(template, win, 'page')
+    ]
   }
 
   // ---------------------------------------------------------------------------
@@ -1561,6 +1905,55 @@ export class Menus {
 /** Menu labels have no room for long page titles. */
 export function clipLabel(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text
+}
+
+/** Groups joined by separators; empty groups vanish rather than leave a double rule. */
+export function joinGroups(groups: MenuItemTemplate[][]): MenuItemTemplate[] {
+  const out: MenuItemTemplate[] = []
+  for (const group of groups) {
+    if (group.length === 0) continue
+    if (out.length > 0) out.push({ type: 'separator' })
+    out.push(...group)
+  }
+  return out
+}
+
+/** URLs a "Save … As…" can fetch into a file (the engine downloads these schemes). */
+export function isDownloadable(url: string): boolean {
+  return /^(https?|ftp|file|blob|data):/i.test(url)
+}
+
+/**
+ * Chrome's copy item of a link: the address itself, or for `mailto:` / `tel:` links the bare
+ * address / number (what one would paste into a mail client or a dialler), without the scheme
+ * and any `?subject=` tail.
+ */
+export function linkCopyItem(url: string): { label: string; text: string; confirmation: string } {
+  const scheme = url.slice(0, url.indexOf(':')).toLowerCase()
+  if (scheme === 'mailto' || scheme === 'tel') {
+    const bare = url.slice(scheme.length + 1).split('?')[0] ?? ''
+    let text = bare
+    try {
+      text = decodeURIComponent(bare)
+    } catch {
+      text = bare
+    }
+    return scheme === 'mailto'
+      ? { label: 'Copy Email Address', text, confirmation: 'Email address copied' }
+      : { label: 'Copy Phone Number', text, confirmation: 'Phone number copied' }
+  }
+  return { label: 'Copy Link Address', text: url, confirmation: 'Link copied' }
+}
+
+/**
+ * Chrome's "Go to <url>": a selection that reads as a web address (the URL bar's own test,
+ * so `example.com` counts and `weather tomorrow` does not) as the address it would open.
+ */
+export function selectionUrl(selection: string): string | null {
+  const text = selection.trim()
+  if (!text || text.length > 2048) return null
+  const url = inputToUrl(text)
+  return url && /^https?:/i.test(url) ? url : null
 }
 
 /** Entries the back/forward list shows at most. */
