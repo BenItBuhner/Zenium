@@ -44,6 +44,12 @@ const NEW_FOLDER_ICON = '📁'
  */
 export class TabGroupsApi {
   private snapshot: Map<string, TabGroupSnapshot> | null = null
+  /**
+   * Folders made by `tabs.group`. A Chrome group ends with its last tab; a folder the user made
+   * is theirs to keep, but one an extension created for a group goes when it empties, so the
+   * sidebar is not left with the extension's "New Folder" shells.
+   */
+  private readonly created = new Set<string>()
 
   constructor(private readonly host: ApiHost) {}
 
@@ -257,6 +263,7 @@ export class TabGroupsApi {
       folder = this.host.browser.createFolder(spaceId, NEW_FOLDER_NAME, NEW_FOLDER_ICON, win, {
         rename: false
       })
+      this.created.add(folder.id)
     }
     const { tabs: manager } = this.host.browser
     for (const tab of tabs) {
@@ -280,6 +287,21 @@ export class TabGroupsApi {
     for (const tab of tabs) {
       if (tab.folderId) this.host.browser.tabs.moveToFolder(tab.id, null)
     }
+    this.dropEmptied()
+  }
+
+  /** Extension-made folders with no tab left (ungrouped, closed or moved away) are removed. */
+  private dropEmptied(): void {
+    const model = this.host.browser.state.model
+    for (const folderId of this.created) {
+      if (!model.folders[folderId]) {
+        this.created.delete(folderId)
+        continue
+      }
+      if (Object.values(model.tabs).some((tab) => tab.folderId === folderId)) continue
+      this.created.delete(folderId)
+      this.host.browser.deleteFolder(folderId, true)
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -288,6 +310,9 @@ export class TabGroupsApi {
 
   /** Called from the router's tick with the tab snapshots it just compared. */
   tick(prev: ModelSnapshot | null, next: ModelSnapshot): void {
+    // Tabs closed or moved out from under an extension's group: the folder goes on this tick,
+    // and the next one reports `onRemoved`.
+    if (this.created.size > 0) this.dropEmptied()
     const orders: Array<[number, readonly string[]]> = []
     for (const [windowId, win] of next.windows) orders.push([windowId, win.order])
     const current = this.snapshotFrom(orders)

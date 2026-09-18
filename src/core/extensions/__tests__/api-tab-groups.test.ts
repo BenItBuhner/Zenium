@@ -4,6 +4,7 @@ import {
   createFolder,
   createSpace,
   createTabRecord,
+  deleteFolder,
   emptyModel,
   insertTabIntoSpace,
   moveTab,
@@ -198,7 +199,9 @@ interface Harness {
   chromeId: (zenId: string) => number
   tick: () => void
   order: () => string[]
+  groupIdFor: (folderId: string) => number
   created: Folder[]
+  deleted: string[]
 }
 
 function harness(): Harness {
@@ -250,6 +253,7 @@ function harness(): Harness {
     windowOfTab: () => win
   }
   const created: Folder[] = []
+  const deleted: string[] = []
   const browser = {
     allWindows: () => [win],
     state: { model },
@@ -270,6 +274,11 @@ function harness(): Harness {
       if (!f) return
       Object.assign(f, patch)
       if (patch.name !== undefined && !patch.name.trim()) f.name = 'Folder'
+    },
+    deleteFolder(folderId: string, unpack: boolean): void {
+      expect(unpack).toBe(true)
+      deleted.push(folderId)
+      deleteFolder(model, folderId, unpack)
     },
     tabs: {
       moveTab(
@@ -360,7 +369,9 @@ function harness(): Harness {
     chromeId,
     tick,
     order: () => tabsInWindow().map((t) => t.id),
-    created
+    groupIdFor: (folderId: string) => ids.idFor(folderId),
+    created,
+    deleted
   }
 }
 
@@ -468,8 +479,49 @@ describe('chrome.tabGroups host', () => {
     expect(h.model.tabs.t1.folderId).toBeNull()
     expect(h.model.tabs.t2.folderId).toBeNull()
     expect(h.model.tabs.p1.folderId).toBe(h.created[0].id)
-    // The folder stays (Zenium keeps empty folders; Chrome would drop the group).
+    // A tab still in it: the folder stays.
     expect(h.model.folders[h.created[0].id]).toBeDefined()
+    // The last tab leaves: the extension's folder goes with it, as Chrome's group would.
+    await callTabs(h.api, 'ungroup', h.ctx(EXT_A), [h.chromeId('p1')])
+    expect(h.model.tabs.p1.folderId).toBeNull()
+    expect(h.model.folders[h.created[0].id]).toBeUndefined()
+    expect(h.deleted).toEqual([h.created[0].id])
+    await expect(call(h.api, 'get', h.ctx(EXT_A), id)).rejects.toThrow(groupNotFound(id))
+  })
+
+  it('keeps a folder the user made when an extension empties it', async () => {
+    const h = harness()
+    h.load(EXT_A, ['tabGroups'])
+    h.addTab('t1')
+    h.addFolder('mine', { name: 'Reading' })
+    h.model.tabs.t1.folderId = 'mine'
+    const id = h.groupIdFor('mine')
+    await callTabs(h.api, 'ungroup', h.ctx(EXT_A), [h.chromeId('t1')])
+    expect(h.model.tabs.t1.folderId).toBeNull()
+    expect(h.model.folders.mine).toBeDefined()
+    expect(h.deleted).toEqual([])
+    h.tick()
+    expect(await call(h.api, 'get', h.ctx(EXT_A), id)).toMatchObject({ id, title: 'Reading' })
+  })
+
+  it('drops an extension-made folder whose last tab closed, reporting onRemoved next tick', async () => {
+    const h = harness()
+    h.load(EXT_A, ['tabGroups'])
+    h.addTab('a')
+    h.addTab('b')
+    h.tick()
+    const id = (await callTabs(h.api, 'group', h.ctx(EXT_A), {
+      tabIds: [h.chromeId('b')]
+    })) as number
+    h.tick()
+    expect(h.out.at(-1)).toMatchObject({ event: 'tabGroups.onCreated', args: [{ id }] })
+    delete h.model.tabs.b
+    for (const space of h.model.spaces) space.tabIds = space.tabIds.filter((t) => t !== 'b')
+    h.tick()
+    expect(h.deleted).toEqual([h.created[0].id])
+    expect(h.model.folders[h.created[0].id]).toBeUndefined()
+    h.tick()
+    expect(h.out.at(-1)).toMatchObject({ event: 'tabGroups.onRemoved', args: [{ id }] })
   })
 
   it('refuses to make folders in a blank or private window', async () => {
