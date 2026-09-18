@@ -50,10 +50,11 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // comment that ends them, so it is taken out first.
   ['.zen-dl-surface {', '@keyframes zen-dl-pop-out {'],
   // The bookmark chrome: bar, panels, star bubble, dialogs, manager (components/bookmarks/*).
-  ['.zen-bm-bar {', '/*\n   * v2 controls and surfaces'],
-  // The v2 controls and surfaces shared by the first run (overlays/PhoneOnboarding.tsx), the
-  // default-browser prompts (defaultbrowser/*) and the gesture hint (phone/GestureHint.tsx).
-  [' * v2 controls and surfaces', ' * Fading scroll edges'],
+  ['.zen-bm-bar {', '/*\n   * The first run on a phone'],
+  // The phone first run (overlays/PhoneOnboarding.tsx, a window surface reading the §9.29
+  // control roles) and the gesture hint (phone/GestureHint.tsx); the default-browser prompts
+  // (defaultbrowser/*) are the chassis' prompt composition and have no rules of their own.
+  [' * The first run on a phone', ' * Fading scroll edges'],
   // Find in page, zoom and fullscreen: the docked find bar (components/content/FindBar.tsx).
   ['.zen-find-bar {', '/*\n * Settings → Default Browser and the'],
   // The phone page zoom sheet, docked under the live page, and its own instance of the stepper

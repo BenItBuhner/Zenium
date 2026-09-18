@@ -1,14 +1,16 @@
 import type { JSX, ReactNode, RefCallback } from 'react'
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Globe, Layers, Sparkles, Star } from 'lucide-react'
+import { Layers, Sparkles, Star } from 'lucide-react'
 import type { ColorScheme, UIState } from '@shared/types'
 import { THEME_PRESETS, resolveTheme } from '@shared/theme'
 import { cmd, run } from '@renderer/lib/api'
 import { useBackSurface } from '@renderer/lib/back'
-import { SPRING_GENTLE, SpringAnimation } from '@renderer/lib/motion/spring'
+import { fadeOpacity } from '@renderer/lib/motion/fade'
+import { reducedMotion, SPRING_GENTLE, SpringAnimation } from '@renderer/lib/motion/spring'
 import { phoneSteps, type PhoneStep } from '@renderer/lib/onboarding'
 import { activeSpace, isDarkScheme } from '@renderer/lib/selectors'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
+import { V2Button } from '../extensions/v2'
 
 /** Engines offered on the phone (the rest are a Settings visit away). */
 const ENGINES = ['google', 'duckduckgo', 'ecosia', 'bing']
@@ -25,11 +27,14 @@ const SCHEMES: Array<{ value: ColorScheme; label: string }> = [
 /**
  * The first run on a phone: three or four full-screen steps on the space gradient – the
  * wordmark, the look (applied live, the whole screen is the preview), the search engine and,
- * where the host has a browser role to give, set as default. Text is the window's ink on the
- * gradient, the choices sit in neutral v2 cards (radio rows, image radio tiles), one primary
- * button per step, the progress a row of dots. Steps slide in on `SPRING_GENTLE`; the system
- * back gesture peels the current step away towards the previous one and springs it back when
- * abandoned.
+ * where the host has a browser role to give, set as default. The flow is one page that is the
+ * window (v2 §9.29, like the new tab page): its root is `data-surface="window"`, so its text is
+ * the theme's ink and its controls read the window family. No cards (§9.17): each choice is a
+ * group of rows under a 15/600 heading, the rows edge to edge with their text at the 16 gutter
+ * (§5, §10.3), plus the image radio tiles of the colour presets (§9.14); one primary button per
+ * step in a §9.11 footer, the progress a row of dots. Steps slide in on `SPRING_GENTLE` – a
+ * 120 ms fade in place under reduced motion (§11.3) – and the system back gesture peels the
+ * current step away towards the previous one and springs it back when abandoned.
  */
 export function PhoneOnboarding({ state }: { state: UIState }): JSX.Element {
   const steps = useMemo(
@@ -92,6 +97,8 @@ export function PhoneOnboarding({ state }: { state: UIState }): JSX.Element {
   const finish = (): void => {
     run('onboarding.complete', { searchEngineId: engine, colorScheme: scheme, essentials: [] })
   }
+  // The button is busy (§9.30) while the host's role request is out – on Android until the
+  // system's dialog has come back – and the flow completes then, whatever was chosen.
   const requestDefault = async (): Promise<void> => {
     if (busy) return
     setBusy(true)
@@ -111,6 +118,7 @@ export function PhoneOnboarding({ state }: { state: UIState }): JSX.Element {
       role="dialog"
       aria-modal="true"
       aria-label="Welcome to Zenium"
+      data-surface="window"
       className="zen-firstrun absolute inset-0 z-50 flex flex-col"
       style={{
         paddingTop: 'var(--zen-inset-top)',
@@ -134,10 +142,11 @@ export function PhoneOnboarding({ state }: { state: UIState }): JSX.Element {
       </div>
 
       <div className="relative min-h-0 flex-1">
+        {/* The column is the sheet's 520 (BottomSheet) on wide screens; rows bleed to its edges. */}
         <div
           key={step}
           ref={attachStep}
-          className="absolute inset-0 flex flex-col overflow-y-auto px-6 pb-4"
+          className="absolute inset-x-0 inset-y-0 mx-auto flex w-full max-w-[520px] flex-col overflow-y-auto pb-4"
           style={{ touchAction: 'pan-y', overscrollBehavior: 'contain' }}
         >
           {step === 'welcome' && <Welcome />}
@@ -161,37 +170,31 @@ export function PhoneOnboarding({ state }: { state: UIState }): JSX.Element {
         </div>
       </div>
 
-      {/* The Default step's Skip and Set as default split the footer with an 8 px gap (v2 §9.11). */}
-      <div className="flex shrink-0 justify-center gap-2 px-6 pb-4 pt-2">
+      {/* The footer (§9.11): one action spans the column; the Default step's Skip and Set as
+          default split it with an 8 px gap, the primary trailing; 16 to the edges. */}
+      <div className="mx-auto flex w-full max-w-[520px] shrink-0 gap-2 px-4 pb-4 pt-2">
         {step === 'default' ? (
           <>
-            <button
-              type="button"
-              className="zen-v2-button max-w-[180px] flex-1"
-              disabled={busy}
-              onClick={finish}
-            >
+            <V2Button className="min-w-0 flex-1" disabled={busy} onClick={finish}>
               Skip
-            </button>
-            <button
-              type="button"
-              className="zen-v2-button max-w-[180px] flex-1"
-              data-primary
-              disabled={busy}
+            </V2Button>
+            <V2Button
+              className="min-w-0 flex-1"
+              variant="primary"
+              busy={busy}
               onClick={() => void requestDefault()}
             >
               Set as default
-            </button>
+            </V2Button>
           </>
         ) : (
-          <button
-            type="button"
-            className="zen-v2-button w-full max-w-[320px]"
-            data-primary
+          <V2Button
+            className="min-w-0 flex-1"
+            variant="primary"
             onClick={() => (last ? finish() : go(1))}
           >
             {last ? 'Start browsing' : index === 0 ? 'Get started' : 'Continue'}
-          </button>
+          </V2Button>
         )}
       </div>
     </div>
@@ -219,8 +222,9 @@ interface StepMotion {
  * The step content lives at offset `x` (px): 0 in place, ±TRAVEL off to a side, fading as it
  * goes. Every movement is one `SpringAnimation` over `{x, v}` painted straight onto the element,
  * so a back gesture can catch a step mid-flight and the flow never sets React state per frame.
- * Returns the callback ref for the step's content element (a new step is a new element) and
- * the controls.
+ * Under reduced motion (§11.3) a new step does not travel: it appears in place on a 120 ms
+ * opacity fade; the springs themselves jump, so a back gesture's commit cuts. Returns the
+ * callback ref for the step's content element (a new step is a new element) and the controls.
  */
 function useStepMotion(index: number): [RefCallback<HTMLDivElement>, StepMotion] {
   const element = useRef<HTMLDivElement | null>(null)
@@ -255,9 +259,17 @@ function useStepMotion(index: number): [RefCallback<HTMLDivElement>, StepMotion]
     enterDirection.current = 0
     if (direction === 0) return
     afterRest.current = null
+    if (reducedMotion()) {
+      paint(0)
+      const el = element.current
+      if (!el) return
+      el.style.opacity = '0'
+      return fadeOpacity(el, 1)
+    }
     const from = direction * TRAVEL
     paint(from)
     animation().start(from, 0, 0)
+    return undefined
   }, [index, paint, animation])
 
   const attach = useCallback<RefCallback<HTMLDivElement>>(
@@ -306,22 +318,22 @@ function useStepMotion(index: number): [RefCallback<HTMLDivElement>, StepMotion]
 
 function Welcome(): JSX.Element {
   return (
-    <div className="my-auto flex flex-col gap-8">
-      <div className="flex flex-col gap-3">
-        <h1 className="text-[34px] font-semibold leading-[1.1] tracking-[-0.02em]">Zenium</h1>
-        <p className="text-[15px] leading-[22px] text-[var(--zen-muted)]">
+    <div className="my-auto flex flex-col">
+      <div className="flex flex-col gap-3 px-4">
+        <h1 className="zen-firstrun-wordmark">Zenium</h1>
+        <p className="zen-firstrun-body zen-firstrun-deemphasized">
           A calmer way to browse. Your tabs sorted into Spaces, your favourite sites one tap away,
           and a window in your own colours.
         </p>
       </div>
-      <ul className="flex flex-col gap-2">
-        <Feature icon={<Layers className="h-5 w-5" strokeWidth={1.75} />} title="Spaces">
+      <ul className="flex flex-col pt-6">
+        <Feature icon={<Layers aria-hidden />} title="Spaces">
           Keep work, home and hobbies apart, each with its own tabs and colours.
         </Feature>
-        <Feature icon={<Star className="h-5 w-5" strokeWidth={1.75} />} title="Essentials">
+        <Feature icon={<Star aria-hidden />} title="Essentials">
           The sites you live in, pinned at the top of every Space.
         </Feature>
-        <Feature icon={<Sparkles className="h-5 w-5" strokeWidth={1.75} />} title="Boosts">
+        <Feature icon={<Sparkles aria-hidden />} title="Boosts">
           Tint a site, swap its fonts or force dark mode, and it stays that way.
         </Feature>
       </ul>
@@ -329,6 +341,10 @@ function Welcome(): JSX.Element {
   )
 }
 
+/**
+ * A two-line row (§9.2): the bare 20 px glyph on the first text line, the label 15/600 over a
+ * 13 description at 69% on 20 px lines, 12 px above and below, rows touching (§9.21).
+ */
 function Feature({
   icon,
   title,
@@ -339,11 +355,11 @@ function Feature({
   children: ReactNode
 }): JSX.Element {
   return (
-    <li className="flex items-start gap-3 py-1.5">
-      <span className="zen-v2-glyph mt-px">{icon}</span>
+    <li className="zen-firstrun-row">
+      <span className="zen-firstrun-row-glyph">{icon}</span>
       <span className="min-w-0 flex-1">
-        <span className="block text-[15px] font-semibold leading-[20px]">{title}</span>
-        <span className="block text-[15px] leading-[20px] text-[var(--zen-muted)]">{children}</span>
+        <span className="block font-semibold">{title}</span>
+        <span className="zen-firstrun-small zen-firstrun-deemphasized block">{children}</span>
       </span>
     </li>
   )
@@ -363,13 +379,12 @@ function Look({
   onPreset: (i: number) => void
 }): JSX.Element {
   return (
-    <div className="my-auto flex flex-col gap-6">
+    <div className="my-auto flex flex-col">
       <StepHeading title="Choose your look">
         These colours belong to the Space you are in; every Space you make can wear its own.
       </StepHeading>
-      <div className="flex flex-col gap-3">
-        <SectionLabel>Colour scheme</SectionLabel>
-        <div role="radiogroup" aria-label="Colour scheme" className="zen-v2-card flex flex-col">
+      <Group label="Colour scheme">
+        <div role="radiogroup" aria-label="Colour scheme" className="flex flex-col">
           {SCHEMES.map((s) => (
             <RadioRow
               key={s.value}
@@ -379,14 +394,10 @@ function Look({
             />
           ))}
         </div>
-      </div>
-      <div className="flex flex-col gap-3">
-        <SectionLabel>Space colours</SectionLabel>
-        <div
-          role="radiogroup"
-          aria-label="Space colours"
-          className="zen-v2-card grid grid-cols-3 gap-x-2 gap-y-4 px-3 py-4"
-        >
+      </Group>
+      <Group label="Space colours">
+        {/* Six presets: three columns in the gutter at §10.4's 8 px gap (two would run three rows). */}
+        <div role="radiogroup" aria-label="Space colours" className="grid grid-cols-3 gap-2 px-4">
           {THEME_PRESETS.map((p, i) => (
             <button
               key={p.name}
@@ -394,23 +405,23 @@ function Look({
               role="radio"
               aria-checked={presetIndex === i}
               aria-label={p.name}
-              className="zen-v2-tile"
+              className="zen-firstrun-tile"
               onClick={() => onPreset(i)}
             >
               <span
-                className="zen-v2-tile-image"
+                className="zen-firstrun-tile-image"
                 style={{ background: resolveTheme(p.theme, dark).background }}
               />
               <span className="max-w-full truncate">{shortName(p.name)}</span>
             </button>
           ))}
         </div>
-      </div>
+      </Group>
     </div>
   )
 }
 
-/** "Zenium Purple" is the one preset name that does not fit under a 64 px tile. */
+/** "Zenium Purple" is the one preset name that does not fit under a third of the column. */
 function shortName(name: string): string {
   return name.startsWith('Zenium ') ? name.slice('Zenium '.length) : name
 }
@@ -425,17 +436,16 @@ function SearchEngine({
   onChange: (id: string) => void
 }): JSX.Element {
   return (
-    <div className="my-auto flex flex-col gap-6">
+    <div className="my-auto flex flex-col">
       <StepHeading title="Pick a search engine">
         What the address bar searches with. More engines, and keywords for them, live in Settings.
       </StepHeading>
-      <div role="radiogroup" aria-label="Search engine" className="zen-v2-card flex flex-col">
+      <div role="radiogroup" aria-label="Search engine" className="flex flex-col pt-4">
         {engines.map((e) => (
           <RadioRow
             key={e.id}
             checked={e.id === value}
             label={e.name}
-            glyph={<span className="text-[14px] font-semibold">{e.glyph}</span>}
             onPick={() => onChange(e.id)}
           />
         ))}
@@ -444,16 +454,17 @@ function SearchEngine({
   )
 }
 
-/** A v2 radio row: the 20 px circle, an optional glyph box, the label; 44 tall, the whole row taps. */
+/**
+ * A radio row (§9.2, §9.14, §9.21): the 20 px circle on the first text line, the label 15/400;
+ * 44 tall, growing with its label, the whole row taps and its press fill bleeds to the edge.
+ */
 function RadioRow({
   checked,
   label,
-  glyph,
   onPick
 }: {
   checked: boolean
   label: string
-  glyph?: ReactNode
   onPick: () => void
 }): JSX.Element {
   return (
@@ -462,11 +473,10 @@ function RadioRow({
       role="radio"
       aria-checked={checked}
       aria-label={label}
-      className="zen-v2-radio"
+      className="zen-firstrun-radio"
       onClick={onPick}
     >
-      <span className="zen-v2-radio-mark" aria-hidden />
-      {glyph && <span className="zen-v2-glyph">{glyph}</span>}
+      <span className="zen-firstrun-radio-mark" aria-hidden />
       <span className="min-w-0 flex-1 truncate">{label}</span>
     </button>
   )
@@ -474,32 +484,37 @@ function RadioRow({
 
 function DefaultBrowser(): JSX.Element {
   return (
-    <div className="my-auto flex flex-col gap-6">
-      <span className="zen-v2-glyph h-12 w-12">
-        <Globe className="h-6 w-6" strokeWidth={1.5} />
-      </span>
+    <div className="my-auto flex flex-col">
       <StepHeading title="Make Zenium your default browser">
-        Links from other apps open in Zenium, in your Spaces, with your Boosts and settings.
+        Links from other apps open in Zenium, in your Spaces, with your Boosts and settings. Android
+        asks you to confirm, and you can change this any time in Settings.
       </StepHeading>
-      <p className="text-[15px] leading-[20px] text-[var(--zen-muted)]">
-        Android asks you to confirm. You can change this any time in Settings.
-      </p>
     </div>
   )
 }
 
+/** The step's title block (§9.26): 22/600 at 28, its description 15 at 69% 4 below, at the gutter. */
 function StepHeading({ title, children }: { title: string; children: ReactNode }): JSX.Element {
   return (
-    <div className="flex flex-col gap-2">
-      <h2 className="text-[22px] font-semibold leading-[28px]">{title}</h2>
-      <p className="text-[15px] leading-[22px] text-[var(--zen-muted)]">{children}</p>
+    <div className="zen-firstrun-intro flex flex-col gap-1 px-4">
+      <h2 className="zen-firstrun-title">{title}</h2>
+      <p className="zen-firstrun-body zen-firstrun-deemphasized">{children}</p>
     </div>
   )
 }
 
-/** A sub-heading over a card: 15/600 in the window's ink. */
-function SectionLabel({ children }: { children: ReactNode }): JSX.Element {
-  return <h3 className="text-[15px] font-semibold leading-[20px]">{children}</h3>
+/**
+ * A group of choices (§9.17, §9.27, §10.3): a bare 15/600 sub-heading at the gutter with the
+ * first row's box 4 below it; 20 above the heading, 16 when the group follows the step's title
+ * block (§9.26) – the stylesheet's `zen-firstrun-group` rules.
+ */
+function Group({ label, children }: { label: string; children: ReactNode }): JSX.Element {
+  return (
+    <section className="zen-firstrun-group flex flex-col">
+      <h3 className="zen-firstrun-heading px-4 pb-1">{label}</h3>
+      {children}
+    </section>
+  )
 }
 
 /** Which preset a space's theme is (the first, when it is none of them). */

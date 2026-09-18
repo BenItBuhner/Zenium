@@ -340,15 +340,29 @@
   color: var(--v2-danger);
 }
 /*
- * On the window gradient (the first run) the secondary fill is of the window's ink, not the
- * page's – beside the rule and unlayered like it, since a layered override would lose to it.
+ * On the window (the first run, `data-surface="window"`) the secondary reads the window family
+ * through the control roles (§9.29): a fill of the window's ink, not the page's – beside the rule
+ * and unlayered like it, since a layered override would lose to it. The primary keeps the rule's
+ * `--v2-accent`, the clamped mix, for its contrast on a gradient of the accent's own hue.
  */
 .zen-firstrun .zen-v2-button:not([data-primary]) {
-  background: var(--v2-window-fill);
-  color: var(--zen-fg);
+  background: var(--v2-control-fill);
+  color: var(--v2-control-text);
 }
 .zen-firstrun .zen-v2-button:not([data-primary]):active:not(:disabled) {
-  background: var(--v2-window-fill-hover);
+  background: var(--v2-control-fill-hover);
+}
+/*
+ * The first run's own controls keep the ring under the coarse-pointer suppressor further down,
+ * as every v2 control does (§9.6), in the window's accent; inside the row, since rows run edge to
+ * edge.
+ */
+.zen-firstrun-radio:focus-visible,
+.zen-firstrun-tile:focus-visible,
+:root[data-pointer='coarse'] .zen-firstrun-radio:focus-visible,
+:root[data-pointer='coarse'] .zen-firstrun-tile:focus-visible {
+  outline: 2px solid var(--v2-control-accent);
+  outline-offset: -2px;
 }
 
 /*
@@ -3387,128 +3401,21 @@
 
 @layer components {
   /*
-   * v2 controls and surfaces (design-language-v2-draft.md §2, §3, §6), shared by the first run,
-   * the default-browser prompts and the gesture hint (the button is the `.zen-v2-button` rule
-   * beside the token block). Proton-like: 20 px radio circles on 44 px rows; cards flat with a
-   * hairline; panels and sheets opaque with a border and a shallow shadow. Everything reads the
-   * --v2-* tokens, nothing carries a colour of its own.
-   */
-  /* A card: flat, hairline border, radius 8; rows sit inside it edge to edge. */
-  .zen-v2-card {
-    overflow: hidden;
-    border: 1px solid var(--v2-card-border);
-    border-radius: var(--v2-radius-card);
-    background: var(--v2-card);
-    color: var(--v2-text);
-  }
-  /*
-   * A radio row (§9.2, §9.14, §9.21): the circle, then the label, on the row's base height – 44
-   * on the phone, 32 on desktop – growing with its content; the circle alone does not raise it.
-   * The vertical padding is what sets one line of body text on that height ((row − line) / 2:
-   * 12 on the phone, 6 on desktop), so the leading circle can sit on the first text line rather
-   * than the row's centre: `align-self: flex-start` and (line − box) / 2 below the line's top –
-   * 0 for the phone's 20 px circle on a 20 px line, 2 for desktop's 16 – never a constant. Rows
-   * in a card touch; there is no gap between them.
-   */
-  .zen-v2-radio {
-    display: flex;
-    width: 100%;
-    min-height: var(--v2-row);
-    align-items: center;
-    gap: 12px;
-    padding: calc((var(--v2-row) - var(--v2-line-body)) / 2) 12px;
-    color: var(--v2-text);
-    text-align: left;
-    font-size: var(--v2-font-body);
-    line-height: var(--v2-line-body);
-    transition: background 120ms var(--zen-ease);
-  }
-  .zen-v2-radio:active {
-    background: var(--v2-fill);
-  }
-  .zen-v2-radio-mark {
-    width: var(--v2-checkbox);
-    height: var(--v2-checkbox);
-    flex-shrink: 0;
-    align-self: flex-start;
-    margin-top: calc((var(--v2-line-body) - var(--v2-checkbox)) / 2);
-    border: 1px solid rgb(var(--v2-text-rgb) / 0.4);
-    border-radius: 9999px;
-    background: var(--v2-page);
-    transition:
-      border 120ms var(--zen-ease),
-      background 120ms var(--zen-ease);
-  }
-  /* Checked: the accent fills the circle around a 6 px dot (§9.14) – a 7 px ring on the phone's 20, 5 on desktop's 16. */
-  .zen-v2-radio[aria-checked='true'] .zen-v2-radio-mark {
-    border-width: calc((var(--v2-checkbox) - 6px) / 2);
-    border-color: var(--v2-accent);
-    background: var(--v2-on-accent);
-  }
-  /* An image radio card (a colour preset): the picture at the card radius, a 2 px accent outline when chosen. */
-  .zen-v2-tile {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 6px;
-    font-size: 13px;
-    line-height: 16px;
-    color: var(--v2-text);
-  }
-  .zen-v2-tile-image {
-    width: 84px;
-    height: 52px;
-    border: 1px solid var(--v2-card-border);
-    border-radius: var(--v2-radius-card);
-    transition: transform 120ms var(--zen-ease);
-  }
-  .zen-v2-tile:active .zen-v2-tile-image {
-    transform: scale(0.96);
-  }
-  .zen-v2-tile[aria-checked='true'] .zen-v2-tile-image {
-    outline: 2px solid var(--v2-accent);
-    outline-offset: 2px;
-  }
-  /* A glyph in a small box of the text fill: a search engine's letter, a feature's icon. */
-  .zen-v2-glyph {
-    display: inline-flex;
-    width: 28px;
-    height: 28px;
-    flex-shrink: 0;
-    align-items: center;
-    justify-content: center;
-    border-radius: var(--v2-radius-control);
-    background: var(--v2-fill);
-    color: var(--v2-text);
-  }
-  /*
-   * Between a radio row's circle and its label (a search engine's letter) the box is taller than
-   * the text line: §9.2's expression with the box's own 28, on both sides, centres it on the first
-   * line without letting it grow the row.
-   */
-  .zen-v2-radio .zen-v2-glyph {
-    align-self: flex-start;
-    margin-top: calc((var(--v2-line-body) - 28px) / 2);
-    margin-bottom: calc((var(--v2-line-body) - 28px) / 2);
-  }
-  .zen-firstrun .zen-v2-glyph {
-    background: var(--v2-window-fill);
-    color: var(--zen-fg);
-  }
-  .zen-firstrun .zen-v2-card .zen-v2-glyph {
-    background: var(--v2-fill);
-    color: var(--v2-text);
-  }
-
-  /*
-   * The first run on a phone. The overlay wears the window gradient itself (the page card
-   * underneath must not show through) and follows a change of look the way the window does;
-   * its text is the window's ink, its choices sit in neutral cards on the gradient.
+   * The first run on a phone (design-language-v2-draft.md §9.29, §9.17, §9.2, §9.14, §9.21). The
+   * flow is one page that is the window, like the new tab page: the overlay wears the space
+   * gradient itself (the page card underneath must not show through) and follows a change of
+   * look the way the window does, and its root carries `data-surface="window"`, so its text is
+   * the theme's ink and every control here reads the window family through the `--v2-control-*`
+   * roles – nothing below names a page token or a hue of its own. Its choices are rows under
+   * 15/600 headings (§9.17: no new phone cards) plus the image radio tiles of the colour presets;
+   * every size and line-height is §4's fixed scale through the tokens.
    */
   .zen-firstrun {
     background: var(--zen-bg);
+    color: var(--v2-control-text);
     transition: background 600ms var(--zen-ease);
   }
+  /* The progress: one 8 px dot per step, the current one in the full ink, the rest at 30%. */
   .zen-firstrun-dot {
     width: 8px;
     height: 8px;
@@ -3517,57 +3424,166 @@
     transition: background 120ms var(--zen-ease);
   }
   .zen-firstrun-dot[data-active='true'] {
-    background: var(--zen-fg);
-  }
-
-  /* A phone sheet on the v2 surface: opaque panel, hairline, radius 12, the dialog shadow. */
-  .zen-v2-sheet {
-    --zen-sheet-inner: 8px;
-    border: 1px solid var(--v2-border);
-    border-bottom: 0;
-    border-radius: var(--v2-radius-sheet) var(--v2-radius-sheet) 0 0;
-    background: var(--v2-panel);
-    color: var(--v2-text);
-    backdrop-filter: none;
-    box-shadow: var(--v2-shadow-sheet);
-  }
-  :root[data-theme='dark'] .zen-v2-sheet {
-    box-shadow: var(--v2-shadow-sheet);
-  }
-  .zen-v2-sheet .zen-sheet-handle {
-    background: rgb(var(--v2-text-rgb) / 0.25);
-  }
-  /* The sheet's scrim is a sibling in the same layer: black, never the gradient's tint. */
-  :has(> .zen-v2-sheet) > .zen-sheet-scrim,
-  .zen-v2-scrim {
-    background: var(--v2-scrim);
-  }
-  /* The same prompt as a dialog for a mouse. */
-  .zen-v2-dialog {
-    border: 1px solid var(--v2-border);
-    border-radius: var(--v2-radius-sheet);
-    background: var(--v2-panel);
-    color: var(--v2-text);
-    box-shadow: var(--v2-shadow-sheet);
+    background: var(--v2-control-text);
   }
   /*
-   * The glyph on a title block's title (§9.23): the row glyph – 20 on phones and tablets, 16 on
-   * desktop, at the row stroke – with no box behind it, centred on the 22 px title line by
-   * (line − glyph) / 2 rather than a constant; the CSS stroke width beats the SVG's attribute.
+   * Type. The wordmark is the one display size in the flow (34/600, tracked in a little), above
+   * §4's scale: the welcome step has nothing else to carry. The step title is the page title
+   * 22/600 at 28 (§9.26), a group heading the sub-heading 15/600 at 20 (§9.27), body 15 at 20,
+   * small 13 at 20 (§9.2: `--v2-line-small`, no stand-in); deemphasised is 69% of the ink.
    */
-  .zen-v2-title-glyph {
+  .zen-firstrun-wordmark {
+    font-size: 34px;
+    font-weight: var(--v2-weight-heading);
+    line-height: 40px;
+    letter-spacing: -0.02em;
+  }
+  .zen-firstrun-title {
+    font-size: var(--v2-font-title);
+    font-weight: var(--v2-weight-heading);
+    line-height: 28px;
+  }
+  .zen-firstrun-heading {
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-heading);
+    line-height: var(--v2-line-body);
+  }
+  .zen-firstrun-body {
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-body);
+    line-height: var(--v2-line-body);
+  }
+  .zen-firstrun-small {
+    font-size: var(--v2-font-small);
+    font-weight: var(--v2-weight-body);
+    line-height: var(--v2-line-small);
+  }
+  .zen-firstrun-deemphasized {
+    color: var(--v2-control-text-deemphasized);
+  }
+  /*
+   * A group of choices (§9.27, §10.3): 20 above its heading – 16 when it follows the step's title
+   * block (§9.26) – and the heading's line box 4 above the first row's box (a bare heading).
+   */
+  .zen-firstrun-group {
+    padding-top: 20px;
+  }
+  .zen-firstrun-intro + .zen-firstrun-group {
+    padding-top: 16px;
+  }
+  /*
+   * A two-line row (§9.2, §9.21): the text at the 16 gutter, 12 above and below (20 + 20 + 24 =
+   * 64), the row edge to edge; its 20 px glyph on the first text line, (line − glyph) / 2 below
+   * the line's top – 0 here – never a constant, and the glyph does not grow the line.
+   */
+  .zen-firstrun-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 12px 16px;
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
+  }
+  .zen-firstrun-row-glyph {
+    display: inline-flex;
     width: var(--v2-icon);
     height: var(--v2-icon);
     flex-shrink: 0;
-    margin-top: calc((22px - var(--v2-icon)) / 2);
+    margin-top: calc((var(--v2-line-body) - var(--v2-icon)) / 2);
+  }
+  .zen-firstrun-row-glyph > svg {
+    width: 100%;
+    height: 100%;
     stroke-width: var(--v2-icon-stroke);
+  }
+  /*
+   * A radio row (§9.2, §9.14, §9.21): the 20 px circle then the label 15/400 on the row's 44,
+   * growing with the label, never clamping; the vertical padding is (row − line) / 2, so one line
+   * sits on the base height and the circle can take the first text line rather than the row's
+   * centre – `align-self: flex-start` and (line − box) / 2 below the line's top, 0 for the phone's
+   * 20 on a 20 line. The whole row is the target; its press fill bleeds to the edge (§9.25); rows
+   * touch (no list gap).
+   */
+  .zen-firstrun-radio {
+    display: flex;
+    width: 100%;
+    min-height: var(--v2-row);
+    align-items: center;
+    gap: 12px;
+    padding: calc((var(--v2-row) - var(--v2-line-body)) / 2) 16px;
+    color: inherit;
+    text-align: left;
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-body);
+    line-height: var(--v2-line-body);
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-firstrun-radio:active {
+    background: var(--v2-control-fill);
+  }
+  .zen-firstrun-radio-mark {
+    width: var(--v2-checkbox);
+    height: var(--v2-checkbox);
+    flex-shrink: 0;
+    align-self: flex-start;
+    margin-top: calc((var(--v2-line-body) - var(--v2-checkbox)) / 2);
+    border: 1px solid rgb(var(--zen-fg-rgb) / 0.45);
+    border-radius: 9999px;
+    transition:
+      border-color 120ms var(--zen-ease),
+      background 120ms var(--zen-ease),
+      box-shadow 120ms var(--zen-ease);
+  }
+  /*
+   * Checked (§9.14): the accent fills the circle around a 6 px dot – the fill is an inset ring of
+   * (box − 6) / 2 over the dot's colour, 7 on the phone's 20 – in the ink that reads on the
+   * accent, since the window has no page colour to lend the dot.
+   */
+  .zen-firstrun-radio[aria-checked='true'] .zen-firstrun-radio-mark {
+    border-color: var(--v2-control-accent);
+    background: var(--zen-on-accent);
+    box-shadow: inset 0 0 0 calc((var(--v2-checkbox) - 6px) / 2 - 1px) var(--v2-control-accent);
+  }
+  /*
+   * An image radio tile (a colour preset; §9.14, §10.4): the picture at the card radius spanning
+   * its grid column, the 13 caption centred 8 below on the token's line, a 2 px accent outline
+   * 2 out when chosen; the tile scales `.96` while pressed (v1 §7's press).
+   */
+  .zen-firstrun-tile {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    color: inherit;
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+  }
+  .zen-firstrun-tile-image {
+    display: block;
+    width: 100%;
+    height: 64px;
+    border: 1px solid var(--v2-control-fill);
+    border-radius: var(--v2-radius-card);
+    transition:
+      transform 120ms var(--zen-ease),
+      outline-color 120ms var(--zen-ease);
+  }
+  .zen-firstrun-tile:active .zen-firstrun-tile-image {
+    transform: scale(0.96);
+  }
+  .zen-firstrun-tile[aria-checked='true'] .zen-firstrun-tile-image {
+    outline: 2px solid var(--v2-control-accent);
+    outline-offset: 2px;
   }
 
   /*
-   * The one-time gesture hint beside the address pill: a small panel, no tail, in a slot on the
-   * bar's side of the content frame. The slot opens to the panel's height in one step (the
-   * component sets it), the panel hangs from the slot's edge nearest the pill and the spring
-   * moves only the panel; `will-change` is on only while it does (`data-moving`).
+   * The one-time gesture hint beside the address pill: a small panel on the message chrome
+   * (§9.33's `--v2-panel`, hairline, card radius, panel shadow; a page surface, §9.29), no tail,
+   * in a slot on the bar's side of the content frame. The slot opens to the panel's height in one
+   * step (the component sets it), the panel hangs from the slot's edge nearest the pill and the
+   * spring moves only the panel; `will-change` is on only while it does (`data-moving`). Its one
+   * sentence is body 15 at 20 (§4) at the 16 gutter.
    */
   .zen-hint-slot {
     position: relative;
@@ -3577,15 +3593,15 @@
   .zen-hint {
     position: absolute;
     left: 0;
-    max-width: 300px;
-    padding: 10px 12px;
+    max-width: 320px;
+    padding: 12px 16px;
     border: 1px solid var(--v2-border);
     border-radius: var(--v2-radius-card);
     background: var(--v2-panel);
     box-shadow: var(--v2-shadow-panel);
     color: var(--v2-text);
-    font-size: 14px;
-    line-height: 20px;
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
   }
   .zen-hint[data-moving] {
     will-change: transform, opacity;

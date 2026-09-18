@@ -2,7 +2,8 @@ import type { JSX } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import type { PhoneBarPosition, UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
-import { SPRING_GENTLE, SpringAnimation } from '@renderer/lib/motion/spring'
+import { fadeOpacity } from '@renderer/lib/motion/fade'
+import { reducedMotion, SPRING_GENTLE, SpringAnimation } from '@renderer/lib/motion/spring'
 
 /** The hint waits this long after the page first shows, and stays this long unless touched. */
 const SHOW_AFTER_MS = 1200
@@ -17,9 +18,10 @@ const TRAVEL = 10
  * gets a little shorter while it is up, the way it does under the default-browser banner. (On
  * Android the page is a native view above the chrome, so a hint floating over the page would
  * never be seen.) The slot opens in one step and one `SPRING_GENTLE` spring carries the panel
- * in and out (opacity and a short slide, nothing that reflows); it leaves after its moment or at
- * the first touch on the chrome, and once it has fully arrived it is not shown again (the
- * `gestureHintDone` setting).
+ * in and out (opacity and a short slide, nothing that reflows) – under reduced motion a 120 ms
+ * fade in place each way (v2 §11.3); it leaves after its moment or at the first touch on the
+ * chrome, and once it has fully arrived it is not shown again (the `gestureHintDone` setting).
+ * The panel is a page surface on the message chrome (§9.29, §9.33).
  */
 export function GestureHint({
   state,
@@ -80,6 +82,35 @@ function HintSlot({ edge, onDone }: { edge: PhoneBarPosition; onDone: () => void
       finished = true
       run('settings.update', { gestureHintDone: true })
     }
+    // The first touch anywhere is the user getting on with it.
+    const onFirstTouch = (leave: () => void, stay: ReturnType<typeof setTimeout>): (() => void) => {
+      const onTouch = (): void => {
+        clearTimeout(stay)
+        leave()
+      }
+      window.addEventListener('pointerdown', onTouch, { capture: true, passive: true })
+      return () => window.removeEventListener('pointerdown', onTouch, { capture: true })
+    }
+    if (reducedMotion()) {
+      // §11.3: in place from the first frame, fading in; out on the same fade from where it is.
+      node.style.transform = ''
+      node.style.opacity = '0'
+      let cancel = fadeOpacity(node, 1, finish)
+      const leave = (): void => {
+        cancel()
+        cancel = fadeOpacity(node, 0, () => {
+          finish()
+          onDone()
+        })
+      }
+      const stay = setTimeout(leave, STAY_MS)
+      const untouch = onFirstTouch(leave, stay)
+      return () => {
+        clearTimeout(stay)
+        untouch()
+        cancel()
+      }
+    }
     const spring = new SpringAnimation(SPRING_GENTLE, paint, (rest) => {
       paint(rest)
       moving(false)
@@ -98,15 +129,10 @@ function HintSlot({ edge, onDone }: { edge: PhoneBarPosition; onDone: () => void
       spring.start(x, Math.min(v, 0), 0)
     }
     const stay = setTimeout(leave, STAY_MS)
-    // The first touch anywhere is the user getting on with it.
-    const onTouch = (): void => {
-      clearTimeout(stay)
-      leave()
-    }
-    window.addEventListener('pointerdown', onTouch, { capture: true, passive: true })
+    const untouch = onFirstTouch(leave, stay)
     return () => {
       clearTimeout(stay)
-      window.removeEventListener('pointerdown', onTouch, { capture: true })
+      untouch()
       spring.stop()
       moving(false)
     }
@@ -115,7 +141,7 @@ function HintSlot({ edge, onDone }: { edge: PhoneBarPosition; onDone: () => void
 
   return (
     <div ref={slot} className="zen-hint-slot" data-edge={edge} style={{ height: 0 }}>
-      <div ref={el} role="status" className="zen-hint" style={{ opacity: 0 }}>
+      <div ref={el} role="status" className="zen-hint" data-surface="page" style={{ opacity: 0 }}>
         Swipe the address bar to switch tabs, pull it {edge === 'bottom' ? 'up' : 'down'} to see
         them all.
       </div>
