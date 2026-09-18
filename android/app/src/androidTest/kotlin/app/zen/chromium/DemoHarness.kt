@@ -350,10 +350,12 @@ abstract class DemoHarness(
      * Click the nearest clickable ancestor of a labelled node through the accessibility tree – the
      * bounds it reports for content inside a scrolled list lag behind on the emulator, so a touch
      * at them would miss. Every node carrying the label is tried (a heading and a row can share
-     * one). False when none of them has a clickable ancestor.
+     * one). False when none of them has a clickable ancestor. `enabledOnly` skips disabled matches
+     * (the bar's own button of the same name under a sheet).
      */
-    protected fun clickByLabel(label: String): Boolean {
+    protected fun clickByLabel(label: String, enabledOnly: Boolean = false): Boolean {
         for (match in findNodes(label)) {
+            if (enabledOnly && !match.isEnabled) continue
             var node: AccessibilityNodeInfo? = match
             while (node != null && !node.isClickable) node = node.parent
             if (node != null) return node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
