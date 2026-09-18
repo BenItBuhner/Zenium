@@ -41,7 +41,12 @@ export function hostExpressions(hostname: string): string[] {
 }
 
 export class PrefixTable {
-  private constructor(private readonly values: BigUint64Array) {}
+  /** Sorted (unsigned) and deduplicated. A plain field: the snapshot script runs this under Node's type stripping. */
+  private readonly values: BigUint64Array
+
+  private constructor(values: BigUint64Array) {
+    this.values = values
+  }
 
   static empty(): PrefixTable {
     return new PrefixTable(new BigUint64Array(0))

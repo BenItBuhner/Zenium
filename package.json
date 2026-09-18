@@ -30,6 +30,7 @@
     "build:android:release": "npm run build:android:web && cd android && ./gradlew assembleRelease -PskipWeb",
     "icons": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/app-icons.ts",
     "blocking:snapshot": "node --experimental-strip-types --no-warnings .github/scripts/build-blocking-snapshot.mts",
+    "safebrowsing:snapshot": "node --experimental-strip-types --no-warnings --import ./.github/scripts/ts-imports.mjs .github/scripts/build-safebrowsing-snapshot.mts",
     "release": "node .github/scripts/cut-release.mjs"
   },
   "dependencies": {

@@ -12,6 +12,13 @@ import {
   type DangerVerdictProvider,
   type DangerVerdictRequest
 } from '../downloads/danger'
+import {
+  FEED_DOCUMENT_VERSION,
+  feedFile,
+  parseFeedDocument,
+  SAFE_BROWSING_DIR,
+  type FeedDocument
+} from './document'
 import { parseFeed, SAFE_BROWSING_FEEDS, safeBrowsingFeed, type SafeBrowsingFeed } from './feeds'
 import { buildSearchRequest, parseSearchResponse, type GsbSearchRequest } from './gsb'
 import { hostExpressions, PrefixTable, prefixOf } from './prefixes'
@@ -26,34 +33,11 @@ import { hostExpressions, PrefixTable, prefixOf } from './prefixes'
  * Browsing key, main-frame navigations the feeds let through are also looked up remotely
  * (`gsb.ts`); a late hit turns the page into the interstitial.
  *
- * Files: `safebrowsing/<feed>.json` under the profile, one {@link FeedDocument} each.
+ * Files: `safebrowsing/<feed>.json` under the profile, one {@link FeedDocument} each (`document.ts`).
  */
 
-export const SAFE_BROWSING_DIR = 'safebrowsing'
-export const FEED_DOCUMENT_VERSION = 1
-
-/**
- * Persisted table of one feed; also the format of the bundled snapshot. A host that reads the
- * files itself (Android's `privacy/SafeBrowsing.kt`) finds everything a hit needs in them.
- */
-export interface FeedDocument {
-  version: typeof FEED_DOCUMENT_VERSION
-  id: string
-  /** What a hit on the feed is reported as. */
-  threat: SafeBrowsingThreat
-  /** Hosts in the table. */
-  entries: number
-  /** When the content was fetched (or, for the snapshot, built). */
-  updatedAt: number
-  etag: string | null
-  lastModified: string | null
-  /** The content is the snapshot bundled with the build (not yet refreshed). */
-  bundled: boolean
-  /** Sorted 8-byte prefixes, base64. */
-  prefixes: string
-}
-
-export type { SafeBrowsingHit }
+export { FEED_DOCUMENT_VERSION, feedFile, parseFeedDocument, SAFE_BROWSING_DIR }
+export type { FeedDocument, SafeBrowsingHit }
 
 /** A block a host applied on the service's word, kept for the tab's error page. */
 export interface PendingBlock {
@@ -77,35 +61,6 @@ const REMOTE_TIMEOUT_MS = 6_000
 const PENDING_BLOCK_TTL_MS = 60_000
 const REMOTE_CACHE_MAX = 2000
 const HOST_CACHE_MAX = 4096
-
-export function feedFile(id: string): string {
-  return `${SAFE_BROWSING_DIR}/${id}.json`
-}
-
-/** Parse a persisted or bundled document; null when it is not one (or for another feed). */
-export function parseFeedDocument(text: string | null, id: string): FeedDocument | null {
-  if (!text) return null
-  try {
-    const raw = JSON.parse(text) as Partial<FeedDocument>
-    if (!raw || raw.version !== FEED_DOCUMENT_VERSION || raw.id !== id) return null
-    if (typeof raw.prefixes !== 'string') return null
-    const feed = safeBrowsingFeed(id)
-    if (!feed) return null
-    return {
-      version: FEED_DOCUMENT_VERSION,
-      id,
-      threat: feed.threat,
-      entries: typeof raw.entries === 'number' ? raw.entries : 0,
-      updatedAt: typeof raw.updatedAt === 'number' ? raw.updatedAt : 0,
-      etag: typeof raw.etag === 'string' ? raw.etag : null,
-      lastModified: typeof raw.lastModified === 'string' ? raw.lastModified : null,
-      bundled: raw.bundled === true,
-      prefixes: raw.prefixes
-    }
-  } catch {
-    return null
-  }
-}
 
 /** The origin bypasses are keyed on (`scheme://host[:port]`), or null for URLs without one. */
 export function bypassKey(url: string): string | null {

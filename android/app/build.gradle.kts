@@ -34,6 +34,16 @@ val copyBlockingSnapshot = tasks.register<Copy>("copyBlockingSnapshot") {
     into(projectDir.resolve("src/main/assets/blocking"))
 }
 
+// The bundled snapshot of the Safe Browsing feeds (resources/safebrowsing, refreshed with
+// `npm run safebrowsing:snapshot`): one prefix-table document per feed, seeded into the profile
+// by the core on first run and read by the Kotlin guard (privacy/Privacy.kt, `bundledFeed`).
+val copySafeBrowsingSnapshot = tasks.register<Copy>("copySafeBrowsingSnapshot") {
+    group = "build"
+    description = "Copies the bundled Safe Browsing snapshot into app/src/main/assets/safebrowsing"
+    from(webRoot.resolve("resources/safebrowsing"))
+    into(projectDir.resolve("src/main/assets/safebrowsing"))
+}
+
 val versionProps = Properties().apply {
     // Mirror the npm package version so About shows the same number on every platform.
     val pkg = webRoot.resolve("package.json").readText()
@@ -195,7 +205,7 @@ base {
     archivesName.set("zenium-$appVersion")
 }
 
-tasks.named("preBuild") { dependsOn(buildWeb, copyBlockingSnapshot) }
+tasks.named("preBuild") { dependsOn(buildWeb, copyBlockingSnapshot, copySafeBrowsingSnapshot) }
 
 dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
