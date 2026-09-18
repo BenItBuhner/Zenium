@@ -91,4 +91,27 @@ class UserAgentTest {
         val brands = UserAgent.brands("135.0.0.0", "0.3.0-beta.2+build.7")
         assertEquals(UserAgent.Brand("Zenium", "0", "0.3.0"), brands[1])
     }
+
+    @Test
+    fun desktopIsChromeOnLinuxWithTheSameEngineVersion() {
+        assertEquals(
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.6261.119 Safari/537.36",
+            UserAgent.desktop(UserAgent.normalize(phone))
+        )
+        // Tablets already lack the Mobile token; only the platform section changes.
+        val tablet = "Mozilla/5.0 (Linux; Android 14; SM-X910) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.6261.119 Safari/537.36"
+        assertEquals(
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.6261.119 Safari/537.36",
+            UserAgent.desktop(tablet)
+        )
+    }
+
+    @Test
+    fun desktopIsIdempotentAndKeepsTheChromeVersion() {
+        val desktop = UserAgent.desktop(UserAgent.normalize(phone))
+        assertEquals(desktop, UserAgent.desktop(desktop))
+        assertEquals("122.0.6261.119", UserAgent.chromeVersion(desktop))
+        assertFalse(desktop.contains("Android"))
+        assertFalse(desktop.contains("Mobile"))
+    }
 }

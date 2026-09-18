@@ -19,6 +19,7 @@ import type {
   MediaState,
   Mod,
   PasswordsStatus,
+  PageEnvironment,
   PermissionRule,
   Platform,
   Rect,
@@ -73,6 +74,7 @@ import {
   sanitizeBlockingSettings,
   type BlockingStatus
 } from '../shared/blocking'
+import { DEFAULT_PAGE_ENVIRONMENT, sanitizePageControls } from '../shared/pageControls'
 import { defer, type StoreIO } from './platform'
 import { sanitizeClosedEntries, summarizeClosed } from './session'
 import type { ZenWindow } from './window'
@@ -184,6 +186,8 @@ export class BrowserState {
   media: MediaState[] = []
   devtoolsOpenFor = new Set<string>()
   resources: ResourceSnapshot = emptyResourceSnapshot()
+  /** Device facts from the host (Android reports them at boot and on configuration changes). */
+  pageEnvironment: PageEnvironment = { ...DEFAULT_PAGE_ENVIRONMENT }
   windowBounds: Rect | null = null
   /** Windows to restore on startup (from the previous session). */
   restoredWindows: PersistedWindow[] = []
@@ -302,6 +306,7 @@ export class BrowserState {
     this.settings.passwords = sanitizePasswordSettings(data.settings?.passwords)
     this.settings.defaultBrowserPromo = sanitizePromoState(data.settings?.defaultBrowserPromo)
     this.settings.blocking = sanitizeBlockingSettings(data.settings?.blocking)
+    this.settings.pageControls = sanitizePageControls(data.settings?.pageControls)
     this.shortcutOverrides = data.shortcutOverrides ?? {}
     this.bookmarks = this.loadBookmarks(data)
     if (Array.isArray(data.windows) && data.windows.length) {
@@ -573,7 +578,8 @@ export class BrowserState {
       foreignTabIds: win.foreignTabIds(),
       windowCount: this.liveWindows().length,
       ...this.extras(win),
-      resources: this.resources
+      resources: this.resources,
+      pageEnvironment: this.pageEnvironment
     }
   }
 

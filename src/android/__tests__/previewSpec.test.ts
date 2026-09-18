@@ -26,6 +26,32 @@ describe('parsePreviewSpec', () => {
     expect(parsePreviewSpec('#find=x')).toEqual({ kind: 'find', text: 'x' })
   })
 
+  it('lands on a Settings section when one is named', () => {
+    expect(parsePreviewSpec('overlay=settings&section=accessibility')).toEqual({
+      kind: 'overlay',
+      overlay: 'settings',
+      section: 'accessibility'
+    })
+    expect(parsePreviewSpec('overlay=settings&section=')).toEqual({
+      kind: 'overlay',
+      overlay: 'settings'
+    })
+  })
+
+  it('opens the app menu, behind an overlay but ahead of the bars', () => {
+    expect(parsePreviewSpec('menu=app')).toEqual({ kind: 'menu' })
+    expect(parsePreviewSpec('menu=app&show=Desktop Site')).toEqual({
+      kind: 'menu',
+      show: 'Desktop Site'
+    })
+    expect(parsePreviewSpec('menu=app&find=x')).toEqual({ kind: 'menu' })
+    expect(parsePreviewSpec('overlay=history&menu=app')).toEqual({
+      kind: 'overlay',
+      overlay: 'history'
+    })
+    expect(parsePreviewSpec('menu=context')).toEqual({ kind: 'idle' })
+  })
+
   it('treats idle, an unknown overlay and junk as idle', () => {
     expect(parsePreviewSpec('idle')).toEqual({ kind: 'idle' })
     expect(parsePreviewSpec('')).toEqual({ kind: 'idle' })
