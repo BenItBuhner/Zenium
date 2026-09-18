@@ -384,6 +384,15 @@ export type PopoverBox =
 /** Which of the anchor's edges a popover's own edge lines up with (§9.20's horizontal order). */
 export type PopoverAlignment = 'start' | 'end'
 
+export interface PlacePopoverOptions {
+  /**
+   * Whether the 60%-of-window height cap applies (default true). `false` only for the surface
+   * §9.20 exempts by name: an extension's manifest popup at its requested size, capped by the
+   * window minus 16 alone.
+   */
+  capHeight?: boolean
+}
+
 const extent = (width: PopoverExtent): number =>
   typeof width === 'number' ? width : width.measured
 
@@ -427,7 +436,8 @@ export function placePopover(
   viewport: Size,
   width: PopoverExtent,
   height?: number,
-  preferredAlignment?: PopoverAlignment
+  preferredAlignment?: PopoverAlignment,
+  options: PlacePopoverOptions = {}
 ): PopoverBox & { alignment: PopoverAlignment } {
   // (4) A window narrower than the popover plus the margins: the popover gives, centred.
   const w = Math.max(0, Math.min(extent(width), viewport.width - 2 * POPOVER_MARGIN))
@@ -450,10 +460,12 @@ export function placePopover(
   // the window's edge gets the nearest box there is.
   else left = Math.min(Math.max(minLeft, at[preferred]), maxLeft)
 
-  // The 60% cap holds for every popover, an explicit height included: a taller document (a
-  // manifest popup, a long menu) shrinks to it and scrolls under its sticky title (§9.20).
+  // The 60% cap holds for every chassis popover, an explicit height included: a long menu or a
+  // known-height panel shrinks to it and scrolls under its sticky title (§9.20). Only a surface
+  // §9.20 exempts by name – an extension's manifest popup, its own document – opts out with
+  // `capHeight: false` and is held by the window minus 16 alone.
   const edge = Math.max(0, viewport.height - 2 * POPOVER_MARGIN)
-  const cap = Math.min(viewport.height * 0.6, edge)
+  const cap = options.capHeight === false ? edge : Math.min(viewport.height * 0.6, edge)
   const wanted = Math.max(0, Math.min(height ?? cap, cap))
   const below = viewport.height - (bar.y + bar.height) - POPOVER_MARGIN
   const above = bar.y - POPOVER_MARGIN
