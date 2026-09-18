@@ -58,13 +58,7 @@ export function OverviewSheet({ title, header, actions, onClose }: Props): JSX.E
       onDismissed={onClose}
       contentKey={`${title}:${actions.map((a) => a.id).join('/')}`}
       handleLabel="Resize sheet"
-      header={
-        <div className="flex h-9 items-center px-3">
-          <span className="min-w-0 flex-1 truncate text-[17px] font-semibold leading-tight tracking-[-0.012em]">
-            {title}
-          </span>
-        </div>
-      }
+      header={<span className="zen-sheet-title">{title}</span>}
     >
       {header}
       <ul className="flex flex-col pb-1">
