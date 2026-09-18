@@ -12,6 +12,7 @@ import { useChord } from '@renderer/lib/shortcuts'
 import { captureActiveTab, panelAloneOverContent, uiStore, type UiState } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { dropStore } from '@renderer/lib/drag'
+import { newTabGrowStore } from '@renderer/lib/newtab'
 import { Urlbar } from '../urlbar/Urlbar'
 import { NewTabPage } from '../newtab/NewTabPage'
 import { OverlayHost } from '../overlays/OverlayHost'
@@ -83,6 +84,9 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
   // The phone draws a new tab page in the frame where the blank page would be (the desktop
   // keeps Zen's bare frame). Its view is never placed there – see `useLayoutReporter`.
   const newTabPage = phone && tab !== null && tab.url === BLANK_URL && !foreign
+  // The grow surface is a stage layer too, but the page it reveals must be painted under it: the
+  // surface fades on its own progress and the page shows through (NewTabGrowLayer).
+  const growing = newTabGrowStore.use((s) => s.phase !== 'idle')
   const showSnapshot =
     (contentHidden || glanceActive) &&
     Boolean(tab) &&
@@ -110,7 +114,7 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
             {newTabPage && (
               // Kept mounted under the omnibox and the gesture stage (which draws its own cards),
               // just not painted, so the page is there the moment they leave.
-              <NewTabPage state={state} tab={tab} hidden={ui.urlbar.open || staged} />
+              <NewTabPage state={state} tab={tab} hidden={ui.urlbar.open || (staged && !growing)} />
             )}
             {tab && foreign && !contentHidden && !glanceActive && (
               <ForeignTabPreview tabId={tab.id} />

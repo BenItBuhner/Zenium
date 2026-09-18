@@ -130,9 +130,8 @@ function SearchField({ tab }: { tab: Tab }): JSX.Element {
         onClick={open}
       >
         <Search className="zen-ntp-placeholder h-5 w-5 shrink-0" strokeWidth={1.75} />
-        <span className="zen-ntp-placeholder min-w-0 flex-1 truncate text-[15px] leading-5">
-          Search or type URL
-        </span>
+        {/* The pill's words (PhoneShell), one string for the address wherever it is asked for. */}
+        <span className="zen-ntp-placeholder min-w-0 flex-1 truncate">Search or enter address</span>
       </button>
       {trailing && (
         <span className="flex shrink-0 items-center gap-0.5 pr-1.5">

@@ -331,11 +331,13 @@
   color: var(--v2-danger);
 }
 /*
- * Busy (§9.30): a working button keeps its size and full opacity, and its label gives way to a
- * 16 px spinner in the same box (`aria-busy`). Unlayered with the rule above for the same reason.
+ * Busy (§9.30): a working button keeps its size and full opacity – busy is not disabled, so the
+ * .4 above never applies to it – and its label gives way to a 16 px spinner in the same box
+ * (`aria-busy`). Unlayered with the rule above for the same reason.
  */
 .zen-v2-button[aria-busy='true'] {
   position: relative;
+  opacity: 1;
 }
 .zen-v2-button[aria-busy='true'] .zen-v2-button-label {
   visibility: hidden;
@@ -2537,15 +2539,27 @@
 
 @layer components {
   /*
-   * v2 controls (design language v2 draft, sections 2, 3 and 6) inside the phone sheet chassis
-   * (`.zen-sheet` above, which is the v2 surface, header and grabber): rows that grow with their
-   * text, Proton's square checkbox and round radio, image radio cards. Built from the `--v2-*`
+   * v2 controls (design language v2 draft, sections 2, 3, 6 and 10.4) inside the phone sheet
+   * chassis (`.zen-sheet` above, which is the v2 surface, header and grabber): rows that grow with
+   * their text, the switch row, Proton's round radio, image radio cards. Built from the `--v2-*`
    * tokens alone. Type: hierarchy by size, weights 400 and 600 only.
    */
   .zen-v2-heading {
-    font-size: 15px;
-    font-weight: 600;
-    line-height: 20px;
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-heading);
+    line-height: var(--v2-line-body);
+  }
+  /*
+   * A group of rows in a sheet keeps the Settings pages' beat (section 10.3): its heading has 20
+   * above and 4 below, and the heading with its air is the whole separation between groups – no
+   * gap between sections. The first heading sits 8 under the sheet's header.
+   */
+  .zen-v2-section > .zen-v2-heading {
+    margin: 20px 0 4px;
+    padding: 0 16px;
+  }
+  .zen-v2-section:first-child > .zen-v2-heading {
+    margin-top: 8px;
   }
   .zen-v2-description {
     font-size: var(--v2-font-small);
@@ -2571,14 +2585,69 @@
     line-height: var(--v2-line-body);
     transition: background 120ms var(--zen-ease);
   }
-  .zen-v2-row:active:not(:disabled) {
+  .zen-v2-row:active:not(:disabled):not([aria-disabled='true']) {
     background: var(--v2-fill);
   }
-  .zen-v2-row:disabled {
+  /* Disabled (section 9.30): .4 on the whole row, text and control together, still laid out. */
+  .zen-v2-row:disabled,
+  .zen-v2-row[aria-disabled='true'] {
     opacity: 0.4;
   }
   .zen-sheet[data-dragging='true'] .zen-v2-row:active {
     background: transparent;
+  }
+  /* A row's text block: the label on the first line, its description under it, no gap (section 9.2). */
+  .zen-v2-row-text {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    flex-direction: column;
+  }
+  .zen-v2-label {
+    display: block;
+    overflow-wrap: anywhere;
+  }
+  .zen-v2-row-text > .zen-v2-description {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+  /*
+   * The switch (section 10.4, the Settings tab's primitive): a 36 × 20 track at radius 10 with a
+   * 16 thumb inset 2 that travels 16 in 150 ms; off = the text's ink at 25 % under a page-coloured
+   * thumb, on = accent under the on-accent thumb. It trails the row's text, centred on the row
+   * (section 9.18); the whole row is the switch (`role="switch"`, `aria-checked`).
+   */
+  .zen-v2-switch {
+    position: relative;
+    display: block;
+    width: 36px;
+    height: 20px;
+    flex-shrink: 0;
+    border-radius: 10px;
+    background: rgb(var(--v2-text-rgb) / 0.25);
+    transition: background 150ms var(--zen-ease);
+  }
+  .zen-v2-switch::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--v2-page);
+    transition:
+      transform 150ms var(--zen-ease),
+      background 150ms var(--zen-ease);
+  }
+  .zen-v2-row[aria-checked='true'] .zen-v2-switch {
+    background: var(--v2-accent);
+  }
+  .zen-v2-row[aria-checked='true'] .zen-v2-switch::after {
+    background: var(--v2-on-accent);
+    transform: translateX(16px);
   }
   /*
    * A row holding a control (section 9.21): the control's height plus 8, the 4 above and below
@@ -2593,11 +2662,11 @@
     padding: 4px 16px;
   }
   /*
-   * Checkbox: the token's square (20 under a finger, 16 on desktop) at radius 2, the accent filled
-   * in with a white check. Leading, it sits on the first text line (section 9.2): its top is
-   * (line − box) / 2 below the line's top – 0 on phones, 2 on desktop – and it never grows the line.
+   * Radio: the token's ring (20 under a finger, 16 on desktop); picked, the ring turns accent and
+   * a dot of half its size fills its middle. Leading, it sits on the first text line (section
+   * 9.2): its top is (line − box) / 2 below the line's top – 0 on phones, 2 on desktop – and it
+   * never grows the line. (Booleans are switch rows on a phone, section 10.4: no checkbox here.)
    */
-  .zen-v2-check,
   .zen-v2-radio {
     display: inline-flex;
     flex-shrink: 0;
@@ -2608,29 +2677,12 @@
     align-items: center;
     justify-content: center;
     border: 1px solid rgb(var(--v2-text-rgb) / 0.4);
+    border-radius: 9999px;
     background: var(--v2-page);
     color: var(--v2-on-accent);
     transition:
       background 120ms var(--zen-ease),
       border-color 120ms var(--zen-ease);
-  }
-  .zen-v2-check {
-    border-radius: 2px;
-  }
-  .zen-v2-check[data-checked] {
-    border-color: var(--v2-accent);
-    background: var(--v2-accent);
-  }
-  .zen-v2-check > svg {
-    opacity: 0;
-    transition: opacity 120ms var(--zen-ease);
-  }
-  .zen-v2-check[data-checked] > svg {
-    opacity: 1;
-  }
-  /* Radio: the token's ring; picked, the ring turns accent and a dot of half its size fills its middle. */
-  .zen-v2-radio {
-    border-radius: 9999px;
   }
   .zen-v2-radio::after {
     content: '';
@@ -2733,6 +2785,8 @@
     /* The panel's shadow, not the URL bar's halo: a resting field on a gradient must not darken the tiles. */
     box-shadow: var(--v2-shadow-panel);
     color: var(--v2-text);
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
     --zen-fg: var(--v2-text);
     --zen-fg-rgb: var(--v2-text-rgb);
     --zen-element-bg: var(--v2-fill);
@@ -2745,13 +2799,26 @@
   .zen-ntp-placeholder {
     color: var(--v2-text-deemphasized);
   }
-  /* The tiles come up one after another; the run waits while the page is not being painted. */
+  /*
+   * The tiles come up one after another, 20 ms apart, so eight are in within v1 §7's 300 ms
+   * (7 × 20 + 120 = 260). The run waits while the page is not being painted, and while the grow
+   * surface is still opaque over it (`data-grow='growing'`): it starts as the page shows through.
+   */
   .zen-ntp-site {
     animation: zen-fade 120ms var(--zen-ease) both;
-    animation-delay: calc(var(--zen-ntp-i, 0) * 30ms);
+    animation-delay: calc(var(--zen-ntp-i, 0) * 20ms);
   }
-  .zen-ntp[data-hidden] .zen-ntp-site {
+  .zen-ntp[data-hidden] .zen-ntp-site,
+  .zen-ntp[data-grow='growing'] .zen-ntp-site {
     animation-play-state: paused;
+  }
+  /* Reduced motion (v2 §11.3): one 120 ms fade for all of them, no stagger; the global rule that
+     cuts every animation to nothing is overruled here on purpose – the fade is the orientation. */
+  @media (prefers-reduced-motion: reduce) {
+    .zen-ntp-site {
+      animation-duration: 120ms !important;
+      animation-delay: 0ms;
+    }
   }
   /* A tile is an Essentials tile: radius 8, a fill of the window's ink, pressed a little deeper. */
   .zen-ntp-tile {
@@ -2850,16 +2917,17 @@
   }
   /*
    * The surface a new tab grows in (MOT-03): the window's colour, clipped per frame to the
-   * rectangle on its way from the button to the frame, and faded once it has arrived so the
-   * page beneath comes through.
+   * rectangle on its way from the button to the frame, and from seven tenths of the way faded on
+   * the same progress, so the page beneath comes through as it arrives (v2 §11, rule 4). Both are
+   * written per frame by NewTabGrowLayer; no transition of its own. The page's last capture lies
+   * under it with the surface's rectangle cut out, so the fade shows the new page, not the old.
    */
   .zen-ntp-grow-surface {
     background: var(--zen-bg);
     will-change: clip-path, opacity;
   }
-  .zen-ntp-grow-surface[data-phase='revealing'] {
-    opacity: 0;
-    transition: opacity 200ms var(--zen-ease);
+  .zen-ntp-grow-capture {
+    will-change: clip-path;
   }
 }
 

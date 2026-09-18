@@ -13,6 +13,10 @@ import { browserStore, closeUrlbar, uiStore } from './ui'
 // The new tab page growing out of the plus button (MOT-03)
 // ---------------------------------------------------------------------------
 
+/**
+ * `growing` while the surface is opaque; `revealing` once its progress has passed
+ * `GROW_FADE_FROM` and the page shows through it (the page's tiles start their entrance then).
+ */
 export type NewTabGrowPhase = 'idle' | 'growing' | 'revealing'
 
 export interface NewTabGrowState {
@@ -108,6 +112,42 @@ export function growTravel(origin: Rect, frame: Rect): number {
   return Math.max(120, Math.hypot(dx, dy) + (frame.height - origin.height) / 2)
 }
 
+/** The progress at which the page starts to show through the surface (v2 §11, rule 4's exception). */
+export const GROW_FADE_FROM = 0.7
+
+/**
+ * The surface's opacity at `progress`: opaque until `GROW_FADE_FROM`, then straight down to 0 at
+ * arrival. The page beneath comes up on the value that grows the window – one spring, no second
+ * clock – so a grow that is caught or run back fades back along the same line.
+ */
+export function growSurfaceOpacity(progress: number): number {
+  const t = (Math.max(0, Math.min(1, progress)) - GROW_FADE_FROM) / (1 - GROW_FADE_FROM)
+  return Math.round((1 - Math.max(0, Math.min(1, t))) * 1000) / 1000
+}
+
+/**
+ * `clip-path` for the page's last capture, which lies under the surface at the frame's rectangle:
+ * the card with the surface's rounded rectangle cut out of it (an even-odd path in the card's own
+ * coordinates), so that what shows through the fading surface is the new page beneath the layer
+ * and not the page being left. The cut-out grows with the surface, on the same progress.
+ */
+export function growHolePath(g: GrowFrame, card: Rect): string {
+  const n = (v: number): string => `${Math.round(v * 100) / 100}`
+  const x = g.x - card.x
+  const y = g.y - card.y
+  const r = Math.max(0, Math.min(g.radius, g.width / 2, g.height / 2))
+  const right = x + g.width
+  const bottom = y + g.height
+  const arc = `A${n(r)} ${n(r)} 0 0 1`
+  const outer = `M0 0H${n(card.width)}V${n(card.height)}H0Z`
+  const inner =
+    `M${n(x + r)} ${n(y)}H${n(right - r)}${arc} ${n(right)} ${n(y + r)}` +
+    `V${n(bottom - r)}${arc} ${n(right - r)} ${n(bottom)}` +
+    `H${n(x + r)}${arc} ${n(x)} ${n(bottom - r)}` +
+    `V${n(y + r)}${arc} ${n(x + r)} ${n(y)}Z`
+  return `path(evenodd, "${outer}${inner}")`
+}
+
 let pendingCapture: Promise<unknown> | null = null
 
 /**
@@ -157,7 +197,7 @@ export async function openNewTabPage(origin: Rect | null): Promise<void> {
   // From the overview the page morphs out of the new tab's card, as any picked tab does.
   if (overview) closeOverview(tabId ?? undefined)
   if (!animate) return
-  if (!tabId || newTabGrowStore.get().phase !== 'growing') {
+  if (!tabId || newTabGrowStore.get().phase === 'idle') {
     finishNewTabGrow()
     return
   }
@@ -168,7 +208,7 @@ export async function openNewTabPage(origin: Rect | null): Promise<void> {
     stopWaiting = null
     if (newTabGrowStore.get().tabId === tabId) {
       newTabGrowStore.set({ ready: true })
-      maybeReveal()
+      maybeFinish()
     }
   })
 }
@@ -205,23 +245,34 @@ function whenTabActive(tabId: string, then: () => void): () => void {
   return cancel
 }
 
-/** The surface has reached the frame; the page fades in beneath it as soon as it is there. */
-export function revealNewTabPage(): void {
-  if (newTabGrowStore.get().phase !== 'growing') return
+/**
+ * The surface's spring reports where it is: past `GROW_FADE_FROM` the page shows through the
+ * surface, and the page is told so (its tiles come up from then, not under an opaque surface).
+ */
+export function growProgress(progress: number): void {
+  const grow = newTabGrowStore.get()
+  if (grow.phase === 'growing' && progress >= GROW_FADE_FROM) {
+    newTabGrowStore.set({ phase: 'revealing' })
+  }
+}
+
+/** The surface has reached the frame and its fade is complete: nothing of the layer is visible. */
+export function arriveNewTabGrow(): void {
+  if (newTabGrowStore.get().phase === 'idle') return
   newTabGrowStore.set({ arrived: true })
-  maybeReveal()
+  maybeFinish()
 }
 
 /**
- * Both halves are in – the surface covers the frame and the page is mounted under it – so the
- * surface fades. The frame draws again beneath it; the blank page's own view stays away, since
- * the layout reporter never places a new tab page's view on the phone.
+ * Both halves are in – the surface has arrived (and faded on the way) and the blank tab is the
+ * active tab under it – so the layer goes. The frame draws again beneath it; the blank page's own
+ * view stays away, since the layout reporter never places a new tab page's view on the phone.
+ * Until the tab is active the (invisible) layer stays, keeping the page being left off screen.
  */
-function maybeReveal(): void {
+function maybeFinish(): void {
   const grow = newTabGrowStore.get()
-  if (grow.phase !== 'growing' || !grow.arrived || !grow.ready) return
-  newTabGrowStore.set({ phase: 'revealing' })
-  setStageLayerShown(GROW_LAYER, false)
+  if (grow.phase === 'idle' || !grow.arrived || !grow.ready) return
+  finishNewTabGrow()
 }
 
 export function finishNewTabGrow(): void {

@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest'
 import type { Rect } from '@shared/types'
 import {
   composeTiles,
+  GROW_FADE_FROM,
   GROW_ORIGIN_RADIUS,
   growClipPath,
   growFrame,
+  growHolePath,
+  growSurfaceOpacity,
   growTravel,
   tileLabel
 } from '../newtab'
@@ -41,6 +44,36 @@ describe('the grow surface (MOT-03)', () => {
   it('runs the spring over the distance the surface travels, never a trivial one', () => {
     expect(growTravel(origin, frame)).toBeGreaterThan(400)
     expect(growTravel(frame, frame)).toBe(120)
+  })
+
+  it('fades the surface on its own progress, from seven tenths to arrival (v2 §11 rule 4)', () => {
+    expect(GROW_FADE_FROM).toBe(0.7)
+    expect(growSurfaceOpacity(0)).toBe(1)
+    expect(growSurfaceOpacity(0.7)).toBe(1)
+    expect(growSurfaceOpacity(0.85)).toBe(0.5)
+    expect(growSurfaceOpacity(1)).toBe(0)
+    // A spring's overshoot never brings it back.
+    expect(growSurfaceOpacity(1.1)).toBe(0)
+    // Run backwards, it comes back along the same line.
+    expect(growSurfaceOpacity(0.775)).toBe(0.75)
+  })
+
+  it('cuts the surface out of the capture beneath it, in the capture’s own coordinates', () => {
+    const card: Rect = { x: 6, y: 40, width: 380, height: 700 }
+    const hole = growHolePath({ x: 106, y: 140, width: 200, height: 100, radius: 20 }, card)
+    expect(hole).toBe(
+      'path(evenodd, "M0 0H380V700H0Z' +
+        'M120 100H280A20 20 0 0 1 300 120V180A20 20 0 0 1 280 200H120A20 20 0 0 1 100 180V120A20 20 0 0 1 120 100Z")'
+    )
+    // Arrived, the cut-out is the whole card: nothing of the old page is left.
+    expect(growHolePath({ ...frame, radius: 14 }, card)).toContain('M14 0H366A14 14 0 0 1 380 14')
+    // The origin pill: its radius never exceeds half a side.
+    expect(growHolePath({ x: 6, y: 40, width: 44, height: 44, radius: 22 }, card)).toContain(
+      'A22 22 0 0 1'
+    )
+    expect(growHolePath({ x: 6, y: 40, width: 20, height: 44, radius: 22 }, card)).toContain(
+      'A10 10 0 0 1'
+    )
   })
 })
 

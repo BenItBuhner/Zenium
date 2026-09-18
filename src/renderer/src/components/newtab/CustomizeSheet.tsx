@@ -1,6 +1,6 @@
 import type { ChangeEvent, JSX, ReactNode } from 'react'
 import { useEffect, useRef, useState } from 'react'
-import { Check, Loader2, SlidersHorizontal } from 'lucide-react'
+import { Loader2, SlidersHorizontal } from 'lucide-react'
 import type {
   NewTabModules,
   NewTabPreset,
@@ -31,6 +31,7 @@ import {
 import { FrameDialogPortal, useFrameDialog } from '@renderer/lib/portals'
 import { browserStore, pushToast } from '@renderer/lib/ui'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
+import { SwitchRow } from '../sheet/SwitchRow'
 
 const PRESET_LABELS: Record<NewTabPreset, string> = {
   focused: 'Focused',
@@ -69,9 +70,9 @@ export function NewTabCustomizeLayer(): JSX.Element | null {
 
 /**
  * The new tab page's customise sheet (the gear on the page), a phone sheet in the v2 vocabulary:
- * the layout presets as image radio cards, the sections as checkbox rows, the shortcut style and
- * the wallpaper source as radio rows. Every change is written to the settings at once, so the
- * page behind the sheet shows it as the sheet is used.
+ * the layout presets as image radio cards, the sections as switch rows (§10.4), the shortcut
+ * style and the wallpaper source as radio rows. Every change is written to the settings at once,
+ * so the page behind the sheet shows it as the sheet is used.
  *
  * The chassis (`BottomSheet`) is the page surface (§9.29) with the v2 header and grabber; the
  * sheet registers with the host as a dialog that draws its own scrim, fading with its motion
@@ -135,7 +136,7 @@ function CustomizeSheet({ state }: { state: UIState }): JSX.Element {
       handleLabel="Resize sheet"
       header={<h2 className="zen-sheet-title">New Tab Page</h2>}
     >
-      <div className="flex flex-col gap-6 pb-4">
+      <div className="flex flex-col pb-4">
         <Section title="Layout">
           <div role="radiogroup" aria-label="Layout" className="zen-ntp-preset-grid">
             {NEW_TAB_PRESETS.map((preset) => (
@@ -158,14 +159,15 @@ function CustomizeSheet({ state }: { state: UIState }): JSX.Element {
 
         <Section title="Show">
           {MODULE_LABELS.map(({ key, label }) => {
+            // Feed has no source yet: its row stays, disabled, with the reason as its description.
             const unavailable = key === 'feed' && !FEED_AVAILABLE
             return (
-              <CheckRow
+              <SwitchRow
                 key={key}
                 label={label}
+                description={unavailable ? 'Not available' : undefined}
                 checked={sections[key]}
                 disabled={unavailable}
-                trailing={unavailable ? 'Not available' : undefined}
                 onChange={(checked) => update(toggleNewTabModule(settings, key, checked))}
               />
             )
@@ -241,45 +243,16 @@ function CustomizeSheet({ state }: { state: UIState }): JSX.Element {
   )
 }
 
-/** A group of the sheet: a sentence-case sub-heading and its rows, set apart by spacing alone. */
+/**
+ * A group of the sheet: a sentence-case sub-heading and its rows, set apart by spacing alone – the
+ * heading's 20 above and 4 below (§10.3), the Settings pages' beat, from the stylesheet.
+ */
 function Section({ title, children }: { title: string; children: ReactNode }): JSX.Element {
   return (
-    <section className="flex flex-col">
-      <h3 className="zen-v2-heading px-4 pb-1">{title}</h3>
+    <section className="zen-v2-section flex flex-col">
+      <h3 className="zen-v2-heading">{title}</h3>
       {children}
     </section>
-  )
-}
-
-/** A checkbox row: the 20 square on the left, the label to its right, the row is the target. */
-function CheckRow({
-  label,
-  checked,
-  disabled,
-  trailing,
-  onChange
-}: {
-  label: string
-  checked: boolean
-  disabled?: boolean
-  trailing?: string
-  onChange: (checked: boolean) => void
-}): JSX.Element {
-  return (
-    <button
-      type="button"
-      role="checkbox"
-      aria-checked={checked}
-      disabled={disabled}
-      className="zen-v2-row"
-      onClick={() => onChange(!checked)}
-    >
-      <span className="zen-v2-check" data-checked={checked || undefined} aria-hidden>
-        <Check className="h-3.5 w-3.5" strokeWidth={3} />
-      </span>
-      <span className="min-w-0 flex-1 truncate">{label}</span>
-      {trailing && <span className="zen-v2-description shrink-0">{trailing}</span>}
-    </button>
   )
 }
 

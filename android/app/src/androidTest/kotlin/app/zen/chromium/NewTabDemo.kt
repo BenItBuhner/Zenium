@@ -176,7 +176,7 @@ class NewTabDemo : DemoHarness("newtab-demo-state.json", "android-ntp", "newtab-
         val captions = sites.count { tile(it) != null }
         finding(
             "  active ${tab?.optString("id")} url '${tab?.optString("url")}', tabs ${tabCount()} (were $before); " +
-                "field ${if (findByLabel(FIELD_LABEL) != null) "shown" else "MISSING"}; tiles $captions of ${sites.size} " +
+                "field ${if (pageField() != null) "shown" else "MISSING"}; tiles $captions of ${sites.size} " +
                 verdict(tab?.optString("url") == BLANK_URL && tabCount() == before + 1 && tiles && captions >= 4)
         )
     }
@@ -225,7 +225,7 @@ class NewTabDemo : DemoHarness("newtab-demo-state.json", "android-ntp", "newtab-
     /** A tap on the field opens the omnibox, attached above the keyboard. */
     private fun fieldToOmnibox() {
         finding("\nsearch field")
-        val field = findByLabel(FIELD_LABEL) ?: run {
+        val field = pageField() ?: run {
             finding("  no '$FIELD_LABEL' on the page")
             return
         }
@@ -246,7 +246,7 @@ class NewTabDemo : DemoHarness("newtab-demo-state.json", "android-ntp", "newtab-
             back()
             SystemClock.sleep(1_500)
         }
-        finding("  back: omnibox ${if (omniboxInput() == null) "closed" else "STILL UP"}, page ${if (findByLabel(FIELD_LABEL) != null) "shown" else "MISSING"}")
+        finding("  back: omnibox ${if (omniboxInput() == null) "closed" else "STILL UP"}, page ${if (pageField() != null) "shown" else "MISSING"}")
     }
 
     /** NTP-21, NTP-22: the gear's sheet, a preset change, a wallpaper source change, predictive back. */
@@ -306,7 +306,7 @@ class NewTabDemo : DemoHarness("newtab-demo-state.json", "android-ntp", "newtab-
         val gone = findByLabel(SHEET_HANDLE_LABEL) == null
         finding(
             "  held: sheet ${if (heldUp) "still up" else "GONE EARLY"}; released: sheet ${if (gone) "dismissed" else "STILL UP"}; " +
-                "page ${if (findByLabel(FIELD_LABEL) != null) "shown" else "MISSING"} ${verdict(heldUp && gone)}"
+                "page ${if (pageField() != null) "shown" else "MISSING"} ${verdict(heldUp && gone)}"
         )
         if (!gone) {
             back()
@@ -417,6 +417,22 @@ class NewTabDemo : DemoHarness("newtab-demo-state.json", "android-ntp", "newtab-
         findNodeWhere { it.isEditable && (it.contentDescription?.toString() == OMNIBOX_LABEL || it.isFocused) }
             ?.let { node -> Rect().also { node.getBoundsInScreen(it) } }
 
+    /**
+     * The page's search field: the button reading [FIELD_LABEL] inside the page's "Search" group.
+     * The bar's pill and the omnibox's input carry the same words (one string for the address), so
+     * the label alone would find the pill first; the group tells the page's field apart.
+     */
+    private fun pageField(): Rect? {
+        val reads: (AccessibilityNodeInfo, String) -> Boolean = { node, label ->
+            node.contentDescription?.toString() == label || node.text?.toString() == label
+        }
+        val inSearchGroup: (AccessibilityNodeInfo) -> Boolean = { node ->
+            generateSequence(node.parent) { it.parent }.take(4).any { reads(it, FIELD_GROUP_LABEL) }
+        }
+        return findNodeWhere { it.isClickable && reads(it, FIELD_LABEL) && inSearchGroup(it) }
+            ?.let { node -> Rect().also { node.getBoundsInScreen(it) } }
+    }
+
     private fun <T> onMain(block: () -> T): T {
         var result: T? = null
         instrumentation.runOnMainSync { result = block() }
@@ -489,7 +505,9 @@ class NewTabDemo : DemoHarness("newtab-demo-state.json", "android-ntp", "newtab-
         private const val PORT = 18131
         private const val BLANK_URL = "zen://blank"
         private const val NEW_TAB_LABEL = "New tab"
-        private const val FIELD_LABEL = "Search or type URL"
+        private const val FIELD_LABEL = "Search or enter address"
+        /** The `role="group"` around the page's field. */
+        private const val FIELD_GROUP_LABEL = "Search"
         private const val GEAR_LABEL = "Customise the new tab page"
         private const val SHEET_HANDLE_LABEL = "Resize sheet"
         private const val OMNIBOX_LABEL = "Search or enter address"
