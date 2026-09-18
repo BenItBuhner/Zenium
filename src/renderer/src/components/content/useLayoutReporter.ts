@@ -103,7 +103,7 @@ export function useLayoutReporter(
     }
   }, [sidePanelRef, panelOpen, formFactor, state.settings.sidebarSide])
 
-  const contentHidden = overlayCoversContent(ui) || ui.compactHover
+  const contentHidden = overlayCoversContent(ui) || ui.compactHover || ui.toolbarHover
   // Where the chrome lies under the pages – the Android chassis, whatever its form factor – the
   // live page is swapped for its cover, so the hide follows the cover's paint. The desktop hosts
   // report the hide the moment it is wanted, as they always have.

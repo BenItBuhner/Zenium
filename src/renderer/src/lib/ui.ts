@@ -8,6 +8,7 @@ import type {
   UrlbarOpenMode
 } from '@shared/types'
 import { cmd, onEvent, run } from './api'
+import { afterKeyRelease } from './keyRelease'
 import { createStore } from './store'
 import { rememberThumbnail, thumbnailOf } from './thumbnails'
 
@@ -104,7 +105,10 @@ export interface UiState {
   toasts: Toast[]
   statusText: string
   drag: DragState | null
+  /** The hidden sidebar (compact mode, fullscreen) is out over a picture of the page. */
   compactHover: boolean
+  /** The hidden top toolbar (compact mode, fullscreen) is out over a picture of the page. */
+  toolbarHover: boolean
   renamingTabId: string | null
   renamingFolderId: string | null
   /** Tab whose pinned URL is being edited in the small prompt. */
@@ -197,6 +201,7 @@ export const uiStore = createStore<UiState>(
     statusText: '',
     drag: null,
     compactHover: false,
+    toolbarHover: false,
     renamingTabId: null,
     renamingFolderId: null,
     editingPinnedUrlTabId: null,
@@ -314,6 +319,7 @@ export function invalidateSnapshot(): void {
     !ui.urlbar.open &&
     !ui.drag &&
     !ui.compactHover &&
+    !ui.toolbarHover &&
     !ui.drawerOpen &&
     !ui.menu &&
     !ui.siteInfoOpen &&
@@ -430,13 +436,18 @@ export function openFindBar(tabId: string, text = '', again: 'next' | 'prev' | n
   })
 }
 
-/** Esc, the X, Back: the bar goes, the active match stays selected and the page has the keyboard. */
-export function closeFindBar(): void {
+/**
+ * Esc, the X, Back: the bar goes, the active match stays selected and the page has the keyboard.
+ * Closed by a key (`release: 'afterKey'`), the page gets the keyboard once that key is up: a
+ * page in HTML fullscreen leaves it on any Escape event the engine hands it, the release too.
+ */
+export function closeFindBar(release: 'now' | 'afterKey' = 'now'): void {
   const ui = uiStore.get()
   if (!ui.findOpen) return
   if (ui.findTabId) run('find.stop', { tabId: ui.findTabId, keepSelection: true })
   uiStore.set({ findOpen: false, findTabId: null, findRequest: null })
-  returnFocusToPage()
+  if (release === 'afterKey') afterKeyRelease(returnFocusToPage)
+  else returnFocusToPage()
 }
 
 // ---------------------------------------------------------------------------

@@ -120,7 +120,7 @@ export function FindBar({
               e.preventDefault()
               if (text) search(text, !e.shiftKey)
             }
-            if (e.key === 'Escape') closeFindBar()
+            if (e.key === 'Escape') closeFindBar('afterKey')
           }}
         />
         <span
@@ -160,7 +160,7 @@ export function FindBar({
         className={buttonClass}
         title="Close (Esc)"
         aria-label="Close find bar"
-        onClick={closeFindBar}
+        onClick={() => closeFindBar()}
       >
         <X className={glyphClass} />
       </button>

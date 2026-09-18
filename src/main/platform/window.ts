@@ -13,6 +13,7 @@ import type {
 } from '../../core/platform'
 import { TitleThrottle } from '../../shared/windowTitle'
 import { windowIcon } from './appIcon'
+import { EdgeTracker, edgeState, type EdgeZone } from './edgeReveal'
 import { placeWindow, type DisplayArea } from './windowPlacement'
 
 const MIN_WIDTH = 640
@@ -25,6 +26,13 @@ const POPUP_MIN_WIDTH = 320
 const POPUP_MIN_HEIGHT = 200
 /** Width (px) of the edge zone that reveals the sidebar in compact mode. */
 const COMPACT_REVEAL_ZONE = 14
+/**
+ * Height (px) of the top zone that reveals the hidden toolbar. Narrower than the sidebar's: a
+ * fullscreen page's own top row sits right under it, and the cursor parks on the screen edge.
+ */
+const TOOLBAR_REVEAL_ZONE = 4
+/** How far below the top edge the cursor may roam before a revealed toolbar is asked to go. */
+const TOOLBAR_KEEP_ZONE = 120
 /**
  * Windows 11 draws the caption buttons itself (Window Controls Overlay), which is what gives the
  * maximise button its Snap Layouts flyout. macOS keeps its traffic lights; Linux draws Zenium's.
@@ -40,7 +48,8 @@ export class ElectronWindow implements WindowHost {
   readonly win: BrowserWindow
   private boundsTimer: ReturnType<typeof setTimeout> | null = null
   private compactTimer: ReturnType<typeof setInterval> | null = null
-  private compactLastSent: boolean | null = null
+  private readonly sidebarEdge = new EdgeTracker()
+  private readonly toolbarEdge = new EdgeTracker()
   private readonly titles: TitleThrottle
   private captionColors: CaptionColors
 
@@ -336,7 +345,9 @@ export class ElectronWindow implements WindowHost {
   /**
    * Like Zen, reveal the hidden sidebar by tracking the real cursor position instead of relying
    * on DOM hover: the page view and the frameless resize border never deliver mouse events to
-   * the chrome, so a DOM-only edge strip is unreliable.
+   * the chrome, so a DOM-only edge strip is unreliable. The hidden top toolbar is revealed the
+   * same way: in a fullscreen window the page runs edge to edge and covers every strip the
+   * chrome could hover.
    */
   private startCompactTracking(): void {
     if (this.compactTimer) return
@@ -353,28 +364,42 @@ export class ElectronWindow implements WindowHost {
     const state = this.browser.state
     const zen = this.zen
     const cm = state.settings.compactMode
-    const hidden = zen.compactEnabled && cm.hideSidebar && !zen.compactSidebarPersistent
-    if (!hidden || zen.htmlFullscreenTabId) {
-      this.compactLastSent = null
+    // The window's fullscreen hides the chrome like compact mode with both switches on.
+    const fullscreen = zen.chrome !== 'popup' && this.win.isFullScreen()
+    const sidebarHidden =
+      fullscreen || (zen.compactEnabled && cm.hideSidebar && !zen.compactSidebarPersistent)
+    const toolbarHidden =
+      state.settings.toolbarLayout === 'multiple' &&
+      (fullscreen || (zen.compactEnabled && cm.hideToolbar))
+    if (zen.htmlFullscreenTabId || (!sidebarHidden && !toolbarHidden)) {
+      this.sidebarEdge.reset()
+      this.toolbarEdge.reset()
       return
     }
-    if (!this.win.isFocused() && !zen.compactSidebarRevealed) return
+    if (!this.win.isFocused() && !zen.compactSidebarRevealed && !this.toolbarEdge.revealed) return
     const bounds = this.win.getContentBounds()
     const cursor = screen.getCursorScreenPoint()
-    const insideY = cursor.y >= bounds.y && cursor.y <= bounds.y + bounds.height
-    const side = state.settings.sidebarSide
-    const distance = side === 'left' ? cursor.x - bounds.x : bounds.x + bounds.width - cursor.x
-    const sidebarWidth = state.settings.sidebarExpanded ? state.settings.sidebarWidth : 56
-    const inRevealZone = insideY && distance >= -6 && distance <= COMPACT_REVEAL_ZONE
-    const outsideSidebar = !insideY || distance > sidebarWidth + 32 || distance < -48
-    // Each transition is sent once; re-sending "hide" would keep resetting the renderer's
-    // hide delay.
-    if (inRevealZone && this.compactLastSent !== true) {
-      this.compactLastSent = true
-      this.send('compact.reveal', { revealed: true })
-    } else if (outsideSidebar && this.compactLastSent !== false) {
-      this.compactLastSent = false
-      if (zen.compactSidebarRevealed) this.send('compact.reveal', { revealed: false })
+    if (sidebarHidden) {
+      const sidebarWidth = state.settings.sidebarExpanded ? state.settings.sidebarWidth : 56
+      const zone: EdgeZone = {
+        edge: state.settings.sidebarSide,
+        reveal: COMPACT_REVEAL_ZONE,
+        keep: sidebarWidth + 32
+      }
+      const send = this.sidebarEdge.sample(
+        edgeState(cursor, bounds, zone),
+        zen.compactSidebarRevealed
+      )
+      if (send !== null) this.send('compact.reveal', { revealed: send, edge: 'sidebar' })
+    } else {
+      this.sidebarEdge.reset()
+    }
+    if (toolbarHidden) {
+      const zone: EdgeZone = { edge: 'top', reveal: TOOLBAR_REVEAL_ZONE, keep: TOOLBAR_KEEP_ZONE }
+      const send = this.toolbarEdge.sample(edgeState(cursor, bounds, zone))
+      if (send !== null) this.send('compact.reveal', { revealed: send, edge: 'toolbar' })
+    } else {
+      this.toolbarEdge.reset()
     }
   }
 }

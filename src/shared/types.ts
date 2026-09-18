@@ -3085,7 +3085,11 @@ export interface Events {
   /** Link hover status text (Firefox shows this in the bottom corner). */
   status: { text: string }
   'sidebar.toggle': void
-  'compact.reveal': { revealed: boolean }
+  /**
+   * The cursor reached (or left) the edge of a hidden piece of chrome: the sidebar's side in
+   * compact mode, the top edge for the toolbar; both while the window is fullscreen.
+   */
+  'compact.reveal': { revealed: boolean; edge: 'sidebar' | 'toolbar' }
   'theme.open': { spaceId: string }
   'space.new': void
   'tab.startRename': { tabId: string }

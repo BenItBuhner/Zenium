@@ -123,8 +123,8 @@ export function useMainEvents(): void {
       onEvent('space.switched', ({ fromIndex, toIndex }) => {
         uiStore.set({ spaceSlideDirection: toIndex > fromIndex ? 1 : toIndex < fromIndex ? -1 : 0 })
       }),
-      onEvent('compact.reveal', ({ revealed }) =>
-        window.dispatchEvent(new CustomEvent('zen-compact-reveal', { detail: revealed }))
+      onEvent('compact.reveal', (reveal) =>
+        window.dispatchEvent(new CustomEvent('zen-compact-reveal', { detail: reveal }))
       ),
       onEvent('menu.show', (menu) => void showMenu(menu, currentActiveTabId())),
       onEvent('menu.hide', ({ menuId }) => {
