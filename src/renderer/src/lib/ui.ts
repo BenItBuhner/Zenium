@@ -170,6 +170,11 @@ export interface UiState {
   bookmarkEdit: { id: string | null; parentId: string; type: BookmarkNodeType } | null
   /** "Bookmark all tabs": the pages to file and the folder name Chrome would suggest. */
   bookmarkAllTabs: { tabIds: string[]; defaultTitle: string } | null
+  /**
+   * The new tab page's add (`id` null) or edit shortcut dialog, up over the page in `tabId`
+   * (a frame dialog; the page gives way to its picture while it is open).
+   */
+  newTabShortcutDialog: { tabId: string; id: string | null; title: string; url: string } | null
   /** A folder panel of the bookmarks bar hangs over the page. */
   barMenuOpen: boolean
   /** A permission prompt ("Allow example.com to use your camera?") is up over the page. */
@@ -241,6 +246,7 @@ export const uiStore = createStore<UiState>(
     zoomBubble: null,
     bookmarkEdit: null,
     bookmarkAllTabs: null,
+    newTabShortcutDialog: null,
     barMenuOpen: false,
     permissionPromptOpen: false,
     selectedTabIds: [],
@@ -331,6 +337,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.windowPromptOpen &&
     !ui.stageActive &&
     !ui.zoomBubble &&
+    !ui.newTabShortcutDialog &&
     !bookmarkChromeOpen(ui)
   )
 }
@@ -362,6 +369,7 @@ export function invalidateSnapshot(): void {
     !ui.stageActive &&
     !ui.zoomBubble &&
     ui.hoverCard.tabId === null &&
+    !ui.newTabShortcutDialog &&
     !bookmarkChromeOpen(ui)
   ) {
     uiStore.set({ snapshot: null, snapshotTabId: null })
@@ -626,8 +634,34 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.stageActive ||
     ui.zoomBubble !== null ||
     ui.hoverCard.tabId !== null ||
+    ui.newTabShortcutDialog !== null ||
     bookmarkChromeOpen(ui)
   )
+}
+
+// ---------------------------------------------------------------------------
+// The new tab page's shortcut dialog over the page
+// ---------------------------------------------------------------------------
+
+/**
+ * `newtab.shortcutDialog`: the page in `tabId` asked for its add or edit shortcut dialog. Like
+ * every chrome dialog over a page, the page is captured first and then gives way to its picture
+ * under the frame's scrim; the chrome takes the keyboard for the dialog's fields.
+ */
+export async function openNewTabShortcutDialog(
+  request: NonNullable<UiState['newTabShortcutDialog']>
+): Promise<void> {
+  if (uiStore.get().overlay === 'onboarding') return
+  await captureActiveTab(request.tabId)
+  run('focus.chrome', undefined)
+  uiStore.set({ newTabShortcutDialog: request })
+}
+
+export function closeNewTabShortcutDialog(): void {
+  if (!uiStore.get().newTabShortcutDialog) return
+  uiStore.set({ newTabShortcutDialog: null })
+  invalidateSnapshot()
+  returnFocusToPage()
 }
 
 // ---------------------------------------------------------------------------

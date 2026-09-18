@@ -11,6 +11,7 @@ import {
   openBookmarkChrome,
   openFindBar,
   openNewTabPageUrlbar,
+  openNewTabShortcutDialog,
   openOverlay,
   openUrlbar,
   pushToast,
@@ -50,6 +51,10 @@ export function useMainEvents(): void {
       onEvent('newtab.opened', ({ tabId, text }) => {
         const state = browserStore.get().state
         openNewTabPageUrlbar(tabId, text, isPhone() || state?.settings.urlbarBehavior === 'normal')
+      }),
+      onEvent('newtab.shortcutDialog', (request) => {
+        closeUrlbar()
+        void openNewTabShortcutDialog(request)
       }),
       onEvent('overlay.open', ({ kind, folderId, section }) => {
         const ui = uiStore.get()
