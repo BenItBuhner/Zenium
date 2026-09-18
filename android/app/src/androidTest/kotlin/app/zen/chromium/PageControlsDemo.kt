@@ -44,201 +44,251 @@ import kotlin.math.max
  * visual scale) and logs those as `probe:` lines for the logcat artifact, and it reads the host's
  * own word on whether the chrome has a surface up, which the accessibility tree lags behind on
  * the emulator. Only asserts that it could run; the recording and the screenshots
- * (`pagecontrols-*.png`) are the evidence.
+ * (`pagecontrols-NN-*.png`, numbered in the order they are taken) are the evidence.
+ *
+ * Open, with its sequence cut into sections and its moves protected, so that [ZoomSheetDemo]
+ * (the zoom sheet on a page of its own, then the sections here that were never recorded) is
+ * composed from the same pieces rather than a copy of them.
  */
 @RunWith(AndroidJUnit4::class)
-class PageControlsDemo : DemoHarness("pagecontrols-demo-state.json", "pagecontrols", "pagecontrols-demo") {
+open class PageControlsDemo(
+    stateAsset: String = "pagecontrols-demo-state.json",
+    shotPrefix: String = "pagecontrols",
+    handshakeDir: String = "pagecontrols-demo"
+) : DemoHarness(stateAsset, shotPrefix, handshakeDir) {
     override val tag = "PageControlsDemo"
 
     /** Serves the page that forbids pinching; starts when the seeded profile asks for its address. */
     private val lockedPage by lazy { LockedPageServer().also { it.start() } }
 
+    /** Screenshots count up in the order they are taken, whatever sections a demo is made of. */
+    private var shots = 0
+
     @Test
     fun record() = runDemo()
 
     override fun patchState(json: String): String =
+        patchTheme(json).replace(LOCKED_PAGE_PLACEHOLDER, lockedPage.url)
+
+    /** The seeded profile's colour scheme from the `theme` argument. */
+    protected fun patchTheme(json: String): String =
         json.replace("\"colorScheme\": \"light\"", "\"colorScheme\": \"$THEME\"")
-            .replace(LOCKED_PAGE_PLACEHOLDER, lockedPage.url)
 
     override fun warmUp() {
-        shell("cmd uimode night ${if (THEME == "dark") "yes" else "no"}")
-        // The first menu pays for layout and compilation: open it once off camera.
-        if (openMenu()) SystemClock.sleep(800)
-        ensureChromeClear()
+        warmUpChrome()
         awaitWikipedia("mobile", 30_000)
         SystemClock.sleep(1_500)
     }
 
+    /** The system's night mode after the seeded scheme, and the first menu paid for off camera. */
+    protected fun warmUpChrome() {
+        shell("cmd uimode night ${if (THEME == "dark") "yes" else "no"}")
+        // The first menu pays for layout and compilation: open it once off camera.
+        if (openMenu()) SystemClock.sleep(800)
+        ensureChromeClear()
+    }
+
     override fun demo() {
+        desktopSiteSection()
+        if (switchToTab(CERN_HOST)) darkThemeSection()
+        if (switchToTab(LOCKED_HOST)) {
+            forceZoomSection()
+            defaultZoomSection()
+            fontSizeSection()
+        }
+    }
+
+    // --- the sections ----------------------------------------------------------------------------
+
+    /** A numbered screenshot: `NN-name`, counting up through the demo. */
+    protected fun snap(name: String) = shot("%02d-%s".format(++shots, name))
+
+    /**
+     * Desktop Site on Wikipedia: the mobile layout, the desktop layout after the toggle, still
+     * the desktop layout after a pull-to-refresh, the checkbox remembered in the menu.
+     */
+    protected fun desktopSiteSection() {
         // 1. Wikipedia as the mobile browser gets it: the mobile (Minerva) layout.
         probe("wikipedia mobile")
-        shot("01-wikipedia-mobile")
+        snap("wikipedia-mobile")
         beat()
 
         // 2. App menu -> Desktop Site: the user agent switches and the page is asked again from
         //    the URL the tab was opened with, so the desktop site answers.
-        if (openMenuItem("Desktop Site", "02-menu-desktop-site")) {
-            if (awaitWikipedia("desktop", 40_000)) SystemClock.sleep(2_500) else Log.w(tag, "no desktop Wikipedia in time")
-            probe("wikipedia desktop")
-            shot("03-wikipedia-desktop")
-            beat()
+        if (!openMenuItem("Desktop Site", "menu-desktop-site")) return
+        if (awaitWikipedia("desktop", 40_000)) SystemClock.sleep(2_500) else Log.w(tag, "no desktop Wikipedia in time")
+        probe("wikipedia desktop")
+        snap("wikipedia-desktop")
+        beat()
 
-            // 3. Pull to refresh: the site is remembered, the reload stays on the desktop layout.
-            val before = probeValue("performance.timeOrigin")
-            pullToRefresh()
-            if (!awaitReload(before, 12_000)) {
-                Log.w(tag, "the pull did not reload; reloading through the view")
-                pageWebView()?.let { web -> instrumentation.runOnMainSync { web.reload() } }
-                awaitReload(before, 12_000)
-            }
-            awaitWikipedia("desktop", 30_000)
-            SystemClock.sleep(2_500)
-            probe("wikipedia desktop after reload")
-            shot("04-wikipedia-desktop-after-reload")
-            if (openMenu() && reveal("Desktop Site") != null) {
-                SystemClock.sleep(1_000)
-                shot("05-menu-desktop-site-checked")
-            }
-            ensureChromeClear()
-            SystemClock.sleep(1_200)
+        // 3. Pull to refresh: the site is remembered, the reload stays on the desktop layout.
+        pullToRefreshOrReload()
+        awaitWikipedia("desktop", 30_000)
+        SystemClock.sleep(2_500)
+        probe("wikipedia desktop after reload")
+        snap("wikipedia-desktop-after-reload")
+        if (openMenu() && reveal("Desktop Site") != null) {
+            SystemClock.sleep(1_000)
+            snap("menu-desktop-site-checked")
         }
+        ensureChromeClear()
+        SystemClock.sleep(1_200)
+    }
 
-        // 4. Next tab: a light-only page, darkened by the dark theme for sites.
-        if (switchToTab(CERN_HOST)) {
-            SystemClock.sleep(1_500)
-            Log.i(tag, "scheme: the page sees ${schemeSeen()} under the $THEME chrome")
-            shot("06-light-page-darkened")
+    /**
+     * On a light-only page: darkened by the dark theme for sites; Look and Feel's colour scheme
+     * switched to the other one and back with no reload, the same document seeing
+     * prefers-color-scheme flip; Dark Theme for This Site off, and the exception listed under
+     * Look and Feel.
+     */
+    protected fun darkThemeSection() {
+        // 4. A light-only page, darkened by the dark theme for sites.
+        SystemClock.sleep(1_500)
+        Log.i(tag, "scheme: the page sees ${schemeSeen()} under the $THEME chrome")
+        snap("light-page-darkened")
+        beat()
+
+        // 4b. Settings > Look and Feel > Colour scheme to the other one, no reload: the same
+        //     document sees prefers-color-scheme flip with the chrome, and the darkening goes
+        //     with a light chrome though its switch stays on (it follows the app theme, as in
+        //     Chrome). Then back, and both return.
+        val document = probeValue("performance.timeOrigin")
+        val own = if (THEME == "dark") "Dark" else "Light"
+        val other = if (THEME == "dark") "Light" else "Dark"
+        if (openSettings("Look and Feel") && chooseOption(COLOR_SCHEME_ROW, own, other)) {
+            SystemClock.sleep(1_200)
+            snap("look-and-feel-colour-scheme-${other.lowercase()}")
+            ensureChromeClear()
+            SystemClock.sleep(2_500)
+            Log.i(tag, "scheme: the page sees ${schemeSeen()} under the ${other.lowercase()} chrome, " +
+                "same document: ${probeValue("performance.timeOrigin") == document}")
+            snap("light-page-${other.lowercase()}-chrome")
             beat()
-
-            // 4b. Settings > Look and Feel > Colour scheme to the other one, no reload: the same
-            //     document sees prefers-color-scheme flip with the chrome, and the darkening goes
-            //     with a light chrome though its switch stays on (it follows the app theme, as in
-            //     Chrome). Then back, and both return.
-            val document = probeValue("performance.timeOrigin")
-            val own = if (THEME == "dark") "Dark" else "Light"
-            val other = if (THEME == "dark") "Light" else "Dark"
-            if (openSettings("Look and Feel") && chooseOption(COLOR_SCHEME_ROW, own, other)) {
-                SystemClock.sleep(1_200)
-                shot("06b-look-and-feel-colour-scheme-${other.lowercase()}")
+            if (openSettings("Look and Feel") && chooseOption(COLOR_SCHEME_ROW, other, own)) {
                 ensureChromeClear()
                 SystemClock.sleep(2_500)
-                Log.i(tag, "scheme: the page sees ${schemeSeen()} under the ${other.lowercase()} chrome, " +
+                Log.i(tag, "scheme: the page sees ${schemeSeen()} under the $THEME chrome again, " +
                     "same document: ${probeValue("performance.timeOrigin") == document}")
-                shot("06c-light-page-${other.lowercase()}-chrome")
+                snap("light-page-${THEME}-chrome-again")
                 beat()
-                if (openSettings("Look and Feel") && chooseOption(COLOR_SCHEME_ROW, other, own)) {
-                    ensureChromeClear()
-                    SystemClock.sleep(2_500)
-                    Log.i(tag, "scheme: the page sees ${schemeSeen()} under the $THEME chrome again, " +
-                        "same document: ${probeValue("performance.timeOrigin") == document}")
-                    shot("06d-light-page-${THEME}-chrome-again")
-                    beat()
-                } else {
-                    ensureChromeClear()
-                }
             } else {
                 ensureChromeClear()
             }
-
-            // 5. App menu -> Dark Theme for This Site off: the page's own light look, and the
-            //    exception listed under Look and Feel > Site exceptions (by the site it is for).
-            if (openMenuItem("Dark Theme for This Site", "07-menu-dark-theme-for-site")) {
-                SystemClock.sleep(2_000)
-                shot("08-light-page-not-darkened")
-                beat()
-                if (openSettings("Look and Feel")) {
-                    if (reveal(CERN_SITE) != null) {
-                        SystemClock.sleep(800)
-                        shot("09-look-and-feel-site-exceptions")
-                    } else {
-                        Log.w(tag, "no $CERN_SITE exception in Look and Feel")
-                    }
-                    ensureChromeClear()
-                    SystemClock.sleep(1_500)
-                }
-            }
+        } else {
+            ensureChromeClear()
         }
 
-        // 6. Next tab, the page that forbids pinching: the pinch does nothing. Settings >
-        //    Accessibility > Force enable zoom, and the same pinch scales the page.
-        if (switchToTab(LOCKED_HOST)) {
-            SystemClock.sleep(1_000)
-            probe("locked page")
-            shot("10-locked-page")
-            pinchOut()
+        // 5. App menu -> Dark Theme for This Site off: the page's own light look, and the
+        //    exception listed under Look and Feel > Site exceptions (by the site it is for).
+        if (!openMenuItem("Dark Theme for This Site", "menu-dark-theme-for-site")) return
+        SystemClock.sleep(2_000)
+        snap("light-page-not-darkened")
+        beat()
+        if (openSettings("Look and Feel")) {
+            if (reveal(CERN_SITE) != null) {
+                SystemClock.sleep(800)
+                snap("look-and-feel-site-exceptions")
+            } else {
+                Log.w(tag, "no $CERN_SITE exception in Look and Feel")
+            }
+            ensureChromeClear()
             SystemClock.sleep(1_500)
-            probe("pinch on a user-scalable=no page")
-            shot("11-pinch-locked")
-            beat()
-            if (openSettings("Accessibility")) {
-                if (toggleSwitch(FORCE_ZOOM_ROW, "12-accessibility")) {
-                    SystemClock.sleep(1_200)
-                    shot("13-accessibility-force-zoom-on")
-                }
-                ensureChromeClear()
-                SystemClock.sleep(2_000)
-            }
-            probe("locked page with force zoom")
-            pinchOut()
-            SystemClock.sleep(1_500)
-            probe("pinch with force zoom")
-            shot("14-pinch-forced")
-            beat()
+        }
+    }
 
-            // 7. A fresh copy of the page (the pinch goes with the old one), then Settings >
-            //    Accessibility > Default zoom two steps up: the preview grows in Settings and the
-            //    page's text follows once Settings closes.
-            reloadPage()
-            awaitPage(LOCKED_HOST, 20_000)
-            SystemClock.sleep(1_000)
-            probe("default zoom 100")
-            if (openSettings("Accessibility")) {
-                if (reveal(DEFAULT_ZOOM_ROW) != null) {
-                    SystemClock.sleep(800)
-                    clickByLabel("Zoom in")
-                    SystemClock.sleep(900)
-                    clickByLabel("Zoom in")
-                    SystemClock.sleep(1_200)
-                    shot("15-accessibility-default-zoom")
-                } else {
-                    Log.w(tag, "no $DEFAULT_ZOOM_ROW row in Accessibility")
-                }
-                ensureChromeClear()
-                SystemClock.sleep(2_500)
+    /**
+     * On the page that forbids pinching: the pinch does nothing; Settings > Accessibility >
+     * Force enable zoom, and the same pinch scales the page.
+     */
+    protected fun forceZoomSection() {
+        // 6. The pinch does nothing on a user-scalable=no page.
+        SystemClock.sleep(1_000)
+        probe("locked page")
+        snap("locked-page")
+        pinchOut()
+        SystemClock.sleep(1_500)
+        probe("pinch on a user-scalable=no page")
+        snap("pinch-locked")
+        beat()
+        if (openSettings("Accessibility")) {
+            if (toggleSwitch(FORCE_ZOOM_ROW, "accessibility")) {
+                SystemClock.sleep(1_200)
+                snap("accessibility-force-zoom-on")
             }
-            probe("default zoom stepped twice")
-            shot("16-locked-page-default-zoom")
-            beat()
-
-            // 8. The system's font size goes to 130 percent (the app keeps its own text; the page
-            //    waits for the switch), then Include system font size multiplies it into the zoom.
-            shell("settings put system font_scale 1.3")
-            SystemClock.sleep(2_500)
-            probe("system font size 130, not included")
-            shot("17-locked-page-system-font-size-off")
-            if (openSettings("Accessibility")) {
-                if (toggleSwitch(FONT_SIZE_ROW, "18-accessibility-font-size")) {
-                    SystemClock.sleep(1_200)
-                    shot("19-accessibility-font-size-on")
-                }
-                ensureChromeClear()
-                SystemClock.sleep(2_500)
-            }
-            probe("system font size 130, included")
-            shot("20-locked-page-system-font-size-on")
-            beat()
-            // Leave the system as it was found.
-            shell("settings put system font_scale 1.0")
+            ensureChromeClear()
             SystemClock.sleep(2_000)
         }
+        probe("locked page with force zoom")
+        pinchOut()
+        SystemClock.sleep(1_500)
+        probe("pinch with force zoom")
+        snap("pinch-forced")
+        beat()
+    }
+
+    /**
+     * A fresh copy of the page on screen (a pinch goes with the old one), then Settings >
+     * Accessibility > Default zoom two steps up: the preview grows in Settings and the page's
+     * text follows once Settings closes.
+     */
+    protected fun defaultZoomSection() {
+        // 7. Default zoom, two steps up.
+        val hostname = probeValue("location.hostname") ?: LOCKED_HOST
+        reloadPage()
+        awaitPage(hostname, 20_000)
+        SystemClock.sleep(1_000)
+        probe("default zoom 100")
+        if (openSettings("Accessibility")) {
+            if (reveal(DEFAULT_ZOOM_ROW) != null) {
+                SystemClock.sleep(800)
+                clickByLabel("Zoom in")
+                SystemClock.sleep(900)
+                clickByLabel("Zoom in")
+                SystemClock.sleep(1_200)
+                snap("accessibility-default-zoom")
+            } else {
+                Log.w(tag, "no $DEFAULT_ZOOM_ROW row in Accessibility")
+            }
+            ensureChromeClear()
+            SystemClock.sleep(2_500)
+        }
+        probe("default zoom stepped twice")
+        snap("locked-page-default-zoom")
+        beat()
+    }
+
+    /**
+     * The system's font size to 130 percent (the app keeps its own text; the page waits for the
+     * switch), then Include system font size multiplies it into the zoom. Leaves the system as
+     * it was found.
+     */
+    protected fun fontSizeSection() {
+        // 8. Include system font size.
+        shell("settings put system font_scale 1.3")
+        SystemClock.sleep(2_500)
+        probe("system font size 130, not included")
+        snap("locked-page-system-font-size-off")
+        if (openSettings("Accessibility")) {
+            if (toggleSwitch(FONT_SIZE_ROW, "accessibility-font-size")) {
+                SystemClock.sleep(1_200)
+                snap("accessibility-font-size-on")
+            }
+            ensureChromeClear()
+            SystemClock.sleep(2_500)
+        }
+        probe("system font size 130, included")
+        snap("locked-page-system-font-size-on")
+        beat()
+        shell("settings put system font_scale 1.0")
+        SystemClock.sleep(2_000)
     }
 
     // --- the chrome ------------------------------------------------------------------------------
 
-    private val host: Host get() = (activity as MainActivity).host
+    protected val host: Host get() = (activity as MainActivity).host
 
     /** The host's word on whether the chrome has a surface a back would dismiss (menu, Settings, …). */
-    private fun chromeSurfaceUp(): Boolean {
+    protected fun chromeSurfaceUp(): Boolean {
         var up = false
         instrumentation.runOnMainSync { up = host.back.chromeSurfaceUp }
         return up
@@ -256,7 +306,7 @@ class PageControlsDemo : DemoHarness("pagecontrols-demo-state.json", "pagecontro
      * scheme change on the software GPU, reported its surface down 1.7 s after the back – past
      * the pause – and the next back went to the system, which put the app away.
      */
-    private fun ensureChromeClear(): Boolean {
+    protected fun ensureChromeClear(): Boolean {
         for (attempt in 1..4) {
             val handle = findByLabel(HANDLE_LABEL)
             val surface = chromeSurfaceUp()
@@ -282,7 +332,7 @@ class PageControlsDemo : DemoHarness("pagecontrols-demo-state.json", "pagecontro
     }
 
     /** Poll the host until the chrome reports a surface up or not (`up`); false when it does not in time. */
-    private fun awaitSurface(up: Boolean, timeoutMs: Long): Boolean {
+    protected fun awaitSurface(up: Boolean, timeoutMs: Long): Boolean {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         while (SystemClock.uptimeMillis() < deadline) {
             if (chromeSurfaceUp() == up) return true
@@ -292,7 +342,7 @@ class PageControlsDemo : DemoHarness("pagecontrols-demo-state.json", "pagecontro
     }
 
     /** Open the app menu from a clear chrome; true once the host and the tree both show it. */
-    private fun openMenu(): Boolean {
+    protected fun openMenu(): Boolean {
         ensureForeground()
         if (!ensureChromeClear()) return false
         val button = findByLabel(MENU_LABEL) ?: computedMenuButton()
@@ -319,14 +369,14 @@ class PageControlsDemo : DemoHarness("pagecontrols-demo-state.json", "pagecontro
      * Open the app menu, scroll `label` into view, take `shotName` if asked, and pick the item.
      * False (menu closed again) when the menu or the item never showed up.
      */
-    private fun openMenuItem(label: String, shotName: String?): Boolean {
+    protected fun openMenuItem(label: String, shotName: String?): Boolean {
         if (!openMenu()) return false
         if (reveal(label) == null) {
             Log.w(tag, "no $label in the app menu")
             ensureChromeClear()
             return false
         }
-        if (shotName != null) shot(shotName)
+        if (shotName != null) snap(shotName)
         if (!clickByLabel(label)) {
             Log.w(tag, "$label could not be clicked")
             ensureChromeClear()
@@ -337,7 +387,7 @@ class PageControlsDemo : DemoHarness("pagecontrols-demo-state.json", "pagecontro
     }
 
     /** Settings from the app menu, then the section with that tab label. */
-    private fun openSettings(section: String): Boolean {
+    protected fun openSettings(section: String): Boolean {
         if (!openMenuItem("Settings", null)) return false
         if (waitFor(section, 6_000) == null || !clickByLabel(section)) {
             Log.w(tag, "no $section section in Settings")
@@ -353,14 +403,14 @@ class PageControlsDemo : DemoHarness("pagecontrols-demo-state.json", "pagecontro
      * switch is the checkable one, and it is clicked through the tree first, then with a finger
      * at its bounds should the tree's click not have flipped it. False when the row is not there.
      */
-    private fun toggleSwitch(row: String, shotName: String?): Boolean {
+    protected fun toggleSwitch(row: String, shotName: String?): Boolean {
         val bounds = reveal(row)
         if (bounds == null) {
             Log.w(tag, "no $row row in Settings")
             return false
         }
         SystemClock.sleep(800)
-        if (shotName != null) shot(shotName)
+        if (shotName != null) snap(shotName)
         val switch = findSwitch(row)
         if (switch == null) {
             Log.w(tag, "no switch labelled $row; tapping the row's trailing edge")
@@ -391,7 +441,7 @@ class PageControlsDemo : DemoHarness("pagecontrols-demo-state.json", "pagecontro
      * mouse), each with a finger at its bounds should the tree's click not have taken. False when
      * the row, the trigger or the option is not there; true once the row reads `next`.
      */
-    private fun chooseOption(row: String, current: String, next: String): Boolean {
+    protected fun chooseOption(row: String, current: String, next: String): Boolean {
         if (reveal(row) == null) {
             Log.w(tag, "no $row row in Settings")
             return false
@@ -424,31 +474,45 @@ class PageControlsDemo : DemoHarness("pagecontrols-demo-state.json", "pagecontro
     }
 
     /** The colour scheme the page sees (`prefers-color-scheme`), or null without a page. */
-    private fun schemeSeen(): String? =
+    protected fun schemeSeen(): String? =
         probeValue("matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'")
 
-    /** Fling the pill to the next tab until the page at `hostname` is on screen; false after three tries. */
-    private fun switchToTab(hostname: String): Boolean {
+    /**
+     * Fling the pill to the next tab until the page at `hostname` (and `path`, when two pages
+     * share a host) is on screen; false after three tries.
+     */
+    protected fun switchToTab(hostname: String, path: String? = null): Boolean {
         ensureChromeClear()
         for (attempt in 1..3) {
             flingLeft()
             settle()
-            if (awaitPage(hostname, 15_000)) return true
-            Log.w(tag, "fling $attempt did not land on $hostname")
+            if (awaitPage(hostname, 15_000, path)) return true
+            Log.w(tag, "fling $attempt did not land on $hostname${path.orEmpty()}")
         }
         return false
     }
 
     /** Reload the page on screen the way the tab would (its scale starts over). */
-    private fun reloadPage() {
+    protected fun reloadPage() {
         val web = pageWebView() ?: return
         val before = probeValue("performance.timeOrigin")
         instrumentation.runOnMainSync { web.reload() }
         awaitReload(before, 15_000)
     }
 
+    /** Pull to refresh, and reload through the view should the pull not have taken. */
+    protected fun pullToRefreshOrReload() {
+        val before = probeValue("performance.timeOrigin")
+        pullToRefresh()
+        if (!awaitReload(before, 12_000)) {
+            Log.w(tag, "the pull did not reload; reloading through the view")
+            pageWebView()?.let { web -> instrumentation.runOnMainSync { web.reload() } }
+            awaitReload(before, 12_000)
+        }
+    }
+
     /** A pull past the refresh threshold from the page's top (`lib/pull.ts`: 120 CSS px + slop). */
-    private fun pullToRefresh() {
+    protected fun pullToRefresh() {
         Finger().apply {
             down(width * 0.5f, height * 0.4f)
             moveBy(0f, 240 * density, 900)
@@ -458,7 +522,7 @@ class PageControlsDemo : DemoHarness("pagecontrols-demo-state.json", "pagecontro
     }
 
     /** Two fingers moving apart around the middle of the page. */
-    private fun pinchOut() {
+    protected fun pinchOut() {
         pinch(width * 0.5f, height * 0.4f, 80 * density, 320 * density, 700)
     }
 
@@ -511,7 +575,7 @@ class PageControlsDemo : DemoHarness("pagecontrols-demo-state.json", "pagecontro
     // --- the page --------------------------------------------------------------------------------
 
     /** The tab's WebView that is on screen (the test shares the app's process and its views). */
-    private fun pageWebView(): TabWebView? {
+    protected fun pageWebView(): TabWebView? {
         var found: TabWebView? = null
         instrumentation.runOnMainSync {
             fun walk(view: View) {
@@ -527,15 +591,21 @@ class PageControlsDemo : DemoHarness("pagecontrols-demo-state.json", "pagecontro
         return found
     }
 
-    /** Wait until the page on screen is at `hostname` and has finished loading; false on timeout. */
-    private fun awaitPage(hostname: String, timeoutMs: Long): Boolean {
+    /**
+     * Wait until the page on screen is at `hostname` (and at `path`, when given) and has finished
+     * loading; false on timeout.
+     */
+    protected fun awaitPage(hostname: String, timeoutMs: Long, path: String? = null): Boolean {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         while (SystemClock.uptimeMillis() < deadline) {
             val web = pageWebView()
-            if (web != null && evalJs(web, PAGE_STATE_JS) == "$hostname:complete") return true
+            val state = web?.let { evalJs(it, PAGE_STATE_JS) }?.split('|')
+            if (state != null && state.size == 3 && state[0] == hostname && state[2] == "complete" &&
+                (path == null || state[1] == path)
+            ) return true
             SystemClock.sleep(500)
         }
-        Log.w(tag, "page $hostname did not finish loading in ${timeoutMs}ms")
+        Log.w(tag, "page $hostname${path.orEmpty()} did not finish loading in ${timeoutMs}ms")
         return false
     }
 
@@ -556,7 +626,7 @@ class PageControlsDemo : DemoHarness("pagecontrols-demo-state.json", "pagecontro
     }
 
     /** Wait for a fresh document (its `performance.timeOrigin` differs from `before`). */
-    private fun awaitReload(before: String?, timeoutMs: Long): Boolean {
+    protected fun awaitReload(before: String?, timeoutMs: Long): Boolean {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         while (SystemClock.uptimeMillis() < deadline) {
             val now = probeValue("performance.timeOrigin")
@@ -567,7 +637,7 @@ class PageControlsDemo : DemoHarness("pagecontrols-demo-state.json", "pagecontro
     }
 
     /** What the page sees, as a `probe:` line in logcat. */
-    private fun probe(step: String) {
+    protected fun probe(step: String) {
         val web = pageWebView() ?: run {
             Log.i(tag, "probe: $step: no page on screen")
             return
@@ -575,11 +645,11 @@ class PageControlsDemo : DemoHarness("pagecontrols-demo-state.json", "pagecontro
         Log.i(tag, "probe: $step: ${evalJs(web, PROBE_JS)}")
     }
 
-    private fun probeValue(expression: String): String? =
+    protected fun probeValue(expression: String): String? =
         pageWebView()?.let { evalJs(it, "String($expression)") }
 
     /** The string a script evaluates to in the page, or null when it did not answer in time. */
-    private fun evalJs(web: TabWebView, script: String): String? {
+    protected fun evalJs(web: TabWebView, script: String): String? {
         val latch = CountDownLatch(1)
         var result: String? = null
         instrumentation.runOnMainSync {
@@ -598,7 +668,7 @@ class PageControlsDemo : DemoHarness("pagecontrols-demo-state.json", "pagecontro
      * splits on whitespace and knows nothing of quotes, so the script travels base64-encoded in a
      * single token and `sh` decodes it.
      */
-    private fun shell(script: String): String {
+    protected fun shell(script: String): String {
         val encoded = Base64.encodeToString(script.toByteArray(), Base64.NO_WRAP)
         val descriptor = ui.executeShellCommand("sh -c echo\${IFS}$encoded|base64\${IFS}-d|sh")
         return ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { it.bufferedReader().readText() }
@@ -652,26 +722,26 @@ class PageControlsDemo : DemoHarness("pagecontrols-demo-state.json", "pagecontro
 
     companion object {
         private const val MENU_LABEL = "Menu"
-        private const val HANDLE_LABEL = "Resize menu"
+        internal const val HANDLE_LABEL = "Resize menu"
         /** The overlay's close button carries its title (`Close (Esc)`) as its description. */
-        private const val CLOSE_OVERLAY_LABEL = "Close (Esc)"
-        private const val FORCE_ZOOM_ROW = "Force enable zoom"
-        private const val DEFAULT_ZOOM_ROW = "Default zoom"
-        private const val FONT_SIZE_ROW = "Include system font size"
-        private const val COLOR_SCHEME_ROW = "Colour scheme"
-        private const val CERN_HOST = "info.cern.ch"
+        internal const val CLOSE_OVERLAY_LABEL = "Close (Esc)"
+        internal const val FORCE_ZOOM_ROW = "Force enable zoom"
+        internal const val DEFAULT_ZOOM_ROW = "Default zoom"
+        internal const val FONT_SIZE_ROW = "Include system font size"
+        internal const val COLOR_SCHEME_ROW = "Colour scheme"
+        internal const val CERN_HOST = "info.cern.ch"
         /** The site the CERN page is remembered under (its registrable domain, `siteKey`). */
-        private const val CERN_SITE = "cern.ch"
-        private const val LOCKED_HOST = "127.0.0.1"
+        internal const val CERN_SITE = "cern.ch"
+        internal const val LOCKED_HOST = "127.0.0.1"
         /** Stands for the locked page's address in the seeded profile until the server has a port. */
         private const val LOCKED_PAGE_PLACEHOLDER = "http://locked-page.invalid/"
 
-        private val THEME = InstrumentationRegistry.getArguments().getString("theme").let {
+        internal val THEME = InstrumentationRegistry.getArguments().getString("theme").let {
             if (it == "light") "light" else "dark"
         }
 
-        /** Which page is showing (host without the port) and whether it has finished loading. */
-        private const val PAGE_STATE_JS = "location.hostname + ':' + document.readyState"
+        /** Which page is showing (host without the port, path) and whether it has finished loading. */
+        private const val PAGE_STATE_JS = "location.hostname + '|' + location.pathname + '|' + document.readyState"
 
         /** Wikipedia's layout once loaded: `mobile` (Minerva), `desktop` (Vector), else null. */
         private const val WIKI_LAYOUT_JS = """
@@ -694,7 +764,7 @@ class PageControlsDemo : DemoHarness("pagecontrols-demo-state.json", "pagecontro
             })()
         """
 
-        private val LOCKED_PAGE_HTML = """
+        internal val LOCKED_PAGE_HTML = """
             <!doctype html>
             <html lang="en">
             <head>
