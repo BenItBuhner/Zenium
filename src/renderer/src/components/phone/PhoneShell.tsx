@@ -38,12 +38,12 @@ import { PillChip } from '../urlbar/PillChip'
 import { Urlbar } from '../urlbar/Urlbar'
 import { BarButton } from './BarButton'
 import { barContext, barLayout } from './barItems'
-import { GestureHint } from './GestureHint'
 import { PhoneStage } from './PhoneStage'
 import { SpacesDrawer } from './SpacesDrawer'
 import { TabPreview } from './TabPreview'
 import { TabsQuickMenu } from './TabsQuickMenu'
 import { useBarHold, type BarHoldHandlers } from './useBarHold'
+import { useGestureHint } from './useGestureHint'
 import { usePillGestures, type PillGestureHandlers } from './usePillGestures'
 import './phonePanels.css'
 
@@ -137,28 +137,29 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
     }
   })
 
+  const barHidden = ui.urlbar.open
+  // The one-time gesture hint (FRE-07) is a toast on the message cards, owed once the chrome is
+  // calm: a page in view under nothing, the bar and its pill in place, no drag, overview or prompt.
+  useGestureHint(
+    state,
+    edge,
+    !onboarding &&
+      !htmlFullscreen &&
+      !barHidden &&
+      tab !== null &&
+      !overlayCoversContent(ui) &&
+      !overviewOpen &&
+      dock.phase === 'idle' &&
+      state.defaultBrowser.prompt !== 'sheet'
+  )
+
   if (htmlFullscreen) return <div className="h-full w-full bg-black" />
 
-  const barHidden = ui.urlbar.open
   // The pill is off its slot and Settings still name the edge it left: the bar there fades out
   // as a preview of the bar at the other edge fades in. Once the new edge is committed the bar
   // simply renders there, under the ghost that is setting down on it.
   const fromHere = dock.phase !== 'idle' && dock.from === edge
   const p = Math.min(1, Math.max(0, dock.progress))
-  // The one-time gesture hint takes a slot on the bar's side of the content frame.
-  const hint = !onboarding && !barHidden && (
-    <GestureHint
-      state={state}
-      edge={edge}
-      calm={
-        tab !== null &&
-        !overlayCoversContent(ui) &&
-        !overviewOpen &&
-        dock.phase === 'idle' &&
-        state.defaultBrowser.prompt !== 'sheet'
-      }
-    />
-  )
   return (
     <div
       className="zen-window relative flex h-full w-full flex-col overflow-hidden"
@@ -186,11 +187,9 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
           paddingRight: 'var(--zen-padding)'
         }}
       >
-        {edge === 'top' && hint}
         <div className="relative min-h-0 flex-1">
           <ContentArea state={state} ui={ui} />
         </div>
-        {edge === 'bottom' && hint}
       </main>
       {/* Messages sit on the content frame's box, over the bar and the stage but under sheets. */}
       <div

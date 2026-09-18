@@ -3427,11 +3427,12 @@
     background: var(--v2-control-text);
   }
   /*
-   * Type. The wordmark is the one display size in the flow (34/600, tracked in a little), above
-   * §4's scale: the welcome step has nothing else to carry. The step title is the page title
-   * 22/600 on `--v2-line-title` (§9.26), a group heading the sub-heading 15/600 at 20 (§9.27),
-   * body 15 at 20, small 13 at 20 (§9.2: `--v2-line-small`, no stand-in); deemphasised is 69% of
-   * the ink.
+   * Type, §4's fixed scale through #169's tokens. The wordmark is the one display size outside
+   * the scale – 34/600 on a 40 line, the first run's welcome and About only, tracked in a little –
+   * and the scale has no token for it, so it is the one literal here. The step title is the page
+   * title 22/600 on `--v2-line-title` (§9.26); a group heading is the sub-heading 15/600 on the
+   * body line (§9.27; nothing in the flow is a 17 heading on `--v2-line-heading`); body 15 at 20,
+   * small 13 at 20 (§9.2: `--v2-line-small`, no stand-in); deemphasised is 69% of the ink.
    */
   .zen-firstrun-wordmark {
     font-size: 34px;
@@ -3546,9 +3547,11 @@
     box-shadow: inset 0 0 0 calc((var(--v2-checkbox) - 6px) / 2 - 1px) var(--v2-control-accent);
   }
   /*
-   * An image radio tile (a colour preset; §9.14, §10.4): the picture at the card radius spanning
-   * its grid column, the 13 caption centred 8 below on the token's line, a 2 px accent outline
-   * 2 out when chosen; the tile scales `.96` while pressed (v1 §7's press).
+   * A swatch tile, §9.14's small form of the image radio (§10.4): three per row at an 8 gap in
+   * the 16 gutter (the grid's), each the preset's colour at `--v2-radius-card` spanning its
+   * column, the 13 caption centred 8 below on the token's line, and the picked one with the 2 px
+   * accent outline 2 px outside its edge, concentric with it (`outline-offset`); the tile scales
+   * `.96` while pressed (v1 §7's press).
    */
   .zen-firstrun-tile {
     display: flex;
@@ -3557,6 +3560,7 @@
     align-items: center;
     gap: 8px;
     color: inherit;
+    text-align: center;
     font-size: var(--v2-font-small);
     line-height: var(--v2-line-small);
   }
@@ -3576,42 +3580,6 @@
   .zen-firstrun-tile[aria-checked='true'] .zen-firstrun-tile-image {
     outline: 2px solid var(--v2-control-accent);
     outline-offset: 2px;
-  }
-
-  /*
-   * The one-time gesture hint beside the address pill: a small panel on the message chrome
-   * (§9.33's `--v2-panel`, hairline, card radius, panel shadow; a page surface, §9.29), no tail,
-   * in a slot on the bar's side of the content frame. The slot opens to the panel's height in one
-   * step (the component sets it), the panel hangs from the slot's edge nearest the pill and the
-   * spring moves only the panel; `will-change` is on only while it does (`data-moving`). Its one
-   * sentence is body 15 at 20 (§4) at the 16 gutter.
-   */
-  .zen-hint-slot {
-    position: relative;
-    flex-shrink: 0;
-    overflow: visible;
-  }
-  .zen-hint {
-    position: absolute;
-    left: 0;
-    max-width: 320px;
-    padding: 12px 16px;
-    border: 1px solid var(--v2-border);
-    border-radius: var(--v2-radius-card);
-    background: var(--v2-panel);
-    box-shadow: var(--v2-shadow-panel);
-    color: var(--v2-text);
-    font-size: var(--v2-font-body);
-    line-height: var(--v2-line-body);
-  }
-  .zen-hint[data-moving] {
-    will-change: transform, opacity;
-  }
-  .zen-hint-slot[data-edge='bottom'] .zen-hint {
-    bottom: 0;
-  }
-  .zen-hint-slot[data-edge='top'] .zen-hint {
-    top: 0;
   }
 }
 

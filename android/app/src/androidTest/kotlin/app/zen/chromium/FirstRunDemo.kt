@@ -85,7 +85,7 @@ class FirstRunDemo : DemoHarness(stateAsset = null, shotPrefix = "firstrun", han
 
         // 3. A first page, arriving the way a link from another app does (the omnibox the first
         //    run ends in keeps no input focus for injected keys), once that omnibox is out of the
-        //    way. The one-time gesture hint then shows beside the pill.
+        //    way. The one-time gesture hint then comes up as a toast at the frame's bottom edge.
         closeUrlbar()
         openLink("https://example.com/")
         SystemClock.sleep(5_000)
@@ -135,7 +135,7 @@ class FirstRunDemo : DemoHarness(stateAsset = null, shotPrefix = "firstrun", han
     /** A step's content slides in on SPRING_GENTLE; let it settle before the next touch. */
     private fun step() = SystemClock.sleep(1_500)
 
-    /** The hint is a status line starting with its first words; the rest may wrap. */
+    /** The hint is a toast (a status line) starting with its first words; the rest may wrap. */
     private fun hintShown(): Boolean = findNode { it.startsWith("Swipe the address bar") } != null
 
     /**
