@@ -63,15 +63,15 @@ class DownloadsDemo : DemoHarness("downloads-demo-state.json", "downloads", "dow
     override fun demo() {
         // 1. A throttled download: the panel opens on the transfer, Pause holds the bytes, Resume
         //    completes the file. While the row moves (four times a second) the emulator's
-        //    accessibility tree seldom settles enough to be read, so the running row is the
-        //    engine's word plus the screenshot and the recording; the tree is read once the row
-        //    holds still ("slow.bin. Paused · <received> of 3.0 MB").
+        //    accessibility tree cannot be traversed in time, so the running row is the engine's
+        //    word plus the screenshot and the recording, Pause goes through the engine, and the
+        //    tree is read once the row holds still ("slow.bin. Paused · <received> of 3.0 MB").
         click(LINK_SLOW)
         val slowId = awaitRow("slow.bin", 15_000) { it.optString("state") == "progressing" }?.optString("id").orEmpty()
         check(slowId.isNotEmpty(), "slow.bin never started downloading")
         SystemClock.sleep(3_500)
         shot("01-in-progress")
-        press("Pause", "download.pause", "slow.bin", slowId) { it.optString("state") == "paused" }
+        press("Pause", "download.pause", "slow.bin", slowId, viaTree = false) { it.optString("state") == "paused" }
         if (waitForRow(15_000) { rowReads(it, "slow.bin", "Paused") } == null) {
             fail("the panel did not show the paused row (\"slow.bin. Paused · … of 3.0 MB\")")
         }
@@ -188,19 +188,39 @@ class DownloadsDemo : DemoHarness("downloads-demo-state.json", "downloads", "dow
     }
 
     /**
-     * Press a row's control (Pause, Resume, Retry) through the accessibility tree when the tree
-     * serves it just then; while a row moves the emulator's tree often does not, and the engine
-     * command the control runs (`download.pause`, ...) stands in for the press, which the log says.
-     * Either way the engine's row for `name` must satisfy `took` within five seconds, else the
-     * command runs outright (a press on a churning tree can land on nothing).
+     * Press a row's control (Pause, Resume, Retry): through the accessibility tree (a click on
+     * the node, else a touch on its bounds) when `viaTree`, else straight through the engine
+     * command the control runs – while a row moves, the emulator's tree cannot be traversed in
+     * time (a node fetch waits on the busy WebView thread), so Pause on a running transfer goes
+     * that way. Either way the engine's row for `name` must satisfy `took` within five seconds,
+     * else the command runs outright. The log says which way the press went.
      */
-    private fun press(label: String, command: String, name: String, id: String, took: (JSONObject) -> Boolean) {
-        if (clickByLabel(label)) {
-            Log.i(tag, "$label: pressed the row's control")
-        } else {
-            Log.i(tag, "$label: not on the accessibility tree; running $command for the row instead")
-            downloadCommand(command, id)
+    private fun press(
+        label: String,
+        command: String,
+        name: String,
+        id: String,
+        viaTree: Boolean = true,
+        took: (JSONObject) -> Boolean
+    ) {
+        val how = when {
+            !viaTree -> {
+                downloadCommand(command, id)
+                "$command (the row is moving; the tree is not read)"
+            }
+            clickByLabel(label) -> "a click on the row's control"
+            else -> {
+                val where = findByLabel(label)
+                if (where != null) {
+                    Finger().tap(where.exactCenterX(), where.exactCenterY())
+                    "a touch on the row's control at $where"
+                } else {
+                    downloadCommand(command, id)
+                    "$command (the control is not on the accessibility tree)"
+                }
+            }
         }
+        Log.i(tag, "$label: $how")
         if (awaitRow(name, 5_000, took) == null) {
             Log.i(tag, "$label did not take; running $command for the row")
             downloadCommand(command, id)
