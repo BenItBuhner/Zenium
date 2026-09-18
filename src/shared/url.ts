@@ -128,6 +128,35 @@ export function displayUrl(url: string): string {
   }
 }
 
+/**
+ * The address in full, as Chrome's "Always show full URLs" shows it and as a copy yields it:
+ * scheme and `www.` kept, error and Reader View pages replaced by the address they stand in for.
+ */
+export function fullUrl(url: string): string {
+  if (!url || url === BLANK_URL) return ''
+  if (url.startsWith(ERROR_URL_PREFIX) || url.startsWith(READER_URL_PREFIX)) {
+    try {
+      return new URL(url).searchParams.get('url') ?? ''
+    } catch {
+      return ''
+    }
+  }
+  return url
+}
+
+/**
+ * Split a displayed address into the site, drawn in full ink, and everything after it (path,
+ * query, fragment), which the address pill deemphasises as Chrome dims all but the host. A scheme
+ * left in the text (`zen://settings`, `file:///tmp/a`, a full URL) is part of the site.
+ */
+export function addressParts(shown: string): { site: string; rest: string } {
+  const schemeEnd = shown.indexOf('://')
+  const start = schemeEnd === -1 ? 0 : schemeEnd + 3
+  const cut = shown.slice(start).search(/[/?#]/)
+  if (cut === -1) return { site: shown, rest: '' }
+  return { site: shown.slice(0, start + cut), rest: shown.slice(start + cut) }
+}
+
 export function getHost(url: string): string {
   try {
     const u = new URL(url)

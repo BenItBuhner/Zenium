@@ -2111,6 +2111,12 @@
     display: none;
   }
 }
+/* The "Not secure" text goes before the address does: it is the address the pill is for. */
+@container (width < 220px) {
+  .zen-pill-label {
+    display: none;
+  }
+}
 
 /*
  * The manager page's header (v2 §9.7): a 22/600 title and no hairline at rest. Unlayered on
