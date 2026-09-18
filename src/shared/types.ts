@@ -2768,10 +2768,21 @@ export type EventName = keyof Events
 // Recently closed tabs and windows (persisted in state.json, summaries in the snapshot)
 // ---------------------------------------------------------------------------
 
-/** A page's back/forward stack (URLs and titles only) and which entry is current. */
+/**
+ * A page's back/forward stack and which entry is current. `pageState` is Chromium's serialised
+ * state of an entry – scroll offset and form control values – handed back on restore so a page
+ * comes back where it was; absent when the engine has none for the entry (or it was too large
+ * to keep).
+ */
 export interface NavigationSnapshot {
-  entries: Array<{ url: string; title: string }>
+  entries: NavigationSnapshotEntry[]
   index: number
+}
+
+export interface NavigationSnapshotEntry {
+  url: string
+  title: string
+  pageState?: string
 }
 
 export interface ClosedTabEntry {

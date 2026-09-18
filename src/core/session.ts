@@ -5,6 +5,7 @@ import type {
   ClosedWindowEntry,
   CrashRestoreOffer,
   NavigationSnapshot,
+  NavigationSnapshotEntry,
   Rect,
   Tab,
   WindowKind
@@ -125,7 +126,7 @@ export function sanitizeClosedEntries(raw: unknown): ClosedEntry[] {
         folderId: t.folderId ?? null,
         index: typeof t.index === 'number' ? t.index : 0,
         windowId: t.windowId ?? null,
-        navigation: isSnapshot(t.navigation) ? t.navigation : null
+        navigation: sanitizeSnapshot(t.navigation)
       })
     } else if (e.kind === 'window') {
       const w = e as Partial<ClosedWindowEntry>
@@ -148,10 +149,35 @@ export function sanitizeClosedEntries(raw: unknown): ClosedEntry[] {
   return out.slice(0, RECENTLY_CLOSED_MAX)
 }
 
-function isSnapshot(value: unknown): value is NavigationSnapshot {
-  if (!value || typeof value !== 'object') return false
+/** Chrome keeps 50 entries per tab; a stored stack is cut to the same. */
+export const NAVIGATION_ENTRIES_MAX = 50
+
+/**
+ * A stored back/forward stack, or null when it is not one. Entries keep their URL and title;
+ * `pageState` (the engine's serialised scroll and form state) stays when it is a string. The
+ * current index is clamped into the entries that survived.
+ */
+export function sanitizeSnapshot(value: unknown): NavigationSnapshot | null {
+  if (!value || typeof value !== 'object') return null
   const s = value as Partial<NavigationSnapshot>
-  return Array.isArray(s.entries) && typeof s.index === 'number'
+  if (!Array.isArray(s.entries) || typeof s.index !== 'number') return null
+  const entries: NavigationSnapshotEntry[] = []
+  for (const item of s.entries) {
+    if (!item || typeof item !== 'object') continue
+    const e = item as Partial<NavigationSnapshotEntry>
+    if (typeof e.url !== 'string' || e.url === '') continue
+    const entry: NavigationSnapshotEntry = {
+      url: e.url,
+      title: typeof e.title === 'string' ? e.title : ''
+    }
+    if (typeof e.pageState === 'string' && e.pageState !== '') entry.pageState = e.pageState
+    entries.push(entry)
+  }
+  if (entries.length === 0) return null
+  const kept = entries.slice(-NAVIGATION_ENTRIES_MAX)
+  const dropped = entries.length - kept.length
+  const index = Math.min(Math.max(Math.round(s.index) - dropped, 0), kept.length - 1)
+  return { entries: kept, index }
 }
 
 // ---------------------------------------------------------------------------

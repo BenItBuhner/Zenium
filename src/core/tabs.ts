@@ -211,12 +211,24 @@ export class TabManager {
       }
       tab.url = url
     }
-    const snapshot = this.pendingNavigation.get(tabId)
-    if (snapshot) {
-      // A reopened tab: give it its back/forward stack back instead of a bare load.
+    const snapshot =
+      this.pendingNavigation.get(tabId) ?? this.browser.state.tabNavigation.get(tabId)
+    if (snapshot && snapshot.entries.length > 0) {
+      // A reopened, restored or unloaded tab: give it its back/forward stack (and, through the
+      // entries' page state, its scroll position) back instead of a bare load.
       this.pendingNavigation.delete(tabId)
-      this.pendingTransition.set(tabId, 'restored')
-      void view.restoreNavigation(snapshot)
+      const index = Math.min(Math.max(snapshot.index, 0), snapshot.entries.length - 1)
+      if (url === '' || url === BLANK_URL || url === snapshot.entries[index].url) {
+        this.pendingTransition.set(tabId, 'restored')
+        void view.restoreNavigation({ entries: snapshot.entries, index })
+      } else {
+        // Asked to go somewhere else meanwhile (typed into the pill while unloaded): the new
+        // page goes on top of the stack and the forward entries go, as in Chrome.
+        void view.restoreNavigation({
+          entries: [...snapshot.entries.slice(0, index + 1), { url, title: tab.title }],
+          index: index + 1
+        })
+      }
       return view
     }
     view.loadURL(url || BLANK_URL)
@@ -232,12 +244,31 @@ export class TabManager {
   navigationEntries(tabId: string): NavigationSnapshot {
     const view = this.view(tabId)
     if (view) return view.navigationEntries()
-    const pending = this.pendingNavigation.get(tabId)
+    const pending = this.pendingNavigation.get(tabId) ?? this.browser.state.tabNavigation.get(tabId)
     if (pending) return pending
     const tab = this.tab(tabId)
     return tab
       ? { entries: [{ url: tab.url, title: tab.title }], index: 0 }
       : { entries: [], index: -1 }
+  }
+
+  /**
+   * Record the tab's back/forward stack in the profile (`BrowserState.tabNavigation`), so the
+   * tab comes back with it – and with each entry's page state, its scroll position – after an
+   * unload, a relaunch or a crash. Private tabs leave nothing behind.
+   */
+  rememberNavigation(tabId: string, view: TabView | undefined = this.view(tabId)): void {
+    const tab = this.tab(tabId)
+    if (!tab || !view || view.isDestroyed() || this.isPrivate(tab)) return
+    // A host without a stack to report (a page still blank) leaves the record alone.
+    const snapshot: NavigationSnapshot | null = view.navigationEntries() ?? null
+    if (!snapshot || snapshot.entries.length === 0) return
+    this.browser.state.tabNavigation.set(tabId, snapshot)
+  }
+
+  /** The stacks of every loaded page, read once more before the pages go (a graceful quit). */
+  rememberAllNavigation(): void {
+    for (const [tabId, view] of this.views) this.rememberNavigation(tabId, view)
   }
 
   /** Jump to an entry of the back/forward stack (the long-press list on the back button). */
@@ -601,6 +632,7 @@ export class TabManager {
       this.browser.history.visit(url, tab.title, tab.favicon, { transition, tabId })
     for (const w of this.browser.allWindows())
       if (w.findResult?.tabId === tabId) w.findResult = null
+    this.rememberNavigation(tabId, view)
     this.sendPageFlags(tabId)
     this.browser.onNavigated(tabId)
     this.browser.protection.onNavigated(tabId, url)
@@ -726,6 +758,8 @@ export class TabManager {
     const saved = this.view(tabId) ? this.browser.governor.memoryOf?.(tabId) : null
     if (saved !== null && saved !== undefined && saved > 0) tab.sleepSavedMb = Math.round(saved)
     else delete tab.sleepSavedMb
+    // The page goes, its history stays: the tab picks the stack up again when it is loaded.
+    this.rememberNavigation(tabId)
     this.destroyView(tabId)
     tab.discarded = true
     tab.frozen = false
@@ -924,6 +958,7 @@ export class TabManager {
     // A page waiting in one of its own dialogs cannot run its handlers; the close dismisses it.
     this.browser.pageDialogs.cancelForTab(tabId)
     this.pendingNavigation.set(tabId, view.navigationEntries())
+    this.rememberNavigation(tabId, view)
     if (keepTab) this.unloadChecks.add(tabId)
     try {
       // A frozen page cannot run its handlers.
@@ -1163,6 +1198,7 @@ export class TabManager {
     removeTabFromSplit(m, tabId)
     removeTabFromLists(m, tabId)
     delete m.tabs[tabId]
+    this.browser.state.tabNavigation.delete(tabId)
     this.destroyView(tabId)
     this.browser.governor.onTabRemoved(tabId)
     this.browser.agents.onTabRemoved(tabId)
@@ -2329,6 +2365,7 @@ export class TabManager {
         view.attachTo(others[0].host)
         others[0].relayout()
       } else {
+        if (tab) this.rememberNavigation(tabId, view)
         this.destroyView(tabId)
         if (tab) {
           tab.discarded = true

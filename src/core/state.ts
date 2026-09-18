@@ -7,6 +7,7 @@ import type {
   BookmarkTreeData,
   Boost,
   ClosedEntry,
+  NavigationSnapshot,
   Container,
   CrashRestoreOffer,
   DefaultBrowserStatus,
@@ -86,7 +87,7 @@ import {
 import { DEFAULT_PAGE_ENVIRONMENT, sanitizePageControls } from '../shared/pageControls'
 import { emptyPrivacyStatus, sanitizePrivacySettings, type PrivacyStatus } from '../shared/privacy'
 import { defer, type StoreIO } from './platform'
-import { sanitizeClosedEntries, summarizeClosed } from './session'
+import { sanitizeClosedEntries, sanitizeSnapshot, summarizeClosed } from './session'
 import type { ZenWindow } from './window'
 
 const BOOKMARKS_BAR_MODES: ReadonlyArray<Settings['bookmarksBar']> = ['always', 'newtab', 'never']
@@ -126,6 +127,12 @@ interface Persisted {
   windows?: PersistedWindow[]
   /** v3: recently closed tabs and windows (newest first, 25 deep). */
   recentlyClosed?: ClosedEntry[]
+  /**
+   * v3: the back/forward stack of every open tab, by tab id, so a restored tab has its history
+   * and (through each entry's page state) its scroll position back. Refreshed on every commit
+   * of a navigation and once more, for the page on screen, at a graceful shutdown.
+   */
+  navigation?: Record<string, NavigationSnapshot>
   /**
    * The clean-exit marker: false from the first write of a run, true only in the write a
    * graceful shutdown makes. A profile that starts with it false was left by a crash, a kill or
@@ -212,6 +219,8 @@ export class BrowserState {
    * toasts once a window is ready, then forgotten. Never persisted.
    */
   readonly migrationNotices: string[] = []
+  /** Back/forward stacks of the open tabs, by tab id (`TabManager` keeps them current). */
+  readonly tabNavigation = new Map<string, NavigationSnapshot>()
   media: MediaState[] = []
   devtoolsOpenFor = new Set<string>()
   resources: ResourceSnapshot = emptyResourceSnapshot()
@@ -340,6 +349,13 @@ export class BrowserState {
   private applyPersisted(data: Persisted): void {
     // Before v3 the recently closed list was in memory only: it starts empty.
     this.recentlyClosed = data.version === 3 ? sanitizeClosedEntries(data.recentlyClosed) : []
+    this.tabNavigation.clear()
+    if (data.navigation && typeof data.navigation === 'object') {
+      for (const [tabId, raw] of Object.entries(data.navigation)) {
+        const snapshot = sanitizeSnapshot(raw)
+        if (snapshot) this.tabNavigation.set(tabId, snapshot)
+      }
+    }
     this.settings = { ...structuredClone(DEFAULT_SETTINGS), ...data.settings }
     this.settings.compactMode = { ...DEFAULT_SETTINGS.compactMode, ...data.settings?.compactMode }
     // Compact mode's "persistent sidebar" toggle is transient by design.
@@ -737,8 +753,23 @@ export class BrowserState {
       bookmarkTree: { schemaVersion: BOOKMARK_SCHEMA_VERSION, nodes: this.bookmarks },
       windows: persistedWindows,
       recentlyClosed: this.recentlyClosed,
+      navigation: this.persistedNavigation(m.tabs),
       cleanExit: this.exiting
     }
+  }
+
+  /** The stacks of the tabs being written (a stack whose tab is gone goes with it). */
+  private persistedNavigation(tabs: Record<string, Tab>): Record<string, NavigationSnapshot> {
+    const out: Record<string, NavigationSnapshot> = {}
+    for (const [tabId, snapshot] of this.tabNavigation) {
+      const tab = tabs[tabId]
+      if (!tab || tab.containerId === PRIVATE_CONTAINER_ID) {
+        this.tabNavigation.delete(tabId)
+        continue
+      }
+      out[tabId] = snapshot
+    }
+    return out
   }
 
   async flush(): Promise<void> {

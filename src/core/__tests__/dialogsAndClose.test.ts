@@ -5,6 +5,7 @@ import type {
   Platform as PlatformOs,
   Tab
 } from '../../shared/types'
+import { PRIVATE_CONTAINER_ID } from '../../shared/types'
 import { Browser } from '../browser'
 import { dialogSite, isEmbeddedDialog } from '../pageDialogs'
 import type {
@@ -52,6 +53,10 @@ interface FakeView {
   unloadChecks: number
   /** While true the page's `beforeunload` holds every navigation: `loadURL` leaves it in place. */
   objects: boolean
+  /** What `navigationEntries()` reports; tests script the page's stack here. */
+  snapshot: NavigationSnapshot
+  /** Every stack the host was asked to replay. */
+  restored: NavigationSnapshot[]
 }
 
 function fakeView(tab: Tab, events: TabViewEvents): FakeView {
@@ -63,9 +68,10 @@ function fakeView(tab: Tab, events: TabViewEvents): FakeView {
     unload: 'none',
     unloadChecks: 0,
     objects: false,
+    snapshot: { entries: [], index: -1 },
+    restored: [],
     view: undefined as unknown as TabView
   }
-  const snapshot: NavigationSnapshot = { entries: [], index: -1 }
   const overrides: Partial<TabView> = {
     isDestroyed: () => fake.destroyed,
     destroy: () => {
@@ -81,7 +87,11 @@ function fakeView(tab: Tab, events: TabViewEvents): FakeView {
     canGoForward: () => false,
     getZoom: () => 1,
     isCurrentlyAudible: () => false,
-    navigationEntries: () => snapshot,
+    navigationEntries: () => fake.snapshot,
+    restoreNavigation: async (snapshot) => {
+      fake.restored.push(snapshot)
+      url = snapshot.entries[snapshot.index]?.url ?? ''
+    },
     confirmUnload: async () => {
       fake.unloadChecks += 1
       if (fake.unload === 'stay') return false
@@ -118,7 +128,8 @@ function fixture(): Fixture {
     closes,
     quits: 0,
     viewOf: (tabId) => {
-      const v = views.find((x) => x.tabId === tabId)
+      // The newest page of the tab: a reloaded tab has a destroyed one before it.
+      const v = [...views].reverse().find((x) => x.tabId === tabId)
       if (!v) throw new Error(`no view for ${tabId}`)
       return v
     }
@@ -527,5 +538,84 @@ describe('window prompts', () => {
     f.browser.windowPrompts.cancelForWindow(win)
     await expect(first).resolves.toBe(false)
     expect(win.prompt).toBeNull()
+  })
+})
+
+describe('back/forward stacks across unloads and launches', () => {
+  const stack: NavigationSnapshot = {
+    entries: [
+      { url: 'https://example.com/', title: 'Home', pageState: 'c2Nyb2xs' },
+      { url: 'https://example.com/article', title: 'Article', pageState: 'ZG93bg==' }
+    ],
+    index: 1
+  }
+
+  it('records the stack of a page that navigated and replays it when the unloaded tab is opened again', () => {
+    const f = fixture()
+    const win = firstWindow(f)
+    const tab = f.browser.tabs.createTab({ url: 'https://example.com/', active: true }, win)
+    const first = f.viewOf(tab.id)
+    first.snapshot = stack
+    first.events.onNavigated('https://example.com/article', false)
+    expect(f.browser.state.tabNavigation.get(tab.id)).toEqual(stack)
+
+    f.browser.tabs.discard(tab.id)
+    expect(f.browser.tabs.tab(tab.id)?.discarded).toBe(true)
+    // The stack (with its page state) is what a reload brings back, not a bare URL.
+    f.browser.tabs.ensureLoaded(tab.id)
+    const second = f.viewOf(tab.id)
+    expect(second).not.toBe(first)
+    expect(second.restored).toEqual([stack])
+    expect(second.view.getURL()).toBe('https://example.com/article')
+  })
+
+  it('a URL typed into an unloaded tab goes on top of its stack, forward entries dropped', () => {
+    const f = fixture()
+    const win = firstWindow(f)
+    const tab = f.browser.tabs.createTab({ url: 'https://example.com/', active: true }, win)
+    f.viewOf(tab.id).snapshot = { ...stack, index: 0 }
+    f.browser.tabs.discard(tab.id)
+    f.browser.tabs.navigate(tab.id, 'https://example.org/typed')
+    const view = f.viewOf(tab.id)
+    expect(view.restored).toEqual([
+      {
+        entries: [stack.entries[0], { url: 'https://example.org/typed', title: 'example.org' }],
+        index: 1
+      }
+    ])
+    expect(view.view.getURL()).toBe('https://example.org/typed')
+  })
+
+  it('a private tab leaves no stack behind and a closed tab takes its stack with it', () => {
+    const f = fixture()
+    const win = firstWindow(f)
+    const tab = f.browser.tabs.createTab({ url: 'https://example.com/', active: true }, win)
+    f.viewOf(tab.id).snapshot = stack
+    f.browser.tabs.discard(tab.id)
+    expect(f.browser.state.tabNavigation.has(tab.id)).toBe(true)
+    f.browser.tabs.closeTab(tab.id, true, win)
+    expect(f.browser.state.tabNavigation.has(tab.id)).toBe(false)
+
+    const priv = f.browser.tabs.createTab(
+      { url: 'https://secret.test/', active: true, containerId: PRIVATE_CONTAINER_ID },
+      win
+    )
+    f.viewOf(priv.id).snapshot = { entries: [{ url: 'https://secret.test/', title: '' }], index: 0 }
+    f.viewOf(priv.id).events.onNavigated('https://secret.test/', false)
+    f.browser.tabs.discard(priv.id)
+    expect(f.browser.state.tabNavigation.has(priv.id)).toBe(false)
+  })
+
+  it('a graceful shutdown reads every open page once more before the last write', () => {
+    const f = fixture()
+    const win = firstWindow(f)
+    const tab = f.browser.tabs.createTab({ url: 'https://example.com/', active: true }, win)
+    const view = f.viewOf(tab.id)
+    view.snapshot = { ...stack, index: 0 }
+    view.events.onNavigated('https://example.com/', false)
+    // The user scrolled since: the engine's page state moved on.
+    view.snapshot = stack
+    f.browser.shutdown()
+    expect(f.browser.state.tabNavigation.get(tab.id)).toEqual(stack)
   })
 })

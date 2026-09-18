@@ -1305,6 +1305,8 @@ export class Browser {
     this.protection.stop()
     this.blocking.stop()
     this.translate.stop()
+    // The pages on screen have scrolled since their stacks were last read.
+    this.tabs.rememberAllNavigation()
     this.state.markExiting()
     this.flushSync()
     this.state.freeze()

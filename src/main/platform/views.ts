@@ -15,7 +15,13 @@ import {
 } from 'electron'
 import { join } from 'node:path'
 import { writeFile } from 'node:fs/promises'
-import type { NavigationSnapshot, PageDialogResponse, Rect, Tab } from '../../shared/types'
+import type {
+  NavigationSnapshot,
+  NavigationSnapshotEntry,
+  PageDialogResponse,
+  Rect,
+  Tab
+} from '../../shared/types'
 import type { SafeBrowsingHit } from '../../shared/privacy'
 import type { SiteCertificate } from '../../shared/siteInfo'
 import {
@@ -97,6 +103,21 @@ type ChildWindowOptions = BrowserWindowConstructorOptions & { webContents?: WebC
 const HOST_NAVIGATION_TTL_MS = 30_000
 /** A `confirmUnload` whose page neither goes nor objects by then is treated as not objecting. */
 const UNLOAD_CHECK_TIMEOUT_MS = 5_000
+/**
+ * An entry's page state (scroll offset, form values) is kept up to this size; a larger one –
+ * a page with a huge form – is left out rather than written into the profile on every commit.
+ */
+const PAGE_STATE_MAX_CHARS = 64 * 1024
+
+/** A stored entry: URL and title, plus the engine's page state when it has one worth keeping. */
+function snapshotEntry(entry: Electron.NavigationEntry): NavigationSnapshotEntry {
+  const out: NavigationSnapshotEntry = { url: entry.url, title: entry.title }
+  const state = entry.pageState
+  if (typeof state === 'string' && state !== '' && state.length <= PAGE_STATE_MAX_CHARS) {
+    out.pageState = state
+  }
+  return out
+}
 
 interface HostNavigation {
   at: number
@@ -465,7 +486,7 @@ export class ElectronTabView implements TabView {
     if (wc.isDestroyed()) return { entries: [], index: -1 }
     const history = wc.navigationHistory
     return {
-      entries: history.getAllEntries().map((e) => ({ url: e.url, title: e.title })),
+      entries: history.getAllEntries().map((e) => snapshotEntry(e)),
       index: history.getActiveIndex()
     }
   }
