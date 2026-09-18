@@ -124,3 +124,49 @@ describe('sanitizeResourceSettings', () => {
     expect(s.process.disablePrerender).toBe(DEFAULT_RESOURCE_SETTINGS.process.disablePrerender)
   })
 })
+
+describe('automation switches', () => {
+  /**
+   * Chromium turns `navigator.webdriver` on for `--enable-automation`, `--headless` and
+   * `--remote-debugging-*`, and Google's sign-in refuses such a browser as "not secure". No
+   * resource profile may put any of them on the command line.
+   */
+  const AUTOMATION = new Set([
+    'enable-automation',
+    'headless',
+    'remote-debugging-port',
+    'remote-debugging-pipe',
+    'remote-allow-origins',
+    'test-type',
+    'enable-blink-features'
+  ])
+
+  it('are never derived, whatever the resource settings', () => {
+    const extremes: Array<Partial<ResourceSettings>> = [
+      {},
+      { enabled: false },
+      {
+        enforcement: 'extreme',
+        gpuMode: 'off',
+        process: {
+          rendererProcessLimit: 1,
+          rendererHeapMb: 256,
+          lowEndDeviceMode: true,
+          disableSpareRenderer: true,
+          disableBackForwardCache: true,
+          disablePrerender: true,
+          rasterThreads: 1,
+          v8OptimizeForSize: true
+        }
+      }
+    ]
+    for (const overrides of extremes) {
+      const profile = deriveStartupProfile(settings(overrides))
+      for (const sw of profile.switches) {
+        expect(AUTOMATION.has(sw.name), sw.name).toBe(false)
+        if (sw.name === 'disable-features' || sw.name === 'js-flags')
+          expect(sw.value ?? '').not.toMatch(/AutomationControlled|webdriver/i)
+      }
+    }
+  })
+})
