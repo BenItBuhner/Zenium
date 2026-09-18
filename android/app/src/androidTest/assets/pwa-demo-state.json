@@ -1,0 +1,97 @@
+{
+  "version": 2,
+  "activeSpaceId": "space_main",
+  "spaces": [
+    {
+      "id": "space_main",
+      "name": "Browse",
+      "icon": "🧭",
+      "containerId": "default",
+      "theme": {
+        "type": "gradient",
+        "colors": [
+          {
+            "c": [
+              70,
+              120,
+              220
+            ],
+            "x": 0.3,
+            "y": 0.3,
+            "isPrimary": true
+          },
+          {
+            "c": [
+              200,
+              110,
+              170
+            ],
+            "x": 0.7,
+            "y": 0.7
+          }
+        ],
+        "opacity": 0.55,
+        "texture": 0,
+        "algorithm": "floating",
+        "monochrome": false,
+        "rotation": 30
+      },
+      "tabIds": [
+        "tab_notes",
+        "tab_app"
+      ],
+      "activeTabId": "tab_notes",
+      "pinnedCollapsed": false
+    }
+  ],
+  "folders": [],
+  "tabs": [
+    {
+      "id": "tab_notes",
+      "spaceId": "space_main",
+      "containerId": "default",
+      "folderId": null,
+      "url": "http://127.0.0.1:18131/notes.html",
+      "title": "Notes on damping",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_app",
+      "spaceId": "space_main",
+      "containerId": "default",
+      "folderId": null,
+      "url": "http://127.0.0.1:18131/app/",
+      "title": "Sketch Studio",
+      "pinned": false,
+      "essential": false
+    }
+  ],
+  "essentialTabIds": [],
+  "containers": [],
+  "splitGroups": [],
+  "settings": {
+    "onboardingDone": true,
+    "colorScheme": "light",
+    "phoneBarPosition": "bottom",
+    "updates": {
+      "autoCheck": false,
+      "autoDownload": false,
+      "channel": "stable"
+    }
+  },
+  "shortcutOverrides": {},
+  "bookmarks": [],
+  "windows": [
+    {
+      "id": "window_main",
+      "bounds": null,
+      "maximized": false,
+      "activeSpaceId": "space_main",
+      "selection": {
+        "space_main": "tab_notes"
+      },
+      "compact": false
+    }
+  ]
+}
