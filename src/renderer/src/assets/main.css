@@ -153,6 +153,8 @@
   /* Focus ring and text selection: one accent, one rule (§1, §9.6). */
   --v2-ring: var(--v2-accent);
   --v2-selection: color-mix(in srgb, var(--v2-accent) 30%, transparent);
+  /* A selected row (selection mode, a picked item), not text selection: the accent at 12 % (§9.6). */
+  --v2-selected: color-mix(in srgb, var(--v2-accent) 12%, transparent);
   /* Behind a desktop dialog: only the content frame dims (§9.5). */
   --v2-scrim-modal: rgb(21 20 26 / 0.45);
   /* Status inks, never a filled surface (§1; the v1 values). */
@@ -169,6 +171,9 @@
   --v2-font-heading: 17px;
   --v2-font-body: 15px;
   --v2-font-small: 13px;
+  /* Fixed line boxes per size (§4): 22 → 28, 17 → 22, 15 → 20, 13 → 20. */
+  --v2-line-title: 28px;
+  --v2-line-heading: 22px;
   --v2-line-body: 20px;
   /* 13 px text sits on the same 20 px line as 15 px text (v2 §4, §9.2): 18 is not used. */
   --v2-line-small: 20px;
@@ -212,6 +217,7 @@
   --v2-urlpill: rgb(255 255 255 / 0.1);
   --v2-nav-active: #252630;
   --v2-scrim-modal: rgb(0 0 0 / 0.55);
+  --v2-selected: color-mix(in srgb, var(--v2-accent) 16%, transparent);
 }
 :root[data-pointer='coarse'] {
   --v2-radius-control: 6px;
