@@ -4,6 +4,7 @@ import {
   attributePageMessage,
   consoleLevel,
   extensionIdOfUrl,
+  isEmbedderLine,
   type ExtensionErrorReport
 } from '../../core/extensions/errorConsole'
 import type { ExtensionErrorEntry } from '../../shared/types'
@@ -113,10 +114,15 @@ export class ExtensionErrorConsole {
     })
   }
 
-  /** A page's line: the extension's own document, or one of its scripts inside a tab page. */
+  /**
+   * A page's line: the extension's own document, or one of its scripts inside a tab page.
+   * Electron's own lines inside an extension's document (its sandbox bundle failing to start in an
+   * MV2 background page) are the embedder's, not the extension's.
+   */
   pageLine(line: PageConsoleLine): void {
     const level = consoleLevel(line.level)
     if (!level) return
+    if (isEmbedderLine(line.sourceId, line.message)) return
     const owner = attributePageMessage(line.frameUrl, line.sourceId)
     if (!owner) return
     this.report(owner.extensionId, {

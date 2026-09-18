@@ -148,6 +148,17 @@ export function attributePageMessage(
 }
 
 /**
+ * Electron's own lines inside an extension's page, not the extension's: its sandbox bundle
+ * fails to start in an MV2 background page (`binding.startupData` is null there) and prints
+ * "Electron sandboxed_renderer.bundle.js script failed to run" plus the `TypeError`, from
+ * `node:electron/js2c/sandbox_bundle`, before the page's own scripts run normally.
+ */
+export function isEmbedderLine(scriptUrl: string | null, message: string): boolean {
+  if (scriptUrl && scriptUrl.startsWith('node:electron/')) return true
+  return message.startsWith('Electron sandboxed_renderer.bundle.js')
+}
+
+/**
  * A manifest issue (`validateManifest`) as a console line: Chrome lists an extension's manifest
  * warnings ("Unrecognized manifest key", a malformed match pattern) beside its runtime errors.
  */

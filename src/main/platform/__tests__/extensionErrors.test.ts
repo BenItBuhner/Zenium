@@ -205,6 +205,26 @@ describe('ExtensionErrorConsole: pages', () => {
     expect(console.list(OTHER)).toEqual([])
   })
 
+  it("leaves Electron's own sandbox-bundle failure in an MV2 background page out", () => {
+    const console = makeConsole()
+    const background = new FakeContents(`chrome-extension://${ID}/_generated_background_page.html`)
+    console.watch(background.asContents())
+    background.print(
+      'error',
+      'Electron sandboxed_renderer.bundle.js script failed to run',
+      'node:electron/js2c/sandbox_bundle'
+    )
+    background.print(
+      'error',
+      "TypeError: Cannot read properties of null (reading 'startupData')",
+      'node:electron/js2c/sandbox_bundle'
+    )
+    background.print('error', 'Uncaught Error: mine', `chrome-extension://${ID}/background.js`)
+    expect(console.list(ID)).toEqual([
+      expect.objectContaining({ message: 'Uncaught Error: mine', source: 'page' })
+    ])
+  })
+
   it('falls back to the contents URL when the frame is disposed by the time the line arrives', () => {
     const console = makeConsole()
     const popup = new FakeContents(`chrome-extension://${ID}/popup.html`)

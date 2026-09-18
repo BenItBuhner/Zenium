@@ -6,6 +6,7 @@ import {
   attributePageMessage,
   consoleLevel,
   extensionIdOfUrl,
+  isEmbedderLine,
   manifestIssueReport,
   type ExtensionErrorReport
 } from '../errorConsole'
@@ -199,6 +200,33 @@ describe('attributePageMessage', () => {
     expect(attributePageMessage('https://example.com/', '')).toBeNull()
     expect(attributePageMessage(null, null)).toBeNull()
     expect(attributePageMessage('zen://home', '/opt/zenium/renderer/index.js')).toBeNull()
+  })
+})
+
+describe('isEmbedderLine', () => {
+  it("recognises Electron's sandbox bundle failing inside an MV2 background page", () => {
+    expect(
+      isEmbedderLine(
+        'node:electron/js2c/sandbox_bundle',
+        "Uncaught TypeError: Cannot read properties of null (reading 'startupData')"
+      )
+    ).toBe(true)
+    expect(
+      isEmbedderLine(
+        '',
+        'Electron sandboxed_renderer.bundle.js script failed to run\nTypeError: ...'
+      )
+    ).toBe(true)
+  })
+
+  it("leaves the extension's own lines alone, whatever they say", () => {
+    expect(isEmbedderLine(`chrome-extension://${ID}/background.js`, 'Uncaught TypeError')).toBe(
+      false
+    )
+    expect(isEmbedderLine(null, 'Electron is mentioned here')).toBe(false)
+    expect(isEmbedderLine(`chrome-extension://${ID}/bg.js`, 'node:electron/ in a message')).toBe(
+      false
+    )
   })
 })
 
