@@ -1,5 +1,7 @@
 package app.zen.chromium
 
+import android.util.Log
+import java.io.IOException
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
@@ -45,12 +47,22 @@ class DemoServer(
             } catch (_: Exception) {
                 if (closed) return else continue
             }
-            Thread { serve(client) }.start()
+            // A client that hangs up mid-request (a fetch the WebView gave up on, a TLS hello
+            // meant for an https server) is its own business: uncaught, the exception would end
+            // the instrumentation process, and the demo with it.
+            Thread {
+                try {
+                    serve(client)
+                } catch (e: IOException) {
+                    Log.i("DemoServer", "client of $origin went away: $e")
+                }
+            }.start()
         }
     }
 
     private fun serve(client: Socket) {
         client.use {
+            it.soTimeout = 10_000
             val request = it.getInputStream().bufferedReader()
             val line = request.readLine() ?: return
             while (true) {

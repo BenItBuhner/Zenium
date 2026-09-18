@@ -41,7 +41,10 @@ import java.io.FileInputStream
  * The picture behind the Image source is written through `newtab.setWallpaper` in the warm-up –
  * the system's file picker is not driven – and the source is set back to the space's colours so
  * the recording shows the change. Gesture navigation is turned on for the run, since the
- * predictive back is an edge swipe. See [DemoHarness] for the plumbing.
+ * predictive back is an edge swipe. The seeded profile has HTTPS-only mode off: on (`ask`, the
+ * default) it upgrades every dotted host but `localhost` and `127.0.0.1`, so the other seven
+ * loopback sites would be asked for over https, which their plain servers cannot answer. See
+ * [DemoHarness] for the plumbing.
  */
 @RunWith(AndroidJUnit4::class)
 class NewTabDemo : DemoHarness("newtab-demo-state.json", "android-ntp", "newtab-demo") {
@@ -134,9 +137,10 @@ class NewTabDemo : DemoHarness("newtab-demo-state.json", "android-ntp", "newtab-
         finding("warm-up done: ${describeActive()}")
     }
 
+    /** A loopback page loads in well under a second; a visit that does not is noted, not waited out. */
     private fun visit(tabId: String, site: Site) {
         coreInvoke("tab.navigate", "{\"tabId\":${JSONObject.quote(tabId)},\"input\":${JSONObject.quote(site.url)}}")
-        awaitLoaded(site.url)
+        if (!awaitLoaded(site.url, 8_000)) finding("  visit of ${site.url} never finished: ${describeActive()}")
         SystemClock.sleep(600)
     }
 
@@ -257,10 +261,12 @@ class NewTabDemo : DemoHarness("newtab-demo-state.json", "android-ntp", "newtab-
         shot("06-customize-sheet")
         finding("  sheet ${if (opened) "opened" else "MISSING"}: presets ${listOf("Focused", "Inspirational", "Custom").count { findByLabel(it) != null }} shown; ${newTabSettings()} ${verdict(opened)}")
 
-        if (tapLabel(Finger(), "Inspirational", 4_000)) {
+        if (reveal("Inspirational") != null && tapLabel(Finger(), "Inspirational", 4_000)) {
             SystemClock.sleep(2_000)
             shot("07-preset-inspirational")
             finding("  Inspirational: ${newTabSettings()} ${verdict(newTabSetting("preset") == "inspirational")}")
+        } else {
+            finding("  no Inspirational card in reach")
         }
         // The Wallpaper rows sit lower in the sheet: pull it up first so they are in reach.
         findByLabel(SHEET_HANDLE_LABEL)?.let { handle ->
@@ -279,8 +285,13 @@ class NewTabDemo : DemoHarness("newtab-demo-state.json", "android-ntp", "newtab-
             finding("  no Image row in reach")
         }
 
-        // Predictive back on the sheet: held, the sheet follows the finger; let go, it goes.
+        // Predictive back on the sheet: held, the sheet follows the finger; let go, it goes. Only
+        // with the sheet up: on the bare page the gesture would be the tab's own back.
         finding("\npredictive back on the sheet")
+        if (findByLabel(SHEET_HANDLE_LABEL) == null) {
+            finding("  the sheet is not up; skipped")
+            return
+        }
         val f = Finger()
         f.down(EDGE_X, height * 0.45f)
         f.moveBy(0.3f * width, 0f, 650)
@@ -305,10 +316,16 @@ class NewTabDemo : DemoHarness("newtab-demo-state.json", "android-ntp", "newtab-
 
     private val Site.caption: String get() = title.substringBefore(" - ")
 
-    /** The site's tile on the page: the button named after the site (not a page heading of the same word). */
+    /**
+     * The site's tile on the page: the button named after the site (not a page heading of the
+     * same word, which is not clickable). The WebView reports a button's name as its description
+     * or as its text depending on the version, so both are checked.
+     */
     private fun tile(site: Site): Rect? =
-        findNodeWhere { it.isClickable && it.contentDescription?.toString() == site.caption }
-            ?.let { node -> Rect().also { node.getBoundsInScreen(it) } }
+        findNodeWhere {
+            it.isClickable &&
+                (it.contentDescription?.toString() == site.caption || it.text?.toString() == site.caption)
+        }?.let { node -> Rect().also { node.getBoundsInScreen(it) } }
 
     private fun awaitTile(site: Site, timeoutMs: Long): Rect? {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
@@ -388,14 +405,15 @@ class NewTabDemo : DemoHarness("newtab-demo-state.json", "android-ntp", "newtab-
 
     private fun shownTabView(): TabWebView? = host.tabs.all().firstOrNull { it.isShown }
 
-    private fun awaitLoaded(url: String, timeoutMs: Long = 20_000) {
+    private fun awaitLoaded(url: String, timeoutMs: Long = 20_000): Boolean {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         while (SystemClock.uptimeMillis() < deadline) {
             val (current, progress) = onMain { shownTabView().let { (it?.url ?: "") to (it?.progress ?: 0) } }
-            if (current == url && progress == 100) return
+            if (current == url && progress == 100) return true
             SystemClock.sleep(250)
         }
         Log.w(tag, "gave up waiting for $url")
+        return false
     }
 
     /** Run a shell command with the instrumentation's shell permissions; returns its output. */
