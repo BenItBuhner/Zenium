@@ -323,7 +323,10 @@ export function sanitizePrivacySettings(
 export interface PrivacyFlags {
   safeBrowsing: boolean
   httpsOnly: HttpsOnlyMode
-  /** Hosts allowed to load over plaintext (session answers and stored `https-only` allows). */
+  /**
+   * Sites (hosts, subdomains included) allowed to load over plaintext: the session's answers and
+   * the stored `https-only` allows. Also the `excludedRequestDomains` of the mode's rule.
+   */
   httpsOnlyAllowed: string[]
   thirdPartyCookies: ThirdPartyCookieMode
   thirdPartyCookieExceptions: string[]

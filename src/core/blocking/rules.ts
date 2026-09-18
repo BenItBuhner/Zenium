@@ -119,7 +119,10 @@ export interface RuleCondition {
   requestMethods?: string[]
   excludedRequestMethods?: string[]
   domainType?: DomainType
-  /** Numeric tab ids compared against the decimal part of the host's tab id. */
+  /**
+   * Numeric tab ids, compared against `RequestContext.chromeTabId` where the host sets it (the
+   * Chrome tab id extensions see), else against the decimal part of the host's own tab id.
+   */
   tabIds?: number[]
   excludedTabIds?: number[]
 }
@@ -202,6 +205,13 @@ export interface RequestContext {
   /** Precomputed by the host when it knows; otherwise derived from `url` vs `initiator`. */
   isThirdParty?: boolean
   tabId?: string
+  /**
+   * The engine-level id of the page the request belongs to: Electron's `webContents.id`, which
+   * is also the Chrome tab id the extension platform hands out, so `tabIds` / `excludedTabIds`
+   * conditions of declarativeNetRequest rules match it. The Android host has no separate id and
+   * leaves it unset; hosts and handlers may key their own bookkeeping on it too.
+   */
+  chromeTabId?: number
   frameId?: number
   /** Session partition / container id the request runs in. */
   partition?: string
@@ -270,9 +280,10 @@ export const BUILTIN_RULE_SETS = {
   /** `allowAllRequests` for every site the user excepted. */
   siteExceptions: 'builtin:site-exceptions',
   /**
-   * HTTPS-only mode's `upgradeScheme` rule (`src/core/privacy`). The mode's per-site plaintext
-   * allowances are not in the set: hosts skip the upgrade for them from the `PrivacyFlags` they
-   * hold, so an answer given on the warning page takes effect on the very next request.
+   * HTTPS-only mode's `upgradeScheme` rule (`src/core/privacy`), the sites the user allowed
+   * over plaintext as its `excludedRequestDomains`. The same sites travel in `PrivacyFlags`
+   * (`httpsOnlyAllowed`) for a host whose engine reloads the store with a delay (Android), so
+   * an answer given on the warning page holds on the very next request either way.
    */
   httpsOnly: 'builtin:https-only'
 } as const

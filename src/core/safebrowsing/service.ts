@@ -14,7 +14,7 @@ import {
 } from '../downloads/danger'
 import { parseFeed, SAFE_BROWSING_FEEDS, safeBrowsingFeed, type SafeBrowsingFeed } from './feeds'
 import { buildSearchRequest, parseSearchResponse, type GsbSearchRequest } from './gsb'
-import { PrefixTable } from './prefixes'
+import { hostExpressions, PrefixTable, prefixOf } from './prefixes'
 
 /**
  * Safe Browsing on open feeds. The service owns one hash-prefix table per feed (`prefixes.ts`),
@@ -71,6 +71,7 @@ const FETCH_TIMEOUT_MS = 90_000
 const REMOTE_TIMEOUT_MS = 6_000
 const PENDING_BLOCK_TTL_MS = 60_000
 const REMOTE_CACHE_MAX = 2000
+const HOST_CACHE_MAX = 4096
 
 export function feedFile(id: string): string {
   return `${SAFE_BROWSING_DIR}/${id}.json`
@@ -122,10 +123,12 @@ export class SafeBrowsingService {
   private readonly feeds = new Map<string, FeedRuntime>()
   private readonly bypassed = new Set<string>()
   private readonly pending = new Map<string, PendingBlock>()
-  /** Remote answers by URL: the threat (or null) and when the answer expires. */
+  /** The local tables' answer per host, cleared whenever a table changes. */
+  private readonly hostCache = new Map<string, SafeBrowsingHit | null>()
+  /** Remote answers by URL: the threat (or null), the listed expression, when the answer expires. */
   private readonly remoteCache = new Map<
     string,
-    { threat: SafeBrowsingThreat | null; until: number }
+    { threat: SafeBrowsingThreat | null; expression: string; until: number }
   >()
   private remoteErrors = 0
   private ready = false
@@ -235,24 +238,40 @@ export class SafeBrowsingService {
   // ---------------------------------------------------------------------------
 
   /**
-   * Whether `url` is on a feed (and not bypassed): the hit to stop it with, or null. Synchronous;
-   * hosts call it for every main-frame and sub-frame request while Safe Browsing is on.
+   * Whether `url` is on a feed (and not bypassed): the hit to stop it with, or null. Synchronous
+   * and cheap (a few hashes and binary searches, the host's answer cached): hosts call it for
+   * every request while Safe Browsing is on.
    */
   lookup(url: string): SafeBrowsingHit | null {
-    if (!this.enabled) return null
+    if (!this.enabled || !/^https?:\/\//i.test(url)) return null
     const host = hostnameOf(url)
-    if (!host || !/^https?:\/\//i.test(url)) return null
+    if (!host) return null
     const key = bypassKey(url)
     if (key && this.bypassed.has(key)) return null
-    for (const rt of this.feeds.values()) {
-      const expression = rt.table.matchHost(host)
-      if (expression)
-        return { feedId: rt.feed.id, threat: rt.feed.threat, expression, remote: false }
-    }
+    const local = this.lookupHost(host)
+    if (local) return local
     const cached = this.remoteCache.get(url)
     if (cached && cached.threat && cached.until > Date.now())
-      return { feedId: 'gsb', threat: cached.threat, expression: host, remote: true }
+      return { feedId: 'gsb', threat: cached.threat, expression: cached.expression, remote: true }
     return null
+  }
+
+  /** The local tables' word on `host` (bypasses aside), remembered until a table changes. */
+  lookupHost(host: string): SafeBrowsingHit | null {
+    const cached = this.hostCache.get(host)
+    if (cached !== undefined) return cached
+    let hit: SafeBrowsingHit | null = null
+    search: for (const expression of hostExpressions(host)) {
+      const prefix = prefixOf(expression)
+      for (const rt of this.feeds.values()) {
+        if (!rt.table.has(prefix)) continue
+        hit = { feedId: rt.feed.id, threat: rt.feed.threat, expression, remote: false }
+        break search
+      }
+    }
+    if (this.hostCache.size >= HOST_CACHE_MAX) this.hostCache.clear()
+    this.hostCache.set(host, hit)
+    return hit
   }
 
   /** The user chose to proceed: nothing on `url`'s origin is stopped until the browser closes. */
@@ -312,21 +331,18 @@ export class SafeBrowsingService {
     const cached = this.remoteCache.get(url)
     if (cached && cached.until > now)
       return cached.threat
-        ? { feedId: 'gsb', threat: cached.threat, expression: hostnameOf(url) ?? url, remote: true }
+        ? { feedId: 'gsb', threat: cached.threat, expression: cached.expression, remote: true }
         : null
     const request = buildSearchRequest(key, url)
     if (!request) return null
     const result = await this.search(request)
     if (!result) return null
-    this.remember(url, result.threat, result.cacheMs)
-    return result.threat
-      ? { feedId: 'gsb', threat: result.threat, expression: result.expression ?? url, remote: true }
-      : null
+    const expression = result.expression ?? hostnameOf(url) ?? url
+    this.remember(url, result.threat, expression, result.cacheMs)
+    return result.threat ? { feedId: 'gsb', threat: result.threat, expression, remote: true } : null
   }
 
-  private async search(
-    request: GsbSearchRequest
-  ): Promise<{
+  private async search(request: GsbSearchRequest): Promise<{
     threat: SafeBrowsingThreat | null
     expression: string | null
     cacheMs: number
@@ -351,12 +367,17 @@ export class SafeBrowsingService {
     }
   }
 
-  private remember(url: string, threat: SafeBrowsingThreat | null, cacheMs: number): void {
+  private remember(
+    url: string,
+    threat: SafeBrowsingThreat | null,
+    expression: string,
+    cacheMs: number
+  ): void {
     if (this.remoteCache.size >= REMOTE_CACHE_MAX) {
       const oldest = this.remoteCache.keys().next().value
       if (oldest !== undefined) this.remoteCache.delete(oldest)
     }
-    this.remoteCache.set(url, { threat, until: Date.now() + cacheMs })
+    this.remoteCache.set(url, { threat, expression, until: Date.now() + cacheMs })
   }
 
   // ---------------------------------------------------------------------------
@@ -408,6 +429,7 @@ export class SafeBrowsingService {
 
   private adopt(rt: FeedRuntime, doc: FeedDocument): void {
     rt.table = PrefixTable.fromBase64(doc.prefixes)
+    this.hostCache.clear()
     rt.doc = { ...doc, entries: rt.table.size }
   }
 
@@ -476,6 +498,7 @@ export class SafeBrowsingService {
       }
       rt.table = table
       rt.doc = doc
+      this.hostCache.clear()
       rt.lastError = null
       await this.io.write(feedFile(rt.feed.id), JSON.stringify(doc))
     } catch (error) {
@@ -498,6 +521,7 @@ export class SafeBrowsingService {
     const feed = safeBrowsingFeed(id)
     if (!rt || !feed) return
     rt.table = table
+    this.hostCache.clear()
     rt.doc = {
       version: FEED_DOCUMENT_VERSION,
       id,

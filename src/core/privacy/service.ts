@@ -5,6 +5,7 @@ import { SafeBrowsingService, sameDocument } from '../safebrowsing/service'
 import type { InterstitialAction } from '../../shared/interstitial'
 import {
   HTTPS_ONLY_PERMISSION,
+  hostInSites,
   secureDnsServers,
   type HttpsOnlyMode,
   type PrivacyFlags,
@@ -56,12 +57,11 @@ export class PrivacyService {
       this.browser.downloads.addVerdictProvider(this.safeBrowsing.verdictProvider()),
       this.browser.permissions.subscribe((change) => {
         if (change.permission !== HTTPS_ONLY_PERMISSION) return
-        this.apply()
+        this.refresh()
         this.browser.state.commitVolatile()
       })
     )
-    this.syncHttpsOnlyRules()
-    this.apply()
+    this.refresh()
   }
 
   stop(): void {
@@ -72,7 +72,11 @@ export class PrivacyService {
 
   onSettingsChanged(): void {
     this.safeBrowsing.onSettingsChanged()
-    if (!this.started) return
+    if (this.started) this.refresh()
+  }
+
+  /** The effective policy changed (or may have): the rule set first, then the hosts' flags. */
+  private refresh(): void {
     this.syncHttpsOnlyRules()
     this.apply()
   }
@@ -149,42 +153,44 @@ export class PrivacyService {
     return [...out].sort()
   }
 
-  /** Every host that may load over plaintext right now: the session's answers and the stored ones. */
+  /**
+   * Every site that may load over plaintext right now (the session's answers and the stored
+   * ones), as hosts, sorted. A site covers its subdomains, as the cookie exceptions do.
+   */
   plaintextSites(): string[] {
     return [...new Set([...this.sessionPlaintext, ...this.storedPlaintextSites()])].sort()
   }
 
-  /** Whether HTTPS-only mode lets `url` (or a URL of its host) load without the upgrade. */
+  /** Whether HTTPS-only mode lets `url` load without the upgrade: its host is an allowed site. */
   allowsPlaintext(url: string): boolean {
     const host = hostnameOf(url)
-    if (!host) return false
-    return this.sessionPlaintext.has(host) || this.storedPlaintextSites().includes(host)
+    return host !== null && hostInSites(host, this.plaintextSites())
   }
 
   /**
-   * The warning page's answer: `url`'s host may load over plaintext, until the browser closes
-   * or (`remember`) for good. Pushed to the host before the caller navigates, so the very next
-   * request of that host is left alone.
+   * The warning page's answer: `url`'s site may load over plaintext, until the browser closes
+   * or (`remember`) for good. The rule set and the hosts' flags are updated before this returns,
+   * so the very next request of that site is left alone.
    */
   allowPlaintext(url: string, remember: boolean): void {
     const host = hostnameOf(url)
     if (!host) return
     if (remember) {
       this.sessionPlaintext.delete(host)
-      // The permission listener applies the flags and commits.
+      // The permission listener refreshes and commits.
       this.browser.permissions.set(HTTPS_ONLY_PERMISSION, `http://${host}`, 'allow')
     } else {
       this.sessionPlaintext.add(host)
     }
-    this.apply()
+    this.refresh()
     this.browser.state.commitVolatile()
   }
 
-  /** Forget a host's plaintext allowance, session and stored alike. */
+  /** Forget a site's plaintext allowance, session and stored alike. */
   forgetPlaintext(host: string): void {
     this.sessionPlaintext.delete(host)
     this.browser.permissions.set(HTTPS_ONLY_PERMISSION, `http://${host}`, null)
-    this.apply()
+    this.refresh()
     this.browser.state.commitVolatile()
   }
 
@@ -195,7 +201,7 @@ export class PrivacyService {
       source: 'builtin',
       priority: RULE_SET_PRIORITY.httpsOnly,
       enabled: mode !== 'off',
-      rules: [httpsOnlyRule(mode === 'always' ? 'always' : 'ask')]
+      rules: [httpsOnlyRule(mode === 'always' ? 'always' : 'ask', this.plaintextSites())]
     }
     const signature = JSON.stringify(set)
     const engine = this.browser.blocking.engine
@@ -257,18 +263,22 @@ export class PrivacyService {
   }
 }
 
+/** Hosts HTTPS-only mode never upgrades: the loopback names have no certificates to upgrade to. */
+export const HTTPS_ONLY_EXEMPT_HOSTS: readonly string[] = ['localhost', '127.0.0.1']
+
 /**
  * HTTPS-only mode's rule: `http://` requests of hosts with a dot are upgraded (single-label
- * intranet names and the loopback address have no certificates to upgrade to). `ask` upgrades
- * documents only; `always` everything a page loads.
+ * intranet names have no certificates to upgrade to), except on the sites the user allowed over
+ * plaintext (`allowed`, subdomains included). `ask` upgrades documents only; `always`
+ * everything a page loads.
  */
-export function httpsOnlyRule(mode: 'ask' | 'always'): Rule {
+export function httpsOnlyRule(mode: 'ask' | 'always', allowed: readonly string[] = []): Rule {
   const rule: Rule = {
     id: 1,
     action: { type: 'upgradeScheme' },
     condition: {
       regexFilter: '^http://[^/?#]*\\.[^/?#]*',
-      excludedRequestDomains: ['localhost', '127.0.0.1']
+      excludedRequestDomains: [...HTTPS_ONLY_EXEMPT_HOSTS, ...allowed]
     }
   }
   if (mode === 'ask') rule.condition.resourceTypes = ['main_frame']

@@ -70,6 +70,7 @@ import {
 } from './security'
 import { ElectronBlocking, ElectronBundledLists, bundledListsDirectory } from './blocking'
 import { supportsWindowMaterial } from './appShell'
+import { ElectronPrivacy } from './privacy'
 
 export const ELECTRON_CAPABILITIES: HostCapabilities = {
   windowControls: true,
@@ -126,6 +127,7 @@ export class ElectronPlatform implements Platform {
   readonly siteData: ElectronSiteData
   readonly passwords: PasswordsHost
   readonly blocking: ElectronBundledLists
+  readonly privacy: ElectronPrivacy
   /** The webRequest multiplexer and text matcher; created with the browser in `start`. */
   requestBlocking!: ElectronBlocking
   readonly translate: ElectronTranslateHost
@@ -150,6 +152,10 @@ export class ElectronPlatform implements Platform {
     })
     // The views hand "Save … As…" downloads to the downloads host, which then asks where to save.
     this.views = new ElectronTabViewHost(this.sessions, this.downloads)
+    // The core's Safe Browsing service exists once the browser does (`start`); no request runs before.
+    this.privacy = new ElectronPrivacy(this.views, {
+      lookup: (url) => (this.browser ? this.browser.privacy.safeBrowsing.lookup(url) : null)
+    })
     this.siteData = new ElectronSiteData(this.sessions)
     this.menus = new ElectronMenus()
     this.dialogs = {
@@ -404,6 +410,9 @@ export class ElectronPlatform implements Platform {
     // session's one onBeforeSendHeaders slot; persistent sessions only, like the store preload.
     this.requestBlocking.registerHeaderRewrite(webstoreClientHints, { persistentOnly: true })
     this.requestBlocking.registerHeaderRewrite(edgeStoreUserAgent, { persistentOnly: true })
+    // Safe Browsing ahead of the rules, the cookie and signal edits after them; the upgrade
+    // observer and the page preload's signals IPC.
+    this.privacy.attach(this.requestBlocking)
     this.sessions.configure((ses: Session, containerId: string) => {
       installZenProtocol(ses, (id) => browser.reader.pageHtml(id))
       extensionResources.install(ses)
