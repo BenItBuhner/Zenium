@@ -26,11 +26,14 @@ import { WarningRow } from './WarningRow'
 export function ExtensionDetails({
   ext,
   scrolled,
+  menuOpen,
   onBack,
   onMenu
 }: {
   ext: ExtensionInfo
   scrolled: boolean
+  /** The header's `⋯` menu is open: its anchor shows it (§9.20). */
+  menuOpen: boolean
   onBack: () => void
   onMenu: (anchor: Anchor) => void
 }): JSX.Element {
@@ -52,6 +55,7 @@ export function ExtensionDetails({
           icon={Ellipsis}
           label="More actions"
           aria-haspopup="menu"
+          aria-expanded={menuOpen}
           onClick={(e) => onMenu(anchorOf(e.currentTarget))}
         />
       </PageHeader>

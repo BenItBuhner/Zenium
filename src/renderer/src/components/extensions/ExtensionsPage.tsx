@@ -28,9 +28,13 @@ import { V2Button, V2Field, V2FormField, V2IconButton, V2Switch } from './v2'
 
 interface MenuState {
   anchor: Anchor
+  /** Whose `⋯` is open – `header`, or the extension's id – so that anchor shows it (§9.20). */
+  owner: string
   title?: string
   items: LocalMenuEntry[]
 }
+
+const HEADER_MENU = 'header'
 
 /**
  * The Extensions tab of Add-ons and Themes, an in-content page to the v2 draft: the page
@@ -100,6 +104,7 @@ export function ExtensionsPage({
           <ExtensionDetails
             ext={details}
             scrolled={scrolled}
+            menuOpen={menu?.owner === details.id}
             onBack={() => setDetailsId(null)}
             onMenu={(anchor) => setMenu(menuFor(details, anchor))}
           />
@@ -109,6 +114,7 @@ export function ExtensionsPage({
             scrolled={scrolled}
             adding={adding}
             setAdding={setAdding}
+            menuOwner={menu?.owner ?? null}
             openMenu={setMenu}
             menuFor={menuFor}
             openDetails={setDetailsId}
@@ -146,6 +152,7 @@ function ExtensionList({
   scrolled,
   adding,
   setAdding,
+  menuOwner,
   openMenu,
   menuFor,
   openDetails
@@ -154,6 +161,8 @@ function ExtensionList({
   scrolled: boolean
   adding: boolean
   setAdding: (v: boolean) => void
+  /** The open menu's `owner`, or null. */
+  menuOwner: string | null
   openMenu: (menu: MenuState) => void
   menuFor: (ext: ExtensionInfo, anchor: Anchor) => MenuState
   openDetails: (id: string) => void
@@ -162,6 +171,7 @@ function ExtensionList({
   const empty = extensions.length === 0
   const headerMenu = (anchor: Anchor): MenuState => ({
     anchor,
+    owner: HEADER_MENU,
     title: 'Extensions',
     items: [
       {
@@ -198,6 +208,7 @@ function ExtensionList({
           icon={Ellipsis}
           label="More actions"
           aria-haspopup="menu"
+          aria-expanded={menuOwner === HEADER_MENU}
           onClick={(e) => openMenu(headerMenu(anchorOf(e.currentTarget)))}
         />
       </PageHeader>
@@ -212,6 +223,7 @@ function ExtensionList({
               <ExtensionCard
                 key={ext.id}
                 ext={ext}
+                menuOpen={menuOwner === ext.id}
                 onOpen={() => openDetails(ext.id)}
                 onMenu={(anchor) => openMenu(menuFor(ext, anchor))}
               />
@@ -326,10 +338,12 @@ function EmptyState({ onAdd, adding }: { onAdd: () => void; adding: boolean }): 
 
 function ExtensionCard({
   ext,
+  menuOpen,
   onOpen,
   onMenu
 }: {
   ext: ExtensionInfo
+  menuOpen: boolean
   onOpen: () => void
   onMenu: (anchor: Anchor) => void
 }): JSX.Element {
@@ -387,6 +401,7 @@ function ExtensionCard({
           label={`${ext.name}, more actions`}
           title="More actions"
           aria-haspopup="menu"
+          aria-expanded={menuOpen}
           onClick={(e) => onMenu(anchorOf(e.currentTarget))}
         />
       </div>
@@ -447,5 +462,5 @@ function rowMenu(
       run('extension.remove', { id: ext.id })
     }
   })
-  return { anchor, title: ext.name, items }
+  return { anchor, owner: ext.id, title: ext.name, items }
 }
