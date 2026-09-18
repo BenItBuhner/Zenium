@@ -44,6 +44,13 @@ export interface ExtensionRecord {
   optionsPage: string | null
   /** `action.default_popup` (or the MV2 `browser_action` equivalent). */
   popup: string | null
+  /** `chrome_url_overrides.newtab`, relative to the extension root; null when not declared. */
+  newTabPage: string | null
+  /**
+   * The user let this extension's `newTabPage` replace new tabs. Off by default (Chrome asks
+   * before a fresh install takes the page over); at most one record has it on.
+   */
+  newTabOverride: boolean
   /**
    * Warning lines an update added over the version the user approved. Chrome keeps such an
    * extension disabled until the user accepts them again; the host clears this on approval.
@@ -69,6 +76,7 @@ export type ManifestFields = Pick<
   | 'hostPermissions'
   | 'optionsPage'
   | 'popup'
+  | 'newTabPage'
 > & { updateUrl: string | null }
 
 interface LooseManifest {
@@ -82,6 +90,7 @@ interface LooseManifest {
   options_page?: unknown
   action?: { default_popup?: unknown } | null
   browser_action?: { default_popup?: unknown } | null
+  chrome_url_overrides?: { newtab?: unknown } | null
   update_url?: unknown
 }
 
@@ -108,6 +117,7 @@ export function manifestFields(input: unknown): ManifestFields {
   hostPermissions.push(...strings(manifest.host_permissions))
   const action = manifest.action ?? manifest.browser_action
   const optionsPage = str(manifest.options_ui?.page) || str(manifest.options_page) || null
+  const newTabPage = str(manifest.chrome_url_overrides?.newtab).replace(/^\/+/, '')
   return {
     version: str(manifest.version),
     manifestVersion,
@@ -117,8 +127,38 @@ export function manifestFields(input: unknown): ManifestFields {
     hostPermissions,
     optionsPage: optionsPage ? optionsPage.replace(/^\/+/, '') : null,
     popup: str(action?.default_popup) || null,
+    newTabPage: newTabPage || null,
     updateUrl: str(manifest.update_url) || null
   }
+}
+
+/** The URL new tabs open with while `record` holds the override, or null when it cannot. */
+export function newTabOverrideUrl(record: ExtensionRecord): string | null {
+  if (!record.enabled || !record.newTabOverride || !record.newTabPage) return null
+  return `chrome-extension://${record.id}/${record.newTabPage}`
+}
+
+/**
+ * Turns the override on for `id` (and off for every other record: like Chrome, one page wins)
+ * or off. Enabling an extension that declares no new-tab page changes nothing. Returns the
+ * records that changed, so the host persists only when something did.
+ */
+export function setNewTabOverride(
+  records: readonly ExtensionRecord[],
+  id: string,
+  enabled: boolean
+): ExtensionRecord[] {
+  const target = records.find((r) => r.id === id)
+  if (!target || (enabled && !target.newTabPage)) return []
+  const changed: ExtensionRecord[] = []
+  for (const record of records) {
+    const wanted = enabled && record.id === id
+    if (!enabled && record.id !== id) continue
+    if (record.newTabOverride === wanted) continue
+    record.newTabOverride = wanted
+    changed.push(record)
+  }
+  return changed
 }
 
 export interface NewRecordOptions {
@@ -157,6 +197,8 @@ export function newRecord(options: NewRecordOptions): ExtensionRecord {
     hostPermissions: fields.hostPermissions,
     optionsPage: fields.optionsPage,
     popup: fields.popup,
+    newTabPage: fields.newTabPage,
+    newTabOverride: false,
     pendingWarnings: null
   }
 }
@@ -286,6 +328,8 @@ function sanitizeRecord(entry: unknown, now: number): ExtensionRecord | null {
     hostPermissions: strings(r.hostPermissions),
     optionsPage: str(r.optionsPage) || null,
     popup: str(r.popup) || null,
+    newTabPage: str(r.newTabPage) || null,
+    newTabOverride: r.newTabOverride === true,
     pendingWarnings: Array.isArray(r.pendingWarnings) ? strings(r.pendingWarnings) : null
   }
 }

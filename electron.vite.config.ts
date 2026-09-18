@@ -23,7 +23,8 @@ export default defineConfig({
           index: resolve('src/preload/index.ts'),
           page: resolve('src/preload/page.ts'),
           webstore: resolve('src/preload/webstore.ts'),
-          extension: resolve('src/preload/extension.ts')
+          extension: resolve('src/preload/extension.ts'),
+          tts: resolve('src/preload/tts.ts')
         }
       }
     }

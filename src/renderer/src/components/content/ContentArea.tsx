@@ -1,7 +1,7 @@
-import type { JSX } from 'react'
+import type { JSX, RefObject } from 'react'
 import { useEffect, useRef, useState } from 'react'
-import { MonitorSmartphone, Plus } from 'lucide-react'
-import type { Rect, UIState } from '@shared/types'
+import { MonitorSmartphone, Plus, X } from 'lucide-react'
+import type { Rect, SidePanelInfo, UIState } from '@shared/types'
 import { cmd, run } from '@renderer/lib/api'
 import { chromeUnderPages } from '@renderer/lib/cover'
 import { wantsDefaultBrowserBanner } from '@renderer/lib/defaultBrowser'
@@ -31,6 +31,7 @@ interface Props {
  */
 export function ContentArea({ state, ui }: Props): JSX.Element {
   const viewportRef = useRef<HTMLDivElement>(null)
+  const sidePanelRef = useRef<HTMLDivElement>(null)
   const tab = activeTab(state)
   const group = tab?.splitGroupId ? (state.splitGroups[tab.splitGroupId] ?? null) : null
   const glanceActive = ui.glanceActive
@@ -56,7 +57,13 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
     }
   }, [glanceTabId, glanceParentId])
 
-  const { area, contentHidden } = useLayoutReporter(viewportRef, state, ui, glanceActive)
+  const { area, contentHidden } = useLayoutReporter(
+    viewportRef,
+    sidePanelRef,
+    state,
+    ui,
+    glanceActive
+  )
   const local: Rect | null = area ? { x: 0, y: 0, width: area.width, height: area.height } : null
   // The phone shell draws the URL bar itself: its field sits in the bar band outside this frame.
   const phone = useViewport().formFactor === 'phone'
@@ -81,51 +88,61 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
         data-staged={staged || undefined}
       >
         {banner && <DefaultBrowserBanner state={state} />}
-        <div ref={viewportRef} className="relative min-h-0 flex-1 overflow-hidden">
-          {state.capabilities.pullToRefresh && <PullIndicator />}
-          {!tab && !ui.urlbar.open && ui.overlay === 'none' && !staged && <EmptyState />}
-          {tab && foreign && !contentHidden && !glanceActive && (
-            <ForeignTabPreview tabId={tab.id} />
-          )}
-          {showSnapshot && (
-            <div className="absolute inset-0">
-              {ui.snapshot &&
-              ui.snapshotTabId &&
-              ui.snapshotTabId === (glanceActive ? glanceParentId : tab?.id) ? (
-                <CoverImage
-                  tabId={ui.snapshotTabId}
-                  src={ui.snapshot}
-                  // The Android chassis swaps the page for this picture at every form factor
-                  // (see lib/cover.ts); the desktop hosts show it as they always have.
-                  cover={chromeUnderPages(state.platform)}
-                  className="h-full w-full object-cover object-top"
-                />
-              ) : null}
-              {/* Panels draw no scrim: a bar panel or the star bubble leaves the capture undimmed. */}
-              {!panelAloneOverContent(ui) && (
-                <div
-                  className={cn(
-                    'absolute inset-0 bg-black/35 transition-opacity',
-                    ui.drag && 'bg-black/20'
-                  )}
-                />
-              )}
-            </div>
-          )}
-          {group && local && !contentHidden && !glanceActive && (
-            <SplitChrome state={state} group={group} area={local} activeTabId={tab?.id ?? null} />
-          )}
-          {ui.drag && local && tab && <SplitDropZones dropKey={dropKey} />}
-          {glanceActive && state.glance && local && (
-            <GlanceFrame state={state} glance={state.glance} area={local} ready={ui.glanceReady} />
-          )}
-          {ui.urlbar.open && local && !phone && (
-            <Urlbar
-              key={`${ui.urlbar.mode}-${ui.urlbar.tabId ?? 'new'}`}
-              state={state}
-              urlbar={ui.urlbar}
-              area={local}
-            />
+        <div className="flex min-h-0 flex-1 flex-row">
+          <div ref={viewportRef} className="relative min-h-0 flex-1 overflow-hidden">
+            {state.capabilities.pullToRefresh && <PullIndicator />}
+            {!tab && !ui.urlbar.open && ui.overlay === 'none' && !staged && <EmptyState />}
+            {tab && foreign && !contentHidden && !glanceActive && (
+              <ForeignTabPreview tabId={tab.id} />
+            )}
+            {showSnapshot && (
+              <div className="absolute inset-0">
+                {ui.snapshot &&
+                ui.snapshotTabId &&
+                ui.snapshotTabId === (glanceActive ? glanceParentId : tab?.id) ? (
+                  <CoverImage
+                    tabId={ui.snapshotTabId}
+                    src={ui.snapshot}
+                    // The Android chassis swaps the page for this picture at every form factor
+                    // (see lib/cover.ts); the desktop hosts show it as they always have.
+                    cover={chromeUnderPages(state.platform)}
+                    className="h-full w-full object-cover object-top"
+                  />
+                ) : null}
+                {/* Panels draw no scrim: a bar panel or the star bubble leaves the capture undimmed. */}
+                {!panelAloneOverContent(ui) && (
+                  <div
+                    className={cn(
+                      'absolute inset-0 bg-black/35 transition-opacity',
+                      ui.drag && 'bg-black/20'
+                    )}
+                  />
+                )}
+              </div>
+            )}
+            {group && local && !contentHidden && !glanceActive && (
+              <SplitChrome state={state} group={group} area={local} activeTabId={tab?.id ?? null} />
+            )}
+            {ui.drag && local && tab && <SplitDropZones dropKey={dropKey} />}
+            {glanceActive && state.glance && local && (
+              <GlanceFrame
+                state={state}
+                glance={state.glance}
+                area={local}
+                ready={ui.glanceReady}
+              />
+            )}
+            {ui.urlbar.open && local && !phone && (
+              <Urlbar
+                key={`${ui.urlbar.mode}-${ui.urlbar.tabId ?? 'new'}`}
+                state={state}
+                urlbar={ui.urlbar}
+                area={local}
+              />
+            )}
+          </div>
+          {state.sidePanel && !phone && (
+            <SidePanelStrip panel={state.sidePanel} bodyRef={sidePanelRef} />
           )}
         </div>
         {ui.findOpen && ui.findTabId && state.tabs[ui.findTabId] && (
@@ -134,6 +151,41 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
       </div>
       {ui.overlay !== 'none' && <OverlayHost state={state} ui={ui} />}
     </div>
+  )
+}
+
+/**
+ * The extension side panel's strip (`chrome.sidePanel`): the panel's own page is a host view
+ * placed over the body by the layout reporter; the strip reserves the room beside the page and
+ * carries the extension's name and a close button. Plain and functional; its design pass is
+ * deferred with the styling hold.
+ */
+function SidePanelStrip({
+  panel,
+  bodyRef
+}: {
+  panel: SidePanelInfo
+  bodyRef: RefObject<HTMLDivElement | null>
+}): JSX.Element {
+  return (
+    <aside
+      className="flex w-[360px] shrink-0 flex-col border-l border-[var(--zen-border)] bg-[var(--zen-bg)]"
+      aria-label={`${panel.name} side panel`}
+    >
+      <div className="flex h-9 shrink-0 items-center gap-2 px-3 text-[13px]">
+        {panel.icon && <img src={panel.icon} alt="" className="h-4 w-4" draggable={false} />}
+        <span className="min-w-0 flex-1 truncate font-medium">{panel.name}</span>
+        <button
+          type="button"
+          className="flex h-6 w-6 items-center justify-center rounded text-[var(--zen-muted)] hover:bg-[var(--zen-element-bg-hover)] hover:text-[var(--zen-fg)]"
+          title="Close side panel"
+          onClick={() => run('extension.closeSidePanel', undefined)}
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+      <div ref={bodyRef} className="min-h-0 flex-1" />
+    </aside>
   )
 }
 

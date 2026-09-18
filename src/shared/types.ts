@@ -386,6 +386,10 @@ export interface ExtensionInfo {
   hostPermissions: string[]
   /** `options_ui.page` or `options_page`, relative to the extension root. */
   optionsPage: string | null
+  /** `chrome_url_overrides.newtab`, relative to the extension root; null when not declared. */
+  newTabPage: string | null
+  /** New tabs open `newTabPage` (`extension.setNewTabOverride`); off by default, one at most. */
+  newTabOverride: boolean
   /** The install prompt's warning lines Chrome would show for this manifest. */
   warnings: string[]
   /** Warning lines an update added; the extension stays disabled until they are approved. */
@@ -403,6 +407,14 @@ export interface ExtensionInfo {
   commands?: ExtensionCommandInfo[]
   /** Why some commands stayed unbound (a Zenium shortcut or another extension holds the key). */
   commandConflicts?: string[]
+}
+
+/** The extension side panel a window is showing (`chrome.sidePanel`), beside the page. */
+export interface SidePanelInfo {
+  extensionId: string
+  name: string
+  /** Data URL of the extension's icon, when it has one. */
+  icon: string | null
 }
 
 /** One `chrome.commands` entry as the extensions page shows it. */
@@ -1692,6 +1704,8 @@ export interface UIState {
   zappingTabId: string | null
   liveFolders: Record<string, LiveFolderConfig>
   extensions: ExtensionInfo[]
+  /** The extension side panel this window shows beside the page, if one is open for its tab. */
+  sidePanel: SidePanelInfo | null
   mods: Mod[]
   sync: SyncStatus
   /** Connected AI agents (MCP sessions) and the tabs they drive. */
@@ -1745,6 +1759,8 @@ export type SuggestionKind =
   | 'engine'
   | 'answer'
   | 'entity'
+  /** A `chrome.omnibox` row: the input belongs to an extension whose keyword starts it. */
+  | 'omnibox'
 
 export interface Suggestion {
   id: string
@@ -1766,6 +1782,8 @@ export interface Suggestion {
   inline?: boolean
   /** Chromium-style relevance the rows were ordered by (1300 is the verbatim query). */
   relevance?: number
+  /** The row's owner lets the user remove it (Delete; `omnibox.onDeleteSuggestion`). */
+  deletable?: boolean
 }
 
 export interface CommandDescriptor {
@@ -1830,6 +1848,8 @@ export interface LayoutReport {
   glance: { tabId: string; rect: Rect; radius: number } | null
   /** When true no tab views should be visible (a chrome overlay covers the content area). */
   contentHidden: boolean
+  /** Where the extension side panel's view goes (`UIState.sidePanel`), or null when none shows. */
+  sidePanel?: Rect | null
 }
 
 // ---------------------------------------------------------------------------
@@ -1856,6 +1876,11 @@ export interface Commands {
 
   'layout.report': { args: LayoutReport; result: void }
 
+  /**
+   * The user asked for a new tab: the URL bar in new-tab mode, or the page an extension
+   * overrides new tabs with (`chrome_url_overrides.newtab`, opted in per extension).
+   */
+  'tab.new': { args: void; result: void }
   'tab.create': {
     args: {
       url?: string
@@ -2031,6 +2056,10 @@ export interface Commands {
    */
   'urlbar.pasteAndGo': { args: { tabId: string | null }; result: void }
   'urlbar.pasteAndSearch': { args: { tabId: string | null }; result: void }
+  /** The URL bar closed without an entry (Escape, a click away): an omnibox session ends. */
+  'urlbar.cancel': { args: void; result: void }
+  /** Delete on a row its owner marked `deletable` (`omnibox.onDeleteSuggestion`). */
+  'urlbar.deleteSuggestion': { args: { input: string }; result: void }
 
   'overlay.snapshot': { args: { tabId: string }; result: string | null }
 
@@ -2293,6 +2322,11 @@ export interface Commands {
   'extension.remove': { args: { id: string }; result: void }
   'extension.setEnabled': { args: { id: string; enabled: boolean }; result: void }
   'extension.setPinned': { args: { id: string; pinned: boolean }; result: void }
+  /** Lets (or stops letting) this extension's `chrome_url_overrides.newtab` page open new tabs. */
+  'extension.setNewTabOverride': { args: { id: string; enabled: boolean }; result: void }
+  /** Opens this extension's `chrome.sidePanel` beside the page, or closes it when it is showing. */
+  'extension.toggleSidePanel': { args: { id: string }; result: void }
+  'extension.closeSidePanel': { args: void; result: void }
   /** Chrome's "Allow in Incognito": let the extension's request rules reach private windows. */
   'extension.setAllowPrivate': { args: { id: string; allowed: boolean }; result: void }
   'extension.reload': { args: { id: string }; result: void }

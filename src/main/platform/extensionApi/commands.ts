@@ -13,6 +13,7 @@ import {
 } from '../../../core/extensions/api/commands'
 import type { ActionApi } from './action'
 import type { ActiveTabGrants } from './activeTab'
+import type { SidePanelApi } from './sidePanel'
 import type { ApiContext, ApiHost, LoadedExtension, NamespaceHandlers } from './types'
 
 /**
@@ -28,7 +29,8 @@ export class CommandsApi {
   constructor(
     private readonly host: ApiHost,
     private readonly action: ActionApi,
-    private readonly activeTab: ActiveTabGrants
+    private readonly activeTab: ActiveTabGrants,
+    private readonly sidePanel: SidePanelApi
   ) {}
 
   readonly handlers: NamespaceHandlers = {
@@ -153,7 +155,8 @@ export class CommandsApi {
     if (EXECUTE_ACTION_COMMANDS.has(command.name)) {
       const { popup, enabled } = this.action.clickState(ext.id, win)
       if (!enabled) return
-      if (popup) this.host.openPopup(ext.id, win)
+      if (this.sidePanel.opensOnActionClick(ext.id, win)) this.sidePanel.toggle(ext.id, win)
+      else if (popup) this.host.openPopup(ext.id, win)
       else this.action.clicked(ext.id, win)
       return
     }

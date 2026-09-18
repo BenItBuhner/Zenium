@@ -262,6 +262,36 @@ describe('installExtensionApi', () => {
     ])
   })
 
+  it('defines the bridged namespaces only for extensions declaring their permission', () => {
+    const manifest = {
+      manifest_version: 3,
+      name: 'Probe',
+      version: '1.0',
+      permissions: ['bookmarks', 'identity'],
+      optional_permissions: ['tabGroups']
+    }
+    g.chrome.runtime.getManifest = () => manifest
+    installExtensionApi(host, API_SPEC)
+    expect(g.chrome.bookmarks.getTree).toBeTypeOf('function')
+    // Optional and not granted yet: the namespace is there for the grant to make useful.
+    expect(g.chrome.tabGroups.query).toBeTypeOf('function')
+    expect(g.chrome.tabs.group).toBeTypeOf('function')
+    expect(g.chrome.identity.getRedirectURL()).toBe(
+      'https://abcdefghijklmnopabcdefghijklmnop.chromiumapp.org/'
+    )
+    for (const hidden of [
+      'history',
+      'downloads',
+      'sessions',
+      'topSites',
+      'sidePanel',
+      'browsingData',
+      'tts'
+    ]) {
+      expect(g.chrome[hidden]).toBeUndefined()
+    }
+  })
+
   it('exposes browserAction instead of action for MV2', () => {
     installNativeGlobals(2)
     const diag = installExtensionApi(host, API_SPEC)

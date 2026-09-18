@@ -25,6 +25,8 @@ import type {
   Rect,
   ResourceSnapshot,
   SharePayload,
+  SidePanelInfo,
+  Suggestion,
   SyncScope,
   SyncStatus,
   Tab,
@@ -753,6 +755,10 @@ export interface ExtensionHost {
   remove(id: string): Promise<void>
   setEnabled(id: string, enabled: boolean, win?: ZenWindow): Promise<void>
   setPinned(id: string, pinned: boolean): void
+  /** Lets this extension's `chrome_url_overrides.newtab` page open new tabs (one at most), or stops it. */
+  setNewTabOverride(id: string, enabled: boolean): void
+  /** The page new tabs open with while an enabled extension holds the override, else null. */
+  newTabUrl(): string | null
   /** Chrome's "Allow in Incognito": whether the extension's request rules reach private windows. */
   setAllowPrivate(id: string, allowed: boolean): void
   reload(id: string): Promise<void>
@@ -761,6 +767,24 @@ export interface ExtensionHost {
   openOptions(id: string, win: ZenWindow): void
   openPopup(id: string, anchor: Rect, win: ZenWindow): void
   closePopup(): void
+  /** The `chrome.sidePanel` a window shows beside its page right now (for `UIState.sidePanel`). */
+  sidePanel(win: ZenWindow): SidePanelInfo | null
+  /** Open an extension's side panel in `win`, or close it when that extension's panel is showing. */
+  toggleSidePanel(id: string, win: ZenWindow): void
+  closeSidePanel(win: ZenWindow): void
+  /** The chrome laid the side panel out here (null: it is not showing); place the panel's view. */
+  placeSidePanel(win: ZenWindow, rect: Rect | null): void
+  /**
+   * `chrome.omnibox`: input starting with an extension's manifest keyword and a space belongs
+   * to that extension. `omniboxSuggest` answers the rows for such input (null: no keyword
+   * matched, the URL bar suggests as usual), `omniboxSubmit` hands an entered input over (true
+   * when an extension took it), `omniboxCancel` ends a session without an entry, and
+   * `omniboxDeleteSuggestion` reports a deleted row.
+   */
+  omniboxSuggest(input: string, win: ZenWindow): Promise<Suggestion[] | null>
+  omniboxSubmit(input: string, newTab: boolean, background: boolean, win: ZenWindow): boolean
+  omniboxCancel(win: ZenWindow): void
+  omniboxDeleteSuggestion(input: string, win: ZenWindow): void
   /**
    * The `chrome.contextMenus` items extensions add to a page's context menu, already grouped
    * per extension the way Chrome does; empty when nothing matches the click.

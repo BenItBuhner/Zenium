@@ -4,11 +4,12 @@ import {
   type BrowserWindow,
   type WebContents
 } from 'electron'
-import type { Tab } from '../../../shared/types'
+import type { Folder, Tab } from '../../../shared/types'
 import { PRIVATE_CONTAINER_ID } from '../../../shared/types'
 import type { Browser } from '../../../core/browser'
 import type { ZenWindow } from '../../../core/window'
 import { essentialsForSpace, tabVisibleIn } from '../../../core/model'
+import { TabGroupIds } from '../../../core/extensions/api/tabGroups'
 import { type ChromeTab, TAB_GROUP_NONE } from '../../../core/extensions/api/tabs'
 import { type ChromeWindow, windowStateFrom } from '../../../core/extensions/api/windows'
 import type { ElectronTabView, ElectronTabViewHost } from '../views'
@@ -48,6 +49,8 @@ export class ApiModel {
   private readonly assigned = new Map<string, string>()
   readonly popups = new Map<number, PopupWindow>()
   private nextSynthetic = SYNTHETIC_TAB_ID_BASE
+  /** Folder ids to `chrome.tabGroups` ids and back. */
+  private readonly groupIds = new TabGroupIds()
 
   constructor(
     private readonly browser: Browser,
@@ -293,6 +296,28 @@ export class ApiModel {
       if (owner === zenId) this.byChromeId.delete(chromeId)
   }
 
+  // ---------------------------------------------------------------------------
+  // Tab groups (Zenium folders)
+  // ---------------------------------------------------------------------------
+
+  /** The `chrome.tabGroups` id of a folder, allotted on first sight and stable from then on. */
+  groupIdFor(folderId: string): number {
+    return this.groupIds.idFor(folderId)
+  }
+
+  /** The folder behind a group id; undefined for an unknown id or a folder that is gone. */
+  folderForGroup(groupId: number): Folder | undefined {
+    const folderId = this.groupIds.folderIdFor(groupId)
+    return folderId ? this.browser.state.model.folders[folderId] : undefined
+  }
+
+  /** The group a tab is in: its folder, for a regular tab whose folder still exists. */
+  groupIdOfTab(tab: Tab): number {
+    if (!tab.folderId || tab.pinned || tab.essential) return TAB_GROUP_NONE
+    if (!this.browser.state.model.folders[tab.folderId]) return TAB_GROUP_NONE
+    return this.groupIdFor(tab.folderId)
+  }
+
   /**
    * The one window a tab belongs to: its own window for local tabs, else the window holding its
    * page, else the window it was last assigned to, else the last focused synced window.
@@ -394,7 +419,7 @@ export class ApiModel {
       frozen: tab.frozen,
       autoDiscardable: true,
       incognito: tab.containerId === PRIVATE_CONTAINER_ID,
-      groupId: TAB_GROUP_NONE,
+      groupId: this.groupIdOfTab(tab),
       lastAccessed: tab.lastActiveAt
     }
     if (bounds) {
