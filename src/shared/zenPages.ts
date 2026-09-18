@@ -542,7 +542,7 @@ export function errorPageHtml(url: URL): string {
 
 /**
  * Shown when a filter list blocks a whole page (malware hosts, ad-only domains). The site can be
- * excepted in Settings → Privacy and security; the page itself only offers the way back.
+ * excepted in Settings → Privacy and Security; the page itself only offers the way back.
  */
 export function blockedPageHtml(target: string): string {
   let host = target
@@ -555,7 +555,7 @@ export function blockedPageHtml(target: string): string {
 <body><div class="card">
   <h1>Zenium blocked this page</h1>
   <p><strong>${escapeHtml(host)}</strong> is on one of your filter lists as an ad, tracking or malware host, so Zenium did not load it.</p>
-  <p>To visit it anyway, add the site to the exceptions in Settings &rsaquo; Privacy and security.</p>
+  <p>To visit it anyway, add the site to the exceptions in Settings &rsaquo; Privacy and Security.</p>
   <p><code>${escapeHtml(target)}</code></p>
   <button onclick="history.back()">Go back</button>
 </div></body></html>`
@@ -655,10 +655,10 @@ function warningButton(button: WarningButton, autofocus: boolean): string {
  * A warning page – Safe Browsing's and HTTPS-only mode's interstitials – on the error page's
  * surface (design-language-v2-draft §9.11, §9.23, §9.30;
  * the rules are the page's own in `main.css`): the neutral page, a title block – the glyph in
- * status ink before the 22/600 title, the description under it – and the actions 24 below:
+ * status ink before the 22/600 title, the description under it – and the actions 16 below:
  * Details first, the way on beside it, Back to safety as the primary trailing (a phone splits
- * two peers and stacks three, primary first). Under Details the reason, the address at 13 and
- * the secondary that goes on regardless.
+ * two peers and stacks three, primary first). Under Details, 16 below the actions, the reason,
+ * the address at 13 and the secondary that goes on regardless.
  */
 function warningPageHtml(page: WarningPage): string {
   const data = Object.entries({ interstitial: page.kind, ...page.data })
@@ -706,7 +706,7 @@ export function safeBrowsingPageHtml(target: string, threat: SafeBrowsingThreat)
     title: copy.title,
     description: `Zenium stopped this page. ${escapeHtml(copy.description)}`,
     actions: [{ action: 'back', label: 'Back to safety', primary: true }],
-    details: `<p><strong>${escapeHtml(host)}</strong> is on one of the open malware and phishing feeds Zenium checks (URLhaus, Phishing.Database, malware-filter). Feeds are refreshed while the browser runs; Safe Browsing can be turned off in Settings &rsaquo; Privacy and security.</p>`,
+    details: `<p><strong>${escapeHtml(host)}</strong> is on one of the open malware and phishing feeds Zenium checks (URLhaus, Phishing.Database, malware-filter). Feeds are refreshed while the browser runs; Safe Browsing can be turned off in Settings &rsaquo; Privacy and Security.</p>`,
     detailActions: [{ action: 'proceed', label: 'Proceed anyway (unsafe)', danger: true }],
     target,
     data: { threat }
@@ -733,7 +733,7 @@ export function httpsOnlyPageHtml(httpUrl: string, code: number): string {
       { action: 'back', label: 'Back to safety', primary: true }
     ],
     details: `<p>${escapeHtml(reason)}${code ? ` (${code})` : ''}</p>
-    <p>HTTPS-only mode can be changed in Settings &rsaquo; Privacy and security.</p>`,
+    <p>HTTPS-only mode can be changed in Settings &rsaquo; Privacy and Security.</p>`,
     detailActions: [{ action: 'continue-always', label: 'Always allow for this site' }],
     target: httpUrl
   })

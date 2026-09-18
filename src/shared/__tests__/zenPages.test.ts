@@ -428,7 +428,7 @@ describe('errorPageHtml', () => {
         'Zenium tried to reach <strong>plain.example</strong> over https and could not.'
       )
       expect(httpsOnly).toContain('(-102)')
-      expect(httpsOnly).toContain('Settings &rsaquo; Privacy and security')
+      expect(httpsOnly).toContain('Settings &rsaquo; Privacy and Security')
       const hostile = errorPageHtml(
         parseZenUrl(httpsOnlyPageUrl('http://<img src=x onerror=alert(1)>/', -102))!
       )

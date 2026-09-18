@@ -544,13 +544,14 @@
  * The interstitials (`zen://error?kind=safebrowsing` and `kind=https-only`, written by the same
  * module; design-language-v2-draft §9.11, §9.23, §9.30): the neutral page above with a title
  * block – the 16 / 20 px glyph in status ink 8 before the 22/600 title, centred on its 28 line,
- * the description 15 at 69% 4 under it – and the actions 24 below it: Back to safety as the
- * page's one primary, trailing, Details and the way on beside it as secondaries. On a phone two
- * peers split the width and three or more stack, primary first (§9.11). Under Details the
- * reason, the address at 13 and the secondary that goes on regardless, in danger ink where it
- * goes to a dangerous site. A pressed action turns busy – full opacity, its label swapped for
- * the 16 px spinner at the same width, `aria-busy` – while the others wait at .4 (disabled) for
- * the browser's answer.
+ * the description 15 at 69% 4 under it – and the actions 16 below it (§9.23's 16 from a title
+ * block to what follows; §9.20's last body element, 16, the buttons, no hairline): Back to
+ * safety as the page's one primary, trailing, Details and the way on beside it as secondaries.
+ * On a phone two peers split the width and three or more stack, primary first (§9.11). Under
+ * Details, 16 below the actions, the reason, the address at 13 and the secondary that goes on
+ * regardless, in danger ink where it goes to a dangerous site. A pressed action turns busy –
+ * full opacity, its label swapped for the 16 px spinner at the same width, `aria-busy` – while
+ * the others wait at .4 (disabled) for the browser's answer.
  */
 .zen-interstitial-title {
   display: flex;
@@ -585,7 +586,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 24px;
+  margin-top: 16px;
 }
 :root[data-form-factor='phone'] .zen-interstitial-actions > .zen-interstitial-action {
   flex: 1;
@@ -600,7 +601,7 @@
   width: 100%;
 }
 .zen-interstitial-details {
-  margin-top: 24px;
+  margin-top: 16px;
 }
 .zen-interstitial-details[hidden] {
   display: none;
@@ -6244,7 +6245,8 @@
 .zen-privacy-row:has(> .zen-privacy-row-actions) > .zen-privacy-row-text {
   margin-block: 2px;
 }
-.zen-privacy-row:has(> .zen-privacy-row-actions) > .zen-v2-check {
+.zen-privacy-row:has(> .zen-privacy-row-actions) > .zen-v2-check,
+.zen-privacy-row:has(> .zen-privacy-row-actions) > .zen-v2-radio {
   margin-top: calc(2px + (var(--v2-line-body) - var(--v2-checkbox)) / 2);
 }
 :root[data-form-factor='phone'] .zen-privacy-row:has(> .zen-privacy-row-actions) {
@@ -6255,13 +6257,20 @@
   > .zen-privacy-row-text {
   margin-block: 8px;
 }
-:root[data-form-factor='phone'] .zen-privacy-row:has(> .zen-privacy-row-actions) > .zen-v2-check {
+:root[data-form-factor='phone'] .zen-privacy-row:has(> .zen-privacy-row-actions) > .zen-v2-check,
+:root[data-form-factor='phone'] .zen-privacy-row:has(> .zen-privacy-row-actions) > .zen-v2-radio {
   margin-top: calc(8px + (var(--v2-line-body) - var(--v2-checkbox)) / 2);
 }
-/* Three text lines (the description wrapped): the controls centre on the label's line instead. */
+/*
+ * Three text lines (the description wrapped): the controls centre on the label's line instead,
+ * (label line − control) / 2 below its top – the icon buttons, or a menulist in the actions.
+ */
 .zen-privacy-row[data-wrapped] > .zen-privacy-row-actions {
   align-self: flex-start;
   margin-top: calc(2px + (var(--v2-line-body) - var(--v2-icon-button)) / 2);
+}
+.zen-privacy-row[data-wrapped] > .zen-privacy-row-actions:has(> .zen-v2-menulist) {
+  margin-top: calc(2px + (var(--v2-line-body) - var(--v2-control)) / 2);
 }
 :root[data-form-factor='phone'] .zen-privacy-row[data-wrapped] > .zen-privacy-row-actions {
   margin-top: calc(8px + (var(--v2-line-body) - var(--v2-icon-button)) / 2);
@@ -6511,7 +6520,7 @@
 }
 /*
  * A card's title block (§9.23, §9.27): 16 from the card's edge to the title (the card's own 10
- * plus 6), its 16 px glyph 8 before it on the 22 line, the description 15 at 69% under it, an
+ * plus 6), its 16 px glyph 8 before it on the 22 line, the description 15 at 69% 4 under it, an
  * action trailing and centred on the block (§9.18), then 16 to the first row's box.
  */
 .zen-protection-card-title {
@@ -6528,9 +6537,23 @@
   margin: calc((22px - var(--v2-icon)) / 2) -4px 0 0;
   stroke-width: var(--v2-icon-stroke);
 }
-/* A field in a card (§9.12, §9.21): the card's 16 sides, the 4 above and below the row's own. */
+.zen-protection-card-title-text {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+}
+/*
+ * A field in a card (§9.12, §9.21): the card's 16 sides, the 4 above and below the row's own. The
+ * field keeps its 32 / 40 (§5): `.zen-v2-field` grows in a row, and in this column it would
+ * shrink to its text instead.
+ */
 .zen-privacy-card > .zen-protection-field {
   padding: 4px var(--v2-card-padding) 6px;
+}
+.zen-protection-field > .zen-v2-field {
+  flex: none;
 }
 /* A field or an add row whose parent is off (§10.4): its label and lines at .4 with the control. */
 .zen-protection-field[data-disabled] > label,
@@ -6622,9 +6645,15 @@
   transform: translateX(16px);
   background: var(--v2-on-accent);
 }
+/* Three text lines (§9.18): the switch centres on the label's line, (line − 20) / 2 below its top. */
+.zen-protection-switch-row[data-wrapped] > .zen-v2-switch {
+  align-self: flex-start;
+  margin-top: calc((var(--v2-line-body) - 20px) / 2);
+}
 /*
  * An action row (§10.4): the whole row is a button; a trailing 16 / 20 glyph only because it
- * leaves the app (the system's Private DNS screen), the spinner while it works (§9.30).
+ * leaves the app (the system's Private DNS screen), the spinner while it works (§9.30). On three
+ * text lines the glyph centres on the label's line (§9.18).
  */
 .zen-protection-action-row > svg {
   width: var(--v2-icon);
@@ -6632,6 +6661,10 @@
   flex-shrink: 0;
   color: var(--v2-text-deemphasized);
   stroke-width: var(--v2-icon-stroke);
+}
+.zen-protection-action-row[data-wrapped] > svg {
+  align-self: flex-start;
+  margin-top: calc((var(--v2-line-body) - var(--v2-icon)) / 2);
 }
 /* A secret string in a field (§4): the platform monospace at the field's size, no ligatures. */
 .zen-protection-secret {
@@ -6663,14 +6696,9 @@
 /*
  * The picker sheet (§9.13, §10.4; `PickerSheet`) is the chassis `BottomSheet` as it comes –
  * surface, scrim, grip, header, title block and rows (§9.16, §9.23, §9.25, §9.28) – with the
- * pane's radio in its rows. Only the rows' descriptions are its own: a choice is read in full
- * before it is taken, so they wrap without the pane's two-line clamp.
- */
-.zen-protection-sheet .zen-sheet-item .zen-privacy-row-desc {
-  display: block;
-  -webkit-line-clamp: unset;
-}
-/*
+ * pane's radio and text in its rows, the descriptions clamped at two lines as everywhere (§9.2):
+ * an option's copy is written to fit them at 412.
+ *
  * The menulist (§6, §9.13): 32 tall at radius 4 with a hairline, the 10% fill, 15/500 and a
  * 16 px chevron; lit while its list is open, .4 when disabled. A row holding one grows to the
  * control plus 8 (§9.21). Scoped to the pane: the class is shared with the other v2 surfaces

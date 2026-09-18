@@ -1,4 +1,4 @@
-import type { JSX, ReactNode } from 'react'
+import type { JSX, ReactNode, RefObject } from 'react'
 import { useId, useLayoutEffect, useRef, useState } from 'react'
 import { CircleAlert, ExternalLink, LoaderCircle } from 'lucide-react'
 import { usePhone } from '@renderer/lib/formFactor'
@@ -21,6 +21,27 @@ import { PickerSheet } from './PickerSheet'
  * booleans are switch rows, a choice is a value row that opens a picker sheet, an action is a
  * row, and no card is drawn (§10.4).
  */
+
+/**
+ * Whether a row's text block runs to three lines (its description wrapped), which the row
+ * learns by measuring the block: two 20 px lines are its own, anything taller is a wrap. A row
+ * says so with `data-wrapped`, and its trailing control then centres on the label's line instead
+ * of the row (§9.18).
+ */
+function useWrapped<T extends HTMLElement>(): [RefObject<T | null>, boolean] {
+  const text = useRef<T>(null)
+  const [wrapped, setWrapped] = useState(false)
+  useLayoutEffect(() => {
+    const el = text.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const measure = (): void => setWrapped(el.getBoundingClientRect().height > 50)
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
+  return [text, wrapped]
+}
 
 /**
  * A 22/600 section of the pane (§9.26): its title on the 28 px line, an optional description 15
@@ -90,7 +111,7 @@ export function List({ children, label }: { children: ReactNode; label?: string 
 
 /**
  * A card's title block (§9.23, §9.27): a 16 px glyph 8 px before a 17/600 title on the 22 px
- * line, the description 15 at 69% under it, an action trailing and centred on the block
+ * line, the description 15 at 69% 4 px under it, an action trailing and centred on the block
  * (§9.18), 16 px to the first row. Desktop only: `List` is rows on a phone.
  */
 export function CardTitle({
@@ -107,7 +128,7 @@ export function CardTitle({
   return (
     <div className="zen-protection-card-title" aria-live="polite">
       {icon}
-      <div className="min-w-0 flex-1">
+      <div className="zen-protection-card-title-text">
         <div className="zen-privacy-card-title">{title}</div>
         <div className="zen-privacy-muted">{description}</div>
       </div>
@@ -118,8 +139,9 @@ export function CardTitle({
 
 /**
  * A boolean row: on a desktop Zen's leading 16 px checkbox on the first text line (§6, §9.2), on
- * a phone the trailing 36 × 20 switch centred on the row with the whole row as its target
- * (§10.4, `role="switch"`). Disabled dims the row's text with the control (§9.30).
+ * a phone the trailing 36 × 20 switch centred on the row – on the label's line once the
+ * description wraps (§9.18) – with the whole row as its target (§10.4, `role="switch"`).
+ * Disabled dims the row's text with the control (§9.30).
  */
 export function BoolRow({
   label,
@@ -134,17 +156,20 @@ export function BoolRow({
   disabled?: boolean
   onChange: (checked: boolean) => void
 }): JSX.Element {
-  if (usePhone()) {
+  const phone = usePhone()
+  const [text, wrapped] = useWrapped<HTMLSpanElement>()
+  if (phone) {
     return (
       <button
         type="button"
         role="switch"
         aria-checked={checked}
         className="zen-privacy-row zen-protection-switch-row"
+        data-wrapped={wrapped || undefined}
         disabled={disabled}
         onClick={() => onChange(!checked)}
       >
-        <span className="zen-privacy-row-text">
+        <span ref={text} className="zen-privacy-row-text">
           <span className="zen-privacy-row-label block">{label}</span>
           {description && <span className="zen-privacy-row-desc">{description}</span>}
         </span>
@@ -187,12 +212,13 @@ export function RadioRow({
   checked: boolean
   disabled?: boolean
   onPick: () => void
-  /** A trailing control the option carries (a menulist), centred on the row (§9.18). */
+  /** A trailing control the option carries (a menulist), centred on the row, or on the label's line when the description wraps (§9.18). */
   children?: ReactNode
 }): JSX.Element {
   const id = useId()
+  const [text, wrapped] = useWrapped<HTMLLabelElement>()
   return (
-    <div className="zen-privacy-row">
+    <div className="zen-privacy-row" data-wrapped={wrapped || undefined}>
       <input
         id={id}
         type="radio"
@@ -203,7 +229,7 @@ export function RadioRow({
         disabled={disabled}
         onChange={onPick}
       />
-      <label htmlFor={id} className="zen-privacy-row-text">
+      <label ref={text} htmlFor={id} className="zen-privacy-row-text">
         <span className="zen-privacy-row-label block">{label}</span>
         {description && <span className="zen-privacy-row-desc">{description}</span>}
       </label>
@@ -296,7 +322,8 @@ export function Choice<V extends string>({
 /**
  * An action row (§10.4): the whole row is a button – label, optional description, a trailing 16
  * / 20 px external-link glyph only when it leaves the app, the spinner while it works (§9.30,
- * `aria-busy`; a second press does nothing). Disabled is .4 on the row.
+ * `aria-busy`; a second press does nothing); the glyph centres on the row, or on the label's line
+ * when the description wraps (§9.18). Disabled is .4 on the row.
  */
 export function ActionRow({
   label,
@@ -313,15 +340,17 @@ export function ActionRow({
   disabled?: boolean
   onClick: () => void
 }): JSX.Element {
+  const [text, wrapped] = useWrapped<HTMLSpanElement>()
   return (
     <button
       type="button"
       className="zen-privacy-row zen-protection-action-row"
+      data-wrapped={wrapped || undefined}
       aria-busy={busy || undefined}
       disabled={disabled}
       onClick={busy ? undefined : onClick}
     >
-      <span className="zen-privacy-row-text">
+      <span ref={text} className="zen-privacy-row-text">
         <span className="zen-privacy-row-label block">{label}</span>
         {description && <span className="zen-privacy-row-desc">{description}</span>}
       </span>
@@ -333,8 +362,8 @@ export function ActionRow({
 /**
  * A row with a label, a description and trailing controls (§9.2, §9.18). The controls centre on
  * the row until the description wraps: on three text lines they centre on the label's line
- * instead, which the row learns by measuring its text block. `disabled` dims the text (§10.4's
- * dependent row); the controls carry their own `disabled`.
+ * instead (`useWrapped`). `disabled` dims the text (§10.4's dependent row); the controls carry
+ * their own `disabled`.
  */
 export function Row({
   label,
@@ -347,18 +376,7 @@ export function Row({
   disabled?: boolean
   children?: ReactNode
 }): JSX.Element {
-  const text = useRef<HTMLDivElement>(null)
-  const [wrapped, setWrapped] = useState(false)
-  useLayoutEffect(() => {
-    const el = text.current
-    if (!el || typeof ResizeObserver === 'undefined') return
-    // Two 20 px lines are the row's own; anything taller is a wrapped description.
-    const measure = (): void => setWrapped(el.getBoundingClientRect().height > 50)
-    measure()
-    const observer = new ResizeObserver(measure)
-    observer.observe(el)
-    return () => observer.disconnect()
-  }, [])
+  const [text, wrapped] = useWrapped<HTMLDivElement>()
   return (
     <div
       className="zen-privacy-row"
