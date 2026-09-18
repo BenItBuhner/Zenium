@@ -30,7 +30,6 @@ import {
   TextArea,
   TitleBlock,
   useEscape,
-  useMoreBelow,
   useScrolled,
   wrapTab,
   type MenuOption
@@ -138,7 +137,8 @@ function Editor({ edit, phone }: { edit: AutofillEdit; phone: boolean }): JSX.El
 /**
  * The desktop shell: title block, the form scrolling between it and the footer, which stays put
  * (a long address form, its validation lines added, runs past a frame 800 tall); §9.7's hairline
- * on the title block once scrolled and on the footer while more of the form lies below.
+ * on the title block once scrolled. The footer draws none: a dialog ends in its actions – the
+ * last field, 16, the buttons, 16 to the edge (§9.20's footer ruling).
  */
 function EditorDialog({
   copy,
@@ -154,7 +154,6 @@ function EditorDialog({
   const panelRef = useRef<HTMLDivElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
   const scrolled = useScrolled(bodyRef)
-  const more = useMoreBelow(bodyRef)
   const titleId = useId()
   useFrameDialog({ onScrimPress: closeAutofillEdit })
   useEscape(closeAutofillEdit)
@@ -180,9 +179,7 @@ function EditorDialog({
         <div ref={bodyRef} className="zen-v2-af-body">
           <div className="zen-v2-af-form">{children}</div>
         </div>
-        <div className="zen-v2-af-dialog-footer" data-more={more || undefined}>
-          {footer}
-        </div>
+        <div className="zen-v2-af-dialog-footer">{footer}</div>
       </form>
     </div>
   )
