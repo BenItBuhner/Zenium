@@ -5,8 +5,10 @@ import android.graphics.Rect
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
+import android.content.Intent
 import android.util.Base64
 import android.util.Log
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.json.JSONArray
 import org.json.JSONObject
@@ -138,7 +140,7 @@ class SettingsTabDemo : DemoHarness("settings-tab-demo-state.json", "android-set
                 return@step
             }
             Finger().tap(button.exactCenterX(), button.exactCenterY())
-            SystemClock.sleep(2_500)
+            SystemClock.sleep(2_200)
             val cards = chromeValue(
                 "(function(){var c=document.querySelectorAll('.zen-overview-card');var s=document.querySelectorAll" +
                     "('.zen-overview-card[aria-label=\"Settings\"]');return c.length+'/'+s.length})()"
@@ -203,7 +205,10 @@ class SettingsTabDemo : DemoHarness("settings-tab-demo-state.json", "android-set
             val settingsId = activeTabId()
             flingRight()
             val away = awaitActive(demoTab, 8_000)
-            SystemClock.sleep(1_200)
+            // The fling is not what this step measures: when it misses, the core switches, so the
+            // menu's reuse is still shown.
+            if (!away) ensureActive(demoTab)
+            SystemClock.sleep(1_000)
             if (!openMenuItem("Settings")) {
                 finding("  the menu had no Settings item")
                 closeSurfaces()
@@ -225,6 +230,12 @@ class SettingsTabDemo : DemoHarness("settings-tab-demo-state.json", "android-set
             commitSwipe()
             val returned = awaitActive(demoTab, 8_000)
             SystemClock.sleep(1_500)
+            // Had the chrome not claimed the root back, the system's back-to-home would have run:
+            // the app comes back for the rest of the recording, and the finding says so.
+            if (!appInFront()) {
+                finding("  the back LEFT THE APP (the launcher is in front): bringing it back")
+                recoverApp()
+            }
             shot("08-back-to-opener")
             val closed = coreState().getJSONObject("tabs").optJSONObject(settingsId) == null
             finding(
@@ -261,7 +272,7 @@ class SettingsTabDemo : DemoHarness("settings-tab-demo-state.json", "android-set
             val tabsBefore = tabCount()
             val settingsBefore = pageTabIds()
             tapPage("#link a")
-            SystemClock.sleep(3_000)
+            SystemClock.sleep(2_200)
             shot("10-refused-link")
             val note = jsonString(tabJs("document.getElementById('note').textContent"))
             finding(
@@ -370,8 +381,15 @@ class SettingsTabDemo : DemoHarness("settings-tab-demo-state.json", "android-set
             val text = chromeValue("(document.querySelector('input[aria-label=\"Search or enter address\"]')||{}).value||''")
             shot("14-pill-editing")
             finding("  pill text '$text' ${verdict(text == "zenium://settings/look")}")
-            closeUrlbar()
-            SystemClock.sleep(1_000)
+            // The keyboard, then the editor: two backs at most. This tab came from the deep link
+            // (fromIntent), so a back at its landing would hand the user to the sender and leave
+            // the app – the editor is closed by count, never by a loop that looks for the pill.
+            if (imeShown()) {
+                back()
+                awaitIme(shown = false, timeoutMs = 4_000)
+            }
+            if (urlbarOpen()) back()
+            SystemClock.sleep(1_500)
         }
 
         finding("\nend: ${describeActive()}")
@@ -395,15 +413,26 @@ class SettingsTabDemo : DemoHarness("settings-tab-demo-state.json", "android-set
     /**
      * The bounds of the first node whose accessible text reads `text` – exactly, or (`exact`
      * false) as a prefix: a Settings row is one button whose text runs its label, value and
-     * description together. Polls, since the tree trails the screen on the emulator.
+     * description together. Polls, since the tree trails the screen on the emulator. A node the
+     * list holds below the fold is scrolled into view first (its bounds read empty, or fall
+     * outside the window, until it is).
      */
     private fun waitForText(text: String, timeoutMs: Long, exact: Boolean = false): Rect? {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
+        var revealed = false
         while (SystemClock.uptimeMillis() < deadline) {
             val node = findNode { it == text || (!exact && it.startsWith(text)) }
             if (node != null) {
                 val bounds = Rect().also { node.getBoundsInScreen(it) }
-                if (bounds.width() > 0 && bounds.height() > 0) return bounds
+                val onScreen = bounds.width() > 0 && bounds.height() > 0 &&
+                    bounds.centerY() in 0 until height && bounds.centerX() in 0 until width
+                if (onScreen) return bounds
+                if (!revealed) {
+                    revealed = true
+                    node.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.id)
+                    SystemClock.sleep(1_000)
+                    continue
+                }
             }
             SystemClock.sleep(200)
         }
@@ -444,6 +473,23 @@ class SettingsTabDemo : DemoHarness("settings-tab-demo-state.json", "android-set
         val f = finger ?: return
         finger = null
         f.up()
+    }
+
+    /** The chrome's address editor is up (its field is mounted only while editing). */
+    private fun urlbarOpen(): Boolean =
+        chromeValue("String(!!document.querySelector('input[aria-label=\"Search or enter address\"]'))") == "true"
+
+    /** The browser's own window is the one in front (not the launcher, not a system dialog). */
+    private fun appInFront(): Boolean = ui.rootInActiveWindow?.packageName?.toString() == app.packageName
+
+    /** Bring the browser's task back in front of the launcher; the activity is singleTask, so nothing restarts. */
+    private fun recoverApp() {
+        val intent = Intent(app, MainActivity::class.java).setAction(Intent.ACTION_MAIN)
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        app.startActivity(intent)
+        val deadline = SystemClock.uptimeMillis() + 10_000
+        while (!appInFront() && SystemClock.uptimeMillis() < deadline) SystemClock.sleep(250)
+        SystemClock.sleep(1_500)
     }
 
     /** Back out of whatever chrome surface is up, a few at most. */
