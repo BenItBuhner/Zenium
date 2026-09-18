@@ -46,9 +46,12 @@ export function isInternalUrl(url: string): boolean {
   return url.startsWith('zen://') || url.startsWith('about:') || url.startsWith('chrome://')
 }
 
-/** The new tab page, where Edge shows the favorites bar even when it is hidden elsewhere. */
+/**
+ * The new tab page, where Edge shows the favorites bar even when it is hidden elsewhere. Once
+ * the blank page has loaded, Chromium reports it as `zen://blank/`: the slash does not count.
+ */
 export function isNewTabUrl(url: string | null | undefined): boolean {
-  return url === null || url === undefined || NEW_TAB_URLS.has(url)
+  return url === null || url === undefined || NEW_TAB_URLS.has(url.replace(/\/$/, ''))
 }
 
 /** Heuristic used by the URL bar: does the user most likely mean a URL rather than a search? */

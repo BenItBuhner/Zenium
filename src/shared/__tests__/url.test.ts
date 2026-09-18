@@ -122,6 +122,8 @@ describe('misc', () => {
 describe('isNewTabUrl', () => {
   it('recognises the empty tab, a future zen://newtab and no tab at all', () => {
     expect(isNewTabUrl(BLANK_URL)).toBe(true)
+    // What the loaded blank page reports itself as.
+    expect(isNewTabUrl(`${BLANK_URL}/`)).toBe(true)
     expect(isNewTabUrl('zen://newtab')).toBe(true)
     expect(isNewTabUrl(null)).toBe(true)
     expect(isNewTabUrl('')).toBe(true)
