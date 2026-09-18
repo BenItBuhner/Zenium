@@ -108,10 +108,11 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
     keyword?.kind === 'scope'
       ? (SEARCH_SCOPES.find((s) => s.scope === keyword.scope)?.label ?? keyword.scope)
       : null
+  // The scope labels already read "Search bookmarks" / "Search history" / "Search tabs".
   const chipLabel = keyword
     ? keyword.kind === 'engine'
       ? `Search ${keyword.engine.name}`
-      : `Search ${scopeLabel}`
+      : scopeLabel
     : null
 
   useEffect(() => {
@@ -557,7 +558,7 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
             <kbd className="zen-omnibox-kbd">@</kbd> Engines, bookmarks, history, tabs
           </span>
           <span className="flex-1" />
-          <span>Type a command like “compact mode”</span>
+          <span className="min-w-0 truncate">Type a command like “compact mode”</span>
         </div>
       </div>
     </div>
@@ -697,6 +698,8 @@ function SuggestionRow({
   onPick: (e: React.MouseEvent) => void
 }): JSX.Element {
   const touch = useRef(false)
+  // A favicon that fails to load leaves the kind's glyph, as Chrome's globe (never a blank cell).
+  const [faviconBroken, setFaviconBroken] = useState(false)
   const Icon = ROW_ICONS[item.kind]
   const pointerProps = {
     onPointerDown: (e: React.PointerEvent) => {
@@ -712,11 +715,18 @@ function SuggestionRow({
       onPick(e)
     }
   }
-  const icon = item.favicon ? (
-    <img src={item.favicon} alt="" className="h-4 w-4 rounded-[3px]" referrerPolicy="no-referrer" />
-  ) : (
-    <Icon className="h-4 w-4 shrink-0 opacity-60" />
-  )
+  const icon =
+    item.favicon && !faviconBroken ? (
+      <img
+        src={item.favicon}
+        alt=""
+        className="h-4 w-4 rounded-[3px]"
+        referrerPolicy="no-referrer"
+        onError={() => setFaviconBroken(true)}
+      />
+    ) : (
+      <Icon className="h-4 w-4 shrink-0 opacity-60" />
+    )
   if (sheet) {
     return (
       <li
