@@ -1,43 +1,103 @@
-import type { CSSProperties, JSX, PointerEvent as ReactPointerEvent } from 'react'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Lock, LockOpen } from 'lucide-react'
+import type { JSX, KeyboardEvent as ReactKeyboardEvent, ReactNode, RefObject } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import {
+  Bell,
+  Camera,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
+  Clapperboard,
+  ClipboardPaste,
+  Cookie,
+  ExternalLink,
+  Globe,
+  Loader2,
+  Lock,
+  LockOpen,
+  MapPin,
+  Mic,
+  Music2,
+  Settings,
+  ShieldAlert,
+  ShieldCheck,
+  Trash2,
+  type LucideIcon
+} from 'lucide-react'
 import type { Tab, UIState } from '@shared/types'
-import { DEFAULT_CONTAINER_ID } from '@shared/types'
+import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '@shared/types'
 import {
   certificateErrorDetail,
   cookieBytes,
   describeSite,
   formatBytes,
   permissionLabel,
+  refusedCertificate,
+  securityIndicator,
+  type IndicatorState,
+  type SiteCertificate,
   type SiteCookie,
+  type SiteDescription,
   type SiteInfo
 } from '@shared/siteInfo'
-import { cmd, run } from '@renderer/lib/api'
+import { describeNetError } from '@shared/zenPages'
+import { cmd } from '@renderer/lib/api'
+import { useBackSurface } from '@renderer/lib/back'
 import { useViewport } from '@renderer/lib/formFactor'
-import { capturePointer } from '@renderer/lib/gestures/pointerCapture'
-import { VelocityTracker } from '@renderer/lib/motion/velocity'
+import { LevelMotion, type LevelState } from '@renderer/lib/motion/levels'
+import {
+  ChromePortal,
+  POPOVER_WIDTH,
+  placePopover,
+  popoverStyle,
+  toRect,
+  useFrameDialog,
+  useLightDismiss,
+  viewportSize,
+  type PopoverBox
+} from '@renderer/lib/portals'
 import {
   closeSiteInfo,
   dismissSiteInfo,
   refreshSiteInfo,
-  setSiteInfoTravel,
-  siteInfoDrag,
-  siteInfoStore
+  registerSiteInfoSurface,
+  siteInfoDismissed,
+  siteInfoOpener,
+  siteInfoStore,
+  stepBackSiteInfo
 } from '@renderer/lib/siteInfo'
-import { browserStore, pushToast, uiStore } from '@renderer/lib/ui'
+import {
+  browserStore,
+  closeSiteDataConfirm,
+  openOverlay,
+  openSiteDataConfirm,
+  pushToast,
+  type UiState
+} from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { useEscapeTrap } from '../bookmarks/escape'
+import { focusAnchor, useScrolled, wrapTab } from '../bookmarks/popover'
+import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 import { Favicon } from '../sidebar/Favicon'
 
-/** Extra run below the screen edge so an upward overshoot never shows a gap under the sheet. */
-const UNDERHANG = 48
 /** Cookies listed before the list folds. */
 const COOKIE_FOLD = 6
 
+type LevelId = 'main' | 'connection' | 'cookies' | 'permissions'
+const LEVEL_TITLES: Record<Exclude<LevelId, 'main'>, string> = {
+  connection: 'Connection',
+  cookies: 'Cookies and site data',
+  permissions: 'Permissions'
+}
+
 /**
  * Site information: what the browser knows about the site a tab is on – the connection and its
- * certificate, cookies, stored data, permissions – with the actions to take them away again.
- * Opens from the site icon in the address pill: a spring-driven sheet on phones, a panel anchored
- * to the icon everywhere else. Mounted once above whichever shell is up.
+ * certificate, cookies and stored data, permissions – with the actions to take them away again.
+ * Opens from the site icon in the address pill: on phones a sheet on the shared `BottomSheet`
+ * chassis, on a mouse a §9.20 popover under the pill. Rows lead into levels (certificate,
+ * cookies, permissions) that push in and pop back on a spring; the system back gesture pops a
+ * level before it dismisses the sheet. Mounted once above whichever shell is up.
  */
 export function SiteInfoLayer(): JSX.Element | null {
   const tabId = siteInfoStore.use((s) => s.tabId)
@@ -50,9 +110,9 @@ export function SiteInfoLayer(): JSX.Element | null {
   }, [tabId, tab])
   if (!tab || !state) return null
   return viewport.formFactor === 'phone' ? (
-    <PhoneSheet tab={tab} state={state} />
+    <PhoneSheet key={tab.id} tab={tab} state={state} />
   ) : (
-    <Popover tab={tab} state={state} />
+    <Popover key={tab.id} tab={tab} state={state} />
   )
 }
 
@@ -86,480 +146,1287 @@ function useSiteInfo(tab: Tab): { info: SiteInfo | null; loading: boolean } {
 }
 
 // ---------------------------------------------------------------------------
-// Phone: bottom sheet on a spring
+// Security, as words: the pill's real state (#124) and the certificate exception (#136)
+// ---------------------------------------------------------------------------
+
+type Tone = 'ok' | 'warn' | 'danger' | 'neutral'
+
+interface Security {
+  indicator: IndicatorState
+  tone: Tone
+  /** A word or two for a row's value: "Secure", "Not secure". */
+  short: string
+  /** The headline of the connection level. */
+  headline: string
+  /** The sentence under it. */
+  detail: string
+  /** The certificate to list: the page's, or the one that was refused. */
+  certificate: SiteCertificate | null
+  /** The certificate failed verification and the connection reports as not secure. */
+  certificateError: boolean
+}
+
+function securityOf(tab: Tab, info: SiteInfo | null, site: SiteDescription): Security {
+  const error = info?.security.certificateError ?? tab.certificateError ?? null
+  const indicator = securityIndicator(tab.url, tab.errorCode, error).state
+  const mixed = info?.security.mixedContent === true
+  const cert = info?.security.certificate ?? (error ? refusedCertificate(error) : null)
+  switch (indicator) {
+    case 'secure':
+      return mixed
+        ? {
+            indicator,
+            tone: 'warn',
+            short: 'Partly secure',
+            headline: 'Connection is partly secure',
+            detail:
+              'The page is encrypted, but some of what it loaded came over a plain connection.',
+            certificate: cert,
+            certificateError: false
+          }
+        : {
+            indicator,
+            tone: 'ok',
+            short: 'Secure',
+            headline: 'Connection is secure',
+            detail: 'Everything you send to this site is encrypted on the way.',
+            certificate: cert,
+            certificateError: false
+          }
+    case 'certificate-error':
+      return {
+        indicator,
+        tone: 'danger',
+        short: 'Not secure',
+        headline: 'Connection is not secure',
+        detail: error
+          ? `${certificateErrorDetail(error)} ${describeNetError(error.code, '')}`.trim()
+          : 'The certificate this site sent could not be verified.',
+        certificate: cert,
+        certificateError: true
+      }
+    case 'dangerous':
+      return {
+        indicator,
+        tone: 'danger',
+        short: 'Dangerous',
+        headline: 'Dangerous site',
+        detail:
+          'Safe Browsing found this site to be dangerous and blocked the page. Attackers here might try to steal your information.',
+        certificate: null,
+        certificateError: false
+      }
+    case 'insecure':
+      return {
+        indicator,
+        tone: 'warn',
+        short: 'Not secure',
+        headline: 'Connection is not secure',
+        detail: 'What you send to this site can be read by anyone along the way.',
+        certificate: null,
+        certificateError: false
+      }
+    case 'local':
+      return {
+        indicator,
+        tone: 'neutral',
+        short: site.scheme === 'file' ? 'Local file' : 'Local',
+        headline: site.scheme === 'file' ? 'Local file' : 'Local site',
+        detail: 'Served from this device; nothing crosses the network.',
+        certificate: null,
+        certificateError: false
+      }
+    case 'internal':
+      return {
+        indicator,
+        tone: 'neutral',
+        short: tab.errorCode !== null ? 'Not loaded' : 'Zenium page',
+        headline: tab.errorCode !== null ? 'The page could not be loaded' : 'Part of Zenium',
+        detail:
+          tab.errorCode !== null
+            ? describeNetError(tab.errorCode, 'The page could not be loaded.')
+            : 'Built into the browser; no site is involved.',
+        certificate: null,
+        certificateError: false
+      }
+    default:
+      return {
+        indicator,
+        tone: 'neutral',
+        short: '',
+        headline: 'Connection',
+        detail: '',
+        certificate: null,
+        certificateError: false
+      }
+  }
+}
+
+/** The connection's glyph: a shield for a dangerous site, a globe off the web, else the lock. */
+function securityGlyph(
+  security: Security,
+  props: { className?: string; strokeWidth?: number } = {}
+): JSX.Element {
+  if (security.indicator === 'dangerous') return <ShieldAlert {...props} aria-hidden />
+  if (security.indicator === 'internal' || security.indicator === 'local')
+    return <Globe {...props} aria-hidden />
+  return security.tone === 'ok' ? (
+    <Lock {...props} aria-hidden />
+  ) : (
+    <LockOpen {...props} aria-hidden />
+  )
+}
+
+function toneClass(tone: Tone): string | false {
+  return (
+    (tone === 'ok' && 'text-[var(--v2-ok)]') ||
+    (tone === 'warn' && 'text-[var(--v2-warn)]') ||
+    (tone === 'danger' && 'text-[var(--v2-danger)]')
+  )
+}
+
+/** A permission's glyph, from the catalogue the browser prompts for. */
+function permissionGlyph(permission: string, props: { className?: string } = {}): JSX.Element {
+  const Icon = PERMISSION_ICONS[permission] ?? ShieldCheck
+  return <Icon {...props} aria-hidden />
+}
+
+const PERMISSION_ICONS: Record<string, LucideIcon> = {
+  camera: Camera,
+  microphone: Mic,
+  media: Camera,
+  geolocation: MapPin,
+  notifications: Bell,
+  midi: Music2,
+  'clipboard-read': ClipboardPaste,
+  openExternal: ExternalLink,
+  mediaKeySystem: Clapperboard
+}
+
+function isPrivateTab(tab: Tab, state: UIState): boolean {
+  return tab.containerId === PRIVATE_CONTAINER_ID || state.window.kind === 'private'
+}
+
+// ---------------------------------------------------------------------------
+// Levels: one spring, two panes at a time
+// ---------------------------------------------------------------------------
+
+interface Levels {
+  motion: LevelMotion
+  /** Discrete state (stack, direction, phase); `t` is read from `motion.current` per frame. */
+  state: LevelState
+  level: LevelId
+  /** Called on every frame of the motion, after `motion.current` is updated. */
+  onFrame: (listener: () => void) => () => void
+}
+
+function useLevels(): Levels {
+  const [state, setState] = useState<LevelState | null>(null)
+  const engine = useMemo(() => {
+    const listeners = new Set<() => void>()
+    const motion = new LevelMotion('main', (s) => {
+      for (const l of listeners) l()
+      // Only a discrete change re-renders; the frames of `t` are painted directly.
+      setState((prev) =>
+        prev &&
+        prev.stack === s.stack &&
+        prev.from === s.from &&
+        prev.to === s.to &&
+        prev.phase === s.phase
+          ? prev
+          : s
+      )
+    })
+    return { motion, listeners }
+  }, [])
+  const { motion } = engine
+  useEffect(() => () => motion.dispose(), [motion])
+  const onFrame = useCallback(
+    (listener: () => void) => {
+      engine.listeners.add(listener)
+      return () => {
+        engine.listeners.delete(listener)
+      }
+    },
+    [engine]
+  )
+  const current = state ?? motion.current
+  // The level the surface shows or is heading to: the target of a push, the parent of a pop.
+  const level = current.to as LevelId
+  return { motion, state: current, level, onFrame }
+}
+
+/**
+ * Paints one frame of the level motion onto the panes: the pane arriving is in flow and sizes
+ * the track; the pane leaving is laid over it and slides out; the deeper of the two travels the
+ * full width from the trailing edge, the one under it shifts by a third and fades.
+ */
+function paintLevels(motion: LevelMotion, panes: Map<string, HTMLElement>, width: number): void {
+  const { from, to, t } = motion.current
+  for (const [id, el] of panes) {
+    const arriving = id === to
+    const leaving = id === from && from !== to
+    if (!arriving && !leaving) {
+      el.style.display = 'none'
+      el.removeAttribute('data-leaving')
+      continue
+    }
+    el.style.display = ''
+    if (leaving) el.setAttribute('data-leaving', '')
+    else el.removeAttribute('data-leaving')
+    const shown = arriving ? t : 1 - t
+    const pushing = motion.pushing
+    const deeper = pushing ? arriving : leaving
+    const x = from === to ? 0 : deeper ? (1 - shown) * width : -0.3 * (1 - shown) * width
+    el.style.transform = x ? `translate3d(${x.toFixed(2)}px, 0, 0)` : ''
+    el.style.opacity = from === to ? '' : String(Math.min(1, Math.max(0, (shown - 0.2) / 0.6)))
+    el.style.willChange = from === to ? '' : 'transform, opacity'
+    const hidden = shown < 0.5
+    if (el.getAttribute('aria-hidden') !== String(hidden))
+      el.setAttribute('aria-hidden', String(hidden))
+  }
+}
+
+function usePaneRegistry(): {
+  panes: Map<string, HTMLElement>
+  register: (id: LevelId) => (el: HTMLElement | null) => void
+} {
+  const panes = useMemo(() => new Map<string, HTMLElement>(), [])
+  const register = useCallback(
+    (id: LevelId) => (el: HTMLElement | null) => {
+      if (el) panes.set(id, el)
+      else panes.delete(id)
+    },
+    [panes]
+  )
+  return { panes, register }
+}
+
+// ---------------------------------------------------------------------------
+// Phone: a sheet on the chassis
 // ---------------------------------------------------------------------------
 
 function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
-  const sheet = siteInfoStore.use((s) => s.sheet)
-  const insets = uiStore.use((s) => s.insets)
-  const ref = useRef<HTMLDivElement>(null)
-  const [travel, setTravel] = useState(0)
-  const grip = useSheetGrip()
+  const sheet = useRef<BottomSheetHandle>(null)
+  const trackRef = useRef<HTMLDivElement>(null)
+  const { info, loading } = useSiteInfo(tab)
+  const levels = useLevels()
+  const { panes, register } = usePaneRegistry()
+  const [confirm, setConfirm] = useState<'cookies' | 'data' | null>(null)
+  const confirmRef = useRef(confirm)
+  useEffect(() => {
+    confirmRef.current = confirm
+  }, [confirm])
+  const [allCookies, setAllCookies] = useState(false)
 
-  useLayoutEffect(() => {
-    const el = ref.current
-    if (!el) return
-    const measure = (): void => {
-      const height = el.offsetHeight
-      setTravel(height)
-      setSiteInfoTravel(height)
-    }
-    measure()
-    const ro = new ResizeObserver(measure)
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [])
+  const paint = useCallback((): void => {
+    const track = trackRef.current
+    if (!track) return
+    paintLevels(levels.motion, panes, track.offsetWidth)
+  }, [levels.motion, panes])
+  useLayoutEffect(paint)
+  useEffect(() => levels.onFrame(paint), [levels, paint])
 
+  // What this module needs of the mounted surface: the chassis owns the sheet's motion, the
+  // component its levels. The back gesture peeks and pops a level; on the root it pulls the
+  // sheet down through the chassis, as every other sheet's does.
+  useEffect(() => {
+    const { motion } = levels
+    registerSiteInfoSurface({
+      depth: () => motion.depth,
+      pop: () => {
+        motion.pop()
+      },
+      dismiss: () => sheet.current?.dismiss(),
+      backProgress: (p) => {
+        if (motion.depth > 0) motion.backProgress(p)
+        else sheet.current?.backProgress(p)
+      },
+      backCommit: () => {
+        if (motion.depth > 0) {
+          if (motion.current.phase === 'back') motion.backCommit()
+          else motion.pop()
+        } else sheet.current?.commitBack()
+      },
+      backCancel: () => {
+        if (motion.depth > 0) motion.backCancel()
+        else sheet.current?.cancelBack()
+      }
+    })
+    return () => registerSiteInfoSurface(null)
+  }, [levels])
+
+  // Escape (hardware keyboards exist on tablets): one level up, or away. A confirmation sheet
+  // stacked on this one answers its own Escape first (§9.24).
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape') return
+      if (e.key !== 'Escape' || confirmRef.current) return
       e.preventDefault()
       e.stopImmediatePropagation()
-      closeSiteInfo()
+      stepBackSiteInfo()
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
   }, [])
 
-  const progress = sheet.progress
-  const shown = Math.min(1, Math.max(0, progress))
+  const site = describeSite(tab.url)
+  const security = securityOf(tab, info, site)
+  const actions = useActions(tab, site)
+  const level = levels.level
+  const push = (id: LevelId): void => levels.motion.push(id)
+  const pop = (): void => {
+    levels.motion.pop()
+  }
+  const cookies = info?.cookies.items ?? []
+  // The chassis measures its detents again when this changes: a level, or the reading arriving.
+  const contentKey = `${tab.id}:${level}:${info ? 'ready' : 'reading'}:${allCookies ? 'all' : 'fold'}`
+
   return (
-    <div
-      className="fixed inset-0 z-[80]"
-      style={{ pointerEvents: sheet.phase === 'closed' ? 'none' : 'auto' }}
-    >
-      <div
-        className="absolute inset-0 bg-black/40"
-        style={{ opacity: 1 - shown }}
-        onClick={() => closeSiteInfo()}
-      />
-      <div
-        ref={ref}
-        role="dialog"
-        aria-label="Site information"
-        className="zen-sheet absolute inset-x-0 mx-auto flex w-full max-w-[520px] flex-col"
-        style={{
-          bottom: -UNDERHANG,
-          maxHeight: `calc(100% - ${insets.top + 40}px)`,
-          paddingBottom: insets.bottom + 12 + UNDERHANG,
-          transform: `translate3d(0, ${Math.round(progress * travel)}px, 0)`
-        }}
+    <>
+      <BottomSheet
+        ref={sheet}
+        onDismissed={() => siteInfoDismissed()}
+        contentKey={contentKey}
+        handleLabel="Dismiss"
+        header={
+          level !== 'main' ? (
+            <>
+              <button
+                type="button"
+                className="zen-sheet-header-control"
+                data-side="leading"
+                onClick={pop}
+                aria-label="Back to site information"
+              >
+                <ChevronLeft className="h-5 w-5" strokeWidth={1.75} />
+              </button>
+              <span className="zen-sheet-title">{LEVEL_TITLES[level]}</span>
+            </>
+          ) : undefined
+        }
       >
-        <div
-          className="shrink-0 px-3 pb-1 pt-2"
-          role="button"
-          tabIndex={-1}
-          aria-label="Drag to dismiss"
-          {...grip}
-        >
-          <div className="mx-auto mb-3 h-1 w-9 rounded-full bg-[var(--zen-fg)]/20" />
-          <SiteHeader tab={tab} state={state} />
+        <div ref={trackRef} className="zen-sheet-track">
+          <section ref={register('main')} className="zen-sheet-pane" data-level="main">
+            <SheetTitle tab={tab} state={state} site={site} security={security} />
+            <SheetMainRows
+              site={site}
+              security={security}
+              info={info}
+              loading={loading}
+              push={push}
+              onSettings={() => actions.openSettings()}
+              onClear={() => setConfirm('data')}
+            />
+          </section>
+          <section ref={register('connection')} className="zen-sheet-pane" data-level="connection">
+            <ConnectionRows security={security} kit={SHEET_ROWS} />
+          </section>
+          <section ref={register('cookies')} className="zen-sheet-pane" data-level="cookies">
+            <CookieRows
+              info={info}
+              site={site}
+              all={allCookies}
+              onToggleAll={() => setAllCookies((v) => !v)}
+              kit={SHEET_ROWS}
+            />
+            {cookies.length > 0 && (
+              <>
+                <div aria-hidden className="zen-sheet-sep" />
+                <button
+                  type="button"
+                  className="zen-sheet-item"
+                  data-danger
+                  aria-busy={actions.busy === 'cookies' || undefined}
+                  onClick={() => setConfirm('cookies')}
+                >
+                  <span className="zen-sheet-item-glyph" data-tone="danger">
+                    <Trash2 />
+                  </span>
+                  <span className="min-w-0 flex-1 truncate">Clear cookies</span>
+                </button>
+              </>
+            )}
+          </section>
+          <section
+            ref={register('permissions')}
+            className="zen-sheet-pane"
+            data-level="permissions"
+          >
+            <PermissionRows
+              info={info}
+              busy={actions.busy}
+              onReset={actions.resetPermission}
+              kit={SHEET_ROWS}
+            />
+          </section>
         </div>
-        <div
-          className="min-h-0 flex-1 overflow-y-auto px-3 pt-2"
-          style={{ touchAction: 'pan-y', overscrollBehavior: 'contain' }}
-        >
-          <SiteInfoBody tab={tab} />
-        </div>
-      </div>
+      </BottomSheet>
+      {confirm && (
+        <ConfirmSheet
+          kind={confirm}
+          site={site.site || site.host}
+          count={cookies.length}
+          onCancel={() => setConfirm(null)}
+          onConfirm={async () => {
+            setConfirm(null)
+            if (confirm === 'cookies') await actions.clearCookies()
+            else await actions.clearData()
+          }}
+        />
+      )}
+    </>
+  )
+}
+
+/** The sheet opens on a title block (§9.23): the favicon on the host's start, the connection under it. */
+function SheetTitle({
+  tab,
+  state,
+  site,
+  security
+}: {
+  tab: Tab
+  state: UIState
+  site: SiteDescription
+  security: Security
+}): JSX.Element {
+  const title = site.web ? site.host.replace(/^www\./, '') : 'Zenium'
+  const container =
+    tab.containerId !== DEFAULT_CONTAINER_ID && tab.containerId !== PRIVATE_CONTAINER_ID
+      ? state.containers.find((c) => c.id === tab.containerId)?.name
+      : undefined
+  const line = [security.short, security.certificate?.issuer || null, container].filter(
+    (p): p is string => Boolean(p)
+  )
+  return (
+    <div className="zen-sheet-title-block">
+      <h2>
+        <Favicon tab={tab} size={20} />
+        <span className="min-w-0 truncate">{title}</span>
+        {isPrivateTab(tab, state) && <span className="zen-v2-badge">Private</span>}
+      </h2>
+      {line.length > 0 && (
+        <p className="flex items-center gap-1.5">
+          {securityGlyph(security, {
+            className: cn('h-4 w-4 shrink-0', toneClass(security.tone)),
+            strokeWidth: 1.75
+          })}
+          <span className="min-w-0 truncate">{line.join(' · ')}</span>
+        </p>
+      )}
     </div>
   )
 }
 
-interface GripHandlers {
-  onPointerDown: (e: ReactPointerEvent<HTMLElement>) => void
-  onPointerMove: (e: ReactPointerEvent<HTMLElement>) => void
-  onPointerUp: (e: ReactPointerEvent<HTMLElement>) => void
-  onPointerCancel: (e: ReactPointerEvent<HTMLElement>) => void
-  style: CSSProperties
+/** The four rows of the root level, and the two actions under a hairline. */
+function SheetMainRows({
+  site,
+  security,
+  info,
+  loading,
+  push,
+  onSettings,
+  onClear
+}: {
+  site: SiteDescription
+  security: Security
+  info: SiteInfo | null
+  loading: boolean
+  push: (id: LevelId) => void
+  onSettings: () => void
+  onClear: () => void
+}): JSX.Element {
+  const reading = loading && !info
+  const cookies = info?.cookies.items ?? []
+  const permissions = info?.permissions ?? []
+  const hasData = info ? cookies.length > 0 || storesAnything(info) : false
+  return (
+    <div className="flex flex-col pb-2">
+      <SheetRow
+        glyph={securityGlyph(security)}
+        tone={security.tone}
+        label="Connection"
+        value={security.short || undefined}
+        valueTone={security.tone === 'warn' || security.tone === 'danger' ? 'warn' : undefined}
+        onClick={security.detail ? () => push('connection') : undefined}
+      />
+      {site.web && (
+        <>
+          <SheetRow
+            glyph={<Cookie />}
+            label="Cookies and site data"
+            value={info ? summariseData(info) : reading ? 'Reading…' : undefined}
+            onClick={hasData ? () => push('cookies') : undefined}
+          />
+          <SheetRow
+            glyph={<ShieldCheck />}
+            label="Permissions"
+            value={
+              info
+                ? permissions.length
+                  ? permissions.map((p) => permissionLabel(p.permission)).join(', ')
+                  : 'None asked for'
+                : reading
+                  ? 'Reading…'
+                  : undefined
+            }
+            onClick={permissions.length ? () => push('permissions') : undefined}
+          />
+          <div aria-hidden className="zen-sheet-sep" />
+          <SheetRow glyph={<Settings />} label="Site settings" onClick={onSettings} />
+          <button
+            type="button"
+            className="zen-sheet-item"
+            data-danger
+            disabled={!hasData && permissions.length === 0}
+            onClick={onClear}
+          >
+            <span className="zen-sheet-item-glyph" data-tone="danger">
+              <Trash2 />
+            </span>
+            <span className="min-w-0 flex-1 truncate">Clear site data</span>
+          </button>
+        </>
+      )}
+      {!site.web && permissions.length > 0 && (
+        <SheetRow
+          glyph={<ShieldCheck />}
+          label="Permissions"
+          value={permissions.map((p) => permissionLabel(p.permission)).join(', ')}
+          onClick={() => push('permissions')}
+        />
+      )}
+    </div>
+  )
 }
 
-/** Dragging the grip pulls the sheet down; a touch during its animation catches it. */
-function useSheetGrip(): GripHandlers {
-  const touch = useRef<{ id: number; y0: number; tracker: VelocityTracker } | null>(null)
-  const finish = (e: ReactPointerEvent<HTMLElement>, cancelled: boolean): void => {
-    const t = touch.current
-    if (!t || t.id !== e.pointerId) return
-    touch.current = null
-    const { vy } = cancelled ? { vy: 0 } : t.tracker.velocity(e.timeStamp)
-    siteInfoDrag.release(vy)
-  }
-  return {
-    onPointerDown: (e) => {
-      if (e.button !== 0 || touch.current) return
-      if (!siteInfoDrag.begin()) return
-      const tracker = new VelocityTracker()
-      tracker.add(e.timeStamp, e.clientX, e.clientY)
-      touch.current = { id: e.pointerId, y0: e.clientY, tracker }
-      capturePointer(e.currentTarget, e.pointerId)
-    },
-    onPointerMove: (e) => {
-      const t = touch.current
-      if (!t || t.id !== e.pointerId) return
-      const native = e.nativeEvent as PointerEvent & { getCoalescedEvents?: () => PointerEvent[] }
-      const coalesced = native.getCoalescedEvents?.() ?? []
-      if (coalesced.length > 0)
-        for (const c of coalesced) t.tracker.add(c.timeStamp, c.clientX, c.clientY)
-      else t.tracker.add(e.timeStamp, e.clientX, e.clientY)
-      siteInfoDrag.move(e.clientY - t.y0)
-    },
-    onPointerUp: (e) => finish(e, false),
-    onPointerCancel: (e) => finish(e, true),
-    style: { touchAction: 'none' }
-  }
+/** A chassis row (§9.2, §9.18): 44 tall, glyph 20, label 15, a 13/69% value, a chevron when it leads on. */
+function SheetRow({
+  glyph,
+  tone,
+  label,
+  description,
+  value,
+  valueTone,
+  control,
+  danger,
+  disabled,
+  onClick
+}: {
+  glyph?: ReactNode
+  tone?: Tone
+  label: string
+  description?: string
+  value?: string
+  valueTone?: 'warn'
+  control?: ReactNode
+  danger?: boolean
+  disabled?: boolean
+  onClick?: () => void
+}): JSX.Element {
+  const body = (
+    <>
+      {glyph && (
+        <span className="zen-sheet-item-glyph" data-tone={tone}>
+          {glyph}
+        </span>
+      )}
+      <span className="min-w-0 flex-1">
+        <span className="block truncate">{label}</span>
+        {description && (
+          <span className="zen-sheet-item-secondary block text-[13px] leading-5 [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] overflow-hidden">
+            {description}
+          </span>
+        )}
+      </span>
+      {value && (
+        <span className="zen-sheet-item-value" data-tone={valueTone}>
+          {value}
+        </span>
+      )}
+      {control}
+      {onClick && !control && (
+        <ChevronRight className="zen-sheet-item-secondary h-5 w-5 shrink-0" strokeWidth={1.75} />
+      )}
+    </>
+  )
+  const className = cn(
+    'zen-sheet-item',
+    description && 'zen-sheet-item-two-line',
+    control && 'zen-sheet-item-control'
+  )
+  if (onClick)
+    return (
+      <button
+        type="button"
+        className={className}
+        data-danger={danger || undefined}
+        disabled={disabled}
+        // The row's name is its label and its value, read as two parts ("Connection, Secure").
+        aria-label={value ? `${label}, ${value}` : label}
+        onClick={onClick}
+      >
+        {body}
+      </button>
+    )
+  return (
+    <div className={className} data-danger={danger || undefined}>
+      {body}
+    </div>
+  )
+}
+
+function SheetHeading({ title, aside }: { title: string; aside?: string }): JSX.Element {
+  return (
+    <h3 className="zen-sheet-heading">
+      <span className="min-w-0 flex-1 truncate">{title}</span>
+      {aside && <span className="zen-sheet-item-value">{aside}</span>}
+    </h3>
+  )
+}
+
+/**
+ * "Clear site data?" on a phone: a sheet over the sheet (§9.24) – a title block with the
+ * question and what it does, then the two actions splitting the footer (§9.11). Portalled next
+ * to the site-information layer so it stacks above it; the chassis recedes the sheet beneath.
+ */
+function ConfirmSheet({
+  kind,
+  site,
+  count,
+  onCancel,
+  onConfirm
+}: {
+  kind: 'cookies' | 'data'
+  site: string
+  count: number
+  onCancel: () => void
+  onConfirm: () => void | Promise<void>
+}): JSX.Element {
+  const sheet = useRef<BottomSheetHandle>(null)
+  const decided = useRef(false)
+  useBackSurface({
+    name: 'site-info-confirm',
+    onProgress: (progress) => sheet.current?.backProgress(progress),
+    onCommit: () => sheet.current?.commitBack(),
+    onCancel: () => sheet.current?.cancelBack()
+  })
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      sheet.current?.dismiss()
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [])
+  const words = confirmWords(kind, site, count)
+  return createPortal(
+    <BottomSheet
+      ref={sheet}
+      onDismissed={() => {
+        if (!decided.current) onCancel()
+      }}
+      contentKey={`site-info-confirm:${kind}`}
+      handleLabel="Dismiss"
+    >
+      <div className="zen-sheet-title-block">
+        <h2>
+          <Trash2 className="h-5 w-5 shrink-0" strokeWidth={1.75} aria-hidden />
+          <span className="min-w-0 truncate">{words.title}</span>
+        </h2>
+        <p>{words.detail}</p>
+      </div>
+      <div className="zen-sheet-footer">
+        <button type="button" className="zen-v2-button" onClick={() => sheet.current?.dismiss()}>
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="zen-v2-button"
+          data-danger
+          aria-label={words.confirmLabel}
+          onClick={() => {
+            decided.current = true
+            // The sheet leaves first; the action runs once it is gone, then the reading refreshes.
+            sheet.current?.dismiss(() => void onConfirm())
+          }}
+        >
+          {words.action}
+        </button>
+      </div>
+    </BottomSheet>,
+    document.body
+  )
+}
+
+function confirmWords(
+  kind: 'cookies' | 'data',
+  site: string,
+  count: number
+): { title: string; detail: string; action: string; confirmLabel: string } {
+  const where = site || 'this site'
+  return kind === 'cookies'
+    ? {
+        title: 'Clear cookies?',
+        detail: `Removes ${count} cookie${count === 1 ? '' : 's'} and signs you out of ${where}.`,
+        action: 'Clear cookies',
+        confirmLabel: 'Confirm clear cookies'
+      }
+    : {
+        title: 'Clear site data?',
+        detail: `Removes the cookies, stored data and permissions of ${where}, then reloads the page.`,
+        action: 'Clear site data',
+        confirmLabel: 'Confirm clear all site data'
+      }
 }
 
 // ---------------------------------------------------------------------------
-// Desktop and tablet: panel anchored to the site icon
+// Desktop and tablet: a popover under the pill
 // ---------------------------------------------------------------------------
 
 function Popover({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
   const anchor = siteInfoStore.use((s) => s.anchor)
-  const ref = useRef<HTMLDivElement>(null)
-  const [pos, setPos] = useState({ left: 8, top: 8 })
-  const width = Math.min(400, window.innerWidth - 16)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const trackRef = useRef<HTMLDivElement>(null)
+  const [box, setBox] = useState<PopoverBox>(() => place(anchor))
+  const { info, loading } = useSiteInfo(tab)
+  const levels = useLevels()
+  const { panes, register } = usePaneRegistry()
+  const [allCookies, setAllCookies] = useState(false)
+  const scrolled = useScrolled(bodyRef)
+  const site = describeSite(tab.url)
+  const security = securityOf(tab, info, site)
+  const actions = useActions(tab, site)
+  const level = levels.level
 
+  // Under the pill, start-aligned with the chip (§9.20); measured again on resize.
   useLayoutEffect(() => {
-    const el = ref.current
-    if (!el) return
-    const rect = el.getBoundingClientRect()
-    const x = anchor ? anchor.x - 12 : (window.innerWidth - width) / 2
-    const y = anchor ? anchor.y + anchor.height + 10 : 64
-    setPos({
-      left: Math.max(8, Math.min(x, window.innerWidth - width - 8)),
-      top: Math.max(8, Math.min(y, window.innerHeight - rect.height - 8))
-    })
-  }, [anchor, width])
+    const measure = (): void => setBox(place(anchor))
+    measure()
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
+  }, [anchor])
+
+  // The panel is as tall as its level; between levels the height follows the spring.
+  const paint = useCallback((): void => {
+    const track = trackRef.current
+    if (!track) return
+    paintLevels(levels.motion, panes, track.offsetWidth)
+  }, [levels.motion, panes])
+  useLayoutEffect(paint)
+  useEffect(() => levels.onFrame(paint), [levels, paint])
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape') return
-      e.preventDefault()
-      e.stopImmediatePropagation()
-      closeSiteInfo()
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
+    const { motion } = levels
+    registerSiteInfoSurface({
+      depth: () => motion.depth,
+      pop: () => {
+        motion.pop()
+      },
+      // A popover has no leaving motion of its own (§7: pop on open only): it is simply gone.
+      dismiss: () => siteInfoDismissed(),
+      backProgress: (p) => motion.backProgress(p),
+      backCommit: () => {
+        if (motion.depth > 0) motion.pop()
+        else siteInfoDismissed()
+      },
+      backCancel: () => motion.backCancel()
+    })
+    return () => registerSiteInfoSurface(null)
+  }, [levels])
+
+  // Keyboard reach (§9.22): the first row takes the focus on open; Tab wraps; Escape steps back
+  // a level and then closes, handing the keyboard to the chip that opened the popover.
+  useEffect(() => {
+    const first = panelRef.current?.querySelector<HTMLElement>(
+      '[data-level="main"] button:not(:disabled)'
+    )
+    first?.focus()
   }, [])
+  useEscapeTrap(true, () => stepBackSiteInfo())
+  // The chrome layer's light dismiss (§9.20): a press anywhere else, a scroll, a resize or another
+  // popover opening puts the popover away; the chip's own press closes it and keeps the focus.
+  useLightDismiss(panelRef, () => closeSiteInfo(), { anchor: () => siteInfoOpener() })
+
+  const onKeyDown = (e: ReactKeyboardEvent): void => {
+    if (e.key === 'Escape') return
+    wrapTab(e, panelRef.current)
+  }
+  const push = (id: LevelId): void => levels.motion.push(id)
+  const pop = (): void => {
+    levels.motion.pop()
+  }
+  const cookies = info?.cookies.items ?? []
+  const permissions = info?.permissions ?? []
+  const hasData = info ? cookies.length > 0 || storesAnything(info) : false
+  const titleId = 'zen-site-info-title'
+  const clearData = (): void => {
+    void openSiteDataConfirm({
+      tabId: tab.id,
+      kind: 'data',
+      site: site.site || site.host,
+      count: cookies.length
+    })
+  }
+  const clearCookies = (): void => {
+    void openSiteDataConfirm({
+      tabId: tab.id,
+      kind: 'cookies',
+      site: site.site || site.host,
+      count: cookies.length
+    })
+  }
 
   return (
-    <div className="fixed inset-0 z-[80]" onMouseDown={() => closeSiteInfo()}>
+    <ChromePortal>
       <div
-        ref={ref}
+        ref={panelRef}
         role="dialog"
-        aria-label="Site information"
-        className="zen-panel zen-animate-pop zen-sheet-panel absolute flex flex-col overflow-hidden"
-        style={{ left: pos.left, top: pos.top, width, maxHeight: window.innerHeight - 16 }}
-        onMouseDown={(e) => e.stopPropagation()}
+        aria-labelledby={titleId}
+        data-site-info-popover=""
+        className="zen-animate-pop zen-bm-popover fixed z-[70] flex flex-col"
+        style={popoverStyle(box)}
+        onKeyDown={onKeyDown}
       >
-        <div className="shrink-0 px-3 pt-3">
-          <SiteHeader tab={tab} state={state} />
+        {level === 'main' ? (
+          <PopoverTitle
+            tab={tab}
+            state={state}
+            site={site}
+            security={security}
+            titleId={titleId}
+            scrolled={scrolled}
+          />
+        ) : (
+          <div className="zen-bm-popover-header" data-scrolled={scrolled}>
+            <button
+              type="button"
+              className="zen-toolbar-button"
+              aria-label="Back to site information"
+              onClick={pop}
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <span id={titleId} className="min-w-0 flex-1 truncate">
+              {LEVEL_TITLES[level]}
+            </span>
+          </div>
+        )}
+        <div ref={bodyRef} className="zen-bm-popover-body">
+          <div ref={trackRef} className="zen-sheet-track">
+            <section
+              ref={register('main')}
+              className="zen-sheet-pane zen-bm-popover-list zen-siteinfo-under-title"
+              data-level="main"
+            >
+              <PopoverMainRows
+                site={site}
+                security={security}
+                info={info}
+                loading={loading}
+                push={push}
+                onSettings={() => actions.openSettings()}
+              />
+            </section>
+            <section
+              ref={register('connection')}
+              className="zen-sheet-pane zen-bm-popover-list"
+              data-level="connection"
+            >
+              <ConnectionRows security={security} kit={POPOVER_ROWS} />
+            </section>
+            <section
+              ref={register('cookies')}
+              className="zen-sheet-pane zen-bm-popover-list"
+              data-level="cookies"
+            >
+              <CookieRows
+                info={info}
+                site={site}
+                all={allCookies}
+                onToggleAll={() => setAllCookies((v) => !v)}
+                kit={POPOVER_ROWS}
+              />
+            </section>
+            <section
+              ref={register('permissions')}
+              className="zen-sheet-pane zen-bm-popover-list"
+              data-level="permissions"
+            >
+              <PermissionRows
+                info={info}
+                busy={actions.busy}
+                onReset={actions.resetPermission}
+                kit={POPOVER_ROWS}
+              />
+            </section>
+          </div>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3 pt-2">
-          <SiteInfoBody tab={tab} />
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Content
-// ---------------------------------------------------------------------------
-
-function SiteHeader({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
-  const site = describeSite(tab.url)
-  const container =
-    tab.containerId !== DEFAULT_CONTAINER_ID
-      ? state.containers.find((c) => c.id === tab.containerId)?.name
-      : undefined
-  const title = site.web ? site.host.replace(/^www\./, '') : 'Zenium'
-  const detail = [site.web && site.site !== site.host ? site.host : null, container]
-    .filter(Boolean)
-    .join(' · ')
-  return (
-    <div className="flex items-center gap-3 px-1">
-      <Favicon tab={tab} size={22} />
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-[16px] font-semibold leading-tight">{title}</div>
-        {detail && (
-          <div className="truncate text-[12px] leading-tight text-[var(--zen-muted)]">{detail}</div>
+        {level === 'main' && site.web && (
+          <div className="zen-siteinfo-footer">
+            <button
+              type="button"
+              className="zen-button"
+              data-variant="danger"
+              disabled={!hasData && permissions.length === 0}
+              onClick={clearData}
+            >
+              Clear site data
+            </button>
+          </div>
+        )}
+        {level === 'cookies' && cookies.length > 0 && (
+          <div className="zen-siteinfo-footer">
+            <button
+              type="button"
+              className="zen-button"
+              data-variant="danger"
+              onClick={clearCookies}
+            >
+              Clear cookies
+            </button>
+          </div>
         )}
       </div>
+    </ChromePortal>
+  )
+}
+
+/** The popover's title block (§9.23): favicon 16 on the host's start, the connection line under it. */
+function PopoverTitle({
+  tab,
+  state,
+  site,
+  security,
+  titleId,
+  scrolled
+}: {
+  tab: Tab
+  state: UIState
+  site: SiteDescription
+  security: Security
+  titleId: string
+  scrolled: boolean
+}): JSX.Element {
+  const title = site.web ? site.host.replace(/^www\./, '') : 'Zenium'
+  const container =
+    tab.containerId !== DEFAULT_CONTAINER_ID && tab.containerId !== PRIVATE_CONTAINER_ID
+      ? state.containers.find((c) => c.id === tab.containerId)?.name
+      : undefined
+  const line = [security.short, security.certificate?.issuer || null, container].filter(
+    (p): p is string => Boolean(p)
+  )
+  return (
+    <div className="zen-bm-title-block" data-scrolled={scrolled}>
+      <h2 id={titleId} className="zen-bm-title flex items-center gap-2">
+        <Favicon tab={tab} size={16} />
+        <span className="min-w-0 truncate">{title}</span>
+        {isPrivateTab(tab, state) && <span className="zen-v2-badge">Private</span>}
+      </h2>
+      {line.length > 0 && (
+        <p className="zen-bm-title-desc flex items-center gap-1.5">
+          {securityGlyph(security, {
+            className: cn('h-4 w-4 shrink-0', toneClass(security.tone)),
+            strokeWidth: 1.5
+          })}
+          <span className="min-w-0 truncate">{line.join(' · ')}</span>
+        </p>
+      )}
     </div>
   )
 }
 
-function SiteInfoBody({ tab }: { tab: Tab }): JSX.Element {
-  const { info, loading } = useSiteInfo(tab)
-  const site = describeSite(tab.url)
-  const [confirming, setConfirming] = useState<'cookies' | 'data' | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [allCookies, setAllCookies] = useState(false)
-
-  const act = async (work: () => Promise<void>): Promise<void> => {
-    if (busy) return
-    setBusy(true)
-    try {
-      await work()
-    } catch {
-      pushToast('That did not work. Try again.', 'error')
-    } finally {
-      setBusy(false)
-      setConfirming(null)
-    }
-  }
-
-  const clearCookies = (): Promise<void> =>
-    act(async () => {
-      const { removed } = await cmd('site.clearCookies', { tabId: tab.id })
-      pushToast(
-        removed === 0
-          ? 'No cookies to remove'
-          : `Removed ${removed} cookie${removed === 1 ? '' : 's'}`
-      )
-      refreshSiteInfo()
-    })
-  const clearData = (): Promise<void> =>
-    act(async () => {
-      await cmd('site.clearData', { tabId: tab.id })
-      pushToast(`Cleared everything ${site.site || 'this site'} stored`)
-      refreshSiteInfo()
-    })
-  const resetPermission = (permission?: string): Promise<void> =>
-    act(async () => {
-      await cmd('site.resetPermissions', { tabId: tab.id, permission })
-      refreshSiteInfo()
-    })
-  const reload = (): void => {
-    run('tab.reload', { tabId: tab.id })
-    closeSiteInfo()
-  }
-
+function PopoverMainRows({
+  site,
+  security,
+  info,
+  loading,
+  push,
+  onSettings
+}: {
+  site: SiteDescription
+  security: Security
+  info: SiteInfo | null
+  loading: boolean
+  push: (id: LevelId) => void
+  onSettings: () => void
+}): JSX.Element {
+  const reading = loading && !info
   const cookies = info?.cookies.items ?? []
-  const shownCookies = allCookies ? cookies : cookies.slice(0, COOKIE_FOLD)
   const permissions = info?.permissions ?? []
-
+  const hasData = info ? cookies.length > 0 || storesAnything(info) : false
   return (
-    <div className="flex flex-col gap-2.5 pb-1">
-      <ConnectionCard info={info} url={tab.url} />
-
+    <div className="flex flex-col">
+      <PopRow
+        glyph={securityGlyph(security)}
+        tone={security.tone}
+        label="Connection"
+        value={security.short || undefined}
+        valueTone={security.tone === 'warn' || security.tone === 'danger' ? 'warn' : undefined}
+        onClick={security.detail ? () => push('connection') : undefined}
+      />
       {site.web && (
         <>
-          <Card
-            title="Cookies"
+          <PopRow
+            glyph={<Cookie />}
+            label="Cookies and site data"
+            value={info ? summariseData(info) : reading ? 'Reading…' : undefined}
+            onClick={hasData ? () => push('cookies') : undefined}
+          />
+          <PopRow
+            glyph={<ShieldCheck />}
+            label="Permissions"
             value={
-              info ? (
-                <span aria-label={`${cookies.length} cookies`}>{cookies.length}</span>
-              ) : loading ? (
-                <Quiet>Reading…</Quiet>
-              ) : null
+              info
+                ? permissions.length
+                  ? permissions.map((p) => permissionLabel(p.permission)).join(', ')
+                  : 'None asked for'
+                : reading
+                  ? 'Reading…'
+                  : undefined
             }
-          >
-            {info && cookies.length === 0 && <Quiet>This site has not stored any cookies.</Quiet>}
-            {shownCookies.map((c, i) => (
-              <CookieRow key={`${c.name}|${c.domain}|${i}`} cookie={c} />
-            ))}
-            {cookies.length > COOKIE_FOLD && (
-              <TextButton onClick={() => setAllCookies((v) => !v)}>
-                {allCookies ? 'Show fewer' : `Show all ${cookies.length}`}
-              </TextButton>
-            )}
-            {info && info.cookies.thirdParty.length > 0 && (
-              <div className="mt-2 flex flex-col gap-1">
-                <div className="text-[12px] text-[var(--zen-muted)]">
-                  Also set by sites embedded in this page
-                </div>
-                {info.cookies.thirdParty.map((t) => (
-                  <Row key={t.site} label={t.site} value={String(t.count)} mono />
-                ))}
-              </div>
-            )}
-            {info && cookies.length > 0 && (
-              <div className="mt-1 text-[12px] text-[var(--zen-muted)]">
-                {formatBytes(cookieBytes(cookies))} in total
-              </div>
-            )}
-          </Card>
-          {cookies.length > 0 &&
-            (confirming === 'cookies' ? (
-              <Confirm
-                message={`Removes ${cookies.length} cookie${cookies.length === 1 ? '' : 's'} and signs you out of ${site.site}.`}
-                action="Clear"
-                actionLabel="Confirm clear cookies"
-                busy={busy}
-                onCancel={() => setConfirming(null)}
-                onConfirm={() => void clearCookies()}
-              />
-            ) : (
-              <Action label="Clear cookies" onClick={() => setConfirming('cookies')} />
-            ))}
-
-          <Card
-            title="Storage"
-            value={
-              info ? (
-                info.storage.usageBytes !== null && info.storage.usageBytes > 0 ? (
-                  formatBytes(info.storage.usageBytes)
-                ) : storesAnything(info) ? null : (
-                  <Quiet>None</Quiet>
-                )
-              ) : loading ? (
-                <Quiet>Reading…</Quiet>
-              ) : null
-            }
-          >
-            {info && <StorageRows info={info} />}
-          </Card>
+            onClick={permissions.length ? () => push('permissions') : undefined}
+          />
+          <PopRow glyph={<Settings />} label="Site settings" onClick={onSettings} />
         </>
       )}
-
-      {/* Local files share one permissions site, so a decision of theirs is listed here too. */}
-      {(site.web || permissions.length > 0) && (
-        <Card title="Permissions">
-          {info && permissions.length === 0 && (
-            <Quiet>This site has not asked for any permissions.</Quiet>
-          )}
-          {permissions.map((p) => (
-            <div key={p.permission} className="flex h-9 items-center gap-3">
-              <span className="min-w-0 flex-1 truncate text-[13.5px]">
-                {permissionLabel(p.permission)}
-              </span>
-              <span
-                className={cn(
-                  'text-[12.5px]',
-                  p.decision === 'allow' ? 'text-[var(--zen-fg)]' : 'text-[var(--zen-muted)]'
-                )}
-              >
-                {p.decision === 'allow' ? 'Allowed' : 'Blocked'}
-              </span>
-              <TextButton
-                aria-label={`Reset ${permissionLabel(p.permission)} permission`}
-                disabled={busy}
-                onClick={() => void resetPermission(p.permission)}
-              >
-                {p.decision === 'allow' ? 'Revoke' : 'Reset'}
-              </TextButton>
-            </div>
-          ))}
-          {permissions.length > 1 && (
-            <TextButton
-              aria-label="Reset all permissions"
-              disabled={busy}
-              onClick={() => void resetPermission()}
-            >
-              Reset all
-            </TextButton>
-          )}
-        </Card>
-      )}
-
-      {site.web && (
-        <>
-          <div className="flex gap-2.5">
-            {confirming === 'data' ? (
-              <Confirm
-                message={`Removes cookies, stored data and permissions of ${site.site}, then reloads the page.`}
-                action="Clear everything"
-                actionLabel="Confirm clear all site data"
-                busy={busy}
-                onCancel={() => setConfirming(null)}
-                onConfirm={() => void clearData()}
-              />
-            ) : (
-              <>
-                <Action label="Reload" ariaLabel="Reload page" onClick={reload} />
-                <Action label="Clear all site data" danger onClick={() => setConfirming('data')} />
-              </>
-            )}
-          </div>
-        </>
+      {!site.web && permissions.length > 0 && (
+        <PopRow
+          glyph={<ShieldCheck />}
+          label="Permissions"
+          value={permissions.map((p) => permissionLabel(p.permission)).join(', ')}
+          onClick={() => push('permissions')}
+        />
       )}
     </div>
   )
 }
 
-function ConnectionCard({ info, url }: { info: SiteInfo | null; url: string }): JSX.Element {
-  const site = describeSite(url)
-  const state = info?.security.state ?? site.state
-  const cert = info?.security.certificate ?? null
-  const mixed = info?.security.mixedContent === true
-  const certificateError = info?.security.certificateError ?? null
-  const secure = state === 'secure' && !mixed
-  const headline =
-    state === 'secure'
-      ? mixed
-        ? 'Partly secure'
-        : 'Secure connection'
-      : state === 'insecure'
-        ? 'Not secure'
-        : state === 'local'
-          ? 'Local page'
-          : state === 'internal'
-            ? 'Zenium page'
-            : 'Connection unknown'
-  const detail =
-    state === 'secure'
-      ? mixed
-        ? 'The page is encrypted, but some of what it loaded came over a plain connection.'
-        : 'Everything you send to this site is encrypted on the way.'
-      : certificateError
-        ? certificateErrorDetail(certificateError)
-        : state === 'insecure'
-          ? 'What you send to this site can be read by anyone along the way.'
-          : state === 'local'
-            ? 'Served from this device; nothing crosses the network.'
-            : state === 'internal'
-              ? 'Built into the browser; no site is involved.'
-              : ''
-  return (
-    <div className="zen-sheet-card flex flex-col gap-2 p-3">
-      <div className="flex items-start gap-3">
-        <span
-          className={cn(
-            'zen-sheet-badge mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center',
-            secure && 'zen-sheet-badge-secure',
-            (state === 'insecure' || mixed) && 'zen-sheet-badge-warn'
-          )}
-        >
-          {state === 'insecure' || mixed ? (
-            <LockOpen className="h-4 w-4" />
-          ) : (
-            <Lock className="h-4 w-4" />
-          )}
+/** A popover row (§9.20, §9.21): 32 tall in the menu size, 40 when it holds a 32 px control. */
+function PopRow({
+  glyph,
+  tone,
+  label,
+  description,
+  value,
+  valueTone,
+  control,
+  disabled,
+  onClick
+}: {
+  glyph?: ReactNode
+  tone?: Tone
+  label: string
+  description?: string
+  value?: string
+  valueTone?: 'warn'
+  control?: ReactNode
+  disabled?: boolean
+  onClick?: () => void
+}): JSX.Element {
+  const body = (
+    <>
+      {glyph && (
+        <span className="zen-siteinfo-glyph" data-tone={tone}>
+          {glyph}
         </span>
-        <div className="min-w-0 flex-1">
-          <div className="text-[14.5px] font-semibold leading-snug">{headline}</div>
-          {detail && (
-            <div className="mt-0.5 text-[12.5px] leading-snug text-[var(--zen-muted)]">
-              {detail}
-            </div>
-          )}
-        </div>
-      </div>
+      )}
+      <span className={cn('min-w-0 flex-1', description && 'py-1.5')}>
+        <span className="block truncate">{label}</span>
+        {description && <span className="zen-siteinfo-caption">{description}</span>}
+      </span>
+      {value && (
+        <span className="zen-siteinfo-value" data-tone={valueTone}>
+          {value}
+        </span>
+      )}
+      {control}
+      {onClick && !control && <ChevronRight className="zen-siteinfo-chevron" />}
+    </>
+  )
+  if (onClick)
+    return (
+      <button
+        type="button"
+        className="zen-siteinfo-row"
+        data-control={control ? '' : undefined}
+        disabled={disabled}
+        aria-label={value ? `${label}, ${value}` : label}
+        onClick={onClick}
+      >
+        {body}
+      </button>
+    )
+  return (
+    <div className="zen-siteinfo-row" data-control={control ? '' : undefined}>
+      {body}
+    </div>
+  )
+}
+
+function PopHeading({ title, aside }: { title: string; aside?: string }): JSX.Element {
+  return (
+    <h3 className="zen-siteinfo-heading">
+      <span className="min-w-0 flex-1 truncate">{title}</span>
+      {aside && <span className="zen-siteinfo-value">{aside}</span>}
+    </h3>
+  )
+}
+
+/** Under the pill, start-aligned with the chip that opened it, at the form width (§9.20). */
+function place(anchor: { x: number; y: number; width: number; height: number } | null): PopoverBox {
+  const viewport = viewportSize()
+  const pill = document.querySelector('.zen-pill')
+  const pillRect = pill ? toRect(pill.getBoundingClientRect()) : null
+  const chip = anchor ?? pillRect ?? { x: 8, y: 28, width: 28, height: 28 }
+  return placePopover(chip, pillRect ?? chip, viewport, POPOVER_WIDTH.form)
+}
+
+// ---------------------------------------------------------------------------
+// The levels' rows, shared by both surfaces
+// ---------------------------------------------------------------------------
+
+/** The two row vocabularies, one per surface: the chassis row on a phone, the popover row on a mouse. */
+interface RowKit {
+  Row: typeof SheetRow
+  Heading: typeof SheetHeading
+  phone?: boolean
+}
+const SHEET_ROWS: RowKit = { Row: SheetRow, Heading: SheetHeading, phone: true }
+const POPOVER_ROWS: RowKit = { Row: PopRow, Heading: PopHeading }
+
+/** The connection and its certificate: the state as a two-line row, then the certificate's fields. */
+function ConnectionRows({ security, kit }: { security: Security; kit: RowKit }): JSX.Element {
+  const { Row, Heading, phone } = kit
+  const cert = security.certificate
+  return (
+    <div className={cn('flex flex-col', phone && 'pb-2')}>
+      <Row
+        glyph={securityGlyph(security)}
+        tone={security.tone}
+        label={security.headline}
+        description={security.detail}
+      />
       {cert && (
-        <div className="flex flex-col pl-11">
+        <>
+          <Heading
+            title={security.certificateError ? 'Certificate that was refused' : 'Certificate'}
+          />
           <Row label="Issued to" value={cert.subject || '—'} />
           <Row label="Issued by" value={cert.issuer || '—'} />
-          {cert.validTo !== null && <Row label="Expires" value={formatDate(cert.validTo)} />}
+          {cert.validFrom !== null && <Row label="Valid from" value={formatDate(cert.validFrom)} />}
+          {cert.validTo !== null && <Row label="Valid until" value={formatDate(cert.validTo)} />}
           {cert.protocol && <Row label="Protocol" value={cert.protocol} />}
-        </div>
+        </>
       )}
     </div>
   )
 }
 
-function StorageRows({ info }: { info: SiteInfo }): JSX.Element {
+/** Every cookie of the site, the sites embedded in it, and what else it stored. */
+function CookieRows({
+  info,
+  site,
+  all,
+  onToggleAll,
+  kit
+}: {
+  info: SiteInfo | null
+  site: SiteDescription
+  all: boolean
+  onToggleAll: () => void
+  kit: RowKit
+}): JSX.Element {
+  const { Row, Heading, phone } = kit
+  const cookies = info?.cookies.items ?? []
+  const shown = all ? cookies : cookies.slice(0, COOKIE_FOLD)
+  const thirdParty = info?.cookies.thirdParty ?? []
+  const foldClass = phone ? 'zen-sheet-item-secondary h-5 w-5 shrink-0' : 'zen-siteinfo-chevron'
+  return (
+    <div className={cn('flex flex-col', phone && 'pb-2')}>
+      <Heading
+        title="Cookies"
+        aside={
+          info && cookies.length > 0
+            ? `${cookies.length} · ${formatBytes(cookieBytes(cookies))}`
+            : undefined
+        }
+      />
+      {info && cookies.length === 0 && (
+        <p className={phone ? 'zen-sheet-empty' : 'zen-siteinfo-empty'}>
+          This site has not stored any cookies
+        </p>
+      )}
+      {shown.map((c, i) => (
+        <CookieRow key={`${c.name}|${c.domain}|${i}`} cookie={c} site={site.site} Row={Row} />
+      ))}
+      {cookies.length > COOKIE_FOLD && (
+        <Row
+          label={all ? 'Show fewer' : `Show all ${cookies.length}`}
+          control={
+            all ? (
+              <ChevronUp className={foldClass} strokeWidth={phone ? 1.75 : 1.5} />
+            ) : (
+              <ChevronDown className={foldClass} strokeWidth={phone ? 1.75 : 1.5} />
+            )
+          }
+          onClick={onToggleAll}
+        />
+      )}
+      {thirdParty.length > 0 && (
+        <>
+          <Heading title="Also set by embedded sites" />
+          {thirdParty.map((t) => (
+            <Row key={t.site} label={t.site} value={String(t.count)} />
+          ))}
+        </>
+      )}
+      {info && <StorageRows info={info} Row={Row} Heading={Heading} />}
+    </div>
+  )
+}
+
+/** A cookie: its name, the flags that set it apart as a description, and its size. */
+function CookieRow({
+  cookie,
+  site,
+  Row
+}: {
+  cookie: SiteCookie
+  site: string
+  Row: typeof SheetRow
+}): JSX.Element {
+  const attrs: string[] = []
+  const domain = cookie.domain.replace(/^\./, '')
+  if (domain && domain !== site) attrs.push(domain)
+  if (cookie.secure) attrs.push('Secure')
+  if (cookie.httpOnly) attrs.push('HttpOnly')
+  if (cookie.session) attrs.push('Session')
+  return (
+    <Row
+      label={cookie.name || '(unnamed)'}
+      description={attrs.length ? attrs.join(' · ') : undefined}
+      value={cookie.size > 0 ? formatBytes(cookie.size) : undefined}
+    />
+  )
+}
+
+function StorageRows({
+  info,
+  Row,
+  Heading
+}: {
+  info: SiteInfo
+  Row: typeof SheetRow
+  Heading: typeof SheetHeading
+}): JSX.Element | null {
   const s = info.storage
   const rows: Array<[string, string]> = []
-  if (s.usageBytes !== null && s.usageBytes > 0) {
-    rows.push([
-      'Site data',
-      s.quotaBytes
-        ? `${formatBytes(s.usageBytes)} of ${formatBytes(s.quotaBytes)}`
-        : formatBytes(s.usageBytes)
-    ])
-  }
+  if (s.usageBytes !== null && s.usageBytes > 0)
+    rows.push(['Storage used', formatBytes(s.usageBytes)])
   if (s.localStorageItems !== null && s.localStorageItems > 0)
     rows.push(['Local storage', items(s.localStorageItems)])
   if (s.sessionStorageItems !== null && s.sessionStorageItems > 0)
@@ -567,190 +1434,281 @@ function StorageRows({ info }: { info: SiteInfo }): JSX.Element {
   if (s.serviceWorkers !== null && s.serviceWorkers > 0)
     rows.push(['Service workers', String(s.serviceWorkers)])
   if (s.origins.length > 1) rows.push(['Origins with data', String(s.origins.length)])
-  if (rows.length === 0) return <Quiet>This site has not stored any data.</Quiet>
+  if (rows.length === 0) return null
   return (
-    <div className="flex flex-col">
+    <>
+      <Heading title="Site data" />
       {rows.map(([label, value]) => (
         <Row key={label} label={label} value={value} />
       ))}
-      {s.origins.length > 1 && (
-        <div className="mt-1 text-[12px] leading-relaxed text-[var(--zen-muted)]">
-          {s.origins.map((o) => o.replace(/^https?:\/\//, '')).join(', ')}
-        </div>
-      )}
-    </div>
+    </>
   )
 }
 
-function CookieRow({ cookie }: { cookie: SiteCookie }): JSX.Element {
-  const attrs: string[] = []
-  if (cookie.domain) attrs.push(cookie.domain.replace(/^\./, ''))
-  if (cookie.secure) attrs.push('Secure')
-  if (cookie.httpOnly) attrs.push('HttpOnly')
-  if (cookie.session) attrs.push('Session')
+/** What the site may do, each with a control to take it back (§9.11: an action inside a row). */
+function PermissionRows({
+  info,
+  busy,
+  onReset,
+  kit
+}: {
+  info: SiteInfo | null
+  busy: Busy
+  onReset: (permission: string) => Promise<void>
+  kit: RowKit
+}): JSX.Element {
+  const { Row, phone } = kit
+  const permissions = info?.permissions ?? []
   return (
-    <div className="flex h-8 items-center gap-3">
-      <span className="min-w-0 flex-1 truncate font-mono text-[12.5px]">
-        {cookie.name || '(unnamed)'}
-      </span>
-      <span className="shrink-0 truncate text-[11.5px] text-[var(--zen-muted)]">
-        {attrs.join(' · ')}
-      </span>
+    <div className={cn('flex flex-col', phone && 'pb-2')}>
+      {info && permissions.length === 0 && (
+        <p className={phone ? 'zen-sheet-empty' : 'zen-siteinfo-empty'}>
+          This site has not asked for any permissions
+        </p>
+      )}
+      {permissions.map((p) => {
+        const label = permissionLabel(p.permission)
+        return (
+          <Row
+            key={p.permission}
+            glyph={permissionGlyph(p.permission)}
+            label={label}
+            value={p.decision === 'allow' ? 'Allowed' : 'Blocked'}
+            control={
+              <button
+                type="button"
+                className={phone ? 'zen-v2-button' : 'zen-button'}
+                aria-label={`Reset ${label} permission`}
+                // Working (§9.30): full opacity, the label gives way to a spinner at the same width.
+                aria-busy={busy === `permission:${p.permission}` || undefined}
+                onClick={() => void onReset(p.permission)}
+              >
+                {busy === `permission:${p.permission}` ? (
+                  <Loader2 className="zen-spin h-4 w-4" aria-hidden />
+                ) : (
+                  'Reset'
+                )}
+              </button>
+            }
+          />
+        )
+      })}
     </div>
   )
 }
 
 // ---------------------------------------------------------------------------
-// Primitives of the sheet: cards for information, full-width actions between them
+// Actions, and words for numbers
 // ---------------------------------------------------------------------------
 
-function Card({
+/** Which action is running, for the control that started it to show as busy (§9.30). */
+type Busy = 'cookies' | 'data' | `permission:${string}` | null
+
+function useActions(
+  tab: Tab,
+  site: SiteDescription
+): {
+  busy: Busy
+  clearCookies: () => Promise<void>
+  clearData: () => Promise<void>
+  resetPermission: (permission?: string) => Promise<void>
+  openSettings: () => void
+} {
+  const [busy, setBusy] = useState<Busy>(null)
+  // Busy is not disabled (§9.30): the working control keeps its look and says so; a second press
+  // while one action runs is simply ignored here.
+  const act = async (key: NonNullable<Busy>, work: () => Promise<void>): Promise<void> => {
+    if (busy) return
+    setBusy(key)
+    try {
+      await work()
+    } catch {
+      pushToast('That did not work. Try again.', 'error')
+    } finally {
+      setBusy(null)
+    }
+  }
+  return {
+    busy,
+    clearCookies: () =>
+      act('cookies', async () => {
+        const { removed } = await cmd('site.clearCookies', { tabId: tab.id })
+        pushToast(
+          removed === 0
+            ? 'No cookies to remove'
+            : `Removed ${removed} cookie${removed === 1 ? '' : 's'}`
+        )
+        refreshSiteInfo()
+      }),
+    clearData: () =>
+      act('data', async () => {
+        await cmd('site.clearData', { tabId: tab.id })
+        pushToast(`Cleared everything ${site.site || 'this site'} stored`)
+        refreshSiteInfo()
+      }),
+    resetPermission: (permission?: string) =>
+      act(`permission:${permission ?? '*'}`, async () => {
+        await cmd('site.resetPermissions', { tabId: tab.id, permission })
+        refreshSiteInfo()
+      }),
+    // Settings (§10): the site's settings live there; opening it replaces the sheet.
+    openSettings: () => void openOverlay('settings', tab.id)
+  }
+}
+
+/**
+ * "Clear site data?" on a mouse: a frame dialog (§9.23, §9.5) over the page's picture, opened
+ * from the popover, which the frame host closes as this comes up (§9.20, one popover at a time).
+ * Rendered by `TabDialogs` inside its `FrameDialogHost`.
+ */
+export function SiteDataConfirmDialog({
+  state,
+  request
+}: {
+  state: UIState
+  request: NonNullable<UiState['siteDataConfirm']>
+}): JSX.Element {
+  const cancelRef = useRef<HTMLButtonElement>(null)
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const [busy, setBusy] = useState(false)
+  const tab = state.tabs[request.tabId]
+  const words = confirmWords(request.kind, request.site, request.count)
+  useEffect(() => {
+    if (!tab) closeSiteDataConfirm()
+  }, [tab])
+  // Destructive: the keyboard starts on Cancel (§9.22); Escape and the scrim are Cancel too.
+  useEffect(() => {
+    cancelRef.current?.focus()
+  }, [])
+  useEscapeTrap(true, () => closeSiteDataConfirm())
+  useBackSurface({ name: 'site-data-confirm', onCommit: () => closeSiteDataConfirm() })
+  const confirm = async (): Promise<void> => {
+    if (busy || !tab) return
+    setBusy(true)
+    try {
+      if (request.kind === 'cookies') {
+        const { removed } = await cmd('site.clearCookies', { tabId: tab.id })
+        pushToast(
+          removed === 0
+            ? 'No cookies to remove'
+            : `Removed ${removed} cookie${removed === 1 ? '' : 's'}`
+        )
+      } else {
+        await cmd('site.clearData', { tabId: tab.id })
+        pushToast(`Cleared everything ${request.site || 'this site'} stored`)
+      }
+    } catch {
+      pushToast('That did not work. Try again.', 'error')
+    } finally {
+      setBusy(false)
+      closeSiteDataConfirm()
+      // The chip's next open reads the site again.
+      refreshSiteInfo()
+      focusAnchor('[data-site-info]')
+    }
+  }
+  return (
+    <FrameConfirm
+      ref={dialogRef}
+      title={words.title}
+      detail={words.detail}
+      action={words.action}
+      actionLabel={words.confirmLabel}
+      busy={busy}
+      cancelRef={cancelRef}
+      onCancel={() => closeSiteDataConfirm()}
+      onConfirm={() => void confirm()}
+    />
+  )
+}
+
+/** A `--v2-dialog` prompt (§9.23): a title block with the question, then its two actions. */
+function FrameConfirm({
+  ref,
   title,
-  value,
-  children
-}: {
-  title: string
-  value?: React.ReactNode
-  children?: React.ReactNode
-}): JSX.Element {
-  return (
-    <section className="zen-sheet-card flex flex-col gap-1 p-3">
-      <header className="flex h-6 items-center gap-3">
-        <h3 className="min-w-0 flex-1 truncate text-[12px] font-semibold uppercase tracking-[0.06em] text-[var(--zen-muted)]">
-          {title}
-        </h3>
-        {value !== undefined && value !== null && (
-          <div className="shrink-0 text-[14px] font-semibold">{value}</div>
-        )}
-      </header>
-      {children}
-    </section>
-  )
-}
-
-function Row({
-  label,
-  value,
-  mono
-}: {
-  label: string
-  value: string
-  mono?: boolean
-}): JSX.Element {
-  return (
-    <div className="flex h-8 items-center gap-3">
-      <span
-        className={cn(
-          'min-w-0 flex-1 truncate text-[13px]',
-          mono ? 'font-mono text-[12.5px]' : 'text-[var(--zen-muted)]'
-        )}
-      >
-        {label}
-      </span>
-      <span className="max-w-[60%] shrink-0 truncate text-right text-[13px]">{value}</span>
-    </div>
-  )
-}
-
-function Quiet({ children }: { children: React.ReactNode }): JSX.Element {
-  return <div className="py-1 text-[13px] text-[var(--zen-muted)]">{children}</div>
-}
-
-function TextButton({
-  children,
-  className,
-  ...rest
-}: React.ButtonHTMLAttributes<HTMLButtonElement>): JSX.Element {
-  return (
-    <button
-      type="button"
-      className={cn(
-        'zen-sheet-text-button h-8 shrink-0 self-start px-1 text-[13px] font-medium text-[var(--zen-accent)] disabled:opacity-40',
-        className
-      )}
-      {...rest}
-    >
-      {children}
-    </button>
-  )
-}
-
-function Action({
-  label,
-  ariaLabel,
-  danger,
-  onClick
-}: {
-  label: string
-  ariaLabel?: string
-  danger?: boolean
-  onClick: () => void
-}): JSX.Element {
-  return (
-    <button
-      type="button"
-      className="zen-sheet-action flex h-12 min-w-0 flex-1 items-center justify-center px-4 text-[14px] font-medium"
-      data-danger={danger || undefined}
-      aria-label={ariaLabel ?? label}
-      onClick={onClick}
-    >
-      <span className="truncate">{label}</span>
-    </button>
-  )
-}
-
-/** A destructive action asks once, inline, where the button was. */
-function Confirm({
-  message,
+  detail,
   action,
   actionLabel,
   busy,
+  cancelRef,
   onCancel,
   onConfirm
 }: {
-  message: string
+  ref: RefObject<HTMLDivElement | null>
+  title: string
+  detail: string
   action: string
   actionLabel: string
   busy: boolean
+  cancelRef: RefObject<HTMLButtonElement | null>
   onCancel: () => void
   onConfirm: () => void
 }): JSX.Element {
+  useFrameDialog({ onScrimPress: onCancel })
+  const titleId = 'zen-site-data-confirm-title'
+  const bodyId = 'zen-site-data-confirm-body'
   return (
-    <div className="zen-sheet-confirm zen-animate-fade flex w-full flex-col gap-2 p-2">
-      <div className="px-2 pt-1.5 text-[13px] leading-snug">{message}</div>
-      <div className="flex gap-2">
-        <button
-          type="button"
-          className="zen-sheet-action zen-sheet-action-inner flex h-11 flex-1 items-center justify-center text-[14px] font-medium"
-          aria-label="Cancel"
-          disabled={busy}
-          onClick={onCancel}
-        >
-          Cancel
-        </button>
-        <button
-          type="button"
-          className="zen-sheet-action zen-sheet-action-inner flex h-11 flex-1 items-center justify-center text-[14px] font-medium"
-          data-danger
-          aria-label={actionLabel}
-          disabled={busy}
-          onClick={onConfirm}
-        >
-          {busy ? 'Working…' : action}
-        </button>
+    <div
+      ref={ref}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
+      aria-describedby={bodyId}
+      className="zen-animate-pop zen-bm-dialog flex w-[400px] max-w-[calc(100%-24px)] flex-col"
+      onKeyDown={(e) => {
+        if (e.key !== 'Escape') wrapTab(e, ref.current)
+      }}
+    >
+      <div className="zen-bm-title-block">
+        <h2 id={titleId} className="zen-bm-title flex items-center gap-2">
+          <Trash2 className="h-4 w-4 shrink-0" strokeWidth={1.5} aria-hidden />
+          <span className="min-w-0 truncate">{title}</span>
+        </h2>
+        <p id={bodyId} className="zen-bm-title-desc">
+          {detail}
+        </p>
+      </div>
+      <div className="zen-bm-form">
+        <div className="zen-bm-footer justify-end">
+          <button ref={cancelRef} type="button" className="zen-button" onClick={onCancel}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="zen-button"
+            data-variant="danger"
+            aria-label={actionLabel}
+            aria-busy={busy || undefined}
+            onClick={onConfirm}
+          >
+            {busy ? <Loader2 className="zen-spin h-4 w-4" aria-hidden /> : action}
+          </button>
+        </div>
       </div>
     </div>
   )
+}
+
+function summariseData(info: SiteInfo): string {
+  const cookies = info.cookies.items
+  const parts: string[] = []
+  if (cookies.length) parts.push(`${cookies.length} cookie${cookies.length === 1 ? '' : 's'}`)
+  const usage = info.storage.usageBytes
+  if (usage !== null && usage > 0) parts.push(formatBytes(usage))
+  else if (cookies.length) parts.push(formatBytes(cookieBytes(cookies)))
+  if (parts.length === 0) return storesAnything(info) ? 'Some site data' : 'None'
+  return parts.join(' · ')
 }
 
 function items(n: number): string {
   return `${n} item${n === 1 ? '' : 's'}`
 }
 
-/** Anything beyond quota-managed storage: Web Storage items or service workers. */
+/** Anything beyond cookies: quota-managed storage, Web Storage items or service workers. */
 function storesAnything(info: SiteInfo): boolean {
   const s = info.storage
   return (
+    (s.usageBytes ?? 0) > 0 ||
     (s.localStorageItems ?? 0) > 0 ||
     (s.sessionStorageItems ?? 0) > 0 ||
     (s.serviceWorkers ?? 0) > 0 ||
