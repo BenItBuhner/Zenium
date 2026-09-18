@@ -335,10 +335,12 @@ class SiteInfoDemo {
             val bounds = Rect().also { node.getBoundsInScreen(it) }
             if (names.any { it == label }) {
                 exact += bounds
-            } else if (described != null && (described.startsWith("$label,") || described.startsWith(label))) {
-                // A row's own name: its label, a comma, its value.
+            } else if (described != null && described.startsWith("$label,")) {
+                // A row's own name: its label, a comma, its value ("Connection, Secure").
                 exact += bounds
             } else if (names.any { it.startsWith(label) }) {
+                // Only when nothing is named exactly: the pill's "Connection is secure" chip also
+                // begins with "Connection", and it is smaller than the row it must not stand in for.
                 val button = node.className?.toString()?.endsWith("Button") == true
                 prefixed += bounds to button
             }
