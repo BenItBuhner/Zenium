@@ -1,8 +1,10 @@
 package app.zen.chromium
 
+import android.os.Bundle
 import android.os.SystemClock
 import android.util.Base64
 import android.util.Log
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import app.zen.chromium.blocking.Blocking
 import app.zen.chromium.blocking.Decision
@@ -270,9 +272,250 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
         shot("16-signals-on")
         beat()
 
+        // 15. Settings > Privacy and Security on a phone (design language v2 §10): every group is
+        //     rows under a 15/600 heading – switch rows, value rows that open a picker sheet,
+        //     action rows – and the two warning pages above were the v2 interstitials.
+        settingsScenes()
+
         note("\nend: ${describeSafeBrowsing(state().getJSONObject("privacy").getJSONObject("safeBrowsing"))}")
         note("done")
     }
+
+    // --- Settings > Privacy and Security ----------------------------------------------------------
+
+    /**
+     * The settings rows of the privacy UI, pressed through the accessibility tree the way the
+     * menu sheet demo picks its rows (the bounds a scrolled list reports lag behind on the
+     * emulator). Every step notes what the core's settings say afterwards; a row the tree does
+     * not carry is noted and skipped, never the end of the demo.
+     */
+    private fun settingsScenes() {
+        note("\n15. Settings > Privacy and Security (phone: rows under headings)")
+        setPrivacy("""{"gpc":false,"dnt":false,"httpsOnly":"ask","thirdPartyCookies":"block-private"}""")
+        if (!openPrivacySettings()) {
+            note("  (the Privacy and Security section never came up)")
+            return
+        }
+        shot("17-settings-security")
+        beat()
+
+        // 15a. Safe Browsing: the switch row off and on again, then Update feeds now at work.
+        note("\n15a. Safe Browsing rows")
+        if (pressRow("Warn about dangerous sites")) {
+            SystemClock.sleep(1_200)
+            note("  safeBrowsingEnabled=${privacySetting("safeBrowsingEnabled")} (switch pressed once)")
+            shot("18-settings-safebrowsing-off")
+            pressRow("Warn about dangerous sites")
+            SystemClock.sleep(1_000)
+            note("  safeBrowsingEnabled=${privacySetting("safeBrowsingEnabled")} (pressed again)")
+        } else {
+            note("  (no switch row 'Warn about dangerous sites')")
+        }
+        if (pressRow("Update feeds now")) {
+            SystemClock.sleep(500)
+            val status = state().getJSONObject("privacy").getJSONObject("safeBrowsing")
+            note("  Update feeds now pressed: updating=${status.optBoolean("updating")}")
+            shot("19-settings-feeds-updating")
+        } else {
+            note("  (no action row 'Update feeds now')")
+        }
+        beat()
+
+        // 15b. HTTPS-only mode: the value row opens the picker sheet; Always is picked from it.
+        note("\n15b. HTTPS-only mode: the value row and its picker sheet")
+        showRow("HTTPS-only mode")
+        if (pressRow("HTTPS-only mode")) {
+            val always = HTTPS_ALWAYS_LABEL
+            if (waitForRow(always, 8_000)) {
+                SystemClock.sleep(800)
+                shot("20-settings-https-only-sheet")
+                pressRow(always)
+                SystemClock.sleep(1_800)
+            } else {
+                note("  (the picker sheet never showed '$always')")
+                back()
+                SystemClock.sleep(1_000)
+            }
+            note("  httpsOnly=${privacySetting("httpsOnly")}")
+            shot("21-settings-https-only-always")
+        } else {
+            note("  (no value row 'HTTPS-only mode')")
+        }
+        beat()
+
+        // 15c. The sites the warning pages above were answered for: one for the session, one for good.
+        note("\n15c. Sites allowed over http")
+        showRow("Sites allowed over http")
+        note("  ${describeHttpsOnly()}")
+        shot("22-settings-plaintext-sites")
+        beat()
+
+        // 15d. Secure DNS on Android is the system's Private DNS setting: the row leaves for it.
+        note("\n15d. Secure DNS: the Private DNS row")
+        showRow("Open Private DNS settings")
+        shot("23-settings-private-dns-row")
+        if (pressRow("Open Private DNS settings")) {
+            val left = awaitSystemWindow(10_000)
+            SystemClock.sleep(1_500)
+            note("  system window in front: $left")
+            shot("24-private-dns-system-screen")
+            back()
+            SystemClock.sleep(1_500)
+            ensureForeground()
+            SystemClock.sleep(1_500)
+            if (findNode { it == "Privacy and Security" } == null) openPrivacySettings()
+        } else {
+            note("  (no action row 'Open Private DNS settings')")
+        }
+        beat()
+
+        // 15e. Third-party cookies: the value row, the picker, block them everywhere.
+        note("\n15e. Third-party cookies: the value row and its picker sheet")
+        showRow("Third-party cookies")
+        if (pressRow("Third-party cookies")) {
+            if (waitForRow(COOKIES_BLOCK_LABEL, 8_000)) {
+                SystemClock.sleep(800)
+                shot("25-settings-cookies-sheet")
+                pressRow(COOKIES_BLOCK_LABEL)
+                SystemClock.sleep(1_800)
+            } else {
+                note("  (the picker sheet never showed '$COOKIES_BLOCK_LABEL')")
+                back()
+                SystemClock.sleep(1_000)
+            }
+            note("  thirdPartyCookies=${privacySetting("thirdPartyCookies")}")
+        } else {
+            note("  (no value row 'Third-party cookies')")
+        }
+
+        // 15f. Related sites: a site typed into the add field and added, then removed again.
+        note("\n15f. Related sites: add and remove")
+        showRow("Add a site")
+        val typed = setEditable("Add a site", "accounts.example")
+        if (typed && pressRow("Add site")) {
+            SystemClock.sleep(1_200)
+        } else {
+            note("  (the add field or its button is not in the tree; the exception is set directly)")
+            setPrivacy("""{"thirdPartyCookieExceptions":["accounts.example"]}""")
+        }
+        note("  thirdPartyCookieExceptions=${privacySetting("thirdPartyCookieExceptions")}")
+        showRow("accounts.example")
+        shot("26-settings-related-sites")
+        if (clickByLabel("Remove accounts.example")) {
+            SystemClock.sleep(1_000)
+            note("  removed: thirdPartyCookieExceptions=${privacySetting("thirdPartyCookieExceptions")}")
+        } else {
+            note("  (no 'Remove accounts.example' control)")
+        }
+        beat()
+
+        // 15g. Privacy signals: both switch rows on.
+        note("\n15g. Privacy signals")
+        showRow("Send a Global Privacy Control signal")
+        pressRow("Send a Global Privacy Control signal")
+        SystemClock.sleep(800)
+        pressRow("Send a Do Not Track request")
+        SystemClock.sleep(1_200)
+        note("  gpc=${privacySetting("gpc")} dnt=${privacySetting("dnt")}")
+        shot("27-settings-signals-on")
+        beat()
+
+        // Out of Settings, the defaults back.
+        setPrivacy("""{"gpc":false,"dnt":false,"httpsOnly":"ask","thirdPartyCookies":"block-private","thirdPartyCookieExceptions":[]}""")
+        invoke("urlbar.runCommand", """{"action":"settings.open"}""")
+        SystemClock.sleep(1_500)
+    }
+
+    /** Open Settings and pick its Privacy and Security section; true once the section's rows are there. */
+    private fun openPrivacySettings(): Boolean {
+        invoke("urlbar.runCommand", """{"action":"settings.open"}""")
+        if (waitFor("Privacy and Security", 8_000) == null) {
+            note("  (Settings did not open)")
+            return false
+        }
+        SystemClock.sleep(800)
+        if (!clickByLabel("Privacy and Security")) note("  (the Privacy and Security chip is not clickable in the tree)")
+        return waitForRow("Warn about dangerous sites", 8_000)
+    }
+
+    /**
+     * Whether a node's words are the row labelled `label`: the label alone, or the label with the
+     * row's description run on after it (a switch, radio or value row the WebView reads as one
+     * node). A description starts a sentence, so a longer label that carries on in lowercase
+     * ("Block third-party cookies in private windows") is not taken for the shorter one.
+     */
+    private fun rowWords(label: String): (String) -> Boolean = { words ->
+        words == label || (words.startsWith(label) && words.substring(label.length).trimStart().let { rest ->
+            rest.isEmpty() || !rest.first().isLetter() || rest.first().isUpperCase()
+        })
+    }
+
+    /**
+     * Click the row that carries `label`: the nearest clickable ancestor of a node reading the
+     * label (see [rowWords]). False when no such row is in the tree.
+     */
+    private fun pressRow(label: String): Boolean {
+        if (clickByLabel(label)) return true
+        val match = findNode(rowWords(label)) ?: return false
+        var node: AccessibilityNodeInfo? = match
+        while (node != null && !node.isClickable) node = node.parent
+        val clicked = node?.performAction(AccessibilityNodeInfo.ACTION_CLICK) ?: false
+        if (!clicked) note("  (a node reads '$label…' but nothing above it is clickable)")
+        return clicked
+    }
+
+    /** Poll for the row labelled `label` (see [rowWords]) for up to `timeoutMs`. */
+    private fun waitForRow(label: String, timeoutMs: Long): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (findNode(rowWords(label)) != null) return true
+            SystemClock.sleep(200)
+        }
+        return false
+    }
+
+    /** Scroll the row that carries `label` into view (the chrome scrolls its pane the least it has to). */
+    private fun showRow(label: String) {
+        val node = findNode(rowWords(label)) ?: run {
+            note("  (no node '$label' to scroll to)")
+            return
+        }
+        node.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.id)
+        SystemClock.sleep(1_500)
+    }
+
+    /**
+     * Put `text` into the field labelled `label` (its label element is the node before the
+     * editable one in the tree), through the accessibility tree; false when no editable node
+     * follows the label.
+     */
+    private fun setEditable(label: String, text: String): Boolean {
+        val root = ui.rootInActiveWindow ?: return false
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue.add(root)
+        var seenLabel = false
+        var visited = 0
+        while (queue.isNotEmpty() && visited < 6_000) {
+            val node = queue.removeFirst()
+            visited++
+            val words = node.text?.toString() ?: node.contentDescription?.toString()
+            if (words == label) seenLabel = true
+            if (node.isEditable && (seenLabel || words == label)) {
+                val arguments = Bundle().apply {
+                    putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+                }
+                val set = node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
+                SystemClock.sleep(900)
+                note("  field '$label' <- '$text': $set")
+                return set
+            }
+            for (i in 0 until node.childCount) node.getChild(i)?.let(queue::add)
+        }
+        return false
+    }
+
+    private fun privacySetting(key: String): Any? =
+        state().getJSONObject("settings").getJSONObject("privacy").opt(key)
 
     // --- the interstitials ----------------------------------------------------------------------
 
@@ -586,6 +829,9 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
         private const val PHISHING_HOST = "127.0.0.5"
         private const val PLAIN_HOST = "127.0.0.6"
         private const val PRIVATE_CONTAINER = "private"
+        /** The picker sheets' options, as `HTTPS_ONLY_LABELS` / `THIRD_PARTY_COOKIE_LABELS` word them. */
+        private const val HTTPS_ALWAYS_LABEL = "Always use secure connections"
+        private const val COOKIES_BLOCK_LABEL = "Block third-party cookies"
 
         /**
          * A feed document as the core persists them (`FeedDocument` in `src/core/safebrowsing/document.ts`):
