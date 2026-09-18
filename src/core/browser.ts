@@ -122,6 +122,7 @@ type CommandHandlers = {
 const FOCUS_CHROME_EVENTS = new Set<EventName>([
   'urlbar.toggle',
   'newtab.opened',
+  'newtab.shortcutDialog',
   'overlay.open',
   'find.open',
   'theme.open',

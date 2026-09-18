@@ -490,20 +490,124 @@ describe('NewTabService: my shortcuts and most visited', () => {
       index: 0
     })
     expect(f.browser.state.newTabShortcuts.map((s) => s.id)).toEqual([sc.id])
-    svc.handleAction(tab.id, { type: 'set-shortcuts-mode', mode: 'custom' })
-    svc.handleAction(tab.id, { type: 'set-greeting', greeting: true })
-    svc.handleAction(tab.id, { type: 'set-background', background: 'solid' })
-    expect(f.browser.state.settings.newTab).toEqual({
-      enabled: true,
-      shortcuts: 'custom',
-      background: 'solid',
-      greeting: true
-    })
     svc.handleAction(tab.id, { type: 'add-shortcut', title: 'bad', url: '!!' })
     await settle()
     expect(eventsNamed(f, 'toast')).toEqual([
       { message: 'That is not a web address.', kind: 'error' }
     ])
+  })
+
+  it('the Add tile and Edit ask the chrome for the shortcut dialog over the page', () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    f.browser.handleCommand(win, 'newtab.open', undefined)
+    const tab = activeTab(f)!
+    const svc = f.browser.newTab
+    svc.handleAction(tab.id, { type: 'edit-shortcut', id: null })
+    expect(eventsNamed(f, 'newtab.shortcutDialog')).toEqual([
+      { tabId: tab.id, id: null, title: '', url: '' }
+    ])
+    const id = svc.addShortcut('Zen', 'zen-browser.app')!
+    svc.handleAction(tab.id, { type: 'edit-shortcut', id })
+    expect(eventsNamed(f, 'newtab.shortcutDialog').at(-1)).toEqual({
+      tabId: tab.id,
+      id,
+      title: 'Zen',
+      url: 'https://zen-browser.app/'
+    })
+    // A tile that is gone, or an add on a full grid, opens nothing.
+    svc.handleAction(tab.id, { type: 'edit-shortcut', id: 'shortcut_gone' })
+    expect(eventsNamed(f, 'newtab.shortcutDialog')).toHaveLength(2)
+    for (let i = 1; i < MAX_NEW_TAB_SHORTCUTS; i++) svc.addShortcut(`S${i}`, `s${i}.example`)
+    svc.handleAction(tab.id, { type: 'edit-shortcut', id: null })
+    expect(eventsNamed(f, 'newtab.shortcutDialog')).toHaveLength(2)
+  })
+
+  it('a tile menu is the host menu, placed where the tile is in the window', () => {
+    const f = fixture()
+    const popups: Array<{ labels: string[]; options: Record<string, unknown> }> = []
+    f.browser.platform.menus.popup = (items, options) => {
+      popups.push({
+        labels: items.map((item) => item.label ?? (item.type === 'separator' ? '-' : '?')),
+        options: options as unknown as Record<string, unknown>
+      })
+    }
+    const win = f.browser.focusedWindow()
+    f.browser.handleCommand(win, 'newtab.open', undefined)
+    const tab = activeTab(f)!
+    // The page sits to the right of the sidebar: its CSS pixels are offset in the window's.
+    win.applyLayout({
+      placements: [{ tabId: tab.id, rect: { x: 300, y: 60, width: 900, height: 700 }, radius: 8 }],
+      glance: null,
+      contentHidden: false
+    })
+    const svc = f.browser.newTab
+    const tile = { id: 'site:news.example', url: 'https://news.example/', title: 'News' }
+    svc.handleAction(tab.id, { ...tile, type: 'tile-menu', x: 100, y: 200, keyboard: false })
+    expect(popups).toHaveLength(1)
+    expect(popups[0].labels).toEqual([
+      'Open in New Tab',
+      'Open in New Window',
+      'Open in New Private Window',
+      '-',
+      'Remove'
+    ])
+    expect(popups[0].options).toMatchObject({ source: 'page', x: 400, y: 260, keyboard: false })
+    // A custom shortcut's tile offers Edit as well.
+    f.browser.handleCommand(win, 'settings.update', { newTab: { shortcuts: 'custom' } })
+    const id = svc.addShortcut('Zen', 'zen-browser.app')!
+    svc.handleAction(tab.id, {
+      type: 'tile-menu',
+      id,
+      url: 'https://zen-browser.app/',
+      title: 'Zen',
+      x: 10,
+      y: 20,
+      keyboard: true
+    })
+    expect(popups[1].labels).toEqual([
+      'Open in New Tab',
+      'Open in New Window',
+      'Open in New Private Window',
+      '-',
+      'Edit Shortcut',
+      'Remove'
+    ])
+    expect(popups[1].options).toMatchObject({ x: 310, y: 80, keyboard: true })
+    // Nothing for a tile that is not a web address.
+    svc.handleAction(tab.id, {
+      type: 'tile-menu',
+      id: 'x',
+      url: 'javascript:alert(1)',
+      title: 'x',
+      x: 0,
+      y: 0,
+      keyboard: false
+    })
+    expect(popups).toHaveLength(2)
+  })
+
+  it('Remove from the menu hands the removal back to the page, so its Undo follows', () => {
+    const f = fixture()
+    const commands: unknown[] = []
+    const win = f.browser.focusedWindow()
+    f.browser.handleCommand(win, 'newtab.open', undefined)
+    const tab = activeTab(f)!
+    const view = f.browser.tabs.view(tab.id)!
+    view.sendNewTabCommand = (command) => {
+      commands.push(command)
+    }
+    f.browser.newTab.removeTileFromPage(tab.id, 'site:news.example')
+    expect(commands).toEqual([{ type: 'remove-tile', id: 'site:news.example' }])
+  })
+
+  it('Customize opens Settings at the New Tab section', () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    f.browser.handleCommand(win, 'newtab.open', undefined)
+    const tab = activeTab(f)!
+    f.browser.newTab.handleAction(tab.id, { type: 'customize' })
+    expect(eventsNamed(f, 'overlay.open').at(-1)).toEqual({ kind: 'settings', section: 'newtab' })
   })
 
   it('removing a most-visited tile hides its host until undone', () => {
@@ -541,8 +645,8 @@ describe('NewTabService: my shortcuts and most visited', () => {
     const tab = activeTab(f)!
     const svc = f.browser.newTab
     expect(svc.stateFor(tab.id)?.canPickImage).toBe(true)
-    // "Image" without an image yet opens the picker.
-    svc.handleAction(tab.id, { type: 'set-background', background: 'image' })
+    // Settings' "Choose image…" opens the picker; a pick switches the background to the image.
+    await f.browser.handleCommand(win, 'newtab.pickBackgroundImage', undefined)
     await settle()
     expect(f.background.picks).toBe(1)
     expect(f.browser.state.settings.newTab.background).toBe('image')

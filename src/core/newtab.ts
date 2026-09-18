@@ -403,26 +403,38 @@ export class NewTabService {
       case 'unhide-site':
         this.unhideSite(action.url)
         return
-      case 'set-shortcuts-mode':
-        this.updateSettings({ shortcuts: action.mode }, win)
+      case 'edit-shortcut':
+        this.openShortcutDialog(tabId, action.id, win)
         return
-      case 'set-background':
-        if (action.background === 'image' && !this.browser.platform.newTabBackground?.current()) {
-          void this.pickBackgroundImage(win)
-          return
-        }
-        this.updateSettings({ background: action.background }, win)
+      case 'tile-menu':
+        if (typeof action.x !== 'number' || typeof action.y !== 'number') return
+        this.browser.menus.showNewTabTileMenu(tabId, action, win)
         return
-      case 'set-greeting':
-        this.updateSettings({ greeting: action.greeting }, win)
-        return
-      case 'pick-background-image':
-        void this.pickBackgroundImage(win)
-        return
-      case 'clear-background-image':
-        void this.clearBackgroundImage()
+      case 'customize':
+        this.browser.emit('overlay.open', { kind: 'settings', section: 'newtab' }, win)
         return
     }
+  }
+
+  /**
+   * The chrome's add (`id` null) or edit shortcut dialog over the page (design language v2
+   * §9.23, through the content frame's dialog host). Nothing opens for a tile that is gone or
+   * for an add on a full grid.
+   */
+  openShortcutDialog(tabId: string, id: string | null, win: ZenWindow): void {
+    const list = this.browser.state.newTabShortcuts
+    const shortcut = id ? list.find((s) => s.id === id) : undefined
+    if (id ? !shortcut : list.length >= MAX_NEW_TAB_SHORTCUTS) return
+    this.browser.emit(
+      'newtab.shortcutDialog',
+      { tabId, id: shortcut?.id ?? null, title: shortcut?.title ?? '', url: shortcut?.url ?? '' },
+      win
+    )
+  }
+
+  /** The page removes the tile itself (and offers Undo), as it does for the Delete key. */
+  removeTileFromPage(tabId: string, id: string): void {
+    this.browser.tabs.view(tabId)?.sendNewTabCommand?.({ type: 'remove-tile', id })
   }
 
   private updateSettings(patch: Partial<NewTabSettings>, win: ZenWindow): void {

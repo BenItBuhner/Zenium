@@ -212,6 +212,68 @@ export class Menus {
     this.popup(joinGroups(groups), win, 'page')
   }
 
+  /**
+   * A tile on the new tab page (right-click, its ⋮ button, Shift+F10): the site's open targets,
+   * then edit (a custom shortcut only) and remove – the page carries the removal out itself so
+   * its Undo toast follows, as for the Delete key. `x`, `y` are the page's CSS pixels; the host
+   * places menus in the window's, so the page's rect in the window is added.
+   */
+  showNewTabTileMenu(
+    tabId: string,
+    tile: { id: string; url: string; title: string; x: number; y: number; keyboard: boolean },
+    win: ZenWindow
+  ): void {
+    const { tabs, state } = this.browser
+    const tab = tabs.tab(tabId)
+    if (!tab || !isNavigableUrl(tile.url)) return
+    const caps = state.capabilities
+    const open: Template = [
+      {
+        label: 'Open in New Tab',
+        click: () =>
+          tabs.createTab(
+            {
+              url: tile.url,
+              active: false,
+              afterTabId: tab.id,
+              containerId: tab.containerId,
+              openerTabId: tab.id
+            },
+            win
+          )
+      }
+    ]
+    if (caps.windows) {
+      open.push(
+        {
+          label: 'Open in New Window',
+          click: () =>
+            this.browser.openUrlInWindow(tile.url, win.isPrivate ? 'private' : 'synced', win)
+        },
+        {
+          label: 'Open in New Private Window',
+          click: () => this.browser.openUrlInWindow(tile.url, 'private', win)
+        }
+      )
+    }
+    const manage: Template = []
+    if (state.settings.newTab.shortcuts === 'custom') {
+      manage.push({
+        label: 'Edit Shortcut',
+        click: () => this.browser.newTab.openShortcutDialog(tabId, tile.id, win)
+      })
+    }
+    manage.push({
+      label: 'Remove',
+      click: () => this.browser.newTab.removeTileFromPage(tabId, tile.id)
+    })
+    const rect = win.contentRect()
+    const anchor = rect
+      ? { x: rect.x + tile.x, y: rect.y + tile.y, keyboard: tile.keyboard }
+      : { keyboard: tile.keyboard }
+    this.popup(joinGroups([open, manage]), win, 'page', anchor)
+  }
+
   /** Chrome's "Inspect": the inspector opens on the node under the click, not the document. */
   private inspectElement(view: TabView, params: PageContextParams): void {
     if (view.inspectElementAt) view.inspectElementAt(params.x, params.y)
