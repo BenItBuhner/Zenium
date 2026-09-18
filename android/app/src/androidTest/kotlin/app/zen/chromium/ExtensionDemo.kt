@@ -611,10 +611,14 @@ class ExtensionDemo {
             val result = raw?.let(::json) ?: JSONObject().put("error", "never settled")
             report.put("result", result)
             report.put("outlineColor", tabEval(lateView, "getComputedStyle(document.body).outlineColor"))
+            // The style, not the colour: Dark Reader's theme recolours the inserted rule on a
+            // WebView where it runs (rgb(179, 0, 90) for the pink on 156).
+            report.put("outlineStyle", tabEval(lateView, "getComputedStyle(document.body).outlineStyle"))
+            val cssLanded = report.optString("outlineStyle") == "dashed"
             val exec = result.optJSONArray("exec")?.optJSONObject(0)?.optJSONObject("result")
             verdict = when {
-                exec != null && exec.optString("title").isNotEmpty() && report.optString("outlineColor") == "rgb(255, 0, 128)" -> "PASS"
-                exec != null || report.optString("outlineColor") == "rgb(255, 0, 128)" -> "PARTIAL"
+                exec != null && exec.optString("title").isNotEmpty() && cssLanded -> "PASS"
+                exec != null || cssLanded -> "PARTIAL"
                 else -> "FAIL"
             }
         }
