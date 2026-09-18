@@ -35,6 +35,8 @@ const ext = (over: Partial<ExtensionInfo>): ExtensionInfo => ({
   permissions: [],
   hostPermissions: [],
   optionsPage: null,
+  newTabPage: null,
+  newTabOverride: false,
   warnings: [],
   pendingWarnings: null,
   updateState: 'unknown',
