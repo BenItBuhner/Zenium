@@ -281,6 +281,11 @@ export class ExtensionApi {
       case 'idle':
         if (method === 'queryState') return 'active'
         break
+      case 'extension':
+        // The store's record carries the file-access toggle; private windows carry no extensions yet.
+        if (method === 'isAllowedFileSchemeAccess') return ext.record.allowFileAccess === true
+        if (method === 'isAllowedIncognitoAccess') return false
+        break
       case 'offscreen':
         if (method === 'hasDocument') return false
         if (method === 'closeDocument') return undefined

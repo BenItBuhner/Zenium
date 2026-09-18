@@ -772,6 +772,16 @@ describe('AndroidExtensionRuntime: chrome.storage on the shared helpers', () => 
     expect(h.files.has(`ext-storage-${ID}.json`)).toBe(false)
   })
 
+  it('chrome.extension reads the file-access toggle from the record and denies private access', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, { allowFileAccess: true }))
+    backgroundUp(h, 'bg1')
+    const files = await call(h, 'bg1', 'extension', 'isAllowedFileSchemeAccess', [])
+    expect(files.result).toBe(true)
+    const incognito = await call(h, 'bg1', 'extension', 'isAllowedIncognitoAccess', [])
+    expect(incognito.result).toBe(false)
+  })
+
   it('managed is read-only and empty', async () => {
     const h = harness()
     await h.runtime.attach(record(h))

@@ -462,11 +462,18 @@ class ExtensionDemo {
         results.put("probeConsole", JSONArray(consoleOf(probeView).takeLast(40)))
         gradeCalls()
         val traces = JSONObject()
+        val failures = JSONObject()
         val seeded = results.getJSONObject("seededInstalls").keys().asSequence().toList()
         instrumentation.runOnMainSync {
-            for (id in seeded) traces.put(id, JSONArray(host.extensions.traceSnapshot(id).takeLast(150)))
+            for (id in seeded) {
+                val trace = host.extensions.traceSnapshot(id)
+                traces.put(id, JSONArray(trace.takeLast(150)))
+                // Every failed reply of the whole run, so a PARTIAL messaging stage names its errors.
+                failures.put(id, JSONArray(trace.filter { it.contains(" reply error=") }.takeLast(40)))
+            }
         }
         results.put("bridgeTrace", traces)
+        results.put("bridgeErrors", failures)
     }
 
     /**
