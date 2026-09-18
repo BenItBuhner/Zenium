@@ -98,12 +98,19 @@ function harness(): {
   begin: (over?: Partial<Parameters<DownloadService['begin']>[0]>) => DownloadItem
   flush: () => Promise<void>
   clock: { now: number }
+  ticks: { paused: boolean }
 } {
   const io = new MemoryIO()
   const downloadHost = new FakeDownloadHost()
   const clock = { now: NOW }
   let api: DownloadsApi | null = null
-  const service = new DownloadService(io, downloadHost, () => api?.tick(), {
+  // The router coalesces ticks; `paused` holds them back so a test can commit several changes
+  // between two, as a small file that starts and completes before the timer fires does.
+  const ticks = { paused: false }
+  const tick = (): void => {
+    if (!ticks.paused) api?.tick()
+  }
+  const service = new DownloadService(io, downloadHost, tick, {
     os: 'win32',
     settings: () => ({ ...DEFAULT_DOWNLOAD_SETTINGS }),
     referrerFamiliar: () => false,
@@ -136,7 +143,7 @@ function harness(): {
     dispatch(extensionId: string, namespace: string, event: string, args: unknown[]): void {
       out.push({ extensionId, event: `${namespace}.${event}`, args })
     },
-    scheduleTick: () => api?.tick(),
+    scheduleTick: tick,
     confirm: async () => answers.shift() ?? false
   }
   const bridge = {
@@ -211,7 +218,8 @@ function harness(): {
     load,
     begin,
     flush,
-    clock
+    clock,
+    ticks
   }
 }
 
@@ -279,6 +287,50 @@ describe('DownloadsApi events from the list', () => {
 
     h.service.remove(item.id)
     expect(h.out).toEqual([{ extensionId: EXT_A, event: 'downloads.onErased', args: [id] }])
+  })
+
+  it('reports a download that completed before a tick saw it as created, then changed', async () => {
+    const h = harness()
+    h.load(EXT_A)
+    // A small file: begun, transferred and finished before the router's coalesced tick runs.
+    h.ticks.paused = true
+    const item = h.begin({ totalBytes: 10 })
+    h.service.progress(item.id, { receivedBytes: 10, state: 'progressing' })
+    h.service.finish(item.id, 'completed')
+    await h.flush()
+    expect(h.out).toEqual([])
+    h.ticks.paused = false
+    h.api.tick()
+
+    expect(h.out.map((o) => o.event)).toEqual(['downloads.onCreated', 'downloads.onChanged'])
+    const created = h.out[0]!.args[0] as ChromeDownloadItem
+    expect(created).toMatchObject({
+      state: 'in_progress',
+      paused: false,
+      canResume: false,
+      bytesReceived: 0,
+      totalBytes: 10,
+      fileSize: -1,
+      exists: true
+    })
+    expect(created.endTime).toBeUndefined()
+    const delta = h.out[1]!.args[0] as DownloadDelta
+    expect(delta).toEqual({
+      id: created.id,
+      state: { previous: 'in_progress', current: 'complete' },
+      endTime: { current: new Date(h.clock.now).toISOString() },
+      fileSize: { previous: -1, current: 10 }
+    })
+
+    // A row first seen still running goes out as it is: nothing to rewind.
+    h.out.length = 0
+    h.ticks.paused = true
+    const running = h.begin({ savePath: '/dl/other.pdf.zeniumdownload' })
+    h.service.progress(running.id, { receivedBytes: 300, state: 'progressing' })
+    h.ticks.paused = false
+    h.api.tick()
+    expect(h.out.map((o) => o.event)).toEqual(['downloads.onCreated'])
+    expect(h.out[0]!.args[0]).toMatchObject({ state: 'in_progress', bytesReceived: 300 })
   })
 
   it('tells nothing to extensions without the permission, and hides private downloads', async () => {

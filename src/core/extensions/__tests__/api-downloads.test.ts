@@ -14,6 +14,7 @@ import {
   chromeDanger,
   chromeInterruptReason,
   chromeState,
+  creationShape,
   downloadDelta,
   hashDownloadId,
   isSafeRelativePath,
@@ -217,6 +218,44 @@ describe('onChanged delta', () => {
     expect(delta?.error).toEqual({ current: 'NETWORK_FAILED' })
     expect(delta?.endTime).toEqual({ current: new Date(NOW).toISOString() })
     expect(delta?.state).toEqual({ previous: 'in_progress', current: 'interrupted' })
+  })
+
+  it('rewinds a settled row to the shape Chrome creates it in, so the settling is the delta', () => {
+    const done = shape(
+      { receivedBytes: 1000, state: 'completed', endedAt: NOW },
+      { targetPath: '/home/u/Downloads/report.pdf', fileGone: true }
+    )
+    const created = creationShape(done)
+    expect(created).toMatchObject({
+      id: 7,
+      url: done.url,
+      filename: done.filename,
+      state: 'in_progress',
+      paused: false,
+      canResume: false,
+      bytesReceived: 0,
+      totalBytes: 1000,
+      fileSize: -1,
+      exists: true
+    })
+    expect(created.endTime).toBeUndefined()
+    expect(created.error).toBeUndefined()
+    expect(downloadDelta(created, done)).toEqual({
+      id: 7,
+      state: { previous: 'in_progress', current: 'complete' },
+      endTime: { current: new Date(NOW).toISOString() },
+      fileSize: { previous: -1, current: 1000 },
+      exists: { previous: true, current: false }
+    })
+
+    const failed = shape({ state: 'interrupted', error: 'interrupted', endedAt: NOW })
+    const rewound = creationShape(failed)
+    expect(rewound.error).toBeUndefined()
+    expect(downloadDelta(rewound, failed)).toMatchObject({
+      state: { previous: 'in_progress', current: 'interrupted' },
+      error: { current: 'NETWORK_FAILED' },
+      canResume: { previous: false, current: true }
+    })
   })
 })
 

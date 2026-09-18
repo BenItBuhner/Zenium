@@ -17,6 +17,7 @@ import {
   ERROR_UI_PERMISSION,
   chromeFilename,
   chromeState,
+  creationShape,
   downloadDelta,
   hashDownloadId,
   normalizeDownloadOptions,
@@ -477,10 +478,12 @@ export class DownloadsApi {
     }
     for (const [zenId, before] of prev) if (!next.has(zenId)) deliver('onErased', [before.id])
     for (const [zenId, after] of next) {
-      const before = prev.get(zenId)
+      let before = prev.get(zenId)
       if (!before) {
-        deliver('onCreated', [after])
-        continue
+        // A row that settled before a tick saw it is created `in_progress` and then changed, in
+        // Chrome's order, rather than born settled.
+        before = after.state === 'in_progress' ? after : creationShape(after)
+        deliver('onCreated', [before])
       }
       const delta = downloadDelta(before, after)
       if (delta) deliver('onChanged', [delta])

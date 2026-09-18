@@ -283,6 +283,29 @@ export function toChromeDownloadItem(
   return result
 }
 
+/**
+ * A download as `onCreated` reported it: Chrome makes the item `in_progress` before a byte has
+ * arrived and tells of everything after as changes. A row that settled (a small file completes,
+ * a refused one is interrupted) between two ticks is first seen in its settled shape; reporting
+ * its creation from this shape and the settling as the `onChanged` between the two keeps Chrome's
+ * order, which listeners waiting for `state.current === 'complete'` depend on.
+ */
+export function creationShape(item: ChromeDownloadItem): ChromeDownloadItem {
+  const created: ChromeDownloadItem = {
+    ...item,
+    state: 'in_progress',
+    paused: false,
+    canResume: false,
+    bytesReceived: 0,
+    fileSize: -1,
+    exists: true
+  }
+  delete created.endTime
+  delete created.estimatedEndTime
+  delete created.error
+  return created
+}
+
 /** The `onChanged` delta between two shapes of one download; null when nothing it reports changed. */
 export function downloadDelta(
   prev: ChromeDownloadItem,
