@@ -2,7 +2,13 @@ import type { JSX, PointerEvent as ReactPointerEvent, ReactNode, Ref } from 'rea
 import { useEffect, useImperativeHandle, useLayoutEffect, useRef } from 'react'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { capturePointer } from '@renderer/lib/gestures/pointerCapture'
-import { computeDetents, SheetMotion, type SheetDetents } from '@renderer/lib/motion/sheet'
+import {
+  computeDetents,
+  detentForField,
+  fieldOverflow,
+  SheetMotion,
+  type SheetDetents
+} from '@renderer/lib/motion/sheet'
 import { VelocityTracker } from '@renderer/lib/motion/velocity'
 import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
@@ -77,6 +83,14 @@ interface Touch {
   tracker: VelocityTracker
 }
 
+/** An element the keyboard comes up for. */
+function isField(el: Element): el is HTMLElement {
+  if (el instanceof HTMLTextAreaElement) return true
+  if (el instanceof HTMLInputElement)
+    return !/^(button|checkbox|radio|range|submit|reset|file|color|image|hidden)$/.test(el.type)
+  return el instanceof HTMLElement && el.isContentEditable
+}
+
 /**
  * Feed a move event to the tracker – including the samples the browser coalesced into it while
  * the main thread was busy, so a fling is measured from the real finger path.
@@ -126,6 +140,8 @@ export function BottomSheet({
   const swallowClick = useRef(false)
   const detents = useRef<SheetDetents>({ collapsed: 0, expanded: 0 })
   const insetTop = useRef(0)
+  /** The gesture bar, or the keyboard while it is up: the detents are measured above it. */
+  const insetBottom = useRef(0)
   /** Runs once a dismissal has finished (a picked row's action). A catch drops it. */
   const afterDismiss = useRef<(() => void) | null>(null)
   /** The window changed size while the page stood receded behind the sheet. */
@@ -187,11 +203,39 @@ export function BottomSheet({
     sheet.style.height = 'auto'
     const intrinsic = sheet.offsetHeight
     sheet.style.height = height
-    detents.current = computeDetents(intrinsic, layer.clientHeight, insetTop.current)
+    detents.current = computeDetents(
+      intrinsic,
+      layer.clientHeight,
+      insetTop.current,
+      insetBottom.current
+    )
     const m = motion()
     if (m.isOpen) m.refresh()
     else m.present()
     sheet.style.visibility = 'visible'
+  }
+
+  /**
+   * A focused field stays above the keyboard: when the bottom inset changes (the keyboard came
+   * up, or grew) or a field in the sheet takes focus, the sheet expands if the field would sit
+   * under the keys at the detent it rests at, and the body scrolls the rest of the way. The
+   * field's place is measured from the sheet's top edge, which the content is anchored to, so a
+   * spring still running does not enter into it; the body's scroll offset is set for the height
+   * the sheet is heading for and holds as it grows.
+   */
+  const keepFieldInView = (): void => {
+    const sheet = sheetRef.current
+    const sc = scrollRef.current
+    const active = document.activeElement
+    if (!sheet || !sc || !active || !sheet.contains(active) || !isField(active)) return
+    const m = motion()
+    if (!m.isOpen || m.dismissing || touch.current) return
+    const inset = insetBottom.current
+    const fieldBottom = active.getBoundingClientRect().bottom - sheet.getBoundingClientRect().top
+    const detent = detentForField(fieldBottom, detents.current, inset, m.restingDetent)
+    if (detent !== m.restingDetent) m.settleTo(detent)
+    const overflow = fieldOverflow(fieldBottom, detents.current[detent], inset)
+    if (overflow > 0) sc.scrollTop += overflow
   }
 
   // The header shows its hairline once the body has scrolled under it, and loses it at the top
@@ -277,11 +321,26 @@ export function BottomSheet({
 
   useLayoutEffect(() => {
     insetTop.current = insets.top
+    const bottomChanged = insetBottom.current !== insets.bottom
+    insetBottom.current = insets.bottom
     // New content starts at its top; the old scroll offset belonged to what was there before.
-    if (scrollRef.current) scrollRef.current.scrollTop = 0
+    if (!bottomChanged && scrollRef.current) scrollRef.current.scrollTop = 0
     measure()
+    // The keyboard came up under a field that has the focus: the sheet makes room for it.
+    if (bottomChanged) keepFieldInView()
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-measure when the content or the insets change
   }, [contentKey, insets.top, insets.bottom])
+
+  // A field taking focus while the keyboard is already up (the next field of a form) is kept in
+  // view the same way.
+  useEffect(() => {
+    const sheet = sheetRef.current
+    if (!sheet) return
+    const onFocusIn = (): void => keepFieldInView()
+    sheet.addEventListener('focusin', onFocusIn)
+    return () => sheet.removeEventListener('focusin', onFocusIn)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reads the latest refs
+  }, [])
 
   // The layer shrinks when the keyboard comes up and grows back; the detents follow.
   useEffect(() => {
