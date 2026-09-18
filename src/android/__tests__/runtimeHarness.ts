@@ -33,6 +33,19 @@ export class FakeKotlin implements RuntimeBridge {
   readonly backgrounds = new Set<string>()
   /** When set, `ext.exec` is rejected with the message it returns for the given arguments. */
   failExec: ((args: Record<string, unknown>) => string | null) | null = null
+  /** The cookie jars (`ext.cookies.*`), one per container, see `FakeJar`. */
+  readonly jars = new Map<string, FakeJar>()
+  /** Whether the fake WebView lists cookies with attributes (`GET_COOKIE_INFO`). */
+  detailedCookies = true
+
+  jar(container = 'default'): FakeJar {
+    let jar = this.jars.get(container)
+    if (!jar) {
+      jar = new FakeJar()
+      this.jars.set(container, jar)
+    }
+    return jar
+  }
 
   call<T = void>(method: string, args?: unknown): Promise<T> {
     if (method === 'ext.exec' && this.failExec) {
@@ -109,17 +122,125 @@ export class FakeKotlin implements RuntimeBridge {
       case 'ext.observeRequests':
       case 'ext.popup.open':
       case 'ext.popup.close':
-      case 'ext.cookies.set':
       case 'ext.authFlow':
         return undefined
-      case 'ext.cookies.get':
-        return null
+      case 'ext.cookies.read': {
+        const jar = this.jar(String(args.container))
+        return {
+          cookies: this.detailedCookies
+            ? jar.setCookieLines(String(args.url))
+            : jar.pairs(String(args.url)),
+          detailed: this.detailedCookies
+        }
+      }
+      case 'ext.cookies.write':
+        return this.jar(String(args.container)).set(String(args.url), String(args.cookie))
       case 'ext.exec':
         return { ran: true }
       default:
         throw new Error(`no such bridge method ${method}`)
     }
   }
+}
+
+/** A stored cookie of the fake jar (what the WebView remembers about one). */
+export interface FakeCookie {
+  name: string
+  value: string
+  /** With a leading dot: a domain cookie; without: host-only. */
+  domain: string
+  path: string
+  secure: boolean
+  httpOnly: boolean
+  expires: number | null
+  sameSite: string | null
+}
+
+/**
+ * A cookie jar with `CookieManager`'s two readings: `getCookie`'s `name=value` pairs and
+ * `getCookieInfo`'s `Set-Cookie` lines, both filtered by URL the way the WebView filters them
+ * (host match, path prefix, `Secure` over https only). `set` parses a `Set-Cookie` line; an
+ * expired one deletes.
+ */
+export class FakeJar {
+  readonly cookies: FakeCookie[] = []
+
+  set(url: string, line: string): boolean {
+    const u = new URL(url)
+    const host = u.hostname.toLowerCase()
+    const parts = line.split(';').map((p) => p.trim())
+    const first = parts.shift() ?? ''
+    const eq = first.indexOf('=')
+    const cookie: FakeCookie = {
+      name: eq === -1 ? '' : first.slice(0, eq),
+      value: eq === -1 ? first : first.slice(eq + 1),
+      domain: host,
+      path: defaultPathOf(u.pathname),
+      secure: false,
+      httpOnly: false,
+      expires: null,
+      sameSite: null
+    }
+    for (const part of parts) {
+      const at = part.indexOf('=')
+      const key = (at === -1 ? part : part.slice(0, at)).toLowerCase()
+      const value = at === -1 ? '' : part.slice(at + 1)
+      if (key === 'domain' && value) {
+        const domain = value.replace(/^\./, '').toLowerCase()
+        if (host !== domain && !host.endsWith(`.${domain}`)) return false
+        cookie.domain = `.${domain}`
+      } else if (key === 'path' && value.startsWith('/')) cookie.path = value
+      else if (key === 'secure') cookie.secure = true
+      else if (key === 'httponly') cookie.httpOnly = true
+      else if (key === 'expires') cookie.expires = Date.parse(value)
+      else if (key === 'max-age') cookie.expires = Date.now() + Number(value) * 1000
+      else if (key === 'samesite') cookie.sameSite = value
+    }
+    if (cookie.secure && u.protocol !== 'https:') return false
+    const index = this.cookies.findIndex(
+      (c) => c.name === cookie.name && c.domain === cookie.domain && c.path === cookie.path
+    )
+    if (index >= 0) this.cookies.splice(index, 1)
+    if (cookie.expires !== null && cookie.expires <= Date.now()) return true
+    this.cookies.push(cookie)
+    return true
+  }
+
+  matching(url: string): FakeCookie[] {
+    const u = new URL(url)
+    const host = u.hostname.toLowerCase()
+    const path = u.pathname || '/'
+    return this.cookies.filter((c) => {
+      const hostOk = c.domain.startsWith('.')
+        ? host === c.domain.slice(1) || host.endsWith(c.domain)
+        : host === c.domain
+      if (!hostOk) return false
+      if (c.secure && u.protocol !== 'https:') return false
+      return path === c.path || path.startsWith(c.path.endsWith('/') ? c.path : `${c.path}/`)
+    })
+  }
+
+  pairs(url: string): string[] {
+    return this.matching(url).map((c) => `${c.name}=${c.value}`)
+  }
+
+  setCookieLines(url: string): string[] {
+    return this.matching(url).map((c) => {
+      const parts = [`${c.name}=${c.value}`]
+      if (c.domain.startsWith('.')) parts.push(`Domain=${c.domain}`)
+      parts.push(`Path=${c.path}`)
+      if (c.expires !== null) parts.push(`Expires=${new Date(c.expires).toUTCString()}`)
+      if (c.secure) parts.push('Secure')
+      if (c.httpOnly) parts.push('HttpOnly')
+      if (c.sameSite) parts.push(`SameSite=${c.sameSite}`)
+      return parts.join('; ')
+    })
+  }
+}
+
+function defaultPathOf(pathname: string): string {
+  const last = pathname.lastIndexOf('/')
+  return last <= 0 ? '/' : pathname.slice(0, last)
 }
 
 // ---------------------------------------------------------------------------

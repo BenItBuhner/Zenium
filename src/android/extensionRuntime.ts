@@ -51,6 +51,7 @@ import {
   type ExecRequest,
   type ExtensionRules
 } from './extensionApi'
+import type { JarReading } from './extensionCookies'
 import { AndroidExtensions, type AndroidExtensionsOptions } from './extensionHost'
 import { AndroidIdentity } from './extensionIdentity'
 import type { ExtensionRuntimeHooks } from './extensionRuntimeHooks'
@@ -816,12 +817,26 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
     })
   }
 
-  cookieHeader(url: string): Promise<string | null> {
-    return this.bridge.call<string | null>('ext.cookies.get', { url })
+  async readCookies(containerId: string, url: string): Promise<JarReading> {
+    const reading = await this.bridge.call<{ cookies?: unknown; detailed?: unknown } | null>(
+      'ext.cookies.read',
+      { container: containerId, url }
+    )
+    return {
+      cookies: Array.isArray(reading?.cookies)
+        ? reading.cookies.filter((c): c is string => typeof c === 'string')
+        : [],
+      detailed: reading?.detailed === true
+    }
   }
 
-  setCookie(url: string, cookie: string): Promise<void> {
-    return this.bridge.call('ext.cookies.set', { url, cookie })
+  async writeCookie(containerId: string, url: string, setCookie: string): Promise<boolean> {
+    const ok = await this.bridge.call<unknown>('ext.cookies.write', {
+      container: containerId,
+      url,
+      cookie: setCookie
+    })
+    return ok === true
   }
 
   /** Kotlin cancels the flow tab's navigation back to `https://<id>.chromiumapp.org/` itself. */

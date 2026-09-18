@@ -179,6 +179,8 @@ class Extensions(private val host: Host) {
     @Volatile var userAgent: String? = null
     /** Optional host permissions granted at runtime (`chrome.permissions.request`), per extension; read on request threads. */
     @Volatile private var grantedHosts: Map<String, List<MatchPattern>> = emptyMap()
+    /** The jar half of `chrome.cookies` (see [ExtensionCookies]). */
+    private val cookies = ExtensionCookies()
     /** Cross-origin fetches of extension pages to permitted hosts (see [CorsProxy]). */
     private val corsProxy = CorsProxy(
         object : CorsProxy.Cookies {
@@ -256,8 +258,8 @@ class Extensions(private val host: Host) {
                 reply(null)
             }
             "ext.exec" -> exec(args, reply)
-            "ext.cookies.get" -> reply(CookieManager.getInstance().getCookie(args.str("url")))
-            "ext.cookies.set" -> { CookieManager.getInstance().setCookie(args.str("url"), args.str("cookie")); reply(null) }
+            "ext.cookies.read" -> reply(cookies.read(args.str("container", Profiles.DEFAULT_CONTAINER), args.str("url")))
+            "ext.cookies.write" -> cookies.write(args.str("container", Profiles.DEFAULT_CONTAINER), args.str("url"), args.str("cookie"), reply)
             "ext.readFile" -> {
                 val id = args.str("id")
                 val path = args.str("path")

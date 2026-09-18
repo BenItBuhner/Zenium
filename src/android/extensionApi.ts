@@ -13,6 +13,7 @@ import { extensionUrl, type RegisteredContentScript } from '@core/extensions/run
 import type { Endpoint, MessageRouter } from '@core/extensions/runtime/router'
 import { ActiveTabGrants } from './extensionActiveTab'
 import { AndroidContextMenus } from './extensionContextMenus'
+import { AndroidCookies, type JarReading } from './extensionCookies'
 import type { AndroidIdentity } from './extensionIdentity'
 
 /**
@@ -80,8 +81,10 @@ export interface ApiHost {
   icon(id: string): string | null
   readFile(id: string, path: string): Promise<string | null>
   exec(request: ExecRequest): Promise<unknown>
-  cookieHeader(url: string): Promise<string | null>
-  setCookie(url: string, cookie: string): Promise<void>
+  /** The cookies a request to `url` from the container's jar would carry (`chrome.cookies`). */
+  readCookies(containerId: string, url: string): Promise<JarReading>
+  /** Store a `Set-Cookie` line against `url` in the container's jar; false when it was refused. */
+  writeCookie(containerId: string, url: string, setCookie: string): Promise<boolean>
   /** The optional host permissions an extension holds right now (`permissions.request` / `remove`); Kotlin's CORS proxy reads them. */
   hostsGranted(id: string, hosts: string[]): void
   openPopup(id: string): void
@@ -241,6 +244,7 @@ export class ExtensionApi {
   readonly tabs: TabIds
   readonly contextMenus: AndroidContextMenus
   readonly activeTab: ActiveTabGrants
+  readonly cookies: AndroidCookies
   private readonly actions = new Map<string, ActionState>()
   /** Optional host permissions granted this session, per extension (Chrome persists them; W2-3 may). */
   private readonly grantedHosts = new Map<string, Set<string>>()
@@ -261,6 +265,16 @@ export class ExtensionApi {
       icon: (id) => host.icon(id),
       grantActiveTab: (id, tab) => this.activeTab.grant(id, tab)
     })
+    this.cookies = new AndroidCookies({
+      read: (containerId, url) => host.readCookies(containerId, url),
+      write: (containerId, url, setCookie) => host.writeCookie(containerId, url, setCookie),
+      hostAccess: (ext, url) => this.hostAccess(ext, url),
+      hostPatterns: (ext) => this.hostPatterns(ext),
+      allAttached: () => host.allAttached(),
+      visibleTabs: (ext) => this.tabs.visibleTabs(ext),
+      chromeTabId: (tabId) => this.tabs.chromeIdFor(tabId),
+      emit: (id, ns, name, args) => host.emit(id, ns, name, args)
+    })
   }
 
   /** The extension is going away: drop what this layer remembers about it. */
@@ -275,6 +289,13 @@ export class ExtensionApi {
   hostPatterns(ext: AttachedExtension): string[] {
     const granted = this.grantedHosts.get(ext.record.id)
     return granted ? [...ext.manifest.hostPermissions, ...granted] : ext.manifest.hostPermissions
+  }
+
+  /** Whether the extension may act on `url`: a host permission covering it, or an `activeTab` grant on its tab. */
+  hostAccess(ext: AttachedExtension, url: string): boolean {
+    return (
+      matchesAnyPattern(url, this.hostPatterns(ext)) || this.activeTab.allowsUrl(ext.record.id, url)
+    )
   }
 
   /** An endpoint reported gone: `onclick` handlers it held go with it. */
@@ -341,8 +362,11 @@ export class ExtensionApi {
         return this.contextMenus.call(ext, endpoint.id, method, args)
       case 'webNavigation':
         return this.webNavigationCall(id, method, args)
-      case 'cookies':
-        return this.cookiesCall(method, args)
+      case 'cookies': {
+        const tabId = endpoint.context === 'content' ? endpoint.tabId : null
+        const tab = tabId ? (this.host.browser.tabs.tab(tabId) ?? null) : null
+        return this.cookies.call(ext, { tab }, method, args)
+      }
       case 'identity':
         return this.host.identity.call(id, method, args)
       case 'history':
@@ -1021,63 +1045,7 @@ export class ExtensionApi {
     throw new Error(`chrome.webNavigation.${method} ${NOT_IMPLEMENTED}`)
   }
 
-  // --- cookies / history / bookmarks / permissions / management ---------------
-
-  private async cookiesCall(method: string, args: unknown[]): Promise<unknown> {
-    const details = asRecord(args[0])
-    const url = typeof details.url === 'string' ? details.url : ''
-    switch (method) {
-      case 'get':
-      case 'getAll': {
-        if (!url)
-          throw new Error('A url is required (Zenium for Android reads cookies by URL only).')
-        const header = await this.host.cookieHeader(url)
-        const domain = safeHost(url)
-        const cookies = (header ?? '')
-          .split(';')
-          .map((part) => part.trim())
-          .filter(Boolean)
-          .map((part) => {
-            const eq = part.indexOf('=')
-            return {
-              name: eq === -1 ? part : part.slice(0, eq),
-              value: eq === -1 ? '' : part.slice(eq + 1),
-              domain,
-              hostOnly: true,
-              path: '/',
-              secure: url.startsWith('https:'),
-              httpOnly: false,
-              sameSite: 'unspecified',
-              session: true,
-              storeId: '0'
-            }
-          })
-        if (method === 'getAll')
-          return cookies.filter((c) => details.name === undefined || c.name === details.name)
-        return cookies.find((c) => c.name === details.name) ?? null
-      }
-      case 'set': {
-        if (!url) throw new Error('A url is required.')
-        const parts = [`${String(details.name ?? '')}=${String(details.value ?? '')}`]
-        if (typeof details.path === 'string') parts.push(`Path=${details.path}`)
-        if (typeof details.domain === 'string') parts.push(`Domain=${details.domain}`)
-        if (details.secure) parts.push('Secure')
-        if (typeof details.expirationDate === 'number')
-          parts.push(`Expires=${new Date(details.expirationDate * 1000).toUTCString()}`)
-        await this.host.setCookie(url, parts.join('; '))
-        return {
-          name: details.name,
-          value: details.value,
-          domain: safeHost(url),
-          path: details.path ?? '/'
-        }
-      }
-      case 'remove':
-        await this.host.setCookie(url, `${String(details.name ?? '')}=; Max-Age=0`)
-        return { url, name: details.name, storeId: '0' }
-    }
-    throw new Error(`chrome.cookies.${method} ${NOT_IMPLEMENTED}`)
-  }
+  // --- history / bookmarks / permissions / management -----------------------
 
   private historyCall(method: string, args: unknown[]): unknown {
     const history = this.host.browser.history
@@ -1313,14 +1281,6 @@ function colorArray(value: string): [number, number, number, number] {
 function safeOrigin(url: string): string {
   try {
     return new URL(url).origin
-  } catch {
-    return ''
-  }
-}
-
-function safeHost(url: string): string {
-  try {
-    return new URL(url).hostname
   } catch {
     return ''
   }
