@@ -3028,6 +3028,65 @@
   letter-spacing: -0.014em;
 }
 
+/*
+ * Fading scroll edges (`useFadeEdges`). The scroll container is masked, so content dissolves
+ * into whatever is behind it – no gradient overlay, no assumption about the background. The
+ * depth of each edge is a registered length: 0 at an edge with nothing past it, the fade size
+ * once there is, eased between the two.
+ */
+@property --zen-fade-start {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+@property --zen-fade-end {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+[data-fade-axis] {
+  transition:
+    --zen-fade-start 180ms var(--zen-ease),
+    --zen-fade-end 180ms var(--zen-ease);
+}
+[data-fade-axis='y'] {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    #000 var(--zen-fade-start),
+    #000 calc(100% - var(--zen-fade-end)),
+    transparent
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    #000 var(--zen-fade-start),
+    #000 calc(100% - var(--zen-fade-end)),
+    transparent
+  );
+}
+[data-fade-axis='x'] {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 var(--zen-fade-start),
+    #000 calc(100% - var(--zen-fade-end)),
+    transparent
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 var(--zen-fade-start),
+    #000 calc(100% - var(--zen-fade-end)),
+    transparent
+  );
+}
+/* A v2 sheet's header marks scrolled-under content with a hairline, not a fade (draft 9.7). */
+.zen-install-sheet .zen-sheet-scroll[data-fade-axis] {
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
 @layer components {
   /*
    * Downloads (design language v2 draft): page surfaces on the v2 token block above. The
@@ -3625,37 +3684,28 @@
 
 @layer components {
   /*
-   * "Add to Home screen" (`InstallSheet`, `InstallBanner`), to the v2 draft: an opaque neutral
-   * sheet with a hairline edge on the menu sheet's motion, the app's icon as a tile – a letter
-   * on the app's colour when it has none – and the manifest's screenshots as bordered cards in
-   * a strip that snaps shot by shot. The ambient banner is a floating panel of the same cloth.
+   * "Add to Home screen" (`InstallSheet`) on the sheet chassis, which owns the surface, grip,
+   * 48 header and footer (`.zen-sheet`, v2 §6, §9.16, §9.11): only what this sheet adds. The
+   * app's icon as a tile – a letter on the app's colour when it has none – beside its name and
+   * origin, or beside the name-edit field under its label (§9.12); the description; and the
+   * manifest's screenshots as bordered cards in a strip that snaps shot by shot.
    */
-  .zen-install-sheet {
-    --zen-sheet-inner: var(--v2-radius-card);
-    padding-left: 16px;
-    padding-right: 16px;
-    border: 1px solid var(--v2-border);
-    border-bottom: 0;
-    border-radius: var(--v2-radius-sheet) var(--v2-radius-sheet) 0 0;
-    background: var(--v2-panel);
-    color: var(--v2-text);
-    backdrop-filter: none;
-    box-shadow: var(--v2-shadow-sheet);
+  /*
+   * The body sits in the sheet's one 16 gutter (§9.25). The header's title line box (22 in the
+   * 48) ends 13 above the body; 3 more put the first element 16 below it (§9.7).
+   */
+  .zen-install-body {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: 3px 16px 0;
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
   }
-  .zen-install-sheet .zen-sheet-handle {
-    background: rgb(var(--v2-text-rgb) / 0.25);
-  }
-  /* The header carries no line at rest; one appears once the body has scrolled under it. */
-  .zen-install-sheet[data-scrolled='true'] .zen-sheet-grip {
-    box-shadow: 0 1px 0 var(--v2-border);
-  }
-  /* A 48 header after the 20 px grip strip (draft 9.16): the title, 17/600 at 22, centred in
-   * it, so the first row starts at 68; the hairline (above) sits on its bottom edge. */
-  .zen-install-title {
-    padding: 13px 0;
-    font-size: var(--v2-font-heading);
-    font-weight: var(--v2-weight-heading);
-    line-height: 22px;
+  .zen-install-app {
+    display: flex;
+    align-items: center;
+    gap: 16px;
   }
   .zen-install-name {
     font-size: var(--v2-font-body);
@@ -3667,13 +3717,21 @@
     font-size: var(--v2-font-small);
     line-height: var(--v2-line-small);
   }
-  .zen-install-body {
+  .zen-install-description {
+    margin: 0;
+    color: var(--v2-text-deemphasized);
     font-size: var(--v2-font-body);
     line-height: var(--v2-line-body);
   }
-  .zen-install-description {
-    color: var(--v2-text-deemphasized);
+  /* The name field under its label, 4 to the field, the origin as its description 4 below (§9.12). */
+  .zen-install-form {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .zen-install-label {
     font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-body);
     line-height: var(--v2-line-body);
   }
   .zen-install-icon {
@@ -3716,6 +3774,7 @@
   }
   .zen-install-shot {
     flex: none;
+    margin: 0;
     overflow: hidden;
     border: 1px solid var(--v2-card-border);
     border-radius: var(--v2-radius-card);
@@ -3732,92 +3791,6 @@
     width: 100%;
     object-fit: cover;
   }
-  /* One row holding a control (draft 9.21): its height is the control plus 8, the 4 above and
-   * below being the row's own padding around the 40 px Add and the 40 px tile. */
-  .zen-install-banner {
-    min-height: calc(var(--v2-control) + 8px);
-    padding: 4px 12px;
-    border: 1px solid var(--v2-border);
-    border-radius: var(--v2-radius-card);
-    background: var(--v2-panel);
-    color: var(--v2-text);
-    box-shadow: var(--v2-shadow-panel);
-    animation: zen-banner-in 180ms var(--zen-ease);
-    touch-action: none;
-  }
-  /* Promoted only while a finger or the spring moves it (v1 §7.4), never at rest. */
-  .zen-install-banner[data-moving] {
-    will-change: transform, opacity;
-  }
-}
-@keyframes zen-banner-in {
-  from {
-    opacity: 0;
-    transform: translateY(-8px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
-/*
- * Fading scroll edges (`useFadeEdges`). The scroll container is masked, so content dissolves
- * into whatever is behind it – no gradient overlay, no assumption about the background. The
- * depth of each edge is a registered length: 0 at an edge with nothing past it, the fade size
- * once there is, eased between the two.
- */
-@property --zen-fade-start {
-  syntax: '<length>';
-  inherits: false;
-  initial-value: 0px;
-}
-@property --zen-fade-end {
-  syntax: '<length>';
-  inherits: false;
-  initial-value: 0px;
-}
-[data-fade-axis] {
-  transition:
-    --zen-fade-start 180ms var(--zen-ease),
-    --zen-fade-end 180ms var(--zen-ease);
-}
-[data-fade-axis='y'] {
-  -webkit-mask-image: linear-gradient(
-    to bottom,
-    transparent,
-    #000 var(--zen-fade-start),
-    #000 calc(100% - var(--zen-fade-end)),
-    transparent
-  );
-  mask-image: linear-gradient(
-    to bottom,
-    transparent,
-    #000 var(--zen-fade-start),
-    #000 calc(100% - var(--zen-fade-end)),
-    transparent
-  );
-}
-[data-fade-axis='x'] {
-  -webkit-mask-image: linear-gradient(
-    to right,
-    transparent,
-    #000 var(--zen-fade-start),
-    #000 calc(100% - var(--zen-fade-end)),
-    transparent
-  );
-  mask-image: linear-gradient(
-    to right,
-    transparent,
-    #000 var(--zen-fade-start),
-    #000 calc(100% - var(--zen-fade-end)),
-    transparent
-  );
-}
-/* A v2 sheet's header marks scrolled-under content with a hairline, not a fade (draft 9.7). */
-.zen-install-sheet .zen-sheet-scroll[data-fade-axis] {
-  -webkit-mask-image: none;
-  mask-image: none;
 }
 
 /*

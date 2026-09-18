@@ -1,72 +1,62 @@
 import type { JSX } from 'react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
+import { Loader2 } from 'lucide-react'
 import type { WebAppInstallPrompt } from '@shared/types'
 import { tileInk, tileLetter, type WebAppScreenshot } from '@shared/webApp'
-import { run } from '@renderer/lib/api'
+import { cmd, run } from '@renderer/lib/api'
 import { useBackSurface } from '@renderer/lib/back'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
+import { useFrameDialog } from '@renderer/lib/portals'
 import { closeInstallSheet, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { useEscapeTrap } from '../bookmarks/escape'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 
-/** "Add to Home screen" floats above whichever shell is up while a prompt is open. */
+const TITLE_ID = 'zen-install-title'
+const NAME_FIELD_ID = 'zen-install-name'
+
+/** "Add to Home screen" while a prompt is open, in the frame dialog host `TabDialogs` mounts. */
 export function InstallLayer(): JSX.Element | null {
   const prompt = uiStore.use((s) => s.install)
   return prompt ? <InstallSheet key={prompt.tabId} prompt={prompt} /> : null
 }
 
 /**
- * The install sheet: the menu sheet's motion under a v2 dialog surface. With a manifest it
- * presents the app – icon, name, origin, description and a screenshot strip – and one primary
- * "Add"; without one it is the lighter name-edit sheet with the page's icon and a title field.
- * Either way "Add" slides the sheet away and asks the core to pin, which brings up the system's
- * own pin dialog; every other way out (Cancel, scrim, drag, back, Escape) reports a cancelled
- * install so a site's deferred `prompt()` learns of it.
+ * The install sheet on the v2 sheet chassis (`BottomSheet`: surface, grip, 48 header, footer),
+ * placed through `FrameDialogHost` and drawing the stack's one scrim itself. With a manifest it
+ * presents the app – tile, name, origin, description and a screenshot strip – and one primary
+ * "Add"; without one it is the lighter name-edit sheet: the page's tile beside a labelled name
+ * field (§9.12) with the origin as its description. "Add" goes busy (§9.30) while the core has
+ * the host fetch the icon and hand the request to the launcher, then the sheet slides away under
+ * the system's own pin dialog; every other way out (Cancel, scrim, drag, back, Escape) reports a
+ * cancelled install so a site's deferred `prompt()` learns of it.
  */
 function InstallSheet({ prompt }: { prompt: WebAppInstallPrompt }): JSX.Element {
   const sheet = useRef<BottomSheetHandle>(null)
-  const body = useRef<HTMLDivElement>(null)
   const [title, setTitle] = useState(prompt.title)
+  const [busy, setBusy] = useState(false)
   const accepted = useRef(false)
   const info = prompt.info
 
+  const dismiss = useCallback(() => sheet.current?.dismiss(), [])
+  useFrameDialog({ onScrimPress: dismiss, ownScrim: true })
+  useEscapeTrap(true, dismiss)
   useBackSurface({
     name: 'install',
     onProgress: (progress) => sheet.current?.backProgress(progress),
     onCommit: () => sheet.current?.commitBack(),
     onCancel: () => sheet.current?.cancelBack()
   })
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape') return
-      e.preventDefault()
-      e.stopImmediatePropagation()
-      sheet.current?.dismiss()
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [])
-  // The header shows a hairline only while the body is scrolled under it (main.css).
-  useEffect(() => {
-    const scroller = body.current?.parentElement
-    const surface = scroller?.closest<HTMLElement>('.zen-sheet')
-    if (!scroller || !surface) return
-    const update = (): void => {
-      surface.dataset.scrolled = String(scroller.scrollTop > 0)
-    }
-    update()
-    scroller.addEventListener('scroll', update, { passive: true })
-    return () => {
-      scroller.removeEventListener('scroll', update)
-      delete surface.dataset.scrolled
-    }
-  }, [])
 
   const name = title.trim() || prompt.title
-  const add = (): void => {
+  const add = async (): Promise<void> => {
     if (accepted.current) return
     accepted.current = true
-    sheet.current?.dismiss(() => run('webapp.pin', { tabId: prompt.tabId, title: name }))
+    setBusy(true)
+    // Resolves once the request reached the launcher (its dialog is up) or could not be made
+    // (the core toasts the failure); either way the sheet is done.
+    await cmd('webapp.pin', { tabId: prompt.tabId, title: name }).catch(() => undefined)
+    sheet.current?.dismiss()
   }
   const onDismissed = (): void => {
     if (!accepted.current) run('webapp.cancelInstall', { tabId: prompt.tabId })
@@ -76,53 +66,64 @@ function InstallSheet({ prompt }: { prompt: WebAppInstallPrompt }): JSX.Element 
   return (
     <BottomSheet
       ref={sheet}
+      hosted
       className="zen-install-sheet"
+      labelledBy={TITLE_ID}
       onDismissed={onDismissed}
       contentKey={`${prompt.tabId}:${info ? 'app' : 'page'}`}
-      handleLabel="Resize sheet"
-      header={<h2 className="zen-install-title truncate">Add to Home Screen</h2>}
+      header={
+        <h2 id={TITLE_ID} className="zen-sheet-title">
+          Add to Home Screen
+        </h2>
+      }
       footer={
-        // Two peers split the footer equally with an 8 px gap, the primary trailing (draft 9.11).
-        <div className="flex gap-2 pb-2 pt-4">
-          <button
-            type="button"
-            className="zen-v2-button flex-1"
-            onClick={() => sheet.current?.dismiss()}
-          >
+        <>
+          <button type="button" className="zen-v2-button" onClick={dismiss}>
             Cancel
           </button>
-          <button type="button" className="zen-v2-button flex-1" data-primary onClick={add}>
-            Add
+          <button
+            type="button"
+            className="zen-v2-button"
+            data-primary
+            aria-label="Add"
+            aria-busy={busy || undefined}
+            onClick={() => void add()}
+          >
+            {busy ? <Loader2 className="zen-spin h-4 w-4" strokeWidth={2} aria-hidden /> : 'Add'}
           </button>
-        </div>
+        </>
       }
     >
-      <div ref={body} className="flex flex-col gap-4">
-        <div className="flex items-center gap-4">
+      <div className="zen-install-body">
+        <div className="zen-install-app">
           <AppIcon icon={prompt.icon} name={name} tint={prompt.tint} size={56} />
-          <div className="min-w-0 flex-1">
-            {info ? (
+          {info ? (
+            <div className="min-w-0 flex-1">
               <div className="zen-install-name truncate">{info.name}</div>
-            ) : (
+              <div className="zen-install-detail truncate">{prompt.origin}</div>
+            </div>
+          ) : (
+            <div className="zen-install-form min-w-0 flex-1">
+              <label htmlFor={NAME_FIELD_ID} className="zen-install-label">
+                Name
+              </label>
               <input
+                id={NAME_FIELD_ID}
                 className="zen-v2-field"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') add()
+                  if (e.key === 'Enter') void add()
                 }}
                 maxLength={60}
                 autoCapitalize="words"
                 autoCorrect="off"
                 spellCheck={false}
-                aria-label="Shortcut name"
                 placeholder={prompt.title}
               />
-            )}
-            <div className={cn('zen-install-detail truncate', info ? 'mt-0.5' : 'mt-1')}>
-              {prompt.origin}
+              <div className="zen-install-detail truncate">{prompt.origin}</div>
             </div>
-          </div>
+          )}
         </div>
         {info?.description && <p className="zen-install-description">{info.description}</p>}
         {info && info.screenshots.length > 0 && <ScreenshotStrip shots={info.screenshots} />}
