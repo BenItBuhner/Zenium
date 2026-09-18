@@ -225,7 +225,7 @@ class Extensions(private val host: Host) {
             "ext.send" -> { send(args.str("ep"), args.str("message")); reply(null) }
             "ext.background.start" -> { startBackground(args.str("id")); reply(null) }
             "ext.background.stop" -> { stopBackground(args.str("id")); reply(null) }
-            "ext.popup.open" -> { openPopup(args.str("id"), args.str("url"), args.str("context", "popup")); reply(null) }
+            "ext.popup.open" -> { openPopup(args.str("id"), args.str("url"), args.str("context", "popup"), args.str("title", "")); reply(null) }
             "ext.popup.close" -> { closePopup(); reply(null) }
             "ext.authFlow" -> {
                 val tabId = args.str("tabId")
@@ -1158,10 +1158,10 @@ class Extensions(private val host: Host) {
         view.destroy()
     }
 
-    private fun openPopup(id: String, url: String, context: String) {
+    private fun openPopup(id: String, url: String, context: String, title: String) {
         closePopup()
         val ext = served[id] ?: return
-        val sheet = ExtensionPopup(host, this, ext, url, context) {
+        val sheet = ExtensionPopup(host, this, ext, title, url, context) {
             popup = null
             host.chrome.hostEvent("ext.popupClosed", json("id" to id))
         }

@@ -750,7 +750,12 @@ describe('AndroidExtensionRuntime: popups and options', () => {
     backgroundUp(h, 'bg1', ['action.onClicked'])
     h.runtime.openPopup(ID)
     expect(h.kt.calledWith('ext.popup.open')).toEqual([
-      { id: ID, url: `https://${ID}.ext.zenium.invalid/popup.html`, context: 'popup' }
+      {
+        id: ID,
+        url: `https://${ID}.ext.zenium.invalid/popup.html`,
+        context: 'popup',
+        title: 'Runtime test'
+      }
     ])
     h.runtime.closePopup()
     expect(h.kt.calledWith('ext.popup.close')).toHaveLength(1)
@@ -770,7 +775,12 @@ describe('AndroidExtensionRuntime: popups and options', () => {
     await h.runtime.attach(record(h, {}, manifest({ options_ui: { page: 'options.html' } })))
     h.runtime.openOptions(ID)
     expect(h.kt.calledWith('ext.popup.open')).toEqual([
-      { id: ID, url: `https://${ID}.ext.zenium.invalid/options.html`, context: 'options' }
+      {
+        id: ID,
+        url: `https://${ID}.ext.zenium.invalid/options.html`,
+        context: 'options',
+        title: 'Runtime test'
+      }
     ])
     const inTab = harness()
     await inTab.runtime.attach(

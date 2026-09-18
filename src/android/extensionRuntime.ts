@@ -76,7 +76,7 @@ import type { ViewEventPayloads } from './views'
  *  ext.configure { id, version, path, allowFileAccess, allowPrivate, units, served, debug }
  *                                           → { units: [{ key, chars, cached }], ms }
  *  ext.detach { id }
- *  ext.background.start / stop { id }, ext.popup.open { id, url, context }, ext.popup.close
+ *  ext.background.start / stop { id }, ext.popup.open { id, url, context, title }, ext.popup.close
  *  ext.send { ep, message }, ext.exec {…}, ext.readFile { id, path }, ext.cookies.get / set
  *  ext.setRules { extensions: [{ ext, allowPrivate, paths, dynamic }] }, ext.observeRequests { on }
  *  ext.authFlow { tabId, id | null }         the tab an identity.launchWebAuthFlow runs in
@@ -845,7 +845,8 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
     this.bridge.send('ext.popup.open', {
       id,
       url: extensionUrl(id, action.popup),
-      context: 'popup'
+      context: 'popup',
+      title: ext.manifest.name || id
     })
   }
 
@@ -859,7 +860,12 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost {
       return
     }
     this.popupOpen = id
-    this.bridge.send('ext.popup.open', { id, url, context: 'options' })
+    this.bridge.send('ext.popup.open', {
+      id,
+      url,
+      context: 'options',
+      title: ext.manifest.name || id
+    })
   }
 
   closePopup(): void {

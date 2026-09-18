@@ -27,7 +27,7 @@ class ExtensionWebView(
     private val extensions: Extensions,
     val served: Extensions.Served,
     val context: String
-) : WebView(host.activity) {
+) : NestedScrollWebView(host.activity) {
     private val origin = "https://${served.id}${Extensions.ORIGIN_SUFFIX}"
     /** Console lines of the page, for the probe and the demo (background pages have no visible UI). */
     val console = ArrayDeque<String>()
