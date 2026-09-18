@@ -70,6 +70,22 @@ describe('the keyboard follows the focus', () => {
     address.focus()
     expect(sent).toEqual(['chrome.showKeyboard', 'chrome.showKeyboard'])
   })
+
+  it('asks for nothing when an input that takes no typing (a checkbox, a radio) takes the focus', () => {
+    const name = field()
+    const checkbox = document.createElement('input')
+    checkbox.type = 'checkbox'
+    const radio = document.createElement('input')
+    radio.type = 'radio'
+    document.body.append(checkbox, radio)
+    checkbox.focus()
+    radio.focus()
+    expect(sent).toEqual([])
+    // From a field to a checkbox is a leave to nothing editable: the keyboard goes down.
+    name.focus()
+    checkbox.focus()
+    expect(sent).toEqual(['chrome.showKeyboard', 'chrome.hideKeyboard'])
+  })
 })
 
 describe('a busy field turned editable again gets the keyboard back (§9.30)', () => {

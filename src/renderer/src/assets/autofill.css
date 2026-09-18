@@ -1,0 +1,1074 @@
+/*
+ * Passwords in pages, in design language v2 (docs/design-language-v2-draft.md §1–§6, §9): the
+ * save / update prompts, the account, address and card pickers, the passkey account dialog, the
+ * vault passphrase dialog and Settings > Autofill with its managers. Every colour, radius, shadow
+ * and size is read from the `--v2-*` token block in main.css; nothing here defines a token of its
+ * own, and the density tokens (`--v2-row`, `--v2-control`, `--v2-icon`) already follow the form
+ * factor, so one rule serves both. Page surfaces all of them (`data-surface="page"` on each root,
+ * §9.29) except the key chip, which sits on the window and reads the control roles.
+ *
+ * Unlayered, like main.css's `.zen-v2-button`: the shared controls below are the same rules #115
+ * appends to main.css, and a layered copy would lose every declaration to them. Loaded by the
+ * autofill components; the `zen-v2-` prefix keeps every control under main.css's shared focus ring.
+ */
+
+/* The scope: body text 15/400 on 20 in the page family. */
+.zen-v2-af {
+  color: var(--v2-text);
+  font-size: var(--v2-font-body);
+  font-weight: var(--v2-weight-body);
+  line-height: var(--v2-line-body);
+}
+.zen-v2-af svg {
+  stroke-width: var(--v2-icon-stroke);
+}
+
+/* ------------------------------------------------------------------------------------------ */
+/* Shared controls (#115's rules, one definition per class: the second to land drops its copy)   */
+/* ------------------------------------------------------------------------------------------ */
+
+/*
+ * Checkbox (§6, §9.2): 16 at radius 2, accent fill with the on-accent check; on the first text
+ * line, (line − box) / 2 below its top – 2 px on desktop, 0 under a finger where box and line are
+ * both 20.
+ */
+.zen-v2-check {
+  display: grid;
+  width: var(--v2-checkbox);
+  height: var(--v2-checkbox);
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin: calc((var(--v2-line-body) - var(--v2-checkbox)) / 2) 0 0;
+  place-items: center;
+  border: 1px solid rgb(var(--v2-text-rgb) / 0.45);
+  border-radius: var(--v2-radius-checkbox);
+  background: var(--v2-page);
+  appearance: none;
+  -webkit-appearance: none;
+  transition:
+    background 120ms var(--zen-ease),
+    border-color 120ms var(--zen-ease);
+}
+.zen-v2-check:hover:not(:disabled):not(:checked) {
+  background: var(--v2-fill);
+}
+.zen-v2-check:checked {
+  border-color: var(--v2-accent);
+  background: var(--v2-accent);
+}
+.zen-v2-check:checked::after {
+  width: 76%;
+  height: 76%;
+  background: var(--v2-on-accent);
+  content: '';
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-7' fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-7' fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+}
+.zen-v2-check:disabled {
+  opacity: 0.4;
+}
+/* Plain radio (§9.14): a 16 / 20 circle, accent fill with a 6 px page-colour dot when chosen. */
+.zen-v2-radio {
+  display: grid;
+  width: var(--v2-checkbox);
+  height: var(--v2-checkbox);
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin: calc((var(--v2-line-body) - var(--v2-checkbox)) / 2) 0 0;
+  place-items: center;
+  border: 1px solid rgb(var(--v2-text-rgb) / 0.45);
+  border-radius: 50%;
+  background: var(--v2-page);
+  appearance: none;
+  -webkit-appearance: none;
+  transition:
+    background 120ms var(--zen-ease),
+    border-color 120ms var(--zen-ease);
+}
+.zen-v2-radio:hover:not(:disabled):not(:checked) {
+  background: var(--v2-fill);
+}
+.zen-v2-radio:checked {
+  border-color: var(--v2-accent);
+  background: var(--v2-accent);
+}
+.zen-v2-radio:checked::after {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--v2-page);
+  content: '';
+}
+.zen-v2-radio:disabled {
+  opacity: 0.4;
+}
+/* Fields (§5): 32 tall at radius 4 with a hairline, 40 and radius 6 under a finger. */
+.zen-v2-field {
+  min-width: 0;
+  height: var(--v2-control);
+  flex: 1;
+  padding: 0 12px;
+  border: 1px solid var(--v2-border);
+  border-radius: var(--v2-radius-control);
+  background: var(--v2-page);
+  color: var(--v2-text);
+  font-size: var(--v2-font-body);
+}
+.zen-v2-field::placeholder {
+  color: var(--v2-text-deemphasized);
+}
+/* Icon buttons (§9.3): 28 with a 16 glyph on desktop, 44 with 20 on phones, 40 on tablets. */
+.zen-v2-icon-button {
+  display: inline-flex;
+  width: var(--v2-icon-button);
+  height: var(--v2-icon-button);
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--v2-radius-inner);
+  color: var(--v2-text);
+  transition:
+    background 120ms var(--zen-ease),
+    transform 120ms var(--zen-ease),
+    opacity 120ms var(--zen-ease);
+}
+.zen-v2-icon-button svg {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  stroke-width: var(--v2-icon-stroke);
+}
+.zen-v2-icon-button:hover:not(:disabled) {
+  background: var(--v2-fill);
+}
+.zen-v2-icon-button:active:not(:disabled) {
+  transform: scale(0.98);
+}
+/* Disabled is one number, .4 (§9.30). */
+.zen-v2-icon-button:disabled {
+  opacity: 0.4;
+}
+:root[data-form-factor='phone'] .zen-v2-icon-button {
+  border-radius: var(--v2-radius-card);
+}
+
+/* ------------------------------------------------------------------------------------------ */
+/* What these surfaces add to the shared controls                                               */
+/* ------------------------------------------------------------------------------------------ */
+
+/* Danger = the secondary button in the danger ink (§6); quiet = no fill at rest (a row's text button). */
+.zen-v2-button[data-variant='danger'] {
+  color: var(--v2-danger);
+}
+.zen-v2-button[data-variant='quiet'] {
+  background: transparent;
+}
+.zen-v2-button[data-variant='quiet']:hover:not(:disabled) {
+  background: var(--v2-fill);
+}
+/*
+ * Busy is not disabled (§9.30): the button keeps its opacity and width, its label gives way to a
+ * 16 px spinner, and it takes no presses until the work is done.
+ */
+.zen-v2-button[aria-busy='true'] {
+  position: relative;
+  color: transparent;
+  pointer-events: none;
+}
+.zen-v2-button[aria-busy='true'] > * {
+  visibility: hidden;
+}
+.zen-v2-button[aria-busy='true']::after {
+  content: '';
+  position: absolute;
+  top: calc(50% - 8px);
+  left: calc(50% - 8px);
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--v2-text);
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: zen-v2-af-spin 800ms linear infinite;
+}
+.zen-v2-button[data-primary][aria-busy='true']::after {
+  border-color: var(--v2-on-accent);
+  border-right-color: transparent;
+}
+@keyframes zen-v2-af-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+/* A button holding a glyph before its label. */
+.zen-v2-button > svg {
+  width: 16px;
+  height: 16px;
+  margin-right: 8px;
+}
+/* A field under its label takes the label's width; disabled at .4 (§9.30). */
+.zen-v2-af-label > .zen-v2-field,
+.zen-v2-af-label > .zen-v2-af-menulist {
+  width: 100%;
+}
+.zen-v2-field:disabled {
+  opacity: 0.4;
+}
+/* A secret string (§4): the platform monospace, no ligatures, one colour. */
+.zen-v2-field[data-secret] {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+  font-variant-ligatures: none;
+}
+/* A field of a few lines (a street address): the field's border and type, sized by its rows, no grip. */
+textarea.zen-v2-field {
+  height: auto;
+  padding: calc((var(--v2-control) - var(--v2-line-body)) / 2 - 1px) 12px;
+  line-height: var(--v2-line-body);
+  resize: none;
+}
+
+/* ------------------------------------------------------------------------------------------ */
+/* Surfaces                                                                                     */
+/* ------------------------------------------------------------------------------------------ */
+
+/*
+ * A desktop popover (§9.20): one of the three widths (set in script), radius 8 on the panel
+ * surface with the panel shadow and a hairline, no scrim; the body scrolls under its title block
+ * past 60% of the window.
+ */
+.zen-v2-af-popover {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--v2-border);
+  border-radius: var(--v2-radius-card);
+  corner-shape: var(--zen-corner);
+  background: var(--v2-panel);
+  box-shadow: var(--v2-shadow-panel);
+}
+/*
+ * The picker's document (`?surface=autofill`): a transparent page whose one panel sits inside
+ * the 8 px margin the surface leaves for its shadow (`PICKER_SURFACE_PAD`). The panel takes the
+ * document's height less that margin, so a long list scrolls inside it.
+ */
+.zen-v2-af-surface {
+  position: fixed;
+  inset: 0;
+  padding: 8px;
+  background: transparent;
+  overflow: hidden;
+}
+.zen-v2-af-surface > .zen-v2-af-popover {
+  max-height: 100%;
+}
+/* The picker's document draws no page of its own: the window's page shows through its margin. */
+:root[data-chrome-surface='autofill'],
+:root[data-chrome-surface='autofill'] body {
+  background: transparent;
+}
+/* A notice in the picker (the unlock step, the passphrase-setup notice): a column, no scroll of its own. */
+.zen-v2-af-notice {
+  display: flex;
+  flex-direction: column;
+}
+/* A modal dialog (§9.5) placed by FrameDialogHost: radius 12, the sheet shadow, 400 wide. */
+.zen-v2-af-dialog {
+  display: flex;
+  flex-direction: column;
+  width: 400px;
+  max-width: calc(100% - 32px);
+  max-height: calc(100% - 32px);
+  overflow: hidden;
+  border: 1px solid var(--v2-border);
+  border-radius: var(--v2-radius-sheet);
+  corner-shape: var(--zen-corner);
+  background: var(--v2-panel);
+  box-shadow: var(--v2-shadow-sheet);
+}
+/*
+ * A phone sheet on the shared BottomSheet chassis (§6 sheets, §9.25): neutral, opaque, a
+ * hairline edge, radius 12, no side padding of its own – its content sets the one 16 gutter –
+ * and `--v2-scrim` on the chassis' scrim, which is the sheet's previous sibling (§9.28).
+ */
+.zen-v2-af-sheet {
+  padding-left: 0;
+  padding-right: 0;
+  border: 1px solid var(--v2-border);
+  border-bottom: 0;
+  border-radius: var(--v2-radius-sheet) var(--v2-radius-sheet) 0 0;
+  background: var(--v2-panel);
+  backdrop-filter: none;
+  box-shadow: var(--v2-shadow-sheet);
+  color: var(--v2-text);
+  font-size: var(--v2-font-body);
+}
+:root[data-theme='dark'] .zen-v2-af-sheet {
+  box-shadow: var(--v2-shadow-sheet);
+}
+.zen-sheet-scrim:has(+ .zen-v2-af-sheet) {
+  background: var(--v2-scrim);
+}
+.zen-v2-af-sheet .zen-sheet-handle {
+  width: 32px;
+  height: 4px;
+  background: rgb(var(--v2-text-rgb) / 0.25);
+}
+.zen-v2-af-sheet[data-dragging='true'] .zen-sheet-handle {
+  background: rgb(var(--v2-text-rgb) / 0.4);
+}
+/*
+ * The picker strip on hosts without a popup surface: docked at the bottom of the content frame,
+ * above the keyboard, so the page shrinks around it like it does for the find bar. A panel edge
+ * on top, rows at the phone pitch, at most three rows before it scrolls.
+ */
+.zen-v2-af-strip {
+  position: relative;
+  z-index: 1;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(3 * var(--v2-row-two-line) + var(--v2-row) + 9px + 16px);
+  border-top: 1px solid var(--v2-border);
+  background: var(--v2-panel);
+  box-shadow: var(--v2-shadow-panel);
+}
+
+/* ------------------------------------------------------------------------------------------ */
+/* Headers                                                                                      */
+/* ------------------------------------------------------------------------------------------ */
+
+/*
+ * A title block (§9.23): no bar, no X; padding 16, an optional 16 px glyph (20 on a phone) 8 px
+ * before the 17/600 title on a 22 px line, a description 15 at 69% 4 px under it, 16 to the
+ * body. Sticky over a scrolling body with the §9.7 hairline once the body has moved.
+ */
+.zen-v2-af-title-block {
+  flex-shrink: 0;
+  padding: 16px;
+  transition: box-shadow 120ms var(--zen-ease);
+}
+/* The hairline is drawn, not laid out: the block stays 54 / 78 tall (§9.23). */
+.zen-v2-af-title-block[data-scrolled='true'] {
+  box-shadow: 0 1px 0 var(--v2-border);
+}
+.zen-v2-af-title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+/* The glyph on the title's start: a Lucide glyph or the site's favicon, centred on the 22 line. */
+.zen-v2-af-title-glyph {
+  display: inline-flex;
+  flex-shrink: 0;
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  margin-top: calc((22px - var(--v2-icon)) / 2);
+  align-items: center;
+  justify-content: center;
+}
+.zen-v2-af-title-glyph svg,
+.zen-v2-af-title-glyph img {
+  width: 100%;
+  height: 100%;
+}
+.zen-v2-af-title-glyph img {
+  border-radius: 3px;
+  object-fit: contain;
+}
+.zen-v2-af-title {
+  min-width: 0;
+  font-size: var(--v2-font-heading);
+  font-weight: var(--v2-weight-heading);
+  line-height: 22px;
+  letter-spacing: -0.008em;
+  overflow-wrap: anywhere;
+}
+.zen-v2-af-description {
+  margin-top: 4px;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+  overflow-wrap: anywhere;
+}
+/*
+ * A prompt sheet's title block sits after the grip strip in the header's place (§9.23: no 48
+ * header, the glyph 20 on the phone through `--v2-icon`), its description on a 22 line there.
+ */
+.zen-v2-af-sheet .zen-v2-af-description {
+  line-height: 22px;
+}
+/* A form sheet's 48 header after the grip strip: its 17/600 title at line-height 22, centred (§9.16). */
+.zen-v2-af-sheet-header {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 16px;
+  text-align: center;
+}
+
+/* ------------------------------------------------------------------------------------------ */
+/* Bodies                                                                                       */
+/* ------------------------------------------------------------------------------------------ */
+
+.zen-v2-af-body {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+}
+/*
+ * A dialog whose form scrolls between its title block and its footer: the form element is the
+ * column, the body inside it scrolls, the footer stays put with the §9.11 desktop 16 around its
+ * buttons (the form's own 16 below its last field gives way to the footer's) and §9.7's hairline
+ * on its top edge while more of the form lies below.
+ */
+.zen-v2-af-dialog-form {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+.zen-v2-af-dialog-form .zen-v2-af-form {
+  padding-bottom: 0;
+}
+.zen-v2-af-dialog-footer {
+  flex-shrink: 0;
+  transition: box-shadow 120ms var(--zen-ease);
+}
+.zen-v2-af-dialog-footer[data-more] {
+  box-shadow: 0 -1px 0 var(--v2-border);
+}
+/* The body of a form: the title block's 16 above it, the 16 gutter to the sides and below. */
+.zen-v2-af-form {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  gap: 12px;
+  padding: 0 16px 16px;
+}
+/*
+ * Body copy under a 48 header (§9.23): 15/400 in the text colour at the 16 gutter, 16 px from
+ * the form or rows it introduces.
+ */
+.zen-v2-af-copy {
+  padding: 0 16px 16px;
+  color: var(--v2-text);
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+  overflow-wrap: anywhere;
+}
+/* A form field (§9.12): the label above the field, 15/400, 4 px to the field; its description 13 at 69%. */
+.zen-v2-af-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+}
+.zen-v2-af-field-hint {
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-body);
+}
+/* Validation text (§9.12): 13 in the danger ink with a 16 px glyph. */
+.zen-v2-af-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  color: var(--v2-danger);
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-body);
+}
+.zen-v2-af-error svg {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+}
+.zen-v2-af-field-row {
+  display: flex;
+  gap: 8px;
+}
+.zen-v2-af-field-row > * {
+  min-width: 0;
+  flex: 1;
+}
+/* Two short fields share a line (month and year, city and postal code). */
+.zen-v2-af-field-row > .zen-v2-af-narrow {
+  flex: 0 0 96px;
+}
+
+/* ------------------------------------------------------------------------------------------ */
+/* List rows (the pickers, the passkey chooser, the menulist sheet)                              */
+/* ------------------------------------------------------------------------------------------ */
+
+/*
+ * A list row (§9.2, §9.21): a 16 / 20 glyph or favicon on the first text line, the title 15/20,
+ * an optional description 13/20 under it; 6 px block padding so a two-line row is 52 / 64 and a
+ * one-line row keeps the base 32 / 44; rows touch. One highlight, native-menu style: the active
+ * row follows the pointer and the keyboard.
+ */
+.zen-v2-af-row {
+  display: flex;
+  width: 100%;
+  min-height: var(--v2-row);
+  align-items: flex-start;
+  gap: 12px;
+  padding: 6px 16px;
+  border-radius: 0;
+  color: var(--v2-text);
+  text-align: left;
+  outline: none;
+  user-select: none;
+  transition: background 100ms var(--zen-ease);
+}
+.zen-v2-af-row:has(.zen-v2-af-row-desc) {
+  min-height: var(--v2-row-two-line);
+}
+:root[data-form-factor='phone'] .zen-v2-af-row {
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+.zen-v2-af-popover .zen-v2-af-row,
+.zen-v2-af-dialog .zen-v2-af-row {
+  padding-left: 8px;
+  padding-right: 8px;
+  border-radius: var(--v2-radius-control);
+}
+.zen-v2-af-row[data-active='true'],
+.zen-v2-af-row[aria-selected='true'] {
+  background: var(--v2-fill);
+}
+/* A row that is a radio's label (the menulist sheet, §9.13): the press fill, 120 ms. */
+.zen-v2-af-row:active {
+  background: var(--v2-fill);
+}
+.zen-v2-af-row:focus-visible {
+  outline: 2px solid var(--v2-accent);
+  outline-offset: -2px;
+}
+.zen-v2-af-row:disabled {
+  opacity: 0.4;
+}
+.zen-v2-af-row-icon {
+  display: flex;
+  flex-shrink: 0;
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  margin-top: calc((var(--v2-line-body) - var(--v2-icon)) / 2);
+  align-items: center;
+  justify-content: center;
+  color: var(--v2-text-deemphasized);
+}
+.zen-v2-af-row-icon img {
+  width: 100%;
+  height: 100%;
+  border-radius: 3px;
+}
+.zen-v2-af-row-text {
+  min-width: 0;
+  flex: 1;
+}
+.zen-v2-af-row-title {
+  display: block;
+  overflow: hidden;
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.zen-v2-af-row-desc {
+  display: block;
+  overflow: hidden;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--v2-line-body);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A trailing glyph in a list row (§9.18) centres on the row. */
+.zen-v2-af-row-trailing {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  align-self: center;
+}
+/* The lock on a row whose fill asks for the passphrase: a 16 px glyph at 69%. */
+.zen-v2-af-row-lock {
+  color: var(--v2-text-deemphasized);
+}
+.zen-v2-af-row-lock svg {
+  width: 16px;
+  height: 16px;
+}
+/* The picker's list: 16 around its rows in a popover (§9.20), the manage row after a hairline. */
+.zen-v2-af-list {
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+}
+.zen-v2-af-strip .zen-v2-af-list {
+  padding: 8px 0;
+}
+/* A list inside a form (the passkey chooser's rows over its Cancel) sits at the form's 16. */
+.zen-v2-af-form > .zen-v2-af-list {
+  padding: 0;
+}
+/* The static row of what a prompt would save (§9.2), at the form's 16 with no fill. */
+.zen-v2-af-preview {
+  padding-left: 0;
+  padding-right: 0;
+  border-radius: 0;
+}
+.zen-v2-af-popover .zen-v2-af-preview,
+.zen-v2-af-dialog .zen-v2-af-preview {
+  padding-left: 0;
+  padding-right: 0;
+}
+/* A sheet's rows carry their own 16 sides (the menu sheet's radio rows, the passkey chooser's). */
+.zen-v2-af-sheet .zen-v2-af-list {
+  padding: 0 0 8px;
+}
+.zen-v2-af-rule {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--v2-border);
+}
+.zen-v2-af-strip .zen-v2-af-rule {
+  margin: 4px 16px;
+}
+/* The empty line (§9.17): one sentence at 69%, centred, its first line 32 / 48 below the header. */
+.zen-v2-af-empty {
+  padding: 16px 32px 0;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+  text-align: center;
+}
+
+/* ------------------------------------------------------------------------------------------ */
+/* Footers and the menulist                                                                     */
+/* ------------------------------------------------------------------------------------------ */
+
+/*
+ * Footers (§9.11): on desktop the actions hug and right-align at 32 with an 8 px gap, primary
+ * last; in a phone sheet two peers split the width, three or more stack full-width, primary
+ * first (`data-stack`), each 40 tall; 16 to the sheet's edges and above the bottom inset.
+ */
+.zen-v2-af-footer {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 16px;
+}
+.zen-v2-af-form > .zen-v2-af-footer {
+  margin-top: 4px;
+  padding: 0;
+}
+.zen-v2-af-sheet .zen-v2-af-footer > .zen-v2-button {
+  flex: 1 1 0;
+}
+.zen-v2-af-sheet .zen-v2-af-footer[data-stack='true'] {
+  flex-direction: column-reverse;
+  align-items: stretch;
+}
+.zen-v2-af-sheet .zen-v2-af-footer[data-stack='true'] > .zen-v2-button {
+  flex: 0 0 auto;
+  width: 100%;
+}
+/*
+ * A rectangular menulist (§9.13): the trigger is a field with a chevron; its menu a `--v2-panel`
+ * popover under it at radius 12, padding 6, 28 px rows at radius 6, the current option marked
+ * with a trailing 16 px check.
+ */
+.zen-v2-af-menulist {
+  display: inline-flex;
+  height: var(--v2-control);
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 8px 0 12px;
+  border: 1px solid var(--v2-border);
+  border-radius: var(--v2-radius-control);
+  background: var(--v2-page);
+  color: var(--v2-text);
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+  text-align: left;
+}
+.zen-v2-af-menulist > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.zen-v2-af-menulist svg {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  color: var(--v2-text-deemphasized);
+}
+.zen-v2-af-menulist:disabled {
+  opacity: 0.4;
+}
+/* A choice not made yet: the placeholder at 69% in place of an option's label. */
+.zen-v2-af-menulist[data-placeholder] > span:first-child {
+  color: var(--v2-text-deemphasized);
+}
+.zen-v2-af-menu {
+  z-index: 100;
+  min-width: var(--radix-select-trigger-width);
+  max-height: min(320px, var(--radix-select-content-available-height));
+  padding: 6px;
+  border: 1px solid var(--v2-border);
+  border-radius: var(--v2-radius-sheet);
+  background: var(--v2-panel);
+  box-shadow: var(--v2-shadow-panel);
+  color: var(--v2-text);
+}
+.zen-v2-af-menu-item {
+  display: flex;
+  height: 28px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 8px;
+  border-radius: var(--v2-radius-inner);
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+  outline: none;
+  cursor: default;
+  user-select: none;
+}
+.zen-v2-af-menu-item[data-highlighted] {
+  background: var(--v2-fill);
+}
+.zen-v2-af-menu-item[data-disabled] {
+  opacity: 0.4;
+}
+.zen-v2-af-menu-item svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* ------------------------------------------------------------------------------------------ */
+/* The key chip in the URL pill (window family, §9.29)                                          */
+/* ------------------------------------------------------------------------------------------ */
+
+/*
+ * A 28 px icon button (§9.3) among the pill's chips, drawing in the family of the surface it sits
+ * on (`--v2-control-*`, the window's here) like the star beside it: 70% at rest, full on hover
+ * with the window fill, the pressed fill while its popover is open (§9.20).
+ */
+.zen-v2-af-chip {
+  color: var(--v2-control-text);
+  opacity: 0.7;
+  transition:
+    background 120ms var(--zen-ease),
+    opacity 120ms var(--zen-ease);
+}
+@media (hover: hover) {
+  .zen-v2-af-chip:hover {
+    background: var(--v2-control-fill);
+    opacity: 1;
+  }
+}
+.zen-v2-af-chip:active,
+.zen-v2-af-chip[aria-expanded='true'] {
+  background: var(--v2-control-fill-hover);
+  opacity: 1;
+}
+
+/* ------------------------------------------------------------------------------------------ */
+/* Settings > Autofill (§6, §9.2, §9.17, §9.18, §9.21, §9.26, §9.27, §9.30)                     */
+/* ------------------------------------------------------------------------------------------ */
+
+/*
+ * The pane: sections 32 apart (24 on phones) in a 664 column. On desktop it opens on its 22/600
+ * title with a 15/69% description 4 under it (§9.26); on a phone the chip strip names the pane
+ * and the groups carry the 15/600 headings, so the title is not drawn.
+ */
+.zen-v2-af-pane {
+  display: flex;
+  max-width: var(--v2-content-max);
+  flex-direction: column;
+  gap: 32px;
+  color: var(--v2-text);
+  font-size: var(--v2-font-body);
+  font-weight: var(--v2-weight-body);
+  line-height: var(--v2-line-body);
+}
+:root[data-form-factor='phone'] .zen-v2-af-pane {
+  gap: 24px;
+}
+.zen-v2-af-pane-title {
+  font-size: var(--v2-font-title);
+  font-weight: var(--v2-weight-heading);
+  line-height: 28px;
+  letter-spacing: -0.01em;
+}
+:root[data-form-factor='phone'] .zen-v2-af-pane-title {
+  display: none;
+}
+.zen-v2-af-pane-intro {
+  margin-top: 4px;
+}
+:root[data-form-factor='phone'] .zen-v2-af-pane-intro {
+  margin-top: 0;
+}
+.zen-v2-af-muted {
+  color: var(--v2-text-deemphasized);
+  font-variant-numeric: tabular-nums;
+}
+/*
+ * A section (§9.27): a 15/600 sub-heading, its 15/69% description 4 px under it, and the first
+ * row's box 8 below the last line of that block.
+ */
+.zen-v2-af-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.zen-v2-af-heading {
+  font-size: var(--v2-font-body);
+  font-weight: var(--v2-weight-heading);
+  line-height: var(--v2-line-body);
+}
+.zen-v2-af-heading-block > .zen-v2-af-muted {
+  margin-top: 4px;
+}
+/*
+ * A card (§3, §6): flat, one hairline, radius 8, only where a group carries its own actions (a
+ * manager with its add row). Rows inside bring their own 16 px sides and touch (§9.21); the
+ * card's 10 px block padding is what the first and last rows' 6 leave of the 16. A phone group is
+ * rows under its heading (§9.17, §10.3) – the card dissolves there and no new phone card appears.
+ */
+.zen-v2-af-card {
+  padding: 10px 0;
+  border: 1px solid var(--v2-card-border);
+  border-radius: var(--v2-radius-card);
+  corner-shape: var(--zen-corner);
+  background: var(--v2-card);
+}
+.zen-v2-af-card > .zen-v2-af-srow,
+.zen-v2-af-card > .zen-v2-af-add {
+  padding-left: var(--v2-card-padding);
+  padding-right: var(--v2-card-padding);
+}
+/* The interim phone Settings overlay keeps the card, at phone metrics: 44 rows leave 4 of the 16. */
+:root[data-form-factor='phone'] .zen-v2-af-card {
+  padding: 4px 0;
+}
+/* The vault gate (§9.27): a 17/600 title on 22 with its glyph, the description, the action under. */
+.zen-v2-af-gate {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: var(--v2-card-padding);
+}
+.zen-v2-af-gate-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.zen-v2-af-gate-head > svg {
+  flex-shrink: 0;
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  margin-top: calc((22px - var(--v2-icon)) / 2);
+  color: var(--v2-text-deemphasized);
+}
+.zen-v2-af-card-title {
+  font-size: var(--v2-font-heading);
+  font-weight: var(--v2-weight-heading);
+  line-height: 22px;
+  letter-spacing: -0.008em;
+}
+.zen-v2-af-gate-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.zen-v2-af-gate-form > .zen-v2-af-label {
+  max-width: 320px;
+}
+:root[data-form-factor='phone'] .zen-v2-af-gate-form > .zen-v2-af-label {
+  max-width: none;
+}
+.zen-v2-af-gate-actions {
+  display: flex;
+  gap: 8px;
+}
+.zen-v2-af-rows {
+  display: flex;
+  flex-direction: column;
+}
+/*
+ * Settings rows (§9.2, §9.18): 32 one line, 52 with a description (label and description each on
+ * a 20 px line, 6 px of padding), growing with content; 44 / 64 on phones. The row centres what
+ * it holds; a leading checkbox, radio or glyph sits on the first text line and a trailing control
+ * stays centred on the row.
+ */
+.zen-v2-af-srow {
+  display: flex;
+  width: 100%;
+  min-height: var(--v2-row);
+  align-items: center;
+  gap: 12px;
+  padding: 6px 0;
+  color: var(--v2-text);
+  text-align: left;
+}
+.zen-v2-af-srow:has(.zen-v2-af-srow-desc) {
+  min-height: var(--v2-row-two-line);
+}
+:root[data-form-factor='phone'] .zen-v2-af-srow {
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+/* A row whose control is off dims its text with the control (§9.30's .4). */
+.zen-v2-af-srow:has(> input:disabled) .zen-v2-af-srow-text {
+  opacity: 0.4;
+}
+.zen-v2-af-srow > .zen-v2-af-row-icon {
+  align-self: flex-start;
+}
+.zen-v2-af-srow-text {
+  min-width: 0;
+  flex: 1;
+}
+.zen-v2-af-srow-label {
+  display: block;
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+  overflow-wrap: anywhere;
+}
+/* The description: 13 at 69% on the same 20 px line as the label (§9.2), two lines at most. */
+.zen-v2-af-srow-desc {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--v2-line-body);
+  overflow-wrap: anywhere;
+}
+/*
+ * Trailing icon buttons (§9.18, §9.21): the row grows around its control to the control plus 8 –
+ * 36 / 52 around a 28 / 44 button – and the 4 above and below are the row's own padding, so
+ * adjacent buttons sit 8 apart. The text and a leading box keep their 6 / 12 by carrying the
+ * other 2 / 8 themselves, so two-line rows stay 52 / 64 beside rows without buttons. Buttons 4
+ * apart.
+ */
+.zen-v2-af-srow-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+}
+.zen-v2-af-srow:has(> .zen-v2-af-srow-actions) {
+  min-height: max(var(--v2-row), calc(var(--v2-icon-button) + 8px));
+  padding-block: 4px;
+}
+.zen-v2-af-srow:has(> .zen-v2-af-srow-actions) > .zen-v2-af-srow-text {
+  margin-block: 2px;
+}
+.zen-v2-af-srow:has(> .zen-v2-af-srow-actions) > .zen-v2-af-row-icon {
+  margin-top: calc(2px + (var(--v2-line-body) - var(--v2-icon)) / 2);
+}
+:root[data-form-factor='phone'] .zen-v2-af-srow:has(> .zen-v2-af-srow-actions) {
+  padding-block: 4px;
+}
+:root[data-form-factor='phone']
+  .zen-v2-af-srow:has(> .zen-v2-af-srow-actions)
+  > .zen-v2-af-srow-text {
+  margin-block: 8px;
+}
+:root[data-form-factor='phone']
+  .zen-v2-af-srow:has(> .zen-v2-af-srow-actions)
+  > .zen-v2-af-row-icon {
+  margin-top: calc(8px + (var(--v2-line-body) - var(--v2-icon)) / 2);
+}
+/* Three text lines (the description wrapped): the controls centre on the label's line instead. */
+.zen-v2-af-srow[data-wrapped] > .zen-v2-af-srow-actions {
+  align-self: flex-start;
+  margin-top: calc(2px + (var(--v2-line-body) - var(--v2-icon-button)) / 2);
+}
+:root[data-form-factor='phone'] .zen-v2-af-srow[data-wrapped] > .zen-v2-af-srow-actions {
+  margin-top: calc(8px + (var(--v2-line-body) - var(--v2-icon-button)) / 2);
+}
+/*
+ * A row holding a 32 / 40 control – a button, a menulist (§9.21): the row is the control plus 8,
+ * the 4 above and below its own padding, the control centred (§9.18) and hugging its label; a
+ * desktop menulist in a row is Zen's 220 wide.
+ */
+.zen-v2-af-srow:has(> .zen-v2-button),
+.zen-v2-af-srow:has(> .zen-v2-af-menulist) {
+  min-height: max(var(--v2-row), calc(var(--v2-control) + 8px));
+  padding-block: 4px;
+}
+.zen-v2-af-srow > .zen-v2-af-menulist {
+  width: 220px;
+}
+/*
+ * A value row on a phone (§9.13, §10.4): the menulist is not drawn; the label sits on the first
+ * line with the current value as its description, no chevron, and the whole row opens the choice
+ * sheet, the press fill on the row.
+ */
+button.zen-v2-af-srow {
+  border-radius: var(--v2-radius-inner);
+  transition: background 120ms var(--zen-ease);
+}
+button.zen-v2-af-srow:active:not(:disabled) {
+  background: var(--v2-fill);
+}
+button.zen-v2-af-srow:disabled {
+  opacity: 0.4;
+}
+/*
+ * Empty state inside a card (§9.17): one plain row – 32 / 44 tall, the sentence at 15 and 69%
+ * left-aligned at the card's 16 padding like a row's label, no top gap; the card's next row is its
+ * follow-up.
+ */
+.zen-v2-af-srow-empty {
+  display: flex;
+  min-height: var(--v2-row);
+  align-items: center;
+  padding: 6px var(--v2-card-padding);
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+}
+:root[data-form-factor='phone'] .zen-v2-af-srow-empty {
+  padding-block: 12px;
+}
+/*
+ * A field with a button beside it in a row (the vault gate, §9.12, §9.21): the label above the
+ * field, 4 px to it, the button beside the field; the 4 above and below are the row's own.
+ */
+.zen-v2-af-add {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 0;
+}
+.zen-v2-af-add-controls {
+  display: flex;
+  gap: 8px;
+}
+.zen-v2-af-add-controls > .zen-v2-field {
+  max-width: 320px;
+}
+:root[data-form-factor='phone'] .zen-v2-af-add-controls > .zen-v2-field {
+  max-width: none;
+}
+/* Validation under the field (§9.12) inside a card sits at the card's 16. */
+.zen-v2-af-card > .zen-v2-af-error {
+  padding: 0 var(--v2-card-padding) 4px;
+}

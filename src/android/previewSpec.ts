@@ -58,8 +58,37 @@ export interface PreviewDownloadSpec {
   private: boolean
 }
 
+/**
+ * The autofill surfaces a preview state may stage with sample data: the four save prompts and
+ * the passkey chooser (sheets), the picker strip for logins, addresses and cards (behind a
+ * passphrase vault, `?vault=none`, its rows wear the lock and a tap asks for the passphrase),
+ * Settings > Autofill with saved entries (`manager`), with none (`manager-empty`) and behind the
+ * vault gate (`manager-locked`), its two editors (`edit-address` adds one, `edit-card` edits a
+ * saved card) and the vault passphrase dialog a re-authenticated command puts up (`passphrase`,
+ * the real one behind a passphrase vault).
+ */
+export const PREVIEW_AUTOFILL = [
+  'save-login',
+  'update-login',
+  'save-address',
+  'save-card',
+  'passkey-account',
+  'picker',
+  'picker-address',
+  'picker-card',
+  'manager',
+  'manager-empty',
+  'manager-locked',
+  'edit-address',
+  'edit-card',
+  'passphrase'
+] as const
+
+export type PreviewAutofillSurface = (typeof PREVIEW_AUTOFILL)[number]
+
 export type PreviewState =
   | { kind: 'idle' }
+  | { kind: 'autofill'; surface: PreviewAutofillSurface }
   | {
       /** An internal page in its tab (`page.open`): Settings, on its landing or a section. */
       kind: 'page'
@@ -150,8 +179,9 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * one of PREVIEW_OVERLAYS (with `section=<id>` for an overlay that has sections, `show=<text>`
  * to scroll a row of the overlay into view, and `expand` to rest a sheet that opened at its peek
  * detent on its expanded one), `menu=app` for the app menu sheet (with `show=<text>` to scroll an
- * item into view), `find=<text>` for the find bar with that text typed (`find=` opens it empty),
- * `pull=<n>` for the active page held pulled down at n percent of the refresh threshold
+ * item into view), `autofill=<surface>` for one of PREVIEW_AUTOFILL staged with sample data,
+ * `find=<text>` for the find bar with that text typed (`find=` opens it empty), `pull=<n>` for
+ * the active page held pulled down at n percent of the refresh threshold
  * (`pull=refresh` pulls past it and lets go), `zoom=<factor>` for the page zoom sheet with the
  * active tab's site at that factor (`zoom=` opens it as it is), `error=<code>` for the active
  * tab's load failing with that Chromium `net::` code (with `url=<target>` for the URL that
@@ -161,10 +191,10 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * Home screen"), or `download=<file>` for a transfer the stand-in downloader plays back
  * (`size=<bytes>`, `at=<percent>` already received, `speed=<bytes per second>`, `paused`,
  * `fail=<error>`, `deleted` for a finished file since gone from disk, `private`, `url=<url>`,
- * `mime=<type>`). When several are given, `page` wins
- * over `overlay`, `overlay` over `menu`, `menu` over `find`, `find` over `pull`, `pull` over
- * `zoom`, `zoom` over `error`, `error` over the messages, the messages over `webapp` and `webapp`
- * over `download`. A leading `#` (the URL hash as read) is ignored.
+ * `mime=<type>`). When several are given, `page` wins over `overlay`, `overlay` over `menu`,
+ * `menu` over `autofill`, `autofill` over `find`, `find` over `pull`, `pull` over `zoom`, `zoom`
+ * over `error`, `error` over the messages, the messages over `webapp` and `webapp` over
+ * `download`. A leading `#` (the URL hash as read) is ignored.
  */
 export function parsePreviewSpec(spec: string): PreviewState {
   const params = new URLSearchParams(spec.startsWith('#') ? spec.slice(1) : spec)
@@ -200,6 +230,10 @@ export function parsePreviewSpec(spec: string): PreviewState {
   if (params.get('menu') === 'app') {
     const show = params.get('show')
     return show ? { kind: 'menu', show } : { kind: 'menu' }
+  }
+  const autofill = params.get('autofill')
+  if (autofill !== null && (PREVIEW_AUTOFILL as readonly string[]).includes(autofill)) {
+    return { kind: 'autofill', surface: autofill as PreviewAutofillSurface }
   }
   const find = params.get('find')
   if (find !== null) return { kind: 'find', text: find }

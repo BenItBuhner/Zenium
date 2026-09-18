@@ -15,6 +15,7 @@ import { extensionChromeAloneOverContent } from '@renderer/lib/extensions/scrim'
 import { cn } from '@renderer/lib/utils'
 import { dropStore } from '@renderer/lib/drag'
 import { newTabGrowStore } from '@renderer/lib/newtab'
+import { PickerStrip } from '../autofill/PickerStrip'
 import { Urlbar } from '../urlbar/Urlbar'
 import { NewTabPage } from '../newtab/NewTabPage'
 import { OverlayHost } from '../overlays/OverlayHost'
@@ -207,6 +208,8 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
         {ui.zoomTabId && state.capabilities.pageControls && (
           <ZoomSheet state={state} tabId={ui.zoomTabId} />
         )}
+        {/* The autofill picker of a host without a popup surface docks here, above the keyboard. */}
+        <PickerStrip state={state} />
       </div>
       {/* The bar is the frame's edge: it recedes with the frame, and overlays cover both. */}
       {loadBar && <LoadProgress tab={tab} hidden={contentHidden || glanceActive || foreign} />}
@@ -264,7 +267,8 @@ function overlayCoversContentBesidesStage(ui: UiState): boolean {
     ui.securityPromptOpen ||
     ui.permissionPromptOpen ||
     ui.pageDialogOpen ||
-    ui.windowPromptOpen
+    ui.windowPromptOpen ||
+    ui.autofillPrompt !== null
   )
 }
 

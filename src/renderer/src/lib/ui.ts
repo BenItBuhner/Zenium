@@ -272,6 +272,25 @@ export interface UiState {
   barMenuOpen: boolean
   /** A permission prompt ("Allow example.com to use your camera?") is up over the page. */
   permissionPromptOpen: boolean
+  /**
+   * An autofill prompt (save / update a login, save an address or card, pick a passkey account)
+   * is up over the page, and how: a popover under the URL bar (no scrim), a sheet, or a dialog.
+   */
+  autofillPrompt: 'popover' | 'sheet' | 'dialog' | null
+  /** The id of a save prompt put away behind the key chip in the pill; the chip brings it back. */
+  autofillPromptCollapsed: string | null
+  /** Settings > Autofill is editing an address or a card (`id: null` adds one). */
+  autofillEdit: { kind: 'address' | 'card'; id: string | null } | null
+  /**
+   * A re-authenticated autofill command wants the vault passphrase (`lib/autofill.ts`
+   * `withPassphrase`): the dialog asking for it is up, with the refused attempt's error.
+   */
+  autofillPassphrase: {
+    title: string
+    description: string
+    error: string | null
+    busy: boolean
+  } | null
   /** Zen's multi-select: tabs picked with Ctrl / Shift+click (acted on together). */
   selectedTabIds: string[]
   /** Last plainly clicked / toggled tab – the anchor for Shift+click ranges. */
@@ -377,6 +396,10 @@ export const uiStore = createStore<UiState>(
     siteDataConfirm: null,
     barMenuOpen: false,
     permissionPromptOpen: false,
+    autofillPrompt: null,
+    autofillPromptCollapsed: null,
+    autofillEdit: null,
+    autofillPassphrase: null,
     selectedTabIds: [],
     selectionAnchorId: null,
     glanceActive: false,
@@ -712,6 +735,9 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.downloadsOpen &&
     !ui.defaultBrowserPrompt &&
     !ui.install &&
+    !ui.autofillPrompt &&
+    !ui.autofillEdit &&
+    !ui.autofillPassphrase &&
     !ui.stageActive &&
     !ui.zoomBubble &&
     !ui.newTabShortcutDialog &&
@@ -759,6 +785,7 @@ export function invalidateSnapshot(): void {
     !ui.downloadsOpen &&
     !ui.defaultBrowserPrompt &&
     !ui.install &&
+    !ui.autofillPrompt &&
     !ui.stageActive &&
     !ui.zoomBubble &&
     ui.hoverCard.tabId === null &&
@@ -1266,6 +1293,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.downloadsOpen ||
     ui.defaultBrowserPrompt ||
     ui.install !== null ||
+    ui.autofillPrompt !== null ||
     ui.stageActive ||
     ui.zoomBubble !== null ||
     ui.hoverCard.tabId !== null ||
@@ -1408,6 +1436,7 @@ export function closeTabsMenu(): void {
  * site-information sheet.
  */
 export function panelAloneOverContent(ui: UiState): boolean {
+  const popover = ui.autofillPrompt === 'popover'
   return (
     (ui.barMenuOpen ||
       ui.starDialog !== null ||
@@ -1416,7 +1445,8 @@ export function panelAloneOverContent(ui: UiState): boolean {
       ui.downloadsOpen ||
       // Site information is a popover on a mouse (no scrim, §9.5) and a chassis sheet on a
       // phone, whose own scrim is the one dim over the page (§11.5).
-      ui.siteInfoOpen) &&
+      ui.siteInfoOpen ||
+      popover) &&
     !overlayCoversContent({
       ...ui,
       barMenuOpen: false,
@@ -1424,7 +1454,8 @@ export function panelAloneOverContent(ui: UiState): boolean {
       zoomBubble: null,
       hoverCard: HOVER_CARD_HIDDEN,
       downloadsOpen: false,
-      siteInfoOpen: false
+      siteInfoOpen: false,
+      autofillPrompt: popover ? null : ui.autofillPrompt
     })
   )
 }

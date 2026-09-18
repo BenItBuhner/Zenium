@@ -117,6 +117,12 @@ export interface HostCapabilities {
   pageTabs: boolean
   /** Pages can be pinned to the launcher / Home screen ("Add to Home screen"). */
   pinShortcuts: boolean
+  /**
+   * The host can float a second chrome document above the page views (`WindowHost.setPopupSurface`):
+   * the autofill picker hangs from a page field there, over a page the user keeps typing into.
+   * Hosts without it (phones) draw the picker in the chrome's own document beside the page.
+   */
+  popupSurface: boolean
 }
 
 export interface Rect {
@@ -3392,6 +3398,21 @@ export interface Commands {
     args: { id: string; itemId: string | null; passphrase?: string }
     result: ReauthOutcome<null>
   }
+  /**
+   * The desktop picker's document (`?surface=autofill`) reports the height its content wants;
+   * the core sizes and places the popup surface from it (`placePickerSurface`).
+   */
+  'autofill.surfaceSize': { args: { id: string; height: number }; result: void }
+  /**
+   * The popup surface took or lost the keyboard: while it holds it the page field's blur does
+   * not close the picker (a press on a row blurs the field first).
+   */
+  'autofill.surfaceFocus': { args: { id: string; focused: boolean }; result: void }
+  /**
+   * The picker's "Manage…" row: the picker closes and Settings opens on the Autofill section of
+   * the window the picker belongs to (the desktop picker's document is not that window's chrome).
+   */
+  'autofill.manage': { args: void; result: void }
   /** Saved addresses, most recently used first. */
   'autofill.listAddresses': { args: void; result: AddressEntry[] }
   'autofill.addAddress': { args: { address: AddressInput }; result: AddressEntry }

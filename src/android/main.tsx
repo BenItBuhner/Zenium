@@ -14,11 +14,11 @@ import { installPreviewStates } from './previewStates'
  * boot payload named before it starts the core).
  */
 void bootAndroid().then(
-  ({ api, preview }) => {
+  ({ browser, api, preview }) => {
     window.zen = api
     if (preview) {
       document.documentElement.dataset.preview = 'true'
-      installPreviewStates()
+      installPreviewStates(browser)
     }
     // The instrumentation drivers (android/app/src/androidTest, through `DemoHarness.chromeJs`)
     // raise messages here while nothing in the app raises an action toast or a banner of its own
