@@ -20,6 +20,8 @@ import type {
   KeyBinding,
   NavigationSnapshot,
   PageRules,
+  PermissionPrompt,
+  PermissionPromptAnswer,
   Platform as PlatformOs,
   Rect,
   ResourceSnapshot,
@@ -83,7 +85,16 @@ export interface PageFlags {
 
 /** Messages the page script sends back to the browser. */
 export interface PageMessage {
-  type: 'glance' | 'open-tab' | 'navigate' | 'media' | 'zap' | 'activation' | 'popup-blocked'
+  type:
+    | 'glance'
+    | 'open-tab'
+    | 'navigate'
+    | 'media'
+    | 'zap'
+    | 'activation'
+    | 'popup-blocked'
+    /** The page called `window.focus()` with a gesture (a notification was clicked): show its tab. */
+    | 'focus'
   url?: string
   x?: number
   y?: number
@@ -492,10 +503,27 @@ export interface DialogHost {
   saveTextFile(options: SaveTextFileOptions, win?: ZenWindow): Promise<boolean>
 }
 
+/**
+ * Where permission prompts are shown. The core's own implementation queues them per tab for the
+ * chrome to render as non-modal bubbles (answered by `permissions.respond`); a host may supply
+ * its own through `Platform.permissionPrompts` instead.
+ */
+export interface PermissionPromptHost {
+  /** Show the prompt; resolves with the user's answer, or null when it was withdrawn unanswered. */
+  show(request: PermissionPrompt): Promise<PermissionPromptAnswer | null>
+  /** Withdraw a pending prompt (its page navigated away, its tab closed). */
+  cancel(id: string): void
+}
+
 export interface ClipboardHost {
   writeText(text: string): void
   /** Fetch an image and put it on the clipboard; resolves false when unsupported / failed. */
   writeImageFromUrl(url: string): Promise<boolean>
+  /**
+   * The clipboard's plain text ('' when it holds none). Hosts that cannot read the clipboard
+   * leave it out; the URL bar's paste-and-go actions then do nothing.
+   */
+  readText?(): Promise<string>
 }
 
 export interface ShellHost {
@@ -530,6 +558,12 @@ export interface NetHost {
       timeoutMs?: number
     }
   ): Promise<{ ok: boolean; status: number; text: string }>
+  /**
+   * Whether `host` resolves in DNS (Chrome's intranet probe behind "Did you mean to go to
+   * http://host/?"). Resolves false on any failure; hosts without a resolver leave it out and
+   * the URL bar offers no such row.
+   */
+  resolveHost?(host: string, options: { signal?: AbortSignal }): Promise<boolean>
 }
 
 /**
@@ -570,6 +604,16 @@ export interface DownloadHost {
   park?(item: DownloadItem): string | null
 }
 
+/** What "Clear browsing data" asks the engine to drop, across containers. */
+export type EngineDataKind = 'cookies' | 'storage' | 'cache'
+
+/** Engine-side readings for the clear-browsing-data preview; null when the engine cannot count. */
+export interface EngineDataCounts {
+  /** Distinct cookie domains across the given containers. */
+  cookieSites: number | null
+  cacheBytes: number | null
+}
+
 export interface SessionHost {
   clearContainerData(containerId: string): Promise<void>
   /** Wipe the private-browsing session once its last window closed. */
@@ -579,6 +623,13 @@ export interface SessionHost {
    * session, so a site asks again (the core forgets its own copies alongside).
    */
   clearAuthCache?(): Promise<void>
+  /**
+   * Clear browsing data: `kinds` of every listed container. Engines cannot limit these to a
+   * time range (Chromium's session API has none), so the core tells the user everything goes.
+   */
+  clearBrowsingData?(containerIds: string[], kinds: EngineDataKind[]): Promise<void>
+  /** Readings for the clear-browsing-data preview across the listed containers. */
+  browsingDataCounts?(containerIds: string[]): Promise<EngineDataCounts>
 }
 
 /** Stored data of a site as the host's storage layer reports it. */
@@ -966,6 +1017,8 @@ export interface Platform {
   readonly theme?: ThemeHost
   /** Cookies and storage per site; hosts without it show a sheet with the connection only. */
   readonly siteData?: SiteDataHost
+  /** Native permission prompts; omit to have the chrome render the core's per-tab queue. */
+  readonly permissionPrompts?: PermissionPromptHost
   /** Hosts that ask before a page may open another app (Android). */
   readonly externalProtocols?: ExternalProtocolHost
   /** Key protection and re-authentication for the password vault; omit when `capabilities.passwords` is off. */

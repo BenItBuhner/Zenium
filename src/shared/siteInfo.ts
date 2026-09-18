@@ -83,6 +83,25 @@ export interface SiteInfo {
   permissions: SitePermission[]
 }
 
+/** Ad and tracker blocking as the site-information popover reports it for one page. */
+export interface SiteBlocking {
+  /** Requests the blocker refused on the page since its document committed. */
+  blockedCount: number
+  /** Blocking is on (the master switch). */
+  enabled: boolean
+  /** The user excepted this site from blocking. */
+  excepted: boolean
+  /** The engine tracks blocking on this host at all (`capabilities.requestBlocking`). */
+  available: boolean
+}
+
+/** `site.info` plus what the desktop popover shows in addition: the blocking counter. */
+export interface SiteInfoSnapshot extends SiteInfo {
+  blocking: SiteBlocking
+  /** The tab is a private one (the popover says so and offers no per-site settings to keep). */
+  isPrivate: boolean
+}
+
 export interface SiteDescription {
   /** Scheme without the colon (`https`, `zen`, …). */
   scheme: string
@@ -139,6 +158,69 @@ export function describeSite(url: string): SiteDescription {
     path: `${parsed.pathname || '/'}${parsed.search}`,
     state: scheme === 'https' ? 'secure' : local ? 'local' : 'insecure',
     web: true
+  }
+}
+
+/**
+ * What the address pill's site icon says about the page. `empty`: no page (the pill shows its
+ * search glyph); `secure`: https; `insecure`: http on a host other than loopback, shown with
+ * Chrome's "Not secure" text; `certificate-error`: an https load Zenium refused because of the
+ * certificate, also "Not secure"; `local`: loopback http and `file:` pages; `internal`: Zenium's
+ * own pages and error pages that stand in for a page that did not load; `unknown`: other schemes.
+ */
+export type IndicatorState =
+  'empty' | 'secure' | 'insecure' | 'certificate-error' | 'local' | 'internal' | 'unknown'
+
+export interface SecurityIndicator {
+  state: IndicatorState
+  /** Text drawn before the address (`Not secure`); null when the glyph says it all. */
+  label: string | null
+  /** The site icon's tooltip. */
+  title: string
+}
+
+/** Chromium's certificate errors: net error codes -200 … -299 (`ERR_CERT_*`). */
+export function isCertificateError(code: number | null | undefined): boolean {
+  return typeof code === 'number' && code <= -200 && code >= -299
+}
+
+/**
+ * Derive the pill's indicator from what the core knows about the tab: its address and the code
+ * of a failed load (a certificate the browser refused is a `zen://error` page standing in for an
+ * https address). Pure, so the chrome maps state to glyph and nothing more.
+ */
+export function securityIndicator(url: string, errorCode: number | null): SecurityIndicator {
+  if (!url || url === BLANK_URL) return { state: 'empty', label: null, title: 'Site information' }
+  const site = describeSite(url)
+  if (url.startsWith(ERROR_URL_PREFIX)) {
+    if (isCertificateError(errorCode) && site.state === 'secure') {
+      return {
+        state: 'certificate-error',
+        label: 'Not secure',
+        title: 'Certificate error · The connection to this site is not secure'
+      }
+    }
+    return { state: 'internal', label: null, title: 'Page could not be loaded' }
+  }
+  switch (site.state) {
+    case 'secure':
+      return { state: 'secure', label: null, title: 'Connection is secure · Site information' }
+    case 'insecure':
+      return {
+        state: 'insecure',
+        label: 'Not secure',
+        title: 'Your connection to this site is not secure · Site information'
+      }
+    case 'local':
+      return {
+        state: 'local',
+        label: null,
+        title: site.scheme === 'file' ? 'Local file' : 'Local site · Site information'
+      }
+    case 'internal':
+      return { state: 'internal', label: null, title: 'Zenium page' }
+    default:
+      return { state: 'unknown', label: null, title: 'Site information' }
   }
 }
 

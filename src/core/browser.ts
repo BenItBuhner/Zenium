@@ -20,6 +20,7 @@ import type {
   WindowChrome,
   WindowKind
 } from '../shared/types'
+import { CONTENT_SETTINGS } from '../shared/contentSettings'
 import { BrowserState, type PersistedWindow } from './state'
 import { HistoryService } from './history'
 import { SessionService } from './session'
@@ -27,6 +28,8 @@ import { BookmarkService } from './bookmarks'
 import { DownloadService } from './downloads'
 import { resolveDownloadSettings } from '../shared/downloads'
 import { PermissionService } from './permissions'
+import { PermissionPromptService } from './permissionPrompts'
+import { PrivacyService } from './privacy'
 import { PopupBlocker } from './popups'
 import { ExternalLaunches } from './external'
 import { SecurityPromptService } from './security'
@@ -62,12 +65,13 @@ import {
   getSpace,
   orderedTabsForSpace,
   reorderContainer,
-  reorderSpace
+  reorderSpace,
+  tabVisibleIn
 } from './model'
 import { getDomain, inputToUrl } from '../shared/url'
 import { overlayForUrl } from '../shared/zenPages'
 import { openAllPrompt, sortedByNameOrder, toggledBookmarksBarMode } from '../shared/bookmarkViews'
-import { buildSearchUrl, matchEngineKeyword } from '../shared/search'
+import { buildSearchUrl, matchKeyword } from '../shared/search'
 import { routeSharedIntent, type SharedIntent } from '../shared/shareTarget'
 import { copyConfirmation } from '../shared/clipboard'
 import { IMAGE_URL_PREFIX } from '../shared/zenPages'
@@ -118,6 +122,10 @@ export class Browser {
   readonly bookmarks: BookmarkService
   readonly downloads: DownloadService
   readonly permissions: PermissionService
+  /** The permission prompts the chrome shows, queued per tab. */
+  readonly permissionPrompts: PermissionPromptService
+  /** Clear browsing data and Safety check. */
+  readonly privacy: PrivacyService
   /** Pop-up blocking: user activation per tab and what was blocked. */
   readonly popups: PopupBlocker
   /** Links that leave for another application (hosts whose engine does not gate them itself). */
@@ -204,7 +212,11 @@ export class Browser {
       downloads: this.downloads.visibleTo(win.isPrivate),
       downloadsProgress: this.downloads.aggregateProgress(win.isPrivate ? {} : { private: false })
     })
-    this.permissions = new PermissionService(platform.io, platform.dialogs)
+    this.permissionPrompts = new PermissionPromptService(() => this.state.commitVolatile())
+    this.permissions = new PermissionService(
+      platform.io,
+      platform.permissionPrompts ?? this.permissionPrompts
+    )
     this.permissions.subscribe(() => this.state.commitVolatile())
     this.popups = new PopupBlocker(this)
     this.external = new ExternalLaunches(this)
@@ -237,6 +249,7 @@ export class Browser {
     this.defaultBrowser = new DefaultBrowserService(this)
     this.blocking = new BlockingService(this)
     this.translate = new TranslateService(this)
+    this.privacy = new PrivacyService(this)
     this.state.extras = () => ({
       boosts: this.boosts.all(),
       zappingTabId: this.boosts.zappingTabId(),
@@ -252,6 +265,7 @@ export class Browser {
       defaultBrowser: this.defaultBrowser.status(),
       blockedPopups: this.popups.all(),
       permissionRules: this.permissions.rules(),
+      permissionPrompts: this.permissionPrompts.list(),
       securityPrompts: this.security.list(),
       blocking: this.blocking.status(),
       translate: this.translate.uiState()
@@ -415,10 +429,7 @@ export class Browser {
   onWindowClosed(win: ZenWindow): void {
     this.windows.delete(win.id)
     for (const w of this.allWindows()) w.selection.delete(win.localSpace?.id ?? '')
-    if (win.isPrivate && !this.allWindows().some((w) => w.isPrivate)) {
-      this.downloads.endPrivateSession()
-      void this.platform.sessions.clearPrivate()
-    }
+    if (win.isPrivate) this.endPrivateSessionIfOver()
     if (this.allWindows().length === 0) {
       this.governor.stop()
       this.tabs.destroyAll()
@@ -426,6 +437,22 @@ export class Browser {
       return
     }
     if (!this.quitting) this.state.commit()
+  }
+
+  /** A private tab closed (hosts with `capabilities.privateTabs`). */
+  onPrivateTabClosed(): void {
+    this.endPrivateSessionIfOver()
+  }
+
+  /**
+   * The private session ends – private transfers stop, the engine's private partition is wiped –
+   * once no private window and no private tab is left.
+   */
+  private endPrivateSessionIfOver(): void {
+    if (this.allWindows().some((w) => w.isPrivate)) return
+    if (this.tabs.privateTabs().length > 0) return
+    this.downloads.endPrivateSession()
+    void this.platform.sessions.clearPrivate()
   }
 
   /** Something (dock, launcher, intent) asked for a window while none is open. */
@@ -947,6 +974,19 @@ export class Browser {
   }
 
   /**
+   * Bring a tab in front of the user: its window comes forward and shows it (a page's
+   * `window.focus()` with a gesture in hand – the click on one of its notifications – lands here,
+   * as it does in Chrome).
+   */
+  revealTab(tabId: string): void {
+    if (!this.tabs.tab(tabId)) return
+    const win = this.tabs.windowFor(tabId)
+    this.tabs.activateTab(tabId, win)
+    win.host.show()
+    win.host.focus()
+  }
+
+  /**
    * Open a URL from outside the browser (command line, Android intent, share sheet, a page of
    * ours such as the release notes). `fromIntent` marks a tab another app sent (Android's view
    * and share intents): mobile system back at its first page returns to that app; it is not set
@@ -1141,10 +1181,26 @@ export class Browser {
     const text = input.trim()
     if (!text) return
     const engines = this.state.searchEngines
-    const keyword = matchEngineKeyword(text, engines)
+    const keyword = matchKeyword(text, engines)
     let url: string | null = null
     let upgradedFrom: string | undefined
+    if (keyword?.kind === 'scope') {
+      // `@bookmarks foo` / `@history foo` open the manager; `@tabs foo` switches to the tab.
+      if (keyword.scope === 'tabs') {
+        const q = keyword.query.trim().toLowerCase()
+        const hit = Object.values(this.state.model.tabs).find(
+          (t) =>
+            tabVisibleIn(t, win.id) &&
+            (!q || `${t.customTitle ?? ''} ${t.title} ${t.url}`.toLowerCase().includes(q))
+        )
+        if (hit) this.tabs.activateTab(hit.id, win)
+        return
+      }
+      this.emit('overlay.open', { kind: keyword.scope }, win)
+      return
+    }
     if (keyword) {
+      if (!keyword.query.trim()) return
       url = buildSearchUrl(keyword.engine, keyword.query)
     } else {
       url = inputToUrl(text)
@@ -1188,6 +1244,25 @@ export class Browser {
     this.tabs.navigate(target.id, url, { upgradedFrom })
   }
 
+  /**
+   * Chrome's "Paste and go" / "Paste and search" (URL-bar context menu, `urlbar.pasteAndGo` and
+   * `urlbar.pasteAndSearch`): the clipboard's text goes where typed text would, or is searched
+   * with the default engine whatever it looks like. Nothing happens for an empty clipboard.
+   */
+  async pasteAndGo(tabId: string | null, alwaysSearch: boolean, win: ZenWindow): Promise<void> {
+    const read = this.platform.clipboard.readText
+    if (!read) return
+    const text = (await read.call(this.platform.clipboard)).trim().replace(/\s+/g, ' ')
+    if (!text) return
+    if (alwaysSearch) {
+      const engines = this.state.searchEngines
+      const engine = engines.find((e) => e.id === this.state.settings.searchEngineId) ?? engines[0]
+      this.submitUrlbar(buildSearchUrl(engine, text), false, tabId, false, win)
+      return
+    }
+    this.submitUrlbar(text, false, tabId, false, win)
+  }
+
   // ---------------------------------------------------------------------------
   // Command surface
   // ---------------------------------------------------------------------------
@@ -1213,6 +1288,10 @@ export class Browser {
     }
     if (message.type === 'popup-blocked') {
       if (typeof message.url === 'string') this.popups.record(tabId, message.url)
+      return
+    }
+    if (message.type === 'focus') {
+      this.revealTab(tabId)
       return
     }
     if (message.type === 'media') {
@@ -1267,6 +1346,20 @@ export class Browser {
       'permissions.forget': ({ origin, permission }) =>
         this.permissions.forgetRule(origin, permission),
       'permissions.reset': () => this.permissions.reset(),
+      'permissions.respond': ({ id, answer }) => this.permissionPrompts.respond(id, answer),
+      'permissions.setDefault': ({ permission, decision }) =>
+        this.permissions.chooseDefault(permission, decision),
+      'permissions.defaults': () =>
+        this.permissions.defaults(CONTENT_SETTINGS.map((setting) => setting.id)),
+      'permissions.listForPermission': ({ permission }) =>
+        this.permissions.listForPermission(permission),
+      'permissions.set': ({ origin, permission, decision }) =>
+        this.permissions.set(permission, origin, decision),
+      'permissions.resetOrigin': ({ origin }) => this.permissions.resetOrigin(origin),
+      'privacy.clearBrowsingData': ({ range, types, passphrase }, win) =>
+        this.privacy.clearBrowsingData(range, types, passphrase, win),
+      'privacy.clearBrowsingDataCounts': ({ range }) => this.privacy.counts(range),
+      'privacy.safetyCheck': () => this.privacy.safetyCheck(),
       'security.respond': ({ id, response }) => this.security.respond(id, response),
       'security.forgetSession': () => {
         this.security.forgetSession()
@@ -1285,6 +1378,8 @@ export class Browser {
       'tab.create': (opts, win) => tabs.createTab(opts, win).id,
       'tab.activate': ({ tabId }, win) => tabs.activateTab(tabId, win),
       'tab.close': ({ tabId, force }, win) => tabs.closeTab(tabId, force, win),
+      'tab.newPrivate': ({ url }, win) => tabs.newPrivateTab(url, win),
+      'tab.closePrivate': (_a, win) => tabs.closePrivateTabs(win),
       'tab.closeOthers': ({ tabId }, win) => tabs.closeOthers(tabId, win),
       'tab.closeBelow': ({ tabId }, win) => tabs.closeBelow(tabId, win),
       'tab.closeAbove': ({ tabId }, win) => tabs.closeAbove(tabId, win),
@@ -1433,12 +1528,15 @@ export class Browser {
       'urlbar.suggest': ({ query, tabId }, win) => this.suggestions.suggest(query, tabId, win),
       'urlbar.submit': ({ input, newTab, tabId, background }, win) =>
         this.submitUrlbar(input, newTab, tabId, Boolean(background), win),
+      'urlbar.pasteAndGo': ({ tabId }, win) => void this.pasteAndGo(tabId, false, win),
+      'urlbar.pasteAndSearch': ({ tabId }, win) => void this.pasteAndGo(tabId, true, win),
       'urlbar.runCommand': ({ action }, win) =>
         this.actions.run(action as AnyAction, { sourceTabId: null, win }),
 
       'overlay.snapshot': ({ tabId }, win) => win.snapshot(tabId),
 
       'site.info': ({ tabId }) => this.siteInfo.info(tabId),
+      'siteInfo.snapshot': ({ tabId }) => this.siteInfo.snapshot(tabId),
       'site.clearCookies': ({ tabId }) => this.siteInfo.clearCookies(tabId),
       'site.clearData': ({ tabId }) => this.siteInfo.clearData(tabId),
       'site.resetPermissions': ({ tabId, permission }) =>

@@ -590,6 +590,27 @@ export class DownloadService {
     this.removeCompleted()
   }
 
+  /** Finished regular rows whose transfer began in `[fromMs, toMs)` (clear browsing data). */
+  finishedInRange(fromMs: number, toMs: number): DownloadItem[] {
+    return this.items.filter(
+      (i) => !i.private && !isInFlight(i.state) && i.startedAt >= fromMs && i.startedAt < toMs
+    )
+  }
+
+  /** Clear browsing data: the finished rows of the range leave the list, as `removeCompleted`. */
+  removeFinishedInRange(fromMs: number, toMs: number): void {
+    const gone = this.finishedInRange(fromMs, toMs)
+    if (gone.length === 0) return
+    const ids = new Set(gone.map((i) => i.id))
+    for (const item of gone) {
+      if (item.savePath && (isQuarantined(item) || item.state === 'interrupted'))
+        void this.host.deletePartial(item)
+    }
+    this.items = this.items.filter((i) => !ids.has(i.id))
+    this.persist()
+    for (const item of gone) this.onChange({ ...item, removed: true }, 'removed')
+  }
+
   /**
    * The last private window closed: private transfers stop, their partial files go, and every
    * private row is forgotten (completed files stay on disk, like Firefox).

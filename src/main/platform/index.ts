@@ -1,9 +1,26 @@
-import { app, clipboard, dialog, ipcMain, nativeTheme, net, shell, type Session } from 'electron'
+import {
+  app,
+  clipboard,
+  dialog,
+  ipcMain,
+  nativeTheme,
+  net,
+  session,
+  shell,
+  type Session,
+  type WebContents
+} from 'electron'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { release } from 'node:os'
 import { basename, join } from 'node:path'
 import type { HostCapabilities, Platform as PlatformOs } from '../../shared/types'
+import { contentSettingId } from '../../shared/contentSettings'
+import {
+  NOTIFICATION_PERMISSION_CHANNEL,
+  type NotificationPermissionStatus
+} from '../../shared/notifications'
 import { Browser } from '../../core/browser'
+import { safeOrigin } from '../../core/permissions'
 import type {
   AppHost,
   ClipboardHost,
@@ -40,8 +57,9 @@ import { ElectronAgentTransport } from '../agent/server'
 import { ElectronSiteData } from './siteData'
 import { ElectronTranslateHost, focusedChromeWebContents } from './translate'
 import { ElectronUpdateHost } from './updates'
-import { applyAppIcon } from './appIcon'
+import { applyAppIcon, iconPngPath } from './appIcon'
 import { ElectronDefaultBrowser } from './defaultBrowser'
+import { ensureWindowsAppIdRegistered, notificationPermissionStatus } from './notifications'
 import { createPasswordsHost } from './passwords'
 import {
   attachSecurityHandlers,
@@ -77,7 +95,9 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   // Windows Settings, the macOS prompt or runs xdg-settings (platform/defaultBrowser.ts).
   defaultBrowser: true,
   requestBlocking: true,
-  pageControls: false
+  pageControls: false,
+  // Private browsing is a window of its own on desktop (`windows`).
+  privateTabs: false
 }
 
 /**
@@ -191,7 +211,8 @@ export class ElectronPlatform implements Platform {
         void clipboard
           .writeText(text)
           .catch((error: Error) => console.warn('[zen] clipboard:', error.message)),
-      writeImageFromUrl: (url) => copyImageFromUrl(url)
+      writeImageFromUrl: (url) => copyImageFromUrl(url),
+      readText: () => clipboard.readText().catch(() => '')
     }
     this.shell = {
       openExternal: (url) => void shell.openExternal(url),
@@ -207,12 +228,34 @@ export class ElectronPlatform implements Platform {
           options.timeoutMs && AbortSignal.timeout(options.timeoutMs)
         ]
         const live = signals.filter((s): s is AbortSignal => Boolean(s))
-        const res = await net.fetch(url, {
+        const target = redirectedOrigin(url)
+        const res = await net.fetch(target.url, {
           signal: live.length > 0 ? AbortSignal.any(live) : undefined,
-          headers: options.headers,
+          headers: target.origin
+            ? { ...options.headers, 'x-zen-origin': target.origin }
+            : options.headers,
           cache: 'no-store'
         })
         return { ok: res.ok, status: res.status, text: res.ok ? await res.text() : '' }
+      },
+      resolveHost: async (host, options) => {
+        if (options.signal?.aborted) return false
+        try {
+          const timeout = new Promise<false>((resolve) => {
+            const timer = setTimeout(() => resolve(false), 1500)
+            options.signal?.addEventListener('abort', () => {
+              clearTimeout(timer)
+              resolve(false)
+            })
+          })
+          const resolved = await Promise.race([
+            session.defaultSession.resolveHost(host).then((r) => r.endpoints.length > 0),
+            timeout
+          ])
+          return resolved
+        } catch {
+          return false
+        }
       }
     }
     this.app = {
@@ -347,6 +390,10 @@ export class ElectronPlatform implements Platform {
     this.registerIpc(browser)
     attachSecurityHandlers(browser, this.views)
     browser.start()
+    // Toasts need the app id registered with Windows; a copy without installer shortcuts
+    // (development, portable) registers it itself.
+    if (process.platform === 'win32')
+      void ensureWindowsAppIdRegistered(app.getName(), iconPngPath(browser.state.settings.appIcon))
     return browser
   }
 
@@ -354,11 +401,11 @@ export class ElectronPlatform implements Platform {
     const { permissions, external } = this.browser
     ses.setPermissionRequestHandler((webContents, permission, callback, details) => {
       const url = details.requestingUrl || webContents?.getURL() || ''
-      const request = permissionRequestDetails(webContents, details)
+      const tabId = webContents ? this.views.tabIdForWebContents(webContents) : undefined
+      const request = permissionRequestDetails(webContents, details, tabId)
       // Chromium does not tell us whether a page's launch of another application had a
       // gesture, so the core's own activation tracking decides: without one the launch is
       // listed with the tab's blocked pop-ups instead of prompting.
-      const tabId = webContents ? this.views.tabIdForWebContents(webContents) : undefined
       if (permission === 'openExternal' && tabId && request.externalUrl) {
         void external.request(tabId, request.externalUrl).then(callback)
         return
@@ -383,6 +430,51 @@ export class ElectronPlatform implements Platform {
     ipcMain.on('zen:page', (event, message: PageMessage) => {
       this.views.viewForWebContents(event.sender)?.dispatchPageMessage(message)
     })
+    this.attachNotificationStatus(browser)
+  }
+
+  /**
+   * `Notification.permission` for pages: the page preload asks synchronously on the page's
+   * first read (the frame's URL is Chromium's word, not the page's), and every change to the
+   * notification permission – an answer to a prompt, Settings, Clear browsing data – is pushed
+   * to the open pages of the site (all pages when a default changed).
+   */
+  private attachNotificationStatus(browser: Browser): void {
+    const { permissions } = browser
+    const statusOf = (url: string, wc: WebContents): NotificationPermissionStatus =>
+      notificationPermissionStatus(permissions, url, this.views.tabIdForWebContents(wc))
+    ipcMain.on(NOTIFICATION_PERMISSION_CHANNEL, (event) => {
+      const url = event.senderFrame?.url ?? event.sender.getURL()
+      event.returnValue = statusOf(url, event.sender)
+    })
+    permissions.subscribe((change) => {
+      if (contentSettingId(change.permission) !== 'notifications') return
+      for (const view of this.views.all()) {
+        if (view.isDestroyed()) continue
+        const url = view.getURL()
+        if (change.origin !== null && safeOrigin(url) !== change.origin) continue
+        view.webContents.send(NOTIFICATION_PERMISSION_CHANNEL, statusOf(url, view.webContents))
+      }
+    })
+  }
+}
+
+/**
+ * Test hook: `ZEN_NET_ORIGIN=http://127.0.0.1:8788` sends every core fetch (search suggestions,
+ * omnibox answers, Live Folders) to that origin instead, with the intended origin in an
+ * `x-zen-origin` header, so a harness can answer deterministically. Unset in normal runs.
+ */
+function redirectedOrigin(url: string): { url: string; origin: string | null } {
+  const override = process.env['ZEN_NET_ORIGIN']
+  if (!override) return { url, origin: null }
+  try {
+    const original = new URL(url)
+    const target = new URL(override)
+    target.pathname = original.pathname
+    target.search = original.search
+    return { url: target.toString(), origin: original.origin }
+  } catch {
+    return { url, origin: null }
   }
 }
 

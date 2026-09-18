@@ -1,20 +1,24 @@
 import type { JSX, ReactNode } from 'react'
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import {
   ArrowLeft,
   ArrowRight,
   BookOpenText,
   Copy,
+  File,
+  Info,
   Lock,
   MoreHorizontal,
   RotateCw,
   Search,
   Sparkles,
+  TriangleAlert,
   VenetianMask,
   X
 } from 'lucide-react'
 import type { Tab, UIState } from '@shared/types'
-import { displayUrl, getDomain } from '@shared/url'
+import { securityIndicator, type IndicatorState } from '@shared/siteInfo'
+import { addressParts, displayUrl, fullUrl, getDomain } from '@shared/url'
 import { useElementWidth } from '@renderer/hooks/useElementWidth'
 import { run } from '@renderer/lib/api'
 import { isPrivateWindow } from '@renderer/lib/selectors'
@@ -77,7 +81,13 @@ export function NavRow({
   className?: string
 }): JSX.Element {
   const url = tab ? displayUrl(tab.url) : ''
-  const secure = tab?.url.startsWith('https://')
+  // The address at rest elides the scheme and `www.` (Chrome); the full URL shows while the
+  // pointer or the keyboard is on the address, or always with the "Always show full URLs" setting.
+  const [revealed, setRevealed] = useState(false)
+  const shown = tab ? (state.settings.showFullUrls || revealed ? fullUrl(tab.url) : url) : ''
+  const address = addressParts(shown)
+  // What the site icon says (derived in the core's site-information module, drawn here).
+  const indicator = securityIndicator(tab?.url ?? '', tab?.errorCode ?? null)
   const isPrivate = isPrivateWindow(state)
   const isWebPage = Boolean(tab && /^https?:/.test(tab.url))
   const isReader = Boolean(tab?.url.startsWith('zen://reader'))
@@ -147,16 +157,53 @@ export function NavRow({
           title={tab?.url ?? 'Search or enter address'}
           onClick={openField}
         >
-          <button type="button" className="flex h-full min-w-0 flex-1 items-center text-left">
+          <button
+            type="button"
+            className="flex h-full min-w-0 flex-1 items-center text-left"
+            onMouseEnter={() => setRevealed(true)}
+            onMouseLeave={() => setRevealed(false)}
+            onFocus={() => setRevealed(true)}
+            onBlur={() => setRevealed(false)}
+            onKeyDown={(e) => {
+              // Ctrl+C on the address copies the full URL, scheme included, as plain text.
+              if (tab && url && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
+                e.preventDefault()
+                run('tab.copyUrl', { tabId: tab.id, markdown: false })
+              }
+            }}
+          >
             <span
               className={cn(
                 'min-w-0 flex-1 truncate text-[12.5px]',
                 !url && 'text-[var(--zen-muted)]'
               )}
             >
-              {url || 'Search or enter address'}
+              {url ? (
+                <>
+                  {address.site}
+                  {address.rest && <span className="opacity-70">{address.rest}</span>}
+                </>
+              ) : (
+                'Search or enter address'
+              )}
             </span>
           </button>
+          {/*
+            Chrome's "Not secure" text before the address of an http page (or of a certificate
+            error's page, in the danger ink), drawn between the site icon and the address; a
+            narrow pill drops it before the address (see the container query on `.zen-pill`).
+          */}
+          {indicator.label && url && tab && (
+            <span
+              className={cn(
+                'zen-pill-label order-[-1] shrink-0 text-[11.5px]',
+                indicator.state === 'certificate-error' ? 'text-[var(--zen-danger)]' : 'opacity-70'
+              )}
+              data-indicator={indicator.state}
+            >
+              {indicator.label}
+            </span>
+          )}
           {/*
             The chips, in one focus scope of their own (`display: contents`, so they stay flex
             items of the pill): the hover-only Boost and Copy chips also show while the keyboard
@@ -173,10 +220,14 @@ export function NavRow({
               // The site icon: connection state at a glance, site information on click.
               <PillChip
                 label="Site information"
-                title={secure ? 'Connection is secure · Site information' : 'Site information'}
+                title={indicator.title}
                 popup="dialog"
                 expanded={siteInfoOpen}
-                className="order-first -ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)] hover:opacity-100"
+                data-indicator={indicator.state}
+                className={cn(
+                  'order-first -ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)] hover:opacity-100',
+                  indicator.state === 'certificate-error' && 'text-[var(--zen-danger)] opacity-100'
+                )}
                 onActivate={(e) => {
                   const chip = e.currentTarget
                   const r = chip.getBoundingClientRect()
@@ -187,7 +238,7 @@ export function NavRow({
                   )
                 }}
               >
-                {secure ? <Lock className="h-3 w-3" /> : <Search className="h-3 w-3" />}
+                <IndicatorGlyph state={indicator.state} scheme={tab.url.split(':')[0] ?? ''} />
               </PillChip>
             ) : (
               <Search className="order-first h-3 w-3 shrink-0 opacity-60" />
@@ -255,6 +306,29 @@ export function NavRow({
       </button>
     </div>
   )
+}
+
+/**
+ * The site icon's glyph for an indicator state (the state itself is derived in the core, see
+ * `securityIndicator`): the lock for https; Chrome's info circle for http, which the "Not
+ * secure" text goes with; the warning triangle for a certificate error; the page glyph for
+ * `file:` and Zenium's own pages; the info circle where nothing more is known.
+ */
+function IndicatorGlyph({ state, scheme }: { state: IndicatorState; scheme: string }): JSX.Element {
+  switch (state) {
+    case 'secure':
+      return <Lock className="h-3 w-3" />
+    case 'certificate-error':
+      return <TriangleAlert className="h-3 w-3" />
+    case 'internal':
+      return <File className="h-3 w-3" />
+    case 'local':
+      return scheme === 'file' ? <File className="h-3 w-3" /> : <Info className="h-3 w-3" />
+    case 'empty':
+      return <Search className="h-3 w-3" />
+    default:
+      return <Info className="h-3 w-3" />
+  }
 }
 
 /**

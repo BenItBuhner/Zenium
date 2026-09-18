@@ -56,6 +56,46 @@ describe('permissionRequestDetails', () => {
       })
     ).toEqual({ filePath: '/home/ada/notes.md', isDirectory: false, fileAccessType: 'writable' })
   })
+
+  it('names the tab the prompt queues under and the devices of a media request', () => {
+    expect(
+      permissionRequestDetails(
+        page,
+        { isMainFrame: true, requestingUrl: 'https://meet.example', mediaTypes: ['video'] },
+        't1'
+      )
+    ).toEqual({ tabId: 't1', mediaTypes: ['video'] })
+    // An empty device list says nothing: the core asks about both.
+    expect(
+      permissionRequestDetails(page, {
+        isMainFrame: true,
+        requestingUrl: 'https://meet.example',
+        mediaTypes: []
+      })
+    ).toEqual({})
+  })
+})
+
+describe('permissionCheckDetails: media', () => {
+  it('turns the one device of a check into the row the core stores', () => {
+    const browser = {} as Browser
+    expect(
+      permissionCheckDetails(
+        'media',
+        'https://meet.example',
+        { isMainFrame: true, mediaType: 'audio' },
+        browser
+      )
+    ).toEqual({ mediaTypes: ['audio'] })
+    expect(
+      permissionCheckDetails(
+        'media',
+        'https://meet.example',
+        { isMainFrame: true, mediaType: 'unknown' },
+        browser
+      )
+    ).toEqual({})
+  })
 })
 
 describe('permissionCheckDetails', () => {

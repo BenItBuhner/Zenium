@@ -2120,6 +2120,12 @@
     display: none;
   }
 }
+/* The "Not secure" text goes before the address does: it is the address the pill is for. */
+@container (width < 220px) {
+  .zen-pill-label {
+    display: none;
+  }
+}
 
 /*
  * The manager page's header (v2 §9.7): a 22/600 title and no hairline at rest. Unlayered on
@@ -2730,6 +2736,137 @@
   }
   .zen-default-browser-ok {
     color: var(--v2-ok);
+  }
+}
+
+/*
+ * The desktop URL bar on design language v2 (§6 "Floating URL bar", §9.20, §9.22, §9.29): a
+ * neutral opaque surface – radius 12 and the URL bar shadow when it floats; anchored under the
+ * pill it is a popover at radius 8 with a hairline and the panel shadow – a 62 px field with a
+ * hairline under it, 50 px rows with a 16 px favicon, the title then ` — ` then the host at 69%,
+ * the chrome menu size at 400. The keyboard's highlight and the pointer's hover are two things:
+ * hovering never moves the selection, so the hover fill is the lighter of the two. Badges (the
+ * keyword chip, "Current tab") are v2 pills: 20 tall, 13/600, padding 0 8, fill on deemphasised
+ * ink. Page tokens only; no blur.
+ */
+@layer components {
+  .zen-omnibox {
+    color: var(--v2-text);
+    background: var(--v2-urlbar);
+    border-radius: var(--v2-radius-sheet);
+    box-shadow: var(--v2-shadow-urlbar);
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
+  }
+  .zen-omnibox[data-attached='true'] {
+    border: 1px solid var(--v2-border);
+    border-radius: var(--v2-radius-card);
+    box-shadow: var(--v2-shadow-panel);
+  }
+  .zen-omnibox-input-row {
+    height: 62px;
+    gap: 12px;
+    padding: 0 16px;
+  }
+  .zen-omnibox-input {
+    color: var(--v2-text);
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
+  }
+  .zen-omnibox-input::placeholder {
+    color: var(--v2-text-deemphasized);
+  }
+  .zen-omnibox-engine {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 24px;
+    height: 24px;
+    border-radius: var(--v2-radius-inner);
+    background: var(--v2-fill);
+    color: var(--v2-text-deemphasized);
+    font-size: var(--v2-font-small);
+    font-weight: var(--v2-weight-heading);
+  }
+  .zen-omnibox-badge {
+    display: inline-flex;
+    align-items: center;
+    flex-shrink: 0;
+    height: 20px;
+    padding: 0 8px;
+    border-radius: 999px;
+    background: var(--v2-fill);
+    color: var(--v2-text-deemphasized);
+    font-size: var(--v2-font-small);
+    font-weight: var(--v2-weight-heading);
+    line-height: 20px;
+    white-space: nowrap;
+  }
+  .zen-omnibox-results {
+    padding: 6px;
+    border-top: 1px solid var(--v2-border);
+  }
+  .zen-omnibox-row {
+    height: 50px;
+    gap: 12px;
+    padding: 0 10px;
+    border-radius: var(--v2-radius-card);
+  }
+  .zen-omnibox-row:hover {
+    background: color-mix(in srgb, var(--v2-fill) 50%, transparent);
+  }
+  .zen-omnibox-row[data-selected='true'],
+  .zen-omnibox-row[data-selected='true']:hover {
+    background: var(--v2-fill);
+  }
+  .zen-omnibox-row-icon {
+    width: var(--v2-icon);
+    height: var(--v2-icon);
+    color: var(--v2-text-deemphasized);
+  }
+  .zen-omnibox-row-title {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .zen-omnibox-row-host {
+    flex: 1 1 0;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--v2-text-deemphasized);
+  }
+  .zen-omnibox-row-hint {
+    display: inline-flex;
+    align-items: center;
+    flex-shrink: 0;
+    gap: 4px;
+    margin-left: auto;
+    color: var(--v2-text-deemphasized);
+    font-size: var(--v2-font-small);
+  }
+  .zen-omnibox-footer {
+    height: 32px;
+    gap: 12px;
+    padding: 0 16px;
+    border-top: 1px solid var(--v2-border);
+    color: var(--v2-text-deemphasized);
+    font-size: var(--v2-font-small);
+    white-space: nowrap;
+  }
+  .zen-omnibox-kbd {
+    display: inline-flex;
+    align-items: center;
+    height: 20px;
+    padding: 0 6px;
+    border-radius: var(--v2-radius-control);
+    background: var(--v2-fill);
+    font-family: var(--font-sans);
+    font-size: 12px;
   }
 }
 
