@@ -48,7 +48,7 @@ function compute(): ViewportInfo {
   const coarse =
     window.matchMedia('(pointer: coarse)').matches || (navigator.maxTouchPoints > 0 && !hover)
   const metrics = { width, height, coarse, hover }
-  const chrome = browserStore.get().state?.window.chrome ?? null
+  const chrome = browserStore.get().state?.window?.chrome ?? null
   return { formFactor: formFactorFor(metrics, chrome), ...metrics }
 }
 
