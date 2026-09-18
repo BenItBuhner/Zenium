@@ -576,26 +576,23 @@ class AutofillDemo : DemoHarness("autofill-demo-state.json", "services-password-
     }
 
     /**
-     * Type into the focused field. The software-rendered emulator takes injected keys slower than
-     * they come and loses some under load (the f6b2b10a run signed in as "ada.lovelac"; the
-     * 7e904b04 run read the field back while keys were still landing), so a page field is typed at
-     * a walking pitch, read once its value has stopped changing and, when that is not the text,
-     * selected and typed over again slower still. The system's PIN field (`intoPage = false`)
-     * cannot be read and is typed once.
+     * Type into the focused field. A page field is read back once its value has stopped changing
+     * and, when that is not the text, selected and typed over again (the f6b2b10a run signed in
+     * as "ada.lovelac": the events of one `getEvents` call all carry the time it was made, and
+     * on the software-rendered emulator the tail of a long string was injected more than the
+     * dispatcher's 10 s after that and dropped as stale – `keys` now stamps each character as it
+     * goes). The system's PIN field (`intoPage = false`) cannot be read and is typed once.
      */
     private fun type(text: String, intoPage: Boolean = true) {
-        if (!intoPage) {
-            keys(text, 25)
-            return
-        }
-        keys(text, 60)
+        keys(text)
+        if (!intoPage) return
         var typed = settledValue()
         for (attempt in 1..2) {
             if (typed == text) return
             note("typed '$text' but the field holds '$typed' (attempt $attempt); typing it again")
             page("(function(){var e=document.activeElement;if(e&&e.select)e.select()})()")
             SystemClock.sleep(400)
-            keys(text, 110)
+            keys(text)
             typed = settledValue()
         }
         note(if (typed == text) "the field holds the text after retyping" else "the field holds '$typed' after retyping '$text'")
@@ -615,12 +612,15 @@ class AutofillDemo : DemoHarness("autofill-demo-state.json", "services-password-
         return last
     }
 
-    private fun keys(text: String, pitchMs: Long) {
-        val events = KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD).getEvents(text.toCharArray())
-            ?: error("no key events for '$text'")
-        for (event in events) {
-            ui.injectInputEvent(event, true)
-            SystemClock.sleep(pitchMs)
+    /** One character's events at a time, so each carries the time it is injected (see [type]). */
+    private fun keys(text: String) {
+        val map = KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD)
+        for (char in text) {
+            val events = map.getEvents(charArrayOf(char)) ?: error("no key events for '$char'")
+            for (event in events) {
+                ui.injectInputEvent(event, true)
+                SystemClock.sleep(25)
+            }
         }
         SystemClock.sleep(200)
     }
