@@ -31,6 +31,7 @@ const DESKTOP: HostCapabilities = {
   defaultBrowser: false,
   requestBlocking: true,
   pageControls: false,
+  privateTabs: false,
   windowControlsOverlay: false,
   windowMaterial: false
 }
@@ -53,7 +54,8 @@ const ANDROID: HostCapabilities = {
   appLinkSettings: true,
   pullToRefresh: true,
   defaultBrowser: true,
-  pageControls: true
+  pageControls: true,
+  privateTabs: true
 }
 
 function state(capabilities: HostCapabilities, platform: UIState['platform']): UIState {

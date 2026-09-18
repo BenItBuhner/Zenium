@@ -23,7 +23,6 @@ import android.view.PixelCopy
 import android.view.View
 import android.view.ViewOutlineProvider
 import android.webkit.ClientCertRequest
-import android.webkit.CookieManager
 import android.webkit.GeolocationPermissions
 import android.webkit.HttpAuthHandler
 import android.webkit.JavascriptInterface
