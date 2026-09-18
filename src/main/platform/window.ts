@@ -1,4 +1,4 @@
-import { BrowserWindow, screen, shell } from 'electron'
+import { BrowserWindow, screen, shell, webContents } from 'electron'
 import { join } from 'node:path'
 import { is } from '@electron-toolkit/utils'
 import type { EventName, Events, Rect } from '../../shared/types'
@@ -144,6 +144,12 @@ export class ElectronWindow implements WindowHost {
 
   focusChrome(): void {
     if (this.alive) this.win.webContents.focus()
+  }
+
+  focusedDocument(): 'chrome' | 'other' | 'none' {
+    const focused = webContents.getFocusedWebContents()
+    if (!focused || focused.isDestroyed()) return 'none'
+    return this.alive && focused.id === this.win.webContents.id ? 'chrome' : 'other'
   }
 
   openChromeDevTools(): void {

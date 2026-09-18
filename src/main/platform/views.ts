@@ -392,6 +392,10 @@ export class ElectronTabView implements TabView {
     this.wc.focus()
   }
 
+  isFocused(): boolean {
+    return !this.wc.isDestroyed() && this.wc.isFocused()
+  }
+
   isDestroyed(): boolean {
     return this.wc.isDestroyed()
   }
