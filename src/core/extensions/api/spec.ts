@@ -8,6 +8,7 @@
  * defined when the engine does not already provide them (Electron's implementation of those
  * works), everything else replaces the engine's inert binding in place.
  */
+import { PRIVACY_METHODS, PRIVACY_SETTING_NAMES } from './privacy'
 
 export type ParamType = 'integer' | 'number' | 'string' | 'boolean' | 'object' | 'array' | 'any'
 
@@ -69,6 +70,14 @@ export interface NamespaceSpec {
    * itself from `EventSpec.extraInfoSpec`.
    */
   eventStyle?: 'webRequest'
+  /**
+   * `privacy`: the namespace's members are objects (`network`, `websites`, …) of
+   * `types.ChromeSetting`s, each with `get` / `set` / `clear` and an `onChange` event. The shim
+   * builds them from this map of object name to setting names and routes the calls as
+   * `<namespace>.<method>(object, setting, details)`; the host fires
+   * `<namespace>.<object>.<setting>.onChange`.
+   */
+  settings?: Readonly<Record<string, readonly string[]>>
 }
 
 export type ApiSpec = Record<string, NamespaceSpec>
@@ -554,6 +563,25 @@ export const API_SPEC: ApiSpec = {
     },
     permissions: ['webRequest', 'webRequestBlocking'],
     eventStyle: 'webRequest'
+  },
+  // Absent from Electron altogether (Chrome's preference service is not part of the engine),
+  // and probed at start-up by uBlock Origin and Privacy Badger. The settings live in the host
+  // (`core/extensions/api/privacy.ts` has the table and Chrome's precedence rules); the ones
+  // Zenium can act on are applied to the pages and the request pipeline, the rest are
+  // remembered and reported back.
+  privacy: {
+    methods: {},
+    events: {},
+    constants: {
+      IPHandlingPolicy: {
+        DEFAULT: 'default',
+        DEFAULT_PUBLIC_AND_PRIVATE_INTERFACES: 'default_public_and_private_interfaces',
+        DEFAULT_PUBLIC_INTERFACE_ONLY: 'default_public_interface_only',
+        DISABLE_NON_PROXIED_UDP: 'disable_non_proxied_udp'
+      }
+    },
+    permissions: ['privacy'],
+    settings: PRIVACY_SETTING_NAMES
   }
 }
 
@@ -562,6 +590,12 @@ export const API_SPEC: ApiSpec = {
  * `removeListener`: not members of `chrome.webRequest`, but routed like one.
  */
 export const WEB_REQUEST_INTERNAL_METHODS = ['addListener', 'removeListener'] as const
+
+/**
+ * The calls the shim makes on behalf of a `privacy` setting object's `get` / `set` / `clear`:
+ * not members of `chrome.privacy`, but routed like one (with the setting's names first).
+ */
+export const PRIVACY_INTERNAL_METHODS = PRIVACY_METHODS
 
 /** Storage areas the host implements; the engine's `local` and `session` stay native for data. */
 export const STORAGE_AREAS = ['local', 'sync', 'session', 'managed'] as const

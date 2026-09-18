@@ -842,6 +842,34 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
   }
 
   // ---------------------------------------------------------------------------
+  // Settings namespaces (`privacy`): objects of `types.ChromeSetting`s
+  // ---------------------------------------------------------------------------
+
+  /**
+   * A `types.ChromeSetting`: `get` / `set` / `clear` route as `<namespace>.<method>(object,
+   * setting, details)` and `onChange` is an event the host fires under the setting's full name.
+   */
+  function chromeSetting(namespace: string, object: string, setting: string): object {
+    const result: Record<string, unknown> = {}
+    for (const method of ['get', 'set', 'clear']) {
+      const qualified = `types.ChromeSetting.${method}(object details, optional function callback)`
+      define(result, method, function (...raw: unknown[]): unknown {
+        const callback = takeCallback(raw)
+        const [details] = normalizeArgs(qualified, raw, [{ name: 'details', type: 'object' }])
+        return settle(qualified, invoke(namespace, method, [object, setting, details]), callback)
+      })
+    }
+    define(
+      result,
+      'onChange',
+      createEvent(`${namespace}.${object}.${setting}.onChange`, undefined, {
+        nativeDelivers: false
+      })
+    )
+    return result
+  }
+
+  // ---------------------------------------------------------------------------
   // Generic namespaces from the table
   // ---------------------------------------------------------------------------
 
@@ -880,6 +908,13 @@ export function installExtensionApi(host: ShimHost, spec: ApiSpec): ShimDiagnost
         nativeDelivers: Boolean(eventSpec.nativeInFrames) && host.kind === 'frame'
       })
       for (const target of targets) define(target, name, object)
+    }
+    for (const [object, settings] of Object.entries(nsSpec.settings ?? {})) {
+      const holders = targets.map((target) => namespaceOn(target, object))
+      for (const setting of settings) {
+        const value = chromeSetting(namespace, object, setting)
+        for (const holder of holders) define(holder, setting, value)
+      }
     }
     for (const [name, value] of Object.entries(nsSpec.constants ?? {})) {
       for (const target of targets) {

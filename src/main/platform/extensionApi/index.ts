@@ -8,7 +8,8 @@ import {
   type IpcMainServiceWorkerEvent,
   type IpcMainServiceWorkerInvokeEvent,
   type ServiceWorkerMain,
-  type Session
+  type Session,
+  type WebContents
 } from 'electron'
 import { join } from 'node:path'
 import {
@@ -26,6 +27,7 @@ import type { PermissionSet } from '../../../core/extensions/api/permissions'
 import type { InvokeResult } from '../../../core/extensions/api/shim'
 import {
   API_SPEC,
+  PRIVACY_INTERNAL_METHODS,
   STORAGE_METHODS,
   WEB_REQUEST_INTERNAL_METHODS,
   isSpecMethod
@@ -56,6 +58,7 @@ import { ManagementApi } from './management'
 import { ApiModel, type ModelSnapshot } from './model'
 import { NotificationsApi } from './notifications'
 import { PermissionsApi } from './permissions'
+import { PrivacyApi } from './privacy'
 import { RuntimeApi } from './runtime'
 import { ApiStore } from './store'
 import { StorageApi } from './storage'
@@ -142,6 +145,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   readonly cookies: CookiesApi
   readonly declarativeNetRequest: DeclarativeNetRequestHostApi
   readonly webRequest: WebRequestApi
+  readonly privacy: PrivacyApi
 
   private readonly namespaces: Record<string, NamespaceHandlers>
   private readonly extensions = new Map<string, LoadedExtension>()
@@ -198,6 +202,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       join(userDataDir, 'zen', 'extension-dnr')
     )
     this.webRequest = new WebRequestApi(this)
+    this.privacy = new PrivacyApi(this)
     this.namespaces = {
       tabs: this.tabs.handlers,
       windows: this.windows.handlers,
@@ -214,7 +219,8 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       notifications: this.notifications.handlers,
       cookies: this.cookies.handlers,
       declarativeNetRequest: this.declarativeNetRequest.handlers,
-      webRequest: this.webRequest.handlers
+      webRequest: this.webRequest.handlers,
+      privacy: this.privacy.handlers
     }
     // A tab's outermost document changed: `activeTab` grants for another origin end and the
     // declarativeNetRequest action counts start over.
@@ -237,9 +243,20 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       this.notify(frameSender(event), kind, payload)
     )
     this.browser.state.subscribe(() => this.scheduleTick())
-    // Every tab view, the ones alive already included: `webNavigation.*` comes from their events.
-    this.views.onViewCreated((view) => this.webNavigation.attach(view))
+    // Every tab view, the ones alive already included: `webNavigation.*` comes from their
+    // events, and the pages follow `privacy.network.webRTCIPHandlingPolicy`.
+    this.views.onViewCreated((view) => {
+      this.webNavigation.attach(view)
+      this.privacy.pageCreated(view.webContents, this.isPrivateView(view.webContents))
+    })
     app.on('before-quit', () => this.flushSync())
+  }
+
+  /** Whether a tab page belongs to a private window (its tab lives in the private container). */
+  private isPrivateView(wc: WebContents): boolean {
+    const zenTabId = this.views.tabIdForWebContents(wc)
+    const tab = zenTabId ? this.model.tab(zenTabId) : undefined
+    return tab?.containerId === PRIVATE_CONTAINER_ID
   }
 
   /**
@@ -251,8 +268,10 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       case 'installed':
       case 'updated':
         this.tellOthers('onInstalled', event.id)
-        // A newer install ranks above the older extensions' declarativeNetRequest rules.
+        // A newer install ranks above the older extensions' declarativeNetRequest rules and
+        // privacy values.
         this.declarativeNetRequest.installOrderChanged()
+        this.privacy.installOrderChanged()
         return
       case 'enabled':
         this.tellOthers('onEnabled', event.id)
@@ -264,11 +283,13 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
         if (event.allowed) this.privateAllowed.add(event.id)
         else this.privateAllowed.delete(event.id)
         this.declarativeNetRequest.sessionsChanged(event.id)
+        this.privacy.privateAccessChanged()
         return
       case 'uninstalled':
         this.seen.delete(event.id)
         this.privateAllowed.delete(event.id)
         this.runtime.openUninstallUrl(event.id)
+        this.privacy.forget(event.id)
         this.store.forget(event.id)
         this.declarativeNetRequest.uninstalled(event.id)
         this.registry.forget(event.id, { keepWorkerEvents: false })
@@ -354,6 +375,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.commands.load(loaded)
     // After the permissions: the state exists only for extensions holding the permission.
     this.declarativeNetRequest.load(loaded)
+    this.privacy.load(ext.id)
     // Existing tabs are the baseline, not a burst of `tabs.onCreated`.
     if (!this.snapshot) this.snapshot = this.model.snapshot()
     const firstEver = this.store.installedVersion(ext.id) === undefined
@@ -376,6 +398,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.commands.unload(ext.id)
     this.declarativeNetRequest.unload(ext.id)
     this.webRequest.unload(ext.id)
+    this.privacy.unload(ext.id)
     this.contextMenus.forget(ext.id)
     this.notifications.forget(ext.id)
     this.activeTab.forget(ext.id)
@@ -458,7 +481,9 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
           ? (STORAGE_METHODS as readonly string[]).includes(method)
           : routed === 'webRequest'
             ? (WEB_REQUEST_INTERNAL_METHODS as readonly string[]).includes(method)
-            : isSpecMethod(API_SPEC, namespace, method)
+            : routed === 'privacy'
+              ? (PRIVACY_INTERNAL_METHODS as readonly string[]).includes(method)
+              : isSpecMethod(API_SPEC, namespace, method)
       const handlers = this.namespaces[routed]
       if (!known || !handlers || !Object.prototype.hasOwnProperty.call(handlers, method)) {
         throw new ApiError(`${namespace}.${method} is not available in Zenium.`)
