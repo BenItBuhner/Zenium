@@ -34,6 +34,13 @@ export interface MessageMotionOptions {
   onSwipe(): void
   /** The card is out of sight and can go. */
   onGone(): void
+  /**
+   * How far out of its slot the card is on its way off along `axis` – 0 in the slot, 1 gone –
+   * once per frame while a finger has it, while it springs back from one, and while it leaves;
+   * 0 once more when it is back at rest. The stack rounds the corners a card uncovers on it
+   * (v2 §9.33).
+   */
+  onTravel?(progress: number, axis: Axis): void
 }
 
 type Phase = 'entering' | 'resting' | 'dragging' | 'leaving'
@@ -44,10 +51,12 @@ type Phase = 'entering' | 'resting' | 'dragging' | 'leaving'
  * swipe settles on – rubber-banding where it may not leave – and springs off (`SPRING_SNAPPY`)
  * when let go past the threshold, flung, timed out or dismissed. Two springs, one per axis, own
  * the transform, and a finger can catch either. The layer clips the cards to the content frame,
- * so arriving and leaving cards emerge from and vanish at its edge; opacity only follows a
- * finger, thinning the card as it is pulled towards the way out. With motion reduced (v2 §11.3)
- * nothing travels: the card appears in its slot and leaves from it on a 120 ms opacity fade, a
- * finger still drags it 1:1 and a release jumps to its outcome.
+ * so arriving and leaving cards emerge from and vanish at its edge. Opacity follows the card's
+ * travel towards the way out – a finger thins it, a spring-back restores it along the same path
+ * – and that one travel value (§11: never a second timer) is what `onTravel` reports and what
+ * `data-uncover` marks on the card. With motion reduced (v2 §11.3) nothing travels: the card
+ * appears in its slot and leaves from it on a 120 ms opacity fade, a finger still drags it 1:1
+ * and a release jumps to its outcome.
  */
 export function useMessageMotion(options: MessageMotionOptions): {
   ref: RefObject<HTMLDivElement | null>
@@ -62,7 +71,11 @@ export function useMessageMotion(options: MessageMotionOptions): {
   const pos = useRef({ x: 0, y: 0 })
   const size = useRef({ width: 0, height: 0 })
   const exitAxis = useRef<Axis | null>(null)
-  const dragAxis = useRef<Axis | null>(null)
+  /**
+   * The axis of the card's excursion out of its slot – a drag, the spring back from one, or the
+   * exit – while one is on; null in the slot and on the way in.
+   */
+  const travelAxis = useRef<Axis | null>(null)
   const springs = useRef<{ x: SpringAnimation; y: SpringAnimation } | null>(null)
   const fadeFrame = useRef<number | null>(null)
 
@@ -110,13 +123,27 @@ export function useMessageMotion(options: MessageMotionOptions): {
     if (!el) return
     const { x, y } = pos.current
     el.style.transform = `translate3d(${x.toFixed(2)}px, ${y.toFixed(2)}px, 0)`
-    const axis = phase.current === 'dragging' ? dragAxis.current : exitAxis.current
-    if (axis && (phase.current === 'dragging' || phase.current === 'leaving')) {
-      const d = axis === 'x' ? x : y - latest.current.slot
-      // Only travel that could take the card off thins it; a rubber-banded pull does not.
-      const outward = allowedAlong(d, axis, latest.current.dirs)
-      el.style.opacity = outward ? dismissPresence(d, reach(axis)).toFixed(3) : ''
+    const axis = travelAxis.current
+    if (!axis) return
+    const d = axis === 'x' ? x : y - latest.current.slot
+    // Only travel that could take the card off counts; a rubber-banded pull is not on its way.
+    const outward = allowedAlong(d, axis, latest.current.dirs)
+    const presence = outward ? dismissPresence(d, reach(axis)) : 1
+    el.style.opacity = outward ? presence.toFixed(3) : ''
+    if (el.dataset.uncover !== axis) el.dataset.uncover = axis
+    latest.current.onTravel?.(1 - presence, axis)
+  }
+
+  /** The excursion is over: the card is back in its slot (or gone). */
+  const settled = (): void => {
+    const axis = travelAxis.current
+    travelAxis.current = null
+    const el = ref.current
+    if (el) {
+      el.style.opacity = ''
+      delete el.dataset.uncover
     }
+    if (axis) latest.current.onTravel?.(0, axis)
   }
 
   const setPhase = (next: Phase): void => {
@@ -136,8 +163,7 @@ export function useMessageMotion(options: MessageMotionOptions): {
     const other = axis === 'x' ? 'y' : 'x'
     if (!ensureSprings()[other].running) {
       setPhase('resting')
-      const el = ref.current
-      if (el) el.style.opacity = ''
+      settled()
     }
   }
 
@@ -179,6 +205,7 @@ export function useMessageMotion(options: MessageMotionOptions): {
       else fade(0, () => latest.current.onGone())
       return
     }
+    travelAxis.current = axis
     if (axis === 'x') {
       s.y.stop()
       s.x.start(pos.current.x, velocity, sign * reach('x'), SPRING_SNAPPY)
@@ -214,6 +241,10 @@ export function useMessageMotion(options: MessageMotionOptions): {
       cancelFade()
       s.x.stop()
       s.y.stop()
+      // A card that goes mid-travel (gone, or the layer unmounting) leaves no travel behind.
+      const axis = travelAxis.current
+      travelAxis.current = null
+      if (axis) latest.current.onTravel?.(0, axis)
     }
     // Mount only: everything later is a retarget.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -246,7 +277,7 @@ export function useMessageMotion(options: MessageMotionOptions): {
       s.x.stop()
       s.y.stop()
       cancelFade()
-      dragAxis.current = axis
+      travelAxis.current = axis
       setPhase('dragging')
     },
     onDrag: (axis, delta) => {
@@ -272,10 +303,10 @@ export function useMessageMotion(options: MessageMotionOptions): {
         leave('y', home, 0)
         return
       }
+      // Back to the slot along the way it came: the travel (opacity, uncovered corners) runs
+      // back with it and clears once it rests.
       const s = ensureSprings()
       setPhase('entering')
-      const el = ref.current
-      if (el) el.style.opacity = ''
       s.x.start(pos.current.x, axis === 'x' ? velocity : 0, 0, SPRING_SNAPPY)
       s.y.start(pos.current.y, axis === 'y' ? velocity : 0, slot, SPRING_SNAPPY)
     }

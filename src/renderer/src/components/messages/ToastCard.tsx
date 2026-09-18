@@ -40,7 +40,6 @@ export function ToastCard({ toast, compact, onMeasure }: Props): JSX.Element {
       data-kind={toast.kind}
       data-action={toast.action ? '' : undefined}
       role="status"
-      aria-live="polite"
       {...handlers}
     >
       <span className="zen-message-text">{toast.message}</span>

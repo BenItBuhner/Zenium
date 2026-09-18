@@ -1,9 +1,11 @@
-import { rubberBand } from './swipe'
+import { rubberBand, SWIPE_THRESHOLDS, type SwipeThresholds } from './swipe'
 
 /**
  * Pure decisions for swiping a message card away (toasts, banners). A card may leave along one
  * or more directions – a toast down or sideways, a banner up or sideways – and rubber-bands the
- * rest. The card's own extent along the axis (plus its gap) is the distance at which it is gone.
+ * rest. The card's own extent along the axis (plus its gap) is the distance at which it is gone,
+ * and the release lets go where every dismissible card in the app does: on the shared
+ * `SWIPE_THRESHOLDS` of the tab and row swipes (v2 §9.33), not a set of its own.
  */
 
 export type Axis = 'x' | 'y'
@@ -16,12 +18,6 @@ export interface DismissDirections {
 
 /** Movement (px) before a touch counts as a drag rather than a tap. */
 export const DISMISS_SLOP = 8
-/** Release speed (px/s) that throws the card off regardless of how far it went. */
-export const DISMISS_FLING_VELOCITY = 500
-/** Fraction of the card's extent the finger has to cross for a slow release to commit. */
-export const DISMISS_COMMIT_FRACTION = 0.4
-/** How far ahead (s) the release velocity is projected for slow releases. */
-export const DISMISS_PROJECTION_SECONDS = 0.1
 /** A card dragged where it cannot go gives this much at most. */
 const RESIST_EXTENT = 40
 
@@ -48,22 +44,23 @@ export function dragOffset(delta: number, axis: Axis, dirs: DismissDirections): 
 
 /**
  * Which way a released card goes: `1` or `-1` off along the axis, `0` back to its slot. A fling
- * in a permitted direction commits from anywhere; a slow release commits once the projected
- * position is `DISMISS_COMMIT_FRACTION` of the card's `extent` out.
+ * (`flingVelocity`) in a permitted direction commits from anywhere; a slow release, projected
+ * `projectionSeconds` ahead, commits once it is `commitFraction` of the card's `extent` out.
  */
 export function dismissSign(
   offset: number,
   velocity: number,
   extent: number,
   axis: Axis,
-  dirs: DismissDirections
+  dirs: DismissDirections,
+  thresholds: SwipeThresholds = SWIPE_THRESHOLDS
 ): -1 | 0 | 1 {
-  if (Math.abs(velocity) >= DISMISS_FLING_VELOCITY && allowedAlong(velocity, axis, dirs)) {
+  if (Math.abs(velocity) >= thresholds.flingVelocity && allowedAlong(velocity, axis, dirs)) {
     return velocity > 0 ? 1 : -1
   }
-  const projected = offset + velocity * DISMISS_PROJECTION_SECONDS
+  const projected = offset + velocity * thresholds.projectionSeconds
   if (!allowedAlong(projected, axis, dirs)) return 0
-  if (Math.abs(projected) < DISMISS_COMMIT_FRACTION * Math.max(1, extent)) return 0
+  if (Math.abs(projected) < thresholds.commitFraction * Math.max(1, extent)) return 0
   return projected > 0 ? 1 : -1
 }
 

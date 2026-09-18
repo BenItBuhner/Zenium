@@ -305,7 +305,7 @@ class LoadingFeedbackDemo : DemoHarness("loading-demo-state.json", "loading-$THE
 
     /**
      * Animator scale 0 is what makes the WebView report `prefers-reduced-motion`; when it picks
-     * the change up live, a toast appears in its slot on a fade and the bar's sweep stands still.
+     * the change up live, a toast appears in its slot on a fade and the bar fades in 120 ms.
      */
     private fun reducedMotion() {
         finding("\nReduced motion (animator duration scale 0)")

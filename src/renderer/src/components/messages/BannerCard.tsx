@@ -22,14 +22,24 @@ interface Props {
   stackTop: boolean
   stackBottom: boolean
   onMeasure: (id: number, height: number) => void
+  /** How far out of the stack the card is on its way off (0 to 1), per frame while it travels. */
+  onTravel: (progress: number) => void
 }
 
 /**
  * One top banner: glyph, title and detail, its one action and a close button, on the shared
  * message motion. It drops from under the toolbar and goes back up (or sideways) when swiped,
- * closed, timed out or replaced.
+ * closed, timed out or replaced; on its way the corners it uncovers on the stack round with it
+ * (`data-uncover`, `--zen-uncover`; v2 §9.33).
  */
-export function BannerCard({ banner, slot, stackTop, stackBottom, onMeasure }: Props): JSX.Element {
+export function BannerCard({
+  banner,
+  slot,
+  stackTop,
+  stackBottom,
+  onMeasure,
+  onTravel
+}: Props): JSX.Element {
   const { ref, handlers } = useMessageMotion({
     home: -1,
     slot,
@@ -37,7 +47,8 @@ export function BannerCard({ banner, slot, stackTop, stackBottom, onMeasure }: P
     leaving: Boolean(banner.leaving),
     onHold: (held) => holdBanner(banner.id, held),
     onSwipe: () => dismissBanner(banner.id, 'swipe'),
-    onGone: () => forgetBanner(banner.id)
+    onGone: () => forgetBanner(banner.id),
+    onTravel
   })
   const titleRef = useRef<HTMLDivElement>(null)
   const detailRef = useRef<HTMLDivElement>(null)

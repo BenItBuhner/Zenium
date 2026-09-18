@@ -1,5 +1,5 @@
 import type { JSX } from 'react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { claimMessageCards, coverBandStore, uiStore } from '@renderer/lib/ui'
 import { BannerCard } from './BannerCard'
 import { bannerSlots, coverFor } from './stack'
@@ -27,6 +27,13 @@ export function MessageLayer(): JSX.Element | null {
   const measure = useCallback((id: number, height: number): void => {
     setHeights((prev) => (prev[id] === height ? prev : { ...prev, [id]: height }))
   }, [])
+  // How far the banner on its way out of the stack has gone (0 in its slot, 1 gone), written per
+  // frame for the stylesheet: the corners it uncovers – its own and its neighbours' – round on it
+  // (v2 §9.33), so the stack never shows a square corner and a spring-back un-rounds them.
+  const stackRef = useRef<HTMLDivElement>(null)
+  const travel = useCallback((progress: number): void => {
+    stackRef.current?.style.setProperty('--zen-uncover', progress.toFixed(3))
+  }, [])
   useEffect(() => claimMessageCards(), [])
 
   const live = banners.filter((b) => !b.leaving)
@@ -46,7 +53,7 @@ export function MessageLayer(): JSX.Element | null {
   return (
     <div className="zen-message-layer" data-surface="page">
       {banners.length > 0 && (
-        <div className="zen-message-stack" style={{ height: stackHeight }}>
+        <div ref={stackRef} className="zen-message-stack" style={{ height: stackHeight }}>
           {banners.map((b, i) => (
             <BannerCard
               key={b.id}
@@ -55,6 +62,7 @@ export function MessageLayer(): JSX.Element | null {
               stackTop={i === 0}
               stackBottom={i === banners.length - 1}
               onMeasure={measure}
+              onTravel={travel}
             />
           ))}
         </div>

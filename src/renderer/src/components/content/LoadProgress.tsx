@@ -16,11 +16,11 @@ const FADE_MS = 200
 const CREEP_TICK_MS = 250
 
 /**
- * The 2 px load bar along the top edge of the content frame: `--zen-accent-fill`, a light sweep
- * running through the filled part, a spring (`SPRING_SNAPPY`, in percent) towards the page's
- * progress or the creep, then filled to the end and faded out in 200 ms. Everything per frame is
- * a `scaleX` on the fill; the bar's own opacity only ever transitions. Switching tabs shows the
- * new tab's bar where it stands – no motion from where the old one was.
+ * The 2 px load bar along the top edge of the content frame: `--zen-accent-fill`, a spring
+ * (`SPRING_SNAPPY`, in percent) towards the page's progress or the creep, then filled to the end
+ * and faded out in 200 ms. Everything per frame is a `scaleX` on the fill; the bar's own opacity
+ * only ever transitions; no sweep runs through it (v2 §9.33: the creep is the sign of life).
+ * Switching tabs shows the new tab's bar where it stands – no motion from where the old one was.
  */
 export function LoadProgress({ tab, hidden }: Props): JSX.Element {
   const barRef = useRef<HTMLDivElement>(null)
