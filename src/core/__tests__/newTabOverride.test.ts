@@ -165,4 +165,15 @@ describe('opening a new tab with a chrome_url_overrides.newtab extension', () =>
     expect(g.sent.map((e) => e.name)).toContain('urlbar.toggle')
     expect(g.loads).not.toContain(OVERRIDE)
   })
+
+  it('the fresh tab a session starts over on yields to the override too (Chrome: at startup)', () => {
+    const f = fixture()
+    f.override.url = OVERRIDE
+    const win = f.browser.focusedWindow()
+    f.browser.openFreshTab(win)
+    expect(f.browser.tabs.activeTabFor(win)?.url).toBe(OVERRIDE)
+    const g = fixture()
+    g.browser.openFreshTab(g.browser.focusedWindow())
+    expect(g.browser.tabs.activeTabFor(g.browser.focusedWindow())?.url).toBe(NEW_TAB_URL)
+  })
 })

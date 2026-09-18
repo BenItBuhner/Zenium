@@ -507,7 +507,9 @@ export class Browser {
    * begins ("restore previous session" off, or the last session's pages declined after a crash).
    */
   openFreshTab(win: ZenWindow): void {
-    const url = this.newTab.homeUrl() ?? BLANK_URL
+    // As for Ctrl+T (`openNewTab`): an enabled extension's new-tab override wins (Chrome).
+    const override = win.isPrivate ? null : this.extensions.newTabUrl()
+    const url = override ?? this.newTab.homeUrl() ?? BLANK_URL
     const tab = this.tabs.createTab({ url, active: true, load: false }, win)
     if (!win.chromeReady) {
       this.urlbarOnReady.add(win.id)
