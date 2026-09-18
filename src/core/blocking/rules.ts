@@ -289,6 +289,12 @@ export const BUILTIN_RULE_SETS = {
   /** `allowAllRequests` for every site the user excepted. */
   siteExceptions: 'builtin:site-exceptions',
   /**
+   * `allow` for the operating systems' and browsers' connectivity and captive-portal probes
+   * (`src/core/blocking/connectivityProbes.ts`), which the lists' `generate_204` heuristics
+   * would otherwise block on every Google sign-in page. Always on; not a user list.
+   */
+  connectivityProbes: 'builtin:connectivity-probes',
+  /**
    * HTTPS-only mode's `upgradeScheme` rule (`src/core/protection`), the sites the user allowed
    * over plaintext as its `excludedRequestDomains`. The same sites travel in `PrivacyFlags`
    * (`httpsOnlyAllowed`) for a host whose engine reloads the store with a delay (Android), so
@@ -307,6 +313,11 @@ export const BUILTIN_RULE_SETS = {
 export const RULE_SET_PRIORITY = {
   /** Subscribed filter lists (EasyList, …). */
   filterList: 1,
+  /**
+   * The builtin connectivity-probe exceptions: above the lists, whose heuristics they correct,
+   * below everything the user says.
+   */
+  connectivityProbes: 5,
   /** The user's own filters. */
   user: 10,
   /** Per-site exceptions. */

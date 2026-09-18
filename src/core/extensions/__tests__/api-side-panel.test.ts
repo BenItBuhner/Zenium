@@ -152,6 +152,8 @@ interface Harness {
   api: SidePanelApi
   win: ZenWindow
   views: FakeView[]
+  /** `focusContent()` calls on the window: the keyboard handed back to the page (or chrome). */
+  keyboardReturns: number
   commits: number
   activated: string[]
   opened: string[]
@@ -169,9 +171,15 @@ function harness(): Harness {
   const chromeIds = new Map<string, number>()
   let nextChromeId = 100
   let activeId: string | null = null
-  const win = { id: 'w1', alive: true } as unknown as ZenWindow
+  const state = { commits: 0, keyboardReturns: 0 }
+  const win = {
+    id: 'w1',
+    alive: true,
+    focusContent: () => {
+      state.keyboardReturns += 1
+    }
+  } as unknown as ZenWindow
   const views: FakeView[] = []
-  const state = { commits: 0 }
   const activated: string[] = []
   const opened: string[] = []
   const behaviorStore: Record<string, boolean> = {}
@@ -292,6 +300,9 @@ function harness(): Harness {
     api,
     win,
     views,
+    get keyboardReturns() {
+      return state.keyboardReturns
+    },
     get commits() {
       return state.commits
     },
@@ -518,6 +529,46 @@ describe('chrome.sidePanel: the panel per window', () => {
     h.call(EXT_A, 'open', { windowId: WINDOW_ID })
     h.views[2].hooks.gone()
     expect(h.api.showing(h.win)).toBeNull()
+  })
+
+  it('hands the keyboard back to the window when the panel closes, not when it swaps', () => {
+    const h = harness()
+    h.addTab('t1')
+    h.load(EXT_A, ['sidePanel'])
+    h.load(EXT_B, ['sidePanel'])
+    // Opening puts the keyboard in the panel's page; nothing goes back to the window.
+    h.call(EXT_A, 'open', { windowId: WINDOW_ID })
+    expect(h.views[0].focused).toBe(1)
+    expect(h.keyboardReturns).toBe(0)
+    // The command closes it: the view is gone, the window decides between its page and chrome.
+    h.api.close(h.win)
+    expect(h.views[0].closed).toBe(true)
+    expect(h.keyboardReturns).toBe(1)
+    // Nothing to close, nothing to hand back.
+    h.api.close(h.win)
+    expect(h.keyboardReturns).toBe(1)
+
+    // The toggle off and an unload close the panel the same way.
+    h.api.toggle(EXT_A, h.win)
+    h.api.toggle(EXT_A, h.win)
+    expect(h.keyboardReturns).toBe(2)
+    h.call(EXT_A, 'open', { windowId: WINDOW_ID })
+    h.unload(EXT_A)
+    expect(h.keyboardReturns).toBe(3)
+
+    // Another extension taking the panel over gets the keyboard itself: no detour via the page.
+    h.load(EXT_A, ['sidePanel'])
+    h.call(EXT_A, 'open', { windowId: WINDOW_ID })
+    h.call(EXT_B, 'open', { windowId: WINDOW_ID })
+    expect(h.api.showing(h.win)).toBe(EXT_B)
+    expect(h.views.at(-2)?.closed).toBe(true)
+    expect(h.views.at(-1)?.focused).toBe(1)
+    expect(h.keyboardReturns).toBe(3)
+
+    // The view going away underneath (its window closed) leaves the keyboard where it is.
+    h.views.at(-1)?.hooks.gone()
+    expect(h.api.showing(h.win)).toBeNull()
+    expect(h.keyboardReturns).toBe(3)
   })
 
   it('links the panel opens go to tabs', () => {

@@ -238,7 +238,8 @@ export class SidePanelApi {
 
   private show(ext: LoadedExtension, win: ZenWindow): void {
     const current = this.panels.get(win.id)
-    if (current && current.extensionId !== ext.id) this.close(win)
+    // Another extension's panel makes way; the keyboard goes to the new one below, not the page.
+    if (current && current.extensionId !== ext.id) this.drop(win)
     let panel = this.panels.get(win.id)
     if (!panel) {
       const view = this.views.create(win, ext, {
@@ -259,11 +260,23 @@ export class SidePanelApi {
   }
 
   close(win: ZenWindow): void {
+    if (!this.drop(win)) return
+    // The panel's page may have held the keyboard; with its view gone no document would, and
+    // the next chord would be lost. The keyboard goes back the way it does when any surface
+    // beside the page goes away (a Glance card, a popup frame): to the active page, or to the
+    // chrome when the window shows none; under chrome that covers the page, with the layout
+    // that shows it again; never into a window the user has left.
+    win.focusContent()
+  }
+
+  /** Take the window's panel down; whether there was one to take. */
+  private drop(win: ZenWindow): boolean {
     const panel = this.panels.get(win.id)
-    if (!panel) return
+    if (!panel) return false
     this.panels.delete(win.id)
     panel.view.close()
     this.host.commitUi()
+    return true
   }
 
   /** The chrome laid the panel strip out (or took it away): the view follows. */
