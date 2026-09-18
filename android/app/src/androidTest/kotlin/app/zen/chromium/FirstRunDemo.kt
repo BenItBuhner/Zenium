@@ -76,10 +76,12 @@ class FirstRunDemo : DemoHarness(stateAsset = null, shotPrefix = "firstrun", han
         val defaultStep = findAny("Skip") != null
         finding("default step: Skip beside Set as default ${verdict(defaultStep)}")
         if (!tapLabel(f, "Skip")) Log.w(tag, "no Skip on the default step")
-        // The first run ends in the omnibox, offered for the first address; let it settle.
+        // The first run ends in the omnibox, offered for the first address (so the pill is not in
+        // the tree yet: the field is); let it settle.
         SystemClock.sleep(4_000)
         shot("06-first-session")
-        finding("first run ended in the browser ${verdict(findByLabelPrefix(PILL_LABEL) != null)}")
+        val browsing = findByLabel(OMNIBOX_LABEL) != null || findByLabelPrefix(PILL_LABEL) != null
+        finding("first run ended in the browser ${verdict(browsing)}")
 
         // 3. A first page, arriving the way a link from another app does (the omnibox the first
         //    run ends in keeps no input focus for injected keys), once that omnibox is out of the
@@ -183,5 +185,7 @@ class FirstRunDemo : DemoHarness(stateAsset = null, shotPrefix = "firstrun", han
 
     companion object {
         private const val BANNER_TITLE = "Open links in Zenium"
+        /** The omnibox field's label (components/urlbar/Urlbar.tsx). */
+        private const val OMNIBOX_LABEL = "Search or enter address"
     }
 }

@@ -17,8 +17,8 @@ adb install -r -g "$apk"
 adb shell pm clear "$app_id"
 
 # The shared script disables Chrome with the other Google apps; with no other browser installed
-# Android hands Zenium the role by itself and there is no dialog to record. Chrome stays enabled
-# (it is never started) and holds the role when the demo begins.
+# Android hands Zenium the role by itself and there is nothing to ask for: no default step, no
+# promo, no banner. Chrome stays enabled (it is never started) and holds the role throughout.
 adb shell pm enable --user 0 com.android.chrome > /dev/null 2>&1 || true
 adb shell cmd role add-role-holder --user 0 android.app.role.BROWSER com.android.chrome || true
 echo "browser role: $(adb shell cmd role get-role-holders --user 0 android.app.role.BROWSER 2>/dev/null || echo unknown)"
