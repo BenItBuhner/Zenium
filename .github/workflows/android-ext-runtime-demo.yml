@@ -11,6 +11,10 @@ name: Android extension runtime demo
 # sideloads.
 on:
   workflow_dispatch:
+  # TEMPORARY (W2-2 verification): removed before the branch is handed back.
+  push:
+    branches:
+      - cursor/android-ext-runtime-surfaces-f955
 
 permissions:
   contents: read
@@ -46,7 +50,12 @@ jobs:
       artifact-name: android-ext-runtime-demo-modern-webview
       artifact-path: artifacts/android-ext-runtime-demo/
       target: default
-      emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
+      # The renderer is the reusable workflow's emulator-gpu (swangle since #149; a -gpu word here
+      # would be dropped). Measured under swangle on this AOSP image: the app draws one frame every
+      # 1.3–3.5 s while a sheet is up (344 Choreographer skips of 94 frames median over the run,
+      # against 40 of 40 under swiftshader_indirect; the API 34 job is unaffected), so the driver's
+      # waits for a gesture's effect are generous.
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
       script-env: |
         WEBVIEW_APK=artifacts/webview/SystemWebView.apk
         SOFT_FAIL=1
