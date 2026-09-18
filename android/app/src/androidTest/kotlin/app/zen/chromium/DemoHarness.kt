@@ -618,6 +618,9 @@ abstract class DemoHarness(
 
         fun up() = inject(MotionEvent.ACTION_UP, SystemClock.uptimeMillis())
 
+        /** The system takes the touch away (a palm, a notification shade): the WebView sees a pointercancel. */
+        fun cancel() = inject(MotionEvent.ACTION_CANCEL, SystemClock.uptimeMillis())
+
         fun tap(x: Float, y: Float) {
             down(x, y)
             hold(60)
