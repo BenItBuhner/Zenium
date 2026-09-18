@@ -55,6 +55,7 @@ function previewPages(): Plugin {
  *
  *   vite build  -c vite.android.config.ts                 → android/app/src/main/assets/www
  *   vite build  -c vite.android.config.ts --mode page     → android/app/src/main/assets/page.js
+ *   vite build  -c vite.android.config.ts --mode ext      → android/app/src/main/assets/ext.js
  *   vite        -c vite.android.config.ts                 → dev server with the iframe preview host
  */
 const aliases = {
@@ -65,6 +66,29 @@ const aliases = {
 }
 
 export default defineConfig(({ mode }) => {
+  if (mode === 'ext' || mode === 'ext-janitor') {
+    // The extension bootstrap (content scripts and extension pages) and the main-world transport
+    // janitor; Kotlin wraps each with its per-install config (and, for the bootstrap, the
+    // sources), so they must stay plain IIFEs over the `__zenExtBoot` global.
+    const janitor = mode === 'ext-janitor'
+    return {
+      resolve: { alias: aliases },
+      define: { 'process.env.NODE_ENV': JSON.stringify('production') },
+      build: {
+        outDir: resolve('android/app/src/main/assets'),
+        emptyOutDir: false,
+        minify: true,
+        lib: {
+          entry: resolve(
+            janitor ? 'src/android/extensionTransport.ts' : 'src/android/extensionBootstrap.ts'
+          ),
+          name: janitor ? 'zenExtJanitor' : 'zenExt',
+          formats: ['iife'],
+          fileName: () => (janitor ? 'ext-janitor.js' : 'ext.js')
+        }
+      }
+    }
+  }
   if (mode === 'page') {
     return {
       resolve: { alias: aliases },

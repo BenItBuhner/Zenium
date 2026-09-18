@@ -1,0 +1,68 @@
+name: Android extension runtime demo
+
+# Exercises the extension runtime on a hardware-accelerated Android emulator: probes what the
+# system WebView is and is not (EngineProbe), lays out five Chrome Web Store extensions fetched as
+# CRX3 packages as store installs next to the probe extension, drives them through the runtime
+# while recording the screen (ExtensionDemo: load, content scripts, messaging, storage, popups,
+# each extension's core function, isolation, late injection, frames, private tabs) and uploads
+# the recording, the screenshots and the JSON results the driver grades stage by stage.
+# Dispatch-only: it takes a quarter of an hour per job. The build, the emulator and the Gradle
+# cache live in android-emulator-demo.yml; this file picks the driver and fetches what it
+# sideloads.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-ext-runtime-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: System WebView
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ext-runtime-demo.sh
+      artifact-name: android-ext-runtime-demo
+      artifact-path: artifacts/android-ext-runtime-demo/
+      # Dark Reader, Vimium, Return YouTube Dislike, Stylus, uBlock Origin Lite.
+      setup-script: >-
+        echo eimadpbcbfnmbkopoojfekhnkhdbieeh dbepggeogbaibhgnhhndojpepiihcmeb gebbhagfogifgggkldgodflihgfeippi
+        clngdbkpkpeebahjckkjfobafhncgmne ddkjiahejlhfcafbddmgiahcphecmpfh
+        | xargs node .github/scripts/fetch-crx.mjs artifacts/ext
+      timeout-minutes: 60
+
+  # The API 34 image bundles a WebView far behind current Chromium; isolated-world injection
+  # (androidx.webkit 1.17, JS_INJECTION_IN_FRAME_AND_WORLD) needs 146+. This job swaps in a Chromium
+  # snapshot SystemWebView.apk on an AOSP image (see android-webview-swap.sh) and runs the same
+  # probe and demo on it. Best effort: it reports what it can and never fails the workflow.
+  modern-webview:
+    name: Best effort - Chromium snapshot WebView on an AOSP image
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ext-runtime-demo.sh
+      artifact-name: android-ext-runtime-demo-modern-webview
+      artifact-path: artifacts/android-ext-runtime-demo/
+      target: default
+      emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
+      script-env: |
+        WEBVIEW_APK=artifacts/webview/SystemWebView.apk
+        SOFT_FAIL=1
+      # The plain `Android` snapshot is armeabi-v7a only and its libwebviewchromium.so cannot be
+      # dlopen'ed on an x86_64 emulator; `AndroidDesktop_x64` ships the same com.android.webview
+      # (minSdk 29) with x86_64 and x86 native code.
+      setup-script: |
+        echo eimadpbcbfnmbkopoojfekhnkhdbieeh dbepggeogbaibhgnhhndojpepiihcmeb gebbhagfogifgggkldgodflihgfeippi clngdbkpkpeebahjckkjfobafhncgmne ddkjiahejlhfcafbddmgiahcphecmpfh | xargs node .github/scripts/fetch-crx.mjs artifacts/ext
+        base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
+        rev=$(curl -fsSL "$base/LAST_CHANGE")
+        echo "chromium snapshot revision $rev"
+        curl -fsSL -o /tmp/chrome-android-desktop.zip "$base/$rev/chrome-android-desktop.zip"
+        mkdir -p artifacts/webview
+        unzip -j -o /tmp/chrome-android-desktop.zip chrome-android-desktop/apks/SystemWebView.apk -d artifacts/webview
+        rm -f /tmp/chrome-android-desktop.zip
+        curl -fsSL "$base/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
+        unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
+        ls -la artifacts/webview
+      timeout-minutes: 60

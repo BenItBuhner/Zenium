@@ -97,6 +97,7 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   // Windows Settings, the macOS prompt or runs xdg-settings (platform/defaultBrowser.ts).
   defaultBrowser: true,
   requestBlocking: true,
+  reducedExtensionIsolation: false,
   pageControls: false,
   // Private browsing is a window of its own on desktop (`windows`).
   privateTabs: false
@@ -142,13 +143,14 @@ export class ElectronPlatform implements Platform {
       focusedChromeWebContents((id) => this.windows.windowForWebContents(id) !== undefined)
     )
     this.sessions = new SessionManager(buildUserAgent())
-    this.views = new ElectronTabViewHost(this.sessions)
-    this.siteData = new ElectronSiteData(this.sessions)
-    this.menus = new ElectronMenus()
     this.downloads = new ElectronDownloads(() => {
       const downloads = resolveDownloadSettings(this.browser.state.settings)
       return { askWhereToSave: downloads.askWhereToSave, directory: downloads.directory }
     })
+    // The views hand "Save … As…" downloads to the downloads host, which then asks where to save.
+    this.views = new ElectronTabViewHost(this.sessions, this.downloads)
+    this.siteData = new ElectronSiteData(this.sessions)
+    this.menus = new ElectronMenus()
     this.dialogs = {
       confirm: async (options: ConfirmOptions, win?: ZenWindow) => {
         const bw = browserWindowOf(win)
@@ -183,6 +185,17 @@ export class ElectronPlatform implements Platform {
         for (const path of result.filePaths)
           files.push({ name: basename(path), text: readFileSync(path, 'utf8') })
         return files
+      },
+      pickFiles: async (options, win?: ZenWindow) => {
+        const bw = browserWindowOf(win)
+        const dialogOptions = {
+          title: options.title,
+          properties: ['openFile' as const, 'multiSelections' as const]
+        }
+        const result = bw
+          ? await dialog.showOpenDialog(bw, dialogOptions)
+          : await dialog.showOpenDialog(dialogOptions)
+        return result.canceled ? [] : result.filePaths
       },
       saveTextFile: async (options, win?: ZenWindow) => {
         const bw = browserWindowOf(win)
@@ -278,7 +291,9 @@ export class ElectronPlatform implements Platform {
             .filter((bw): bw is Electron.BrowserWindow => bw !== undefined)
         ),
       isDefaultBrowser: () => this.defaultBrowser.isDefault(),
-      requestDefaultBrowser: () => this.defaultBrowser.request()
+      requestDefaultBrowser: () => this.defaultBrowser.request(),
+      // Windows and macOS have a system emoji picker; Linux has none (Chrome shows no item there).
+      ...(app.isEmojiPanelSupported() ? { showEmojiPanel: () => app.showEmojiPanel() } : {})
     }
     this.theme = {
       systemDark: () => nativeTheme.shouldUseDarkColors,

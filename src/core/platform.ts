@@ -26,6 +26,7 @@ import type {
   Rect,
   ResourceSnapshot,
   SharePayload,
+  ShortcutAction,
   SidePanelInfo,
   Suggestion,
   SyncScope,
@@ -108,11 +109,16 @@ export interface PageMessage {
 }
 
 export interface PageContextParams {
+  /** Click position in the view's coordinates (DIP), as the host's `context-menu` event gives it. */
   x: number
   y: number
   linkURL: string
+  /** Text of the clicked link (Edge's "Copy link text"); empty for image links. */
+  linkText?: string
   srcURL: string
   mediaType: 'none' | 'image' | 'audio' | 'video' | 'canvas' | 'file' | 'plugin'
+  /** State of the clicked `<video>` / `<audio>`; hosts that cannot tell leave it out. */
+  mediaFlags?: MediaContextFlags
   selectionText: string
   isEditable: boolean
   misspelledWord: string
@@ -132,6 +138,47 @@ export interface PageContextParams {
     canDelete: boolean
     canSelectAll: boolean
   }
+}
+
+/** Chromium's media flags of a clicked media element (the subset the menus read). */
+export interface MediaContextFlags {
+  inError: boolean
+  isPaused: boolean
+  isMuted: boolean
+  hasAudio: boolean
+  isLooping: boolean
+  isControlsVisible: boolean
+  canToggleControls: boolean
+  canSave: boolean
+  canShowPictureInPicture: boolean
+  isShowingPictureInPicture: boolean
+  canLoop: boolean
+}
+
+/**
+ * Chrome elements with a context menu of their own, marked `data-zen-menu` in the renderer: the
+ * URL bar's field and pill, the reload button.
+ */
+export type ChromeMenuTarget = 'urlbar' | 'urlpill' | 'reload'
+
+export const CHROME_MENU_TARGETS: readonly ChromeMenuTarget[] = ['urlbar', 'urlpill', 'reload']
+
+/**
+ * A right-click inside the chrome document (URL bar, toolbar, overlays): what the host's own
+ * `context-menu` event says about the spot, plus which marked chrome element it landed on
+ * (`data-zen-menu` in the renderer; null when none).
+ */
+export interface ChromeContextParams {
+  /** Click position in chrome CSS pixels. */
+  x: number
+  y: number
+  /** `data-zen-menu` of the innermost marked element under the pointer, or null. */
+  target: ChromeMenuTarget | null
+  /** Tab the marked element acts on (`data-zen-menu-tab`); null for a new-tab URL bar. */
+  tabId: string | null
+  isEditable: boolean
+  selectionText: string
+  editFlags: PageContextParams['editFlags']
 }
 
 export interface FindResultInfo {
@@ -291,7 +338,12 @@ export interface TabView {
   getZoom(): number
   findInPage(text: string, forward: boolean, newSession: boolean): void
   stopFind(action: 'clearSelection' | 'keepSelection'): void
-  executeJavaScript(code: string): Promise<unknown>
+  /**
+   * Run `code` in the page's main frame, or in the sub-frame `frameId`
+   * (`PageContextParams.frameId`) on hosts that can address frames; others run it in the main
+   * frame.
+   */
+  executeJavaScript(code: string, frameId?: number): Promise<unknown>
   /** Inject a stylesheet; resolves with a key for `removeInsertedCSS`. */
   insertCSS(css: string): Promise<string>
   removeInsertedCSS(key: string): Promise<void>
@@ -321,7 +373,21 @@ export interface TabView {
 
   // Page operations.
   openDevTools(mode: 'toggle' | 'inspect' | 'console'): void
-  downloadURL(url: string): void
+  /**
+   * Open the developer tools on the element at (`x`, `y`) in the view's coordinates (the
+   * "Inspect Element" of the context menu). Hosts without an inspector leave it out.
+   */
+  inspectElementAt?(x: number, y: number): void
+  /**
+   * Start a download of `url`. `saveAs` asks where to save first, whatever the download setting
+   * says (Chrome's "Save link / image / video as…" always ask); hosts without a picker save to
+   * the downloads folder.
+   */
+  downloadURL(url: string, options?: { saveAs?: boolean }): void
+  /** Reload one sub-frame of the page (`PageContextParams.frameId`); hosts without frames leave it out. */
+  reloadFrame?(frameId: number): void
+  /** Drop the HTTP cache of the page's session ("Empty Cache and Hard Reload"); optional. */
+  clearCache?(): Promise<void>
   print(): void
   /** Save the page (host decides where / whether to ask); resolves with the saved path or null. */
   savePage(suggestedName: string): Promise<string | null>
@@ -406,10 +472,20 @@ export interface WindowHost {
   setTitle(title: string): void
   /** Bounds to remember for session restore (null when the host has no movable windows). */
   normalBounds(): Rect | null
+  /**
+   * Where the chrome's document sits on the screen right now (DIP), for turning a screen point
+   * into chrome coordinates; hosts without movable windows leave this out.
+   */
+  contentBounds?(): Rect | null
   /** Brief vibration for a gesture landmark; hosts without haptics leave this out. */
   haptic?(kind: HapticKind): void
   /** Recolour the native caption buttons drawn over the chrome (hosts with an overlay). */
   setCaptionColors?(colors: CaptionColors): void
+  /**
+   * The marked chrome element (`data-zen-menu`) under a point of the chrome document, for the
+   * chrome's own context menus; hosts whose chrome draws its menus itself leave it out.
+   */
+  menuTargetAt?(x: number, y: number): Promise<{ target: string; tabId: string | null } | null>
 }
 
 export interface WindowCreateInit {
@@ -434,8 +510,33 @@ export interface WindowHostFactory {
 // Menus, dialogs, misc
 // ---------------------------------------------------------------------------
 
+/**
+ * Items the host implements itself. The editing roles work in every menu; the rest are the
+ * standard entries of a macOS menu bar (`window`, `help` and `services` mark a whole submenu as
+ * the system's Window, Help or Services menu).
+ */
 export type MenuRole =
-  'undo' | 'redo' | 'cut' | 'copy' | 'paste' | 'pasteAndMatchStyle' | 'delete' | 'selectAll'
+  | 'undo'
+  | 'redo'
+  | 'cut'
+  | 'copy'
+  | 'paste'
+  | 'pasteAndMatchStyle'
+  | 'delete'
+  | 'selectAll'
+  | 'startSpeaking'
+  | 'stopSpeaking'
+  | 'about'
+  | 'services'
+  | 'hide'
+  | 'hideOthers'
+  | 'unhide'
+  | 'quit'
+  | 'minimize'
+  | 'zoom'
+  | 'front'
+  | 'window'
+  | 'help'
 
 export interface MenuItemTemplate {
   type?: 'normal' | 'separator' | 'checkbox' | 'radio'
@@ -450,17 +551,42 @@ export interface MenuItemTemplate {
   icon?: string | null
   submenu?: MenuItemTemplate[]
   click?: () => void
+  /**
+   * The shortcut action the item stands for. The core fills `accelerator` from the active key
+   * table, and runs the action when the item has no `click` of its own.
+   */
+  action?: ShortcutAction
+  /**
+   * The chord shown after the label, in Electron's accelerator syntax (`Ctrl+Shift+N`; macOS
+   * draws it as glyphs). Display only: the key table handles the keys, so hosts must not
+   * register it.
+   */
+  accelerator?: string
 }
 
 export type MenuSource =
-  'page' | 'tab' | 'selection' | 'space' | 'folder' | 'newtab' | 'app' | 'bookmark' | 'history'
+  | 'page'
+  | 'tab'
+  | 'selection'
+  | 'space'
+  | 'folder'
+  | 'newtab'
+  | 'app'
+  | 'bookmark'
+  | 'history'
+  | 'urlbar'
 
 export interface MenuPopupOptions {
   source: MenuSource
   win: ZenWindow
-  /** Anchor in chrome CSS pixels (renderer-hosted menus); omitted for native menus. */
+  /**
+   * Where to open, in chrome CSS pixels: the anchor of renderer-hosted menus, and of native menus
+   * opened from a control rather than the pointer. Omitted: native menus open at the pointer.
+   */
   x?: number
   y?: number
+  /** Opened by the keyboard: the first item starts selected so the arrow keys take over at once. */
+  keyboard?: boolean
 }
 
 export interface MenuHost {
@@ -468,6 +594,12 @@ export interface MenuHost {
   /** Renderer-hosted menus report clicks/dismissals back through these. */
   activate?(menuId: string, itemId: string): void
   dismiss?(menuId: string): void
+  /**
+   * Hosts with a menu bar (macOS) show `menus` as the application menu: one entry per top-level
+   * menu, roles where the system provides the menu. Called at start and whenever what the menus
+   * show changed; hosts without a menu bar leave it out.
+   */
+  setApplicationMenu?(menus: MenuItemTemplate[]): void
 }
 
 export interface ConfirmOptions {
@@ -503,6 +635,11 @@ export interface DialogHost {
   ): Promise<PickedTextFile[]>
   /** Save text where the user chooses (bookmark export); false when cancelled or failed. */
   saveTextFile(options: SaveTextFileOptions, win?: ZenWindow): Promise<boolean>
+  /**
+   * Let the user pick files to open as pages ("Open File…"); resolves with their paths, empty
+   * when cancelled. Hosts whose pages cannot show local files leave it out.
+   */
+  pickFiles?(options: { title: string }, win?: ZenWindow): Promise<string[]>
 }
 
 /**
@@ -681,6 +818,11 @@ export interface AppHost {
    * Unsupported hosts resolve null without doing anything.
    */
   requestDefaultBrowser(): Promise<boolean | null>
+  /**
+   * The OS emoji picker for the focused text field (Chrome's "Emoji" in editable menus); present
+   * only where the system has one (Windows, macOS).
+   */
+  showEmojiPanel?(): void
 }
 
 /**
@@ -737,6 +879,12 @@ export interface Governor {
   sample(): Promise<ResourceSnapshot>
   trim(): Promise<void>
   relaunch(): void
+  /**
+   * Memory (MB) attributed to a tab's page at the last sample, for the "memory saved" line of a
+   * tab put to sleep; null when the governor has no figure for it. Hosts that do not measure
+   * leave this out.
+   */
+  memoryOf?(tabId: string): number | null
 }
 
 /** Browser extensions (Chromium extension API); Electron only. */

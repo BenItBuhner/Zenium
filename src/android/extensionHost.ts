@@ -226,7 +226,7 @@ export class AndroidExtensions implements ExtensionHost {
     win?.alive ? this.prompts.ask(request, win) : this.nativeConfirm(request, win)
 
   constructor(
-    private readonly browser: Browser,
+    protected readonly browser: Browser,
     private readonly io: AndroidExtensionStoreIo,
     options: AndroidExtensionsOptions = {}
   ) {

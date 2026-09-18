@@ -25,7 +25,7 @@ import { useTheme } from '@renderer/hooks/useTheme'
 import { BookmarksBar } from './components/bookmarks/BookmarksBar'
 import { captionBandInMain } from '@renderer/lib/layout'
 import { ContentArea } from './components/content/ContentArea'
-import { DragGhost } from './components/DragGhost'
+import { DragLayer } from './components/DragLayer'
 import { PopupFrame } from './components/extensions/PopupFrame'
 import { ModStyles } from './components/ModStyles'
 import { Onboarding } from './components/overlays/Onboarding'
@@ -233,7 +233,7 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
         <CompactToolbar state={state} showBar={barWanted} trailingInset={captionInset} />
       )}
 
-      {ui.drag && <DragGhost state={state} drag={ui.drag} />}
+      {ui.drag && <DragLayer state={state} drag={ui.drag} />}
       {onboarding && <Onboarding state={state} />}
     </div>
   )

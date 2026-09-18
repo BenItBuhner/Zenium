@@ -15,6 +15,7 @@ import type {
   Settings,
   ShareAction,
   SharePayload,
+  Shortcut,
   Space,
   Tab,
   WindowChrome,
@@ -34,6 +35,7 @@ import { PopupBlocker } from './popups'
 import { ExternalLaunches } from './external'
 import { SecurityPromptService } from './security'
 import { TabManager } from './tabs'
+import { TabDragController } from './tabDrag'
 import { ZenWindow } from './window'
 import { Actions, type AnyAction } from './actions'
 import { KeyboardHandler } from './keys'
@@ -84,6 +86,7 @@ import { sanitizeAppIcon } from '../shared/appIcon'
 import { sanitizeUpdateSettings } from '../shared/updates'
 import { sanitizePromoState } from '../shared/defaultBrowser'
 import { sanitizeBlockingSettings } from '../shared/blocking'
+import { isShortcutPreset } from '../shared/shortcuts'
 import type { ExtensionHost, Governor, PageMessage, Platform, SyncHost } from './platform'
 
 type CommandHandlers = {
@@ -105,6 +108,7 @@ const FOCUS_CHROME_EVENTS = new Set<EventName>([
   'tab.editPinnedUrl',
   'tab.pickIcon',
   'menu.show',
+  'menu.app',
   'bookmark.star',
   'bookmark.edit'
 ])
@@ -133,6 +137,8 @@ export class Browser {
   /** HTTP authentication and client-certificate prompts. */
   readonly security: SecurityPromptService
   readonly tabs: TabManager
+  /** A sidebar tab drag in flight, followed across windows (drops into them, tear-offs). */
+  readonly tabDrag: TabDragController
   /** Recently closed tabs and windows (Ctrl+Shift+T, the app menu's submenu, the history page). */
   readonly session: SessionService
   readonly actions: Actions
@@ -171,6 +177,8 @@ export class Browser {
   private readonly sharedImages = new Map<string, string>()
   /** Windows whose chrome should come up with the URL bar open (fresh windows with a blank tab). */
   private readonly urlbarOnReady = new Set<string>()
+  /** The shortcut table last handed to the host (`syncShortcuts`). */
+  private syncedShortcuts: Shortcut[] | null = null
 
   constructor(readonly platform: Platform) {
     this.state = new BrowserState(
@@ -223,6 +231,7 @@ export class Browser {
     this.security = new SecurityPromptService(this)
     this.pageControls = new PageControls(this)
     this.tabs = new TabManager(this)
+    this.tabDrag = new TabDragController(this)
     this.session = new SessionService(this)
     this.history.onChange((kind) => {
       for (const w of this.allWindows()) w.send('history.changed', { kind })
@@ -416,6 +425,10 @@ export class Browser {
     if (this.state.settings.onboardingDone) this.tabs.claimVisible(win)
     if (this.urlbarOnReady.delete(win.id))
       setTimeout(() => this.emit('urlbar.toggle', { mode: 'new-tab' }, win), 150)
+    // Whatever loading the profile changed under the user is said once, in the first window.
+    const notices = this.state.migrationNotices.splice(0)
+    if (notices.length)
+      setTimeout(() => notices.forEach((message) => this.toast(message, 'info', win)), 600)
   }
 
   onWindowFocused(win: ZenWindow): void {
@@ -429,6 +442,7 @@ export class Browser {
 
   onWindowClosed(win: ZenWindow): void {
     this.windows.delete(win.id)
+    this.tabDrag.onWindowClosed(win)
     for (const w of this.allWindows()) w.selection.delete(win.localSpace?.id ?? '')
     if (win.isPrivate) this.endPrivateSessionIfOver()
     if (this.allWindows().length === 0) {
@@ -497,6 +511,12 @@ export class Browser {
         win.updateTitle()
       }
       this.syncCaptionColors()
+      // The table is rebuilt (a new array) when the preset or the overrides change, from
+      // Settings or from another device: hosts with their own copy get it then.
+      if (this.state.shortcuts !== this.syncedShortcuts) this.syncShortcuts()
+      // The menu bar (macOS) reflects the front window and the model: enabled states, the
+      // compact mode check, recently closed entries, the bookmarks bar.
+      this.menus.scheduleApplicationMenu()
     })
     // Rule sets load synchronously so the first page is protected.
     this.blocking.start()
@@ -1175,12 +1195,16 @@ export class Browser {
   }
 
   private syncShortcuts(): void {
+    const table = this.state.shortcuts
+    this.syncedShortcuts = table
     const bindings: KeyBinding[] = []
-    for (const s of this.state.shortcuts) {
+    for (const s of table) {
       if (s.binding) bindings.push(s.binding)
       bindings.push(...s.extraBindings)
     }
     this.platform.views.setShortcuts?.(bindings)
+    // The menu bar shows the chords: it changes with the table.
+    this.menus.syncApplicationMenu()
   }
 
   // ---------------------------------------------------------------------------
@@ -1407,6 +1431,7 @@ export class Browser {
       'tab.reload': ({ tabId, skipCache }) => tabs.reload(tabId, skipCache),
       'tab.stop': ({ tabId }) => tabs.stop(tabId),
       'tab.toggleMute': ({ tabId }) => tabs.toggleMute(tabId),
+      'tab.toggleMuteSite': ({ tabId }) => tabs.toggleMuteSite(tabId),
       'tab.togglePin': ({ tabId }, win) => tabs.togglePin(tabId, win),
       'tab.toggleEssential': ({ tabId }, win) => tabs.toggleEssential(tabId, win),
       'tab.resetPinned': ({ tabId }, win) => tabs.resetPinned(tabId, true, win),
@@ -1437,6 +1462,13 @@ export class Browser {
           )
       },
       'tab.moveToFolder': ({ tabId, folderId }) => tabs.moveToFolder(tabId, folderId),
+      'tab.drop': ({ tabId, key }, win) => void tabs.dropTab(tabId, key, win),
+      'tab.dragStart': ({ tabId }, win) => this.tabDrag.start(tabId, win),
+      'tab.dragMove': ({ tabId, x, y, inSidebar }, win) =>
+        this.tabDrag.move(tabId, x, y, inSidebar, win),
+      'tab.dragTarget': ({ tabId, key }, win) => this.tabDrag.setTarget(tabId, key, win),
+      'tab.dragEnd': ({ tabId, x, y, outcome }, win) => this.tabDrag.end(tabId, x, y, outcome, win),
+      'tab.moveToNewWindow': ({ tabId }, win) => void tabs.moveTabToNewWindow(tabId, null, win),
       'tab.reopenClosed': (_a, win) => this.session.reopenClosed(win),
       'tab.navigationEntries': ({ tabId }) => tabs.navigationEntries(tabId),
       'tab.goToIndex': ({ tabId, index }) => tabs.goToIndex(tabId, index),
@@ -1502,7 +1534,8 @@ export class Browser {
       'folder.delete': ({ folderId, unpack }) => this.deleteFolder(folderId, unpack),
       'folder.contextMenu': ({ folderId }, win) => this.menus.showFolderContextMenu(folderId, win),
       'newtab.contextMenu': (_a, win) => this.menus.showNewTabContextMenu(win),
-      'app.menu': (_a, win) => this.menus.showAppMenu(win),
+      'app.menu': ({ anchor, keyboard }, win) =>
+        this.menus.showAppMenu(win, { anchor, keyboard: Boolean(keyboard) }),
       'focus.content': (_a, win) => win.focusContent(),
       'focus.chrome': (_a, win) => win.focusChrome(),
       haptic: ({ kind }, win) => win.haptic(kind),
@@ -1577,6 +1610,9 @@ export class Browser {
         state.resetShortcuts()
         this.syncShortcuts()
         state.commit()
+      },
+      'shortcuts.recording': ({ recording }, win) => {
+        win.recordingShortcut = recording
       },
       'sidebar.setWidth': ({ width }) => {
         state.settings.sidebarWidth = Math.max(160, Math.min(520, Math.round(width)))
@@ -1965,6 +2001,8 @@ export class Browser {
         })
       } else if (key === 'pageControls' && value && typeof value === 'object') {
         this.pageControls.update(value as Partial<Settings['pageControls']>)
+      } else if (key === 'shortcutPreset') {
+        if (isShortcutPreset(value)) s.shortcutPreset = value
       } else {
         ;(s as unknown as Record<string, unknown>)[key] = value
       }

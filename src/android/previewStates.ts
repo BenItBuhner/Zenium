@@ -64,7 +64,7 @@ function apply(spec: string): void {
           })
         )
       })
-      run('app.menu', undefined)
+      run('app.menu', {})
     } else if (target.kind === 'find' && tab) {
       uiStore.set({ findOpen: true, findTabId: tab.id })
       // The bar mounts on the next render; type into it the way a keyboard would.

@@ -8,21 +8,44 @@ const ICON_CACHE_MAX = 200
 
 /**
  * Native popup menus. Zen (Firefox) uses native-styled menus everywhere, and native popups are
- * also the only thing that can draw above the tab views in Electron.
+ * also the only thing that can draw above the tab views in Electron. On macOS the same
+ * templates make the menu bar.
  */
 export class ElectronMenus implements MenuHost {
   /** Decoded favicons by URL (`null` = could not be fetched or decoded; not retried). */
   private readonly icons = new Map<string, Electron.NativeImage | null>()
 
-  /** Native menus always open at the cursor, so the anchor in the options is not needed. */
+  /**
+   * The menu bar. Only macOS has one worth the name (Windows and Linux windows are frameless
+   * and the "⋯" menu stands in), so the method exists there alone and the core skips the work
+   * elsewhere.
+   */
+  readonly setApplicationMenu?: (menus: MenuItemTemplate[]) => void
+
+  constructor() {
+    if (process.platform === 'darwin') {
+      this.setApplicationMenu = (menus) =>
+        Menu.setApplicationMenu(Menu.buildFromTemplate(menus.map((item) => this.toElectron(item))))
+    }
+  }
+
+  /**
+   * Opens at the pointer unless the core anchors the menu to a control (the "⋯" button). A menu
+   * opened by the keyboard says so: Chromium then starts with its first item selected, and the
+   * arrow keys and Escape work from there (Escape leaves the keyboard where it was, on the button).
+   */
   popup(items: MenuItemTemplate[], options: MenuPopupOptions): void {
     const host = options.win.host as ElectronWindow | undefined
     if (!host?.alive) return
     const show = (): void => {
       if (!host.alive) return
-      Menu.buildFromTemplate(items.map((item) => this.toElectron(item))).popup({
-        window: host.win
-      })
+      const popup: Electron.PopupOptions = { window: host.win }
+      if (options.x !== undefined && options.y !== undefined) {
+        popup.x = Math.round(options.x)
+        popup.y = Math.round(options.y)
+      }
+      if (options.keyboard) popup.sourceType = 'keyboard'
+      Menu.buildFromTemplate(items.map((item) => this.toElectron(item))).popup(popup)
     }
     const pending = [...remoteIcons(items)].filter((url) => !this.icons.has(url))
     if (pending.length === 0) {
@@ -49,6 +72,13 @@ export class ElectronMenus implements MenuHost {
     if (item.type === 'checkbox' || item.type === 'radio') out.checked = item.checked
     if (item.role) out.role = item.role
     if (item.click) out.click = item.click
+    if (item.accelerator) {
+      // The chord is a hint: Zenium's own key table runs the shortcut (and the user can rebind
+      // it), so the system must not also fire the item. Roles keep their registered chords –
+      // Cmd+C and friends only work through them on macOS.
+      out.accelerator = item.accelerator
+      out.registerAccelerator = false
+    }
     if (item.submenu) out.submenu = item.submenu.map((sub) => this.toElectron(sub))
     const icon = item.icon ? this.icon(item.icon) : null
     if (icon) out.icon = icon

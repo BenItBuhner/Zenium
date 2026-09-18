@@ -74,7 +74,7 @@ function compileUncached(pattern: string): CompiledMatchPattern | null {
     const exact = hostName.toLowerCase()
     hostTest = (host) => host === exact
   }
-  const pathTest = globToRegExp(pathPart)
+  const pathTest = pathGlobToRegExp(pathPart)
   return {
     pattern,
     test: (url) => {
@@ -137,7 +137,7 @@ function splitPattern(pattern: string): SplitPattern | null {
   }
 }
 
-/** Glob where `*` matches any run of characters (Chrome's title and path globs). */
+/** Glob where `*` matches any run of characters and `?` one (Chrome's title and include globs). */
 export function globToRegExp(glob: string): RegExp {
   let source = ''
   for (const ch of glob) {
@@ -146,6 +146,16 @@ export function globToRegExp(glob: string): RegExp {
     else source += ch.replace(/[.+^${}()|[\]\\]/, '\\$&')
   }
   return new RegExp(`^${source}$`)
+}
+
+/** The path part of a match pattern: only `*` is a wildcard, `?` starts the query and is literal. */
+function pathGlobToRegExp(glob: string): RegExp {
+  let source = ''
+  for (const ch of glob) {
+    if (ch === '*') source += '.*'
+    else source += ch.replace(/[.+?^${}()|[\]\\]/, '\\$&')
+  }
+  return new RegExp(`^${source}$`, 's')
 }
 
 interface ParsedUrl {
@@ -185,4 +195,115 @@ function parseUrl(url: string): ParsedUrl | null {
     port = hostPort.slice(portColon + 1)
   }
   return { scheme, host: host.toLowerCase(), port, path }
+}
+
+// ---------------------------------------------------------------------------
+// Structured patterns and content-script matching (hosts that plan injection themselves)
+// ---------------------------------------------------------------------------
+
+/** A match pattern taken apart, for hosts that plan injection by origin (`parseMatchPattern`). */
+export interface MatchPattern {
+  /** `*` stands for http and https; `<all_urls>` lists every scheme it covers. */
+  schemes: string[]
+  /** Lower-case host; `*` alone matches every host, `*.` prefix matches the domain and subdomains. */
+  host: string
+  /** null when the pattern has no explicit port (matches any). `*` matches any port too. */
+  port: string | null
+  /** Glob over path and query with `*` wildcards; always starts with `/`. */
+  path: string
+  matchesAllUrls: boolean
+}
+
+const STRUCTURED_PATTERN = /^([a-z*][a-z0-9+.-]*):\/\/([^/]*)(\/.*)?$/is
+const STRUCTURED_SCHEMES = new Set([...ALL_URL_SCHEMES, 'chrome-extension', 'chrome', 'about'])
+
+/** Take a pattern apart (`null` when invalid); `compileMatchPattern` is the URL predicate. */
+export function parseMatchPattern(pattern: string): MatchPattern | null {
+  if (pattern === '<all_urls>') {
+    return {
+      schemes: [...ALL_URL_SCHEMES],
+      host: '*',
+      port: null,
+      path: '/*',
+      matchesAllUrls: true
+    }
+  }
+  const m = STRUCTURED_PATTERN.exec(pattern)
+  if (!m) return null
+  const scheme = m[1].toLowerCase()
+  if (scheme !== '*' && !STRUCTURED_SCHEMES.has(scheme)) return null
+  const hostPart = m[2]
+  const path = m[3] ?? ''
+  if (path === '') return null
+  if (scheme === 'file') {
+    if (hostPart !== '') return null
+    return { schemes: ['file'], host: '', port: null, path, matchesAllUrls: false }
+  }
+  let host = hostPart.toLowerCase()
+  let port: string | null = null
+  const colon = host.lastIndexOf(':')
+  if (colon !== -1 && !host.endsWith(']')) {
+    port = host.slice(colon + 1)
+    host = host.slice(0, colon)
+    if (port !== '*' && !/^\d+$/.test(port)) return null
+  }
+  if (host === '') return null
+  if (host.includes('*') && host !== '*' && !host.startsWith('*.')) return null
+  if (host.startsWith('*.') && host.slice(2).includes('*')) return null
+  return {
+    schemes: scheme === '*' ? ['http', 'https'] : [scheme],
+    host,
+    port,
+    path,
+    matchesAllUrls: false
+  }
+}
+
+/** The declaration fields Chrome consults when deciding whether a content script runs in a frame. */
+export interface ContentScriptMatch {
+  matches: readonly string[]
+  excludeMatches?: readonly string[]
+  includeGlobs?: readonly string[]
+  excludeGlobs?: readonly string[]
+  allFrames?: boolean
+  matchAboutBlank?: boolean
+  matchOriginAsFallback?: boolean
+}
+
+export interface FrameContext {
+  /** The frame's own URL. */
+  url: string
+  isTopFrame: boolean
+  /**
+   * For `about:blank` / `about:srcdoc` frames (match_about_blank) and data:/blob: frames
+   * (match_origin_as_fallback): the URL whose origin the frame inherited (parent or opener).
+   */
+  precursorUrl: string | null
+}
+
+/** The URL a content script declaration is matched against for this frame, or null when none applies. */
+export function effectiveMatchUrl(script: ContentScriptMatch, frame: FrameContext): string | null {
+  const url = frame.url
+  if (url === 'about:blank' || url === 'about:srcdoc' || url.startsWith('about:blank?')) {
+    return script.matchAboutBlank || script.matchOriginAsFallback ? frame.precursorUrl : null
+  }
+  const scheme = schemeOf(url)
+  if (scheme === 'data' || scheme === 'blob' || scheme === 'filesystem') {
+    return script.matchOriginAsFallback ? frame.precursorUrl : null
+  }
+  return url
+}
+
+/** Chrome's decision for one declaration in one frame: matches, exclusions and the globs. */
+export function contentScriptAppliesTo(script: ContentScriptMatch, frame: FrameContext): boolean {
+  if (!frame.isTopFrame && !script.allFrames) return false
+  const url = effectiveMatchUrl(script, frame)
+  if (!url) return false
+  if (!matchesAnyPattern(url, script.matches)) return false
+  if (script.excludeMatches?.length && matchesAnyPattern(url, script.excludeMatches)) return false
+  if (script.includeGlobs?.length && !script.includeGlobs.some((g) => globToRegExp(g).test(url)))
+    return false
+  if (script.excludeGlobs?.length && script.excludeGlobs.some((g) => globToRegExp(g).test(url)))
+    return false
+  return true
 }

@@ -13,7 +13,10 @@ export default defineConfig(
       '**/out',
       'android/**/build',
       'android/.gradle',
-      'android/app/src/main/assets'
+      'android/app/src/main/assets',
+      // Extension fixtures the instrumentation sideloads: they run inside the emulated
+      // chrome.* runtime, not in this codebase's toolchain.
+      'android/app/src/androidTest/assets'
     ]
   },
   tseslint.configs.recommended,

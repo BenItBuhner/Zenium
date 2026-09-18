@@ -7,6 +7,7 @@ import { chromeUnderPages } from '@renderer/lib/cover'
 import { wantsDefaultBrowserBanner } from '@renderer/lib/defaultBrowser'
 import { useViewport } from '@renderer/lib/formFactor'
 import { activeTab, isForeignTab } from '@renderer/lib/selectors'
+import { useChord } from '@renderer/lib/shortcuts'
 import { captureActiveTab, panelAloneOverContent, uiStore, type UiState } from '@renderer/lib/ui'
 import { extensionChromeAloneOverContent } from '@renderer/lib/extensions/scrim'
 import { cn } from '@renderer/lib/utils'
@@ -90,7 +91,8 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
       >
         {banner && <DefaultBrowserBanner state={state} />}
         <div className="flex min-h-0 flex-1 flex-row">
-          <div ref={viewportRef} className="relative min-h-0 flex-1 overflow-hidden">
+          {/* A tab dragged onto the page (past the split zones at its edges) tears off into a new window. */}
+          <div ref={viewportRef} className="relative min-h-0 flex-1 overflow-hidden" data-tear-zone>
             {state.capabilities.pullToRefresh && <PullIndicator />}
             {!tab && !ui.urlbar.open && ui.overlay === 'none' && !staged && <EmptyState />}
             {tab && foreign && !contentHidden && !glanceActive && (
@@ -257,6 +259,8 @@ function ForeignTabPreview({ tabId }: { tabId: string }): JSX.Element {
 }
 
 function EmptyState(): JSX.Element {
+  // The chord from the active key table (`Ctrl T`, `⌘T`); nothing while New Tab is unbound.
+  const chord = useChord('tab.new')?.replace(/\+(?=.)/g, ' ')
   return (
     <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-[var(--zen-muted)]">
       <div className="text-lg font-medium text-[var(--zen-fg)]">This space is empty</div>
@@ -267,7 +271,7 @@ function EmptyState(): JSX.Element {
         onClick={() => window.dispatchEvent(new CustomEvent('zen-new-tab'))}
       >
         <Plus className="h-4 w-4" /> New Tab
-        <kbd className="zen-kbd zen-kbd-hint ml-1">Ctrl T</kbd>
+        {chord && <kbd className="zen-kbd zen-kbd-hint ml-1">{chord}</kbd>}
       </button>
     </div>
   )

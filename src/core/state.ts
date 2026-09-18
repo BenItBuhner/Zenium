@@ -30,6 +30,7 @@ import type {
   SecurityPrompt,
   Settings,
   Shortcut,
+  ShortcutPreset,
   SidePanelInfo,
   Space,
   SplitGroup,
@@ -50,7 +51,12 @@ import {
 } from '../shared/defaults'
 import { sanitizePhoneBar } from '../shared/phoneBar'
 import { DEFAULT_SEARCH_ENGINES } from '../shared/search'
-import { applyShortcutOverrides, defaultShortcuts } from '../shared/shortcuts'
+import {
+  applyShortcutOverrides,
+  defaultShortcuts,
+  isShortcutPreset,
+  migrateShortcutPreset
+} from '../shared/shortcuts'
 import {
   BOOKMARK_SCHEMA_VERSION,
   BookmarkTree,
@@ -190,6 +196,11 @@ export class BrowserState {
   })
   /** Newest first; the `SessionService` owns the list, this is where it persists. */
   recentlyClosed: ClosedEntry[] = []
+  /**
+   * What loading the profile changed under the user (a migration that moved settings): shown as
+   * toasts once a window is ready, then forgotten. Never persisted.
+   */
+  readonly migrationNotices: string[] = []
   media: MediaState[] = []
   devtoolsOpenFor = new Set<string>()
   resources: ResourceSnapshot = emptyResourceSnapshot()
@@ -260,7 +271,7 @@ export class BrowserState {
   private dirty = false
   /** Callbacks waiting for the scheduled broadcast to have gone out. */
   private afterBroadcastQueue: Array<() => void> = []
-  private shortcutsCache: Shortcut[] | null = null
+  private shortcutsCache: { preset: ShortcutPreset; table: Shortcut[] } | null = null
   /** The last set of synced windows written to disk (used once they are all closed). */
   private lastWindows: PersistedWindow[] = []
   /** After shutdown nothing may be written any more (windows closing would shrink the list). */
@@ -321,7 +332,14 @@ export class BrowserState {
     if (!BOOKMARKS_BAR_MODES.includes(this.settings.bookmarksBar)) {
       this.settings.bookmarksBar = DEFAULT_SETTINGS.bookmarksBar
     }
+    this.settings.mutedHosts = Array.isArray(this.settings.mutedHosts)
+      ? this.settings.mutedHosts.filter((h): h is string => typeof h === 'string' && h !== '')
+      : []
     this.shortcutOverrides = data.shortcutOverrides ?? {}
+    const preset = migrateShortcutPreset(data.settings?.shortcutPreset, this.shortcutOverrides)
+    this.settings.shortcutPreset = preset.preset
+    // Shortcuts matter where there is a keyboard; a phone is not told about them.
+    if (preset.notice && this.platform !== 'android') this.migrationNotices.push(preset.notice)
     this.bookmarks = this.loadBookmarks(data)
     if (Array.isArray(data.windows) && data.windows.length) {
       this.restoredWindows = data.windows.filter((w) => w && typeof w.id === 'string')
@@ -489,14 +507,25 @@ export class BrowserState {
     }
   }
 
+  /** The active preset (a value another device synced that this build does not know falls back to Chrome). */
+  get shortcutPreset(): ShortcutPreset {
+    const preset = this.settings.shortcutPreset
+    return isShortcutPreset(preset) ? preset : 'chrome'
+  }
+
+  /** The active table: the preset's defaults under the user's overrides; rebuilt when either changes. */
   get shortcuts(): Shortcut[] {
-    if (!this.shortcutsCache) {
-      this.shortcutsCache = applyShortcutOverrides(
-        defaultShortcuts(this.platform),
-        this.shortcutOverrides
-      )
+    const preset = this.shortcutPreset
+    if (!this.shortcutsCache || this.shortcutsCache.preset !== preset) {
+      this.shortcutsCache = {
+        preset,
+        table: applyShortcutOverrides(
+          defaultShortcuts(this.platform, preset),
+          this.shortcutOverrides
+        )
+      }
     }
-    return this.shortcutsCache
+    return this.shortcutsCache.table
   }
 
   setShortcutOverride(id: string, binding: KeyBinding | null): void {

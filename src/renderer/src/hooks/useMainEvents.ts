@@ -1,7 +1,9 @@
 import { useEffect } from 'react'
 import type { Rect, UIState } from '@shared/types'
-import { onEvent } from '@renderer/lib/api'
+import { onEvent, run } from '@renderer/lib/api'
+import { remoteDragOver } from '@renderer/lib/drag'
 import { isPhone } from '@renderer/lib/formFactor'
+import { APP_MENU_EVENT } from '@renderer/lib/shortcuts'
 import {
   cancelExternalProtocol,
   closeMenu,
@@ -69,13 +71,23 @@ export function useMainEvents(): void {
         closeUrlbar()
         void openOverlay('space-editor', currentActiveTabId(), spaceId)
       }),
-      onEvent('find.open', ({ tabId, again }) => {
-        uiStore.set({ findOpen: true, findTabId: tabId })
+      onEvent('find.open', ({ tabId, again, text }) => {
+        uiStore.set({ findOpen: true, findTabId: tabId, findSeed: text ?? null })
         if (again) window.dispatchEvent(new CustomEvent('zen-find-again', { detail: again }))
+        if (text !== undefined)
+          window.dispatchEvent(new CustomEvent('zen-find-seed', { detail: text }))
+      }),
+      onEvent('menu.app', () => {
+        // The menu button claims the request when it is on screen (it takes the focus and opens
+        // the menu from itself, so Escape leaves the keyboard on it); otherwise the menu opens
+        // at the pointer, keyboard mode all the same.
+        const claimed = !window.dispatchEvent(new CustomEvent(APP_MENU_EVENT, { cancelable: true }))
+        if (!claimed) run('app.menu', { keyboard: true })
       }),
       onEvent('toast', ({ message, kind }) => pushToast(message, kind)),
       onEvent('status', ({ text }) => uiStore.set({ statusText: text })),
       onEvent('sidebar.toggle', () => window.dispatchEvent(new CustomEvent('zen-sidebar-toggle'))),
+      onEvent('tab.dragOver', (over) => remoteDragOver(over)),
       onEvent('tab.startRename', ({ tabId }) => uiStore.set({ renamingTabId: tabId })),
       onEvent('folder.startRename', ({ folderId }) => uiStore.set({ renamingFolderId: folderId })),
       onEvent('tab.editPinnedUrl', ({ tabId }) => uiStore.set({ editingPinnedUrlTabId: tabId })),

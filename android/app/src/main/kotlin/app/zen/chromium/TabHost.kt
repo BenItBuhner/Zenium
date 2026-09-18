@@ -65,6 +65,8 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         view.host = host
         view.installPageScript()
         view.applyPullToRefreshMode()
+        // A page that lived in a custom tab had no extension layer; the browser window's takes it over.
+        host.extensions?.attach(view)
         view.tabId = viewId
         view.visibility = View.GONE
         view.translationX = 0f

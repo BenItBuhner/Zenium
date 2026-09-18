@@ -43,6 +43,21 @@ enum class ResourceType(val dnrName: String) {
             SCRIPT.bit or XMLHTTPREQUEST.bit or FONT.bit or MEDIA.bit or OBJECT.bit or PING.bit or OTHER.bit
 
         /**
+         * The type bits a filter's type condition is tested against for a request whose
+         * candidate mask is `requestMask`. A request of unknown type carries [AMBIGUOUS_MASK] so
+         * that a filter for any of those types applies to it – a filter for `||tracker.example^`
+         * beacons should also stop a fetch to that host. A filter with no URL pattern, request
+         * host or site to it (`unscoped`: EasyPrivacy's `*$ping,third-party`, a rule whose only
+         * condition is `resourceTypes`) selects requests by type alone, and matched on any shared
+         * bit it would apply to every fetch of every page for a type most of them are not (that
+         * one line blocked every third-party `fetch` and XHR on the emulator, YouTube's own
+         * included). Such a filter is tested against the one type an unknown request most likely
+         * is: `xmlhttprequest`.
+         */
+        fun candidateMask(requestMask: Int, unscoped: Boolean): Int =
+            if (unscoped && requestMask == AMBIGUOUS_MASK) XMLHTTPREQUEST.bit else requestMask
+
+        /**
          * Android's `WebResourceRequest` carries no resource type, so it is inferred the way other
          * WebView blockers do: the main-frame flag, then the renderer's `Accept` header (documents,
          * stylesheets and images announce themselves), then the file extension. Null when nothing

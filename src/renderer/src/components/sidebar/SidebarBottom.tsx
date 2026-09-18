@@ -173,8 +173,9 @@ function SpaceIcon({
         active
           ? 'bg-[var(--zen-element-bg-active)] opacity-100'
           : 'opacity-45 hover:opacity-90 hover:bg-[var(--zen-element-bg)]',
-        isDrop && 'ring-2 ring-[var(--zen-accent)] opacity-100'
+        isDrop && 'opacity-100'
       )}
+      data-drop-into={isDrop || undefined}
       title={space.name}
       onClick={() => run('space.activate', { spaceId: space.id })}
       onContextMenu={(e) => {

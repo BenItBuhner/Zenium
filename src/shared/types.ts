@@ -88,6 +88,12 @@ export interface HostCapabilities {
    */
   pageControls: boolean
   /**
+   * Extensions run, but their content scripts share the page's world (an Android WebView below
+   * Chromium 146 has no isolated worlds; the emulation layer falls back to a scope proxy). Pages
+   * can then observe the scripts' DOM work; the extensions UI says so.
+   */
+  reducedExtensionIsolation: boolean
+  /**
    * Private browsing as tabs inside the one window (`tab.newPrivate`): hosts without separate
    * windows. Desktop hosts offer private windows instead (`windows`).
    */
@@ -99,6 +105,11 @@ export interface Rect {
   y: number
   width: number
   height: number
+}
+
+export interface Point {
+  x: number
+  y: number
 }
 
 // ---------------------------------------------------------------------------
@@ -216,6 +227,11 @@ export interface Tab {
   muted: boolean
   /** True when the tab has no live WebContents (Zen calls these "pending"/unloaded tabs). */
   discarded: boolean
+  /**
+   * Memory (MB) the page held when it was put to sleep, for the sleeping tab's tooltip; absent
+   * when the host could not tell (or the tab was never loaded this session).
+   */
+  sleepSavedMb?: number
   /** Page lifecycle frozen by the resource governor (no timers, no script) – Chromium tab freezing. */
   frozen: boolean
   /** CPU throttling factor the governor applied to the renderer (1 = none, 4 = four times slower). */
@@ -885,6 +901,13 @@ export interface KeyBinding {
   key: string
 }
 
+/**
+ * Which default binding table the shortcuts start from: Chrome's and Edge's chords (`chrome`,
+ * the default) or the Zen Browser set Zenium grew up with (`zen`). User overrides sit on top
+ * of either.
+ */
+export type ShortcutPreset = 'chrome' | 'zen'
+
 export type ShortcutAction =
   | 'compact.toggle'
   | 'compact.toggleSidebar'
@@ -911,6 +934,8 @@ export type ShortcutAction =
   | 'tab.togglePin'
   | 'tab.resetPinned'
   | 'tab.duplicate'
+  /** Chrome's tab search (Ctrl+Shift+A); reserved, does nothing until the tab search ships. */
+  | 'tab.search'
   | 'sidebar.toggle'
   | 'glance.expand'
   | 'space.new'
@@ -921,7 +946,10 @@ export type ShortcutAction =
   | 'window.newUnsynced'
   | 'window.newPrivate'
   | 'window.close'
+  | 'window.minimize'
   | 'app.quit'
+  /** Open the application menu from the keyboard (Alt+F / F10 on Windows and Linux). */
+  | 'menu.app'
   | 'tab.next'
   | 'tab.prev'
   | 'tab.select1'
@@ -950,7 +978,11 @@ export type ShortcutAction =
   | 'find.open'
   | 'find.next'
   | 'find.prev'
+  /** Chrome's "Use Selection for Find" (Cmd+E on macOS). */
+  | 'find.useSelection'
   | 'page.savePage'
+  | 'page.openFile'
+  | 'page.emailLink'
   | 'page.print'
   | 'page.viewSource'
   | 'page.fullscreen'
@@ -988,6 +1020,8 @@ export interface Shortcut {
   extraBindings: KeyBinding[]
   /** Actions this build cannot perform yet (kept so the list matches Zen 1:1). */
   unsupported?: boolean
+  /** Reserved for a feature that has not shipped: bound (a no-op) but left out of the list. */
+  hidden?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -1070,6 +1104,11 @@ export interface Settings {
   unloadEnabled: boolean
   unloadTimeoutMinutes: number
   unloadExcludedDomains: string[]
+  /**
+   * Hosts the user chose "Mute Site" for (lower-case hostnames without `www.`): every tab on
+   * such a host is muted, new pages of the host start muted, and leaving the host lifts the mute.
+   */
+  mutedHosts: string[]
   searchEngineId: string
   searchSuggestions: boolean
   /**
@@ -1117,6 +1156,11 @@ export interface Settings {
   pageControls: PageControlsSettings
   /** The bookmarks bar above the content frame: always, only on the new tab page, or never. */
   bookmarksBar: BookmarksBarMode
+  /**
+   * Which built-in key table the user's overrides sit on. New profiles follow Chrome; a profile
+   * from before the setting existed keeps the Zen set when it had customised bindings.
+   */
+  shortcutPreset: ShortcutPreset
 }
 
 // ---------------------------------------------------------------------------
@@ -1508,6 +1552,16 @@ export interface MediaState {
   playing: boolean
 }
 
+/** A tab from another window being dragged over this one (`tab.dragOver`). */
+export interface TabDragOver {
+  tabId: string
+  title: string
+  favicon: string | null
+  /** Pointer position in this window's chrome (CSS px). */
+  x: number
+  y: number
+}
+
 // ---------------------------------------------------------------------------
 // Security: blocked pop-ups, site rules, HTTP authentication, client certificates
 // ---------------------------------------------------------------------------
@@ -1829,6 +1883,8 @@ export interface CommandDescriptor {
     | 'downloads.open'
     | 'tab.freezeOthers'
     | 'tab.wakeAll'
+    | 'tab.moveToNewWindow'
+    | 'page.toggleMuteSite'
     | 'resources.trim'
     | 'resources.open'
   /** The host capability the command needs; not offered where it is false. */
@@ -1856,7 +1912,16 @@ export interface MenuDescriptor {
   id: string
   items: MenuItemDescriptor[]
   source:
-    'page' | 'tab' | 'selection' | 'space' | 'folder' | 'newtab' | 'app' | 'bookmark' | 'history'
+    | 'page'
+    | 'tab'
+    | 'selection'
+    | 'space'
+    | 'folder'
+    | 'newtab'
+    | 'app'
+    | 'bookmark'
+    | 'history'
+    | 'urlbar'
   /** Anchor in chrome CSS pixels, when known. */
   x: number | null
   y: number | null
@@ -1941,6 +2006,8 @@ export interface Commands {
   'tab.reload': { args: { tabId: string; skipCache?: boolean }; result: void }
   'tab.stop': { args: { tabId: string }; result: void }
   'tab.toggleMute': { args: { tabId: string }; result: void }
+  /** "Mute Site" / "Unmute Site": every tab of the host, remembered in `settings.mutedHosts`. */
+  'tab.toggleMuteSite': { args: { tabId: string }; result: void }
   'tab.togglePin': { args: { tabId: string }; result: void }
   'tab.toggleEssential': { args: { tabId: string }; result: void }
   'tab.resetPinned': { args: { tabId: string }; result: void }
@@ -1956,6 +2023,36 @@ export interface Commands {
   }
   'tab.moveToSpace': { args: { tabId: string; spaceId: string }; result: void }
   'tab.moveToFolder': { args: { tabId: string; folderId: string | null }; result: void }
+  /**
+   * A sidebar drag let go over a drop target of this window. `key` is the target's `data-drop`
+   * (`tab:<id>:before|after`, `section:<section>:<spaceId>`, `folder:<id>`, `space:<id>`,
+   * `split:<side>`, `bookmark:<folderId>:<index>`); the core resolves it against the model.
+   */
+  'tab.drop': { args: { tabId: string; key: string }; result: void }
+  /** A sidebar tab drag began in this window (the core tracks it across windows from here on). */
+  'tab.dragStart': { args: { tabId: string }; result: void }
+  /**
+   * The pointer moved during a tab drag. `x`/`y` are chrome coordinates of this window (they run
+   * past its edges while the pointer is outside it); `inSidebar` is true while the pointer is
+   * over this window's own sidebar, where no other window can be the target.
+   */
+  'tab.dragMove': {
+    args: { tabId: string; x: number; y: number; inSidebar: boolean }
+    result: void
+  }
+  /** The window a drag from another window hovers reports the drop target under the pointer. */
+  'tab.dragTarget': { args: { tabId: string; key: string | null }; result: void }
+  /**
+   * The drag ended outside this window's drop targets (chrome coordinates as for `tab.dragMove`):
+   * `release` moves the tab into the other Zenium window under the pointer or tears it off into
+   * a new window there; `cancel` (Escape) just ends the drag.
+   */
+  'tab.dragEnd': {
+    args: { tabId: string; x: number; y: number; outcome: 'release' | 'cancel' }
+    result: void
+  }
+  /** "Move Tab to New Window" from the tab menu: the new window opens beside this one. */
+  'tab.moveToNewWindow': { args: { tabId: string }; result: void }
   /** Restore the newest recently closed entry (a window entry as a whole window). */
   'tab.reopenClosed': { args: void; result: void }
   /** The tab's back/forward stack for the long-press list on the back / forward buttons. */
@@ -2029,7 +2126,12 @@ export interface Commands {
   'folder.delete': { args: { folderId: string; unpack: boolean }; result: void }
   'folder.contextMenu': { args: { folderId: string }; result: void }
   'newtab.contextMenu': { args: void; result: void }
-  'app.menu': { args: void; result: void }
+  /**
+   * The "⋯" application menu. `anchor` is the menu button in chrome CSS pixels: the menu opens
+   * along its bottom edge; without it the menu opens at the pointer. `keyboard` marks a menu
+   * opened by a shortcut, whose first item starts selected.
+   */
+  'app.menu': { args: { anchor?: Rect; keyboard?: boolean }; result: void }
   /** Renderer-hosted menus: an item was picked / the menu was dismissed. */
   'menu.click': { args: { menuId: string; itemId: string }; result: void }
   'menu.close': { args: { menuId: string }; result: void }
@@ -2132,7 +2234,13 @@ export interface Commands {
 
   'settings.update': { args: Partial<Settings>; result: void }
   'shortcuts.update': { args: { id: string; binding: KeyBinding | null }; result: void }
+  /** Drop every override: the table goes back to the active preset. */
   'shortcuts.reset': { args: void; result: void }
+  /**
+   * The Settings recorder is (or stopped) listening for a chord: while it is, key presses in the
+   * chrome are captured by the renderer and no shortcut runs.
+   */
+  'shortcuts.recording': { args: { recording: boolean }; result: void }
   'sidebar.setWidth': { args: { width: number }; result: void }
   'sidebar.toggleExpanded': { args: void; result: void }
 
@@ -2579,7 +2687,13 @@ export interface Events {
   'urlbar.toggle': { mode: UrlbarOpenMode; text?: string }
   'urlbar.close': void
   'overlay.open': { kind: OverlayKind; folderId?: string; section?: string }
-  'find.open': { tabId: string; again?: 'next' | 'prev' }
+  /** Open the find bar; `text` replaces what it holds and is searched for at once ("use selection for find"). */
+  'find.open': { tabId: string; again?: 'next' | 'prev'; text?: string }
+  /**
+   * A shortcut asked for the application menu: the renderer focuses the menu button and opens
+   * the menu from it (`app.menu` with `keyboard`), so Escape leaves the keyboard on the button.
+   */
+  'menu.app': void
   /**
    * A download row changed. `progress` is throttled to 4 Hz per item, state changes arrive at
    * once; `done` covers completed, cancelled and interrupted (read `item.state`). Private items
@@ -2596,6 +2710,11 @@ export interface Events {
   'theme.open': { spaceId: string }
   'space.new': void
   'tab.startRename': { tabId: string }
+  /**
+   * A tab dragged from another window hovers this one: show its ghost at the given chrome
+   * coordinates and light up the drop target under it (null once it leaves or the drag ends).
+   */
+  'tab.dragOver': TabDragOver | null
   'folder.startRename': { folderId: string }
   /** Open the pinned-URL editor for a pinned/essential tab. */
   'tab.editPinnedUrl': { tabId: string }

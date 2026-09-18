@@ -66,10 +66,20 @@ export interface ExtensionPopupState {
   shown: boolean
 }
 
+/** A sidebar tab in the hand (see lib/drag.ts); the ghost and caret are placed imperatively. */
 export interface DragState {
   tabId: string
-  x: number
-  y: number
+  /** The drag began in another window (the core relays it); the tab may not be in this list. */
+  remote: boolean
+  title: string
+  favicon: string | null
+  /** The lifted row's size; the ghost is drawn at it. */
+  width: number
+  height: number
+  /** An Essentials tile was lifted (the ghost is a tile, not a row). */
+  tile: boolean
+  /** The pointer let go: the ghost is settling into its slot or dissolving. */
+  settling: boolean
 }
 
 export interface Insets {
@@ -89,6 +99,8 @@ export interface UiState {
   urlbar: UrlbarState
   findOpen: boolean
   findTabId: string | null
+  /** Text the find bar starts with when it opens next (the page selection); consumed on mount. */
+  findSeed: string | null
   /** Data URL of the active tab, shown dimmed behind overlays. */
   snapshot: string | null
   snapshotTabId: string | null
@@ -179,6 +191,7 @@ export const uiStore = createStore<UiState>(
     urlbar: { open: false, mode: 'new-tab', tabId: null, initialText: undefined, attached: false },
     findOpen: false,
     findTabId: null,
+    findSeed: null,
     snapshot: null,
     snapshotTabId: null,
     toasts: [],

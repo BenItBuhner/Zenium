@@ -113,6 +113,14 @@ export class ElectronWindow implements WindowHost {
       if (direction === 'left') browser.actions.run('space.next', { sourceTabId: null, win: zen })
       if (direction === 'right') browser.actions.run('space.prev', { sourceTabId: null, win: zen })
     })
+    // The mouse's back and forward buttons (Windows: WM_APPCOMMAND; Linux: buttons 8 and 9),
+    // wherever in the window they are pressed, navigate the active tab like Chrome's do.
+    win.on('app-command', (_e, command) => {
+      if (command === 'browser-backward')
+        browser.actions.run('nav.back', { sourceTabId: null, win: zen })
+      else if (command === 'browser-forward')
+        browser.actions.run('nav.forward', { sourceTabId: null, win: zen })
+    })
     win.on('close', () => {
       if (this.boundsTimer) clearTimeout(this.boundsTimer)
       zen.onClosing()
@@ -142,7 +150,17 @@ export class ElectronWindow implements WindowHost {
       return { action: 'deny' }
     })
     wc.on('will-navigate', (event) => event.preventDefault())
-    wc.on('context-menu', (event) => event.preventDefault())
+    // The chrome's rows show their menus themselves (and cancel the DOM event, which keeps this
+    // one from firing); what reaches here is a text field, the URL bar or plain chrome.
+    wc.on('context-menu', (_event, params) =>
+      zen.onContextMenu({
+        x: params.x,
+        y: params.y,
+        isEditable: params.isEditable,
+        selectionText: params.selectionText,
+        editFlags: params.editFlags
+      })
+    )
     // The chrome document's <title> is a constant "Zenium"; keep Electron from copying it over the
     // per-window title the core sets (active tab name) via setTitle. This has to be the window's
     // event: BrowserWindow applies the title right after emitting it unless it was prevented.
@@ -180,6 +198,29 @@ export class ElectronWindow implements WindowHost {
 
   openChromeDevTools(): void {
     if (this.alive) this.win.webContents.openDevTools({ mode: 'detach' })
+  }
+
+  /** The `data-zen-menu` element under a chrome point, read from the chrome document itself. */
+  async menuTargetAt(
+    x: number,
+    y: number
+  ): Promise<{ target: string; tabId: string | null } | null> {
+    if (!this.alive) return null
+    const result: unknown = await this.win.webContents
+      .executeJavaScript(
+        `(() => {
+          const hit = document.elementFromPoint(${Math.round(x)}, ${Math.round(y)});
+          const el = hit && hit.closest('[data-zen-menu]');
+          if (!el) return null;
+          return { target: el.getAttribute('data-zen-menu'), tabId: el.getAttribute('data-zen-menu-tab') || null };
+        })()`,
+        true
+      )
+      .catch(() => null)
+    if (!result || typeof result !== 'object') return null
+    const hit = result as { target?: unknown; tabId?: unknown }
+    if (typeof hit.target !== 'string') return null
+    return { target: hit.target, tabId: typeof hit.tabId === 'string' ? hit.tabId : null }
   }
 
   contentSize(): { width: number; height: number } {
@@ -238,6 +279,13 @@ export class ElectronWindow implements WindowHost {
 
   normalBounds(): Rect | null {
     return this.alive ? this.win.getNormalBounds() : null
+  }
+
+  /** The chrome document's place on the screen (DIP); the frameless window has no frame to add. */
+  contentBounds(): Rect | null {
+    return this.alive && this.win.isVisible() && !this.win.isMinimized()
+      ? this.win.getContentBounds()
+      : null
   }
 
   setCaptionColors(colors: CaptionColors): void {

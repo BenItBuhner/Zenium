@@ -30,6 +30,7 @@ const DESKTOP: HostCapabilities = {
   passwords: true,
   defaultBrowser: false,
   requestBlocking: true,
+  reducedExtensionIsolation: false,
   pageControls: false,
   privateTabs: false,
   windowControlsOverlay: false,

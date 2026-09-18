@@ -59,7 +59,13 @@ import readabilityJs from '@mozilla/readability/Readability.js?raw'
 import readabilityReaderableJs from '@mozilla/readability/Readability-readerable.js?raw'
 import type { AgentHttpRequest, AgentHttpResponse } from '@core/agent/http'
 import type { Bridge } from './bridge'
-import { AndroidExtensions } from './extensionHost'
+import type { AndroidExtensions } from './extensionHost'
+import {
+  AndroidExtensionsWithRuntime,
+  AndroidExtensionRuntime,
+  type ExtMessageEvent,
+  type ExtRequestEvent
+} from './extensionRuntime'
 import { AndroidExtensionStoreIo } from './extensionStoreIo'
 import { AndroidSiteData } from './siteData'
 import { AndroidTranslateHost, type TranslateProgressEvent } from './translate'
@@ -74,6 +80,11 @@ export interface AndroidCapabilityInputs {
   /** Kotlin named the extension install root: the store and the registry are there to use. */
   extensions: boolean
   /**
+   * The WebView injects into named isolated worlds (Chromium 146+, androidx.webkit 1.17). Without
+   * them content scripts run in the page's world behind a scope proxy: reduced isolation.
+   */
+  isolatedWorlds: boolean
+  /**
    * The WebView keeps separate profiles (Chrome 111+): containers and the private session have
    * cookies, storage and cache of their own. Without it a "private" tab would browse on the
    * default profile, so none is offered. Absent from an older boot payload: taken as supported.
@@ -85,6 +96,7 @@ export interface AndroidCapabilityInputs {
 export function androidCapabilities({
   sdkInt,
   extensions,
+  isolatedWorlds,
   profiles = true
 }: AndroidCapabilityInputs): HostCapabilities {
   return {
@@ -112,6 +124,7 @@ export function androidCapabilities({
     defaultBrowser: true,
     requestBlocking: true,
     pageControls: true,
+    reducedExtensionIsolation: extensions && !isolatedWorlds,
     // One window: private browsing is a tab in it, on a throwaway WebView profile.
     privateTabs: profiles
   }
@@ -195,6 +208,11 @@ export interface BootInfo {
    * preview host, which has no files and therefore no extensions).
    */
   extensionsRoot?: string
+  /**
+   * The WebView can inject scripts into named isolated worlds (`Extensions.isolatedWorlds`, read
+   * once at start): decides the `reducedExtensionIsolation` capability before any extension runs.
+   */
+  isolatedWorlds?: boolean
   insets: { top: number; right: number; bottom: number; left: number }
   fullscreen: boolean
   /** Screen class, peripherals and font scale for the page controls (absent in old hosts). */
@@ -283,6 +301,19 @@ export interface HostEventPayloads {
    * chrome is still booting is not lost: the store collects the queue when it starts, too.
    */
   'extension.sideload': { count: number }
+  /** A bridge message from a content-script frame or an extension page (`ext/Extensions.kt`). */
+  'ext.message': ExtMessageEvent
+  /** Endpoints whose frame or page went away. */
+  'ext.gone': { eps: string[] }
+  /** The popup / options sheet was dismissed (back gesture, a tap outside, `window.close()`). */
+  'ext.popupClosed': { id: string }
+  /** One intercepted request, while an extension listens for `webRequest` events. */
+  'ext.request': ExtRequestEvent
+  /**
+   * A tab running an extension's `identity.launchWebAuthFlow` was about to navigate back to
+   * `https://<id>.chromiumapp.org/…`: Kotlin cancelled the load and the URL is the flow's result.
+   */
+  'ext.identityRedirect': { tabId: string; url: string }
   /** Bytes of a translation model file arriving (`translate.download` in flight). */
   'translate.progress': TranslateProgressEvent
 }
@@ -665,6 +696,8 @@ export class AndroidPlatform implements Platform {
   /** `files/zen/extensions` when Kotlin has one; the preview host installs nothing. */
   private readonly extensionsRoot: string | null
   private extensions: AndroidExtensions | null = null
+  /** The runtime behind the store, once `createExtensions` built it (null in the preview host). */
+  private extensionRuntime: AndroidExtensionRuntime | null = null
   private readonly bootEnvironment: PageEnvironment | null
 
   constructor(
@@ -676,6 +709,7 @@ export class AndroidPlatform implements Platform {
     this.capabilities = androidCapabilities({
       sdkInt: boot.sdkInt,
       extensions: this.extensionsRoot !== null,
+      isolatedWorlds: boot.isolatedWorlds === true,
       profiles: boot.profiles
     })
     this.bootEnvironment = boot.environment ?? null
@@ -804,14 +838,17 @@ export class AndroidPlatform implements Platform {
   }
 
   /**
-   * The extension store (`extensionHost.ts`): installs from the stores and from files into
-   * `files/zen/extensions`, the registry, updates. Without an install root (the preview host)
-   * the built-in stand-in answers, and the capability above keeps the UI away.
+   * The extension store (`extensionHost.ts`) with the runtime (`extensionRuntime.ts`) behind it:
+   * the store installs from the stores and from files into `files/zen/extensions`, keeps the
+   * registry and updates; the runtime runs what the store hands over. Without an install root
+   * (the preview host) the built-in stand-in answers, and the capability above keeps the UI away.
    */
   createExtensions(browser: Browser): ExtensionHost {
     if (this.extensionsRoot === null) return new NoExtensions(browser)
     const io = new AndroidExtensionStoreIo(this.bridge, this.extensionsRoot)
-    this.extensions = new AndroidExtensions(browser, io)
+    const runtime = new AndroidExtensionRuntime(this.bridge, browser, () => this.window)
+    this.extensionRuntime = runtime
+    this.extensions = new AndroidExtensionsWithRuntime(browser, io, runtime)
     return this.extensions
   }
 
@@ -838,6 +875,8 @@ export class AndroidPlatform implements Platform {
     const view = this.views.get(tabId)
     if (!view) return
     view.dispatch(name, payload)
+    // After the core, so `tabs.onUpdated` carries the tab as the core now sees it.
+    this.extensionRuntime?.onViewEvent(tabId, name, payload)
     if (name === 'destroyed') this.views.forget(tabId)
   }
 
@@ -1026,6 +1065,23 @@ export class AndroidPlatform implements Platform {
         // Without a store (the preview host) the packages stay queued in Kotlin's cache and are
         // swept with the next start.
         if (this.extensions) void this.extensions.installPending(this.window)
+        return
+      case 'ext.message':
+        this.extensionRuntime?.onMessage(payload as HostEventPayloads['ext.message'])
+        return
+      case 'ext.gone':
+        this.extensionRuntime?.onGone((payload as HostEventPayloads['ext.gone']).eps)
+        return
+      case 'ext.popupClosed':
+        this.extensionRuntime?.onPopupClosed()
+        return
+      case 'ext.request':
+        this.extensionRuntime?.onRequest(payload as HostEventPayloads['ext.request'])
+        return
+      case 'ext.identityRedirect':
+        this.extensionRuntime?.onIdentityRedirect(
+          payload as HostEventPayloads['ext.identityRedirect']
+        )
         return
       case 'translate.progress':
         this.translate.onProgress(payload as HostEventPayloads['translate.progress'])

@@ -32,6 +32,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import app.zen.chromium.ext.Extensions
 import app.zen.chromium.blocking.Blocking
 import app.zen.chromium.ext.ExtensionStore
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
@@ -72,6 +73,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     val launcherIcon = LauncherIcon(activity)
     override val pageToken: String = SecureRandom().let { r -> ByteArray(16).also(r::nextBytes).joinToString("") { "%02x".format(it) } }
     override val pageScript: String = activity.assets.open("page.js").bufferedReader().readText().replace("__ZEN_TOKEN__", pageToken)
+    /** The extension runtime's Kotlin half: created before the tabs so their WebViews can attach. */
+    override val extensions: Extensions = Extensions(this)
     /** The core's page-controls policy (desktop site, dark theme for sites, zoom), mirrored per navigation. */
     override var pageRules: PageRules = PageRules.NONE
         private set
@@ -140,6 +143,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "downloadsDir" to (Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)?.absolutePath ?: ""),
             // Where the extension store installs; its presence turns the extensions capability on.
             "extensionsRoot" to extStore.root.absolutePath,
+            // Whether content scripts get real isolated worlds (decided once, when the runtime was built).
+            "isolatedWorlds" to extensions.isolatedWorlds,
             "insets" to activity.currentInsets(),
             "fullscreen" to immersive,
             "environment" to activity.environment()
@@ -341,8 +346,22 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "translate.cancel" -> { translate.cancel(args.str("token")); reply(null) }
             "translate.delete" -> translate.delete(args.arr("names"), reply)
 
-            else -> throw IllegalArgumentException("Unknown method: $method")
+            // The extension runtime's methods (ext/Extensions.kt; the contract is src/android/extensionRuntime.ts).
+            else -> if (method.startsWith("ext.")) extensions.handle(method, args, reply) else throw IllegalArgumentException("Unknown method: $method")
         }
+    }
+
+    /**
+     * Keep a WebView alive without showing it (extension background pages). It sits behind the
+     * chrome at one pixel: a view that is not attached, or invisible, counts as hidden to the
+     * renderer and gets background timer throttling, which a background page must not.
+     */
+    fun attachHidden(view: View) {
+        root.addView(view, 0, FrameLayout.LayoutParams(1, 1))
+    }
+
+    fun detachHidden(view: View) {
+        root.removeView(view)
     }
 
     /** Marker so `encodeResult` passes pre-encoded JSON through untouched. */
@@ -848,6 +867,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     }
 
     fun destroy() {
+        extensions.destroy()
         cancelProbe()
         agentServer.stop()
         downloads.destroy()

@@ -14,6 +14,9 @@ export class KeyboardHandler {
   handle(input: KeyEventInput, sourceTabId: string | null, win: ZenWindow): boolean {
     if (input.type !== 'keyDown') return false
     if (isModifierKey(input.key)) return false
+    // The Settings recorder owns the chrome's keys while it listens: the chord it records must
+    // not also run (BUG-044). Pages keep their shortcuts; the recorder has no focus there.
+    if (win.recordingShortcut && sourceTabId === null) return false
 
     const shortcut = matchShortcut(this.browser.state.shortcuts, input)
     if (shortcut) {

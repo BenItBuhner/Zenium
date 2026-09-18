@@ -23,6 +23,7 @@ import android.view.PixelCopy
 import android.view.View
 import android.view.ViewOutlineProvider
 import android.webkit.ClientCertRequest
+import android.webkit.ConsoleMessage
 import android.webkit.GeolocationPermissions
 import android.webkit.HttpAuthHandler
 import android.webkit.JavascriptInterface
@@ -109,6 +110,14 @@ class TabWebView(
     private var lastDeviceWidth = 0
     var muted = false
         private set
+    /**
+     * The main-frame URL as last reported by the WebViewClient; readable from any thread
+     * (`shouldInterceptRequest` runs on a network thread where `getUrl()` must not be called).
+     */
+    val currentUrl: String? get() = currentDocument
+
+    /** The last console warnings and errors of the page (extension diagnostics). */
+    val console = ArrayDeque<String>()
     /** The `domReady` view event, once per document (see `DomReadyGate`). */
     private val domReady = DomReadyGate()
     /** `onPageStarted` fired for a document whose commit `doUpdateVisitedHistory` has not reported yet. */
@@ -192,6 +201,12 @@ class TabWebView(
         // Mouse right-click / stylus button (DeX, tablets) opens the same menu as a long-press.
         setOnContextClickListener { onLongPress() }
         installPageScript()
+        host.extensions?.attach(this)
+    }
+
+    override fun destroy() {
+        host.extensions?.detach(this)
+        super.destroy()
     }
 
     // --- placement ------------------------------------------------------------------------------
@@ -931,10 +946,13 @@ class TabWebView(
         /**
          * The engine's word on a main-frame navigation: true when it took the navigation over
          * (onto the Zenium blocked page, or to the redirect target), false when the page may go.
+         * An extension's web-auth flow running in this tab ends on its way back first: that
+         * navigation is the flow's result and is never loaded.
          */
         private fun interceptNavigation(request: WebResourceRequest): Boolean {
             if (!request.isForMainFrame) return false
             val target = request.url.toString()
+            if (host.extensions?.interceptNavigation(this@TabWebView, target) == true) return true
             val decision = host.blocking.decideNavigation(this@TabWebView, target)
             when (decision.action) {
                 Decision.Action.BLOCK -> {
@@ -954,8 +972,13 @@ class TabWebView(
             return false
         }
 
+        /**
+         * Network thread. The extension layer answers first: it serves the extension origins and,
+         * until W2-3 moves declarativeNetRequest onto the request engine, decides its rules; anything
+         * it leaves alone goes to the request engine.
+         */
         override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
-            host.blocking.intercept(this@TabWebView, request)
+            host.extensions?.intercept(request, this@TabWebView, null) ?: host.blocking.intercept(this@TabWebView, request)
 
         override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
             // Navigations with no link click ahead of them (forms, history.back(), redirects).
@@ -971,6 +994,7 @@ class TabWebView(
             // Darkening for the page that is coming, before its first paint; the core confirms.
             if (PageRules.isWebPage(url)) setDarkening(host.pageRules.darken(url))
             failPendingEvals("the page navigated away before the script finished")
+            host.extensions?.onDocumentGone(this@TabWebView, url)
             host.viewEvent(tabId, "startLoading", null)
             if (muted) setMuted(true)
         }
@@ -1070,6 +1094,17 @@ class TabWebView(
 
         override fun onProgressChanged(view: WebView, newProgress: Int) {
             host.progress(tabId, newProgress)
+        }
+
+        /** Warnings and errors only, for the extension layer's diagnostics (pages log a lot). */
+        override fun onConsoleMessage(message: ConsoleMessage): Boolean {
+            if (message.messageLevel() == ConsoleMessage.MessageLevel.ERROR || message.messageLevel() == ConsoleMessage.MessageLevel.WARNING) {
+                synchronized(console) {
+                    console.addLast("${message.messageLevel()} ${message.sourceId()}:${message.lineNumber()} ${message.message()}")
+                    while (console.size > 100) console.removeFirst()
+                }
+            }
+            return false
         }
 
         override fun onReceivedIcon(view: WebView, icon: Bitmap) {

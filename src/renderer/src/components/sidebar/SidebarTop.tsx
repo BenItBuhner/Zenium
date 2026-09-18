@@ -1,5 +1,5 @@
 import type { JSX, ReactNode } from 'react'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   ArrowLeft,
   ArrowRight,
@@ -23,6 +23,7 @@ import { useElementWidth } from '@renderer/hooks/useElementWidth'
 import { run } from '@renderer/lib/api'
 import { isPrivateWindow } from '@renderer/lib/selectors'
 import { openSiteInfo } from '@renderer/lib/siteInfo'
+import { APP_MENU_EVENT, hint, openAppMenu } from '@renderer/lib/shortcuts'
 import { openOverlay, openUrlbar, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { StarChip } from '../bookmarks/StarChip'
@@ -105,6 +106,20 @@ export function NavRow({
     })
   const tree = useBookmarkTree(state)
   const bookmarked = Boolean(tab && isWebPage && tree.hasUrl(tab.url))
+  const menuButton = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    // Alt+F / F10: the menu opens from this button with the keyboard on it, so Escape closes
+    // the menu and leaves the focus here (design language v2 §9.22).
+    const fromKeyboard = (e: Event): void => {
+      const button = menuButton.current
+      if (!button || e.defaultPrevented || button.offsetParent === null) return
+      e.preventDefault()
+      button.focus()
+      openAppMenu(button, true)
+    }
+    window.addEventListener(APP_MENU_EVENT, fromKeyboard)
+    return () => window.removeEventListener(APP_MENU_EVENT, fromKeyboard)
+  }, [])
   return (
     <div
       ref={row}
@@ -115,7 +130,7 @@ export function NavRow({
     >
       <NavigationButton
         tab={tab}
-        title="Back (Alt+←)"
+        title={hint('Back', state, 'nav.back')}
         enabled={Boolean(tab?.canGoBack)}
         command="tab.back"
       >
@@ -123,7 +138,7 @@ export function NavRow({
       </NavigationButton>
       <NavigationButton
         tab={tab}
-        title="Forward (Alt+→)"
+        title={hint('Forward', state, 'nav.forward')}
         enabled={Boolean(tab?.canGoForward)}
         command="tab.forward"
       >
@@ -132,8 +147,10 @@ export function NavRow({
       <button
         type="button"
         className="zen-toolbar-button"
-        title={tab?.loading ? 'Stop (Esc)' : 'Reload (Ctrl+R)'}
+        title={tab?.loading ? 'Stop (Esc)' : hint('Reload', state, 'nav.reload')}
         disabled={!tab}
+        data-zen-menu="reload"
+        data-zen-menu-tab={tab?.id}
         onClick={() =>
           tab &&
           (tab.loading ? run('tab.stop', { tabId: tab.id }) : run('tab.reload', { tabId: tab.id }))
@@ -155,6 +172,8 @@ export function NavRow({
           aria-label="Address"
           className="zen-squircle zen-pill group/pill mx-0.5 flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-[10px] bg-[var(--zen-element-bg)] px-2.5 text-left hover:bg-[var(--zen-element-bg-hover)]"
           title={tab?.url ?? 'Search or enter address'}
+          data-zen-menu="urlpill"
+          data-zen-menu-tab={tab?.id}
           onClick={openField}
         >
           <button
@@ -246,9 +265,11 @@ export function NavRow({
             {tab && (tab.readerable || isReader) && (
               <PillChip
                 label="Reader View"
-                title={
-                  isReader ? 'Exit Reader View (Ctrl+Alt+R)' : 'Enter Reader View (Ctrl+Alt+R)'
-                }
+                title={hint(
+                  isReader ? 'Exit Reader View' : 'Enter Reader View',
+                  state,
+                  'page.readerMode'
+                )}
                 pressed={isReader}
                 className={cn(
                   'flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
@@ -279,14 +300,24 @@ export function NavRow({
             {url && (
               <PillChip
                 label="Copy URL"
-                title="Copy URL (Ctrl+Shift+C)"
+                title={hint('Copy URL', state, 'tab.copyUrl')}
                 className="zen-pill-extra hidden h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)] group-hover/pill:flex group-focus-within/chips:flex"
                 onActivate={() => tab && run('tab.copyUrl', { tabId: tab.id })}
               >
                 <Copy className="h-3 w-3" />
               </PillChip>
             )}
-            {tab && isWebPage && <StarChip tab={tab} filled={bookmarked} />}
+            {tab && isWebPage && (
+              <StarChip
+                tab={tab}
+                filled={bookmarked}
+                title={hint(
+                  bookmarked ? 'Edit bookmark' : 'Bookmark this tab',
+                  state,
+                  'bookmark.add'
+                )}
+              />
+            )}
           </span>
         </div>
       )}
@@ -297,10 +328,12 @@ export function NavRow({
         compact={compact}
       />
       <button
+        ref={menuButton}
         type="button"
         className="zen-toolbar-button"
-        title="Menu"
-        onClick={() => run('app.menu', undefined)}
+        title={hint('Menu', state, 'menu.app')}
+        aria-haspopup="menu"
+        onClick={() => openAppMenu(menuButton.current)}
       >
         <MoreHorizontal className="h-4 w-4" />
       </button>

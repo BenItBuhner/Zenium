@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Zenium extension frames page</title>
+    <link rel="stylesheet" href="probe-page.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Zenium extension frames</h1>
+      <p>
+        A page with one same-origin iframe. The probe extension's frame script runs in the
+        iframe alone; its background then injects into the iframe by frame id, and into every
+        frame at once.
+      </p>
+      <iframe id="inner" src="frame-inner.html" title="inner frame" width="360" height="160"></iframe>
+    </main>
+  </body>
+</html>
