@@ -5,10 +5,10 @@ import { Check, ChevronDown } from 'lucide-react'
 import { useEscape } from '@renderer/hooks/useEscape'
 import { useFloatingChrome } from '@renderer/hooks/useFloatingChrome'
 import { useArrowKeys, usePopover } from '@renderer/hooks/usePopover'
-import { anchorOf, type Anchor } from '@renderer/lib/anchor'
-import { anchorBelow } from '@renderer/lib/extensions/popupPlacement'
+import { anchorOf, placeUnder, popOrigin, type Anchor } from '@renderer/lib/anchor'
 import { useViewport } from '@renderer/lib/formFactor'
 import { openedFromKeyboard } from '@renderer/lib/popover'
+import { ChromePortal, type PopoverBox } from '@renderer/lib/portals'
 import { cn } from '@renderer/lib/utils'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 import { V2Radio } from './v2'
@@ -94,69 +94,67 @@ function MenulistPopover<T extends string>({
   const [fromKeyboard] = useState(openedFromKeyboard)
   const ready = useFloatingChrome({ pageHadFocus: !fromKeyboard })
   const ref = useRef<HTMLDivElement>(null)
-  const [pos, setPos] = useState<{ left: number; top: number; side: 'left' | 'right' } | null>(null)
+  const [box, setBox] = useState<PopoverBox | null>(null)
   useLayoutEffect(() => {
     const el = ref.current
     if (!el) return
-    // Layout size, not the client rect, which the pop animation's first frame scales to .94.
-    const placed = anchorBelow(
-      anchor,
-      { width: el.offsetWidth, height: el.offsetHeight },
-      { width: window.innerWidth, height: window.innerHeight }
-    )
-    setPos({ left: placed.x, top: placed.y, side: placed.side })
+    // The list keeps its intrinsic width (no less than the control's), measured as layout
+    // size, not the client rect, which the pop animation's first frame scales to .94.
+    setBox(placeUnder(anchor, el.offsetWidth))
   }, [anchor, options.length, ready])
   usePopover(ref, {
     onClose,
-    active: ready && pos !== null,
+    active: ready && box !== null,
     initial: (root) => root.querySelector<HTMLElement>('[aria-selected="true"]')
   })
   useArrowKeys(ref, '.zen-v2-menulist-option')
   if (!ready) return null
   // The layer is the light dismiss (§9.20): a press outside the list closes it on pointerdown
-  // and goes no further – the control's own press included, which does not reopen it.
-  return createPortal(
-    <div
-      className="fixed inset-0 z-[90]"
-      onPointerDown={(e) => {
-        e.stopPropagation()
-        onClose()
-      }}
-    >
+  // and goes no further – the control's own press included, which does not reopen it. (The
+  // chrome layer supplies no dismiss of its own; this one is kept until it does.)
+  return (
+    <ChromePortal>
       <div
-        ref={ref}
-        role="listbox"
-        aria-label={label}
-        className="zen-v2 zen-v2-panel zen-v2-menulist-popup zen-animate-pop fixed select-none"
-        data-surface="page"
-        style={{
-          left: pos?.left ?? anchor.x,
-          top: pos?.top ?? anchor.y + anchor.height,
-          minWidth: anchor.width,
-          visibility: pos ? 'visible' : 'hidden',
-          transformOrigin: pos?.side === 'right' ? '100% 0' : '0 0'
+        className="fixed inset-0"
+        onPointerDown={(e) => {
+          e.stopPropagation()
+          onClose()
         }}
-        onPointerDown={(e) => e.stopPropagation()}
       >
-        {options.map((option) => {
-          const selected = option.value === value
-          return (
-            <button
-              key={option.value}
-              type="button"
-              role="option"
-              aria-selected={selected}
-              className="zen-v2-menulist-option"
-              onClick={() => onPick(option.value)}
-            >
-              <span className="min-w-0 flex-1 truncate">{option.label}</span>
-              {selected && <Check />}
-            </button>
-          )
-        })}
+        <div
+          ref={ref}
+          role="listbox"
+          aria-label={label}
+          className="zen-v2 zen-v2-panel zen-v2-menulist-popup zen-animate-pop fixed select-none"
+          style={{
+            left: box?.left ?? anchor.x,
+            top: box?.top ?? anchor.y + anchor.height,
+            minWidth: anchor.width,
+            maxHeight: box?.maxHeight,
+            visibility: box ? 'visible' : 'hidden',
+            transformOrigin: box ? popOrigin(anchor, box) : undefined
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          {options.map((option) => {
+            const selected = option.value === value
+            return (
+              <button
+                key={option.value}
+                type="button"
+                role="option"
+                aria-selected={selected}
+                className="zen-v2-menulist-option"
+                onClick={() => onPick(option.value)}
+              >
+                <span className="min-w-0 flex-1 truncate">{option.label}</span>
+                {selected && <Check />}
+              </button>
+            )
+          })}
+        </div>
       </div>
-    </div>,
-    document.body
+    </ChromePortal>
   )
 }
 

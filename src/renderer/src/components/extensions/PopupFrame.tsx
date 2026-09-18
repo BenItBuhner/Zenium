@@ -1,8 +1,9 @@
 import type { JSX } from 'react'
 import { useEffect, useRef } from 'react'
-import type { Anchor } from '@renderer/lib/anchor'
+import { popOrigin, type Anchor } from '@renderer/lib/anchor'
 import { run } from '@renderer/lib/api'
 import { closeExtensionPopup, placementFor } from '@renderer/lib/extensions/popup'
+import { ChromePortal } from '@renderer/lib/portals'
 import { uiStore } from '@renderer/lib/ui'
 
 /** The pop (design-language.md §7): the view is shown once the frame has finished scaling in. */
@@ -11,16 +12,17 @@ const POP_MS = 180
 /**
  * The panel an action popup sits in (v2 draft §1–§3: the panel colour, a hairline border and
  * the panel shadow at radius 8). The document is main's WebContentsView; this draws the surface
- * around it flush under the toolbar's bar (§9.20), pops it in, and then tells main where the view goes
- * (`extension.resizePopup`). When the document asks for a new size, the frame and the view move
- * together, at once.
+ * around it flush under the toolbar's bar (§9.20, through the chrome layer like every popover:
+ * `ChromePortal`), pops it in, and then tells main where the view goes (`extension.resizePopup`).
+ * When the document asks for a new size, the frame and the view move together, at once.
  *
  * Under the frame, while the popup is up, a layer over the whole chrome is its light dismiss
  * (§9.20): a press anywhere in the chrome – the page's capture, the bar, another action's button,
  * the button that opened it – closes the popup on pointerdown and goes no further, so the
  * control under the press is not pressed. The document itself is main's view above the chrome
  * and keeps its own input. A wheel over the chrome (the frame's scroll) and a window resize,
- * which moves the button the frame hangs from, close it too.
+ * which moves the button the frame hangs from, close it too. (The chrome layer supplies no
+ * dismiss of its own; this one is kept until it does.)
  */
 export function PopupFrame(): JSX.Element | null {
   const popup = uiStore.use((s) => s.extensionPopup)
@@ -37,18 +39,20 @@ export function PopupFrame(): JSX.Element | null {
   }, [open])
   if (!popup) return null
   return (
-    <div
-      className="fixed inset-0 z-[80]"
-      role="presentation"
-      onPointerDown={(e) => {
-        e.stopPropagation()
-        closeExtensionPopup()
-      }}
-      onWheel={() => closeExtensionPopup()}
-      onContextMenu={(e) => e.preventDefault()}
-    >
-      {popup.shown && <Frame key={popup.id} anchor={popup.anchor} content={popup.content} />}
-    </div>
+    <ChromePortal>
+      <div
+        className="fixed inset-0"
+        role="presentation"
+        onPointerDown={(e) => {
+          e.stopPropagation()
+          closeExtensionPopup()
+        }}
+        onWheel={() => closeExtensionPopup()}
+        onContextMenu={(e) => e.preventDefault()}
+      >
+        {popup.shown && <Frame key={popup.id} anchor={popup.anchor} content={popup.content} />}
+      </div>
+    </ChromePortal>
   )
 }
 
@@ -59,8 +63,7 @@ function Frame({
   anchor: Anchor
   content: { width: number; height: number } | null
 }): JSX.Element {
-  const placement = placementFor(anchor, content)
-  const { frame, inner, innerRadius, side } = placement
+  const { frame, inner, innerRadius } = placementFor(anchor, content)
   const padding = inner.x - frame.x
   const popped = useRef(false)
   const { x, y, width, height } = inner
@@ -76,20 +79,16 @@ function Frame({
     const timer = window.setTimeout(show, POP_MS)
     return () => window.clearTimeout(timer)
   }, [x, y, width, height])
-  // The pop grows out of the button: the origin is where its centre meets the frame's top edge.
-  const originX = Math.max(0, Math.min(frame.width, anchor.x + anchor.width / 2 - frame.x))
   return (
     <div
       className="zen-ext-popup-frame zen-animate-pop"
       role="presentation"
-      data-surface="page"
-      data-side={side}
       style={{
         left: frame.x,
         top: frame.y,
         width: frame.width,
         height: frame.height,
-        transformOrigin: `${originX}px 0`
+        transformOrigin: popOrigin(anchor, { left: frame.x, width: frame.width })
       }}
       onPointerDown={(e) => e.stopPropagation()}
       onWheel={(e) => e.stopPropagation()}

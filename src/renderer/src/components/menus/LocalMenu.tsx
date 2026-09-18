@@ -5,10 +5,10 @@ import type { LucideIcon } from 'lucide-react'
 import { useEscape } from '@renderer/hooks/useEscape'
 import { useFloatingChrome } from '@renderer/hooks/useFloatingChrome'
 import { useArrowKeys, usePopover } from '@renderer/hooks/usePopover'
-import type { Anchor } from '@renderer/lib/anchor'
-import { anchorBelow } from '@renderer/lib/extensions/popupPlacement'
+import { placeUnder, popOrigin, type Anchor } from '@renderer/lib/anchor'
 import { useViewport } from '@renderer/lib/formFactor'
 import { openedFromKeyboard } from '@renderer/lib/popover'
+import { ChromePortal, type PopoverBox } from '@renderer/lib/portals'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 
 export interface LocalMenuItem {
@@ -47,10 +47,10 @@ function isSeparator(entry: LocalMenuEntry): entry is LocalMenuSeparator {
 
 /**
  * A menu the renderer owns (v2 draft §6 menus): on a mouse a bordered panel at radius 8 flush
- * under its control (6 for a context menu, §2; §9.20 for where it hangs) with 31 rows, a 16 icon
- * each when any has one, hairline separators and danger rows in the danger ink; on a finger the
- * same rows at 44 in a bottom sheet. Escape and an outside click (or a tap on the scrim) close
- * it; there is no scrim on the desktop (§9.5).
+ * under its control (6 for a context menu, §2; §9.20 for where it hangs, through the chrome
+ * layer) with 31 rows, a 16 icon each when any has one, hairline separators and danger rows in
+ * the danger ink; on a finger the same rows at 44 in a bottom sheet. Escape and an outside click
+ * (or a tap on the scrim) close it; there is no scrim on the desktop (§9.5).
  *
  * The page's view composites above the chrome, so while the menu is up the content frame shows
  * the page's capture instead (`useFloatingChrome`), as it does for the main-process menus.
@@ -62,13 +62,13 @@ export function LocalMenu(props: Props): JSX.Element | null {
   const [fromKeyboard] = useState(openedFromKeyboard)
   const ready = useFloatingChrome({ pageHadFocus: !fromKeyboard })
   if (!ready) return null
-  return createPortal(
-    viewport.coarse ? (
-      <SheetMenu {...props} />
-    ) : (
+  // A sheet is the phone's dialog, not a popover: it stays on the body with the other sheets,
+  // whose §9.24 stack is their mount order there.
+  if (viewport.coarse) return createPortal(<SheetMenu {...props} />, document.body)
+  return (
+    <ChromePortal>
       <PopoverMenu {...props} fromKeyboard={fromKeyboard} />
-    ),
-    document.body
+    </ChromePortal>
   )
 }
 
@@ -80,32 +80,29 @@ function PopoverMenu({
   fromKeyboard
 }: Props & { fromKeyboard: boolean }): JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
-  const [pos, setPos] = useState<{ left: number; top: number; side: 'left' | 'right' } | null>(null)
+  const [box, setBox] = useState<PopoverBox | null>(null)
   useLayoutEffect(() => {
     const el = ref.current
     if (!el) return
-    // Layout size, not the client rect: the pop animation's first frame is scaled to .94, and
-    // an end-aligned menu measured through it would land 6% of its width off.
-    const placed = anchorBelow(
-      anchor,
-      { width: el.offsetWidth, height: el.offsetHeight },
-      { width: window.innerWidth, height: window.innerHeight }
-    )
-    setPos({ left: placed.x, top: placed.y, side: placed.side })
+    // A menu keeps its intrinsic width (§5): measured as layout size, not the client rect –
+    // the pop animation's first frame is scaled to .94, and an end-aligned menu measured
+    // through it would land 6% of its width off.
+    setBox(placeUnder(anchor, el.offsetWidth))
   }, [anchor, items.length])
   // Opened by pointer the menu itself takes focus, and the arrow keys start at the first item.
   usePopover(ref, {
     onClose,
-    active: pos !== null,
+    active: box !== null,
     initial: fromKeyboard ? 'first' : 'container'
   })
   useArrowKeys(ref, '.zen-v2-menu-item')
   const withIcons = items.some((item) => !isSeparator(item) && item.icon)
   // The layer is the light dismiss (§9.20): a press outside the menu closes it on pointerdown
-  // and goes no further, so the control under the press is not pressed.
+  // and goes no further, so the control under the press is not pressed. (The chrome layer
+  // supplies no dismiss of its own; this one is kept until it does.)
   return (
     <div
-      className="fixed inset-0 z-[90]"
+      className="fixed inset-0"
       onPointerDown={(e) => {
         e.stopPropagation()
         onClose()
@@ -120,13 +117,13 @@ function PopoverMenu({
         role="menu"
         tabIndex={-1}
         className="zen-v2 zen-v2-panel zen-v2-menu zen-animate-pop fixed select-none"
-        data-surface="page"
         data-context={context || undefined}
         style={{
-          left: pos?.left ?? anchor.x,
-          top: pos?.top ?? anchor.y + anchor.height,
-          visibility: pos ? 'visible' : 'hidden',
-          transformOrigin: pos?.side === 'right' ? '100% 0' : '0 0'
+          left: box?.left ?? anchor.x,
+          top: box?.top ?? anchor.y + anchor.height,
+          maxHeight: box?.maxHeight,
+          visibility: box ? 'visible' : 'hidden',
+          transformOrigin: box ? popOrigin(anchor, box) : undefined
         }}
         onPointerDown={(e) => e.stopPropagation()}
         onContextMenu={(e) => e.preventDefault()}

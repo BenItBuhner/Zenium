@@ -455,6 +455,7 @@
     border-radius: var(--v2-radius-sheet);
     font-size: var(--v2-font-body);
     line-height: var(--v2-line-body);
+    overflow-y: auto;
   }
   .zen-v2-menulist-option {
     display: flex;
@@ -710,7 +711,10 @@
     opacity: 1;
   }
 
-  /* Menus: rows 31 with a 16 icon, label and a hint at 69%, hairline separators. */
+  /*
+   * Menus: rows 31 with a 16 icon, label and a hint at 69%, hairline separators. Placed by
+   * `placePopover` (§9.20) at their intrinsic width; past its height ceiling the rows scroll.
+   */
   .zen-v2-menu {
     display: flex;
     flex-direction: column;
@@ -719,6 +723,7 @@
     padding: 4px 0;
     font-size: 14px;
     line-height: 15px;
+    overflow-y: auto;
   }
   /* A context menu (a right-click) is radius 6 (§2); the popovers under a `···` stay at 8. */
   .zen-v2-menu[data-context] {
@@ -971,20 +976,17 @@
   /* --- Extensions: toolbar, panel, popup, dialog ------------------------------------------ */
 
   /*
-   * Two token families, never mixed (§9.29). The toolbar is a window surface – its row carries
-   * `data-surface="window"` – and what this PR puts in it (the action buttons, their badges, a
-   * missing icon's puzzle glyph) draws in the theme's foreground and accent: ink
-   * `rgb(var(--zen-fg-rgb))`, fills `--v2-window-fill` / `--v2-window-fill-hover`, accent
-   * `--zen-accent`. The page, the puzzle panel, the menus, the menulist popup, the dialog, the
-   * sheets and the popup frame are page surfaces (`data-surface="page"` on their roots) in the
-   * `--v2-text` / `--v2-fill` / `--v2-accent` family. A component that sits on both (the icon's
-   * fallback glyph, the badge) reads the family from its nearest surface root, not from a prop.
+   * Two token families, never mixed (§9.29). The toolbar row is in SidebarTop, a window surface
+   * (`data-surface="window"` on its root, #120), and what this PR puts in it (the action
+   * buttons, their badges, a missing icon's puzzle glyph) draws in the theme's foreground and
+   * accent. The puzzle panel, the menus, the menulist popup and the popup frame sit in the chrome
+   * layer, the dialog in the frame dialog host – both page surfaces (lib/portals.tsx) – and the
+   * extensions page and the phone sheets carry `data-surface="page"` themselves. A component
+   * that sits on both kinds (the icon's fallback glyph, the badge) reads the shared control roles
+   * (`--v2-control-*`, main.css), which the nearest surface root resolves, not a prop.
    */
-  [data-surface='window'] .zen-ext-icon-glyph {
-    color: rgb(var(--zen-fg-rgb) / 0.69);
-  }
-  [data-surface='page'] .zen-ext-icon-glyph {
-    color: var(--v2-text-deemphasized);
+  .zen-ext-icon-glyph {
+    color: var(--v2-control-text-deemphasized);
   }
 
   /*
@@ -1005,11 +1007,12 @@
   }
   /*
    * The anchor keeps its pressed fill while its popover is open (§9.20), as Zen's menu button:
-   * the window family's pressed fill, the one main's star chip holds while its bubble is open.
+   * its surface's pressed fill (the window's, in the toolbar), the one main's star chip holds
+   * while its bubble is open.
    */
-  [data-surface='window'] .zen-toolbar-button.zen-ext-action[data-active],
-  [data-surface='window'] .zen-toolbar-button.zen-ext-puzzle[data-active] {
-    background: var(--v2-window-fill-hover);
+  .zen-toolbar-button.zen-ext-action[data-active],
+  .zen-toolbar-button.zen-ext-puzzle[data-active] {
+    background: var(--v2-control-fill-hover);
     opacity: 1;
   }
 
@@ -1017,15 +1020,14 @@
    * The toolbar badge (`chrome.action.setBadgeText`): a 10/600 pill (the pill's one use, §2)
    * over the button's corner, in the extension's colour when it set one (inline), else the
    * accent of the surface it sits on (§9.29): the theme's `--zen-accent` with its ink in the
-   * toolbar, `--v2-accent` on a page. No knockout ring, as Chrome: one in a fixed colour would
+   * toolbar, `--v2-accent` on a page. The ink on the accent has no shared control role yet, so
+   * it alone is keyed on the surface. No knockout ring, as Chrome: one in a fixed colour would
    * halo over a themed sidebar.
    */
   [data-surface='window'] .zen-ext-badge {
-    background: var(--zen-accent);
     color: var(--zen-on-accent);
   }
   [data-surface='page'] .zen-ext-badge {
-    background: var(--v2-accent);
     color: var(--v2-on-accent);
   }
   .zen-ext-badge {
@@ -1039,6 +1041,7 @@
     min-width: 14px;
     padding: 0 3px;
     border-radius: 9999px;
+    background: var(--v2-control-accent);
     font-size: 10px;
     font-weight: var(--v2-weight-heading);
     line-height: 1;
@@ -1050,14 +1053,13 @@
    * The puzzle-piece popover (§9.20): 400 wide – its rows carry a trailing pin button – flush
    * under the toolbar's bar, a title block (§9.23) over the rows, content up to 60% of the
    * window's height (never more than the window minus 16) and past that the rows scroll under
-   * the title. The text is inset 16 with the title; the rows' hover fill runs 8 beyond it.
+   * the title. Width, place and height ceiling are `placePopover`'s (lib/portals.tsx), set
+   * inline. The text is inset 16 with the title; the rows' hover fill runs 8 beyond it.
    */
   .zen-ext-panel {
     position: fixed;
     display: flex;
     flex-direction: column;
-    width: 400px;
-    max-height: min(60vh, calc(100vh - 16px));
     font-size: 14px;
     line-height: var(--v2-line-body);
   }
@@ -1105,11 +1107,11 @@
   /*
    * The frame around an action popup: a panel at radius 8 whose 1px border is a spread shadow
    * outside the rect, so the document's view fills the frame to its concentric radius 7. It
-   * pops in 180ms and follows the document's size; the view itself is main's.
+   * pops in 180ms and follows the document's size; the view itself is main's. It sits in the
+   * chrome layer (lib/portals.tsx), which stacks it over the window.
    */
   .zen-ext-popup-frame {
     position: fixed;
-    z-index: 80;
     border-radius: var(--v2-radius-card);
     background: var(--v2-panel);
     box-shadow:
