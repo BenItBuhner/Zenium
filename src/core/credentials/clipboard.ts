@@ -42,6 +42,7 @@ export class SensitiveClipboard {
   async flush(): Promise<void> {
     const text = this.pending
     this.cancel()
-    if (text && this.clipboard.clearText) await this.clipboard.clearText(text).catch(() => undefined)
+    if (text && this.clipboard.clearText)
+      await this.clipboard.clearText(text).catch(() => undefined)
   }
 }

@@ -827,10 +827,7 @@ export interface PasskeyAccountPrompt {
 }
 
 export type AutofillPrompt =
-  | SaveLoginPrompt
-  | SaveAddressPrompt
-  | SaveCardPrompt
-  | PasskeyAccountPrompt
+  SaveLoginPrompt | SaveAddressPrompt | SaveCardPrompt | PasskeyAccountPrompt
 
 /** The user's answer to an autofill prompt; dismissing sends null instead. */
 export type AutofillPromptResponse =
@@ -2913,7 +2910,10 @@ export interface Commands {
   }
   'autofill.removeCard': { args: { id: string }; result: void }
   /** The full number of a card, behind re-authentication. */
-  'autofill.revealCard': { args: { id: string; passphrase?: string }; result: ReauthOutcome<string> }
+  'autofill.revealCard': {
+    args: { id: string; passphrase?: string }
+    result: ReauthOutcome<string>
+  }
   /** Copy a card's number (behind re-authentication) with the clipboard marked sensitive. */
   'autofill.copyCardNumber': {
     args: { id: string; passphrase?: string }

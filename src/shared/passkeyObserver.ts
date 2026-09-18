@@ -44,7 +44,9 @@ export function installPasskeyObserver(win: Window): void {
         void (promise as Promise<unknown>).then(
           (credential) => {
             if (!credential) return
-            const id = toBase64Url((credential as { rawId?: unknown }).rawId ?? (credential as { id?: unknown }).id)
+            const id = toBase64Url(
+              (credential as { rawId?: unknown }).rawId ?? (credential as { id?: unknown }).id
+            )
             if (name === 'create') {
               const rp = (pk.rp as { id?: unknown; name?: unknown } | undefined) ?? {}
               const user = (pk.user as { name?: unknown; displayName?: unknown } | undefined) ?? {}
@@ -73,7 +75,11 @@ export function installPasskeyObserver(win: Window): void {
       return promise
     }
     try {
-      Object.defineProperty(credentials, name, { value: wrapped, configurable: true, writable: true })
+      Object.defineProperty(credentials, name, {
+        value: wrapped,
+        configurable: true,
+        writable: true
+      })
     } catch {
       /* a frozen container keeps the native method; passkeys still work, just unlisted */
     }

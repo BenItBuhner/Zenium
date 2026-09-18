@@ -39,7 +39,14 @@ export type FormsEvent =
    * fields). `newPassword` marks sign-up and change-password forms; `values` holds the address or
    * card fields of the other groups.
    */
-  | { type: 'submit'; group: 'login'; formId: string; username: string; password: string; newPassword: boolean }
+  | {
+      type: 'submit'
+      group: 'login'
+      formId: string
+      username: string
+      password: string
+      newPassword: boolean
+    }
   | { type: 'submit'; group: 'address' | 'card'; formId: string; values: FormValues }
   /**
    * The submitted form left the page without a navigation (a single-page app signed the user

@@ -94,16 +94,46 @@ interface Rule {
  * `cardNumber` and "Card number" all read as `card number`.
  */
 const RULES: Rule[] = [
-  { kind: 'cc-csc', test: /\b(cvc|cvv|cvn|csc|cid|security code|card code|verification (code|value))\b/ },
-  { kind: 'cc-number', test: /\b(card number|cardnumber|cc ?number|ccnum|card no|pan|credit card|debit card)\b/ },
-  { kind: 'cc-exp-month', test: /\b(exp(iry|iration)?( date)? ?month|exp ?mm|ccmonth|cc ?exp ?m|mm)\b/ },
-  { kind: 'cc-exp-year', test: /\b(exp(iry|iration)?( date)? ?year|exp ?yy(yy)?|ccyear|cc ?exp ?y|yy(yy)?)\b/ },
-  { kind: 'cc-exp', test: /\b(exp(iry|iration)?( date)?|valid (thru|until|to)|mm ?\/ ?yy(yy)?|cc ?exp)\b/ },
+  // "Security code" / "verification code" alone are a one-time code; next to a card number
+  // `classifyContainer` makes them the card's (see below).
+  {
+    kind: 'cc-csc',
+    test: /\b(cvc|cvv|cvn|csc|cid|card code|card (security|verification) (code|value)|cc ?csc)\b/
+  },
+  {
+    kind: 'cc-number',
+    test: /\b(card number|cardnumber|cc ?number|ccnum|card no|pan|credit card|debit card)\b/
+  },
+  {
+    kind: 'cc-exp-month',
+    test: /\b(exp(iry|iration)?( date)? ?month|exp ?mm|ccmonth|cc ?exp ?m|mm)\b/
+  },
+  {
+    kind: 'cc-exp-year',
+    test: /\b(exp(iry|iration)?( date)? ?year|exp ?yy(yy)?|ccyear|cc ?exp ?y|yy(yy)?)\b/
+  },
+  // The bag has lost its punctuation: `MM/YY`, `MM / YY` and `MMYY` all read as `mm yy` / `mmyy`.
+  {
+    kind: 'cc-exp',
+    test: /\b(exp(iry|iration)?( date)?|valid (thru|until|to)|mm ?yy(yy)?|cc ?exp)\b/
+  },
   { kind: 'cc-name', test: /\b(card ?holder|name on card|cardholder name|cc ?name|card name)\b/ },
-  { kind: 'one-time-code', test: /\b(one time code|otp|verification code|2fa|two factor|totp|mfa code|security code)\b/ },
-  { kind: 'postal-code', test: /\b(zip|zip ?code|postal|postal ?code|post ?code|pin ?code|postcode|eircode)\b/ },
-  { kind: 'address-line2', test: /\b(address ?(line)? ?2|addr2|address2|apt|apartment|suite|unit|floor|building)\b/ },
-  { kind: 'address-line1', test: /\b(address ?(line)? ?1|addr1|address1|street ?address|street|address|shipping address|billing address|house number)\b/ },
+  {
+    kind: 'one-time-code',
+    test: /\b(one time code|otp|verification code|2fa|two factor|totp|mfa code|security code)\b/
+  },
+  {
+    kind: 'postal-code',
+    test: /\b(zip|zip ?code|postal|postal ?code|post ?code|pin ?code|postcode|eircode)\b/
+  },
+  {
+    kind: 'address-line2',
+    test: /\b(address ?(line)? ?2|addr2|address2|apt|apartment|suite|unit|floor|building)\b/
+  },
+  {
+    kind: 'address-line1',
+    test: /\b(address ?(line)? ?1|addr1|address1|street ?address|street|address|shipping address|billing address|house number)\b/
+  },
   { kind: 'address-level2', test: /\b(city|town|locality|suburb|municipality|village)\b/ },
   { kind: 'address-level1', test: /\b(state|province|region|county|prefecture|territory)\b/ },
   { kind: 'country', test: /\b(country|nation)\b/ },
@@ -144,8 +174,12 @@ export function classifyField(
   const fromAutocomplete = kindFromAutocomplete(signals.autocomplete)
   if (signals.type === 'password') {
     if (fromAutocomplete === 'new-password') return 'new-password'
-    const bag = normaliseSignal(`${signals.name} ${signals.id} ${signals.placeholder} ${signals.label}`)
-    if (/\b(new|confirm|repeat|retype|verify|create|choose|again|register|signup|sign up)\b/.test(bag))
+    const bag = normaliseSignal(
+      `${signals.name} ${signals.id} ${signals.placeholder} ${signals.label}`
+    )
+    if (
+      /\b(new|confirm|repeat|retype|verify|create|choose|again|register|signup|sign up)\b/.test(bag)
+    )
       return 'new-password'
     return 'password'
   }
@@ -178,54 +212,78 @@ export function classifyField(
     if (signals.type === 'email') return 'email'
     if (signals.type === 'tel') return 'tel'
   }
-  const bag = normaliseSignal(`${signals.name} ${signals.id} ${signals.placeholder} ${signals.label}`)
+  const bag = normaliseSignal(
+    `${signals.name} ${signals.id} ${signals.placeholder} ${signals.label}`
+  )
   if (!bag) return null
   if (signals.type === 'search' || (SEARCH_LIKE.test(bag) && !context.hasPasswordField)) return null
   for (const rule of RULES) {
     if (rule.loginOnly && !context.hasPasswordField) continue
     if (rule.kind === 'cc-exp-month' || rule.kind === 'cc-exp-year') {
+      // `MM / YY` in one field is the whole expiry, not its month.
+      if (/\bmm ?yy/.test(bag)) continue
       // Bare `mm` / `yy` are only expiry parts next to a card number or an "exp" word.
-      if (!/\b(exp|card|cc|valid)\b/.test(bag) && !/\bmm\b.*\byy/.test(bag) && signals.tag !== 'select')
-        continue
+      if (!/\b(exp|card|cc|valid)\b/.test(bag) && signals.tag !== 'select') continue
     }
     if (rule.test.test(bag)) return rule.kind
   }
   return null
 }
 
-/** Which group a form's classified fields make it, or null when they are too few to matter. */
-export function groupOfForm(kinds: FormFieldKind[]): FormGroup | null {
-  if (kinds.includes('password') || kinds.includes('new-password')) return 'login'
-  if (kinds.includes('cc-number')) return 'card'
-  const address = new Set(
-    kinds.filter((k) =>
-      [
-        'street-address',
-        'address-line1',
-        'address-line2',
-        'address-level1',
-        'address-level2',
-        'postal-code',
-        'country'
-      ].includes(k)
-    )
+const ADDRESS_KINDS: readonly FormFieldKind[] = [
+  'street-address',
+  'address-line1',
+  'address-line2',
+  'address-level1',
+  'address-level2',
+  'postal-code',
+  'country'
+]
+
+/**
+ * The groups a form's classified fields make up. A password field makes a login form; a card
+ * number a payment form; two address fields an address form; a single-page checkout is all three
+ * at once. A lone username or email field (a two-step sign-in) counts as a login form.
+ */
+export function groupsOfForm(kinds: FormFieldKind[]): Set<FormGroup> {
+  const groups = new Set<FormGroup>()
+  if (kinds.includes('password') || kinds.includes('new-password')) groups.add('login')
+  if (kinds.includes('cc-number')) groups.add('card')
+  if (new Set(kinds.filter((k) => ADDRESS_KINDS.includes(k))).size >= 2) groups.add('address')
+  if (
+    groups.size === 0 &&
+    (kinds.includes('username') || (kinds.includes('email') && kinds.length === 1))
   )
-  if (address.size >= 2) return 'address'
-  if (kinds.includes('username') || (kinds.includes('email') && kinds.length === 1)) return 'login'
-  return null
+    groups.add('login')
+  return groups
+}
+
+/** The main group of a form (what a submit of it is about), or null when it has none. */
+export function groupOfForm(kinds: FormFieldKind[]): FormGroup | null {
+  const groups = groupsOfForm(kinds)
+  return groups.has('login')
+    ? 'login'
+    : groups.has('card')
+      ? 'card'
+      : groups.has('address')
+        ? 'address'
+        : null
 }
 
 /**
  * Resolve the group of one field inside its form: card fields always belong to the card group;
- * a login form owns its username / password fields and nothing else; contact fields go with an
- * address group when the form has one.
+ * username / password fields to a login form only; an email field to the login form when there
+ * is one, else to the address; other contact fields to an address form when the form is one.
  */
-export function groupOfField(kind: FormFieldKind, formGroup: FormGroup | null): FormGroup | null {
+export function groupOfField(
+  kind: FormFieldKind,
+  groups: ReadonlySet<FormGroup>
+): FormGroup | null {
   const own = groupOfKind(kind)
   if (own === 'card') return 'card'
-  if (own === 'login') return formGroup === 'login' ? 'login' : null
-  if (kind === 'email' && formGroup === 'login') return 'login'
-  return formGroup === 'address' ? 'address' : null
+  if (own === 'login') return groups.has('login') ? 'login' : null
+  if (kind === 'email' && groups.has('login')) return 'login'
+  return groups.has('address') ? 'address' : null
 }
 
 // ---------------------------------------------------------------------------
@@ -300,7 +358,12 @@ function labelText(el: Control): string {
 }
 
 export function signalsOf(el: Control): FieldSignals {
-  const tag = el instanceof HTMLSelectElement ? 'select' : el instanceof HTMLTextAreaElement ? 'textarea' : 'input'
+  const tag =
+    el instanceof HTMLSelectElement
+      ? 'select'
+      : el instanceof HTMLTextAreaElement
+        ? 'textarea'
+        : 'input'
   return {
     tag,
     type: el instanceof HTMLInputElement ? el.type.toLowerCase() : '',
@@ -316,7 +379,7 @@ export function signalsOf(el: Control): FieldSignals {
 interface ClassifiedForm {
   id: string
   container: Element
-  group: FormGroup | null
+  groups: Set<FormGroup>
   fields: Map<Control, FormFieldKind>
 }
 
@@ -335,8 +398,9 @@ function controlsIn(container: Element): Control[] {
 /**
  * Classify every visible control of a container. Password fields anchor the login group; when
  * no field declares itself the username, the last text / email field before the first password
- * takes the role (Chrome's rule). Two password fields with the same value are a confirmation and
- * both count as the new password.
+ * takes the role (Chrome's rule). Two password fields are a sign-up's password and its
+ * confirmation and both count as the new password. A "security code" next to a card number is
+ * the card's, not a one-time code.
  */
 export function classifyContainer(container: Element): Map<Control, FormFieldKind> {
   const controls = controlsIn(container)
@@ -347,6 +411,8 @@ export function classifyContainer(container: Element): Map<Control, FormFieldKin
     const kind = classifyField(signalsOf(control), context)
     if (kind) kinds.set(control, kind)
   }
+  if ([...kinds.values()].includes('cc-number'))
+    for (const [control, kind] of kinds) if (kind === 'one-time-code') kinds.set(control, 'cc-csc')
   if (passwords.length > 0) {
     if (passwords.length >= 2 && ![...kinds.values()].includes('new-password'))
       for (const p of passwords) kinds.set(p, 'new-password')
@@ -393,7 +459,9 @@ export function selectOption(select: HTMLSelectElement, candidates: string[]): b
     }
   }
   for (const candidate of wanted) {
-    const hit = options.find((o) => (o.textContent ?? '').trim().toLowerCase().startsWith(candidate))
+    const hit = options.find((o) =>
+      (o.textContent ?? '').trim().toLowerCase().startsWith(candidate)
+    )
     if (hit) {
       select.value = hit.value
       return true
@@ -402,7 +470,20 @@ export function selectOption(select: HTMLSelectElement, candidates: string[]): b
   return false
 }
 
-const MONTHS = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december']
+const MONTHS = [
+  'january',
+  'february',
+  'march',
+  'april',
+  'may',
+  'june',
+  'july',
+  'august',
+  'september',
+  'october',
+  'november',
+  'december'
+]
 
 /** The strings a select may use for a value of `kind` (`01`, `1`, `Jan`; `2027`, `27`; `US`, `United States`). */
 export function candidatesFor(
@@ -429,7 +510,10 @@ export function candidatesFor(
 }
 
 /** Format a text expiry field the way its placeholder or length asks (`MM/YY` or `MM/YYYY`). */
-export function expiryText(value: string, signals: Pick<FieldSignals, 'placeholder' | 'maxLength'>): string {
+export function expiryText(
+  value: string,
+  signals: Pick<FieldSignals, 'placeholder' | 'maxLength'>
+): string {
   const m = /^(\d{1,2})\s*\/\s*(\d{2,4})$/.exec(value.trim())
   if (!m) return value
   const month = m[1].padStart(2, '0')
@@ -441,7 +525,11 @@ export function expiryText(value: string, signals: Pick<FieldSignals, 'placehold
 function fireInput(el: Control, value: string): void {
   const InputEventCtor = typeof InputEvent === 'function' ? InputEvent : null
   const input = InputEventCtor
-    ? new InputEventCtor('input', { bubbles: true, inputType: 'insertReplacementText', data: value })
+    ? new InputEventCtor('input', {
+        bubbles: true,
+        inputType: 'insertReplacementText',
+        data: value
+      })
     : new Event('input', { bubbles: true })
   el.dispatchEvent(input)
   el.dispatchEvent(new Event('change', { bubbles: true }))
@@ -465,13 +553,24 @@ export function installFormsScript(transport: FormsTransport): void {
   const forms = new Map<string, ClassifiedForm>()
   let focused: { control: Control; formId: string; fieldId: string } | null = null
   let lastSubmit: { formId: string; at: number } | null = null
-  let settle: { formId: string; control: Control; href: string; started: number; timer: number } | null = null
+  let settle: {
+    formId: string
+    control: Control
+    href: string
+    started: number
+    timer: number
+  } | null = null
 
   const classify = (container: Element): ClassifiedForm => {
     for (const [id, el] of byId) if (!el.isConnected) byId.delete(id)
     const fields = classifyContainer(container)
     const id = idOf(container)
-    const form: ClassifiedForm = { id, container, group: groupOfForm([...fields.values()]), fields }
+    const form: ClassifiedForm = {
+      id,
+      container,
+      groups: groupsOfForm([...fields.values()]),
+      fields
+    }
     forms.set(id, form)
     return form
   }
@@ -493,7 +592,7 @@ export function installFormsScript(transport: FormsTransport): void {
   const fieldsInfo = (form: ClassifiedForm, group: FormGroup): FormFieldInfo[] => {
     const info: FormFieldInfo[] = []
     for (const [control, kind] of form.fields)
-      if (groupOfField(kind, form.group) === group)
+      if (groupOfField(kind, form.groups) === group)
         info.push({ id: idOf(control), kind, hasValue: control.value.trim() !== '' })
     return info
   }
@@ -505,7 +604,7 @@ export function installFormsScript(transport: FormsTransport): void {
     const form = classify(containerOf(target))
     const kind = form.fields.get(target)
     if (!kind) return
-    const group = groupOfField(kind, form.group)
+    const group = groupOfField(kind, form.groups)
     if (!group || kind === 'one-time-code' || kind === 'cc-csc') return
     focused = { control: target, formId: form.id, fieldId: idOf(target) }
     transport.send({
@@ -532,7 +631,8 @@ export function installFormsScript(transport: FormsTransport): void {
     if (!focused || moveFrame) return
     moveFrame = requestAnimationFrame(() => {
       moveFrame = 0
-      if (focused) transport.send({ type: 'moved', fieldId: focused.fieldId, rect: rectOf(focused.control) })
+      if (focused)
+        transport.send({ type: 'moved', fieldId: focused.fieldId, rect: rectOf(focused.control) })
     })
   }
 
@@ -543,50 +643,73 @@ export function installFormsScript(transport: FormsTransport): void {
       if (!value) continue
       if (kind === 'cc-csc' || kind === 'one-time-code') continue
       if (control instanceof HTMLSelectElement) {
-        const option = control.options[control.selectedIndex]
+        const options = [...control.options]
+        const option =
+          options[control.selectedIndex] ?? options.find((o) => o.value === control.value)
         values[kind] = option ? `${option.value}|${(option.textContent ?? '').trim()}` : value
       } else if (!(kind in values)) values[kind] = value
     }
     return values
   }
 
-  /** Report a submit of `container` once, whichever signal (event, click, Enter) saw it first. */
+  /** The values of one group of a form. */
+  const valuesOf = (values: FormValues, group: FormGroup): FormValues => {
+    const picked: FormValues = {}
+    for (const [k, v] of Object.entries(values))
+      if (groupOfKind(k as FormFieldKind) === group) picked[k as FormFieldKind] = v
+    return picked
+  }
+
+  /**
+   * Report a submit of `container` once, whichever signal (event, click, Enter) saw it first. A
+   * submit with nothing to report (empty fields) does not count as one: the user's next try does.
+   * A login form reports its login only; a checkout reports its card and its address.
+   */
   const submitted = (container: Element): void => {
     if (!enabled) return
     const form = classify(container)
     const now = Date.now()
-    if (lastSubmit && lastSubmit.formId === form.id && now - lastSubmit.at < SUBMIT_DEDUPE_MS) return
-    lastSubmit = { formId: form.id, at: now }
-    if (form.group === 'login') {
-      const values = gather(form)
-      const passwordControl = [...form.fields].find(([, k]) => k === 'password' || k === 'new-password')?.[0]
+    if (lastSubmit && lastSubmit.formId === form.id && now - lastSubmit.at < SUBMIT_DEDUPE_MS)
+      return
+    const values = gather(form)
+    let reported = false
+    if (form.groups.has('login')) {
+      const passwordControl = [...form.fields].find(
+        ([, k]) => k === 'password' || k === 'new-password'
+      )?.[0]
       const password = values['new-password'] ?? values.password ?? ''
       const username = values.username ?? values.email ?? ''
-      if (!password && !username) return
-      transport.send({
-        type: 'submit',
-        group: 'login',
-        formId: form.id,
-        username,
-        password,
-        newPassword: 'new-password' in values
-      })
-      if (password && passwordControl) watchSettle(form.id, passwordControl)
-      return
+      if (password || username) {
+        transport.send({
+          type: 'submit',
+          group: 'login',
+          formId: form.id,
+          username,
+          password,
+          newPassword: 'new-password' in values
+        })
+        if (password && passwordControl) watchSettle(form.id, passwordControl)
+        reported = true
+      }
+    } else {
+      if (form.groups.has('card') && values['cc-number']) {
+        transport.send({
+          type: 'submit',
+          group: 'card',
+          formId: form.id,
+          values: valuesOf(values, 'card')
+        })
+        reported = true
+      }
+      if (form.groups.has('address')) {
+        const address = valuesOf(values, 'address')
+        if (Object.keys(address).length > 0) {
+          transport.send({ type: 'submit', group: 'address', formId: form.id, values: address })
+          reported = true
+        }
+      }
     }
-    const values = gather(form)
-    const cardFields = Object.keys(values).filter((k) => groupOfKind(k as FormFieldKind) === 'card')
-    if (cardFields.length) {
-      const card: FormValues = {}
-      for (const k of cardFields) card[k as FormFieldKind] = values[k as FormFieldKind]
-      if (values['cc-number']) transport.send({ type: 'submit', group: 'card', formId: form.id, values: card })
-    }
-    if (form.group === 'address') {
-      const address: FormValues = {}
-      for (const [k, v] of Object.entries(values))
-        if (groupOfKind(k as FormFieldKind) === 'address') address[k as FormFieldKind] = v
-      transport.send({ type: 'submit', group: 'address', formId: form.id, values: address })
-    }
+    if (reported) lastSubmit = { formId: form.id, at: now }
   }
 
   /**
@@ -619,14 +742,22 @@ export function installFormsScript(transport: FormsTransport): void {
     let el = target instanceof Element ? target : null
     for (let depth = 0; el && depth < 6; depth++) {
       if (el instanceof HTMLButtonElement || el instanceof HTMLInputElement) {
-        const type = (el.getAttribute('type') ?? (el instanceof HTMLButtonElement ? 'submit' : '')).toLowerCase()
-        if (type === 'submit' || type === 'image') return el.form ?? el.closest('form') ?? document.documentElement
-        if (type === 'button' && SUBMIT_TEXT.test(el.textContent ?? (el as HTMLInputElement).value ?? ''))
+        const type = (
+          el.getAttribute('type') ?? (el instanceof HTMLButtonElement ? 'submit' : '')
+        ).toLowerCase()
+        if (type === 'submit' || type === 'image')
+          return el.form ?? el.closest('form') ?? document.documentElement
+        if (
+          type === 'button' &&
+          SUBMIT_TEXT.test(el.textContent ?? (el as HTMLInputElement).value ?? '')
+        )
           return el.form ?? el.closest('form') ?? document.documentElement
         return null
       }
       if (el.getAttribute('role') === 'button' || el instanceof HTMLAnchorElement) {
-        return SUBMIT_TEXT.test(el.textContent ?? '') ? (el.closest('form') ?? document.documentElement) : null
+        return SUBMIT_TEXT.test(el.textContent ?? '')
+          ? (el.closest('form') ?? document.documentElement)
+          : null
       }
       el = el.parentElement
     }
@@ -653,7 +784,11 @@ export function installFormsScript(transport: FormsTransport): void {
         } else {
           if (control instanceof HTMLInputElement && control.readOnly) continue
           const text =
-            kind === 'cc-exp' ? expiryText(value, signalsOf(control)) : kind === 'cc-exp-year' && control.maxLength === 2 ? value.slice(-2) : value
+            kind === 'cc-exp'
+              ? expiryText(value, signalsOf(control))
+              : kind === 'cc-exp-year' && control.maxLength === 2
+                ? value.slice(-2)
+                : value
           control.focus()
           setNativeValue(control, text)
           fireInput(control, text)
@@ -714,25 +849,22 @@ export function installFormsScript(transport: FormsTransport): void {
     },
     true
   )
-  window.addEventListener(
-    'message',
-    (event: MessageEvent) => {
-      const data: unknown = event.data
-      if (!data || typeof data !== 'object' || event.source !== window) return
-      const report = (data as { __zeniumPasskey?: unknown }).__zeniumPasskey
-      if (!report || typeof report !== 'object') return
-      const r = report as Record<string, unknown>
-      const str = (v: unknown): string => (typeof v === 'string' ? v.slice(0, 512) : '')
-      if (r.op !== 'create' && r.op !== 'get') return
-      transport.send({
-        type: 'passkey',
-        op: r.op,
-        rpId: str(r.rpId) || location.hostname,
-        rpName: str(r.rpName),
-        userName: str(r.userName),
-        userDisplayName: str(r.userDisplayName),
-        credentialId: str(r.credentialId)
-      })
-    }
-  )
+  window.addEventListener('message', (event: MessageEvent) => {
+    const data: unknown = event.data
+    if (!data || typeof data !== 'object' || event.source !== window) return
+    const report = (data as { __zeniumPasskey?: unknown }).__zeniumPasskey
+    if (!report || typeof report !== 'object') return
+    const r = report as Record<string, unknown>
+    const str = (v: unknown): string => (typeof v === 'string' ? v.slice(0, 512) : '')
+    if (r.op !== 'create' && r.op !== 'get') return
+    transport.send({
+      type: 'passkey',
+      op: r.op,
+      rpId: str(r.rpId) || location.hostname,
+      rpName: str(r.rpName),
+      userName: str(r.userName),
+      userDisplayName: str(r.userDisplayName),
+      credentialId: str(r.credentialId)
+    })
+  })
 }

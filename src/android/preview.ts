@@ -250,7 +250,8 @@ export function createPreviewBridge(): NativeBridge {
       new URLSearchParams(location.search).get('autofill') === 'system'
         ? { enabled: true, service: 'com.example.preview/.AutofillService' }
         : { enabled: false, service: null },
-    'autofill.setProvider': ({ provider }) => console.info('[zen preview] autofill provider', provider),
+    'autofill.setProvider': ({ provider }) =>
+      console.info('[zen preview] autofill provider', provider),
     // The pages are cross-origin iframes here: no forms script to talk to.
     'view.forms': () => undefined,
     'app.openExternal': ({ url }) => void window.open(String(url), '_blank'),

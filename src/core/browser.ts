@@ -1484,7 +1484,11 @@ export class Browser {
       return
     }
     if (message.type === 'forms') {
-      if (message.forms && typeof message.forms === 'object' && typeof message.forms.type === 'string')
+      if (
+        message.forms &&
+        typeof message.forms === 'object' &&
+        typeof message.forms.type === 'string'
+      )
         this.autofill.handleEvent(tabId, message.forms)
       return
     }

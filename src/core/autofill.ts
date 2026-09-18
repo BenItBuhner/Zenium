@@ -192,7 +192,8 @@ export class AutofillService {
     const tab = this.browser.tabs.tab(tabId)
     if (!view || !tab) return
     view.sendFormsCommand?.({ type: 'config', enabled: this.pagesEnabled() })
-    if (/^https?:/i.test(tab.url)) void view.executeJavaScript(PASSKEY_OBSERVER_SOURCE).catch(() => undefined)
+    if (/^https?:/i.test(tab.url))
+      void view.executeJavaScript(PASSKEY_OBSERVER_SOURCE).catch(() => undefined)
   }
 
   /** The tab committed a navigation: a submitted login is judged now, the picker is moot. */
@@ -201,7 +202,9 @@ export class AutofillService {
     for (const key of this.autoFilled) if (key.startsWith(`${tabId}|`)) this.autoFilled.delete(key)
     if (this.picker?.tabId === tabId) this.closePicker()
     // Hosts without a dom-ready signal (Android) learn the configuration for the new document here.
-    this.browser.tabs.view(tabId)?.sendFormsCommand?.({ type: 'config', enabled: this.pagesEnabled() })
+    this.browser.tabs
+      .view(tabId)
+      ?.sendFormsCommand?.({ type: 'config', enabled: this.pagesEnabled() })
     this.evaluateCandidate(tabId)
   }
 
@@ -344,7 +347,7 @@ export class AutofillService {
           item = {
             id: c.id,
             title: c.username || 'No username',
-            subtitle: c.origin === context.origin ? '' : domainOf(c.origin) || siteLabel(c.origin),
+            subtitle: c.origin === context.origin ? '' : siteLabel(c.origin),
             favicon: favicons.get(domainOf(c.origin)) ?? null,
             needsPassphrase: !this.fillAuthorized && askPassphrase
           }
@@ -778,7 +781,9 @@ export class AutofillService {
       case 'update-login':
         options = {
           message: `Update password for ${prompt.site}?`,
-          detail: prompt.username ? `The saved password for ${prompt.username} changes.` : undefined,
+          detail: prompt.username
+            ? `The saved password for ${prompt.username} changes.`
+            : undefined,
           okLabel: 'Update',
           cancelLabel: 'Not now'
         }
@@ -905,7 +910,11 @@ export class AutofillService {
     this.bump()
   }
 
-  async revealCard(id: string, passphrase?: string, win?: ZenWindow): Promise<ReauthOutcome<string>> {
+  async revealCard(
+    id: string,
+    passphrase?: string,
+    win?: ZenWindow
+  ): Promise<ReauthOutcome<string>> {
     const card = this.browser.passwords.store.getCard(id)
     if (!card) return { status: 'denied' }
     const gate = await this.browser.passwords.authorize(
@@ -917,7 +926,11 @@ export class AutofillService {
     return { status: 'ok', value: card.number }
   }
 
-  async copyCardNumber(id: string, passphrase?: string, win?: ZenWindow): Promise<ReauthOutcome<null>> {
+  async copyCardNumber(
+    id: string,
+    passphrase?: string,
+    win?: ZenWindow
+  ): Promise<ReauthOutcome<null>> {
     const card = this.browser.passwords.store.getCard(id)
     if (!card) return { status: 'denied' }
     const gate = await this.browser.passwords.authorize(

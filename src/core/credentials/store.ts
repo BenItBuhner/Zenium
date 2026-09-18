@@ -539,7 +539,11 @@ export class CredentialStore {
     return address
   }
 
-  updateAddress(id: string, patch: Partial<AddressInput>, now: number = Date.now()): AddressEntry | null {
+  updateAddress(
+    id: string,
+    patch: Partial<AddressInput>,
+    now: number = Date.now()
+  ): AddressEntry | null {
     this.requireKey()
     const address = this.addresses.get(id)
     if (!address) return null
@@ -599,7 +603,11 @@ export class CredentialStore {
     return card
   }
 
-  updateCard(id: string, patch: Partial<PaymentCardInput>, now: number = Date.now()): PaymentCard | null {
+  updateCard(
+    id: string,
+    patch: Partial<PaymentCardInput>,
+    now: number = Date.now()
+  ): PaymentCard | null {
     this.requireKey()
     const card = this.cards.get(id)
     if (!card) return null

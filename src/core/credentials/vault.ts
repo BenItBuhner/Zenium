@@ -180,7 +180,8 @@ export function parseVaultFile(text: string): VaultFile {
 }
 
 const str = (v: unknown): string => (typeof v === 'string' ? v : '')
-const num = (v: unknown, fallback = 0): number => (typeof v === 'number' && Number.isFinite(v) ? v : fallback)
+const num = (v: unknown, fallback = 0): number =>
+  typeof v === 'number' && Number.isFinite(v) ? v : fallback
 const nullableNum = (v: unknown): number | null => (typeof v === 'number' ? v : null)
 
 function payloadOf(record: VaultRecord): EntryPayload {
@@ -200,19 +201,20 @@ function payloadOf(record: VaultRecord): EntryPayload {
         lastUsedAt: c.lastUsedAt
       }
     }
-    case 'address': {
-      const { id: _id, ...rest } = record.value
-      return { kind: 'address', ...rest }
-    }
-    case 'card': {
-      const { id: _id, ...rest } = record.value
-      return { kind: 'card', ...rest }
-    }
-    case 'passkey': {
-      const { id: _id, ...rest } = record.value
-      return { kind: 'passkey', ...rest }
-    }
+    case 'address':
+      return { kind: 'address', ...withoutId(record.value) }
+    case 'card':
+      return { kind: 'card', ...withoutId(record.value) }
+    case 'passkey':
+      return { kind: 'passkey', ...withoutId(record.value) }
   }
+}
+
+/** The id lives in the entry envelope, not in the encrypted payload. */
+function withoutId<T extends { id: string }>(value: T): Omit<T, 'id'> {
+  const copy: Partial<T> = { ...value }
+  delete copy.id
+  return copy as Omit<T, 'id'>
 }
 
 function recordOf(id: string, payload: EntryPayload): VaultRecord {

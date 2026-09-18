@@ -58,7 +58,13 @@ export function cardNetwork(number: string): CardNetwork {
   const d = cardDigits(number)
   if (!d) return 'unknown'
   if (d.startsWith('34') || d.startsWith('37')) return 'amex'
-  if (inRange(d, 300, 305) || d.startsWith('309') || d.startsWith('36') || d.startsWith('38') || d.startsWith('39'))
+  if (
+    inRange(d, 300, 305) ||
+    d.startsWith('309') ||
+    d.startsWith('36') ||
+    d.startsWith('38') ||
+    d.startsWith('39')
+  )
     return 'diners'
   if (inRange(d, 3528, 3589)) return 'jcb'
   if (d.startsWith('6011') || inRange(d, 644, 649) || d.startsWith('65')) return 'discover'
@@ -85,7 +91,10 @@ export function fullYear(year: number, now: number = Date.now()): number {
  * Read an expiry the way pages write it: `MM/YY`, `MM / YYYY`, `MM-YY`, `MMYY`, `YYYY-MM` (an
  * `<input type=month>`); null when it is not one.
  */
-export function parseExpiry(text: string, now: number = Date.now()): { month: number; year: number } | null {
+export function parseExpiry(
+  text: string,
+  now: number = Date.now()
+): { month: number; year: number } | null {
   const t = text.trim()
   let month: number
   let year: number
@@ -133,7 +142,9 @@ export function maskedCardNumber(number: string): string {
 }
 
 /** `Visa •••• 4242` (or the nickname when the user gave one). */
-export function cardLabel(card: Pick<PaymentCardSummary, 'network' | 'last4' | 'nickname'>): string {
+export function cardLabel(
+  card: Pick<PaymentCardSummary, 'network' | 'last4' | 'nickname'>
+): string {
   return card.nickname || `${NETWORK_NAMES[card.network]} \u2022\u2022\u2022\u2022 ${card.last4}`
 }
 
@@ -199,7 +210,10 @@ function yearFrom(raw: string | undefined, now: number): number | null {
  * The card a submitted payment form carried, or null when the number or expiry is unusable.
  * `cc-exp` (one field) and `cc-exp-month` / `cc-exp-year` (two) are both understood.
  */
-export function cardFromForm(values: FormValues, now: number = Date.now()): PaymentCardInput | null {
+export function cardFromForm(
+  values: FormValues,
+  now: number = Date.now()
+): PaymentCardInput | null {
   const number = cardDigits(values['cc-number'] ?? '')
   if (!luhnValid(number)) return null
   let month: number | null = null

@@ -1,5 +1,5 @@
 import type { Credential, Rect } from '../../shared/types'
-import { domainOf } from './origins'
+import { siteLabel } from './origins'
 
 /**
  * Pure decisions behind the in-page save prompt and the account picker, kept apart from the
@@ -38,7 +38,8 @@ export interface SaveContext {
   matches: Credential[]
 }
 
-const sameUser = (a: string, b: string): boolean => a.trim().toLowerCase() === b.trim().toLowerCase()
+const sameUser = (a: string, b: string): boolean =>
+  a.trim().toLowerCase() === b.trim().toLowerCase()
 
 /**
  * Save, update or stay quiet. A submitted username that matches a saved login with another
@@ -87,7 +88,7 @@ export function orderLoginsForPicker(
     })
     .map((credential) => ({
       credential,
-      subtitle: credential.origin === pageOrigin ? '' : (domainOf(credential.origin) || credential.origin)
+      subtitle: credential.origin === pageOrigin ? '' : siteLabel(credential.origin)
     }))
 }
 

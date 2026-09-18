@@ -166,7 +166,7 @@ const COUNTRY_ALIASES: Record<string, string> = {
   'czech republic': 'CZ',
   'viet nam': 'VN',
   'hong kong sar': 'HK',
-  'macau': 'MO',
+  macau: 'MO',
   'ivory coast': 'CI',
   'cote d’ivoire': 'CI',
   "cote d'ivoire": 'CI',
@@ -237,7 +237,10 @@ let namesByFolded: Map<string, string> | null = null
  * ("United States"), a common alias ("UK"), or the `value|label` pair of a `<select>`.
  */
 export function resolveCountry(text: string): string | null {
-  const parts = text.split('|').map((p) => p.trim()).filter(Boolean)
+  const parts = text
+    .split('|')
+    .map((p) => p.trim())
+    .filter(Boolean)
   for (const part of parts) {
     const code = normalizeCountry(part)
     if (code) return code
@@ -344,7 +347,10 @@ export function regionsOf(country: string): { key: string; name: string }[] {
  */
 export function resolveRegion(country: string, text: string): string {
   const regions = regionsOf(country)
-  const parts = text.split('|').map((p) => p.trim()).filter(Boolean)
+  const parts = text
+    .split('|')
+    .map((p) => p.trim())
+    .filter(Boolean)
   if (!regions.length) return parts[0] ?? ''
   for (const part of parts) {
     const upper = part.toUpperCase()
@@ -406,9 +412,15 @@ export function addressFormat(country: string): AddressFormat {
   const code = normalizeCountry(country) ?? 'US'
   const rules = countryRules(code)
   const required = requiredFields(code)
-  const fields: AddressFieldSpec[] = [{ field: 'country', label: FIXED_LABELS.country ?? 'Country', required: true }]
+  const fields: AddressFieldSpec[] = [
+    { field: 'country', label: FIXED_LABELS.country ?? 'Country', required: true }
+  ]
   for (const field of fieldOrder(code)) {
-    const spec: AddressFieldSpec = { field, label: labelFor(field, rules), required: required.has(field) }
+    const spec: AddressFieldSpec = {
+      field,
+      label: labelFor(field, rules),
+      required: required.has(field)
+    }
     if (field === 'region' && rules.regions.length) spec.options = rules.regions
     fields.push(spec)
   }
@@ -435,13 +447,15 @@ export function addressComplete(address: AddressInput): boolean {
 }
 
 /**
- * The address as the country prints it, one array element per line (region keys become names,
- * upper-cased fields upper-cased, a multi-line street on its own lines). Phone and email are not
- * part of the printed address; the name and the country line can be left out.
+ * The address as the country prints it, one array element per line, a multi-line street on its
+ * own lines. The region prints as stored (`CA`, `ON`, `北海道`: the postal convention; the manager
+ * shows the display name in its picker). `upper` applies the country's upper-case rule for an
+ * envelope; the UI leaves it off. Phone and email are not part of the printed address; the name
+ * and the country line can be left out.
  */
 export function formatAddress(
   address: AddressInput,
-  options: { name?: boolean; country?: boolean } = {}
+  options: { name?: boolean; country?: boolean; upper?: boolean } = {}
 ): string[] {
   const includeName = options.name ?? true
   const includeCountry = options.country ?? true
@@ -450,9 +464,8 @@ export function formatAddress(
   const value = (field: keyof AddressInput): string => {
     if (field === 'name' && !includeName) return ''
     let text = address[field].trim()
-    if (field === 'region') text = regionName(code, text)
     const token = FIELD_TOKENS[field]
-    if (token && rules.upper.includes(token)) text = text.toUpperCase()
+    if (options.upper && token && rules.upper.includes(token)) text = text.toUpperCase()
     return text
   }
   const lines: string[] = []
@@ -550,7 +563,10 @@ export function addressToForm(address: AddressEntry | AddressInput): {
   values: FormValues
   labels: { countryName: string; regionName: string }
 } {
-  const lines = address.streetAddress.split('\n').map((l) => l.trim()).filter(Boolean)
+  const lines = address.streetAddress
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
   const nameParts = address.name.trim().split(/\s+/).filter(Boolean)
   const values: FormValues = {
     name: address.name,
@@ -567,7 +583,8 @@ export function addressToForm(address: AddressEntry | AddressInput): {
     tel: address.phone,
     email: address.email
   }
-  for (const key of Object.keys(values) as (keyof FormValues)[]) if (!values[key]) delete values[key]
+  for (const key of Object.keys(values) as (keyof FormValues)[])
+    if (!values[key]) delete values[key]
   return {
     values,
     labels: {
