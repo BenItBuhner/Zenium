@@ -61,7 +61,12 @@ interface Caret {
 }
 
 type DropTarget =
-  /** A slot of the lifted row's own list: its neighbours slide to open it. */
+  /**
+   * A slot of a tab list, read off the rows' geometry: the lifted row's own list (its hole is
+   * `liftedAt` among the others) or another list here (pinned from regular, a remote drag, a
+   * tile from Essentials; `liftedAt` is then the count, a hole past the end). The rows slide on
+   * that list's motion to open the gap.
+   */
   | {
       kind: 'slot'
       key: string | null
@@ -69,8 +74,11 @@ type DropTarget =
       index: number
       liftedAt: number
       caret: Caret
+      motion: SlideMotion
+      rows: HTMLElement[]
+      shift: number
     }
-  /** A `data-drop` target: another list's slot, a folder, a section, a space, a split, the bar. */
+  /** A `data-drop` target: a grid tile's edge, a folder, a section, a space, a split, the bar. */
   | { kind: 'key'; key: string; caret: Caret | null; into: boolean }
   /** The page, or past the window's edge: the tab leaves this window. */
   | { kind: 'tearoff' }
@@ -84,6 +92,8 @@ interface Session {
   list: HTMLElement | null
   scroller: HTMLElement | null
   motion: SlideMotion | null
+  /** The list whose rows are slid open right now, own or not. */
+  slid: SlideMotion | null
   sidebar: HTMLElement | null
   /** Pointer offset inside the picked-up row and the row's size: the ghost keeps both. */
   dx: number
@@ -253,6 +263,7 @@ function begin(tab: Tab, rowEl: HTMLElement, startX: number, startY: number): vo
     list,
     scroller,
     motion,
+    slid: null,
     sidebar: rowEl.closest<HTMLElement>('aside'),
     dx: startX - rect.left,
     dy: startY - rect.top,
@@ -306,6 +317,7 @@ function beginRemote(over: TabDragOver): void {
     list: rowEl && motion ? rowEl.parentElement : null,
     scroller,
     motion,
+    slid: null,
     sidebar: document.querySelector<HTMLElement>('aside'),
     dx: REMOTE_GRAB.dx,
     dy: REMOTE_GRAB.dy,
@@ -374,7 +386,8 @@ function cancel(s: Session): void {
   if (s.settling) return
   const { x, y } = s.pointer
   run('tab.dragEnd', { tabId: s.tabId, x, y, outcome: 'cancel' })
-  s.motion?.slide(new Map())
+  s.slid?.slide(new Map())
+  s.slid = null
   hideCaret()
   dropStore.set({ key: null, ghost: 'row' })
   const own = ownRect(s)
@@ -438,7 +451,7 @@ function end(s: Session, focusPage: boolean): void {
   invalidateSnapshot()
   // Rows that slid for a drop that never committed (a cancel from the other window, a failed
   // tear-off) glide home; a commit that does land puts them right first.
-  s.motion?.releaseSoon()
+  s.slid?.releaseSoon()
   if (focusPage) returnFocusToPage()
 }
 
@@ -480,8 +493,9 @@ function offerZones(s: Session, x: number, y: number): void {
 /**
  * What lies under the pointer, in this order: a drop-into target drawn over the lists (a folder
  * row, the Essentials grid, a space, the separator's pin zone, a split edge, the bookmarks bar)
- * wins; then a slot of the lifted row's own list, read off the rows' geometry; then another
- * list's row edge; then the section's empty space; then the page, which tears the tab off.
+ * wins; then a slot of the lifted row's own list, read off the rows' geometry; then a slot of
+ * the tab list under the pointer; then a grid tile's edge; then the section's empty space; then
+ * the page, which tears the tab off.
  */
 function resolve(x: number, y: number, s: Session): DropTarget {
   if (x < 0 || y < 0 || x >= window.innerWidth || y >= window.innerHeight)
@@ -498,29 +512,23 @@ function resolve(x: number, y: number, s: Session): DropTarget {
       caret: null,
       into: kind === 'folder' || kind === 'section' || kind === 'space' || kind === 'bookmark'
     }
-  const slot = resolveSlot(x, y, s)
-  if (slot) return slot
+  const own = s.list && s.motion ? resolveSlot(x, y, s, s.list, s.motion) : null
+  if (own) return own
+  // The list under the pointer; in the empty space under a panel's rows, its regular list.
+  const scroller = under?.closest<HTMLElement>('[data-tab-scroller]') ?? null
+  const listEl =
+    under?.closest<HTMLElement>('[data-tab-list]') ??
+    scroller?.querySelector<HTMLElement>('[data-tab-list="regular"]') ??
+    null
+  const motion = scroller ? listMotions.get(scroller) : undefined
+  if (listEl && listEl !== s.list && motion) {
+    const slot = resolveSlot(x, y, s, listEl, motion)
+    if (slot) return slot
+  }
   if (key && kind && dropEl) {
     if (key.startsWith(`tab:${s.tabId}:`)) return { kind: 'none' }
-    if (kind === 'tab') {
-      const row = dropEl.closest<HTMLElement>('[data-tab-id]')
-      if (!row) return { kind: 'none' }
-      // A grid tile (Essentials) draws its own vertical caret; rows take the shared one.
-      if (!row.matches('.zen-tab')) return { kind: 'key', key, caret: null, into: false }
-      const r = row.getBoundingClientRect()
-      const gap = rowGap(row.parentElement)
-      const after = key.endsWith(':after')
-      return {
-        kind: 'key',
-        key,
-        caret: {
-          x: r.left + 8,
-          y: after ? r.bottom + gap / 2 : r.top - gap / 2,
-          width: r.width - 16
-        },
-        into: false
-      }
-    }
+    // A grid tile's edge (Essentials): the tile draws its own vertical caret.
+    if (kind === 'tab') return { kind: 'key', key, caret: null, into: false }
     return { kind: 'key', key, caret: null, into: true }
   }
   if (under?.closest('[data-tear-zone]')) return { kind: 'tearoff' }
@@ -528,29 +536,48 @@ function resolve(x: number, y: number, s: Session): DropTarget {
 }
 
 /**
- * Within the lifted row's own list the slot is read off the rows as drawn, not hit-tested: the
- * pointer over the gap the neighbours opened must keep resolving to that gap. The band runs from
- * the first row to the last; for the regular list it reaches down to the end of the scroller,
- * so the empty space under the rows means "after the last one".
+ * The slot of `list` under the pointer, read off the rows as drawn, not hit-tested: the pointer
+ * over the gap the neighbours opened must keep resolving to that gap. When the lifted row is one
+ * of the rows its slot is the hole; otherwise the hole is past the end and the incoming row is
+ * as tall as the list's rows. The band runs from the first row to the last; for the regular
+ * list it reaches down to the end of the scroller, so the empty space under the rows means
+ * "after the last one".
  */
-function resolveSlot(x: number, y: number, s: Session): DropTarget | null {
-  const { list, motion } = s
-  if (!list || !motion) return null
+function resolveSlot(
+  x: number,
+  y: number,
+  s: Session,
+  list: HTMLElement,
+  motion: SlideMotion
+): DropTarget | null {
   const rows = listRows(list)
-  const ownEl = rows.find((r) => r.dataset.tabId === s.tabId)
-  if (!ownEl) return null
-  const liftedAt = rows.indexOf(ownEl)
+  const ownEl = rows.find((r) => r.dataset.tabId === s.tabId) ?? null
   const others = rows.filter((r) => r !== ownEl)
-  const own = motion.restingRect(s.tabId) ?? ownEl.getBoundingClientRect()
+  if (!ownEl && others.length === 0) return null
+  const liftedAt = ownEl ? rows.indexOf(ownEl) : others.length
   const spans: Span[] = others.map((r) => {
     const rr = motion.restingRect(r.dataset.tabId ?? '') ?? r.getBoundingClientRect()
     return { start: rr.top, end: rr.bottom }
   })
+  const gap = rowGap(list)
   const band = list.getBoundingClientRect()
-  const top = Math.min(own.top, spans[0]?.start ?? own.top)
-  let bottom = Math.max(own.bottom, spans[spans.length - 1]?.end ?? own.bottom)
-  if (list.dataset.tabList === 'regular' && s.scroller)
-    bottom = Math.max(bottom, s.scroller.getBoundingClientRect().bottom)
+  let own: Span & { left: number; width: number }
+  if (ownEl) {
+    const r = motion.restingRect(s.tabId) ?? ownEl.getBoundingClientRect()
+    own = { start: r.top, end: r.bottom, left: r.left, width: r.width }
+  } else {
+    // The virtual hole after the last row, one row tall.
+    const last = spans[spans.length - 1] ?? { start: band.top, end: band.top }
+    const sample = others[others.length - 1]?.getBoundingClientRect()
+    const height = sample?.height ?? s.height
+    const start = last.end + gap
+    own = { start, end: start + height, left: band.left, width: band.width }
+  }
+  const top = Math.min(own.start, spans[0]?.start ?? own.start)
+  let bottom = Math.max(own.end, spans[spans.length - 1]?.end ?? own.end)
+  const scroller = list.closest<HTMLElement>('[data-tab-scroller]')
+  if (list.dataset.tabList === 'regular' && scroller)
+    bottom = Math.max(bottom, scroller.getBoundingClientRect().bottom)
   if (x < band.left || x > band.right || y < top || y > bottom) return null
   const mids = others.map((r) => {
     const v = motion.visualRect(r.dataset.tabId ?? '') ?? r.getBoundingClientRect()
@@ -558,15 +585,21 @@ function resolveSlot(x: number, y: number, s: Session): DropTarget | null {
   })
   const index = slotAt(y, mids)
   const ids = others.map((r) => r.dataset.tabId ?? '')
-  const { key, stay } = slotKey(ids, liftedAt, index)
-  const cy = gapCentre(liftedAt, index, spans, { start: own.top, end: own.bottom })
+  const named = slotKey(ids, liftedAt, index)
+  // A row from elsewhere never "stays": past the end it lands after the last row.
+  const key = named.key
+  const stay = ownEl ? named.stay : false
+  const cy = gapCentre(liftedAt, index, spans, own)
   return {
     kind: 'slot',
     key,
     stay,
     index,
     liftedAt,
-    caret: { x: own.left + 8, y: cy, width: own.width - 16 }
+    caret: { x: own.left + 8, y: cy, width: own.width - 16 },
+    motion,
+    rows: others,
+    shift: own.end - own.start + gap
   }
 }
 
@@ -579,29 +612,28 @@ function rowGap(list: HTMLElement | null): number {
 // Feedback: the ghost, the caret, the sliding rows
 // ---------------------------------------------------------------------------
 
+/**
+ * The feedback for a target: the drop key and ghost shape for the components, the rows of the
+ * slot's list slid open (any other list slid for an earlier target glides home), the caret.
+ */
 function apply(target: DropTarget, s: Session): void {
   s.target = target
   const key = target.kind === 'slot' || target.kind === 'key' ? target.key : null
   const ghost: GhostKind =
     target.kind === 'tearoff' ? 'tearoff' : target.kind === 'key' && target.into ? 'into' : 'row'
   dropStore.set({ key, ghost })
-  if (s.motion && s.list) {
-    if (target.kind === 'slot') {
-      const rows = listRows(s.list).filter((r) => r.dataset.tabId !== s.tabId)
-      const offsets = slideOffsets(
-        target.liftedAt,
-        target.index,
-        rows.length,
-        s.height + rowGap(s.list)
-      )
-      const byId = new Map<string, number>()
-      rows.forEach((r, j) => {
-        if (offsets[j]) byId.set(r.dataset.tabId ?? '', offsets[j])
-      })
-      s.motion.slide(byId)
-    } else {
-      s.motion.slide(new Map())
-    }
+  if (target.kind === 'slot') {
+    const offsets = slideOffsets(target.liftedAt, target.index, target.rows.length, target.shift)
+    const byId = new Map<string, number>()
+    target.rows.forEach((r, j) => {
+      if (offsets[j]) byId.set(r.dataset.tabId ?? '', offsets[j])
+    })
+    if (s.slid && s.slid !== target.motion) s.slid.slide(new Map())
+    target.motion.slide(byId)
+    s.slid = target.motion
+  } else if (s.slid) {
+    s.slid.slide(new Map())
+    s.slid = null
   }
   const caret = target.kind === 'slot' ? target.caret : target.kind === 'key' ? target.caret : null
   if (caret) showCaret(caret)
