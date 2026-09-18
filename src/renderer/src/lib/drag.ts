@@ -33,8 +33,14 @@ import {
  */
 export type GhostKind = 'row' | 'into' | 'tearoff'
 
-export const dropStore = createStore<{ key: string | null; ghost: GhostKind }>(
-  { key: null, ghost: 'row' },
+/**
+ * The drop target under the pointer (`key`), the ghost's shape, and whether the sidebar should
+ * offer the drop zones that need room of their own (an empty Essentials grid's "Drop here").
+ * Nothing in the sidebar moves while the pointer is over the tab rows: those zones mount once
+ * the pointer has gone above the tab panel, and stay for the rest of the drag.
+ */
+export const dropStore = createStore<{ key: string | null; ghost: GhostKind; zones: boolean }>(
+  { key: null, ghost: 'row', zones: false },
   'drop'
 )
 
@@ -155,6 +161,7 @@ export function startTabDrag(tab: Tab, e: React.PointerEvent): void {
     if (!s || s.remote) return
     s.pointer = { x: ev.clientX, y: ev.clientY }
     placeGhost(ev.clientX, ev.clientY)
+    offerZones(s, ev.clientX, ev.clientY)
     apply(resolve(ev.clientX, ev.clientY, s), s)
     run('tab.dragMove', {
       tabId: s.tabId,
@@ -219,6 +226,7 @@ export function remoteDragOver(over: TabDragOver | null): void {
   if (!s) return
   s.pointer = { x: over.x, y: over.y }
   placeGhost(over.x, over.y)
+  offerZones(s, over.x, over.y)
   const target = resolve(over.x, over.y, s)
   apply(target, s)
   const key = target.kind === 'slot' || target.kind === 'key' ? target.key : null
@@ -425,7 +433,7 @@ function end(s: Session, focusPage: boolean): void {
   if (s.frame !== null) cancelAnimationFrame(s.frame)
   document.body.style.cursor = ''
   hideCaret()
-  dropStore.set({ key: null, ghost: 'row' })
+  dropStore.set({ key: null, ghost: 'row', zones: false })
   uiStore.set({ drag: null })
   invalidateSnapshot()
   // Rows that slid for a drop that never committed (a cancel from the other window, a failed
@@ -459,17 +467,41 @@ function inSidebar(s: Session, x: number, y: number): boolean {
   return Boolean(r && x >= r.left && x < r.right && y >= r.top && y < r.bottom)
 }
 
+/**
+ * The zones that take room of their own (an empty Essentials grid's "Drop here") are offered
+ * once the pointer is in the sidebar above the tab panel, where nothing under it can shift.
+ */
+function offerZones(s: Session, x: number, y: number): void {
+  if (dropStore.get().zones || !inSidebar(s, x, y)) return
+  const panel = s.scroller?.getBoundingClientRect()
+  if (panel && y < panel.top) dropStore.set({ zones: true })
+}
+
+/**
+ * What lies under the pointer, in this order: a drop-into target drawn over the lists (a folder
+ * row, the Essentials grid, a space, the separator's pin zone, a split edge, the bookmarks bar)
+ * wins; then a slot of the lifted row's own list, read off the rows' geometry; then another
+ * list's row edge; then the section's empty space; then the page, which tears the tab off.
+ */
 function resolve(x: number, y: number, s: Session): DropTarget {
   if (x < 0 || y < 0 || x >= window.innerWidth || y >= window.innerHeight)
     return { kind: 'tearoff' }
-  const slot = resolveSlot(x, y, s)
-  if (slot) return slot
   const under = document.elementFromPoint(x, y)
   const dropEl = under?.closest<HTMLElement>('[data-drop]')
-  if (dropEl) {
-    const key = dropEl.dataset.drop ?? ''
+  const key = dropEl?.dataset.drop ?? null
+  const kind = key?.slice(0, key.indexOf(':')) ?? null
+  const overList = kind === 'tab' || key?.startsWith('section:regular:')
+  if (key && kind && !overList)
+    return {
+      kind: 'key',
+      key,
+      caret: null,
+      into: kind === 'folder' || kind === 'section' || kind === 'space' || kind === 'bookmark'
+    }
+  const slot = resolveSlot(x, y, s)
+  if (slot) return slot
+  if (key && kind && dropEl) {
     if (key.startsWith(`tab:${s.tabId}:`)) return { kind: 'none' }
-    const [kind, , position] = key.split(':')
     if (kind === 'tab') {
       const row = dropEl.closest<HTMLElement>('[data-tab-id]')
       if (!row) return { kind: 'none' }
@@ -477,19 +509,19 @@ function resolve(x: number, y: number, s: Session): DropTarget {
       if (!row.matches('.zen-tab')) return { kind: 'key', key, caret: null, into: false }
       const r = row.getBoundingClientRect()
       const gap = rowGap(row.parentElement)
+      const after = key.endsWith(':after')
       return {
         kind: 'key',
         key,
         caret: {
           x: r.left + 8,
-          y: position === 'before' ? r.top - gap / 2 : r.bottom + gap / 2,
+          y: after ? r.bottom + gap / 2 : r.top - gap / 2,
           width: r.width - 16
         },
         into: false
       }
     }
-    const into = kind === 'folder' || kind === 'section' || kind === 'space' || kind === 'bookmark'
-    return { kind: 'key', key, caret: null, into }
+    return { kind: 'key', key, caret: null, into: true }
   }
   if (under?.closest('[data-tear-zone]')) return { kind: 'tearoff' }
   return { kind: 'none' }
@@ -497,7 +529,9 @@ function resolve(x: number, y: number, s: Session): DropTarget {
 
 /**
  * Within the lifted row's own list the slot is read off the rows as drawn, not hit-tested: the
- * pointer over the gap the neighbours opened must keep resolving to that gap.
+ * pointer over the gap the neighbours opened must keep resolving to that gap. The band runs from
+ * the first row to the last; for the regular list it reaches down to the end of the scroller,
+ * so the empty space under the rows means "after the last one".
  */
 function resolveSlot(x: number, y: number, s: Session): DropTarget | null {
   const { list, motion } = s
@@ -514,7 +548,10 @@ function resolveSlot(x: number, y: number, s: Session): DropTarget | null {
   })
   const band = list.getBoundingClientRect()
   const top = Math.min(own.top, spans[0]?.start ?? own.top)
-  if (x < band.left || x > band.right || y < top || y > band.bottom) return null
+  let bottom = Math.max(own.bottom, spans[spans.length - 1]?.end ?? own.bottom)
+  if (list.dataset.tabList === 'regular' && s.scroller)
+    bottom = Math.max(bottom, s.scroller.getBoundingClientRect().bottom)
+  if (x < band.left || x > band.right || y < top || y > bottom) return null
   const mids = others.map((r) => {
     const v = motion.visualRect(r.dataset.tabId ?? '') ?? r.getBoundingClientRect()
     return (v.top + v.bottom) / 2

@@ -29,6 +29,7 @@ const ENTER_BATCH = 6
 export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Element {
   const drag = uiStore.use((s) => s.drag)
   const dropKey = dropStore.use((s) => s.key)
+  const zones = dropStore.use((s) => s.zones)
   const pinned = pinnedOf(state, space)
   const regular = regularOf(state, space)
   const folders = Object.values(state.folders).filter((f) => f.spaceId === space.id)
@@ -60,9 +61,10 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
     ...regular.map((t) => `${t.id}${t.folderId ?? ''}`)
   ].join('|')
   useLayoutEffect(() => {
-    // The row whose ghost is still gliding into its slot is placed, not animated.
+    // The row whose ghost is still gliding into its slot is placed, not animated. The rows also
+    // glide when a drop zone above the panel takes its room (`zones`), rather than jumping.
     motion.flip(uiStore.get().drag?.tabId ?? null, isActive)
-  }, [motion, orderKey, isActive])
+  }, [motion, orderKey, isActive, zones])
 
   return (
     <ListMotionContext.Provider value={motion}>
@@ -77,11 +79,11 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
             if (e.target === e.currentTarget) window.dispatchEvent(new CustomEvent('zen-new-tab'))
           }}
         >
-          {(pinned.length > 0 || Boolean(drag)) && (
+          {pinned.length > 0 && (
             <>
               <SpaceHeader space={space} compact={compact} />
               {!space.pinnedCollapsed && (
-                <div className="relative flex flex-col gap-0.5">
+                <div className="relative flex flex-col gap-0.5" data-tab-list="pinned">
                   {pinned.map((tab) => (
                     <TabItem
                       key={tab.id}
@@ -90,13 +92,6 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
                       compact={compact}
                     />
                   ))}
-                  {drag && (
-                    <DropZone
-                      dropKey={`section:pinned:${space.id}`}
-                      activeKey={dropKey}
-                      label="Pin here"
-                    />
-                  )}
                 </div>
               )}
             </>
@@ -114,9 +109,19 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
                   <Brush className="h-3 w-3" />
                 </button>
               )}
+              {/* Pinning by drag: the separator is the target, over its own margins, so nothing
+                  in the list moves when a drag starts (an appearing zone would shift the rows). */}
+              {drag && (
+                <DropZone
+                  dropKey={`section:pinned:${space.id}`}
+                  activeKey={dropKey}
+                  label="Pin here"
+                  overlay
+                />
+              )}
             </div>
           )}
-          <div className="flex flex-col gap-0.5">
+          <div className="flex flex-col gap-0.5" data-tab-list="regular">
             {folders.map((folder) => (
               <FolderRow
                 key={folder.id}
@@ -173,16 +178,23 @@ function SpaceHeader({ space, compact }: { space: Space; compact: boolean }): JS
   )
 }
 
+/**
+ * A drop target that takes no room of its own: `tall` fills the empty space under the rows,
+ * `overlay` covers the separator and its margins. Both light up (fill, inset outline, label)
+ * only while the pointer is over them.
+ */
 function DropZone({
   dropKey,
   activeKey,
   label,
-  tall
+  tall,
+  overlay
 }: {
   dropKey: string
   activeKey: string | null
   label?: string
   tall?: boolean
+  overlay?: boolean
 }): JSX.Element {
   const active = activeKey === dropKey
   return (
@@ -190,8 +202,9 @@ function DropZone({
       data-drop={dropKey}
       data-drop-into={active || undefined}
       className={cn(
-        'relative flex items-center justify-center rounded-lg text-[11px] text-[var(--zen-muted)]',
-        tall ? 'absolute inset-0' : 'h-6'
+        'absolute z-10 flex items-center justify-center rounded-lg text-[11px] text-[var(--v2-control-text-deemphasized)]',
+        tall && 'inset-0',
+        overlay && 'inset-x-0 -inset-y-1.5'
       )}
     >
       {label && active ? label : null}

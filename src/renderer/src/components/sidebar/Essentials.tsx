@@ -23,10 +23,13 @@ interface Props {
 export function Essentials({ essentials, activeTabId, compact }: Props): JSX.Element | null {
   const drag = uiStore.use((s) => s.drag)
   const dropKey = dropStore.use((s) => s.key)
+  const zones = dropStore.use((s) => s.zones)
   const dragged = drag ? essentials.find((t) => t.id === drag.tabId) : undefined
   const showZone = Boolean(drag) && !dragged
 
-  if (essentials.length === 0 && !drag) return null
+  // With no tiles the grid has no room of its own: its "Drop here" mounts once the pointer has
+  // gone above the tab panel (lib/drag.ts `zones`), never under a pointer that is over the rows.
+  if (essentials.length === 0 && !(showZone && zones)) return null
 
   return (
     <div

@@ -662,14 +662,16 @@
   /*
    * Drop-into target (v2 draft §9.4): a folder row, a section, Essentials, a space keeps its
    * size and gains the hover fill plus a 2 px inset outline in the accent at its own radius.
+   * Every one of them sits on a window surface (§9.29), so the control roles resolve to the
+   * window family: the theme's foreground and accent.
    */
   [data-drop-into] {
-    background: var(--v2-fill);
-    box-shadow: inset 0 0 0 2px var(--v2-accent);
+    background: var(--v2-control-fill-hover);
+    box-shadow: inset 0 0 0 2px var(--v2-control-accent);
   }
   /* The audio indicator: the speaker glyph while a tab plays, the muted glyph deemphasised. */
   .zen-tab-audio[data-muted] {
-    color: var(--v2-text-deemphasized);
+    color: var(--v2-control-text-deemphasized);
   }
   /* Compact rows have no room for the glyph: a dot marks sound, a hollow one a muted tab. */
   .zen-tab-audio-dot {
@@ -679,17 +681,18 @@
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: var(--v2-accent);
+    background: var(--v2-control-accent);
     pointer-events: none;
   }
   .zen-tab-audio-dot[data-muted] {
     background: transparent;
-    box-shadow: inset 0 0 0 1.5px var(--v2-text-deemphasized);
+    box-shadow: inset 0 0 0 1.5px var(--v2-control-text-deemphasized);
   }
   /*
    * A tab drag (lib/drag.ts, components/DragLayer.tsx). The ghost is the lifted row, at v1
-   * level 2 with scale(1.02) and 90% opacity (v2 draft §9.4); past the sidebar it becomes a
-   * small window card. Both layers are placed by transform from the drag code, never by React.
+   * level 2 with scale(1.02) and 90% opacity (v2 draft §9.4), on the window's solid colour so
+   * it reads over whatever it crosses; past the sidebar it becomes a small window card. Both
+   * layers are placed by transform from the drag code, never by React.
    */
   .zen-tab-ghost {
     position: fixed;
@@ -701,10 +704,12 @@
     opacity: 1;
   }
   .zen-tab-ghost-row {
-    background: var(--v2-panel);
-    box-shadow:
-      inset 0 0 0 1px var(--v2-border),
-      var(--zen-shadow-2);
+    background-color: var(--zen-bg-solid);
+    background-image: linear-gradient(
+      var(--v2-control-fill-hover),
+      var(--v2-control-fill-hover)
+    );
+    box-shadow: var(--zen-shadow-2);
     transform: scale(1.02);
     opacity: 0.9;
     transition:
@@ -724,7 +729,7 @@
     z-index: 101;
     height: 2px;
     border-radius: 1px;
-    background: var(--v2-accent);
+    background: var(--v2-control-accent);
     pointer-events: none;
     opacity: 0;
     will-change: transform;
@@ -736,7 +741,7 @@
     bottom: 4px;
     width: 2px;
     border-radius: 1px;
-    background: var(--v2-accent);
+    background: var(--v2-control-accent);
     pointer-events: none;
   }
   .zen-tab-tearoff {

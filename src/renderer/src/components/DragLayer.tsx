@@ -10,7 +10,9 @@ import { Favicon } from './sidebar/Favicon'
  * What a tab drag draws over the window: the ghost in the hand – the lifted row, thinned out
  * over a drop-into target, or the tear-off card past the sidebar – and the insertion caret in
  * the gap the rows opened. Both are positioned by lib/drag.ts through the registered elements,
- * so the pointer never waits for a render.
+ * so the pointer never waits for a render. The caret marks a window surface's list and the
+ * ghost is a row lifted off one, so both draw in the window family (design-language-v2-draft
+ * §9.29); the tear-off card depicts a window and is a card, page family.
  */
 export function DragLayer({ state, drag }: { state: UIState; drag: DragState }): JSX.Element {
   const ghost = dropStore.use((s) => s.ghost)
@@ -25,15 +27,20 @@ export function DragLayer({ state, drag }: { state: UIState; drag: DragState }):
   )
   return (
     <>
-      <div ref={registerCaret} className="zen-tab-caret" aria-hidden />
+      <div ref={registerCaret} className="zen-tab-caret" data-surface="window" aria-hidden />
       <div
         ref={registerGhost}
         className="zen-tab-ghost"
+        data-surface="window"
         data-into={ghost === 'into' || undefined}
         aria-hidden
       >
         {ghost === 'tearoff' ? (
-          <div className="zen-tab-tearoff" style={{ width: Math.max(200, drag.width) }}>
+          <div
+            className="zen-tab-tearoff"
+            data-surface="page"
+            style={{ width: Math.max(200, drag.width) }}
+          >
             <div className="zen-tab-tearoff-bar">
               {icon}
               <span className="min-w-0 flex-1 truncate">{title}</span>
