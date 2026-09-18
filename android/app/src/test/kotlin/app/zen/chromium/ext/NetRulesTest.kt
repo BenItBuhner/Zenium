@@ -108,6 +108,57 @@ class NetRulesTest {
     }
 
     @Test
+    fun `a urlFilter is indexed by its complete tokens only, and an edge run that may be part of a URL token is not one`() {
+        val hash = { s: String -> NetRules.urlTokens(s).single() }
+        assertEquals(listOf(hash("ads"), hash("test")), NetRules.filterTokens("||ads.test^").toList())
+        // `js` may be the start of `json`; `oho` sits between `/` and `.`.
+        assertEquals(listOf(hash("oho")), NetRules.filterTokens("/oho.js").toList())
+        // Runs next to a wildcard or at an unanchored edge are not complete tokens.
+        assertEquals(emptyList<Int>(), NetRules.filterTokens("*banner").toList())
+        assertEquals(emptyList<Int>(), NetRules.filterTokens(".php").toList())
+        // `tag` may be the start of `tagged`; `js` is closed by the end anchor.
+        assertEquals(listOf(hash("js")), NetRules.filterTokens("/tag*.js|").toList())
+        assertEquals(listOf(hash("https"), hash("a"), hash("test"), hash("x")), NetRules.filterTokens("|https://a.test/x|").toList())
+        assertEquals(listOf(hash("ad"), hash("server")), NetRules.filterTokens("/AD-Server/").toList())
+        // Distinct tokens: https, x, test, 1.
+        assertEquals(4, NetRules.urlTokens("https://x.test/x/x?x=1").size)
+    }
+
+    @Test
+    fun `the token index finds a rule through any of its tokens and keeps the rules it cannot index in play`() {
+        val rules = rulesOf(
+            """{"id":1,"action":{"type":"block"},"condition":{"urlFilter":"/ads/ban","resourceTypes":["script"]}}""",
+            """{"id":2,"action":{"type":"block"},"condition":{"urlFilter":"*banner","resourceTypes":["image"]}}""",
+            """{"id":3,"action":{"type":"block"},"condition":{"requestDomains":["track.test"],"resourceTypes":["image"]}}""",
+            """{"id":4,"action":{"type":"allow"},"condition":{"urlFilter":"||track.test/keep.gif|","resourceTypes":["image"]}}"""
+        )
+        assertEquals(2, rules.looseCount)
+        // `/ads/ban` is a prefix of the URL's `banner` run: found through `ads`, matched as a substring.
+        assertEquals(NetRules.Decision.Block, rules.decide("https://x.test/ads/banner.js", null, "script", "GET"))
+        assertNull(rules.decide("https://x.test/ads-banner.js", null, "script", "GET"))
+        assertEquals(NetRules.Decision.Block, rules.decide("https://x.test/xbanner.png", null, "image", "GET"))
+        assertEquals(NetRules.Decision.Block, rules.decide("https://track.test/p.gif", null, "image", "GET"))
+        assertEquals(NetRules.Decision.Allow, rules.decide("https://track.test/keep.gif", null, "image", "GET"))
+        assertNull(rules.decide("https://x.test/nothing.gif", null, "image", "GET"))
+    }
+
+    @Test
+    fun `a request against tens of thousands of rules tests a few dozen of them`() {
+        val chrome = ArrayList<String>()
+        for (i in 0 until 20_000) chrome.add("""{"id":${i + 1},"action":{"type":"block"},"condition":{"urlFilter":"||host$i.test/path$i/","resourceTypes":["script"]}}""")
+        chrome.add("""{"id":20001,"action":{"type":"block"},"condition":{"urlFilter":"||host7.test/path7/","resourceTypes":["image"]}}""")
+        val rules = rulesOf(*chrome.toTypedArray())
+        assertEquals(0, rules.looseCount)
+        assertEquals(NetRules.Decision.Block, rules.decide("https://host7.test/path7/x.js", null, "script", "GET"))
+        assertEquals(NetRules.Decision.Block, rules.decide("https://host7.test/path7/x.png", null, "image", "GET"))
+        assertNull(rules.decide("https://host7.test/path8/x.js", null, "script", "GET"))
+        val started = System.nanoTime()
+        for (i in 0 until 200) rules.decide("https://cdn.other.test/static/app-$i.js?v=$i", "https://other.test/", "script", "GET")
+        val perDecisionMicros = (System.nanoTime() - started) / 1_000 / 200
+        assertTrue("a decision took $perDecisionMicros µs", perDecisionMicros < 2_000)
+    }
+
+    @Test
     fun `redirect resolves extensionPath against the extension origin`() {
         val rules = rulesOf(
             """{"id":9,"action":{"type":"redirect","redirect":{"extensionPath":"/empty.js"}},"condition":{"urlFilter":"||analytics.test/lib.js","resourceTypes":["script"]}}"""

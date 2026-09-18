@@ -12,9 +12,13 @@ import java.util.Locale
  * reference matcher and its tests; this is the Kotlin twin: same `urlFilter` grammar, same
  * priority-then-action precedence.
  *
- * The prototype's index is a required-literal prefilter: the longest literal run of a
- * `urlFilter` must occur in the URL before its regex is tried, so a request against tens of
- * thousands of rules costs mostly `indexOf`. The shared request-blocking engine replaces this.
+ * The prototype's index is a token index in the shape of the shared engine's `FilterIndex`:
+ * every rule whose `urlFilter` has a complete token (a run of letters and digits bounded on both
+ * sides by something other than a wildcard, so every matching URL contains it as a whole token)
+ * sits in the bucket of its rarest one, and a request only tests the rules of the buckets its
+ * URL's tokens name plus the few rules without a token (domain-list rules, regular expressions).
+ * Within a bucket the longest literal run of the `urlFilter` must occur in the URL before its
+ * regex is tried. The shared request-blocking engine replaces this.
  */
 class NetRules(val rules: List<Rule>) {
     constructor(rulesJson: JSONArray) : this(
@@ -26,11 +30,53 @@ class NetRules(val rules: List<Rule>) {
         }
     )
 
+    /** token hash → the rules whose rarest complete token it is. */
+    private val buckets: HashMap<Int, Array<Rule>>
+    /** Rules without a complete token: tested for every request. */
+    private val loose: Array<Rule>
+
+    init {
+        val tokens = ArrayList<IntArray>(rules.size)
+        val histogram = HashMap<Int, Int>()
+        for (rule in rules) {
+            val t = rule.tokens
+            tokens.add(t)
+            for (h in t) histogram[h] = (histogram[h] ?: 0) + 1
+        }
+        val building = HashMap<Int, ArrayList<Rule>>()
+        val untokened = ArrayList<Rule>()
+        for (i in rules.indices) {
+            val t = tokens[i]
+            if (t.isEmpty()) {
+                untokened.add(rules[i])
+                continue
+            }
+            var best = t[0]
+            var bestCount = histogram[best] ?: 0
+            for (h in t) {
+                val count = histogram[h] ?: 0
+                if (count < bestCount) {
+                    best = h
+                    bestCount = count
+                }
+            }
+            building.getOrPut(best) { ArrayList() }.add(rules[i])
+        }
+        buckets = HashMap(building.size)
+        for ((k, v) in building) buckets[k] = v.toTypedArray()
+        loose = untokened.toTypedArray()
+    }
+
+    /** Rules no token indexes (tested for every request). */
+    val looseCount: Int get() = loose.size
+
     class Rule(
         val id: Int,
         val priority: Int,
         val action: String,
         val redirectUrl: String?,
+        /** The `urlFilter` as written (null for regex-only and URL-less rules). */
+        val urlFilter: String?,
         /** Regex source (null when the rule has no URL condition); compiled on first use. */
         val regexSource: String?,
         /** Lower-cased literal that must appear in the (lower-cased) URL when the filter is case-insensitive. */
@@ -63,6 +109,9 @@ class NetRules(val rules: List<Rule>) {
         val excludedRequestDomainSet: Set<String> = excludedRequestDomains.toHashSet()
         val initiatorDomainSet: Set<String> = initiatorDomains.toHashSet()
         val excludedInitiatorDomainSet: Set<String> = excludedInitiatorDomains.toHashSet()
+
+        /** Hashes of the `urlFilter`'s complete tokens (empty for regex-only and URL-less rules). */
+        val tokens: IntArray = urlFilter?.let(::filterTokens) ?: IntArray(0)
     }
 
     sealed class Decision {
@@ -78,13 +127,19 @@ class NetRules(val rules: List<Rule>) {
         val lowerUrl = url.lowercase(Locale.ROOT)
         val lowerMethod = method.lowercase(Locale.ROOT)
         var best: Rule? = null
-        for (rule in rules) {
-            if (rule.action == "modifyHeaders") continue
-            if (!matches(rule, url, lowerUrl, host, initiatorHost, type, lowerMethod)) continue
-            if (best == null || rule.priority > best.priority ||
-                (rule.priority == best.priority && rank(rule.action) > rank(best.action))
+        val consider = { rule: Rule ->
+            if (rule.action != "modifyHeaders" && matches(rule, url, lowerUrl, host, initiatorHost, type, lowerMethod) &&
+                (best == null || rule.priority > best!!.priority ||
+                    (rule.priority == best!!.priority && rank(rule.action) > rank(best!!.action)))
             ) best = rule
         }
+        if (buckets.isNotEmpty()) {
+            for (token in urlTokens(lowerUrl)) {
+                val bucket = buckets[token] ?: continue
+                for (rule in bucket) consider(rule)
+            }
+        }
+        for (rule in loose) consider(rule)
         val winner = best ?: return null
         return when (winner.action) {
             "allow", "allowAllRequests" -> Decision.Allow
@@ -148,6 +203,7 @@ class NetRules(val rules: List<Rule>) {
                 priority = o.optInt("priority", 1),
                 action = o.optString("action", "block"),
                 redirectUrl = o.optString("redirectUrl", "").takeIf { o.has("redirectUrl") && !o.isNull("redirectUrl") },
+                urlFilter = urlFilter,
                 regexSource = source,
                 requiredLiteral = literal?.takeIf { it.length >= 3 },
                 caseSensitive = caseSensitive,
@@ -247,6 +303,71 @@ class NetRules(val rules: List<Rule>) {
         /** The longest run of the filter without `*`, `^` or `|` – a substring every match must contain. */
         fun longestLiteral(filter: String): String? =
             filter.split('*', '^', '|').maxByOrNull { it.length }?.takeIf { it.isNotEmpty() }
+
+        private fun isTokenChar(c: Char): Boolean = c in 'a'..'z' || c in '0'..'9'
+
+        private fun tokenHash(s: String, start: Int, end: Int): Int {
+            var h = 0
+            for (i in start until end) h = h * 31 + s[i].code
+            return h
+        }
+
+        /**
+         * Hashes of a `urlFilter`'s complete tokens: runs of `[a-z0-9]` (the filter lowercased)
+         * bounded on both sides by something in the filter other than `*` – a separator character,
+         * or an anchor at the edge (`||`, `|`). A run at an unanchored edge or next to a wildcard
+         * may be only part of a URL token and is not indexed; a filter of nothing but such runs
+         * yields no tokens and its rule is tested for every request.
+         */
+        fun filterTokens(filter: String): IntArray {
+            var body = filter.lowercase(Locale.ROOT)
+            var leftAnchored = false
+            var rightAnchored = false
+            if (body.startsWith("||")) {
+                leftAnchored = true
+                body = body.substring(2)
+            } else if (body.startsWith("|")) {
+                leftAnchored = true
+                body = body.substring(1)
+            }
+            if (body.endsWith("|")) {
+                rightAnchored = true
+                body = body.substring(0, body.length - 1)
+            }
+            val out = ArrayList<Int>(8)
+            var i = 0
+            val n = body.length
+            while (i < n) {
+                if (!isTokenChar(body[i])) {
+                    i++
+                    continue
+                }
+                val start = i
+                while (i < n && isTokenChar(body[i])) i++
+                val boundedLeft = if (start == 0) leftAnchored else body[start - 1] != '*'
+                val boundedRight = if (i == n) rightAnchored else body[i] != '*'
+                if (boundedLeft && boundedRight) out.add(tokenHash(body, start, i))
+            }
+            return out.toIntArray()
+        }
+
+        /** Distinct hashes of the tokens of a lowercased URL (every run of `[a-z0-9]`). */
+        fun urlTokens(lowerUrl: String): IntArray {
+            val out = ArrayList<Int>(24)
+            var i = 0
+            val n = lowerUrl.length
+            while (i < n) {
+                if (!isTokenChar(lowerUrl[i])) {
+                    i++
+                    continue
+                }
+                val start = i
+                while (i < n && isTokenChar(lowerUrl[i])) i++
+                val h = tokenHash(lowerUrl, start, i)
+                if (h !in out) out.add(h)
+            }
+            return out.toIntArray()
+        }
 
         fun hostOf(url: String): String = runCatching { URI(url).host?.lowercase(Locale.ROOT) ?: "" }.getOrDefault("")
 

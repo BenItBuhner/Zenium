@@ -269,8 +269,21 @@ class ExtensionDemo {
      */
     private fun showTab(tabId: String) {
         chromeInvoke("tab.activate", """{"tabId":${JSONObject.quote(tabId)}}""")
-        waitFor(10_000, 200) { if (state().optString("activeTabId") == tabId) true else null }
+        waitFor(10_000, 200) { if (activeTabId() == tabId) true else null }
         SystemClock.sleep(600)
+    }
+
+    /** The active tab of the window's active space, as the core's snapshot reports it. */
+    private fun activeTabId(): String? {
+        val snapshot = state()
+        val spaceId = snapshot.optString("activeSpaceId")
+        val spaces = snapshot.optJSONArray("spaces") ?: return null
+        for (i in 0 until spaces.length()) {
+            val space = spaces.getJSONObject(i)
+            if (space.optString("id") != spaceId) continue
+            return if (space.isNull("activeTabId")) null else space.optString("activeTabId")
+        }
+        return null
     }
 
     private fun handshake() {
@@ -292,7 +305,7 @@ class ExtensionDemo {
         val probeView = waitForView(probeTab)
         waitFor(30_000) { if (tabEval(probeView, PROBE_DONE) == "true") true else null }
         SystemClock.sleep(2_500)
-        results.put("activeTabAtProbe", state().optString("activeTabId") == probeTab)
+        results.put("activeTabAtProbe", activeTabId() == probeTab)
         shot("01-probe-page-dark-reader")
         val probe = json(tabEval(probeView, PROBE_REPORT))
         if (worlds) mergeWorldReports(probeView, probe)
@@ -320,7 +333,7 @@ class ExtensionDemo {
         shot("02-vimium-hints")
         val vimium = json(tabEval(probeView, VIMIUM_REPORT))
         vimium.put("pageKeys", json(tabEval(probeView, "JSON.stringify(window.__keys || null)")))
-        vimium.put("activeTab", state().optString("activeTabId") == probeTab)
+        vimium.put("activeTab", activeTabId() == probeTab)
         if (worlds) worldEval(probeView, VIMIUM, VIMIUM_WORLD_REPORT)?.let { vimium.put("world", json(it)) }
         results.put("vimium", vimium)
         stage(VIMIUM, "coreFunction", if (vimium.optInt("hints") > 0) "PASS" else "FAIL", "hints=${vimium.optInt("hints")} ui=${vimium.optInt("ui")}")
