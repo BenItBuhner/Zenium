@@ -9,12 +9,7 @@ import { run } from '@renderer/lib/api'
 import { badgeLabel, badgeStyle } from '@renderer/lib/extensions/badge'
 import { closeExtensionPopup, openExtensionPopup } from '@renderer/lib/extensions/popup'
 import { openedFromKeyboard } from '@renderer/lib/popover'
-import {
-  ChromePortal,
-  POPOVER_WIDTH,
-  popoverStyle,
-  useLightDismiss
-} from '@renderer/lib/portals'
+import { ChromePortal, POPOVER_WIDTH, popoverStyle, useLightDismiss } from '@renderer/lib/portals'
 import {
   actionEnabled,
   actionIcon,

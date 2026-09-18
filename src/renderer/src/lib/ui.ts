@@ -59,8 +59,11 @@ export interface Toast {
 /** An extension popup the renderer is framing (the document itself is main's WebContentsView). */
 export interface ExtensionPopupState {
   id: string
-  /** The toolbar button it hangs from, in window coordinates, with the bar it sits in. */
-  anchor: Anchor
+  /**
+   * The toolbar button it hangs from, in window coordinates, with the bar it sits in: its box,
+   * not the element (the chrome layer's popover registry holds that, lib/extensions/popup.ts).
+   */
+  anchor: Omit<Anchor, 'element'>
   /** The document's preferred size once it reported one. */
   content: { width: number; height: number } | null
   /** The frame is up: the size arrived, or the wait for it ran out. */

@@ -59,13 +59,15 @@ export function openExtensionPopup(id: string, anchor: Anchor, hasPopup: boolean
   // the button itself, which then does not reopen it – a scroll, a resize or another popover
   // opening closes the popup. Registered from the press rather than the frame's mount, so a
   // press while the page is still being captured closes the pending popup too. The document
-  // is main's view above the chrome and keeps its own input.
+  // is main's view above the chrome and keeps its own input. The button itself is the
+  // registry's alone; the store holds the anchor's box and bar, plain data like the rest of it.
+  const { element, ...placed } = anchor
   releasePopover = openPopover({
     element: () => frame,
-    anchor: () => anchor.element ?? null,
+    anchor: () => element ?? null,
     close: () => closeExtensionPopup()
   })
-  const placement = placementFor(anchor, null)
+  const placement = placementFor(placed, null)
   run('extension.openPopup', {
     id,
     anchor: box,
@@ -79,7 +81,7 @@ export function openExtensionPopup(id: string, anchor: Anchor, hasPopup: boolean
     if (pending !== mine) return
     pending = null
     uiStore.set({
-      extensionPopup: { id, anchor, content: mine.size, shown: mine.size !== null }
+      extensionPopup: { id, anchor: placed, content: mine.size, shown: mine.size !== null }
     })
     if (mine.size) return
     window.setTimeout(() => {

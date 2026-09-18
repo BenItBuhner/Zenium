@@ -8,12 +8,7 @@ import { useArrowKeys, usePopover } from '@renderer/hooks/usePopover'
 import { placeUnder, popOrigin, type Anchor } from '@renderer/lib/anchor'
 import { useViewport } from '@renderer/lib/formFactor'
 import { openedFromKeyboard } from '@renderer/lib/popover'
-import {
-  ChromePortal,
-  popoverStyle,
-  useLightDismiss,
-  type PopoverBox
-} from '@renderer/lib/portals'
+import { ChromePortal, popoverStyle, useLightDismiss, type PopoverBox } from '@renderer/lib/portals'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 
 export interface LocalMenuItem {
