@@ -174,8 +174,11 @@ export class Menus {
     if (isMedia) groups.push(...this.mediaGroups(tab, view, params, win))
     if (params.isEditable) {
       if (params.misspelledWord) groups.push(this.spellingGroup(view, params))
-      // Chrome searches a field's selected text too; the item closes the editing group.
-      const tail = selection ? this.selectionGroup(tab, selection, win).slice(1) : []
+      // Chrome searches a field's selected text too; the item closes the editing group. A
+      // misspelled word is auto-selected on right-click, so skip the search there – its group is
+      // the spelling suggestions, as in Chrome.
+      const tail =
+        selection && !params.misspelledWord ? this.selectionGroup(tab, selection, win).slice(1) : []
       groups.push(this.editGroup(params, { tail }))
     } else if (selection) {
       groups.push(this.selectionGroup(tab, selection, win))

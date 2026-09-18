@@ -895,6 +895,22 @@ describe('the page context menu', () => {
     expect(item(h.items(), 'No Spelling Suggestions').enabled).toBe(false)
   })
 
+  it('does not offer to search the auto-selected misspelled word', () => {
+    // Right-clicking a misspelled word selects it; its group is the suggestions, not a web search
+    // (as in Chrome).
+    const menu = pageHarness().menu(
+      pageParams({
+        isEditable: true,
+        editFlags: ALL_EDITS,
+        misspelledWord: 'teh',
+        dictionarySuggestions: ['the'],
+        selectionText: 'teh'
+      })
+    )
+    expect(menu.some((l) => l.startsWith('Search'))).toBe(false)
+    expect(menu).toContain('the')
+  })
+
   it('offers the emoji picker only where the host has one', () => {
     const without = pageHarness().menu(pageParams({ isEditable: true, editFlags: ALL_EDITS }))
     expect(without).not.toContain('Emoji')
