@@ -101,7 +101,7 @@ beforeEach(() => {
     get: () => 300
   })
   chrome = document.createElement('nav')
-  chrome.dataset.windowChrome = ''
+  chrome.dataset.shellChrome = ''
   opener = document.createElement('button')
   opener.textContent = 'Menu'
   chrome.appendChild(opener)
@@ -309,6 +309,21 @@ describe('the chrome behind the scrim is inert (§9.22, one mechanism with the f
     expect(sheets()).toHaveLength(0)
     expect(chrome.hasAttribute('inert')).toBe(false)
     expect(chromeInertHeld()).toBe(false)
+  })
+
+  it('marks the shell chrome and the window surfaces, not the desktop root with its window-frame mode', () => {
+    const desktopRoot = document.createElement('div')
+    desktopRoot.className = 'zen-window'
+    desktopRoot.dataset.windowChrome = 'frameless'
+    const toolbar = document.createElement('div')
+    toolbar.dataset.surface = 'window'
+    desktopRoot.appendChild(toolbar)
+    document.body.appendChild(desktopRoot)
+    render(<BottomSheet onDismissed={() => undefined}>{rows('Copy')}</BottomSheet>)
+    expect(chrome.hasAttribute('inert')).toBe(true)
+    expect(toolbar.hasAttribute('inert')).toBe(true)
+    expect(desktopRoot.hasAttribute('inert')).toBe(false)
+    desktopRoot.remove()
   })
 })
 

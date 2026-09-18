@@ -100,11 +100,12 @@ function subscribeFrameHost(listener: () => void): () => void {
  * The window chrome roots: what goes inert while a frame dialog or a sheet is open (§9.5,
  * §9.22). On a mouse, the window surfaces (§9.29: the toolbar, the sidebar, the bookmarks bar);
  * on a phone, the shell's chrome under its sheets – the content column, the messages, the bar,
- * the pill's stage, the drawer, the tabs menu – each marked `data-window-chrome` where it is
+ * the pill's stage, the drawer, the tabs menu – each marked `data-shell-chrome` where it is
  * rendered (PhoneShell and the phone components), never the shell itself, which the frame
- * dialog host and its sheets sit inside.
+ * dialog host and its sheets sit inside. (Not `data-window-chrome`: that is the desktop root's
+ * window-frame mode, and marking the root would make its own dialogs inert.)
  */
-const WINDOW_CHROME_ROOTS = '[data-surface="window"], [data-window-chrome]'
+const WINDOW_CHROME_ROOTS = '[data-surface="window"], [data-shell-chrome]'
 /** Where a window root does not count as chrome to make inert: inside a host or the chrome layer. */
 const NOT_CHROME = '.zen-frame-dialogs, .zen-chrome-layer'
 

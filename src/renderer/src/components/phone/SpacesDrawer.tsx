@@ -136,7 +136,7 @@ export function SpacesDrawer({ state, isDark }: Props): JSX.Element {
 
   const shown = Math.min(1, Math.max(0, p))
   return (
-    <div className="absolute inset-0 z-40" data-window-chrome onClick={() => closeSpacesDrawer()}>
+    <div className="absolute inset-0 z-40" data-shell-chrome onClick={() => closeSpacesDrawer()}>
       <div
         className="zen-overview-scrim pointer-events-none absolute inset-0"
         style={{ opacity: shown }}
