@@ -3,7 +3,7 @@ import { useEffect, useRef } from 'react'
 import { popOrigin, type Anchor } from '@renderer/lib/anchor'
 import { run } from '@renderer/lib/api'
 import { bindPopupFrame, placementFor } from '@renderer/lib/extensions/popup'
-import { ChromePortal } from '@renderer/lib/portals'
+import { ChromePortal, type PopoverAlignment } from '@renderer/lib/portals'
 import { uiStore } from '@renderer/lib/ui'
 
 /** The pop (design-language.md §7): the view is shown once the frame has finished scaling in. */
@@ -15,7 +15,9 @@ const POP_MS = 180
  * around it flush under the toolbar's bar – or above it when there is more room there – at the
  * size the manifest asked for (§9.20, through the chrome layer like every popover:
  * `ChromePortal`), pops it in, and then tells main where the view goes (`extension.resizePopup`).
- * When the document asks for a new size, the frame and the view move together, at once.
+ * When the document asks for a new size, the frame and the view move together, at once. Opened
+ * from the puzzle panel it keeps the panel's alignment while that fits (§9.20's continuity
+ * clause), on every re-placement too.
  *
  * Light dismiss is the chrome layer's (§9.20 amended): the popup is in its popover registry from
  * the button's press (`openExtensionPopup`), which closes it on a press anywhere in the chrome
@@ -29,19 +31,26 @@ export function PopupFrame(): JSX.Element | null {
   if (!popup?.shown) return null
   return (
     <ChromePortal>
-      <Frame key={popup.id} anchor={popup.anchor} content={popup.content} />
+      <Frame
+        key={popup.id}
+        anchor={popup.anchor}
+        content={popup.content}
+        alignment={popup.alignment}
+      />
     </ChromePortal>
   )
 }
 
 function Frame({
   anchor,
-  content
+  content,
+  alignment
 }: {
   anchor: Anchor
   content: { width: number; height: number } | null
+  alignment?: PopoverAlignment
 }): JSX.Element {
-  const { frame, inner, innerRadius, side } = placementFor(anchor, content)
+  const { frame, inner, innerRadius, side } = placementFor(anchor, content, alignment)
   const padding = inner.x - frame.x
   const popped = useRef(false)
   const { x, y, width, height } = inner

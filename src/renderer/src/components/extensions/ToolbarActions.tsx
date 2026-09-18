@@ -193,13 +193,17 @@ function ExtensionsPanel({
   // In the chrome layer's popover registry from the press (the panel holds its first paint
   // until the page's capture is in place, and a press meanwhile closes it all the same).
   useLightDismiss(ref, onClose, { anchor: opener })
+  const box = placeUnder(anchor, PANEL_WIDTH)
+  // A row's popup replaces the panel on the same button and inherits the alignment the panel
+  // resolved to while that fits (§9.20's continuity clause: the eye stays where the panel was).
   const openFromPanel = (ext: ExtensionInfo): void => {
     if (!actionEnabled(ext)) return
     onClose()
-    openExtensionPopup(ext.id, anchor, Boolean(ext.action?.popup ?? ext.popup))
+    openExtensionPopup(ext.id, anchor, Boolean(ext.action?.popup ?? ext.popup), {
+      alignment: box.alignment
+    })
   }
   if (!ready) return null
-  const box = placeUnder(anchor, PANEL_WIDTH)
   return (
     <ChromePortal>
       <div

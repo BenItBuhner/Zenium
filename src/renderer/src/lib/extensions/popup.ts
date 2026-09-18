@@ -2,7 +2,7 @@ import type { ExtensionPromptRequest } from '@shared/types'
 import type { Anchor } from '../anchor'
 import { run } from '../api'
 import { activeTab } from '../selectors'
-import { openPopover } from '../portals'
+import { openPopover, type PopoverAlignment } from '../portals'
 import {
   browserStore,
   captureActiveTab,
@@ -45,8 +45,17 @@ export function bindPopupFrame(el: HTMLElement | null): void {
  * The frame overhangs the content frame, and the page's view composites above the chrome: the
  * page is captured first and its view hidden behind the capture while the popup is up
  * (`overlayCoversContent`), as for every other chrome overlay.
+ *
+ * `from` is the surface the popup replaces on the same button: the puzzle panel, whose resolved
+ * alignment the popup inherits while it fits (§9.20's continuity clause – the eye stays where
+ * the panel was). A popup from a pinned toolbar button passes nothing and takes §9.20's order.
  */
-export function openExtensionPopup(id: string, anchor: Anchor, hasPopup: boolean): void {
+export function openExtensionPopup(
+  id: string,
+  anchor: Anchor,
+  hasPopup: boolean,
+  from?: { alignment: PopoverAlignment }
+): void {
   const current = uiStore.get().extensionPopup
   if (current || pending) closeExtensionPopup()
   // Main takes the button's box alone; the bar is the frame's business.
@@ -68,7 +77,8 @@ export function openExtensionPopup(id: string, anchor: Anchor, hasPopup: boolean
     anchor: () => element ?? null,
     close: () => closeExtensionPopup()
   })
-  const placement = placementFor(placed, null)
+  const alignment = from?.alignment
+  const placement = placementFor(placed, null, alignment)
   run('extension.openPopup', {
     id,
     anchor: box,
@@ -83,7 +93,13 @@ export function openExtensionPopup(id: string, anchor: Anchor, hasPopup: boolean
     if (pending !== mine) return
     pending = null
     uiStore.set({
-      extensionPopup: { id, anchor: placed, content: mine.size, shown: mine.size !== null }
+      extensionPopup: {
+        id,
+        anchor: placed,
+        alignment,
+        content: mine.size,
+        shown: mine.size !== null
+      }
     })
     if (mine.size) return
     window.setTimeout(() => {
@@ -132,12 +148,14 @@ export function popupSizeReported(id: string, width: number, height: number): vo
 /** Where the frame and the view go for the current window size. */
 export function placementFor(
   anchor: Anchor,
-  content: { width: number; height: number } | null
+  content: { width: number; height: number } | null,
+  alignment?: PopoverAlignment
 ): PopupPlacement {
   return placePopup({
     anchor,
     content,
-    viewport: { width: window.innerWidth, height: window.innerHeight }
+    viewport: { width: window.innerWidth, height: window.innerHeight },
+    alignment
   })
 }
 

@@ -9,6 +9,7 @@ import type {
   UrlbarOpenMode
 } from '@shared/types'
 import type { Anchor } from './anchor'
+import type { PopoverAlignment } from './portals'
 import { cmd, onEvent, run } from './api'
 import { afterKeyRelease } from './keyRelease'
 import { createStore } from './store'
@@ -64,6 +65,11 @@ export interface ExtensionPopupState {
    * not the element (the chrome layer's popover registry holds that, lib/extensions/popup.ts).
    */
   anchor: Omit<Anchor, 'element'>
+  /**
+   * The puzzle panel's alignment when the popup was opened from one of its rows: the frame
+   * keeps it while it fits (§9.20's continuity clause). Absent for a popup from a pinned button.
+   */
+  alignment?: PopoverAlignment
   /** The document's preferred size once it reported one. */
   content: { width: number; height: number } | null
   /** The frame is up: the size arrived, or the wait for it ran out. */

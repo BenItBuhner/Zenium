@@ -89,6 +89,21 @@ describe('openExtensionPopup and the page capture', () => {
     expect(snapshotCalls()).toBe(1)
   })
 
+  it("keeps the puzzle panel's alignment on its store entry, and none from a pinned button", async () => {
+    // From the panel: the popup replaces it on the same button and takes its resolved alignment
+    // (§9.20's continuity clause); the frame re-places with it on every render.
+    const panel = holdFloatingChrome(TAB)
+    await panel.ready
+    openExtensionPopup('ext', PUZZLE, true, { alignment: 'start' })
+    expect(uiStore.get().extensionPopup?.alignment).toBe('start')
+    panel.release()
+    closeExtensionPopup()
+    // From a pinned toolbar button: nothing to inherit, §9.20's order decides.
+    openExtensionPopup('ext', PUZZLE, true)
+    await vi.waitFor(() => expect(uiStore.get().extensionPopup?.id).toBe('ext'))
+    expect(uiStore.get().extensionPopup?.alignment).toBeUndefined()
+  })
+
   it('closing the popup drops the capture once nothing is over the content', async () => {
     openExtensionPopup('ext', PUZZLE, true)
     await vi.waitFor(() => expect(uiStore.get().extensionPopup?.id).toBe('ext'))

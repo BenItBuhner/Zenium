@@ -56,6 +56,36 @@ describe('placePopup', () => {
   it('end-aligns with a button in the trailing half of its bar', () => {
     const p = placePopup({ anchor: button(300), content: { width: 100, height: 300 }, viewport })
     expect(p.frame.x + p.frame.width).toBe(300 + 28)
+    expect(p.alignment).toBe('end')
+  })
+
+  it("opened from the puzzle panel, keeps the panel's alignment while it fits (§9.20 continuity)", () => {
+    // The puzzle button at 274–302 in the sidebar's 32 bar: the 400 panel flipped to start
+    // (274–674). Dark Reader's 276 popup from one of its rows would end-align by the order (its
+    // button is in the bar's trailing half, and 24–302 fits); with the panel's alignment it
+    // start-aligns at 274–552 instead, so the eye stays where the panel was.
+    const puzzle: Anchor = { x: 274, y: 44, width: 28, height: 28, bar: { ...bar, y: 42 } }
+    const content = { width: 276, height: 580 }
+    const byOrder = placePopup({ anchor: puzzle, content, viewport })
+    expect(byOrder.alignment).toBe('end')
+    expect(byOrder.frame.x + byOrder.frame.width).toBe(302)
+    const fromPanel = placePopup({ anchor: puzzle, content, viewport, alignment: 'start' })
+    expect(fromPanel.alignment).toBe('start')
+    expect(fromPanel.frame.x).toBe(274)
+    expect(fromPanel.frame.x + fromPanel.frame.width).toBe(274 + 276 + 2 * POPUP_PADDING)
+    expect(fromPanel.inner.x).toBe(274 + POPUP_PADDING)
+    // The inherited alignment is kept only while it fits: in a 560 window a 280 popup cannot
+    // start-align from that button (274 + 282 crosses the margin), so it falls back to the
+    // order and end-aligns, 20–302.
+    const squeezed = placePopup({
+      anchor: puzzle,
+      content: { width: 280, height: 300 },
+      viewport: { width: 560, height: 800 },
+      alignment: 'start'
+    })
+    expect(squeezed.alignment).toBe('end')
+    expect(squeezed.frame.x).toBe(20)
+    expect(squeezed.frame.x + squeezed.frame.width).toBe(302)
   })
 
   it('flips its alignment when the aligned box would cross the margin (§9.20: flip first)', () => {

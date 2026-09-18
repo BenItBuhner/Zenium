@@ -2,6 +2,7 @@ import type { Rect } from '@shared/types'
 import {
   placePopover,
   viewportSize,
+  type PopoverAlignment,
   type PopoverBox,
   type PopoverExtent,
   type Size
@@ -41,14 +42,19 @@ function boxOf(el: Element): Rect {
  * popup at the size its manifest asks for. Those two also know their `height` (the menu's rows,
  * the popup's document) and pass it, so the surface is that tall – capped by the window minus
  * 16 rather than the 60% a chassis popover's body scrolls under.
+ *
+ * `alignment` is the one a surface this one replaces on the same anchor resolved to (§9.20's
+ * continuity clause: the popup opened from the puzzle panel takes the panel's); the box says
+ * which the surface got.
  */
 export function placeUnder(
   anchor: Anchor,
   width: PopoverExtent,
   height?: number,
-  viewport: Size = viewportSize()
-): PopoverBox {
-  return placePopover(anchor, anchor.bar ?? anchor, viewport, width, height)
+  viewport: Size = viewportSize(),
+  alignment?: PopoverAlignment
+): PopoverBox & { alignment: PopoverAlignment } {
+  return placePopover(anchor, anchor.bar ?? anchor, viewport, width, height, alignment)
 }
 
 /**
