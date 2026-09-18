@@ -1,88 +1,103 @@
 import type { JSX } from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import { ChevronDown, ChevronUp, X } from 'lucide-react'
 import type { UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
-import { returnFocusToPage, uiStore } from '@renderer/lib/ui'
+import { closeFindBar, uiStore, type UiState } from '@renderer/lib/ui'
 import { cn, findCounter } from '@renderer/lib/utils'
 
 /**
- * Firefox-style find bar docked at the bottom of the content frame. On a phone it becomes one
- * row of 44 px targets around a field that takes the remaining width, with the match count
- * inside the field the way Chrome's does; the desktop layout is unchanged.
+ * The find bar, docked under the page: a panel row (v2 §9.21) with a 32px field that carries
+ * the match count, and 28px previous / next / close buttons. On a phone it becomes one row of
+ * 44px targets around a field that takes the remaining width. `docked="fullscreen"` is the bar
+ * under a page in HTML fullscreen; it tells the main process how much of the window to leave it.
+ *
+ * The query lives in the UI store (`findText`), so the bar keeps it across a remount, and each
+ * opening arrives as a `findRequest`: Ctrl+F re-selects the query (or brings the page's selection
+ * in), F3 / Ctrl+G step to the next or previous match at once.
  */
-export function FindBar({ state, tabId }: { state: UIState; tabId: string }): JSX.Element {
-  // "Use selection for find" opens the bar with the page's selection already in it.
-  const [text, setText] = useState(() => {
-    const seed = uiStore.get().findSeed
-    if (seed !== null) uiStore.set({ findSeed: null })
-    return seed ?? ''
-  })
+export function FindBar({
+  state,
+  tabId,
+  ui,
+  docked
+}: {
+  state: UIState
+  tabId: string
+  ui: UiState
+  docked: 'content' | 'fullscreen'
+}): JSX.Element {
+  const text = ui.findText
+  const request = ui.findRequest
   const inputRef = useRef<HTMLInputElement>(null)
+  const barRef = useRef<HTMLDivElement>(null)
+  /** The query the page's find session is for ('' between sessions): only it can be followed up. */
+  const session = useRef('')
   const result = state.findResult?.tabId === tabId ? state.findResult : null
   const phone = useViewport().formFactor === 'phone'
 
+  const search = (value: string, forward: boolean): void => {
+    // Stepping continues the session for that text; anything else starts one from the selection.
+    const follow = value !== '' && session.current === value
+    session.current = value
+    run('find.start', { tabId, text: value, forward, newSession: !follow })
+  }
+
+  // Every opening focuses the field and selects the query so typing replaces it. A query that no
+  // session is running for (the bar reopened with the last one, a selection came in) is searched
+  // so its matches light up; F3 / Ctrl+G step on instead.
   useEffect(() => {
+    const again = request?.again ?? null
+    if (again) {
+      if (text) search(text, again === 'next')
+    } else if (text && text !== session.current) {
+      search(text, true)
+    }
     inputRef.current?.focus()
     inputRef.current?.select()
-    if (text) run('find.start', { tabId, text, forward: true, newSession: true })
-    // Only on mount: the seed is what the bar opened with.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs per request; the rest is read as it stands then
+  }, [request?.seq])
 
+  // Under a fullscreen page the view is drawn by the main process; it makes room for the bar.
   useEffect(() => {
-    const again = (e: Event): void => {
-      const dir = (e as CustomEvent<'next' | 'prev'>).detail
-      inputRef.current?.focus()
-      if (text) run('find.start', { tabId, text, forward: dir === 'next', newSession: false })
-    }
-    // The bar is already up and a new selection arrives: search for it afresh.
-    const seed = (e: Event): void => {
-      const value = (e as CustomEvent<string>).detail
-      uiStore.set({ findSeed: null })
-      setText(value)
-      inputRef.current?.focus()
-      inputRef.current?.select()
-      if (value) run('find.start', { tabId, text: value, forward: true, newSession: true })
-    }
-    window.addEventListener('zen-find-again', again)
-    window.addEventListener('zen-find-seed', seed)
-    return () => {
-      window.removeEventListener('zen-find-again', again)
-      window.removeEventListener('zen-find-seed', seed)
-    }
-  }, [tabId, text])
+    if (docked !== 'fullscreen') return
+    const el = barRef.current
+    if (!el) return
+    run('window.fullscreenInset', { bottom: el.getBoundingClientRect().height })
+    return () => run('window.fullscreenInset', { bottom: 0 })
+  }, [docked])
 
-  const close = (): void => {
-    run('find.stop', { tabId, keepSelection: true })
-    uiStore.set({ findOpen: false, findTabId: null })
-    returnFocusToPage()
+  const setText = (value: string): void => {
+    uiStore.set({ findText: value })
+    search(value, true)
   }
 
-  const search = (value: string, forward = true, newSession = true): void => {
-    run('find.start', { tabId, text: value, forward, newSession })
-  }
-
-  const count = findCounter(text, result, phone)
+  const count = findCounter(text, result)
+  const noMatch = result !== null && result.matches === 0
   const buttonClass = phone
     ? 'zen-toolbar-button h-11 w-11 rounded-[12px]'
-    : 'zen-toolbar-button h-7 w-7'
+    : 'zen-toolbar-button zen-find-button'
   const glyphClass = phone ? 'h-5 w-5' : 'h-4 w-4'
 
   return (
     <div
+      ref={barRef}
       className={cn(
-        'zen-animate-in flex items-center bg-[var(--zen-bg-solid)] px-3',
-        phone ? 'zen-find-phone h-14 gap-1' : 'h-10 gap-2 border-t border-[var(--zen-border)]'
+        'zen-animate-in flex items-center',
+        phone ? 'zen-find-phone h-14 gap-1 bg-[var(--zen-bg-solid)] px-3' : 'zen-find-bar'
       )}
+      role="search"
+      aria-label="Find in page"
+      data-surface={phone ? undefined : 'page'}
     >
       <div
         className={
           phone
             ? 'zen-squircle flex h-10 min-w-0 flex-1 items-center rounded-[10px] bg-[var(--zen-element-bg)] pl-3 pr-2.5'
-            : 'contents'
+            : 'zen-find-field'
         }
+        data-no-match={noMatch ? 'true' : undefined}
       >
         <input
           ref={inputRef}
@@ -93,26 +108,28 @@ export function FindBar({ state, tabId }: { state: UIState; tabId: string }): JS
           enterKeyHint="search"
           autoCapitalize="none"
           autoComplete="off"
+          spellCheck={false}
           className={
             phone
               ? 'h-full min-w-0 flex-1 bg-transparent text-[14px] outline-none placeholder:text-[var(--zen-muted)]'
-              : 'h-7 w-72 rounded-md bg-[var(--zen-element-bg)] px-2 text-[13px] outline-none ring-1 ring-transparent focus:ring-[var(--zen-accent)]/60'
+              : undefined
           }
-          onChange={(e) => {
-            setText(e.target.value)
-            search(e.target.value)
-          }}
+          onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') search(text, !e.shiftKey, false)
-            if (e.key === 'Escape') close()
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              if (text) search(text, !e.shiftKey)
+            }
+            if (e.key === 'Escape') closeFindBar('afterKey')
           }}
         />
         <span
           className={
             phone
               ? 'shrink-0 pl-2 text-[13px] tabular-nums text-[var(--zen-muted)]'
-              : 'min-w-[80px] text-[12px] text-[var(--zen-muted)]'
+              : 'zen-find-count'
           }
+          role="status"
         >
           {count}
         </span>
@@ -122,8 +139,8 @@ export function FindBar({ state, tabId }: { state: UIState; tabId: string }): JS
         className={buttonClass}
         title="Previous (Shift+Enter)"
         aria-label="Previous match"
-        onClick={() => search(text, false, false)}
-        disabled={!text}
+        onClick={() => search(text, false)}
+        disabled={!text || noMatch}
       >
         <ChevronUp className={glyphClass} />
       </button>
@@ -132,8 +149,8 @@ export function FindBar({ state, tabId }: { state: UIState; tabId: string }): JS
         className={buttonClass}
         title="Next (Enter)"
         aria-label="Next match"
-        onClick={() => search(text, true, false)}
-        disabled={!text}
+        onClick={() => search(text, true)}
+        disabled={!text || noMatch}
       >
         <ChevronDown className={glyphClass} />
       </button>
@@ -143,7 +160,7 @@ export function FindBar({ state, tabId }: { state: UIState; tabId: string }): JS
         className={buttonClass}
         title="Close (Esc)"
         aria-label="Close find bar"
-        onClick={close}
+        onClick={() => closeFindBar()}
       >
         <X className={glyphClass} />
       </button>

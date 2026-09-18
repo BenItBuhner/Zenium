@@ -6,6 +6,7 @@ import type {
   ColorScheme,
   ContainerColor,
   ContainerIcon as ContainerIconName,
+  CrashRestoreMode,
   GlanceTrigger,
   HostCapabilities,
   NewTabPosition,
@@ -38,7 +39,12 @@ import { AppIconGroup } from './AppIconPicker'
 import { ExtensionsSection, ModsSection } from './AddonsPanel'
 import { DefaultBrowserSection } from './DefaultBrowserSection'
 import { OverlayShell } from './OverlayShell'
-import { AccessibilitySection, SitesGroups } from './PageControlsSettings'
+import {
+  AccessibilitySection,
+  PageZoomRow,
+  SiteZoomsGroup,
+  SitesGroups
+} from './PageControlsSettings'
 import { ResourcesSection } from './ResourcesSection'
 import { Choice, Group, MENULIST_HEIGHT, Row, SWITCH_HEIGHT, Segmented } from './SettingsPrimitives'
 import { ShortcutsSection } from './ShortcutsSection'
@@ -287,7 +293,10 @@ function LookSection({
             />
           </Row>
         )}
+        {/* Chrome's Page zoom menulist; the host with the page-controls sheet has the zoom under Accessibility. */}
+        {!caps.pageControls && <PageZoomRow s={s} set={set} />}
       </Group>
+      {!caps.pageControls && <SiteZoomsGroup s={s} />}
       {caps.pageControls && <SitesGroups s={s} set={set} />}
       <AppIconGroup value={s.appIcon} platform={platform} onChange={(id) => set({ appIcon: id })} />
       <Group title="Bookmarks">
@@ -475,6 +484,33 @@ function TabsSection({
         <Row label="Restore previous session on startup">
           <Switch checked={s.restoreSession} onCheckedChange={(v) => set({ restoreSession: v })} />
         </Row>
+        {windows && (
+          <Row
+            label="Restore pages after a crash"
+            hint="What happens to the open pages when Zenium did not shut down correctly."
+          >
+            <Choice<CrashRestoreMode>
+              value={s.crashRestore}
+              onChange={(v) => set({ crashRestore: v })}
+              options={[
+                { value: 'ask', label: 'Ask first' },
+                { value: 'always', label: 'Restore them' },
+                { value: 'never', label: 'Start fresh' }
+              ]}
+            />
+          </Row>
+        )}
+        {windows && (
+          <Row
+            label="Warn before closing a window with multiple tabs"
+            hint="Also asks before quitting with more than one tab open."
+          >
+            <Switch
+              checked={s.warnOnCloseWindow}
+              onCheckedChange={(v) => set({ warnOnCloseWindow: v })}
+            />
+          </Row>
+        )}
         <Row label="Always ask where to save downloads">
           <Switch checked={s.askWhereToSave} onCheckedChange={(v) => set({ askWhereToSave: v })} />
         </Row>

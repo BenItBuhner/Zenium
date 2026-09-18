@@ -89,6 +89,18 @@ class NetErrorsTest {
     }
 
     @Test
+    fun `every refused certificate has an ERR_CERT name for the interstitial to print`() {
+        for (primary in listOf(SslError.SSL_EXPIRED, SslError.SSL_NOTYETVALID, SslError.SSL_DATE_INVALID, SslError.SSL_IDMISMATCH, SslError.SSL_UNTRUSTED, SslError.SSL_INVALID, 42)) {
+            val code = NetErrors.sslCode(primary)
+            val name = NetErrors.name(code)
+            assertEquals("primary error $primary -> $code", true, name != null && name.startsWith("ERR_CERT_"))
+        }
+        assertEquals("ERR_CERT_COMMON_NAME_INVALID", NetErrors.name(NetErrors.sslCode(SslError.SSL_IDMISMATCH)))
+        assertEquals("ERR_CERT_AUTHORITY_INVALID", NetErrors.name(NetErrors.sslCode(SslError.SSL_UNTRUSTED)))
+        assertEquals("ERR_CERT_INVALID", NetErrors.name(NetErrors.sslCode(SslError.SSL_INVALID)))
+    }
+
+    @Test
     fun `codes carry the name the page prints`() {
         assertEquals("ERR_NAME_NOT_RESOLVED", NetErrors.name(-105))
         assertEquals("ERR_CONNECTION_REFUSED", NetErrors.name(-102))

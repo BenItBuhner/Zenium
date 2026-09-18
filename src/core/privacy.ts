@@ -163,6 +163,9 @@ export class PrivacyService {
         // Hosts without the granular call drop everything of every container.
         for (const id of this.containerIds()) await quiet(sessions.clearContainerData(id))
       }
+      // Site data gone, certificate decisions gone: as Chrome resets them with the cookies.
+      if (chosen.has('cookies'))
+        for (const id of this.containerIds()) b.security.certificateExceptions.forgetContainer(id)
       if (chosen.has('cookies')) cleared.push('cookies')
       if (chosen.has('cache')) cleared.push('cache')
     }

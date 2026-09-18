@@ -34,6 +34,8 @@ import { PrivacyService } from './privacy'
 import { PopupBlocker } from './popups'
 import { ExternalLaunches } from './external'
 import { SecurityPromptService } from './security'
+import { PageDialogService } from './pageDialogs'
+import { WindowPrompts } from './windowPrompts'
 import { TabManager } from './tabs'
 import { TabDragController } from './tabDrag'
 import { ZenWindow } from './window'
@@ -51,9 +53,13 @@ import { ModService } from './mods'
 import { SiteInfoService } from './siteInfo'
 import { TranslateService } from './translate/service'
 import { PageControls } from './pageControls'
+import { FindMemory } from './find'
+import { FullscreenService } from './fullscreen'
 import { UpdateService } from './updates'
 import { ExternalProtocolService } from './externalProtocols'
 import { PasswordService } from './credentials/service'
+import { AutofillService } from './autofill'
+import { addressFormat, countries } from './credentials/address'
 import { DefaultBrowserService } from './defaultBrowser'
 import { BlockingService } from './blocking/service'
 import { ProtectionService } from './protection/service'
@@ -79,7 +85,12 @@ import { routeSharedIntent, type SharedIntent } from '../shared/shareTarget'
 import { copyConfirmation } from '../shared/clipboard'
 import { IMAGE_URL_PREFIX } from '../shared/zenPages'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
-import { ONBOARDING_ESSENTIALS, sanitizePasswordSettings, spaceLabel } from '../shared/defaults'
+import {
+  ONBOARDING_ESSENTIALS,
+  sanitizeAutofillSettings,
+  sanitizePasswordSettings,
+  spaceLabel
+} from '../shared/defaults'
 import { sanitizePhoneBar } from '../shared/phoneBar'
 import { PRIVATE_THEME, captionColors, resolveTheme, rgbToHex } from '../shared/theme'
 import { newId } from '../shared/ids'
@@ -138,6 +149,10 @@ export class Browser {
   readonly external: ExternalLaunches
   /** HTTP authentication and client-certificate prompts. */
   readonly security: SecurityPromptService
+  /** `alert` / `confirm` / `prompt` and "Leave site?" dialogs of pages, shown by the chrome. */
+  readonly pageDialogs: PageDialogService
+  /** Window-modal questions ("Close N tabs?", "Quit Zenium?"), shown by a window's chrome. */
+  readonly windowPrompts: WindowPrompts
   readonly tabs: TabManager
   /** A sidebar tab drag in flight, followed across windows (drops into them, tear-offs). */
   readonly tabDrag: TabDragController
@@ -164,6 +179,8 @@ export class Browser {
   readonly externalProtocols: ExternalProtocolService
   /** The encrypted credential vault and everything the password manager does with it. */
   readonly passwords: PasswordService
+  /** In-page autofill: save / update prompts, the account picker, addresses, cards, passkey records. */
+  readonly autofill: AutofillService
   /** The system's browser role: are we the default, and should we be asking to become it. */
   readonly defaultBrowser: DefaultBrowserService
   /** Ad and tracker blocking: the rule engine, its lists and the blocked-request counters. */
@@ -174,9 +191,17 @@ export class Browser {
   readonly translate: TranslateService
   /** Desktop site, dark theme for sites and page zoom, remembered per site (Chrome's page controls). */
   readonly pageControls: PageControls
+  /** The last find-in-page query per tab and profile-wide (what the bar reopens with). */
+  readonly find = new FindMemory()
+  /** Fullscreen hints (F11, a page's element) and the Esc hold that leaves the window's fullscreen. */
+  readonly fullscreen: FullscreenService
   readonly windows = new Map<string, ZenWindow>()
+  /** Set by `shutdown()`: the app is going away, windows close without further questions. */
   quitting = false
   private readonly handlers: CommandHandlers
+  /** Close checks in flight per window, so a second request joins the first instead of asking twice. */
+  private readonly closeChecks = new Map<string, Promise<boolean>>()
+  private quitCheck: Promise<boolean> | null = null
   /** Images shared into the browser, shown by `zen://image?id=…` while the app runs. */
   private readonly sharedImages = new Map<string, string>()
   /** Windows whose chrome should come up with the URL bar open (fresh windows with a blank tab). */
@@ -233,7 +258,10 @@ export class Browser {
     this.popups = new PopupBlocker(this)
     this.external = new ExternalLaunches(this)
     this.security = new SecurityPromptService(this)
+    this.pageDialogs = new PageDialogService(this)
+    this.windowPrompts = new WindowPrompts(this)
     this.pageControls = new PageControls(this)
+    this.fullscreen = new FullscreenService(this)
     this.tabs = new TabManager(this)
     this.tabDrag = new TabDragController(this)
     this.session = new SessionService(this)
@@ -259,6 +287,7 @@ export class Browser {
     this.siteInfo = new SiteInfoService(this)
     this.externalProtocols = new ExternalProtocolService(this)
     this.passwords = new PasswordService(this, platform.passwords)
+    this.autofill = new AutofillService(this)
     this.defaultBrowser = new DefaultBrowserService(this)
     this.blocking = new BlockingService(this)
     this.protection = new ProtectionService(this)
@@ -282,6 +311,9 @@ export class Browser {
       permissionRules: this.permissions.rules(),
       permissionPrompts: this.permissionPrompts.list(),
       securityPrompts: this.security.list(),
+      pageDialogs: this.pageDialogs.list(),
+      crashRestore: this.session.crashRestoreOffer(),
+      autofill: this.autofill.uiState(),
       blocking: this.blocking.status(),
       privacy: this.protection.status(),
       translate: this.translate.uiState()
@@ -375,6 +407,7 @@ export class Browser {
         ? this.state.settings.windowMaterial
         : 'none',
       bounds: opts.persisted?.bounds ?? opts.bounds ?? null,
+      displayId: opts.persisted?.displayId ?? null,
       maximized: opts.persisted?.maximized ?? false,
       activeSpaceId,
       selection: opts.persisted?.selection ?? {},
@@ -391,6 +424,7 @@ export class Browser {
     const theme = resolveTheme(win.activeSpace().theme, this.darkScheme())
     win.host = this.platform.windows.create(win, {
       bounds: win.initialBounds,
+      displayId: win.initialDisplayId,
       maximized: win.initialMaximized,
       cascadeFrom: win.cascadeFrom,
       title: win.isPrivate ? 'Zenium (Private Browsing)' : 'Zenium',
@@ -428,7 +462,8 @@ export class Browser {
 
   /** The chrome of `win` finished loading for the first time. */
   onChromeReady(win: ZenWindow): void {
-    if (this.state.settings.onboardingDone) this.tabs.claimVisible(win)
+    if (this.state.settings.onboardingDone && !this.session.holdsPages())
+      this.tabs.claimVisible(win)
     if (this.urlbarOnReady.delete(win.id))
       setTimeout(() => this.emit('urlbar.toggle', { mode: 'new-tab' }, win), 150)
     // Whatever loading the profile changed under the user is said once, in the first window.
@@ -438,17 +473,117 @@ export class Browser {
   }
 
   onWindowFocused(win: ZenWindow): void {
-    if (this.state.settings.onboardingDone) this.tabs.claimVisible(win)
+    if (this.state.settings.onboardingDone && !this.session.holdsPages())
+      this.tabs.claimVisible(win)
     this.defaultBrowser.onForeground()
   }
 
+  /**
+   * `win` comes up on a fresh empty tab with the URL bar open – how a session that starts over
+   * begins ("restore previous session" off, or the last session's pages declined after a crash).
+   */
+  openFreshTab(win: ZenWindow): void {
+    this.tabs.createTab({ active: true, load: false }, win)
+    if (win.chromeReady) setTimeout(() => this.emit('urlbar.toggle', { mode: 'new-tab' }, win), 150)
+    else this.urlbarOnReady.add(win.id)
+  }
+
   onWindowClosing(win: ZenWindow): void {
+    this.windowPrompts.cancelForWindow(win)
     this.tabs.releaseWindow(win, this.quitting)
+  }
+
+  // ---------------------------------------------------------------------------
+  // Closing windows and quitting, the way the user asks for it
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Close a window as the user asked (Ctrl+Shift+W, the caption button, the menu): first the
+   * warning about its tabs (when more than one closes and the setting is on), then every page
+   * whose `beforeunload` objects gets to ask "Leave site?", one after the other. The window
+   * closes once everything agreed; resolves true then. Hosts route their native close request
+   * here and close for real only once `win.closeApproved` is set.
+   */
+  async requestWindowClose(win: ZenWindow): Promise<boolean> {
+    if (!win.alive || win.isClosing) return false
+    if (win.closeApproved || this.quitting) {
+      win.closeApproved = true
+      win.host.close()
+      return true
+    }
+    let check = this.closeChecks.get(win.id)
+    if (!check) {
+      check = this.confirmWindowClose(win).finally(() => this.closeChecks.delete(win.id))
+      this.closeChecks.set(win.id, check)
+    }
+    if (!(await check) || !win.alive) return false
+    win.closeApproved = true
+    win.host.close()
+    return true
+  }
+
+  private async confirmWindowClose(win: ZenWindow): Promise<boolean> {
+    const count = this.tabs.closingTabCount(win)
+    if (this.state.settings.warnOnCloseWindow && count > 1) {
+      if (!(await this.windowPrompts.ask(win, 'close-tabs', count))) return false
+    }
+    if (this.quitting) return true
+    return this.confirmUnloadAll(this.tabs.viewsClosingWith(win), [win])
+  }
+
+  /**
+   * Quit as the user asked (Ctrl+Q, the app menu, the Dock): the warning about the open tabs
+   * (the window setting applies – closing the last window is quitting), then every objecting
+   * page's "Leave site?". The app quits once everything agreed. Hosts route their own quit
+   * requests here and quit for real only once `quitting` is set (`shutdown`).
+   */
+  async requestQuit(from?: ZenWindow): Promise<boolean> {
+    if (this.quitting) return true
+    if (!this.quitCheck) {
+      this.quitCheck = this.confirmQuit(from).finally(() => {
+        this.quitCheck = null
+      })
+    }
+    if (!(await this.quitCheck)) return false
+    // Every request that waited on the same check quits once.
+    if (this.quitting) return true
+    this.shutdown()
+    this.platform.app.quit()
+    return true
+  }
+
+  private async confirmQuit(from?: ZenWindow): Promise<boolean> {
+    const windows = this.allWindows()
+    if (windows.length === 0) return true
+    const win = from?.alive ? from : this.focusedWindow()
+    const count = this.tabs.openTabCount()
+    if (this.state.settings.warnOnCloseWindow && count > 1) {
+      if (!(await this.windowPrompts.ask(win, 'quit', count))) return false
+    }
+    if (this.quitting) return true
+    const tabIds = windows.flatMap((w) => [...this.tabs.viewsOwnedBy(w).keys()])
+    return this.confirmUnloadAll(tabIds, windows)
+  }
+
+  /**
+   * Whether every page of `tabIds` may be unloaded: each one that objects asks "Leave site?" in
+   * turn (Chrome's order). The first "Stay" ends it – the pages that went by then stay unloaded
+   * in their tabs, and the ones on screen come back.
+   */
+  private async confirmUnloadAll(tabIds: string[], windows: ZenWindow[]): Promise<boolean> {
+    for (const tabId of tabIds) {
+      if (this.quitting) return true
+      if (await this.tabs.confirmUnload(tabId, true)) continue
+      for (const win of windows) if (win.alive) this.tabs.claimVisible(win)
+      return false
+    }
+    return true
   }
 
   onWindowClosed(win: ZenWindow): void {
     this.windows.delete(win.id)
     this.tabDrag.onWindowClosed(win)
+    this.fullscreen.onWindowClosed(win)
     for (const w of this.allWindows()) w.selection.delete(win.localSpace?.id ?? '')
     if (win.isPrivate) this.endPrivateSessionIfOver()
     if (this.allWindows().length === 0) {
@@ -473,6 +608,8 @@ export class Browser {
     if (this.allWindows().some((w) => w.isPrivate)) return
     if (this.tabs.privateTabs().length > 0) return
     this.downloads.endPrivateSession()
+    // Certificates proceeded past in private windows are forgotten with the session, as in Chrome.
+    this.security.certificateExceptions.forgetContainer(PRIVATE_CONTAINER_ID)
     void this.platform.sessions.clearPrivate()
   }
 
@@ -540,10 +677,11 @@ export class Browser {
     for (const persisted of restore) this.createWindow({ kind: 'synced', persisted })
     if (!restoreSession) {
       const win = this.allWindows()[0]
-      if (win) {
-        this.tabs.createTab({ active: true, load: false }, win)
-        this.urlbarOnReady.add(win.id)
-      }
+      if (win) this.openFreshTab(win)
+    } else if (this.state.uncleanExit && this.state.platform !== 'android') {
+      // The last run crashed (or was killed): its pages are offered, not loaded. Android ends
+      // most runs by killing the process – that is its normal exit, and the pages just come back.
+      this.session.onUncleanStart()
     }
     // The host may have come up under another icon (a fresh install with a restored profile,
     // a launcher alias flipped back by an update); the persisted choice wins.
@@ -555,6 +693,7 @@ export class Browser {
     this.agents.start()
     this.updates.start()
     this.passwords.start()
+    this.autofill.start()
     this.defaultBrowser.start()
     this.translate.start()
     this.syncShortcuts()
@@ -612,6 +751,7 @@ export class Browser {
     this.boosts.apply(tabId)
     void this.reader.detect(tabId)
     this.translate.onPageReady(tabId)
+    this.autofill.onPageReady(tabId)
   }
 
   onNavigated(tabId: string): void {
@@ -619,6 +759,8 @@ export class Browser {
     if (tab) tab.readerable = false
     this.extensions.closePopup()
     this.translate.onNavigated(tabId)
+    this.autofill.onNavigated(tabId)
+    this.fullscreen.onNavigated(tabId)
   }
 
   updateMedia(): void {
@@ -1175,6 +1317,11 @@ export class Browser {
     else this.toast('Link handling is set in the system settings on this device.', 'info', win)
   }
 
+  /**
+   * The app is going away for good (every check passed, or the system is shutting down): stop
+   * the services, write the profile one last time – with the clean-exit marker – and freeze it.
+   * Windows closing after this ask nothing and write nothing.
+   */
   shutdown(): void {
     if (this.quitting) return
     this.quitting = true
@@ -1184,6 +1331,10 @@ export class Browser {
     this.protection.stop()
     this.blocking.stop()
     this.translate.stop()
+    this.passwords.shutdown()
+    // The pages on screen have scrolled since their stacks were last read.
+    this.tabs.rememberAllNavigation()
+    this.state.markExiting()
     this.flushSync()
     this.state.freeze()
   }
@@ -1344,9 +1495,22 @@ export class Browser {
       this.revealTab(tabId)
       return
     }
+    if (message.type === 'forms') {
+      if (
+        message.forms &&
+        typeof message.forms === 'object' &&
+        typeof message.forms.type === 'string'
+      )
+        this.autofill.handleEvent(tabId, message.forms)
+      return
+    }
     if (message.type === 'interstitial') {
-      if (typeof message.action === 'string' && typeof message.url === 'string')
-        this.protection.handleInterstitial(tabId, message.action, message.url)
+      if (typeof message.action === 'string' && typeof message.url === 'string') {
+        // The certificate interstitial's tab answers first; the other warning pages are the
+        // protection service's.
+        if (!this.tabs.handleCertificateInterstitial(tabId, message.action, message.url))
+          this.protection.handleInterstitial(tabId, message.action, message.url)
+      }
       return
     }
     if (message.type === 'media') {
@@ -1416,14 +1580,36 @@ export class Browser {
       'privacy.clearBrowsingDataCounts': ({ range }) => this.privacy.counts(range),
       'privacy.safetyCheck': () => this.privacy.safetyCheck(),
       'security.respond': ({ id, response }) => this.security.respond(id, response),
+      'pageDialog.respond': ({ id, response }) => this.pageDialogs.respond(id, response),
+      'window.respondPrompt': ({ id, accepted }) => this.windowPrompts.respond(id, accepted),
+      'session.crashRestore': ({ restore }) => this.session.crashRestore(restore),
       'security.forgetSession': () => {
         this.security.forgetSession()
         void platform.sessions.clearAuthCache?.()
       },
+      'autofill.respond': ({ id, response }) => this.autofill.respond(id, response),
+      'autofill.pick': ({ id, itemId, passphrase }, win) =>
+        this.autofill.pick(id, itemId, passphrase, win),
+      'autofill.listAddresses': () => this.autofill.listAddresses(),
+      'autofill.addAddress': ({ address }) => this.autofill.addAddress(address),
+      'autofill.updateAddress': ({ id, patch }) => this.autofill.updateAddress(id, patch),
+      'autofill.removeAddress': ({ id }) => this.autofill.removeAddress(id),
+      'autofill.addressFormat': ({ country }) => addressFormat(country),
+      'autofill.countries': () => countries(),
+      'autofill.listCards': () => this.autofill.listCards(),
+      'autofill.addCard': ({ card }) => this.autofill.addCard(card),
+      'autofill.updateCard': ({ id, patch }) => this.autofill.updateCard(id, patch),
+      'autofill.removeCard': ({ id }) => this.autofill.removeCard(id),
+      'autofill.revealCard': ({ id, passphrase }, win) =>
+        this.autofill.revealCard(id, passphrase, win),
+      'autofill.copyCardNumber': ({ id, passphrase }, win) =>
+        this.autofill.copyCardNumber(id, passphrase, win),
+      'autofill.listPasskeys': () => this.autofill.listPasskeys(),
+      'autofill.removePasskey': ({ id }) => this.autofill.removePasskey(id),
       'app.openExternal': ({ url }) => {
         if (/^(https?|mailto):/.test(url)) platform.shell.openExternal(url)
       },
-      'app.quit': () => platform.app.quit(),
+      'app.quit': () => void this.requestQuit(),
       'app.share': (payload, win) => this.share(payload, win),
       'app.openAppLinkSettings': (_a, win) => this.openAppLinkSettings(win),
       'externalProtocol.respond': ({ requestId, allow, always }) =>
@@ -1433,7 +1619,7 @@ export class Browser {
       'tab.new': (_a, win) => this.openNewTab(win),
       'tab.create': (opts, win) => tabs.createTab(opts, win).id,
       'tab.activate': ({ tabId }, win) => tabs.activateTab(tabId, win),
-      'tab.close': ({ tabId, force }, win) => tabs.closeTab(tabId, force, win),
+      'tab.close': ({ tabId, force }, win) => void tabs.requestClose(tabId, force, win),
       'tab.newPrivate': ({ url }, win) => tabs.newPrivateTab(url, win),
       'tab.closePrivate': (_a, win) => tabs.closePrivateTabs(win),
       'tab.closeOthers': ({ tabId }, win) => tabs.closeOthers(tabId, win),
@@ -1488,8 +1674,8 @@ export class Browser {
       'tab.goToIndex': ({ tabId, index }) => tabs.goToIndex(tabId, index),
       'tab.navigationMenu': ({ tabId }, win) => this.menus.showNavigationMenu(tabId, win),
       'tab.setZoom': ({ tabId, delta }) =>
-        delta === null ? tabs.setZoom(tabId, 1) : tabs.adjustZoom(tabId, delta),
-      'tab.setZoomFactor': ({ tabId, factor }) => this.pageControls.setZoomFactor(tabId, factor),
+        delta === null ? tabs.resetZoom(tabId) : tabs.adjustZoom(tabId, delta),
+      'tab.setZoomFactor': ({ tabId, factor }) => tabs.setZoom(tabId, factor),
       'tab.setDesktopSite': ({ tabId, on }) => this.pageControls.setDesktopSite(tabId, on),
       'tab.setDarkenSite': ({ tabId, on }) => this.pageControls.setDarkenSite(tabId, on),
       'pageControls.forgetSite': ({ kind, domain }) => this.pageControls.forgetSite(kind, domain),
@@ -1579,7 +1765,12 @@ export class Browser {
       'glance.split': (_a, win) => tabs.splitGlance(win),
 
       'compact.toggle': (_a, win) => this.toggleCompactMode(win),
-      'compact.setRevealed': ({ revealed }, win) => {
+      'compact.setRevealed': ({ revealed, edge }, win) => {
+        if (edge === 'toolbar') {
+          // Main's cursor tracking alone reads it; nothing in the snapshot changes.
+          win.compactToolbarRevealed = revealed
+          return
+        }
         if (win.compactSidebarRevealed === revealed) return
         win.compactSidebarRevealed = revealed
         state.commitVolatile()
@@ -1601,7 +1792,7 @@ export class Browser {
       'urlbar.deleteSuggestion': ({ input }, win) =>
         this.extensions.omniboxDeleteSuggestion(input, win),
 
-      'overlay.snapshot': ({ tabId }, win) => win.snapshot(tabId),
+      'overlay.snapshot': ({ tabId, fresh }, win) => win.snapshot(tabId, fresh),
 
       'site.info': ({ tabId }) => this.siteInfo.info(tabId),
       'siteInfo.snapshot': ({ tabId }) => this.siteInfo.snapshot(tabId),
@@ -1659,7 +1850,11 @@ export class Browser {
       'session.restoreClosed': ({ id }, win) => this.session.restoreClosed(id, win),
       'session.clearRecentlyClosed': () => this.session.clearRecentlyClosed(),
 
-      'clipboard.writeText': ({ text }) => platform.clipboard.writeText(text),
+      'clipboard.writeText': ({ text, sensitive }) => {
+        if (sensitive)
+          this.passwords.clipboard.copy(text, state.settings.passwords.clipboardClearSeconds)
+        else platform.clipboard.writeText(text)
+      },
 
       'bookmark.toggle': ({ tabId }, win) => this.toggleBookmark(tabId, win),
       'bookmark.star': ({ tabId }, win) => this.starTab(tabId, win),
@@ -1709,6 +1904,7 @@ export class Browser {
           state.commitVolatile()
           return
         }
+        this.find.remember(tabId, text)
         view.findInPage(text, forward, newSession)
       },
       'find.stop': ({ tabId, keepSelection }, win) => {
@@ -1737,6 +1933,7 @@ export class Browser {
         for (const tab of Object.values(state.model.tabs))
           if (tab.containerId === id) tab.containerId = DEFAULT_CONTAINER_ID
         void platform.sessions.clearContainerData(id)
+        this.security.certificateExceptions.forgetContainer(id)
         state.commit()
       },
       'container.reorder': ({ id, index }) => {
@@ -1747,8 +1944,9 @@ export class Browser {
       'window.minimize': (_a, win) => win.host.minimize(),
       'window.toggleMaximize': (_a, win) =>
         win.host.isMaximized() ? win.host.unmaximize() : win.host.maximize(),
-      'window.close': (_a, win) => win.host.close(),
+      'window.close': (_a, win) => void this.requestWindowClose(win),
       'window.toggleFullscreen': (_a, win) => this.toggleFullscreen(win),
+      'window.fullscreenInset': ({ bottom }, win) => win.setFullscreenInset(bottom),
       'window.formFactor': ({ formFactor }, win) => {
         win.formFactor = formFactor
       },
@@ -1972,7 +2170,8 @@ export class Browser {
       agents: JSON.stringify(s.agents),
       updates: JSON.stringify(s.updates),
       blocking: s.blocking,
-      privacy: JSON.stringify(s.privacy)
+      privacy: JSON.stringify(s.privacy),
+      autofill: `${JSON.stringify(s.passwords)}${JSON.stringify(s.autofill)}`
     }
     for (const [key, value] of Object.entries(patch)) {
       if (value === undefined) continue
@@ -2003,6 +2202,11 @@ export class Browser {
         s.passwords = sanitizePasswordSettings({
           ...s.passwords,
           ...(value as Partial<Settings['passwords']>)
+        })
+      } else if (key === 'autofill' && value && typeof value === 'object') {
+        s.autofill = sanitizeAutofillSettings({
+          ...s.autofill,
+          ...(value as Partial<Settings['autofill']>)
         })
       } else if (key === 'defaultBrowserPromo' && value && typeof value === 'object') {
         s.defaultBrowserPromo = sanitizePromoState({
@@ -2056,6 +2260,8 @@ export class Browser {
     if (before.appIcon !== s.appIcon) this.platform.app.setAppIcon?.(s.appIcon)
     if (before.blocking !== s.blocking) this.blocking.onSettingsChanged()
     if (before.privacy !== JSON.stringify(s.privacy)) this.protection.onSettingsChanged()
+    if (before.autofill !== `${JSON.stringify(s.passwords)}${JSON.stringify(s.autofill)}`)
+      this.autofill.onSettingsChanged()
     this.state.commit()
   }
 

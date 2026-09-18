@@ -54,6 +54,13 @@ interface PageHost {
      * custom tab has no core to run the backgrounds against, so its pages get no content scripts.
      */
     val extensions: Extensions? get() = null
+    /**
+     * Whether the forms script in the pages reports fields and submits (the core's autofill; off
+     * when a system autofill service owns the pages). Sent with the flags to every new document.
+     */
+    val formsEnabled: Boolean get() = true
+    /** The autofill provider of the pages: `zenium` takes the WebViews out of the system framework. */
+    val autofillProvider: String get() = SystemAutofill.PROVIDER_SYSTEM
 
     /** Something happened to one page: `navigated`, `title`, `startLoading`, … (see [TabWebView]). */
     fun viewEvent(tabId: String, name: String, payload: Any?)

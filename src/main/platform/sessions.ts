@@ -76,6 +76,9 @@ export class SessionManager implements SessionHost {
   /** Forget everything the private session accumulated (last private window closed). */
   async clearPrivate(): Promise<void> {
     await this.clearContainerData(PRIVATE_CONTAINER_ID)
+    // Certificate errors are decided per TLS handshake: a connection kept alive over a certificate
+    // the session proceeded past must not carry into the next private session.
+    await this.sessions.get(PRIVATE_CONTAINER_ID)?.closeAllConnections()
   }
 
   /**

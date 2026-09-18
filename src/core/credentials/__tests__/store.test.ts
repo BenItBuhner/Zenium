@@ -444,3 +444,124 @@ describe('CredentialStore import', () => {
     expect(second.store.count()).toBe(3)
   })
 })
+
+describe('CredentialStore addresses, cards and passkey records', () => {
+  const address = {
+    country: 'US',
+    name: 'Ada Lovelace',
+    organization: '',
+    streetAddress: '1600 Amphitheatre Pkwy',
+    locality: 'Mountain View',
+    region: 'CA',
+    postalCode: '94043',
+    sortingCode: '',
+    phone: '',
+    email: 'ada@example.com'
+  }
+  const card = {
+    number: '4242424242424242',
+    expMonth: 3,
+    expYear: 2029,
+    name: 'Ada Lovelace',
+    nickname: ''
+  }
+  const passkey = {
+    rpId: 'example.com',
+    rpName: 'Example',
+    userName: 'ada@example.com',
+    userDisplayName: 'Ada',
+    credentialId: 'AQID-g',
+    origin: 'https://example.com'
+  }
+
+  it('keeps every kind in the one encrypted vault and reopens them', async () => {
+    const first = setup()
+    await first.store.unlock()
+    first.store.add({ url: 'https://example.com/login', username: 'ada', password: 'pw' })
+    const a = first.store.addAddress(address, 1_000)
+    const c = first.store.addCard({ ...card, number: '4242 4242 4242 4242' }, 1_000)
+    const p = first.store.addPasskey(passkey, 1_000)
+    expect(c.number).toBe('4242424242424242')
+    await first.store.flush()
+    const text = first.io.documents.get(VAULT_DOCUMENT)!
+    for (const secret of ['4242424242424242', 'Amphitheatre', 'ada@example.com', 'AQID-g'])
+      expect(text).not.toContain(secret)
+
+    const second = reopen(first)
+    await second.store.unlock(undefined, false)
+    expect(second.store.count()).toBe(1)
+    expect(second.store.listAddresses()).toEqual([{ ...a }])
+    expect(second.store.listCards()).toEqual([{ ...c }])
+    expect(second.store.listPasskeys()).toEqual([{ ...p }])
+    expect(second.store.getAddress(a.id)?.email).toBe('ada@example.com')
+    expect(second.store.getCard(c.id)?.number).toBe('4242424242424242')
+  })
+
+  it('updates, marks used, orders by use and removes', async () => {
+    const { store } = setup()
+    await store.unlock()
+    const a1 = store.addAddress(address, 1_000)
+    const a2 = store.addAddress({ ...address, name: 'Bob' }, 2_000)
+    expect(store.listAddresses().map((a) => a.id)).toEqual([a2.id, a1.id])
+    store.markAddressUsed(a1.id, 3_000)
+    expect(store.listAddresses().map((a) => a.id)).toEqual([a1.id, a2.id])
+    expect(store.updateAddress(a1.id, { phone: '555' }, 4_000)).toMatchObject({
+      phone: '555',
+      updatedAt: 4_000,
+      lastUsedAt: 3_000
+    })
+    expect(store.updateAddress('address_nope', { phone: '1' })).toBeNull()
+    expect(store.removeAddress(a2.id)?.id).toBe(a2.id)
+    expect(store.listAddresses()).toHaveLength(1)
+
+    const c1 = store.addCard(card, 1_000)
+    expect(store.updateCard(c1.id, { expYear: 2031, nickname: 'Work' }, 5_000)).toMatchObject({
+      expYear: 2031,
+      nickname: 'Work',
+      number: '4242424242424242'
+    })
+    store.markCardUsed(c1.id, 6_000)
+    expect(store.getCard(c1.id)?.lastUsedAt).toBe(6_000)
+    expect(store.removeCard(c1.id)?.id).toBe(c1.id)
+    expect(store.listCards()).toEqual([])
+
+    const p1 = store.addPasskey(passkey, 1_000)
+    const p2 = store.addPasskey(
+      { ...passkey, userName: 'bob@example.com', credentialId: 'BBBB' },
+      2_000
+    )
+    expect(store.listPasskeys().map((p) => p.id)).toEqual([p2.id, p1.id])
+    store.markPasskeyUsed(p1.id, 3_000)
+    expect(store.listPasskeys().map((p) => p.id)).toEqual([p1.id, p2.id])
+    expect(store.findPasskey('example.com', 'BBBB')?.id).toBe(p2.id)
+    expect(store.findPasskey('example.com', '', 'ada@example.com')?.id).toBe(p1.id)
+    expect(store.findPasskey('other.example', 'AQID-g')).toBeNull()
+    expect(store.removePasskey(p1.id)?.id).toBe(p1.id)
+    expect(store.listPasskeys()).toHaveLength(1)
+  })
+
+  it('refuses writes while locked and lists nothing', async () => {
+    const first = setup()
+    await first.store.unlock()
+    first.store.addAddress(address)
+    await first.store.flush()
+    const second = reopen(first)
+    expect(second.store.listAddresses()).toEqual([])
+    expect(() => second.store.addAddress(address)).toThrow()
+    expect(() => second.store.addCard(card)).toThrow()
+    expect(() => second.store.addPasskey(passkey)).toThrow()
+  })
+
+  it('leaves a vault written by this version readable by the login-only reader of older ones', async () => {
+    // The login list ignores the other record kinds instead of failing on them.
+    const first = setup()
+    await first.store.unlock()
+    first.store.add({ url: 'https://example.com', username: 'ada', password: 'pw' })
+    first.store.addCard(card)
+    await first.store.flush()
+    const second = reopen(first)
+    await second.store.unlock(undefined, false)
+    expect(second.store.list().map((c) => c.username)).toEqual(['ada'])
+    expect(second.store.count()).toBe(1)
+  })
+})

@@ -150,6 +150,15 @@ class TabWebView(
     private var interstitialUrl: String? = null
     /** A certificate `onReceivedSslError` refused; the request's own failure follows and is the same news. */
     private var refusedCertificateUrl: String? = null
+    /**
+     * Certificates refused for resources that did not read as the page itself (another site's:
+     * most likely a subresource, which Chrome blocks quietly), by URL, with the failure the
+     * interstitial would show should the request turn out to be the main frame's after all
+     * (`onReceivedError` knows the frame; `onReceivedSslError` does not).
+     */
+    private val refusedCertificates = HashMap<String, RefusedCertificate>()
+
+    private class RefusedCertificate(val code: Int, val certificate: JSONObject?)
 
     init {
         Profiles.apply(this, containerId)
@@ -184,6 +193,8 @@ class TabWebView(
         // Dark theme for sites: only ever while the app itself is dark (WebView ties algorithmic
         // darkening to the theme), and never for pages that bring a dark scheme of their own.
         setDarkening(host.pageRules.darkenDefault)
+        applyWebAuthn()
+        applyAutofillProvider()
         setBackgroundColor(Color.WHITE)
         clipToOutline = true
         outlineProvider = object : ViewOutlineProvider() {
@@ -463,6 +474,7 @@ class TabWebView(
 
     private fun sendFlags() {
         postToPage(json("type" to "flags", "flags" to currentFlags).toString())
+        postToPage(formsConfig())
     }
 
     /** Deliver a browser → page message over the reply proxy (or the legacy bridge). */
@@ -481,6 +493,42 @@ class TabWebView(
     /** The core's "always allow pop-ups on this site": window.open may open windows on its own. */
     fun setPopupsAllowed(allowed: Boolean) {
         settings.javaScriptCanOpenWindowsAutomatically = allowed
+    }
+
+    // --- autofill and passkeys -----------------------------------------------------------------------
+
+    /**
+     * A fill for the page's forms script, or its configuration (`{type:'config', enabled}`); the
+     * host keeps the configuration and [sendFlags] repeats it to every new document.
+     */
+    fun sendForms(command: JSONObject) {
+        postToPage(json("type" to "forms", "command" to command).toString())
+    }
+
+    private fun formsConfig(): String =
+        json("type" to "forms", "command" to json("type" to "config", "enabled" to host.formsEnabled)).toString()
+
+    /**
+     * Whose autofill the page gets (see [SystemAutofill]): under the system provider the WebView
+     * stays a client of the framework, under Zenium's it and every field in it step out of it.
+     */
+    fun applyAutofillProvider() {
+        importantForAutofill = SystemAutofill.importance(host.autofillProvider)
+    }
+
+    /**
+     * Passkeys (WebAuthn) through Android's Credential Manager, at the level a non-privileged app
+     * gets: `navigator.credentials` works for origins whose Digital Asset Links statement lists
+     * this app (Zenium's own sites). Any origin at all needs `WEB_AUTHENTICATION_SUPPORT_FOR_BROWSER`,
+     * which Android grants only to the browsers on Google's privileged-browser allowlist; those
+     * requests are refused by the platform, not by Zenium. Without the WebView feature (an old
+     * WebView) the calls fail as they always did.
+     */
+    private fun applyWebAuthn() {
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_AUTHENTICATION)) return
+        runCatching {
+            WebSettingsCompat.setWebAuthenticationSupport(settings, WebSettingsCompat.WEB_AUTHENTICATION_SUPPORT_FOR_APP)
+        }.onFailure { Log.w("ZenTab", "WebAuthn support could not be enabled: ${it.message}") }
     }
 
     // --- input ---------------------------------------------------------------------------------
@@ -729,6 +777,15 @@ class TabWebView(
         if (url.startsWith("http", ignoreCase = true)) {
             val flags = host.privacy.flags
             applyCookiePolicy(flags, url)
+            if (retriesFailedEntry(url)) {
+                // The address the core's error page stands in for, asked for again (Proceed past
+                // the certificate interstitial, or a retry): from WebView's own entry for the
+                // failed load, right behind, which a history navigation runs afresh. The page
+                // then takes the failed load's place rather than stacking behind the warning, as
+                // on the desktop, where the interstitial lives in the failed entry itself.
+                super.goBack()
+                return
+            }
             // A WebView that cannot attach the GPC / DNT headers to every request gets them on
             // the navigations the browser starts, at least.
             if (!host.privacy.headersSupported) {
@@ -783,6 +840,18 @@ class TabWebView(
         val history = copyBackForwardList()
         val steps = backIndex(history) - history.currentIndex
         if (steps == -1) super.goBack() else if (steps < 0) super.goBackOrForward(steps)
+    }
+
+    /** Whether a load of `target` from the core's error page is best run from the entry right behind (see [loadUrl]). */
+    private fun retriesFailedEntry(target: String): Boolean {
+        val history = copyBackForwardList()
+        val behind = history.currentIndex - 1
+        return retriesFailedEntryOf(
+            onErrorPage = url?.startsWith(ERROR_PAGE_PREFIX) == true,
+            target = target,
+            behindUrl = if (behind >= 0) history.getItemAtIndex(behind)?.url else null,
+            skipped = interstitialUrl
+        )
     }
 
     override fun goForward() {
@@ -1161,30 +1230,69 @@ class TabWebView(
 
         override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
             host.blocking.onRequestError(this@TabWebView, request, error.errorCode)
-            if (!request.isForMainFrame) return
             val url = request.url.toString()
+            if (!request.isForMainFrame) {
+                refusedCertificates.remove(url)
+                return
+            }
             failedUrl = url
             loading = false
             // The request behind a refused certificate fails in turn; onReceivedSslError said it all.
             if (url == refusedCertificateUrl) return
+            // Unless the refusal did not read as the page's own: it was, so it is the news now.
+            refusedCertificates.remove(url)?.let { refused ->
+                refusedCertificateUrl = url
+                failLoad(refused.code, NetErrors.name(refused.code) ?: "ERR_CERT_INVALID", url, refused.certificate)
+                return
+            }
             val failure = NetErrors.failure(error.errorCode, error.description, NetErrors.offline(context))
             failLoad(failure.code, failure.name ?: error.description.toString(), url)
         }
 
+        /**
+         * A certificate that failed verification. The load goes ahead when the user proceeded past
+         * the interstitial for the site and certificate this session (`Security.certificateExceptions`,
+         * the core's decision mirrored here); otherwise it is refused, like Chrome does, and the
+         * page becomes the certificate interstitial: the failure with the certificate goes to the
+         * core, which renders `zen://error` with it and the offer to proceed. A resource of another
+         * site than the page's is most likely a subresource, blocked quietly (Chrome too); should
+         * the request prove to be the main frame's, `onReceivedError` renders the interstitial.
+         */
         override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: SslError) {
-            // Like Chrome, never proceed with a broken certificate; the error page explains why.
-            handler.cancel()
             val url = error.url
+            val certificate = error.certificate
+            if (host.security.certificateAllowed(containerId, url, Security.fingerprintOf(certificate))) {
+                handler.proceed()
+                return
+            }
+            handler.cancel()
+            val code = NetErrors.sslCode(error.primaryError)
+            val details = Security.describeCertificate(certificate)
+            if (!readsAsPage(url)) {
+                refusedCertificates[url] = RefusedCertificate(code, details)
+                return
+            }
             failedUrl = url
             refusedCertificateUrl = url
             loading = false
-            val code = NetErrors.sslCode(error.primaryError)
-            failLoad(code, NetErrors.name(code) ?: "ERR_CERT_INVALID", url)
+            failLoad(code, NetErrors.name(code) ?: "ERR_CERT_INVALID", url, details)
         }
 
-        /** Tell the core, in Chromium's terms: the `net::` code and the `ERR_…` name (or reason) the page prints. */
-        private fun failLoad(code: Int, description: String, url: String) {
-            host.viewEvent(tabId, "failLoad", json("code" to code, "description" to description, "url" to url))
+        /** Whether a failed resource is the document being loaded: same site as it, or no document to compare with. */
+        private fun readsAsPage(resourceUrl: String): Boolean {
+            val document = currentDocument ?: return true
+            val documentSite = CertificateExceptions.siteOf(document) ?: return true
+            return CertificateExceptions.siteOf(resourceUrl) == documentSite
+        }
+
+        /**
+         * Tell the core, in Chromium's terms: the `net::` code and the `ERR_…` name (or reason) the
+         * page prints, and for a refused certificate what the interstitial shows of it.
+         */
+        private fun failLoad(code: Int, description: String, url: String, certificate: JSONObject? = null) {
+            val event = json("code" to code, "description" to description, "url" to url)
+            if (certificate != null) event.put("certificate", certificate)
+            host.viewEvent(tabId, "failLoad", event)
         }
 
         override fun onRenderProcessGone(view: WebView, detail: android.webkit.RenderProcessGoneDetail): Boolean {
@@ -1308,6 +1416,14 @@ class TabWebView(
             if (onErrorPage && behind >= 1 && skipped != null && entryUrlAt(behind) == skipped) return behind - 1
             return behind
         }
+
+        /**
+         * The pure half of the retry in [loadUrl]: from the core's error page, a load of the very
+         * address WebView's own error page committed under (`skipped`), when that entry is the one
+         * right behind (`behindUrl`), goes back onto it instead of making a new entry.
+         */
+        fun retriesFailedEntryOf(onErrorPage: Boolean, target: String, behindUrl: String?, skipped: String?): Boolean =
+            onErrorPage && skipped != null && target == skipped && behindUrl == skipped
 
         /** Longer than any tool budget (browser_wait_for allows 30 s) but shorter than the socket's. */
         private const val EVAL_TIMEOUT_MS = 45_000L

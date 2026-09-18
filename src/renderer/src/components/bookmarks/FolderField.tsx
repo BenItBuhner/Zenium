@@ -3,7 +3,12 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Check, ChevronDown, Folder } from 'lucide-react'
 import type { BookmarkTree } from '@shared/bookmarks'
 import { recentFolders } from '@shared/bookmarks'
-import { ChromePortal, POPOVER_MARGIN } from '@renderer/lib/portals'
+import {
+  ChromePortal,
+  POPOVER_MARGIN,
+  useLightDismiss,
+  type DismissReason
+} from '@renderer/lib/portals'
 import { cn } from '@renderer/lib/utils'
 import { FolderChooser } from './FolderChooser'
 import { useEscapeTrap } from './escape'
@@ -37,7 +42,10 @@ interface PopupBox {
  * folder's name whose popup (v2 draft §9.13: a panel under the trigger, 28px rows, the current
  * option checked) lists the recently used folders and a "Choose another folder…" row that swaps
  * the menulist for the whole folder tree (with "New folder"). The popup renders through the
- * chrome layer (`ChromePortal`) so the dialog's scrolling body cannot clip it.
+ * chrome layer (`ChromePortal`) so the dialog's scrolling body cannot clip it, and the layer's
+ * light dismiss puts it away – a press anywhere else, the trigger's own press, a scroll, a
+ * resize – with the focus back on the menulist; inside the star bubble it is the bubble's child
+ * popover (its trigger is in the bubble), so a press in the list leaves the bubble open.
  */
 export function FolderField({
   tree,
@@ -86,17 +94,18 @@ export function FolderField({
     if (focusTrigger) triggerRef.current?.focus()
   }
 
-  // The list takes the keyboard while open; a click anywhere else puts it away.
+  // The list takes the keyboard while open.
   useEffect(() => {
     if (!listOpen) return
     listRef.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.focus()
-    const onDown = (e: PointerEvent): void => {
-      const t = e.target as Node | null
-      if (!listRef.current?.contains(t) && !triggerRef.current?.contains(t)) setPopup(null)
-    }
-    window.addEventListener('pointerdown', onDown, true)
-    return () => window.removeEventListener('pointerdown', onDown, true)
   }, [listOpen])
+  // The layer's light dismiss puts it away, the menulist taking the focus back – unless what
+  // closed it was another popover or a dialog opening, which has the focus now.
+  useLightDismiss(
+    listRef,
+    (reason: DismissReason) => closeList(reason !== 'replaced' && reason !== 'all'),
+    { anchor: triggerRef, disabled: !listOpen }
+  )
 
   const pick = (id: string): void => {
     closeList(true)

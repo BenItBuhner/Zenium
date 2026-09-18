@@ -10,6 +10,7 @@ export function Toolbar({
   tab,
   floating,
   children,
+  trailing,
   trailingInset = 0,
   leadingInset = 0,
   showWindowControls = false
@@ -19,6 +20,8 @@ export function Toolbar({
   floating?: boolean
   /** Rows under the navigation row (the bookmarks bar, when the toolbar floats over the page). */
   children?: ReactNode
+  /** Controls after the navigation row (the fullscreen toolbar's way out). */
+  trailing?: ReactNode
   /** Room (px) kept clear at the trailing end for native caption buttons drawn over the row. */
   trailingInset?: number
   /** Room (px) kept clear at the leading end for macOS traffic lights. */
@@ -37,6 +40,7 @@ export function Toolbar({
         }}
       >
         <NavRow state={state} tab={tab} compact={false} className="flex-1" />
+        {trailing}
         {showWindowControls && <WindowControls />}
       </div>
       {children}

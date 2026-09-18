@@ -10,12 +10,15 @@ import { uiStore, type UiState } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { ExtensionPromptDialog } from './extensions/ExtensionPromptDialog'
 import { PermissionPrompts } from './security/PermissionPromptDialog'
+import { PageDialogs } from './dialogs/PageDialog'
+import { WindowPromptDialog } from './dialogs/WindowPromptDialog'
 import { SecurityPrompts } from './security/SecurityPromptDialog'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { BookmarkAllTabsDialog } from './bookmarks/BookmarkAllTabsDialog'
 import { EditBookmarkDialog } from './bookmarks/EditBookmarkDialog'
 import { StarDialog } from './bookmarks/StarDialog'
+import { ZoomBubble } from './zoom/ZoomBubble'
 
 const TAB_ICONS = [
   ...SPACE_ICONS,
@@ -37,17 +40,20 @@ const TAB_ICONS = [
  * Small dialogs shown by every layout: the star bubble, "Bookmark all tabs", a bookmark or
  * folder edit requested outside the manager (the manager hosts its own), the pinned-URL editor
  * and the icon picker, the security prompts (HTTP sign-in, certificate choice) the page's
- * requests wait on, the permission prompts a page's requests wait on, and the extension
- * install and permission prompts. The modal ones render through the `FrameDialogHost` this
- * mounts, so they centre in the box it is placed in – the content frame on desktop, the shell
- * on phones – over a scrim that dims only that box (lib/portals.tsx). The star bubble is a
- * popover: on desktop it portals to the chrome layer, anchored under the star; on phones it is
- * a sheet in the host.
+ * requests wait on, the permission prompts a page's requests wait on, the page's own dialogs
+ * (`alert`, `confirm`, `prompt`, "Leave site?"), the questions asked before a window closes
+ * or Zenium quits, and the extension install and permission prompts. The modal ones render
+ * through the `FrameDialogHost` this mounts, so they centre in the box it is placed in – the
+ * content frame on desktop, the shell on phones – over a scrim that dims only that box
+ * (lib/portals.tsx). The star bubble is a popover: on desktop it portals to the chrome layer,
+ * anchored under the star; on phones it is a sheet in the host. The zoom bubble is a desktop
+ * popover too, under the pill's zoom chip.
  */
 export function TabDialogs({ state }: { state: UIState }): JSX.Element {
   const pinnedTabId = uiStore.use((s) => s.editingPinnedUrlTabId)
   const iconTabId = uiStore.use((s) => s.iconPickerTabId)
   const star = uiStore.use((s) => s.starDialog)
+  const zoom = uiStore.use((s) => s.zoomBubble)
   const allTabs = uiStore.use((s) => s.bookmarkAllTabs)
   const edit = uiStore.use((s) => s.bookmarkEdit)
   const managerOpen = uiStore.use((s) => s.overlay === 'bookmarks')
@@ -66,7 +72,10 @@ export function TabDialogs({ state }: { state: UIState }): JSX.Element {
       />
       <SecurityPrompts state={state} />
       <PermissionPrompts state={state} />
+      <PageDialogs state={state} />
+      <WindowPromptDialog state={state} />
       <ExtensionPromptDialog />
+      {zoom && <ZoomBubble state={state} bubble={zoom} />}
     </FrameDialogHost>
   )
 }

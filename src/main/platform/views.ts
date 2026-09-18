@@ -15,15 +15,33 @@ import {
 } from 'electron'
 import { join } from 'node:path'
 import { writeFile } from 'node:fs/promises'
-import type { NavigationSnapshot, Rect, Tab } from '../../shared/types'
+import type {
+  CertificateDetails,
+  NavigationSnapshot,
+  NavigationSnapshotEntry,
+  PageDialogResponse,
+  Rect,
+  Tab
+} from '../../shared/types'
 import type { SafeBrowsingHit } from '../../shared/privacy'
-import type { SiteCertificate } from '../../shared/siteInfo'
+import { isCertificateError, type SiteCertificate } from '../../shared/siteInfo'
+import { inPlaceErrorPageScript } from '../../shared/zenPages'
+import { certificateSiteOf } from '../../core/security'
+import type { PageHint } from '../../shared/fullscreenHint'
+import {
+  DISMISSED_ANSWER,
+  LEAVE_SITE_CHANNEL,
+  type PageDialogAnswer,
+  type PageDialogCall
+} from '../../shared/pageDialogIpc'
+import type { FormsCommand } from '../../shared/forms'
 import type {
   AgentCapture,
   AgentCaptureOptions,
   AgentInputEvent,
   InputModifier,
   KeyEventInput,
+  NavigationIntent,
   PageFlags,
   PageMessage,
   TabView,
@@ -83,6 +101,41 @@ export interface ViewNavigationHint {
 /** What Electron hands `createWindow`: the window options plus the page Chromium made, if any. */
 type ChildWindowOptions = BrowserWindowConstructorOptions & { webContents?: WebContents }
 
+/**
+ * A navigation the host started (address bar, back, reload) that the page's `beforeunload` may
+ * object to; replayed when the user chooses to leave. Stale after this long.
+ */
+const HOST_NAVIGATION_TTL_MS = 30_000
+/** A `confirmUnload` whose page neither goes nor objects by then is treated as not objecting. */
+const UNLOAD_CHECK_TIMEOUT_MS = 5_000
+/**
+ * An entry's page state (scroll offset, form values) is kept up to this size; a larger one –
+ * a page with a huge form – is left out rather than written into the profile on every commit.
+ */
+const PAGE_STATE_MAX_CHARS = 64 * 1024
+
+/** A stored entry: URL and title, plus the engine's page state when it has one worth keeping. */
+function snapshotEntry(entry: Electron.NavigationEntry): NavigationSnapshotEntry {
+  const out: NavigationSnapshotEntry = { url: entry.url, title: entry.title }
+  const state = entry.pageState
+  if (typeof state === 'string' && state !== '' && state.length <= PAGE_STATE_MAX_CHARS) {
+    out.pageState = state
+  }
+  return out
+}
+
+interface HostNavigation {
+  at: number
+  reload: boolean
+  replay: () => void
+}
+
+/** A `confirmUnload` in flight: settled by the page going away or by the user's answer. */
+interface UnloadCheck {
+  promise: Promise<boolean>
+  settle: (leave: boolean) => void
+}
+
 /** What every tab page runs with; `session` picks the container (omitted for pages that exist). */
 function pageWebPreferences(session?: Session): WebPreferences {
   return {
@@ -126,11 +179,23 @@ export class ElectronTabView implements TabView {
   private visible = false
   private navigationHint: ViewNavigationHint | null = null
   /**
+   * The main-frame certificate the current navigation was refused over (`certificate-error`),
+   * handed to the core with the `did-fail-load` that follows so the interstitial can show it.
+   */
+  private refusedCertificate: { url: string; certificate: CertificateDetails } | null = null
+  /**
    * A `window.open` / `target=_blank` the core may turn into a tab (`onCreatedNavigationTarget`);
    * returns the function that withdraws the announcement when it does not.
    */
   onNavigationTarget: ((source: WebContents, url: string) => () => void) | null = null
   private events!: TabViewEvents
+  /** The user chose to leave: the next `beforeunload` objection is overruled. */
+  private leaveApproved = false
+  /** The last navigation this host started, for the "Leave site?" replay. */
+  private hostNavigation: HostNavigation | null = null
+  /** What the page itself was about to do, as its preload reported it (`navigate-intent`). */
+  private pageIntent: { at: number; intent: NavigationIntent } | null = null
+  private unloadCheck: UnloadCheck | null = null
 
   constructor(
     readonly view: WebContentsView,
@@ -152,7 +217,7 @@ export class ElectronTabView implements TabView {
   }
 
   /** Connect the page's events to its tab; called exactly once, right after the tab exists. */
-  wire(events: TabViewEvents, tab: Tab): void {
+  wire(events: TabViewEvents): void {
     this.events = events
     const wc = this.wc
     const ev = events
@@ -167,7 +232,16 @@ export class ElectronTabView implements TabView {
     wc.on('page-favicon-updated', (_e, favicons) => ev.onFaviconUpdated(favicons))
     wc.on('did-fail-load', (_e, code, description, url, isMainFrame) => {
       if (!isMainFrame || wc.isDestroyed()) return
-      ev.onFailLoad(code, description, url)
+      const refused = this.refusedCertificate
+      this.refusedCertificate = null
+      // The certificate the failure is about: refused for this site in this navigation.
+      const certificate =
+        refused &&
+        isCertificateError(code) &&
+        certificateSiteOf(refused.url) === certificateSiteOf(url)
+          ? refused.certificate
+          : null
+      ev.onFailLoad(code, description, url, isCertificateError(code) ? { certificate } : undefined)
     })
     wc.on('render-process-gone', (_e, details) => ev.onCrashed(details.reason))
     wc.on('audio-state-changed', (e) => ev.onAudioStateChanged(e.audible))
@@ -205,21 +279,15 @@ export class ElectronTabView implements TabView {
       if (ev.onKey(key)) event.preventDefault()
     })
     wc.on('update-target-url', (_e, url) => ev.onTargetUrl(url))
-    wc.on('will-prevent-unload', (event) => {
-      const options = {
-        type: 'question' as const,
-        buttons: ['Leave Page', 'Stay on Page'],
-        defaultId: 0,
-        cancelId: 1,
-        message: `This page is asking you to confirm that you want to leave — ${wc.getTitle() || tab.title}`,
-        detail: 'Information you’ve entered may not be saved.',
-        noLink: true
-      }
-      const win = this.win
-      const choice = win
-        ? dialog.showMessageBoxSync(win, options)
-        : dialog.showMessageBoxSync(options)
-      if (choice === 0) event.preventDefault()
+    wc.on('will-prevent-unload', (event) => this.onWillPreventUnload(event))
+    wc.on('did-start-navigation', (details) => {
+      // The page is unloading (its `beforeunload` let it): nothing is left to replay.
+      if (!details.isMainFrame || details.isSameDocument) return
+      this.leaveApproved = false
+      this.hostNavigation = null
+      this.pageIntent = null
+      // A refused certificate belongs to the navigation it happened in (which asks after this).
+      this.refusedCertificate = null
     })
     wc.on('dom-ready', () => ev.onDomReady())
     // By the time this fires `this.view.webContents` no longer returns the object (Electron drops
@@ -275,6 +343,11 @@ export class ElectronTabView implements TabView {
 
   /** A message from the page script (routed here by the platform's IPC handler). */
   dispatchPageMessage(message: PageMessage): void {
+    if (message.type === 'navigate-intent') {
+      // The page is about to navigate itself; kept for the "Leave site?" flow, not the core's.
+      if (message.intent) this.pageIntent = { at: Date.now(), intent: message.intent }
+      return
+    }
     this.events.onPageMessage(message)
   }
 
@@ -288,13 +361,127 @@ export class ElectronTabView implements TabView {
     this.events.onUnsafeNavigation(url, hit)
   }
 
+  // --- dialogs and beforeunload ----------------------------------------------
+
+  /**
+   * The page called `alert`, `confirm` or `prompt` (its preload asks over synchronous IPC, so
+   * the page waits). `frameUrl` is the calling frame's; the dialog is titled after its site.
+   */
+  async askDialog(call: PageDialogCall, frameUrl: string): Promise<PageDialogAnswer> {
+    if (this.wc.isDestroyed()) return DISMISSED_ANSWER
+    const response: PageDialogResponse = await this.events.onDialog({
+      kind: call.kind,
+      message: call.message,
+      defaultValue: call.defaultValue,
+      frameUrl,
+      pageUrl: this.wc.getURL()
+    })
+    return { accepted: response.accepted, value: response.value }
+  }
+
+  /**
+   * The page's `beforeunload` handler objects to it going away. Electron decides synchronously,
+   * so the page is kept (the event is not prevented) and the chrome asks; when the user chooses
+   * to leave, the action is redone with the objection overruled: the host's own navigation from
+   * its record, the page's own by the page (its preload replays what it was about to do), and a
+   * close by the core, which carries on with the destroy once its check resolves.
+   */
+  private onWillPreventUnload(event: Electron.Event): void {
+    if (this.leaveApproved) {
+      this.leaveApproved = false
+      event.preventDefault()
+      return
+    }
+    const wc = this.wc
+    const check = this.unloadCheck
+    const now = Date.now()
+    const host =
+      this.hostNavigation && now - this.hostNavigation.at < HOST_NAVIGATION_TTL_MS
+        ? this.hostNavigation
+        : null
+    const page =
+      this.pageIntent && now - this.pageIntent.at < HOST_NAVIGATION_TTL_MS
+        ? this.pageIntent.intent
+        : null
+    this.hostNavigation = null
+    this.pageIntent = null
+    const reload = !check && (host ? host.reload : page?.navigationType === 'reload')
+    void this.events.onLeaveSite(reload).then((leave) => {
+      if (check) {
+        check.settle(leave)
+        return
+      }
+      if (!leave || wc.isDestroyed()) return
+      this.leaveApproved = true
+      if (host) host.replay()
+      else wc.send(LEAVE_SITE_CHANNEL)
+    })
+  }
+
+  /**
+   * Run the page's `beforeunload` handlers by closing with `waitForBeforeUnload`: a page that does
+   * not object is gone at once (the core hears `destroyed` and closes the tab); one that objects
+   * stays, and the answer to the chrome's question settles the promise.
+   */
+  confirmUnload(): Promise<boolean> {
+    const wc = this.wc
+    if (wc.isDestroyed()) return Promise.resolve(true)
+    if (this.unloadCheck) return this.unloadCheck.promise
+    let settle: (leave: boolean) => void = () => undefined
+    const promise = new Promise<boolean>((resolve) => {
+      const onGone = (): void => settle(true)
+      // A renderer that never answers (hung) does not hold the close up, as in Chrome.
+      const timer = setTimeout(() => settle(true), UNLOAD_CHECK_TIMEOUT_MS)
+      settle = (leave) => {
+        if (this.unloadCheck?.promise !== promise) return
+        this.unloadCheck = null
+        clearTimeout(timer)
+        wc.off('destroyed', onGone)
+        resolve(leave)
+      }
+      wc.once('destroyed', onGone)
+      wc.once('will-prevent-unload', () => clearTimeout(timer))
+    })
+    this.unloadCheck = { promise, settle }
+    wc.close({ waitForBeforeUnload: true })
+    return promise
+  }
+
+  private recordHostNavigation(reload: boolean, replay: () => void): void {
+    this.hostNavigation = { at: Date.now(), reload, replay }
+  }
+
   // --- navigation -----------------------------------------------------------
 
   loadURL(url: string): void {
     // Address-bar entries and programmatic loads both arrive here; Chrome reports the latter as
     // `link` too, so no `typed` claim is made without knowing the source.
     this.navigationHint = {}
+    this.recordHostNavigation(false, () => this.loadURL(url))
     void this.wc.loadURL(url).catch(() => undefined)
+  }
+
+  /**
+   * `certificate-error` refused the main frame's certificate for `url`: kept for the failure
+   * Chromium reports next, so the core can render the interstitial with it.
+   */
+  expectCertificateFailure(url: string, certificate: CertificateDetails): void {
+    this.refusedCertificate = { url, certificate }
+  }
+
+  /**
+   * The certificate interstitial, written into the empty document Chromium committed for the
+   * failed load rather than loaded as a document of its own: the entry stays the failed
+   * address's, so the tab shows that address, back leads to the page before and a load of the
+   * address asks for it again. The error document is complete by the time `did-fail-load`
+   * reports, so the script runs at once; the page preload is in that document and relays the
+   * interstitial's controls like in any other.
+   */
+  showErrorPage(url: string): void {
+    if (this.wc.isDestroyed()) return
+    void this.wc
+      .executeJavaScript(inPlaceErrorPageScript(new URL(url)), true)
+      .catch(() => undefined)
   }
 
   /** The hint for the next main-frame commit, consumed once (`webNavigation.onCommitted`). */
@@ -321,17 +508,21 @@ export class ElectronTabView implements TabView {
   }
 
   goBack(): void {
+    this.recordHostNavigation(false, () => this.goBack())
     this.wc.navigationHistory.goBack()
   }
 
   goForward(): void {
+    this.recordHostNavigation(false, () => this.goForward())
     this.wc.navigationHistory.goForward()
   }
 
   goToIndex(index: number): void {
     if (this.wc.isDestroyed()) return
     const history = this.wc.navigationHistory
-    if (index >= 0 && index < history.length()) history.goToIndex(index)
+    if (index < 0 || index >= history.length()) return
+    this.recordHostNavigation(false, () => this.goToIndex(index))
+    history.goToIndex(index)
   }
 
   navigationEntries(): NavigationSnapshot {
@@ -339,7 +530,7 @@ export class ElectronTabView implements TabView {
     if (wc.isDestroyed()) return { entries: [], index: -1 }
     const history = wc.navigationHistory
     return {
-      entries: history.getAllEntries().map((e) => ({ url: e.url, title: e.title })),
+      entries: history.getAllEntries().map((e) => snapshotEntry(e)),
       index: history.getActiveIndex()
     }
   }
@@ -366,6 +557,7 @@ export class ElectronTabView implements TabView {
   }
 
   reload(ignoreCache: boolean): void {
+    this.recordHostNavigation(true, () => this.reload(ignoreCache))
     if (ignoreCache) this.wc.reloadIgnoringCache()
     else this.wc.reload()
   }
@@ -426,8 +618,16 @@ export class ElectronTabView implements TabView {
     this.wc.send('zen:page-flags', flags)
   }
 
+  sendFormsCommand(command: FormsCommand): void {
+    if (!this.wc.isDestroyed()) this.wc.send('zen:forms', command)
+  }
+
   setZapMode(on: boolean): void {
     this.wc.send('zen:zap', on)
+  }
+
+  showHint(hint: PageHint | null): void {
+    if (!this.wc.isDestroyed()) this.wc.send('zen:page-hint', hint)
   }
 
   setBackgroundColor(color: string): void {
@@ -880,7 +1080,7 @@ export class ElectronTabViewHost implements TabViewHost {
       }),
       this
     )
-    view.wire(events, tab)
+    view.wire(events)
     view.attachTo(host)
     this.track(view, tab.id)
     return view
@@ -914,7 +1114,7 @@ export class ElectronTabViewHost implements TabViewHost {
       this
     )
     const { tab, events } = ticket.adopt(view)
-    view.wire(events, tab)
+    view.wire(events)
     this.track(view, tab.id)
     // A link's new window navigates from here (Electron only does so for windows it creates);
     // the referrer and any form body come along as they would in Chrome.

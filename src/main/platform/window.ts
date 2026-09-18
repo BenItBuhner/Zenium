@@ -13,14 +13,26 @@ import type {
 } from '../../core/platform'
 import { TitleThrottle } from '../../shared/windowTitle'
 import { windowIcon } from './appIcon'
+import { EdgeTracker, edgeState, type EdgeZone } from './edgeReveal'
+import { placeWindow, type DisplayArea } from './windowPlacement'
 
 const MIN_WIDTH = 640
 const MIN_HEIGHT = 420
+/** A first window's size (within the display). */
+const DEFAULT_WIDTH = 1280
+const DEFAULT_HEIGHT = 820
 /** Popups are as small as the page asked for, within reason. */
 const POPUP_MIN_WIDTH = 320
 const POPUP_MIN_HEIGHT = 200
 /** Width (px) of the edge zone that reveals the sidebar in compact mode. */
 const COMPACT_REVEAL_ZONE = 14
+/**
+ * Height (px) of the top zone that reveals the hidden toolbar. Narrower than the sidebar's: a
+ * fullscreen page's own top row sits right under it, and the cursor parks on the screen edge.
+ */
+const TOOLBAR_REVEAL_ZONE = 4
+/** How far below the top edge the cursor may roam before a revealed toolbar is asked to go. */
+const TOOLBAR_KEEP_ZONE = 120
 /**
  * Windows 11 draws the caption buttons itself (Window Controls Overlay), which is what gives the
  * maximise button its Snap Layouts flyout. macOS keeps its traffic lights; Linux draws Zenium's.
@@ -36,7 +48,8 @@ export class ElectronWindow implements WindowHost {
   readonly win: BrowserWindow
   private boundsTimer: ReturnType<typeof setTimeout> | null = null
   private compactTimer: ReturnType<typeof setInterval> | null = null
-  private compactLastSent: boolean | null = null
+  private readonly sidebarEdge = new EdgeTracker()
+  private readonly toolbarEdge = new EdgeTracker()
   private readonly titles: TitleThrottle
   private captionColors: CaptionColors
 
@@ -46,11 +59,14 @@ export class ElectronWindow implements WindowHost {
     init: WindowCreateInit
   ) {
     let initial = init.bounds
+    let displayId = init.displayId
     if (!initial && init.cascadeFrom?.alive) {
-      const b = (init.cascadeFrom.host as ElectronWindow).win.getNormalBounds()
+      const from = (init.cascadeFrom.host as ElectronWindow).win
+      const b = from.getNormalBounds()
       initial = { x: b.x + 28, y: b.y + 28, width: b.width, height: b.height }
+      displayId = screen.getDisplayMatching(b).id
     }
-    const bounds = sanitizeBounds(initial, init.chrome)
+    const bounds = sanitizeBounds(initial, displayId, init.chrome)
     const isMac = process.platform === 'darwin'
     const mica = init.material === 'mica' && process.platform === 'win32'
     this.captionColors = init.captionColors
@@ -121,10 +137,23 @@ export class ElectronWindow implements WindowHost {
       else if (command === 'browser-forward')
         browser.actions.run('nav.forward', { sourceTabId: null, win: zen })
     })
-    win.on('close', () => {
+    win.on('close', (event) => {
+      // The caption button, Alt+F4 and the window manager arrive here first: the browser runs
+      // its checks (the tab-count warning, every page's "Leave site?") and closes again once
+      // they pass. Windows the browser closes itself, and every window while quitting, go.
+      if (!zen.closeApproved && !browser.quitting) {
+        event.preventDefault()
+        // Off the event: the checks may pass at once and close again, which must not re-enter
+        // the close that is being cancelled here.
+        setImmediate(() => void browser.requestWindowClose(zen))
+        return
+      }
       if (this.boundsTimer) clearTimeout(this.boundsTimer)
       zen.onClosing()
     })
+    // Windows: the user logs off or the system shuts down and the process is about to be ended.
+    // Persist (with the clean-exit marker) and go without questions.
+    win.on('session-end', () => browser.shutdown())
     win.on('closed', () => {
       this.stopCompactTracking()
       this.titles.cancel()
@@ -288,6 +317,10 @@ export class ElectronWindow implements WindowHost {
       : null
   }
 
+  displayId(): number | null {
+    return this.alive ? screen.getDisplayMatching(this.win.getBounds()).id : null
+  }
+
   setCaptionColors(colors: CaptionColors): void {
     if (!CAPTION_OVERLAY || !this.alive) return
     const current = this.captionColors
@@ -312,7 +345,9 @@ export class ElectronWindow implements WindowHost {
   /**
    * Like Zen, reveal the hidden sidebar by tracking the real cursor position instead of relying
    * on DOM hover: the page view and the frameless resize border never deliver mouse events to
-   * the chrome, so a DOM-only edge strip is unreliable.
+   * the chrome, so a DOM-only edge strip is unreliable. The hidden top toolbar is revealed the
+   * same way: in a fullscreen window the page runs edge to edge and covers every strip the
+   * chrome could hover.
    */
   private startCompactTracking(): void {
     if (this.compactTimer) return
@@ -329,28 +364,45 @@ export class ElectronWindow implements WindowHost {
     const state = this.browser.state
     const zen = this.zen
     const cm = state.settings.compactMode
-    const hidden = zen.compactEnabled && cm.hideSidebar && !zen.compactSidebarPersistent
-    if (!hidden || zen.htmlFullscreenTabId) {
-      this.compactLastSent = null
+    // The window's fullscreen hides the chrome like compact mode with both switches on.
+    const fullscreen = zen.chrome !== 'popup' && this.win.isFullScreen()
+    const sidebarHidden =
+      fullscreen || (zen.compactEnabled && cm.hideSidebar && !zen.compactSidebarPersistent)
+    const toolbarHidden =
+      state.settings.toolbarLayout === 'multiple' &&
+      (fullscreen || (zen.compactEnabled && cm.hideToolbar))
+    if (zen.htmlFullscreenTabId || (!sidebarHidden && !toolbarHidden)) {
+      this.sidebarEdge.reset()
+      this.toolbarEdge.reset()
       return
     }
-    if (!this.win.isFocused() && !zen.compactSidebarRevealed) return
+    if (!this.win.isFocused() && !zen.compactSidebarRevealed && !zen.compactToolbarRevealed) return
     const bounds = this.win.getContentBounds()
     const cursor = screen.getCursorScreenPoint()
-    const insideY = cursor.y >= bounds.y && cursor.y <= bounds.y + bounds.height
-    const side = state.settings.sidebarSide
-    const distance = side === 'left' ? cursor.x - bounds.x : bounds.x + bounds.width - cursor.x
-    const sidebarWidth = state.settings.sidebarExpanded ? state.settings.sidebarWidth : 56
-    const inRevealZone = insideY && distance >= -6 && distance <= COMPACT_REVEAL_ZONE
-    const outsideSidebar = !insideY || distance > sidebarWidth + 32 || distance < -48
-    // Each transition is sent once; re-sending "hide" would keep resetting the renderer's
-    // hide delay.
-    if (inRevealZone && this.compactLastSent !== true) {
-      this.compactLastSent = true
-      this.send('compact.reveal', { revealed: true })
-    } else if (outsideSidebar && this.compactLastSent !== false) {
-      this.compactLastSent = false
-      if (zen.compactSidebarRevealed) this.send('compact.reveal', { revealed: false })
+    if (sidebarHidden) {
+      const sidebarWidth = state.settings.sidebarExpanded ? state.settings.sidebarWidth : 56
+      const zone: EdgeZone = {
+        edge: state.settings.sidebarSide,
+        reveal: COMPACT_REVEAL_ZONE,
+        keep: sidebarWidth + 32
+      }
+      const send = this.sidebarEdge.sample(
+        edgeState(cursor, bounds, zone),
+        zen.compactSidebarRevealed
+      )
+      if (send !== null) this.send('compact.reveal', { revealed: send, edge: 'sidebar' })
+    } else {
+      this.sidebarEdge.reset()
+    }
+    if (toolbarHidden) {
+      const zone: EdgeZone = { edge: 'top', reveal: TOOLBAR_REVEAL_ZONE, keep: TOOLBAR_KEEP_ZONE }
+      const send = this.toolbarEdge.sample(
+        edgeState(cursor, bounds, zone),
+        zen.compactToolbarRevealed
+      )
+      if (send !== null) this.send('compact.reveal', { revealed: send, edge: 'toolbar' })
+    } else {
+      this.toolbarEdge.reset()
     }
   }
 }
@@ -378,32 +430,24 @@ export class ElectronWindowFactory implements WindowHostFactory {
   }
 }
 
-function sanitizeBounds(saved: Rect | null, chrome: WindowChrome): Rect {
-  const primary = screen.getPrimaryDisplay().workArea
-  const fallback: Rect = {
-    width: Math.min(1280, primary.width - 40),
-    height: Math.min(820, primary.height - 40),
-    x:
-      primary.x + Math.max(0, Math.round((primary.width - Math.min(1280, primary.width - 40)) / 2)),
-    y:
-      primary.y + Math.max(0, Math.round((primary.height - Math.min(820, primary.height - 40)) / 2))
-  }
-  if (!saved) return fallback
-  const minWidth = chrome === 'popup' ? POPUP_MIN_WIDTH : MIN_WIDTH
-  const minHeight = chrome === 'popup' ? POPUP_MIN_HEIGHT : MIN_HEIGHT
-  const width = Math.max(minWidth, Math.min(saved.width, primary.width))
-  const height = Math.max(minHeight, Math.min(saved.height, primary.height))
-  // Make sure the window is visible on some display.
-  const visibleOnSomeDisplay = screen.getAllDisplays().some((d) => {
-    const a = d.workArea
-    return (
-      saved.x + 100 < a.x + a.width &&
-      saved.x + width - 100 > a.x &&
-      saved.y + 50 < a.y + a.height &&
-      saved.y >= a.y - 20
-    )
-  })
-  return visibleOnSomeDisplay
-    ? { x: saved.x, y: saved.y, width, height }
-    : { ...fallback, width, height }
+/**
+ * Saved bounds go back onto the display they were saved on (or the one they lie on, or the
+ * primary), fitted into its work area; see `placeWindow`.
+ */
+function sanitizeBounds(saved: Rect | null, displayId: number | null, chrome: WindowChrome): Rect {
+  const primary = screen.getPrimaryDisplay()
+  const displays: DisplayArea[] = [
+    primary,
+    ...screen.getAllDisplays().filter((d) => d.id !== primary.id)
+  ].map((d) => ({ id: d.id, workArea: d.workArea }))
+  return placeWindow(
+    {
+      saved,
+      displayId,
+      minWidth: chrome === 'popup' ? POPUP_MIN_WIDTH : MIN_WIDTH,
+      minHeight: chrome === 'popup' ? POPUP_MIN_HEIGHT : MIN_HEIGHT,
+      defaultSize: { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT }
+    },
+    displays
+  )
 }

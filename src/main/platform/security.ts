@@ -2,7 +2,7 @@ import { app, type Certificate, type WebContents } from 'electron'
 import { statSync } from 'node:fs'
 import type { Browser } from '../../core/browser'
 import type { PermissionRequestDetails } from '../../core/permissions'
-import type { ClientCertificateInfo } from '../../shared/types'
+import type { CertificateDetails, ClientCertificateInfo } from '../../shared/types'
 import type { ElectronTabViewHost } from './views'
 
 type RequestDetails = Parameters<
@@ -104,11 +104,39 @@ export function describeCertificate(cert: Certificate): ClientCertificateInfo {
   }
 }
 
+/** A server certificate that failed verification, as the interstitial and site information show it. */
+export function describeServerCertificate(cert: Certificate): CertificateDetails {
+  return {
+    subjectName: cert.subjectName || cert.subject?.commonName || '',
+    issuerName: cert.issuerName || cert.issuer?.commonName || '',
+    validStart: cert.validStart * 1000,
+    validExpiry: cert.validExpiry * 1000,
+    fingerprint: cert.fingerprint
+  }
+}
+
 /**
- * HTTP authentication and client-certificate selection: Chromium asks through `app`, the core's
- * prompt service asks the user through the chrome, and the answer goes back into the request.
+ * HTTP authentication, client-certificate selection and server-certificate errors: Chromium asks
+ * through `app`, the core's prompt service asks the user through the chrome, and the answer goes
+ * back into the request.
  */
 export function attachSecurityHandlers(browser: Browser, views: ElectronTabViewHost): void {
+  // Chromium keeps no decision of its own here: every TLS handshake with a certificate that fails
+  // verification asks. The answer is the core's session exception for the tab's container, site
+  // and certificate (the interstitial's Proceed); everything else is denied, as Chrome does, and
+  // the failure that follows renders the interstitial with the certificate recorded here. Pages
+  // that are not tabs (the chrome, extension pages) never get to proceed.
+  app.on('certificate-error', (event, webContents, url, _error, cert, callback, isMainFrame) => {
+    event.preventDefault()
+    const tabId = webContents ? views.tabIdForWebContents(webContents) : undefined
+    const certificate = describeServerCertificate(cert)
+    const allowed =
+      tabId !== undefined && browser.tabs.certificateAllowed(tabId, url, certificate.fingerprint)
+    if (!allowed && isMainFrame && webContents)
+      views.viewForWebContents(webContents)?.expectCertificateFailure(url, certificate)
+    callback(allowed)
+  })
+
   app.on('login', (event, webContents, details, authInfo, callback) => {
     event.preventDefault()
     const tabId = webContents ? (views.tabIdForWebContents(webContents) ?? null) : null

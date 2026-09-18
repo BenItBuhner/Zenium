@@ -12,9 +12,12 @@ import {
   sealManifest,
   unwrapWithPassphrase,
   wrapWithPassphrase,
-  type VaultFile
+  type VaultFile,
+  type VaultRecord
 } from '../vault'
 import { FakeKeyWrap, TEST_KDF, corruptBase64, credential } from './fakes'
+
+const login = (value: ReturnType<typeof credential>): VaultRecord => ({ kind: 'login', value })
 
 async function sampleVault(): Promise<{
   key: Uint8Array
@@ -40,7 +43,7 @@ async function sampleVault(): Promise<{
       createdAt: 1_700_000_000_000,
       keyWrap: { os: 'blob', passphrase: null }
     },
-    logins,
+    logins.map(login),
     ['ads.example'],
     1_700_000_000_500
   )
@@ -121,13 +124,13 @@ describe('vault format', () => {
     await expectVaultError(decodeVault(key, duplicated), 'tampered')
 
     const foreign = structuredClone(file)
-    foreign.entries.push(await encryptEntry(key, 'another-vault', credential({ id: 'z' })))
+    foreign.entries.push(await encryptEntry(key, 'another-vault', login(credential({ id: 'z' }))))
     await expectVaultError(decodeVault(key, foreign), 'tampered')
   })
 
   it('detects an entry copied from another vault under the same key', async () => {
     const { key, file } = await sampleVault()
-    const other = await encryptEntry(key, newVaultId(), credential({ id: 'a' }))
+    const other = await encryptEntry(key, newVaultId(), login(credential({ id: 'a' })))
     const grafted = structuredClone(file)
     grafted.entries[0] = other
     await expectVaultError(decodeVault(key, grafted), 'tampered')
@@ -144,8 +147,8 @@ describe('vault format', () => {
     const key = newDataKey()
     const meta = { vaultId: newVaultId(), createdAt: 1, keyWrap: { os: 'blob', passphrase: null } }
     const logins = [credential({ id: 'a' })]
-    const first = await encodeVault(key, meta, logins, [])
-    const second = await encodeVault(key, meta, logins, [])
+    const first = await encodeVault(key, meta, logins.map(login), [])
+    const second = await encodeVault(key, meta, logins.map(login), [])
     expect(first.entries[0].nonce).not.toBe(second.entries[0].nonce)
     expect(first.manifest.nonce).not.toBe(second.manifest.nonce)
   })

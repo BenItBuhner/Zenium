@@ -407,6 +407,58 @@
   font-family: inherit;
   cursor: pointer;
 }
+/*
+ * The certificate interstitial (the page's ERR_CERT_* variant): the row of Back to safety and
+ * Advanced, and the Advanced block – a card holding the explanation, the certificate's fields and
+ * the proceed control, which is text rather than a button so it is read before it is pressed.
+ */
+.zen-error-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 16px;
+}
+.zen-error-advanced {
+  padding: var(--v2-card-padding);
+  border-radius: var(--v2-radius-card);
+  background: var(--v2-card);
+}
+.zen-error-advanced[hidden] {
+  display: none;
+}
+.zen-error-certificate {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 16px;
+  margin: 0 0 12px;
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-small);
+}
+.zen-error-certificate div {
+  display: contents;
+}
+.zen-error-certificate dt {
+  color: var(--v2-text-deemphasized);
+}
+.zen-error-certificate dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.zen-error-proceed {
+  padding: 0;
+  background: none;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-body);
+  font-weight: var(--v2-weight-body);
+  line-height: var(--v2-line-body);
+  text-decoration: underline;
+  text-align: left;
+}
+.zen-error-proceed:focus-visible {
+  outline: 2px solid var(--v2-ring);
+  outline-offset: 2px;
+  border-radius: var(--v2-radius-checkbox);
+}
 
 @layer base {
   html,
@@ -794,28 +846,43 @@
 
   /*
    * Where dialogs and popovers render (lib/portals.tsx). The frame dialog host lies over the
-   * content frame's box (the whole shell on phones): one grid cell, so dialogs open at once stack
-   * centred rather than sit side by side, and a phone sheet aligns itself to the bottom edge. It
-   * is inert until a dialog registers; then its scrim dims only the frame (§9.5). The chrome
-   * layer is the window-wide home of popovers, menus and toasts: above everything, catching no
-   * pointer of its own (each portal turns pointer events back on for its subtree).
+   * content frame's box (the whole shell on phones). It is inert until a dialog registers; then
+   * its scrim dims only the frame (§9.5) and the window chrome outside goes inert. The dialogs
+   * render in a slot after the scrim with a stacking context of its own above it (z-index 1), so
+   * a dialog paints over the scrim and takes the pointer whether or not it is positioned itself;
+   * the slot is one grid cell, so dialogs open at once stack centred rather than sit side by
+   * side, and a phone sheet aligns itself to the bottom edge; between the dialogs the slot lets
+   * the pointer through to the scrim. The chrome layer is the window-wide home of popovers,
+   * menus and toasts: above everything, catching no pointer of its own (each portal turns pointer
+   * events back on for its subtree).
    */
   .zen-frame-dialogs {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(0, 1fr);
-    place-items: center;
     isolation: isolate;
     pointer-events: none;
   }
   .zen-frame-dialogs[data-open] {
     pointer-events: auto;
   }
-  .zen-frame-dialogs > * {
+  .zen-frame-scrim {
+    position: absolute;
+    inset: 0;
+    background: var(--v2-scrim-modal);
+  }
+  .zen-frame-dialogs-slot {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    place-items: center;
+    pointer-events: none;
+  }
+  .zen-frame-dialogs-slot > * {
     grid-area: 1 / 1;
   }
-  .zen-frame-scrim {
-    background: var(--v2-scrim-modal);
+  .zen-frame-dialogs[data-open] .zen-frame-dialogs-slot > * {
+    pointer-events: auto;
   }
   .zen-chrome-layer {
     position: fixed;
@@ -2786,6 +2853,89 @@
   border: 1px solid var(--zen-page-menu-line);
   background: var(--zen-page-menu-bg);
   box-shadow: 0 2px 6px rgb(0 0 0 / 0.2);
+}
+
+/*
+ * Find in page, zoom and fullscreen (the `find` cluster) on design language v2: the docked find
+ * bar, the zoom bubble and the fullscreen hint. They read the token block and nothing else.
+ */
+@layer components {
+  /*
+   * The find bar (§9.21): a panel row of control + 8 under the page, a 320px field with Chrome's
+   * n/m count inside it (13 tabular at 69%), 28px icon buttons at 8. Plain: the hairline above
+   * is the only edge, the miss shows in the count alone.
+   */
+  .zen-find-bar {
+    height: calc(var(--v2-control) + 8px);
+    gap: 8px;
+    padding: 0 8px 0 12px;
+    border-top: 1px solid var(--v2-border);
+    background: var(--v2-panel);
+    color: var(--v2-text);
+  }
+  .zen-find-field {
+    display: flex;
+    width: 320px;
+    max-width: 100%;
+    height: var(--v2-control);
+    align-items: center;
+    padding: 0 12px;
+    border: 1px solid var(--v2-border);
+    border-radius: var(--v2-radius-control);
+  }
+  .zen-find-field:focus-within {
+    outline: 2px solid var(--v2-accent);
+    outline-offset: 0;
+  }
+  .zen-find-field > input {
+    min-width: 0;
+    flex: 1;
+    height: 100%;
+    background: transparent;
+    color: var(--v2-text);
+    font-size: 13px;
+    outline: none;
+  }
+  .zen-find-field > input::placeholder {
+    color: var(--v2-text-deemphasized);
+  }
+  .zen-find-count {
+    flex-shrink: 0;
+    padding-left: 8px;
+    color: var(--v2-text-deemphasized);
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+  }
+  .zen-find-field[data-no-match='true'] .zen-find-count {
+    color: var(--v2-danger);
+  }
+  .zen-find-button {
+    border-radius: 6px;
+    color: var(--v2-text);
+  }
+  .zen-find-button:hover:not(:disabled) {
+    background: var(--v2-fill);
+  }
+  .zen-find-button:active:not(:disabled) {
+    background: var(--v2-fill-hover);
+  }
+
+  /*
+   * The zoom bubble (§9.20): the shared popover surface with a §9.23 title block ("Zoom" over
+   * the percentage) and one row of 32px controls under it – the two steps square, Reset at the
+   * trailing end – 16 to the sides and below.
+   */
+  .zen-zoom-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 16px 16px;
+  }
+  .zen-zoom-step {
+    width: var(--v2-control);
+    padding: 0;
+    color: var(--v2-text);
+  }
 }
 
 /*

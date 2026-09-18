@@ -1,6 +1,8 @@
 import type { KeyBinding, NavigationSnapshot, PageRules, Rect, Tab } from '@shared/types'
 import type { SafeBrowsingHit } from '@shared/privacy'
-import type { SiteCertificate } from '@shared/siteInfo'
+import type { FormsCommand } from '@shared/forms'
+import { isCertificateError, type SiteCertificate } from '@shared/siteInfo'
+import { certificateDetailsFrom } from '@shared/url'
 import { zenPageHtml, type ImagePageLookup, type ReaderPageLookup } from '@shared/zenPages'
 import type {
   AgentCapture,
@@ -39,7 +41,8 @@ export interface ViewEventPayloads {
   navigated: ViewNavState & { inPage: boolean }
   title: { title: string }
   favicon: { url: string }
-  failLoad: { code: number; description: string; url: string }
+  /** A failed load; a refused certificate (`ERR_CERT_*`) comes with what the interstitial shows of it. */
+  failLoad: { code: number; description: string; url: string; certificate?: unknown }
   /** HTTPS-only mode's rule sent the navigation to `to` instead of `from` (before it loads). */
   upgraded: { from: string; to: string }
   /** The Safe Browsing guard refused the navigation (a `failLoad` of the URL follows). */
@@ -115,7 +118,14 @@ export class AndroidTabView implements TabView {
         return
       case 'failLoad': {
         const p = payload as ViewEventPayloads['failLoad']
-        ev.onFailLoad(p.code, p.description, p.url)
+        ev.onFailLoad(
+          p.code,
+          p.description,
+          p.url,
+          isCertificateError(p.code)
+            ? { certificate: certificateDetailsFrom(p.certificate) }
+            : undefined
+        )
         return
       }
       case 'upgraded': {
@@ -354,6 +364,11 @@ export class AndroidTabView implements TabView {
 
   setZapMode(on: boolean): void {
     this.bridge.send('view.setZap', { tabId: this.tabId, on })
+  }
+
+  /** Autofill: a fill for the page's forms script, or its on/off configuration (Kotlin keeps the latter for new documents). */
+  sendFormsCommand(command: FormsCommand): void {
+    this.bridge.send('view.forms', { tabId: this.tabId, command })
   }
 
   setBackgroundColor(color: string): void {

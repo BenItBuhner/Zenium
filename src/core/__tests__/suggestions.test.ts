@@ -71,6 +71,7 @@ function setup(
     id: 'window_1',
     kind,
     bounds: null,
+    displayId: null,
     maximized: false,
     activeSpaceId: state.model.activeSpaceId,
     selection: {},

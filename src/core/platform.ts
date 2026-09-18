@@ -9,6 +9,7 @@
  * import from `electron`, `node:*` or the DOM.
  */
 import type {
+  CertificateDetails,
   ColorScheme,
   DownloadItem,
   EventName,
@@ -19,6 +20,7 @@ import type {
   HostCapabilities,
   KeyBinding,
   NavigationSnapshot,
+  PageDialogResponse,
   PageRules,
   PermissionPrompt,
   PermissionPromptAnswer,
@@ -36,6 +38,8 @@ import type {
   WindowMaterial
 } from '../shared/types'
 import type { AppIconId } from '../shared/appIcon'
+import type { FormsCommand, FormsEvent } from '../shared/forms'
+import type { PageHint } from '../shared/fullscreenHint'
 import type { CaptionColors } from '../shared/theme'
 import type { KeyInput } from '../shared/shortcuts'
 import type { SiteCertificate, SiteCookie } from '../shared/siteInfo'
@@ -63,13 +67,24 @@ export interface PlatformInfo {
 // ---------------------------------------------------------------------------
 
 /** Raw text storage for the JSON stores (one document per name). */
+/** How a document is written. */
+export interface StoreWriteOptions {
+  /**
+   * Keep the previous version as `<name>.bak` (rolling: every write moves the document that was
+   * there aside). For the profile's core documents, whose loss would be the loss of the session.
+   * Hosts that cannot leave this out; the core reads the backup when the document is gone or
+   * unreadable.
+   */
+  backup?: boolean
+}
+
 export interface StoreIO {
   /** Synchronous read at startup; `null` when the document does not exist. */
   readSync(name: string): string | null
   /** Atomic write; the promise settles once the document is durable. */
-  write(name: string, text: string): Promise<void>
+  write(name: string, text: string, options?: StoreWriteOptions): Promise<void>
   /** Synchronous write used when the process is about to go away. */
-  writeSync(name: string, text: string): void
+  writeSync(name: string, text: string, options?: StoreWriteOptions): void
   /** Delete a document (missing documents are not an error). Hosts without it get a `{}` tombstone. */
   remove?(name: string): Promise<void>
   /** Whether a document exists without reading it (large documents such as filter lists). */
@@ -88,6 +103,20 @@ export interface PageFlags {
   thirdParty: 'new-tab' | 'glance' | 'same-tab' | null
 }
 
+/**
+ * How a page is about to navigate itself (its Navigation API `navigate` event), reported just
+ * before its `beforeunload` handlers run. A host whose engine answers `beforeunload` at once
+ * (Electron) keeps the page and asks the user asynchronously; the record tells it what the
+ * page was doing (a reload is asked about differently) and that the page can redo it.
+ */
+export interface NavigationIntent {
+  /** Where the page is going. */
+  url: string
+  navigationType: 'push' | 'replace' | 'reload' | 'traverse'
+  /** A form submission with a body. */
+  post: boolean
+}
+
 /** Messages the page script sends back to the browser. */
 export interface PageMessage {
   type:
@@ -101,6 +130,9 @@ export interface PageMessage {
     /** The page called `window.focus()` with a gesture (a notification was clicked): show its tab. */
     | 'focus'
     | 'interstitial'
+    | 'navigate-intent'
+    /** The forms script reports fields, submissions and passkey requests (`forms`). */
+    | 'forms'
   url?: string
   x?: number
   y?: number
@@ -111,6 +143,31 @@ export interface PageMessage {
   selector?: string
   /** `interstitial`: the button pressed on a Zenium warning page (see `shared/zenPages`). */
   action?: InterstitialAction
+  /** `navigate-intent`: the navigation the page is starting (consumed by the host, not the core). */
+  intent?: NavigationIntent
+  /** `forms`: what the forms script saw (a focused field, a submit, a passkey). */
+  forms?: FormsEvent
+}
+
+/** What a host reports when a page calls `alert`, `confirm` or `prompt`. */
+export interface PageDialogRequest {
+  kind: 'alert' | 'confirm' | 'prompt'
+  message: string
+  /** `prompt`: the second argument, already a string ('' when absent). */
+  defaultValue: string
+  /** URL of the frame that called; the dialog is titled after its site. */
+  frameUrl: string
+  /** URL of the top document, to tell an embedded page's dialog from the page's own. */
+  pageUrl: string
+}
+
+/** What a host knows about a failed main-frame load beyond its code. */
+export interface LoadDetails {
+  /**
+   * An `ERR_CERT_*` failure: the server certificate Zenium refused, which the interstitial shows
+   * and the session's exception is keyed by. Null when the host could not describe it.
+   */
+  certificate?: CertificateDetails | null
 }
 
 export interface PageContextParams {
@@ -257,8 +314,11 @@ export interface TabViewEvents {
   onNavigated(url: string, inPage: boolean): void
   onTitleUpdated(title: string): void
   onFaviconUpdated(favicons: string[]): void
-  /** Main-frame load failure (Chromium `net::` error code; hosts map their own codes). */
-  onFailLoad(code: number, description: string, url: string): void
+  /**
+   * Main-frame load failure (Chromium `net::` error code; hosts map their own codes). For an
+   * `ERR_CERT_*` failure `details.certificate` describes the certificate the host refused.
+   */
+  onFailLoad(code: number, description: string, url: string, details?: LoadDetails): void
   /**
    * The host's request engine upgraded a main-frame navigation from `from` (http) to `to`
    * (HTTPS-only mode's rule); if `to` then fails, the tab offers `from`.
@@ -304,6 +364,16 @@ export interface TabViewEvents {
   /** A trusted input event (click, key, tap) was delivered to the page. */
   onUserActivation(): void
   onPageMessage(message: PageMessage): void
+  /**
+   * The page called `alert`, `confirm` or `prompt`; resolves with the chrome's answer. The
+   * page's renderer waits for it, as in Chrome.
+   */
+  onDialog(request: PageDialogRequest): Promise<PageDialogResponse>
+  /**
+   * The page's `beforeunload` handler objects to it going away – under a navigation, a reload,
+   * or the close the host is carrying out. Resolves true when the user leaves anyway.
+   */
+  onLeaveSite(reload: boolean): Promise<boolean>
 }
 
 /**
@@ -328,6 +398,14 @@ export interface WindowOpenTicket {
  */
 export interface TabView {
   loadURL(url: string): void
+  /**
+   * Show the `zen://error` page `url` in place of the document a failed load left behind, under
+   * the failed address's own history entry, so back leads to the page before and a load of the
+   * address asks for it again (Chrome's interstitials live in the failed entry). The core uses it
+   * for the certificate interstitial; hosts without it get the page loaded as a document of its
+   * own, and the core then keeps `zen://error` as the tab's URL.
+   */
+  showErrorPage?(url: string): void
   getURL(): string
   getTitle(): string
   canGoBack(): boolean
@@ -370,12 +448,29 @@ export interface TabView {
   setPopupsAllowed?(allowed: boolean): void
   /** Boost "zap element" picker on/off. */
   setZapMode(on: boolean): void
+  /** Autofill: fill values into the page's form, or reconfigure the forms script. */
+  sendFormsCommand?(command: FormsCommand): void
+
+  /**
+   * Draw a fullscreen hint over the page (null takes it down): a page in fullscreen covers the
+   * chrome, so the hint is the page script's. Hosts whose chrome stands over such a page leave
+   * this out and draw their own.
+   */
+  showHint?(hint: PageHint | null): void
   setBackgroundColor(color: string): void
   focus(): void
   /** Whether this page holds the keyboard right now. Hosts that cannot tell leave it out. */
   isFocused?(): boolean
   isDestroyed(): boolean
   destroy(): void
+  /**
+   * Whether the page may be unloaded: runs its `beforeunload` handlers and, when one objects,
+   * has the chrome ask ("Leave site?"). Resolves true when the page can go – no objection, the
+   * user chose to leave, or the page is gone already – and false when it stays. A page with no
+   * objection may be destroyed by the check itself (its close simply goes ahead). Hosts whose
+   * engine cannot run the handlers without unloading leave this out.
+   */
+  confirmUnload?(): Promise<boolean>
 
   // Placement (driven by the renderer's layout reports). A view belongs to one window at a time.
   attachTo(host: WindowHost): void
@@ -492,6 +587,8 @@ export interface WindowHost {
    * into chrome coordinates; hosts without movable windows leave this out.
    */
   contentBounds?(): Rect | null
+  /** The display the window is on (the host's id), remembered with its bounds; hosts with one display leave this out. */
+  displayId?(): number | null
   /** Brief vibration for a gesture landmark; hosts without haptics leave this out. */
   haptic?(kind: HapticKind): void
   /** Recolour the native caption buttons drawn over the chrome (hosts with an overlay). */
@@ -505,6 +602,8 @@ export interface WindowHost {
 
 export interface WindowCreateInit {
   bounds: Rect | null
+  /** The display `bounds` were saved on; the window goes back to it when it is still there. */
+  displayId: number | null
   maximized: boolean
   /** Offset the new window from this one (new windows cascade like Firefox). */
   cascadeFrom: ZenWindow | null
@@ -670,7 +769,12 @@ export interface PermissionPromptHost {
 }
 
 export interface ClipboardHost {
-  writeText(text: string): void
+  /**
+   * `sensitive` marks a password or card number: hosts whose clipboard has a preview (Android 13+
+   * `ClipDescription.EXTRA_IS_SENSITIVE`) hide the value there; the core clears it again after
+   * the configured timeout through `clearText`.
+   */
+  writeText(text: string, sensitive?: boolean): void
   /** Fetch an image and put it on the clipboard; resolves false when unsupported / failed. */
   writeImageFromUrl(url: string): Promise<boolean>
   /**
@@ -678,6 +782,12 @@ export interface ClipboardHost {
    * leave it out; the URL bar's paste-and-go actions then do nothing.
    */
   readText?(): Promise<string>
+  /**
+   * Empty the clipboard if it still holds exactly `expected` (a secret copied earlier); a
+   * clipboard the user has meanwhile used for something else is left alone. Hosts without it
+   * cannot clear, and the core says so in the copy toast.
+   */
+  clearText?(expected: string): Promise<void>
 }
 
 export interface ShellHost {
@@ -799,6 +909,13 @@ export interface SessionHost {
    * session, so a site asks again (the core forgets its own copies alongside).
    */
   clearAuthCache?(): Promise<void>
+  /**
+   * The user proceeded past the certificate interstitial: engines that decide certificate errors
+   * on their own side (the Android WebView) mirror the core's exception (`CertificateExceptions`)
+   * so the next request for the site of `url` over this certificate goes ahead. Resolves once
+   * mirrored; the core loads the address again after. Electron asks the core directly.
+   */
+  allowCertificate?(containerId: string, url: string, fingerprint: string): Promise<void>
   /**
    * Clear browsing data: `kinds` of every listed container. Engines cannot limit these to a
    * time range (Chromium's session API has none), so the core tells the user everything goes.
@@ -1133,6 +1250,28 @@ export interface PasswordsHost {
   reauth: ReauthHost
 }
 
+/** What Android's autofill framework says about the device (`AutofillManager`). */
+export interface SystemAutofillStatus {
+  /** A system autofill service is set for the user (Google, Bitwarden, 1Password, …). */
+  enabled: boolean
+  /** The service's component name when the system reveals it (API 28+), else null. */
+  service: string | null
+}
+
+/**
+ * The host side of in-page autofill beyond the page script: on Android the WebView is always a
+ * client of the system Autofill Framework, so the core needs to know whether a service is set
+ * and be able to keep it off the pages when Zenium is the chosen provider. Desktop hosts leave
+ * this out.
+ */
+export interface AutofillHost {
+  systemStatus(): Promise<SystemAutofillStatus>
+  /** `zenium`: the pages stop taking part in system autofill; `system`: the framework fills them. */
+  setProvider(provider: 'system' | 'zenium'): void
+  /** Status changes while the app runs (the user set a service in the system settings). */
+  onSystemStatusChanged?(listener: (status: SystemAutofillStatus) => void): void
+}
+
 /** A default filter list whose snapshot is built into the app (`resources/blocking/`). */
 export interface BundledFilterList {
   id: string
@@ -1232,6 +1371,8 @@ export interface Platform {
   readonly externalProtocols?: ExternalProtocolHost
   /** Key protection and re-authentication for the password vault; omit when `capabilities.passwords` is off. */
   readonly passwords?: PasswordsHost
+  /** The system autofill framework (Android); desktop hosts have none. */
+  readonly autofill?: AutofillHost
   /** Bundled filter-list snapshots; hosts without it start unprotected until the lists download. */
   readonly blocking?: BlockingHost
   /**

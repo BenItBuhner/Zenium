@@ -11,6 +11,7 @@ import type {
   WindowChrome,
   WindowKind,
   WindowMaterial,
+  WindowPrompt,
   WindowState
 } from '../shared/types'
 import type { Browser } from './browser'
@@ -31,6 +32,8 @@ export interface WindowInit {
   chrome: WindowChrome
   material: WindowMaterial
   bounds: Rect | null
+  /** The display `bounds` were saved on (null: unknown, or the host has one display). */
+  displayId: number | null
   maximized: boolean
   activeSpaceId: string
   selection: Record<string, string>
@@ -63,9 +66,13 @@ export class ZenWindow {
   glance: GlanceState | null = null
   findResult: FindResult | null = null
   compactSidebarRevealed = false
+  /** The hidden top toolbar is out (compact mode or the window's fullscreen); the chrome's word. */
+  compactToolbarRevealed = false
   compactEnabled: boolean
   compactSidebarPersistent = false
   htmlFullscreenTabId: string | null = null
+  /** Window pixels under the HTML fullscreen view kept for chrome docked there (the find bar). */
+  private fullscreenBottomInset = 0
   /**
    * The layout the chrome is showing, as it reports it (`window.formFactor`); the desktop layout
    * until the chrome says otherwise. The app menu and the command list are built for it.
@@ -77,10 +84,20 @@ export class ZenWindow {
    */
   recordingShortcut = false
   lastFocusedAt = 0
+  /** The window-modal question the chrome is showing ("Close N tabs?"), owned by `WindowPrompts`. */
+  prompt: WindowPrompt | null = null
+  /**
+   * The user's request to close this window went through its checks (the tab-count warning,
+   * every page's `beforeunload`): the host may close it for real. Hosts whose native close
+   * request arrives first (the caption button, Alt+F4) hold it until this is set.
+   */
+  closeApproved = false
   readonly initialBounds: Rect | null
+  readonly initialDisplayId: number | null
   readonly initialMaximized: boolean
   readonly cascadeFrom: ZenWindow | null
   private savedBounds: Rect | null
+  private savedDisplayId: number | null
   private lastLayout: LayoutReport | null = null
   private pendingContentFocus = false
   private closing = false
@@ -101,6 +118,8 @@ export class ZenWindow {
       this.selection.set(spaceId, tabId)
     this.initialBounds = init.bounds
     this.savedBounds = init.bounds
+    this.initialDisplayId = init.displayId
+    this.savedDisplayId = init.displayId
     this.initialMaximized = init.maximized
     this.cascadeFrom = init.cascadeFrom ?? null
   }
@@ -115,6 +134,11 @@ export class ZenWindow {
 
   get isClosing(): boolean {
     return this.closing
+  }
+
+  /** Whether the chrome document has loaded (events reach it, the URL bar can be opened). */
+  get chromeReady(): boolean {
+    return this.chromeReadyOnce
   }
 
   /** Last known normal (non-maximised) bounds; what a reopened window comes back at. */
@@ -164,7 +188,8 @@ export class ZenWindow {
       maximized: alive ? this.host.isMaximized() : this.initialMaximized,
       fullscreen: alive ? this.host.isFullScreen() : false,
       focused: alive ? this.host.isFocused() : false,
-      htmlFullscreenTabId: this.htmlFullscreenTabId
+      htmlFullscreenTabId: this.htmlFullscreenTabId,
+      prompt: this.prompt
     }
   }
 
@@ -183,6 +208,7 @@ export class ZenWindow {
     return {
       id: this.id,
       bounds: this.savedBounds,
+      displayId: this.savedDisplayId,
       maximized: this.alive ? this.host.isMaximized() : this.initialMaximized,
       activeSpaceId: this.activeSpaceId,
       selection,
@@ -200,12 +226,15 @@ export class ZenWindow {
     if (!this.host.isMaximized() && !this.host.isFullScreen()) {
       this.savedBounds = this.host.normalBounds() ?? this.savedBounds
     }
+    // A maximised window keeps its normal bounds but may have moved to another display.
+    this.savedDisplayId = this.host.displayId?.() ?? this.savedDisplayId
     if (this.kind === 'synced') this.browser.state.commit()
   }
 
   /** Maximised / fullscreen / focus flags changed. */
   onWindowStateChanged(): void {
     if (!this.alive) return
+    this.browser.fullscreen.onWindowStateChanged(this)
     this.browser.state.commitVolatile()
   }
 
@@ -215,7 +244,10 @@ export class ZenWindow {
     this.onWindowStateChanged()
   }
 
-  /** The host window is about to close. */
+  /**
+   * The host window is about to close – for real: a host whose native close request comes first
+   * asks the browser (`requestWindowClose`) and closes once `closeApproved` is set.
+   */
   onClosing(): void {
     this.closing = true
     this.onBoundsChanged()
@@ -264,6 +296,25 @@ export class ZenWindow {
     if (this.lastLayout) this.applyLayout(this.lastLayout)
   }
 
+  /** Where the chrome last placed a tab's view (window coordinates), or null when it is not shown. */
+  viewRect(tabId: string): Rect | null {
+    const layout = this.lastLayout
+    if (!layout || layout.contentHidden) return null
+    if (layout.glance?.tabId === tabId) return layout.glance.rect
+    return layout.placements.find((p) => p.tabId === tabId)?.rect ?? null
+  }
+
+  /**
+   * The find bar opened (or closed) under a page in HTML fullscreen: the view gives up (or takes
+   * back) that strip at the bottom, the only chrome a fullscreen page shares the window with.
+   */
+  setFullscreenInset(bottom: number): void {
+    const next = Math.max(0, Math.round(bottom))
+    if (next === this.fullscreenBottomInset) return
+    this.fullscreenBottomInset = next
+    if (this.htmlFullscreenTabId) this.relayout()
+  }
+
   /** Position tab views exactly where the renderer laid the content area out. */
   applyLayout(report: LayoutReport): void {
     this.lastLayout = report
@@ -272,9 +323,11 @@ export class ZenWindow {
     const owned = tabs.viewsOwnedBy(this)
     const fullscreenTabId = this.htmlFullscreenTabId
     if (fullscreenTabId && owned.has(fullscreenTabId)) {
-      // An element in HTML fullscreen covers the whole window, chrome included.
+      // An element in HTML fullscreen covers the whole window, chrome included, save for the
+      // strip a docked find bar asked for.
       this.browser.extensions.placeSidePanel(this, null)
-      const { width, height } = this.host.contentSize()
+      const { width, height: full } = this.host.contentSize()
+      const height = Math.max(0, full - this.fullscreenBottomInset)
       for (const [tabId, view] of owned) {
         if (view.isDestroyed()) continue
         if (tabId === fullscreenTabId) {
@@ -399,11 +452,13 @@ export class ZenWindow {
 
   /**
    * Snapshot of a tab, used to keep a dimmed preview behind overlays (URL bar, Glance) and for
-   * tabs whose live page is shown in another window.
+   * tabs whose live page is shown in another window. A page hidden under the chrome has none,
+   * unless `fresh` asks for it as it is now (it changed under the zoom bubble); Electron paints
+   * a hidden view on request, a host that cannot answers null and the chrome keeps its picture.
    */
-  async snapshot(tabId: string): Promise<string | null> {
+  async snapshot(tabId: string, fresh = false): Promise<string | null> {
     const view = this.browser.tabs.view(tabId)
-    if (!view || !view.isVisible()) return null
+    if (!view || (!fresh && !view.isVisible())) return null
     return view.snapshot()
   }
 }

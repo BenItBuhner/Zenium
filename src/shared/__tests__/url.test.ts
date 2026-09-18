@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest'
+import type { CertificateDetails } from '../types'
 import {
   BLANK_URL,
   BOOKMARKS_URL,
   addressParts,
+  certificateDetailsFrom,
   displayHost,
   displayUrl,
+  errorPageCertificate,
   errorPageUrl,
   fullUrl,
   getDomain,
@@ -153,6 +156,61 @@ describe('misc', () => {
     expect(isNavigableUrl('https://a.b')).toBe(true)
     expect(isNavigableUrl('javascript:void 0')).toBe(false)
     expect(isNavigableUrl('')).toBe(false)
+  })
+})
+
+describe('errorPageUrl: the refused certificate', () => {
+  const certificate: CertificateDetails = {
+    subjectName: '*.badssl.com',
+    issuerName: 'DigiCert SHA2 Secure Server CA',
+    validStart: 1_427_846_400_000,
+    validExpiry: 1_428_883_200_000,
+    fingerprint: 'sha256/6vrsUckLNSQnSOaQlHcoKdzhUR9ctSYNeHx0kSVR9gs='
+  }
+
+  it('rides in the page URL and comes back whole', () => {
+    const page = errorPageUrl(
+      -201,
+      'ERR_CERT_DATE_INVALID',
+      'https://expired.badssl.com/',
+      certificate
+    )
+    const params = new URL(page).searchParams
+    expect(params.get('code')).toBe('-201')
+    expect(params.get('url')).toBe('https://expired.badssl.com/')
+    expect(errorPageCertificate(params)).toEqual(certificate)
+    // The plain error page (and an interstitial the host could not describe) carries none.
+    expect(
+      errorPageCertificate(new URL(errorPageUrl(-201, 'x', 'https://a.example/')).searchParams)
+    ).toBeNull()
+    expect(
+      errorPageCertificate(
+        new URL(errorPageUrl(-201, 'x', 'https://a.example/', null)).searchParams
+      )
+    ).toBeNull()
+  })
+
+  it('reads a partial or mangled description as unknown fields, and no object at all as none', () => {
+    expect(certificateDetailsFrom({ subjectName: 'a.example', validExpiry: 5 })).toEqual({
+      subjectName: 'a.example',
+      issuerName: '',
+      validStart: 0,
+      validExpiry: 5,
+      fingerprint: ''
+    })
+    expect(
+      certificateDetailsFrom({ subjectName: 7, validStart: 'soon', fingerprint: null })
+    ).toEqual({
+      subjectName: '',
+      issuerName: '',
+      validStart: 0,
+      validExpiry: 0,
+      fingerprint: ''
+    })
+    expect(certificateDetailsFrom(null)).toBeNull()
+    expect(certificateDetailsFrom('sha256/abc')).toBeNull()
+    const params = new URLSearchParams({ certificate: '{not json' })
+    expect(errorPageCertificate(params)).toBeNull()
   })
 })
 

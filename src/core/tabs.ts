@@ -1,4 +1,5 @@
 import type {
+  CertificateError,
   ClosedTabEntry,
   HistoryTransition,
   NavigationSnapshot,
@@ -33,6 +34,7 @@ import {
 import {
   BLANK_URL,
   ERROR_URL_PREFIX,
+  errorPageCertificate,
   errorPageUrl,
   httpsOnlyPageUrl,
   interstitialKindOf,
@@ -43,10 +45,14 @@ import {
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
 import { describeNetError, HTTP_FALLBACK_CODES, overlayForUrl } from '../shared/zenPages'
+import { isCertificateError } from '../shared/siteInfo'
+import type { InterstitialAction } from '../shared/interstitial'
 import { closedTabEntry, closedWindowEntry } from './session'
 import { newId } from '../shared/ids'
+import { clampZoom, stepZoom } from '../shared/pageControls'
 import { defer, type PageFlags, type TabView, type TabViewEvents } from './platform'
 import { safeOrigin } from './permissions'
+import { certificateSiteOf } from './security'
 import { openedWindowKind, planWindowOpen } from './windowOpen'
 import { parseDropKey } from './tabDrag'
 
@@ -71,6 +77,8 @@ export class TabManager {
   private readonly httpsUpgraded = new Map<string, string>()
   /** Back/forward stacks to replay when a reopened tab's page is created. */
   private readonly pendingNavigation = new Map<string, NavigationSnapshot>()
+  /** Tabs under a window's or the app's unload check: a page that goes is unloaded, not closed. */
+  private readonly unloadChecks = new Set<string>()
   /** How the next committed navigation of a tab came about (for the history record). */
   private readonly pendingTransition = new Map<string, HistoryTransition>()
 
@@ -209,12 +217,24 @@ export class TabManager {
       }
       tab.url = url
     }
-    const snapshot = this.pendingNavigation.get(tabId)
-    if (snapshot) {
-      // A reopened tab: give it its back/forward stack back instead of a bare load.
+    const snapshot =
+      this.pendingNavigation.get(tabId) ?? this.browser.state.tabNavigation.get(tabId)
+    if (snapshot && snapshot.entries.length > 0) {
+      // A reopened, restored or unloaded tab: give it its back/forward stack (and, through the
+      // entries' page state, its scroll position) back instead of a bare load.
       this.pendingNavigation.delete(tabId)
-      this.pendingTransition.set(tabId, 'restored')
-      void view.restoreNavigation(snapshot)
+      const index = Math.min(Math.max(snapshot.index, 0), snapshot.entries.length - 1)
+      if (url === '' || url === BLANK_URL || url === snapshot.entries[index].url) {
+        this.pendingTransition.set(tabId, 'restored')
+        void view.restoreNavigation({ entries: snapshot.entries, index })
+      } else {
+        // Asked to go somewhere else meanwhile (typed into the pill while unloaded): the new
+        // page goes on top of the stack and the forward entries go, as in Chrome.
+        void view.restoreNavigation({
+          entries: [...snapshot.entries.slice(0, index + 1), { url, title: tab.title }],
+          index: index + 1
+        })
+      }
       return view
     }
     view.loadURL(url || BLANK_URL)
@@ -230,12 +250,31 @@ export class TabManager {
   navigationEntries(tabId: string): NavigationSnapshot {
     const view = this.view(tabId)
     if (view) return view.navigationEntries()
-    const pending = this.pendingNavigation.get(tabId)
+    const pending = this.pendingNavigation.get(tabId) ?? this.browser.state.tabNavigation.get(tabId)
     if (pending) return pending
     const tab = this.tab(tabId)
     return tab
       ? { entries: [{ url: tab.url, title: tab.title }], index: 0 }
       : { entries: [], index: -1 }
+  }
+
+  /**
+   * Record the tab's back/forward stack in the profile (`BrowserState.tabNavigation`), so the
+   * tab comes back with it – and with each entry's page state, its scroll position – after an
+   * unload, a relaunch or a crash. Private tabs leave nothing behind.
+   */
+  rememberNavigation(tabId: string, view: TabView | undefined = this.view(tabId)): void {
+    const tab = this.tab(tabId)
+    if (!tab || !view || view.isDestroyed() || this.isPrivate(tab)) return
+    // A host without a stack to report (a page still blank) leaves the record alone.
+    const snapshot: NavigationSnapshot | null = view.navigationEntries() ?? null
+    if (!snapshot || snapshot.entries.length === 0) return
+    this.browser.state.tabNavigation.set(tabId, snapshot)
+  }
+
+  /** The stacks of every loaded page, read once more before the pages go (a graceful quit). */
+  rememberAllNavigation(): void {
+    for (const [tabId, view] of this.views) this.rememberNavigation(tabId, view)
   }
 
   /** Jump to an entry of the back/forward stack (the long-press list on the back button). */
@@ -331,8 +370,7 @@ export class TabManager {
     this.owners.set(tab.id, win)
     if (this.siteMuted(tab.url)) tab.muted = true
     if (tab.muted) view.setMuted(true)
-    if (this.browser.pageControls.enabled) this.browser.pageControls.onViewCreated(tab, view)
-    else if (tab.zoom !== 1) view.setZoom(tab.zoom)
+    this.browser.pageControls.onViewCreated(tab, view)
     this.browser.governor.onViewCreated(tab.id, view)
     win.relayout()
     return view
@@ -394,13 +432,14 @@ export class TabManager {
             }
           }
         }),
-      onFailLoad: (code, description, url) => {
+      onFailLoad: (code, description, url, details) => {
         const v = view()
         if (code === -3 || !v) return
         this.browser.governor.onLoadFinished(tabId)
-        const failed = (): void =>
+        const failed = (certificateError: CertificateError | null = null): void =>
           update((t) => {
             t.errorCode = code
+            t.certificateError = certificateError
             t.loading = false
           })
         // The host's request engine refused the navigation on Safe Browsing's word.
@@ -425,8 +464,21 @@ export class TabManager {
           return
         }
         this.httpsUpgraded.delete(tabId)
-        failed()
-        v.loadURL(errorPageUrl(code, description || describeNetError(code, ''), url))
+        // A certificate that failed verification on an https address: the page is the
+        // interstitial, with the refused certificate and the offer to proceed past it.
+        const certificateError: CertificateError | null =
+          isCertificateError(code) && certificateSiteOf(url)
+            ? { code, url, certificate: details?.certificate ?? null, bypassed: false }
+            : null
+        failed(certificateError)
+        const page = errorPageUrl(
+          code,
+          description || describeNetError(code, ''),
+          url,
+          certificateError?.certificate
+        )
+        if (certificateError && v.showErrorPage) this.showInterstitial(tabId, v, url, page)
+        else v.loadURL(page)
       },
       onUpgraded: (from, to) => this.noteUpgrade(tabId, from, to),
       onUnsafeNavigation: (url, hit) =>
@@ -473,6 +525,7 @@ export class TabManager {
         win.htmlFullscreenTabId = tabId
         state.commitVolatile()
         win.relayout()
+        this.browser.fullscreen.onHtmlFullscreen(tabId, true)
       },
       onLeaveHtmlFullscreen: () => {
         for (const w of this.browser.allWindows()) {
@@ -482,6 +535,7 @@ export class TabManager {
           }
         }
         state.commitVolatile()
+        this.browser.fullscreen.onHtmlFullscreen(tabId, false)
       },
       onDevtoolsOpened: () => {
         state.devtoolsOpenFor.add(tabId)
@@ -544,8 +598,32 @@ export class TabManager {
           }
         }
       },
-      onPageMessage: (message) => this.browser.handlePageMessage(tabId, message)
+      onPageMessage: (message) => this.browser.handlePageMessage(tabId, message),
+      onDialog: (request) => this.browser.pageDialogs.ask(tabId, request),
+      onLeaveSite: async (reload) => {
+        const leave = await this.browser.pageDialogs.confirmLeave(tabId, reload)
+        if (!leave) this.stayedOnPage(tabId)
+        return leave
+      }
     }
+  }
+
+  /**
+   * The user chose to stay on a page that objected to leaving. `navigate` writes the destination
+   * into the tab as soon as it is asked for (the pill shows where the tab is going, as Chrome's
+   * omnibox does); with the navigation refused, the tab goes back to the page that is still
+   * there.
+   */
+  private stayedOnPage(tabId: string): void {
+    const tab = this.tab(tabId)
+    const view = this.view(tabId)
+    if (!tab || !view || view.isDestroyed()) return
+    const url = view.getURL()
+    this.pendingTransition.delete(tabId)
+    if (!url || tab.url === url) return
+    tab.url = url
+    tab.title = view.getTitle() || titleForUrl(url)
+    this.browser.state.commit()
   }
 
   isPrivate(tab: Tab): boolean {
@@ -559,14 +637,14 @@ export class TabManager {
       tab.errorCode = null
       this.httpsUpgraded.delete(tabId)
     }
+    tab.certificateError = this.certificateErrorOf(tab, url)
     this.followSiteMute(tab, view, tab.url, url)
     tab.url = url
     tab.title = view.getTitle() || titleForUrl(url)
     tab.canGoBack = view.canGoBack()
     tab.canGoForward = view.canGoForward()
     tab.bookmarked = this.browser.bookmarks.has(url)
-    if (this.browser.pageControls.enabled) this.browser.pageControls.onNavigated(tab, view)
-    else tab.zoom = view.getZoom()
+    this.browser.pageControls.onNavigated(tab, view)
     view.setBackgroundColor(this.backgroundFor(url))
     view.setPopupsAllowed?.(this.browser.popups.siteAllowed(url))
     const transition = this.pendingTransition.get(tabId) ?? 'link'
@@ -575,6 +653,7 @@ export class TabManager {
       this.browser.history.visit(url, tab.title, tab.favicon, { transition, tabId })
     for (const w of this.browser.allWindows())
       if (w.findResult?.tabId === tabId) w.findResult = null
+    this.rememberNavigation(tabId, view)
     this.sendPageFlags(tabId)
     this.browser.onNavigated(tabId)
     this.browser.protection.onNavigated(tabId, url)
@@ -590,10 +669,17 @@ export class TabManager {
     this.httpsUpgraded.set(tabId, from)
   }
 
-  /** The page an error page (or interstitial) of `tabId` stands in for, or null off one. */
+  /**
+   * The page an error page (or interstitial) of `tabId` stands in for, or null off one. The
+   * certificate interstitial a host writes into the failed entry itself (`showInterstitial`)
+   * stands in for the tab's own address.
+   */
   errorPageTarget(tabId: string): string | null {
     const tab = this.tab(tabId)
-    if (!tab || !tab.url.startsWith(ERROR_URL_PREFIX)) return null
+    if (!tab) return null
+    if (this.showingCertificateInterstitial(tab) && !tab.url.startsWith(ERROR_URL_PREFIX))
+      return tab.url
+    if (!tab.url.startsWith(ERROR_URL_PREFIX)) return null
     return safeParam(tab.url, 'url')
   }
 
@@ -640,6 +726,103 @@ export class TabManager {
     this.navigate(tabId, BLANK_URL)
   }
 
+  /**
+   * The certificate error of the document that just committed. A `zen://error` page carries the
+   * failure in its URL, so an interstitial reached again through history is actionable again. An
+   * https page of a site the session has an exception for was loaded over the excepted
+   * certificate (the host asks the core on every handshake, and that was the answer): it shows,
+   * `bypassed`, and reports as not secure, as in Chrome. Null for every other document.
+   */
+  private certificateErrorOf(tab: Tab, url: string): CertificateError | null {
+    if (url.startsWith(ERROR_URL_PREFIX)) {
+      const params = new URL(url).searchParams
+      const code = Number(params.get('code') ?? 0)
+      const target = params.get('url') ?? ''
+      if (!isCertificateError(code) || !certificateSiteOf(target)) return null
+      return { code, url: target, certificate: errorPageCertificate(params), bypassed: false }
+    }
+    const exception = this.browser.security.certificateExceptions.exceptionFor(tab.containerId, url)
+    return exception
+      ? { code: exception.code, url, certificate: exception.certificate, bypassed: true }
+      : null
+  }
+
+  /** The tab shows the certificate interstitial (not yet proceeded past). */
+  private showingCertificateInterstitial(tab: Tab): boolean {
+    return !!tab.certificateError && !tab.certificateError.bypassed
+  }
+
+  /**
+   * The certificate interstitial in place of the document the failed load left behind (hosts with
+   * `showErrorPage`). Like Chrome's, it lives in the failed entry: the tab's address is the failed
+   * one, back leads to the page before it, and nothing of it reaches history.
+   */
+  private showInterstitial(tabId: string, view: TabView, url: string, page: string): void {
+    const tab = this.tab(tabId)
+    if (!tab || !view.showErrorPage) return
+    tab.url = url
+    tab.title = titleForUrl(url)
+    tab.canGoBack = view.canGoBack()
+    tab.canGoForward = view.canGoForward()
+    tab.bookmarked = this.browser.bookmarks.has(url)
+    this.pendingTransition.delete(tabId)
+    for (const w of this.browser.allWindows())
+      if (w.findResult?.tabId === tabId) w.findResult = null
+    view.setBackgroundColor(this.backgroundFor(page))
+    view.showErrorPage(page)
+    this.browser.state.commit()
+  }
+
+  /**
+   * Whether a request of the tab may go ahead over a certificate that failed verification: only
+   * when the user proceeded past the interstitial for the site and this certificate earlier in
+   * the session (`CertificateExceptions`). Pages that are not tabs never may.
+   */
+  certificateAllowed(tabId: string, url: string, fingerprint: string): boolean {
+    const tab = this.tab(tabId)
+    return (
+      !!tab &&
+      this.browser.security.certificateExceptions.isAllowed(tab.containerId, url, fingerprint)
+    )
+  }
+
+  /**
+   * A button of the certificate interstitial was pressed (the page script relays it): true when
+   * the tab is showing that interstitial for `url` and the press was acted on, false for the
+   * other warning pages (the protection service's). Proceed remembers the certificate for the
+   * session – per site and certificate, until the browser quits or the private session ends, as
+   * Chrome does – and asks for the address again; Back to safety leaves the page (`leaveErrorPage`).
+   */
+  handleCertificateInterstitial(tabId: string, action: InterstitialAction, url: string): boolean {
+    const tab = this.tab(tabId)
+    const view = this.view(tabId)
+    const error = tab?.certificateError
+    if (!tab || !view || !error || error.bypassed || error.url !== url) return false
+    if (action === 'back') {
+      this.leaveErrorPage(tabId)
+      return true
+    }
+    if (action !== 'proceed') return true
+    const certificate = error.certificate
+    if (!certificate?.fingerprint) return true
+    const exceptions = this.browser.security.certificateExceptions
+    if (!exceptions.allow(tab.containerId, error.url, error.code, certificate)) return true
+    // Engines that decide on their own side hear of the exception before the address is asked for.
+    const mirrored =
+      this.browser.platform.sessions.allowCertificate?.(
+        tab.containerId,
+        error.url,
+        certificate.fingerprint
+      ) ?? Promise.resolve()
+    void mirrored
+      .catch(() => undefined)
+      .then(() => {
+        if (this.view(tabId) === view && !view.isDestroyed())
+          this.navigate(tabId, error.url, { transition: 'reload' })
+      })
+    return true
+  }
+
   sendPageFlags(tabId: string): void {
     const tab = this.tab(tabId)
     const view = this.view(tabId)
@@ -678,6 +861,9 @@ export class TabManager {
     this.browser.security.cancelForTab(tabId)
     this.browser.permissionPrompts.cancelForTab(tabId)
     this.browser.permissions.onTabGone(tabId)
+    this.browser.pageDialogs.cancelForTab(tabId)
+    this.browser.autofill.onTabGone(tabId)
+    this.browser.fullscreen.onTabGone(tabId)
     if (this.owners.has(tabId)) view.detach()
     this.owners.delete(tabId)
     if (!view.isDestroyed()) {
@@ -699,6 +885,8 @@ export class TabManager {
     const saved = this.view(tabId) ? this.browser.governor.memoryOf?.(tabId) : null
     if (saved !== null && saved !== undefined && saved > 0) tab.sleepSavedMb = Math.round(saved)
     else delete tab.sleepSavedMb
+    // The page goes, its history stays: the tab picks the stack up again when it is loaded.
+    this.rememberNavigation(tabId)
     this.destroyView(tabId)
     tab.discarded = true
     tab.frozen = false
@@ -711,8 +899,12 @@ export class TabManager {
     this.browser.state.commit()
   }
 
-  /** A frozen page cannot navigate; wake it before touching its history or URL. */
+  /**
+   * A frozen page cannot navigate; wake it before touching its history or URL. A page waiting in
+   * one of its own dialogs cannot either: like Chrome, the navigation dismisses the dialog.
+   */
   private thawForNavigation(tabId: string): void {
+    this.browser.pageDialogs.cancelForTab(tabId)
     const tab = this.tab(tabId)
     if (!tab || !this.view(tabId) || !tab.frozen) return
     void this.browser.governor.thaw(tabId)
@@ -860,16 +1052,113 @@ export class TabManager {
     this.browser.externalProtocols.cancelForTab(tabId)
     this.browser.popups.onTabGone(tabId)
     this.browser.security.cancelForTab(tabId)
+    this.browser.pageDialogs.cancelForTab(tabId)
     this.browser.governor.onViewDestroyed(tabId, view)
     this.browser.state.devtoolsOpenFor.delete(tabId)
     const tab = this.tab(tabId)
     if (!tab) return
-    if (tab.pinned || tab.essential) {
-      // Pinned tabs survive their page: they simply show as unloaded until clicked again.
+    if (tab.pinned || tab.essential || this.unloadChecks.has(tabId)) {
+      // Pinned tabs survive their page: they simply show as unloaded until clicked again. So does
+      // a tab whose page went under a window's or the app's unload check – the window may yet stay
+      // open (another page's "Stay"), and the tab is then simply unloaded, its stack kept.
       this.discard(tabId)
       return
     }
     this.closeTab(tabId, true, owner)
+  }
+
+  // ---------------------------------------------------------------------------
+  // beforeunload
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Whether the page of `tabId` may be unloaded: its `beforeunload` handlers run and, when one
+   * objects, the chrome asks "Leave site?". Resolves true when the page may go – or is gone by
+   * then: a page that does not object is closed by the check itself, and its tab with it (with
+   * `keepTab`, the tab stays and shows as unloaded, for checks that may not end in a close).
+   * Its back/forward stack is kept for a reload or "Recently closed" either way.
+   */
+  async confirmUnload(tabId: string, keepTab = false): Promise<boolean> {
+    const view = this.view(tabId)
+    const tab = this.tab(tabId)
+    if (!view || !tab || !view.confirmUnload || view.isDestroyed()) return true
+    // A page waiting in one of its own dialogs cannot run its handlers; the close dismisses it.
+    this.browser.pageDialogs.cancelForTab(tabId)
+    this.pendingNavigation.set(tabId, view.navigationEntries())
+    this.rememberNavigation(tabId, view)
+    if (keepTab) this.unloadChecks.add(tabId)
+    try {
+      // A frozen page cannot run its handlers.
+      if (tab.frozen) {
+        await this.browser.governor.thaw(tabId, true)
+        tab.frozen = false
+      }
+      // Only an explicit "stay" keeps the page (a host that answers nothing does not object).
+      const leave = (await view.confirmUnload()) !== false
+      if (!leave && this.view(tabId) === view) this.pendingNavigation.delete(tabId)
+      return leave
+    } finally {
+      this.unloadChecks.delete(tabId)
+    }
+  }
+
+  /**
+   * Close a tab the way the user asks for it (Ctrl+W, the tab's X, the menu): a page whose
+   * `beforeunload` handler objects gets to ask "Leave site?" first, and the tab stays when the
+   * user says so. Resolves true once the tab is closed.
+   */
+  async requestClose(tabId: string, force = false, win?: ZenWindow): Promise<boolean> {
+    if (!(await this.confirmUnload(tabId))) return false
+    this.closeTab(tabId, force, win)
+    return true
+  }
+
+  /**
+   * Pages destroyed when `win` closes: those of its own tabs, and every page it holds when no
+   * other synced window remains to take them (`releaseWindow`).
+   */
+  viewsClosingWith(win: ZenWindow): string[] {
+    const others = this.browser
+      .allWindows()
+      .filter((w) => w !== win && w.kind === 'synced' && w.alive)
+    const out: string[] = []
+    for (const [tabId, view] of this.viewsOwnedBy(win)) {
+      if (view.isDestroyed()) continue
+      const tab = this.tab(tabId)
+      if (!tab || tab.windowId === win.id || others.length === 0) out.push(tabId)
+    }
+    return out
+  }
+
+  /**
+   * How many tabs close with `win`, as the user sees it: the tabs of a blank or private window,
+   * a synced window's own tabs, or every tab when it is the last synced window (they come back
+   * with the next session, but the window they are in closes).
+   */
+  closingTabCount(win: ZenWindow): number {
+    const m = this.model
+    const glance = win.glance?.tabId
+    if (win.localSpace) return win.localSpace.tabIds.filter((id) => m.tabs[id]).length
+    const others = this.browser
+      .allWindows()
+      .filter((w) => w !== win && w.kind === 'synced' && w.alive)
+    let n = 0
+    for (const tab of Object.values(m.tabs)) {
+      if (tab.id === glance || (tab.spaceId && m.localSpaces[tab.spaceId])) continue
+      if (others.length === 0 || tab.windowId === win.id) n += 1
+    }
+    return n
+  }
+
+  /** How many tabs close when the app quits: every tab of every window (Glance previews aside). */
+  openTabCount(): number {
+    const glances = new Set(
+      this.browser
+        .allWindows()
+        .map((w) => w.glance?.tabId)
+        .filter((id): id is string => Boolean(id))
+    )
+    return Object.keys(this.model.tabs).filter((id) => !glances.has(id)).length
   }
 
   /** Which window a tab belongs to under the current window-sync mode (null = shared). */
@@ -1036,9 +1325,11 @@ export class TabManager {
     removeTabFromSplit(m, tabId)
     removeTabFromLists(m, tabId)
     delete m.tabs[tabId]
+    this.browser.state.tabNavigation.delete(tabId)
     this.destroyView(tabId)
     this.browser.governor.onTabRemoved(tabId)
     this.browser.agents.onTabRemoved(tabId)
+    this.browser.find.forget(tabId)
     this.browser.liveFolders.onTabLeftFolder(tabId, tab.folderId)
     if (closed) this.browser.session.pushTab(closed)
     for (const { w, s, next } of reselect) {
@@ -1170,6 +1461,7 @@ export class TabManager {
     tab.url = url
     tab.title = titleForUrl(url)
     tab.errorCode = null
+    tab.certificateError = null
     if (opts.upgradedFrom) this.httpsUpgraded.set(tabId, `http://${opts.upgradedFrom}`)
     else this.httpsUpgraded.delete(tabId)
     this.pendingTransition.set(tabId, opts.transition ?? 'typed')
@@ -1276,38 +1568,48 @@ export class TabManager {
   }
 
   /**
-   * Zoom a tab's page. With page controls (Android) the factor is the site's, remembered in the
-   * settings; a plain reset (`factor` 1) returns the site to the default zoom. Otherwise it is
-   * Zen's per-tab zoom as on desktop.
+   * Zoom a tab's page to an exact factor. A web page's factor is its site's, remembered in the
+   * settings and applied to every tab of the site (Chrome's per-host zoom); any other page
+   * (internal pages, files) zooms on its own on the desktop, the tab keeping the factor, and
+   * not at all under the full page controls (the sheet is about sites).
    */
   setZoom(tabId: string, factor: number): void {
     const tab = this.tab(tabId)
     if (!tab) return
-    if (this.browser.pageControls.enabled) {
-      if (factor === 1) this.browser.pageControls.resetZoom(tabId)
-      else this.browser.pageControls.setZoomFactor(tabId, factor)
+    if (this.browser.pageControls.remembersZoom(tab)) {
+      this.browser.pageControls.setZoomFactor(tabId, factor)
       return
     }
-    const clamped = Math.min(5, Math.max(0.25, Math.round(factor * 100) / 100))
-    tab.zoom = clamped
-    this.view(tabId)?.setZoom(clamped)
+    if (this.browser.pageControls.enabled) return
+    tab.zoom = clampZoom(factor)
+    this.view(tabId)?.setZoom(tab.zoom)
     this.browser.state.commitVolatile()
+    this.browser.emit(
+      'zoom.changed',
+      { tabId, factor: tab.zoom, siteKey: null },
+      this.windowFor(tabId)
+    )
   }
 
+  /** Zoom In / Zoom Out: one step along the host's ladder (Chrome's presets on the desktop). */
   adjustZoom(tabId: string, direction: number): void {
     const tab = this.tab(tabId)
     if (!tab) return
-    if (this.browser.pageControls.enabled) {
+    if (this.browser.pageControls.remembersZoom(tab)) {
       this.browser.pageControls.adjustZoom(tabId, direction)
       return
     }
-    // Zen 1.21: finer zoom steps than Firefox's classic table.
-    const steps = [0.3, 0.5, 0.67, 0.8, 0.9, 1, 1.1, 1.2, 1.33, 1.5, 1.7, 2, 2.4, 3, 4, 5]
+    if (this.browser.pageControls.enabled) return
     const current = this.view(tabId)?.getZoom() ?? tab.zoom
-    let idx = steps.findIndex((s) => Math.abs(s - current) < 0.01)
-    if (idx === -1) idx = steps.findIndex((s) => s > current) - (direction > 0 ? 1 : 0)
-    const next = steps[Math.min(steps.length - 1, Math.max(0, idx + direction))]
-    this.setZoom(tabId, next)
+    this.setZoom(tabId, stepZoom(current, direction, this.browser.pageControls.zoomLevels))
+  }
+
+  /** Ctrl+0: back to the default zoom (the site's exception goes away); other pages to 100 percent. */
+  resetZoom(tabId: string): void {
+    const tab = this.tab(tabId)
+    if (!tab) return
+    if (this.browser.pageControls.remembersZoom(tab)) this.browser.pageControls.resetZoom(tabId)
+    else this.setZoom(tabId, 1)
   }
 
   // ---------------------------------------------------------------------------
@@ -2202,6 +2504,7 @@ export class TabManager {
         view.attachTo(others[0].host)
         others[0].relayout()
       } else {
+        if (tab) this.rememberNavigation(tabId, view)
         this.destroyView(tabId)
         if (tab) {
           tab.discarded = true

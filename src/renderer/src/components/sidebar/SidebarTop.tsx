@@ -32,6 +32,7 @@ import { ToolbarActions } from '../extensions/ToolbarActions'
 import { useLongPress } from '../phone/useLongPress'
 import { PillChip } from '../urlbar/PillChip'
 import { WindowControls } from '../WindowControls'
+import { ZoomChip } from '../zoom/ZoomChip'
 
 /** Back, forward, reload, the puzzle piece and the menu: always in the row, never folded. */
 const FIXED_BUTTONS = 5
@@ -88,7 +89,11 @@ export function NavRow({
   const shown = tab ? (state.settings.showFullUrls || revealed ? fullUrl(tab.url) : url) : ''
   const address = addressParts(shown)
   // What the site icon says (derived in the core's site-information module, drawn here).
-  const indicator = securityIndicator(tab?.url ?? '', tab?.errorCode ?? null)
+  const indicator = securityIndicator(
+    tab?.url ?? '',
+    tab?.errorCode ?? null,
+    tab?.certificateError ?? null
+  )
   const isPrivate = isPrivateWindow(state)
   const isWebPage = Boolean(tab && /^https?:/.test(tab.url))
   const isReader = Boolean(tab?.url.startsWith('zen://reader'))
@@ -100,10 +105,15 @@ export function NavRow({
   // What the chips have open, for their `aria-expanded`.
   const siteInfoOpen = uiStore.use((s) => s.siteInfoOpen)
   const boostsOpen = uiStore.use((s) => s.overlay === 'boosts')
-  const openField = (): void =>
+  // A popup (`window.open` with features) has Chrome's read-only location bar: the address and
+  // its chips show where the page is, but nothing can be typed into it.
+  const readOnly = state.window.chrome === 'popup'
+  const openField = (): void => {
+    if (readOnly) return
     void openUrlbar(tab ? 'edit' : 'new-tab', tab?.id ?? null, {
       attached: state.settings.urlbarBehavior !== 'always-float'
     })
+  }
   const tree = useBookmarkTree(state)
   const bookmarked = Boolean(tab && isWebPage && tree.hasUrl(tab.url))
   const menuButton = useRef<HTMLButtonElement>(null)
@@ -170,15 +180,23 @@ export function NavRow({
         <div
           role="group"
           aria-label="Address"
-          className="zen-squircle zen-pill group/pill mx-0.5 flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-[10px] bg-[var(--zen-element-bg)] px-2.5 text-left hover:bg-[var(--zen-element-bg-hover)]"
+          className={cn(
+            'zen-squircle zen-pill group/pill mx-0.5 flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-[10px] bg-[var(--zen-element-bg)] px-2.5 text-left',
+            !readOnly && 'hover:bg-[var(--zen-element-bg-hover)]'
+          )}
           title={tab?.url ?? 'Search or enter address'}
           data-zen-menu="urlpill"
           data-zen-menu-tab={tab?.id}
+          data-readonly={readOnly || undefined}
           onClick={openField}
         >
           <button
             type="button"
-            className="flex h-full min-w-0 flex-1 items-center text-left"
+            className={cn(
+              'flex h-full min-w-0 flex-1 items-center text-left',
+              readOnly && 'cursor-default'
+            )}
+            aria-readonly={readOnly || undefined}
             onMouseEnter={() => setRevealed(true)}
             onMouseLeave={() => setRevealed(false)}
             onFocus={() => setRevealed(true)}
@@ -307,6 +325,7 @@ export function NavRow({
                 <Copy className="h-3 w-3" />
               </PillChip>
             )}
+            {tab && <ZoomChip state={state} tab={tab} />}
             {tab && isWebPage && (
               <StarChip
                 tab={tab}

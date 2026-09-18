@@ -2,14 +2,18 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import chromeCss from '../../renderer/src/assets/main.css?raw'
 import { classifyViewport, type ViewportMetrics } from '../formFactor'
 import { errorPageUrl } from '../url'
+import { INTERSTITIAL_MESSAGE_KEY } from '../interstitial'
+import type { CertificateDetails } from '../types'
 import {
   BLOCKED_BY_CLIENT_CODE,
   ERROR_PAGE_ATTRIBUTES_SCRIPT,
   ERROR_PAGE_RULES_START,
+  certificateInterstitial,
   describeNetError,
   errorPageContent,
   errorPageHtml,
   errorPageStyle,
+  inPlaceErrorPageScript,
   overlayForUrl,
   parseZenUrl,
   zenPageHtml
@@ -18,6 +22,21 @@ import {
 const DNS = errorPageUrl(-105, 'net::ERR_NAME_NOT_RESOLVED', 'http://nonexistent.invalid/')
 const REFUSED = errorPageUrl(-102, 'net::ERR_CONNECTION_REFUSED', 'http://localhost:1/')
 const OFFLINE = errorPageUrl(-106, 'net::ERR_INTERNET_DISCONNECTED', 'https://example.com/')
+
+/** What the desktop host records of expired.badssl.com's certificate. */
+const EXPIRED_CERT: CertificateDetails = {
+  subjectName: '*.badssl.com',
+  issuerName: 'COMODO RSA Domain Validation Secure Server CA',
+  validStart: Date.UTC(2015, 3, 9),
+  validExpiry: Date.UTC(2015, 3, 12),
+  fingerprint: 'sha256/abc123+/='
+}
+const EXPIRED = errorPageUrl(
+  -201,
+  'net::ERR_CERT_DATE_INVALID',
+  'https://expired.badssl.com/',
+  EXPIRED_CERT
+)
 
 describe('parseZenUrl', () => {
   it('names the page in hostname whatever the engine makes of a non-special scheme', () => {
@@ -75,7 +94,8 @@ describe('errorPageContent', () => {
       site: 'nonexistent.invalid',
       reason: "nonexistent.invalid's server IP address could not be found.",
       code: 'ERR_NAME_NOT_RESOLVED',
-      target: 'http://nonexistent.invalid/'
+      target: 'http://nonexistent.invalid/',
+      interstitial: null
     })
   })
 
@@ -122,6 +142,67 @@ describe('errorPageContent', () => {
       expect(content.code).toMatch(/^ERR_CERT_/)
     }
     expect(errorPageContent(-207, '', 'https://bad.example/').code).toBe('ERR_CERT_INVALID')
+  })
+
+  it("is the certificate interstitial for an ERR_CERT_* failure of an https address, in Chrome's structure", () => {
+    const content = errorPageContent(
+      -201,
+      'net::ERR_CERT_DATE_INVALID',
+      'https://expired.badssl.com/',
+      EXPIRED_CERT
+    )
+    expect(content.title).toBe('Your connection is not private')
+    expect(content.code).toBe('ERR_CERT_DATE_INVALID')
+    const interstitial = content.interstitial!
+    expect(interstitial.explanation).toContain('expired.badssl.com')
+    expect(interstitial.explanation).toMatch(/expired or is not yet valid/)
+    expect(interstitial.details.map((d) => d.label)).toEqual([
+      'Issued to',
+      'Issued by',
+      'Valid from',
+      'Valid until',
+      'Fingerprint'
+    ])
+    expect(interstitial.details[0].value).toBe('*.badssl.com')
+    expect(interstitial.details[4].value).toBe('sha256/abc123+/=')
+    expect(interstitial.proceed).toBe('Proceed to expired.badssl.com (unsafe)')
+  })
+
+  it('explains each certificate error in its own words and the rest of the family generically', () => {
+    const explain = (code: number): string =>
+      certificateInterstitial(code, 'https://bad.example/', null)!.explanation
+    expect(explain(-200)).toMatch(/for another site/)
+    expect(explain(-201)).toMatch(/expired or is not yet valid/)
+    expect(explain(-202)).toMatch(/not trusted by this device/)
+    expect(explain(-207)).toMatch(/is not valid/)
+    expect(explain(-213)).toMatch(/is not valid/)
+    // A name mismatch names the site the certificate is for when the host could describe it.
+    expect(
+      certificateInterstitial(-200, 'https://wrong.host.badssl.com/', EXPIRED_CERT)!.explanation
+    ).toContain('from *.badssl.com')
+  })
+
+  it('offers no proceed control without a fingerprint to remember the exception by', () => {
+    const anonymous = certificateInterstitial(-202, 'https://self-signed.badssl.com/', null)!
+    expect(anonymous.details).toEqual([])
+    expect(anonymous.proceed).toBeNull()
+    expect(anonymous.explanation).toContain('self-signed.badssl.com')
+    const unnamed = certificateInterstitial(-202, 'https://self-signed.badssl.com/', {
+      ...EXPIRED_CERT,
+      fingerprint: ''
+    })!
+    expect(unnamed.proceed).toBeNull()
+    expect(unnamed.details.map((d) => d.label)).not.toContain('Fingerprint')
+  })
+
+  it('is never an interstitial for another failure, or a certificate code off https', () => {
+    expect(errorPageContent(-105, '', 'https://a.example/', EXPIRED_CERT).interstitial).toBeNull()
+    expect(certificateInterstitial(-201, 'http://a.example/', EXPIRED_CERT)).toBeNull()
+    expect(certificateInterstitial(-201, 'file:///etc/hosts', EXPIRED_CERT)).toBeNull()
+    expect(certificateInterstitial(-201, '', EXPIRED_CERT)).toBeNull()
+    expect(
+      errorPageContent(-1, 'crashed', 'https://a.example/', EXPIRED_CERT).interstitial
+    ).toBeNull()
   })
 
   it('falls back sensibly for codes it has no copy for', () => {
@@ -193,6 +274,61 @@ describe('errorPageHtml', () => {
     expect(style).toBe(errorPageStyle())
   })
 
+  it('renders the certificate interstitial: Back to safety first, Advanced hiding the details and Proceed', () => {
+    const html = errorPageHtml(parseZenUrl(EXPIRED)!)
+    expect(html).toContain('<title>expired.badssl.com</title>')
+    expect(html).toContain('<h1>Your connection is not private</h1>')
+    expect(html).toContain('<p class="zen-error-code">ERR_CERT_DATE_INVALID</p>')
+    expect(html).not.toContain('>Reload</button>')
+    const back = html.indexOf('>Back to safety</button>')
+    const advanced = html.indexOf('>Advanced</button>')
+    const proceed = html.indexOf('>Proceed to expired.badssl.com (unsafe)</button>')
+    expect(back).toBeGreaterThan(0)
+    expect(advanced).toBeGreaterThan(back)
+    expect(proceed).toBeGreaterThan(advanced)
+    // Back is the one primary button; Proceed reads as text inside the hidden Advanced block.
+    expect(html).toContain('class="zen-v2-button" data-primary onclick=')
+    expect(html).toContain('<section id="zen-error-advanced" class="zen-error-advanced" hidden>')
+    expect(html).toContain('aria-expanded="false" aria-controls="zen-error-advanced"')
+    expect(html).toContain('<button type="button" class="zen-error-proceed" onclick=')
+    expect(html).toContain('<dt>Issued to</dt><dd>*.badssl.com</dd>')
+    expect(html).toContain('<dt>Fingerprint</dt><dd>sha256/abc123+/=</dd>')
+  })
+
+  it("posts the interstitial message the other warning pages post, with the page's URL", () => {
+    const html = errorPageHtml(parseZenUrl(EXPIRED)!)
+    const message = (action: string): string =>
+      `window.postMessage({${INTERSTITIAL_MESSAGE_KEY}:{action:&quot;${action}&quot;,url:&quot;https://expired.badssl.com/&quot;}},&#39;*&#39;)`
+    expect(html).toContain(`onclick="${message('back')}">Back to safety</button>`)
+    expect(html).toContain(`onclick="${message('proceed')}">Proceed to expired.badssl.com (unsafe)`)
+  })
+
+  it('shows the interstitial without a certificate too, with no way to proceed', () => {
+    const html = errorPageHtml(
+      parseZenUrl(
+        errorPageUrl(-202, 'net::ERR_CERT_AUTHORITY_INVALID', 'https://self-signed.badssl.com/')
+      )!
+    )
+    expect(html).toContain('<h1>Your connection is not private</h1>')
+    expect(html).toContain('>Back to safety</button>')
+    expect(html).toContain('>Advanced</button>')
+    expect(html).not.toContain('Proceed to')
+    expect(html).not.toContain('<dl')
+  })
+
+  it('escapes the certificate fields like the rest of the page', () => {
+    const html = errorPageHtml(
+      parseZenUrl(
+        errorPageUrl(-200, '', 'https://a.example/', {
+          ...EXPIRED_CERT,
+          subjectName: '<img src=x onerror=alert(1)>'
+        })
+      )!
+    )
+    expect(html).not.toContain('<img src=x')
+    expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;')
+  })
+
   it('hands a request the engine blocked to the Zenium blocked page', () => {
     const html = errorPageHtml(
       parseZenUrl(
@@ -202,6 +338,19 @@ describe('errorPageHtml', () => {
     expect(html).toContain('<title>Page blocked</title>')
     expect(html).toContain('Zenium blocked this page')
     expect(html).toContain('<strong>ads.example</strong>')
+  })
+})
+
+describe('inPlaceErrorPageScript', () => {
+  it("writes the page into the engine's error document only, root attributes included", () => {
+    const script = inPlaceErrorPageScript(parseZenUrl(EXPIRED)!)
+    expect(script).toContain("if(location.protocol!=='chrome-error:')return false;")
+    expect(script).toContain('root.innerHTML=doc.documentElement.innerHTML')
+    expect(script).toContain(ERROR_PAGE_ATTRIBUTES_SCRIPT)
+    // The page travels as one JSON string argument, so nothing of it is parsed as script.
+    expect(script.endsWith(`})(${JSON.stringify(errorPageHtml(parseZenUrl(EXPIRED)!))})`)).toBe(
+      true
+    )
   })
 })
 

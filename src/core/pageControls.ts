@@ -1,7 +1,10 @@
 import type { PageControlsSettings, PageEnvironment, Tab } from '../shared/types'
 import {
+  ZOOM_LEVELS,
+  ZOOM_PRESETS,
   clampZoom,
   desktopByDefault,
+  isWebPage,
   pageRulesFor,
   resolveDesktop,
   resolveDarkening,
@@ -21,12 +24,19 @@ import type { TabView } from './platform'
  * Page controls: desktop site, dark theme for sites and page zoom, each remembered per site the
  * way Chrome does. The rules themselves are the pure functions in `shared/pageControls.ts`; this
  * service owns the stored maps, hands hosts their copy of the policy (`PageRules`) and applies
- * the resolved values to live pages. Inert on hosts without the capability (Electron keeps its
- * plain per-tab zoom).
+ * the resolved values to live pages.
+ *
+ * Zoom memory is on every host: a factor set on one tab of a site goes to every tab of the site
+ * and is written to the settings, so the site opens at it after a relaunch (Chrome's per-host
+ * zoom levels; the key here is the registrable domain, `siteKey`, as for the other controls).
+ * Desktop site, darkening and the rules push are the full page controls of the Android host
+ * (`capabilities.pageControls`); the desktop keeps Chromium's own user agent and colours.
+ * Pages that are not web pages (internal pages, files) keep the host's plain per-tab zoom.
  */
 export class PageControls {
   constructor(private readonly browser: Browser) {}
 
+  /** The full set – desktop site, darkening, the rules push – as opposed to zoom memory alone. */
   get enabled(): boolean {
     return this.browser.state.capabilities.pageControls
   }
@@ -37,6 +47,15 @@ export class PageControls {
 
   get environment(): PageEnvironment {
     return this.browser.state.pageEnvironment
+  }
+
+  /**
+   * The ladder Zoom In / Zoom Out climb: the sheet's 50 to 300 percent with the full page
+   * controls (the phone's slider walks the same levels), Chrome's 25 to 500 percent presets on
+   * the desktop.
+   */
+  get zoomLevels(): readonly number[] {
+    return this.enabled ? ZOOM_LEVELS : ZOOM_PRESETS
   }
 
   resolve(url: string): ResolvedPageControls {
@@ -56,6 +75,11 @@ export class PageControls {
   /** The zoom the sheet shows and stores: the site's own factor, before the system font size. */
   siteZoomOf(tab: Tab): number {
     return siteZoom(this.settings, tab.url)
+  }
+
+  /** Whether the tab's page has a remembered site zoom (a web page); other pages zoom per tab. */
+  remembersZoom(tab: Tab): boolean {
+    return siteKey(tab.url) !== null
   }
 
   // ---------------------------------------------------------------------------
@@ -89,15 +113,28 @@ export class PageControls {
     this.applyAll()
   }
 
-  /** A live page was created for `tab`: give it the controls of the page it is about to load. */
+  /**
+   * A live page was created for `tab`: give it the controls of the page it is about to load. A
+   * page that is not a web page gets the tab's own zoom back (a restored tab).
+   */
   onViewCreated(tab: Tab, view: TabView): void {
-    if (!this.enabled) return
+    if (!this.enabled && !isWebPage(tab.url)) {
+      if (tab.zoom !== 1) view.setZoom(tab.zoom)
+      return
+    }
     tab.zoom = this.applyTo(view, tab.url)
   }
 
-  /** The page committed a navigation: its controls follow the new URL. */
+  /**
+   * The page committed a navigation: its controls follow the new URL. Without the full page
+   * controls a page that is not a web page reports the zoom the engine gave it (Chromium keeps
+   * one per host of its own).
+   */
   onNavigated(tab: Tab, view: TabView): void {
-    if (!this.enabled) return
+    if (!this.enabled && !isWebPage(tab.url)) {
+      tab.zoom = view.getZoom()
+      return
+    }
     tab.zoom = this.applyTo(view, tab.url)
   }
 
@@ -105,18 +142,23 @@ export class PageControls {
   private applyTo(view: TabView, url: string): number {
     const r = this.resolve(url)
     view.setZoom(r.zoom)
-    view.setDarkening?.(r.darken)
-    view.setDesktopMode?.(r.desktop)
+    if (this.enabled) {
+      view.setDarkening?.(r.darken)
+      view.setDesktopMode?.(r.desktop)
+    }
     return r.zoom
   }
 
-  /** Re-apply to every live page (a policy or device change); desktop mode waits for its next load. */
+  /**
+   * Re-apply to every live page (a policy or device change), or to every page of one site (its
+   * zoom changed); desktop mode waits for its next load.
+   */
   private applyAll(onlySite?: string): void {
-    if (!this.enabled) return
     for (const [tabId, view] of this.browser.tabs.allViews()) {
       const tab = this.browser.tabs.tab(tabId)
       if (!tab || view.isDestroyed()) continue
-      if (onlySite && siteKey(tab.url) !== onlySite) continue
+      const key = siteKey(tab.url)
+      if (onlySite ? key !== onlySite : !this.enabled && !key) continue
       tab.zoom = this.applyTo(view, tab.url)
     }
   }
@@ -125,7 +167,11 @@ export class PageControls {
   // Commands
   // ---------------------------------------------------------------------------
 
-  /** An exact factor for the tab's site, as a slider sets it (the menu's steps go through `adjustZoom`). */
+  /**
+   * An exact factor for the tab's site, as a slider sets it (the menu's steps go through
+   * `adjustZoom`). Every tab of the site follows at once, and the chrome hears of the change
+   * (`zoom.changed`) so it can show the zoom bubble.
+   */
   setZoomFactor(tabId: string, factor: number): void {
     const tab = this.browser.tabs.tab(tabId)
     const key = tab ? siteKey(tab.url) : null
@@ -133,13 +179,18 @@ export class PageControls {
     const s = this.settings
     s.siteZooms = withSiteOverride(s.siteZooms, key, clampZoom(factor), s.zoom)
     this.afterChange(key)
+    this.browser.emit(
+      'zoom.changed',
+      { tabId, factor: tab.zoom, siteKey: key },
+      this.browser.tabs.windowFor(tabId)
+    )
   }
 
-  /** Zoom in / out along Chrome's zoom table (keyboard shortcuts, the sheet's steppers). */
+  /** Zoom in / out along the host's ladder (keyboard shortcuts, Ctrl+wheel, the sheet's steppers). */
   adjustZoom(tabId: string, direction: number): void {
     const tab = this.browser.tabs.tab(tabId)
     if (!tab || !siteKey(tab.url)) return
-    this.setZoomFactor(tabId, stepZoom(this.siteZoomOf(tab), direction))
+    this.setZoomFactor(tabId, stepZoom(this.siteZoomOf(tab), direction, this.zoomLevels))
   }
 
   /** Back to the default zoom: the site's exception goes away. */

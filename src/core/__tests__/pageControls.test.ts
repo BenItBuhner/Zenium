@@ -34,37 +34,49 @@ interface Recorded {
   reloads: number
 }
 
+type Host = 'android' | 'desktop'
+
+interface Sent {
+  name: string
+  payload: unknown
+}
+
 /**
- * A page-controls host (Android's shape): every view records what it is told, the view host
- * keeps the last rules it was handed.
+ * A page-controls host (Android's shape) or a plain desktop host: every view records what it
+ * is told, the view host keeps the last rules it was handed, the window what it was sent.
  */
 function fakePlatform(
-  io: StoreIO
-): Platform & { rules: PageRules[]; records: Map<string, Recorded> } {
+  io: StoreIO,
+  host: Host = 'android'
+): Platform & { rules: PageRules[]; records: Map<string, Recorded>; sent: Sent[] } {
   const rules: PageRules[] = []
   const records = new Map<string, Recorded>()
+  const sent: Sent[] = []
   const capabilities = stub<HostCapabilities>({
-    windows: false,
+    windows: host === 'desktop',
     updates: false,
     agents: false,
-    pageControls: true
+    pageControls: host === 'android'
   })
   return {
     rules,
     records,
-    info: { os: 'android' as PlatformOs, version: '0.0.0' },
+    sent,
+    info: { os: (host === 'android' ? 'android' : 'linux') as PlatformOs, version: '0.0.0' },
     capabilities,
     io,
     windows: {
       create: () =>
         stub<WindowHost>({
           alive: true,
-          contentSize: () => ({ width: 412, height: 915 }),
+          contentSize: () =>
+            host === 'android' ? { width: 412, height: 915 } : { width: 1280, height: 800 },
           normalBounds: () => null,
           isFullScreen: () => false,
           isMaximized: () => false,
           isFocused: () => true,
-          isVisible: () => true
+          isVisible: () => true,
+          send: (name: string, payload: unknown) => void sent.push({ name, payload })
         })
     },
     views: stub<TabViewHost>({
@@ -100,13 +112,16 @@ function fakePlatform(
   }
 }
 
-function start(io = memoryIo()): {
+function start(
+  io = memoryIo(),
+  host: Host = 'android'
+): {
   browser: Browser
   platform: ReturnType<typeof fakePlatform>
   win: ZenWindow
   io: ReturnType<typeof memoryIo>
 } {
-  const platform = fakePlatform(io)
+  const platform = fakePlatform(io, host)
   const browser = new Browser(platform)
   browser.start()
   const win = browser.allWindows()[0] as ZenWindow
@@ -115,6 +130,10 @@ function start(io = memoryIo()): {
 
 function last<T>(list: T[]): T | undefined {
   return list[list.length - 1]
+}
+
+function zoomChanges(platform: ReturnType<typeof fakePlatform>): unknown[] {
+  return platform.sent.filter((s) => s.name === 'zoom.changed').map((s) => s.payload)
 }
 
 describe('page controls in the browser', () => {
@@ -240,5 +259,93 @@ describe('page controls in the browser', () => {
     expect(browser.state.settings.pageControls.desktopSites).toEqual({})
     expect(record.zoom.every((z) => z === 1)).toBe(true)
     expect(record.reloads).toBe(0)
+  })
+})
+
+describe('zoom memory on the desktop', () => {
+  it('remembers a zoom per site and applies it to every tab of the site', () => {
+    const { browser, platform, win } = start(memoryIo(), 'desktop')
+    const tab = browser.tabs.createTab({ url: 'https://en.wikipedia.org/', active: true }, win)
+    const other = browser.tabs.createTab({ url: 'https://de.wikipedia.org/', active: false }, win)
+    const elsewhere = browser.tabs.createTab({ url: 'https://example.com/', active: false }, win)
+
+    browser.handleCommand(win, 'tab.setZoom', { tabId: tab.id, delta: 1 })
+    expect(browser.state.settings.pageControls.siteZooms).toEqual({ 'wikipedia.org': 1.1 })
+    expect(last(platform.records.get(tab.id)!.zoom)).toBe(1.1)
+    expect(last(platform.records.get(other.id)!.zoom)).toBe(1.1)
+    expect(browser.tabs.tab(other.id)!.zoom).toBe(1.1)
+    expect(last(platform.records.get(elsewhere.id)!.zoom)).toBe(1)
+    expect(zoomChanges(platform)).toEqual([
+      { tabId: tab.id, factor: 1.1, siteKey: 'wikipedia.org' }
+    ])
+
+    // A tab of the site opened later starts at the remembered factor.
+    const later = browser.tabs.createTab({ url: 'https://fr.wikipedia.org/', active: false }, win)
+    expect(last(platform.records.get(later.id)!.zoom)).toBe(1.1)
+
+    // Reset takes the site back to the default zoom and forgets the exception.
+    browser.handleCommand(win, 'tab.setZoom', { tabId: other.id, delta: null })
+    expect(browser.state.settings.pageControls.siteZooms).toEqual({})
+    expect(last(platform.records.get(tab.id)!.zoom)).toBe(1)
+    expect(last(platform.records.get(later.id)!.zoom)).toBe(1)
+  })
+
+  it('leaves the desktop site and darkening controls to Chromium', () => {
+    const { browser, platform, win } = start(memoryIo(), 'desktop')
+    const tab = browser.tabs.createTab({ url: 'https://example.com/', active: true }, win)
+    browser.handleCommand(win, 'tab.setZoom', { tabId: tab.id, delta: 1 })
+    const record = platform.records.get(tab.id)!
+    expect(record.desktop).toEqual([])
+    expect(record.darken).toEqual([])
+    expect(platform.rules).toEqual([])
+  })
+
+  it("climbs Chrome's presets to 500 percent and down to 25", () => {
+    const { browser, platform, win } = start(memoryIo(), 'desktop')
+    const tab = browser.tabs.createTab({ url: 'https://example.com/', active: true }, win)
+    const record = platform.records.get(tab.id)!
+    for (let i = 0; i < 12; i++)
+      browser.handleCommand(win, 'tab.setZoom', { tabId: tab.id, delta: 1 })
+    expect(last(record.zoom)).toBe(5)
+    expect(browser.state.settings.pageControls.siteZooms).toEqual({ 'example.com': 5 })
+    for (let i = 0; i < 20; i++)
+      browser.handleCommand(win, 'tab.setZoom', { tabId: tab.id, delta: -1 })
+    expect(last(record.zoom)).toBe(0.25)
+  })
+
+  it('zooms internal pages and files per tab, without remembering them', () => {
+    const { browser, platform, win } = start(memoryIo(), 'desktop')
+    const tab = browser.tabs.createTab({ url: 'zen://settings', active: true }, win)
+    const record = platform.records.get(tab.id)!
+    browser.handleCommand(win, 'tab.setZoom', { tabId: tab.id, delta: 1 })
+    expect(last(record.zoom)).toBe(1.1)
+    expect(browser.tabs.tab(tab.id)!.zoom).toBe(1.1)
+    expect(browser.state.settings.pageControls.siteZooms).toEqual({})
+    expect(zoomChanges(platform)).toEqual([{ tabId: tab.id, factor: 1.1, siteKey: null }])
+    browser.handleCommand(win, 'tab.setZoom', { tabId: tab.id, delta: null })
+    expect(last(record.zoom)).toBe(1)
+  })
+
+  it('reopens a site at its zoom after a relaunch', async () => {
+    const io = memoryIo()
+    const first = start(io, 'desktop')
+    const tab = first.browser.tabs.createTab(
+      { url: 'https://example.com/', active: true },
+      first.win
+    )
+    first.browser.handleCommand(first.win, 'tab.setZoomFactor', { tabId: tab.id, factor: 1.5 })
+    await new Promise((r) => setImmediate(r))
+    await first.browser.state.flush()
+    expect(JSON.parse(io.files['state.json']).settings.pageControls.siteZooms).toEqual({
+      'example.com': 1.5
+    })
+
+    const second = start(io, 'desktop')
+    const again = second.browser.tabs.createTab(
+      { url: 'https://example.com/about', active: true },
+      second.win
+    )
+    expect(last(second.platform.records.get(again.id)!.zoom)).toBe(1.5)
+    expect(second.browser.tabs.tab(again.id)!.zoom).toBe(1.5)
   })
 })

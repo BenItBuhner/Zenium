@@ -38,6 +38,12 @@ import type {
 import type { ZenWindow } from '../../core/window'
 import { DEFAULT_CONTAINER_ID } from '../../shared/types'
 import { resolveDownloadSettings } from '../../shared/downloads'
+import {
+  DISMISSED_ANSWER,
+  PAGE_DIALOG_CHANNEL,
+  sanitizeDialogCall,
+  type PageDialogAnswer
+} from '../../shared/pageDialogIpc'
 import { FileStoreIO } from './storeIo'
 import { SessionManager, buildUserAgent } from './sessions'
 import { installZenProtocol } from './protocol'
@@ -63,6 +69,7 @@ import { applyAppIcon, iconPngPath } from './appIcon'
 import { ElectronDefaultBrowser } from './defaultBrowser'
 import { ensureWindowsAppIdRegistered, notificationPermissionStatus } from './notifications'
 import { createPasswordsHost } from './passwords'
+import { attachWebAuthnHandlers, configurePlatformAuthenticators } from './webauthn'
 import {
   attachSecurityHandlers,
   permissionCheckDetails,
@@ -228,13 +235,21 @@ export class ElectronPlatform implements Platform {
     }
     this.passwords = createPasswordsHost()
     this.clipboard = {
-      // Asynchronous since Electron 44; the host contract stays fire-and-forget.
+      // Asynchronous since Electron 44; the host contract stays fire-and-forget. Electron has no
+      // sensitive flag for the system clipboard; the core's timed clearing covers desktop.
       writeText: (text) =>
         void clipboard
           .writeText(text)
           .catch((error: Error) => console.warn('[zen] clipboard:', error.message)),
       writeImageFromUrl: (url) => copyImageFromUrl(url),
-      readText: () => clipboard.readText().catch(() => '')
+      readText: () => clipboard.readText().catch(() => ''),
+      clearText: async (expected) => {
+        try {
+          if ((await clipboard.readText()) === expected) clipboard.clear()
+        } catch (error) {
+          console.warn('[zen] clipboard:', (error as Error).message)
+        }
+      }
     }
     this.shell = {
       openExternal: (url) => void shell.openExternal(url),
@@ -419,6 +434,7 @@ export class ElectronPlatform implements Platform {
       // The one webRequest listener set of the session; every request hook goes through it.
       this.requestBlocking.attach(ses, containerId)
       this.attachPermissions(ses)
+      attachWebAuthnHandlers(browser, this.views, ses)
       this.downloads.attach(ses, containerId, (sourceTabId) =>
         browser.onDownloadStarted(sourceTabId)
       )
@@ -432,6 +448,7 @@ export class ElectronPlatform implements Platform {
     this.sessions.get(DEFAULT_CONTAINER_ID)
     this.registerIpc(browser)
     attachSecurityHandlers(browser, this.views)
+    configurePlatformAuthenticators(__ZENIUM_APPLE_TEAM_ID__)
     browser.start()
     // Toasts need the app id registered with Windows; a copy without installer shortcuts
     // (development, portable) registers it itself.
@@ -453,6 +470,9 @@ export class ElectronPlatform implements Platform {
         void external.request(tabId, request.externalUrl).then(callback)
         return
       }
+      // A page locking the keyboard keeps Esc: the fullscreen hint says to hold it instead.
+      if (permission === 'keyboardLock' && tabId)
+        this.browser.fullscreen.keyboardLockRequested(tabId)
       void permissions.decide(permission, url, request).then(callback)
     })
     ses.setPermissionCheckHandler((_wc, permission, requestingOrigin, details) =>
@@ -472,6 +492,27 @@ export class ElectronPlatform implements Platform {
     })
     ipcMain.on('zen:page', (event, message: PageMessage) => {
       this.views.viewForWebContents(event.sender)?.dispatchPageMessage(message)
+    })
+    // A page's `alert` / `confirm` / `prompt`: the renderer blocks on `sendSync` until
+    // `returnValue` is set, which happens once the chrome's dialog is answered. Every path must
+    // set it, or the page would hang.
+    ipcMain.on(PAGE_DIALOG_CHANNEL, (event, raw: unknown) => {
+      const answer = (value: PageDialogAnswer): void => {
+        try {
+          event.returnValue = value
+        } catch {
+          // The page went away while its dialog was up.
+        }
+      }
+      const view = this.views.viewForWebContents(event.sender)
+      const call = sanitizeDialogCall(raw)
+      if (!view || !call) {
+        answer(DISMISSED_ANSWER)
+        return
+      }
+      view
+        .askDialog(call, event.senderFrame?.url ?? '')
+        .then(answer, () => answer(DISMISSED_ANSWER))
     })
     this.attachNotificationStatus(browser)
   }

@@ -15,6 +15,7 @@ import { dropStore } from '@renderer/lib/drag'
 import { Urlbar } from '../urlbar/Urlbar'
 import { OverlayHost } from '../overlays/OverlayHost'
 import { CoverImage } from './CoverImage'
+import { CrashRestoreBanner } from './CrashRestoreBanner'
 import { DefaultBrowserBanner } from './DefaultBrowserBanner'
 import { FindBar } from './FindBar'
 import { GlanceFrame } from './GlanceFrame'
@@ -76,9 +77,11 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
     (contentHidden || glanceActive) && Boolean(tab) && !staged && !(phone && ui.urlbar.open)
   const dropKey = dropStore.use((s) => s.key)
   const foreign = isForeignTab(state, tab?.id)
-  // The "Make Zenium your default browser" strip sits above the page, inside the frame, so the
-  // layout reporter's viewport (and the tab view under it) shrink by its height.
-  const banner = !phone && wantsDefaultBrowserBanner(state)
+  // The "Make Zenium your default browser" and "Restore pages?" strips sit above the page,
+  // inside the frame, so the layout reporter's viewport (and the tab view under it) shrink by
+  // their height. A fullscreen window shows the page alone (Chrome hides its infobars there too).
+  const banner = !phone && !state.window.fullscreen && wantsDefaultBrowserBanner(state)
+  const crashRestore = !phone ? state.crashRestore : null
 
   // Overlays are hosted beside the frame, not inside it: on phones the frame recedes (scales to
   // .97) under a sheet, and a sheet mounted within it would shrink with the page – its 44 px
@@ -89,6 +92,7 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
         className="zen-content-frame relative flex h-full min-h-0 flex-col overflow-hidden"
         data-staged={staged || undefined}
       >
+        {crashRestore && <CrashRestoreBanner offer={crashRestore} />}
         {banner && <DefaultBrowserBanner state={state} />}
         <div className="flex min-h-0 flex-1 flex-row">
           {/* A tab dragged onto the page (past the split zones at its edges) tears off into a new window. */}
@@ -153,7 +157,7 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
           )}
         </div>
         {ui.findOpen && ui.findTabId && state.tabs[ui.findTabId] && (
-          <FindBar state={state} tabId={ui.findTabId} />
+          <FindBar state={state} tabId={ui.findTabId} ui={ui} docked="content" />
         )}
       </div>
       {ui.overlay !== 'none' && <OverlayHost state={state} ui={ui} />}
@@ -208,7 +212,9 @@ function overlayCoversContentBesidesStage(ui: UiState): boolean {
     ui.drag !== null ||
     ui.siteInfoOpen ||
     ui.securityPromptOpen ||
-    ui.permissionPromptOpen
+    ui.permissionPromptOpen ||
+    ui.pageDialogOpen ||
+    ui.windowPromptOpen
   )
 }
 

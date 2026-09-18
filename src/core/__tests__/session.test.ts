@@ -5,9 +5,11 @@ import { createTabRecord } from '../model'
 import {
   closedTabEntry,
   closedWindowEntry,
+  NAVIGATION_ENTRIES_MAX,
   pushClosed,
   RECENTLY_CLOSED_MAX,
   sanitizeClosedEntries,
+  sanitizeSnapshot,
   summarizeClosed
 } from '../session'
 
@@ -139,5 +141,45 @@ describe('sanitizeClosedEntries', () => {
       tabEntry(`https://s${i}.test/`, i)
     )
     expect(sanitizeClosedEntries(many)).toHaveLength(RECENTLY_CLOSED_MAX)
+  })
+})
+
+describe('sanitizeSnapshot', () => {
+  it('keeps well-formed entries with their page state and clamps the index', () => {
+    expect(
+      sanitizeSnapshot({
+        entries: [
+          { url: 'https://a.test/', title: 'A', pageState: 'c2Nyb2xs' },
+          { url: 'https://b.test/', title: 7, pageState: '' },
+          { url: '', title: 'no url' },
+          null,
+          'x'
+        ],
+        index: 9
+      })
+    ).toEqual({
+      entries: [
+        { url: 'https://a.test/', title: 'A', pageState: 'c2Nyb2xs' },
+        { url: 'https://b.test/', title: '' }
+      ],
+      index: 1
+    })
+    expect(sanitizeSnapshot({ entries: [], index: 0 })).toBeNull()
+    expect(sanitizeSnapshot({ entries: 'nope', index: 0 })).toBeNull()
+    expect(sanitizeSnapshot({ entries: [{ url: 'https://a.test/' }] })).toBeNull()
+    expect(sanitizeSnapshot(null)).toBeNull()
+  })
+
+  it('cuts a long stack to the newest entries and moves the index with them', () => {
+    const entries = Array.from({ length: NAVIGATION_ENTRIES_MAX + 10 }, (_, i) => ({
+      url: `https://s${i}.test/`,
+      title: ''
+    }))
+    const out = sanitizeSnapshot({ entries, index: entries.length - 3 })
+    expect(out?.entries).toHaveLength(NAVIGATION_ENTRIES_MAX)
+    expect(out?.entries[0].url).toBe('https://s10.test/')
+    expect(out?.index).toBe(NAVIGATION_ENTRIES_MAX - 3)
+    // An index that pointed into the dropped part lands on the oldest kept entry.
+    expect(sanitizeSnapshot({ entries, index: 2 })?.index).toBe(0)
   })
 })

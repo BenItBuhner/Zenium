@@ -3,7 +3,9 @@ import type {
   ClosedEntrySummary,
   ClosedTabEntry,
   ClosedWindowEntry,
+  CrashRestoreOffer,
   NavigationSnapshot,
+  NavigationSnapshotEntry,
   Rect,
   Tab,
   WindowKind
@@ -124,7 +126,7 @@ export function sanitizeClosedEntries(raw: unknown): ClosedEntry[] {
         folderId: t.folderId ?? null,
         index: typeof t.index === 'number' ? t.index : 0,
         windowId: t.windowId ?? null,
-        navigation: isSnapshot(t.navigation) ? t.navigation : null
+        navigation: sanitizeSnapshot(t.navigation)
       })
     } else if (e.kind === 'window') {
       const w = e as Partial<ClosedWindowEntry>
@@ -147,10 +149,35 @@ export function sanitizeClosedEntries(raw: unknown): ClosedEntry[] {
   return out.slice(0, RECENTLY_CLOSED_MAX)
 }
 
-function isSnapshot(value: unknown): value is NavigationSnapshot {
-  if (!value || typeof value !== 'object') return false
+/** Chrome keeps 50 entries per tab; a stored stack is cut to the same. */
+export const NAVIGATION_ENTRIES_MAX = 50
+
+/**
+ * A stored back/forward stack, or null when it is not one. Entries keep their URL and title;
+ * `pageState` (the engine's serialised scroll and form state) stays when it is a string. The
+ * current index is clamped into the entries that survived.
+ */
+export function sanitizeSnapshot(value: unknown): NavigationSnapshot | null {
+  if (!value || typeof value !== 'object') return null
   const s = value as Partial<NavigationSnapshot>
-  return Array.isArray(s.entries) && typeof s.index === 'number'
+  if (!Array.isArray(s.entries) || typeof s.index !== 'number') return null
+  const entries: NavigationSnapshotEntry[] = []
+  for (const item of s.entries) {
+    if (!item || typeof item !== 'object') continue
+    const e = item as Partial<NavigationSnapshotEntry>
+    if (typeof e.url !== 'string' || e.url === '') continue
+    const entry: NavigationSnapshotEntry = {
+      url: e.url,
+      title: typeof e.title === 'string' ? e.title : ''
+    }
+    if (typeof e.pageState === 'string' && e.pageState !== '') entry.pageState = e.pageState
+    entries.push(entry)
+  }
+  if (entries.length === 0) return null
+  const kept = entries.slice(-NAVIGATION_ENTRIES_MAX)
+  const dropped = entries.length - kept.length
+  const index = Math.min(Math.max(Math.round(s.index) - dropped, 0), kept.length - 1)
+  return { entries: kept, index }
 }
 
 // ---------------------------------------------------------------------------
@@ -163,7 +190,69 @@ function isSnapshot(value: unknown): value is NavigationSnapshot {
  * it back where it was, with its back/forward stack, and a window comes back whole.
  */
 export class SessionService {
+  private crashOffer: CrashRestoreOffer | null = null
+  /** The last session's pages wait for the user's answer: windows do not load them on their own. */
+  private holdingPages = false
+
   constructor(private readonly browser: Browser) {}
+
+  // ---------------------------------------------------------------------------
+  // After an unclean exit
+  // ---------------------------------------------------------------------------
+
+  /** The offer the chrome shows ("Restore pages?"), or null. */
+  crashRestoreOffer(): CrashRestoreOffer | null {
+    return this.crashOffer
+  }
+
+  /** While true, windows load nothing on their own (at startup, on focus) – the user decides. */
+  holdsPages(): boolean {
+    return this.holdingPages
+  }
+
+  /**
+   * Startup after a run that did not shut down cleanly – the tabs are back in the sidebar, none
+   * of their pages loaded yet. The setting decides: "ask" holds the pages and has the chrome offer
+   * them (Chrome's "Restore pages?" bubble), "always" restores as after a clean exit, "never"
+   * starts on a fresh tab with the last session's tabs kept unloaded (a page that took the
+   * browser down does not come back on its own either way).
+   */
+  onUncleanStart(): void {
+    const mode = this.browser.state.settings.crashRestore
+    if (mode === 'always') return
+    this.holdingPages = true
+    if (mode === 'never') {
+      this.startFresh()
+      return
+    }
+    this.crashOffer = {
+      tabCount: this.browser.tabs.openTabCount(),
+      windowCount: this.browser.allWindows().length
+    }
+  }
+
+  /** The user answered the offer: Restore loads the pages that were showing, Dismiss starts fresh. */
+  crashRestore(restore: boolean): void {
+    if (!this.crashOffer && !this.holdingPages) return
+    this.crashOffer = null
+    this.holdingPages = false
+    if (restore) {
+      for (const win of this.browser.allWindows()) this.browser.tabs.claimVisible(win)
+    } else {
+      this.startFresh()
+    }
+    this.browser.state.commitVolatile()
+  }
+
+  private startFresh(): void {
+    this.holdingPages = false
+    const win = this.browser.allWindows()[0]
+    if (win) this.browser.openFreshTab(win)
+  }
+
+  // ---------------------------------------------------------------------------
+  // Recently closed
+  // ---------------------------------------------------------------------------
 
   recentlyClosed(): ClosedEntry[] {
     return this.browser.state.recentlyClosed

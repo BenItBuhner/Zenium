@@ -1,4 +1,5 @@
 import type {
+  CertificateDetails,
   ClientCertificateInfo,
   HttpAuthPrompt,
   SecurityPrompt,
@@ -68,6 +69,83 @@ export function httpAuthKey(
  */
 export const AUTH_RETRY_WINDOW_MS = 60_000
 
+/** `host:port` of an https address (443 when it leaves the port out); null for any other URL. */
+export function certificateSiteOf(url: string): string | null {
+  try {
+    const parsed = new URL(url)
+    if (parsed.protocol !== 'https:' || !parsed.hostname) return null
+    return `${parsed.hostname.toLowerCase()}:${parsed.port || '443'}`
+  } catch {
+    return null
+  }
+}
+
+/** A certificate the user proceeded past, and the `ERR_CERT_*` code it failed with. */
+export interface CertificateException {
+  code: number
+  certificate: CertificateDetails
+}
+
+/**
+ * The certificates the user proceeded past this session, remembered as Chrome remembers them: per
+ * site (host and port) and per certificate, so a site that changes its certificate asks again,
+ * until the browser quits. Kept per container, so a private window's exceptions end with its
+ * session. Nothing here is persisted. The hosts ask on every TLS handshake (Chromium keeps no
+ * decision of its own in Electron), so this is the one place the answer lives.
+ */
+export class CertificateExceptions {
+  private readonly allowed = new Map<string, CertificateException>()
+
+  /**
+   * Remember `certificate` for the site of `url`; false when `url` is not https or the
+   * certificate has no fingerprint to remember it by.
+   */
+  allow(containerId: string, url: string, code: number, certificate: CertificateDetails): boolean {
+    const key = this.key(containerId, url, certificate.fingerprint)
+    if (!key) return false
+    // Re-added last, so `exceptionFor` names the exception the latest load went ahead under.
+    this.allowed.delete(key)
+    this.allowed.set(key, { code, certificate })
+    return true
+  }
+
+  isAllowed(containerId: string, url: string, fingerprint: string): boolean {
+    const key = this.key(containerId, url, fingerprint)
+    return key !== null && this.allowed.has(key)
+  }
+
+  /**
+   * The exception a load of `url` in `containerId` goes ahead under, if the session has one for
+   * its site: a committed https page of such a site was loaded over the excepted certificate (the
+   * host asked, and this was the answer), unless the site has since put a valid one up. The
+   * latest one when several certificates of the site were excepted.
+   */
+  exceptionFor(containerId: string, url: string): CertificateException | null {
+    const site = certificateSiteOf(url)
+    if (!site) return null
+    const prefix = `${containerId}|${site}|`
+    let found: CertificateException | null = null
+    for (const [key, exception] of this.allowed) if (key.startsWith(prefix)) found = exception
+    return found
+  }
+
+  /** The container's session ended (private browsing) or its site data was cleared: its exceptions go. */
+  forgetContainer(containerId: string): void {
+    for (const key of this.allowed.keys())
+      if (key.startsWith(`${containerId}|`)) this.allowed.delete(key)
+  }
+
+  get size(): number {
+    return this.allowed.size
+  }
+
+  private key(containerId: string, url: string, fingerprint: string): string | null {
+    const site = certificateSiteOf(url)
+    if (!site || !fingerprint) return null
+    return `${containerId}|${site}|${fingerprint}`
+  }
+}
+
 interface Pending {
   prompt: SecurityPrompt
   resolve: (response: SecurityPromptResponse | null) => void
@@ -92,6 +170,11 @@ export class SecurityPromptService {
    */
   private readonly inFlight = new Map<string, Promise<HttpCredentials | null>>()
   private readonly certificateInFlight = new Map<string, Promise<number | null>>()
+  /**
+   * Server certificates the user proceeded past (the interstitial's "Proceed"). Separate from
+   * `forgetSession`, which is about sign-ins; these end with the session or the browser.
+   */
+  readonly certificateExceptions = new CertificateExceptions()
 
   constructor(
     private readonly browser: Browser,

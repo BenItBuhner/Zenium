@@ -9,11 +9,13 @@ import {
   closeMenu,
   closeUrlbar,
   openBookmarkChrome,
+  openFindBar,
   openOverlay,
   openUrlbar,
   pushToast,
   showExternalProtocol,
   showMenu,
+  showZoomBubble,
   uiStore
 } from '@renderer/lib/ui'
 import { activeTab } from '@renderer/lib/selectors'
@@ -42,6 +44,8 @@ export function useMainEvents(): void {
         }
         if (ui.overlay === 'onboarding') return
         const state = browserStore.get().state
+        // A popup's location bar is read-only (Chrome): Ctrl+L and Ctrl+K have nothing to open.
+        if (state?.window.chrome === 'popup' && mode !== 'new-tab') return
         // Phones always anchor the bar to the top: the keyboard owns the bottom half.
         const attached = isPhone() || state?.settings.urlbarBehavior === 'normal'
         void openUrlbar(mode, currentActiveTabId(), { text, attached })
@@ -70,11 +74,11 @@ export function useMainEvents(): void {
         closeUrlbar()
         void openOverlay('space-editor', currentActiveTabId(), spaceId)
       }),
-      onEvent('find.open', ({ tabId, again, text }) => {
-        uiStore.set({ findOpen: true, findTabId: tabId, findSeed: text ?? null })
-        if (again) window.dispatchEvent(new CustomEvent('zen-find-again', { detail: again }))
-        if (text !== undefined)
-          window.dispatchEvent(new CustomEvent('zen-find-seed', { detail: text }))
+      onEvent('find.open', ({ tabId, text, again }) => openFindBar(tabId, text, again ?? null)),
+      onEvent('find.selection', ({ tabId, text }) => {
+        // Cmd+E does not open the bar; one open for the tab searches the selection.
+        const ui = uiStore.get()
+        if (ui.findOpen && ui.findTabId === tabId) openFindBar(tabId, text)
       }),
       onEvent('menu.app', () => {
         // The menu button claims the request when it is on screen (it takes the focus and opens
@@ -82,6 +86,13 @@ export function useMainEvents(): void {
         // at the pointer, keyboard mode all the same.
         const claimed = !window.dispatchEvent(new CustomEvent(APP_MENU_EVENT, { cancelable: true }))
         if (!claimed) run('app.menu', { keyboard: true })
+      }),
+      onEvent('zoom.changed', ({ tabId, factor }) => {
+        // Chrome's bubble, for the page on screen. The host with the page-controls sheet
+        // (Android) shows the zoom there instead.
+        const state: UIState | null = browserStore.get().state
+        if (!state || state.capabilities.pageControls || tabId !== currentActiveTabId()) return
+        void showZoomBubble(tabId, factor)
       }),
       onEvent('toast', ({ message, kind }) => pushToast(message, kind)),
       onEvent('status', ({ text }) => uiStore.set({ statusText: text })),
@@ -117,8 +128,8 @@ export function useMainEvents(): void {
       onEvent('space.switched', ({ fromIndex, toIndex }) => {
         uiStore.set({ spaceSlideDirection: toIndex > fromIndex ? 1 : toIndex < fromIndex ? -1 : 0 })
       }),
-      onEvent('compact.reveal', ({ revealed }) =>
-        window.dispatchEvent(new CustomEvent('zen-compact-reveal', { detail: revealed }))
+      onEvent('compact.reveal', (reveal) =>
+        window.dispatchEvent(new CustomEvent('zen-compact-reveal', { detail: reveal }))
       ),
       onEvent('extension.popupSize', ({ id, width, height }) =>
         popupSizeReported(id, width, height)

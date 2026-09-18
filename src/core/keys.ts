@@ -12,6 +12,8 @@ export class KeyboardHandler {
   constructor(private readonly browser: Browser) {}
 
   handle(input: KeyEventInput, sourceTabId: string | null, win: ZenWindow): boolean {
+    // Esc held in a fullscreen window leaves it (both edges of the key are needed for that).
+    if (input.key === 'Escape') this.browser.fullscreen.onEscape(input, win)
     if (input.type !== 'keyDown') return false
     if (isModifierKey(input.key)) return false
     // The Settings recorder owns the chrome's keys while it listens: the chord it records must

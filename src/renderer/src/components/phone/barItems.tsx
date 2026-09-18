@@ -21,7 +21,7 @@ import { run } from '@renderer/lib/api'
 import { openSpacesDrawer } from '@renderer/lib/gestures/drawer'
 import { toggleOverview } from '@renderer/lib/gestures/stage'
 import { activeSpace, activeTab, essentialsFor, tabsOf } from '@renderer/lib/selectors'
-import { openOverlay, openUrlbar, uiStore } from '@renderer/lib/ui'
+import { openFindBar, openOverlay, openUrlbar } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { ReloadStopGlyph, TabCountBadge } from './BarGlyphs'
 
@@ -174,7 +174,7 @@ export const BAR_ITEMS: Record<PhoneBarItemId, BarItem> = {
     run: ({ tab }) => {
       if (!tab) return
       run('focus.chrome', undefined)
-      uiStore.set({ findOpen: true, findTabId: tab.id })
+      openFindBar(tab.id)
     }
   }
 }
