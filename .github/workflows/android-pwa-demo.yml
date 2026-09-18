@@ -11,9 +11,6 @@ name: Android Add to Home screen demo
 # demo it runs.
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - cursor/android-add-to-home-install-7c2e
 
 permissions:
   contents: read
