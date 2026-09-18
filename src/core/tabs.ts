@@ -2262,8 +2262,8 @@ export class TabManager {
       const t = this.tab(id)
       return (
         t &&
-        // A chrome page fills the content area itself; it does not share it in a split.
-        !this.browser.pages.isChromePage(t) &&
+        // A page tab joins a split as its registry entry allows (a chrome page does not, yet).
+        this.browser.pages.splittable(t) &&
         tabVisibleIn(t, win.id) &&
         (!t.spaceId || !m.localSpaces[t.spaceId] || t.spaceId === space.id)
       )
@@ -2405,6 +2405,7 @@ export class TabManager {
   }
 
   addToSplit(groupId: string, tabId: string): void {
+    if (!this.browser.pages.splittable(this.tab(tabId))) return
     if (addTabToSplit(this.model, groupId, tabId)) {
       const group = this.model.splitGroups[groupId]
       const win = group

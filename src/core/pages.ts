@@ -76,9 +76,14 @@ export class PageService {
     return parseInternalPageUrl(url, this.pages)
   }
 
+  /** The page definition an address names, if it is one this service routes. */
+  pageAt(url: string): InternalPageDefinition | null {
+    return internalPageOf(url, this.pages)
+  }
+
   /** The page definition behind a tab, if the tab shows an internal page. */
   pageOf(tab: Tab | undefined): InternalPageDefinition | null {
-    return tab ? internalPageOf(tab.url, this.pages) : null
+    return tab ? this.pageAt(tab.url) : null
   }
 
   /** Whether `tab` is an internal page tab of either kind. */
@@ -95,13 +100,38 @@ export class PageService {
   }
 
   /**
-   * Open a page. A page with `reuse: 'window'` that the window already has is focused – one per
-   * window, as Firefox's `switchToTabHavingURI` keeps one about:preferences (v2 §10.1), switching
-   * space when it lives in another – and moved to `section` when one is given (`undefined` keeps
-   * it where it is, `null` is the landing page); otherwise a new tab opens next to its opener,
+   * Whether `tab` may share the content area in a split view: a site always, a page as its
+   * registry entry says (`splittable`) – a chrome page fills the area itself until the chrome
+   * draws one page per pane.
+   */
+  splittable(tab: Tab | undefined): boolean {
+    return this.pageOf(tab)?.splittable ?? true
+  }
+
+  /**
+   * The window a page opens in when asked from `win`: `win` itself with the full chrome; from a
+   * toolbar-only popup (a page's sized `window.open`) the popup's opener – the full window it
+   * came from, else the full window used last. A popup has no sidebar or strip to hold a
+   * second tab, and Chrome opens chrome://settings from a popup in its opener as well. The
+   * popup itself only when no full window is alive.
+   */
+  hostWindowFor(win: ZenWindow): ZenWindow {
+    if (win.chrome !== 'popup') return win
+    for (let w = win.opener; w; w = w.opener) if (w.alive && w.chrome !== 'popup') return w
+    const full = this.browser.allWindows().filter((w) => w.chrome !== 'popup')
+    return full.sort((a, b) => b.lastFocusedAt - a.lastFocusedAt)[0] ?? win
+  }
+
+  /**
+   * Open a page. A `singleton` page that the window already has is focused – one per window, as
+   * Firefox's `switchToTabHavingURI` keeps one about:preferences (v2 §10.1), switching space
+   * when it lives in another – and moved to `section` when one is given (`undefined` keeps it
+   * where it is, `null` is the landing page); otherwise a new tab opens next to its opener,
    * which it remembers for back (`Tab.openerTabId`; `fromIntent` marks a deep link another app
-   * sent, `Tab.fromIntent`). A chrome page on a host without page tabs opens as its overlay.
-   * Returns the tab id; null for an overlay or an unregistered page.
+   * sent, `Tab.fromIntent`). Asked from a popup window the page opens in the popup's opener
+   * ({@link hostWindowFor}), brought to the front, with no opener tab (the popup's tab is not in
+   * that window). A chrome page on a host without page tabs opens as its overlay. Returns the
+   * tab id; null for an overlay or an unregistered page.
    */
   open(
     id: string,
@@ -112,6 +142,14 @@ export class PageService {
   ): string | null {
     const page = Object.prototype.hasOwnProperty.call(this.pages, id) ? this.pages[id] : undefined
     if (!page) return null
+    const asked = win
+    win = this.hostWindowFor(asked)
+    const rerouted = win !== asked
+    if (rerouted) openerTabId = null
+    // A page sent to another window is brought to the front there.
+    const raise = (): void => {
+      if (rerouted && win.alive) win.host.focus()
+    }
     if (page.render === 'chrome' && !this.asTabs) {
       if (page.overlay) {
         this.browser.emit(
@@ -119,14 +157,16 @@ export class PageService {
           { kind: page.overlay, section: section ?? undefined },
           win
         )
+        raise()
       }
       return null
     }
     const tabs = this.browser.tabs
-    const existing = page.reuse === 'window' ? this.findInWindow(page, win) : undefined
+    const existing = page.singleton ? this.findInWindow(page, win) : undefined
     if (existing) {
       if (section !== undefined) this.navigate(existing.id, section)
       tabs.activateTab(existing.id, win)
+      raise()
       return existing.id
     }
     const opener =
@@ -143,6 +183,7 @@ export class PageService {
       },
       win
     )
+    raise()
     if (page.render === 'chrome') {
       const history = initialHistory(url, this.pages)
       this.histories.set(tab.id, history)
@@ -172,10 +213,10 @@ export class PageService {
    * A navigation the `TabManager` was asked to make in `tabId`. True when the page service took
    * it: the URL names a chrome page – the tab moves to that section when it already shows the
    * page, else the page opens in its own tab with `tabId` as opener (Chrome Android leaves the
-   * current tab alone when `chrome://settings` is typed into it) – or a `reuse: 'window'`
-   * document page that another tab of the window already shows, which is focused and navigated
-   * instead. False when the tab should simply load the URL: a site, a document, or a document
-   * page that belongs in this tab.
+   * current tab alone when `chrome://settings` is typed into it) – or a `singleton` document
+   * page that another tab of the window already shows, which is focused and navigated instead.
+   * False when the tab should simply load the URL: a site, a document, or a document page that
+   * belongs in this tab.
    */
   routeNavigation(tabId: string, url: string): boolean {
     const ref = this.parse(url)
@@ -192,7 +233,7 @@ export class PageService {
       this.open(ref.id, ref.section, tab ? tabs.windowFor(tabId) : undefined, tabId)
       return true
     }
-    if (page.reuse !== 'window' || !tab) return false
+    if (!page.singleton || !tab) return false
     const win = tabs.windowFor(tabId)
     const existing = this.findInWindow(page, win)
     if (!existing || existing.id === tabId) return false
@@ -309,6 +350,8 @@ export class PageService {
     tab.canGoBack = history.index > 0
     tab.canGoForward = history.index < history.entries.length - 1
     tab.errorCode = null
+    // A section is its own address, so the star follows it as on a site's navigation.
+    tab.bookmarked = this.browser.bookmarks.has(tab.url)
     this.browser.tabs.windowFor(tab.id).updateTitle()
   }
 }

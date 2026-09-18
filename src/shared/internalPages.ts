@@ -50,13 +50,11 @@ export type InternalPageId = 'settings'
 export type InternalPageRender = 'chrome' | 'document'
 
 /**
- * Whether opening a page focuses the tab of it the window already has. `window`: one per window,
- * as Firefox's `switchToTabHavingURI` keeps one about:preferences and Chrome its singleton
- * chrome://settings, chrome://history and chrome://downloads (v2 §10.1); a second open focuses
- * the tab and, given a section, moves it there. `none`: every open is a new tab (the new tab
- * page).
+ * The glyph a page tab shows in its favicon slot – the pill, the sidebar row, the tab strip, the
+ * overview card – named for the renderer to draw (Lucide's `settings`, `history`, `star`,
+ * `download`); a page tab never fetches a favicon.
  */
-export type InternalPageReuse = 'window' | 'none'
+export type InternalPageGlyph = 'settings' | 'history' | 'star' | 'download'
 
 /** One section of an internal page: `zen://<page>/<id>`. */
 export interface InternalPageSection {
@@ -77,7 +75,27 @@ export interface InternalPageDefinition {
   /** The tab title on the landing page ("Settings"), and on every section for a chrome page. */
   title: string
   render: InternalPageRender
-  reuse: InternalPageReuse
+  /**
+   * One tab of the page per window: a second open focuses the tab the window has and, given a
+   * section, moves it there – Firefox's `switchToTabHavingURI` for about:preferences, Chrome's
+   * one chrome://settings, chrome://history and chrome://downloads (v2 §10.1). `false`: every
+   * open is a new tab (the new tab page).
+   */
+  singleton: boolean
+  /** The favicon-slot glyph; absent for a page with no mark of its own (the new tab page). */
+  glyph?: InternalPageGlyph
+  /**
+   * What the address pill shows for the page besides the glyph and its title. `showStar`: the
+   * bookmark star chip stays, as Chrome keeps it on chrome://settings; the new tab page hides it.
+   * A page never shows a lock, a site-information or a reader chip – there is no site.
+   */
+  pill: { showStar: boolean }
+  /**
+   * Whether the tab may share the content area in a split view. A chrome page fills the area
+   * itself and is not splittable until the chrome can draw one page per pane; a document page
+   * has a view of its own. The core reads this and nothing else, so a program flips it here.
+   */
+  splittable: boolean
   /**
    * A chrome page on a host without `capabilities.pageTabs` (the desktop, whose content frame the
    * chrome cannot draw into) opens as this overlay instead; a document page never needs one.
@@ -210,18 +228,22 @@ export const SETTINGS_SECTIONS: readonly InternalPageSection[] = [
 /**
  * The pages this build routes. Pages the desktop program registers as it moves them onto this
  * route (design entries, not implementations – `internal-page-tabs.md` §1): the new tab page is
- * `{ render: 'document', reuse: 'none' }` (its document is `zen://blank` today, `zen://newtab`
- * an alias in `shared/url.ts`); History, Bookmarks and Downloads are `{ reuse: 'window' }` with
- * the render the desktop chooses for each (`chrome` with an `overlay` where the chrome already
- * draws them, or `document`). A page in the registry is a page the parser routes, so nothing is
- * registered ahead of its implementation.
+ * `{ render: 'document', singleton: false, pill: { showStar: false }, splittable: true }` with no
+ * glyph (its document is `zen://blank` today, `zen://newtab` an alias in `shared/url.ts`);
+ * History, Bookmarks and Downloads are `singleton: true` with the `history`, `star` and
+ * `download` glyphs, the star chip shown, and the render the desktop chooses for each (`chrome`
+ * with an `overlay` where the chrome already draws them, or `document`). A page in the registry
+ * is a page the parser routes, so nothing is registered ahead of its implementation.
  */
 export const INTERNAL_PAGES: Readonly<Record<InternalPageId, InternalPageDefinition>> = {
   settings: {
     id: 'settings',
     title: 'Settings',
     render: 'chrome',
-    reuse: 'window',
+    singleton: true,
+    glyph: 'settings',
+    pill: { showStar: true },
+    splittable: false,
     overlay: 'settings',
     sections: SETTINGS_SECTIONS
   }

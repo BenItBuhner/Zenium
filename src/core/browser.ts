@@ -445,7 +445,8 @@ export class Browser {
             from?.compactEnabled ??
             this.state.settings.compactMode.enabled),
       localSpace,
-      cascadeFrom: opts.bounds ? undefined : from
+      cascadeFrom: opts.bounds ? undefined : from,
+      opener: from
     })
     this.windows.set(id, win)
     const theme = resolveTheme(win.activeSpace().theme, this.darkScheme())
@@ -898,7 +899,7 @@ export class Browser {
   /** Ctrl+D without a star dialog: add to the default folder, or remove every copy again. */
   toggleBookmark(tabId: string, win: ZenWindow = this.tabs.windowFor(tabId)): void {
     const tab = this.tabs.tab(tabId)
-    if (!tab || tab.url.startsWith('zen://')) return
+    if (!tab || !this.bookmarkable(tab.url)) return
     if (this.bookmarks.has(tab.url)) {
       this.bookmarks.removeByUrl(tab.url)
       this.toast('Bookmark removed', 'info', win)
@@ -913,13 +914,21 @@ export class Browser {
   }
 
   /**
+   * What the star and Ctrl+D take: a site, and an internal page whose registry entry keeps the
+   * star (`pill.showStar` – Chrome bookmarks chrome://settings); no other `zen://` document.
+   */
+  bookmarkable(url: string): boolean {
+    return !url.startsWith('zen://') || this.pages.pageAt(url)?.pill.showStar === true
+  }
+
+  /**
    * The star: bookmark the page into the default folder when it is not bookmarked yet, then let
    * the star dialog rename, refile or remove it. A second press edits the existing bookmark
    * instead of adding another one.
    */
   starTab(tabId: string, win: ZenWindow = this.tabs.windowFor(tabId)): void {
     const tab = this.tabs.tab(tabId)
-    if (!tab || tab.url.startsWith('zen://')) return
+    if (!tab || !this.bookmarkable(tab.url)) return
     let node: BookmarkNode | null = this.bookmarks.findByUrl(tab.url)[0] ?? null
     const created = !node
     if (!node) {

@@ -1,6 +1,7 @@
 import type { CSSProperties, JSX } from 'react'
 import { useEffect, useRef } from 'react'
 import { Globe, Lock, Search } from 'lucide-react'
+import { internalPageOf } from '@shared/internalPages'
 import type { PhoneBarPosition, Space, Tab, UIState } from '@shared/types'
 import { displayHost } from '@shared/url'
 import { run } from '@renderer/lib/api'
@@ -13,7 +14,6 @@ import {
 } from '@renderer/lib/gestures/dock'
 import { closeOverview, overviewIsOpen, stageStore } from '@renderer/lib/gestures/stage'
 import { closeSpacesDrawer } from '@renderer/lib/gestures/drawer'
-import { isPageTab } from '@renderer/lib/pages'
 import { activeSpace, activeTab } from '@renderer/lib/selectors'
 import { openSiteInfo } from '@renderer/lib/siteInfo'
 import {
@@ -377,9 +377,9 @@ export function PillContent({
   // No lock over a certificate that failed verification (the interstitial, or the page the user
   // proceeded to): the connection is not secure, as site information says.
   const secure = shown?.url.startsWith('https://') && !shown.certificateError
-  // An internal page (Settings): the gear in the favicon slot and the page's name, no lock and
-  // no site-information chip – there is no site (v2 §10.1).
-  const page = isPageTab(shown)
+  // An internal page (Settings): its glyph in the favicon slot and the page's name, no lock and
+  // no site-information chip – there is no site (v2 §10.1); the registry says which glyph.
+  const page = shown ? internalPageOf(shown.url) !== null : false
   const Control = interactive ? 'button' : 'span'
   const controlProps = interactive ? { type: 'button' as const } : {}
   return (

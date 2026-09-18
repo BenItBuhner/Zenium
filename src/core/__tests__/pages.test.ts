@@ -30,6 +30,8 @@ function stub<T extends object>(overrides: Partial<T> = {}): T {
 interface Sent {
   name: string
   payload: unknown
+  /** The window whose chrome received it. */
+  winId: string
 }
 
 interface Fixture {
@@ -41,16 +43,25 @@ interface Fixture {
   loaded: string[]
   /** Events the core sent the chrome. */
   sent: Sent[]
+  /** `host.focus()` calls per window id (a window brought to the front). */
+  raised: Map<string, number>
 }
 
 function fixture(
-  opts: { pageTabs?: boolean; profile?: unknown; pages?: InternalPageRegistry } = {}
+  opts: {
+    pageTabs?: boolean
+    /** A host with several windows (the desktop); one window (Android) by default. */
+    windows?: boolean
+    profile?: unknown
+    pages?: InternalPageRegistry
+  } = {}
 ): Fixture {
   const viewsFor: string[] = []
   const loaded: string[] = []
   const sent: Sent[] = []
+  const raised = new Map<string, number>()
   const capabilities = stub<HostCapabilities>({
-    windows: false,
+    windows: opts.windows ?? false,
     updates: false,
     agents: false,
     pageTabs: opts.pageTabs ?? true
@@ -60,19 +71,29 @@ function fixture(
     capabilities,
     io: memoryIo(opts.profile === undefined ? null : JSON.stringify(opts.profile)),
     windows: {
-      create: () =>
-        stub<WindowHost>({
-          alive: true,
+      create: (win: ZenWindow) => {
+        let alive = true
+        return stub<WindowHost>({
+          get alive() {
+            return alive
+          },
           contentSize: () => ({ width: 412, height: 915 }),
           normalBounds: () => null,
           isFullScreen: () => false,
           isMaximized: () => false,
           isFocused: () => true,
           isVisible: () => true,
+          focus: () => {
+            raised.set(win.id, (raised.get(win.id) ?? 0) + 1)
+          },
+          close: () => {
+            alive = false
+          },
           send: (name: string, payload: unknown) => {
-            sent.push({ name, payload })
+            sent.push({ name, payload, winId: win.id })
           }
         })
+      }
     },
     views: stub<TabViewHost>({
       createView: (tab: Tab) => {
@@ -112,7 +133,7 @@ function fixture(
   browser.state.settings.onboardingDone = true
   browser.start()
   const win = browser.focusedWindow()
-  return { browser, win, viewsFor, loaded, sent }
+  return { browser, win, viewsFor, loaded, sent, raised }
 }
 
 function activeTab(f: Fixture): Tab | undefined {
@@ -395,6 +416,199 @@ describe('back inside Settings (the tab’s history)', () => {
   })
 })
 
+describe('registry attributes the core reads', () => {
+  it('keeps a page out of splits while its entry says splittable: false (Settings)', () => {
+    const f = fixture()
+    const a = openSite(f, 'https://a.test/')
+    const b = openSite(f, 'https://b.test/')
+    const id = openPage(f) ?? ''
+    f.browser.tabs.createSplit([a.id, id], 'vertical', f.win)
+    // Settings was filtered out; one tab left is no split.
+    expect(f.browser.tabs.tab(id)?.splitGroupId).toBeNull()
+    expect(f.browser.tabs.tab(a.id)?.splitGroupId).toBeNull()
+    f.browser.tabs.createSplit([a.id, b.id], 'vertical', f.win)
+    const group = f.browser.tabs.tab(a.id)?.splitGroupId ?? ''
+    expect(group).not.toBe('')
+    f.browser.tabs.addToSplit(group, id)
+    expect(f.browser.tabs.tab(id)?.splitGroupId).toBeNull()
+    expect(f.browser.state.model.splitGroups[group]?.tabIds).toEqual([a.id, b.id])
+  })
+
+  it('lets a page whose entry allows it share a split (a document page)', () => {
+    const f = fixture({ pages: TRIAL })
+    const a = openSite(f, 'https://a.test/')
+    const id = f.browser.handleCommand(f.win, 'page.open', { id: 'downloads' }) as string
+    f.browser.tabs.createSplit([a.id, id], 'vertical', f.win)
+    const group = f.browser.tabs.tab(a.id)?.splitGroupId
+    expect(group).toBeTruthy()
+    expect(f.browser.tabs.tab(id)?.splitGroupId).toBe(group)
+  })
+
+  it('keeps the star on a page whose entry shows it, and off every other zen:// document', () => {
+    const f = fixture()
+    openSite(f, 'https://a.test/')
+    const id = openPage(f, 'privacy') ?? ''
+    expect(f.browser.bookmarkable('zen://settings/privacy')).toBe(true)
+    expect(f.browser.bookmarkable('https://a.test/')).toBe(true)
+    expect(f.browser.bookmarkable('zen://history')).toBe(false)
+    expect(f.browser.bookmarkable('zen://blank')).toBe(false)
+    f.browser.toggleBookmark(id, f.win)
+    expect(f.browser.bookmarks.has('zen://settings/privacy')).toBe(true)
+    expect(f.browser.tabs.tab(id)?.bookmarked).toBe(true)
+    // A section is its own address: the star follows the tab's history like a site's.
+    back(f, id)
+    expect(f.browser.tabs.tab(id)?.url).toBe('zen://settings')
+    expect(f.browser.tabs.tab(id)?.bookmarked).toBe(false)
+    f.browser.tabs.goForward(id)
+    expect(f.browser.tabs.tab(id)?.bookmarked).toBe(true)
+  })
+
+  it('does not star a page whose entry hides it', () => {
+    const f = fixture({ pages: TRIAL })
+    openSite(f, 'https://a.test/')
+    const id = f.browser.handleCommand(f.win, 'page.open', { id: 'welcome' }) as string
+    expect(f.browser.bookmarkable('zen://welcome')).toBe(false)
+    f.browser.toggleBookmark(id, f.win)
+    expect(f.browser.bookmarks.has('zen://welcome')).toBe(false)
+  })
+})
+
+describe('a page asked for from a popup window (core rule)', () => {
+  /** A page's sized `window.open` on a desktop-shaped host: a toolbar-only window off `f.win`. */
+  function popupOff(f: Fixture, from: ZenWindow = f.win): ZenWindow {
+    return f.browser.createWindow({
+      kind: 'unsynced',
+      from,
+      chrome: 'popup',
+      bounds: { x: 80, y: 80, width: 500, height: 400 },
+      empty: true
+    })
+  }
+
+  it('opens the page in the popup’s opener, brought to the front, and never in the popup', () => {
+    const f = fixture({ windows: true })
+    openSite(f, 'https://a.test/')
+    const popup = popupOff(f)
+    const inPopup = f.browser.tabs.createTab({ url: 'https://popup.test/', active: true }, popup)
+    const id = f.browser.handleCommand(popup, 'page.open', { id: 'settings', section: 'privacy' })
+    const tab = f.browser.tabs.tab(typeof id === 'string' ? id : undefined)
+    expect(tab?.url).toBe('zen://settings/privacy')
+    // In the opener's space, active there; the popup's own tab is not in that window.
+    expect(spaceUrls(f)).toContain('zen://settings/privacy')
+    expect(activeTab(f)?.id).toBe(id)
+    expect(tab?.openerTabId).toBeNull()
+    expect(popup.localSpace?.tabIds).toEqual([inPopup.id])
+    expect(f.raised.get(f.win.id)).toBe(1)
+    // The window that asked is the one a chrome page's overlay fallback would go to as well.
+    expect(f.browser.pages.hostWindowFor(popup)).toBe(f.win)
+    expect(f.browser.pages.hostWindowFor(f.win)).toBe(f.win)
+  })
+
+  it('reuses the opener’s Settings tab from the popup as it would from the opener', () => {
+    const f = fixture({ windows: true })
+    openSite(f, 'https://a.test/')
+    const first = openPage(f, 'look')
+    const popup = popupOff(f)
+    f.browser.tabs.createTab({ url: 'https://popup.test/', active: true }, popup)
+    const again = f.browser.handleCommand(popup, 'page.open', { id: 'settings', section: 'about' })
+    expect(again).toBe(first)
+    expect(f.browser.tabs.tab(first ?? undefined)?.url).toBe('zen://settings/about')
+    expect(spaceUrls(f).filter((u) => u.startsWith('zen://settings'))).toHaveLength(1)
+  })
+
+  it('walks a popup’s popup up to the full window, else takes the full window used last', () => {
+    const f = fixture({ windows: true })
+    openSite(f, 'https://a.test/')
+    const popup = popupOff(f)
+    const nested = popupOff(f, popup)
+    expect(f.browser.pages.hostWindowFor(nested)).toBe(f.win)
+    // The opener closed: the last full window used stands in.
+    const other = f.browser.createWindow({ kind: 'synced', from: f.win })
+    other.onFocused()
+    f.win.host.close()
+    f.browser.onWindowClosed(f.win)
+    expect(f.browser.pages.hostWindowFor(popup)).toBe(other)
+  })
+
+  it('sends a chrome page’s overlay to the opener on a host without page tabs', () => {
+    const f = fixture({ windows: true, pageTabs: false })
+    openSite(f, 'https://a.test/')
+    const popup = popupOff(f)
+    f.browser.tabs.createTab({ url: 'https://popup.test/', active: true }, popup)
+    f.sent.length = 0
+    const result = f.browser.handleCommand(popup, 'page.open', { id: 'settings' })
+    expect(result).toBeNull()
+    const overlays = f.sent.filter((s) => s.name === 'overlay.open')
+    expect(overlays).toHaveLength(1)
+    expect(overlays[0].winId).toBe(f.win.id)
+    expect(f.raised.get(f.win.id)).toBe(1)
+  })
+})
+
+describe('a chrome page tab has no view to attach (the guarantee for moves and tear-off)', () => {
+  it('is whole without one: load, claim and claimVisible leave it as it is', () => {
+    const f = fixture()
+    openSite(f, 'https://a.test/')
+    const id = openPage(f, 'look') ?? ''
+    const tabs = f.browser.tabs
+    expect(tabs.view(id)).toBeUndefined()
+    expect(tabs.ensureLoaded(id, f.win)).toBeUndefined()
+    expect(tabs.load(id, f.win)).toBeUndefined()
+    expect(tabs.claim(id, f.win)).toBe(false)
+    tabs.claimVisible(f.win)
+    expect(tabs.ownerOf(id)).toBeUndefined()
+    expect(f.viewsFor).not.toContain(id)
+    // Shown all the same: the window resolves through what it shows, not through a view owner.
+    expect(tabs.visibleTabIds(f.win)).toEqual([id])
+    expect(tabs.windowFor(id)).toBe(f.win)
+    expect(tabs.tab(id)?.discarded).toBe(false)
+    expect(tabs.tab(id)?.loading).toBe(false)
+    expect(tabs.tab(id)?.canGoBack).toBe(true)
+  })
+
+  it('moves into another window and shows there view-less, its section history intact', () => {
+    const f = fixture({ windows: true })
+    openSite(f, 'https://a.test/')
+    const id = openPage(f, 'look') ?? ''
+    const blank = f.browser.createWindow({ kind: 'unsynced', from: f.win })
+    const local = blank.localSpace
+    if (!local) throw new Error('a blank window has a local space')
+    f.browser.handleCommand(blank, 'tab.moveToSpace', { tabId: id, spaceId: local.id })
+    f.browser.tabs.activateTab(id, blank)
+    f.browser.tabs.claimVisible(blank)
+    expect(f.browser.tabs.tab(id)?.spaceId).toBe(local.id)
+    expect(f.browser.tabs.visibleTabIds(blank)).toEqual([id])
+    expect(f.browser.tabs.windowFor(id)).toBe(blank)
+    expect(f.viewsFor).not.toContain(id)
+    expect(f.browser.tabs.tab(id)?.url).toBe('zen://settings/look')
+    expect(f.browser.tabs.tab(id)?.canGoBack).toBe(true)
+    back(f, id)
+    expect(f.browser.tabs.tab(id)?.url).toBe('zen://settings')
+    // One per window: the window it left has none now, so opening there makes a new tab.
+    const again = openPage(f)
+    expect(again).not.toBe(id)
+    expect(spaceUrls(f).filter((u) => u.startsWith('zen://settings'))).toHaveLength(1)
+  })
+
+  it('outlives the window that showed it when another window remains, and shows there', () => {
+    const f = fixture({ windows: true })
+    openSite(f, 'https://a.test/')
+    const id = openPage(f, 'privacy') ?? ''
+    const other = f.browser.createWindow({ kind: 'synced', from: f.win })
+    f.win.onClosing()
+    f.win.host.close()
+    f.win.onClosed()
+    expect(f.browser.allWindows()).toEqual([other])
+    expect(f.browser.tabs.tab(id)).toBeDefined()
+    expect(f.browser.tabs.tab(id)?.discarded).toBe(false)
+    f.browser.tabs.activateTab(id, other)
+    f.browser.tabs.claimVisible(other)
+    expect(f.browser.tabs.visibleTabIds(other)).toEqual([id])
+    expect(f.viewsFor).not.toContain(id)
+    expect(f.browser.tabs.tab(id)?.url).toBe('zen://settings/privacy')
+  })
+})
+
 describe('a restored session', () => {
   it('brings the Settings tab back on its section, loaded and without an opener', () => {
     const space = createSpace('Work', '')
@@ -448,18 +662,29 @@ describe('a restored session', () => {
 // `zen://blank` today, and the shared normaliser only knows the pages in the real registry.
 const TRIAL: InternalPageRegistry = {
   ...INTERNAL_PAGES,
-  welcome: { id: 'welcome', title: 'Welcome', render: 'document', reuse: 'none', sections: [] },
+  welcome: {
+    id: 'welcome',
+    title: 'Welcome',
+    render: 'document',
+    singleton: false,
+    pill: { showStar: false },
+    splittable: true,
+    sections: []
+  },
   downloads: {
     id: 'downloads',
     title: 'Downloads',
     render: 'document',
-    reuse: 'window',
+    singleton: true,
+    glyph: 'download',
+    pill: { showStar: true },
+    splittable: true,
     sections: [{ id: 'active', label: 'Active', keywords: [] }]
   }
 }
 
 describe('a document page on the same route', () => {
-  it('opens in a tab with a page view every time (reuse: none), an opener remembered', () => {
+  it('opens in a tab with a page view every time (singleton: false), an opener remembered', () => {
     const f = fixture({ pages: TRIAL })
     const site = openSite(f, 'https://a.test/')
     const first = f.browser.handleCommand(f.win, 'page.open', { id: 'welcome' }) as string
