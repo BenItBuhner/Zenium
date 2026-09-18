@@ -12,7 +12,7 @@ class NonUniqueHostTest {
     private fun unique(vararg hosts: String) = hosts.forEach { assertFalse(it, NonUniqueHost.isNonUnique(it)) }
 
     @Test
-    fun `loopback: localhost, every star-dot-localhost, 127 slash 8 and colon-colon-1`() {
+    fun `loopback - localhost, every star-dot-localhost, 127 slash 8 and colon-colon-1`() {
         nonUnique(
             "localhost", "LOCALHOST", "localhost.", "dev.localhost", "a.b.localhost",
             "127.0.0.1", "127.1.2.3", "[::1]", "::1", "[0:0:0:0:0:0:0:1]", "[::ffff:127.0.0.1]"

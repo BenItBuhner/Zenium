@@ -1,4 +1,6 @@
+// eslint-disable-next-line no-restricted-imports
 import { readdirSync, readFileSync } from 'node:fs'
+// eslint-disable-next-line no-restricted-imports
 import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { isNonUniqueHost, nonUniqueHostTables, parseIpv4, parseIpv6 } from '../nonUniqueHost'

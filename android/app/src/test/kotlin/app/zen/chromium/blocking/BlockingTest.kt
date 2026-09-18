@@ -222,7 +222,7 @@ class BlockingTest {
     }
 
     @Test
-    fun `HTTPS-only mode leaves non-unique hosts alone: the rule the core writes, and the policy ahead of a stale one`() {
+    fun `HTTPS-only mode leaves non-unique hosts alone - the rule the core writes, and the policy ahead of a stale one`() {
         // The rule as `httpsOnlyRule` in `src/core/protection/service.ts` writes it.
         val httpsOnly = EngineSnapshot(
             listOf(
