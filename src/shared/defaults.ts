@@ -1,6 +1,8 @@
 import type {
   AgentServerStatus,
   AgentSettings,
+  AutofillSettings,
+  AutofillUIState,
   CheckupState,
   Container,
   FolderColor,
@@ -39,13 +41,21 @@ export function emptyAgentServerStatus(): AgentServerStatus {
   return { running: false, url: null, lanUrls: [], token: '', error: null }
 }
 
-/** Offer to save logins, and ask again a minute after the last re-authentication like Chrome. */
+/**
+ * Offer to save logins, ask again a minute after the last re-authentication like Chrome, never
+ * sign in without the picker, leave Android's autofill service in charge where one is set, and
+ * clear a copied secret from the clipboard after a minute (Bitwarden's default; Chrome never does).
+ */
 export const DEFAULT_PASSWORD_SETTINGS: PasswordSettings = {
   offerToSave: true,
-  reauthGraceSeconds: 60
+  reauthGraceSeconds: 60,
+  autoSignIn: false,
+  androidProvider: 'system',
+  clipboardClearSeconds: 60
 }
 
 export const MAX_REAUTH_GRACE_SECONDS = 60 * 60
+export const MAX_CLIPBOARD_CLEAR_SECONDS = 60 * 60
 
 export function sanitizePasswordSettings(
   raw: Partial<PasswordSettings> | undefined | null
@@ -53,11 +63,45 @@ export function sanitizePasswordSettings(
   const d = DEFAULT_PASSWORD_SETTINGS
   const r = raw ?? {}
   const grace = Number(r.reauthGraceSeconds)
+  const clear = Number(r.clipboardClearSeconds)
   return {
     offerToSave: typeof r.offerToSave === 'boolean' ? r.offerToSave : d.offerToSave,
     reauthGraceSeconds: Number.isFinite(grace)
       ? Math.max(0, Math.min(MAX_REAUTH_GRACE_SECONDS, Math.round(grace)))
-      : d.reauthGraceSeconds
+      : d.reauthGraceSeconds,
+    autoSignIn: typeof r.autoSignIn === 'boolean' ? r.autoSignIn : d.autoSignIn,
+    androidProvider:
+      r.androidProvider === 'zenium' || r.androidProvider === 'system'
+        ? r.androidProvider
+        : d.androidProvider,
+    clipboardClearSeconds: Number.isFinite(clear)
+      ? Math.max(0, Math.min(MAX_CLIPBOARD_CLEAR_SECONDS, Math.round(clear)))
+      : d.clipboardClearSeconds
+  }
+}
+
+export const DEFAULT_AUTOFILL_SETTINGS: AutofillSettings = { addresses: true, cards: true }
+
+export function sanitizeAutofillSettings(
+  raw: Partial<AutofillSettings> | undefined | null
+): AutofillSettings {
+  const d = DEFAULT_AUTOFILL_SETTINGS
+  const r = raw ?? {}
+  return {
+    addresses: typeof r.addresses === 'boolean' ? r.addresses : d.addresses,
+    cards: typeof r.cards === 'boolean' ? r.cards : d.cards
+  }
+}
+
+export function emptyAutofillUIState(): AutofillUIState {
+  return {
+    prompts: [],
+    picker: null,
+    addressCount: 0,
+    cardCount: 0,
+    passkeyCount: 0,
+    systemAutofill: null,
+    revision: 0
   }
 }
 
@@ -192,6 +236,7 @@ export const DEFAULT_SETTINGS: Settings = {
   updates: structuredClone(DEFAULT_UPDATE_SETTINGS),
   externalProtocols: {},
   passwords: structuredClone(DEFAULT_PASSWORD_SETTINGS),
+  autofill: structuredClone(DEFAULT_AUTOFILL_SETTINGS),
   defaultBrowserPromo: structuredClone(DEFAULT_PROMO_STATE),
   defaultBrowserPromptDismissed: null,
   blocking: structuredClone(DEFAULT_BLOCKING_SETTINGS),

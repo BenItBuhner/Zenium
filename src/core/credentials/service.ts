@@ -20,7 +20,9 @@ import {
   runCheckup,
   zxcvbnScorer
 } from './checkup'
+import { SensitiveClipboard } from './clipboard'
 import { parseImport, toChromeCsv } from './csv'
+import { clearsInLabel } from './fill'
 import { generatePassphrase, generatePassword } from './generator'
 import { PBKDF2_PARAMS, deriveWithWebCrypto } from './kdf'
 import { domainOf, siteLabel } from './origins'
@@ -73,6 +75,8 @@ export class NoopReauth implements ReauthHost {
  */
 export class PasswordService {
   readonly store: CredentialStore
+  /** Copies of passwords and card numbers go through here (sensitive flag, timed clearing). */
+  readonly clipboard: SensitiveClipboard
   private readonly host: PasswordsHost
   private checkup: CheckupState = emptyCheckupState()
   private checkupAbort: AbortController | null = null
@@ -92,6 +96,7 @@ export class PasswordService {
     host: PasswordsHost | undefined
   ) {
     this.host = host ?? { keys: new NoopKeyWrap(), reauth: new NoopReauth() }
+    this.clipboard = new SensitiveClipboard(browser.platform.clipboard)
     this.store = new CredentialStore(browser.platform.io, this.host.keys)
     this.store.onChange = () => this.bump()
     this.store.loadSync()
@@ -129,8 +134,14 @@ export class PasswordService {
     }
   }
 
+  /** Persist now (also when a mobile host is backgrounded: a copied secret stays for pasting). */
   flushSync(): void {
     this.store.flushSync()
+  }
+
+  /** The app quits: a secret still waiting for its clearing timer leaves the clipboard now. */
+  shutdown(): void {
+    void this.clipboard.flush()
   }
 
   // ---------------------------------------------------------------------------
@@ -241,6 +252,34 @@ export class PasswordService {
       : { status: 'setup-passphrase' }
   }
 
+  /** The re-authentication gate for other services (in-page fill of passwords and cards). */
+  authorize(reason: string, passphrase?: string, win?: ZenWindow): Promise<ReauthOutcome<null>> {
+    return this.reauth(reason, passphrase, win)
+  }
+
+  /** A re-authentication right now would have to ask for the vault passphrase in the chrome. */
+  wouldAskPassphrase(): boolean {
+    const graceMs = this.browser.state.settings.passwords.reauthGraceSeconds * 1000
+    if (this.lastReauthAt && Date.now() - this.lastReauthAt < graceMs) return false
+    return !this.osReauth && this.store.protection().passphrase
+  }
+
+  /**
+   * Put a secret on the clipboard marked sensitive and say so; it is cleared again after the
+   * configured timeout when the host can clear (`what`: "Password", "Card number").
+   */
+  copySecret(text: string, what: string, win?: ZenWindow): void {
+    const seconds = this.clipboard.copy(
+      text,
+      this.browser.state.settings.passwords.clipboardClearSeconds
+    )
+    this.browser.toast(
+      seconds > 0 ? `${what} copied, clears in ${clearsInLabel(seconds)}` : `${what} copied`,
+      'info',
+      win
+    )
+  }
+
   // ---------------------------------------------------------------------------
   // Logins
   // ---------------------------------------------------------------------------
@@ -296,9 +335,11 @@ export class PasswordService {
         win
       )
       if (gate.status !== 'ok') return gate
+      this.copySecret(credential.password, 'Password', win)
+      return { status: 'ok', value: null }
     }
-    this.browser.platform.clipboard.writeText(credential[field])
-    this.browser.toast(field === 'password' ? 'Password copied' : 'Username copied', 'info', win)
+    this.browser.platform.clipboard.writeText(credential.username)
+    this.browser.toast('Username copied', 'info', win)
     return { status: 'ok', value: null }
   }
 

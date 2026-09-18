@@ -1,4 +1,4 @@
-import type { Credential } from '../../shared/types'
+import type { AddressEntry, Credential, PasskeyEntry, PaymentCard } from '../../shared/types'
 import type { KdfParams, KeyWrapHost } from '../platform'
 import {
   DATA_KEY_BYTES,
@@ -13,12 +13,15 @@ import {
 } from './crypto'
 
 /**
- * The vault file. Every login is a separate AES-256-GCM box under one random data key, with a
- * fresh nonce per write and the entry id as additional authenticated data, so a box cannot be
- * moved to another id or another vault. An encrypted manifest lists the ids (and the never-save
- * domains), so a removed, duplicated or foreign entry is noticed as tampering rather than
- * silently accepted. The data key itself is stored wrapped: by the OS keystore, by a key derived
- * from the passphrase, or both.
+ * The vault file. Every entry (a login, an address, a payment card, a passkey record) is a
+ * separate AES-256-GCM box under one random data key, with a fresh nonce per write and the entry
+ * id as additional authenticated data, so a box cannot be moved to another id or another vault.
+ * An encrypted manifest lists the ids (and the never-save domains), so a removed, duplicated or
+ * foreign entry is noticed as tampering rather than silently accepted. The data key itself is
+ * stored wrapped: by the OS keystore, by a key derived from the passphrase, or both.
+ *
+ * Entries carry a `kind` inside the box; a box without one is a login (vaults written before
+ * addresses and cards existed).
  */
 
 export const VAULT_FORMAT = 'zenium-passwords'
@@ -55,7 +58,8 @@ export interface VaultFile {
   entries: VaultEntry[]
 }
 
-interface EntryPayload {
+interface LoginPayload {
+  kind?: 'login'
   origin: string
   url: string
   username: string
@@ -66,6 +70,19 @@ interface EntryPayload {
   updatedAt: number
   lastUsedAt: number | null
 }
+
+type AddressPayload = { kind: 'address' } & Omit<AddressEntry, 'id'>
+type CardPayload = { kind: 'card' } & Omit<PaymentCard, 'id'>
+type PasskeyPayload = { kind: 'passkey' } & Omit<PasskeyEntry, 'id'>
+
+type EntryPayload = LoginPayload | AddressPayload | CardPayload | PasskeyPayload
+
+/** One decrypted entry of any kind. */
+export type VaultRecord =
+  | { kind: 'login'; value: Credential }
+  | { kind: 'address'; value: AddressEntry }
+  | { kind: 'card'; value: PaymentCard }
+  | { kind: 'passkey'; value: PasskeyEntry }
 
 interface ManifestPayload {
   ids: string[]
@@ -162,49 +179,137 @@ export function parseVaultFile(text: string): VaultFile {
   }
 }
 
+const str = (v: unknown): string => (typeof v === 'string' ? v : '')
+const num = (v: unknown, fallback = 0): number =>
+  typeof v === 'number' && Number.isFinite(v) ? v : fallback
+const nullableNum = (v: unknown): number | null => (typeof v === 'number' ? v : null)
+
+function payloadOf(record: VaultRecord): EntryPayload {
+  switch (record.kind) {
+    case 'login': {
+      const c = record.value
+      return {
+        kind: 'login',
+        origin: c.origin,
+        url: c.url,
+        username: c.username,
+        password: c.password,
+        realm: c.realm,
+        notes: c.notes,
+        createdAt: c.createdAt,
+        updatedAt: c.updatedAt,
+        lastUsedAt: c.lastUsedAt
+      }
+    }
+    case 'address':
+      return { kind: 'address', ...withoutId(record.value) }
+    case 'card':
+      return { kind: 'card', ...withoutId(record.value) }
+    case 'passkey':
+      return { kind: 'passkey', ...withoutId(record.value) }
+  }
+}
+
+/** The id lives in the entry envelope, not in the encrypted payload. */
+function withoutId<T extends { id: string }>(value: T): Omit<T, 'id'> {
+  const copy: Partial<T> = { ...value }
+  delete copy.id
+  return copy as Omit<T, 'id'>
+}
+
+function recordOf(id: string, payload: EntryPayload): VaultRecord {
+  const p = payload as Record<string, unknown>
+  switch (p.kind) {
+    case 'address':
+      return {
+        kind: 'address',
+        value: {
+          id,
+          country: str(p.country),
+          name: str(p.name),
+          organization: str(p.organization),
+          streetAddress: str(p.streetAddress),
+          locality: str(p.locality),
+          region: str(p.region),
+          postalCode: str(p.postalCode),
+          sortingCode: str(p.sortingCode),
+          phone: str(p.phone),
+          email: str(p.email),
+          createdAt: num(p.createdAt),
+          updatedAt: num(p.updatedAt),
+          lastUsedAt: nullableNum(p.lastUsedAt)
+        }
+      }
+    case 'card':
+      return {
+        kind: 'card',
+        value: {
+          id,
+          number: str(p.number),
+          expMonth: num(p.expMonth),
+          expYear: num(p.expYear),
+          name: str(p.name),
+          nickname: str(p.nickname),
+          createdAt: num(p.createdAt),
+          updatedAt: num(p.updatedAt),
+          lastUsedAt: nullableNum(p.lastUsedAt)
+        }
+      }
+    case 'passkey':
+      return {
+        kind: 'passkey',
+        value: {
+          id,
+          rpId: str(p.rpId),
+          rpName: str(p.rpName),
+          userName: str(p.userName),
+          userDisplayName: str(p.userDisplayName),
+          credentialId: str(p.credentialId),
+          origin: str(p.origin),
+          createdAt: num(p.createdAt),
+          lastUsedAt: nullableNum(p.lastUsedAt)
+        }
+      }
+    default:
+      return {
+        kind: 'login',
+        value: {
+          id,
+          origin: str(p.origin),
+          url: str(p.url),
+          username: str(p.username),
+          password: str(p.password),
+          realm: typeof p.realm === 'string' ? p.realm : null,
+          notes: str(p.notes),
+          createdAt: num(p.createdAt),
+          updatedAt: num(p.updatedAt),
+          lastUsedAt: nullableNum(p.lastUsedAt)
+        }
+      }
+  }
+}
+
 export async function encryptEntry(
   key: Uint8Array,
   vaultId: string,
-  credential: Credential
+  record: VaultRecord
 ): Promise<VaultEntry> {
-  const payload: EntryPayload = {
-    origin: credential.origin,
-    url: credential.url,
-    username: credential.username,
-    password: credential.password,
-    realm: credential.realm,
-    notes: credential.notes,
-    createdAt: credential.createdAt,
-    updatedAt: credential.updatedAt,
-    lastUsedAt: credential.lastUsedAt
-  }
-  const box = await sealJson(key, payload, entryAad(vaultId, credential.id))
-  return { id: credential.id, ...box }
+  const box = await sealJson(key, payloadOf(record), entryAad(vaultId, record.value.id))
+  return { id: record.value.id, ...box }
 }
 
 async function decryptEntry(
   key: Uint8Array,
   vaultId: string,
   entry: VaultEntry
-): Promise<Credential> {
+): Promise<VaultRecord> {
   let payload: EntryPayload
   try {
     payload = await openJson<EntryPayload>(key, entry, entryAad(vaultId, entry.id))
   } catch {
     throw new VaultError('tampered', `Entry ${entry.id} failed authentication.`)
   }
-  return {
-    id: entry.id,
-    origin: typeof payload.origin === 'string' ? payload.origin : '',
-    url: typeof payload.url === 'string' ? payload.url : '',
-    username: typeof payload.username === 'string' ? payload.username : '',
-    password: typeof payload.password === 'string' ? payload.password : '',
-    realm: typeof payload.realm === 'string' ? payload.realm : null,
-    notes: typeof payload.notes === 'string' ? payload.notes : '',
-    createdAt: typeof payload.createdAt === 'number' ? payload.createdAt : 0,
-    updatedAt: typeof payload.updatedAt === 'number' ? payload.updatedAt : 0,
-    lastUsedAt: typeof payload.lastUsedAt === 'number' ? payload.lastUsedAt : null
-  }
+  return recordOf(entry.id, payload)
 }
 
 /** Seal the manifest for the current set of entries (in order) and never-save domains. */
@@ -223,15 +328,14 @@ export async function sealManifest(
 export async function encodeVault(
   key: Uint8Array,
   meta: { vaultId: string; createdAt: number; keyWrap: KeyWrapRecord },
-  credentials: Credential[],
+  records: VaultRecord[],
   neverSave: string[],
   now: number = Date.now()
 ): Promise<VaultFile> {
   const entries: VaultEntry[] = []
-  for (const credential of credentials)
-    entries.push(await encryptEntry(key, meta.vaultId, credential))
+  for (const record of records) entries.push(await encryptEntry(key, meta.vaultId, record))
   const manifest: ManifestPayload = {
-    ids: credentials.map((c) => c.id),
+    ids: records.map((r) => r.value.id),
     neverSave: [...neverSave],
     updatedAt: now
   }
@@ -249,6 +353,9 @@ export async function encodeVault(
 
 export interface DecodedVault {
   credentials: Credential[]
+  addresses: AddressEntry[]
+  cards: PaymentCard[]
+  passkeys: PasskeyEntry[]
   neverSave: string[]
 }
 
@@ -269,12 +376,31 @@ export async function decodeVault(key: Uint8Array, file: VaultFile): Promise<Dec
   const ids = file.entries.map((e) => e.id)
   if (ids.length !== manifest.ids.length || ids.some((id, i) => id !== manifest.ids[i]))
     throw new VaultError('tampered', 'The vault entries do not match the manifest.')
-  const credentials: Credential[] = []
-  for (const entry of file.entries) credentials.push(await decryptEntry(key, file.vaultId, entry))
-  return {
-    credentials,
+  const decoded: DecodedVault = {
+    credentials: [],
+    addresses: [],
+    cards: [],
+    passkeys: [],
     neverSave: manifest.neverSave.filter((d): d is string => typeof d === 'string')
   }
+  for (const entry of file.entries) {
+    const record = await decryptEntry(key, file.vaultId, entry)
+    switch (record.kind) {
+      case 'login':
+        decoded.credentials.push(record.value)
+        break
+      case 'address':
+        decoded.addresses.push(record.value)
+        break
+      case 'card':
+        decoded.cards.push(record.value)
+        break
+      case 'passkey':
+        decoded.passkeys.push(record.value)
+        break
+    }
+  }
+  return decoded
 }
 
 /** Wrap the data key with a key derived from `passphrase` through the host's KDF. */

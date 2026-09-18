@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Demo Shop - Checkout</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>Demo Shop <a href="/welcome">Basket</a></header>
+<main>
+  <h1>Checkout</h1>
+  <p class="lead">Shipping address and payment.</p>
+  <form action="/order" method="post">
+    <label for="country">Country</label>
+    <select id="country" name="country" autocomplete="country">
+      <option value="US" selected>United States</option>
+      <option value="CA">Canada</option>
+      <option value="GB">United Kingdom</option>
+    </select>
+    <label for="name">Full name</label>
+    <input id="name" name="name" autocomplete="name" autocorrect="off" spellcheck="false">
+    <label for="street">Street address</label>
+    <input id="street" name="street" autocomplete="address-line1" autocorrect="off" spellcheck="false">
+    <label for="city">City</label>
+    <input id="city" name="city" autocomplete="address-level2" autocorrect="off" spellcheck="false">
+    <div class="row">
+      <div>
+        <label for="state">State</label>
+        <input id="state" name="state" autocomplete="address-level1" autocapitalize="characters" autocorrect="off" spellcheck="false">
+      </div>
+      <div>
+        <label for="zip">ZIP</label>
+        <input id="zip" name="zip" inputmode="numeric" autocomplete="postal-code">
+      </div>
+    </div>
+    <label for="cardnumber">Card number</label>
+    <input id="cardnumber" name="cardnumber" inputmode="numeric" autocomplete="cc-number" placeholder="1234 5678 9012 3456">
+    <div class="row">
+      <div>
+        <label for="expiry">Expiry</label>
+        <input id="expiry" name="expiry" inputmode="numeric" autocomplete="cc-exp" placeholder="MM / YY">
+      </div>
+      <div>
+        <label for="cvc">CVC</label>
+        <input id="cvc" name="cvc" inputmode="numeric" autocomplete="cc-csc">
+      </div>
+    </div>
+    <label for="cardname">Name on card</label>
+    <input id="cardname" name="cardname" autocomplete="cc-name" autocorrect="off" spellcheck="false">
+    <button type="submit">Place order</button>
+  </form>
+</main>
+</body>
+</html>

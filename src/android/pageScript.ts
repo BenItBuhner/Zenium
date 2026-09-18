@@ -1,13 +1,16 @@
 import { installPageScript, type PageScriptFlags } from '@shared/pageScript'
 import type { PageRules } from '@shared/types'
+import { installFormsScript } from '@shared/formsScript'
+import { installPasskeyObserver } from '@shared/passkeyObserver'
+import type { FormsCommand } from '@shared/forms'
 import { downloadNameOf, rememberDownloadName, type DownloadNames } from './downloadNames'
 import { installViewportController, type PageRulesConfig } from './viewport'
 
 /**
  * Injected by Kotlin into every page WebView (document-start). Transport is the
  * `WebViewCompat.addWebMessageListener` object `__zenPageBridge`: messages go up with
- * `postMessage`, flags come back through its `onmessage`. Kotlin replaces `__ZEN_TOKEN__` with a
- * per-session secret so pages cannot forge browser messages.
+ * `postMessage`, flags and forms commands come back through its `onmessage`. Kotlin replaces
+ * `__ZEN_TOKEN__` with a per-session secret so pages cannot forge browser messages.
  *
  * Kotlin prefixes the script with the page-controls rules (`window.__zenPageRules`) and the
  * view's width (`window.__zenDeviceWidth`), so zoom, the desktop layout and force-zoom are laid
@@ -92,6 +95,7 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
 
   let onFlags: ((flags: PageScriptFlags) => void) | null = null
   let onZap: ((on: boolean) => void) | null = null
+  let onForms: ((command: FormsCommand) => void) | null = null
   const onMessage = (event: { data: string }): void => {
     try {
       const data = JSON.parse(event.data) as {
@@ -100,9 +104,11 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
         on?: boolean
         rules?: PageRules
         deviceWidth?: number
+        command?: FormsCommand
       }
       if (data.type === 'flags' && data.flags) onFlags?.(data.flags)
       else if (data.type === 'zap') onZap?.(Boolean(data.on))
+      else if (data.type === 'forms' && data.command) onForms?.(data.command)
       else if (data.type === 'pageRules' && data.rules && topFrame) {
         const config: PageRulesConfig = {
           rules: data.rules,
@@ -131,6 +137,19 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
       domReady()
     }
   }
+
+  // This script runs in the page's own world, so the WebAuthn observer installs directly.
+  try {
+    installPasskeyObserver(w)
+  } catch {
+    /* a page that seals navigator.credentials keeps its passkeys unlisted */
+  }
+  installFormsScript({
+    send: (forms) => bridge.postMessage(JSON.stringify({ token: TOKEN, type: 'forms', forms })),
+    onCommand: (listener) => {
+      onForms = listener
+    }
+  })
 
   installPageScript({
     trackMedia: true,

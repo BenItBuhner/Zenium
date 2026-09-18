@@ -1,5 +1,6 @@
 import type { KeyBinding, NavigationSnapshot, PageRules, Rect, Tab } from '@shared/types'
 import type { SafeBrowsingHit } from '@shared/privacy'
+import type { FormsCommand } from '@shared/forms'
 import type { SiteCertificate } from '@shared/siteInfo'
 import { zenPageHtml, type ImagePageLookup, type ReaderPageLookup } from '@shared/zenPages'
 import type {
@@ -354,6 +355,11 @@ export class AndroidTabView implements TabView {
 
   setZapMode(on: boolean): void {
     this.bridge.send('view.setZap', { tabId: this.tabId, on })
+  }
+
+  /** Autofill: a fill for the page's forms script, or its on/off configuration (Kotlin keeps the latter for new documents). */
+  sendFormsCommand(command: FormsCommand): void {
+    this.bridge.send('view.forms', { tabId: this.tabId, command })
   }
 
   setBackgroundColor(color: string): void {

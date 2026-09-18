@@ -116,3 +116,29 @@ describe('AndroidTabView.dispatch', () => {
     expect(reached).toEqual(['onDestroyed'])
   })
 })
+
+describe('AndroidTabView.sendFormsCommand', () => {
+  it('hands fills and the on/off configuration to Kotlin for the page', () => {
+    const { bridge, calls } = fakeBridge()
+    const view = new AndroidTabView('tab_1', bridge)
+    view.sendFormsCommand({ type: 'config', enabled: false })
+    view.sendFormsCommand({
+      type: 'fill',
+      formId: 'f1',
+      values: { username: 'ada', password: 'pw' }
+    })
+    expect(calls).toEqual([
+      {
+        method: 'view.forms',
+        args: { tabId: 'tab_1', command: { type: 'config', enabled: false } }
+      },
+      {
+        method: 'view.forms',
+        args: {
+          tabId: 'tab_1',
+          command: { type: 'fill', formId: 'f1', values: { username: 'ada', password: 'pw' } }
+        }
+      }
+    ])
+  })
+})

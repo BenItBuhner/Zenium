@@ -30,6 +30,7 @@ import {
   type PageDialogAnswer,
   type PageDialogCall
 } from '../../shared/pageDialogIpc'
+import type { FormsCommand } from '../../shared/forms'
 import type {
   AgentCapture,
   AgentCaptureOptions,
@@ -572,6 +573,10 @@ export class ElectronTabView implements TabView {
 
   sendPageFlags(flags: PageFlags): void {
     this.wc.send('zen:page-flags', flags)
+  }
+
+  sendFormsCommand(command: FormsCommand): void {
+    if (!this.wc.isDestroyed()) this.wc.send('zen:forms', command)
   }
 
   setZapMode(on: boolean): void {

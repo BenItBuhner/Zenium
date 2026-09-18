@@ -737,6 +737,7 @@ export class TabManager {
     this.browser.permissionPrompts.cancelForTab(tabId)
     this.browser.permissions.onTabGone(tabId)
     this.browser.pageDialogs.cancelForTab(tabId)
+    this.browser.autofill.onTabGone(tabId)
     if (this.owners.has(tabId)) view.detach()
     this.owners.delete(tabId)
     if (!view.isDestroyed()) {

@@ -36,6 +36,7 @@ import type {
   WindowMaterial
 } from '../shared/types'
 import type { AppIconId } from '../shared/appIcon'
+import type { FormsCommand, FormsEvent } from '../shared/forms'
 import type { CaptionColors } from '../shared/theme'
 import type { KeyInput } from '../shared/shortcuts'
 import type { SiteCertificate, SiteCookie } from '../shared/siteInfo'
@@ -127,6 +128,8 @@ export interface PageMessage {
     | 'focus'
     | 'interstitial'
     | 'navigate-intent'
+    /** The forms script reports fields, submissions and passkey requests (`forms`). */
+    | 'forms'
   url?: string
   x?: number
   y?: number
@@ -139,6 +142,8 @@ export interface PageMessage {
   action?: InterstitialAction
   /** `navigate-intent`: the navigation the page is starting (consumed by the host, not the core). */
   intent?: NavigationIntent
+  /** `forms`: what the forms script saw (a focused field, a submit, a passkey). */
+  forms?: FormsEvent
 }
 
 /** What a host reports when a page calls `alert`, `confirm` or `prompt`. */
@@ -420,6 +425,8 @@ export interface TabView {
   setPopupsAllowed?(allowed: boolean): void
   /** Boost "zap element" picker on/off. */
   setZapMode(on: boolean): void
+  /** Autofill: fill values into the page's form, or reconfigure the forms script. */
+  sendFormsCommand?(command: FormsCommand): void
   setBackgroundColor(color: string): void
   focus(): void
   /** Whether this page holds the keyboard right now. Hosts that cannot tell leave it out. */
@@ -732,7 +739,12 @@ export interface PermissionPromptHost {
 }
 
 export interface ClipboardHost {
-  writeText(text: string): void
+  /**
+   * `sensitive` marks a password or card number: hosts whose clipboard has a preview (Android 13+
+   * `ClipDescription.EXTRA_IS_SENSITIVE`) hide the value there; the core clears it again after
+   * the configured timeout through `clearText`.
+   */
+  writeText(text: string, sensitive?: boolean): void
   /** Fetch an image and put it on the clipboard; resolves false when unsupported / failed. */
   writeImageFromUrl(url: string): Promise<boolean>
   /**
@@ -740,6 +752,12 @@ export interface ClipboardHost {
    * leave it out; the URL bar's paste-and-go actions then do nothing.
    */
   readText?(): Promise<string>
+  /**
+   * Empty the clipboard if it still holds exactly `expected` (a secret copied earlier); a
+   * clipboard the user has meanwhile used for something else is left alone. Hosts without it
+   * cannot clear, and the core says so in the copy toast.
+   */
+  clearText?(expected: string): Promise<void>
 }
 
 export interface ShellHost {
@@ -1176,6 +1194,28 @@ export interface PasswordsHost {
   reauth: ReauthHost
 }
 
+/** What Android's autofill framework says about the device (`AutofillManager`). */
+export interface SystemAutofillStatus {
+  /** A system autofill service is set for the user (Google, Bitwarden, 1Password, …). */
+  enabled: boolean
+  /** The service's component name when the system reveals it (API 28+), else null. */
+  service: string | null
+}
+
+/**
+ * The host side of in-page autofill beyond the page script: on Android the WebView is always a
+ * client of the system Autofill Framework, so the core needs to know whether a service is set
+ * and be able to keep it off the pages when Zenium is the chosen provider. Desktop hosts leave
+ * this out.
+ */
+export interface AutofillHost {
+  systemStatus(): Promise<SystemAutofillStatus>
+  /** `zenium`: the pages stop taking part in system autofill; `system`: the framework fills them. */
+  setProvider(provider: 'system' | 'zenium'): void
+  /** Status changes while the app runs (the user set a service in the system settings). */
+  onSystemStatusChanged?(listener: (status: SystemAutofillStatus) => void): void
+}
+
 /** A default filter list whose snapshot is built into the app (`resources/blocking/`). */
 export interface BundledFilterList {
   id: string
@@ -1275,6 +1315,8 @@ export interface Platform {
   readonly externalProtocols?: ExternalProtocolHost
   /** Key protection and re-authentication for the password vault; omit when `capabilities.passwords` is off. */
   readonly passwords?: PasswordsHost
+  /** The system autofill framework (Android); desktop hosts have none. */
+  readonly autofill?: AutofillHost
   /** Bundled filter-list snapshots; hosts without it start unprotected until the lists download. */
   readonly blocking?: BlockingHost
   /**

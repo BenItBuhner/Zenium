@@ -56,6 +56,8 @@ import { PageControls } from './pageControls'
 import { UpdateService } from './updates'
 import { ExternalProtocolService } from './externalProtocols'
 import { PasswordService } from './credentials/service'
+import { AutofillService } from './autofill'
+import { addressFormat, countries } from './credentials/address'
 import { DefaultBrowserService } from './defaultBrowser'
 import { BlockingService } from './blocking/service'
 import { ProtectionService } from './protection/service'
@@ -81,7 +83,12 @@ import { routeSharedIntent, type SharedIntent } from '../shared/shareTarget'
 import { copyConfirmation } from '../shared/clipboard'
 import { IMAGE_URL_PREFIX } from '../shared/zenPages'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
-import { ONBOARDING_ESSENTIALS, sanitizePasswordSettings, spaceLabel } from '../shared/defaults'
+import {
+  ONBOARDING_ESSENTIALS,
+  sanitizeAutofillSettings,
+  sanitizePasswordSettings,
+  spaceLabel
+} from '../shared/defaults'
 import { sanitizePhoneBar } from '../shared/phoneBar'
 import { PRIVATE_THEME, captionColors, resolveTheme, rgbToHex } from '../shared/theme'
 import { newId } from '../shared/ids'
@@ -170,6 +177,8 @@ export class Browser {
   readonly externalProtocols: ExternalProtocolService
   /** The encrypted credential vault and everything the password manager does with it. */
   readonly passwords: PasswordService
+  /** In-page autofill: save / update prompts, the account picker, addresses, cards, passkey records. */
+  readonly autofill: AutofillService
   /** The system's browser role: are we the default, and should we be asking to become it. */
   readonly defaultBrowser: DefaultBrowserService
   /** Ad and tracker blocking: the rule engine, its lists and the blocked-request counters. */
@@ -271,6 +280,7 @@ export class Browser {
     this.siteInfo = new SiteInfoService(this)
     this.externalProtocols = new ExternalProtocolService(this)
     this.passwords = new PasswordService(this, platform.passwords)
+    this.autofill = new AutofillService(this)
     this.defaultBrowser = new DefaultBrowserService(this)
     this.blocking = new BlockingService(this)
     this.protection = new ProtectionService(this)
@@ -295,6 +305,7 @@ export class Browser {
       securityPrompts: this.security.list(),
       pageDialogs: this.pageDialogs.list(),
       crashRestore: this.session.crashRestoreOffer(),
+      autofill: this.autofill.uiState(),
       blocking: this.blocking.status(),
       privacy: this.protection.status(),
       translate: this.translate.uiState()
@@ -671,6 +682,7 @@ export class Browser {
     this.agents.start()
     this.updates.start()
     this.passwords.start()
+    this.autofill.start()
     this.defaultBrowser.start()
     this.translate.start()
     this.syncShortcuts()
@@ -728,6 +740,7 @@ export class Browser {
     this.boosts.apply(tabId)
     void this.reader.detect(tabId)
     this.translate.onPageReady(tabId)
+    this.autofill.onPageReady(tabId)
   }
 
   onNavigated(tabId: string): void {
@@ -735,6 +748,7 @@ export class Browser {
     if (tab) tab.readerable = false
     this.extensions.closePopup()
     this.translate.onNavigated(tabId)
+    this.autofill.onNavigated(tabId)
   }
 
   updateMedia(): void {
@@ -1305,6 +1319,7 @@ export class Browser {
     this.protection.stop()
     this.blocking.stop()
     this.translate.stop()
+    this.passwords.shutdown()
     // The pages on screen have scrolled since their stacks were last read.
     this.tabs.rememberAllNavigation()
     this.state.markExiting()
@@ -1468,6 +1483,15 @@ export class Browser {
       this.revealTab(tabId)
       return
     }
+    if (message.type === 'forms') {
+      if (
+        message.forms &&
+        typeof message.forms === 'object' &&
+        typeof message.forms.type === 'string'
+      )
+        this.autofill.handleEvent(tabId, message.forms)
+      return
+    }
     if (message.type === 'interstitial') {
       if (typeof message.action === 'string' && typeof message.url === 'string')
         this.protection.handleInterstitial(tabId, message.action, message.url)
@@ -1547,6 +1571,25 @@ export class Browser {
         this.security.forgetSession()
         void platform.sessions.clearAuthCache?.()
       },
+      'autofill.respond': ({ id, response }) => this.autofill.respond(id, response),
+      'autofill.pick': ({ id, itemId, passphrase }, win) =>
+        this.autofill.pick(id, itemId, passphrase, win),
+      'autofill.listAddresses': () => this.autofill.listAddresses(),
+      'autofill.addAddress': ({ address }) => this.autofill.addAddress(address),
+      'autofill.updateAddress': ({ id, patch }) => this.autofill.updateAddress(id, patch),
+      'autofill.removeAddress': ({ id }) => this.autofill.removeAddress(id),
+      'autofill.addressFormat': ({ country }) => addressFormat(country),
+      'autofill.countries': () => countries(),
+      'autofill.listCards': () => this.autofill.listCards(),
+      'autofill.addCard': ({ card }) => this.autofill.addCard(card),
+      'autofill.updateCard': ({ id, patch }) => this.autofill.updateCard(id, patch),
+      'autofill.removeCard': ({ id }) => this.autofill.removeCard(id),
+      'autofill.revealCard': ({ id, passphrase }, win) =>
+        this.autofill.revealCard(id, passphrase, win),
+      'autofill.copyCardNumber': ({ id, passphrase }, win) =>
+        this.autofill.copyCardNumber(id, passphrase, win),
+      'autofill.listPasskeys': () => this.autofill.listPasskeys(),
+      'autofill.removePasskey': ({ id }) => this.autofill.removePasskey(id),
       'app.openExternal': ({ url }) => {
         if (/^(https?|mailto):/.test(url)) platform.shell.openExternal(url)
       },
@@ -1786,7 +1829,11 @@ export class Browser {
       'session.restoreClosed': ({ id }, win) => this.session.restoreClosed(id, win),
       'session.clearRecentlyClosed': () => this.session.clearRecentlyClosed(),
 
-      'clipboard.writeText': ({ text }) => platform.clipboard.writeText(text),
+      'clipboard.writeText': ({ text, sensitive }) => {
+        if (sensitive)
+          this.passwords.clipboard.copy(text, state.settings.passwords.clipboardClearSeconds)
+        else platform.clipboard.writeText(text)
+      },
 
       'bookmark.toggle': ({ tabId }, win) => this.toggleBookmark(tabId, win),
       'bookmark.star': ({ tabId }, win) => this.starTab(tabId, win),
@@ -2082,7 +2129,8 @@ export class Browser {
       agents: JSON.stringify(s.agents),
       updates: JSON.stringify(s.updates),
       blocking: s.blocking,
-      privacy: JSON.stringify(s.privacy)
+      privacy: JSON.stringify(s.privacy),
+      autofill: `${JSON.stringify(s.passwords)}${JSON.stringify(s.autofill)}`
     }
     for (const [key, value] of Object.entries(patch)) {
       if (value === undefined) continue
@@ -2113,6 +2161,11 @@ export class Browser {
         s.passwords = sanitizePasswordSettings({
           ...s.passwords,
           ...(value as Partial<Settings['passwords']>)
+        })
+      } else if (key === 'autofill' && value && typeof value === 'object') {
+        s.autofill = sanitizeAutofillSettings({
+          ...s.autofill,
+          ...(value as Partial<Settings['autofill']>)
         })
       } else if (key === 'defaultBrowserPromo' && value && typeof value === 'object') {
         s.defaultBrowserPromo = sanitizePromoState({
@@ -2166,6 +2219,8 @@ export class Browser {
     if (before.appIcon !== s.appIcon) this.platform.app.setAppIcon?.(s.appIcon)
     if (before.blocking !== s.blocking) this.blocking.onSettingsChanged()
     if (before.privacy !== JSON.stringify(s.privacy)) this.protection.onSettingsChanged()
+    if (before.autofill !== `${JSON.stringify(s.passwords)}${JSON.stringify(s.autofill)}`)
+      this.autofill.onSettingsChanged()
     this.state.commit()
   }
 
