@@ -14,6 +14,7 @@ import {
   SheetMotion,
   type SheetDetents
 } from '@renderer/lib/motion/sheet'
+import { reducedMotion } from '@renderer/lib/motion/spring'
 import { VelocityTracker } from '@renderer/lib/motion/velocity'
 import type { Hold } from '@renderer/lib/pageView'
 import { isTextField, sheetInitialFocus, wrapTab } from '@renderer/lib/popover'
@@ -27,6 +28,9 @@ import { cn } from '@renderer/lib/utils'
  * ours before the WebView starts a scroll it could not perform anyway.
  */
 const SLOP = 6
+
+/** Under reduced motion an appearance or departure is an opacity fade of this length (v2 §11.3). */
+export const REDUCED_MOTION_FADE_MS = 120
 
 export interface BottomSheetHandle {
   /** Slide the sheet off the screen; `then` runs once it is gone, right before `onDismissed`. */
@@ -235,7 +239,13 @@ export function BottomSheet({
       const m = motion()
       if (m.isOpen) return
       m.present()
-      if (sheetRef.current) sheetRef.current.style.visibility = 'visible'
+      const sheet = sheetRef.current
+      if (sheet) {
+        sheet.style.visibility = 'visible'
+        // Below the screen at this frame, the step to full opacity shows nothing; under reduced
+        // motion the spring has jumped it into place and main.css fades it in over 120 ms (§11.3).
+        sheet.style.opacity = '1'
+      }
     })
   }
 
@@ -434,6 +444,8 @@ export function BottomSheet({
     () => () => {
       hold.current?.cancel()
       hold.current = null
+      if (fade.current !== null) window.clearTimeout(fade.current)
+      fade.current = null
       const m = motionRef.current
       if (!m) return
       afterDismiss.current = null
@@ -457,11 +469,35 @@ export function BottomSheet({
     return true
   }
 
+  /**
+   * Under reduced motion a departure is a 120 ms fade in place (§11.3): the sheet and its scrim
+   * go to 0 on main.css's transition, and the spring's jump off the screen follows the fade.
+   * Cleared by a finger catching the sheet before the jump, or by the unmount.
+   */
+  const fade = useRef<number | null>(null)
+  const dropFade = (): void => {
+    if (fade.current === null) return
+    window.clearTimeout(fade.current)
+    fade.current = null
+    if (sheetRef.current) sheetRef.current.style.opacity = '1'
+    paint()
+  }
+
   const dismiss = (then?: () => void): void => {
     if (dropHold(then)) return
     const m = motion()
     if (!m.isOpen) return
     if (then) afterDismiss.current = then
+    if (fade.current !== null) return
+    if (reducedMotion() && sheetRef.current && scrimRef.current) {
+      sheetRef.current.style.opacity = '0'
+      scrimRef.current.style.opacity = '0'
+      fade.current = window.setTimeout(() => {
+        fade.current = null
+        motion().dismiss()
+      }, REDUCED_MOTION_FADE_MS)
+      return
+    }
     m.dismiss()
   }
 
@@ -487,6 +523,7 @@ export function BottomSheet({
     t.y0 = e.clientY
     // Whatever the motion was about to do (a pick, a dismissal) is off: the finger decides now.
     afterDismiss.current = null
+    dropFade()
     motion().beginDrag()
     // Captured only now: a capture from pointerdown on would retarget the click of a plain tap
     // away from the row that was tapped.
@@ -614,7 +651,7 @@ export function BottomSheet({
           'zen-sheet zen-sheet-detents absolute inset-x-0 bottom-0 mx-auto flex w-full max-w-[520px] flex-col',
           className
         )}
-        style={{ paddingBottom: Math.max(8, insets.bottom), visibility: 'hidden' }}
+        style={{ paddingBottom: Math.max(8, insets.bottom), visibility: 'hidden', opacity: 0 }}
         data-locked="true"
         data-surface="page"
       >

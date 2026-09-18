@@ -2034,6 +2034,17 @@
     will-change: transform, scale;
   }
   /*
+   * Reduced motion (v2 §11.3): the spring jumps the sheet to its detent and off it, and the
+   * chassis turns each jump into a 120 ms opacity fade in place – the sheet's and its scrim's.
+   * Nowhere else does the chassis put a timed transition on a sheet.
+   */
+  @media (prefers-reduced-motion: reduce) {
+    .zen-sheet-scrim,
+    .zen-sheet-detents {
+      transition: opacity 120ms var(--zen-ease);
+    }
+  }
+  /*
    * The grabber's tap target is a 44 px band (v2 §9.9), drawn as the same 32×4 bar 8 px from the
    * top. It is 96 px wide and overlaps the header's upper half only in the middle, so the header's
    * leading and trailing 44 px controls keep their whole targets; the grip still drags anywhere.
@@ -5977,8 +5988,16 @@
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
-  /* The load bar's appearance and departure stay an opacity fade, at v2 §11.3's 120 ms, not a cut. */
-  .zen-load-progress {
+  /*
+   * The load bar's appearance and departure stay an opacity fade, at v2 §11.3's 120 ms, not a
+   * cut; so do a sheet's and its scrim's (the chassis rules above transition opacity alone under
+   * reduced motion, and the phone frame-dialog host's sheet does the same).
+   */
+  .zen-load-progress,
+  .zen-sheet-scrim,
+  .zen-sheet-detents,
+  .zen-frame-dialogs[data-sheet] .zen-frame-scrim,
+  .zen-frame-dialogs[data-sheet] .zen-frame-dialogs-slot {
     transition-duration: 120ms !important;
   }
   /*
