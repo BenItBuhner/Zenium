@@ -250,10 +250,12 @@ class SiteInfoDemo {
     }
 
     private fun tapLabel(f: Finger, label: String): Boolean {
-        val target = findByLabel(label) ?: run {
+        val candidates = findAllByLabel(label)
+        val target = candidates.firstOrNull() ?: run {
             Log.w(TAG, "no node labelled '$label'")
             return false
         }
+        Log.i(TAG, "tap '$label' at $target of ${candidates.size} candidates $candidates")
         f.tap(target.exactCenterX(), target.exactCenterY())
         return true
     }
@@ -328,10 +330,13 @@ class SiteInfoDemo {
         while (queue.isNotEmpty() && visited < 8_000) {
             val node = queue.removeFirst()
             visited++
-            val names = listOfNotNull(node.contentDescription?.toString(), node.text?.toString())
-                .map { it.replace(Regex("\\s+"), " ").trim() }
+            val described = node.contentDescription?.toString()?.replace(Regex("\\s+"), " ")?.trim()
+            val names = listOfNotNull(described, node.text?.toString()?.replace(Regex("\\s+"), " ")?.trim())
             val bounds = Rect().also { node.getBoundsInScreen(it) }
             if (names.any { it == label }) {
+                exact += bounds
+            } else if (described != null && (described.startsWith("$label,") || described.startsWith(label))) {
+                // A row's own name: its label, a comma, its value.
                 exact += bounds
             } else if (names.any { it.startsWith(label) }) {
                 val button = node.className?.toString()?.endsWith("Button") == true

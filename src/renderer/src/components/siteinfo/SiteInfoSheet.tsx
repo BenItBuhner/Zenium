@@ -762,6 +762,8 @@ function SheetRow({
         className={className}
         data-danger={danger || undefined}
         disabled={disabled}
+        // The row's name is its label and its value, read as two parts ("Connection, Secure").
+        aria-label={value ? `${label}, ${value}` : label}
         onClick={onClick}
       >
         {body}
@@ -1255,6 +1257,7 @@ function PopRow({
         className="zen-siteinfo-row"
         data-control={control ? '' : undefined}
         disabled={disabled}
+        aria-label={value ? `${label}, ${value}` : label}
         onClick={onClick}
       >
         {body}
