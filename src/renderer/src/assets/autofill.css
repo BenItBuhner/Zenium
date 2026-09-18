@@ -104,21 +104,11 @@
 .zen-v2-radio:disabled {
   opacity: 0.4;
 }
-/* Fields (§5): 32 tall at radius 4 with a hairline, 40 and radius 6 under a finger. */
-.zen-v2-field {
-  min-width: 0;
-  height: var(--v2-control);
-  flex: 1;
-  padding: 0 12px;
-  border: 1px solid var(--v2-border);
-  border-radius: var(--v2-radius-control);
-  background: var(--v2-page);
-  color: var(--v2-text);
-  font-size: var(--v2-font-body);
-}
-.zen-v2-field::placeholder {
-  color: var(--v2-text-deemphasized);
-}
+/*
+ * Fields (§5, §9.12) are the chassis' `.zen-v2-field` (extensions.css: 32 / 40 tall, radius
+ * 4 / 6, the text at 30% as the border, `width: 100%`); nothing is restated here – a restated
+ * `flex: 1` once gave the field a 0% basis inside its column-flex label and collapsed it to 22.
+ */
 /* Icon buttons (§9.3): 28 with a 16 glyph on desktop, 44 with 20 on phones, 40 on tablets. */
 .zen-v2-icon-button {
   display: inline-flex;
@@ -206,13 +196,9 @@
   height: 16px;
   margin-right: 8px;
 }
-/* A field under its label takes the label's width; disabled at .4 (§9.30). */
-.zen-v2-af-label > .zen-v2-field,
+/* A menulist under its label takes the label's width (the chassis field already does). */
 .zen-v2-af-label > .zen-v2-af-menulist {
   width: 100%;
-}
-.zen-v2-field:disabled {
-  opacity: 0.4;
 }
 /* A secret string (§4): the platform monospace, no ligatures, one colour. */
 .zen-v2-field[data-secret] {
@@ -245,6 +231,10 @@ textarea.zen-v2-field {
   corner-shape: var(--zen-corner);
   background: var(--v2-panel);
   box-shadow: var(--v2-shadow-panel);
+}
+/* A notice panel holds the focus itself on open (§9.22, `tabIndex -1`); the panel draws no ring for it. */
+.zen-v2-af-popover:focus {
+  outline: none;
 }
 /*
  * The picker's document (`?surface=autofill`): a transparent page whose one panel sits inside
@@ -456,11 +446,12 @@ textarea.zen-v2-field {
   font-size: var(--v2-font-small);
   line-height: var(--v2-line-body);
 }
+/* The 16 glyph on the message's first line: (line − 16) / 2 below its top, never a hard-coded 2 (§9.2). */
 .zen-v2-af-error svg {
   flex-shrink: 0;
   width: 16px;
   height: 16px;
-  margin-top: 2px;
+  margin-top: calc((var(--v2-line-body) - 16px) / 2);
 }
 .zen-v2-af-field-row {
   display: flex;
@@ -497,7 +488,7 @@ textarea.zen-v2-field {
   text-align: left;
   outline: none;
   user-select: none;
-  transition: background 100ms var(--zen-ease);
+  transition: background 120ms var(--zen-ease);
 }
 .zen-v2-af-row:has(.zen-v2-af-row-desc) {
   min-height: var(--v2-row-two-line);
@@ -567,15 +558,17 @@ textarea.zen-v2-field {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* The description wraps to two lines then ellipsis (§9.2); the row grows to 72 with it. */
 .zen-v2-af-row-desc {
-  display: block;
+  display: -webkit-box;
   overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   color: var(--v2-text-deemphasized);
   font-size: var(--v2-font-small);
   font-variant-numeric: tabular-nums;
   line-height: var(--v2-line-body);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 /* A trailing glyph in a list row (§9.18) centres on the row. */
 .zen-v2-af-row-trailing {
@@ -620,6 +613,10 @@ textarea.zen-v2-field {
 /* A sheet's rows carry their own 16 sides (the menu sheet's radio rows, the passkey chooser's). */
 .zen-v2-af-sheet .zen-v2-af-list {
   padding: 0 0 8px;
+}
+/* Rows over a footer (the passkey chooser): 16 from the last row's box to the buttons (§9.20, §9.23) – 12 here with the footer's 4. */
+.zen-v2-af-sheet .zen-v2-af-list + .zen-v2-af-form {
+  padding-top: 4px;
 }
 .zen-v2-af-rule {
   height: 1px;
@@ -768,26 +765,26 @@ textarea.zen-v2-field {
 
 /*
  * A 28 px icon button (§9.3) among the pill's chips, drawing in the family of the surface it sits
- * on (`--v2-control-*`, the window's here) like the star beside it: 70% at rest, full on hover
- * with the window fill, the pressed fill while its popover is open (§9.20).
+ * on (`--v2-control-*`, the window's here) like the star beside it: the family's 69% ink at rest
+ * (§9.29 – opacity is disabled's alone, §9.30), the full ink on hover with the window fill, the
+ * pressed fill while its popover is open (§9.20).
  */
 .zen-v2-af-chip {
-  color: var(--v2-control-text);
-  opacity: 0.7;
+  color: var(--v2-control-text-deemphasized);
   transition:
     background 120ms var(--zen-ease),
-    opacity 120ms var(--zen-ease);
+    color 120ms var(--zen-ease);
 }
 @media (hover: hover) {
   .zen-v2-af-chip:hover {
     background: var(--v2-control-fill);
-    opacity: 1;
+    color: var(--v2-control-text);
   }
 }
 .zen-v2-af-chip:active,
 .zen-v2-af-chip[aria-expanded='true'] {
   background: var(--v2-control-fill-hover);
-  opacity: 1;
+  color: var(--v2-control-text);
 }
 
 /* ------------------------------------------------------------------------------------------ */
@@ -795,22 +792,31 @@ textarea.zen-v2-field {
 /* ------------------------------------------------------------------------------------------ */
 
 /*
- * The pane: sections 32 apart (24 on phones) in a 664 column. On desktop it opens on its 22/600
- * title with a 15/69% description 4 under it (§9.26); on a phone the chip strip names the pane
- * and the groups carry the 15/600 headings, so the title is not drawn.
+ * The pane: a 664 column. On desktop it opens on its 22/600 title with a 15/69% description 4
+ * under it, 16 from that block's last line to the first sub-heading's box, then sections 32
+ * apart (§9.26). On a phone the chip strip names the pane and the groups carry the 15/600
+ * headings, so the title is not drawn and the groups sit 20 apart – the heading's own air (§10.3).
  */
 .zen-v2-af-pane {
   display: flex;
   max-width: var(--v2-content-max);
   flex-direction: column;
-  gap: 32px;
   color: var(--v2-text);
   font-size: var(--v2-font-body);
   font-weight: var(--v2-weight-body);
   line-height: var(--v2-line-body);
 }
-:root[data-form-factor='phone'] .zen-v2-af-pane {
-  gap: 24px;
+.zen-v2-af-pane > * + * {
+  margin-top: 32px;
+}
+.zen-v2-af-pane > .zen-v2-af-pane-head + * {
+  margin-top: 16px;
+}
+:root[data-form-factor='phone'] .zen-v2-af-pane > * + * {
+  margin-top: 20px;
+}
+:root[data-form-factor='phone'] .zen-v2-af-pane > .zen-v2-af-pane-head + * {
+  margin-top: 16px;
 }
 .zen-v2-af-pane-title {
   font-size: var(--v2-font-title);
@@ -840,6 +846,13 @@ textarea.zen-v2-field {
   flex-direction: column;
   gap: 8px;
 }
+/* On a phone a group is one run of rows (§10.3): its lists touch, 8 from the heading block only. */
+:root[data-form-factor='phone'] .zen-v2-af-section {
+  gap: 0;
+}
+:root[data-form-factor='phone'] .zen-v2-af-heading-block {
+  margin-bottom: 8px;
+}
 .zen-v2-af-heading {
   font-size: var(--v2-font-body);
   font-weight: var(--v2-weight-heading);
@@ -849,10 +862,10 @@ textarea.zen-v2-field {
   margin-top: 4px;
 }
 /*
- * A card (§3, §6): flat, one hairline, radius 8, only where a group carries its own actions (a
- * manager with its add row). Rows inside bring their own 16 px sides and touch (§9.21); the
- * card's 10 px block padding is what the first and last rows' 6 leave of the 16. A phone group is
- * rows under its heading (§9.17, §10.3) – the card dissolves there and no new phone card appears.
+ * A card (§3, §6), desktop only: flat, one hairline, radius 8, only where a group carries its
+ * own actions (a manager with its add row). Rows inside bring their own 16 px sides and touch
+ * (§9.21); the card's 10 px block padding is what the first and last rows' 6 leave of the 16. A
+ * phone group is rows under its heading (§9.17, §10.3): `List` draws no card there.
  */
 .zen-v2-af-card {
   padding: 10px 0;
@@ -866,11 +879,11 @@ textarea.zen-v2-field {
   padding-left: var(--v2-card-padding);
   padding-right: var(--v2-card-padding);
 }
-/* The interim phone Settings overlay keeps the card, at phone metrics: 44 rows leave 4 of the 16. */
-:root[data-form-factor='phone'] .zen-v2-af-card {
-  padding: 4px 0;
-}
-/* The vault gate (§9.27): a 17/600 title on 22 with its glyph, the description, the action under. */
+/*
+ * The vault gate card (§9.27): its name inside – the 17/600 title on 22 with its glyph 8 before
+ * it – under one 16 padding (the card's row inset does not apply: its body is text), the
+ * description under the title, the action 12 below.
+ */
 .zen-v2-af-gate {
   display: flex;
   flex-direction: column;
@@ -903,12 +916,23 @@ textarea.zen-v2-field {
 .zen-v2-af-gate-form > .zen-v2-af-label {
   max-width: 320px;
 }
-:root[data-form-factor='phone'] .zen-v2-af-gate-form > .zen-v2-af-label {
-  max-width: none;
-}
 .zen-v2-af-gate-actions {
   display: flex;
   gap: 8px;
+}
+/*
+ * The phone gate has no card (§10.3): the form's field sits at the gutter under the heading, 4
+ * above and 8 below like a field in a row (§9.21), and its two buttons split the width at an 8
+ * gap (§9.11's phone peers).
+ */
+:root[data-form-factor='phone'] .zen-v2-af-gate-form {
+  padding: 4px 0 8px;
+}
+:root[data-form-factor='phone'] .zen-v2-af-gate-form > .zen-v2-af-label {
+  max-width: none;
+}
+:root[data-form-factor='phone'] .zen-v2-af-gate-actions > .zen-v2-button {
+  flex: 1;
 }
 .zen-v2-af-rows {
   display: flex;
@@ -1024,24 +1048,93 @@ textarea.zen-v2-field {
   width: 220px;
 }
 /*
- * A value row on a phone (§9.13, §10.4): the menulist is not drawn; the label sits on the first
- * line with the current value as its description, no chevron, and the whole row opens the choice
- * sheet, the press fill on the row.
+ * Phone rows that are the control (§10.4): the value row (the menulist is not drawn – the label
+ * on the first line, the current value as its description, no chevron, the tap opens the choice
+ * sheet), the switch row and the action row. The whole row is a button with the press fill on
+ * it, bleeding to the page's edge through the interim overlay's 12 px gutter (the §10 tab's rows
+ * run edge to edge with their own 16), square: a phone page has no radius inside it except the
+ * field and the switch (§10.3). Disabled is .4 on the row, text and control together (§9.30).
  */
-button.zen-v2-af-srow {
-  border-radius: var(--v2-radius-inner);
+:root[data-form-factor='phone'] .zen-v2-af-pane {
+  --zen-af-gutter: 12px;
+}
+.zen-v2-af-tap-row {
   transition: background 120ms var(--zen-ease);
 }
-button.zen-v2-af-srow:active:not(:disabled) {
+:root[data-form-factor='phone'] .zen-v2-af-tap-row {
+  width: auto;
+  margin-left: calc(-1 * var(--zen-af-gutter, 0px));
+  margin-right: calc(-1 * var(--zen-af-gutter, 0px));
+  padding-left: var(--zen-af-gutter, 0px);
+  padding-right: var(--zen-af-gutter, 0px);
+}
+.zen-v2-af-tap-row:active:not(:disabled) {
   background: var(--v2-fill);
 }
-button.zen-v2-af-srow:disabled {
+.zen-v2-af-tap-row:disabled {
   opacity: 0.4;
 }
 /*
- * Empty state inside a card (§9.17): one plain row – 32 / 44 tall, the sentence at 15 and 69%
- * left-aligned at the card's 16 padding like a row's label, no top gap; the card's next row is its
- * follow-up.
+ * The switch (§10.4): a 36 × 20 track at radius 10 trailing the text, the 16 thumb 2 in with a 16
+ * travel over 150 ms; off is the text at 25% with a page-coloured thumb, on the accent with the
+ * on-accent thumb. `aria-checked` is the row's. Three text lines: the switch centres on the label's
+ * line, (line − 20) / 2 below its top (§9.18). Own class until #156's shared switch lands.
+ */
+.zen-v2-af-switch {
+  position: relative;
+  display: block;
+  width: 36px;
+  height: 20px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  background: rgb(var(--v2-text-rgb) / 0.25);
+  transition: background 150ms var(--zen-ease);
+}
+.zen-v2-af-switch::after {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--v2-page);
+  content: '';
+  transition:
+    transform 150ms var(--zen-ease),
+    background 150ms var(--zen-ease);
+}
+.zen-v2-af-switch-row[aria-checked='true'] > .zen-v2-af-switch {
+  background: var(--v2-accent);
+}
+.zen-v2-af-switch-row[aria-checked='true'] > .zen-v2-af-switch::after {
+  transform: translateX(16px);
+  background: var(--v2-on-accent);
+}
+.zen-v2-af-switch-row[data-wrapped] > .zen-v2-af-switch {
+  align-self: flex-start;
+  margin-top: calc((var(--v2-line-body) - 20px) / 2);
+}
+/*
+ * An action row (§10.4): the row is the button; its glyph sits in the entries' leading slot so
+ * the labels share one edge. While it works, the 20 spinner trails at full opacity (§9.30) and
+ * the row takes no second press.
+ */
+.zen-v2-af-action-row[aria-busy='true'] {
+  pointer-events: none;
+}
+.zen-v2-af-row-spinner {
+  flex-shrink: 0;
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  border: 2px solid var(--v2-text);
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: zen-v2-af-spin 800ms linear infinite;
+}
+/*
+ * Empty state inside a card or a phone group (§9.17): one plain row – 32 / 44 tall, the sentence
+ * at 15 and 69% left-aligned at the card's 16 padding (the gutter on a phone) like a row's label,
+ * no top gap; the list's next row is its follow-up.
  */
 .zen-v2-af-srow-empty {
   display: flex;
@@ -1051,6 +1144,9 @@ button.zen-v2-af-srow:disabled {
   color: var(--v2-text-deemphasized);
   font-size: var(--v2-font-body);
   line-height: var(--v2-line-body);
+}
+.zen-v2-af-rows > .zen-v2-af-srow-empty {
+  padding-inline: 0;
 }
 :root[data-form-factor='phone'] .zen-v2-af-srow-empty {
   padding-block: 12px;
@@ -1068,12 +1164,6 @@ button.zen-v2-af-srow:disabled {
 .zen-v2-af-add-controls {
   display: flex;
   gap: 8px;
-}
-.zen-v2-af-add-controls > .zen-v2-field {
-  max-width: 320px;
-}
-:root[data-form-factor='phone'] .zen-v2-af-add-controls > .zen-v2-field {
-  max-width: none;
 }
 /* Validation under the field (§9.12) inside a card sits at the card's 16. */
 .zen-v2-af-card > .zen-v2-af-error {

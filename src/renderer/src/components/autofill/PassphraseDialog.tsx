@@ -46,8 +46,9 @@ function PassphraseForm({ ask, onCancel }: { ask: Ask; onCancel: () => void }): 
   const [value, setValue] = useState('')
   const id = useId()
   const field = useRef<HTMLInputElement>(null)
-  // The field takes the focus when the form opens and again when a refused attempt hands it back
-  // (the disabled field lost it while the attempt ran); an attempt clears the field as it leaves.
+  // The field takes the focus when the form opens and again after a refused attempt; an attempt
+  // clears the field as it leaves and holds it read-only – nothing dims while the vault works
+  // (§9.30: busy is the spinner on Unlock at full opacity, and Cancel stays live).
   useEffect(() => {
     if (!ask.busy) field.current?.focus()
   }, [ask.busy])
@@ -66,17 +67,16 @@ function PassphraseForm({ ask, onCancel }: { ask: Ask; onCancel: () => void }): 
           ref={field}
           id={id}
           type="password"
+          secret
           value={value}
           autoComplete="current-password"
-          disabled={ask.busy}
+          readOnly={ask.busy}
           onChange={(e) => setValue(e.target.value)}
         />
       </Labelled>
       <Footer count={2}>
-        <Btn onClick={onCancel} disabled={ask.busy}>
-          Cancel
-        </Btn>
-        <Btn type="submit" variant="primary" busy={ask.busy} disabled={!value}>
+        <Btn onClick={onCancel}>Cancel</Btn>
+        <Btn type="submit" variant="primary" busy={ask.busy} disabled={!value && !ask.busy}>
           Unlock
         </Btn>
       </Footer>
