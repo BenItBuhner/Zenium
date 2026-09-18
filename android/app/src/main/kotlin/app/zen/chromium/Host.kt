@@ -22,6 +22,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.InputMethodManager
 import android.webkit.WebChromeClient
+import android.webkit.WebView
 import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatDelegate
@@ -97,6 +98,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         private set
     /** Previews of the pages a back gesture would return to. */
     override val snapshots = HistorySnapshots(activity)
+    /** Page views go behind the chrome no earlier than with the chrome's next drawn frame. */
+    private val pageVisibility = PageVisibility { tabId, visible -> tabs.setVisible(tabId, visible) }
     /** Last: it reads the tabs and fullscreen state above when it decides what back would do. */
     val back = PredictiveBack(activity, this, chrome = { chrome }, onLeave = { activity.moveTaskToBack(true) })
     val lifecycle = HostLifecycle()
@@ -197,7 +200,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "view.setBounds" -> { tabs.setBounds(args.str("tabId"), args.obj("rect")); reply(null) }
             "view.setRadius" -> { tabs.setRadius(args.str("tabId"), args.num("radius")); reply(null) }
             "view.setPullOffset" -> { tab?.setPullOffset(args.num("offset")); reply(null) }
-            "view.setVisible" -> { tabs.setVisible(args.str("tabId"), args.bool("visible")); reply(null) }
+            "view.setVisible" -> { setTabVisible(args.str("tabId"), args.bool("visible")); reply(null) }
             "view.bringToFront" -> { tabs.bringToFront(args.str("tabId")); reply(null) }
             "view.download" -> {
                 if (tab != null) downloads.start(args.str("url"), tab.settings.userAgentString, null, null, -1, tab.tabId)
@@ -592,6 +595,24 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         root.requestLayout()
         chrome.invalidate()
         for (tab in tabs.all()) if (tab.visibility == View.VISIBLE) tab.invalidate()
+    }
+
+    /**
+     * `view.setVisible`: a show happens now; a hide waits for the chrome to draw the frame that
+     * carries the layout it was reported from – the chrome lies under the pages, and that frame
+     * holds the page's stand-in picture – or for [PageVisibility.DEADLINE_MS] (see [PageVisibility]).
+     */
+    private fun setTabVisible(tabId: String, visible: Boolean) {
+        val ticket = pageVisibility.request(tabId, visible) ?: return
+        val deadline = Runnable {
+            if (pageVisibility.complete(ticket)) Log.d(TAG, "hide of $tabId: chrome drew no frame within the deadline")
+        }
+        main.postDelayed(deadline, PageVisibility.DEADLINE_MS)
+        chrome.postVisualStateCallback(ticket.id, object : WebView.VisualStateCallback() {
+            override fun onComplete(requestId: Long) {
+                if (pageVisibility.complete(ticket)) main.removeCallbacks(deadline)
+            }
+        })
     }
 
     private var probeRun: Runnable? = null

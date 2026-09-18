@@ -581,7 +581,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
             </span>
           </div>
           <div className="relative min-h-0 flex-1 overflow-hidden">
-            <TabPreview tab={hero} scale={1 - 0.2 * p} />
+            <TabPreview tab={hero} scale={1 - 0.2 * p} cover />
           </div>
         </div>
       )}

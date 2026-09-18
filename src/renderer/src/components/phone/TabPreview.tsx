@@ -4,12 +4,18 @@ import { BLANK_URL, getHost } from '@shared/url'
 import { tabTitle } from '@renderer/lib/selectors'
 import { useThumbnail } from '@renderer/lib/thumbnails'
 import { cn } from '@renderer/lib/utils'
+import { CoverImage } from '../content/CoverImage'
 import { Favicon } from '../sidebar/Favicon'
 
 interface Props {
   tab: Tab
   /** Scale of the placeholder typography (1 = a full-size page). */
   scale?: number
+  /**
+   * This card stands in for the live page (the hero of the overview, the current tab's card in
+   * a switch): the page is kept until the card's picture is painted (see `lib/cover.ts`).
+   */
+  cover?: boolean
   className?: string
   style?: CSSProperties
 }
@@ -19,14 +25,20 @@ interface Props {
  * chrome captured of it, or – for pages never shown since start-up – a quiet placeholder page
  * carrying the tab's identity.
  */
-export function TabPreview({ tab, scale = 1, className, style }: Props): JSX.Element {
+export function TabPreview({
+  tab,
+  scale = 1,
+  cover = false,
+  className,
+  style
+}: Props): JSX.Element {
   const thumbnail = useThumbnail(tab.id)
   if (thumbnail) {
     return (
-      <img
+      <CoverImage
+        tabId={tab.id}
         src={thumbnail}
-        alt=""
-        draggable={false}
+        cover={cover}
         className={cn('block h-full w-full object-cover object-top', className)}
         style={style}
       />
