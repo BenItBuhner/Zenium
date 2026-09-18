@@ -127,13 +127,84 @@ class BlockingTest {
         val moved = Blocking.evaluate(snapshot, tab, "https://moved.example/x", true, "text/html", "GET")
         assertTrue(moved is Verdict.Empty)
         assertEquals(listOf("https://upgrade.example/page", "https://safe.example/"), tab.redirects)
-        // Subresources cannot be redirected from shouldInterceptRequest: they pass.
-        assertSame(Verdict.Pass, Blocking.evaluate(snapshot, tab, "https://moved.example/a.js", false, null, "GET"))
-        assertSame(Verdict.Pass, Blocking.evaluate(snapshot, tab, "http://upgrade.example/a.js", false, null, "GET"))
+        // Subresources cannot be redirected from shouldInterceptRequest: the verdict names the
+        // target for the redirect executor (`Extensions.redirect()`), which substitutes it.
+        val sub = Blocking.evaluate(snapshot, tab, "https://moved.example/a.js", false, null, "GET")
+        assertTrue(sub is Verdict.Redirect)
+        assertEquals("https://safe.example/", (sub as Verdict.Redirect).url)
+        assertEquals(ResourceType.SCRIPT, sub.type)
+        val up = Blocking.evaluate(snapshot, tab, "http://upgrade.example/a.js", false, null, "GET")
+        assertEquals("https://upgrade.example/a.js", (up as Verdict.Redirect).url)
         assertEquals(0, tab.blocked)
         val nav = Blocking.decideNavigation(snapshot, tab, "http://upgrade.example/")
         assertEquals(Decision.Action.UPGRADE, nav.action)
         assertEquals("https://upgrade.example/", nav.redirectUrl)
+    }
+
+    @Test
+    fun `HTTPS-only mode's subresource upgrades stay the page's mixed-content business`() {
+        val httpsOnly = EngineSnapshot(
+            listOf(
+                RuleSetInfo.parse(
+                    JSONObject(
+                        """{"id":"${Blocking.HTTPS_ONLY_SET}","source":"builtin","priority":100,"enabled":true,"rules":[
+                            {"id":1,"action":{"type":"upgradeScheme"},"condition":{"urlFilter":"http://*"}}
+                        ]}"""
+                    )
+                )!!
+            ),
+            null
+        )
+        val tab = FakeTab()
+        assertSame(Verdict.Pass, Blocking.evaluate(httpsOnly, tab, "http://plain.example/a.js", false, null, "GET"))
+        val nav = Blocking.evaluate(httpsOnly, tab, "http://plain.example/", true, "text/html", "GET")
+        assertTrue(nav is Verdict.Empty)
+        assertEquals(listOf("http://plain.example/" to "https://plain.example/"), tab.upgrades)
+    }
+
+    @Test
+    fun `the observer hears every decision with the matcher's latency, the partition is the tab's`() {
+        val heard = ArrayList<Triple<String, Decision, Long>>()
+        val observer = DecisionObserver { _, request, decision, nanos -> heard.add(Triple("${request.partition}:${request.url}", decision, nanos)) }
+        val tab = FakeTab(containerId = "work")
+        Blocking.evaluate(snapshot, tab, "https://tracker.net/t.js", false, "*/*", "GET", observer = observer)
+        Blocking.evaluate(snapshot, tab, "https://cdn.example/app.js", false, null, "GET", observer = observer)
+        Blocking.evaluate(snapshot, tab, "data:text/plain,hi", false, null, "GET", observer = observer)
+        assertEquals(2, heard.size)
+        assertEquals("work:https://tracker.net/t.js", heard[0].first)
+        assertEquals(Decision.Action.BLOCK, heard[0].second.action)
+        assertEquals(Decision.TEXT_SET_ID, heard[0].second.matchedSet)
+        assertEquals("work:https://cdn.example/app.js", heard[1].first)
+        assertEquals(Decision.Action.ALLOW, heard[1].second.action)
+        assertNull(heard[1].second.matchedSet)
+        assertTrue(heard.all { it.third >= 0 })
+        // With an observer even the empty snapshot reports (the allow the request got), so the
+        // observational webRequest events of the extension platform see every request.
+        Blocking.evaluate(EngineSnapshot.EMPTY, tab, "https://tracker.net/t.js", false, null, "GET", observer = observer)
+        assertEquals(3, heard.size)
+        assertEquals(Decision.Action.ALLOW, heard[2].second.action)
+    }
+
+    @Test
+    fun `an extension's scoped set decides nothing in a private tab`() {
+        val scoped = EngineSnapshot(
+            listOf(
+                RuleSetInfo.parse(
+                    JSONObject(
+                        """{"id":"ext:abc:static:ads","source":"dnr","priority":2999,"enabled":true,"partitions":["default","work"],"rules":[
+                            {"id":1,"action":{"type":"block"},"condition":{"urlFilter":"||ads.example^"}}
+                        ]}"""
+                    )
+                )!!
+            ),
+            null
+        )
+        val private = FakeTab(containerId = "private")
+        assertSame(Verdict.Pass, Blocking.evaluate(scoped, private, "https://ads.example/a.js", false, null, "GET"))
+        assertEquals(Decision.Action.ALLOW, Blocking.decideNavigation(scoped, private, "https://ads.example/").action)
+        val work = FakeTab(containerId = "work")
+        assertTrue(Blocking.evaluate(scoped, work, "https://ads.example/a.js", false, null, "GET") is Verdict.Empty)
+        assertEquals(Decision.Action.BLOCK, Blocking.decideNavigation(scoped, FakeTab(), "https://ads.example/").action)
     }
 
     @Test

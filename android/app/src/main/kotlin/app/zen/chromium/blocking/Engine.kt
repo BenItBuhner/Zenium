@@ -5,9 +5,14 @@ package app.zen.chromium.blocking
  * priority order plus one text engine over the enabled filter lists. `decide` follows the
  * declarativeNetRequest resolution of the TypeScript engine (`src/core/blocking/engine.ts`):
  * highest effective priority wins, allow beats block within a priority, `allowAllRequests`
- * matched by a request's document allows the request, and filter-list matches take part at the
- * filter-list priority with uBlock Origin's `@@` / `$important` semantics resolved inside the
- * text engine. Header edits are not applied on Android.
+ * matched by a request's document allows the request, a set scoped to partitions takes part
+ * only in requests of one of them, and filter-list matches take part at the filter-list
+ * priority with uBlock Origin's `@@` / `$important` semantics resolved inside the text engine.
+ * Header edits are not applied on Android.
+ *
+ * Structured rules are looked up through each set's [RuleIndex] (a request visits the rules
+ * under its host's suffixes and its URL's tokens, plus the few with nothing to index them by),
+ * so an extension's tens of thousands of rules cost a request microseconds, not a scan.
  */
 class EngineSnapshot(sets: Collection<RuleSetInfo>, private val text: TextEngine?) {
     private val ordered: List<RuleSetInfo> = sets
@@ -20,6 +25,12 @@ class EngineSnapshot(sets: Collection<RuleSetInfo>, private val text: TextEngine
     /** Network filters in the text engine. */
     val filterCount: Int get() = text?.filterCount ?: 0
 
+    /** Structured rules across the enabled sets. */
+    val ruleCount: Int = ordered.sumOf { it.rules.size }
+
+    /** The enabled sets with structured rules, highest priority first (diagnostics). */
+    val ruleSets: List<RuleSetInfo> get() = ordered
+
     private class Candidate(val effective: Long, val rank: Int, val decision: Decision)
 
     fun decide(req: Request): Decision {
@@ -27,12 +38,18 @@ class EngineSnapshot(sets: Collection<RuleSetInfo>, private val text: TextEngine
         var frameComputed = false
         var frame: Request? = null
         for (set in ordered) {
+            if (!set.appliesTo(req.partition)) continue
             val current = best
             // Lower bands cannot beat a definitive winner from a higher band.
             if (current != null && set.priority < current.effective / (DnrRule.RULE_PRIORITY_MAX + 1)) break
-            for (rule in set.rules) {
+            set.index.forEachCandidate(req) { rule ->
+                if (rule.matches(req)) {
+                    decisionFor(set.id, rule, req)?.let { best = better(best, Candidate(rule.effective, rule.action.rank, it)) }
+                }
+            }
+            for (rule in set.index.allowAll) {
                 var hit = rule.matches(req)
-                if (!hit && rule.action == RuleAction.ALLOW_ALL_REQUESTS) {
+                if (!hit) {
                     if (!frameComputed) {
                         frame = frameContext(req)
                         frameComputed = true
@@ -45,6 +62,12 @@ class EngineSnapshot(sets: Collection<RuleSetInfo>, private val text: TextEngine
                 best = better(best, Candidate(rule.effective, rule.action.rank, decision))
             }
         }
+        return resolveText(best, req)
+    }
+
+    /** The filter lists' word, against the structured rules' best candidate so far. */
+    private fun resolveText(structured: Candidate?, req: Request): Decision {
+        var best = structured
         if (text != null) {
             val current = best
             val allowedAbove = current != null && current.decision.action == Decision.Action.ALLOW && current.effective >= TEXT_EFFECTIVE
@@ -89,7 +112,37 @@ class EngineSnapshot(sets: Collection<RuleSetInfo>, private val text: TextEngine
     private fun frameContext(req: Request): Request? {
         if (req.type == ResourceType.MAIN_FRAME) return null
         val url = req.documentUrl ?: return null
-        return Request(url, ResourceType.MAIN_FRAME, null, "GET", thirdParty = false, tabId = req.tabId)
+        return Request(url, ResourceType.MAIN_FRAME, null, "GET", thirdParty = false, tabId = req.tabId, partition = req.partition)
+    }
+
+    /**
+     * The same resolution over every rule of every applicable set, without the index: the
+     * reference [decide] is checked against in tests, and what a diagnostics run compares to.
+     */
+    internal fun decideLinear(req: Request): Decision {
+        var best: Candidate? = null
+        var frameComputed = false
+        var frame: Request? = null
+        for (set in ordered) {
+            if (!set.appliesTo(req.partition)) continue
+            val current = best
+            if (current != null && set.priority < current.effective / (DnrRule.RULE_PRIORITY_MAX + 1)) break
+            for (rule in set.rules) {
+                var hit = rule.matches(req)
+                if (!hit && rule.action == RuleAction.ALLOW_ALL_REQUESTS) {
+                    if (!frameComputed) {
+                        frame = frameContext(req)
+                        frameComputed = true
+                    }
+                    val f = frame
+                    hit = f != null && rule.matches(f)
+                }
+                if (!hit) continue
+                val decision = decisionFor(set.id, rule, req) ?: continue
+                best = better(best, Candidate(rule.effective, rule.action.rank, decision))
+            }
+        }
+        return resolveText(best, req)
     }
 
     companion object {

@@ -24,7 +24,10 @@ import java.util.zip.GZIPInputStream
  * the current snapshot on WebView's IO threads. It also hands the core the bundled snapshot of
  * the default lists (`assets/blocking/`), the `BlockingHost` half of the platform contract, and
  * hosts the `chrome.webRequest`-style [listeners] the extension platform's emulation registers
- * (the Android half of the desktop multiplexer's listener contract, see `WebRequest.kt`).
+ * (the Android half of the desktop multiplexer's listener contract, see `WebRequest.kt`). The
+ * extension runtime's declarativeNetRequest sets are among the persisted sets (`ext:` ids,
+ * scoped to the partitions their extension runs in); it hears the engine's decisions through
+ * [observer] and substitutes redirected subresources through [redirector].
  *
  * One instance per process ([shared]): the browser window's `Host` and every custom tab's
  * `CustomTabHost` read the same files, so they share one compiled snapshot – the default lists
@@ -55,6 +58,24 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
      */
     @Volatile
     var policy: RequestPolicy? = null
+
+    /**
+     * Told of every decision the engine takes on a page's request, on the IO thread that took
+     * it (the Android half of the desktop's `ElectronBlocking.onDecision`): the extension
+     * runtime routes the decisions that named an extension's rule into `getMatchedRules`, the
+     * action counts and `onRuleMatchedDebug`, and the observational `webRequest` events. Must be
+     * cheap; it runs before the request goes out.
+     */
+    @Volatile
+    var observer: DecisionObserver? = null
+
+    /**
+     * Honours a `redirect` (or another set's `upgradeScheme`) decision on a subresource, which
+     * WebView cannot redirect from `shouldInterceptRequest`: the extension runtime's
+     * `Extensions.redirect()` substitutes the target's response. Null lets the request through.
+     */
+    @Volatile
+    var redirector: RedirectExecutor? = null
 
     /** Wall-clock milliseconds of the last build, for the settings sheet and the demo. */
     @Volatile
@@ -151,7 +172,7 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
     fun intercept(tab: BlockingTab, request: WebResourceRequest): WebResourceResponse? {
         val verdict = evaluate(
             snapshot, listeners, tab, request.url.toString(), request.isForMainFrame,
-            request.requestHeaders ?: emptyMap(), request.method ?: "GET", policy
+            request.requestHeaders ?: emptyMap(), request.method ?: "GET", policy, observer
         )
         return when (verdict) {
             Verdict.Pass -> null
@@ -161,6 +182,7 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
                 verdict.mimeType, verdict.charset, 200, "OK",
                 mapOf("Content-Length" to verdict.bytes.size.toString()), ByteArrayInputStream(verdict.bytes)
             )
+            is Verdict.Redirect -> redirector?.redirect(tab, request, verdict.url, verdict.type)
         }
     }
 
@@ -259,6 +281,7 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
     fun stats(): JSONObject = JSONObject()
         .put("sets", snapshot.setCount)
         .put("filters", snapshot.filterCount)
+        .put("rules", snapshot.ruleCount)
         .put("builds", builds)
         .put("lastBuildMs", lastBuildMs)
 
@@ -325,9 +348,10 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
             isMainFrame: Boolean,
             headers: Map<String, String>,
             method: String,
-            policy: RequestPolicy? = null
+            policy: RequestPolicy? = null,
+            observer: DecisionObserver? = null
         ): Verdict {
-            val engine = evaluate(snap, tab, url, isMainFrame, headers["Accept"], method, policy)
+            val engine = evaluate(snap, tab, url, isMainFrame, headers["Accept"], method, policy, observer)
             if (listeners.isEmpty || !isHttp(url)) return engine
             val record = listeners.begin(tab, url, method, isMainFrame, ResourceType.guessKnown(url, isMainFrame, headers["Accept"]))
             if (engine !is Verdict.Pass) {
@@ -378,7 +402,8 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
             isMainFrame: Boolean,
             accept: String?,
             method: String,
-            policy: RequestPolicy? = null
+            policy: RequestPolicy? = null,
+            observer: DecisionObserver? = null
         ): Verdict {
             if (!isHttp(url)) return Verdict.Pass
             val known = ResourceType.guessKnown(url, isMainFrame, accept)
@@ -394,12 +419,15 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
                     return Verdict.Empty(403, "Forbidden")
                 }
             }
-            if (snap === EngineSnapshot.EMPTY) return Verdict.Pass
+            if (snap === EngineSnapshot.EMPTY && observer == null) return Verdict.Pass
             val req = Request(
                 url, type, if (isMainFrame) null else tab.documentUrl, method,
-                tabId = tab.tabId, typeMask = known?.bit ?: ResourceType.AMBIGUOUS_MASK
+                tabId = tab.tabId, typeMask = known?.bit ?: ResourceType.AMBIGUOUS_MASK,
+                partition = tab.containerId
             )
-            val decision = snap.decide(req)
+            val started = System.nanoTime()
+            val decision = if (snap === EngineSnapshot.EMPTY) Decision.ALLOW else snap.decide(req)
+            observer?.onDecision(tab, req, decision, System.nanoTime() - started)
             return when (decision.action) {
                 Decision.Action.ALLOW -> Verdict.Pass
                 Decision.Action.BLOCK -> {
@@ -417,25 +445,29 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
                         tab.onRequestsBlocked(1)
                         Verdict.Neutered(type)
                     }
-                    isMainFrame && decision.redirectUrl != null -> {
+                    decision.redirectUrl == null -> Verdict.Pass
+                    isMainFrame -> {
                         tab.onDocumentRedirected(decision.redirectUrl)
                         Verdict.Empty(204, "No Content")
                     }
-                    // WebView cannot redirect a subresource from here; the translator's rule is honoured on the desktop only.
-                    else -> Verdict.Pass
+                    // WebView cannot redirect a subresource from here: the redirect executor
+                    // substitutes the target's response, or the request goes out unchanged.
+                    else -> Verdict.Redirect(decision.redirectUrl, type)
                 }
-                // WebView cannot redirect a subresource from here: `always` mode's subresource
-                // upgrades are the desktop's; here the page's mixed-content mode stands in.
-                Decision.Action.UPGRADE -> {
-                    if (isMainFrame && applyUpgrade(policy, tab, url, decision)) Verdict.Empty(204, "No Content")
-                    else Verdict.Pass
+                Decision.Action.UPGRADE -> when {
+                    isMainFrame -> if (applyUpgrade(policy, tab, url, decision)) Verdict.Empty(204, "No Content") else Verdict.Pass
+                    // HTTPS-only mode's subresource upgrades (`always` mode) are the desktop's;
+                    // here the page's mixed-content mode stands in.
+                    decision.matchedSet == HTTPS_ONLY_SET || decision.redirectUrl == null -> Verdict.Pass
+                    // An extension's `upgradeScheme` on a subresource: fetched over https by the executor.
+                    else -> Verdict.Redirect(decision.redirectUrl, type)
                 }
             }
         }
 
         fun decideNavigation(snap: EngineSnapshot, tab: BlockingTab, url: String): Decision {
             if (snap === EngineSnapshot.EMPTY || !isHttp(url)) return Decision.ALLOW
-            return snap.decide(Request(url, ResourceType.MAIN_FRAME, null, "GET", tabId = tab.tabId))
+            return snap.decide(Request(url, ResourceType.MAIN_FRAME, null, "GET", tabId = tab.tabId, partition = tab.containerId))
         }
 
         /** The core's rule set for HTTPS-only mode (`BUILTIN_RULE_SETS.httpsOnly` in `rules.ts`). */
@@ -547,6 +579,24 @@ sealed class Verdict {
 
     /** A body a listener's `data:` / `about:blank` redirect stands for, served as 200. */
     class Body(val mimeType: String, val charset: String?, val bytes: ByteArray) : Verdict()
+
+    /**
+     * A rule's `redirect` / `upgradeScheme` of a subresource to `url`: for the [RedirectExecutor]
+     * to substitute; the request goes out unchanged when there is none.
+     */
+    class Redirect(val url: String, val type: ResourceType) : Verdict()
+}
+
+/** Hears every decision the engine takes on a page's request; see [Blocking.observer]. */
+fun interface DecisionObserver {
+    /** `elapsedNanos` is the time `EngineSnapshot.decide` took (the matcher's latency). */
+    fun onDecision(tab: BlockingTab, request: Request, decision: Decision, elapsedNanos: Long)
+}
+
+/** Substitutes the response of a redirected subresource; see [Blocking.redirector]. */
+fun interface RedirectExecutor {
+    /** The response standing in for `request`, redirected to `target`; null to let WebView load `request` itself. */
+    fun redirect(tab: BlockingTab, request: WebResourceRequest, target: String, type: ResourceType): WebResourceResponse?
 }
 
 /** What the engine needs from a tab and tells it (implemented by `TabWebView`). */

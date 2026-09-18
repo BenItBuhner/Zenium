@@ -20,7 +20,13 @@ class Request(
      * [ResourceType.AMBIGUOUS_MASK] when WebView gave nothing away. Type conditions match when
      * they and this mask share a bit.
      */
-    val typeMask: Int = type.bit
+    val typeMask: Int = type.bit,
+    /**
+     * The session partition the request runs in (`RequestContext.partition`: the tab's container
+     * id, `private` for a private tab). A set scoped to partitions (`RuleSet.partitions`) takes
+     * part only when this names one of them; null takes part in unscoped sets only.
+     */
+    val partition: String? = null
 ) {
     val urlLower: String = url.lowercase()
     /** Index in `url` where the host begins (after the scheme and any user info). */

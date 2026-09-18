@@ -28,11 +28,13 @@ class DnrRule(
     val effective: Long,
     private val redirectUrl: String?,
     private val regexSubstitution: String?,
-    private val pattern: UrlPattern?,
-    private val initiatorDomains: List<String>?,
-    private val excludedInitiatorDomains: List<String>?,
-    private val requestDomains: List<String>?,
-    private val excludedRequestDomains: List<String>?,
+    /** The `urlFilter` / `regexFilter`; null when the rule has neither. Read by [RuleIndex]. */
+    val pattern: UrlPattern?,
+    private val initiatorDomains: Set<String>?,
+    private val excludedInitiatorDomains: Set<String>?,
+    /** `requestDomains`, lowercased; a request host matches when it is one or a subdomain of one. Read by [RuleIndex]. */
+    val requestDomains: Set<String>?,
+    private val excludedRequestDomains: Set<String>?,
     /** Zenium's addition to the shape: never match a non-unique host (`excludedNonUniqueHosts` in `rules.ts`). */
     private val excludedNonUniqueHosts: Boolean,
     private val typeMask: Int,
@@ -89,15 +91,33 @@ class DnrRule(
             return setPriority.toLong() * (RULE_PRIORITY_MAX + 1) + rp
         }
 
-        private fun matchesDomains(host: String, include: List<String>?, exclude: List<String>?): Boolean {
-            if (exclude != null && exclude.any { Domains.hostMatchesDomain(host, it) }) return false
-            if (include != null) return include.any { Domains.hostMatchesDomain(host, it) }
+        private fun matchesDomains(host: String, include: Set<String>?, exclude: Set<String>?): Boolean {
+            if (exclude != null && hasDomainOf(host, exclude)) return false
+            if (include != null) return hasDomainOf(host, include)
             return true
         }
 
-        private fun strings(o: JSONObject, key: String): List<String>? {
+        /**
+         * Whether `host` or one of its parent domains is in `domains`: the host's label suffixes
+         * are looked up in turn, so a list of tens of thousands of domains (uBlock Origin Lite
+         * folds whole hosts files into one rule's `requestDomains`) costs as many lookups as the
+         * host has labels, not one comparison per domain.
+         */
+        fun hasDomainOf(host: String, domains: Set<String>): Boolean {
+            if (host.isEmpty()) return false
+            var start = 0
+            while (true) {
+                val key = if (start == 0) host else host.substring(start)
+                if (key in domains) return true
+                val dot = host.indexOf('.', start)
+                if (dot == -1) return false
+                start = dot + 1
+            }
+        }
+
+        private fun strings(o: JSONObject, key: String): Set<String>? {
             val arr = o.optJSONArray(key) ?: return null
-            val out = ArrayList<String>(arr.length())
+            val out = HashSet<String>(arr.length() * 2)
             for (i in 0 until arr.length()) out.add(arr.optString(i).lowercase())
             return if (out.isEmpty()) null else out
         }
@@ -141,8 +161,8 @@ class DnrRule(
                 excludedNonUniqueHosts = c.optBoolean("excludedNonUniqueHosts", false),
                 typeMask = typeMask(c, "resourceTypes"),
                 excludedTypeMask = typeMask(c, "excludedResourceTypes"),
-                methods = strings(c, "requestMethods")?.toHashSet(),
-                excludedMethods = strings(c, "excludedRequestMethods")?.toHashSet(),
+                methods = strings(c, "requestMethods"),
+                excludedMethods = strings(c, "excludedRequestMethods"),
                 domainType = domainType,
                 tabIds = c.optJSONArray("tabIds")?.let { ints(it) },
                 excludedTabIds = c.optJSONArray("excludedTabIds")?.let { ints(it) }
@@ -159,7 +179,8 @@ class DnrRule(
 
 /**
  * A rule set as the core persists it (`blocking/index.json` entry or a `blocking.sync` change):
- * metadata, compiled structured rules, and where its filter text lives.
+ * metadata, compiled structured rules (and their [RuleIndex]), the partitions it is scoped to,
+ * and where its filter text lives.
  */
 class RuleSetInfo(
     val id: String,
@@ -171,10 +192,26 @@ class RuleSetInfo(
     /** File under the profile (`blocking/<name>.json`) with the full set when `hasFilterText`. */
     val file: String?,
     val updatedAt: Long,
-    val filterCount: Int
+    val filterCount: Int,
+    /**
+     * Session partitions the set applies to (`RuleSet.partitions`): container ids, `private`
+     * for private tabs. Null for a set that applies everywhere. An extension's sets arrive
+     * scoped to the partitions it is loaded into, so a private tab's requests never meet the
+     * rules of an extension the user has not allowed there.
+     */
+    val partitions: Set<String>? = null
 ) {
     /** Changes to any of these mean the filter text must be re-read. */
     val textFingerprint: String get() = "$file:$updatedAt:$filterCount"
+
+    /** The rules indexed for lookup; built once with the set, on the builder thread. */
+    val index: RuleIndex = RuleIndex(rules)
+
+    /** Whether the set takes part in requests of `partition` (`appliesToPartition` in `engine.ts`). */
+    fun appliesTo(partition: String?): Boolean {
+        val scope = partitions ?: return true
+        return partition != null && partition in scope
+    }
 
     companion object {
         fun parse(o: JSONObject): RuleSetInfo? {
@@ -190,6 +227,14 @@ class RuleSetInfo(
             }
             rules.sortWith(compareByDescending<DnrRule> { it.effective }.thenByDescending { it.action.rank })
             val hasText = o.optBoolean("hasFilterText", false)
+            val partitions = o.optJSONArray("partitions")?.let { arr ->
+                val out = HashSet<String>()
+                for (i in 0 until arr.length()) {
+                    val p = arr.optString(i, "")
+                    if (p.isNotEmpty()) out.add(p)
+                }
+                out
+            }
             return RuleSetInfo(
                 id = id,
                 source = o.optString("source", "filter-list"),
@@ -199,7 +244,8 @@ class RuleSetInfo(
                 hasFilterText = hasText,
                 file = o.optString("file").takeIf { hasText && it.isNotEmpty() },
                 updatedAt = o.optLong("updatedAt", 0L),
-                filterCount = o.optInt("filterCount", 0)
+                filterCount = o.optInt("filterCount", 0),
+                partitions = partitions
             )
         }
     }
