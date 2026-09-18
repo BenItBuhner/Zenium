@@ -1058,16 +1058,32 @@ class ExtensionDemo {
         var clicked: JSONObject? = null
         var picked = "none"
         if (item != null && bg != null) {
+            var tappedAt = 0L
             if (target != null) {
                 tap(target.first, target.second)
+                tappedAt = SystemClock.uptimeMillis()
                 picked = "tap"
-                clicked = waitFor(6_000, 250) { menuClick(bg, clicksBefore) }
+                clicked = waitFor(12_000, 250) { menuClick(bg, clicksBefore) }
             }
             if (clicked == null) {
                 val row = pickMenuItem(MENU_LINK_LABEL)
-                picked = if (row) "$picked, then a click in the document" else "$picked, then no row left to click"
-                clicked = waitFor(6_000, 250) { menuClick(bg, clicksBefore) }
+                when {
+                    row -> {
+                        picked = "$picked, then a click in the document"
+                        clicked = waitFor(6_000, 250) { menuClick(bg, clicksBefore) }
+                    }
+                    target != null -> {
+                        // No row left: the tap took the menu down, and its click is still on its
+                        // way through a stalled main thread (measured on WebView 156 under the
+                        // emulator's swangle renderer: the sheet closed 6.3 s after the tap, one
+                        // app frame every 1.3–3.5 s). Only the tap's click can arrive now.
+                        picked = "tap (late)"
+                        clicked = waitFor(12_000, 250) { menuClick(bg, clicksBefore) }
+                    }
+                    else -> picked = "$picked, then no row left to click"
+                }
             }
+            if (clicked != null && tappedAt != 0L) report.put("clickAfterTapMs", SystemClock.uptimeMillis() - tappedAt)
         }
         report.put("picked", picked)
         if (menuLabels().length() > 0) {
@@ -1080,7 +1096,7 @@ class ExtensionDemo {
         stage(
             PROBE_ID, "contextMenus",
             when {
-                item != null && right && via == "long-press" && picked == "tap" -> "PASS"
+                item != null && right && via == "long-press" && (picked == "tap" || picked == "tap (late)") -> "PASS"
                 item != null && right -> "PARTIAL"
                 item != null -> "PARTIAL"
                 else -> "FAIL"
