@@ -424,8 +424,8 @@ textarea.zen-v2-field {
   padding: 0 16px 16px;
 }
 /*
- * Body copy under a 48 header (§9.23): 15/400 in the text colour at the 16 gutter, 16 px from
- * the form or rows it introduces.
+ * Body copy under a 48 header or a title block (§9.23): a paragraph that introduces a form or
+ * rows, 15/400 in the text colour at the 16 gutter, 16 px from what it introduces.
  */
 .zen-v2-af-copy {
   padding: 0 16px 16px;

@@ -135,10 +135,12 @@ function Editor({ edit, phone }: { edit: AutofillEdit; phone: boolean }): JSX.El
 // ---------------------------------------------------------------------------
 
 /**
- * The desktop shell: title block, the form scrolling between it and the footer, which stays put
- * (a long address form, its validation lines added, runs past a frame 800 tall); §9.7's hairline
- * on the title block once scrolled. The footer draws none: a dialog ends in its actions – the
- * last field, 16, the buttons, 16 to the edge (§9.20's footer ruling).
+ * The desktop shell: a title block of the title alone, then the body – the paragraph that
+ * introduces the form is body copy at 15/400 in the text colour (§9.23), as it is in the phone
+ * sheet, not the title block's description – scrolling between the block and the footer, which
+ * stays put (a long address form, its validation lines added, runs past a frame 800 tall);
+ * §9.7's hairline on the title block once scrolled. The footer draws none: a dialog ends in its
+ * actions – the last field, 16, the buttons, 16 to the edge (§9.20's footer ruling).
  */
 function EditorDialog({
   copy,
@@ -168,15 +170,10 @@ function EditorDialog({
       data-surface="page"
       onKeyDown={(e) => wrapTab(e, panelRef.current)}
     >
-      <TitleBlock
-        id={titleId}
-        icon={copy.icon}
-        title={copy.title}
-        description={copy.description}
-        scrolled={scrolled}
-      />
+      <TitleBlock id={titleId} icon={copy.icon} title={copy.title} scrolled={scrolled} />
       <form className="zen-v2-af-dialog-form" onSubmit={onSubmit}>
         <div ref={bodyRef} className="zen-v2-af-body">
+          <SheetCopy>{copy.description}</SheetCopy>
           <div className="zen-v2-af-form">{children}</div>
         </div>
         <div className="zen-v2-af-dialog-footer">{footer}</div>
