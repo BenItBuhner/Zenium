@@ -32,15 +32,26 @@ function stub<T extends object>(overrides: Partial<T> = {}): T {
 /** What the fixture records about one tab view: focus requests and visibility changes. */
 interface RecordedView {
   readonly tabId: string
+  /** `focus()` calls on the view. */
   focusCalls: number
   visible: boolean
-  readonly visibility: boolean[]
+  /** Whether the view holds the keyboard (set by `focus()`, or by the test to fake a state). */
+  focused: boolean
+}
+
+/**
+ * The keyboard as the host sees it. `focusChrome()` and a view's `focus()` move it like the
+ * real host would; a test moves it to a foreign document (an extension popup's view) by hand.
+ */
+interface Keyboard {
+  document: 'chrome' | 'other' | 'none'
 }
 
 interface Fixture {
   browser: Browser
   win: ZenWindow
   views: RecordedView[]
+  keyboard: Keyboard
   /** `focusChrome()` calls on the window's host so far. */
   chromeFocusCalls: () => number
   /** Open a page in a new tab; its view is owned by the window and shown. */
@@ -53,8 +64,22 @@ function placementsFor(tabIds: string[]): LayoutReport['placements'] {
   return tabIds.map((tabId) => ({ tabId, rect: AREA, radius: 12 }))
 }
 
-function fixture(): Fixture {
+const shown = (tabIds: string[]): LayoutReport => ({
+  placements: placementsFor(tabIds),
+  glance: null,
+  contentHidden: false
+})
+
+const hidden = (tabIds: string[]): LayoutReport => ({
+  placements: placementsFor(tabIds),
+  glance: null,
+  contentHidden: true
+})
+
+/** `hostTellsFocus` false models a host without `focusedDocument` / `isFocused` (Android). */
+function fixture(hostTellsFocus = true): Fixture {
   const views: RecordedView[] = []
+  const keyboard: Keyboard = { document: 'chrome' }
   let chromeFocus = 0
   const capabilities = stub<HostCapabilities>({ windows: true, updates: false, agents: false })
   const platform: Platform = {
@@ -73,7 +98,10 @@ function fixture(): Fixture {
           isVisible: () => true,
           focusChrome: () => {
             chromeFocus++
-          }
+            keyboard.document = 'chrome'
+            for (const v of views) v.focused = false
+          },
+          ...(hostTellsFocus ? { focusedDocument: () => keyboard.document } : {})
         })
     },
     views: stub<TabViewHost>({
@@ -82,7 +110,7 @@ function fixture(): Fixture {
           tabId: tab.id,
           focusCalls: 0,
           visible: false,
-          visibility: []
+          focused: false
         }
         views.push(recorded)
         let url = ''
@@ -91,11 +119,13 @@ function fixture(): Fixture {
           isVisible: () => recorded.visible,
           setVisible: (visible: boolean) => {
             recorded.visible = visible
-            recorded.visibility.push(visible)
           },
           focus: () => {
             recorded.focusCalls++
+            for (const v of views) v.focused = v === recorded
+            keyboard.document = 'other'
           },
+          ...(hostTellsFocus ? { isFocused: () => recorded.focused } : {}),
           hasDocument: () => url !== '',
           getURL: () => url,
           getTitle: () => '',
@@ -132,98 +162,137 @@ function fixture(): Fixture {
     const tabId = win.selectedTabIn(win.activeSpace())
     const view = views.find((v) => v.tabId === tabId)
     if (!tabId || !view) throw new Error('the page did not open in a tab of its own')
-    win.applyLayout({ placements: placementsFor([tabId]), glance: null, contentHidden: false })
+    win.applyLayout(shown([tabId]))
     return view
   }
-  return { browser, win, views, chromeFocusCalls: () => chromeFocus, openPage }
+  return { browser, win, views, keyboard, chromeFocusCalls: () => chromeFocus, openPage }
+}
+
+/** The page has the keyboard, as after a click into it. */
+function typingIn(f: Fixture, page: RecordedView): void {
+  page.focused = true
+  f.keyboard.document = 'other'
 }
 
 describe('keyboard focus on layout reports', () => {
-  it('keeps focus where it is when a popup that owns the keyboard hides the page', () => {
+  it('does not take the keyboard from a foreign document when chrome UI covers the page', () => {
     const f = fixture()
     const page = f.openPage('https://example.com')
     expect(page.visible).toBe(true)
+    // An extension popup's view took the keyboard (while still hidden behind its frame); the
+    // renderer then hides the page behind the frame's capture.
+    f.keyboard.document = 'other'
+    page.focused = false
     const before = f.chromeFocusCalls()
-    // The renderer framed an extension popup over the page: the page is hidden behind its
-    // capture, but the popup's own view holds the keyboard.
-    f.win.applyLayout({
-      placements: placementsFor([page.tabId]),
-      glance: null,
-      contentHidden: true,
-      hiddenBy: 'popup'
-    })
+    f.win.applyLayout(hidden([page.tabId]))
     expect(page.visible).toBe(false)
     expect(f.chromeFocusCalls()).toBe(before)
-    // Re-reports while the popup is up (a resize, a state change) do not steal it either.
-    f.win.applyLayout({ placements: [], glance: null, contentHidden: true, hiddenBy: 'popup' })
+    // Re-reports while the popup is up (a resize, a state change) leave it alone as well.
+    f.win.applyLayout({ placements: [], glance: null, contentHidden: true })
     expect(f.chromeFocusCalls()).toBe(before)
   })
 
-  it('moves focus to the chrome when a chrome overlay such as Settings hides the page', () => {
+  it('moves the keyboard to the chrome when an overlay covers the page the user types in', () => {
     const f = fixture()
     const page = f.openPage('https://example.com')
+    typingIn(f, page)
     const before = f.chromeFocusCalls()
-    f.win.applyLayout({
-      placements: placementsFor([page.tabId]),
-      glance: null,
-      contentHidden: true,
-      hiddenBy: 'chrome'
-    })
+    f.win.applyLayout(hidden([page.tabId]))
     expect(page.visible).toBe(false)
+    expect(f.chromeFocusCalls()).toBe(before + 1)
+    expect(f.keyboard.document).toBe('chrome')
+  })
+
+  it('still hands the keyboard to the chrome when the chrome already holds it', () => {
+    const f = fixture()
+    const page = f.openPage('https://example.com')
+    f.keyboard.document = 'chrome'
+    const before = f.chromeFocusCalls()
+    f.win.applyLayout(hidden([page.tabId]))
     expect(f.chromeFocusCalls()).toBe(before + 1)
   })
 
-  it('treats a report that does not say what hides the page as a chrome overlay', () => {
+  it('does nothing for a hidden report that covers no showing page', () => {
     const f = fixture()
     const page = f.openPage('https://example.com')
+    typingIn(f, page)
+    f.win.applyLayout(hidden([page.tabId]))
     const before = f.chromeFocusCalls()
-    f.win.applyLayout({
-      placements: placementsFor([page.tabId]),
-      glance: null,
-      contentHidden: true
-    })
+    // The user clicked into a foreign document meanwhile; a second hidden report (the overlay
+    // re-laid out) must not pull the keyboard back.
+    f.keyboard.document = 'other'
+    f.win.applyLayout({ placements: [], glance: null, contentHidden: true })
+    expect(f.chromeFocusCalls()).toBe(before)
+  })
+
+  it('keeps moving the keyboard on a host that cannot say who holds it', () => {
+    const f = fixture(false)
+    const page = f.openPage('https://example.com')
+    const before = f.chromeFocusCalls()
+    f.win.applyLayout(hidden([page.tabId]))
     expect(f.chromeFocusCalls()).toBe(before + 1)
   })
 
   it('focuses the chrome for an empty window, where the URL bar is the only thing to type into', () => {
     const f = fixture()
     const before = f.chromeFocusCalls()
-    f.win.applyLayout({ placements: [], glance: null, contentHidden: false })
+    f.win.applyLayout(shown([]))
     expect(f.chromeFocusCalls()).toBe(before + 1)
   })
 
-  it('leaves a visible page alone', () => {
+  it('leaves a visible page alone, also in a split', () => {
     const f = fixture()
-    const page = f.openPage('https://example.com')
+    const first = f.openPage('https://example.com')
+    const second = f.openPage('https://example.org')
+    typingIn(f, second)
     const before = f.chromeFocusCalls()
+    f.win.applyLayout(shown([first.tabId, second.tabId]))
+    expect(first.visible).toBe(true)
+    expect(second.visible).toBe(true)
+    expect(f.chromeFocusCalls()).toBe(before)
+    expect(second.focused).toBe(true)
+  })
+
+  it('leaves the keyboard alone while a Glance card is up over its parent', () => {
+    const f = fixture()
+    const parent = f.openPage('https://example.com')
+    f.browser.handleCommand(f.win, 'glance.open', {
+      url: 'https://example.net',
+      parentTabId: parent.tabId,
+      originX: 400,
+      originY: 300
+    })
+    const glanceTabId = f.win.glance?.tabId
+    expect(glanceTabId).toBeDefined()
+    if (!glanceTabId) return
+    const card = f.views.find((v) => v.tabId === glanceTabId)
+    expect(card).toBeDefined()
+    const before = f.chromeFocusCalls()
+    // The parent is frozen behind the card (no placement for it), the card is placed.
     f.win.applyLayout({
-      placements: placementsFor([page.tabId]),
-      glance: null,
+      placements: [],
+      glance: { tabId: glanceTabId, rect: { x: 400, y: 120, width: 720, height: 600 }, radius: 12 },
       contentHidden: false
     })
+    expect(card?.visible).toBe(true)
+    expect(parent.visible).toBe(false)
     expect(f.chromeFocusCalls()).toBe(before)
   })
 
-  it('hands focus back to the page once the overlay that hid it closes', () => {
+  it('hands the keyboard back to the page once the overlay that hid it closes', () => {
     const f = fixture()
     const page = f.openPage('https://example.com')
-    f.win.applyLayout({
-      placements: placementsFor([page.tabId]),
-      glance: null,
-      contentHidden: true,
-      hiddenBy: 'chrome'
-    })
+    typingIn(f, page)
+    f.win.applyLayout(hidden([page.tabId]))
+    expect(f.keyboard.document).toBe('chrome')
     // Closing Settings asks for the page's focus while the layout still says it is hidden: the
     // request waits for the layout that shows the page again.
     const focused = page.focusCalls
     f.browser.handleCommand(f.win, 'focus.content', undefined)
     expect(page.focusCalls).toBe(focused)
-    f.win.applyLayout({
-      placements: placementsFor([page.tabId]),
-      glance: null,
-      contentHidden: false
-    })
+    f.win.applyLayout(shown([page.tabId]))
     expect(page.visible).toBe(true)
     expect(page.focusCalls).toBe(focused + 1)
+    expect(page.focused).toBe(true)
   })
 })

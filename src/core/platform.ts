@@ -265,6 +265,8 @@ export interface TabView {
   setZapMode(on: boolean): void
   setBackgroundColor(color: string): void
   focus(): void
+  /** Whether this page holds the keyboard right now. Hosts that cannot tell leave it out. */
+  isFocused?(): boolean
   isDestroyed(): boolean
   destroy(): void
 
@@ -325,6 +327,12 @@ export interface WindowHost {
   readonly alive: boolean
   send<K extends EventName>(name: K, payload: Events[K]): void
   focusChrome(): void
+  /**
+   * Which document holds the keyboard: the chrome's own, some other web view (a tab view, which
+   * the core recognises through `TabView.isFocused`, or a view another surface owns, such as an
+   * extension's popup), or none. Hosts that cannot tell leave it out.
+   */
+  focusedDocument?(): 'chrome' | 'other' | 'none'
   openChromeDevTools(): void
   contentSize(): { width: number; height: number }
   isFullScreen(): boolean

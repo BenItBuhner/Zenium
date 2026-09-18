@@ -15,7 +15,7 @@ import type { Browser } from './browser'
 import type { PersistedWindow } from './state'
 import { getSpace, tabVisibleIn } from './model'
 import { formatWindowTitle } from '../shared/windowTitle'
-import type { WindowHost } from './platform'
+import type { TabView, WindowHost } from './platform'
 
 export interface WindowInit {
   id: string
@@ -251,6 +251,8 @@ export class ZenWindow {
       for (const p of report.placements) wanted.set(p.tabId, { rect: p.rect, radius: p.radius })
     }
     const glance = report.glance
+    // Whether a page that was showing goes away under this report (chrome UI covers it).
+    let covered = false
     for (const [tabId, view] of owned) {
       if (view.isDestroyed()) continue
       const placement = wanted.get(tabId)
@@ -262,6 +264,7 @@ export class ZenWindow {
         if (!view.isVisible()) view.setVisible(true)
       } else if (view.isVisible()) {
         view.setVisible(false)
+        covered = true
       }
     }
     if (glance) {
@@ -275,14 +278,31 @@ export class ZenWindow {
     }
     if (this.pendingContentFocus && !report.contentHidden) this.focusContent()
     // With no page visible (empty space / chrome overlay / preview of a page shown in another
-    // window) keyboard input must go to the chrome, otherwise shortcuts stop working. A page
-    // hidden behind a popup that owns the keyboard itself (an extension popup's view) is the one
-    // exception: taking focus would blur the popup, and a popup closes on blur.
+    // window) keyboard input must go to the chrome, otherwise shortcuts stop working.
     const showsOwnPage = [...wanted.keys()].some((id) => owned.has(id))
-    const wantsChromeFocus = report.contentHidden
-      ? report.hiddenBy !== 'popup'
-      : !showsOwnPage && !glance
-    if (wantsChromeFocus) this.focusChrome()
+    if (report.contentHidden) {
+      // Chrome UI covers the page: the keyboard goes with it, but only when a page that was
+      // showing loses its place under this report (one that hides nothing new leaves the
+      // keyboard where it is) and never while a document of another surface holds it – an
+      // extension popup's view, focused while still hidden, would blur and close.
+      if (covered && !this.keyboardHeldElsewhere(owned)) this.focusChrome()
+    } else if (!showsOwnPage && !glance) {
+      this.focusChrome()
+    }
+  }
+
+  /**
+   * Whether the keyboard is held by a document that is neither this window's chrome nor one of
+   * the tab views it shows. Hosts that cannot tell get the old answer: the keyboard moves.
+   */
+  private keyboardHeldElsewhere(owned: Map<string, TabView>): boolean {
+    if (this.host.focusedDocument?.() !== 'other') return false
+    for (const view of owned.values()) {
+      if (view.isDestroyed()) continue
+      // A view that cannot say may well be the one holding it.
+      if (!view.isFocused || view.isFocused()) return false
+    }
+    return true
   }
 
   /**
