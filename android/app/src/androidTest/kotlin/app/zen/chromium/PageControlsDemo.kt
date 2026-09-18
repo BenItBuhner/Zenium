@@ -285,15 +285,6 @@ open class PageControlsDemo(
 
     // --- the chrome ------------------------------------------------------------------------------
 
-    protected val host: Host get() = (activity as MainActivity).host
-
-    /** The host's word on whether the chrome has a surface a back would dismiss (menu, Settings, …). */
-    protected fun chromeSurfaceUp(): Boolean {
-        var up = false
-        instrumentation.runOnMainSync { up = host.back.chromeSurfaceUp }
-        return up
-    }
-
     /**
      * Nothing of the chrome's is up: no menu, no Settings, nothing a step left behind. Back is
      * only sent while the host reports a surface (without one it would navigate the page, or
@@ -329,16 +320,6 @@ open class PageControlsDemo(
     /** Back, unless the host has meanwhile dropped its surface (the back would then leave the app). */
     private fun backWhileSurfaceUp() {
         if (chromeSurfaceUp()) back() else Log.i(tag, "the chrome surface went on its own; no back")
-    }
-
-    /** Poll the host until the chrome reports a surface up or not (`up`); false when it does not in time. */
-    protected fun awaitSurface(up: Boolean, timeoutMs: Long): Boolean {
-        val deadline = SystemClock.uptimeMillis() + timeoutMs
-        while (SystemClock.uptimeMillis() < deadline) {
-            if (chromeSurfaceUp() == up) return true
-            SystemClock.sleep(150)
-        }
-        return false
     }
 
     /** Open the app menu from a clear chrome; true once the host and the tree both show it. */
