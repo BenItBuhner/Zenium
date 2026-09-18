@@ -84,7 +84,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     override var fullscreenTab: TabWebView? = null
         private set
     private var fullscreenCallback: WebChromeClient.CustomViewCallback? = null
-    var immersive = false
+    override var immersive = false
         private set
     /** The chrome's colour scheme, so native pieces (the back preview) match it. */
     override var themeDark = false
@@ -359,10 +359,25 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         back.refresh()
     }
 
+    /**
+     * The window left the screen (launcher, another app, the lock screen). Fullscreen is a way of
+     * looking at a page, not a setting: the app comes back with its bars, like Chrome does, rather
+     * than in the fullscreen it was left in – a relaunch from the launcher is a new start to the
+     * user, whether or not the process survived.
+     */
+    fun onStop() {
+        if (immersive) setImmersive(false)
+    }
+
+    /** Back while in Zenium's own fullscreen (and nothing is fullscreen on the page) leaves it. */
+    override fun leaveImmersive() = setImmersive(false)
+
     private fun setImmersive(on: Boolean) {
+        if (immersive == on) return
         immersive = on
         setSystemBarsHidden(on || fullscreenTab != null)
         chrome.hostEvent("fullscreen", json("fullscreen" to on))
+        back.refresh()
     }
 
     private fun setSystemBarsHidden(hidden: Boolean) {
