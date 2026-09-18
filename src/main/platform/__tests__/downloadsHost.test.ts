@@ -111,6 +111,14 @@ class FakeSession extends EventEmitter {
 }
 
 const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0))
+/** The rename at the end of a download runs on the real file system: wait for it, not a tick count. */
+async function settled(done: () => boolean, timeoutMs = 5000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (!done()) {
+    if (Date.now() > deadline) throw new Error('did not settle in time')
+    await flush()
+  }
+}
 
 const dirs: string[] = []
 afterEach(() => {
@@ -169,8 +177,7 @@ describe('ElectronDownloads programmatic starts', () => {
     expect(h.host.targetPath(h.service.items[1]!.id)).toBe(join(h.dir, 'other.txt'))
     expect(h.started).toEqual([null, null])
     item.complete()
-    await flush()
-    await flush()
+    await settled(() => record.savePath === join(h.dir, 'sub', 'renamed.txt'))
     expect(record.state).toBe('completed')
     expect(record.savePath).toBe(join(h.dir, 'sub', 'renamed.txt'))
     expect(readFileSync(record.savePath, 'utf8')).toBe('abc')
@@ -208,8 +215,7 @@ describe('ElectronDownloads filename determiner', () => {
     expect(asked).toEqual([{ id: record.id, suggested: 'a.txt' }])
     expect(h.host.targetPath(record.id)).toBe(join(h.dir, 'chosen.txt'))
     item.complete()
-    await flush()
-    await flush()
+    await settled(() => record.savePath === join(h.dir, 'chosen.txt'))
     expect(record.savePath).toBe(join(h.dir, 'chosen.txt'))
     expect(readFileSync(record.savePath, 'utf8')).toBe('abc')
     expect(existsSync(join(h.dir, 'chosen(1).txt'))).toBe(false)
@@ -247,8 +253,7 @@ describe('ElectronDownloads filename determiner', () => {
     expect(record.state).toBe('progressing')
     expect(existsSync(join(h.dir, 'fast.txt'))).toBe(false)
     answer!({ filename: 'late.txt', conflictAction: 'uniquify' })
-    await flush()
-    await flush()
+    await settled(() => record.savePath === join(h.dir, 'late.txt'))
     expect(record.state).toBe('completed')
     expect(record.savePath).toBe(join(h.dir, 'late.txt'))
   })
