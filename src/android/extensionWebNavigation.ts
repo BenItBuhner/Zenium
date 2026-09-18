@@ -53,6 +53,16 @@ interface InFlight {
   reload: boolean
   history: boolean
   byPage: boolean
+  /** The chrome's own error page loading into a hidden tab: nothing of it is reported. */
+  chromePage?: boolean
+}
+
+/**
+ * The core's error page as the WebView's navigation listener and `doUpdateVisitedHistory`
+ * see it: `loadDataWithBaseURL` under `zen://error` starts as a `data:` navigation.
+ */
+function isChromeDocument(url: string): boolean {
+  return url.startsWith(ERROR_PAGE_PREFIX) || url.startsWith('data:text/html')
 }
 
 /** Chrome's `documentId`s: minted per committed document since the WebView exposes none. */
@@ -83,9 +93,10 @@ export class AndroidWebNavigation {
    * navigation with `onErrorOccurred` and hides the `chrome-error://` document that takes its
    * place; here two documents follow the failure and neither is the extension's business:
    * WebView's own error page, which commits and finishes *under the failed URL* (so the URL
-   * alone cannot tell its `load` from the page's), then the core's `zen://error` page, whose
-   * hash and `pushState` navigations report under a `data:` URL. Everything about the tab is
-   * dropped until another document commits.
+   * alone cannot tell its `load` from the page's), then the core's `zen://error` page, which
+   * the listener sees start as a `data:` navigation and whose hash and `pushState` moves report
+   * under that `data:` URL too. Both are dropped; a navigation of the page's own (any other URL)
+   * is reported as usual and, once it commits, the tab is ordinary again.
    */
   private readonly hidden = new Set<string>()
 
@@ -110,13 +121,16 @@ export class AndroidWebNavigation {
           if (this.hidden.has(tabId)) return []
           return this.sameDocument(tabId, tab, r.url)
         }
+        const chromePage = this.hidden.has(tabId) && isChromeDocument(r.url)
         this.inFlight.set(tabId, {
           url: r.url,
           serverRedirect: false,
           reload: r.reload === true,
           history: r.history === true,
-          byPage: r.byPage === true
+          byPage: r.byPage === true,
+          chromePage
         })
+        if (chromePage) return []
         return [this.event('onBeforeNavigate', tab, r.url, this.documents.get(tabId))]
       }
       case 'redirected': {
@@ -131,6 +145,7 @@ export class AndroidWebNavigation {
         if (r.sameDocument) return []
         const flight = this.inFlight.get(tabId)
         this.inFlight.delete(tabId)
+        if (flight?.chromePage) return []
         if (!r.committed || r.errorPage) {
           // Cancelled, failed before anything committed, or WebView's own error page took the
           // place of the document: Chrome reports the error and hides the error page's commit.
@@ -180,10 +195,8 @@ export class AndroidWebNavigation {
       this.hidden.add(tabId)
       return []
     }
-    if (inPage) {
-      if (this.hidden.has(tabId)) return []
-      return this.sameDocument(tabId, tab, url)
-    }
+    if (this.hidden.has(tabId) && (inPage || isChromeDocument(url))) return []
+    if (inPage) return this.sameDocument(tabId, tab, url)
     this.hidden.delete(tabId)
     const doc = documentId()
     this.documents.set(tabId, doc)

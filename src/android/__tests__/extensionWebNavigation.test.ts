@@ -115,12 +115,30 @@ describe('AndroidWebNavigation: the navigation listener path', () => {
     // error, so its DOMContentLoaded and load say nothing.
     expect(nav.report('t1', TAB, { phase: 'dom', url: 'https://down.test/' })).toEqual([])
     expect(nav.report('t1', TAB, { phase: 'load', url: 'https://down.test/' })).toEqual([])
-    // The core's error page is the chrome's navigation: nothing of it reaches extensions.
+    // The core's error page is the chrome's navigation: nothing of it reaches extensions. As
+    // measured on WebView 156, the listener sees `loadDataWithBaseURL` start as a `data:`
+    // navigation and complete under the `zen://error` base URL.
+    expect(
+      nav.report('t1', TAB, { phase: 'started', url: 'data:text/html;charset=utf-8;base64,' })
+    ).toEqual([])
+    expect(
+      nav.report('t1', TAB, { phase: 'completed', url: 'zen://error?x', committed: true })
+    ).toEqual([])
     expect(
       nav.report('t1', TAB, { phase: 'started', url: 'zen://error?url=https%3A%2F%2Fdown.test%2F' })
     ).toEqual([])
     expect(
       nav.report('t1', TAB, { phase: 'completed', url: 'zen://error?x', committed: true })
+    ).toEqual([])
+    expect(
+      nav.report('t1', TAB, { phase: 'load', url: 'data:text/html;charset=utf-8;base64,' })
+    ).toEqual([])
+    expect(
+      nav.report('t1', TAB, {
+        phase: 'started',
+        url: 'data:text/html;charset=utf-8;base64,',
+        sameDocument: true
+      })
     ).toEqual([])
     expect(
       nav.report('t1', TAB, {
