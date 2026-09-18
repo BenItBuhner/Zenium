@@ -165,6 +165,11 @@ export const INTERNAL_PAGES: Readonly<Record<InternalPageId, InternalPageDefinit
   settings: { id: 'settings', title: 'Settings', sections: SETTINGS_SECTIONS }
 }
 
+/** Every registered page id. */
+export const INTERNAL_PAGE_IDS: readonly InternalPageId[] = Object.keys(
+  INTERNAL_PAGES
+) as InternalPageId[]
+
 /** A page and the section in it (`null` = the landing page). */
 export interface InternalPageRef {
   id: InternalPageId

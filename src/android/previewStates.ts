@@ -1,6 +1,7 @@
 import { run } from '@renderer/lib/api'
 import { abortPull, dispatchPullEvent, PULL_THRESHOLD, pullTravelFor } from '@renderer/lib/pull'
 import { Download, Smartphone, Star } from 'lucide-react'
+import { isInternalPageUrl } from '@shared/internalPages'
 import { activeTab } from '@renderer/lib/selectors'
 import {
   browserStore,
@@ -17,20 +18,22 @@ import {
   uiStore
 } from '@renderer/lib/ui'
 import type { HostGlobal } from './boot'
-import { parsePreviewSpec } from './previewSpec'
+import { parsePreviewSpec, type PreviewState } from './previewSpec'
 
 /**
  * Chrome states selectable from outside the preview host (`npm run dev:android`), so screenshots
  * and quick checks need no tapping through the menus. A state is a query string (see
- * `parsePreviewSpec`): `idle`, `overlay=<kind>` (history, bookmarks, downloads, settings, addons, …;
- * `section=<id>` picks a Settings section, `show=<text>` scrolls the row with that text into
- * view), `menu=app` (the app menu sheet; `show=<text>` scrolls an item into view), `find=<text>`
- * (the find bar with that text typed), `pull=<n>` (the page held pulled down at n percent of the
- * refresh threshold; `pull=refresh` lets go past it), `zoom=<factor>` (the page zoom sheet at
- * that factor), `error=<code>` (the active tab's load failed with that Chromium `net::` code,
- * `url=<target>` naming the URL that failed: the zen://error page is up) or the message surfaces
- * and the load bar: `toast=<text>&action=<label>`, `banners=<n>`, `progress=<0…1>`. It comes in
- * as the URL hash,
+ * `parsePreviewSpec`): `idle`, `page=settings` (the Settings tab; `section=<id>` opens a section
+ * over the landing, `search=<text>` types into the landing's search, `show=<text>` scrolls a row
+ * into view), `overlay=<kind>` (history, bookmarks, downloads, addons, …; `overlay=settings`
+ * opens the Settings tab on this host, with `section=<id>`; `show=<text>` scrolls the row with
+ * that text into view), `menu=app` (the app menu sheet; `show=<text>` scrolls an item into
+ * view), `find=<text>` (the find bar with that text typed), `pull=<n>` (the page held pulled down
+ * at n percent of the refresh threshold; `pull=refresh` lets go past it), `zoom=<factor>` (the
+ * page zoom sheet at that factor), `error=<code>` (the active tab's load failed with that
+ * Chromium `net::` code, `url=<target>` naming the URL that failed: the zen://error page is up)
+ * or the message surfaces and the load bar: `toast=<text>&action=<label>`, `banners=<n>`,
+ * `progress=<0…1>`. It comes in as the URL hash,
  * `http://localhost:41734/#overlay=history`, or as `window.postMessage({ zenPreview: 'find=coffee' }, '*')`,
  * which also re-applies an unchanged state. Once applied it is echoed in `<html data-preview-state>`
  * so a driver can wait for it; `.github/scripts/android-preview-shots.mjs` is one.
@@ -51,7 +54,7 @@ function apply(spec: string): void {
   whenReady(() => {
     const state = browserStore.get().state
     const tab = state ? activeTab(state) : null
-    const target = parsePreviewSpec(spec)
+    const target = asPageState(parsePreviewSpec(spec))
 
     // Every spec starts from idle so states do not stack: a pull in flight is put back at once
     // (a `cancel` would spring home, and the next pull would catch that spring part-way).
@@ -61,7 +64,20 @@ function apply(spec: string): void {
     abortPull()
     clearMessages(tab?.loading ? tab.id : null)
 
-    if (target.kind === 'overlay') {
+    if (target.kind === 'page') {
+      // The page tab is the state: reached once the active tab is a page tab, then a frame for the
+      // page (and its drill-in's slide) to settle before the search is typed or a row shown.
+      whenActiveTabIs(isInternalPageUrl, () => {
+        setTimeout(() => {
+          if (target.search) type('input[aria-label="Find in Settings"]', target.search)
+          requestAnimationFrame(() => {
+            show(target.show)
+            done(spec)
+          })
+        }, 300)
+      })
+      run('page.open', { id: target.page, section: target.section ?? null })
+    } else if (target.kind === 'overlay') {
       void openOverlay(target.overlay, tab?.id ?? null, null, null, target.section ?? null).then(
         () => {
           if (target.show) requestAnimationFrame(() => show(target.show))
@@ -90,12 +106,7 @@ function apply(spec: string): void {
       uiStore.set({ findOpen: true, findTabId: tab.id })
       // The bar mounts on the next render; type into it the way a keyboard would.
       requestAnimationFrame(() => {
-        const input = document.querySelector<HTMLInputElement>('input[aria-label="Find in page"]')
-        if (input && target.text) {
-          const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
-          setter?.call(input, target.text)
-          input.dispatchEvent(new Event('input', { bubbles: true }))
-        }
+        if (target.text) type('input[aria-label="Find in page"]', target.text)
         done(spec)
       })
     } else if (target.kind === 'pull' && tab) {
@@ -120,6 +131,51 @@ function apply(spec: string): void {
 function failLoad(tabId: string, code: number, url: string): void {
   const host = (window as unknown as { __zenHost: HostGlobal }).__zenHost
   host.viewEvent(tabId, 'failLoad', JSON.stringify({ code, description: '', url }))
+}
+
+/**
+ * The Settings, Shortcuts and Sync overlays are the Settings tab on a host with page tabs: an
+ * `overlay=settings` recipe from before the tab lands on the same page.
+ */
+function asPageState(target: PreviewState): PreviewState {
+  if (target.kind !== 'overlay' || !browserStore.get().state?.capabilities.pageTabs) return target
+  const sectionOf: Partial<Record<typeof target.overlay, string>> = {
+    shortcuts: 'shortcuts',
+    sync: 'sync'
+  }
+  if (target.overlay !== 'settings' && !sectionOf[target.overlay]) return target
+  const page: Extract<PreviewState, { kind: 'page' }> = { kind: 'page', page: 'settings' }
+  const section = target.section ?? sectionOf[target.overlay]
+  if (section) page.section = section
+  if (target.show) page.show = target.show
+  return page
+}
+
+/** Type `text` into the first element matching `selector` the way a keyboard would. */
+function type(selector: string, text: string): void {
+  const input = document.querySelector<HTMLInputElement>(selector)
+  if (!input) return
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+  setter?.call(input, text)
+  input.dispatchEvent(new Event('input', { bubbles: true }))
+}
+
+/** Runs `fn` once the active tab satisfies `test` (at once when it already does). */
+function whenActiveTabIs(test: (url: string) => boolean, fn: () => void): void {
+  const check = (): boolean => {
+    const state = browserStore.get().state
+    const tab = state ? activeTab(state) : null
+    return tab !== null && test(tab.url)
+  }
+  if (check()) {
+    fn()
+    return
+  }
+  const unsubscribe = browserStore.subscribe(() => {
+    if (!check()) return
+    unsubscribe()
+    fn()
+  })
 }
 
 /**

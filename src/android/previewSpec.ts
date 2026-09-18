@@ -1,4 +1,5 @@
 import type { OverlayKind } from '@shared/types'
+import { INTERNAL_PAGE_IDS, type InternalPageId } from '@shared/internalPages'
 
 /** The overlays a preview state may open by name. */
 export const PREVIEW_OVERLAYS: readonly OverlayKind[] = [
@@ -21,6 +22,16 @@ export const PREVIEW_PULL_MAX = 2.5
 
 export type PreviewState =
   | { kind: 'idle' }
+  | {
+      /** An internal page in its tab (`page.open`): Settings, on its landing or a section. */
+      kind: 'page'
+      page: InternalPageId
+      section?: string
+      /** Text of an element on the page to scroll into view once it is open. */
+      show?: string
+      /** Text typed into the page's search field once it is open (the Settings landing). */
+      search?: string
+    }
   | {
       kind: 'overlay'
       overlay: OverlayKind
@@ -68,7 +79,9 @@ export type PreviewState =
 const MAX_PREVIEW_BANNERS = 3
 
 /**
- * A preview state spec is a query string: `idle` (or anything unrecognised), `overlay=<kind>` for
+ * A preview state spec is a query string: `idle` (or anything unrecognised), `page=<id>` for an
+ * internal page opened in its tab (`section=<id>` for one of its sections, `search=<text>` types
+ * into its search field, `show=<text>` scrolls a row into view), `overlay=<kind>` for
  * one of PREVIEW_OVERLAYS (with `section=<id>` to land on a Settings section and `show=<text>` to
  * scroll a row of the overlay into view), `menu=app` for the app menu sheet (with `show=<text>` to
  * scroll an item into view), `find=<text>` for the find bar with that text typed (`find=` opens it
@@ -78,12 +91,26 @@ const MAX_PREVIEW_BANNERS = 3
  * tab's load failing with that Chromium `net::` code (with `url=<target>` for the URL that
  * failed, else the tab's own), which puts up the zen://error page, or any of `toast=<text>` (with
  * `action=<label>`, `kind=error`), `banners=<n>` and `progress=<0…1>` together for the message
- * surfaces and the load bar. When several are given, `overlay` wins over `menu`, `menu` over
- * `find`, `find` over `pull`, `pull` over `zoom`, `zoom` over `error`, and `error` over the
- * messages. A leading `#` (the URL hash as read) is ignored.
+ * surfaces and the load bar. When several are given, `page` wins over `overlay`, `overlay` over
+ * `menu`, `menu` over `find`, `find` over `pull`, `pull` over `zoom`, `zoom` over `error`, and
+ * `error` over the messages. A leading `#` (the URL hash as read) is ignored.
  */
 export function parsePreviewSpec(spec: string): PreviewState {
   const params = new URLSearchParams(spec.startsWith('#') ? spec.slice(1) : spec)
+  const page = params.get('page')
+  if (page !== null && (INTERNAL_PAGE_IDS as readonly string[]).includes(page)) {
+    const state: Extract<PreviewState, { kind: 'page' }> = {
+      kind: 'page',
+      page: page as InternalPageId
+    }
+    const section = params.get('section')
+    if (section) state.section = section
+    const search = params.get('search')
+    if (search) state.search = search
+    const show = params.get('show')
+    if (show) state.show = show
+    return state
+  }
   const overlay = params.get('overlay')
   if (overlay !== null && (PREVIEW_OVERLAYS as readonly string[]).includes(overlay)) {
     const state: Extract<PreviewState, { kind: 'overlay' }> = {

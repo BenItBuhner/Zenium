@@ -177,7 +177,11 @@ export function SettingsSheet({
     return () => scroller.removeEventListener('scroll', sync)
   }, [])
   return createPortal(
-    <div inert={under || undefined}>
+    <div
+      className="zen-settings-sheet-layer"
+      data-under={under || undefined}
+      inert={under || undefined}
+    >
       <BottomSheet
         ref={sheet}
         onDismissed={onClose}

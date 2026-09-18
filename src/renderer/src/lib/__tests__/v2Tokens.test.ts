@@ -66,7 +66,10 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // DefaultBrowserSection.tsx, content/DefaultBrowserBanner.tsx): the flat card and its inks.
   ['.zen-default-browser-card {', '\n@media (prefers-reduced-motion: reduce) {'],
   // The message cards: toast and banner, their action button, glyph and close (components/messages/*).
-  ['.zen-message {', '.zen-suggestion {']
+  ['.zen-message {', '.zen-suggestion {'],
+  // The Settings tab (components/pages/settings): the page host, the shared v2 rows, fields,
+  // icon buttons and image radio cards it introduces, its sheets and its overview thumbnail.
+  ['.zen-page-host {', ' * History page (design language v2 draft']
 ]
 
 /**
