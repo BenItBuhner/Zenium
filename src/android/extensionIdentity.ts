@@ -1,5 +1,3 @@
-import type { Browser } from '@core/browser'
-import type { ZenWindow } from '@core/window'
 import {
   ERROR_FLOW_IN_PROGRESS,
   ERROR_GET_AUTH_TOKEN,
@@ -15,31 +13,41 @@ import {
   type AuthViewEvents,
   type WebAuthFlow
 } from '@core/extensions/api/webAuthFlow'
-import type { ViewEventPayloads } from './views'
 
 /**
- * `chrome.identity` on Android, on the shared flow (`api/webAuthFlow.ts`). Until W2-2's auth
- * sheet, `launchWebAuthFlow` runs the provider's pages in a tab of the window: an interactive
- * flow opens it in front; a silent one loads it in the background and closes it again, unseen,
- * when the provider redirects straight back or (the usual case) its first page asks for the user.
- * The way back is Chrome's `https://<id>.chromiumapp.org/…`, which providers have registered:
- * Kotlin knows which tab is in a flow (`ext.authFlow`), cancels that tab's navigation there
- * before any request goes out and reports it as `ext.identityRedirect`; one that committed anyway
- * (a POST the WebView does not ask about) ends the flow from the tab's `navigated` event. The
- * emulated origin only ever serves the extension's files.
+ * `chrome.identity` on Android, on the shared flow (`api/webAuthFlow.ts`). `launchWebAuthFlow`
+ * runs the provider's pages in an auth sheet of their own (`ExtensionAuthSheet.kt`: the v2 phone
+ * sheet around a WebView on the regular profile, so a session the user already has with the
+ * provider counts), hidden until the flow says so: an interactive flow shows it once the first
+ * page has loaded, a silent one never does and ends unseen. The way back is Chrome's
+ * `https://<id>.chromiumapp.org/…`, which providers have registered: Kotlin cancels the sheet's
+ * navigation there before any request goes out and reports the URL as `navigating`; one that
+ * committed anyway (a POST the WebView does not ask about) lands on an empty stand-in page and
+ * reports the same. The emulated origin only ever serves the extension's files.
  *
  * `getAuthToken` needs Chrome's signed-in Google account and is refused, `getProfileUserInfo` is
  * empty, the token cache members are no-ops, all as on the desktop.
  */
-export interface AuthTabHost {
-  readonly browser: Browser
-  window(): ZenWindow
-  /** Tell Kotlin which extension's flow runs in the tab (null: none any more). */
-  authFlowTab(tabId: string, extensionId: string | null): void
+export interface AuthSheetHost {
+  /** Open the provider's first page in a new, hidden auth sheet known to Kotlin as `viewId`. */
+  openAuthSheet(viewId: number, extensionId: string, url: string): void
+  /** Bring the sheet up for the user. */
+  showAuthSheet(viewId: number): void
+  /** Take the sheet down without a `closed` event. */
+  closeAuthSheet(viewId: number): void
 }
 
-interface TabView {
-  tabId: string
+/** What Kotlin reports about an auth sheet (`ext.authView`). */
+export type AuthSheetEvent = 'navigating' | 'loaded' | 'failed' | 'closed'
+
+export interface AuthSheetEventPayload {
+  viewId: number
+  event: AuthSheetEvent
+  url?: string
+}
+
+interface SheetView {
+  viewId: number
   extensionId: string
   events: AuthViewEvents
   closed: boolean
@@ -50,11 +58,12 @@ const NOT_IMPLEMENTED = 'is not implemented on Zenium for Android'
 export class AndroidIdentity {
   /** Extension id → its running flow. */
   private readonly flows = new Map<string, WebAuthFlow>()
-  /** Tab id → the flow view it carries. */
-  private readonly tabs = new Map<string, TabView>()
+  /** Sheet id → the flow view it carries. */
+  private readonly views = new Map<number, SheetView>()
+  private nextViewId = 1
 
   constructor(
-    private readonly host: AuthTabHost,
+    private readonly host: AuthSheetHost,
     private readonly timers?: AuthFlowTimers
   ) {}
 
@@ -84,52 +93,35 @@ export class AndroidIdentity {
     return this.flows.has(extensionId)
   }
 
-  /** The tab an extension's flow runs in, if one is. */
-  flowTab(extensionId: string): string | null {
-    for (const [tabId, view] of this.tabs) if (view.extensionId === extensionId) return tabId
+  /** The sheet an extension's flow runs in, if one is. */
+  flowSheet(extensionId: string): number | null {
+    for (const [viewId, view] of this.views) if (view.extensionId === extensionId) return viewId
     return null
   }
 
-  /** Kotlin cancelled the flow tab's navigation back to the redirect origin. */
-  onRedirect(tabId: string, url: string): void {
-    this.tabs.get(tabId)?.events.navigating(url)
-  }
-
-  /** The tab's view events, as the runtime receives them from Kotlin. */
-  onViewEvent<K extends keyof ViewEventPayloads>(
-    tabId: string,
-    name: K,
-    payload: ViewEventPayloads[K]
-  ): void {
-    const view = this.tabs.get(tabId)
+  /** What happened to a sheet, as Kotlin reports it. */
+  onSheetEvent(payload: AuthSheetEventPayload): void {
+    const view = this.views.get(payload.viewId)
     if (!view) return
-    switch (name) {
-      case 'navigated': {
-        const p = payload as ViewEventPayloads['navigated']
-        if (!p.inPage) view.events.navigating(p.url)
+    switch (payload.event) {
+      case 'navigating':
+        if (typeof payload.url === 'string') view.events.navigating(payload.url)
         return
-      }
-      case 'stopLoading':
+      case 'loaded':
         view.events.loaded()
         return
-      case 'failLoad':
+      case 'failed':
         view.events.failed()
         return
-      case 'destroyed':
-        this.tabGone(view)
-        return
-      default:
+      case 'closed':
+        // The user dismissed it (the flow's own close never reports back).
+        this.forget(view)
+        view.events.closed()
         return
     }
   }
 
-  /** The state snapshot lost the tab (closed by the user, or by the flow itself). */
-  onTabRemoved(tabId: string): void {
-    const view = this.tabs.get(tabId)
-    if (view) this.tabGone(view)
-  }
-
-  /** The extension is unloading: an open flow fails the way a closed tab does. */
+  /** The extension is unloading: an open flow fails the way a dismissed sheet does. */
   unload(extensionId: string): void {
     this.flows.get(extensionId)?.cancel()
   }
@@ -142,7 +134,7 @@ export class AndroidIdentity {
       flow = runWebAuthFlow(
         extensionId,
         details,
-        (url, events) => this.openTab(extensionId, url, details.interactive, events),
+        (url, events) => this.openSheet(extensionId, url, events),
         this.timers
       )
     } catch (error) {
@@ -156,39 +148,45 @@ export class AndroidIdentity {
     return flow.result
   }
 
-  private openTab(
-    extensionId: string,
-    url: string,
-    interactive: boolean,
-    events: AuthViewEvents
-  ): AuthView {
-    const win = this.host.window()
-    const tab = this.host.browser.tabs.createTab({ url, active: interactive }, win)
-    const view: TabView = { tabId: tab.id, extensionId, events, closed: false }
-    this.tabs.set(tab.id, view)
-    this.host.authFlowTab(tab.id, extensionId)
+  private openSheet(extensionId: string, url: string, events: AuthViewEvents): AuthView {
+    const viewId = this.nextViewId++
+    const view: SheetView = { viewId, extensionId, events, closed: false }
+    this.views.set(viewId, view)
+    this.host.openAuthSheet(viewId, extensionId, url)
     return {
       show: () => {
-        if (!view.closed) this.host.browser.tabs.activateTab(tab.id, win)
+        if (!view.closed) this.host.showAuthSheet(viewId)
       },
       close: () => {
         if (view.closed) return
         this.forget(view)
-        this.host.browser.tabs.closeTab(tab.id, true, win)
+        this.host.closeAuthSheet(viewId)
         view.events.closed()
       }
     }
   }
 
-  /** The tab went away under the flow. */
-  private tabGone(view: TabView): void {
-    this.forget(view)
-    view.events.closed()
-  }
-
-  private forget(view: TabView): void {
+  private forget(view: SheetView): void {
     view.closed = true
-    this.tabs.delete(view.tabId)
-    this.host.authFlowTab(view.tabId, null)
+    this.views.delete(view.viewId)
+  }
+}
+
+/** Shapes an `ext.authView` host event, or null for one the runtime cannot use. */
+export function authSheetEvent(raw: unknown): AuthSheetEventPayload | null {
+  if (typeof raw !== 'object' || raw === null) return null
+  const p = raw as Record<string, unknown>
+  if (typeof p.viewId !== 'number') return null
+  if (
+    p.event !== 'navigating' &&
+    p.event !== 'loaded' &&
+    p.event !== 'failed' &&
+    p.event !== 'closed'
+  )
+    return null
+  return {
+    viewId: p.viewId,
+    event: p.event,
+    url: typeof p.url === 'string' ? p.url : undefined
   }
 }

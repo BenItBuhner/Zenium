@@ -34,6 +34,7 @@ import {
   type ServiceWorkerMessage
 } from './extensionServiceWorker'
 import type { ClaimedTransport, TransportJanitor } from './extensionTransport'
+import { installCorsProxy } from './extensionCorsProxy'
 
 /**
  * The extension bootstrap Kotlin injects at document start into tab WebViews (content mode) and
@@ -324,6 +325,16 @@ declare const __zenExtBoot: Boot
     const swSend = (message: ServiceWorkerMessage): void => engine.post({ t: 'sw', ...message })
     let lifecycle: (() => Promise<void>) | null = null
 
+    // Cross-origin fetch / XHR to the hosts the extension's permissions cover go through
+    // Kotlin's CORS proxy; bodied ones hand their body over first (extensionCorsProxy.ts).
+    let ticketSeq = 0
+    installCorsProxy(window, {
+      origin,
+      hostPermissions: ext.hostPermissions,
+      postBody: (ticket, body) => engine.post({ t: 'proxyBody', ticket, body }),
+      nextTicket: () => `${endpointId}:${++ticketSeq}`
+    })
+
     if (context === 'background' && workerScript) {
       // Service-worker globals the MV3 script expects; `importScripts` is synchronous by
       // contract, so it is a synchronous XHR to the extension origin plus an indirect eval (the
@@ -369,12 +380,32 @@ declare const __zenExtBoot: Boot
     if (context === 'popup') {
       // Chrome closes the popup on window.close(); the host owns the sheet.
       pageWindow.close = (): void => engine.post({ t: 'closePopup' })
+      // Chrome sizes a popup to its document's preferred size, not to the viewport it happens to
+      // have: content that overflows wants that much room; otherwise the body's own box (a
+      // `width: 300px` body is a 300 px popup, a short document a short popup). The viewport's
+      // own extent is the answer only when the body fills it (`height: 100%`).
+      const outer = (el: HTMLElement, axis: 'width' | 'height'): number => {
+        const style = getComputedStyle(el)
+        const margins =
+          axis === 'width'
+            ? (parseFloat(style.marginLeft) || 0) + (parseFloat(style.marginRight) || 0)
+            : (parseFloat(style.marginTop) || 0) + (parseFloat(style.marginBottom) || 0)
+        return el.getBoundingClientRect()[axis] + margins
+      }
       const report = (): void => {
         const root = document.documentElement
         const body = document.body
-        const width = Math.max(root.scrollWidth, body ? body.scrollWidth : 0)
-        const height = Math.max(root.scrollHeight, body ? body.scrollHeight : 0)
-        engine.post({ t: 'popupSize', width, height })
+        const overflowWidth = Math.max(root.scrollWidth, body ? body.scrollWidth : 0)
+        const overflowHeight = Math.max(root.scrollHeight, body ? body.scrollHeight : 0)
+        const width =
+          overflowWidth > root.clientWidth || !body
+            ? overflowWidth
+            : Math.min(outer(body, 'width'), root.clientWidth)
+        const height =
+          overflowHeight > root.clientHeight || !body
+            ? overflowHeight
+            : Math.min(outer(body, 'height'), root.clientHeight)
+        engine.post({ t: 'popupSize', width: Math.ceil(width), height: Math.ceil(height) })
       }
       window.addEventListener('load', () => {
         report()

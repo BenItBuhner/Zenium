@@ -51,6 +51,8 @@ export interface ContentUnit {
 export interface ServedConfig {
   /** `web_accessible_resources` globs (tab pages may only fetch these). */
   webAccessible: string[]
+  /** `host_permissions` (MV2 origin permissions included): the hosts the CORS proxy reaches for the extension's pages. */
+  hosts: string[]
   /** The generated background page, or null when the extension has none or an MV2 page. */
   backgroundHtml: string | null
   backgroundUrl: string | null
@@ -199,6 +201,7 @@ export function planUnits(
     units,
     served: {
       webAccessible: manifest.webAccessibleResources.flatMap((set) => set.resources),
+      hosts: manifest.hostPermissions,
       backgroundHtml:
         background && background.kind !== 'page' ? backgroundPageHtml(manifest) : null,
       // An MV3 worker's `self.location` is its script's URL in Chrome: the page that stands in
