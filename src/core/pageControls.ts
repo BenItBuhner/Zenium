@@ -168,9 +168,9 @@ export class PageControls {
   // ---------------------------------------------------------------------------
 
   /**
-   * An exact factor for the tab's site, as a slider sets it (the menu's steps go through
-   * `adjustZoom`). Every tab of the site follows at once, and the chrome hears of the change
-   * (`zoom.changed`) so it can show the zoom bubble.
+   * An exact factor for the tab's site, as a slider sets it (the desktop bubble's and the phone
+   * zoom sheet's; the menu's steps go through `adjustZoom`). Every tab of the site follows at
+   * once, and the chrome hears of the change (`zoom.changed`) so it can show the zoom bubble.
    */
   setZoomFactor(tabId: string, factor: number): void {
     const tab = this.browser.tabs.tab(tabId)

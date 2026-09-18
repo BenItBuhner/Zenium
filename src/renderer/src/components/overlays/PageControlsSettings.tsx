@@ -11,7 +11,7 @@ import { Choice, Group, MENULIST_HEIGHT, Row } from './SettingsPrimitives'
  * Settings rows for the page controls (hosts with `capabilities.pageControls`): the site
  * defaults under Look and Feel, and the Accessibility section with the default zoom. Built from
  * the shared `Group` / `Row` primitives; the per-site lists show only real exceptions, which the
- * menu's Desktop Site, Dark Theme for This Site and Zoom items create.
+ * menu's Desktop Site, Dark Theme for This Site and Zoom… (the phone's zoom sheet) items create.
  *
  * The desktop has zoom memory without the rest of the page controls: its default zoom is
  * Chrome's "Page zoom" menulist under Appearance (`PageZoomRow`), and the sites that were

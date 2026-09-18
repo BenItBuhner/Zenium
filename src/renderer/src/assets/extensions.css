@@ -6,6 +6,10 @@
  * Every colour, radius, size and weight reads main.css's `--v2-*` block; the density tokens
  * carry the phone's 44/64 rows, 40 controls, 20 glyphs at stroke 1.75 and 44 icon buttons, so
  * a form-factor override below exists only where the draft's phone value has no token yet.
+ *
+ * Every hover fill sits inside `@media (hover: hover)` (as main.css's app-icon grid): Chromium
+ * keeps a tap's `:hover` on the element until the next touch, so on a phone an ungated rule
+ * leaves a tapped button lit. Press (`:active`), expanded and pressed states stay ungated.
  */
 
 /*
@@ -294,9 +298,11 @@
     color: var(--v2-accent);
     text-decoration: none;
   }
-  .zen-v2-link:hover {
-    text-decoration: underline;
-    text-underline-offset: 3px;
+  @media (hover: hover) {
+    .zen-v2-link:hover {
+      text-decoration: underline;
+      text-underline-offset: 3px;
+    }
   }
   .zen-v2-link .lucide {
     width: var(--v2-icon);
@@ -435,9 +441,13 @@
     line-height: var(--v2-line-body);
     transition: background 120ms var(--zen-ease);
   }
-  .zen-v2-menulist:hover:not(:disabled),
   .zen-v2-menulist[aria-expanded='true'] {
     background: color-mix(in srgb, var(--v2-page), var(--v2-text) 7%);
+  }
+  @media (hover: hover) {
+    .zen-v2-menulist:hover:not(:disabled) {
+      background: color-mix(in srgb, var(--v2-page), var(--v2-text) 7%);
+    }
   }
   .zen-v2-menulist:focus-visible {
     border-color: var(--v2-accent);
@@ -469,8 +479,10 @@
     white-space: nowrap;
     transition: background 120ms var(--zen-ease);
   }
-  .zen-v2-menulist-option:hover {
-    background: var(--v2-fill);
+  @media (hover: hover) {
+    .zen-v2-menulist-option:hover {
+      background: var(--v2-fill);
+    }
   }
   .zen-v2-menulist-option:active {
     background: var(--v2-fill-hover);
@@ -518,8 +530,10 @@
       background 120ms var(--zen-ease),
       border-color 120ms var(--zen-ease);
   }
-  .zen-v2-checkbox:hover:not(:disabled) {
-    background: var(--v2-fill);
+  @media (hover: hover) {
+    .zen-v2-checkbox:hover:not(:disabled) {
+      background: var(--v2-fill);
+    }
   }
   .zen-v2-checkbox:checked {
     background: var(--v2-accent);
@@ -592,15 +606,17 @@
       transform 160ms var(--zen-ease),
       background 120ms var(--zen-ease);
   }
-  .zen-v2-switch:hover:not(:disabled) .zen-v2-toggle {
-    background: var(--v2-fill-hover);
-  }
   .zen-v2-switch[aria-checked='true'] .zen-v2-toggle {
     background: var(--v2-accent);
     border-color: var(--v2-accent);
   }
-  .zen-v2-switch[aria-checked='true']:hover:not(:disabled) .zen-v2-toggle {
-    background: color-mix(in srgb, var(--v2-accent) 88%, var(--v2-text));
+  @media (hover: hover) {
+    .zen-v2-switch:hover:not(:disabled) .zen-v2-toggle {
+      background: var(--v2-fill-hover);
+    }
+    .zen-v2-switch[aria-checked='true']:hover:not(:disabled) .zen-v2-toggle {
+      background: color-mix(in srgb, var(--v2-accent) 88%, var(--v2-text));
+    }
   }
   .zen-v2-switch[aria-checked='true'] .zen-v2-toggle::after {
     transform: translateX(12px);
@@ -627,13 +643,17 @@
     width: var(--v2-icon);
     height: var(--v2-icon);
   }
-  .zen-v2-icon-button:hover:not(:disabled),
   .zen-v2-icon-button[aria-expanded='true'] {
     background: var(--v2-fill);
   }
   /* On a phone the anchor opens a sheet, not a popover: it keeps aria-expanded, not the lit fill (§9.20 is the desktop's). */
-  [data-form-factor='phone'] .zen-v2-icon-button[aria-expanded='true']:not(:hover) {
+  [data-form-factor='phone'] .zen-v2-icon-button[aria-expanded='true'] {
     background: transparent;
+  }
+  @media (hover: hover) {
+    .zen-v2-icon-button:hover:not(:disabled) {
+      background: var(--v2-fill);
+    }
   }
   .zen-v2-icon-button:active:not(:disabled) {
     background: var(--v2-fill-hover);
@@ -751,8 +771,10 @@
     height: var(--v2-icon);
     flex-shrink: 0;
   }
-  .zen-v2-menu-item:hover:not(:disabled) {
-    background: var(--v2-fill);
+  @media (hover: hover) {
+    .zen-v2-menu-item:hover:not(:disabled) {
+      background: var(--v2-fill);
+    }
   }
   .zen-v2-menu-item:active:not(:disabled) {
     background: var(--v2-fill-hover);
@@ -806,8 +828,10 @@
     padding: var(--v2-card-padding);
     transition: border-color 120ms var(--zen-ease);
   }
-  .zen-ext-card:has(> .zen-ext-card-main:hover) {
-    border-color: rgb(var(--v2-text-rgb) / 0.3);
+  @media (hover: hover) {
+    .zen-ext-card:has(> .zen-ext-card-main:hover) {
+      border-color: rgb(var(--v2-text-rgb) / 0.3);
+    }
   }
   .zen-ext-card-main {
     display: flex;
@@ -1046,8 +1070,10 @@
   .zen-ext-panel-row > .zen-v2-icon-button {
     align-self: center;
   }
-  .zen-ext-panel-row:hover {
-    background: var(--v2-fill);
+  @media (hover: hover) {
+    .zen-ext-panel-row:hover {
+      background: var(--v2-fill);
+    }
   }
   .zen-ext-panel-row:active {
     background: var(--v2-fill-hover);
@@ -1157,11 +1183,13 @@
   height: var(--v2-icon);
   flex-shrink: 0;
 }
-.zen-v2-button:hover:not(:disabled) {
-  background: var(--v2-fill-hover);
-}
-.zen-v2-button[data-primary]:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--v2-accent) 88%, var(--v2-text));
+@media (hover: hover) {
+  .zen-v2-button:hover:not(:disabled) {
+    background: var(--v2-fill-hover);
+  }
+  .zen-v2-button[data-primary]:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--v2-accent) 88%, var(--v2-text));
+  }
 }
 .zen-v2-button[data-variant='danger'] {
   color: var(--v2-danger);

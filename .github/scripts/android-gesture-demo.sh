@@ -192,29 +192,61 @@ if [ "$ready" -ne 1 ]; then
   exit 1
 fi
 
-adb shell screenrecord --bit-rate 8000000 --time-limit 170 "/sdcard/$video" &
+# screenrecord stops itself after three minutes: record in parts of 170 s until the driver says
+# it is done (it stays alive a little longer so the app is still on screen) or dies, and join
+# the parts afterwards. A demo within one part gets its one file, as before.
+(
+  part=0
+  while [ "$part" -lt 5 ]; do
+    if adb shell run-as "$app_id" test -f "files/$demo_dir/done" 2>/dev/null; then break; fi
+    if ! kill -0 "$driver_pid" 2>/dev/null; then break; fi
+    part=$((part + 1))
+    adb shell screenrecord --bit-rate 8000000 --time-limit 170 "/sdcard/demo-part-$part.mp4" &
+    rec=$!
+    if [ "$part" -eq 1 ]; then
+      sleep 1
+      adb shell run-as "$app_id" touch "files/$demo_dir/recording"
+    fi
+    while kill -0 "$rec" 2>/dev/null; do
+      if adb shell run-as "$app_id" test -f "files/$demo_dir/done" 2>/dev/null || ! kill -0 "$driver_pid" 2>/dev/null; then
+        adb shell pkill -INT screenrecord || adb shell "kill -2 \$(pidof screenrecord)" || true
+        sleep 2
+        break
+      fi
+      sleep 0.5
+    done
+    wait "$rec" || true
+  done
+) &
 recorder_pid=$!
-sleep 1
-adb shell run-as "$app_id" touch "files/$demo_dir/recording"
 
-# Stop recording when the driver says it is done (it stays alive a little longer so the app is
-# still on screen), or when it dies.
-for _ in $(seq 1 720); do
-  if adb shell run-as "$app_id" test -f "files/$demo_dir/done" 2>/dev/null; then
-    break
-  fi
-  if ! kill -0 "$driver_pid" 2>/dev/null; then
-    break
-  fi
-  sleep 0.25
-done
-adb shell pkill -INT screenrecord || adb shell "kill -2 \$(pidof screenrecord)" || true
 wait "$recorder_pid" || true
 wait "$driver_pid" || true
 sleep 2
 kill "$logcat_pid" "$monitor_pid" 2> /dev/null || true
 
-adb pull "/sdcard/$video" "$out/$video"
+parts=()
+for name in $(adb shell ls /sdcard/ 2>/dev/null | tr -d '\r' | grep '^demo-part-' | sort -V); do
+  adb pull "/sdcard/$name" "$out/$name"
+  parts+=("$out/$name")
+done
+if [ "${#parts[@]}" -eq 1 ]; then
+  mv "${parts[0]}" "$out/$video"
+elif [ "${#parts[@]}" -gt 1 ]; then
+  # The runner image has no ffmpeg; a recording in parts is the one thing here that needs it.
+  if ! command -v ffmpeg > /dev/null 2>&1 && command -v apt-get > /dev/null 2>&1; then
+    sudo -n apt-get install -y -qq --no-install-recommends ffmpeg > /dev/null 2>&1 \
+      || { sudo -n apt-get update -qq > /dev/null 2>&1 && sudo -n apt-get install -y -qq --no-install-recommends ffmpeg > /dev/null 2>&1; } \
+      || true
+  fi
+  : > "$out/parts.txt"
+  for p in "${parts[@]}"; do echo "file '$(realpath "$p")'" >> "$out/parts.txt"; done
+  if command -v ffmpeg > /dev/null 2>&1 && ffmpeg -loglevel error -f concat -safe 0 -i "$out/parts.txt" -c copy "$out/$video"; then
+    rm -f "${parts[@]}" "$out/parts.txt"
+  else
+    echo "::warning::the recording's parts could not be joined; they are in the artifact as they are"
+  fi
+fi
 # Screenshots, and whatever else a driver writes down next to them (an accessibility tree dump).
 for name in $(adb shell run-as "$app_id" ls "files/$demo_dir" | tr -d '\r'); do
   case "$name" in
