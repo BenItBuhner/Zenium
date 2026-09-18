@@ -7,9 +7,9 @@
  * v1 section 7 / v2 section 11. The sheets themselves are the chassis's (`.zen-sheet*`,
  * `.zen-v2-button` in main.css) and this file adds nothing to them but the form's layout.
  * Every value is a token so the surfaces re-tune with the block in main.css. The focusable
- * pieces (rows, the toast action, the field's clear) also carry a `zen-v2-*` alias class, which
- * is how main.css's one shared focus ring reaches them on coarse pointers; the field draws its
- * own ring on :focus-within.
+ * pieces (the toast action, the field's clear) also carry a `zen-v2-*` alias class, which is
+ * how main.css's one shared focus ring reaches them on coarse pointers; the field draws its own
+ * ring on :focus-within and a row draws it around itself from its accessible row's focus.
  */
 @layer components {
   /* A panel that takes the content card's place: the neutral panel with a hairline edge, no blur. */
@@ -102,6 +102,27 @@
   .zen-list-row[data-selected='true'],
   .zen-list-row[data-selected='true']:active {
     background: var(--v2-nav-active);
+  }
+  /*
+   * The accessible row (a button, or a checkbox while picking): the leading box and the text,
+   * laid out as the row's own flex line so nothing moves; a trailing control is its sibling.
+   * It takes the focus, and the ring – main.css's shared one, offset 0 in light and -2 in dark
+   * – is drawn around the whole row from it, not around the text alone.
+   */
+  .zen-list-main {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    align-items: center;
+    gap: 12px;
+    outline: none;
+  }
+  .zen-list-row:has(> .zen-list-main:focus-visible) {
+    outline: 2px solid var(--v2-ring);
+    outline-offset: 0;
+  }
+  :root[data-theme='dark'] .zen-list-row:has(> .zen-list-main:focus-visible) {
+    outline-offset: -2px;
   }
   /*
    * The leading box: a glyph or favicon, or the row's checkbox while rows are being picked. It

@@ -222,7 +222,16 @@ export interface PhoneListRowProps {
   ariaLabel?: string
 }
 
-/** One row of a phone list: 44 tall, 64 with a subtitle, growing with its content. */
+/**
+ * One row of a phone list: 44 tall, 64 with a subtitle, growing with its content.
+ *
+ * The row is a plain box that takes the touches (tap, hold, swipe) and draws the press and the
+ * selection; the accessible row is its first child, a button (a checkbox while selecting) named
+ * by the label and holding the leading box and the text, and the trailing control is that
+ * button's sibling. A control inside a button is not valid ARIA, and Android's accessibility
+ * tree makes every button a leaf – TalkBack would never reach a row's Remove or 3-dot button
+ * nested in it. Focus lands on the accessible row; the ring is drawn around the whole box.
+ */
 export function PhoneListRow({
   icon,
   title,
@@ -240,39 +249,44 @@ export function PhoneListRow({
   const glyphRef = useRef<SVGSVGElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
   const swipe = useSwipeToDelete({ frameRef, underRef, glyphRef, contentRef }, onSwipeDelete)
-  const gestures = useRowGestures({
+  const { onKeyDown, ...pointer } = useRowGestures({
     onTap,
     onLongPress,
     swipe: onSwipeDelete && !selecting ? swipe : null
   })
   const row = (
     <div
-      role={selecting ? 'checkbox' : 'button'}
-      aria-checked={selecting ? selected : undefined}
-      aria-label={ariaLabel ?? title}
-      tabIndex={0}
       data-selected={selected}
       data-two-line={Boolean(subtitle)}
-      className="zen-list-row zen-v2-list-row select-none"
+      className="zen-list-row select-none"
       style={{ touchAction: onSwipeDelete && !selecting ? 'pan-y' : undefined }}
-      {...gestures}
+      {...pointer}
     >
-      <span className="zen-list-lead" data-checkbox={selecting} aria-hidden>
-        {selecting ? (
-          <span
-            className="zen-list-checkbox flex items-center justify-center"
-            data-checked={selected}
-          >
-            <Check className="h-4 w-4" strokeWidth={2.5} />
-          </span>
-        ) : (
-          icon
-        )}
-      </span>
-      <span className="zen-list-text">
-        <span className="zen-list-title truncate">{title}</span>
-        {subtitle && <span className="zen-list-subtitle truncate">{subtitle}</span>}
-      </span>
+      <div
+        role={selecting ? 'checkbox' : 'button'}
+        aria-checked={selecting ? selected : undefined}
+        aria-label={ariaLabel ?? title}
+        tabIndex={0}
+        className="zen-list-main"
+        onKeyDown={onKeyDown}
+      >
+        <span className="zen-list-lead" data-checkbox={selecting} aria-hidden>
+          {selecting ? (
+            <span
+              className="zen-list-checkbox flex items-center justify-center"
+              data-checked={selected}
+            >
+              <Check className="h-4 w-4" strokeWidth={2.5} />
+            </span>
+          ) : (
+            icon
+          )}
+        </span>
+        <span className="zen-list-text">
+          <span className="zen-list-title truncate">{title}</span>
+          {subtitle && <span className="zen-list-subtitle truncate">{subtitle}</span>}
+        </span>
+      </div>
       {!selecting && trailing && <span className="zen-list-trailing">{trailing}</span>}
     </div>
   )
