@@ -37,7 +37,14 @@ interface Props {
   contentKey?: string
   /** Accessible name of the handle. */
   handleLabel?: string
+  /** The id of the element that names the dialog (its title), for `aria-labelledby`. */
+  labelledBy?: string
   className?: string
+  /**
+   * Rendered inside a `FrameDialogHost` (lib/portals.tsx): the layer fills the host's box
+   * (`absolute`) instead of the viewport (`fixed`), and the host orders the stack.
+   */
+  hosted?: boolean
 }
 
 type Zone = 'grip' | 'body' | 'scrim'
@@ -90,7 +97,9 @@ export function BottomSheet({
   children,
   contentKey,
   handleLabel = 'Resize sheet',
-  className
+  labelledBy,
+  className,
+  hosted = false
 }: Props): JSX.Element {
   const layerRef = useRef<HTMLDivElement>(null)
   const sheetRef = useRef<HTMLDivElement>(null)
@@ -286,8 +295,14 @@ export function BottomSheet({
     // A drag produces no click to swallow; a new touch must start with a clean slate.
     swallowClick.current = false
     const moving = motion().current.phase === 'settling'
-    // A resting sheet's scrim is only a tap target.
-    if (!moving && zone === 'scrim') return
+    // A press on a resting sheet's scrim is the dismissal itself (v2 draft §9.20, consumed on
+    // `pointerdown`): the click that follows it reaches nothing.
+    if (!moving && zone === 'scrim') {
+      e.preventDefault()
+      swallowClick.current = true
+      dismiss()
+      return
+    }
     const tracker = new VelocityTracker()
     tracker.add(e.timeStamp, e.clientX, e.clientY)
     const t: Touch = {
@@ -361,7 +376,7 @@ export function BottomSheet({
     // A page surface (design language v2 §9.29): the sheet's controls draw in the page family.
     <div
       ref={layerRef}
-      className="fixed inset-0 z-[90]"
+      className={hosted ? 'absolute inset-0' : 'fixed inset-0 z-[90]'}
       data-surface="page"
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
@@ -374,15 +389,14 @@ export function BottomSheet({
         e.stopPropagation()
       }}
     >
-      <div
-        ref={scrimRef}
-        className="zen-sheet-scrim absolute inset-0"
-        style={{ opacity: 0 }}
-        onClick={() => dismiss()}
-      />
+      <div ref={scrimRef} className="zen-sheet-scrim absolute inset-0" style={{ opacity: 0 }} />
+      {/* Focusable itself (tabIndex -1), so a sheet whose first control must not take the focus
+          on open – a form's text field on a phone – can still move the focus into the dialog. */}
       <div
         ref={sheetRef}
         role="dialog"
+        aria-labelledby={labelledBy}
+        tabIndex={-1}
         className={cn(
           'zen-sheet zen-sheet-detents absolute inset-x-0 bottom-0 mx-auto flex w-full max-w-[520px] flex-col',
           className

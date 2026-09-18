@@ -8,6 +8,7 @@ import type { Rect } from '@shared/types'
 import {
   ChromePortal,
   FrameDialogHost,
+  FrameDialogPortal,
   POPOVER_HEIGHT_FLOOR,
   POPOVER_MARGIN,
   POPOVER_WIDTH,
@@ -239,6 +240,35 @@ describe('FrameDialogHost', () => {
     expect(hosts[0]!.querySelector(':scope > .zen-frame-scrim')).toBeNull()
   })
 
+  it('draws no scrim of its own while a sheet with its own scrim is on top (§9.24, §9.28)', () => {
+    function Sheet({ name }: { name: string }): JSX.Element {
+      useFrameDialog({ ownScrim: true })
+      return <div data-dialog={name}>{name}</div>
+    }
+    render(
+      <FrameDialogHost>
+        <Sheet name="menu" />
+      </FrameDialogHost>
+    )
+    // Open all the same: the chrome goes inert, the layer takes the pointer.
+    expect(host().getAttribute('data-open')).toBe('true')
+    expect(scrim()).toBeNull()
+    // A plain dialog over the sheet brings the host's scrim back; the sheet's own is under it.
+    rerender(
+      <FrameDialogHost>
+        <Sheet name="menu" />
+        <Dialog name="prompt" />
+      </FrameDialogHost>
+    )
+    expect(scrim()).not.toBeNull()
+    rerender(
+      <FrameDialogHost>
+        <Sheet name="menu" />
+      </FrameDialogHost>
+    )
+    expect(scrim()).toBeNull()
+  })
+
   it('closes every open popover when a dialog opens (one popover at a time, §9.20)', () => {
     const onDismiss = vi.fn()
     function Popover(): JSX.Element {
@@ -267,6 +297,79 @@ describe('FrameDialogHost', () => {
     )
     expect(onDismiss).toHaveBeenCalledWith('all')
     expect(openPopoverCount()).toBe(0)
+  })
+})
+
+describe('FrameDialogPortal', () => {
+  /** A panel's sheet, opened by a row inside the content frame, mounting in the frame's host. */
+  function PanelSheet({ onScrimPress }: { onScrimPress?: () => void }): JSX.Element {
+    return (
+      <FrameDialogPortal>
+        <Dialog name="edit" onScrimPress={onScrimPress} />
+      </FrameDialogPortal>
+    )
+  }
+
+  it('renders into the frame host from outside its subtree, and registers with it', () => {
+    const close = vi.fn()
+    render(
+      <>
+        <FrameDialogHost frame />
+        <div data-panel>
+          <PanelSheet onScrimPress={close} />
+        </div>
+      </>
+    )
+    const panel = mount!.querySelector<HTMLElement>('[data-dialog="edit"]')!
+    expect(panel.parentElement).toBe(slot())
+    expect(mount!.querySelector('[data-panel] [data-dialog]')).toBeNull()
+    expect(host().getAttribute('data-open')).toBe('true')
+    pressScrim()
+    expect(close).toHaveBeenCalledTimes(1)
+    // The sheet goes; the host closes.
+    rerender(
+      <>
+        <FrameDialogHost frame />
+        <div data-panel />
+      </>
+    )
+    expect(host().hasAttribute('data-open')).toBe(false)
+    expect(scrim()).toBeNull()
+  })
+
+  it('prefers the nearest host above it to the frame’s', () => {
+    render(
+      <>
+        <FrameDialogHost frame />
+        <div data-manager>
+          <FrameDialogHost>
+            <PanelSheet />
+          </FrameDialogHost>
+        </div>
+      </>
+    )
+    const hosts = mount!.querySelectorAll<HTMLElement>('.zen-frame-dialogs')
+    expect(hosts).toHaveLength(2)
+    expect(hosts[0]!.hasAttribute('data-open')).toBe(false)
+    expect(hosts[1]!.getAttribute('data-open')).toBe('true')
+    expect(hosts[1]!.querySelector('[data-dialog="edit"]')).not.toBeNull()
+  })
+
+  it('renders nothing until a frame host has mounted, then the sheet appears in it', () => {
+    render(
+      <>
+        <PanelSheet />
+      </>
+    )
+    expect(mount!.querySelector('[data-dialog="edit"]')).toBeNull()
+    rerender(
+      <>
+        <FrameDialogHost frame />
+        <PanelSheet />
+      </>
+    )
+    expect(slot().querySelector('[data-dialog="edit"]')).not.toBeNull()
+    expect(host().getAttribute('data-open')).toBe('true')
   })
 })
 
