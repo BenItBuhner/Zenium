@@ -2,16 +2,32 @@ import type {
   ButtonHTMLAttributes,
   InputHTMLAttributes,
   JSX,
+  KeyboardEvent as ReactKeyboardEvent,
   ReactNode,
   Ref,
+  RefObject,
   TextareaHTMLAttributes
 } from 'react'
-import { useId, useRef, useState } from 'react'
+import { useId, useLayoutEffect, useRef, useState } from 'react'
 import { Check, ChevronDown, CircleAlert, Search } from 'lucide-react'
-import { Select as SelectPrimitive } from 'radix-ui'
+import type { Rect } from '@shared/types'
 import { useBackSurface } from '@renderer/lib/back'
+import {
+  ChromePortal,
+  FrameDialogPortal,
+  POPOVER_WIDTH,
+  placePopover,
+  popoverStyle,
+  toRect,
+  useAnchorRect,
+  useFrameDialog,
+  useLightDismiss,
+  viewportSize,
+  type PopoverExtent
+} from '@renderer/lib/portals'
 import { cn } from '@renderer/lib/utils'
-import { useEscape } from './lib'
+import { BottomSheet, type BottomSheetHandle } from '../../sheet/BottomSheet'
+import { useEscape, useFocusReach, useOverPage, usePhone } from './lib'
 
 /**
  * The password manager's controls in the v2 vocabulary (`.zen-v2-pw-*` in passwords.css): Firefox
@@ -22,25 +38,39 @@ import { useEscape } from './lib'
 
 type Variant = 'primary' | 'secondary' | 'danger'
 
-/** 32 × radius 4 at 15/500. Primary = accent fill (one per view); secondary = text at 10 %; danger = the danger ink. */
+/**
+ * 32 × radius 4 at 15/500. Primary = accent fill (one per view); secondary = text at 10 %; danger =
+ * the danger ink. Disabled is the whole control at .4 (§9.30). `busy` is not disabled: the button
+ * keeps its opacity and its width, its label gives way to a 16 px spinner, it is `aria-busy`, and
+ * a press does nothing until the work is done.
+ */
 export function Btn({
   variant = 'secondary',
+  busy = false,
   className,
   type = 'button',
+  onClick,
+  children,
   ref,
   ...rest
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: Variant
+  busy?: boolean
   ref?: Ref<HTMLButtonElement>
 }): JSX.Element {
   return (
     <button
       ref={ref}
-      type={type}
+      type={busy ? 'button' : type}
       data-variant={variant}
+      aria-busy={busy || undefined}
       className={cn('zen-v2-pw-btn', className)}
+      onClick={busy ? undefined : onClick}
       {...rest}
-    />
+    >
+      <span className="zen-v2-pw-btn-label">{children}</span>
+      {busy && <span className="zen-v2-pw-spinner" aria-hidden />}
+    </button>
   )
 }
 
@@ -101,12 +131,26 @@ export function TextArea({
   return <textarea className={cn('zen-v2-pw-field', className)} {...rest} />
 }
 
+interface MenulistOption<T extends string> {
+  value: T
+  label: string
+}
+
 /**
- * A rectangular menulist: the trigger is a field with a chevron, the menu a bordered panel
- * anchored under it (§9.20): gap 0, its start edge on the trigger's – or its end edge, when the
- * trigger sits in the trailing half of its row – kept 8 px inside the window. While it is open it
- * is the topmost surface: Escape and the system back close the menu and return focus to the
- * trigger, and nothing under it (a pane, the overlay) hears the key; opening another closes it.
+ * A rectangular menulist: the trigger is a field with a chevron. On the desktop the list is a
+ * popover in the chrome layer (`ChromePortal`, lib/portals.tsx) placed by `placePopover` (§9.20):
+ * flush under the trigger, its start edge on the trigger's – or its end edge, when the trigger
+ * sits in the trailing half of its row – kept 8 px inside the window, 320 wide (a list without
+ * trailing controls, never fitted to its options or the window), at most 60 % of the window tall
+ * before it scrolls. The layer's light dismiss closes it (§9.20 amended: a press anywhere outside
+ * is consumed, the trigger's own press closes without reopening, a scroll, a resize or another
+ * popover opening closes it too). On a phone it is never a popover (§9.13): the list is a picker
+ * sheet on the shared `BottomSheet` in the frame's dialog host – 44 px rows with a radio glyph on
+ * the current option, picking one closes it – the top of a depth-two stack over the manager's
+ * page (§9.24), which recedes and goes inert under the sheet's own scrim. Either way the open
+ * list is the topmost surface and takes the keyboard (§9.22): focus lands on the current option,
+ * arrows move, Enter or Space picks, Escape and the system back close it and hand focus back to
+ * the trigger, and nothing under it hears the key.
  */
 export function Menulist<T extends string>({
   value,
@@ -119,9 +163,9 @@ export function Menulist<T extends string>({
   className
 }: {
   value: T
-  options: Array<{ value: T; label: string }>
+  options: Array<MenulistOption<T>>
   onChange: (value: T) => void
-  /** Name for assistive tech (a row label is not associated with the control). */
+  /** Name for assistive tech (a row label is not associated with the control); a sheet's title. */
   label: string
   disabled?: boolean
   /** Take the row's whole width (a stacked phone row). */
@@ -130,72 +174,293 @@ export function Menulist<T extends string>({
   title?: boolean
   className?: string
 }): JSX.Element {
+  const phone = usePhone()
   const [open, setOpen] = useState(false)
-  const [align, setAlign] = useState<'start' | 'end'>('start')
   const trigger = useRef<HTMLButtonElement>(null)
+  const listId = useId()
   // One surface name per instance: with a shared name, the first menulist on the view would
   // claim Escape for a menu that is not its own and the open one would stay open.
-  const surface = `passwords-menu-${useId()}`
-  useBackSurface(open ? { name: surface, onCommit: () => setOpen(false) } : null)
-  useEscape(surface, () => setOpen(false))
+  const surface = `passwords-menu-${listId}`
+  const close = (): void => setOpen(false)
+  /** Closed by a key or a gesture: the trigger takes the focus back (§9.22). */
+  const closeToTrigger = (): void => {
+    setOpen(false)
+    trigger.current?.focus({ preventScroll: true })
+  }
+  const current = options.find((o) => o.value === value)
+  const list = {
+    id: listId,
+    label,
+    surface,
+    options,
+    value,
+    onPick: (next: T) => {
+      onChange(next)
+      closeToTrigger()
+    }
+  }
   return (
-    <SelectPrimitive.Root
-      value={value}
-      open={open}
-      onOpenChange={(next) => {
-        if (next) setAlign(inTrailingHalf(trigger.current) ? 'end' : 'start')
-        setOpen(next)
-      }}
-      onValueChange={(v) => onChange(v as T)}
-      disabled={disabled}
-    >
-      <SelectPrimitive.Trigger
+    <>
+      <button
         ref={trigger}
+        type="button"
+        role="combobox"
         aria-label={label}
+        aria-haspopup={phone ? 'dialog' : 'listbox'}
+        aria-expanded={open}
+        aria-controls={open ? listId : undefined}
+        data-state={open ? 'open' : 'closed'}
         data-fill={fill || undefined}
         data-title={title || undefined}
+        disabled={disabled}
         className={cn('zen-v2-pw-menulist', className)}
+        onClick={() => setOpen((o) => !o)}
+        onKeyDown={(e) => {
+          if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+          e.preventDefault()
+          setOpen(true)
+        }}
       >
-        <SelectPrimitive.Value />
-        <SelectPrimitive.Icon asChild>
-          <ChevronDown />
-        </SelectPrimitive.Icon>
-      </SelectPrimitive.Trigger>
-      <SelectPrimitive.Portal>
-        <SelectPrimitive.Content
-          position="popper"
-          side="bottom"
-          align={align}
-          sideOffset={0}
-          collisionPadding={8}
-          className="zen-v2-pw-menu zen-animate-pop"
-        >
-          <SelectPrimitive.Viewport>
-            {options.map((o) => (
-              <SelectPrimitive.Item key={o.value} value={o.value} className="zen-v2-pw-menu-item">
-                <span>
-                  <SelectPrimitive.ItemIndicator>
-                    <Check className="size-4" strokeWidth={2} />
-                  </SelectPrimitive.ItemIndicator>
-                </span>
-                <SelectPrimitive.ItemText>{o.label}</SelectPrimitive.ItemText>
-              </SelectPrimitive.Item>
-            ))}
-          </SelectPrimitive.Viewport>
-        </SelectPrimitive.Content>
-      </SelectPrimitive.Portal>
-    </SelectPrimitive.Root>
+        <span>{current?.label ?? ''}</span>
+        <ChevronDown aria-hidden />
+      </button>
+      {open &&
+        (phone ? (
+          <MenulistSheet {...list} onClose={closeToTrigger} />
+        ) : (
+          <MenulistPopover {...list} anchor={trigger} onClose={closeToTrigger} onDismiss={close} />
+        ))}
+    </>
   )
 }
 
-/** Whether a menulist's centre lies in the trailing half of the row or header it sits in (§9.20). */
-function inTrailingHalf(trigger: HTMLElement | null): boolean {
-  if (!trigger) return false
-  const bar = trigger.closest('.zen-v2-pw-row, .zen-v2-pw-header-row') ?? trigger.parentElement
-  if (!bar) return false
-  const t = trigger.getBoundingClientRect()
-  const b = bar.getBoundingClientRect()
-  return t.left + t.width / 2 > b.left + b.width / 2
+interface OpenList<T extends string> {
+  id: string
+  label: string
+  /** The back-registry name of this list while it is open. */
+  surface: string
+  options: Array<MenulistOption<T>>
+  value: T
+  onPick: (value: T) => void
+}
+
+/** The open desktop list: a listbox in the chrome layer, one option focused, hanging under its trigger. */
+function MenulistPopover<T extends string>({
+  id,
+  label,
+  surface,
+  anchor,
+  options,
+  value,
+  onPick,
+  onClose,
+  onDismiss
+}: OpenList<T> & {
+  anchor: RefObject<HTMLButtonElement | null>
+  /** Closed by Escape or the system back: the trigger takes the focus back. */
+  onClose: () => void
+  /** Closed by the light dismiss: focus stays where the press landed. */
+  onDismiss: () => void
+}): JSX.Element {
+  const ref = useRef<HTMLDivElement>(null)
+  const items = useRef<Array<HTMLDivElement | null>>([])
+  const anchorRect = useAnchorRect(anchor)
+  const [active, setActive] = useState(() =>
+    Math.max(
+      0,
+      options.findIndex((o) => o.value === value)
+    )
+  )
+  useBackSurface({ name: surface, onCommit: onClose })
+  useEscape(surface, onClose)
+  // The keyboard lands on the current option as the list opens (§9.22), then follows `active`.
+  useLayoutEffect(() => {
+    items.current[active]?.focus({ preventScroll: true })
+  }, [active])
+  useLightDismiss(
+    ref,
+    () => {
+      // Whatever closed it, focus does not fall to the body: the trigger takes it back when the
+      // list held it (an outside press was consumed and moved nothing; a scroll moves nothing).
+      const held = ref.current?.contains(document.activeElement) ?? false
+      onDismiss()
+      if (held) anchor.current?.focus({ preventScroll: true })
+    },
+    { anchor }
+  )
+  // The fixed 320 of §9.20: a list without trailing controls, never fitted.
+  const width: PopoverExtent = POPOVER_WIDTH.list
+  const box = anchorRect
+    ? placePopover(anchorRect, menulistBar(anchor.current, anchorRect), viewportSize(), width)
+    : null
+  const move = (index: number): void => {
+    const next = (index + options.length) % options.length
+    setActive(next)
+  }
+  const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>): void => {
+    switch (e.key) {
+      case 'ArrowDown':
+        move(active + 1)
+        break
+      case 'ArrowUp':
+        move(active - 1)
+        break
+      case 'Home':
+        move(0)
+        break
+      case 'End':
+        move(options.length - 1)
+        break
+      case 'Enter':
+      case ' ': {
+        const option = options[active]
+        if (option) onPick(option.value)
+        break
+      }
+      case 'Tab':
+        // The list is the topmost surface: Tab stays inside it (§9.22).
+        move(active + (e.shiftKey ? -1 : 1))
+        break
+      default:
+        return
+    }
+    e.preventDefault()
+  }
+  return (
+    <ChromePortal>
+      <div
+        ref={ref}
+        id={id}
+        role="listbox"
+        aria-label={label}
+        tabIndex={-1}
+        className="zen-v2-pw-menu zen-animate-pop fixed"
+        data-side={box?.side}
+        // Until the anchor has been measured it is laid out but not shown.
+        style={box ? popoverStyle(box) : { visibility: 'hidden' }}
+        onKeyDown={onKeyDown}
+      >
+        {options.map((o, i) => (
+          <div
+            key={o.value}
+            ref={(el) => {
+              items.current[i] = el
+            }}
+            role="option"
+            aria-selected={o.value === value}
+            tabIndex={-1}
+            data-highlighted={i === active || undefined}
+            className="zen-v2-pw-menu-item"
+            onPointerMove={() => i !== active && setActive(i)}
+            onClick={() => onPick(o.value)}
+          >
+            <span>{o.value === value && <Check className="size-4" strokeWidth={2} />}</span>
+            <span className="min-w-0 flex-1 truncate">{o.label}</span>
+          </div>
+        ))}
+      </div>
+    </ChromePortal>
+  )
+}
+
+/**
+ * The open phone list (§9.13): a picker sheet on the shared `BottomSheet` chassis (main.css
+ * `.zen-sheet`, `.zen-sheet-item`), mounted in the frame's dialog host through `FrameDialogPortal`
+ * (lib/portals.tsx) – over the manager's page, outside the overlay's stacking context – with the
+ * §9.16 48 header naming it under the grabber and 44 px rows edge to edge at the 16 gutter
+ * (§9.25), the current option marked by the radio glyph. It draws the stack's one scrim itself
+ * (`ownScrim`, §9.24, §9.28) and holds the page under it inert (`useOverPage`); one spring moves
+ * the sheet, the scrim and the page's recede together, and a drag, a fling, the scrim, Escape or
+ * the back gesture close it and nothing else. A pick applies at once and lets the sheet leave.
+ */
+function MenulistSheet<T extends string>({
+  id,
+  label,
+  surface,
+  options,
+  value,
+  onPick,
+  onClose
+}: OpenList<T> & {
+  /** The sheet has left the screen, whichever way: the trigger takes the focus back. */
+  onClose: () => void
+}): JSX.Element {
+  const sheet = useRef<BottomSheetHandle>(null)
+  const rows = useRef<HTMLDivElement>(null)
+  const titleId = useId()
+  const dismiss = (): void => sheet.current?.dismiss()
+  useFrameDialog({ onScrimPress: dismiss, ownScrim: true })
+  useOverPage()
+  useBackSurface({
+    name: surface,
+    onProgress: (progress) => sheet.current?.backProgress(progress),
+    onCommit: () => sheet.current?.commitBack(),
+    onCancel: () => sheet.current?.cancelBack()
+  })
+  useEscape(surface, dismiss)
+  // Focus lands on the current option as the sheet opens (§9.22); Tab then stays inside it.
+  useLayoutEffect(() => {
+    rows.current
+      ?.querySelector<HTMLElement>('[aria-checked="true"]')
+      ?.focus({ preventScroll: true })
+  }, [])
+  useFocusReach(rows)
+  return (
+    <FrameDialogPortal>
+      <div className="zen-v2-pw zen-v2-pw-sheet-layer absolute inset-0" data-surface="page">
+        <BottomSheet
+          ref={sheet}
+          hosted
+          labelledBy={titleId}
+          className="zen-v2-pw-sheet"
+          handleLabel="Dismiss"
+          header={
+            <h2 id={titleId} className="zen-sheet-title">
+              {label}
+            </h2>
+          }
+          onDismissed={onClose}
+        >
+          <div
+            ref={rows}
+            id={id}
+            role="radiogroup"
+            aria-labelledby={titleId}
+            className="zen-v2-pw-sheet-rows"
+          >
+            {options.map((o) => (
+              <button
+                key={o.value}
+                type="button"
+                role="radio"
+                aria-checked={o.value === value}
+                className="zen-sheet-item"
+                onClick={() => {
+                  onPick(o.value)
+                  dismiss()
+                }}
+              >
+                <span className="zen-v2-pw-radio" data-checked={o.value === value} aria-hidden />
+                <span className="min-w-0 flex-1 truncate">{o.label}</span>
+              </button>
+            ))}
+          </div>
+        </BottomSheet>
+      </div>
+    </FrameDialogPortal>
+  )
+}
+
+/**
+ * The bar a menulist hangs from, for `placePopover`: horizontally the row or header it sits in
+ * – its end edge aligns when the trigger is in that row's trailing half (§9.20) – and vertically
+ * the trigger itself, so the list is flush under the control at gap 0, not under the row's padding.
+ */
+function menulistBar(trigger: HTMLElement | null, anchor: Rect): Rect {
+  const row = trigger?.closest('.zen-v2-pw-row, .zen-v2-pw-header-row') ?? trigger?.parentElement
+  if (!row) return anchor
+  const r = toRect(row.getBoundingClientRect())
+  return { x: r.x, width: r.width, y: anchor.y, height: anchor.height }
 }
 
 /** The Proton checkbox glyph: a 16 square (20 on a phone) at radius 2, accent when checked. */
@@ -402,17 +667,23 @@ export function TitleBlock({
 export function Heading({
   children,
   trailing,
+  description,
   className
 }: {
   children: ReactNode
   trailing?: ReactNode
+  /** The group's description, 15 at 69 %, 4 px under the heading (§9.27). */
+  description?: ReactNode
   className?: string
 }): JSX.Element {
   return (
-    <h3 className={cn('zen-v2-pw-heading flex min-h-8 items-center gap-2', className)}>
-      <span className="min-w-0 flex-1 truncate">{children}</span>
-      {trailing}
-    </h3>
+    <div className={cn('zen-v2-pw-heading-block flex flex-col', className)}>
+      <h3 className="zen-v2-pw-heading flex items-center gap-2">
+        <span className="min-w-0 flex-1 truncate">{children}</span>
+        {trailing}
+      </h3>
+      {description && <Description>{description}</Description>}
+    </div>
   )
 }
 

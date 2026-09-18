@@ -50,9 +50,13 @@ export function Checkup({
         : 'Finds passwords that appeared in data breaches, are reused across sites or are easy to guess.'
 
   return (
-    <div className="zen-v2-pw-gutter flex flex-col gap-4 pb-8">
+    <div className="zen-v2-pw-gutter zen-v2-pw-sections flex flex-col gap-4 pb-8">
       <div className={phone ? 'flex flex-col gap-4' : 'flex items-start gap-4'}>
-        <div className="flex min-w-0 flex-1 items-start gap-3">
+        {/* Busy (§9.30): the block being worked on says so; the progress bar reports the count. */}
+        <div
+          className="flex min-w-0 flex-1 items-start gap-3"
+          aria-busy={checkup.running || undefined}
+        >
           <StatusGlyph
             tone={clean ? 'ok' : issues > 0 ? 'danger' : 'accent'}
             className="mt-0.5 !h-6 !w-6"
@@ -67,17 +71,23 @@ export function Checkup({
             )}
           </div>
         </div>
-        {checkup.running ? (
-          <Btn onClick={() => run('passwords.checkupCancel', undefined)}>Cancel</Btn>
-        ) : (
+        {/*
+         * The view's one primary starts the check and, while it runs, is the working button
+         * (§9.30): full opacity, its label a spinner, `aria-busy`; Cancel stands beside it.
+         */}
+        <div className="flex shrink-0 gap-2">
+          {checkup.running && (
+            <Btn onClick={() => run('passwords.checkupCancel', undefined)}>Cancel</Btn>
+          )}
           <Btn
             variant="primary"
-            disabled={logins.length === 0}
+            busy={checkup.running}
+            disabled={!checkup.running && logins.length === 0}
             onClick={() => run('passwords.checkupRun', undefined)}
           >
             {ran ? 'Check again' : 'Check now'}
           </Btn>
-        )}
+        </div>
       </div>
 
       {ran && (
@@ -152,13 +162,13 @@ function Findings({
       <Heading
         className="px-3"
         trailing={<Description className="tabular-nums">{count}</Description>}
+        description={count === 0 ? empty : hint}
       >
         <span className="flex min-w-0 items-center gap-2">
           <StatusGlyph tone={count === 0 ? 'muted' : tone}>{icon}</StatusGlyph>
           <span className="truncate">{title}</span>
         </span>
       </Heading>
-      <Description className="px-3 pb-1">{count === 0 ? empty : hint}</Description>
       {count > 0 && <div className="flex flex-col">{children}</div>}
     </section>
   )

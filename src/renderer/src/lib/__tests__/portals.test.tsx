@@ -15,6 +15,7 @@ import {
   FrameDialogHost,
   FrameDialogPortal,
   POPOVER_HEIGHT_FLOOR,
+  FrameDialogPortal,
   POPOVER_MARGIN,
   POPOVER_WIDTH,
   chromeInertHeld,
@@ -1543,6 +1544,121 @@ describe('chrome inertness while a frame dialog is open (§9.5)', () => {
     second()
     expect(inert(chrome('sidebar'))).toBe(false)
     expect(chromeInertHeld()).toBe(false)
+  })
+
+  it('draws no scrim of its own while the dialog on top draws the stack’s (a sheet), and again over it', () => {
+    render(
+      <FrameDialogHost>
+        <Dialog name="sheet" ownScrim />
+      </FrameDialogHost>
+    )
+    // The host still opens – it takes the pointer and orders the stack – but the sheet's scrim,
+    // fading with its motion, is the only one (§9.24: one scrim per stack).
+    expect(host().getAttribute('data-open')).toBe('true')
+    expect(scrim()).toBeNull()
+    // A prompt with the host's scrim opening over the sheet brings the host's scrim back.
+    rerender(
+      <FrameDialogHost>
+        <Dialog name="sheet" ownScrim />
+        <Dialog name="prompt" />
+      </FrameDialogHost>
+    )
+    expect(scrim()).not.toBeNull()
+    rerender(
+      <FrameDialogHost>
+        <Dialog name="sheet" ownScrim />
+      </FrameDialogHost>
+    )
+    expect(scrim()).toBeNull()
+  })
+})
+
+describe('FrameDialogPortal', () => {
+  it('renders a dialog from outside every host into the frame’s host and registers it there', () => {
+    const close = vi.fn()
+    render(
+      <div>
+        <FrameDialogHost frame />
+        <div data-page>
+          <FrameDialogPortal>
+            <Dialog name="sheet" onScrimPress={close} />
+          </FrameDialogPortal>
+        </div>
+      </div>
+    )
+    // A page's sheet: its state lives in the page, inside the content frame, but its panel is a
+    // child of the frame's host, in flow with the dialogs mounted there.
+    const panel = mount!.querySelector<HTMLElement>('[data-dialog="sheet"]')!
+    expect(panel.parentElement).toBe(slot())
+    expect(mount!.querySelector('[data-page] [data-dialog]')).toBeNull()
+    expect(host().getAttribute('data-open')).toBe('true')
+    pressScrim()
+    expect(close).toHaveBeenCalledTimes(1)
+    // It leaves with the portal: the host closes again.
+    rerender(
+      <div>
+        <FrameDialogHost frame />
+        <div data-page />
+      </div>
+    )
+    expect(host().hasAttribute('data-open')).toBe(false)
+    expect(mount!.querySelector('[data-dialog="sheet"]')).toBeNull()
+  })
+
+  it('prefers the nearest host when there is one above the portal', () => {
+    render(
+      <div>
+        <FrameDialogHost frame />
+        <FrameDialogHost>
+          <div data-manager>
+            <FrameDialogPortal>
+              <Dialog name="edit" />
+            </FrameDialogPortal>
+          </div>
+        </FrameDialogHost>
+      </div>
+    )
+    const hosts = mount!.querySelectorAll<HTMLElement>('.zen-frame-dialogs')
+    expect(hosts).toHaveLength(2)
+    expect(hosts[0]!.hasAttribute('data-open')).toBe(false)
+    expect(hosts[1]!.getAttribute('data-open')).toBe('true')
+    expect(mount!.querySelector('[data-dialog="edit"]')!.parentElement).toBe(
+      hosts[1]!.querySelector('.zen-frame-dialogs-slot')
+    )
+  })
+
+  it('renders nothing while no frame host is mounted, and the dialog once one is', () => {
+    render(
+      <div>
+        <FrameDialogPortal>
+          <Dialog name="sheet" />
+        </FrameDialogPortal>
+      </div>
+    )
+    expect(mount!.querySelector('[data-dialog="sheet"]')).toBeNull()
+    rerender(
+      <div>
+        <FrameDialogPortal>
+          <Dialog name="sheet" />
+        </FrameDialogPortal>
+        <FrameDialogHost frame />
+      </div>
+    )
+    expect(mount!.querySelector('[data-dialog="sheet"]')!.parentElement).toBe(slot())
+    expect(host().getAttribute('data-open')).toBe('true')
+  })
+
+  it('finds the frame host wherever it sits in the tree, never a host that is not the frame’s', () => {
+    render(
+      <div>
+        <FrameDialogHost />
+        <FrameDialogPortal>
+          <Dialog name="sheet" />
+        </FrameDialogPortal>
+      </div>
+    )
+    expect(mount!.querySelector('[data-dialog="sheet"]')).toBeNull()
+    expect(host().hasAttribute('data-open')).toBe(false)
   })
 })
 

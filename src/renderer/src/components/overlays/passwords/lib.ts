@@ -1,5 +1,5 @@
 import type { RefObject, UIEvent } from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { CredentialSummary, UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { relativeTime } from '@renderer/lib/utils'
@@ -28,6 +28,36 @@ export function useScrolled(): { scrolled: boolean; onScroll: (e: UIEvent<HTMLEl
       if (next !== scrolled) setScrolled(next)
     }
   }
+}
+
+/*
+ * The modal layers over the manager's page – the re-authentication prompt, a phone menulist's
+ * picker sheet – counted so the page knows it is the lower surface of a stack (v2 §9.24,
+ * §11.2): inert, and on a phone receded, while any of them is up.
+ */
+let layersOverPage = 0
+const layerListeners = new Set<() => void>()
+
+function subscribeLayers(listener: () => void): () => void {
+  layerListeners.add(listener)
+  return () => layerListeners.delete(listener)
+}
+
+/** Hold the manager's page under this layer for as long as the component is mounted. */
+export function useOverPage(): void {
+  useEffect(() => {
+    layersOverPage++
+    for (const listener of layerListeners) listener()
+    return () => {
+      layersOverPage--
+      for (const listener of layerListeners) listener()
+    }
+  }, [])
+}
+
+/** Whether a modal layer is up over the manager's page. */
+export function useUnderLayer(): boolean {
+  return useSyncExternalStore(subscribeLayers, () => layersOverPage > 0)
 }
 
 /**

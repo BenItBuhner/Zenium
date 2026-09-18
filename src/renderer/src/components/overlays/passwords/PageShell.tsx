@@ -4,17 +4,21 @@ import { ChevronLeft, X } from 'lucide-react'
 import { useBackDismissal } from '@renderer/lib/back'
 import { closeOverlay } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
-import { useEscape, usePhone } from './lib'
+import { useEscape, usePhone, useUnderLayer } from './lib'
 import { IconBtn, Title } from './shared'
 
 /**
  * The manager's chassis: an in-content page on the neutral page surface filling the content
- * area (design language v2 §1, §3, §6), with the overlay's back gesture – the page recedes towards
- * the bottom edge under the finger – and a click outside closing it. Panes stack inside; `layer`
- * (the re-authentication prompt) sits over the whole content area, outside the page frame: a
- * desktop scrim dims the frame only (§9.5), while the phone sheet portals itself to the window,
- * where the shell's other sheets live. While the layer is up the page is inert, so nothing
- * focusable is left behind the scrim (§9.22).
+ * area (design language v2 §1, §3, §6), a page surface for the token families (§9.29), with the
+ * overlay's back gesture – the page recedes towards the bottom edge under the finger – and a
+ * click outside closing it. Panes stack inside. `layer` is the re-authentication prompt, a modal
+ * that mounts itself in the frame's dialog host (`FrameDialogPortal`, lib/portals.tsx), over the
+ * page and outside it: on the desktop the host's scrim dims the content frame only (§9.5); on a
+ * phone the prompt – like a menulist's picker sheet (§9.13) – is a sheet over this page, a
+ * depth-two stack (§9.24): the sheet owns the one scrim, and the page recedes under it on the
+ * sheet's progress (passwords.css). While any such layer is up (`useOverPage`, lib.ts) the page
+ * is inert, so nothing under the scrim scrolls or takes focus (§9.22, §11.2), and the layer
+ * closes first: Escape and back reach it before anything here.
  */
 export function PageShell({
   children,
@@ -26,25 +30,36 @@ export function PageShell({
   className?: string
 }): JSX.Element {
   const phone = usePhone()
+  const under = useUnderLayer()
   const pageRef = useRef<HTMLDivElement>(null)
   useBackDismissal('overlay', {
     travel: 360,
     render: (v) => {
       const el = pageRef.current
       if (!el) return
+      // At rest the inline transform goes, so the stylesheet's recede under a sheet can take over.
+      if (v <= 0) {
+        el.style.transform = ''
+        el.style.opacity = ''
+        return
+      }
       el.style.transform = `translateY(${30 * v}%) scale(${1 - 0.1 * v})`
       el.style.opacity = String(1 - v)
     },
     dismissed: () => closeOverlay()
   })
   return (
-    <div className="zen-v2-pw absolute inset-0 z-30 flex" onMouseDown={() => closeOverlay()}>
+    <div
+      className="zen-v2-pw absolute inset-0 z-30 flex"
+      data-surface="page"
+      onMouseDown={() => closeOverlay()}
+    >
       <div
         ref={pageRef}
         role="dialog"
         aria-label="Passwords"
-        inert={Boolean(layer)}
-        style={{ transformOrigin: '50% 100%' }}
+        inert={under}
+        data-under={under || undefined}
         className={cn(
           'zen-v2-pw-page zen-animate-in relative flex flex-1 flex-col overflow-hidden',
           phone ? 'm-2' : 'm-3',
@@ -54,8 +69,12 @@ export function PageShell({
       >
         {children}
       </div>
+      {/*
+       * The layer renders elsewhere (a portal), but its events still bubble up the React tree:
+       * a press inside the prompt must not read as a press outside the page.
+       */}
       {layer && (
-        <div className="absolute inset-0 z-10" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="contents" onMouseDown={(e) => e.stopPropagation()}>
           {layer}
         </div>
       )}

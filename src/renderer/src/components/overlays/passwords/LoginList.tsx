@@ -47,7 +47,7 @@ export function LoginList({
   }
 
   return (
-    <div className="zen-v2-pw-gutter flex flex-col gap-2 pb-8">
+    <div className="zen-v2-pw-gutter zen-v2-pw-sections flex flex-col gap-2 pb-8">
       <div className="flex items-center gap-3 pb-2">
         <SearchField
           autoFocus={!phone}
@@ -141,10 +141,9 @@ function NeverSave({ domains }: { domains: string[] }): JSX.Element {
   }
   return (
     <section className="mt-4 flex flex-col">
-      <Heading className="px-3">Never saved</Heading>
-      <Description className="px-3 pb-2">
-        Zenium will not offer to save logins for these sites.
-      </Description>
+      <Heading className="px-3" description="Zenium will not offer to save logins for these sites.">
+        Never saved
+      </Heading>
       {domains.map((domain) => (
         <ListRow key={domain}>
           <span className="min-w-0 flex-1 truncate">{domain}</span>

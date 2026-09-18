@@ -1,12 +1,12 @@
 import type { JSX } from 'react'
 import { useId, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { KeyRound, ShieldCheck } from 'lucide-react'
 import { useBackSurface } from '@renderer/lib/back'
+import { FrameDialogPortal, POPOVER_WIDTH, useFrameDialog } from '@renderer/lib/portals'
 import { cn } from '@renderer/lib/utils'
 import { BottomSheet, type BottomSheetHandle } from '../../sheet/BottomSheet'
-import { MIN_PASSPHRASE, useEscape, useFocusReach, usePhone } from './lib'
-import { Btn, Description, ErrorNote, Field, StatusGlyph, TextField, TitleBlock } from './shared'
+import { MIN_PASSPHRASE, useEscape, useFocusReach, useOverPage, usePhone } from './lib'
+import { Btn, ErrorNote, Field, StatusGlyph, TextField, TitleBlock } from './shared'
 
 export interface PassphraseRequest {
   /** Ask for the existing passphrase, or have one created first. */
@@ -17,14 +17,19 @@ export interface PassphraseRequest {
 
 /**
  * Asks for the vault passphrase (or for a new one on devices without an OS keystore or
- * biometrics). On a phone it is a v2 sheet (§6: neutral panel, radius 12, hairline, grabber,
- * black scrim; §9.16: a 48 header after the 20 px grip strip) on the `BottomSheet` spring – one
- * progress value moves the sheet, the scrim and the back preview together; it is dragged, flung
- * or pulled down by the back gesture. On the desktop it is a dialog headed by a title block
- * (§9.23: glyph, title and the reason as its description, no X) whose scrim dims the content
- * frame only (§9.5). Either way it is the topmost surface and takes the keyboard (§9.22): focus
- * lands in the passphrase field, Tab stays inside, Escape and back settle it and hand focus
- * back to the control that asked; the manager behind it stays open.
+ * biometrics). A modal dialog, so it mounts in the frame's `FrameDialogHost` through
+ * `FrameDialogPortal` (lib/portals.tsx) – over the content frame and the manager alike, outside
+ * the overlay's stacking context and the frame's transform – and never draws a portal or a scrim
+ * of its own. On a phone it is a v2 sheet on the shared `BottomSheet` (§6, §9.25: neutral panel,
+ * radius 12, hairline, grabber, rows edge to edge at the 16 gutter) that draws the stack's one
+ * scrim itself (`ownScrim`, §9.24, §9.28) and opens on a title block (§9.23: a prompt has no 48
+ * header – grip strip, glyph and title, the reason as its description, the §9.11 footer); one
+ * spring moves the sheet, the scrim and the recede of what is under it together, and it is
+ * dragged, flung or pulled down by the back gesture. On the desktop it is a `--v2-dialog` panel
+ * headed by the same title block (no X), centred by the host over its §9.5 scrim, which dims the
+ * content frame only. Either way it is the topmost surface and takes the keyboard (§9.22): focus
+ * lands in the passphrase field, Tab stays inside, Escape and back settle it and hand focus back
+ * to the control that asked; the manager behind it stays open, receded and inert.
  */
 export function PassphrasePrompt({
   request,
@@ -34,10 +39,14 @@ export function PassphrasePrompt({
   onSettle: (passphrase: string | null) => void
 }): JSX.Element {
   const phone = usePhone()
-  return phone ? (
-    <PhonePrompt request={request} onSettle={onSettle} />
-  ) : (
-    <DesktopPrompt request={request} onSettle={onSettle} />
+  return (
+    <FrameDialogPortal>
+      {phone ? (
+        <PhonePrompt request={request} onSettle={onSettle} />
+      ) : (
+        <DesktopPrompt request={request} onSettle={onSettle} />
+      )}
+    </FrameDialogPortal>
   )
 }
 
@@ -49,44 +58,49 @@ function PhonePrompt({
   onSettle: (passphrase: string | null) => void
 }): JSX.Element {
   const sheet = useRef<BottomSheetHandle>(null)
+  const titleId = useId()
+  const descriptionId = useId()
   // The sheet leaves the screen first; what it answers is decided by how it left.
   const answer = useRef<string | null>(null)
+  const dismiss = (): void => sheet.current?.dismiss()
+  // The host draws no scrim of its own while this sheet is on top: the sheet's fades with its motion.
+  useFrameDialog({ onScrimPress: dismiss, ownScrim: true })
+  useOverPage()
   useBackSurface({
     name: 'passwords-prompt',
     onProgress: (progress) => sheet.current?.backProgress(progress),
     onCommit: () => sheet.current?.commitBack(),
     onCancel: () => sheet.current?.cancelBack()
   })
-  useEscape('passwords-prompt', () => sheet.current?.dismiss())
-  // Like the shell's other sheets (Root.tsx) this one sits at the window level, above the phone
-  // bar and outside the overlay host's stacking context, rather than inside the manager's page.
-  return createPortal(
-    <BottomSheet
-      ref={sheet}
-      className="zen-v2-pw zen-v2-pw-sheet"
-      onDismissed={() => onSettle(answer.current)}
-      handleLabel="Dismiss"
-      header={
-        <div className="zen-v2-pw-sheet-header flex items-center gap-3 px-4">
-          <StatusGlyph tone="accent">
-            {request.mode === 'setup' ? <ShieldCheck /> : <KeyRound />}
-          </StatusGlyph>
-          <span className="zen-v2-pw-panel-title min-w-0 flex-1 truncate">{title(request)}</span>
-        </div>
-      }
-    >
-      <PromptForm
-        request={request}
-        description={describe(request)}
-        className="px-4 pb-4 pt-2"
-        onCancel={() => sheet.current?.dismiss()}
-        onSubmit={(value) => {
-          answer.current = value
-          sheet.current?.dismiss()
-        }}
-      />
-    </BottomSheet>,
-    document.body
+  useEscape('passwords-prompt', dismiss)
+  return (
+    <div className="zen-v2-pw zen-v2-pw-sheet-layer absolute inset-0" data-surface="page">
+      <BottomSheet
+        ref={sheet}
+        hosted
+        labelledBy={titleId}
+        className="zen-v2-pw-sheet"
+        onDismissed={() => onSettle(answer.current)}
+        handleLabel="Dismiss"
+      >
+        <TitleBlock
+          id={titleId}
+          descriptionId={descriptionId}
+          description={describe(request)}
+          glyph={<Glyph request={request} />}
+        >
+          {title(request)}
+        </TitleBlock>
+        <PromptForm
+          request={request}
+          onCancel={dismiss}
+          onSubmit={(value) => {
+            answer.current = value
+            dismiss()
+          }}
+        />
+      </BottomSheet>
+    </div>
   )
 }
 
@@ -99,45 +113,40 @@ function DesktopPrompt({
 }): JSX.Element {
   const titleId = useId()
   const descriptionId = useId()
-  useBackSurface({ name: 'passwords-prompt', onCommit: () => onSettle(null) })
-  useEscape('passwords-prompt', () => onSettle(null))
+  const cancel = (): void => onSettle(null)
+  useFrameDialog({ onScrimPress: cancel })
+  useOverPage()
+  useBackSurface({ name: 'passwords-prompt', onCommit: cancel })
+  useEscape('passwords-prompt', cancel)
   return (
     <div
-      className="zen-v2-pw-scrim zen-animate-fade absolute inset-0 flex items-center justify-center p-4"
-      onMouseDown={(e) => {
-        // Only this prompt closes; the overlay behind it stays open.
-        e.stopPropagation()
-        onSettle(null)
-      }}
+      role="dialog"
+      aria-labelledby={titleId}
+      aria-describedby={descriptionId}
+      tabIndex={-1}
+      className="zen-v2-pw zen-v2-pw-dialog zen-animate-pop flex max-w-[calc(100%-32px)] flex-col"
+      style={{ width: POPOVER_WIDTH.form }}
+      onMouseDown={(e) => e.stopPropagation()}
     >
-      <div
-        role="dialog"
-        aria-labelledby={titleId}
-        aria-describedby={descriptionId}
-        tabIndex={-1}
-        className="zen-v2-pw zen-v2-pw-dialog zen-animate-pop flex w-full max-w-[400px] flex-col"
-        onMouseDown={(e) => e.stopPropagation()}
+      <TitleBlock
+        id={titleId}
+        descriptionId={descriptionId}
+        description={describe(request)}
+        glyph={<Glyph request={request} />}
       >
-        <TitleBlock
-          id={titleId}
-          descriptionId={descriptionId}
-          description={describe(request)}
-          glyph={
-            <StatusGlyph tone="accent">
-              {request.mode === 'setup' ? <ShieldCheck /> : <KeyRound />}
-            </StatusGlyph>
-          }
-        >
-          {title(request)}
-        </TitleBlock>
-        <PromptForm
-          request={request}
-          className="px-4 pb-4"
-          onCancel={() => onSettle(null)}
-          onSubmit={onSettle}
-        />
-      </div>
+        {title(request)}
+      </TitleBlock>
+      <PromptForm request={request} onCancel={cancel} onSubmit={onSettle} />
     </div>
+  )
+}
+
+/** The title's glyph (§9.23): 16 on the desktop, 20 on a phone, in the accent ink, no fill box. */
+function Glyph({ request }: { request: PassphraseRequest }): JSX.Element {
+  return (
+    <StatusGlyph tone="accent">
+      {request.mode === 'setup' ? <ShieldCheck /> : <KeyRound />}
+    </StatusGlyph>
   )
 }
 
@@ -153,19 +162,19 @@ function describe(request: PassphraseRequest): string {
     : request.reason
 }
 
+/**
+ * The body under the title block: the field (two when a passphrase is being created), any error,
+ * and the footer – on a phone the sheet footer of §9.11 (peers split the width at an 8 px gap,
+ * the primary trailing, 16 above the bottom inset), on the desktop hugging right at 32 tall.
+ */
 function PromptForm({
   request,
-  description,
   onCancel,
-  onSubmit,
-  className
+  onSubmit
 }: {
   request: PassphraseRequest
-  /** The reason as the body's first line (the phone sheet; the desktop title block carries it). */
-  description?: string
   onCancel: () => void
   onSubmit: (passphrase: string) => void
-  className?: string
 }): JSX.Element {
   const phone = usePhone()
   const form = useRef<HTMLFormElement>(null)
@@ -178,39 +187,40 @@ function PromptForm({
   return (
     <form
       ref={form}
-      className={cn('flex flex-col gap-4', className)}
+      className="flex flex-col"
       onSubmit={(e) => {
         e.preventDefault()
         if (ready) onSubmit(value)
       }}
     >
-      {description && <Description>{description}</Description>}
-      <Field label="Passphrase" htmlFor="vault-passphrase">
-        <TextField
-          id="vault-passphrase"
-          type="password"
-          autoFocus
-          autoComplete={setup ? 'new-password' : 'current-password'}
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          placeholder={setup ? `At least ${MIN_PASSPHRASE} characters` : undefined}
-        />
-      </Field>
-      {setup && (
-        <Field label="Confirm passphrase" htmlFor="vault-passphrase-confirm">
+      <div className="flex flex-col gap-4 px-4">
+        <Field label="Passphrase" htmlFor="vault-passphrase">
           <TextField
-            id="vault-passphrase-confirm"
+            id="vault-passphrase"
             type="password"
-            autoComplete="new-password"
-            value={confirm}
-            onChange={(e) => setConfirm(e.target.value)}
-            aria-invalid={mismatch || undefined}
+            autoFocus
+            autoComplete={setup ? 'new-password' : 'current-password'}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder={setup ? `At least ${MIN_PASSPHRASE} characters` : undefined}
           />
-          {mismatch && <ErrorNote>The two passphrases differ.</ErrorNote>}
         </Field>
-      )}
-      {request.error && <ErrorNote>{request.error}</ErrorNote>}
-      <div className={cn('flex gap-2', phone ? 'flex-col-reverse' : 'justify-end')}>
+        {setup && (
+          <Field label="Confirm passphrase" htmlFor="vault-passphrase-confirm">
+            <TextField
+              id="vault-passphrase-confirm"
+              type="password"
+              autoComplete="new-password"
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              aria-invalid={mismatch || undefined}
+            />
+            {mismatch && <ErrorNote>The two passphrases differ.</ErrorNote>}
+          </Field>
+        )}
+        {request.error && <ErrorNote>{request.error}</ErrorNote>}
+      </div>
+      <div className={cn(phone ? 'zen-sheet-footer' : 'flex justify-end gap-2 p-4')}>
         <Btn onClick={onCancel}>Cancel</Btn>
         <Btn type="submit" variant="primary" disabled={!ready}>
           {setup ? 'Create' : 'Continue'}

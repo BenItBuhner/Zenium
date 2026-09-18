@@ -90,7 +90,7 @@ export function VaultGate({ status }: { status: PasswordsStatus }): JSX.Element 
 
   if (needsSetup) {
     const mismatch = confirm.length > 0 && confirm !== passphrase
-    const ready = passphrase.length >= MIN_PASSPHRASE && confirm === passphrase && !busy
+    const ready = passphrase.length >= MIN_PASSPHRASE && confirm === passphrase
     return (
       <Hero
         icon={<KeyRound />}
@@ -101,7 +101,7 @@ export function VaultGate({ status }: { status: PasswordsStatus }): JSX.Element 
           className="flex w-full max-w-[360px] flex-col gap-3 text-left"
           onSubmit={(e) => {
             e.preventDefault()
-            if (ready) void unlock(passphrase)
+            if (ready && !busy) void unlock(passphrase)
           }}
         >
           <Field label="Passphrase" htmlFor="vault-new">
@@ -127,7 +127,13 @@ export function VaultGate({ status }: { status: PasswordsStatus }): JSX.Element 
             {mismatch && <ErrorNote>The two passphrases differ.</ErrorNote>}
           </Field>
           {error && <ErrorNote>{error}</ErrorNote>}
-          <Btn type="submit" variant="primary" disabled={!ready} className="mt-1 self-end">
+          <Btn
+            type="submit"
+            variant="primary"
+            busy={busy}
+            disabled={!ready}
+            className="mt-1 self-end"
+          >
             Create vault
           </Btn>
         </form>
@@ -163,7 +169,13 @@ export function VaultGate({ status }: { status: PasswordsStatus }): JSX.Element 
             onChange={(e) => setPassphrase(e.target.value)}
           />
           {error && <ErrorNote>{error}</ErrorNote>}
-          <Btn type="submit" variant="primary" disabled={!passphrase || busy} className="self-end">
+          <Btn
+            type="submit"
+            variant="primary"
+            busy={busy}
+            disabled={!passphrase}
+            className="self-end"
+          >
             Unlock
           </Btn>
         </form>
@@ -183,8 +195,8 @@ export function VaultGate({ status }: { status: PasswordsStatus }): JSX.Element 
     >
       <div className="flex flex-col items-center gap-3">
         {error && <ErrorNote>{error}</ErrorNote>}
-        <Btn variant="primary" disabled={busy} onClick={() => void unlock()}>
-          {busy ? 'Unlocking…' : 'Unlock'}
+        <Btn variant="primary" busy={busy} onClick={() => void unlock()}>
+          Unlock
         </Btn>
       </div>
     </Hero>

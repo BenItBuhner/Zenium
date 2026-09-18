@@ -74,7 +74,7 @@ export function ManagerSettings({ state, gate }: { state: UIState; gate: Gate })
   }
 
   return (
-    <div className="zen-v2-pw-gutter flex flex-col gap-6 pb-8">
+    <div className="zen-v2-pw-gutter zen-v2-pw-sections flex flex-col gap-6 pb-8">
       <Section title="Saving">
         <CheckRow
           label="Offer to save passwords"
@@ -200,7 +200,7 @@ function PassphraseEditor({
   const [confirm, setConfirm] = useState('')
   const [busy, setBusy] = useState(false)
   const mismatch = confirm.length > 0 && confirm !== value
-  const ready = value.length >= MIN_PASSPHRASE && confirm === value && !busy
+  const ready = value.length >= MIN_PASSPHRASE && confirm === value
   const save = async (): Promise<void> => {
     setBusy(true)
     const result = await gate(
@@ -218,7 +218,7 @@ function PassphraseEditor({
       className="zen-v2-pw-inner-box zen-animate-fade flex w-full flex-col gap-3"
       onSubmit={(e) => {
         e.preventDefault()
-        if (ready) void save()
+        if (ready && !busy) void save()
       }}
     >
       <div className={cn('flex gap-3', phone ? 'flex-col' : 'items-start')}>
@@ -254,7 +254,7 @@ function PassphraseEditor({
       </Description>
       <div className={cn('flex gap-2', phone ? 'flex-col-reverse' : 'justify-end')}>
         <Btn onClick={onDone}>Cancel</Btn>
-        <Btn type="submit" variant="primary" disabled={!ready}>
+        <Btn type="submit" variant="primary" busy={busy} disabled={!ready}>
           {hasPassphrase ? 'Change passphrase' : 'Add passphrase'}
         </Btn>
       </div>
