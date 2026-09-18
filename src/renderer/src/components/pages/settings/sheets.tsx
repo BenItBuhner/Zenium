@@ -227,11 +227,11 @@ function HostedSheet({
       >
         <div ref={body} className="zen-settings-sheet-body">
           {titled && (
-            <div className="zen-settings-title-block">
-              <h2 id={titleId} className="zen-settings-sheet-title">
-                {title}
-              </h2>
-              {description && <p className="zen-settings-title-description">{description}</p>}
+            // The chassis's §9.23 title block (#140): padding 16, 17/600 at 22, the description
+            // 15 at 69 % on the body line 4 under, 16 to what follows.
+            <div className="zen-sheet-title-block">
+              <h2 id={titleId}>{title}</h2>
+              {description && <p>{description}</p>}
             </div>
           )}
           <SheetDismissContext.Provider value={dismiss}>{children}</SheetDismissContext.Provider>

@@ -133,11 +133,14 @@ describe('parsing page addresses', () => {
     expect(namesInternal('zeniumx://settings')).toBe(false)
     expect(namesInternal(null)).toBe(false)
 
-    // Web content, a data: or about:blank document, and no document at all: refused.
+    // Web content, a data: or about:blank document, an extension's own document (its new-tab
+    // override page, as Chrome refuses one a chrome://settings link), and no document at all:
+    // refused.
     for (const document of [
       'https://example.com/',
       'data:text/html,<a>',
       'about:blank',
+      'chrome-extension://abcdefghijklmnopabcdefghijklmnop/newtab.html',
       '',
       null
     ]) {

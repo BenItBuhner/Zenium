@@ -4681,15 +4681,6 @@
   corner-shape: inherit;
   pointer-events: none;
 }
-.zen-settings-sheet-title {
-  margin: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--v2-font-heading);
-  font-weight: var(--v2-weight-heading);
-  line-height: 22px;
-}
 .zen-settings-sheet-body {
   display: flex;
   flex-direction: column;
@@ -4700,23 +4691,6 @@
   display: flex;
   flex-direction: column;
 }
-/* A title block (§9.23): padding 16, the title, its description 4 under, 16 to the body. */
-.zen-settings-title-block {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 0 16px 16px;
-}
-.zen-settings-title-block > .zen-settings-sheet-title {
-  white-space: normal;
-}
-.zen-settings-title-description {
-  margin: 0;
-  color: var(--v2-text-deemphasized);
-  font-size: var(--v2-font-body);
-  line-height: 22px;
-}
-
 /* Where two panes fit (§10.5), the desktop panel's body draws inside the tab on the page surface. */
 .zen-settings-two-pane {
   height: 100%;

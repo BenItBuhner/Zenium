@@ -85,6 +85,14 @@ describe('new tab and settings pages', () => {
     // A section is part of the address (the deep link adb sends, v2 §10.1).
     expect(inputToUrl('zenium://settings/privacy')).toBe(`${SETTINGS_URL}/privacy`)
     expect(inputToUrl('ZENIUM://Newtab/')).toBe(NEW_TAB_URL)
+    // A zenium:// address that is not a registered page is exactly the zen:// one and falls
+    // through to that address's own handling: the history page (a chrome surface, zenPages),
+    // an error page with its query intact – never a blank tab.
+    expect(inputToUrl('zenium://history')).toBe(HISTORY_URL)
+    expect(inputToUrl('zenium://history')).toBe(inputToUrl('zen://history'))
+    expect(inputToUrl('zenium://error?url=https%3A%2F%2Fexample.com&code=-105')).toBe(
+      'zen://error?url=https%3A%2F%2Fexample.com&code=-105'
+    )
     expect(inputToUrl('zenium://reader/?id=1')).toBe('zen://reader/?id=1')
     expect(inputToUrl('chrome://settings')).toBe(SETTINGS_URL)
     expect(inputToUrl('chrome://settings/')).toBe(SETTINGS_URL)

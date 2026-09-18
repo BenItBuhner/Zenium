@@ -272,6 +272,18 @@ describe('opening Settings as a tab', () => {
       section: 'resources'
     })
   })
+
+  it('opens the New Tab section from the new tab page’s Customize as a tab of this tab, never the overlay', () => {
+    const f = fixture()
+    f.browser.handleCommand(f.win, 'newtab.open', undefined)
+    const ntp = activeTab(f)!
+    expect(ntp.url).toBe('zen://newtab')
+    f.browser.newTab.handleAction(ntp.id, { type: 'customize' })
+    const settings = activeTab(f)
+    expect(settings?.url).toBe('zen://settings/newtab')
+    expect(settings?.openerTabId).toBe(ntp.id)
+    expect(f.sent.some((s) => s.name === 'overlay.open')).toBe(false)
+  })
 })
 
 describe('typed and external page addresses', () => {
