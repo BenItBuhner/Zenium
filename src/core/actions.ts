@@ -150,10 +150,18 @@ export class Actions {
       case 'nav.stop':
         if (target) tabs.stop(target.id)
         return
-      case 'nav.home':
-        if (active) tabs.navigate(active.id, BLANK_URL)
-        this.browser.emit('urlbar.toggle', { mode: 'edit', text: '' }, win)
+      case 'nav.home': {
+        const home = this.browser.newTab.homeUrl()
+        if (active) tabs.navigate(active.id, home ?? BLANK_URL)
+        if (home && active) {
+          this.browser.state.afterBroadcast(() =>
+            this.browser.emit('newtab.opened', { tabId: active.id }, win)
+          )
+        } else {
+          this.browser.emit('urlbar.toggle', { mode: 'edit', text: '' }, win)
+        }
         return
+      }
 
       // --- url bar / find ---
       case 'urlbar.focus':

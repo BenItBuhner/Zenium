@@ -30,7 +30,7 @@ import {
   phoneBarOffered
 } from '@shared/phoneBar'
 import { SEARCH_SCOPES, completeWwwCom, matchKeyword } from '@shared/search'
-import { ERROR_URL_PREFIX, BLANK_URL } from '@shared/url'
+import { ERROR_URL_PREFIX, isEmptyTabUrl, isNewTabUrl } from '@shared/url'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { cmd, run } from '@renderer/lib/api'
 import { useBackDismissal } from '@renderer/lib/back'
@@ -54,9 +54,12 @@ interface Props {
 const drafts = new Map<string, string>()
 let keywordSeq = 0
 
-/** The text the field holds for a page: its address, or the address an error page stands in for. */
+/**
+ * The text the field holds for a page: its address, or the address an error page stands in for.
+ * Empty tabs – blank and the new tab page alike – hold nothing, as Chrome's omnibox does there.
+ */
 function pageTextFor(tab: Tab): string {
-  if (tab.url === BLANK_URL) return ''
+  if (isEmptyTabUrl(tab.url)) return ''
   if (tab.url.startsWith(ERROR_URL_PREFIX)) {
     try {
       return new URL(tab.url).searchParams.get('url') ?? ''
@@ -120,11 +123,17 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
     const el = inputRef.current
     if (!el) return
     el.focus()
+    if (urlbar.typed) {
+      // Text the user typed into the new tab page before the bar was up: carry on after it.
+      el.setSelectionRange(el.value.length, el.value.length)
+      return
+    }
     // Everything selected, read from the start: `select()` alone puts the caret end at the tail
     // and scrolls a long URL so only its query is visible. A backward selection keeps the focus
     // end – the one the field scrolls to – at the origin.
     el.setSelectionRange(0, el.value.length, 'backward')
     el.scrollLeft = 0
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once, on mount
   }, [])
 
   const fetchSuggestions = useCallback(
@@ -166,8 +175,32 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
   )
 
   useEffect(() => {
-    const timer = setTimeout(() => void fetchSuggestions(lastTyped.current, false), 0)
+    // Typed text behaves as if typed here: inline completion applies to it from the start.
+    const autofill = Boolean(urlbar.typed) && !/\s/.test(lastTyped.current)
+    const timer = setTimeout(() => void fetchSuggestions(lastTyped.current, autofill), 0)
     return () => clearTimeout(timer)
+  }, [fetchSuggestions, urlbar.typed])
+
+  // Keys the new tab page's search box received while this bar was already open (a keystroke
+  // that raced the focus hand-off): spliced in at the caret as if typed here.
+  useEffect(() => {
+    const onType = (e: Event): void => {
+      const el = inputRef.current
+      const typed = (e as CustomEvent<string>).detail
+      if (!el || !typed) return
+      const start = el.selectionStart ?? el.value.length
+      const end = el.selectionEnd ?? el.value.length
+      const value = el.value.slice(0, start) + typed + el.value.slice(end)
+      el.value = value
+      el.setSelectionRange(start + typed.length, start + typed.length)
+      el.focus()
+      const grew = value.length > lastTyped.current.length && value.startsWith(lastTyped.current)
+      lastTyped.current = value
+      setText(value)
+      void fetchSuggestions(value, grew && !/\s/.test(value))
+    }
+    window.addEventListener('zen-urlbar-type', onType)
+    return () => window.removeEventListener('zen-urlbar-type', onType)
   }, [fetchSuggestions])
 
   const onChange = (e: React.ChangeEvent<HTMLInputElement>): void => {
@@ -214,7 +247,8 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
     void fetchSuggestions(fill, false)
   }, [keywordFill, fetchSuggestions])
 
-  const draftKey = tab ? `${tab.id}|${tab.url}` : 'new'
+  // A new-tab draft is shared by every new tab page, as it is for the bar without a tab.
+  const draftKey = tab && urlbar.mode !== 'new-tab' ? `${tab.id}|${tab.url}` : 'new'
   const close = useCallback(
     (keepDraft: boolean) => {
       if (keepDraft && text.trim() && text !== tab?.url) drafts.set(draftKey, text)
@@ -257,7 +291,9 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
     opts: { newTab?: boolean; background?: boolean; input?: string } = {}
   ): void => {
     const value = (opts.input ?? text).trim()
-    const newTab = opts.newTab || urlbar.mode === 'new-tab' || !tab
+    // Over a new tab page the bar edits that tab: what is typed loads there, no second tab.
+    const overNewTabPage = urlbar.mode === 'new-tab' && Boolean(tab && isNewTabUrl(tab.url))
+    const newTab = opts.newTab || !tab || (urlbar.mode === 'new-tab' && !overNewTabPage)
     const navigate = (input: string): void =>
       run('urlbar.submit', {
         input,

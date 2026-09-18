@@ -2,7 +2,7 @@ import { useState, type JSX } from 'react'
 import { Globe, VenetianMask } from 'lucide-react'
 import type { Tab } from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
-import { BLANK_URL, getHost } from '@shared/url'
+import { getHost, isEmptyTabUrl } from '@shared/url'
 import { cn } from '@renderer/lib/utils'
 
 /**
@@ -50,9 +50,9 @@ export function Favicon({
   if (!src) {
     const host = getHost(tab.url).replace(/^www\./, '')
     const letter = (tab.customTitle ?? (host || tab.title)).trim().charAt(0).toUpperCase()
-    if (!letter || tab.url === BLANK_URL || tab.url.startsWith('zen://')) {
+    if (!letter || isEmptyTabUrl(tab.url) || tab.url.startsWith('zen://')) {
       const Icon =
-        tab.containerId === PRIVATE_CONTAINER_ID && tab.url === BLANK_URL ? VenetianMask : Globe
+        tab.containerId === PRIVATE_CONTAINER_ID && isEmptyTabUrl(tab.url) ? VenetianMask : Globe
       return (
         <Icon
           className={cn('zen-tab-favicon shrink-0 opacity-60', className)}
