@@ -8,6 +8,7 @@ import type { TranslatePreferences, TranslateSelectionResult, TranslateUIState }
 import type { EngineRelayRequest, EngineRelayResponse } from './translateEngine'
 import type { UpdateSettings, UpdateStatus } from './updates'
 import type { BlockingSettings, BlockingStatus } from './blocking'
+import type { PrivacySettings, PrivacyStatus } from './privacy'
 
 export type Platform = 'linux' | 'win32' | 'darwin' | 'android'
 
@@ -98,6 +99,8 @@ export interface HostCapabilities {
    * windows. Desktop hosts offer private windows instead (`windows`).
    */
   privateTabs: boolean
+  /** The host can point the resolver at DNS-over-HTTPS servers (desktop); Android uses the system's Private DNS. */
+  secureDns: boolean
 }
 
 export interface Rect {
@@ -1134,6 +1137,8 @@ export interface Settings {
    * from before the setting existed keeps the Zen set when it had customised bindings.
    */
   shortcutPreset: ShortcutPreset
+  /** Safe Browsing, HTTPS-only, secure DNS, cookies, GPC / DNT (Settings → Privacy and security). */
+  privacy: PrivacySettings
 }
 
 // ---------------------------------------------------------------------------
@@ -1781,6 +1786,8 @@ export interface UIState {
   securityPrompts: SecurityPrompt[]
   /** Ad and tracker blocking: lists, their freshness and the session counter. */
   blocking: BlockingStatus
+  /** Safe Browsing feeds, HTTPS-only exceptions and the resolver's secure DNS state. */
+  privacy: PrivacyStatus
   /** Page translation: preferences, models on the device and the per-tab translation state. */
   translate: TranslateUIState
   /** The device facts the page controls resolve against (screen class, peripherals, font scale). */

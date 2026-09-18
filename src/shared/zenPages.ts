@@ -14,6 +14,8 @@
 import chromeStylesheet from '../renderer/src/assets/main.css?raw'
 import { PHONE_MAX_WIDTH } from './formFactor'
 import type { OverlayKind } from './types'
+import { SAFE_BROWSING_THREAT_LABELS, type SafeBrowsingThreat } from './privacy'
+import { INTERSTITIAL_MESSAGE_KEY, type InterstitialAction } from './interstitial'
 
 export const ZEN_SCHEME = 'zen'
 
@@ -354,6 +356,10 @@ export const BLOCKED_BY_CLIENT_CODE = -20
 export function errorPageHtml(url: URL): string {
   const code = Number(url.searchParams.get('code') ?? 0)
   const target = url.searchParams.get('url') ?? ''
+  const kind = url.searchParams.get('kind')
+  if (kind === 'safebrowsing')
+    return safeBrowsingPageHtml(target, threatOf(url.searchParams.get('threat')))
+  if (kind === 'https-only') return httpsOnlyPageHtml(target, code)
   if (code === BLOCKED_BY_CLIENT_CODE) return blockedPageHtml(target)
   const content = errorPageContent(code, url.searchParams.get('description') ?? '', target)
   const reload = content.target
@@ -385,6 +391,82 @@ export function blockedPageHtml(target: string): string {
   <p>To visit it anyway, add the site to the exceptions in Settings &rsaquo; Privacy and security.</p>
   <p><code>${escapeHtml(target)}</code></p>
   <button onclick="history.back()">Go back</button>
+</div></body></html>`
+}
+
+function hostOf(target: string): string {
+  try {
+    return new URL(target).hostname || target
+  } catch {
+    return target
+  }
+}
+
+function threatOf(value: string | null): SafeBrowsingThreat {
+  return value && value in SAFE_BROWSING_THREAT_LABELS ? (value as SafeBrowsingThreat) : 'unknown'
+}
+
+const INTERSTITIAL_STYLE = `
+  .card { text-align: left; max-width: 560px; }
+  .actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
+  details { margin: 0 0 20px; opacity: .8; line-height: 1.5; }
+  summary { cursor: pointer; }
+  .warn { font-size: 40px; line-height: 1; margin-bottom: 16px; }
+`
+
+function postAction(action: InterstitialAction, target: string): string {
+  return `window.postMessage({${INTERSTITIAL_MESSAGE_KEY}:{action:${JSON.stringify(action)},url:${JSON.stringify(target)}}},'*')`
+}
+
+/**
+ * Safe Browsing's interstitial (Chrome's red page, in Zenium's words): the request engine
+ * refused the navigation because the site is on a malware or phishing feed. "Proceed anyway"
+ * excepts the origin until the browser closes.
+ */
+export function safeBrowsingPageHtml(target: string, threat: SafeBrowsingThreat): string {
+  const host = hostOf(target)
+  const copy = SAFE_BROWSING_THREAT_LABELS[threat]
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Security warning</title><style>${BASE_STYLE}${INTERSTITIAL_STYLE}</style></head>
+<body><div class="card" data-interstitial="safebrowsing" data-threat="${escapeHtml(threat)}">
+  <div class="warn" aria-hidden="true">&#9888;</div>
+  <h1>${escapeHtml(copy.title)}</h1>
+  <p>Zenium stopped this page. ${escapeHtml(copy.description)}</p>
+  <details>
+    <summary>Details</summary>
+    <p><strong>${escapeHtml(host)}</strong> is on one of the open malware and phishing feeds Zenium checks (URLhaus, Phishing.Database, malware-filter). Feeds are refreshed while the browser runs; Safe Browsing can be turned off in Settings &rsaquo; Privacy and security.</p>
+    <p><code>${escapeHtml(target)}</code></p>
+    <p><button class="secondary" onclick="${escapeHtml(postAction('proceed', target))}">Proceed anyway (unsafe)</button></p>
+  </details>
+  <div class="actions">
+    <button class="primary" autofocus onclick="${escapeHtml(postAction('back', target))}">Back to safety</button>
+  </div>
+</div></body></html>`
+}
+
+/**
+ * HTTPS-only mode's question: the https upgrade of `httpUrl` failed, so the page can only be
+ * had over plaintext. "Continue" allows the site until the browser closes; "Always allow"
+ * remembers it (the `https-only` permission).
+ */
+export function httpsOnlyPageHtml(httpUrl: string, code: number): string {
+  const host = hostOf(httpUrl)
+  const reason = describeNetError(code, 'The secure connection could not be made.')
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Secure connection not available</title><style>${BASE_STYLE}${INTERSTITIAL_STYLE}</style></head>
+<body><div class="card" data-interstitial="https-only">
+  <div class="warn" aria-hidden="true">&#128275;</div>
+  <h1>Secure connection not available</h1>
+  <p>Zenium tried to reach <strong>${escapeHtml(host)}</strong> over https and could not. Loading it over http means what you send and receive can be read and changed on the way.</p>
+  <details>
+    <summary>Details</summary>
+    <p>${escapeHtml(reason)}${code ? ` (${code})` : ''}</p>
+    <p><code>${escapeHtml(httpUrl)}</code></p>
+    <p>HTTPS-only mode can be changed in Settings &rsaquo; Privacy and security.</p>
+  </details>
+  <div class="actions">
+    <button class="primary" autofocus onclick="${escapeHtml(postAction('back', httpUrl))}">Back to safety</button>
+    <button class="secondary" onclick="${escapeHtml(postAction('continue', httpUrl))}">Continue to HTTP site</button>
+    <button class="secondary" onclick="${escapeHtml(postAction('continue-always', httpUrl))}">Always allow for this site</button>
+  </div>
 </div></body></html>`
 }
 

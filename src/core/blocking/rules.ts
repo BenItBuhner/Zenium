@@ -268,7 +268,13 @@ export const BUILTIN_RULE_SETS = {
   /** An `allow` on everything while blocking is off. */
   globalOff: 'builtin:global-off',
   /** `allowAllRequests` for every site the user excepted. */
-  siteExceptions: 'builtin:site-exceptions'
+  siteExceptions: 'builtin:site-exceptions',
+  /**
+   * HTTPS-only mode's `upgradeScheme` rule (`src/core/privacy`). The mode's per-site plaintext
+   * allowances are not in the set: hosts skip the upgrade for them from the `PrivacyFlags` they
+   * hold, so an answer given on the warning page takes effect on the very next request.
+   */
+  httpsOnly: 'builtin:https-only'
 } as const
 
 /**
@@ -287,6 +293,11 @@ export const RULE_SET_PRIORITY = {
   siteExceptions: 900,
   /** The global off switch. */
   globalOff: 1000,
+  /**
+   * HTTPS-only mode. Above the blocking switch and the per-site blocking exceptions on purpose:
+   * turning ad blocking off, or excepting a site from it, says nothing about plaintext.
+   */
+  httpsOnly: 1500,
   /**
    * Rule sets translated from extensions' declarativeNetRequest rules
    * (`src/core/extensions/dnr/translate.ts`): `dnr + slot` with the most recently installed

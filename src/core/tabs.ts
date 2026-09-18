@@ -34,7 +34,9 @@ import {
   BLANK_URL,
   ERROR_URL_PREFIX,
   errorPageUrl,
+  httpsOnlyPageUrl,
   isNavigableUrl,
+  safeBrowsingPageUrl,
   titleForUrl
 } from '../shared/url'
 import type { Browser } from './browser'
@@ -60,7 +62,11 @@ export type { PageFlags } from './platform'
 export class TabManager {
   private readonly views = new Map<string, TabView>()
   private readonly owners = new Map<string, ZenWindow>()
-  /** Tabs whose current load came from typed input we upgraded to https:// (eligible for http fallback). */
+  /**
+   * Tabs whose current load is an https:// upgrade – of typed input without a scheme, or of an
+   * http:// navigation HTTPS-only mode's rule upgraded – keyed to the plaintext URL to fall back
+   * to (or to ask about) when the secure load fails.
+   */
   private readonly httpsUpgraded = new Map<string, string>()
   /** Back/forward stacks to replay when a reopened tab's page is created. */
   private readonly pendingNavigation = new Map<string, NavigationSnapshot>()
@@ -391,19 +397,39 @@ export class TabManager {
         const v = view()
         if (code === -3 || !v) return
         this.browser.governor.onLoadFinished(tabId)
-        const upgradedFrom = this.httpsUpgraded.get(tabId)
-        if (upgradedFrom && url.startsWith('https://') && HTTP_FALLBACK_CODES.has(code)) {
+        const failed = (): void =>
+          update((t) => {
+            t.errorCode = code
+            t.loading = false
+          })
+        // The host's request engine refused the navigation on Safe Browsing's word.
+        const unsafe = this.browser.privacy.safeBrowsing.takePendingBlock(tabId, url)
+        if (unsafe) {
           this.httpsUpgraded.delete(tabId)
-          v.loadURL(`http://${upgradedFrom}`)
+          failed()
+          v.loadURL(safeBrowsingPageUrl(url, unsafe.threat))
+          return
+        }
+        const plaintext = this.httpsUpgraded.get(tabId)
+        if (plaintext && url.startsWith('https://') && HTTP_FALLBACK_CODES.has(code)) {
+          this.httpsUpgraded.delete(tabId)
+          const { privacy } = this.browser
+          if (privacy.httpsOnly !== 'off' && !privacy.allowsPlaintext(plaintext)) {
+            // HTTPS-only mode asks before loading the page over plaintext.
+            failed()
+            v.loadURL(httpsOnlyPageUrl(plaintext, code))
+            return
+          }
+          v.loadURL(plaintext)
           return
         }
         this.httpsUpgraded.delete(tabId)
-        update((t) => {
-          t.errorCode = code
-          t.loading = false
-        })
+        failed()
         v.loadURL(errorPageUrl(code, description || describeNetError(code, ''), url))
       },
+      onUpgraded: (from, to) => this.noteUpgrade(tabId, from, to),
+      onUnsafeNavigation: (url, hit) =>
+        this.browser.privacy.safeBrowsing.notePendingBlock(tabId, url, hit),
       onCrashed: (reason) => {
         if (reason === 'clean-exit') return
         const tab = this.tab(tabId)
@@ -550,7 +576,43 @@ export class TabManager {
       if (w.findResult?.tabId === tabId) w.findResult = null
     this.sendPageFlags(tabId)
     this.browser.onNavigated(tabId)
+    this.browser.privacy.onNavigated(tabId, url)
     this.browser.state.commit()
+  }
+
+  /**
+   * The host's request engine upgraded a main-frame navigation of `tabId` from `from` (http) to
+   * `to` (HTTPS-only mode): should `to` fail, the tab falls back to – or asks about – `from`.
+   */
+  noteUpgrade(tabId: string, from: string, to: string): void {
+    if (!this.tab(tabId) || !/^http:\/\//i.test(from) || !/^https:\/\//i.test(to)) return
+    this.httpsUpgraded.set(tabId, from)
+  }
+
+  /** The page an error page (or interstitial) of `tabId` stands in for, or null off one. */
+  errorPageTarget(tabId: string): string | null {
+    const tab = this.tab(tabId)
+    if (!tab || !tab.url.startsWith(ERROR_URL_PREFIX)) return null
+    return safeParam(tab.url, 'url')
+  }
+
+  /**
+   * "Back to safety": leave an error page for the last entry of the tab's history that is not
+   * the failed page itself (nor another error page), or for a blank tab when there is none.
+   */
+  leaveErrorPage(tabId: string): void {
+    const view = this.view(tabId)
+    if (!view) return
+    const failed = this.errorPageTarget(tabId)
+    const { entries, index } = view.navigationEntries()
+    for (let i = index - 1; i >= 0; i--) {
+      const url = entries[i]?.url
+      if (!url || url === failed || url.startsWith(ERROR_URL_PREFIX)) continue
+      this.thawForNavigation(tabId)
+      view.goToIndex(i)
+      return
+    }
+    this.navigate(tabId, BLANK_URL)
   }
 
   sendPageFlags(tabId: string): void {
@@ -584,6 +646,7 @@ export class TabManager {
     if (!view) return
     this.views.delete(tabId)
     this.httpsUpgraded.delete(tabId)
+    this.browser.privacy.safeBrowsing.forgetTab(tabId)
     this.browser.externalProtocols.cancelForTab(tabId)
     this.pendingTransition.delete(tabId)
     this.browser.popups.onTabGone(tabId)
@@ -704,7 +767,7 @@ export class TabManager {
     tab.bookmarked = this.browser.bookmarks.has(tab.url)
     // Set before the load below so an active tab's single activation load (or a background load)
     // is eligible for the http fallback straight away.
-    if (opts.upgradedFrom) this.httpsUpgraded.set(tab.id, opts.upgradedFrom)
+    if (opts.upgradedFrom) this.httpsUpgraded.set(tab.id, `http://${opts.upgradedFrom}`)
     if (opts.active !== false) {
       this.activateTab(tab.id, win)
     } else if (opts.load !== false && tab.url !== BLANK_URL) {
@@ -1082,7 +1145,7 @@ export class TabManager {
     tab.url = url
     tab.title = titleForUrl(url)
     tab.errorCode = null
-    if (opts.upgradedFrom) this.httpsUpgraded.set(tabId, opts.upgradedFrom)
+    if (opts.upgradedFrom) this.httpsUpgraded.set(tabId, `http://${opts.upgradedFrom}`)
     else this.httpsUpgraded.delete(tabId)
     this.pendingTransition.set(tabId, opts.transition ?? 'typed')
     const hadView = this.view(tabId) !== undefined

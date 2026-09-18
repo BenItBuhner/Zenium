@@ -126,7 +126,8 @@ export function androidCapabilities({
     pageControls: true,
     reducedExtensionIsolation: extensions && !isolatedWorlds,
     // One window: private browsing is a tab in it, on a throwaway WebView profile.
-    privateTabs: profiles
+    privateTabs: profiles,
+    secureDns: false
   }
 }
 
@@ -755,12 +756,19 @@ export class AndroidPlatform implements Platform {
     }
     this.net = {
       fetchText: async (url, options) => {
-        const result = await bridge.call<{ ok: boolean; status?: number; text: string }>(
-          'net.fetch',
-          { url, headers: options.headers ?? {}, timeoutMs: options.timeoutMs ?? 0 }
-        )
+        const result = await bridge.call<{
+          ok: boolean
+          status?: number
+          text: string
+          headers?: Record<string, string>
+        }>('net.fetch', { url, headers: options.headers ?? {}, timeoutMs: options.timeoutMs ?? 0 })
         if (options.signal?.aborted) throw new Error('aborted')
-        return { ok: result.ok, status: result.status ?? (result.ok ? 200 : 0), text: result.text }
+        return {
+          ok: result.ok,
+          status: result.status ?? (result.ok ? 200 : 0),
+          text: result.text,
+          headers: result.headers ?? {}
+        }
       }
     }
     // Kotlin owns the transfers (`Downloads.kt`); records and decisions stay in the core.

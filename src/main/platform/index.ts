@@ -100,7 +100,8 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   reducedExtensionIsolation: false,
   pageControls: false,
   // Private browsing is a window of its own on desktop (`windows`).
-  privateTabs: false
+  privateTabs: false,
+  secureDns: true
 }
 
 /**
@@ -251,7 +252,12 @@ export class ElectronPlatform implements Platform {
             : options.headers,
           cache: 'no-store'
         })
-        return { ok: res.ok, status: res.status, text: res.ok ? await res.text() : '' }
+        const headers: Record<string, string> = {}
+        for (const name of ['etag', 'last-modified', 'content-type']) {
+          const value = res.headers.get(name)
+          if (value) headers[name] = value
+        }
+        return { ok: res.ok, status: res.status, text: res.ok ? await res.text() : '', headers }
       },
       resolveHost: async (host, options) => {
         if (options.signal?.aborted) return false
