@@ -46,6 +46,7 @@ export function Menulist({
   label,
   placeholder,
   disabled,
+  row,
   className
 }: {
   /** The picked value; null shows `placeholder`. */
@@ -56,6 +57,12 @@ export function Menulist({
   label: string
   placeholder?: string
   disabled?: boolean
+  /**
+   * Drawn as a §10.4 action row instead of the bordered menulist: the text in a 44 px row with
+   * the press fill and no chevron, for phone settings pages, where menulists are not drawn
+   * (§9.13). The list opens the same way.
+   */
+  row?: boolean
   className?: string
 }): JSX.Element {
   const phone = useViewport().formFactor === 'phone'
@@ -90,6 +97,41 @@ export function Menulist({
     if (next !== value) onChange(next)
   }
 
+  const list =
+    open &&
+    (phone ? (
+      <Sheet title={label} value={value} options={options} onPick={pick} onClose={close} />
+    ) : (
+      <Popover
+        anchor={trigger}
+        label={label}
+        value={value}
+        options={options}
+        onPick={pick}
+        onClose={close}
+      />
+    ))
+
+  if (row) {
+    return (
+      <>
+        <button
+          ref={trigger}
+          type="button"
+          className={cn('zen-translate-action-row', className)}
+          aria-label={label}
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          disabled={disabled}
+          onClick={() => (open ? close() : openList())}
+        >
+          <span className="min-w-0 flex-1 truncate">{current?.label ?? placeholder ?? ''}</span>
+        </button>
+        {list}
+      </>
+    )
+  }
+
   return (
     <span className={cn('zen-translate-menulist', className)}>
       <button
@@ -112,19 +154,7 @@ export function Menulist({
         <span className="truncate">{current?.label ?? placeholder ?? ''}</span>
         <ChevronDown aria-hidden />
       </button>
-      {open &&
-        (phone ? (
-          <Sheet title={label} value={value} options={options} onPick={pick} onClose={close} />
-        ) : (
-          <Popover
-            anchor={trigger}
-            label={label}
-            value={value}
-            options={options}
-            onPick={pick}
-            onClose={close}
-          />
-        ))}
+      {list}
     </span>
   )
 }

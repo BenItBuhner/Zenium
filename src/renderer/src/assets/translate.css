@@ -8,8 +8,10 @@
 
 /* --- Text ----------------------------------------------------------------------------------- */
 
+/* Captions count and measure (12 of 18, 12.1 MB of 33.4 MB): their digits keep one width (§4). */
 .zen-translate-caption {
   color: var(--v2-text-deemphasized);
+  font-variant-numeric: tabular-nums;
 }
 .zen-translate-danger {
   color: var(--v2-danger);
@@ -541,6 +543,33 @@ div:has(> .zen-sheet.zen-translate-sheet) > .zen-sheet-scrim {
 .zen-translate-row-add > .zen-translate-menulist {
   min-width: 220px;
 }
-:root[data-form-factor='phone'] .zen-translate-row-add > .zen-translate-menulist {
-  flex: 1;
+/*
+ * On a phone settings page the menulist is not drawn (§9.13): the control that adds to a list is
+ * a §10.4 action row – its text 15/400 in a 44 px row with the press fill, no chevron since it
+ * opens a sheet rather than another page – and the sheet is the menulist's own. Its text lines
+ * up with the labels of the rows above it; the press fill reaches the card's edges.
+ */
+.zen-translate-action-row {
+  display: flex;
+  align-items: center;
+  min-height: var(--v2-row);
+  margin: 0 calc(-1 * var(--v2-card-padding));
+  padding: 0 var(--v2-card-padding);
+  border-radius: var(--v2-radius-inner);
+  color: var(--v2-text);
+  font-size: var(--v2-font-body);
+  font-weight: var(--v2-weight-body);
+  line-height: var(--v2-line-body);
+  text-align: start;
+  transition: background 120ms var(--zen-ease);
+}
+.zen-translate-action-row:active:not(:disabled) {
+  background: var(--v2-fill);
+}
+.zen-translate-action-row:disabled {
+  opacity: 0.4;
+}
+.zen-translate-action-row:focus-visible {
+  outline: 2px solid var(--v2-ring);
+  outline-offset: -2px;
 }

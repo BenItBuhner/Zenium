@@ -1423,10 +1423,11 @@ export function closeTabsMenu(): void {
 
 /**
  * Only anchored panels are up: a bar panel, the star bubble, the zoom bubble, the tab hover
- * card, the downloads bubble, site information. The page behind them is captured all the same
- * (they overlap the live view), but panels draw no scrim, so the capture shows undimmed; dialogs
- * dim it. A chassis sheet's scrim is its own one dim (§11.5), so the same holds under the
- * site-information sheet.
+ * card, the downloads bubble, site information, the translate selection popover, a menulist's
+ * list. The page behind them is captured all the same (they overlap the live view), but panels
+ * and popovers draw no scrim (v2 §9.5, §9.20), so the capture shows undimmed; dialogs dim it. A
+ * chassis sheet's scrim is its own one dim (§11.5), so the same holds under the site-information
+ * sheet.
  */
 export function panelAloneOverContent(ui: UiState): boolean {
   return (
@@ -1437,7 +1438,9 @@ export function panelAloneOverContent(ui: UiState): boolean {
       ui.downloadsOpen ||
       // Site information is a popover on a mouse (no scrim, §9.5) and a chassis sheet on a
       // phone, whose own scrim is the one dim over the page (§11.5).
-      ui.siteInfoOpen) &&
+      ui.siteInfoOpen ||
+      ui.translateSelection !== null ||
+      ui.menulistOpen) &&
     !overlayCoversContent({
       ...ui,
       barMenuOpen: false,
@@ -1445,7 +1448,9 @@ export function panelAloneOverContent(ui: UiState): boolean {
       zoomBubble: null,
       hoverCard: HOVER_CARD_HIDDEN,
       downloadsOpen: false,
-      siteInfoOpen: false
+      siteInfoOpen: false,
+      translateSelection: null,
+      menulistOpen: false
     })
   )
 }
