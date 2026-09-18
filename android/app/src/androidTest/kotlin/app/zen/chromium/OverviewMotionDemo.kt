@@ -11,6 +11,8 @@ import org.json.JSONTokener
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /**
  * Records the tab overview grid's choreography and its drop-target state, and writes what it
@@ -32,9 +34,16 @@ import java.io.File
  * classes on main and after the fix, so the driver records both. A hover that hangs is recovered
  * from by closing the overview (which drops the card) and opening it again, so the run goes on.
  *
+ * Where the cards are is read from the DOM as well (`[data-tab-id]`, the group, the New Tab
+ * card), not from the accessibility tree: on the API 34 emulator that tree trails the grid by
+ * seconds, and a card re-mounted under another parent (into or out of a group) was missing from
+ * it for ten seconds in the first run. DOM boxes are CSS px; they are scaled by the device pixel
+ * ratio and checked once against the accessibility bounds of the overview's Spaces button.
+ *
  * The pages come from a loopback server in this process ([DemoServer]); the profile
  * (`overview-motion-demo-state.json`) is one space with the group Research [Alpha, Beta] and the
- * loose tabs Home (active), Gamma, Delta, so the grid is: the group, Home | Gamma, Delta | New Tab.
+ * loose tabs Home (active), Gamma, Delta. An expanded group of two spans the row with its cards in
+ * the grid's columns, so the grid is: Research [Alpha | Beta], then Home | Gamma, Delta | New Tab.
  * Driven by the `android-overview-demo` workflow (`demo: motion`). See [DemoHarness].
  */
 @RunWith(AndroidJUnit4::class)
@@ -96,23 +105,22 @@ class OverviewMotionDemo : DemoHarness("overview-motion-demo-state.json", "overv
     }
 
     // --- the scenarios ---------------------------------------------------------------------------
-    // The grid is scrolled so that nothing a scenario changes shrinks it past its scroll offset:
-    // a clamp of the offset would move every card at once (on both builds), hiding the glide.
+    // The grid is scrolled only when a card is out of its viewport: a shrink past the scroll
+    // offset would clamp it and move every card at once (on both builds), hiding the glide.
 
     /**
      * Delta closed with its X: the New Tab card, its neighbour, glides into Delta's place (up
-     * from the third row, whose top shows under the fold; the grid is not scrolled for it, so the
-     * row it leaves going away does not clamp the offset).
+     * from the third row, whose top shows under the fold).
      */
     private fun closeNeighbour() {
         finding("\n1. Delta, the New Tab card's neighbour, closed with its X")
-        show("Delta")
-        val delta = find("Delta")
-        Finger().tap(delta.right - 20 * density, delta.top + 20 * density)
+        show(card(DELTA))
+        val x = box(closeButton(DELTA))
+        Finger().tap(x.exactCenterX(), x.exactCenterY())
         SystemClock.sleep(GLIDE_PEEK)
         still("close-neighbour-glide")
         SystemClock.sleep(SETTLE)
-        expect("Delta is closed", !tabExists("tab_delta"))
+        expect("Delta is closed", !tabExists(DELTA))
         lift("after the close", clear = true)
     }
 
@@ -123,9 +131,9 @@ class OverviewMotionDemo : DemoHarness("overview-motion-demo-state.json", "overv
      */
     private fun intoGroup() {
         finding("\n2. Gamma into the group (dropped on Beta)")
-        show("Group Research")
-        val beta = find("Beta")
-        val gamma = find("Gamma")
+        show(GROUP)
+        val beta = box(card(BETA))
+        val gamma = box(card(GAMMA))
         val f = carry(gamma, PointF(beta.exactCenterX(), beta.exactCenterY()))
         still("into-group-ring")
         lift("Gamma over Beta", ring = true)
@@ -133,54 +141,65 @@ class OverviewMotionDemo : DemoHarness("overview-motion-demo-state.json", "overv
         SystemClock.sleep(GLIDE_PEEK)
         still("into-group-glide")
         settleLift("after the drop on Beta")
-        expect("Gamma is in the group", folderOf("tab_gamma") == "folder_research")
-        expect("the group is Alpha, Beta, Gamma", groupOrder("folder_research") == listOf("tab_alpha", "tab_beta", "tab_gamma"))
+        expect("Gamma is in the group", folderOf(GAMMA) == RESEARCH)
+        expect("the group is Alpha, Beta, Gamma", groupOrder(RESEARCH) == listOf(ALPHA, BETA, GAMMA))
     }
 
     /**
-     * Gamma carried out of the group to the top edge of Home: the gap opens before Home once the
-     * finger rests there (no ring: a slot, not a target), and on release Gamma leaves the group
-     * and lands in it. The hover must not outlive the release.
+     * Gamma carried out of the group to the right edge of Home: the gap opens after Home once the
+     * finger rests there (no ring: a slot, not a target), the group shrinks a row and the grid
+     * reflows up under the finger – which is then over the New Tab card, the end of the loose
+     * cards, the same slot – and on release Gamma leaves the group and lands there. The hover must
+     * not outlive the release. (Home's top edge would read "before Home" first and, after the
+     * reflow, "the end" – the card would hop twice under a still finger.)
      */
     private fun outOfGroup() {
-        finding("\n3. Gamma out of the group, to the slot before Home")
-        show("Group Research")
-        val home = find("Home")
-        val gamma = find("Gamma")
-        val f = carry(gamma, PointF(home.exactCenterX(), home.top + 25 * density))
+        finding("\n3. Gamma out of the group, to the slot after Home")
+        show(GROUP)
+        val home = box(card(HOME))
+        val gamma = box(card(GAMMA))
+        val f = carry(gamma, PointF(home.right - 0.12f * home.width(), home.exactCenterY()))
         still("out-of-group-gap")
-        lift("Gamma resting at Home's top edge", held = true, ring = false)
+        lift("Gamma resting at Home's right edge", held = true, ring = false)
         f.up()
         SystemClock.sleep(GLIDE_PEEK)
         still("out-of-group-glide")
         settleLift("after the drop out of the group")
-        expect("Gamma is loose", folderOf("tab_gamma") == null)
-        expect("the loose cards are Gamma, Home", looseOrder() == listOf("tab_gamma", "tab_home"))
-        expect("the group is back to Alpha, Beta", groupOrder("folder_research") == listOf("tab_alpha", "tab_beta"))
+        expect("Gamma is loose", folderOf(GAMMA) == null)
+        expect("the loose cards are Home, Gamma", looseOrder() == listOf(HOME, GAMMA))
+        expect("the group is back to Alpha, Beta", groupOrder(RESEARCH) == listOf(ALPHA, BETA))
     }
 
     /**
      * Home carried over the group's header (the ring), then up off the grid (the ring goes), then
-     * the touch is cancelled: the card springs back and nothing changes.
+     * the touch is cancelled: the card springs back and nothing changes. The finger goes up the
+     * gutter between Alpha and Beta: over a member card on the way it would take a slot in the
+     * group instead, and a card's own group is never its target (no ring).
      */
     private fun cancelOverGroup() {
         finding("\n4. Home over the group, off the grid, then the touch is cancelled")
-        show("Group Research")
-        val header = find("Group Research")
-        val home = find("Home")
-        val f = carry(home, PointF(header.exactCenterX(), header.exactCenterY()))
+        show(GROUP)
+        val header = box(GROUP_HEADER)
+        val home = box(card(HOME))
+        val gutterX = (box(card(ALPHA)).right + box(card(BETA)).left) / 2f
+        val f = Finger()
+        f.press(home.exactCenterX(), home.exactCenterY())
+        f.moveBy(0f, -NUDGE, 120)
+        f.moveBy(gutterX - home.exactCenterX(), 0f, 300)
+        f.moveBy(0f, header.exactCenterY() - (home.exactCenterY() - NUDGE), 700)
+        f.hold(1_400)
         still("cancel-ring")
         lift("Home over the group's header", ring = true)
         // Off the grid: the overview's own header row (the space's name and the Spaces button), above the cards.
-        val offGrid = find("Spaces")
+        val offGrid = box(SPACES)
         f.moveBy(0f, offGrid.exactCenterY() - header.exactCenterY(), 400)
         f.hold(900)
         still("cancel-left")
         lift("Home carried off the grid", held = true, ring = false)
         f.cancel()
         settleLift("after the pointer cancel")
-        expect("Home is still loose", folderOf("tab_home") == null)
-        expect("the group is still Alpha, Beta", groupOrder("folder_research") == listOf("tab_alpha", "tab_beta"))
+        expect("Home is still loose", folderOf(HOME) == null)
+        expect("the group is still Alpha, Beta", groupOrder(RESEARCH) == listOf(ALPHA, BETA))
     }
 
     /**
@@ -190,9 +209,9 @@ class OverviewMotionDemo : DemoHarness("overview-motion-demo-state.json", "overv
      */
     private fun flingOutOfGroup() {
         finding("\n5. Alpha flung out of the group onto the New Tab card")
-        show("Group Research")
-        val alpha = find("Alpha")
-        val newTab = find("New Tab")
+        show(GROUP)
+        val alpha = box(card(ALPHA))
+        val newTab = box(NEW_TAB)
         val f = Finger()
         f.press(alpha.exactCenterX(), alpha.exactCenterY())
         f.moveBy(0f, -NUDGE, 120)
@@ -203,9 +222,9 @@ class OverviewMotionDemo : DemoHarness("overview-motion-demo-state.json", "overv
         SystemClock.sleep(GLIDE_PEEK)
         still("fling-glide")
         settleLift("after the fling")
-        expect("Alpha is loose", folderOf("tab_alpha") == null)
-        expect("Alpha landed at the end", looseOrder().lastOrNull() == "tab_alpha")
-        expect("the group is Beta alone", groupOrder("folder_research") == listOf("tab_beta"))
+        expect("Alpha is loose", folderOf(ALPHA) == null)
+        expect("Alpha landed at the end", looseOrder().lastOrNull() == ALPHA)
+        expect("the group is Beta alone", groupOrder(RESEARCH) == listOf(BETA))
     }
 
     /** The dark scheme, and one more glide – Alpha closed, the New Tab card takes its row – caught in flight. */
@@ -213,14 +232,14 @@ class OverviewMotionDemo : DemoHarness("overview-motion-demo-state.json", "overv
         finding("\n6. Dark scheme: Alpha closed with its X")
         coreInvoke("settings.update", "{\"colorScheme\":\"dark\"}")
         SystemClock.sleep(2_500)
-        show("Group Research")
+        show(GROUP)
         still("dark-grid")
-        val alpha = find("Alpha")
-        Finger().tap(alpha.right - 20 * density, alpha.top + 20 * density)
+        val x = box(closeButton(ALPHA))
+        Finger().tap(x.exactCenterX(), x.exactCenterY())
         SystemClock.sleep(GLIDE_PEEK)
         still("dark-close-glide")
         SystemClock.sleep(SETTLE)
-        expect("Alpha is closed", !tabExists("tab_alpha"))
+        expect("Alpha is closed", !tabExists(ALPHA))
         lift("after the close", clear = true)
     }
 
@@ -228,8 +247,9 @@ class OverviewMotionDemo : DemoHarness("overview-motion-demo-state.json", "overv
 
     /** Open the overview from the bar's tabs button (the pill's pull when the bar has none) and let it settle. */
     private fun openOverview() {
-        if (findByLabel("Spaces") != null) return
+        if (overviewOpen()) return
         val tabs = findNode { it.startsWith("Tabs (") }?.let { node -> Rect().also { node.getBoundsInScreen(it) } }
+            ?: domRect("[aria-label^=\"Tabs (\"]")
         if (tabs != null) {
             Finger().tap(tabs.exactCenterX(), tabs.exactCenterY())
         } else {
@@ -239,9 +259,18 @@ class OverviewMotionDemo : DemoHarness("overview-motion-demo-state.json", "overv
             f.moveBy(0f, -0.75f * overviewTravel + NUDGE, 400)
             f.up()
         }
-        waitFor("Spaces", 8_000) ?: error("the overview never opened")
-        SystemClock.sleep(3_000)
+        val deadline = SystemClock.uptimeMillis() + 8_000
+        while (!overviewOpen()) {
+            if (SystemClock.uptimeMillis() >= deadline) error("the overview never opened")
+            SystemClock.sleep(200)
+        }
+        SystemClock.sleep(2_000)
+        calibrate()
     }
+
+    /** The overview is on screen and has finished growing in (its root at scale 1). */
+    private fun overviewOpen(): Boolean =
+        jsString("(function(){var e=document.querySelector('.zen-overview');return e?e.style.transform:''})()") == "scale(1)"
 
     /**
      * Hold the card at `from` until it lifts, cross the slop, carry it so the finger ends at `to`
@@ -256,28 +285,82 @@ class OverviewMotionDemo : DemoHarness("overview-motion-demo-state.json", "overv
         return f
     }
 
+    // --- where things are: the chrome's DOM ----------------------------------------------------
+
+    /** Screen px the DOM's origin is at: (0, 0) for a chrome that fills the window; see [calibrate]. */
+    private var originX = 0f
+    private var originY = 0f
+    private var calibrated = false
+
+    private fun card(tabId: String) = "[data-tab-id=\"$tabId\"]"
+    private fun closeButton(tabId: String) = "${card(tabId)} [aria-label=\"Close tab\"]"
+
+    /** A JS expression's string result ("" when it never answered or returned nothing). */
+    private fun jsString(code: String): String = (JSONTokener(chromeJs(code)).nextValue() as? String).orEmpty()
+
     /**
-     * The bounds of the first of these labels on screen, waiting for the accessibility tree to
-     * catch up with the grid (it trails a glide by a second or two on the emulator); the demo
-     * cannot go on without it.
+     * The on-screen box of the first element `selector` matches, from `getBoundingClientRect`
+     * scaled to device px; null when nothing matches. With `scrollIntoView`, the grid is scrolled
+     * the least it has to for the element to be fully in its viewport first (when it is not).
      */
-    private fun find(vararg labels: String): Rect {
+    private fun domRect(selector: String, scrollIntoView: Boolean = false): Rect? {
+        val scroll = if (!scrollIntoView) "" else
+            "var g=document.querySelector('.zen-overview-grid');" +
+                "if(g){var gr=g.getBoundingClientRect(),er=e.getBoundingClientRect();" +
+                "if(er.top<gr.top||er.bottom>gr.bottom)e.scrollIntoView({block:'nearest'});}"
+        val js = "(function(){var e=document.querySelector(${JSONObject.quote(selector)});if(!e)return '';" + scroll +
+            "var r=e.getBoundingClientRect();" +
+            "return JSON.stringify({l:r.left,t:r.top,r:r.right,b:r.bottom,d:window.devicePixelRatio})})()"
+        val text = jsString(js)
+        if (text.isEmpty()) return null
+        val o = JSONObject(text)
+        val d = o.getDouble("d")
+        return Rect(
+            (o.getDouble("l") * d + originX).roundToInt(),
+            (o.getDouble("t") * d + originY).roundToInt(),
+            (o.getDouble("r") * d + originX).roundToInt(),
+            (o.getDouble("b") * d + originY).roundToInt()
+        )
+    }
+
+    /** The box of `selector`, waiting for it to be in the DOM; the demo cannot go on without it. */
+    private fun box(selector: String): Rect {
         val deadline = SystemClock.uptimeMillis() + LOOKUP_WAIT
         while (true) {
-            findAny(*labels)?.let { return it }
-            if (SystemClock.uptimeMillis() >= deadline) error("none of ${labels.joinToString()} is on screen")
+            domRect(selector)?.let { return it }
+            if (SystemClock.uptimeMillis() >= deadline) error("nothing matches $selector")
             SystemClock.sleep(250)
         }
     }
 
-    /** Like [find], after scrolling the element fully into the grid's viewport. */
-    private fun show(vararg labels: String): Rect {
-        val deadline = SystemClock.uptimeMillis() + LOOKUP_WAIT
-        while (true) {
-            reveal(*labels)?.let { return it }
-            if (SystemClock.uptimeMillis() >= deadline) error("none of ${labels.joinToString()} exists")
-            SystemClock.sleep(250)
+    /** Like [box], after scrolling the element fully into the grid's viewport when it is not. */
+    private fun show(selector: String): Rect {
+        val before = box(selector)
+        val after = domRect(selector, scrollIntoView = true) ?: before
+        if (after != before) SystemClock.sleep(1_200)
+        return domRect(selector) ?: after
+    }
+
+    /**
+     * Check the DOM's coordinates against the accessibility tree once: the Spaces button in the
+     * overview's header never moves, so its accessibility bounds are current. Any offset (a
+     * chrome not at the window's origin) is applied to every box from then on.
+     */
+    private fun calibrate() {
+        if (calibrated) return
+        val fromDom = domRect(SPACES) ?: return
+        val fromTree = waitFor("Spaces", 4_000) ?: return
+        val dx = fromTree.exactCenterX() - fromDom.exactCenterX()
+        val dy = fromTree.exactCenterY() - fromDom.exactCenterY()
+        finding(
+            "coordinates: Spaces button at $fromDom from the DOM, $fromTree from the accessibility tree" +
+                " (offset ${dx.roundToInt()}, ${dy.roundToInt()})"
+        )
+        if (abs(dx) <= MAX_OFFSET && abs(dy) <= MAX_OFFSET) {
+            originX = dx
+            originY = dy
         }
+        calibrated = true
     }
 
     // --- what the grid shows of a lift -----------------------------------------------------------
@@ -414,7 +497,21 @@ class OverviewMotionDemo : DemoHarness("overview-motion-demo-state.json", "overv
         private const val GLIDE_PEEK = 450L
         /** How long a release has to clear the lift and the grid to finish its glide. */
         private const val SETTLE = 4_000L
-        /** How long a card's label may take to show up in the accessibility tree after a change. */
+        /** How long an element may take to appear in the DOM after a change. */
         private const val LOOKUP_WAIT = 6_000L
+        /** Largest DOM-to-screen offset (px) [calibrate] takes for real rather than for a stale tree. */
+        private const val MAX_OFFSET = 200f
+
+        // The seeded profile's ids, and the DOM of the grid.
+        private const val ALPHA = "tab_alpha"
+        private const val BETA = "tab_beta"
+        private const val HOME = "tab_home"
+        private const val GAMMA = "tab_gamma"
+        private const val DELTA = "tab_delta"
+        private const val RESEARCH = "folder_research"
+        private const val GROUP = ".zen-group"
+        private const val GROUP_HEADER = "[aria-label=\"Group Research\"]"
+        private const val NEW_TAB = ".zen-overview-new"
+        private const val SPACES = "[aria-label=\"Spaces\"]"
     }
 }
