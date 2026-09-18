@@ -313,9 +313,16 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
         }
         if (pressRow("Update feeds now")) {
             SystemClock.sleep(500)
-            val status = state().getJSONObject("privacy").getJSONObject("safeBrowsing")
+            var status = state().getJSONObject("privacy").getJSONObject("safeBrowsing")
             note("  Update feeds now pressed: updating=${status.optBoolean("updating")}")
             shot("19-settings-feeds-updating")
+            // The live feeds land before the next scene starts, so the rows read their result.
+            val deadline = SystemClock.uptimeMillis() + 30_000
+            while (status.optBoolean("updating") && SystemClock.uptimeMillis() < deadline) {
+                SystemClock.sleep(1_000)
+                status = state().getJSONObject("privacy").getJSONObject("safeBrowsing")
+            }
+            note("  after the refresh: ${describeSafeBrowsing(status)}")
         } else {
             note("  (no action row 'Update feeds now')")
         }
