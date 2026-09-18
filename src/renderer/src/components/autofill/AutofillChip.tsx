@@ -1,9 +1,10 @@
-import type { JSX } from 'react'
+import type { JSX, KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { CreditCard, KeyRound, MapPin } from 'lucide-react'
 import type { AutofillPrompt, Tab, UIState } from '@shared/types'
 import { chipPrompt, toggleAutofillPrompt } from '@renderer/lib/autofill'
 import { uiStore } from '@renderer/lib/ui'
 import { PillChip } from '../urlbar/PillChip'
+import { enterAutofillPrompt } from './AutofillPrompts'
 
 /** What the chip stands for, in its name and tooltip. */
 function chipLabel(prompt: Exclude<AutofillPrompt, { kind: 'passkey-account' }>): string {
@@ -36,6 +37,13 @@ export function AutofillChip({ state, tab }: { state: UIState; tab: Tab }): JSX.
   const label = chipLabel(prompt)
   const Glyph =
     prompt.kind === 'save-address' ? MapPin : prompt.kind === 'save-card' ? CreditCard : KeyRound
+  // The prompt stands right after the chip in the Tab order (§9.22): it renders in the chrome
+  // layer at the end of the document, and a prompt the page raised took no focus, so the chip's
+  // Tab steps into it.
+  const onKeyDown = (e: ReactKeyboardEvent<HTMLButtonElement>): void => {
+    if (e.key !== 'Tab' || e.shiftKey || !open) return
+    if (enterAutofillPrompt()) e.preventDefault()
+  }
   return (
     <PillChip
       label={label}
@@ -46,6 +54,7 @@ export function AutofillChip({ state, tab }: { state: UIState; tab: Tab }): JSX.
       data-open={open ? 'true' : 'false'}
       className="zen-v2-af-chip flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px]"
       onActivate={() => toggleAutofillPrompt(prompt.id)}
+      onKeyDown={onKeyDown}
     >
       <Glyph className="h-4 w-4" />
     </PillChip>

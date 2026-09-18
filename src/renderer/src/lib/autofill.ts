@@ -59,10 +59,15 @@ export function chipPrompt(
 /**
  * Put the desktop save prompt away behind its chip, or bring it back (Chrome's key icon): the
  * prompt stays pending in the core either way, until it is answered or the tab leaves the site.
+ * Brought back by hand, the prompt is a popover the user opened and takes the focus (v2 §9.22);
+ * raised by the page it took none.
  */
 export function toggleAutofillPrompt(id: string): void {
   const collapsed = uiStore.get().autofillPromptCollapsed === id
-  uiStore.set({ autofillPromptCollapsed: collapsed ? null : id })
+  uiStore.set({
+    autofillPromptCollapsed: collapsed ? null : id,
+    autofillPromptByHand: collapsed ? id : null
+  })
 }
 
 /**

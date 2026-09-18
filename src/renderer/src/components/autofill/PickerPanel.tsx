@@ -191,6 +191,7 @@ export function PickerPanel({
         <button
           type="button"
           className="zen-v2-af-row"
+          data-nav=""
           data-active={active === picker.items.length || undefined}
           disabled={busy}
           onPointerEnter={() => setActive(picker.items.length)}

@@ -1,4 +1,4 @@
-import type { JSX, ReactNode } from 'react'
+import type { FocusEvent as ReactFocusEvent, JSX, ReactNode } from 'react'
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { CreditCard, Fingerprint, KeyRound, MapPin, type LucideIcon } from 'lucide-react'
@@ -14,6 +14,8 @@ import type {
 } from '@shared/types'
 import { useBackSurface } from '@renderer/lib/back'
 import { useViewport } from '@renderer/lib/formFactor'
+import { reducedMotion } from '@renderer/lib/motion/spring'
+import { cn } from '@renderer/lib/utils'
 import {
   ChromePortal,
   POPOVER_MARGIN,
@@ -56,6 +58,24 @@ const PAGE_WAIT_MS = 1500
 const SUBMIT_GRACE_MS = 400
 /** The chip in the URL pill a desktop prompt hangs from (`NavRow`). */
 export const CHIP_SELECTOR = '[data-af-chip]'
+/** The desktop prompt's panel, for the chip's Tab to step into. */
+const PROMPT_SELECTOR = '[data-af-prompt]'
+/** The prompt popover's pop, in and out (§9.20; `zen-animate-pop`'s 180). */
+const PROMPT_POP_MS = 180
+
+/**
+ * Move the keyboard into the open desktop prompt (§9.22): its field when it has one (the login
+ * prompts' username), else the panel itself, a title-and-notice container named by its title.
+ * The chip's Tab steps in here, since a prompt the page raised took no focus on open.
+ */
+export function enterAutofillPrompt(
+  panel = document.querySelector<HTMLElement>(PROMPT_SELECTOR)
+): boolean {
+  if (!panel || panel.dataset.closing) return false
+  const target = panel.querySelector<HTMLElement>('input, textarea') ?? panel
+  target.focus({ preventScroll: true })
+  return true
+}
 
 /**
  * The prompts of `UIState.autofill.prompts`, one at a time, for the active tab: save / update a
@@ -269,18 +289,21 @@ interface Action {
 function LoginBody({
   prompt,
   phone,
+  focusOnOpen = false,
   render
 }: {
   prompt: SaveLoginPrompt
   phone: boolean
+  /** The field takes the focus as the prompt opens: a popover the user opened (§9.22), not a phone sheet or a notice. */
+  focusOnOpen?: boolean
   render: (form: ReactNode, actions: Action[], submit: () => AutofillPromptResponse) => JSX.Element
 }): JSX.Element {
   const [username, setUsername] = useState(prompt.username)
   const id = useId()
   const field = useRef<HTMLInputElement>(null)
   useEffect(() => {
-    if (!phone) field.current?.focus()
-  }, [phone])
+    if (focusOnOpen && !phone) field.current?.focus()
+  }, [focusOnOpen, phone])
   const save = (): AutofillPromptResponse => ({
     action: 'save',
     username: username.trim() === prompt.username ? undefined : username.trim()
@@ -464,40 +487,61 @@ function PromptPopover({
   const titleId = useId()
   const copy = copyFor(prompt)
   const { chip, pill } = useChipRects()
+  // Whether the chip brought the prompt back by hand (`toggleAutofillPrompt`), read as it opens.
+  const [byHand] = useState(() => uiStore.get().autofillPromptByHand === prompt.id)
+  const [closing, setClosing] = useState(false)
 
-  // Escape puts the prompt away behind its chip, which takes the focus back (§9.22); so does
-  // the chrome layer's light dismiss – a press outside (the focus stays where it landed), the
-  // chip's own press (the layer hands it the focus and consumes the press, so the chip does not
-  // reopen it), a scroll, a resize, another popover or a frame dialog opening. With no chip on
-  // screen (compact mode has no pill) there would be no way back, so the prompt is dismissed
-  // instead ("not now").
+  // "Not now", Escape and the chrome layer's light dismiss – a press outside (the focus stays
+  // where it landed), the chip's own press (the layer hands it the focus and consumes the press,
+  // so the chip does not reopen it), a scroll, a resize, another popover or a frame dialog
+  // opening – put the prompt away behind its chip: the pop reversed towards the chip, 180 ms,
+  // opacity with it (§9.20), the chip lit to bring it back, and the focus on the chip when the
+  // keyboard put it away (§9.22). With no chip on screen (compact mode has no pill) there would
+  // be no way back, so the prompt is dismissed instead ("not now").
   const collapse = (toChip: boolean): void => {
+    if (closing) return
     const chipEl = document.querySelector<HTMLElement>(CHIP_SELECTOR)
     if (!chipEl) {
       respond(null)
       return
     }
     if (toChip) chipEl.focus({ preventScroll: true })
-    uiStore.set({ autofillPromptCollapsed: prompt.id })
+    if (reducedMotion()) {
+      uiStore.set({ autofillPromptCollapsed: prompt.id })
+      return
+    }
+    setClosing(true)
+    window.setTimeout(() => uiStore.set({ autofillPromptCollapsed: prompt.id }), PROMPT_POP_MS)
   }
   useEscape(() => collapse(true))
   useBackSurface({ name: 'autofill-prompt', onCommit: () => collapse(false) })
   useLightDismiss(panelRef, () => collapse(false), {
-    anchor: () => document.querySelector(CHIP_SELECTOR)
+    anchor: () => document.querySelector(CHIP_SELECTOR),
+    disabled: closing
   })
 
   const act = (action: Action): void => {
+    if (closing) return
     if (action.collapse) collapse(true)
     else respond(action.response)
   }
 
-  // Focus on open (§9.22): the login prompts focus their username field (`LoginBody`); the
-  // address and card prompts are a title and a notice with actions and no field, so the panel
-  // itself takes the focus (`tabIndex -1`, named by its title) and Tab reaches its buttons.
+  // Focus (§9.22). Raised by the page – the user just submitted a form and is reading the page –
+  // the prompt is a notice: it takes no focus and moves none, announces itself as a
+  // `role="status"` region, and the keyboard reaches it with Tab from its chip (`AutofillChip`
+  // steps into `enterAutofillPrompt`) or by a click into it, which is when its field takes the
+  // focus. Brought back by hand from the chip it is a popover the user opened: the login prompts
+  // focus their username field, the address and card prompts (a title and a notice with actions,
+  // no field) their container, named by the title. Inside, Tab wraps; Escape returns to the chip.
   const notice = prompt.kind === 'save-address' || prompt.kind === 'save-card'
   useEffect(() => {
-    if (notice) panelRef.current?.focus({ preventScroll: true })
-  }, [notice])
+    if (byHand && notice) panelRef.current?.focus({ preventScroll: true })
+  }, [byHand, notice])
+  const onPanelFocus = (e: ReactFocusEvent<HTMLDivElement>): void => {
+    // The container itself took the focus (a click on the panel's text, `enterAutofillPrompt`):
+    // a prompt with a field hands it on to the field.
+    if (e.target === e.currentTarget) enterAutofillPrompt(e.currentTarget)
+  }
 
   // With no pill on screen (compact mode) the prompt stands in the window's top trailing corner.
   const viewport = viewportSize()
@@ -508,6 +552,10 @@ function PromptPopover({
     height: 28
   }
   const box = placePopover(anchor, pill ?? anchor, viewport, POPOVER_WIDTH.form)
+  // The pop grows from the chip and collapses back into it: its origin is the chip's centre on
+  // the popover's edge that faces the pill (§9.20).
+  const originX = Math.round(anchor.x + anchor.width / 2 - box.left)
+  const transformOrigin = `${originX}px ${box.side === 'below' ? '0' : '100%'}`
 
   const footer = (actions: Action[]): JSX.Element => (
     <Footer count={actions.length}>
@@ -542,12 +590,13 @@ function PromptPopover({
         <LoginBody
           prompt={prompt}
           phone={false}
+          focusOnOpen={byHand}
           render={(form, actions, submit) => (
             <form
               className="zen-v2-af-form"
               onSubmit={(e) => {
                 e.preventDefault()
-                respond(submit())
+                if (!closing) respond(submit())
               }}
             >
               {form}
@@ -562,12 +611,18 @@ function PromptPopover({
     <ChromePortal>
       <div
         ref={panelRef}
-        role="dialog"
+        role={byHand ? 'dialog' : 'status'}
         aria-labelledby={titleId}
-        tabIndex={notice ? -1 : undefined}
-        className="zen-v2-af zen-v2-af-popover zen-animate-pop fixed z-[70]"
+        tabIndex={-1}
+        data-af-prompt=""
+        data-closing={closing || undefined}
+        className={cn(
+          'zen-v2-af zen-v2-af-popover fixed z-[70]',
+          closing ? 'zen-v2-af-pop-out' : 'zen-animate-pop'
+        )}
         data-surface="page"
-        style={popoverStyle(box)}
+        style={{ ...popoverStyle(box), transformOrigin }}
+        onFocus={onPanelFocus}
         onKeyDown={(e) => wrapTab(e, panelRef.current)}
       >
         <TitleBlock
