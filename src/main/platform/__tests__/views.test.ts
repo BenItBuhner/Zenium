@@ -86,7 +86,9 @@ vi.mock('electron', async () => {
       return undefined
     }
   }
-  return { WebContentsView: FakeWebContentsView }
+  /** The view host follows the chrome's scheme for dark theme for sites; light and quiet here. */
+  const nativeTheme = Object.assign(new EventEmitter(), { shouldUseDarkColors: false })
+  return { WebContentsView: FakeWebContentsView, nativeTheme }
 })
 
 /** A page Chromium made for a script `window.open`, before any tab adopted it. */
