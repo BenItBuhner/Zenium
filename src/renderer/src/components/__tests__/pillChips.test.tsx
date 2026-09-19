@@ -428,6 +428,84 @@ describe('desktop pill (NavRow)', () => {
   })
 })
 
+/*
+ * The desktop pill on one of Zenium's own pages (design language v2 §10.1): `zenium://settings/
+ * <section>` while the field fits it, the page's title once it does not – as the phone pill names
+ * its pages – with the whole address in the tooltip either way. happy-dom lays nothing out, so
+ * the widths the pill measures before its first paint (the address at its natural width in the
+ * probe, the width the field is given) are set here.
+ */
+describe('desktop pill on an internal page', () => {
+  const settings = tab('zen://settings/privacy', { title: 'Settings' })
+  const widths = { probe: 0, field: 0 }
+
+  beforeEach(() => {
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: Element
+    ) {
+      const width = this.hasAttribute('data-pill-probe')
+        ? widths.probe
+        : this.hasAttribute('data-reads')
+          ? widths.field
+          : 0
+      return { x: 0, y: 0, top: 0, left: 0, right: width, bottom: 0, width, height: 0 } as DOMRect
+    })
+  })
+
+  afterEach(() => vi.restoreAllMocks())
+
+  const pillOf = (el: HTMLElement): { pill: HTMLElement; field: HTMLElement } => {
+    const pill = el.querySelector<HTMLElement>('[role="group"][aria-label="Address"]')!
+    return { pill, field: pill.querySelector<HTMLElement>('[data-reads]')! }
+  }
+
+  it('reads the whole address, section and all, while the field fits it', () => {
+    widths.probe = 150
+    widths.field = 160
+    const el = render(<NavRow state={state(settings)} tab={settings} compact={false} />)
+    const { pill, field } = pillOf(el)
+    expect(focusable(pill)[0].textContent).toBe('zenium://settings/privacy')
+    expect(field.getAttribute('data-reads')).toBe('address')
+    // The probe holds the same address, out of the accessibility tree and never in the name.
+    const probe = pill.querySelector<HTMLElement>('[data-pill-probe]')!
+    expect(probe.textContent).toBe('zenium://settings/privacy')
+    expect(probe.getAttribute('aria-hidden')).toBe('true')
+    expect(probe.className).toContain('invisible')
+    expect(pill.getAttribute('title')).toBe('zenium://settings/privacy')
+  })
+
+  it('names the page once the field cannot fit the address; the tooltip keeps the address', () => {
+    widths.probe = 150
+    widths.field = 60
+    const el = render(<NavRow state={state(settings)} tab={settings} compact={false} />)
+    const { pill, field } = pillOf(el)
+    expect(focusable(pill)[0].textContent).toBe('Settings')
+    expect(field.getAttribute('data-reads')).toBe('title')
+    // `zenium://`, never the canonical `zen://` the tab carries (§10.1).
+    expect(pill.getAttribute('title')).toBe('zenium://settings/privacy')
+    // The star stays: Chrome keeps it on chrome://settings, the registry says so for Settings.
+    expect(pill.querySelector('[aria-label="Bookmark this tab"]')).not.toBeNull()
+  })
+
+  it('leaves a site’s address to truncate as before: a site has no title to stand in', () => {
+    widths.probe = 150
+    widths.field = 60
+    const site = tab('https://example.com/some/path')
+    const el = render(<NavRow state={state(site)} tab={site} compact={false} />)
+    const { pill, field } = pillOf(el)
+    expect(focusable(pill)[0].textContent).toBe('example.com/some/path')
+    expect(field.getAttribute('data-reads')).toBe('address')
+    expect(pill.getAttribute('title')).toBe('https://example.com/some/path')
+  })
+
+  it('offers the search prompt, not `zen://newtab`, as the empty tab’s tooltip', () => {
+    const empty = tab('zen://newtab')
+    const el = render(<NavRow state={state(empty)} tab={empty} compact={false} />)
+    const { pill } = pillOf(el)
+    expect(pill.getAttribute('title')).toBe('Search or enter address')
+  })
+})
+
 describe('phone pill (PillContent)', () => {
   const page = tab('https://example.com/some/path')
 

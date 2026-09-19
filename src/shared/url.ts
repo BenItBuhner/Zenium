@@ -254,6 +254,20 @@ export function displayHost(url: string): string {
   }
 }
 
+/**
+ * What the desktop pill reads for a tab at rest, given `shown` – its address as `displayUrl` or
+ * `fullUrl` renders it – and whether that address fits the pill's field. An address that fits is
+ * shown whole, section and all (`zenium://settings/privacy`); one that does not is the internal
+ * page's title ("Settings") where the tab is one of Zenium's own pages, as the phone pill names
+ * them (v2 §10.1) – "ze…" says nothing, and the title is what the tab row says too. A site's
+ * address truncates as before: its host comes first and is what matters. The URL bar's field
+ * keeps the whole address while editing, whatever the pill shows.
+ */
+export function pillText(url: string, shown: string, fits: boolean): string {
+  if (fits || !shown) return shown
+  return internalPageTitle(url) ?? shown
+}
+
 const SECOND_LEVEL = new Set(['co', 'com', 'org', 'net', 'gov', 'edu', 'ac', 'or', 'ne', 'go'])
 
 /** Approximate registrable domain (eTLD+1) – good enough for "same site" checks. */

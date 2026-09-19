@@ -1,5 +1,5 @@
-import type { JSX, ReactNode } from 'react'
-import { useEffect, useRef, useState } from 'react'
+import type { JSX, ReactNode, RefObject } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   AppWindow,
   ArrowLeft,
@@ -20,7 +20,7 @@ import {
 import { internalPageOf } from '@shared/internalPages'
 import type { Tab, UIState } from '@shared/types'
 import { securityIndicator, type IndicatorState } from '@shared/siteInfo'
-import { addressParts, displayUrl, fullUrl, getDomain } from '@shared/url'
+import { addressParts, displayUrl, fullUrl, getDomain, pillText } from '@shared/url'
 import { useElementWidth } from '@renderer/hooks/useElementWidth'
 import { run } from '@renderer/lib/api'
 import { blockedPopupsOf, closeBlockedPopups, openBlockedPopups } from '@renderer/lib/security'
@@ -92,7 +92,15 @@ export function NavRow({
   // pointer or the keyboard is on the address, or always with the "Always show full URLs" setting.
   const [revealed, setRevealed] = useState(false)
   const shown = tab ? (state.settings.showFullUrls || revealed ? fullUrl(tab.url) : url) : ''
-  const address = addressParts(shown)
+  // An internal page's address that the pill cannot fit gives way to the page's title, as the
+  // phone pill names Zenium's own pages (v2 §10.1): `pillText`, from the field's width against
+  // the address at its natural width (the probe span, drawn invisibly without truncation).
+  const pill = useRef<HTMLDivElement>(null)
+  const field = useRef<HTMLSpanElement>(null)
+  const probe = useRef<HTMLSpanElement>(null)
+  const fits = useAddressFits(pill, field, probe, !compact)
+  const text = tab ? pillText(tab.url, shown, fits) : ''
+  const address = addressParts(text)
   // What the site icon says (derived in the core's site-information module, drawn here).
   const indicator = securityIndicator(
     tab?.url ?? '',
@@ -193,13 +201,16 @@ export function NavRow({
           §9.22); the site icon is drawn ahead of it with `order-first`.
         */
         <div
+          ref={pill}
           role="group"
           aria-label="Address"
           className={cn(
-            'zen-squircle zen-pill group/pill mx-0.5 flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-[10px] bg-[var(--zen-element-bg)] px-2.5 text-left',
+            'zen-squircle zen-pill group/pill relative mx-0.5 flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-[10px] bg-[var(--zen-element-bg)] px-2.5 text-left',
             !readOnly && 'hover:bg-[var(--zen-element-bg-hover)]'
           )}
-          title={tab?.url ?? 'Search or enter address'}
+          // The tooltip carries the whole address – the user-facing `zenium://` form for an
+          // internal page (§10.1: `zen://` never shows), and the address behind a title.
+          title={(tab && fullUrl(tab.url)) || 'Search or enter address'}
           data-zen-menu="urlpill"
           data-zen-menu-tab={tab?.id}
           data-readonly={readOnly || undefined}
@@ -225,10 +236,12 @@ export function NavRow({
             }}
           >
             <span
+              ref={field}
               className={cn(
                 'min-w-0 flex-1 truncate text-[12.5px]',
                 !url && 'text-[var(--zen-muted)]'
               )}
+              data-reads={url ? (text === shown ? 'address' : 'title') : undefined}
             >
               {url ? (
                 <>
@@ -240,6 +253,15 @@ export function NavRow({
               )}
             </span>
           </button>
+          {/* The address at its natural width, for `useAddressFits`; out of flow, never seen. */}
+          <span
+            ref={probe}
+            aria-hidden="true"
+            className="pointer-events-none invisible absolute left-0 top-0 whitespace-nowrap text-[12.5px]"
+            data-pill-probe
+          >
+            {shown}
+          </span>
           {/*
             Chrome's "Not secure" text before the address of an http page (or of a certificate
             error's page, in the danger ink), drawn between the site icon and the address; a
@@ -414,6 +436,41 @@ export function NavRow({
       </button>
     </div>
   )
+}
+
+/**
+ * Whether the address at its natural width (`probe`) fits the width the pill gives its field
+ * (`field`): measured before the first paint and again whenever either changes size – the
+ * sidebar resized, a chip come or gone, the tab moved to another section. Held still while the
+ * pointer or the keyboard is on the pill: the hover-only chips narrow the field for the hover's
+ * duration, and the text must not swap under the pointer – it truncates then, as every address
+ * does. The observer's next delivery after the hover ends measures the rest layout again.
+ * `mounted` says the pill is in the row (the compact sidebar has none): its change rebinds the
+ * observer to the pill the row has now.
+ */
+function useAddressFits(
+  pill: RefObject<HTMLElement | null>,
+  field: RefObject<HTMLElement | null>,
+  probe: RefObject<HTMLElement | null>,
+  mounted: boolean
+): boolean {
+  const [fits, setFits] = useState(true)
+  useLayoutEffect(() => {
+    const slot = field.current
+    const text = probe.current
+    if (!mounted || !slot || !text) return
+    // Fractional widths: a text 0.3 px wider than its box already draws the ellipsis.
+    const measure = (): void => {
+      if (pill.current?.matches(':hover, :focus-within')) return
+      setFits(text.getBoundingClientRect().width <= slot.getBoundingClientRect().width)
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(slot)
+    observer.observe(text)
+    return () => observer.disconnect()
+  }, [pill, field, probe, mounted])
+  return fits
 }
 
 /**

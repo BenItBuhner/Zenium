@@ -1763,12 +1763,19 @@ async function scenarioWalkthrough() {
       if ((activeTitle ?? '').trim() !== 'Settings') {
         throw new Error(`the active sidebar row is "${activeTitle}", expected "Settings"`)
       }
-      const address = await s.chrome
-        .locator('[role="group"][aria-label="Address"] > button')
-        .first()
-        .textContent()
-      if ((address ?? '').trim() !== 'zenium://settings') {
-        throw new Error(`the pill reads "${address}", expected "zenium://settings"`)
+      // The pill: `zenium://settings` while its field fits the address, the page's title
+      // "Settings" once it does not (the sidebar's default width, §10.1's chrome note); the
+      // tooltip carries the `zenium://` address either way, never `zen://`.
+      const pill = s.chrome.locator('[role="group"][aria-label="Address"]').first()
+      const reads = await pill.locator('[data-reads]').first().getAttribute('data-reads')
+      const address = ((await pill.locator(':scope > button').first().textContent()) ?? '').trim()
+      const expected = reads === 'title' ? 'Settings' : 'zenium://settings'
+      if (!['address', 'title'].includes(reads ?? '') || address !== expected) {
+        throw new Error(`the pill reads "${address}" (${reads}), expected "${expected}"`)
+      }
+      const tooltip = await pill.getAttribute('title')
+      if (tooltip !== 'zenium://settings') {
+        throw new Error(`the pill's tooltip is "${tooltip}", expected "zenium://settings"`)
       }
       await s.shot('08-settings')
       // Ctrl+F on the tab is "Find in Settings" (the page claims `find.open`), not the find bar;
@@ -1803,7 +1810,7 @@ async function scenarioWalkthrough() {
         8000,
         `the Settings row gone (${rowsBefore} rows before)`
       )
-      return { address: address.trim(), owner, after, rows: rowsBefore }
+      return { address, reads, tooltip, owner, after, rows: rowsBefore }
     })
 
     await s.step('context-menu', async () => {
