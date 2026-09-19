@@ -5,6 +5,7 @@ import { abortPull, dispatchPullEvent, PULL_THRESHOLD, pullTravelFor } from '@re
 import { Download, Smartphone, Star } from 'lucide-react'
 import { installBannerShown, presentInstallBanner } from '@renderer/lib/installBanner'
 import { isInternalPageUrl } from '@shared/internalPages'
+import type { UIState } from '@shared/types'
 import { BLANK_URL } from '@shared/url'
 import { DEFAULT_FOLDER_ICON } from '@renderer/components/phone/GroupCard'
 import { activeSpace, activeTab, regularOf } from '@renderer/lib/selectors'
@@ -106,8 +107,12 @@ const PREVIEW_GROUP_PAGES = [
   'https://developer.mozilla.org/en-US/docs/Web/API/Web_Animations_API',
   'https://en.wikipedia.org/wiki/Kerning'
 ]
-/** The group the last `group=<n>` state made, dissolved before the next state. */
-let previewGroup: string | null = null
+/**
+ * The group the last `group=<n>` state made and the world before it (the tab that was active,
+ * the tabs there were), put back before the next state: a run of stills takes each state from
+ * the same loose profile.
+ */
+let previewGroup: { folderId: string; activeId: string; tabIds: ReadonlySet<string> } | null = null
 
 /**
  * Put the active tab in a group of `members`: the space's loose pages join first, then tabs made
@@ -125,7 +130,7 @@ async function makeGroup(activeId: string, members: number): Promise<void> {
     color: 'blue',
     rename: false
   })
-  previewGroup = folderId
+  previewGroup = { folderId, activeId, tabIds: new Set(Object.keys(state.tabs)) }
   await cmd('tab.moveToFolder', { tabId: activeId, folderId })
   const loose = regularOf(state, space).filter(
     (t) => t.id !== activeId && !t.folderId && !isInternalPageUrl(t.url) && t.url !== BLANK_URL
@@ -146,12 +151,60 @@ async function makeGroup(activeId: string, members: number): Promise<void> {
   }
 }
 
-/** The group a previous state made goes, its tabs unpacked, so the next state starts loose. */
+/**
+ * The group a previous state made goes and the world before it comes back: the tab that was
+ * active then is active again (first, so closing the others never has the core pick a
+ * neighbour), the tabs made since – for the group, or in it by its plus chip – close, and the
+ * folder is deleted with its tabs unpacked, so the next state starts loose.
+ */
 async function dissolveGroup(): Promise<void> {
-  const folderId = previewGroup
+  const made = previewGroup
   previewGroup = null
-  if (!folderId || !browserStore.get().state?.folders[folderId]) return
-  await cmd('folder.delete', { folderId, unpack: true }).catch(() => undefined)
+  const state = made ? browserStore.get().state : null
+  if (!made || !state) return
+  const quiet = (): undefined => undefined
+  const restored = state.tabs[made.activeId] ? made.activeId : null
+  if (restored && activeTab(state)?.id !== restored)
+    await cmd('tab.activate', { tabId: restored }).catch(quiet)
+  for (const id of Object.keys(state.tabs)) {
+    if (!made.tabIds.has(id)) await cmd('tab.close', { tabId: id, force: true }).catch(quiet)
+  }
+  if (state.folders[made.folderId])
+    await cmd('folder.delete', { folderId: made.folderId, unpack: true }).catch(quiet)
+  // A command's answer comes before the state it changed does: the next state reads the store,
+  // so the store is waited for (bounded) to show the folder gone and the tab back.
+  await untilState(
+    (s) =>
+      !s.folders[made.folderId] &&
+      (restored === null || activeTab(s)?.id === restored) &&
+      Object.keys(s.tabs).every((id) => made.tabIds.has(id))
+  )
+}
+
+/** How long the store is given to reflect a state a command changed before going ahead anyway. */
+const STORE_SETTLE_MS = 2000
+
+/** Resolves once the store's state passes `test`, or after {@link STORE_SETTLE_MS}. */
+function untilState(test: (state: UIState) => boolean): Promise<void> {
+  return new Promise((resolve) => {
+    const check = (): boolean => {
+      const state = browserStore.get().state
+      return state !== null && test(state)
+    }
+    if (check()) {
+      resolve()
+      return
+    }
+    const done = (): void => {
+      unsubscribe()
+      clearTimeout(timer)
+      resolve()
+    }
+    const timer = setTimeout(done, STORE_SETTLE_MS)
+    const unsubscribe = browserStore.subscribe(() => {
+      if (check()) done()
+    })
+  })
 }
 
 /**
