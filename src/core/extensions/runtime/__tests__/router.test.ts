@@ -158,6 +158,29 @@ describe('tabs.sendMessage', () => {
     router.handle('bg', { t: 'msg', id: 3, target: { tabId: 9 }, data: 'hi' })
     expect(take('bg').at(-1)).toEqual({ t: 'reply', id: 3, ok: false, error: 'No tab with id: 9.' })
   })
+
+  it("reaches the tab's user-script worlds too, never the extension's own pages", () => {
+    const { router, take } = setup()
+    router.register(endpoint('bg', { context: 'background', tabId: null }))
+    router.register(endpoint('popup', { context: 'popup', tabId: null }))
+    router.register(endpoint('top', { frameId: 0 }))
+    // Tampermonkey's content.js: a `runtime.onMessage` listener in the USER_SCRIPT world.
+    router.register(endpoint('world', { context: 'userScript', frameId: 0 }))
+
+    router.handle('bg', { t: 'msg', id: 1, target: { tabId: 1, options: null }, data: 'hi' })
+    expect(take('top')).toHaveLength(1)
+    const [deliver] = take('world')
+    expect(deliver).toMatchObject({ t: 'deliver', data: 'hi' })
+    // Sent by the background: not a user script's message, so the world's onMessage hears it.
+    expect(deliver.userScript).toBeUndefined()
+    expect(take('popup')).toEqual([])
+
+    // A runtime.sendMessage from the world lands on the pages alone, flagged as a user script's.
+    router.handle('world', { t: 'msg', id: 1, target: {}, data: 'up', userScript: true })
+    expect(take('bg').at(-1)).toMatchObject({ t: 'deliver', data: 'up', userScript: true })
+    expect(take('popup').at(-1)).toMatchObject({ t: 'deliver', data: 'up', userScript: true })
+    expect(take('top')).toEqual([])
+  })
 })
 
 describe('ports', () => {

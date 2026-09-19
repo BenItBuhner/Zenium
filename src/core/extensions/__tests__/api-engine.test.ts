@@ -449,15 +449,33 @@ describe('createEmulatedEngine', () => {
     expect(h.last()).toMatchObject({ ns: 'contextMenus', method: 'removeAll' })
   })
 
-  it('user-script contexts get messaging only, flagged for onUserScriptMessage', () => {
+  it('user-script contexts get messaging and identity only, flagged for onUserScriptMessage', () => {
     const h = harness({ context: 'userScript' })
-    expect(Object.keys(h.chrome)).toEqual(['runtime'])
-    expect(Object.keys(h.chrome.runtime).sort()).toEqual(['connect', 'id', 'sendMessage'])
+    // The desktop world's surface (shared/userScriptWorld.ts): no storage, tabs or i18n there.
+    expect(Object.keys(h.chrome).sort()).toEqual(['extension', 'runtime'])
+    expect(Object.keys(h.chrome.runtime).sort()).toEqual([
+      'connect',
+      'getPlatformInfo',
+      'getURL',
+      'id',
+      'onConnect',
+      'onMessage',
+      'sendMessage'
+    ])
+    expect((h.chrome.extension as Ns).inIncognitoContext).toBe(false)
+    expect((h.chrome.runtime.getURL as Fn)('content.js')).toBe(`${ORIGIN}/content.js`)
     void (h.chrome.runtime.sendMessage as Fn)('hi')
     expect(h.last()).toMatchObject({ t: 'msg', data: 'hi', userScript: true })
     void (h.chrome.runtime.connect as Fn)({ name: 'p' })
     expect(h.last()).toMatchObject({ t: 'connect', name: 'p', userScript: true })
     expect(h.engine.diagnostics).toBeNull()
+    // Tampermonkey's content.js listens for what the extension sends the tab; a `deliver` (a
+    // `tabs.sendMessage`) reaches that listener as a content script's would.
+    const heard: unknown[] = []
+    ;(h.chrome.runtime.onMessage as Listenable).addListener((m) => heard.push(m))
+    expect(h.last()).toMatchObject({ t: 'listen', event: 'runtime.onMessage', on: true })
+    h.engine.receive({ t: 'deliver', id: 7, data: 'to-the-world', sender: { id: EXT } })
+    expect(heard).toEqual(['to-the-world'])
 
     const bg = harness()
     const plain: unknown[] = []

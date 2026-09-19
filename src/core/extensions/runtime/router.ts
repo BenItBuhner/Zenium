@@ -184,10 +184,12 @@ export class MessageRouter {
       const tabId = this.outbox.tabIdFromChrome(chromeTabId)
       if (tabId === null) return `No tab with id: ${chromeTabId}.`
       const frameId = target.options?.frameId
+      // The tab's content scripts and its user-script worlds (their `runtime.onMessage` /
+      // `onConnect` hear `tabs.sendMessage` / `tabs.connect`, as Chrome's do).
       return this.all().filter(
         (e) =>
           e.extensionId === sender.extensionId &&
-          e.context === 'content' &&
+          (e.context === 'content' || e.context === 'userScript') &&
           e.tabId === tabId &&
           (frameId === undefined || frameId === null || e.frameId === Number(frameId))
       )

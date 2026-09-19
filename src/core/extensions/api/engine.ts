@@ -472,8 +472,20 @@ export function createEmulatedEngine(
   const getURL = (path: unknown): string =>
     `${config.origin}/${String(path ?? '').replace(/^\/+/, '')}`
 
+  // What every context has, a `USER_SCRIPT` world with `messaging` on included: Chrome gives
+  // user-script worlds the identity bits and messaging both ways – `sendMessage` / `connect` to
+  // the extension (its `onUserScriptMessage` / `onUserScriptConnect`) and `onMessage` /
+  // `onConnect` for what the extension sends the tab (`shared/userScriptWorld.ts` is the
+  // desktop's copy of this surface). Tampermonkey's content.js runs in that world and adds its
+  // `runtime.onMessage` listener unguarded.
   Object.assign(runtime, {
     id: config.id,
+    getURL,
+    getPlatformInfo: (...args: unknown[]) =>
+      settle(
+        Promise.resolve({ os: 'android', arch: 'arm64', nacl_arch: 'arm' }),
+        takeCallback(args)
+      ),
     sendMessage: (...args: unknown[]) => {
       const { extensionId, message, options, callback } = parseSendMessageArgs(args)
       return settle(sendMessage({ extensionId, options: options ?? null }, message), callback)
@@ -485,23 +497,17 @@ export function createEmulatedEngine(
         extensionId = (rest.shift() as string | null) ?? null
       }
       return connect({ extensionId }, rest[0])
-    }
+    },
+    onMessage: createEvent('runtime.onMessage', true),
+    onConnect: createEvent('runtime.onConnect', true)
   })
 
   if (!userScript) {
     Object.assign(runtime, {
-      getURL,
       // Chrome defines it only with the `nativeMessaging` permission.
       ...(config.permissions.includes('nativeMessaging') ? { connectNative } : {}),
       getManifest: () => config.manifest,
-      getPlatformInfo: (...args: unknown[]) =>
-        settle(
-          Promise.resolve({ os: 'android', arch: 'arm64', nacl_arch: 'arm' }),
-          takeCallback(args)
-        ),
-      onMessage: createEvent('runtime.onMessage', true),
       onMessageExternal: createEvent('runtime.onMessageExternal', true),
-      onConnect: createEvent('runtime.onConnect', true),
       onConnectExternal: createEvent('runtime.onConnectExternal', true),
       onUserScriptMessage: createEvent('runtime.onUserScriptMessage', true),
       onUserScriptConnect: createEvent('runtime.onUserScriptConnect', true)
@@ -509,6 +515,9 @@ export function createEmulatedEngine(
   }
 
   const chrome: Record<string, unknown> = { runtime }
+  // The world's `chrome.extension` is the incognito flag alone (the shim's default for a content
+  // script, which has no private-tab notion here either).
+  if (userScript) chrome.extension = { inIncognitoContext: false }
 
   // --- engine members the table marks `engine` -------------------------------------------------
 
