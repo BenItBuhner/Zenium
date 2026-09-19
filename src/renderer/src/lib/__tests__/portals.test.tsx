@@ -1268,22 +1268,23 @@ describe('FrameDialogHost on a phone (the sheet chassis, §11)', () => {
       uiStore.set({ pageDialogOpen: false })
       invalidateSnapshot()
     })
-    // Gone from the slot as React removed it – not put back, not marked – and the host's state
-    // follows its registered dialogs alone: no `data-leaving` anywhere, `open` false, the
-    // chrome let go of by the host (the chassis' own hold from rise to landing is #187's).
+    // In the commit that removed it the host put nothing back and marked nothing – the panel
+    // is out of the slot as React left it, unmarked – and the host's own state follows its
+    // registered dialogs alone: no `data-leaving` on the host or its scrim, `data-open` off,
+    // no cover hold. (Whatever the sheet chassis then does with the slot's children for its
+    // way down – a kept panel of its own, its hold on the chrome to the landing – is the
+    // chassis', #187, and none of the host's.)
     expect(panel.isConnected).toBe(false)
     expect(panel.hasAttribute('data-leaving')).toBe(false)
     expect(panel.hasAttribute('inert')).toBe(false)
     expect(panel.hasAttribute('aria-hidden')).toBe(false)
-    expect(slot().childElementCount).toBe(0)
     expect(leaving()).toEqual([])
     expect(host().hasAttribute('data-open')).toBe(false)
     expect(host().hasAttribute('data-leaving')).toBe(false)
     expect(scrim()!.hasAttribute('data-leaving')).toBe(false)
-    expect(chromeInertHeld()).toBe(false)
     expect(uiStore.get().frameDialogCover).toBe(0)
-    // The sheet's own way down runs as on main: scrim and recede back on the spring, the page
-    // under the sheet's cover until the landing – nothing of it the host's retention.
+    // The sheet's own way down runs: scrim and recede back on the spring, the page under the
+    // sheet's cover until the landing – nothing of it the host's retention.
     expect(uiStore.get().frameSheetOpen).toBe(true)
     let last = 1
     for (let i = 0; i < 120 && scheduled(); i++) {
@@ -1292,8 +1293,9 @@ describe('FrameDialogHost on a phone (the sheet chassis, §11)', () => {
       expect(Number(recedeVar())).toBeCloseTo(p, 4)
       expect(p).toBeLessThanOrEqual(last + 1e-9)
       last = p
-      expect(slot().childElementCount).toBe(0)
       expect(host().hasAttribute('data-leaving')).toBe(false)
+      expect(scrim()!.hasAttribute('data-leaving')).toBe(false)
+      expect(uiStore.get().frameDialogCover).toBe(0)
     }
     expect(scheduled()).toBe(false)
     expect(host().hasAttribute('data-sheet-up')).toBe(false)
