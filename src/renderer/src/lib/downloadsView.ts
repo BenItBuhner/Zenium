@@ -1,4 +1,4 @@
-import type { DownloadDanger, DownloadItem } from '@shared/types'
+import type { DownloadDanger, DownloadInterruptReason, DownloadItem } from '@shared/types'
 import {
   allPaused,
   displayName,
@@ -9,8 +9,9 @@ import { formatBytes } from './utils'
 
 /*
  * Pure presentation helpers for the downloads bubble and the `zen://downloads` page: the status
- * line under a file name, the wording of a flagged file's warning, the split that lets a long
- * name truncate in its middle, day grouping and search for the page, the file-type glyph.
+ * line under a file name, the wording of a failure and of a flagged file's warning, the split
+ * that lets a long name truncate in its middle, day grouping and search for the page, the
+ * file-type glyph.
  */
 
 // ---------------------------------------------------------------------------
@@ -23,66 +24,40 @@ export interface DownloadStatus {
   tone: 'muted' | 'warn' | 'danger'
   /** A second line explaining the status (a flagged file's warning); the rows show it under `text`. */
   detail?: string
+  /** A tooltip on the line where Chrome shows one: the engine's sentence for a failure. */
+  hint?: string
 }
 
 /**
- * Chrome's interrupt reasons (the `chrome.downloads` `InterruptReason` names) onto the one-line
- * statuses of its download bubble, as Chrome 112's `BubbleStatusTextBuilder` words them; a
- * reason outside the table (`FILE_FAILED`, `FILE_HASH_MISMATCH`, `FILE_TOO_SHORT`,
- * `SERVER_NO_RANGE`, `SERVER_CROSS_ORIGIN_REDIRECT`) reads `REASON_FALLBACK` there too.
+ * The engine's interrupt reasons (`DownloadInterruptReason`, Chromium's in kebab case) onto the
+ * one-line statuses of Chrome 112's download bubble, as its `BubbleStatusTextBuilder` words
+ * them. Keyed by the closed set, so a member without a line does not compile; the engine's
+ * `interruptMessage` carries the same sentences for consumers without a table of their own.
  */
-const BUBBLE_REASONS: Record<string, string> = {
-  FILE_ACCESS_DENIED: 'Needs permission to download',
-  FILE_NO_SPACE: 'Out of storage space',
-  FILE_NAME_TOO_LONG: 'File name or location is too long',
-  FILE_TOO_LARGE: 'File is too big for this device',
-  FILE_VIRUS_INFECTED: 'Virus detected',
-  FILE_BLOCKED: 'Blocked by your organization',
-  FILE_SECURITY_CHECK_FAILED: 'Virus scan failed',
-  FILE_SAME_AS_SOURCE: 'Already downloaded',
-  NETWORK_INVALID_REQUEST: 'Check internet connection',
-  NETWORK_FAILED: 'Check internet connection',
-  NETWORK_INSTABILITY: 'Check internet connection',
-  NETWORK_TIMEOUT: 'Check internet connection',
-  NETWORK_DISCONNECTED: 'Check internet connection',
-  NETWORK_SERVER_DOWN: 'Site wasn’t available',
-  SERVER_FAILED: 'Site wasn’t available',
-  SERVER_CERT_PROBLEM: 'Site wasn’t available',
-  SERVER_UNREACHABLE: 'Site wasn’t available',
-  SERVER_UNAUTHORIZED: 'File wasn’t available on site',
-  SERVER_FORBIDDEN: 'File wasn’t available on site',
-  SERVER_BAD_CONTENT: 'File wasn’t available on site',
-  FILE_TRANSIENT_ERROR: 'Couldn’t finish download',
-  USER_SHUTDOWN: 'Couldn’t finish download',
-  CRASH: 'Couldn’t finish download',
-  SERVER_CONTENT_LENGTH_MISMATCH: 'Couldn’t finish download'
+export const INTERRUPT_WORDING: Readonly<Record<DownloadInterruptReason, string>> = {
+  'network-failed': 'Check internet connection',
+  'network-timeout': 'Check internet connection',
+  'network-disconnected': 'Check internet connection',
+  'network-server-down': 'Site wasn’t available',
+  'server-failed': 'Site wasn’t available',
+  'server-no-range': 'Something went wrong',
+  'server-bad-content': 'File wasn’t available on site',
+  'server-unauthorized': 'File wasn’t available on site',
+  'server-forbidden': 'File wasn’t available on site',
+  'server-unreachable': 'Site wasn’t available',
+  'file-failed': 'Something went wrong',
+  'file-access-denied': 'Needs permission to download',
+  'file-no-space': 'Out of storage space',
+  'file-name-too-long': 'File name or location is too long',
+  'file-too-large': 'File is too big for this device',
+  'file-virus-infected': 'Virus detected',
+  'file-blocked': 'Blocked by your organization',
+  'file-security-check-failed': 'Virus scan failed',
+  'file-same-as-source': 'Already downloaded',
+  'user-canceled': 'Cancelled',
+  'user-shutdown': 'Couldn’t finish download',
+  crash: 'Couldn’t finish download'
 }
-const REASON_FALLBACK = 'Something went wrong'
-
-/**
- * Chromium `net::` error names a host may pass through, onto the interrupt reasons above – the
- * same reading the `chrome.downloads` bridge gives extensions, so a row and an extension agree
- * on why a transfer stopped.
- */
-const NET_ERROR_REASONS: Array<[RegExp, string]> = [
-  [/^ERR_(TIMED_OUT|CONNECTION_TIMED_OUT)$/, 'NETWORK_TIMEOUT'],
-  [/^ERR_(INTERNET_DISCONNECTED|NETWORK_CHANGED)$/, 'NETWORK_DISCONNECTED'],
-  [/^ERR_(CONNECTION_REFUSED|NAME_NOT_RESOLVED|ADDRESS_UNREACHABLE)$/, 'SERVER_UNREACHABLE'],
-  [/^ERR_(CERT_|SSL_)/, 'SERVER_CERT_PROBLEM'],
-  [/^ERR_HTTP_RESPONSE_CODE_FAILURE$/, 'SERVER_FAILED'],
-  [/^ERR_INVALID_RESPONSE$/, 'SERVER_BAD_CONTENT'],
-  [/^ERR_CONTENT_LENGTH_MISMATCH$/, 'SERVER_CONTENT_LENGTH_MISMATCH'],
-  [/^ERR_UNSAFE_REDIRECT$/, 'SERVER_CROSS_ORIGIN_REDIRECT'],
-  [/^ERR_ACCESS_DENIED$/, 'FILE_ACCESS_DENIED'],
-  [/^ERR_FILE_NO_SPACE$/, 'FILE_NO_SPACE'],
-  [/^ERR_FILE_TOO_BIG$/, 'FILE_TOO_LARGE'],
-  [/^ERR_FILE_VIRUS_INFECTED$/, 'FILE_VIRUS_INFECTED'],
-  [/^ERR_BLOCKED_BY_CLIENT$/, 'FILE_BLOCKED'],
-  [
-    /^ERR_(CONNECTION_|NETWORK_|SOCKET_|EMPTY_RESPONSE|INCOMPLETE_CHUNKED_ENCODING)/,
-    'NETWORK_FAILED'
-  ]
-]
 
 /** Chrome's phrasing: "3 secs left", "1 min left", "2 hours left", "1 day left". */
 export function formatRemaining(ms: number | null | undefined): string {
@@ -104,33 +79,12 @@ export function formatSpeed(bytesPerSecond: number): string {
 }
 
 /**
- * Why a transfer stopped, as `Failed – <reason>` in the words of Chrome's download bubble, from
- * the engine's `error`: its `DownloadInterruptReason` (Chromium's interrupt reasons spelled
- * `network-failed`, one for one with the `chrome.downloads` names the table holds), the older
- * short reasons persisted before it (`shutdown` for rows in flight when the app quit,
- * `file-error` when the final rename failed), Chrome's interrupt-reason names themselves and
- * the Chromium `net::` error names a host may pass through. No reason at all (`interrupted`)
+ * Why a transfer stopped, as `Failed · <reason>` in the words of Chrome's download bubble (the
+ * status line's caption shape, `Done · 2 MB`), from the engine's `error`. No reason at all
  * reads a bare `Failed` rather than a guess.
  */
-export function describeDownloadError(error: string | undefined): string {
-  switch (error) {
-    case undefined:
-    case '':
-    case 'interrupted':
-      return 'Failed'
-    case 'shutdown':
-      return `Failed – ${BUBBLE_REASONS.USER_SHUTDOWN}`
-    case 'file-error':
-      return `Failed – ${REASON_FALLBACK}`
-    default: {
-      let name = error.replace(/^net::/, '').replace(/^DOWNLOAD_INTERRUPT_REASON_/, '')
-      if (/^[a-z]+(-[a-z]+)*$/.test(name)) name = name.toUpperCase().replace(/-/g, '_')
-      if (name.startsWith('ERR_')) {
-        name = NET_ERROR_REASONS.find(([pattern]) => pattern.test(name))?.[1] ?? ''
-      }
-      return `Failed – ${BUBBLE_REASONS[name] ?? REASON_FALLBACK}`
-    }
-  }
+export function describeDownloadError(error: DownloadInterruptReason | undefined): string {
+  return error ? `Failed · ${INTERRUPT_WORDING[error]}` : 'Failed'
 }
 
 /**
@@ -189,9 +143,9 @@ export function dangerActionLabels(danger: DownloadDanger): DangerActionLabels {
 
 /**
  * The one-line status under the file name: the engine's speed and time left while running,
- * the failure reason when interrupted, Chrome's blocked status with the verdict's sentence as
- * its detail while a flagged file waits, `Deleted` for a finished file the engine found gone
- * from disk (`fileMissing`).
+ * `Failed · <reason>` when interrupted (the engine's sentence as the line's tooltip), Chrome's
+ * blocked status with the verdict's sentence as its detail while a flagged file waits,
+ * `Deleted` for a finished file the engine found gone from disk.
  */
 export function downloadStatus(item: DownloadItem): DownloadStatus {
   const received = formatBytes(item.receivedBytes)
@@ -207,7 +161,11 @@ export function downloadStatus(item: DownloadItem): DownloadStatus {
     case 'cancelled':
       return { text: 'Cancelled', tone: 'muted' }
     case 'interrupted':
-      return { text: describeDownloadError(item.error), tone: 'danger' }
+      return {
+        text: describeDownloadError(item.error),
+        tone: 'danger',
+        hint: item.errorMessage || undefined
+      }
     case 'completed':
       if (needsDangerDecision(item)) {
         return {
@@ -216,17 +174,27 @@ export function downloadStatus(item: DownloadItem): DownloadStatus {
           detail: dangerSummary(item.danger)
         }
       }
-      if (item.fileMissing) return { text: 'Deleted', tone: 'muted' }
+      if (isDeletedRow(item)) return { text: 'Deleted', tone: 'muted' }
       return { text: total ? `Done · ${total}` : 'Done', tone: 'muted' }
   }
 }
 
 /**
- * A finished file that can be opened, shown or dragged (a flagged one waits for Keep; one the
- * engine found deleted has nothing to open).
+ * Chrome's greyed "Deleted" row: a finished file the engine found gone from disk – deleted
+ * through "Delete file" or by the user outside the browser (`fileMissing`, which the engine
+ * sets only on a completed, released file). Its name and glyph go to the deemphasised ink,
+ * nothing opens or reveals it, Retry downloads it again and Remove from list still applies.
+ */
+export function isDeletedRow(item: Pick<DownloadItem, 'state' | 'fileMissing'>): boolean {
+  return item.state === 'completed' && item.fileMissing === true
+}
+
+/**
+ * A finished file that can be opened, shown, dragged or deleted (a flagged one waits for Keep;
+ * one the engine found deleted has nothing to open).
  */
 export function isOnDisk(item: DownloadItem): boolean {
-  return item.state === 'completed' && !needsDangerDecision(item) && !item.fileMissing
+  return item.state === 'completed' && !needsDangerDecision(item) && !isDeletedRow(item)
 }
 
 // ---------------------------------------------------------------------------
