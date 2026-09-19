@@ -2261,29 +2261,13 @@
    * The overview's panes (TAB-02, TAB-03): the one coming up fades in over the backdrop – a 120 ms
    * state change (v2 §11.4: content changing in place on a window strip cross-fades on opacity,
    * no slide and no cut), which reduced motion keeps (the sheet's closing block holds these
-   * durations past its cut) – while the window surfaces blend to the pane's theme. The segment
-   * above them is a tab bar in the window family (§9.29): the picked label in the window ink
-   * under a 2 px accent line, the other at 69%; the switch is the same 120 ms, opacity and colour
-   * only, no movement.
+   * durations past its cut) – while the window surfaces blend to the pane's theme (§11.5). The
+   * Tabs | Private segment above them is the shared `.zen-v2-segment` primitive (§9.34, with the
+   * other primitives at the end of the sheet), in the window family through the overview's
+   * `data-surface="window"`.
    */
   .zen-overview-pane {
     animation: zen-fade 120ms var(--zen-ease);
-  }
-  .zen-overview-segment-tab {
-    color: rgb(var(--zen-fg-rgb) / 0.69);
-    font-weight: var(--v2-weight-button);
-    transition: color 120ms var(--zen-ease);
-  }
-  .zen-overview-segment-tab[aria-selected='true'] {
-    color: var(--zen-fg);
-  }
-  .zen-overview-segment-indicator {
-    background: var(--v2-control-accent, var(--zen-accent));
-    opacity: 0;
-    transition: opacity 120ms var(--zen-ease);
-  }
-  .zen-overview-segment-tab[aria-selected='true'] .zen-overview-segment-indicator {
-    opacity: 1;
   }
 
   /*
@@ -5592,6 +5576,57 @@
   }
 }
 
+/*
+ * The shared v2 segment (§9.34; the first to land it is the tab overview's Tabs | Private,
+ * TAB-02): two or three text tabs switching the views of one surface – never a setting's choice,
+ * which is a radio or a value row. A `role="tablist"` row of `role="tab"` buttons, a row tall
+ * (`--v2-row`: 44 on a phone) at the 16 gutter, each label 15/600 in its family's ink through the
+ * §9.29 control roles: the current one (`aria-selected`) in the text role over a 2 px accent line
+ * at the label's width, the others in the deemphasised role (the theme ink at 69% on a window
+ * surface, as the overview is); no pill and no fill – §9.14 has no segmented pill. The switch is
+ * the ink and the line's opacity over 120 ms, nothing that moves (§11.4), and reduced motion
+ * keeps those 120 ms (the closing block at the end of the sheet). One unlayered rule, tokens
+ * only, like the primitives above; a surface adds a modifier beside it, never a copy.
+ */
+.zen-v2-segment {
+  display: flex;
+  min-height: var(--v2-row);
+  flex-shrink: 0;
+  align-items: stretch;
+  gap: 8px;
+  padding: 0 8px;
+}
+.zen-v2-segment > [role='tab'] {
+  position: relative;
+  display: flex;
+  min-width: var(--v2-row);
+  align-items: center;
+  padding: 0 8px;
+  color: var(--v2-control-text-deemphasized, var(--v2-text-deemphasized));
+  font-size: var(--v2-font-body);
+  font-weight: var(--v2-weight-heading);
+  line-height: var(--v2-line-body);
+  transition: color 120ms var(--zen-ease);
+}
+.zen-v2-segment > [role='tab'][aria-selected='true'] {
+  color: var(--v2-control-text, var(--v2-text));
+}
+.zen-v2-segment > [role='tab']::after {
+  content: '';
+  position: absolute;
+  right: 8px;
+  bottom: 0;
+  left: 8px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--v2-control-accent, var(--v2-accent));
+  opacity: 0;
+  transition: opacity 120ms var(--zen-ease);
+}
+.zen-v2-segment > [role='tab'][aria-selected='true']::after {
+  opacity: 1;
+}
+
 /* The shared image radio card (§6, §10.4): a card that wears the 2 px accent outline when picked. */
 .zen-v2-card-radio {
   border-radius: var(--v2-radius-card);
@@ -7807,15 +7842,16 @@
     transition-duration: 120ms !important;
   }
   /*
-   * The overview's panes and its segment (TAB-02, TAB-03): content changing in place on a window
-   * strip fades the same under reduced motion (v2 §11.4) – a pane coming up keeps its 120 ms
-   * fade, the segment's ink and its line their 120 ms; neither moves in full motion either.
+   * The overview's panes and the segment primitive (TAB-02, TAB-03; §9.34): content changing in
+   * place on a window strip fades the same under reduced motion (v2 §11.4) – a pane coming up
+   * keeps its 120 ms fade, a segment's ink and its line their 120 ms; neither moves in full
+   * motion either.
    */
   .zen-overview-pane {
     animation-duration: 120ms !important;
   }
-  .zen-overview-segment-tab,
-  .zen-overview-segment-indicator {
+  .zen-v2-segment > [role='tab'],
+  .zen-v2-segment > [role='tab']::after {
     transition-duration: 120ms !important;
   }
 }

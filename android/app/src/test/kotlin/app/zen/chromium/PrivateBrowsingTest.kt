@@ -91,7 +91,11 @@ class PrivateBrowsingTest {
             assertTrue("$name unused", """@string/$name"""" in shortcuts)
             assertTrue("$name undefined", """<string name="$name">""" in strings)
         }
+        // Sentence case, following the platform (Chrome's "New incognito tab"), not the Title Case
+        // of the menus inside the app (design language v2 9.1); one strings file, so every variant's
+        // generated shortcuts.xml resolves the same labels.
         assertTrue("""<string name="shortcut_private_short">New private tab</string>""" in strings)
+        assertTrue("""<string name="shortcut_private_long">New private tab in Zenium</string>""" in strings)
         assertTrue("""android:icon="@drawable/ic_shortcut_private"""" in shortcuts)
         val icon = read(
             "src/main/res/drawable/ic_shortcut_private.xml",

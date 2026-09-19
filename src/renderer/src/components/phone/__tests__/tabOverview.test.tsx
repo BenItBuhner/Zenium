@@ -1495,7 +1495,11 @@ describe('the chrome switch in the stylesheet', () => {
     readFileSync(resolve(__dirname, '../../../assets/main.css'), 'utf8')
   ).filter((r) =>
     r.selectors.some(
-      (s) => s === '*' || s.startsWith('.zen-overview') || s.startsWith('.zen-group')
+      (s) =>
+        s === '*' ||
+        s.startsWith('.zen-overview') ||
+        s.startsWith('.zen-group') ||
+        s.startsWith('.zen-v2-segment')
     )
   )
   const forSelector = (selector: string, reduced: boolean): CssRule[] =>
@@ -1599,12 +1603,18 @@ describe('the chrome switch in the stylesheet', () => {
         .map((r) => r.declarations.get('animation-duration'))
         .find(Boolean)
     ).toEqual({ value: '120ms', important: true })
-    // The segment: the label's ink and the line's opacity, nothing that moves.
-    expect([...transitions('.zen-overview-segment-tab').entries()]).toEqual([['color', 120]])
-    expect([...transitions('.zen-overview-segment-indicator').entries()]).toEqual([
-      ['opacity', 120]
-    ])
-    expect(transitions('.zen-overview-segment-tab', true).get('color')).toBe(120)
-    expect(transitions('.zen-overview-segment-indicator', true).get('opacity')).toBe(120)
+    // The segment primitive (§9.34): the label's ink and the line's opacity, nothing that moves.
+    const tab = ".zen-v2-segment > [role='tab']"
+    expect([...transitions(tab).entries()]).toEqual([['color', 120]])
+    expect([...transitions(`${tab}::after`).entries()]).toEqual([['opacity', 120]])
+    expect(transitions(tab, true).get('color')).toBe(120)
+    expect(transitions(`${tab}::after`, true).get('opacity')).toBe(120)
+    // The line is 2 px of the family's accent at the label's width, no pill and no fill.
+    expect(declared(`${tab}::after`, 'height')).toBe('2px')
+    expect(declared(`${tab}::after`, 'background')).toContain('--v2-control-accent')
+    expect(declared(tab, 'background')).toBeUndefined()
+    expect(declared('.zen-v2-segment', 'background')).toBeUndefined()
+    expect(declared('.zen-v2-segment', 'min-height')).toBe('var(--v2-row)')
+    expect(declared(tab, 'font-weight')).toBe('var(--v2-weight-heading)')
   })
 })

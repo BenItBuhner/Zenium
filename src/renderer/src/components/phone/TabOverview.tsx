@@ -1173,10 +1173,12 @@ function newTabOn(pane: OverviewPane): void {
 }
 
 /**
- * The overview's two panes as a tab bar above the grid (TAB-02): "Tabs" and "Private", text in
+ * The overview's two panes as a tab bar above the grid (TAB-02): "Tabs" and "Private" on the
+ * shared `.zen-v2-segment` primitive (design language v2 §9.34, this PR's to land): text tabs in
  * the window family – the picked one in the window ink with the 2 px accent line under it, the
- * other at 69% – switching on a tap with a 120 ms state change (v2 §11); not a segmented pill
- * (§9.14 has none). Its row is 40 tall at the 16 gutter, each label a 44 target.
+ * other at 69% – switching on a tap with a 120 ms state change (§11.4); not a segmented pill
+ * (§9.14 has none). The class is the truth for its geometry and inks (a row tall at the 16
+ * gutter, each label a 44 target); the markup carries the roles.
  */
 function PaneSegment({
   pane,
@@ -1190,11 +1192,7 @@ function PaneSegment({
     { id: 'private', label: 'Private' }
   ]
   return (
-    <div
-      role="tablist"
-      aria-label="Tabs and private tabs"
-      className="zen-overview-segment flex h-10 shrink-0 items-stretch gap-2 px-3"
-    >
+    <div role="tablist" aria-label="Tabs and private tabs" className="zen-v2-segment">
       {panes.map(({ id, label }) => (
         <button
           key={id}
@@ -1203,15 +1201,11 @@ function PaneSegment({
           aria-selected={pane === id}
           data-pane={id}
           data-testid={`overview-pane-${id}`}
-          className="zen-overview-segment-tab relative flex min-w-[44px] items-center px-2 text-[15px]"
           onClick={() => {
             if (pane !== id) onPick(id)
           }}
         >
-          <span className="relative">
-            {label}
-            <span className="zen-overview-segment-indicator absolute inset-x-0 -bottom-2 h-0.5 rounded-[1px]" />
-          </span>
+          {label}
         </button>
       ))}
     </div>
