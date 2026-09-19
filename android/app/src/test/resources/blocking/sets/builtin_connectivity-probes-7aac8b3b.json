@@ -1,0 +1,86 @@
+{
+  "id": "builtin:connectivity-probes",
+  "rules": [
+    {
+      "id": 1,
+      "action": {
+        "type": "allow"
+      },
+      "condition": {
+        "urlFilter": "||accounts.google.com/generate_204^"
+      }
+    },
+    {
+      "id": 2,
+      "action": {
+        "type": "allow"
+      },
+      "condition": {
+        "urlFilter": "||www.gstatic.com/generate_204^"
+      }
+    },
+    {
+      "id": 3,
+      "action": {
+        "type": "allow"
+      },
+      "condition": {
+        "urlFilter": "||connectivitycheck.gstatic.com/generate_204^"
+      }
+    },
+    {
+      "id": 4,
+      "action": {
+        "type": "allow"
+      },
+      "condition": {
+        "urlFilter": "||clients3.google.com/generate_204^"
+      }
+    },
+    {
+      "id": 5,
+      "action": {
+        "type": "allow"
+      },
+      "condition": {
+        "urlFilter": "||play.googleapis.com/generate_204^"
+      }
+    },
+    {
+      "id": 6,
+      "action": {
+        "type": "allow"
+      },
+      "condition": {
+        "urlFilter": "||www.google.com/generate_204^"
+      }
+    },
+    {
+      "id": 7,
+      "action": {
+        "type": "allow"
+      },
+      "condition": {
+        "urlFilter": "||android.clients.google.com/generate_204^"
+      }
+    },
+    {
+      "id": 8,
+      "action": {
+        "type": "allow"
+      },
+      "condition": {
+        "urlFilter": "||www.msftconnecttest.com/connecttest.txt^"
+      }
+    },
+    {
+      "id": 9,
+      "action": {
+        "type": "allow"
+      },
+      "condition": {
+        "urlFilter": "||captive.apple.com/hotspot-detect.html^"
+      }
+    }
+  ]
+}
