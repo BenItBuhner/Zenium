@@ -18,6 +18,8 @@ import android.view.KeyCharacterMap
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Test
@@ -169,7 +171,7 @@ class ServicesHardeningDemo {
             shot("01-popup-blocked-chip")
             tapLabel(f, "Pop-up blocked", prefix = true)
             waitFor("Blocked pop-ups", 5_000)
-            SystemClock.sleep(1_200)
+            awaitCovered()
             shot("02-popup-blocked-sheet")
             tapLabel(f, "Open")
             SystemClock.sleep(4_000)
@@ -188,7 +190,7 @@ class ServicesHardeningDemo {
         openInApp("http://$SERVER/apps")
         waitFor("Call +1 555 0100", 12_000)
         if (waitFor("Not now", 6_000)) {
-            SystemClock.sleep(800)
+            awaitCovered()
             shot("04-app-launch-on-load-asks")
             answerSheet(f, "Not now")
         } else {
@@ -198,7 +200,7 @@ class ServicesHardeningDemo {
         SystemClock.sleep(1_500)
         tapLabel(f, "Call +1 555 0100")
         if (waitFor("Not now", 6_000)) {
-            SystemClock.sleep(800)
+            awaitCovered()
             shot("06-tel-launch-prompt")
             answerSheet(f, "Not now")
         } else {
@@ -207,7 +209,7 @@ class ServicesHardeningDemo {
         SystemClock.sleep(1_500)
         tapLabel(f, "Scan a barcode (intent:// with a fallback)")
         if (waitFor("Not now", 6_000)) {
-            SystemClock.sleep(800)
+            awaitCovered()
             shot("07-intent-launch-prompt")
             answerSheet(f, "Open")
         }
@@ -216,18 +218,20 @@ class ServicesHardeningDemo {
         ensureForeground()
         shot("08-intent-fallback-page")
 
-        // 3. HTTP sign-in: the dialog, a wrong password (asked again, with the notice), then the
-        //    right one. The form is submitted from the password field with Enter, the way a user
-        //    would with the soft keyboard up (it covers the dialog's buttons).
+        // 3. HTTP sign-in: the dialog, a wrong password (asked again, with the validation line
+        //    under the password field, which is cleared and focused), then the right one. While
+        //    the credentials are tried the form is busy (§9.30): its fields go read-only, which
+        //    takes the keyboard down; the refusal's focus brings it back up and the sheet lifts
+        //    the form above it again, which the emulator takes a moment over.
         openInApp("http://$SERVER/protected")
         waitFor("Sign in", 12_000)
-        SystemClock.sleep(1_200)
+        awaitCovered()
         shot("09-http-auth-dialog")
         fill(f, "Username", "zenium")
         fill(f, "Password", "wrong")
         submitSignIn()
-        waitFor("The username or password was not accepted. Please try again.", 10_000)
-        SystemClock.sleep(1_200)
+        waitFor(RETRY_MESSAGE, 10_000)
+        awaitAboveKeyboard(RETRY_MESSAGE)
         shot("10-http-auth-retry")
         fill(f, "Password", "secret")
         submitSignIn()
@@ -276,7 +280,7 @@ class ServicesHardeningDemo {
             SystemClock.sleep(800)
             tapLabel(f, "Pop-up blocked", prefix = true)
             waitFor("Blocked pop-ups", 5_000)
-            SystemClock.sleep(1_200)
+            awaitCovered()
             tapLabel(f, "Always allow pop-ups on", prefix = true)
             SystemClock.sleep(3_000)
         }
@@ -285,12 +289,13 @@ class ServicesHardeningDemo {
         waitFor("Site permissions", 12_000)
         SystemClock.sleep(1_500)
         shot("16-settings-security")
-        // A row's accessible text runs its label and description together.
+        // A row's accessible text runs its label and description together: the answer's row is
+        // found by its description, the sheet's action row by its label as a prefix.
         if (tapLabel(f, "May open pop-up windows", contains = true)) {
-            waitFor("Forget this answer", 5_000)
+            waitFor("Forget this answer", 5_000, prefix = true)
             SystemClock.sleep(1_200)
             shot("17-settings-security-answer-sheet")
-            tapLabel(f, "Forget this answer")
+            tapLabel(f, "Forget this answer", prefix = true)
             waitFor("No site permissions remembered yet", 8_000)
             SystemClock.sleep(1_200)
             shot("18-settings-security-forgotten")
@@ -574,6 +579,67 @@ class ServicesHardeningDemo {
     }
 
     /**
+     * A sheet over a live page is in the accessibility tree as soon as it renders, but the chrome
+     * keeps the page's own view in front until a cover of the page has painted behind the sheet
+     * (up to 2.5 s on the emulator's software GPU, `COVER_WAIT_MS`), and only then hides the page
+     * views; a screenshot taken before that shows the page, not the sheet. Polls the host until
+     * no page view is shown, then lets the sheet's slide finish; false when a page view is still
+     * shown after `timeoutMs`.
+     */
+    private fun awaitCovered(timeoutMs: Long = 6_000): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (!pageShown()) {
+                step("page views hidden")
+                SystemClock.sleep(600)
+                return true
+            }
+            SystemClock.sleep(150)
+        }
+        step("a page view is still shown after ${timeoutMs}ms")
+        return false
+    }
+
+    private fun pageShown(): Boolean {
+        var shown = false
+        instrumentation.runOnMainSync {
+            shown = (activity as? MainActivity)?.host?.tabs?.all()?.any { it.isShown } ?: false
+        }
+        return shown
+    }
+
+    /**
+     * The node labelled `label` sits clear of the soft keyboard: the keyboard is up and the
+     * sheet has lifted the form so the node's bounds end above it. Polls until it does, then lets
+     * the sheet's spring settle; false when the keyboard never came or the node stayed under it.
+     */
+    private fun awaitAboveKeyboard(label: String, timeoutMs: Long = 8_000): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            val ime = imeInset()
+            val bounds = findByLabel(label)
+            if (ime > 0 && bounds != null && bounds.bottom <= height - ime) {
+                step("'$label' is above the keyboard")
+                SystemClock.sleep(800)
+                return true
+            }
+            SystemClock.sleep(200)
+        }
+        step("'$label' never came above the keyboard within ${timeoutMs}ms")
+        return false
+    }
+
+    /** The keyboard's inset in px per the window's insets; 0 while it is down. */
+    private fun imeInset(): Int {
+        var inset = 0
+        instrumentation.runOnMainSync {
+            val insets = ViewCompat.getRootWindowInsets(activity.window.decorView) ?: return@runOnMainSync
+            if (insets.isVisible(WindowInsetsCompat.Type.ime())) inset = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
+        }
+        return inset
+    }
+
+    /**
      * Tap the node labelled `label` once it has come to rest (a sheet still sliding in reports
      * bounds a frame behind), inside its bounds but clear of the system navigation bar along
      * the bottom edge, which would take the tap instead.
@@ -747,6 +813,8 @@ class ServicesHardeningDemo {
         private const val TAG = "ServicesHardeningDemo"
         private const val PILL_LABEL = "Address"
         private const val SERVER = "10.0.2.2:8787"
+        /** The sign-in form's validation line after a refused attempt (`lib/security.ts`). */
+        private const val RETRY_MESSAGE = "The username or password was not accepted. Please try again."
         /** Asks every visitor for a client certificate; answers 400 to none and to one it did not issue. */
         private const val CERT_SITE = "https://client.badssl.com/"
         private const val CERT_NAME = "Zenium demo"
