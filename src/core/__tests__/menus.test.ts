@@ -3,7 +3,8 @@ import type {
   FormFactor,
   HostCapabilities,
   Platform as PlatformOs,
-  Settings
+  Settings,
+  SharePayload
 } from '../../shared/types'
 import { searchCommands, type CommandContext } from '../../shared/commands'
 import { resolveDownloadSettings } from '../../shared/downloads'
@@ -68,7 +69,8 @@ const DESKTOP: HostCapabilities = {
   pageTabs: false,
   pinShortcuts: false,
   translate: true,
-  voiceSearch: false
+  voiceSearch: false,
+  selectionToolbar: false
 }
 
 /**
@@ -110,7 +112,8 @@ const ANDROID: HostCapabilities = {
   // Kotlin's boot info turns this on where the launcher can pin (ShortcutManagerCompat).
   pinShortcuts: false,
   translate: true,
-  voiceSearch: false
+  voiceSearch: false,
+  selectionToolbar: true
 }
 
 function memoryIo(): StoreIO {
@@ -1031,6 +1034,103 @@ describe('the page context menu', () => {
     expect(menu).not.toContain('Open Link in New Window')
     expect(menu).not.toContain('Open Link in New Private Window')
     expect(menu).toContain('Share Link…')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The floating selection toolbar (Android's action mode over selected page text)
+// ---------------------------------------------------------------------------
+
+describe('the selection toolbar', () => {
+  const PHONE: HarnessOptions = { formFactor: 'phone' }
+
+  it('has no items on a desktop host, whose page context menu carries the actions', () => {
+    const h = pageHarness()
+    expect(h.browser.menus.selectionToolbar(h.tabId, 'quantum foam')).toEqual([])
+    expect(h.browser.menus.runSelectionAction(h.tabId, 'search', 'quantum foam')).toBe(false)
+    expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(h.tabId)
+    expect(h.menu(pageParams({ selectionText: 'quantum foam' })).slice(0, 2)).toEqual([
+      'Copy',
+      'Search Google for “quantum foam”'
+    ])
+  })
+
+  it('on the phone lists Search Zenium then Share for text, and nothing for blank text or a gone tab', () => {
+    const h = pageHarness(ANDROID, PHONE)
+    expect(h.browser.menus.selectionToolbar(h.tabId, '  quantum foam ')).toEqual([
+      { id: 'search', title: 'Search Zenium' },
+      { id: 'share', title: 'Share' }
+    ])
+    expect(h.browser.menus.selectionToolbar(h.tabId, '   ')).toEqual([])
+    expect(h.browser.menus.selectionToolbar('tab_gone', 'quantum foam')).toEqual([])
+  })
+
+  it('Search Zenium opens the query in a background tab next to this one, with it as the opener', () => {
+    const h = pageHarness(ANDROID, PHONE)
+    expect(h.browser.menus.runSelectionAction(h.tabId, 'search', 'quantum foam')).toBe(true)
+    expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(h.tabId)
+    const tabIds = h.win.activeSpace().tabIds
+    const opened = h.browser.tabs.tab(tabIds[tabIds.indexOf(h.tabId) + 1] ?? '')
+    expect(opened?.url).toMatch(/^https:\/\/www\.google\..*quantum%20foam/)
+    expect(opened?.openerTabId).toBe(h.tabId)
+    // The menu's search still comes to the front, like Chrome's.
+    h.menu(pageParams({ selectionText: 'quantum foam' }))
+    h.click('Search Google for “quantum foam”')
+    expect(h.browser.tabs.activeTabFor(h.win)?.id).not.toBe(h.tabId)
+  })
+
+  it('an address gets Open in Glance instead of a search, which previews it where the selection sits', () => {
+    const h = pageHarness(ANDROID, PHONE)
+    expect(h.browser.menus.selectionToolbar(h.tabId, 'example.org/docs')).toEqual([
+      { id: 'glance', title: 'Open in Glance' },
+      { id: 'share', title: 'Share' }
+    ])
+    expect(
+      h.browser.menus.runSelectionAction(h.tabId, 'glance', 'example.org/docs', { x: 0.25, y: 1.5 })
+    ).toBe(true)
+    expect(h.win.glance).toMatchObject({ parentTabId: h.tabId, originX: 0.25, originY: 1 })
+    expect(h.browser.tabs.tab(h.win.glance?.tabId ?? '')?.url).toBe('https://example.org/docs')
+    expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(h.tabId)
+  })
+
+  it('leaves Open in Glance out while a glance is open or the setting is off', () => {
+    const h = pageHarness(ANDROID, PHONE)
+    h.browser.tabs.openGlance('https://example.com/', h.tabId, 0.5, 0.5, h.win)
+    expect(h.browser.menus.selectionToolbar(h.tabId, 'example.org/docs')).toEqual([
+      { id: 'share', title: 'Share' }
+    ])
+    h.browser.tabs.closeGlance(h.win)
+    h.browser.handleCommand(h.win, 'settings.update', { glanceEnabled: false })
+    expect(h.browser.menus.selectionToolbar(h.tabId, 'example.org/docs')).toEqual([
+      { id: 'share', title: 'Share' }
+    ])
+    expect(h.browser.menus.runSelectionAction(h.tabId, 'glance', 'example.org/docs')).toBe(false)
+    expect(h.win.glance).toBeNull()
+  })
+
+  it('Share hands the text to the host sheet, and an id the text does not warrant does nothing', () => {
+    const shared: SharePayload[] = []
+    const h = pageHarness(ANDROID, PHONE)
+    h.browser.platform.shell.share = (payload): Promise<void> => {
+      shared.push(payload)
+      return Promise.resolve()
+    }
+    expect(h.browser.menus.runSelectionAction(h.tabId, 'share', 'quantum foam')).toBe(true)
+    expect(shared).toEqual([{ text: 'quantum foam', tabId: h.tabId }])
+    // A menu-only action, a toolbar action the text no longer warrants, an unknown id.
+    expect(h.browser.menus.runSelectionAction(h.tabId, 'go', 'example.org/docs')).toBe(false)
+    expect(h.browser.menus.runSelectionAction(h.tabId, 'glance', 'quantum foam')).toBe(false)
+    expect(h.browser.menus.runSelectionAction(h.tabId, 'define', 'quantum foam')).toBe(false)
+    expect(h.browser.menus.runSelectionAction(h.tabId, 'share', '   ')).toBe(false)
+    expect(shared.length).toBe(1)
+    expect(h.win.glance).toBeNull()
+    expect(h.win.activeSpace().tabIds.length).toBe(1)
+  })
+
+  it('is off without the capability even on a phone-shaped host', () => {
+    const h = pageHarness({ ...ANDROID, selectionToolbar: false }, PHONE)
+    expect(h.browser.menus.selectionToolbar(h.tabId, 'quantum foam')).toEqual([])
+    expect(h.browser.menus.runSelectionAction(h.tabId, 'search', 'quantum foam')).toBe(false)
   })
 })
 

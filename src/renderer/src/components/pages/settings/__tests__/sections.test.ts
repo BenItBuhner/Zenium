@@ -73,7 +73,8 @@ const ANDROID: HostCapabilities = {
   // Kotlin's boot info turns this on where the launcher can pin (ShortcutManagerCompat).
   pinShortcuts: false,
   translate: true,
-  voiceSearch: false
+  voiceSearch: false,
+  selectionToolbar: true
 }
 
 function tab(id: string, url: string, patch: Partial<Tab> = {}): Tab {

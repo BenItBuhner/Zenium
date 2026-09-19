@@ -34,6 +34,55 @@ import { applicationMenu, menuSignature, runFromMenuBar } from './menuBar'
 
 type Template = MenuItemTemplate[]
 
+/** Where a selection action was invoked from: the page context menu or the host's floating toolbar. */
+type SelectionSurface = 'menu' | 'toolbar'
+
+/** One thing to do with selected text; see `Menus.selectionActions`. */
+interface SelectionAction {
+  /** Stable name a toolbar host hands back (`runSelectionAction`). */
+  id: string
+  /** The context menu's label (Chrome's wording: `Search Google for "…"`). */
+  label: string
+  /** The floating toolbar's title: short, Title Case. */
+  title: string
+  /** Whether the page context menu lists it. */
+  menu: boolean
+  /** Whether the floating toolbar lists it (on hosts that have one). */
+  toolbar: boolean
+  run(surface: SelectionSurface): void
+}
+
+/** Where the selection was asked about, for the actions that place something. */
+interface SelectionPlaces {
+  /**
+   * Where the context menu's click landed, in CSS pixels of the page view; absent for a text
+   * field's selection and for the toolbar.
+   */
+  at?: { x: number; y: number }
+  /** Where the selection sits in the page, 0…1 of its width and height (the toolbar's touch). */
+  origin?: { x: number; y: number }
+}
+
+/** What a toolbar host draws for one action: the id it names back and the title it shows. */
+export interface SelectionToolbarItem {
+  id: string
+  title: string
+}
+
+/**
+ * The toolbar's order, by id: what a 412 dp phone fits in the bar first (after the system's Copy:
+ * the search or the glance, then Share) and the widest, Translate, last, so that at most one of
+ * Zenium's items sits behind the overflow; an id not named here goes after them, in the order
+ * of `Menus.selectionActions`. The menu keeps that order throughout (Translate Selection before
+ * Share, as on the desktop).
+ */
+const SELECTION_TOOLBAR_ORDER: readonly string[] = ['search', 'glance', 'share', 'translate']
+
+function toolbarRank(id: string): number {
+  const rank = SELECTION_TOOLBAR_ORDER.indexOf(id)
+  return rank === -1 ? SELECTION_TOOLBAR_ORDER.length : rank
+}
+
 /** How long state changes are batched before the menu bar is rebuilt from them. */
 const APPLICATION_MENU_DEBOUNCE_MS = 80
 
@@ -585,42 +634,153 @@ export class Menus {
     win: ZenWindow,
     at?: { x: number; y: number }
   ): Template {
-    const { tabs, state } = this.browser
+    const items: Template = [{ label: 'Copy', role: 'copy' }]
+    for (const action of this.selectionActions(tab, selection, win, { at })) {
+      if (action.menu) items.push({ label: action.label, click: () => action.run('menu') })
+    }
+    return items
+  }
+
+  /**
+   * What can be done with selected page text, the one list both surfaces draw from: the page
+   * context menu (`selectionGroup`, its `label`, in this order) and – on hosts with
+   * `capabilities.selectionToolbar` – the system's floating toolbar over the selection (`title`,
+   * short and Title Case, the toolbar has room for a handful of words; its order is
+   * `SELECTION_TOOLBAR_ORDER`). An action names the surfaces it belongs on; a future item needs
+   * an entry here and nothing else. The toolbar's search opens its tab in the background: the
+   * reader keeps their place and the result waits next door.
+   */
+  private selectionActions(
+    tab: Tab,
+    selection: string,
+    win: ZenWindow,
+    { at, origin = { x: 0.5, y: 0.5 } }: SelectionPlaces = {}
+  ): SelectionAction[] {
+    const { tabs, state, translate } = this.browser
     const engine =
       state.searchEngines.find((e) => e.id === state.settings.searchEngineId) ??
       state.searchEngines[0]
-    const open = (url: string): void =>
+    // The toolbar's tab opens in the background, with this tab as its opener: a back on it
+    // returns here, like a link's "Open Link in New Tab" (the menu's opens in front, like Chrome).
+    const open = (url: string, surface: SelectionSurface): void =>
       void tabs.createTab(
-        { url, active: true, afterTabId: tab.id, containerId: tab.containerId },
+        {
+          url,
+          active: surface === 'menu',
+          afterTabId: tab.id,
+          containerId: tab.containerId,
+          openerTabId: tab.id
+        },
         win
       )
     const asUrl = selectionUrl(selection)
-    const items: Template = [{ label: 'Copy', role: 'copy' }]
+    const actions: SelectionAction[] = []
     if (asUrl) {
-      items.push({
+      // The menu's item for an address; the toolbar previews it in a glance instead (Chrome's
+      // toolbar has no item for an address either, and the toolbar's width is a handful of words).
+      actions.push({
+        id: 'go',
         label: `Go to ${clipLabel(displayUrl(asUrl), SELECTION_LABEL_MAX)}`,
-        click: () => open(asUrl)
+        title: 'Open in New Tab',
+        menu: true,
+        toolbar: false,
+        run: (surface) => open(asUrl, surface)
       })
+      // Glance previews the address over the page: the toolbar's own item (the menu's link
+      // items offer it for links). Off with the setting, and never on top of another glance.
+      if (state.settings.glanceEnabled && !win.glance) {
+        actions.push({
+          id: 'glance',
+          label: 'Open in Glance',
+          title: 'Open in Glance',
+          menu: false,
+          toolbar: true,
+          run: () => tabs.openGlance(asUrl, tab.id, clamp01(origin.x), clamp01(origin.y), win)
+        })
+      }
     } else if (engine) {
       const short = clipLabel(selection, SELECTION_LABEL_MAX)
-      items.push({
+      actions.push({
+        id: 'search',
         label: `Search ${engine.name} for “${short}”`,
-        click: () => open(buildSearchUrl(engine, selection))
+        title: 'Search Zenium',
+        menu: true,
+        toolbar: true,
+        run: (surface) => open(buildSearchUrl(engine, selection), surface)
       })
     }
-    if (at && this.browser.translate.available) {
-      items.push({
+    // The services core's selection translation: the menu offers it for the page's own selection
+    // (a text field's comes without `at`) and puts the popover where the click landed; the
+    // toolbar's touch anchors nothing, so the phone shows its sheet.
+    if (translate.available) {
+      actions.push({
+        id: 'translate',
         label: 'Translate Selection',
-        click: () => void this.browser.translate.showSelection(tab.id, selection, at, win)
+        title: 'Translate',
+        menu: at !== undefined,
+        toolbar: true,
+        run: (surface) =>
+          void translate.showSelection(
+            tab.id,
+            selection,
+            surface === 'menu' ? (at ?? null) : null,
+            win
+          )
       })
     }
     if (state.capabilities.share) {
-      items.push({
+      actions.push({
+        id: 'share',
         label: 'Share…',
-        click: () => void this.browser.share({ text: selection, tabId: tab.id }, win)
+        title: 'Share',
+        menu: true,
+        toolbar: true,
+        run: () => void this.browser.share({ text: selection, tabId: tab.id }, win)
       })
     }
-    return items
+    return actions
+  }
+
+  /**
+   * Zenium's items for the host's floating selection toolbar over `selection` in `tabId`, in
+   * order: the id the host hands back to `runSelectionAction` and the title it shows (and reads
+   * out). Empty on hosts without the toolbar (`capabilities.selectionToolbar`), whose menus carry
+   * the same actions, and for a tab that is gone.
+   */
+  selectionToolbar(tabId: string, selection: string): SelectionToolbarItem[] {
+    const { tabs, state } = this.browser
+    const tab = tabs.tab(tabId)
+    if (!state.capabilities.selectionToolbar || !tab || !selection.trim()) return []
+    const win = tabs.windowFor(tabId)
+    return this.selectionActions(tab, selection, win)
+      .filter((action) => action.toolbar)
+      .sort((a, b) => toolbarRank(a.id) - toolbarRank(b.id))
+      .map(({ id, title }) => ({ id, title }))
+  }
+
+  /**
+   * The toolbar item `id` was touched with `selection` selected (the host reads the selection
+   * again at the touch, so the text is the one on screen): run it. The list is built afresh
+   * from the text, so an id the text no longer warrants (an address that stopped being one)
+   * does nothing. `origin` is where the selection sits in the page, 0…1 of its width and
+   * height, for the glance to grow out of.
+   */
+  runSelectionAction(
+    tabId: string,
+    id: string,
+    selection: string,
+    origin?: { x: number; y: number }
+  ): boolean {
+    const { tabs, state } = this.browser
+    const tab = tabs.tab(tabId)
+    if (!state.capabilities.selectionToolbar || !tab || !selection.trim()) return false
+    const win = tabs.windowFor(tabId)
+    const action = this.selectionActions(tab, selection, win, { origin }).find(
+      (candidate) => candidate.toolbar && candidate.id === id
+    )
+    if (!action) return false
+    action.run('toolbar')
+    return true
   }
 
   /** Back, Forward, Reload / Stop – and the way out of fullscreen while the page is in it. */
@@ -2394,6 +2554,10 @@ export function selectionUrl(selection: string): string | null {
   if (!text || text.length > 2048) return null
   const url = inputToUrl(text)
   return url && /^https?:/i.test(url) ? url : null
+}
+
+function clamp01(value: number): number {
+  return Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 0.5
 }
 
 /** Entries the back/forward list shows at most. */
