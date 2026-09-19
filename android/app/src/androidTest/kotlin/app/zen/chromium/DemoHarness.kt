@@ -40,7 +40,11 @@ import kotlin.math.roundToInt
  *  - it writes `done` when the sequence is over, so the recording stops before the process does;
  *  - screenshots land next to them as `<shotPrefix>-<name>.png`.
  *
- * `stateAsset` is the profile to seed; `null` leaves the profile empty (the first run).
+ * `stateAsset` is the profile to seed; `null` leaves the profile empty (the first run). A demo
+ * that is the second act of another – the process was stopped between them (`am force-stop`
+ * from the workflow script: the instrumentation shares the process, so no driver survives that)
+ * and this one proves what came back – passes `keepProfile`: the profile and the app's caches
+ * are left as the first act's process left them, and only the handshake directory is reset.
  * `uiAutomationFlags` go to [android.app.Instrumentation.getUiAutomation]: by default connecting
  * suspends every other accessibility service for the run, and a demo that wants TalkBack to stay
  * up passes [UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES].
@@ -49,7 +53,8 @@ abstract class DemoHarness(
     private val stateAsset: String?,
     private val shotPrefix: String,
     handshakeDir: String,
-    uiAutomationFlags: Int = 0
+    uiAutomationFlags: Int = 0,
+    private val keepProfile: Boolean = false
 ) {
     protected val instrumentation = InstrumentationRegistry.getInstrumentation()
     protected val ui: UiAutomation = instrumentation.getUiAutomation(uiAutomationFlags)
@@ -128,11 +133,13 @@ abstract class DemoHarness(
     // --- setup -----------------------------------------------------------------------------------
 
     private fun seedProfile() {
-        val zen = File(app.filesDir, "zen").apply { mkdirs() }
-        zen.listFiles()?.forEach { it.delete() }
-        if (stateAsset != null) {
-            File(zen, "state.json").writeText(patchState(readAsset(stateAsset)))
-            seedMore(zen)
+        if (!keepProfile) {
+            val zen = File(app.filesDir, "zen").apply { mkdirs() }
+            zen.listFiles()?.forEach { it.delete() }
+            if (stateAsset != null) {
+                File(zen, "state.json").writeText(patchState(readAsset(stateAsset)))
+                seedMore(zen)
+            }
         }
         out.deleteRecursively()
         out.mkdirs()

@@ -967,7 +967,10 @@ class TabWebView(
         // A view with no document yet shows nothing worth a picture; its card has its placeholder.
         val document = currentDocument ?: return
         if (document == "about:blank") return
-        captureBitmap(coverScale()) { bitmap -> if (bitmap != null) publishThumbnail(bitmap, document) }
+        val asked = SystemClock.uptimeMillis()
+        captureBitmap(coverScale()) { bitmap ->
+            if (bitmap != null) publishThumbnail(bitmap, document, SystemClock.uptimeMillis() - asked)
+        }
     }
 
     /**
@@ -975,8 +978,10 @@ class TabWebView(
      * main thread, written to disk ([Thumbnails.save]) and handed to the chrome
      * (`thumbnail.captured`). Not of a page that navigated since the copy was asked for, and not
      * twice for one frame – a cover and a hide that shared the copy publish once between them.
+     * `copyMs` is what the copy took when this call asked for it (-1: the copy was the cover's);
+     * the log line carries it with the encode-and-save time, for the cost of a picture per switch.
      */
-    private fun publishThumbnail(bitmap: Bitmap, document: String?) {
+    private fun publishThumbnail(bitmap: Bitmap, document: String?, copyMs: Long = -1L) {
         val thumbnails = host.thumbnails ?: return
         val now = SystemClock.uptimeMillis()
         if (document == null || document != currentDocument || Thumbnails.isFresh(thumbnailAt, now)) return
@@ -985,7 +990,15 @@ class TabWebView(
         val cardWidth = thumbnails.width
         val target = host
         encoder.execute {
+            val started = SystemClock.uptimeMillis()
             val picture = Thumbnails.encode(bitmap, cardWidth)?.takeIf { thumbnails.save(id, it.jpeg) }
+            if (picture != null) {
+                Log.d(
+                    "ZenTab",
+                    "thumbnail of $id: ${picture.width}x${picture.height} ${picture.jpeg.size} bytes, " +
+                        "copy ${if (copyMs < 0) "shared" else "$copyMs ms"}, encode and save ${SystemClock.uptimeMillis() - started} ms"
+                )
+            }
             Handler(Looper.getMainLooper()).post {
                 // The page navigated while the picture was encoded: it is of the page before, and
                 // the card must not show it (BH-14) – not now, not after a restart. Nor does a
