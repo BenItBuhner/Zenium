@@ -10,7 +10,15 @@ import { viewportStore } from '@renderer/lib/formFactor'
 import { SheetPresence } from '@renderer/lib/motion/presence'
 import { recedeDepth } from '@renderer/lib/motion/recede'
 import { REDUCED_MOTION_FADE_MS } from '@renderer/lib/motion/sheet'
+import { reducedMotion } from '@renderer/lib/motion/spring'
 import { cancelExternalProtocol, uiStore } from '@renderer/lib/ui'
+
+// The chassis's one reduced-motion check, wrapped so a test can see who asks it (and force its
+// answer); it answers as the real one does until a test says otherwise.
+vi.mock('@renderer/lib/motion/spring', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@renderer/lib/motion/spring')>()
+  return { ...actual, reducedMotion: vi.fn(actual.reducedMotion) }
+})
 
 /*
  * A sheet's leave outlives its request (design language v2 draft §11.1: the store's `null` means
@@ -181,6 +189,7 @@ afterEach(() => {
   chrome.remove()
   vi.unstubAllGlobals()
   vi.useRealTimers()
+  vi.mocked(reducedMotion).mockReset()
   frames.now = 0
   act(() => viewportStore.set({ ...viewportStore.get(), coarse: false, formFactor: 'desktop' }))
 })
@@ -406,7 +415,8 @@ describe('the stack (§11.2)', () => {
 })
 
 describe('reduced motion (§11.3)', () => {
-  it('the leave is the 120 ms fade in place, then the unmount: no recede runs', async () => {
+  /** The user prefers reduced motion: what the chassis's `reducedMotion()` reads. */
+  const preferReducedMotion = (): void => {
     vi.stubGlobal('matchMedia', (query: string) => ({
       matches: query.includes('prefers-reduced-motion'),
       media: query,
@@ -417,6 +427,10 @@ describe('reduced motion (§11.3)', () => {
       onchange: null,
       dispatchEvent: () => false
     }))
+  }
+
+  it('the leave is the 120 ms fade in place, then the unmount: no recede runs', async () => {
+    preferReducedMotion()
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     render(<Layer request="menu" />)
     await settle()
@@ -432,6 +446,7 @@ describe('reduced motion (§11.3)', () => {
     expect(sheet.style.opacity).toBe('0')
     expect(scrims()[0].style.opacity).toBe('0')
     expect(sheet.hasAttribute('inert')).toBe(true)
+    expect(sheet.getAttribute('aria-hidden')).toBe('true')
     expect(frames.scheduled).toBe(false)
     expect(recedeVar()).toBe('1.0000')
     expect(presence(sheet)).toBe(1)
@@ -446,6 +461,108 @@ describe('reduced motion (§11.3)', () => {
     expect(sheets()).toHaveLength(0)
     expect(recedeDepth()).toBe(0)
     expect(recedeVar()).toBe('')
+  })
+
+  it('the dismissal and the leave fade through the one check and the one length – the chassis’s `reducedMotion()` and `REDUCED_MOTION_FADE_MS` – with no check or length of the leave’s own', async () => {
+    // The chassis's check is forced, and the media query stubbed with it so that the spring,
+    // which asks the same question from inside its own module, jumps as it does for the user.
+    preferReducedMotion()
+    const check = vi.mocked(reducedMotion)
+    check.mockReturnValue(true)
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+
+    // The dismissal: a press on a live sheet's scrim (§9.20); the surface's write follows the
+    // landing. The sheet and its scrim step to 0 at once, and the sheet is gone at 120 ms – not
+    // a millisecond before – the slide having been skipped.
+    function Surface(): JSX.Element {
+      const [up, setUp] = useState(true)
+      return (
+        <SheetPresence>
+          {up ? (
+            <BottomSheet key="menu" onDismissed={() => setUp(false)}>
+              {rows('Copy')}
+            </BottomSheet>
+          ) : null}
+        </SheetPresence>
+      )
+    }
+    render(<Surface />)
+    await settle()
+    const dismissed = sheets()[0]
+    check.mockClear()
+    act(() => {
+      press(scrims()[0])
+    })
+    expect(check).toHaveBeenCalled()
+    expect(dismissed.style.opacity).toBe('0')
+    expect(scrims()[0].style.opacity).toBe('0')
+    expect(frames.scheduled).toBe(false)
+    act(() => {
+      vi.advanceTimersByTime(REDUCED_MOTION_FADE_MS - 1)
+    })
+    expect(sheets()).toEqual([dismissed])
+    act(() => {
+      vi.advanceTimersByTime(1)
+    })
+    expect(sheets()).toHaveLength(0)
+    expect(recedeDepth()).toBe(0)
+
+    // The leave: the request goes from under a sheet at rest. The same function is asked and
+    // the same 120 ms pass, the recede untouched, before the unmount.
+    rerender(<Layer request="menu" />)
+    await settle()
+    expect(recedeVar()).toBe('1.0000')
+    const left = sheets()[0]
+    check.mockClear()
+    rerender(<Layer request={null} />)
+    expect(check).toHaveBeenCalled()
+    expect(sheets()).toEqual([left])
+    expect(left.style.opacity).toBe('0')
+    expect(scrims()[0].style.opacity).toBe('0')
+    expect(left.hasAttribute('inert')).toBe(true)
+    expect(left.getAttribute('aria-hidden')).toBe('true')
+    expect(frames.scheduled).toBe(false)
+    act(() => {
+      vi.advanceTimersByTime(REDUCED_MOTION_FADE_MS - 1)
+    })
+    expect(sheets()).toEqual([left])
+    expect(recedeVar()).toBe('1.0000')
+    act(() => {
+      vi.advanceTimersByTime(1)
+    })
+    expect(sheets()).toHaveLength(0)
+    expect(recedeDepth()).toBe(0)
+    expect(recedeVar()).toBe('')
+  })
+})
+
+describe('assistive technology (§11.2, Leaving)', () => {
+  it('the leaving sheet is `inert` and `aria-hidden` from the commit that took its request – before the first frame of its leave – and stays so to the unmount', async () => {
+    render(<Layer request="menu" />)
+    await settle()
+    frames.run(60)
+    const sheet = sheets()[0]
+    expect(sheet.hasAttribute('inert')).toBe(false)
+    expect(sheet.hasAttribute('aria-hidden')).toBe(false)
+
+    // The store's write: the same commit marks the sheet, and no frame of the way down has run.
+    rerender(<Layer request={null} />)
+    expect(sheets()).toEqual([sheet])
+    expect(presence(sheet)).toBe(1)
+    expect(sheet.hasAttribute('inert')).toBe(true)
+    expect(sheet.getAttribute('aria-hidden')).toBe('true')
+
+    // Never taken off on the way down; gone only with the sheet.
+    let judged = 0
+    runLeave(() => {
+      if (!sheet.isConnected) return
+      expect(sheet.hasAttribute('inert')).toBe(true)
+      expect(sheet.getAttribute('aria-hidden')).toBe('true')
+      judged++
+    })
+    expect(judged).toBeGreaterThan(5)
+    expect(sheets()).toHaveLength(0)
+    expect(sheet.isConnected).toBe(false)
   })
 })
 
@@ -498,8 +615,10 @@ describe('focus (§9.22)', () => {
     })
     expect(frames.scheduled).toBe(false)
     expect(presence(sheet)).toBeCloseTo(caught, 4)
-    // Under the finger the sheet takes the pointer again (the finger has it); the layer is still leaving.
-    expect(sheet.hasAttribute('inert')).toBe(false)
+    // Under the finger the sheet is still on its way out – inert and hidden from assistive
+    // technology as before (§11.2, Leaving); the finger holds it by the layer's capture.
+    expect(sheet.hasAttribute('inert')).toBe(true)
+    expect(sheet.getAttribute('aria-hidden')).toBe('true')
     expect(layers()[0].hasAttribute('data-leaving')).toBe(true)
     // It lets go: the leave goes on to its landing and the sheet unmounts; there is no detent
     // to come back to.

@@ -126,12 +126,15 @@ function track(tracker: VelocityTracker, e: ReactPointerEvent<HTMLElement>): voi
  * Its leave outlives its request (§11.1, `SheetPresence` in lib/motion/presence.tsx): rendered
  * under the wrapper, a sheet whose request the store has cleared – a host-driven close, or the
  * surface's own write once `onDismissed` ran – is told it is `leaving` and runs its own
- * dismissal from wherever it stands, p 1 → 0 over its travel on the sheet spring (the 120 ms fade
- * under reduced motion), inert and taking the pointer on its scrim throughout, and answers the
- * wrapper's `onLeft` once landed, which is when it unmounts: the layer leaves the stack, the
- * chrome and the page come back and focus returns to the opener then, not at the store write.
- * A finger catching a leaving sheet holds it; the leave resumes with the finger's velocity when
- * it lets go. A back gesture over a leaving sheet is absorbed: it is on its way already.
+ * dismissal from wherever it stands – the same `dismiss` as the surface's, so the 120 ms fade
+ * under reduced motion is the one check and the one length (`reducedMotion`,
+ * `REDUCED_MOTION_FADE_MS`) – p 1 → 0 over its travel on the sheet spring, `inert` and
+ * `aria-hidden` from the commit that took its request and taking the pointer on its scrim
+ * throughout (§11.2, Leaving), and answers the wrapper's `onLeft` once landed, which is when it
+ * unmounts: the layer leaves the stack, the chrome and the page come back and focus returns to
+ * the opener then, not at the store write. A finger catching a leaving sheet holds it; the leave
+ * resumes with the finger's velocity when it lets go. A back gesture over a leaving sheet is
+ * absorbed: it is on its way already.
  *
  * The body scrolls natively only while the sheet rests expanded; pulling down on a body that
  * sits at its top drags the sheet instead. Everything else (Escape, system back, a picked item)
@@ -221,10 +224,10 @@ export function BottomSheet({
     sheet.style.transform = `translate3d(0, ${frame.translateY}px, 0) scale(var(--zen-layer-scale, 1))`
     sheet.style.setProperty('--zen-layer-recede', layer.recede.toFixed(4))
     // Under another sheet the content takes no input (§9.24); the sheet above owns the gesture.
-    // A leaving sheet takes none either (§9.22) – its layer still takes the pointer, on the scrim
-    // – except under the finger that caught it, until that lets go.
+    // A leaving sheet takes none either, to its unmount (§11.2, Leaving) – its layer still takes
+    // the pointer, on the scrim, and a finger that caught it holds it by the layer's capture.
     // The sheet is promoted only while it stands recessed (main.css `data-recessed`).
-    sheet.toggleAttribute('inert', layer.inert || (leavingRef.current && !touch.current))
+    sheet.toggleAttribute('inert', layer.inert || leavingRef.current)
     sheet.toggleAttribute('data-recessed', layer.inert)
     layerRef.current?.toggleAttribute('data-leaving', leavingRef.current)
     // The scrim's colour and full opacity are the token's; its share is the sheet's progress as
@@ -355,8 +358,18 @@ export function BottomSheet({
   }, [])
   useLayoutEffect(() => {
     latest.current = { onDismissed, onLeft: leave?.onLeft }
-    leavingRef.current = leaving
   })
+  // The request went (§11.1): in this very commit, before the first frame of its leave paints,
+  // the sheet is inert and hidden from assistive technology – a screen reader never lands on a
+  // sheet on its way out – and stays so to its unmount, a finger holding it or not (§11.2,
+  // Leaving; `leaving` never goes back for a generation). `paint` keeps `inert` from here on.
+  useLayoutEffect(() => {
+    leavingRef.current = leaving
+    const sheet = sheetRef.current
+    if (!leaving || !sheet) return
+    sheet.setAttribute('inert', '')
+    sheet.setAttribute('aria-hidden', 'true')
+  }, [leaving])
 
   // On the recede stack from mount to unmount: every sheet, whatever it holds (v2 draft §11.1).
   // Before the measure below, so the first frame the motion writes already reaches the page.
