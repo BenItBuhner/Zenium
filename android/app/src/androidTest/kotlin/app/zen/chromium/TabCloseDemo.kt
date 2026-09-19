@@ -777,7 +777,8 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
         private const val SNAPSHOT_WAIT = 8_000L
         private const val PROMPT = "Close 7 tabs?"
         private const val BULK_TOAST = "7 tabs closed"
-        private const val ROW = ".zen-frame-dialogs .zen-list-row"
+        /** A row of the Recently closed sheet: the shared row primitive with the phone modifier (#201). */
+        private const val ROW = ".zen-frame-dialogs .zen-v2-row.zen-phone-row"
         private const val CHECKBOX = ".zen-frame-dialogs input.zen-v2-checkbox"
         private const val CHECKBOX_IN_DOM = "!!document.querySelector('$CHECKBOX')"
         private const val CHECKBOX_CHECKED = "($CHECKBOX_IN_DOM && document.querySelector('$CHECKBOX').checked)"

@@ -457,7 +457,7 @@ describe('Recently closed', () => {
     await openMenu()
     await pick('Recently closed (2)')
     expect(dialogTitle()).toBe('Recently closed')
-    const rows = [...document.querySelectorAll<HTMLElement>('.zen-frame-dialogs .zen-list-row')]
+    const rows = [...document.querySelectorAll<HTMLElement>('.zen-frame-dialogs .zen-phone-row')]
     // Tab entries only, the list's order kept; a row is its title, then host and time (§9.13).
     const labels = rows.map((r) => r.querySelector('[role="button"]')?.getAttribute('aria-label'))
     expect(labels).toEqual([
@@ -494,14 +494,14 @@ describe('Recently closed', () => {
     closed = [entry(x, NOW), entry(y, NOW - 1000)]
     await openMenu()
     await pick('Recently closed (2)')
-    expect(document.querySelectorAll('.zen-frame-dialogs .zen-list-row')).toHaveLength(2)
+    expect(document.querySelectorAll('.zen-frame-dialogs .zen-phone-row')).toHaveLength(2)
     closed = [entry(y, NOW - 1000)]
     act(() => {
       for (const listener of changeListeners) listener()
     })
     await settle()
     expect(
-      [...document.querySelectorAll<HTMLElement>('.zen-frame-dialogs .zen-list-row')].map((r) =>
+      [...document.querySelectorAll<HTMLElement>('.zen-frame-dialogs .zen-phone-row')].map((r) =>
         r.querySelector('[role="button"]')?.getAttribute('aria-label')
       )
     ).toEqual([expect.stringMatching(/^Y, y\.example/)])
