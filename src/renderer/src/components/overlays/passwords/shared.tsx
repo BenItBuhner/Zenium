@@ -459,7 +459,11 @@ function PickerSheet<T extends string>({
   })
   useEscape(dismiss)
   return (
-    <div className="zen-v2-pw zen-v2-pw-sheet-layer absolute inset-0" data-surface="page">
+    <div
+      className="zen-v2-pw zen-v2-pw-sheet-layer absolute inset-0"
+      data-surface="page"
+      data-sheet-layer=""
+    >
       <BottomSheet
         ref={sheet}
         hosted
@@ -585,7 +589,11 @@ function HostedPromptSheet({
   })
   useEscape(dismiss)
   return (
-    <div className="zen-v2-pw zen-v2-pw-sheet-layer absolute inset-0" data-surface="page">
+    <div
+      className="zen-v2-pw zen-v2-pw-sheet-layer absolute inset-0"
+      data-surface="page"
+      data-sheet-layer=""
+    >
       <BottomSheet
         ref={sheet}
         hosted
