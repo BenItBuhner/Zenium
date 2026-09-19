@@ -8,12 +8,12 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 
 /**
- * A runtime permission the app asked for in its own name (voice search's microphone, `Voice.kt`)
- * once the system prompt has answered. A refusal for this once and one for good are told apart by
- * `shouldShowRequestPermissionRationale` read AFTER the refusal: true while the system would show
- * the prompt once more, false once it would not (the user chose "Don't ask again", refused twice
- * on Android 11+, or a device policy holds the permission), when only the app's settings screen
- * can turn it on.
+ * A runtime permission the app asked for in its own name (voice search's microphone, `Voice.kt`;
+ * the scanner's camera, `QrScan.kt`) once the system prompt has answered. A refusal for this once
+ * and one for good are told apart by `shouldShowRequestPermissionRationale` read AFTER the
+ * refusal: true while the system would show the prompt once more, false once it would not (the
+ * user chose "Don't ask again", refused twice on Android 11+, or a device policy holds the
+ * permission), when only the app's settings screen can turn it on.
  */
 enum class RuntimeGrant {
     GRANTED,
@@ -46,9 +46,10 @@ class Permissions(private val host: PageHost) {
     }
 
     /**
-     * A permission the app itself needs (voice search's microphone), unlike a page's: no per-site
-     * decision of the core's and no remembered answer, straight to the system prompt when it is
-     * not granted, and the prompt's answer read as a [RuntimeGrant]. `then` runs on the main thread.
+     * A permission the app itself needs (voice search's microphone, the scanner's camera), unlike
+     * a page's: no per-site decision of the core's and no remembered answer, straight to the system
+     * prompt when it is not granted, and the prompt's answer read as a [RuntimeGrant]. `then` runs
+     * on the main thread.
      */
     fun requestForApp(permission: String, then: (RuntimeGrant) -> Unit) {
         val activity = host.activity

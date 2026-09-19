@@ -23,6 +23,7 @@ import type { InternalPageId } from './internalPages'
 import type { WebAppInfo } from './webApp'
 import type { ContentDefault } from './contentSettings'
 import type { VoiceEvent, VoiceStartOutcome } from './voice'
+import type { QrEvent, QrStartOutcome } from './qrScan'
 
 export type Platform = 'linux' | 'win32' | 'darwin' | 'android'
 
@@ -153,6 +154,12 @@ export interface HostCapabilities {
    * Hosts without it (phones) draw the picker in the chrome's own document beside the page.
    */
   popupSurface: boolean
+  /**
+   * The device has a back camera the app may scan with: the camera buttons on the new tab
+   * page's field and in the omnibox's empty field open the scan sheet (`qr.start`,
+   * `shared/qrScan.ts`). Off, no camera button shows anywhere.
+   */
+  qrScan: boolean
 }
 
 export interface Rect {
@@ -2698,6 +2705,25 @@ export interface Commands {
   'voice.cancel': { args: void; result: void }
   /** The app's system settings screen, where a permanently refused microphone is turned back on. */
   'voice.openSettings': { args: void; result: void }
+  /**
+   * QR scanning (`capabilities.qrScan`): ask for the camera – the runtime permission prompt may
+   * show – and open the back camera into the scan sheet's preview. The outcome says whether it
+   * is scanning; `qr.event`s then carry `ready`, the stills, the decode and the end
+   * (`shared/qrScan.ts`).
+   */
+  'qr.start': { args: void; result: QrStartOutcome }
+  /** Close the camera without a result (Cancel, the sheet dismissed, the app paused). */
+  'qr.cancel': { args: void; result: void }
+  /**
+   * Where the sheet's preview slot is, in CSS px of the chrome's viewport, and whether the
+   * native preview shows there now (hidden while the sheet moves, the slot showing the last
+   * still instead). `radius` is the slot's corner radius, for the preview's clip.
+   */
+  'qr.layout': { args: { rect: Rect; radius: number; visible: boolean }; result: void }
+  /** Turn the camera's torch on or off (`ready` said whether there is one). */
+  'qr.setTorch': { args: { on: boolean }; result: void }
+  /** The app's system settings screen, where a permanently refused camera is turned back on. */
+  'qr.openSettings': { args: void; result: void }
   /** The external-protocol sheet's answer (`always` remembers the scheme in settings). */
   'externalProtocol.respond': {
     args: { requestId: string; allow: boolean; always: boolean }
@@ -3724,6 +3750,8 @@ export interface Events {
   'zoom.open': { tabId: string }
   /** The host's recogniser reports while a voice search runs (after `voice.start` answered `listening`). */
   'voice.event': VoiceEvent
+  /** The host's camera reports while a scan runs (after `qr.start` answered `scanning`). */
+  'qr.event': QrEvent
   toast: { message: string; kind?: 'info' | 'error' }
   /** Link hover status text (Firefox shows this in the bottom corner). */
   status: { text: string }

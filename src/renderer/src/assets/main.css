@@ -2549,6 +2549,89 @@
   .zen-sheet-item:disabled {
     opacity: 0.4;
   }
+  /*
+   * The scan sheet's body (OMN-22; `components/qr/QrScanSheet.tsx`): the framed target in the
+   * 16 px gutter (§9.25) – a square window at the card radius, black like a viewfinder, that the
+   * host's live preview covers exactly, with four corner brackets 4 px outside its edge in the
+   * deemphasized ink (a marker, not an action, so not the accent) – and the torch toggle 12 px
+   * under it, a §6 button with a 16 px glyph whose pressed fill stays while the torch is on
+   * (`aria-pressed`). The window is the target: the decoder reads the whole picture, so nothing
+   * is drawn over it. While the preview is away (the sheet moving) the last still fills the
+   * window, cropped as the preview was.
+   */
+  .zen-qr-body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 0 16px 8px;
+  }
+  .zen-qr-target {
+    position: relative;
+    width: min(100%, 320px);
+    /* Room for the brackets on every side. */
+    padding: 6px;
+  }
+  .zen-qr-window {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 1;
+    overflow: hidden;
+    border-radius: var(--v2-radius-card);
+    background: #000;
+  }
+  .zen-qr-still {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    pointer-events: none;
+  }
+  .zen-qr-corner {
+    position: absolute;
+    width: 24px;
+    height: 24px;
+    border: 2px solid var(--v2-text-deemphasized);
+    pointer-events: none;
+  }
+  .zen-qr-corner[data-corner='tl'] {
+    top: 0;
+    left: 0;
+    border-right: 0;
+    border-bottom: 0;
+    border-top-left-radius: calc(var(--v2-radius-card) + 4px);
+  }
+  .zen-qr-corner[data-corner='tr'] {
+    top: 0;
+    right: 0;
+    border-left: 0;
+    border-bottom: 0;
+    border-top-right-radius: calc(var(--v2-radius-card) + 4px);
+  }
+  .zen-qr-corner[data-corner='bl'] {
+    bottom: 0;
+    left: 0;
+    border-right: 0;
+    border-top: 0;
+    border-bottom-left-radius: calc(var(--v2-radius-card) + 4px);
+  }
+  .zen-qr-corner[data-corner='br'] {
+    bottom: 0;
+    right: 0;
+    border-left: 0;
+    border-top: 0;
+    border-bottom-right-radius: calc(var(--v2-radius-card) + 4px);
+  }
+  .zen-qr-torch {
+    gap: 8px;
+  }
+  .zen-qr-torch[aria-pressed='true'] {
+    background: var(--v2-fill-hover);
+  }
+  .zen-qr-torch[aria-pressed='true'] > svg {
+    color: var(--v2-accent);
+  }
   /* A row under a finger that is dragging the sheet is not being pressed. */
   .zen-sheet[data-dragging='true'] .zen-sheet-item:active {
     background: transparent;

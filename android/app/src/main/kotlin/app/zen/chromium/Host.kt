@@ -107,6 +107,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     val shortcuts = Shortcuts(activity, io)
     /** Voice search: the device's speech recogniser behind the chrome's mic buttons (OMN-19). */
     val voice = Voice(this)
+    /** QR scanning: the back camera behind the chrome's camera buttons, its preview laid over the scan sheet (OMN-22). */
+    val qrScan = QrScan(this, root)
     override var fullscreenTab: TabWebView? = null
         private set
     private var fullscreenCallback: WebChromeClient.CustomViewCallback? = null
@@ -187,7 +189,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 "environment" to activity.environment(),
                 "pinShortcuts" to shortcuts.supported,
                 // A speech recogniser on the device: the mic buttons show (voice search, OMN-19).
-                "voiceSearch" to voice.available
+                "voiceSearch" to voice.available,
+                // A back camera on the device: the camera buttons show (QR scanning, OMN-22).
+                "qrScan" to qrScan.available
             )
         }
         // Answers `true` once the file is replaced; a failure throws, which the bridge reports as
@@ -470,6 +474,13 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "voice.cancel" -> { voice.cancel(); reply(null) }
             "voice.openSettings" -> { voice.openSettings(); reply(null) }
 
+            // --- QR scanning (QrScan.kt; the contract is `QrScanHost` in src/core/platform.ts) --------
+            "qr.start" -> qrScan.start(reply)
+            "qr.cancel" -> { qrScan.cancel(); reply(null) }
+            "qr.layout" -> { qrScan.layout(args); reply(null) }
+            "qr.setTorch" -> { qrScan.setTorch(args.bool("on")); reply(null) }
+            "qr.openSettings" -> { qrScan.openSettings(); reply(null) }
+
             // --- AI agents (MCP server) ------------------------------------------------------------
             "agent.start" -> reply(agentServer.start(args.num("port", 41735.0).toInt(), args.bool("lan")))
             "agent.stop" -> { agentServer.stop(); reply(null) }
@@ -565,6 +576,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         if (immersive) setImmersive(false)
         // A recogniser listening to a screen that is gone: the session ends, the sheet with it.
         voice.abort()
+        // A camera scanning a screen that is gone: the session ends, the sheet with it (#187).
+        qrScan.abort()
     }
 
     /** Back while in Zenium's own fullscreen (and nothing is fullscreen on the page) leaves it. */
@@ -1114,6 +1127,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         extensions.destroy()
         cancelProbe()
         voice.destroy()
+        qrScan.destroy()
         shortcuts.destroy()
         agentServer.stop()
         downloads.destroy()

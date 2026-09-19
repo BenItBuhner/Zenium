@@ -178,6 +178,16 @@ export type PreviewState =
   | { kind: 'webapp'; surface: PreviewWebAppSurface }
   | { kind: 'download'; download: PreviewDownloadSpec }
   | {
+      /**
+       * QR scanning started from the active tab, the stand-in camera playing `script` back
+       * (`previewQrScript` in preview.ts: `scanning`, `starting`, `torch`, `text`, `wifi`,
+       * `busy`, `camera`, `denied`, `denied-permanently`, `unavailable`, or the default run to
+       * a decoded address).
+       */
+      kind: 'qr'
+      script: string
+    }
+  | {
       kind: 'popups'
       /** Pop-ups the blocker refused on the active page (the third and every sixth is an app launch). */
       count: number
@@ -383,6 +393,8 @@ export function parsePreviewSpec(spec: string): PreviewState {
   }
   const download = params.get('download')
   if (download) return { kind: 'download', download: parseDownload(download, params) }
+  const qr = params.get('qr')
+  if (qr !== null) return { kind: 'qr', script: qr || 'url' }
   const popups = params.get('popups')
   if (popups !== null && popups !== '' && Number.isFinite(Number(popups))) {
     const count = Math.min(PREVIEW_POPUPS_MAX, Math.max(0, Math.floor(Number(popups))))
