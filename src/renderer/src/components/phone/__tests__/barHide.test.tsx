@@ -4,6 +4,7 @@ import { DEFAULT_SETTINGS } from '@shared/defaults'
 import type { Space, Tab, UIState } from '@shared/types'
 import {
   barHideStore,
+  dispatchBarNavigation,
   dispatchBarScroll,
   resetBarHide,
   setBarHideContext,
@@ -171,21 +172,22 @@ describe('the published hide progress', () => {
     expectAgreement()
   })
 
-  it('a sheet over the page brings a hidden bar back and closes the gate; the omnibox editing does the same', () => {
+  it('a cover over the page (a sheet, the omnibox) brings a hidden bottom bar back at once, under the recede, and closes the gate; a docked panel closes it on the spring', () => {
     scroll([60])
     now += 16
     dispatchBarScroll('t1', 'end', { time: now })
     settle()
     expect(uiStore.get().barHidden).toBe(true)
 
+    // The recede fades the bottom bar as the sheet arrives (§11.1): the bar is back in place at
+    // once, so no half-faded bar slides in under it.
     uiStore.set({ menu: { items: [] } as never })
     expect(barHideStore.get().allowed).toBe(false)
-    expect(barHideStore.get().phase).toBe('settling')
-    expectAgreement()
-    settle()
+    expect(barHideStore.get().phase).toBe('rest')
     expect(rootVar()).toBe(0)
     expect(uiStore.get().barHidden).toBe(false)
     expectAgreement()
+    expect(frames).toHaveLength(0)
     // With the bar at rest and the gate shut, the host is told there is nothing to follow.
     expect(hostFrames[hostFrames.length - 1]).toBeNull()
     // Scrolling under the sheet moves nothing.
@@ -194,10 +196,55 @@ describe('the published hide progress', () => {
     uiStore.set({ menu: null })
     expect(barHideStore.get().allowed).toBe(true)
 
+    // The omnibox covers the page too (and attaches to the pill): the bar is in place at once.
+    scroll([60])
+    now += 16
+    dispatchBarScroll('t1', 'end', { time: now })
+    settle()
+    expect(uiStore.get().barHidden).toBe(true)
     uiStore.set({
       urlbar: { open: true, mode: 'edit', tabId: 't1', initialText: undefined, attached: false }
     })
     expect(barHideStore.get().allowed).toBe(false)
+    expect(barHideStore.get().phase).toBe('rest')
+    expect(rootVar()).toBe(0)
+    expectAgreement()
+    uiStore.set({
+      urlbar: { open: false, mode: 'new-tab', tabId: null, initialText: undefined, attached: false }
+    })
+    expect(barHideStore.get().allowed).toBe(true)
+
+    // Find docking (§9.32) covers nothing: the bar is seen coming back, on the spring.
+    scroll([60])
+    now += 16
+    dispatchBarScroll('t1', 'end', { time: now })
+    settle()
+    expect(uiStore.get().barHidden).toBe(true)
+    uiStore.set({ findOpen: true })
+    expect(barHideStore.get().allowed).toBe(false)
+    expect(barHideStore.get().phase).toBe('settling')
+    expectAgreement()
+    settle()
+    expect(rootVar()).toBe(0)
+    expectAgreement()
+    uiStore.set({ findOpen: false })
+  })
+
+  it('a sheet over a top-docked bar, which the recede does not fade, brings it back on the spring', () => {
+    browserStore.set({ state: state('top') })
+    setBarHideContext({ edge: 'top' })
+    scroll([60])
+    now += 16
+    dispatchBarScroll('t1', 'end', { time: now })
+    settle()
+    expect(uiStore.get().barHidden).toBe(true)
+    uiStore.set({ menu: { items: [] } as never })
+    expect(barHideStore.get().allowed).toBe(false)
+    expect(barHideStore.get().phase).toBe('settling')
+    expectAgreement()
+    settle()
+    expect(rootVar()).toBe(0)
+    expectAgreement()
   })
 
   it('stays put on the new tab page and with the setting off', () => {
@@ -289,5 +336,67 @@ describe('the published hide progress', () => {
     dispatchBarScroll('other', 'move', { delta: 30, time: now })
     expect(rootVar()).toBe(0)
     expect(barHideStore.get().phase).toBe('rest')
+  })
+
+  it("a same-document navigation keeps a hidden bar where it is: the page's URL is not the key", () => {
+    scroll([60])
+    now += 16
+    dispatchBarScroll('t1', 'end', { time: now })
+    settle()
+    expect(uiStore.get().barHidden).toBe(true)
+
+    // pushState / replaceState / a fragment: the URL changes, the document stays, the bar stays.
+    browserStore.set({ state: state('bottom', 'https://example.com/long?page=2') })
+    dispatchBarNavigation('t1', true)
+    expect(barHideStore.get().phase).toBe('rest')
+    expect(uiStore.get().barHidden).toBe(true)
+    browserStore.set({ state: state('bottom', 'https://example.com/long?page=2#section-3') })
+    dispatchBarNavigation('t1', true)
+    expect(uiStore.get().barHidden).toBe(true)
+
+    // Another tab's document committing moves nothing on screen either.
+    dispatchBarNavigation('other', false)
+    expect(uiStore.get().barHidden).toBe(true)
+
+    // A new document on this tab: the bar starts in place, on the spring.
+    dispatchBarNavigation('t1', false)
+    expect(barHideStore.get().phase).toBe('settling')
+    settle()
+    expect(rootVar()).toBe(0)
+    expectAgreement()
+  })
+
+  it('a load starting on the tab, or another tab coming to the front, puts the bar back', () => {
+    scroll([60])
+    now += 16
+    dispatchBarScroll('t1', 'end', { time: now })
+    settle()
+    expect(uiStore.get().barHidden).toBe(true)
+
+    // The `loading` edge (a link followed, a reload), whatever the URL reads.
+    const loadingState = state('bottom')
+    loadingState.tabs.t1 = { ...loadingState.tabs.t1, loading: true } as Tab
+    browserStore.set({ state: loadingState })
+    expect(barHideStore.get().phase).toBe('settling')
+    settle()
+    expect(rootVar()).toBe(0)
+    // Loading going on is not a second edge.
+    scroll([60])
+    now += 16
+    dispatchBarScroll('t1', 'end', { time: now })
+    settle()
+    expect(uiStore.get().barHidden).toBe(true)
+    browserStore.set({ state: loadingState })
+    expect(barHideStore.get().phase).toBe('rest')
+
+    // A tab switch.
+    const switched = state('bottom')
+    switched.tabs = { ...switched.tabs, t2: { ...tab, id: 't2', url: 'https://other.example' } }
+    switched.spaces = [{ ...space, tabIds: ['t1', 't2'], activeTabId: 't2' }]
+    browserStore.set({ state: switched })
+    expect(barHideStore.get().phase).toBe('settling')
+    settle()
+    expect(rootVar()).toBe(0)
+    expectAgreement()
   })
 })

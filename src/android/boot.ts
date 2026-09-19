@@ -20,6 +20,7 @@ import {
 } from '@renderer/lib/back'
 import { privateSurfaceNow, subscribePrivateSurface } from '@renderer/lib/privateSurface'
 import {
+  dispatchBarNavigation,
   dispatchBarScroll,
   setBarHideHost,
   showBar,
@@ -306,13 +307,17 @@ function installHostGlobal(
     resolve: (id, json) => bridge.resolve(id, json),
     reject: (id, message) => bridge.reject(id, message),
     viewEvent: (tabId, name, json) =>
-      withPlatform((platform) =>
-        platform.viewEvent(
-          tabId,
-          name as keyof ViewEventPayloads,
-          parse<ViewEventPayloads[keyof ViewEventPayloads]>(json)
-        )
-      ),
+      withPlatform((platform) => {
+        const payload = parse<ViewEventPayloads[keyof ViewEventPayloads]>(json)
+        platform.viewEvent(tabId, name as keyof ViewEventPayloads, payload)
+        // After the core: the bar that hides on scroll keys the page's document by this commit,
+        // and the `inPage` flag is what tells a pushState from a document (`lib/barHide.ts`).
+        if (name === 'navigated')
+          dispatchBarNavigation(
+            tabId,
+            (payload as ViewEventPayloads['navigated'] | undefined)?.inPage === true
+          )
+      }),
     hostEvent: (name, json) =>
       withPlatform((platform) =>
         platform.hostEvent(

@@ -44,8 +44,13 @@ export interface BarScrollPayload {
 export const BAR_HIDE_FLING_VELOCITY = 400
 /** A release slower than this settles at once; faster ones wait for the fling's scroll to end. */
 export const BAR_HIDE_SETTLE_VELOCITY = 200
-/** A fling has ended when the page has not scrolled for this long. */
-export const BAR_HIDE_FLING_GAP_MS = 96
+/**
+ * A fling has ended when the page has not scrolled for this long. Longer than the host's own
+ * window for a fling's scroll (`BarHideGesture.FLING_GAP_MS`, 120 ms), by a frame or two of the
+ * bridge: a fling's last report must never find the bar settled already, or it would set it
+ * flinging again for a px and snap it a second time.
+ */
+export const BAR_HIDE_FLING_GAP_MS = 150
 /** A bottom inset this large (CSS px) is the keyboard: no gesture bar comes close. */
 export const KEYBOARD_INSET_MIN = 120
 
@@ -181,15 +186,20 @@ export class BarHideMachine {
   }
 
   /**
-   * Whether the bar may hide right now. Closing the gate brings a bar that is off back on the
-   * spring and ignores the scroll until it opens again.
+   * Whether the bar may hide right now. Closing the gate brings a bar that is off back – on the
+   * spring, or at once with `atOnce` (a sheet arriving over a bottom-docked bar: the recede is
+   * already fading the bar, and a bar sliding in while it fades is a ghost) – and ignores the
+   * scroll until it opens again.
    */
-  setAllowed(allowed: boolean): void {
+  setAllowed(allowed: boolean, atOnce = false): void {
     if (this.allowed === allowed) return
     this.allowed = allowed
     if (!allowed) {
       this.clearGap()
-      if (this.offset > 0 || this.phase !== 'rest') this.snapTo(0)
+      if (this.offset > 0 || this.phase !== 'rest') {
+        if (atOnce) this.reset()
+        else this.snapTo(0)
+      }
     }
   }
 
@@ -430,23 +440,27 @@ const machine = new BarHideMachine(
       barHideStore.set({ progress })
       publishHost()
       // Leaving the hidden rest: the content column takes its shown layout at once, so the page
-      // comes back under a frame that is already there for it.
-      if (progress < 1 && uiStore.get().barHidden) uiStore.set({ barHidden: false })
+      // comes back under a frame that is already there for it (a reset from the hidden rest
+      // leaves the phase at rest, so this is the one place that sees it go).
+      if (progress < 1 && uiStore.get().barHidden) publishHidden(false)
     },
     onChange: (phase) => {
       barHideStore.set({ phase })
-      const hidden = machine.hidden
-      if (uiStore.get().barHidden !== hidden) uiStore.set({ barHidden: hidden })
-      const el = root()
-      if (el) {
-        if (hidden) el.dataset.barHidden = 'true'
-        else delete el.dataset.barHidden
-      }
+      publishHidden(machine.hidden)
       publishHost()
     }
   },
   48
 )
+
+/** The boolean at rest, on the store and the root together (`uiStore.barHidden`, `data-bar-hidden`). */
+function publishHidden(hidden: boolean): void {
+  if (uiStore.get().barHidden !== hidden) uiStore.set({ barHidden: hidden })
+  const el = root()
+  if (!el) return
+  if (hidden) el.dataset.barHidden = 'true'
+  else delete el.dataset.barHidden
+}
 
 /** Host → chrome: one report of the active page's scroll. */
 export function dispatchBarScroll(
@@ -504,22 +518,41 @@ export function currentGate(): BarHideGate {
   }
 }
 
-/** The active tab and its document (`id`, URL without the fragment) and whether it is loading. */
-let lastPage: string | null | undefined
+/**
+ * Host → chrome: a navigation committed on a tab's page. A new document (`inPage` false) starts
+ * with its bar in place, as Chrome's does; a same-document navigation – `pushState`,
+ * `replaceState`, a fragment – stays on the page and keeps the bar where it is (Chrome ignores
+ * those too). The URL is not consulted at all: a page rewriting its own URL as it scrolls (a
+ * scroll-spy, an infinite feed) is the very case that must not pop the bar back.
+ */
+export function dispatchBarNavigation(tabId: string, inPage: boolean): void {
+  if (inPage) return
+  const state = browserStore.get().state
+  if (state && activeTab(state)?.id !== tabId) return
+  machine.show()
+}
+
+/** The active tab (`id`) and whether it is loading, as of the last state seen. */
+let lastTabId: string | null | undefined
 let lastLoading = false
 
 function evaluateGate(): void {
-  const allowed = barMayHide(currentGate())
+  const gate = currentGate()
+  const allowed = barMayHide(gate)
   if (barHideStore.get().allowed !== allowed) barHideStore.set({ allowed })
-  machine.setAllowed(allowed)
-  // Another tab, another document or a reload starting: the bar starts in place, as Chrome's
-  // does. A fragment navigation stays on the page and keeps the bar where it is.
+  // A sheet over a bottom-docked bar: the bar is back at once under the recede's fade (§11.1),
+  // not slid in while fading. The top bar is not in the sheet's path and is not faded, so its
+  // return is seen and rides the spring.
+  machine.setAllowed(allowed, !allowed && gate.covered && context.edge === 'bottom')
+  // Another tab, or a load starting on this one (a link followed, a reload): the bar starts in
+  // place. The document itself is keyed by the host's `navigated` event (`dispatchBarNavigation`),
+  // not by the URL, so a same-document navigation leaves the bar alone.
   const state = browserStore.get().state
   const tab = state ? activeTab(state) : null
-  const page = tab ? `${tab.id}\n${tab.url.split('#')[0]}` : null
+  const tabId = tab?.id ?? null
   const loading = Boolean(tab?.loading)
-  if (lastPage !== undefined && (page !== lastPage || (loading && !lastLoading))) machine.show()
-  lastPage = page
+  if (lastTabId !== undefined && (tabId !== lastTabId || (loading && !lastLoading))) machine.show()
+  lastTabId = tabId
   lastLoading = loading
   publishHost()
 }
