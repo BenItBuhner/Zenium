@@ -713,11 +713,16 @@ abstract class DemoHarness(
             SystemClock.sleep(2_000)
         }
         for ((index, item) in path.withIndex()) {
-            val target = reveal(item) ?: run {
+            if (reveal(item) == null) {
                 Log.w(tag, "no $item in the menu")
                 return false
             }
-            Finger().tap(target.exactCenterX(), target.exactCenterY())
+            // The finger goes in once the row's bounds hold still (the tree lags the menu's pull
+            // and scroll on the emulator) and inside the touchable window ([touchTapLabel]).
+            if (!touchTapLabel(item)) {
+                Log.w(tag, "no bounds on screen to touch for $item")
+                return false
+            }
             // A submenu slides in; give it a moment before looking for its items.
             if (index < path.lastIndex) SystemClock.sleep(1_200)
         }

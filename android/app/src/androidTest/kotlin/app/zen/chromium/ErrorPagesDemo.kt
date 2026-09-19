@@ -298,8 +298,10 @@ class ErrorPagesDemo : DemoHarness("share-demo-state.json", "errors", "errors-de
     /**
      * Open the menu, expand it so the whole list is in reach, and touch the item labelled `label`
      * – the menu flow's injected touch (the rule in DemoHarness); the caller asserts what the item
-     * did. True when a finger went in; false when the menu or the item never showed. A touch that
-     * left the menu open is a fault of the run, and the tree's click then gets to the item's page.
+     * did. True when a finger went in; false when the menu or the item never showed, or the row
+     * had no bounds on screen to touch (the tree's click then gets to the item's page, with no
+     * touch to assert). A touch that left the menu open is a fault of the run, and the tree's
+     * click then gets to the item's page.
      */
     private fun menuItem(label: String): Boolean {
         openMenu()
@@ -323,10 +325,17 @@ class ErrorPagesDemo : DemoHarness("share-demo-state.json", "errors", "errors-de
             back()
             return false
         }
-        Finger().tap(target.exactCenterX(), target.exactCenterY())
+        // The finger goes in once the row's bounds hold still (the tree lags the menu's scroll on
+        // the emulator) and inside the touchable window (touchTapLabel).
+        if (!touchTapLabel(label)) {
+            Log.w(tag, "no bounds on screen to touch for $label at $target; clicking it through the tree")
+            clickByLabel(label)
+            SystemClock.sleep(1_500)
+            return false
+        }
         SystemClock.sleep(1_500)
         if (findByLabel(HANDLE_LABEL) != null) {
-            touchFault("the touch on the menu's $label row at $target left the menu open")
+            touchFault("the touch on the menu's $label row left the menu open")
             clickByLabel(label)
             SystemClock.sleep(1_500)
         }

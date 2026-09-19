@@ -401,10 +401,19 @@ class BackDemo {
      * without `took` holding is a fault of the run, reported once the recording is done ([record]).
      */
     private fun touchLabelExpecting(label: String, effect: String, timeoutMs: Long = 5_000, took: () -> Boolean) {
-        val bounds = findByLabel(label)
+        var bounds = findByLabel(label)
         if (bounds == null) {
             Log.w(TAG, "no node labelled $label to touch")
             return
+        }
+        // The finger goes in once two reads of the row's bounds agree: the menu is still coming
+        // up, and the tree lags it on the emulator.
+        val settle = SystemClock.uptimeMillis() + 3_000
+        while (SystemClock.uptimeMillis() < settle) {
+            SystemClock.sleep(350)
+            val again = findByLabel(label) ?: break
+            if (again == bounds) break
+            bounds = again
         }
         Finger().tap(bounds.exactCenterX(), bounds.exactCenterY())
         val deadline = SystemClock.uptimeMillis() + timeoutMs

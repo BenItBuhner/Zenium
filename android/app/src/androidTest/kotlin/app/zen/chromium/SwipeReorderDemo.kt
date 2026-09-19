@@ -109,10 +109,19 @@ class SwipeReorderDemo : DemoHarness("overview-demo-state.json", "overview-swipe
         f.up()
         SystemClock.sleep(2_000)
         // The group sheet's injected touch (the rule in DemoHarness): its row under a finger, and
-        // the group's card must leave the grid on it.
+        // the group's card must leave the grid on it. The grid is inert under the sheet and so
+        // out of the tree: the sheet leaves first (a fall through to the scrim closes it too),
+        // then the grid is back with its other cards, and only then does the card's absence
+        // mean the group closed.
         tap("Close group (2 tabs)")
-        if (waitForGone("Group Group", 8_000)) Log.i(tag, "the group closed under the finger")
-        else touchFault("the touch on the group sheet's Close group left the group's card in the grid")
+        waitForGone("Close group (2 tabs)", 8_000)
+        if (!gridBack(6_000)) {
+            touchFault("the grid did not come back into the tree after the group sheet")
+        } else if (waitForGone("Group Group", 6_000)) {
+            Log.i(tag, "the group closed under the finger")
+        } else {
+            touchFault("the touch on the group sheet's Close group left the group's card in the grid")
+        }
         SystemClock.sleep(1_500)
         shot("06-end")
     }
@@ -124,6 +133,16 @@ class SwipeReorderDemo : DemoHarness("overview-demo-state.json", "overview-swipe
     /** Like [find], after scrolling the element fully into the grid's viewport. */
     private fun show(vararg labels: String): Rect =
         reveal(*labels) ?: error("none of ${labels.joinToString()} exists")
+
+    /** Whether the grid's other cards (the folded Research group, the RFC card) are back in the tree within `timeoutMs`. */
+    private fun gridBack(timeoutMs: Long): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (findAny("Group Research", RFC_TITLE) != null) return true
+            SystemClock.sleep(200)
+        }
+        return false
+    }
 
     /** Tap the element with this label once it exists, scrolled into view if it is in the grid. */
     private fun tap(label: String) {

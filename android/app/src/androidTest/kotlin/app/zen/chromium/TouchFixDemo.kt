@@ -172,23 +172,25 @@ class TouchFixDemo : DemoHarness("touchfix-demo-state.json", "touchfix-$THEME", 
     }
 
     /**
-     * [tapFirst] on a row's Remove control, the panel asserted to carry one fewer of them within
-     * five seconds: the row went with its entry. A touch that left the count is a fault of the
-     * run (the panel did not take the finger); the recording goes on.
+     * [tapFirst] on a row's Remove control, the panel asserted to carry exactly one fewer of them
+     * within five seconds: the row went with its entry (a panel that left the tree altogether
+     * would read none, not one fewer). A touch that left the count is a fault of the run (the
+     * panel did not take the finger); the recording goes on.
      */
     private fun removeFirst(label: String) {
         val before = findNodes(label).size
         tapFirst(label)
         val deadline = SystemClock.uptimeMillis() + 5_000
+        var now = before
         while (SystemClock.uptimeMillis() < deadline) {
-            val now = findNodes(label).size
-            if (now < before) {
+            now = findNodes(label).size
+            if (now == before - 1) {
                 Log.i(tag, "the touch on the first '$label' took: $before -> $now rows")
                 return
             }
             SystemClock.sleep(200)
         }
-        touchFault("the touch on the panel's first '$label' left all $before rows in place")
+        touchFault("the touch on the panel's first '$label' left $now of $before rows in place")
     }
 
     companion object {

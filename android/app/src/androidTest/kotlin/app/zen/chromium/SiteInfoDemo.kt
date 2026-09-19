@@ -194,13 +194,19 @@ class SiteInfoDemo {
             if (tapUntil(f, "Clear cookies", "Confirm clear cookies")) {
                 SystemClock.sleep(1_200)
                 shot("05-clear-cookies-confirm")
-                // The stacked confirm's injected touch, its result asserted: the jar is cleared
-                // and read again through Kotlin, so wait for the empty state (the danger row
-                // leaves with the last cookie, §9.11) rather than a fixed time; the row still
-                // there means the touch did not take (a fall through to the scrim closes the
-                // confirm with the cookies kept).
-                if (tapLabel(f, "Confirm clear cookies") && !awaitGone("Clear cookies", 15_000)) {
-                    touchFault("the touch on the confirm's 'Confirm clear cookies' left the Clear cookies row: the jar was not cleared")
+                // The stacked confirm's injected touch, its result asserted. The confirm leaves
+                // first (a fall through to the scrim closes it too) and the level beneath, inert
+                // under it and so out of the tree, comes back with its header: only then does the
+                // danger row's absence mean the jar was cleared (it leaves with the last cookie,
+                // §9.11, read again through Kotlin, so a wait rather than a fixed time). The row
+                // still there means the touch did not take: the cookies were kept.
+                if (tapLabel(f, "Confirm clear cookies")) {
+                    awaitGone("Confirm clear cookies", 10_000)
+                    if (!awaitLabel(BACK_LABEL, 6_000)) {
+                        touchFault("the cookies level did not come back into the tree after the confirm")
+                    } else if (!awaitGone("Clear cookies", 15_000)) {
+                        touchFault("the touch on the confirm's 'Confirm clear cookies' left the Clear cookies row: the jar was not cleared")
+                    }
                 }
                 SystemClock.sleep(800)
                 shot("06-cookies-cleared")
@@ -322,6 +328,16 @@ class SiteInfoDemo {
             last = now
         }
         Log.w(TAG, "sheet still moving after 6 s")
+    }
+
+    /** Wait until a node is labelled `label`, up to `timeoutMs`; false when none came. */
+    private fun awaitLabel(label: String, timeoutMs: Long): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (findByLabel(label) != null) return true
+            SystemClock.sleep(300)
+        }
+        return false
     }
 
     /** Wait until no node is labelled `label` any more, up to `timeoutMs`; false when it is still there. */
