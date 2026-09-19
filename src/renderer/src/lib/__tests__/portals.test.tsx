@@ -9,7 +9,7 @@ import { dispatchBackEvent, topBackSurface } from '../back'
 import { viewportStore } from '../formFactor'
 import { registerRecedeLayer } from '../motion/recede'
 import { BACK_PEEK, sheetBackPosition } from '../motion/sheet'
-import { uiStore } from '../ui'
+import { invalidateSnapshot, pageHidden, uiStore } from '../ui'
 import {
   ChromePortal,
   FrameDialogHost,
@@ -76,6 +76,19 @@ const pressScrim = (): void => {
     press(scrim()!)
   })
 }
+/** The panels the hosts keep for the way out, in tree order. */
+const leaving = (): HTMLElement[] => [
+  ...mount!.querySelectorAll<HTMLElement>('.zen-frame-dialogs-slot > [data-leaving]')
+]
+/**
+ * End the way out on a mouse: every kept panel's exit animation reports its end (happy-dom
+ * runs no animation; the host listens for the event on the panel itself).
+ */
+const endExit = (): void => {
+  act(() => {
+    for (const panel of leaving()) panel.dispatchEvent(new Event('animationend'))
+  })
+}
 
 /** A dialog panel placed through the host, as the bookmark dialogs and prompts are. */
 function Dialog({
@@ -129,8 +142,12 @@ describe('FrameDialogHost', () => {
     expect(panel.parentElement).toBe(slot())
     rerender(<FrameDialogHost />)
     expect(host().hasAttribute('data-open')).toBe(false)
+    // The panel and the scrim stay for the way out (tested below); at its end both are gone.
+    expect(leaving()).toEqual([panel])
+    endExit()
     expect(scrim()).toBeNull()
     expect(slot()).not.toBeNull()
+    expect(slot().childElementCount).toBe(0)
   })
 
   it('layers every dialog above the scrim, positioned or not (regression: BookmarkAllTabsDialog)', () => {
@@ -276,7 +293,12 @@ describe('FrameDialogHost', () => {
         <Sheet name="menu" />
       </FrameDialogHost>
     )
+    // The prompt's panel and the host's scrim leave together; the sheet's own scrim stays.
+    expect(leaving().map((el) => el.dataset.dialog)).toEqual(['prompt'])
+    expect(scrim()!.getAttribute('data-leaving')).toBe('true')
+    endExit()
     expect(scrim()).toBeNull()
+    expect(slot().querySelector('[data-dialog="menu"]')).not.toBeNull()
   })
 
   it('closes every open popover when a dialog opens (one popover at a time, §9.20)', () => {
@@ -336,7 +358,8 @@ describe('FrameDialogPortal', () => {
     expect(host().getAttribute('data-open')).toBe('true')
     pressScrim()
     expect(close).toHaveBeenCalledTimes(1)
-    // The sheet goes; the host closes.
+    // The sheet goes; the host closes, its scrim fading out with the kept panel (the way out,
+    // tested below).
     rerender(
       <>
         <FrameDialogHost frame />
@@ -344,6 +367,8 @@ describe('FrameDialogPortal', () => {
       </>
     )
     expect(host().hasAttribute('data-open')).toBe(false)
+    expect(scrim()!.getAttribute('data-leaving')).toBe('true')
+    endExit()
     expect(scrim()).toBeNull()
   })
 
@@ -393,6 +418,409 @@ describe('FrameDialogPortal', () => {
     )
     expect(mount!.querySelector('[data-dialog="sheet"]')).toBeNull()
     expect(host().hasAttribute('data-open')).toBe(false)
+  })
+})
+
+/**
+ * A dialog that returns null the moment its state clears – the page's alert (`PageDialogs`),
+ * the window's prompts, the bookmark dialogs, the star card on a phone – with its panel placed
+ * through the host.
+ */
+function Prompt({
+  open,
+  name = 'prompt',
+  onScrimPress
+}: {
+  open: boolean
+  name?: string
+  onScrimPress?: () => void
+}): JSX.Element | null {
+  if (!open) return null
+  return <Dialog name={name} onScrimPress={onScrimPress} />
+}
+const dialogNames = (): Array<string | undefined> =>
+  [...slot().children].map((el) => (el as HTMLElement).dataset.dialog)
+
+/*
+ * The way out (lib/portals.tsx, `useLeavingPanels`): a dialog that unmounts its panel the
+ * moment its state clears leaves the panel with the host, which keeps the element itself in the
+ * slot – `data-leaving`, `inert`, `aria-hidden` – through its exit and drops it at the end: on a
+ * mouse the pop in reverse and the scrim's fade, the panel gone as its animation ends; on a
+ * phone the slot's slide down on the chassis' spring, gone as it lands at 0 (tested with the
+ * chassis below). Until then the host is up for it – it keeps the pointer, the chrome stays
+ * inert and the page stays under its picture – and a dialog opening meanwhile ends the way out
+ * at once. No dialog needs to know.
+ */
+describe('the way out: the host keeps a closed dialog’s panel through its exit', () => {
+  afterEach(() => {
+    uiStore.set({ snapshot: null, snapshotTabId: null, pageDialogOpen: false })
+  })
+
+  it('keeps the panel in the slot – the element itself, inert and hidden from AT – and drops it as its exit animation ends', () => {
+    render(
+      <Chrome>
+        <FrameDialogHost>
+          <Prompt open />
+        </FrameDialogHost>
+      </Chrome>
+    )
+    const panel = slot().querySelector<HTMLElement>('[data-dialog="prompt"]')!
+    rerender(
+      <Chrome>
+        <FrameDialogHost>
+          <Prompt open={false} />
+        </FrameDialogHost>
+      </Chrome>
+    )
+    // The very element, back where it stood, marked for the way out: it takes no press and no
+    // focus and is nothing to assistive technology (§9.22).
+    expect(panel.parentElement).toBe(slot())
+    expect(panel.hasAttribute('data-leaving')).toBe(true)
+    expect(panel.hasAttribute('inert')).toBe(true)
+    expect(panel.getAttribute('aria-hidden')).toBe('true')
+    // The host is still up for it: no dialog (`data-open` off) but `data-leaving` on, so it
+    // keeps the pointer; the scrim fades with the panel; the chrome stays inert (§9.5).
+    expect(host().hasAttribute('data-open')).toBe(false)
+    expect(host().getAttribute('data-leaving')).toBe('true')
+    expect(scrim()!.getAttribute('data-leaving')).toBe('true')
+    expect(inert(chrome('sidebar'))).toBe(true)
+    expect(chromeInertHeld()).toBe(true)
+    // A descendant's animation ending is not the panel's.
+    act(() => {
+      const child = panel.appendChild(document.createElement('span'))
+      child.dispatchEvent(new Event('animationend', { bubbles: true }))
+    })
+    expect(panel.parentElement).toBe(slot())
+    // Its own end: gone for good, the host idle, the chrome back.
+    endExit()
+    expect(panel.parentElement).toBeNull()
+    expect(slot().childElementCount).toBe(0)
+    expect(host().hasAttribute('data-leaving')).toBe(false)
+    expect(scrim()).toBeNull()
+    expect(inert(chrome('sidebar'))).toBe(false)
+    expect(chromeInertHeld()).toBe(false)
+  })
+
+  it('runs the pop in reverse on the kept panel and fades the scrim, the 180 ms of the way in; a 120 ms fade in place under reduced motion; none of it on the phone sheet', () => {
+    expect(cssRule('.zen-frame-dialogs-slot > [data-leaving]')).toContain(
+      'animation: zen-pop-out 180ms var(--zen-ease) forwards'
+    )
+    expect(cssRule('.zen-frame-scrim[data-leaving]')).toContain(
+      'animation: zen-fade-out 180ms var(--zen-ease) forwards'
+    )
+    expect(cssRule('@keyframes zen-pop-out')).toMatch(/from \{ opacity: 1; transform: none;/)
+    expect(cssRule('.zen-frame-dialogs[data-open], .zen-frame-dialogs[data-leaving]')).toContain(
+      'pointer-events: auto'
+    )
+    // §11.3: the departure stays a fade, the pop's scale dropped.
+    const reduced = cssRule(
+      '.zen-frame-dialogs-slot > [data-leaving], .zen-frame-scrim[data-leaving]'
+    )
+    expect(reduced).toContain('animation-name: zen-fade-out')
+    expect(reduced).toContain('animation-duration: 120ms !important')
+    // On a phone the chassis slides the slot: the panels' own animation is off there, the
+    // kept one's included (the rule outranks the `[data-leaving]` one).
+    expect(cssRule('.zen-frame-dialogs[data-sheet] .zen-frame-dialogs-slot > *')).toContain(
+      'animation: none'
+    )
+  })
+
+  it('goes regardless after 600 ms when no animation reports its end (a background window)', () => {
+    vi.useFakeTimers()
+    try {
+      render(
+        <FrameDialogHost>
+          <Prompt open />
+        </FrameDialogHost>
+      )
+      rerender(
+        <FrameDialogHost>
+          <Prompt open={false} />
+        </FrameDialogHost>
+      )
+      expect(leaving()).toHaveLength(1)
+      act(() => {
+        vi.advanceTimersByTime(599)
+      })
+      expect(leaving()).toHaveLength(1)
+      expect(chromeInertHeld()).toBe(true)
+      act(() => {
+        vi.advanceTimersByTime(1)
+      })
+      expect(leaving()).toHaveLength(0)
+      expect(chromeInertHeld()).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a dialog opening during the way out ends it at once: no stale panel under the new one, the chrome never let go of', () => {
+    render(
+      <Chrome>
+        <FrameDialogHost>
+          <Prompt open name="first" />
+        </FrameDialogHost>
+      </Chrome>
+    )
+    const first = slot().querySelector<HTMLElement>('[data-dialog="first"]')!
+    rerender(
+      <Chrome>
+        <FrameDialogHost>
+          <Prompt open={false} name="first" />
+        </FrameDialogHost>
+      </Chrome>
+    )
+    expect(leaving()).toEqual([first])
+    const watched = new MutationObserver(() => {})
+    watched.observe(chrome('sidebar'), { attributes: true, attributeFilter: ['inert'] })
+    rerender(
+      <Chrome>
+        <FrameDialogHost>
+          <Prompt open name="second" />
+        </FrameDialogHost>
+      </Chrome>
+    )
+    expect(first.parentElement).toBeNull()
+    expect(leaving()).toEqual([])
+    expect(dialogNames()).toEqual(['second'])
+    expect(host().getAttribute('data-open')).toBe('true')
+    expect(host().hasAttribute('data-leaving')).toBe(false)
+    expect(scrim()!.hasAttribute('data-leaving')).toBe(false)
+    expect(chromeInertHeld()).toBe(true)
+    // One hold throughout: the sidebar's `inert` was never removed and put back.
+    expect(watched.takeRecords()).toEqual([])
+    watched.disconnect()
+  })
+
+  it('a prompt answered as the next mounts in its place shows no ghost: the new panel alone (PageDialogs’ queue)', () => {
+    render(
+      <FrameDialogHost>
+        <Dialog key="a" name="a" />
+      </FrameDialogHost>
+    )
+    rerender(
+      <FrameDialogHost>
+        <Dialog key="b" name="b" />
+      </FrameDialogHost>
+    )
+    expect(leaving()).toEqual([])
+    expect(dialogNames()).toEqual(['b'])
+  })
+
+  it('two stacked: the one leaving keeps its place in the stack over or under the one that stays; both at once leave together, the host up for the last', () => {
+    render(
+      <FrameDialogHost>
+        <Prompt open name="edit" />
+        <Prompt open name="prompt" />
+      </FrameDialogHost>
+    )
+    const edit = slot().querySelector<HTMLElement>('[data-dialog="edit"]')!
+    const prompt = slot().querySelector<HTMLElement>('[data-dialog="prompt"]')!
+    // The top one goes: kept above the dialog it left over, whose scrim stays, not fading.
+    rerender(
+      <FrameDialogHost>
+        <Prompt open name="edit" />
+        <Prompt open={false} name="prompt" />
+      </FrameDialogHost>
+    )
+    expect(leaving()).toEqual([prompt])
+    expect([...slot().children]).toEqual([edit, prompt])
+    expect(host().getAttribute('data-open')).toBe('true')
+    expect(scrim()!.hasAttribute('data-leaving')).toBe(false)
+    endExit()
+    expect([...slot().children]).toEqual([edit])
+    expect(host().getAttribute('data-open')).toBe('true')
+    // The lower one goes while the top stays: kept in its place under it.
+    rerender(
+      <FrameDialogHost>
+        <Prompt open name="edit" />
+        <Prompt open name="prompt" />
+      </FrameDialogHost>
+    )
+    const prompt2 = slot().querySelector<HTMLElement>('[data-dialog="prompt"]')!
+    rerender(
+      <FrameDialogHost>
+        <Prompt open={false} name="edit" />
+        <Prompt open name="prompt" />
+      </FrameDialogHost>
+    )
+    expect(leaving()).toEqual([edit])
+    expect([...slot().children]).toEqual([edit, prompt2])
+    endExit()
+    expect([...slot().children]).toEqual([prompt2])
+    // Both at once: both kept, in order, the scrim fading; one ending first leaves the host up
+    // for the other, and the chrome comes back with the last.
+    rerender(
+      <FrameDialogHost>
+        <Prompt open name="edit" />
+        <Prompt open name="prompt" />
+      </FrameDialogHost>
+    )
+    const edit3 = slot().querySelector<HTMLElement>('[data-dialog="edit"]')!
+    rerender(
+      <FrameDialogHost>
+        <Prompt open={false} name="edit" />
+        <Prompt open={false} name="prompt" />
+      </FrameDialogHost>
+    )
+    expect(leaving()).toEqual([edit3, prompt2])
+    expect(scrim()!.getAttribute('data-leaving')).toBe('true')
+    act(() => {
+      prompt2.dispatchEvent(new Event('animationend'))
+    })
+    expect([...slot().children]).toEqual([edit3])
+    expect(host().getAttribute('data-leaving')).toBe('true')
+    expect(chromeInertHeld()).toBe(true)
+    endExit()
+    expect(slot().childElementCount).toBe(0)
+    expect(host().hasAttribute('data-leaving')).toBe(false)
+    expect(chromeInertHeld()).toBe(false)
+  })
+
+  it('keeps nothing for a sheet that draws its own scrim – its motion is its own way out – nor for a dialog whose panel stays as it goes inactive', () => {
+    function Sheet(): JSX.Element {
+      useFrameDialog({ onScrimPress: () => {}, ownScrim: true })
+      return <div data-dialog="sheet" data-sheet-layer="true" />
+    }
+    render(
+      <FrameDialogHost>
+        <Sheet />
+      </FrameDialogHost>
+    )
+    rerender(<FrameDialogHost />)
+    expect(leaving()).toEqual([])
+    expect(slot().childElementCount).toBe(0)
+    expect(host().hasAttribute('data-leaving')).toBe(false)
+    expect(chromeInertHeld()).toBe(false)
+    // Inactive but still rendered (a form-factor change places the dialog elsewhere): nothing
+    // left the slot, so nothing is kept and the host is idle at once.
+    rerender(
+      <FrameDialogHost>
+        <Dialog name="edit" />
+      </FrameDialogHost>
+    )
+    rerender(
+      <FrameDialogHost>
+        <Dialog name="edit" active={false} />
+      </FrameDialogHost>
+    )
+    expect(leaving()).toEqual([])
+    expect(host().hasAttribute('data-leaving')).toBe(false)
+    expect(chromeInertHeld()).toBe(false)
+    expect(slot().querySelector('[data-dialog="edit"]')!.hasAttribute('inert')).toBe(false)
+  })
+
+  it('a dialog placed through FrameDialogPortal leaves the same way', () => {
+    render(
+      <>
+        <FrameDialogHost frame />
+        <div data-panel>
+          <FrameDialogPortal>
+            <Dialog name="edit" />
+          </FrameDialogPortal>
+        </div>
+      </>
+    )
+    const panel = slot().querySelector<HTMLElement>('[data-dialog="edit"]')!
+    rerender(
+      <>
+        <FrameDialogHost frame />
+        <div data-panel />
+      </>
+    )
+    expect(leaving()).toEqual([panel])
+    expect(host().getAttribute('data-leaving')).toBe('true')
+    endExit()
+    expect(slot().childElementCount).toBe(0)
+    expect(host().hasAttribute('data-leaving')).toBe(false)
+  })
+
+  it('keeps the page under its picture from the dialog’s open to the end of the way out, past the flag that hid it', () => {
+    uiStore.set({ snapshot: 'data:,page', snapshotTabId: 't1' })
+    render(
+      <FrameDialogHost>
+        <Prompt open />
+      </FrameDialogHost>
+    )
+    // Nothing covers the page yet (a page dialog captures it and sets its flag once it is up):
+    // the host holds nothing – hiding the page now would show a blank frame.
+    expect(uiStore.get().frameDialogCover).toBe(0)
+    expect(pageHidden(uiStore.get())).toBe(false)
+    act(() => uiStore.set({ pageDialogOpen: true }))
+    expect(uiStore.get().frameDialogCover).toBe(1)
+    // The dialog closes: its flag clears and the capture is asked to go (`closePageDialog`) –
+    // the host's hold keeps the view hidden and the capture for the way out.
+    rerender(
+      <FrameDialogHost>
+        <Prompt open={false} />
+      </FrameDialogHost>
+    )
+    act(() => {
+      uiStore.set({ pageDialogOpen: false })
+      invalidateSnapshot()
+    })
+    expect(leaving()).toHaveLength(1)
+    expect(uiStore.get().frameDialogCover).toBe(1)
+    expect(pageHidden(uiStore.get())).toBe(true)
+    expect(uiStore.get().snapshot).toBe('data:,page')
+    endExit()
+    expect(uiStore.get().frameDialogCover).toBe(0)
+    expect(pageHidden(uiStore.get())).toBe(false)
+    expect(uiStore.get().snapshot).toBeNull()
+  })
+
+  it('covers the way out of a dialog whose state is the flag itself, cleared before its panel has left (the bookmark dialogs, the star card)', () => {
+    function StoreDialog(): JSX.Element | null {
+      const open = uiStore.use((s) => s.pageDialogOpen)
+      return open ? <Dialog name="store" /> : null
+    }
+    uiStore.set({ snapshot: 'data:,page', snapshotTabId: 't1', pageDialogOpen: true })
+    render(
+      <FrameDialogHost>
+        <StoreDialog />
+      </FrameDialogHost>
+    )
+    expect(uiStore.get().frameDialogCover).toBe(1)
+    act(() => {
+      uiStore.set({ pageDialogOpen: false })
+      invalidateSnapshot()
+    })
+    expect(leaving().map((el) => el.dataset.dialog)).toEqual(['store'])
+    expect(uiStore.get().snapshot).toBe('data:,page')
+    expect(pageHidden(uiStore.get())).toBe(true)
+    endExit()
+    expect(uiStore.get().snapshot).toBeNull()
+    expect(uiStore.get().frameDialogCover).toBe(0)
+  })
+
+  it('holds nothing over a page that shows live, and a hold outlasts a dialog only by its way out', () => {
+    render(
+      <FrameDialogHost>
+        <Prompt open />
+      </FrameDialogHost>
+    )
+    rerender(
+      <FrameDialogHost>
+        <Prompt open={false} />
+      </FrameDialogHost>
+    )
+    expect(uiStore.get().frameDialogCover).toBe(0)
+    endExit()
+    // A dialog that hid the page and closed with nothing to keep (its panel stays, inactive):
+    // the hold goes with it at once.
+    rerender(
+      <FrameDialogHost>
+        <Dialog name="edit" />
+      </FrameDialogHost>
+    )
+    act(() => uiStore.set({ pageDialogOpen: true }))
+    expect(uiStore.get().frameDialogCover).toBe(1)
+    rerender(
+      <FrameDialogHost>
+        <Dialog name="edit" active={false} />
+      </FrameDialogHost>
+    )
+    expect(uiStore.get().frameDialogCover).toBe(0)
   })
 })
 
@@ -790,6 +1218,136 @@ describe('FrameDialogHost on a phone (the sheet chassis, §11)', () => {
     expect(slot().style.transform).toBe('')
     expect(scrim()!.style.opacity).toBe('0')
   })
+
+  /*
+   * The way out on the chassis (`useLeavingPanels` driven by `useSheetChassis`): the panel of a
+   * dialog that unmounted it as it closed is kept in the slot and rides the slide down, so the
+   * scrim, the recede and the sheet leave together over a panel, not an empty slot; it goes as
+   * the spring lands at 0, not at its own (turned-off) animation's end.
+   */
+  it('keeps the panel of a dialog that unmounted it as it closed: it rides the slot down, and goes as the spring lands at 0', async () => {
+    render(
+      <Chrome>
+        <FrameDialogHost>
+          <Prompt open />
+        </FrameDialogHost>
+      </Chrome>
+    )
+    await settle()
+    frames(60)
+    expect(recedeVar()).toBe('1.0000')
+    const panel = slot().querySelector<HTMLElement>('[data-dialog="prompt"]')!
+    rerender(
+      <Chrome>
+        <FrameDialogHost>
+          <Prompt open={false} />
+        </FrameDialogHost>
+      </Chrome>
+    )
+    // Kept: the element itself, in the slot, taking no press or focus and nothing to AT; the
+    // host still up for it, the chrome still inert, the page still under its cover.
+    expect(panel.parentElement).toBe(slot())
+    expect(panel.hasAttribute('data-leaving')).toBe(true)
+    expect(panel.hasAttribute('inert')).toBe(true)
+    expect(panel.getAttribute('aria-hidden')).toBe('true')
+    expect(host().hasAttribute('data-open')).toBe(false)
+    expect(host().getAttribute('data-leaving')).toBe('true')
+    expect(inert(chrome('sidebar'))).toBe(true)
+    expect(uiStore.get().frameSheetOpen).toBe(true)
+    // Not the desktop's way out: an animation's end means nothing here (main.css runs none on
+    // the sheet); the panel waits for the progress to land.
+    act(() => {
+      panel.dispatchEvent(new Event('animationend'))
+    })
+    expect(panel.parentElement).toBe(slot())
+    // The way down: scrim, recede and slide run back together on the one progress, the panel
+    // riding the slot – the slide still measured from it – for as long as anything shows.
+    let last = 1
+    for (let i = 0; i < 120 && scheduled(); i++) {
+      act(() => frames(1))
+      const p = opacity(scrim())
+      expect(Number(recedeVar())).toBeCloseTo(p, 4)
+      expect(p).toBeLessThanOrEqual(last + 1e-9)
+      last = p
+      if (p <= 0) continue
+      expect(panel.parentElement).toBe(slot())
+      expect(translateY()).toBeCloseTo((1 - p) * TRAVEL, 1)
+      expect(host().hasAttribute('data-sheet-up')).toBe(true)
+      expect(uiStore.get().frameSheetOpen).toBe(true)
+    }
+    expect(scheduled()).toBe(false)
+    // Landed at 0: gone for good, the host idle, the chrome back, the page let back – all at
+    // the same moment.
+    expect(panel.parentElement).toBeNull()
+    expect(slot().childElementCount).toBe(0)
+    expect(host().hasAttribute('data-leaving')).toBe(false)
+    expect(host().hasAttribute('data-sheet-up')).toBe(false)
+    expect(inert(chrome('sidebar'))).toBe(false)
+    expect(chromeInertHeld()).toBe(false)
+    expect(uiStore.get().frameSheetOpen).toBe(false)
+    expect(recedeVar()).toBe('')
+  })
+
+  it('a dialog opening on the way down ends the way out at once: the kept panel goes, the new one takes the spring where it is', async () => {
+    render(
+      <FrameDialogHost>
+        <Prompt open name="first" />
+      </FrameDialogHost>
+    )
+    await settle()
+    frames(60)
+    const first = slot().querySelector<HTMLElement>('[data-dialog="first"]')!
+    rerender(
+      <FrameDialogHost>
+        <Prompt open={false} name="first" />
+      </FrameDialogHost>
+    )
+    act(() => frames(4))
+    const midway = opacity(scrim())
+    expect(midway).toBeGreaterThan(0)
+    expect(midway).toBeLessThan(1)
+    expect(first.parentElement).toBe(slot())
+    rerender(
+      <FrameDialogHost>
+        <Prompt open name="second" />
+      </FrameDialogHost>
+    )
+    // No stale panel under the new one, and the host open for it, not leaving.
+    expect(first.parentElement).toBeNull()
+    expect(dialogNames()).toEqual(['second'])
+    expect(host().getAttribute('data-open')).toBe('true')
+    expect(host().hasAttribute('data-leaving')).toBe(false)
+    expect(chromeInertHeld()).toBe(true)
+    // The spring turns round where it is: no jump, and the new panel rises to rest.
+    await settle()
+    act(() => frames(1))
+    expect(Math.abs(opacity(scrim()) - midway)).toBeLessThan(0.2)
+    act(() => frames(60))
+    expect(recedeVar()).toBe('1.0000')
+    expect(dialogNames()).toEqual(['second'])
+    expect(slot().querySelector('[data-dialog="second"]')!.hasAttribute('inert')).toBe(false)
+  })
+
+  it('a dialog closed before the sheet came up keeps nothing: no slide to ride, the panel goes at once', async () => {
+    render(
+      <FrameDialogHost>
+        <Prompt open />
+      </FrameDialogHost>
+    )
+    rerender(
+      <FrameDialogHost>
+        <Prompt open={false} />
+      </FrameDialogHost>
+    )
+    expect(slot().childElementCount).toBe(0)
+    expect(host().hasAttribute('data-leaving')).toBe(false)
+    expect(chromeInertHeld()).toBe(false)
+    await settle()
+    act(() => frames(2))
+    expect(opacity(scrim())).toBe(0)
+    expect(document.documentElement.dataset.receding).toBeUndefined()
+    expect(uiStore.get().frameSheetOpen).toBe(false)
+  })
 })
 
 /** Window chrome around the frame: a sidebar and a toolbar with a button that opens a panel. */
@@ -838,6 +1396,9 @@ describe('chrome inertness while a frame dialog is open (§9.5)', () => {
         <FrameDialogHost />
       </Chrome>
     )
+    // Inert until the prompt's panel has left (its way out, below), and live at once after.
+    expect(inert(chrome('sidebar'))).toBe(true)
+    endExit()
     expect(inert(chrome('sidebar'))).toBe(false)
     expect(inert(chrome('toolbar'))).toBe(false)
   })
@@ -864,12 +1425,15 @@ describe('chrome inertness while a frame dialog is open (§9.5)', () => {
       </Chrome>
     )
     expect(inert(chrome('sidebar'))).toBe(true)
+    endExit()
+    expect(inert(chrome('sidebar'))).toBe(true)
     rerender(
       <Chrome>
         <FrameDialogHost />
         <FrameDialogHost />
       </Chrome>
     )
+    endExit()
     expect(inert(chrome('sidebar'))).toBe(false)
   })
 
@@ -911,6 +1475,7 @@ describe('chrome inertness while a frame dialog is open (§9.5)', () => {
         <FrameDialogHost />
       </Chrome>
     )
+    endExit()
     expect(inert(late)).toBe(false)
     expect(inert(chrome('already'))).toBe(true)
   })
