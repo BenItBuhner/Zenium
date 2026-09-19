@@ -23,6 +23,7 @@ import {
   type PullEventPhase
 } from '@renderer/lib/pull'
 import { Bridge, getNativeBridge } from './bridge'
+import { fetchDeferredDocuments } from './handoff'
 import { AndroidPlatform, type BootInfo, type HostEventPayloads } from './platform'
 import { createPreviewBridge } from './preview'
 import type { ViewEventPayloads } from './views'
@@ -62,24 +63,36 @@ export interface HostGlobal {
  * Start Zen inside the chrome WebView: build the core on the Android platform, expose the
  * renderer API and the host callbacks. Falls back to the iframe preview host when there is no
  * Kotlin bridge (plain browser / dev server).
+ *
+ * Asynchronous for one reason: the boot payload names the core's big documents instead of
+ * carrying them, and they are fetched as files (`handoff.ts`) while the platform and the core
+ * are built; the core starts once they are in the store, and reads them there as it always did.
  */
-export function bootAndroid(): { browser: Browser; api: ZenApi; preview: boolean } {
+export async function bootAndroid(): Promise<{ browser: Browser; api: ZenApi; preview: boolean }> {
   const native = getNativeBridge()
   const preview = native === null
   const bridge = new Bridge(native ?? createPreviewBridge())
   // The host global must exist before the first (synchronous) bridge call answers.
   const platformRef: { current: AndroidPlatform | null } = { current: null }
-  installHostGlobal(bridge, platformRef)
+  const hostGlobal = installHostGlobal(bridge, platformRef)
 
   const boot = bridge.callSync<BootInfo>('boot', {})
+  const deferred = fetchDeferredDocuments(boot.deferred, {
+    fetch: (url, init) => fetch(url, init),
+    readSync: (name) => bridge.callSync<string | null | undefined>('storage.read', { name }) ?? null
+  })
   const platform = new AndroidPlatform(bridge, boot)
   const browser = new Browser(platform)
   platform.bind(browser)
+  platform.io.adopt(await deferred)
+  // From here on nothing yields until the core has started: what the host sends in reaches a
+  // started core, as it did when this was one synchronous run.
   platformRef.current = platform
   syncNativeTheme(bridge, platform, browser)
   syncBackState(bridge)
   syncPullToRefresh(bridge, platform)
   browser.start()
+  hostGlobal.flush()
 
   // Shortcuts typed into the chrome itself go through the same table as page keys.
   window.addEventListener(
@@ -202,33 +215,62 @@ function syncPullToRefresh(bridge: Bridge, platform: AndroidPlatform): void {
   })
 }
 
-function installHostGlobal(bridge: Bridge, platformRef: { current: AndroidPlatform | null }): void {
+/**
+ * Install `window.__zenHost`. What Kotlin sends before the platform exists – a view event, an
+ * insets change, the URL the app was launched with – waits in order and is delivered by
+ * `flush()` once the core has started (before the boot fetched documents, nothing could arrive
+ * in between: the boot was one synchronous run).
+ */
+function installHostGlobal(
+  bridge: Bridge,
+  platformRef: { current: AndroidPlatform | null }
+): { flush(): void } {
   const parse = <T>(json: string | null | undefined): T =>
     (json === null || json === undefined || json === '' ? undefined : JSON.parse(json)) as T
+  let queued: Array<(platform: AndroidPlatform) => void> | null = []
+  const withPlatform = (deliver: (platform: AndroidPlatform) => void): void => {
+    const platform = platformRef.current
+    if (platform && queued === null) deliver(platform)
+    else queued?.push(deliver)
+  }
   const host: HostGlobal = {
     resolve: (id, json) => bridge.resolve(id, json),
     reject: (id, message) => bridge.reject(id, message),
     viewEvent: (tabId, name, json) =>
-      platformRef.current?.viewEvent(
-        tabId,
-        name as keyof ViewEventPayloads,
-        parse<ViewEventPayloads[keyof ViewEventPayloads]>(json)
+      withPlatform((platform) =>
+        platform.viewEvent(
+          tabId,
+          name as keyof ViewEventPayloads,
+          parse<ViewEventPayloads[keyof ViewEventPayloads]>(json)
+        )
       ),
     hostEvent: (name, json) =>
-      platformRef.current?.hostEvent(
-        name as keyof HostEventPayloads,
-        parse<HostEventPayloads[keyof HostEventPayloads]>(json)
+      withPlatform((platform) =>
+        platform.hostEvent(
+          name as keyof HostEventPayloads,
+          parse<HostEventPayloads[keyof HostEventPayloads]>(json)
+        )
       ),
     onKey: (tabId, json) =>
-      platformRef.current?.viewKey(tabId, parse<KeyEventInput>(json)) ?? false,
+      queued === null
+        ? (platformRef.current?.viewKey(tabId, parse<KeyEventInput>(json)) ?? false)
+        : false,
     backEvent: (phase, json) =>
       dispatchBackEvent(phase as BackPhase, parse<BackEventPayload | null>(json)),
     pullEvent: (tabId, phase, json) =>
       dispatchPullEvent(tabId, phase as PullEventPhase, parse<PullEventPayload | null>(json)),
-    openUrl: (url) => {
-      const platform = platformRef.current
-      platform?.browser.openExternalUrl(url, platform.window, { fromIntent: true })
-    }
+    openUrl: (url) =>
+      withPlatform((platform) =>
+        platform.browser.openExternalUrl(url, platform.window, { fromIntent: true })
+      )
   }
   ;(window as unknown as { __zenHost: HostGlobal }).__zenHost = host
+  return {
+    flush: () => {
+      const platform = platformRef.current
+      const pending = queued ?? []
+      queued = null
+      if (platform) for (const deliver of pending) deliver(platform)
+    }
+  }
 }

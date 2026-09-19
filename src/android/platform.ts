@@ -65,6 +65,12 @@ import type { AgentHttpRequest, AgentHttpResponse } from '@core/agent/http'
 import type { Bridge } from './bridge'
 import type { AndroidExtensions } from './extensionHost'
 import {
+  fetchBundledFeed,
+  readSpilledBody,
+  type DeferredDocument,
+  type SpilledBody
+} from './handoff'
+import {
   AndroidExtensionsWithRuntime,
   AndroidExtensionRuntime,
   type ExtMessageEvent,
@@ -267,8 +273,14 @@ export interface BootInfo {
   appIcon?: string
   /** The launcher accepts pinned shortcuts (`ShortcutManagerCompat.isRequestPinShortcutSupported`). */
   pinShortcuts?: boolean
-  /** Persisted JSON documents by name (state.json, history.json, …). */
+  /** Persisted JSON documents by name (state.json, history.json, …), the ones small enough to inline. */
   files: Record<string, string>
+  /**
+   * The documents too big for the payload (a Safe Browsing feed's table), by name, size and
+   * version tag; fetched from the document handler before the core starts (`handoff.ts`).
+   * Absent from an older host and from the preview host.
+   */
+  deferred?: DeferredDocument[]
   downloadsDir: string
   /**
    * Absolute path of `files/zen/extensions`, where the extension store installs (absent in the
@@ -682,7 +694,9 @@ class AndroidBlockingHost implements BlockingHost {
  * the Safe Browsing guard's switch and bypasses, the cookie mode for `CookieManager`, the GPC
  * and DNT headers and their `navigator` script, HTTPS-only mode's allowed sites. Secure DNS is
  * the system's business on Android (`secureDns: false`). The bundled Safe Browsing snapshot is
- * in the APK's assets (`assets/safebrowsing/<id>.json`), read through Kotlin.
+ * in the APK's assets (`assets/safebrowsing/<id>.json`), fetched through the asset loader – a
+ * few hundred kilobytes that would otherwise come JSON-quoted through a script – and read
+ * through Kotlin when the fetch cannot bring it (a chrome on another origin).
  */
 class AndroidPrivacyHost implements PrivacyHost {
   constructor(private readonly bridge: Bridge) {}
@@ -692,6 +706,8 @@ class AndroidPrivacyHost implements PrivacyHost {
   }
 
   async bundledSafeBrowsingFeed(id: string): Promise<string | null> {
+    const fetched = await fetchBundledFeed(id, (url, init) => fetch(url, init))
+    if (fetched !== null) return fetched
     const raw = await this.bridge.call<unknown>('privacy.bundledFeed', { id })
     return typeof raw === 'string' && raw ? raw : null
   }
@@ -820,6 +836,8 @@ export class AndroidPlatform implements Platform {
     this.externalProtocols = {
       respond: (requestId, allow) => bridge.send('externalProtocol.respond', { requestId, allow })
     }
+    // A body over Kotlin's inline limit (a filter list, a Safe Browsing feed) does not come back
+    // JSON-quoted in the reply but as a file the chrome fetches by token (`BootHandoff.readBody`).
     this.net = {
       fetchText: async (url, options) => {
         const result = await bridge.call<{
@@ -827,12 +845,20 @@ export class AndroidPlatform implements Platform {
           status?: number
           text: string
           headers?: Record<string, string>
+          /** The spilled body, when there is one; `text` is empty then. */
+          body?: SpilledBody
         }>('net.fetch', { url, headers: options.headers ?? {}, timeoutMs: options.timeoutMs ?? 0 })
+        let text = result.text
+        if (result.body) {
+          const release = (token: string): void => bridge.send('net.release', { token })
+          if (options.signal?.aborted) release(result.body.token)
+          else text = await readSpilledBody(result.body, (u, init) => fetch(u, init), release)
+        }
         if (options.signal?.aborted) throw new Error('aborted')
         return {
           ok: result.ok,
           status: result.status ?? (result.ok ? 200 : 0),
-          text: result.text,
+          text,
           headers: result.headers ?? {}
         }
       }
