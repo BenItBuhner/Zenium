@@ -182,9 +182,10 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
     var barHide: BarHideFrame? = null
         private set
 
+    /** Per frame while the bar moves: only the views on screen are laid out for it; one coming on screen catches up in [setVisible]. */
     fun setBarHide(frame: BarHideFrame?) {
         barHide = frame
-        for (view in views.values) place(view)
+        for (view in views.values) if (view.visibility == View.VISIBLE) place(view)
     }
 
     /**
@@ -201,6 +202,10 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
      * is clipped to what the bar has left. A bottom-docked bar's page grows at the bottom under
      * the clip; a top-docked bar's page is slid up with the bar and clipped at the frame's bottom,
      * so the content under the bar moves with it and the page holds still under the finger.
+     *
+     * The tall layout has a band less to scroll, so Chromium clamps a page that was within the
+     * band of its end: the gesture starts no hide there ([BarHideScrollFilter], [BarHideShare]),
+     * and a page in its last band keeps its bar, laid out short, with all of it reachable.
      */
     private fun place(view: TabWebView) {
         // A view filling the window (picture-in-picture, [fillWindow]) is laid out by nobody else
@@ -279,7 +284,11 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         // GONE views neither draw nor receive input; JS keeps running so background audio, like
         // in Zen, carries on until the core unloads the tab.
         val next = if (visible) View.VISIBLE else View.GONE
-        if (view.visibility != next) view.visibility = next
+        if (view.visibility == next) return
+        view.visibility = next
+        // The bar may have moved while this view was off screen (only views on screen follow it
+        // per frame, [setBarHide]): it takes the bar's current frame as it comes on.
+        if (visible) place(view)
     }
 
     fun bringToFront(tabId: String) {

@@ -17,11 +17,20 @@ import kotlin.math.min
  * The finger is measured on the screen (raw coordinates): the WebView slides with the bar, so in
  * its own coordinates a finger that holds still reads as moving by the bar's travel.
  *
+ * The bar takes only from a drag that scrolls the page itself. Chrome's controls take a scroll
+ * once its chain has reached the viewport, so a finger on an inner scroller, a canvas, a map or
+ * a text-selection handle moves no toolbar; here the finger goes through to the WebView untouched
+ * until the page's own scroller has moved under it ([rootScrolled], from `onScrollChanged`,
+ * which inner scrollers never fire), and the bar takes from the next move on. The page scrolls
+ * by the frame that confirms it – a few px on a device – before the bar starts: the one cost
+ * against Chrome. An inner scroller that runs out chains its scroll to the page, and the bar
+ * takes from there, as Chrome's does.
+ *
  * The slop crossing goes through to the WebView as a crossing – the slop and [slopPass] past it
  * – so it begins its scroll (and drops its long press); what the finger has travelled beyond
- * that in the same event is the bar's, like the moves after it. A slow frame delivers a stretch
- * of the drag batched into that one event, and passed whole it would scroll the page by the
- * bar's share.
+ * that in the same event is the bar's once the page has scrolled, like the moves after it. A
+ * slow frame delivers a stretch of the drag batched into that one event, and passed whole it
+ * would scroll the page by the bar's share.
  */
 class BarHideShare(private val slop: Float, private val slopPass: Float) {
     /** The bar's offset as this side counts it, what the next take is measured against; re-read from the chrome between fingers. */
@@ -31,6 +40,9 @@ class BarHideShare(private val slop: Float, private val slopPass: Float) {
         private set
     /** The bar may take travel from this gesture: it was docked at the top and free to hide when the finger landed. */
     var taking = false
+        private set
+    /** The page's own scroller has moved under this finger: the drag is the page's, not an inner scroller's. */
+    var rootScrolled = false
         private set
     private var downX = 0f
     private var downY = 0f
@@ -48,6 +60,7 @@ class BarHideShare(private val slop: Float, private val slopPass: Float) {
         lastY = y
         downLocalY = localY
         consumed = 0f
+        rootScrolled = false
         passedSlop = false
         horizontal = false
         multiTouch = false
@@ -58,23 +71,30 @@ class BarHideShare(private val slop: Float, private val slopPass: Float) {
         multiTouch = true
     }
 
+    /** The page's scroller scrolled (or pushed against its top) under this finger. */
+    fun rootScrolled() {
+        rootScrolled = true
+    }
+
     /**
      * The finger is at (`x`, `y`) on the screen: what the bar takes of the move – positive when
      * it hides further, negative when it comes back, 0 when nothing. `travel` is the bar's full
      * travel (0 when there is no top-docked bar to take any right now) and `pageBelow` whether
-     * the page has anything left to scroll to (a page at its bottom keeps its bar).
+     * the page has room below for a hide to start – the band it will be laid out taller by – or,
+     * with the bar already off its edge, anything left to scroll to (a page at its bottom keeps
+     * its bar).
      */
     fun move(x: Float, y: Float, travel: Int, pageBelow: Boolean): Float {
         val dy = y - lastY
         lastY = y
         if (!taking || multiTouch || horizontal || travel <= 0) return 0f
-        if (passedSlop) return take(dy, travel, pageBelow)
+        if (passedSlop) return if (rootScrolled) take(dy, travel, pageBelow) else 0f
         val dx = x - downX
         val travelled = y - downY
         if (hypot(dx, travelled) <= slop) return 0f
         passedSlop = true
         horizontal = abs(dx) > abs(travelled)
-        if (horizontal) return 0f
+        if (horizontal || !rootScrolled) return 0f
         val beyond = abs(travelled) - slop - slopPass
         return if (beyond > 0f) take(if (travelled < 0f) -beyond else beyond, travel, pageBelow) else 0f
     }

@@ -371,6 +371,15 @@ class TabWebView(
         translationY = pullOffsetPx + barShiftPx
     }
 
+    /**
+     * How much further down the page can scroll in its current layout, device px (0 at its end):
+     * what the bar that hides on scroll reads before it starts a hide – the page laid out a band
+     * taller must still have that band to scroll, or Chromium clamps the scroll back – and by
+     * which it tells that clamp from a finger's scroll up (see [BarHideScrollFilter]).
+     */
+    fun scrollRemaining(): Int =
+        (computeVerticalScrollRange() - computeVerticalScrollExtent() - scrollY).coerceAtLeast(0)
+
     /** Whether a drag down from the top of this page may become a pull-to-refresh right now. */
     fun pullToRefreshEligible(): Boolean =
         host.pullToRefresh && backTransition == null && PullGestureClassifier.refreshable(url)
@@ -396,6 +405,7 @@ class TabWebView(
 
     override fun onOverScrolled(scrollX: Int, scrollY: Int, clampedX: Boolean, clampedY: Boolean) {
         super.onOverScrolled(scrollX, scrollY, clampedX, clampedY)
+        barHide.onOverScrolled(scrollY, clampedY)
         pull.onOverScrolled(scrollY, clampedY)
     }
 

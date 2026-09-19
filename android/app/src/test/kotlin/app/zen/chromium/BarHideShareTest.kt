@@ -17,9 +17,14 @@ class BarHideShareTest {
     /** Where the finger of the share under test is on the screen. */
     private var lastFinger = downY
 
-    private fun share(offset: Float = 0f, taking: Boolean = true) = BarHideShare(slop, pass).also {
+    /**
+     * A share with a finger down and – unless `rootScrolled` is false – the page's own scroller
+     * already confirmed under it, as it is a frame after the slop crossing on the page itself.
+     */
+    private fun share(offset: Float = 0f, taking: Boolean = true, rootScrolled: Boolean = true) = BarHideShare(slop, pass).also {
         it.mirror = offset
         it.down(x, downY, local, taking)
+        if (rootScrolled) it.rootScrolled()
         lastFinger = downY
     }
 
@@ -100,6 +105,77 @@ class BarHideShareTest {
         near(0f, s.moveTo(downY - 60f, pageBelow = false))
         near(0f, s.mirror)
         near(local - 60f, s.seenY(downY - 60f))
+    }
+
+    @Test
+    fun aFingerLandingNearThePagesEndStartsNoHideButStillBringsABarBack() {
+        // Less than the bar's travel left below (the gesture answers `pageBelow` false while
+        // the bar is at its edge): the drag is the page's to its end, nothing grows.
+        val s = share()
+        near(0f, s.moveTo(downY - 120f, pageBelow = false))
+        near(0f, s.consumed)
+        near(local - 120f, s.seenY(downY - 120f))
+        // A hidden bar in the same place comes back under the finger all the same: only a
+        // start is refused there.
+        val hidden = share(offset = 84f)
+        near(0f, hidden.moveTo(downY + 15f, pageBelow = false))
+        near(-84f, hidden.moveTo(downY + 99f, pageBelow = false))
+        near(0f, hidden.mirror)
+        near(local + 15f, hidden.seenY(downY + 99f))
+    }
+
+    @Test
+    fun aDragThatScrollsNoRootTakesNothing() {
+        // A finger on an inner scroller (a list, a map, a text-selection handle): the page's
+        // own scroller never moves, so the bar takes nothing and the WebView sees the finger
+        // as it is, all the way through.
+        val s = share(rootScrolled = false)
+        near(0f, s.moveTo(downY - 200f))
+        near(0f, s.consumed)
+        near(0f, s.mirror)
+        near(local - 200f, s.seenY(downY - 200f))
+        assertFalse(s.rootScrolled)
+        // Nor does a hidden bar come back for an inner scroller dragged the other way.
+        val hidden = share(offset = 84f, rootScrolled = false)
+        near(0f, hidden.moveTo(downY + 200f))
+        near(84f, hidden.mirror)
+        near(local + 200f, hidden.seenY(downY + 200f))
+    }
+
+    @Test
+    fun theBarTakesFromTheMoveAfterThePageHasScrolled() {
+        // The crossing and the frame after it go through whole – the page scrolls by that frame,
+        // confirming the drag is its own – and from the next move the bar takes.
+        val s = share(rootScrolled = false)
+        near(0f, s.moveTo(downY - 20f))
+        near(local - 20f, s.seenY(downY - 20f))
+        s.rootScrolled()
+        near(30f, s.moveTo(downY - 50f))
+        near(30f, s.mirror)
+        // The WebView's finger holds where it was when the page had scrolled.
+        near(local - 20f, s.seenY(downY - 50f))
+        near(54f, s.moveTo(downY - 104f))
+        near(84f, s.mirror)
+        near(0f, s.moveTo(downY - 130f))
+        near(local - 130f + 84f, s.seenY(downY - 130f))
+        // An inner scroller that ran out and chained to the page confirms it late in the drag:
+        // the bar takes from there, as Chrome's controls do once the chain reaches the viewport.
+        val chained = share(rootScrolled = false)
+        near(0f, chained.moveTo(downY - 300f))
+        chained.rootScrolled()
+        near(84f, chained.moveTo(downY - 400f))
+        near(local - 400f + 84f, chained.seenY(downY - 400f))
+    }
+
+    @Test
+    fun aCrossingAfterThePageScrolledStillHandsTheBarWhatLiesPastTheSlop() {
+        // The page's scroller moved before the finger's crossing was delivered (a script scroll
+        // under a finger, or the crossing batched behind the frame that carried the confirmation):
+        // the crossing goes through and the bar takes what lies past it, as before.
+        val s = share(rootScrolled = false)
+        s.rootScrolled()
+        near(48f - slop - pass, s.jumpTo(downY - 48f))
+        near(local - slop - pass, s.seenY(downY - 48f))
     }
 
     @Test

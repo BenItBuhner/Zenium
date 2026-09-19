@@ -55,15 +55,18 @@ class BarHideFrame(
  * per frame), `end` (the finger lifted, with the time, for the velocity) and `show` (the page
  * pushed against its top, or a fling up under a top-docked bar: the bar comes back). Only a
  * finger's scroll and the fling it leaves count: a page that scrolls itself (an anchor, a
- * script) moves no bar, as in Chrome.
+ * script) moves no bar, as in Chrome, and neither does the clamp Chromium applies when the page
+ * is laid out taller near its end ([BarHideScrollFilter]).
  *
  * Consuming, with the bar docked at the top. Chrome's top controls take a scroll before the page
  * does; here a drag's vertical travel goes to the bar first and the WebView sees the rest, as a
  * finger that holds still while the bar moves ([BarHideShare], applied in [forward] by shifting
- * the touches the WebView sees). The bar's offset is mirrored here in device px so the hand-over
- * does not wait on the bridge; the chrome, which clamps the same deltas the same way, stays the
- * truth and the mirror is re-read from it between fingers. With the bar at the bottom nothing is
- * consumed: the page scrolls and the bar follows the scroll, as Chrome's bottom controls do.
+ * the touches the WebView sees) – once the page's own scroller has moved under the finger, so a
+ * finger on an inner scroller moves no bar. The bar's offset is mirrored here in device px so
+ * the hand-over does not wait on the bridge; the chrome, which clamps the same deltas the same
+ * way, stays the truth and the mirror is re-read from it between fingers. With the bar at the
+ * bottom nothing is consumed: the page scrolls and the bar follows the scroll, as Chrome's
+ * bottom controls do.
  *
  * Touch distances are device pixels here and CSS pixels on the bridge.
  */
@@ -74,6 +77,8 @@ class BarHideGesture(
     private val density = view.resources.displayMetrics.density
     /** The share of a drag's travel between a top-docked bar and the page (see [BarHideShare]). */
     private val share = BarHideShare(ViewConfiguration.get(view.context).scaledTouchSlop.toFloat(), SLOP_PASS_DP * density)
+    /** What the page's scroll changes mean for the bar (see [BarHideScrollFilter]). */
+    private val filter = BarHideScrollFilter(FLING_GAP_MS, FINGER_TOLERANCE_DP * density)
 
     /** The chrome's latest word on the bar (see [BarHideFrame]); null: the bar may not hide. */
     var frame: BarHideFrame? = null
@@ -81,10 +86,10 @@ class BarHideGesture(
             field = value
             // The chrome's offset is the mirror's, except under a finger a top-docked bar is
             // taking travel from: there the mirror leads and the chrome follows a frame behind.
-            if (!touching || value?.edge != BarHideFrame.Edge.TOP) share.mirror = value?.offsetPx ?: 0f
+            if (!filter.touching || value?.edge != BarHideFrame.Edge.TOP) share.mirror = value?.offsetPx ?: 0f
+            if (value == null || value.offsetPx <= 0f) filter.barAtRest()
         }
 
-    private var touching = false
     /**
      * The finger on the screen (raw coordinates), from the latest real touch. The WebView's own
      * coordinates will not do here: `TabHost.place` slides the view with a top-docked bar, so
@@ -96,8 +101,6 @@ class BarHideGesture(
     /** Scroll waiting for the next frame's report, CSS px. */
     private var pending = 0.0
     private var flushPosted = false
-    /** Until when a scroll with no finger on the page is the finger's fling. */
-    private var flingUntil = 0L
 
     private val flush = Runnable {
         flushPosted = false
@@ -113,17 +116,15 @@ class BarHideGesture(
         fingerY = event.rawY
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                touching = true
-                flingUntil = 0L
+                filter.down(fingerY)
                 share.mirror = frame?.offsetPx ?: 0f
                 if (frame != null) emit("start", null)
             }
             MotionEvent.ACTION_POINTER_DOWN -> share.pointerDown()
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                touching = false
                 // From now, not from the event's own time: a lift delivered late (batched behind
                 // a slow frame) still leaves the scroll it started its gap to arrive in.
-                flingUntil = maxOf(event.eventTime, SystemClock.uptimeMillis()) + FLING_GAP_MS
+                filter.lifted(maxOf(event.eventTime, SystemClock.uptimeMillis()))
                 flush.run()
                 if (frame != null) emit("end", json("time" to event.eventTime))
             }
@@ -146,7 +147,11 @@ class BarHideGesture(
             MotionEvent.ACTION_DOWN -> share.down(fingerX, fingerY, event.y, taking = frame?.edge == BarHideFrame.Edge.TOP)
             MotionEvent.ACTION_MOVE -> {
                 val travel = frame?.takeIf { it.edge == BarHideFrame.Edge.TOP }?.travelPx ?: 0
-                val taken = share.move(fingerX, fingerY, travel, view.canScrollVertically(1))
+                // A hide starts only with the band the page is about to be laid out taller by
+                // still below (else Chromium clamps the scroll back, see [BarHideScrollFilter]);
+                // one under way needs only something left to scroll to.
+                val pageBelow = view.scrollRemaining() >= if (share.mirror <= 0f) travel else 1
+                val taken = share.move(fingerX, fingerY, travel, pageBelow)
                 if (taken != 0f) report(taken)
             }
         }
@@ -162,35 +167,31 @@ class BarHideGesture(
         }
     }
 
-    /** `View.onScrollChanged` on the WebView. */
+    /** `View.onScrollChanged` on the WebView: the page's own scroller moved (inner scrollers never reach here). */
     fun onScrollChanged(scrollY: Int, oldScrollY: Int) {
         val frame = frame ?: return
-        val dt = scrollY - oldScrollY
-        if (dt == 0) return
-        val now = SystemClock.uptimeMillis()
-        val flinging = !touching && now < flingUntil
-        if (!touching && !flinging) return
-        // The page reached its top without a finger on it (a fling ran out at the top): a bar
-        // still off comes back. Under a finger the scroll itself brings it back.
-        if (scrollY <= 0 && oldScrollY > 0 && !touching && share.mirror > 0f) {
-            emit("show", null)
-            return
+        val verdict = filter.scrolled(
+            scrollY,
+            oldScrollY,
+            view.scrollRemaining(),
+            share.mirror,
+            frame.travelPx,
+            frame.edge == BarHideFrame.Edge.TOP,
+            fingerY,
+            SystemClock.uptimeMillis()
+        )
+        when (verdict) {
+            BarHideScrollFilter.Verdict.NONE -> return
+            BarHideScrollFilter.Verdict.HELD -> {}
+            BarHideScrollFilter.Verdict.REPORT -> report((scrollY - oldScrollY).toFloat())
+            BarHideScrollFilter.Verdict.SHOW -> emit("show", null)
         }
-        when (frame.edge) {
-            BarHideFrame.Edge.BOTTOM -> {
-                if (flinging) flingUntil = now + FLING_GAP_MS
-                report(dt.toFloat())
-            }
-            BarHideFrame.Edge.TOP -> {
-                // The finger's travel, not the page's scroll, moves a top-docked bar (see
-                // [BarHideShare]); a fling up under a hidden bar brings it back on its spring, as
-                // Chrome's fling shows its controls.
-                if (flinging && dt < 0 && share.mirror > 0f) {
-                    flingUntil = 0L
-                    emit("show", null)
-                }
-            }
-        }
+        if (filter.touching) share.rootScrolled()
+    }
+
+    /** `View.onOverScrolled` on the WebView: a drag pushing the page against its top has reached the page's own scroller too. */
+    fun onOverScrolled(scrollY: Int, clampedY: Boolean) {
+        if (clampedY && scrollY <= 0 && filter.touching) share.rootScrolled()
     }
 
     private fun report(px: Float) {
@@ -202,9 +203,15 @@ class BarHideGesture(
     }
 
     companion object {
-        /** A page that has not scrolled for this long after the finger lifted is done flinging. */
-        private const val FLING_GAP_MS = 120L
+        /**
+         * A page that has not scrolled for this long after the finger lifted is done flinging.
+         * The chrome waits longer than this for a fling's scroll to end (`BAR_HIDE_FLING_GAP_MS`,
+         * `lib/barHide.ts`), so a fling's last report never finds it settled already.
+         */
+        const val FLING_GAP_MS = 120L
         /** What of a slop crossing goes through past the slop itself, so the WebView is sure to see the crossing (dp). */
         private const val SLOP_PASS_DP = 1f
+        /** A finger that has moved this far (dp) the other way since the page last scrolled did not scroll it this way. */
+        private const val FINGER_TOLERANCE_DP = 2f
     }
 }
