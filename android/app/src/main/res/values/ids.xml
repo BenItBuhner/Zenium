@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The menu group of Zenium's items in a page's text-selection action mode (SelectionToolbar.kt):
+         a group of the app's own, so the WebView's rebuilds of its groups leave it alone. -->
+    <item name="zen_selection_group" type="id" />
+</resources>
