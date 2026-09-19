@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The launcher's long-press shortcuts (the `android.app.shortcuts` meta-data on the launcher
+  aliases, see scripts/app-icons/lib.ts). One: a new private tab, as Chrome offers "New Incognito
+  tab" (INC-01). Its intent lands on MainActivity in the browser's task, which asks the chrome for
+  a private tab in the current space (PrivateBrowsing.ACTION_NEW_TAB); the target package is the
+  build's applicationId through a resource, since res/ knows no manifest placeholders.
+-->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="new-private-tab"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_private"
+        android:shortcutShortLabel="@string/shortcut_private_short"
+        android:shortcutLongLabel="@string/shortcut_private_long">
+        <intent
+            android:action="app.zen.chromium.NEW_PRIVATE_TAB"
+            android:targetPackage="@string/application_id"
+            android:targetClass="app.zen.chromium.MainActivity" />
+    </shortcut>
+</shortcuts>

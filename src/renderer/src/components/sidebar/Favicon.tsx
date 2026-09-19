@@ -66,12 +66,15 @@ export function Favicon({
     const host = getHost(tab.url).replace(/^www\./, '')
     const letter = (tab.customTitle ?? (host || tab.title)).trim().charAt(0).toUpperCase()
     if (!letter || isEmptyTabUrl(tab.url) || tab.url.startsWith('zen://')) {
+      // The private marker (v2 §9.19): the mask glyph while the private tab has no page, at the
+      // row stroke when drawn at the phone's 20.
       const Icon =
         tab.containerId === PRIVATE_CONTAINER_ID && isEmptyTabUrl(tab.url) ? VenetianMask : Globe
       return (
         <Icon
           className={cn('zen-tab-favicon shrink-0 opacity-60', className)}
           style={{ width: size, height: size }}
+          strokeWidth={size >= 20 ? 1.75 : 2}
         />
       )
     }

@@ -27,6 +27,8 @@ Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 
 const { NEW_TAB_CELL, TabOverview } = await import('../TabOverview')
 const { activeLiftPointer, cancelLift, liftStore } = await import('../useCardLift')
+const { privateTabsStore, resetOverviewPane } = await import('@renderer/lib/privateTabs')
+const { PRIVATE_CONTAINER_ID } = await import('@shared/types')
 const { clearDepartures, departStore } = await import('../departureStore')
 const { GROUP_HEADER, GROUP_PAD } = await import('../GroupCard')
 const { collectCells, FlipTracker, layoutAnimations, REDUCED_FADE_MS } =
@@ -1223,6 +1225,174 @@ describe('under reduced motion', () => {
       for (const done of finish) done()
     })
     expect(departStore.get().items).toEqual([])
+  })
+})
+
+// --- (G) the private pane (TAB-02, TAB-03) --------------------------------------------------------
+
+describe('the private pane', () => {
+  const privateTab = (id: string, url: string, patch: Partial<Tab> = {}): Tab =>
+    tab(id, url, { containerId: PRIVATE_CONTAINER_ID, ...patch })
+  /** The same state on a host with private tabs (the Android host): the segment shows. */
+  const withPrivate = (state: UIState): UIState => ({
+    ...state,
+    capabilities: { ...state.capabilities, privateTabs: true }
+  })
+  /** Two regular tabs and two private ones, interleaved in the space's track; a is in view. */
+  const mixed = (): UIState =>
+    withPrivate(
+      stateOf(
+        [
+          tab('a', 'https://a.example/'),
+          privateTab('p1', 'https://one.example/'),
+          tab('b', 'https://b.example/'),
+          privateTab('p2', 'https://two.example/')
+        ],
+        []
+      )
+    )
+  const cellKeys = (): string[] => [...collectCells(grid()).keys()]
+  const segment = (pane: 'tabs' | 'private'): HTMLElement =>
+    host!.querySelector<HTMLElement>(`[data-testid="overview-pane-${pane}"]`)!
+  const selected = (pane: 'tabs' | 'private'): boolean =>
+    segment(pane).getAttribute('aria-selected') === 'true'
+  const countShown = (): string =>
+    host!.querySelector<HTMLElement>('[data-testid="overview-count"]')!.textContent!
+  /** The `zen-new-tab` requests the overview makes while `during` runs: their details. */
+  const newTabRequests = (during: () => void): unknown[] => {
+    const asked: unknown[] = []
+    const hear = (e: Event): void => {
+      asked.push((e as CustomEvent).detail)
+    }
+    window.addEventListener('zen-new-tab', hear)
+    during()
+    window.removeEventListener('zen-new-tab', hear)
+    return asked
+  }
+
+  afterEach(() => {
+    act(() => resetOverviewPane())
+  })
+
+  it('a host without private tabs has no segment, and a private card never reaches its grid', () => {
+    render(stateOf([tab('a', 'https://a.example/'), privateTab('p1', 'https://one.example/')], []))
+    expect(host!.querySelector('[role="tablist"]')).toBeNull()
+    expect(cellKeys()).toEqual(['a', NEW_TAB_CELL])
+  })
+
+  it('the regular pane shows the space without its private tabs; the private pane every private tab and no regular one', () => {
+    render(mixed())
+    expect(selected('tabs')).toBe(true)
+    expect(cellKeys()).toEqual(['a', 'b', NEW_TAB_CELL])
+    expect(countShown()).toBe('2 tabs')
+    expect(grid().dataset.pane).toBe('tabs')
+    const regularGrid = grid()
+
+    // The segment switches panes: the private grid is a fresh one (it fades in over the backdrop).
+    act(() => segment('private').click())
+    expect(privateTabsStore.get().pane).toBe('private')
+    expect(selected('private')).toBe(true)
+    expect(selected('tabs')).toBe(false)
+    expect(cellKeys()).toEqual(['p1', 'p2', NEW_TAB_CELL])
+    expect(countShown()).toBe('2 tabs')
+    expect(grid().dataset.pane).toBe('private')
+    expect(grid()).not.toBe(regularGrid)
+    expect(host!.querySelector('.zen-title')!.textContent).toBe('Private')
+    // Its last card asks for a private tab.
+    expect(cellOf(NEW_TAB_CELL).dataset.testid).toBe('overview-new-private-tab')
+
+    // And back: the space's grid again, the space's name over it.
+    act(() => segment('tabs').click())
+    expect(cellKeys()).toEqual(['a', 'b', NEW_TAB_CELL])
+    expect(host!.querySelector('.zen-title')!.textContent).toBe('Work')
+    expect(cellOf(NEW_TAB_CELL).dataset.testid).toBe('overview-new-tab')
+  })
+
+  it('opens on the pane of the tab in view: a private tab up, the private pane – without a pick', () => {
+    const state = mixed()
+    state.spaces[0].activeTabId = 'p1'
+    render(state)
+    expect(privateTabsStore.get().pane).toBeNull()
+    expect(selected('private')).toBe(true)
+    expect(cellKeys()).toEqual(['p1', 'p2', NEW_TAB_CELL])
+    // Pinned and grouped regular tabs stay on their pane too.
+    render(
+      withPrivate(
+        stateOf([
+          privateTab('p1', 'https://one.example/'),
+          tab('pinned', 'https://pinned.example/', { pinned: true }),
+          tab('m1', 'https://m1.example/', { folderId: GROUP }),
+          tab('m2', 'https://m2.example/', { folderId: GROUP })
+        ])
+      )
+    )
+    expect(cellKeys()).toEqual(['p1', NEW_TAB_CELL])
+    act(() => segment('tabs').click())
+    expect(cellKeys()).toEqual(['pinned', `group:${GROUP}`, 'm1', 'm2', NEW_TAB_CELL])
+  })
+
+  it('with no private tab the private pane is the explainer, whose button asks for a private tab', () => {
+    render(withPrivate(stateOf([tab('a', 'https://a.example/')], [])))
+    act(() => segment('private').click())
+    expect(host!.querySelector('.zen-overview-grid')).toBeNull()
+    const empty = host!.querySelector<HTMLElement>('[data-testid="overview-private-empty"]')!
+    expect(empty.querySelector('h2')!.textContent).toBe('No private tabs')
+    expect(countShown()).toBe('0 tabs')
+    const button = empty.querySelector<HTMLElement>('[data-testid="overview-private-empty-new"]')!
+    expect(button.textContent).toBe('New Private Tab')
+    expect(newTabRequests(() => act(() => button.click()))).toEqual([
+      { containerId: PRIVATE_CONTAINER_ID }
+    ])
+    // The first private tab replaces the explainer with the grid.
+    render(
+      withPrivate(
+        stateOf([tab('a', 'https://a.example/'), privateTab('p1', 'https://one.example/')], [])
+      )
+    )
+    expect(host!.querySelector('[data-testid="overview-private-empty"]')).toBeNull()
+    expect(cellKeys()).toEqual(['p1', NEW_TAB_CELL])
+  })
+
+  it("each pane's New Tab card asks for a tab of its own mode", () => {
+    render(mixed())
+    const asked = newTabRequests(() => {
+      act(() => cellOf(NEW_TAB_CELL).click())
+      act(() => segment('private').click())
+      act(() => cellOf(NEW_TAB_CELL).click())
+    })
+    expect(asked).toEqual([{}, { containerId: PRIVATE_CONTAINER_ID }])
+  })
+
+  it('a held private card offers to close the other private tabs only', () => {
+    // Four private tabs and two regular ones: "Close other tabs" on p1 counts three, not five.
+    render(
+      withPrivate(
+        stateOf(
+          [
+            privateTab('p1', 'https://one.example/'),
+            tab('a', 'https://a.example/'),
+            privateTab('p2', 'https://two.example/'),
+            tab('b', 'https://b.example/'),
+            privateTab('p3', 'https://three.example/'),
+            privateTab('p4', 'https://four.example/')
+          ],
+          []
+        )
+      )
+    )
+    expect(selected('private')).toBe(true)
+    place('p1', 0, 0)
+    pickUp('p1')
+    const p = at('p1', 0.5, 0.5)
+    letGo(p.x, p.y)
+    act(() => elapse(300))
+    act(() => settleSprings())
+    const labels = [...document.querySelectorAll<HTMLElement>('.zen-sheet-item')].map(
+      (el) => el.textContent
+    )
+    expect(labels).toContain('Close other tabs (3)')
+    // No grouping on the private pane: the session is not a workspace.
+    expect(labels).not.toContain('New group')
   })
 })
 

@@ -1,7 +1,8 @@
 import type { JSX } from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Plus, X } from 'lucide-react'
+import { Plus, VenetianMask, X } from 'lucide-react'
 import type { PhoneBarPosition, Rect, UIState } from '@shared/types'
+import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { useBackSurface } from '@renderer/lib/back'
 import { stageStore } from '@renderer/lib/gestures/stage'
@@ -14,9 +15,10 @@ const GAP = 8
 const MARGIN = 8
 
 /**
- * The Tabs button's hold: a small menu anchored to the button – New Tab and Close Tab – above
- * a bar docked at the bottom, below one docked at the top. It is a menu on the v2 draft's
- * panel, sized for a thumb; a tap anywhere else, the system back or Escape closes it.
+ * The Tabs button's hold: a small menu anchored to the button – New Tab, New Private Tab on
+ * hosts with private tabs (INC-01), and Close Tab – above a bar docked at the bottom, below one
+ * docked at the top. It is a menu on the v2 draft's panel, sized for a thumb; a tap anywhere
+ * else, the system back or Escape closes it.
  */
 export function TabsQuickMenu({
   state,
@@ -105,6 +107,26 @@ export function TabsQuickMenu({
           <Plus className="h-5 w-5 shrink-0" strokeWidth={1.75} />
           <span className="min-w-0 flex-1 truncate">New Tab</span>
         </button>
+        {state.capabilities.privateTabs && (
+          <button
+            type="button"
+            role="menuitem"
+            className="zen-quick-menu-item"
+            data-testid="quick-menu-new-private-tab"
+            onClick={() =>
+              pick(() =>
+                window.dispatchEvent(
+                  new CustomEvent('zen-new-tab', {
+                    detail: { containerId: PRIVATE_CONTAINER_ID }
+                  })
+                )
+              )
+            }
+          >
+            <VenetianMask className="h-5 w-5 shrink-0" strokeWidth={1.75} />
+            <span className="min-w-0 flex-1 truncate">New Private Tab</span>
+          </button>
+        )}
         <button
           type="button"
           role="menuitem"

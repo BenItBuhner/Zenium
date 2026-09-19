@@ -3,7 +3,7 @@ import { useEffect, useRef } from 'react'
 import { Globe, Lock, Search } from 'lucide-react'
 import { internalPageOf } from '@shared/internalPages'
 import type { PhoneBarPosition, Space, Tab, UIState } from '@shared/types'
-import { displayHost } from '@shared/url'
+import { displayHost, isEmptyTabUrl } from '@shared/url'
 import { run } from '@renderer/lib/api'
 import {
   contentShift,
@@ -15,6 +15,8 @@ import {
 import { closeOverview, overviewIsOpen, stageStore } from '@renderer/lib/gestures/stage'
 import { closeSpacesDrawer } from '@renderer/lib/gestures/drawer'
 import { barFade } from '@renderer/lib/motion/recede'
+import { usePrivateSurface } from '@renderer/lib/privateSurface'
+import { isPrivateTab } from '@renderer/lib/privateTabs'
 import { activeSpace, activeTab } from '@renderer/lib/selectors'
 import { openSiteInfo } from '@renderer/lib/siteInfo'
 import {
@@ -73,6 +75,9 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
   const activeTabId = tab?.id ?? null
   const dock = dockStore.use()
   const overviewOpen = stageStore.use((s) => s.overview.phase !== 'closed')
+  // The window surfaces are on the private theme (blending to it): a private tab is in view, or
+  // the overview shows the private pane (§9.29; MOT-14).
+  const privateSurface = usePrivateSurface(state)
 
   // Picking a tab (or opening chrome UI) in the drawer closes it.
   const lastActive = useRef(activeTabId)
@@ -166,6 +171,7 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
     <div
       className="zen-window relative flex h-full w-full flex-col overflow-hidden"
       data-dark={isDark}
+      data-private={privateSurface || undefined}
       style={{
         paddingTop: 0,
         paddingBottom: 0,
@@ -389,6 +395,8 @@ export function PillContent({
   // An internal page (Settings): its glyph in the favicon slot and the page's name, no lock and
   // no site-information chip – there is no site (v2 §10.1); the registry says which glyph.
   const page = shown ? internalPageOf(shown.url) !== null : false
+  // The mask glyph of a private tab without a page is drawn at the phone's 20 (v2 §9.19).
+  const iconSize = shown && isPrivateTab(shown) && isEmptyTabUrl(shown.url) ? 20 : 16
   const Control = interactive ? 'button' : 'span'
   const controlProps = interactive ? { type: 'button' as const } : {}
   return (
@@ -424,10 +432,22 @@ export function PillContent({
           data-site-info
           className="order-first -ml-1.5 -mr-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
         >
-          <Favicon tab={shown} size={16} />
+          <Favicon tab={shown} size={iconSize} />
         </PillChip>
       ) : (
         <Search className="order-first h-4 w-4 shrink-0 opacity-60" />
+      )}
+      {/*
+        The private marker (v2 §9.19): while the private tab has no page the mask glyph stands in
+        its favicon slot (`Favicon`) and that is all; once it has one the favicon shows like any
+        other and the pill says "Private" in the neutral badge – the window family, 20 tall,
+        13/600 – at the end of the leading chip group, before the host. Never glyph and badge
+        together. It comes up with the tab's content, on the same fade (MOT-14).
+      */}
+      {shown && isPrivateTab(shown) && !isEmptyTabUrl(shown.url) && (
+        <span className="zen-v2-badge zen-animate-fade order-first" data-testid="private-badge">
+          Private
+        </span>
       )}
       {url && secure && !page && (
         <PillChip
