@@ -605,6 +605,16 @@ class Extensions(private val host: Host) {
         synchronized(bridgeTrace) { bridgeTrace.filter { it.contains(" ${extensionId.take(8)}/") } }
 
     /**
+     * The endpoints a view holds right now, one line each (context, extension, main frame, URL,
+     * endpoint id), for instrumentation: whether the document a blank extension page shows is
+     * still one the host can answer.
+     */
+    fun endpointSnapshot(view: WebView): List<String> =
+        endpoints.entries.filter { it.value.view === view }.map { (ep, e) ->
+            "${e.context} ${e.extensionId.take(8)} main=${e.isMainFrame} world=${e.world} url=${e.url} ep=$ep"
+        }
+
+    /**
      * Instrumentation only: run `script` in the isolated world of `extensionId`'s main-frame
      * content endpoint on `view` and hand back the JSON-encoded result, or null when the
      * extension has no world endpoint there (or worlds are off). `evaluateJavascript` only sees

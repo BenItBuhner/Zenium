@@ -443,6 +443,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             return
         }
         val tabsBefore = tabUrls().keys
+        val since = SystemClock.uptimeMillis()
         coreInvoke("extension.openOptions", """{"id":${JSONObject.quote(row.id)}}""")
         var where = ""
         var tabId: String? = null
@@ -492,12 +493,15 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             val opened = openedTabs.values.toList()
             detail.put("openedTabs", JSONArray(opened))
             if (sheet != null) detail.put("sheetDom", json(tabEval(sheet, DOM_REPORT))).put("sheetConsole", JSONArray(consoleOf(sheet).takeLast(20)))
-            // A tab that opened and drew nothing: its document's report (scripts, readyState) and console are
-            // the evidence of why (Adblock Plus's and Ghostery's options pages stayed blank on both jobs).
+            // A tab that opened and drew nothing: its document's report (scripts, readyState), console,
+            // the host's endpoints for it, the bridge trace of the stage and a message probe are the
+            // evidence of why (Adblock Plus's and Ghostery's options pages stayed blank on both jobs,
+            // their documents complete and their consoles empty; Adblock Plus's options.js awaits one
+            // runtime.sendMessage before it shows its body).
             openedTabs.entries.firstOrNull { it.value.contains(".ext.zenium.invalid/") }?.let { blank ->
                 var v: TabWebView? = null
                 instrumentation.runOnMainSync { v = host.tabs.get(blank.key) }
-                v?.let { detail.put("tabReport", json(tabEval(it, BLANK_PAGE_REPORT))).put("tabConsole", JSONArray(consoleOf(it).takeLast(20))) }
+                v?.let { detail.put("blankTab", blankPageEvidence(it, row, since)) }
             }
             stage(
                 entry, "options",
@@ -943,6 +947,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val fixture = Regex("page-[abc]\\.html")
         val openBefore = tabUrls().values.count { fixture.containsMatchIn(it) && !it.endsWith("/page-a.html") }
         val extra = JSONObject().put("openBefore", openBefore)
+        val since = SystemClock.uptimeMillis()
         coreInvoke("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
         var click = JSONObject().put("popup", false)
         val popup = poll(6_000, 400) { popupView()?.takeIf { it.context == "popup" && rendered(it) } }
@@ -961,8 +966,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         if (listTab != null) {
             val view = waitForView(listTab.key)
             list = pollExpr(view, "JSON.stringify({pass: document.querySelectorAll('a[href*=\"page-\"]').length >= 3, links: document.querySelectorAll('a[href*=\"page-\"]').length, text: document.body.innerText.replace(/\\s+/g,' ').trim().slice(0,200)})", 10_000)
-            // The list page drew nothing but its "..." placeholder (the 156 job): its document and console.
-            if (!list.optBoolean("pass")) extra.put("listReport", json(tabEval(view, BLANK_PAGE_REPORT))).put("listConsole", JSONArray(consoleOf(view).takeLast(20)))
+            // The list page drew nothing but its spinner (the 156 job, its console empty): the blank-page
+            // evidence – the host's endpoints for it, the stage's bridge trace, a message probe.
+            if (!list.optBoolean("pass")) extra.put("blankList", blankPageEvidence(view, row, since))
         }
         SystemClock.sleep(1_000)
         val openAfter = tabUrls().values.count { fixture.containsMatchIn(it) && !it.endsWith("/page-a.html") }
@@ -1212,6 +1218,33 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     }
 
     private fun json(text: String): JSONObject = runCatching { JSONObject(text) }.getOrElse { JSONObject().put("raw", text) }
+
+    /**
+     * An extension page that opened and drew nothing: its document's report, the endpoints the host
+     * still holds for the view (a page the host dropped gets no reply, and no error), what crossed
+     * the bridge for the extension since the stage began (the background's own calls and their
+     * replies left out: its storage traffic would fill the window), and whether a message and a
+     * storage read sent from the page now come back ([MESSAGE_PROBE]).
+     */
+    private fun blankPageEvidence(view: WebView, row: Row, since: Long): JSONObject {
+        var endpoints: List<String> = emptyList()
+        var trace: List<String> = emptyList()
+        instrumentation.runOnMainSync {
+            endpoints = host.extensions.endpointSnapshot(view)
+            trace = host.extensions.traceSnapshot(row.id)
+        }
+        val stage = trace.filter {
+            (it.substringBefore(' ').toLongOrNull() ?: 0L) >= since && !it.contains("/background call ") && !it.contains("/background reply ")
+        }
+        tabEval(view, MESSAGE_PROBE)
+        SystemClock.sleep(2_500)
+        return JSONObject()
+            .put("report", json(tabEval(view, BLANK_PAGE_REPORT)))
+            .put("console", JSONArray(consoleOf(view).takeLast(20)))
+            .put("endpoints", JSONArray(endpoints))
+            .put("trace", JSONArray(stage.takeLast(80)))
+            .put("probe", json(tabEval(view, "JSON.stringify(window.__zenMessageProbe||null)")))
+    }
 
     private fun <T> poll(timeoutMs: Long, pollMs: Long = 250, probe: () -> T?): T? {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
@@ -1744,6 +1777,16 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val VSC_HANDSHAKE_PROBE =
             "(function(){var h=document.documentElement;var p=window.__vscProbe={askedAt:Date.now(),answer:null,ms:null};h.addEventListener('VSC_SETTINGS_READY',function(e){p.ms=Date.now()-p.askedAt;try{p.answer=JSON.stringify(e.detail)}catch(x){p.answer='unserialisable: '+x}},{once:true});" +
                 "h.dispatchEvent(new CustomEvent('VSC_REQUEST_SETTINGS'));return 'asked'})()"
+        /**
+         * From a blank extension page: does a `runtime.sendMessage` to the extension's other pages come
+         * back at all (a response, `undefined`, or Chrome's "Receiving end" error all count), and does a
+         * `storage.local.get` – the two hops a page's first paint usually waits on. What each answered,
+         * or that it had not after 2.5 s, lands on `window.__zenMessageProbe`.
+         */
+        private const val MESSAGE_PROBE =
+            "(function(){var p=window.__zenMessageProbe={askedAt:Date.now(),message:null,messageError:null,messageMs:null,storage:null,storageError:null,storageMs:null};" +
+                "try{chrome.runtime.sendMessage({type:'zenium-probe',what:'os'}).then(function(v){p.messageMs=Date.now()-p.askedAt;p.message=v===undefined?'undefined':JSON.stringify(v).slice(0,200)},function(e){p.messageMs=Date.now()-p.askedAt;p.messageError=String(e&&e.message||e)})}catch(e){p.messageError='threw: '+String(e&&e.message||e)}" +
+                "try{chrome.storage.local.get(null).then(function(v){p.storageMs=Date.now()-p.askedAt;p.storage=Object.keys(v).length+' keys'},function(e){p.storageMs=Date.now()-p.askedAt;p.storageError=String(e&&e.message||e)})}catch(e){p.storageError='threw: '+String(e&&e.message||e)}return 'asked'})()"
         /** In the extension's world: does chrome.storage.sync.get(null) answer, and how fast. */
         private const val STORAGE_PROBE =
             "(function(){var p=window.__zenStorageProbe={askedAt:Date.now(),result:null,error:null,ms:null};try{chrome.storage.sync.get(null).then(function(v){p.ms=Date.now()-p.askedAt;p.result=JSON.stringify(v).slice(0,200)},function(e){p.ms=Date.now()-p.askedAt;p.error=String(e&&e.message||e)})}catch(e){p.error='threw: '+String(e&&e.message||e)}return 'asked'})()"
