@@ -228,6 +228,7 @@ function FindField({
           type="text"
           role="searchbox"
           className="zen-v2-field zen-settings-search-field"
+          data-testid="settings-find"
           placeholder="Find in Settings"
           aria-label="Find in Settings"
           inputMode="search"
