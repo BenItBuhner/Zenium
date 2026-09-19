@@ -4,7 +4,8 @@ import type {
   BootStats,
   ContentBootConfig,
   ExtensionBoot,
-  IsolationMode
+  IsolationMode,
+  UnitWorld
 } from '@core/extensions/runtime/boot'
 import { contentScriptAppliesTo, type FrameContext } from '@core/extensions/api/matchPattern'
 import {
@@ -217,7 +218,13 @@ declare const __zenExtBoot: Boot
     typeof performance === 'object' && performance && performance.timeOrigin > 0
       ? Math.round(performance.timeOrigin).toString(36)
       : nonce
-  const endpointIdFor = (extId: string): string => `${docId}.${nonce}.${extId.slice(0, 8)}`
+  /**
+   * One endpoint per extension per copy of this script; under the `with` fallback the copy also
+   * holds an extension's user-script scope next to its content scope (two units of one main
+   * world), and that engine's endpoint is told apart by its context.
+   */
+  const endpointIdFor = (extId: string, context: EngineContextKind = 'content'): string =>
+    `${docId}.${nonce}${context === 'userScript' ? 'u' : ''}.${extId.slice(0, 8)}`
   const realWindow = window as unknown as Any
   const engineTransport = { post }
 
@@ -252,7 +259,7 @@ declare const __zenExtBoot: Boot
     root: object,
     world: boolean
   ): EmulatedEngine {
-    const endpointId = endpointIdFor(ext.id)
+    const endpointId = endpointIdFor(ext.id, context)
     const engine = createEmulatedEngine(
       {
         id: ext.id,
@@ -443,6 +450,26 @@ declare const __zenExtBoot: Boot
   const frame = frameContext()
   const attached: ExtensionBoot[] = []
 
+  /**
+   * The world a unit's scripts see. A `user` unit's scripts get the user-script world's engine
+   * (messaging only, and only when the extension configured it); every other unit's get the
+   * content script's. Each unit that attaches to this copy of the script brings its own: under
+   * the `with` fallback every unit of every extension lands in the one main world, and the first
+   * copy to boot must not lend its world to the rest (a user-script unit booting first gave
+   * Video Speed Controller's bridge a `chrome` without `storage` and Google Translate's script
+   * one without `i18n`).
+   */
+  interface UnitContext {
+    world: UnitWorld
+    messaging: boolean
+  }
+  const unitContextOf = (config: ContentBootConfig): UnitContext => ({
+    world: config.world,
+    messaging: config.world !== 'user' || config.userScriptMessaging === true
+  })
+  /** What the host's `exec` and a late boot run as: the extension's content scope. */
+  const contentUnit: UnitContext = { world: 'isolated', messaging: true }
+
   // A page's CSP has no say over an extension's resources in Chrome; over the emulated origin it
   // has. A `<script src=<extension origin>/…>` the page's `script-src` refused runs in the main
   // world through the host instead (`extensionScriptRecovery.ts`).
@@ -530,9 +557,12 @@ declare const __zenExtBoot: Boot
    * `with` – the scope proxy, `chrome` lives in its store; `none` – the real window and the
    * page's own `chrome`, as `world: "MAIN"` scripts get in Chrome (no extension APIs, no
    * endpoint: the injection's result travels back through the host's own evaluation).
+   * A content scope and a user-script scope of one extension are two scopes with two engines
+   * (and two endpoints) even when both share this copy of the script.
    */
-  function scopeFor(ext: ExtensionBoot, isolation: IsolationMode): Scope {
-    const key = `${ext.id}/${isolation}`
+  function scopeFor(ext: ExtensionBoot, isolation: IsolationMode, unit: UnitContext): Scope {
+    const context: EngineContextKind = unit.world === 'user' ? 'userScript' : 'content'
+    const key = `${ext.id}/${isolation}/${context}`
     let scope = scopes.get(key)
     if (scope) return scope
     if (isolation === 'none') {
@@ -547,8 +577,7 @@ declare const __zenExtBoot: Boot
       scopes.set(key, scope)
       return scope
     }
-    const context: EngineContextKind = unitWorld === 'user' ? 'userScript' : 'content'
-    const messaging = unitWorld !== 'user' || content.userScriptMessaging === true
+    const messaging = unit.messaging
     let root: Any
     if (isolation === 'world') {
       shieldWorld(ext, 'world')
@@ -639,7 +668,7 @@ declare const __zenExtBoot: Boot
       remove?: unknown
       world?: unknown
     }
-    const scope = scopeFor(ext, options.world === 'MAIN' ? 'none' : ext.isolation)
+    const scope = scopeFor(ext, options.world === 'MAIN' ? 'none' : ext.isolation, contentUnit)
     if (kind === 'css') {
       const key = `${ext.id}/#${String(options.id ?? options.code ?? '')}`
       if (options.remove) removeCss(key)
@@ -665,15 +694,15 @@ declare const __zenExtBoot: Boot
    * host evaluated the bootstrap in a document that predates the extension's world) carries no
    * groups: it only gives `exec` a scope and a bridge, and says hello like any other endpoint.
    */
-  const apply = (ext: ExtensionBoot, late: boolean, started: number): void => {
+  const apply = (ext: ExtensionBoot, late: boolean, unit: UnitContext, started: number): void => {
     if (!attached.some((e) => e.id === ext.id)) attached.push(ext)
     const due: BootGroup[] = []
     if (!late)
       for (const group of ext.groups) if (contentScriptAppliesTo(group, frame)) due.push(group)
     if (stats) stats.matchMs += performance.now() - started
-    if (late) scopeFor(ext, ext.isolation === 'none' ? 'with' : ext.isolation)
+    if (late) scopeFor(ext, ext.isolation === 'none' ? 'with' : ext.isolation, contentUnit)
     for (const group of due) {
-      const scope = scopeFor(ext, isolationOf(ext, group))
+      const scope = scopeFor(ext, isolationOf(ext, group), unit)
       scheduleRunAt(group.runAt, hooks, () => runGroup(scope, group))
     }
     if (stats) {
@@ -681,7 +710,7 @@ declare const __zenExtBoot: Boot
       stats.bootMs += performance.now() - started
     }
   }
-  apply(content.extension, content.late === true, t0)
+  apply(content.extension, content.late === true, unitContextOf(content), t0)
 
   const runtime: Runtime = {
     attach(other) {
@@ -689,7 +718,7 @@ declare const __zenExtBoot: Boot
       if (other.config.token !== content.token || other.config.kind !== 'content') return
       Object.assign(sources, other.sources)
       Object.assign(cssTexts, other.css)
-      apply(other.config.extension, other.config.late === true, t)
+      apply(other.config.extension, other.config.late === true, unitContextOf(other.config), t)
     }
   }
   Object.freeze(runtime)
