@@ -907,13 +907,16 @@ export function FrameDialogHost({
       if (frameHost === api) setFrameHost(null)
     }
   }, [frame, api])
-  // Open for the panels on their way out too (a mouse): the chrome comes back when the last one
-  // is gone.
-  const open = dialogs.length > 0 || leaving.exiting
-  // The chrome is inert while a dialog is open (§9.5). On a phone the sheet chassis holds it
-  // itself, from the rise to the landing of its leave (`useSheetChassis`); a sheet with its own
-  // chassis holds it as a `BottomSheet` does.
-  const holds = open && !(sheet && chassisOpen)
+  // The chrome is inert while a dialog is open (§9.5, §9.22). The host holds it for its own
+  // dialogs on a mouse, and for their panels on the way out too: the chrome comes back when the
+  // last one is gone. On a phone the sheet chassis holds it itself, from the rise to the landing
+  // of its leave (`useSheetChassis`). Never for a sheet on the chassis already (`ownScrim`:
+  // `BottomSheet` placed `hosted`), on either pose: it holds the chrome as a `BottomSheet` does,
+  // and as it goes it releases that hold and then returns the focus to its opener, in the one
+  // layout cleanup – a hold of the host's would still stand at that moment (the host's state
+  // clears a commit later), the opener under it would refuse the focus, and focus would fall to
+  // `body` (the 9.22 regression of the Settings pickers and every other hosted sheet).
+  const holds = (!sheet && chassisOpen) || leaving.exiting
   useEffect(() => {
     if (!holds) return
     return holdChromeInert()
