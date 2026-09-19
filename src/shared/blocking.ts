@@ -85,7 +85,7 @@ export const TRACKING_LEVEL_LABELS: Record<TrackingLevel, { label: string; descr
     balanced: {
       label: 'Balanced',
       description:
-        'Blocks ads and trackers with EasyList, EasyPrivacy, uBlock Origin filters and Peter Lowe’s list. Sites keep working.'
+        'Blocks ads and trackers with EasyList, EasyPrivacy and uBlock Origin’s filters. Sites keep working.'
     },
     strict: {
       label: 'Strict',

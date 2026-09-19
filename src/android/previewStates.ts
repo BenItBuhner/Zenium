@@ -22,6 +22,16 @@ import {
   showBanner,
   uiStore
 } from '@renderer/lib/ui'
+import {
+  customListId,
+  DEFAULT_FILTER_LISTS,
+  enabledListsFor,
+  siteOriginOf,
+  type BlockingStatus,
+  type FilterListStatus,
+  type TrackingLevel
+} from '@shared/blocking'
+import type { UIState } from '@shared/types'
 import type { HostGlobal } from './boot'
 import { PREVIEW_WEB_APP, postPreviewManifest } from './preview'
 import { PREVIEW_DOWNLOAD_EVENT } from './previewDownloads'
@@ -52,8 +62,9 @@ const SHEET_LEAVE_MS = 1500
  * Chromium `net::` code, `url=<target>` naming the URL that failed: the zen://error page is up),
  * the message surfaces and the load bar: `toast=<text>&action=<label>`, `banners=<n>`,
  * `progress=<0…1>`, `webapp=<surface>` (an "Add to Home screen" surface on the active tab) or
- * `download=<file>` (the stand-in downloader starts that transfer; see `PreviewDownloadSpec`). It
- * comes in as the URL hash, `http://localhost:41734/#overlay=history`, or as
+ * `download=<file>` (the stand-in downloader starts that transfer; see `PreviewDownloadSpec`).
+ * `blocking=<variant>` may accompany any of them (see `seedBlocking`). It comes in as the URL
+ * hash, `http://localhost:41734/#overlay=history`, or as
  * `window.postMessage({ zenPreview: 'find=coffee' }, '*')`, which also re-applies an unchanged
  * state. Once applied it is echoed in `<html data-preview-state>` so a driver can wait for it;
  * `.github/scripts/android-preview-shots.mjs` is one.
@@ -115,6 +126,19 @@ function reach(spec: string): void {
   const state = browserStore.get().state
   const tab = state ? activeTab(state) : null
   const target = parsePreviewSpec(spec)
+  // The request engine's state the spec asks for is patched in once the target is up (the core's
+  // push on the way there would replace an earlier patch) and again before a page's rows are
+  // shown or tapped, so a row the seeded state adds is there for `show` and the steps.
+  const blocking = new URLSearchParams(spec.startsWith('#') ? spec.slice(1) : spec).get(
+    'blocking'
+  )
+  const seed = (): void => {
+    if (blocking) seedBlocking(blocking)
+  }
+  const finish = (): void => {
+    seed()
+    done(spec)
+  }
 
   if (target.kind === 'page') {
     // The page tab is the state: reached once the active tab is a page tab and the page has its
@@ -123,6 +147,7 @@ function reach(spec: string): void {
     whenActiveTabIs(isInternalPageUrl, () => {
       whenPageRendered(() => {
         setTimeout(() => {
+          seed()
           // The landing keeps its query between states unless it is retyped: an empty one clears it.
           type('input[aria-label="Find in Settings"]', target.search ?? '')
           requestAnimationFrame(() => {
@@ -131,7 +156,7 @@ function reach(spec: string): void {
               if (el.scrollTop > 0) el.scrollTop = 0
             }
             show(target.show)
-            steps(target.then ?? [], () => done(spec))
+            steps(target.then ?? [], finish)
           })
         }, 300)
       })
@@ -141,14 +166,14 @@ function reach(spec: string): void {
     void openOverlay(target.overlay, tab?.id ?? null, null, null, target.section ?? null).then(
       () => {
         if (target.show) requestAnimationFrame(() => show(target.show))
-        if (target.expand) expandSheet(() => done(spec))
-        else done(spec)
+        if (target.expand) expandSheet(finish)
+        else finish()
       }
     )
   } else if (target.kind === 'download') {
     // The stand-in host (preview.ts) plays the transfer back; it reports like Kotlin would.
     window.dispatchEvent(new CustomEvent(PREVIEW_DOWNLOAD_EVENT, { detail: target.download }))
-    done(spec)
+    finish()
   } else if (target.kind === 'menu') {
     // The core answers with `menu.show`; the state is reached once the descriptor is in the store.
     const unsubscribe = uiStore.subscribe(() => {
@@ -158,7 +183,7 @@ function reach(spec: string): void {
       requestAnimationFrame(() =>
         requestAnimationFrame(() => {
           show(target.show)
-          done(spec)
+          finish()
         })
       )
     })
@@ -166,28 +191,146 @@ function reach(spec: string): void {
   } else if (target.kind === 'zoom' && tab) {
     if (target.factor !== null) run('tab.setZoomFactor', { tabId: tab.id, factor: target.factor })
     openZoom(tab.id)
-    requestAnimationFrame(() => done(spec))
+    requestAnimationFrame(finish)
   } else if (target.kind === 'find' && tab) {
     uiStore.set({ findOpen: true, findTabId: tab.id })
     // The bar mounts on the next render; type into it the way a keyboard would.
     requestAnimationFrame(() => {
       if (target.text) type('input[aria-label="Find in page"]', target.text)
-      done(spec)
+      finish()
     })
   } else if (target.kind === 'pull' && tab) {
     pull(tab.id, target.progress, target.released)
-    requestAnimationFrame(() => done(spec))
+    requestAnimationFrame(finish)
   } else if (target.kind === 'error' && tab) {
     failLoad(tab.id, target.code, target.url ?? tab.url)
-    requestAnimationFrame(() => done(spec))
+    requestAnimationFrame(finish)
   } else if (target.kind === 'messages') {
     showMessages(target, tab?.id ?? null)
-    done(spec)
+    finish()
   } else if (target.kind === 'webapp' && tab) {
+    seed()
     applyWebApp(target.surface, tab.id, spec)
   } else {
-    done(spec)
+    finish()
   }
+}
+
+// ---------------------------------------------------------------------------
+// Request blocking, seeded
+// ---------------------------------------------------------------------------
+
+const HOUR_MS = 60 * 60 * 1000
+/** Network filters per default list, about what the bundled snapshot carries. */
+const FILTER_COUNTS: Record<string, number> = {
+  urlhaus: 2183,
+  'ubo-badware': 3412,
+  easylist: 56828,
+  easyprivacy: 31207,
+  'ubo-filters': 18942,
+  'peter-lowe': 3589,
+  'ubo-privacy': 4210
+}
+const CUSTOM_LIST_URL = 'https://filters.adtidy.org/extension/ublock/filters/14.txt'
+const USER_FILTERS = '||ads.example.com^\n@@||news.example.com^$document\n||tracker.example^$foo'
+const EXCEPTED_SITES = [
+  'https://news.ycombinator.com',
+  'https://en.wikipedia.org',
+  'https://mail.proton.me'
+]
+
+/**
+ * Settings > Privacy and security and the URL bar's blocked-count chip in states this stand-in
+ * host cannot reach on its own (it has no request engine and ships no filter lists): the chrome's
+ * copy of the browser state is patched in place until the core next pushes one. Variants: `on`
+ * (Balanced, lists fresh, requests blocked on the page), `off` (the master switch off),
+ * `level-off`, `strict`, `full` (excepted sites, a custom list, the user's filters with a parse
+ * error), `excepted` (the current site excepted), `updating`, `loading` and `bundled` (first run
+ * on the snapshot built into the app).
+ */
+function seedBlocking(variant: string): void {
+  const state = browserStore.get().state
+  if (!state) return
+  browserStore.set({ state: blockingFixture(state, variant, Date.now()) })
+}
+
+export function blockingFixture(state: UIState, variant: string, now: number): UIState {
+  const tab = activeTab(state)
+  const origin = tab ? siteOriginOf(tab.url) : null
+  const level: TrackingLevel =
+    variant === 'strict' ? 'strict' : variant === 'level-off' ? 'off' : 'balanced'
+  const enabled = variant !== 'off'
+  const full = variant === 'full'
+  const bundled = variant === 'bundled'
+  const updating = variant === 'updating'
+  const customLists = full
+    ? [
+        {
+          id: customListId(CUSTOM_LIST_URL),
+          url: CUSTOM_LIST_URL,
+          name: 'AdGuard Annoyances',
+          enabled: true
+        }
+      ]
+    : []
+  const settings: UIState['settings'] = {
+    ...state.settings,
+    blocking: {
+      ...state.settings.blocking,
+      level,
+      lists: {},
+      customLists,
+      userFilters: full ? USER_FILTERS : '',
+      autoUpdate: true
+    }
+  }
+  const on = enabledListsFor(settings.blocking, enabled)
+  const updatedAt = bundled ? null : now - 2 * HOUR_MS
+  const lists: FilterListStatus[] = DEFAULT_FILTER_LISTS.map((l) => ({
+    ...l,
+    enabled: on.has(l.id),
+    version: bundled ? null : '202609170807',
+    updatedAt,
+    filterCount: FILTER_COUNTS[l.id] ?? 0,
+    bundled,
+    updating: updating && (l.id === 'easylist' || l.id === 'easyprivacy'),
+    lastError: null
+  }))
+  for (const c of customLists)
+    lists.push({
+      id: c.id,
+      name: c.name,
+      description: c.url,
+      url: c.url,
+      homepage: c.url,
+      licence: 'GPL-3.0',
+      tier: null,
+      enabled: c.enabled,
+      version: null,
+      updatedAt,
+      filterCount: 7120,
+      bundled: false,
+      updating: false,
+      lastError: null
+    })
+  const siteExceptions = [
+    ...(full ? EXCEPTED_SITES : []),
+    ...(variant === 'excepted' && origin ? [origin] : [])
+  ].sort()
+  const blocking: BlockingStatus = {
+    ready: variant !== 'loading',
+    enabled,
+    siteExceptions,
+    sessionBlocked: 1284,
+    lists,
+    updating,
+    lastUpdatedAt: bundled || variant === 'loading' ? null : now - 2 * HOUR_MS,
+    userFilterErrors: full ? [{ line: 3, message: 'Unknown option "foo"' }] : []
+  }
+  const active = enabled && level !== 'off' && !(origin !== null && siteExceptions.includes(origin))
+  const tabs = { ...state.tabs }
+  if (tab) tabs[tab.id] = { ...tab, blockedCount: active ? 12 : 0 }
+  return { ...state, settings, blocking, tabs }
 }
 
 /**
