@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   PREVIEW_OVERLAYS,
+  PREVIEW_PRIVATE_SURFACES,
   PREVIEW_PULL_MAX,
   PREVIEW_WEBAPP_SURFACES,
   parsePreviewSpec,
@@ -75,17 +76,20 @@ describe('parsePreviewSpec', () => {
   })
 
   it('opens the app menu, behind an overlay but ahead of the bars', () => {
-    expect(parsePreviewSpec('menu=app')).toEqual({ kind: 'menu' })
+    expect(parsePreviewSpec('menu=app')).toEqual({ kind: 'menu', menu: 'app' })
     expect(parsePreviewSpec('menu=app&show=Desktop Site')).toEqual({
       kind: 'menu',
+      menu: 'app',
       show: 'Desktop Site'
     })
-    expect(parsePreviewSpec('menu=app&find=x')).toEqual({ kind: 'menu' })
-    expect(parsePreviewSpec('menu=app&zoom=2')).toEqual({ kind: 'menu' })
+    expect(parsePreviewSpec('menu=app&find=x')).toEqual({ kind: 'menu', menu: 'app' })
+    expect(parsePreviewSpec('menu=app&zoom=2')).toEqual({ kind: 'menu', menu: 'app' })
     expect(parsePreviewSpec('overlay=history&menu=app')).toEqual({
       kind: 'overlay',
       overlay: 'history'
     })
+    // The Tabs button's quick menu is the other one; a menu with no sheet of its own is idle.
+    expect(parsePreviewSpec('menu=tabs')).toEqual({ kind: 'menu', menu: 'tabs' })
     expect(parsePreviewSpec('menu=context')).toEqual({ kind: 'idle' })
   })
 
@@ -146,6 +150,34 @@ describe('parsePreviewSpec', () => {
     // Not an id as Chrome forms them: no such state.
     expect(parsePreviewSpec('extension-page=dark-reader/options.html')).toEqual({ kind: 'idle' })
     expect(parsePreviewSpec('extension-page=')).toEqual({ kind: 'idle' })
+  })
+
+  it('shows a private tab and the overview panes by surface', () => {
+    for (const surface of PREVIEW_PRIVATE_SURFACES) {
+      expect(parsePreviewSpec(`private=${surface}`)).toEqual({
+        kind: 'private',
+        surface,
+        url: null
+      })
+    }
+    expect(parsePreviewSpec('private=page&url=https://example.org/')).toEqual({
+      kind: 'private',
+      surface: 'page',
+      url: 'https://example.org/'
+    })
+    // The bare `private` flag belongs to a download.
+    expect(parsePreviewSpec('download=a.pdf&private')).toMatchObject({
+      kind: 'download',
+      download: { private: true }
+    })
+    // Ahead of the bars and of everything below them (#135's slot), behind the sheets.
+    expect(parsePreviewSpec('private=newtab&webapp=banner')).toEqual({
+      kind: 'private',
+      surface: 'newtab',
+      url: null
+    })
+    expect(parsePreviewSpec('private=empty&download=a.pdf')).toMatchObject({ kind: 'private' })
+    expect(parsePreviewSpec('menu=app&private=empty')).toEqual({ kind: 'menu', menu: 'app' })
   })
 
   it('puts up messages and the load bar together', () => {
@@ -374,7 +406,7 @@ describe('parsePreviewSpec', () => {
       kind: 'permission',
       permission: 'notifications'
     })
-    expect(parsePreviewSpec('menu=app&prompt=camera')).toEqual({ kind: 'menu' })
+    expect(parsePreviewSpec('menu=app&prompt=camera')).toEqual({ kind: 'menu', menu: 'app' })
     expect(parsePreviewSpec('prompt=')).toEqual({ kind: 'idle' })
     // The security dialogs' two `prompt=` values are theirs (#62), and come up after the bars.
     expect(parsePreviewSpec('prompt=http-auth')).toMatchObject({
@@ -384,11 +416,13 @@ describe('parsePreviewSpec', () => {
     expect(parsePreviewSpec('prompt=certificate&find=x')).toEqual({ kind: 'find', text: 'x' })
   })
 
-  it('opens a private tab, blank or on a page', () => {
-    expect(parsePreviewSpec('private=new')).toEqual({ kind: 'private', url: null })
-    expect(parsePreviewSpec('private=1')).toEqual({ kind: 'private', url: null })
+  it('opens a private tab, blank or on a page, as #135 first spelt it', () => {
+    const blank = { kind: 'private', surface: 'newtab', url: null }
+    expect(parsePreviewSpec('private=new')).toEqual(blank)
+    expect(parsePreviewSpec('private=1')).toEqual(blank)
     expect(parsePreviewSpec('private=https%3A%2F%2Fexample.com%2F')).toEqual({
       kind: 'private',
+      surface: 'page',
       url: 'https://example.com/'
     })
     expect(parsePreviewSpec('private=')).toEqual({ kind: 'idle' })
@@ -397,7 +431,7 @@ describe('parsePreviewSpec', () => {
       kind: 'permission',
       permission: 'camera'
     })
-    expect(parsePreviewSpec('private=new&find=x')).toEqual({ kind: 'private', url: null })
+    expect(parsePreviewSpec('private=new&find=x')).toEqual(blank)
   })
 
   it('reads the pill editor: its text, a new tab, the stand-in clipboard and its steps', () => {
