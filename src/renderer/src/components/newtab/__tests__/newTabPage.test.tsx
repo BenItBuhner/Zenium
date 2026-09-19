@@ -1,0 +1,147 @@
+// @vitest-environment happy-dom
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, createElement } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import type { Tab, UIState } from '@shared/types'
+import { PRIVATE_CONTAINER_ID } from '@shared/types'
+import { DEFAULT_NEW_TAB_SETTINGS } from '@shared/newTab'
+import { BLANK_URL } from '@shared/url'
+
+/*
+ * The one new tab route keyed on the tab's container (NTP-31): a private tab's blank page is the
+ * private page – the explainer in the window family, the search field, no tiles and no gear – and
+ * every other blank tab's is the space's page. A blank tab of the other mode mounts the other page.
+ */
+
+const invoke = vi.fn<(name: string, args?: unknown) => Promise<unknown>>(async (name) =>
+  name === 'history.topSites' ? [] : null
+)
+Object.assign(window, { zen: { invoke, on: () => () => undefined } })
+;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
+const { NewTabPage } = await import('../NewTabPage')
+const { uiStore } = await import('@renderer/lib/ui')
+
+function tab(id: string, containerId: string): Tab {
+  return {
+    id,
+    spaceId: 'space',
+    containerId,
+    url: BLANK_URL,
+    title: '',
+    favicon: null,
+    pinned: false,
+    essential: false,
+    pinnedUrl: null,
+    customTitle: null,
+    customIcon: null,
+    windowId: null,
+    folderId: null,
+    loading: false,
+    canGoBack: false,
+    canGoForward: false,
+    audible: false,
+    muted: false,
+    discarded: false,
+    frozen: false,
+    cpuThrottle: 1,
+    zoom: 1,
+    splitGroupId: null,
+    createdAt: 0,
+    lastActiveAt: 0,
+    errorCode: null,
+    bookmarked: false,
+    readerable: false,
+    blockedCount: 0
+  } as Tab
+}
+
+const state = {
+  platform: 'android',
+  capabilities: { privateTabs: true },
+  tabs: {},
+  spaces: [],
+  activeSpaceId: 'space',
+  folders: {},
+  settings: { newTab: structuredClone(DEFAULT_NEW_TAB_SETTINGS), colorScheme: 'light' },
+  newTabShortcuts: [],
+  newTabHiddenHosts: [],
+  bookmarks: []
+} as unknown as UIState
+
+let root: Root | null = null
+let host: HTMLElement | null = null
+
+function render(t: Tab): HTMLElement {
+  if (!root) {
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+  }
+  act(() => root!.render(createElement(NewTabPage, { state, tab: t, hidden: false })))
+  return host!
+}
+
+beforeEach(() => {
+  invoke.mockClear()
+})
+
+afterEach(() => {
+  act(() => root?.unmount())
+  root = null
+  host?.remove()
+  host = null
+  uiStore.set({ urlbar: { open: false, mode: 'edit', tabId: null } } as never)
+})
+
+describe('the new tab route keyed on the container', () => {
+  it("a private tab's blank page is the private page: the explainer, the field, no tiles, no gear", () => {
+    render(tab('p', PRIVATE_CONTAINER_ID))
+    const page = host!.querySelector<HTMLElement>('[data-testid="private-ntp"]')!
+    expect(page).not.toBeNull()
+    // A window surface on the bare gradient (§9.29): the private theme the window has blended to.
+    expect(page.dataset.surface).toBe('window')
+    expect(page.dataset.wallpaper).toBe('none')
+    expect(page.querySelector('h1')!.textContent).toBe("You're browsing privately")
+    expect(page.querySelector('[data-testid="private-ntp-glyph"]')).not.toBeNull()
+    const headings = [...page.querySelectorAll('h2')].map((h) => h.textContent)
+    expect(headings).toEqual(["Zenium won't save", 'Still visible to'])
+    const rows = [...page.querySelectorAll('li')].map((li) => li.textContent)
+    expect(rows).toEqual([
+      'Browsing history',
+      'Cookies and site data',
+      'Information entered in forms',
+      'Websites you visit',
+      'Your employer or school',
+      'Your internet service provider'
+    ])
+    expect(page.textContent).toContain('Downloads you save and bookmarks you add are kept')
+    expect(page.querySelector('[aria-label="Most visited"]')).toBeNull()
+    expect(page.querySelector('[aria-label="Customise the new tab page"]')).toBeNull()
+    // Nothing of the regular history is asked for.
+    expect(invoke.mock.calls.map(([name]) => name)).not.toContain('history.topSites')
+  })
+
+  it('its field opens the omnibox for the private tab, as the regular page does', async () => {
+    render(tab('p', PRIVATE_CONTAINER_ID))
+    const field = host!.querySelector<HTMLElement>('.zen-ntp-field-main')!
+    expect(field.textContent).toContain('Search or enter address')
+    await act(async () => {
+      field.click()
+      await Promise.resolve()
+    })
+    expect(uiStore.get().urlbar).toMatchObject({ open: true, tabId: 'p', attached: true })
+  })
+
+  it("a regular blank tab's page is the space's, and the tab changing mode mounts the other page", () => {
+    render(tab('r', 'default'))
+    expect(host!.querySelector('[data-testid="private-ntp"]')).toBeNull()
+    const regular = host!.querySelector<HTMLElement>('.zen-ntp')!
+    expect(regular.querySelector('[aria-label="Customise the new tab page"]')).not.toBeNull()
+    render(tab('p', PRIVATE_CONTAINER_ID))
+    const priv = host!.querySelector<HTMLElement>('[data-testid="private-ntp"]')!
+    expect(priv).not.toBeNull()
+    expect(priv).not.toBe(regular)
+    expect(regular.isConnected).toBe(false)
+  })
+})
