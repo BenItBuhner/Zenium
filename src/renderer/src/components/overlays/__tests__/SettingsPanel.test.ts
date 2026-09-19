@@ -38,7 +38,8 @@ const DESKTOP: HostCapabilities = {
   secureDns: true,
   newTabPage: true,
   pageTabs: false,
-  pinShortcuts: false
+  pinShortcuts: false,
+  voiceSearch: false
 }
 
 const ANDROID: HostCapabilities = {

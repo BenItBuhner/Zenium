@@ -11,6 +11,7 @@ import type { BlockingSettings, BlockingStatus } from './blocking'
 import type { PrivacySettings, PrivacyStatus } from './privacy'
 import type { InternalPageId } from './internalPages'
 import type { WebAppInfo } from './webApp'
+import type { VoiceEvent, VoiceStartOutcome } from './voice'
 
 export type Platform = 'linux' | 'win32' | 'darwin' | 'android'
 
@@ -117,6 +118,12 @@ export interface HostCapabilities {
   pageTabs: boolean
   /** Pages can be pinned to the launcher / Home screen ("Add to Home screen"). */
   pinShortcuts: boolean
+  /**
+   * The device has a speech recogniser (`SpeechRecognizer.isRecognitionAvailable`): the mic
+   * buttons in the omnibox, on the new tab page's field and in the bar start voice search
+   * (`voice.start`, `shared/voice.ts`). Off, no mic button shows anywhere.
+   */
+  voiceSearch: boolean
 }
 
 export interface Rect {
@@ -1451,6 +1458,7 @@ export type PhoneBarItemId =
   | 'menu'
   | 'spaces'
   | 'find'
+  | 'voice'
 /** Which controls sit on either side of the address pill; both sides read left to right as drawn. */
 export interface PhoneBarLayout {
   left: PhoneBarItemId[]
@@ -2636,6 +2644,17 @@ export interface Commands {
   'app.share': { args: SharePayload; result: void }
   /** Android's "Open by default" screen for this app (`capabilities.appLinkSettings`). */
   'app.openAppLinkSettings': { args: void; result: void }
+  /**
+   * Voice search (`capabilities.voiceSearch`): ask for the microphone – the runtime permission
+   * prompt may show – and start the device's recogniser in the user's language. The outcome
+   * says whether it is listening; `voice.event`s then carry the levels, the transcripts and the
+   * end (`shared/voice.ts`).
+   */
+  'voice.start': { args: void; result: VoiceStartOutcome }
+  /** Stop the recogniser without a result (Cancel, the sheet dismissed, the app paused). */
+  'voice.cancel': { args: void; result: void }
+  /** The app's system settings screen, where a permanently refused microphone is turned back on. */
+  'voice.openSettings': { args: void; result: void }
   /** The external-protocol sheet's answer (`always` remembers the scheme in settings). */
   'externalProtocol.respond': {
     args: { requestId: string; allow: boolean; always: boolean }
@@ -3564,6 +3583,8 @@ export interface Events {
   'downloads.reveal': { id: string | null }
   /** Open the page zoom sheet for a tab (hosts with page controls). */
   'zoom.open': { tabId: string }
+  /** The host's recogniser reports while a voice search runs (after `voice.start` answered `listening`). */
+  'voice.event': VoiceEvent
   toast: { message: string; kind?: 'info' | 'error' }
   /** Link hover status text (Firefox shows this in the bottom corner). */
   status: { text: string }

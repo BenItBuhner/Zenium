@@ -43,11 +43,11 @@ export const NEW_TAB_PRESETS: readonly NewTabPreset[] = [
 export const FEED_AVAILABLE = false
 
 /**
- * Voice and visual search are later workers' rows. The phone's search field shows their buttons
- * only once something handles the `zen-voice-search` / `zen-visual-search` events they dispatch,
- * so no control that does nothing ships in the meantime.
+ * Visual search (OMN-22, NTP-03) is a later row. The phone's search field shows its camera button
+ * only once something handles the `zen-visual-search` event it dispatches, so no control that does
+ * nothing ships in the meantime. The mic button is the host's word: `capabilities.voiceSearch`
+ * (`shared/voice.ts`), on where the device has a speech recogniser.
  */
-export const VOICE_SEARCH_AVAILABLE = false
 export const VISUAL_SEARCH_AVAILABLE = false
 
 /** What a page draws. Same shape as the modules: a preset is a fixed set of them. */

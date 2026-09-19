@@ -12,6 +12,7 @@ import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '@shared/types'
 import { interruptReasonFrom, resolveDownloadSettings } from '@shared/downloads'
 import { newId } from '@shared/ids'
 import type { SharedIntent } from '@shared/shareTarget'
+import type { VoiceEvent, VoiceStartOutcome } from '@shared/voice'
 import {
   isDebugApplicationId,
   type UpdateAsset,
@@ -49,6 +50,7 @@ import type {
   SessionHost,
   ShellHost,
   ShortcutHost,
+  VoiceHost,
   SystemAutofillStatus,
   UpdateHost,
   WindowHost,
@@ -143,7 +145,8 @@ export function androidCapabilities({
     // The WebView has no preload bridge for `zen://newtab` yet; new tabs stay URL-bar-only.
     newTabPage: false,
     pageTabs: true,
-    pinShortcuts: false
+    pinShortcuts: false,
+    voiceSearch: false
   }
 }
 
@@ -273,6 +276,8 @@ export interface BootInfo {
   appIcon?: string
   /** The launcher accepts pinned shortcuts (`ShortcutManagerCompat.isRequestPinShortcutSupported`). */
   pinShortcuts?: boolean
+  /** The device has a speech recogniser (`SpeechRecognizer.isRecognitionAvailable`, `Voice.kt`). */
+  voiceSearch?: boolean
   /** Persisted JSON documents by name (state.json, history.json, …), the ones small enough to inline. */
   files: Record<string, string>
   /**
@@ -404,6 +409,8 @@ export interface HostEventPayloads {
   'translate.progress': TranslateProgressEvent
   /** The launcher confirmed a `shortcut.pin` request (the user accepted the system dialog). */
   'shortcut.pinned': { id: string }
+  /** The speech recogniser reports while a voice search runs (`Voice.kt`; `shared/voice.ts`). */
+  'voice.event': VoiceEvent
 }
 
 /**
@@ -759,6 +766,7 @@ export class AndroidPlatform implements Platform {
   readonly privacy: PrivacyHost
   readonly translate: AndroidTranslateHost
   readonly shortcuts: ShortcutHost
+  readonly voice: VoiceHost
   /** The new tab page's picked wallpaper, in its own document (`newtab-wallpaper.json`). */
   readonly newTabBackground: AndroidNewTabBackground
   browser!: Browser
@@ -795,7 +803,8 @@ export class AndroidPlatform implements Platform {
         isolatedWorlds: boot.isolatedWorlds === true,
         profiles: boot.profiles
       }),
-      pinShortcuts: boot.pinShortcuts === true
+      pinShortcuts: boot.pinShortcuts === true,
+      voiceSearch: boot.voiceSearch === true
     }
     this.bootEnvironment = boot.environment ?? null
     this.io = io
@@ -941,6 +950,13 @@ export class AndroidPlatform implements Platform {
     }
     this.shortcuts = {
       pin: (request) => bridge.call<boolean>('shortcut.pin', request)
+    }
+    // Kotlin asks for the microphone and runs the recogniser (`Voice.kt`); its reports come back
+    // as `voice.event`s and go to the window for the listening sheet.
+    this.voice = {
+      start: () => bridge.call<VoiceStartOutcome>('voice.start'),
+      cancel: () => bridge.send('voice.cancel'),
+      openSettings: () => bridge.send('voice.openSettings')
     }
     this.events.send('insets', boot.insets)
   }
@@ -1217,6 +1233,9 @@ export class AndroidPlatform implements Platform {
         return
       case 'shortcut.pinned':
         browser.webApps.onPinned((payload as HostEventPayloads['shortcut.pinned']).id)
+        return
+      case 'voice.event':
+        browser.emit('voice.event', payload as HostEventPayloads['voice.event'], this.window)
         return
       case 'view.adopt': {
         const p = payload as HostEventPayloads['view.adopt']
