@@ -11,6 +11,7 @@ import {
   computeDetents,
   detentForField,
   fieldOverflow,
+  REDUCED_MOTION_FADE_MS,
   SheetMotion,
   type SheetDetents
 } from '@renderer/lib/motion/sheet'
@@ -28,9 +29,6 @@ import { cn } from '@renderer/lib/utils'
  * ours before the WebView starts a scroll it could not perform anyway.
  */
 const SLOP = 6
-
-/** Under reduced motion an appearance or departure is an opacity fade of this length (v2 §11.3). */
-export const REDUCED_MOTION_FADE_MS = 120
 
 export interface BottomSheetHandle {
   /** Slide the sheet off the screen; `then` runs once it is gone, right before `onDismissed`. */
@@ -233,9 +231,13 @@ export function BottomSheet({
 
   /**
    * Bring the sheet up once the live page is off the screen (at once where nothing has to be
-   * waited for). Until then the sheet is laid out but invisible, so that a sheet never recedes
-   * a page that is about to be replaced by its picture – the swap would show. Escape, back or a
-   * dismissal during the wait take the sheet down without a slide.
+   * waited for). Until then the sheet is laid out but held at `opacity: 0` – not `visibility:
+   * hidden`, which takes no focus: the focus moves into the sheet as it mounts (§9.22), by the
+   * chassis or by the surface's own effect, and has to land while the hold lasts – and takes no
+   * press (a tap on it falls to the scrim, the dismissal, as it does on the frame dialog host at
+   * progress 0), so that a sheet never recedes a page that is about to be replaced by its
+   * picture – the swap would show. Escape, back or a dismissal during the wait take the sheet
+   * down without a slide.
    */
   const present = (): void => {
     if (hold.current) return
@@ -249,7 +251,7 @@ export function BottomSheet({
       m.present()
       const sheet = sheetRef.current
       if (sheet) {
-        sheet.style.visibility = 'visible'
+        sheet.style.pointerEvents = ''
         // Below the screen at this frame, the step to full opacity shows nothing; under reduced
         // motion the spring has jumped it into place and main.css fades it in over 120 ms (§11.3).
         sheet.style.opacity = '1'
@@ -349,11 +351,12 @@ export function BottomSheet({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- registered once per mount
   }, [])
 
-  // Focus moves into the sheet as it opens (§9.22) – after the layout effects above have shown
-  // the sheet, since a hidden element takes no focus – and again when its content is swapped
-  // from under it (a menu stepping into a submenu) and the focus fell to nothing with the old
-  // rows. Focus a surface put elsewhere in the sheet stays. A sheet with a sheet above it does
-  // not take the focus back: the top one holds it (§9.24).
+  // Focus moves into the sheet as it opens (§9.22) – on mount, while the sheet may still be held
+  // at opacity 0 for the page's cover (an element at opacity 0 takes the focus; a hidden one
+  // would not) – and again when its content is swapped from under it (a menu stepping into a
+  // submenu) and the focus fell to nothing with the old rows. Focus a surface put elsewhere in
+  // the sheet stays. A sheet with a sheet above it does not take the focus back: the top one
+  // holds it (§9.24).
   useEffect(() => {
     const sheet = sheetRef.current
     const body = scrollRef.current
@@ -644,7 +647,9 @@ export function BottomSheet({
     >
       <div ref={scrimRef} className="zen-sheet-scrim absolute inset-0" style={{ opacity: 0 }} />
       {/* Focusable itself (tabIndex -1), so a sheet whose first control must not take the focus
-          on open – a form's text field on a phone – can still move the focus into the dialog. */}
+          on open – a form's text field on a phone – can still move the focus into the dialog.
+          Held at opacity 0 and out of the pointer's way until `present` (the wait for the page's
+          cover; `visibility: hidden` would refuse the focus that moves in on mount). */}
       <div
         ref={sheetRef}
         role="dialog"
@@ -654,7 +659,7 @@ export function BottomSheet({
           'zen-sheet zen-sheet-detents absolute inset-x-0 bottom-0 mx-auto flex w-full max-w-[520px] flex-col',
           className
         )}
-        style={{ paddingBottom: Math.max(8, insets.bottom), visibility: 'hidden', opacity: 0 }}
+        style={{ paddingBottom: Math.max(8, insets.bottom), opacity: 0, pointerEvents: 'none' }}
         data-locked="true"
         data-surface="page"
       >

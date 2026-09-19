@@ -14,6 +14,7 @@ import {
 } from '@renderer/lib/gestures/dock'
 import { closeOverview, overviewIsOpen, stageStore } from '@renderer/lib/gestures/stage'
 import { closeSpacesDrawer } from '@renderer/lib/gestures/drawer'
+import { recedeFade } from '@renderer/lib/motion/recede'
 import { activeSpace, activeTab } from '@renderer/lib/selectors'
 import { openSiteInfo } from '@renderer/lib/siteInfo'
 import {
@@ -206,6 +207,10 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
         <MessageLayer />
       </div>
       <PhoneStage state={state} />
+      {/* The bar's opacity is the chassis rule in main.css – `1 − recede`, the sheet's progress
+          (v2 draft §11.1), at whichever edge the bar is docked. At rest nothing is written over
+          it; while the pill is carried the carry's own fade is composed into the same product
+          (`recedeFade`), so a sheet coming up mid-carry fades the bar all the same. */}
       {!barHidden && (
         <PhoneBar
           state={state}
@@ -214,7 +219,7 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
           hold={hold}
           overviewOpen={overviewOpen}
           pillLook={dock.phase === 'idle' ? 'docked' : 'well'}
-          style={{ opacity: fromHere ? 1 - p : 1 }}
+          style={fromHere ? { opacity: recedeFade(1 - p) } : undefined}
         />
       )}
       {!barHidden && fromHere && (
@@ -226,7 +231,7 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
           overviewOpen={overviewOpen}
           pillLook={p >= 0.5 ? 'well-target' : 'well'}
           inert
-          style={{ opacity: p }}
+          style={{ opacity: recedeFade(p) }}
         />
       )}
       {barHidden && <Urlbar state={state} urlbar={ui.urlbar} area={null} phoneEdge={edge} />}

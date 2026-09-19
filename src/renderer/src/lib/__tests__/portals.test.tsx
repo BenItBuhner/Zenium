@@ -17,7 +17,6 @@ import {
   POPOVER_HEIGHT_FLOOR,
   POPOVER_MARGIN,
   POPOVER_WIDTH,
-  SHEET_RISE_PX,
   chromeInertHeld,
   chromeLayer,
   closeAllPopovers,
@@ -399,9 +398,11 @@ describe('FrameDialogPortal', () => {
 
 /*
  * On a phone the host is a sheet on the recede chassis (design language v2 draft §11.1, §11.5):
- * one progress value is the scrim's opacity, the slot's rise and – through the recede registry –
- * the page's recede; the close reverses it on the same spring; a sheet above recedes the slot
- * and makes it inert. The frame loop is cranked by hand.
+ * one progress value is the scrim's opacity, the slot's slide over its panels' full height
+ * across the frame's bottom edge and – through the recede registry – the page's recede; the
+ * close reverses it on the same spring; a sheet above recedes the slot and makes it inert. The
+ * frame loop is cranked by hand, the layout given sizes: the slot is 800 px tall and a panel
+ * stands 300 px above its bottom edge (a bottom-aligned card 300 px tall), so the slide is 300.
  */
 describe('FrameDialogHost on a phone (the sheet chassis, §11)', () => {
   let now = 0
@@ -418,6 +419,16 @@ describe('FrameDialogHost on a phone (the sheet chassis, §11)', () => {
   const scheduled = (): boolean => queue.size > 0
   const recedeVar = (): string => document.documentElement.style.getPropertyValue('--zen-recede')
   const opacity = (el: HTMLElement | null): number => Number(el?.style.opacity)
+  /** The slot's vertical translation (px) as written this frame. */
+  const translateY = (): number => {
+    const m = /translate3d\(0, (-?[\d.]+)px, 0\)/.exec(slot().style.transform)
+    expect(m, `a translation in ${slot().style.transform}`).not.toBeNull()
+    return Number(m![1])
+  }
+  const SLOT_HEIGHT = 800
+  const PANEL_TOP = 500
+  const TRAVEL = SLOT_HEIGHT - PANEL_TOP
+  let sizes: Array<[string, PropertyDescriptor | undefined]> = []
   /** Let the wait for the page's cover resolve (at once with no page) and the spring start. */
   const settle = async (): Promise<void> => {
     await act(async () => {
@@ -439,11 +450,31 @@ describe('FrameDialogHost on a phone (the sheet chassis, §11)', () => {
     })
     vi.stubGlobal('performance', { now: () => now })
     viewportStore.set({ ...viewportStore.get(), formFactor: 'phone' })
+    sizes = ['clientHeight', 'offsetTop'].map((name) => [
+      name,
+      Object.getOwnPropertyDescriptor(HTMLElement.prototype, name)
+    ])
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.classList.contains('zen-frame-dialogs-slot') ? SLOT_HEIGHT : 0
+      }
+    })
+    Object.defineProperty(HTMLElement.prototype, 'offsetTop', {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.hasAttribute('data-dialog') ? Number(this.dataset.top ?? PANEL_TOP) : 0
+      }
+    })
   })
 
   afterEach(() => {
     act(() => viewportStore.set({ ...viewportStore.get(), formFactor: 'desktop' }))
     vi.unstubAllGlobals()
+    for (const [name, descriptor] of sizes) {
+      if (descriptor) Object.defineProperty(HTMLElement.prototype, name, descriptor)
+      else delete (HTMLElement.prototype as unknown as Record<string, unknown>)[name]
+    }
   })
 
   it('marks the host a sheet and keeps a scrim at nothing while no dialog is open', () => {
@@ -463,17 +494,18 @@ describe('FrameDialogHost on a phone (the sheet chassis, §11)', () => {
         <Dialog name="edit" />
       </FrameDialogHost>
     )
-    // Open, on the stack at 0, painted at nothing before the first frame: no pop of the panel.
+    // Open, on the stack at 0, painted at nothing before the first frame: no pop of the panel,
+    // which stands its whole height below the frame's bottom edge.
     expect(host().getAttribute('data-open')).toBe('true')
     expect(document.documentElement.dataset.receding).toBe('true')
     expect(recedeVar()).toBe('0.0000')
     expect(opacity(scrim())).toBe(0)
-    expect(slot().style.opacity).toBe('0.0000')
-    expect(slot().style.transform).toContain(`translate3d(0, ${SHEET_RISE_PX.toFixed(2)}px, 0)`)
+    expect(slot().style.opacity).toBe('0')
+    expect(translateY()).toBe(TRAVEL)
     expect(host().hasAttribute('data-sheet-up')).toBe(false)
 
     await settle()
-    // The sheet holds the page under its cover from before the rise (§11.5): the host is asked
+    // The sheet holds the page under its cover from before the slide (§11.5): the host is asked
     // to hide the page views by the sheet itself, not by the dialog it hosts.
     expect(uiStore.get().frameSheetOpen).toBe(true)
     expect(scheduled()).toBe(true)
@@ -482,7 +514,11 @@ describe('FrameDialogHost on a phone (the sheet chassis, §11)', () => {
       frames(1)
       const p = opacity(scrim())
       expect(Number(recedeVar())).toBeCloseTo(p, 4)
-      expect(Number(slot().style.opacity)).toBeCloseTo(p, 4)
+      // The slide is `p` over the panel's full travel (§11.1), the slot shown throughout; the
+      // spring's hair of overshoot past 1 shows in the slide while the opacities stop at 1.
+      if (p < 1) expect(translateY()).toBeCloseTo((1 - p) * TRAVEL, 1)
+      else expect(translateY()).toBeLessThanOrEqual(0)
+      expect(slot().style.opacity).toBe('1')
       expect(p).toBeGreaterThanOrEqual(last - 1e-9)
       last = p
     }
@@ -506,6 +542,8 @@ describe('FrameDialogHost on a phone (the sheet chassis, §11)', () => {
       expect(Number(recedeVar())).toBeCloseTo(p, 4)
       expect(p).toBeLessThanOrEqual(last + 1e-9)
       expect(last - p).toBeLessThan(0.25)
+      // The same slide back down, `p` over the same travel.
+      if (p > 0) expect(translateY()).toBeCloseTo((1 - p) * TRAVEL, 1)
       last = p
       if (p > 0) expect(uiStore.get().frameSheetOpen).toBe(true)
     }
@@ -514,6 +552,52 @@ describe('FrameDialogHost on a phone (the sheet chassis, §11)', () => {
     expect(document.documentElement.dataset.receding).toBeUndefined()
     expect(recedeVar()).toBe('')
     expect(uiStore.get().frameSheetOpen).toBe(false)
+  })
+
+  it('the slide is the panels’ full height across the frame’s bottom edge (22:49 ruling), from the highest panel’s top; a sheet on its own chassis does not count', async () => {
+    // Two panels open at once stack in the slot: the taller one (its top 200 px down the 800
+    // slot) sets the travel, 600, so at 0 nothing of either stands above the edge. A
+    // `BottomSheet` placed `hosted` (`data-sheet-layer`, filling the slot) runs its own track.
+    function Tall(): JSX.Element {
+      useFrameDialog()
+      return <div data-dialog="tall" data-top="200" />
+    }
+    render(
+      <FrameDialogHost>
+        <Dialog name="edit" />
+        <Tall />
+        <div data-sheet-layer="true" data-dialog="own-sheet" data-top="0" />
+      </FrameDialogHost>
+    )
+    expect(translateY()).toBe(SLOT_HEIGHT - 200)
+    await settle()
+    frames(60)
+    expect(translateY()).toBe(0)
+    // With the panels gone on the way down the last measure stands: the empty slot keeps its
+    // geometry and runs the same slide back, not a jump to a fresh 0.
+    rerender(<FrameDialogHost />)
+    frames(3)
+    const p = opacity(scrim())
+    expect(p).toBeGreaterThan(0)
+    expect(p).toBeLessThan(1)
+    expect(translateY()).toBeCloseTo((1 - p) * (SLOT_HEIGHT - 200), 1)
+  })
+
+  it('promotes the scrim and the slot only while the sheet is about to move or moving (§9.33), and keeps the desktop dialog’s pop off the phone sheet', () => {
+    // The gate: `data-open` (a dialog open, the wait for the cover included) or `data-sheet-up`
+    // (anything of the sheet showing, the way down included); never the idle host.
+    const gate = '.zen-frame-dialogs[data-sheet]:is([data-open], [data-sheet-up])'
+    expect(cssRule(`${gate} .zen-frame-scrim`)).toContain('will-change: opacity')
+    expect(cssRule(`${gate} .zen-frame-dialogs-slot`)).toContain('will-change: transform, opacity')
+    expect(cssRule('.zen-frame-dialogs[data-sheet] .zen-frame-scrim')).not.toContain('will-change')
+    expect(cssRule('.zen-frame-dialogs[data-sheet] .zen-frame-dialogs-slot')).not.toContain(
+      'will-change'
+    )
+    // The panels' own §9.5 pop (the desktop dialog's 24 px rise and fade) is off on the sheet:
+    // the slide is the whole motion.
+    expect(cssRule('.zen-frame-dialogs[data-sheet] .zen-frame-dialogs-slot > *')).toContain(
+      'animation: none'
+    )
   })
 
   it('a dialog gone before the sheet came up lets the page back without a slide', async () => {
@@ -571,8 +655,10 @@ describe('FrameDialogHost on a phone (the sheet chassis, §11)', () => {
     frames(60)
     const above = registerRecedeLayer()
     try {
-      expect(slot().hasAttribute('inert')).toBe(true)
+      // Registered above but showing nothing yet: the slot stays live (§11.2: inert from q > 0).
+      expect(slot().hasAttribute('inert')).toBe(false)
       above.progress(0.5)
+      expect(slot().hasAttribute('inert')).toBe(true)
       expect(slot().style.getPropertyValue('--zen-layer-recede')).toBe('0.5000')
       expect(opacity(scrim())).toBeCloseTo(0.5, 4)
       expect(recedeVar()).toBe('1.0000')
@@ -696,7 +782,7 @@ describe('FrameDialogHost on a phone (the sheet chassis, §11)', () => {
     )
     await settle()
     frames(60)
-    expect(slot().style.opacity).toBe('1.0000')
+    expect(slot().style.opacity).toBe('1')
     rerender(<FrameDialogHost />)
     frames(90)
     expect(scheduled()).toBe(false)

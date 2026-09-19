@@ -105,12 +105,17 @@ afterEach(() => {
 describe('BottomSheet on the recede chassis', () => {
   it('is on the stack from mount, comes up once the page is covered, and recedes the page by its own progress', async () => {
     render(<BottomSheet onDismissed={() => undefined}>rows</BottomSheet>)
-    // Mounted: on the stack at 0, laid out but not yet shown – the wait for the cover.
+    // Mounted: on the stack at 0, laid out but not yet shown – the wait for the cover – held at
+    // opacity 0 and out of the pointer's way, never `visibility: hidden` (that would refuse the
+    // focus the chassis moves in on mount, §9.22).
     expect(html().dataset.receding).toBe('true')
     expect(recedeVar()).toBe('0.0000')
-    expect(sheets()[0].style.visibility).toBe('hidden')
+    expect(sheets()[0].style.opacity).toBe('0')
+    expect(sheets()[0].style.pointerEvents).toBe('none')
+    expect(sheets()[0].style.visibility).toBe('')
     await settle()
-    expect(sheets()[0].style.visibility).toBe('visible')
+    expect(sheets()[0].style.opacity).toBe('1')
+    expect(sheets()[0].style.pointerEvents).toBe('')
     expect(frames.scheduled).toBe(true)
 
     // Every frame: the scrim's share and the page's recede are the same number.
@@ -186,10 +191,14 @@ describe('BottomSheet on the recede chassis', () => {
         </BottomSheet>
       </>
     )
-    // Registered above: the lower content is inert at once, receded not at all yet.
-    expect(lower.hasAttribute('inert')).toBe(true)
+    // Registered above but held for the cover: the lower content stays live until the upper
+    // sheet shows something of itself (§11.2: inert from q > 0), receded not at all yet.
+    expect(lower.hasAttribute('inert')).toBe(false)
     expect(lower.style.getPropertyValue('--zen-layer-recede')).toBe('0.0000')
     await settle()
+    frames.run(1)
+    expect(lower.hasAttribute('inert')).toBe(true)
+    expect(lower.hasAttribute('data-recessed')).toBe(true)
     for (let i = 0; i < 60 && frames.scheduled; i++) {
       frames.run(1)
       const [lowerScrim, upperScrim] = scrims()
@@ -265,7 +274,7 @@ describe('BottomSheet on the recede chassis', () => {
       </BottomSheet>
     )
     // No frame has run: the sheet has not come up.
-    expect(sheets()[0].style.visibility).toBe('hidden')
+    expect(sheets()[0].style.opacity).toBe('0')
     act(() => ref.current!.dismiss())
     expect(onDismissed).toHaveBeenCalledTimes(1)
     expect(frames.scheduled).toBe(false)

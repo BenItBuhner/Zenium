@@ -959,19 +959,22 @@
   /*
    * On a phone the host's dialogs are sheets, and the host is on the sheet chassis (v2 draft
    * §11.1, §11.5, `useSheetChassis` in lib/portals.tsx): its scrim is the sheet scrim at the
-   * sheet's progress and the slot rises in and fades on the sheet spring, both written per
-   * frame with the page's recede; the panels' own pop does not run on top of the rise. Under
-   * another sheet the slot recedes about its bottom centre like any lower sheet (§11.2), on the
-   * same rule as `.zen-sheet`. The host carries `data-sheet-up` while anything of the sheet
-   * shows: it takes the pointer that long, so a press on the way down lands on the scrim and not
-   * on the page under it; at progress 0 (the wait for the page's cover) the dialogs take none –
-   * except a sheet on the chassis already (`[data-sheet-layer]`, `BottomSheet` placed `hosted`),
-   * which runs its own progress and keeps the host's chassis down.
+   * sheet's progress and the slot slides its whole height in across the frame's bottom edge on
+   * the sheet spring (a 9.23 sheet, not the desktop dialog's 24 px pop), both written per frame
+   * with the page's recede; the panels' own pop does not run on top of the slide. Under another
+   * sheet the slot recedes about its bottom centre like any lower sheet (§11.2), on the same
+   * rule as `.zen-sheet`. The host carries `data-sheet-up` while anything of the sheet shows: it
+   * takes the pointer that long, so a press on the way down lands on the scrim and not on the
+   * page under it; at progress 0 (the wait for the page's cover) the dialogs take none – except
+   * a sheet on the chassis already (`[data-sheet-layer]`, `BottomSheet` placed `hosted`), which
+   * runs its own progress and keeps the host's chassis down. The scrim and the slot are
+   * promoted only while the sheet is about to move or moving (§9.33): from a dialog's open
+   * (`data-open`, the wait for the cover included) until the spring has landed back at 0
+   * (`data-sheet-up`), never while the host stands idle.
    */
   .zen-frame-dialogs[data-sheet] .zen-frame-scrim {
     background: var(--zen-scrim);
     animation: none;
-    will-change: opacity;
   }
   .zen-frame-dialogs[data-sheet-up] {
     pointer-events: auto;
@@ -979,6 +982,11 @@
   .zen-frame-dialogs[data-sheet] .zen-frame-dialogs-slot {
     --zen-layer-scale: calc(1 - 0.03 * var(--zen-layer-recede, 0) * var(--zen-recede-gain, 1));
     transform-origin: 50% 100%;
+  }
+  .zen-frame-dialogs[data-sheet]:is([data-open], [data-sheet-up]) .zen-frame-scrim {
+    will-change: opacity;
+  }
+  .zen-frame-dialogs[data-sheet]:is([data-open], [data-sheet-up]) .zen-frame-dialogs-slot {
     will-change: transform, opacity;
   }
   .zen-frame-dialogs[data-sheet] .zen-frame-dialogs-slot > * {
@@ -4295,6 +4303,11 @@
 :root[data-form-factor='phone'][data-receding] .zen-content-frame {
   will-change: transform;
 }
+/*
+ * The bar fades with the sheet's progress at whichever edge it is docked (§11.1): at p = 1 it
+ * is gone, the receded page alone under the scrim. The shell writes no rest opacity of its own
+ * over this; a pill carry composes its share into the same product (`recedeFade`, recede.ts).
+ */
 :root[data-form-factor='phone'] .zen-phone-bar {
   opacity: calc(1 - var(--zen-recede, 0) * var(--zen-recede-gain, 1));
 }

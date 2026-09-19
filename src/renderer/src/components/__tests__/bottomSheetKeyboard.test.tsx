@@ -11,7 +11,9 @@ import {
 } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
-import { chromeInertHeld } from '@renderer/lib/portals'
+import { PhoneSheet } from '../phone/PhoneSheet'
+import { viewportStore } from '@renderer/lib/formFactor'
+import { FrameDialogHost, chromeInertHeld } from '@renderer/lib/portals'
 import { uiStore } from '@renderer/lib/ui'
 
 /*
@@ -20,10 +22,60 @@ import { uiStore } from '@renderer/lib/ui'
  * while it is up, focus goes back to the opener when it has gone, and of two stacked sheets only
  * the top one holds the focus. Plus the keyboard-relative detents: the peek stands above the
  * bottom inset, and a focused field is kept above the keys. Rendered for real in happy-dom, the
- * frame loop cranked by hand, the layout given sizes (happy-dom lays nothing out).
+ * frame loop cranked by hand, the layout given sizes (happy-dom lays nothing out), and `focus()`
+ * given Chrome's rule (happy-dom focuses anything): a sheet waiting for the page's cover is held
+ * at opacity 0, which takes the focus, never `visibility: hidden`, which would not.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
+/**
+ * The wait for the page's cover before a sheet comes up (`activePageCovered`, §11.5): resolved
+ * at once with no page to cover – the module's own – unless a test holds it, as the phone does
+ * while the live page gives way to its picture.
+ */
+const cover = vi.hoisted(() => ({
+  pending: null as { promise: Promise<void>; resolve: () => void } | null
+}))
+vi.mock('@renderer/lib/ui', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('@renderer/lib/ui')>()
+  return {
+    ...mod,
+    activePageCovered: () =>
+      cover.pending
+        ? { promise: cover.pending.promise, cancel: () => undefined }
+        : mod.activePageCovered()
+  }
+})
+
+/**
+ * Chrome's rule for `focus()`, which happy-dom lacks: an element that is not rendered visible –
+ * `visibility: hidden` or `display: none` on it or on an ancestor – or that stands in an inert
+ * subtree takes no focus; the call does nothing. The chassis moves the focus into a sheet as it
+ * mounts, while the sheet may still be held for the page's cover: held `visibility: hidden` the
+ * focus would land nowhere (the regression the review of #168 measured on the bookmark editor
+ * and the clear-history prompt); held at opacity 0 it lands.
+ */
+function installChromeFocusRule(): void {
+  const native = HTMLElement.prototype.focus
+  const rendered = (target: HTMLElement): boolean => {
+    for (let el: HTMLElement | null = target; el; el = el.parentElement) {
+      if (
+        el.style.visibility === 'hidden' ||
+        el.style.display === 'none' ||
+        el.hasAttribute('inert')
+      )
+        return false
+    }
+    return true
+  }
+  vi.spyOn(HTMLElement.prototype, 'focus').mockImplementation(function (
+    this: HTMLElement,
+    options?: FocusOptions
+  ) {
+    if (rendered(this)) native.call(this, options)
+  })
+}
 
 /** A hand-cranked animation frame: `run(n)` advances the clock 16 ms a frame and runs the callbacks. */
 class Frames {
@@ -71,6 +123,32 @@ function rerender(el: ReactElement): void {
   act(() => root!.render(el))
 }
 
+/** Let the wait for the page's cover resolve (at once with no page) and the sheet come up. */
+async function settle(): Promise<void> {
+  await act(async () => {
+    await Promise.resolve()
+  })
+}
+
+/**
+ * Hold the page's cover, as the phone does while the live page gives way to its picture: a
+ * sheet mounted meanwhile waits at opacity 0. `resolve` lets it come up.
+ */
+function holdCover(): { resolve: () => Promise<void> } {
+  let release!: () => void
+  const promise = new Promise<void>((r) => {
+    release = r
+  })
+  cover.pending = { promise, resolve: release }
+  return {
+    resolve: async () => {
+      cover.pending = null
+      release()
+      await settle()
+    }
+  }
+}
+
 /** The sheet's dialog elements, lowest first. */
 const sheets = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>('.zen-sheet')]
 const active = (): Element | null => document.activeElement
@@ -89,6 +167,7 @@ const dismissAndSettle = (handle: BottomSheetHandle): void => {
 
 beforeEach(() => {
   frames.install()
+  installChromeFocusRule()
   // The layer is 800 px tall and a sheet's content 300 px: an expanded detent above the peek.
   Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
     configurable: true,
@@ -117,7 +196,9 @@ afterEach(() => {
   chrome.remove()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
+  cover.pending = null
   act(() => uiStore.set({ insets: { top: 0, right: 0, bottom: 0, left: 0 } }))
+  act(() => viewportStore.set({ ...viewportStore.get(), formFactor: 'desktop' }))
   frames.now = 0
 })
 
@@ -357,7 +438,7 @@ describe('focus returns to the opener (§9.22, §9.24)', () => {
 })
 
 describe('a stack holds the focus on top only (§9.24)', () => {
-  it('the upper sheet takes the focus and the lower goes inert; the lower gets both back when the upper leaves', () => {
+  it('the upper sheet takes the focus and the lower goes inert; the lower gets both back when the upper leaves', async () => {
     const lower = createRef<BottomSheetHandle>()
     const upper = createRef<BottomSheetHandle>()
     const both = (second: boolean): ReactElement => (
@@ -371,12 +452,19 @@ describe('a stack holds the focus on top only (§9.24)', () => {
       </>
     )
     render(both(false))
+    await settle()
+    act(() => frames.run(60))
     expect(active()).toBe(byText('Font size'))
     // A tap on the row that opens the picker gives it the focus.
     act(() => byText('Theme').focus())
     rerender(both(true))
     const [a, b] = sheets()
+    // The upper sheet takes the focus as it mounts; the lower goes inert with the upper's first
+    // frame (§11.2: from q > 0), not from its registering.
     expect(active()).toBe(byText('Small'))
+    expect(a.hasAttribute('inert')).toBe(false)
+    await settle()
+    act(() => frames.run(1))
     expect(a.hasAttribute('inert')).toBe(true)
     expect(b.hasAttribute('inert')).toBe(false)
     expect(chrome.hasAttribute('inert')).toBe(true)
@@ -398,6 +486,147 @@ describe('a stack holds the focus on top only (§9.24)', () => {
   })
 })
 
+/*
+ * On the phone a sheet waits for the live page to give way to its picture before it comes up
+ * (§11.5, `activePageCovered`), and the chassis moves the focus in as the sheet mounts – during
+ * that wait. The hold is opacity 0 and no pointer, never `visibility: hidden`: the focus lands
+ * in the sheet at once and is still there once the sheet shows (the regression the review of
+ * #168 measured: focus stayed on the opener, and Enter no longer closed the prompt).
+ */
+describe('focus lands in a sheet held for the page’s cover (§9.22, regression)', () => {
+  it('the rule under test: no focus for a hidden element, focus for one at opacity 0', () => {
+    const hidden = document.createElement('div')
+    hidden.tabIndex = -1
+    hidden.style.visibility = 'hidden'
+    const clear = document.createElement('div')
+    clear.tabIndex = -1
+    clear.style.opacity = '0'
+    document.body.append(hidden, clear)
+    hidden.focus()
+    expect(active()).not.toBe(hidden)
+    clear.focus()
+    expect(active()).toBe(clear)
+    hidden.remove()
+    clear.remove()
+  })
+
+  it('a plain sheet: the first row has the focus through the wait, and once the sheet shows', async () => {
+    const hold = holdCover()
+    render(<BottomSheet onDismissed={() => undefined}>{rows('Copy', 'Share')}</BottomSheet>)
+    const sheet = sheets()[0]
+    // Waiting: laid out, at opacity 0, out of the pointer's way, and not hidden.
+    expect(sheet.style.opacity).toBe('0')
+    expect(sheet.style.pointerEvents).toBe('none')
+    expect(sheet.style.visibility).toBe('')
+    expect(active()).toBe(byText('Copy'))
+    expect(chrome.hasAttribute('inert')).toBe(true)
+    await hold.resolve()
+    act(() => frames.run(60))
+    expect(sheet.style.opacity).toBe('1')
+    expect(sheet.style.pointerEvents).toBe('')
+    expect(active()).toBe(byText('Copy'))
+  })
+
+  it('a stacked sheet: the upper takes the focus as it mounts; the lower goes inert with its first frame', async () => {
+    const lower = createRef<BottomSheetHandle>()
+    const upper = createRef<BottomSheetHandle>()
+    const both = (second: boolean): ReactElement => (
+      <>
+        <Surface open handle={lower}>
+          {rows('Font size', 'Theme')}
+        </Surface>
+        <Surface open={second} handle={upper}>
+          {rows('Small', 'Large')}
+        </Surface>
+      </>
+    )
+    render(both(false))
+    await settle()
+    act(() => frames.run(60))
+    act(() => byText('Theme').focus())
+    const hold = holdCover()
+    rerender(both(true))
+    const [a, b] = sheets()
+    expect(b.style.opacity).toBe('0')
+    expect(active()).toBe(byText('Small'))
+    expect(a.hasAttribute('inert')).toBe(false)
+    await hold.resolve()
+    act(() => frames.run(1))
+    expect(a.hasAttribute('inert')).toBe(true)
+    expect(active()).toBe(byText('Small'))
+    act(() => frames.run(60))
+    expect(b.style.opacity).toBe('1')
+    expect(active()).toBe(byText('Small'))
+    dismissAndSettle(upper.current!)
+    expect(active()).toBe(byText('Theme'))
+  })
+
+  it('a PhoneSheet form: the dialog itself holds the focus (never its field), a prompt its Cancel', async () => {
+    viewportStore.set({ ...viewportStore.get(), formFactor: 'phone' })
+    // The bookmark editor's shape: a field first, the actions in the footer.
+    let hold = holdCover()
+    render(
+      <>
+        <FrameDialogHost frame />
+        <PhoneSheet name="bookmark-edit" title="Edit bookmark" focus="dialog" onClose={() => {}}>
+          <form>
+            <input aria-label="Name" />
+            <div className="zen-sheet-footer">
+              <button type="button">Cancel</button>
+              <button type="submit" data-primary>
+                Save
+              </button>
+            </div>
+          </form>
+        </PhoneSheet>
+      </>
+    )
+    let sheet = sheets()[0]
+    expect(sheet.getAttribute('role')).toBe('dialog')
+    expect(sheet.style.opacity).toBe('0')
+    expect(active()).toBe(sheet)
+    await hold.resolve()
+    act(() => frames.run(60))
+    expect(sheet.style.opacity).toBe('1')
+    expect(active()).toBe(sheet)
+    if (root) act(() => root!.unmount())
+    root = null
+
+    // The clear-history prompt's shape: a title block, then Cancel and the action. Enter on the
+    // focused Cancel is the browser's click on it, which closes the prompt – so the focus has
+    // to be on it, not left on the opener.
+    opener.focus()
+    hold = holdCover()
+    render(
+      <>
+        <FrameDialogHost frame />
+        <PhoneSheet
+          name="clear-history"
+          title="Clear browsing history?"
+          prompt={{ description: 'This removes every visit from the history.' }}
+          focus="first"
+          onClose={() => {}}
+        >
+          <div className="zen-sheet-footer">
+            <button type="button">Cancel</button>
+            <button type="button" data-primary>
+              Clear
+            </button>
+          </div>
+        </PhoneSheet>
+      </>
+    )
+    sheet = sheets()[0]
+    expect(sheet.style.opacity).toBe('0')
+    expect(active()).toBe(byText('Cancel'))
+    await hold.resolve()
+    act(() => frames.run(60))
+    expect(sheet.style.opacity).toBe('1')
+    expect(active()).toBe(byText('Cancel'))
+    expect(sheet.contains(active())).toBe(true)
+  })
+})
+
 /** A box `top` px down the layer and `height` tall, as `getBoundingClientRect` reports it. */
 const box = (top: number, height: number): DOMRect =>
   ({ top, bottom: top + height, left: 0, right: 400, width: 400, height, x: 0, y: top }) as DOMRect
@@ -408,13 +637,14 @@ const keyboard = (height: number): void => {
 }
 
 describe('keyboard-relative detents', () => {
-  it('with the keyboard up the peek moves above the keys', () => {
+  it('with the keyboard up the peek moves above the keys', async () => {
     // A form 1000 px tall on the 800 px layer: a peek at 416 and an expanded detent at 760.
     Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
       configurable: true,
       get: () => 1000
     })
     render(<BottomSheet onDismissed={() => undefined}>form</BottomSheet>)
+    await settle()
     act(() => frames.run(60))
     const sheet = sheets()[0]
     expect(sheet.style.height).toBe('416px')
@@ -430,7 +660,7 @@ describe('keyboard-relative detents', () => {
     expect(sheet.style.height).toBe('416px')
   })
 
-  it('a focused field is kept above the keys: the sheet expands for it, and the body scrolls the rest', () => {
+  it('a focused field is kept above the keys: the sheet expands for it, and the body scrolls the rest', async () => {
     Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
       configurable: true,
       get: () => 1000
@@ -441,6 +671,7 @@ describe('keyboard-relative detents', () => {
         <input aria-label="Address" />
       </BottomSheet>
     )
+    await settle()
     act(() => frames.run(60))
     const sheet = sheets()[0]
     const [name, address] = document.querySelectorAll('input')

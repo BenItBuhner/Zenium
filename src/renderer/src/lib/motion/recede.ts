@@ -14,11 +14,13 @@
  *    second sheet does not push the page further (§11.2).
  *  - A lower sheet recedes exactly as the page does, by the presence of the sheets above it
  *    (`recede`, about its bottom centre – main.css), its content inert from the moment a sheet
- *    is registered above it, and its own scrim hands over to the upper one's as that comes in,
- *    so the stack has one scrim and the page never darkens past the token (§9.24). The handover
- *    is exact, not linear: two scrims one over the other multiply, so a lower share of `1 − q`
- *    under an upper of `q` would let the page breathe lighter half-way (by a quarter of the
- *    token's alpha squared) as a sheet stacks, or as one sheet leaves while the next arrives.
+ *    above it shows anything of itself (q > 0, §11.2; a sheet registered above but still held
+ *    for the page's cover leaves it live), and its own scrim hands over to the upper one's as
+ *    that comes in, so the stack has one scrim and the page never darkens past the token
+ *    (§9.24). The handover is exact, not linear: two scrims one over the other multiply, so a
+ *    lower share of `1 − q` under an upper of `q` would let the page breathe lighter half-way
+ *    (by a quarter of the token's alpha squared) as a sheet stacks, or as one sheet leaves
+ *    while the next arrives.
  *    Given the token's alpha `a` (`--zen-scrim-alpha`, read from the root when a layer
  *    registers), the lower share is what keeps the compound dim at the token times the stack's
  *    summed presence, capped at one: `(min(1, dim + p) − dim) / (1 − a · dim)` for a layer of
@@ -40,7 +42,7 @@ export interface RecedeLayerFrame {
   recede: number
   /** The share of this sheet's own scrim to show: its presence, fading as a sheet above comes in. */
   scrim: number
-  /** A sheet stands above: the content takes no input. */
+  /** A sheet above shows something of itself (its presence > 0): the content takes no input. */
   inert: boolean
 }
 
@@ -72,7 +74,7 @@ export function recedeFrame(presences: readonly number[], scrimAlpha = 0): Reced
     const total = Math.min(1, dim + p)
     // (1 − a·s)(1 − a·dim) = 1 − a·total: this layer's share s takes the compound dim to `total`.
     const scrim = a * dim < 1 ? (total - dim) / (1 - a * dim) : 0
-    layers[i] = { recede: above, scrim, inert: i < presences.length - 1 }
+    layers[i] = { recede: above, scrim, inert: above > 0 }
     above = Math.max(above, p)
     dim = total
   }
@@ -82,6 +84,20 @@ export function recedeFrame(presences: readonly number[], scrimAlpha = 0): Reced
 /** The scale a recede of `p` puts a surface at. */
 export function recedeScale(p: number): number {
   return 1 - RECEDE_SCALE * clamp01(p)
+}
+
+/**
+ * The CSS opacity of chrome that fades with the recede – the phone bar at whichever edge it is
+ * docked (§11.1: `1 − p`, gone at the first detent) – times `share`, a fade of the element's
+ * own (the bar's while its pill is carried to the other edge). Reads the root's `--zen-recede`
+ * live, the same value main.css scales the page by, so the fade is the sheet's progress frame
+ * for frame and reverses with it; `--zen-recede-gain` is 0 under reduced motion (§11.3). A
+ * component that writes the bar's opacity inline writes this, never a number of its own: a
+ * plain `opacity: 1` would beat the stylesheet's rule and hold the bar at full while the page
+ * stands receded.
+ */
+export function recedeFade(share = 1): string {
+  return `calc((1 - var(--zen-recede, 0) * var(--zen-recede-gain, 1)) * ${clamp01(share).toFixed(4)})`
 }
 
 export interface RecedeHandle {

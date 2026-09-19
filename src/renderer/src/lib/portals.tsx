@@ -171,9 +171,6 @@ export function chromeInertHeld(): boolean {
   return inertHolds > 0
 }
 
-/** How far (px) a phone host's slot rises into place as its progress runs 0 → 1. */
-export const SHEET_RISE_PX = 24
-
 /**
  * The sheet spring for a 0…1 progress: `SPRING_GENTLE`'s motion, its rest thresholds – set in
  * px for a sheet that travels some 400 px – scaled to the unit, so the value settles to within
@@ -194,19 +191,42 @@ interface SheetChassis {
 }
 
 /**
+ * How far (px) the host's slot travels between closed and resting: the sheet's full height
+ * across the frame's bottom edge (§11.1: `p` is a surface's progress over its own travel, and a
+ * phone dialog is a §9.23 sheet), measured as the distance from the top edge of the highest
+ * panel in the slot to the slot's bottom edge, so at 0 nothing of any panel is above the edge
+ * and at 1 the panels stand where they are laid out. A sheet on its own chassis
+ * (`[data-sheet-layer]`) runs its own track and does not count. With no panel in the slot (the
+ * way down after the last dialog has gone) the last measure stands, so the empty slot keeps
+ * its geometry; 0 with nothing ever measured.
+ */
+function slotTravel(slot: HTMLElement, last: number): number {
+  let top = Infinity
+  for (const child of slot.children) {
+    if (!(child instanceof HTMLElement) || child.hasAttribute('data-sheet-layer')) continue
+    top = Math.min(top, child.offsetTop)
+  }
+  return top === Infinity ? last : Math.max(0, slot.clientHeight - top)
+}
+
+/**
  * The host as a phone sheet on the recede chassis (design language v2 draft §11.1, §11.5): one
  * progress value `p`, run 0 → 1 on `SPRING_GENTLE` when a dialog opens and back to 0 when the
- * last one closes, is the scrim's opacity, the slot's rise and fade and – through the recede
- * registry – the page's recede and the bottom bar's fade; a sheet above recedes the slot and
- * makes it inert like any lower sheet (§11.2). The sheet holds the page under its cover for as
- * long as anything of it shows (`coverPageUnderSheet`): the dialogs it hosts mount before they
- * capture the page and set their own flag, and drop that flag the moment they go, so the sheet
- * captures the page itself before it rises, waits for the live page to have given way to its
- * picture (the recede never starts on a page about to be swapped), and lets the page back only
- * once the spring has landed at 0 (the page comes back at the transform it left at). Everything
- * is written straight to the three elements the returned refs are put on; React renders none of
- * it. While anything of the sheet shows the host carries `data-sheet-up` (main.css: it takes
- * the pointer, so a press during the way down lands on the scrim and not on the page under it).
+ * last one closes, is the scrim's opacity, the slot's slide over its full height across the
+ * frame's bottom edge (`slotTravel`; a phone dialog is a §9.23 sheet and slides like one, the
+ * desktop dialog keeps its 24 px pop) and – through the recede registry – the page's recede and
+ * the bottom bar's fade; a sheet above recedes the slot and makes it inert like any lower sheet
+ * (§11.2). The sheet holds the page under its cover for as long as anything of it shows
+ * (`coverPageUnderSheet`): the dialogs it hosts mount before they capture the page and set
+ * their own flag, and drop that flag the moment they go, so the sheet captures the page itself
+ * before it rises, waits for the live page to have given way to its picture (the recede never
+ * starts on a page about to be swapped), and lets the page back only once the spring has landed
+ * at 0 (the page comes back at the transform it left at). Everything is written straight to the
+ * three elements the returned refs are put on; React renders none of it. While anything of the
+ * sheet shows the host carries `data-sheet-up` (main.css: it takes the pointer, so a press
+ * during the way down lands on the scrim and not on the page under it). Under reduced motion
+ * the spring jumps: the slot arrives in place and its opacity steps 0 → 1, which main.css
+ * turns into the 120 ms fade of §11.3 (as it does the scrim's, both ways).
  *
  * The system back gesture (#24) drives the same `p` while the dialog on top is dismissable: the
  * finger peeks the sheet down its track (`sheetBackPosition`, as `SheetMotion` does), the page
@@ -229,20 +249,25 @@ function useSheetChassis(active: boolean, open: boolean, top?: FrameDialogEntry)
   const up = useRef(false)
   /** Where the back gesture caught the sheet; null while no finger holds it. */
   const backOrigin = useRef<number | null>(null)
+  /** The slot's travel (px) as last measured (`slotTravel`). */
+  const travel = useRef(0)
 
   const paint = (): void => {
     const host = hostRef.current
     const scrim = scrimRef.current
     const slot = slotRef.current
     const q = layer.current
-    // The spring overshoots a hair: the rise shows it, the opacities stop at their ends.
+    // The spring overshoots a hair: the slide shows it, the opacities stop at their ends.
     const share = Math.min(1, Math.max(0, p.current))
     // The stack shows one scrim: this one's share (the registry's, from the same `p`) gives way
     // as a sheet above fades its own in.
     if (scrim) scrim.style.opacity = q.scrim.toFixed(4)
     if (slot) {
-      slot.style.opacity = share.toFixed(4)
-      slot.style.transform = `translate3d(0, ${((1 - p.current) * SHEET_RISE_PX).toFixed(2)}px, 0) scale(var(--zen-layer-scale, 1))`
+      travel.current = slotTravel(slot, travel.current)
+      // Below the edge at 0, the step to full opacity shows nothing (and under reduced motion,
+      // where the spring has jumped the slot into place, main.css fades it in – §11.3).
+      slot.style.opacity = share > 0 ? '1' : '0'
+      slot.style.transform = `translate3d(0, ${((1 - p.current) * travel.current).toFixed(2)}px, 0) scale(var(--zen-layer-scale, 1))`
       slot.style.setProperty('--zen-layer-recede', q.recede.toFixed(4))
       slot.toggleAttribute('inert', q.inert)
     }
@@ -384,6 +409,7 @@ function useSheetChassis(active: boolean, open: boolean, top?: FrameDialogEntry)
   }, [active, open])
 
   // Unmounted (the shell changed): no frame writes into a gone tree, the page is released.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- `clear` touches refs only; once, at unmount
   useEffect(() => clear, [])
 
   return { hostRef, scrimRef, slotRef }
@@ -410,9 +436,11 @@ function useSheetChassis(active: boolean, open: boolean, top?: FrameDialogEntry)
  * popover closes; Escape and the dialog's own controls stay live.
  *
  * On a phone the host is a sheet on the recede chassis (`data-sheet`, `useSheetChassis`,
- * v2 draft §11): its scrim is the sheet scrim at the sheet's progress, the slot rises in and
- * the page recedes on the same spring, all reversed on close – a dialog placed through it
- * inherits the recede without a line of its own, and cannot leave it out.
+ * v2 draft §11): its scrim is the sheet scrim at the sheet's progress, the slot slides in over
+ * its panels' full height from the frame's bottom edge and the page recedes on the same spring,
+ * all reversed on close – a dialog placed through it inherits the slide and the recede without
+ * a line of its own, and cannot leave them out. (A dialog's panel is the surface's to keep: one
+ * that unmounts it the moment it closes leaves the scrim and the recede to run back alone.)
  *
  * A dialog that is a sheet on the chassis already – `BottomSheet` placed `hosted`, which drives
  * the recede and draws the stack's one scrim itself, fading with its motion (§9.24, §9.28) –

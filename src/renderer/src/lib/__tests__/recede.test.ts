@@ -1,10 +1,13 @@
 // @vitest-environment happy-dom
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   pageRecede,
   RECEDE_RADIUS_PX,
   RECEDE_SCALE,
   recedeDepth,
+  recedeFade,
   recedeFrame,
   recedeScale,
   registerRecedeLayer,
@@ -79,6 +82,49 @@ describe('recedeFrame: progress → recede', () => {
   })
 })
 
+/*
+ * The phone bar fades with the sheet (§11.1): its opacity is `1 − p` from the root's
+ * `--zen-recede`, by the stylesheet at rest and by `recedeFade` wherever a component writes the
+ * bar's opacity itself (the pill carry between the edges), so nothing inline ever holds the bar
+ * at 1 over a receded page – the review of #168 measured the bar at 1 at p = 1 for exactly that.
+ */
+describe('the bar fade (§11.1): one value, at whichever edge', () => {
+  /** The stylesheet's declarations for a selector, whitespace folded (main.css is not loaded here). */
+  const cssRule = (selector: string): string => {
+    const css = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8').replace(
+      /\s+/g,
+      ' '
+    )
+    const at = css.indexOf(`${selector} {`)
+    expect(at, `a rule for ${selector}`).toBeGreaterThan(-1)
+    return css.slice(at, css.indexOf('}', at))
+  }
+
+  it('the stylesheet fades the bar by the root value, with no edge in the selector: a top-docked bar fades the same', () => {
+    const rule = cssRule(":root[data-form-factor='phone'] .zen-phone-bar")
+    expect(rule).toContain('opacity: calc(1 - var(--zen-recede, 0) * var(--zen-recede-gain, 1))')
+    // No other rule of the bar's writes an opacity that could stand in for it.
+    const css = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8')
+    const barRules = [...css.matchAll(/[^{}]*\.zen-phone-bar[^{}]*\{[^}]*\}/g)].map((m) => m[0])
+    expect(barRules.length).toBeGreaterThan(1)
+    expect(barRules.filter((r) => /opacity\s*:/.test(r))).toHaveLength(1)
+  })
+
+  it('recedeFade composes a fade of the element’s own into the same product, clamped, and is 1 − recede alone by default', () => {
+    expect(recedeFade()).toBe(
+      'calc((1 - var(--zen-recede, 0) * var(--zen-recede-gain, 1)) * 1.0000)'
+    )
+    expect(recedeFade(0.25)).toBe(
+      'calc((1 - var(--zen-recede, 0) * var(--zen-recede-gain, 1)) * 0.2500)'
+    )
+    expect(recedeFade(0)).toContain('* 0.0000)')
+    expect(recedeFade(1.7)).toContain('* 1.0000)')
+    expect(recedeFade(-2)).toContain('* 0.0000)')
+    // Never a bare number: a number written inline would beat the stylesheet's rule.
+    for (const share of [0, 0.5, 1]) expect(Number.isNaN(Number(recedeFade(share)))).toBe(true)
+  })
+})
+
 describe('recedeFrame: the stack rule (§11.2, §9.24)', () => {
   it('a second sheet does not push the page further', () => {
     expect(recedeFrame([1, 1]).page).toBe(1)
@@ -88,16 +134,18 @@ describe('recedeFrame: the stack rule (§11.2, §9.24)', () => {
     expect(recedeFrame([0.3, 0.6]).page).toBe(0.6)
   })
 
-  it('the lower sheet recedes by the presence of the sheet above it, inert from its registering', () => {
+  it('the lower sheet recedes by the presence of the sheet above it, inert from q > 0 (§11.2)', () => {
     const [lower, upper] = recedeFrame([1, 0.5]).layers
     expect(lower.recede).toBe(0.5)
     expect(lower.inert).toBe(true)
     expect(upper.recede).toBe(0)
     expect(upper.inert).toBe(false)
-    // Registered above, not yet up: the lower content is inert already, receded not at all.
+    // Registered above but showing nothing yet (held for the page's cover): the lower content
+    // stays live, receded not at all – it goes inert with the upper sheet's first frame.
     const [under, over] = recedeFrame([1, 0]).layers
-    expect(under).toEqual({ recede: 0, scrim: 1, inert: true })
+    expect(under).toEqual({ recede: 0, scrim: 1, inert: false })
     expect(over).toEqual({ recede: 0, scrim: 0, inert: false })
+    expect(recedeFrame([1, 0.001]).layers[0].inert).toBe(true)
   })
 
   it('the stack shows one scrim: the lower share gives way as the upper comes in, summing to the top presence', () => {
@@ -166,6 +214,8 @@ describe('recedeFrame: the stack rule (§11.2, §9.24)', () => {
     expect(layers[1].recede).toBe(0.9)
     expect(layers[2].recede).toBe(0)
     expect(layers.map((l) => l.inert)).toEqual([true, true, false])
+    // The top one still held at 0: the middle sheet is live, the bottom inert under the middle.
+    expect(recedeFrame([1, 0.4, 0]).layers.map((l) => l.inert)).toEqual([true, false, false])
   })
 })
 
@@ -189,14 +239,21 @@ describe('the registry', () => {
     expect(pageRecede()).toBe(0)
   })
 
-  it('a second layer registers above the first: the first is told it is under one, and recedes with it', () => {
+  it('a second layer registers above the first: the first is told it is under one once that shows, and recedes with it', () => {
     const lowerFrames: RecedeLayerFrame[] = []
     const lower = layer((f) => lowerFrames.push(f))
     lower.progress(1)
     expect(lowerFrames.at(-1)).toEqual({ recede: 0, scrim: 1, inert: false })
+    expect(lower.onTop()).toBe(true)
 
     const upper = layer()
-    expect(lowerFrames.at(-1)).toEqual({ recede: 0, scrim: 1, inert: true })
+    // Registered above, nothing of it showing yet: the lower is no longer on top (the focus and
+    // the keyboard are the upper one's), its content still live (§11.2: inert from q > 0).
+    expect(lower.onTop()).toBe(false)
+    expect(upper.onTop()).toBe(true)
+    expect(lowerFrames.at(-1)).toEqual({ recede: 0, scrim: 1, inert: false })
+    upper.progress(0.01)
+    expect(lowerFrames.at(-1)).toEqual({ recede: 0.01, scrim: 0.99, inert: true })
     upper.progress(0.5)
     expect(lowerFrames.at(-1)).toEqual({ recede: 0.5, scrim: 0.5, inert: true })
     expect(recedeVar()).toBe('1.0000')
@@ -205,6 +262,8 @@ describe('the registry', () => {
 
     upper.release()
     expect(lowerFrames.at(-1)).toEqual({ recede: 0, scrim: 1, inert: false })
+    expect(lower.onTop()).toBe(true)
+    expect(upper.onTop()).toBe(false)
     expect(recedeVar()).toBe('1.0000')
   })
 

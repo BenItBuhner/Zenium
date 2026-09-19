@@ -32,6 +32,13 @@ export const SHEET_CLOSED: SheetState = { phase: 'closed', progress: 1 }
  */
 export const BACK_PEEK = 0.3
 
+/**
+ * Under reduced motion a sheet's appearance or departure is an opacity fade in place of this
+ * length, the spring having jumped it there (v2 draft §11.3); main.css transitions the opacity
+ * of the sheet chassis' elements for as long.
+ */
+export const REDUCED_MOTION_FADE_MS = 120
+
 // ---------------------------------------------------------------------------
 // Geometry: detents, frames, drags and where a release settles
 // ---------------------------------------------------------------------------
