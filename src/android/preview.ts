@@ -4,6 +4,7 @@ import type { BootInfo } from './platform'
 import type { Platform } from '@shared/types'
 import type { VoiceEvent, VoiceStartOutcome } from '@shared/voice'
 import { createPreviewDownloads } from './previewDownloads'
+import { CHUNK_CHARS } from './storeIo'
 
 interface HostGlobal {
   resolve(id: number, json: string | null): void
@@ -213,6 +214,10 @@ export function createPreviewBridge(): NativeBridge {
     }
   }
 
+  let pieceSeq = 0
+  const pieceWrites = new Map<number, { name: string; parts: string[] }>()
+  const pieceReads = new Map<number, { text: string; at: number }>()
+
   const handlers: Record<string, (args: Record<string, unknown>) => unknown | Promise<unknown>> = {
     boot: (): BootInfo => ({
       version: 'preview',
@@ -236,9 +241,53 @@ export function createPreviewBridge(): NativeBridge {
       // Landed (the Kotlin host answers the same; the store's mirror follows only then).
       return true
     },
-    'storage.read': ({ name }) => localStorage.getItem(STORAGE_PREFIX + String(name)),
+    // The text whole up to the piece size, a bigger document as { token } for storage.readChunk.
+    'storage.read': ({ name }) => {
+      const text = localStorage.getItem(STORAGE_PREFIX + String(name))
+      if (text === null || text.length <= CHUNK_CHARS) return text
+      const token = ++pieceSeq
+      pieceReads.set(token, { text, at: 0 })
+      return { token }
+    },
     'storage.exists': ({ name }) => localStorage.getItem(STORAGE_PREFIX + String(name)) !== null,
     'storage.remove': ({ name }) => localStorage.removeItem(STORAGE_PREFIX + String(name)),
+    // Documents in pieces (`AndroidStoreIO`): the same protocol as Kotlin's Storage, over localStorage.
+    'storage.writeBegin': ({ name }) => {
+      const token = ++pieceSeq
+      pieceWrites.set(token, { name: String(name), parts: [] })
+      return token
+    },
+    'storage.writeChunk': ({ token, text }) => {
+      const write = pieceWrites.get(Number(token))
+      if (!write) throw new Error(`no write ${String(token)}`)
+      write.parts.push(String(text))
+      return true
+    },
+    'storage.writeEnd': ({ token }) => {
+      const write = pieceWrites.get(Number(token))
+      if (!write) throw new Error(`no write ${String(token)}`)
+      pieceWrites.delete(Number(token))
+      localStorage.setItem(STORAGE_PREFIX + write.name, write.parts.join(''))
+      return true
+    },
+    'storage.writeAbort': ({ token }) => {
+      pieceWrites.delete(Number(token))
+      return null
+    },
+    'storage.readChunk': ({ token, maxChars }) => {
+      const read = pieceReads.get(Number(token))
+      if (!read || read.at >= read.text.length) {
+        pieceReads.delete(Number(token))
+        return null
+      }
+      const chunk = read.text.slice(read.at, read.at + Math.max(1, Number(maxChars) || 1))
+      read.at += chunk.length
+      return chunk
+    },
+    'storage.readEnd': ({ token }) => {
+      pieceReads.delete(Number(token))
+      return null
+    },
     // The preview has no request engine and ships no filter-list snapshot.
     'blocking.bundled': () => [],
     'blocking.install': () => null,

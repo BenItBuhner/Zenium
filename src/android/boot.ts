@@ -28,7 +28,7 @@ import { fetchDeferredDocuments } from './handoff'
 import { installKeyboardPolicy } from './keyboard'
 import { AndroidPlatform, type BootInfo, type HostEventPayloads } from './platform'
 import { createPreviewBridge } from './preview'
-import { AndroidStoreIO } from './storeIo'
+import { AndroidStoreIO, readDocument } from './storeIo'
 import type { ViewEventPayloads } from './views'
 
 /** Same shape as the Electron preload's `window.zen`, so the renderer is unchanged. */
@@ -94,8 +94,7 @@ export async function bootAndroid(): Promise<{ browser: Browser; api: ZenApi; pr
   io.adopt(
     await fetchDeferredDocuments(boot.deferred, {
       fetch: (url, init) => fetch(url, init),
-      readSync: (name) =>
-        bridge.callSync<string | null | undefined>('storage.read', { name }) ?? null
+      readSync: (name) => readDocument(bridge, name)
     })
   )
   // From here on nothing yields until the core has started: what the host sends in reaches a

@@ -184,6 +184,8 @@ class Extensions(private val host: Host) {
     private val worldSlots = WorldSlots(if (isolatedWorlds) WORLD_SLOTS else 0)
     private val endpoints = HashMap<String, Endpoint>()
     private val backgrounds = HashMap<String, ExtensionWebView>()
+    /** `chrome.offscreen`'s hidden page per extension: a background-like view on the URL the extension named. */
+    private val offscreens = HashMap<String, ExtensionWebView>()
     private var popup: ExtensionPopup? = null
     /** The user agent extension pages send (set when the first extension view is built), for the CORS proxy's requests. */
     @Volatile var userAgent: String? = null
@@ -295,6 +297,8 @@ class Extensions(private val host: Host) {
             "ext.background.stop" -> { stopBackground(args.str("id")); reply(null) }
             "ext.popup.open" -> { openPopup(args.str("id"), args.str("url"), args.str("context", "popup"), args.str("title", "")); reply(null) }
             "ext.popup.close" -> { closePopup(); reply(null) }
+            "ext.offscreen.open" -> { openOffscreen(args.str("id"), args.str("url")); reply(null) }
+            "ext.offscreen.close" -> { closeOffscreen(args.str("id")); reply(null) }
             "ext.auth.open" -> { openAuthSheet(args.getInt("viewId"), args.str("id"), args.str("url"), args.str("title")); reply(null) }
             "ext.auth.show" -> { authSheets[args.getInt("viewId")]?.show(); reply(null) }
             "ext.auth.close" -> { authSheets.remove(args.getInt("viewId"))?.close(); reply(null) }
@@ -317,6 +321,16 @@ class Extensions(private val host: Host) {
                 io.execute {
                     val text = runCatching { fileFor(id, path)?.takeIf { it.isFile }?.readText() }.getOrNull()
                     main.post { reply(text) }
+                }
+            }
+            "ext.i18n.detectLanguage" -> {
+                // The classifier is a call into the system's text-classification service; a
+                // failure of that service is a text nobody could place.
+                val text = args.str("text")
+                io.execute {
+                    val detected = runCatching { LanguageDetection.detect(host.activity, text) }
+                        .getOrElse { e -> Log.w(TAG, "detectLanguage: ${e.message}"); LanguageDetection.NONE }
+                    main.post { reply(detected) }
                 }
             }
             else -> throw IllegalArgumentException("Unknown method: $method")
@@ -468,6 +482,7 @@ class Extensions(private val host: Host) {
         served = served - id
         for (view in handlers.keys.toList()) removeExtension(view, id)
         stopBackground(id)
+        closeOffscreen(id)
         if (popup?.extensionId == id) closePopup()
         // The core dropped these endpoints already; the frames keep running what was injected.
         endpoints.entries.removeAll { it.value.extensionId == id }
@@ -590,6 +605,16 @@ class Extensions(private val host: Host) {
         synchronized(bridgeTrace) { bridgeTrace.filter { it.contains(" ${extensionId.take(8)}/") } }
 
     /**
+     * The endpoints a view holds right now, one line each (context, extension, main frame, URL,
+     * endpoint id), for instrumentation: whether the document a blank extension page shows is
+     * still one the host can answer.
+     */
+    fun endpointSnapshot(view: WebView): List<String> =
+        endpoints.entries.filter { it.value.view === view }.map { (ep, e) ->
+            "${e.context} ${e.extensionId.take(8)} main=${e.isMainFrame} world=${e.world} url=${e.url} ep=$ep"
+        }
+
+    /**
      * Instrumentation only: run `script` in the isolated world of `extensionId`'s main-frame
      * content endpoint on `view` and hand back the JSON-encoded result, or null when the
      * extension has no world endpoint there (or worlds are off). `evaluateJavascript` only sees
@@ -624,6 +649,11 @@ class Extensions(private val host: Host) {
      * reply proxy, the one handle a WebView gives to a frame (`evaluateJavascript` takes none), so
      * it needs a WebView with `JS_INJECTION_IN_FRAME_AND_WORLD` and a frame the extension has a
      * script in: the world endpoint for the isolated world, the main-world one for `world: "MAIN"`.
+     *
+     * The extension's own files (`files`, extension-relative paths) are read here and streamed
+     * into the script ([ExtensionScripts.execScript]) rather than sent as `code`: a missing one is
+     * Chrome's `Could not load file` rejection. The read is off the main thread; where the script
+     * runs is decided first, with the endpoints this call saw.
      */
     private fun exec(args: JSONObject, reply: (Any?) -> Unit) {
         val tab = host.tabs.get(args.str("tabId"))
@@ -638,39 +668,68 @@ class Extensions(private val host: Host) {
             return
         }
         val payload = args.obj("payload")
-        val call = ExtensionScripts.guarded(
-            ExtensionScripts.exec(token, id, args.str("kind", "js"), payload, args.strOrNull("code"), args.strOrNull("funcSource"), args.optJSONArray("args")?.toString())
-        )
+        val paths = args.optJSONArray("files")?.let { a -> List(a.length()) { i -> a.optString(i, "") } } ?: emptyList()
+        val files = ArrayList<File>(paths.size)
+        for (path in paths) {
+            val file = fileIn(ext.dir, path)?.takeIf { it.isFile }
+            if (file == null) {
+                reply(Host.Rejection("Could not load file: '$path'."))
+                return
+            }
+            files.add(file)
+        }
         val wantMain = payload.optString("world") == "MAIN"
         val doc = args.strOrNull("doc")
+        var prefix: String? = null
+        var named = false
+        val run: (String) -> Unit
         if (doc != null) {
             if (!isolatedWorlds) {
                 reply(Host.Rejection("This WebView cannot run a script in a subframe (Chromium 146 and later can)"))
                 return
             }
             val frame = endpoints.values.filter { it.view === tab && it.extensionId == id && it.context == "content" && !it.isMainFrame && it.doc == doc }
-            val endpoint = frame.firstOrNull { it.world == !wantMain }
-            when {
-                frame.isEmpty() -> reply(Host.Rejection("No such frame in the tab (it navigated away, or the extension has no script in it)"))
-                endpoint == null -> reply(Host.Rejection("The extension has no ${if (wantMain) "main-world" else "isolated-world"} script in that frame"))
-                else -> runInFrame(endpoint, call, reply)
-            }
-            return
-        }
-        val mine = endpoints.values.filter { it.view === tab && it.extensionId == id && it.context == "content" && it.isMainFrame }
-        if (isolatedWorlds && !wantMain) {
-            val world = mine.firstOrNull { it.world }
-            if (world != null) {
-                runInFrame(world, call, reply)
+            if (frame.isEmpty()) {
+                reply(Host.Rejection("No such frame in the tab (it navigated away, or the extension has no script in it)"))
                 return
             }
+            val endpoint = frame.firstOrNull { it.world == !wantMain }
+            if (endpoint == null) {
+                reply(Host.Rejection("The extension has no ${if (wantMain) "main-world" else "isolated-world"} script in that frame"))
+                return
+            }
+            run = { call -> runInFrame(endpoint, call, reply) }
+        } else {
+            val mine = endpoints.values.filter { it.view === tab && it.extensionId == id && it.context == "content" && it.isMainFrame }
+            val world = if (isolatedWorlds && !wantMain) mine.firstOrNull { it.world } else null
+            if (world != null) {
+                run = { call -> runInFrame(world, call, reply) }
+            } else {
+                if (mine.none { !it.world }) {
+                    lateBoots++
+                    prefix = ExtensionScripts.lateBoot(bootstrap, ext.lateConfig, debug)
+                }
+                // Named like the document-start script: the injected function's DOM writes are the extension's too.
+                named = true
+                run = { script -> tab.evaluateJavascript(script) { result -> reply(unwrap(result)) } }
+            }
         }
-        val booted = mine.any { !it.world }
-        val script = if (booted) call else {
-            lateBoots++
-            ExtensionScripts.lateBoot(bootstrap, ext.lateConfig, debug) + "\n" + call
+        val assemble = {
+            ExtensionScripts.execScript(
+                token, id, args.str("kind", "js"), payload, args.strOrNull("code"), files,
+                args.strOrNull("funcSource"), args.optJSONArray("args")?.toString(), prefix, named
+            )
         }
-        tab.evaluateJavascript(script) { result -> reply(unwrap(result)) }
+        if (files.isEmpty()) {
+            run(assemble())
+            return
+        }
+        io.execute {
+            val script = runCatching(assemble)
+            main.post {
+                script.fold(run) { e -> reply(Host.Rejection("Could not load file: ${e.message ?: e.javaClass.simpleName}.")) }
+            }
+        }
     }
 
     /** [ExtensionScripts.guarded] `call`, run in the frame and world of `endpoint` through its reply proxy. */
@@ -1216,6 +1275,28 @@ class Extensions(private val host: Host) {
         view.destroy()
     }
 
+    /**
+     * `ext.offscreen.open`: the extension's one offscreen document (`chrome.offscreen`), a hidden
+     * view like the background's on the page the extension named; its bootstrap says hello as an
+     * `offscreen` endpoint, which is what the core's `createDocument` waits for. An earlier one
+     * under the id is replaced (the core refuses a second `createDocument`; this is its retry).
+     */
+    private fun openOffscreen(id: String, url: String) {
+        val ext = served[id] ?: return
+        closeOffscreen(id)
+        val view = ExtensionWebView(host, this, ext, "offscreen")
+        offscreens[id] = view
+        host.attachHidden(view)
+        view.loadUrl(url)
+    }
+
+    private fun closeOffscreen(id: String) {
+        val view = offscreens.remove(id) ?: return
+        onDocumentGone(view)
+        host.detachHidden(view)
+        view.destroy()
+    }
+
     private fun openPopup(id: String, url: String, context: String, title: String) {
         closePopup()
         val ext = served[id] ?: return
@@ -1266,6 +1347,9 @@ class Extensions(private val host: Host) {
     fun onRendererGone(view: ExtensionWebView) {
         val id = backgrounds.entries.firstOrNull { it.value === view }?.key
         if (id != null) stopBackground(id)
+        // A dead offscreen page goes the same way; `hasDocument` says false once its endpoint is gone.
+        val offscreen = offscreens.entries.firstOrNull { it.value === view }?.key
+        if (offscreen != null) closeOffscreen(offscreen)
         if (popup?.webView === view) closePopup()
     }
 
@@ -1282,6 +1366,7 @@ class Extensions(private val host: Host) {
         closePopup()
         closeAuthSheets()
         for (id in backgrounds.keys.toList()) stopBackground(id)
+        for (id in offscreens.keys.toList()) closeOffscreen(id)
         notifications.destroy()
         io.shutdownNow()
         // The engine outlives the window; a runtime that is gone must not be called (a newer

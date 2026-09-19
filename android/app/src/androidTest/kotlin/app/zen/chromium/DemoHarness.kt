@@ -793,6 +793,11 @@ abstract class DemoHarness(
         val deadline = SystemClock.uptimeMillis() + 15_000
         while (SystemClock.uptimeMillis() < deadline) {
             val raw = chromeJs("window.__demo===undefined?'':window.__demo")
+            // "" is a chrome that did not answer the poll (its renderer busy or blocked): not an answer yet.
+            if (raw.isEmpty()) {
+                SystemClock.sleep(100)
+                continue
+            }
             val value = (JSONTokener(raw).nextValue() as? String).orEmpty()
             if (value.startsWith("ERR:")) error("$name failed: ${value.removePrefix("ERR:")}")
             if (value.isNotEmpty()) return value

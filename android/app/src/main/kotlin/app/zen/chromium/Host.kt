@@ -196,10 +196,25 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             storage.writeSync(args.str("name"), args.str("text"), args.bool("backup"))
             true
         }
-        // Documents outside the boot payload (the rule-set files under blocking/), and a boot
-        // document the core reads before its fetched file has arrived.
-        "storage.read" -> storage.read(args.str("name"))
+        // Documents outside the boot payload (the rule-set files under blocking/, the extension
+        // storage under ext-storage/), and a boot document the core reads before its fetched file
+        // has arrived: the text whole up to Storage.INLINE_READ_BYTES, a bigger one as { token } to
+        // be read in pieces (storage.readChunk until null), one piece on the Java heap at a time.
+        "storage.read" -> storage.readOrBegin(args.str("name"), Storage.INLINE_READ_BYTES)
         "storage.exists" -> storage.exists(args.str("name"))
+        "storage.readChunk" -> storage.readChunk(args.num("token").toLong(), args.num("maxChars").toInt())
+        "storage.readEnd" -> {
+            storage.endRead(args.num("token").toLong())
+            null
+        }
+        // The last-chance write of a large document, in pieces on this thread (true: the piece landed).
+        "storage.writeBegin" -> storage.beginWrite(args.str("name"), args.bool("backup")) ?: throw IllegalArgumentException("cannot write ${args.str("name")}")
+        "storage.writeChunk" -> storage.writeChunk(args.num("token").toLong(), args.str("text")).takeIf { it } ?: throw IllegalStateException("no write ${args.num("token").toLong()}")
+        "storage.writeEnd" -> storage.endWrite(args.num("token").toLong()).takeIf { it } ?: throw IllegalStateException("write ${args.num("token").toLong()} did not land")
+        "storage.writeAbort" -> {
+            storage.abortWrite(args.num("token").toLong())
+            null
+        }
         else -> throw IllegalArgumentException("Unknown sync method: $method")
     }
 
@@ -213,6 +228,25 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 main.post { reply(if (failure == null) null else Rejection(failure.message ?: failure.javaClass.simpleName)) }
             }
             "storage.remove" -> storage.remove(args.str("name")) { main.post { reply(null) } }
+            // A large document in pieces, each landing on the storage thread before the next is sent.
+            "storage.writeBegin" -> {
+                val name = args.str("name")
+                val backup = args.bool("backup")
+                storage.execute { val token = storage.beginWrite(name, backup); main.post { reply(token ?: Rejection("cannot write $name")) } }
+            }
+            "storage.writeChunk" -> {
+                val token = args.num("token").toLong()
+                val text = args.str("text")
+                storage.execute { val ok = storage.writeChunk(token, text); main.post { reply(if (ok) true else Rejection("no write $token")) } }
+            }
+            "storage.writeEnd" -> {
+                val token = args.num("token").toLong()
+                storage.execute { val ok = storage.endWrite(token); main.post { reply(if (ok) true else Rejection("write $token did not land")) } }
+            }
+            "storage.writeAbort" -> {
+                val token = args.num("token").toLong()
+                storage.execute { storage.abortWrite(token); main.post { reply(null) } }
+            }
 
             // --- request blocking (the BlockingHost contract and diagnostics) ----------------------
             "blocking.bundled" -> reply(blocking.bundledLists())

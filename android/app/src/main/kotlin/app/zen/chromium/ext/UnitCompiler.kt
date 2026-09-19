@@ -1,8 +1,10 @@
 package app.zen.chromium.ext
 
+import androidx.annotation.VisibleForTesting
 import app.zen.chromium.strOrNull
 import org.json.JSONArray
 import org.json.JSONObject
+import java.lang.ref.SoftReference
 import java.security.MessageDigest
 
 /**
@@ -11,7 +13,10 @@ import java.security.MessageDigest
  *
  *  - the sources of an extension's files are read once per version, however many units and
  *    reconfigures ask for them (a `registerContentScripts` call re-plans the extension's units,
- *    it does not change its files);
+ *    it does not change its files) – held softly: every source is also inside the assembled
+ *    script, so under heap pressure the GC takes the raw texts back and the next reconfigure
+ *    reads them again (Grammarly's ten million characters of sources are that much heap twice,
+ *    on a 192 MB debug heap that also holds the other extensions' units);
  *  - a unit whose inputs (config, groups, CSS, debug flag) did not change keeps its assembled
  *    script, so a reconfigure that re-sends an unchanged unit costs a hash, not an assembly;
  *  - every other extension's cache is untouched, and a new version starts from nothing.
@@ -33,8 +38,8 @@ class UnitCompiler(private val bootstrap: () -> String) {
     )
 
     private class ExtensionCache(val version: String) {
-        /** Extension-relative path → file text (null: missing or unreadable). */
-        val sources = HashMap<String, String?>()
+        /** Extension-relative path → the file's text behind a [SoftReference], or [MISSING] (unreadable). */
+        val sources = HashMap<String, Any>()
         val units = HashMap<String, Compiled>()
     }
 
@@ -80,7 +85,8 @@ class UnitCompiler(private val bootstrap: () -> String) {
                 val files = g.optJSONArray("js") ?: JSONArray()
                 val sources = List(files.length()) { k ->
                     val path = files.optString(k, "")
-                    source(entry, path, read)
+                    if (path.startsWith(INLINE_CODE)) path.substring(INLINE_CODE.length)
+                    else source(entry, path, read)
                         ?: "console.error(${JSONObject.quote("[Zenium] extension $ext: missing content script $path")});"
                 }
                 groups.add(ExtensionScripts.Group(ext, g.optInt("index"), sources, g.optString("isolation", "with")))
@@ -112,19 +118,40 @@ class UnitCompiler(private val bootstrap: () -> String) {
         cache.remove(id)
     }
 
-    /** The number of source files held for an extension, for instrumentation. */
+    /** The number of source files held for an extension (a text the GC took back no longer counts), for instrumentation. */
     @Synchronized
-    fun cachedSources(id: String): Int = cache[id]?.sources?.size ?: 0
+    fun cachedSources(id: String): Int = cache[id]?.sources?.values?.count { it === MISSING || (it as SoftReference<*>).get() != null } ?: 0
+
+    /** What the GC may do at any time: let go of every source text held for the extension. */
+    @VisibleForTesting
+    @Synchronized
+    fun clearSourcesForTest(id: String) {
+        cache[id]?.sources?.values?.forEach { (it as? SoftReference<*>)?.clear() }
+    }
 
     private fun source(entry: ExtensionCache, path: String, read: (String) -> String?): String? {
         if (path.isEmpty()) return null
-        if (entry.sources.containsKey(path)) return entry.sources[path]
+        when (val held = entry.sources[path]) {
+            MISSING -> return null
+            is SoftReference<*> -> (held.get() as String?)?.let { return it }
+        }
         val text = runCatching { read(path) }.getOrNull()
-        entry.sources[path] = text
+        entry.sources[path] = if (text == null) MISSING else SoftReference(text)
         return text
     }
 
     companion object {
+        /** Marks a path whose file is missing or unreadable, so it is not read again for the version. */
+        private val MISSING = Any()
+
+        /**
+         * A `js` entry that is the script's text rather than a path: `userScripts.register` takes
+         * `{ code }` entries (Tampermonkey registers every user script that way, Ghostery its
+         * scriptlets), and the core carries them in the group's `js` list behind a NUL – a
+         * character no path has (`extensionApi.ts`, `inlineScript`).
+         */
+        const val INLINE_CODE = "\u0000"
+
         fun sha256(text: String): String {
             val digest = MessageDigest.getInstance("SHA-256").digest(text.toByteArray())
             val sb = StringBuilder(digest.size * 2)

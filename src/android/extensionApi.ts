@@ -10,12 +10,16 @@ import {
   coversAllUrls,
   normalizeCaptureOptions
 } from '@core/extensions/api/capture'
-import type { EngineContextKind } from '@core/extensions/api/engine'
+import { NATIVE_HOST_NOT_FOUND, type EngineContextKind } from '@core/extensions/api/engine'
 import type { LocaleMessages } from '@core/extensions/api/i18n'
 import { globToRegExp, matchesAnyPattern } from '@core/extensions/api/matchPattern'
 import type { ExtensionRecord } from '@core/extensions/registry'
 import type { RunAt, RuntimeManifest, ScriptWorld } from '@core/extensions/runtime/manifest'
-import { extensionUrl, type RegisteredContentScript } from '@core/extensions/runtime/plan'
+import {
+  extensionOrigin,
+  extensionUrl,
+  type RegisteredContentScript
+} from '@core/extensions/runtime/plan'
 import type { Endpoint, MessageRouter } from '@core/extensions/runtime/router'
 import { ActiveTabGrants } from './extensionActiveTab'
 import { AndroidContextMenus } from './extensionContextMenus'
@@ -54,6 +58,11 @@ export interface ExecRequest {
   kind: 'js' | 'css'
   payload: Record<string, unknown>
   code: string | null
+  /**
+   * The extension's own script files (extension-relative paths, in order): the host reads them
+   * into the script itself, so their text never crosses the bridge (Loom's `content.js` is 13 MB).
+   */
+  files: string[] | null
   funcSource: string | null
   args: unknown[] | null
 }
@@ -83,6 +92,11 @@ export interface ApiHost {
   /** The extension's toolbar icon as a `data:` URL, when the store has read it. */
   icon(id: string): string | null
   readFile(id: string, path: string): Promise<string | null>
+  /**
+   * `i18n.detectLanguage`: the platform's guess at the text's language, in Chrome's shape
+   * (`languages` by share of the text; `isReliable` when the guess is a confident one).
+   */
+  detectTextLanguage(text: string): Promise<DetectedLanguage>
   exec(request: ExecRequest): Promise<unknown>
   /** The cookies a request to `url` from the container's jar would carry (`chrome.cookies`). */
   readCookies(containerId: string, url: string): Promise<JarReading>
@@ -105,6 +119,14 @@ export interface ApiHost {
   notificationsAllowed(): Promise<boolean>
   openPopup(id: string): void
   openOptions(id: string): void
+  /**
+   * `chrome.offscreen`: the extension's one hidden document. `openOffscreen` resolves once the
+   * page said hello (Chrome's `createDocument` resolves when the document is created), or
+   * rejects when it never does.
+   */
+  openOffscreen(id: string, url: string): Promise<void>
+  closeOffscreen(id: string): void
+  hasOffscreen(id: string): boolean
   /** `runtime.reload()` and `management.uninstallSelf()`: the store re-reads or removes the extension. */
   reload(id: string): Promise<void>
   uninstall(id: string): Promise<void>
@@ -138,6 +160,45 @@ const DEFAULT_BADGE_BACKGROUND = '#5f6368'
 const DEFAULT_BADGE_TEXT_COLOR = '#ffffff'
 
 const NOT_IMPLEMENTED = 'is not implemented on Zenium for Android'
+
+/** `tabs.detectLanguage`: the page's declared language, read in the extension's world. */
+const DECLARED_LANGUAGE_JS =
+  "(function(){var h=document.documentElement;return (h&&h.getAttribute('lang'))||(document.body&&document.body.getAttribute('lang'))||''})()"
+
+/**
+ * A BCP 47 tag (`en-US`, `pt_BR`, ` DE `) as the bare lower-case language Chrome's
+ * `detectLanguage` answers with; `und` for nothing, or for a value that is no tag.
+ */
+export function languageCodeOf(declared: unknown): string {
+  if (typeof declared !== 'string') return 'und'
+  const primary = declared.trim().split(/[-_]/)[0] ?? ''
+  return /^[a-zA-Z]{2,3}$/.test(primary) ? primary.toLowerCase() : 'und'
+}
+
+/** `i18n.detectLanguage`'s answer, Chrome's shape. */
+export interface DetectedLanguage {
+  isReliable: boolean
+  languages: { language: string; percentage: number }[]
+}
+
+/** The leading part of a text the host's classifier reads (`i18n.detectLanguage`). */
+export const LANGUAGE_SAMPLE_CHARS = 4096
+
+/**
+ * The host's `ext.i18n.detectLanguage` answer as a `DetectedLanguage`: only well-formed entries
+ * count, and a guess with no language is not a reliable one.
+ */
+export function asDetectedLanguage(value: unknown): DetectedLanguage {
+  const record = asRecord(value)
+  const languages: DetectedLanguage['languages'] = []
+  for (const entry of Array.isArray(record.languages) ? record.languages : []) {
+    const item = asRecord(entry)
+    const percentage = asNumber(item.percentage)
+    if (typeof item.language === 'string' && item.language && percentage !== null)
+      languages.push({ language: item.language, percentage })
+  }
+  return { isReliable: record.isReliable === true && languages.length > 0, languages }
+}
 
 export function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {}
@@ -508,8 +569,12 @@ export class ExtensionApi {
         if (method === 'isAllowedIncognitoAccess') return ext.record.allowPrivate === true
         break
       case 'offscreen':
-        if (method === 'hasDocument') return false
-        if (method === 'closeDocument') return undefined
+        return this.offscreenCall(ext, method, args)
+      case 'i18n':
+        // getMessage, getUILanguage and getAcceptLanguages are the engine's; the platform's
+        // classifier answers detectLanguage.
+        if (method === 'detectLanguage')
+          return this.host.detectTextLanguage(typeof args[0] === 'string' ? args[0] : '')
         break
       case 'downloads':
         if (method === 'download') {
@@ -568,8 +633,9 @@ export class ExtensionApi {
       case 'get':
         return ids.chromeTab(ids.tabFor(ext, args[0]))
       case 'getCurrent': {
-        // Extension pages have no tab of their own; content scripts get theirs.
-        if (endpoint.context === 'content' && endpoint.tabId) {
+        // A content script's tab, or the tab an extension page is open in (OneTab's list page
+        // reads its own id from it); popups, workers and offscreen pages have none.
+        if ((endpoint.context === 'content' || endpoint.context === 'page') && endpoint.tabId) {
           const tab = tabs.tab(endpoint.tabId)
           return tab ? ids.chromeTab(tab) : undefined
         }
@@ -649,8 +715,79 @@ export class ExtensionApi {
       }
       case 'captureVisibleTab':
         return this.captureVisibleTab(ext, args[0], args[1])
+      case 'detectLanguage': {
+        const target = targetOrActive(args[0])
+        if (!target) throw new Error('No active tab.')
+        return this.detectLanguage(ext, target)
+      }
     }
     throw new Error(`chrome.tabs.${method} ${NOT_IMPLEMENTED}`)
+  }
+
+  /**
+   * Chrome runs its language detector over the page's text. The phone has none, so the answer
+   * is what the document declares (`<html lang>`, which Blink also fills from a Content-Language
+   * header), as the bare language code Chrome returns – `und` when nothing is declared or the
+   * page cannot be asked. Ghostery and LanguageTool call this on every page they attach to.
+   */
+  private async detectLanguage(ext: AttachedExtension, target: Tab): Promise<string> {
+    let declared: unknown
+    try {
+      declared = await this.host.exec({
+        extensionId: ext.record.id,
+        tabId: target.id,
+        frameId: 0,
+        kind: 'js',
+        payload: { world: 'ISOLATED' },
+        code: DECLARED_LANGUAGE_JS,
+        files: null,
+        funcSource: null,
+        args: null
+      })
+    } catch {
+      return 'und'
+    }
+    return languageCodeOf(declared)
+  }
+
+  /**
+   * `chrome.offscreen`: one hidden page per extension, on its origin, with the same `chrome` as
+   * a popup (Tampermonkey makes its blob URLs in one, Google Translate plays its audio there);
+   * Chrome's errors word for word. `reasons` and `justification` are required by Chrome's
+   * validator but change nothing here.
+   */
+  private async offscreenCall(
+    ext: AttachedExtension,
+    method: string,
+    args: unknown[]
+  ): Promise<unknown> {
+    const id = ext.record.id
+    switch (method) {
+      case 'createDocument': {
+        const params = asRecord(args[0])
+        const url = typeof params.url === 'string' ? params.url.trim() : ''
+        if (!url)
+          throw new Error(
+            "Error at parameter 'parameters': Error at property 'url': Invalid or missing url."
+          )
+        const reasons = Array.isArray(params.reasons) ? params.reasons : []
+        if (reasons.length === 0)
+          throw new Error(
+            "Error at parameter 'parameters': Error at property 'reasons': Expected at least one reason."
+          )
+        if (this.host.hasOffscreen(id))
+          throw new Error('Only a single offscreen document may be created.')
+        await this.host.openOffscreen(id, offscreenUrl(id, url))
+        return undefined
+      }
+      case 'closeDocument':
+        if (!this.host.hasOffscreen(id)) throw new Error('No current offscreen document.')
+        this.host.closeOffscreen(id)
+        return undefined
+      case 'hasDocument':
+        return this.host.hasOffscreen(id)
+    }
+    throw new Error(`chrome.offscreen.${method} ${NOT_IMPLEMENTED}`)
   }
 
   /**
@@ -748,12 +885,10 @@ export class ExtensionApi {
     details: Record<string, unknown>
   ): Promise<unknown> {
     const id = ext.record.id
-    const code =
-      typeof details.code === 'string'
-        ? details.code
-        : await this.host.readFile(id, String(details.file ?? ''))
     const frames = this.targetFrames(ext, target, details)
     if (kind === 'js') {
+      // `{ file }` goes to the host by name; `{ code }` as text.
+      const file = typeof details.file === 'string' ? details.file : null
       const results = await this.injectFrames(frames, (frameId) =>
         this.host.exec({
           extensionId: id,
@@ -761,13 +896,18 @@ export class ExtensionApi {
           frameId,
           kind: 'js',
           payload: { world: 'ISOLATED' },
-          code: code ?? '',
+          code: file === null ? String(details.code ?? '') : null,
+          files: file === null ? null : [file],
           funcSource: null,
           args: null
         })
       )
       return results.map((r) => r.value)
     }
+    const code =
+      typeof details.code === 'string'
+        ? details.code
+        : await this.host.readFile(id, String(details.file ?? ''))
     const cssId = typeof details.file === 'string' ? details.file : (code ?? '')
     await this.injectFrames(frames, (frameId) =>
       this.host.exec({
@@ -777,6 +917,7 @@ export class ExtensionApi {
         kind: 'css',
         payload: { id: cssId, code: code ?? '' },
         code: null,
+        files: null,
         funcSource: null,
         args: null
       })
@@ -916,20 +1057,15 @@ export class ExtensionApi {
         const tab = resolveTab()
         const frames = this.targetFrames(ext, tab, target)
         const world = injection.world === 'MAIN' ? 'MAIN' : 'ISOLATED'
-        let code: string | null = null
+        let files: string[] | null = null
         let funcSource: string | null = null
         let funcArgs: unknown[] | null = null
         if (typeof injection.funcSource === 'string') {
           funcSource = injection.funcSource
           funcArgs = Array.isArray(injection.args) ? injection.args : []
         } else {
-          const sources: string[] = []
-          for (const file of asStringArray(injection.files)) {
-            const text = await this.host.readFile(id, file)
-            if (text === null) throw new Error(`Could not load file: '${file}'.`)
-            sources.push(text)
-          }
-          code = sources.join('\n;\n')
+          // The host reads the files into the script (a missing one is its `Could not load file` rejection).
+          files = asStringArray(injection.files)
         }
         const results = await this.injectFrames(frames, (frameId) =>
           this.host.exec({
@@ -938,7 +1074,8 @@ export class ExtensionApi {
             frameId,
             kind: 'js',
             payload: { world },
-            code,
+            code: null,
+            files,
             funcSource,
             args: funcArgs
           })
@@ -969,6 +1106,7 @@ export class ExtensionApi {
               kind: 'css',
               payload: { id: sheet.id, code: sheet.code, remove },
               code: null,
+              files: null,
               funcSource: null,
               args: null
             })
@@ -996,7 +1134,9 @@ export class ExtensionApi {
   /**
    * `chrome.userScripts`: registrations live next to the content scripts, in the `USER_SCRIPT`
    * world (their own unit and, with `configureWorld({ messaging: true })`, a messaging-only
-   * `chrome`); `js` entries are `{ file }` / `{ code }` objects, only files are injected here.
+   * `chrome`). `js` entries are `{ file }` / `{ code }` objects; a code entry travels in the
+   * group's `js` list as an inline script (`inlineScript`), which the host's compiler pastes in
+   * place of a file's text. An `update` patch without `js` leaves the scripts as they are.
    */
   private async userScriptsCall(
     ext: AttachedExtension,
@@ -1007,13 +1147,22 @@ export class ExtensionApi {
     const isUser = (s: RegisteredContentScript): boolean => s.world === 'USER_SCRIPT'
     const fromUserScript = (raw: unknown): Record<string, unknown> => {
       const script = asRecord(raw)
-      const js = Array.isArray(script.js) ? script.js.map((j) => asRecord(j).file) : []
-      return {
-        ...script,
-        js: asStringArray(js),
-        world: script.world === 'MAIN' ? 'MAIN' : 'USER_SCRIPT'
+      if (!Array.isArray(script.js)) return script
+      const js: string[] = []
+      for (const entry of script.js) {
+        const source = asRecord(entry)
+        if (typeof source.code === 'string') js.push(inlineScript(source.code))
+        else if (typeof source.file === 'string') js.push(source.file)
       }
+      return { ...script, js }
     }
+    const toUserScript = (s: RegisteredContentScript): Record<string, unknown> => ({
+      ...registeredToChrome(s),
+      js: s.js.map((entry) => {
+        const code = inlineScriptCode(entry)
+        return code === null ? { file: entry } : { code }
+      })
+    })
     switch (method) {
       case 'register':
         return this.register(
@@ -1028,7 +1177,7 @@ export class ExtensionApi {
           .registered(id)
           .filter(isUser)
           .filter((s) => filter.length === 0 || filter.includes(s.id))
-          .map((s) => ({ ...registeredToChrome(s), js: s.js.map((file) => ({ file })) }))
+          .map(toUserScript)
       }
       case 'unregister':
         return this.unregister(id, args[0], isUser)
@@ -1121,6 +1270,10 @@ export class ExtensionApi {
           tabId: e.tabId ? this.tabs.chromeIdFor(e.tabId) : -1,
           windowId: 1
         }))
+      // No native messaging hosts on the phone: Chrome's answer for a host that does not exist.
+      case 'sendNativeMessage':
+      case 'connectNative':
+        throw new Error(NATIVE_HOST_NOT_FOUND)
     }
     throw new Error(`chrome.runtime.${method} ${NOT_IMPLEMENTED}`)
   }
@@ -1424,6 +1577,25 @@ function safeOrigin(url: string): string {
   }
 }
 
+/**
+ * The page of `offscreen.createDocument({ url })` on the extension's served origin: a path
+ * (`offscreen.html`), a `chrome-extension://<id>/...` URL or the served URL itself
+ * (`runtime.getURL` answers that here). Another extension's id is not this extension's page.
+ */
+export function offscreenUrl(id: string, url: string): string {
+  const origin = extensionOrigin(id)
+  if (url === origin || url.startsWith(origin + '/')) return url
+  const scheme = /^chrome-extension:\/\/([a-p]{32})(\/[^#]*)?/.exec(url)
+  if (scheme) {
+    if (scheme[1] !== id)
+      throw new Error(`Invalid URL: "${url}" is not on this extension's origin.`)
+    return extensionUrl(id, scheme[2] ?? '/')
+  }
+  if (/^[a-z][a-z0-9+.-]*:/i.test(url))
+    throw new Error(`Invalid URL: "${url}" is not on this extension's origin.`)
+  return extensionUrl(id, url)
+}
+
 export function contextTypeOf(context: EngineContextKind): string {
   switch (context) {
     case 'background':
@@ -1435,6 +1607,23 @@ export function contextTypeOf(context: EngineContextKind): string {
     default:
       return 'TAB'
   }
+}
+
+/**
+ * A `userScripts.register` `{ code }` entry in a group's `js` list: the text behind a NUL, a
+ * character no extension path carries, so it rides in the same list as the files and keeps its
+ * place among them (Chrome runs a registration's entries in order). Kotlin's `UnitCompiler`
+ * reads it back (`INLINE_CODE`); `getScripts` reports it as `{ code }` again.
+ */
+const INLINE_SCRIPT_PREFIX = '\u0000'
+
+export function inlineScript(code: string): string {
+  return INLINE_SCRIPT_PREFIX + code
+}
+
+/** The code of an inline `js` entry, or null for a file path. */
+export function inlineScriptCode(entry: string): string | null {
+  return entry.startsWith(INLINE_SCRIPT_PREFIX) ? entry.slice(INLINE_SCRIPT_PREFIX.length) : null
 }
 
 /** A `scripting.registerContentScripts` / `userScripts.register` entry, normalised. */

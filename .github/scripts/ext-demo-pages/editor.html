@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Zenium editor fixture</title>
+    <style>
+      body {
+        font:
+          18px system-ui,
+          sans-serif;
+        margin: 24px;
+        color: #222;
+      }
+      textarea {
+        width: 100%;
+        box-sizing: border-box;
+        font: inherit;
+      }
+      video {
+        display: block;
+        max-width: 100%;
+        margin-top: 16px;
+        background: #000;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Editor fixture</h1>
+    <p>Some text to select and translate: <span id="phrase">buenos días amigo</span>.</p>
+    <p>
+      <a id="link-a" href="/page-a.html">Page A</a> |
+      <a id="link-b" href="/page-b.html">Page B</a> |
+      <a id="link-c" href="/page-c.html">Page C</a>
+    </p>
+    <textarea id="editor" rows="6">
+This are a sentence with a error in it. Their going to fix it tomorow.</textarea>
+    <p>
+      <input
+        id="username"
+        name="username"
+        type="text"
+        autocomplete="username"
+        placeholder="Username"
+      />
+      <input
+        id="password"
+        name="password"
+        type="password"
+        autocomplete="current-password"
+        placeholder="Password"
+      />
+    </p>
+    <video id="clip" controls width="320" height="240" muted playsinline>
+      <source src="/clip.mp4" type="video/mp4" />
+      <source src="/clip.webm" type="video/webm" />
+    </video>
+  </body>
+</html>

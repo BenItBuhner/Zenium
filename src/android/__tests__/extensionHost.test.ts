@@ -162,9 +162,12 @@ class FakeRuntime implements ExtensionRuntimeHooks {
   readonly events: string[] = []
   /** A reason to refuse a record, or null to run it. */
   refuse: (record: ExtensionRecord) => string | null = () => null
+  /** Set, an attach waits for it before it finishes (the Kotlin side opening and configuring). */
+  attaching: Promise<void> | null = null
 
   async attach(record: ExtensionRecord): Promise<void> {
     this.events.push(`attach ${record.id} ${record.version}`)
+    if (this.attaching) await this.attaching
     const reason = this.refuse(record)
     if (reason) throw new Error(reason)
   }
@@ -723,6 +726,9 @@ describe('AndroidExtensions: installing from files', () => {
 // Managing
 // ---------------------------------------------------------------------------
 
+/** A turn of the event loop: every microtask queued so far has run. */
+const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
+
 describe('AndroidExtensions: managing installs', () => {
   async function installed(): Promise<Harness> {
     const h = harness()
@@ -762,6 +768,62 @@ describe('AndroidExtensions: managing installs', () => {
     const h = await installed()
     await h.ext.reload(ID)
     expect(h.runtime.events).toEqual([`detach ${ID}`, `attach ${ID} 1.0.0`])
+  })
+
+  it('a disable arriving while the extension reloads itself waits for the reload and leaves it off', async () => {
+    // uBlock Origin calls chrome.runtime.reload() on its first start; the chrome's toggle (or
+    // the sweep's cleanup) flipping the extension off while that reload's attach is on its way
+    // to Kotlin left the extension running with its record disabled.
+    const h = await installed()
+    let opened!: () => void
+    h.runtime.attaching = new Promise<void>((resolve) => {
+      opened = resolve
+    })
+    const reload = h.ext.reload(ID)
+    await tick()
+    expect(h.runtime.events).toEqual([`detach ${ID}`, `attach ${ID} 1.0.0`])
+    const disable = h.ext.setEnabled(ID, false)
+    await tick()
+    // The disable has not detached: the reload's attach is still in flight.
+    expect(h.runtime.events).toHaveLength(2)
+    expect(h.ext.record(ID)?.enabled).toBe(true)
+    opened()
+    await reload
+    await disable
+    expect(h.runtime.events).toEqual([`detach ${ID}`, `attach ${ID} 1.0.0`, `detach ${ID}`])
+    expect(h.ext.list()[0].enabled).toBe(false)
+    expect(h.registry().extensions[0].enabled).toBe(false)
+    // Off, a reload keeps it off; on again, one attach.
+    h.runtime.attaching = null
+    await h.ext.reload(ID)
+    expect(h.runtime.events).toHaveLength(3)
+    await h.ext.setEnabled(ID, true)
+    expect(h.runtime.events.at(-1)).toBe(`attach ${ID} 1.0.0`)
+  })
+
+  it('a reload arriving during a disable does not bring the extension back', async () => {
+    const h = await installed()
+    // The disable's detach is instant here; the reload queued behind it reads the record as off.
+    const disable = h.ext.setEnabled(ID, false)
+    const reload = h.ext.reload(ID)
+    await Promise.all([disable, reload])
+    expect(h.runtime.events).toEqual([`detach ${ID}`])
+    expect(h.ext.list()[0].enabled).toBe(false)
+  })
+
+  it('a remove queued behind a reload takes the reloaded instance down', async () => {
+    const h = await installed()
+    let opened!: () => void
+    h.runtime.attaching = new Promise<void>((resolve) => {
+      opened = resolve
+    })
+    const reload = h.ext.reload(ID)
+    const remove = h.ext.remove(ID)
+    await tick()
+    opened()
+    await Promise.all([reload, remove])
+    expect(h.runtime.events).toEqual([`detach ${ID}`, `attach ${ID} 1.0.0`, `detach ${ID}`])
+    expect(h.ext.list()).toEqual([])
   })
 
   it('pins through reconfigure and leaves pinned extensions out of update checks', async () => {
@@ -825,6 +887,51 @@ describe('AndroidExtensions: managing installs', () => {
     const h = await installed()
     h.ext.openOptions(ID, WIN)
     expect(h.opened).toEqual([`chrome-extension://${ID}/options.html`])
+  })
+
+  it('routes new tabs to the override page once opted in, on the origin a tab serves', async () => {
+    const h = harness()
+    const crx = await buildCrx({
+      zip: sampleExtensionZip({
+        name: 'New Tab',
+        version: '1.0.0',
+        chrome_url_overrides: { newtab: 'newtab.html' }
+      }),
+      rsaKeys: [key]
+    })
+    await storeFront(h.kt, { cws: crx })
+    await h.ext.installFromStore(ID, null)
+    // Declared is not opted in: the record carries the page, the browser keeps its own new tab.
+    expect(h.ext.list()[0].newTabPage).toBe('newtab.html')
+    expect(h.ext.newTabUrl()).toBeNull()
+    h.ext.setNewTabOverride(ID, true)
+    expect(h.ext.newTabUrl()).toBe(`https://${ID}.ext.zenium.invalid/newtab.html`)
+    expect(h.registry().extensions[0].newTabOverride).toBe(true)
+    // Disabled, the page is not served: back to the browser's own.
+    await h.ext.setEnabled(ID, false)
+    expect(h.ext.newTabUrl()).toBeNull()
+    await h.ext.setEnabled(ID, true)
+    expect(h.ext.newTabUrl()).toBe(`https://${ID}.ext.zenium.invalid/newtab.html`)
+    h.ext.setNewTabOverride(ID, false)
+    expect(h.ext.newTabUrl()).toBeNull()
+  })
+
+  it('shows the browser new tab while the override extension failed to attach', async () => {
+    const h = harness()
+    const crx = await buildCrx({
+      zip: sampleExtensionZip({
+        name: 'New Tab',
+        version: '1.0.0',
+        chrome_url_overrides: { newtab: 'newtab.html' }
+      }),
+      rsaKeys: [key]
+    })
+    await storeFront(h.kt, { cws: crx })
+    h.runtime.refuse = () => 'no worker'
+    await h.ext.installFromStore(ID, null)
+    h.ext.setNewTabOverride(ID, true)
+    expect(h.ext.list()[0].error).toBe('no worker')
+    expect(h.ext.newTabUrl()).toBeNull()
   })
 
   it('comes back from the registry on the next start and attaches what is enabled', async () => {

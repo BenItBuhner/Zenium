@@ -1,0 +1,68 @@
+name: Android extension compatibility sweep
+
+# The top-30 extension compatibility sweep on the phone (internal/extensions/android-compat-sweep.md),
+# the desktop sweep's method on the emulator: CompatSweep installs every extension of the list from
+# its store through the merged store host (Chrome Web Store by id; uBlock Origin MV2 from Edge
+# Add-ons), grades install / background clean / popup / options / core function with the concrete
+# outcome, disables it before the next, and writes results.json plus a numbered screenshot per
+# stage. Two jobs, as the runtime demo has: the API 34 image's own WebView (Chromium 113, page-world
+# injection) and a Chromium snapshot WebView swapped onto an AOSP image (isolated worlds). Dispatch
+# only: the two run for about two hours each. The build, the emulator and the Gradle cache live in
+# android-emulator-demo.yml.
+on:
+  workflow_dispatch:
+    inputs:
+      only:
+        description: Comma-separated extension ids to sweep alone (empty for all thirty)
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+# One sweep per ref at a time; a dispatched run finishes (its two hours are the measurement).
+concurrency:
+  group: android-ext-compat-sweep-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  system-webview:
+    name: System WebView (API 34 image)
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ext-compat-sweep.sh
+      artifact-name: android-ext-compat-sweep
+      artifact-path: artifacts/android-ext-compat-sweep/
+      script-env: |
+        SWEEP_ONLY=${{ inputs.only }}
+      timeout-minutes: 210
+
+  # The same sweep on a Chromium snapshot SystemWebView.apk swapped onto an AOSP image (see
+  # android-webview-swap.sh): isolated-world injection needs Chromium 146+. Best effort: it
+  # reports what it can and never fails the workflow.
+  modern-webview:
+    name: Best effort - Chromium snapshot WebView on an AOSP image
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ext-compat-sweep.sh
+      artifact-name: android-ext-compat-sweep-modern-webview
+      artifact-path: artifacts/android-ext-compat-sweep/
+      target: default
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
+      script-env: |
+        WEBVIEW_APK=artifacts/webview/SystemWebView.apk
+        SOFT_FAIL=1
+        SWEEP_ONLY=${{ inputs.only }}
+      setup-script: |
+        base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
+        rev=$(curl -fsSL "$base/LAST_CHANGE")
+        echo "chromium snapshot revision $rev"
+        curl -fsSL -o /tmp/chrome-android-desktop.zip "$base/$rev/chrome-android-desktop.zip"
+        mkdir -p artifacts/webview
+        unzip -j -o /tmp/chrome-android-desktop.zip chrome-android-desktop/apks/SystemWebView.apk -d artifacts/webview
+        rm -f /tmp/chrome-android-desktop.zip
+        curl -fsSL "$base/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
+        unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
+        ls -la artifacts/webview
+      timeout-minutes: 210

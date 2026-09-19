@@ -111,6 +111,26 @@ class UnitCompilerTest {
     }
 
     @Test
+    fun `sources the GC took back are read again and only they - a cached unit needs none of them`() {
+        val compiler = UnitCompiler { "/*boot*/" }
+        compiler.compile(id, "1.0.0", units("k" to listOf("cs.js")), true, read)
+        assertEquals(2, compiler.cachedSources(id))
+        compiler.clearSourcesForTest(id)
+        assertEquals(0, compiler.cachedSources(id))
+        val readsAfterClear = reads
+        // The unit itself is still cached: no source is needed for it.
+        val same = compiler.compile(id, "1.0.0", units("k" to listOf("cs.js")), true, read)
+        assertTrue(same[0].cached)
+        assertEquals(readsAfterClear, reads)
+        // A re-plan that adds a unit reads its files again (cs.js and style.css went; extra.js never was).
+        val more = compiler.compile(id, "1.0.0", units("k" to listOf("cs.js"), "k2" to listOf("extra.js", "cs.js")), true, read)
+        assertEquals(listOf(true, false), more.map { it.cached })
+        assertTrue(more[1].script.contains("console.log('extra')") && more[1].script.contains("console.log('cs')"))
+        assertEquals(readsAfterClear + 3, reads)
+        assertEquals(3, compiler.cachedSources(id))
+    }
+
+    @Test
     fun `a missing file becomes a console error instead of a broken unit and stays cached as missing`() {
         val compiler = UnitCompiler { "/*boot*/" }
         val compiled = compiler.compile(id, "1.0.0", units("k" to listOf("gone.js")), true, read)
@@ -118,6 +138,22 @@ class UnitCompilerTest {
         val readsAfterFirst = reads
         compiler.compile(id, "1.0.0", units("k2" to listOf("gone.js")), true, read)
         assertEquals(readsAfterFirst, reads)
+    }
+
+    @Test
+    fun `an inline code entry is the script itself, in its place among the files, and reads nothing`() {
+        // `userScripts.register({ js: [{ code }] })`: the core sends the text behind a NUL.
+        val compiler = UnitCompiler { "/*boot*/" }
+        val inline = UnitCompiler.INLINE_CODE + "window.tm_scripts = null; /* a user script */"
+        val compiled = compiler.compile(id, "1.0.0", units("user:*" to listOf("cs.js", inline, "extra.js")), true, read)
+        val script = compiled[0].script
+        val cs = script.indexOf("console.log('cs')")
+        val code = script.indexOf("window.tm_scripts = null; /* a user script */")
+        val extra = script.indexOf("console.log('extra')")
+        assertTrue(cs in 0 until code && code < extra)
+        assertFalse(script.contains(UnitCompiler.INLINE_CODE))
+        assertFalse(script.contains("missing content script"))
+        assertEquals(3, reads) // cs.js, extra.js and the CSS; the code entry is not a file
     }
 
     @Test

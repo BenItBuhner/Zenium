@@ -42,6 +42,12 @@ export class FakeKotlin implements RuntimeBridge {
   readonly backgrounds = new Set<string>()
   /** When set, `ext.exec` is rejected with the message it returns for the given arguments. */
   failExec: ((args: Record<string, unknown>) => string | null) | null = null
+  /** When set, what `ext.exec` answers (the script's value) for the given arguments. */
+  execAnswer: ((args: Record<string, unknown>) => unknown) | null = null
+  /** What the fake platform's classifier answers `ext.i18n.detectLanguage` (Kotlin's shape). */
+  languageAnswer: (text: string) => unknown = () => ({ isReliable: false, languages: [] })
+  /** The offscreen documents Kotlin holds right now (`ext.offscreen.*`): extension id → page URL. */
+  readonly offscreens = new Map<string, string>()
   /** The cookie jars (`ext.cookies.*`), one per container, see `FakeJar`. */
   readonly jars = new Map<string, FakeJar>()
   /** Whether the fake WebView lists cookies with attributes (`GET_COOKIE_INFO`). */
@@ -117,6 +123,7 @@ export class FakeKotlin implements RuntimeBridge {
       }
       case 'ext.detach':
         this.backgrounds.delete(String(args.id))
+        this.offscreens.delete(String(args.id))
         return undefined
       case 'ext.background.start':
         this.backgrounds.add(String(args.id))
@@ -132,9 +139,17 @@ export class FakeKotlin implements RuntimeBridge {
         return undefined
       case 'ext.readFile':
         return this.files.get(`${args.id}/${args.path}`) ?? null
+      case 'ext.i18n.detectLanguage':
+        return this.languageAnswer(String(args.text))
       case 'ext.observeRequests':
       case 'ext.popup.open':
       case 'ext.popup.close':
+        return undefined
+      case 'ext.offscreen.open':
+        this.offscreens.set(String(args.id), String(args.url))
+        return undefined
+      case 'ext.offscreen.close':
+        this.offscreens.delete(String(args.id))
         return undefined
       case 'ext.auth.open':
         this.authSheets.set(Number(args.viewId), {
@@ -167,7 +182,7 @@ export class FakeKotlin implements RuntimeBridge {
       case 'ext.cookies.write':
         return this.jar(String(args.container)).set(String(args.url), String(args.cookie))
       case 'ext.exec':
-        return { ran: true }
+        return this.execAnswer ? this.execAnswer(args) : { ran: true }
       case 'view.capture':
         return this.capture ? this.capture(args) : null
       case 'ext.notifications.show': {
@@ -495,7 +510,7 @@ export function record(
 export function hello(
   h: Harness,
   ep: string,
-  ctx: 'content' | 'background' | 'popup' | 'page',
+  ctx: 'content' | 'background' | 'popup' | 'offscreen' | 'page',
   extra: { tabId?: string | null; top?: boolean; url?: string } = {}
 ): void {
   const url =

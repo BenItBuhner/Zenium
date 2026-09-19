@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Zenium tracker page (compat sweep)</title>
+    <link rel="stylesheet" href="probe-page.css" />
+    <script>
+      // The eight third-party hosts the desktop compatibility sweep's ads fixture requests (all of
+      // them in the default lists of the five ad blockers under test) and a local control. The
+      // page records what each request came to; the driver reads the engine's decisions besides.
+      window.__ads = {}
+      function mark(name, state) {
+        window.__ads[name] = state
+        var el = document.getElementById(name)
+        if (el) el.textContent = state
+      }
+    </script>
+  </head>
+  <body>
+    <main>
+      <h1>Ad and tracker requests</h1>
+      <p>Eight tracker scripts and a local control stylesheet.</p>
+      <ul>
+        <li>gtag: <span id="gtag">pending</span></li>
+        <li>analytics: <span id="analytics">pending</span></li>
+        <li>adsbygoogle: <span id="adsbygoogle">pending</span></li>
+        <li>doubleclick: <span id="doubleclick">pending</span></li>
+        <li>facebook: <span id="facebook">pending</span></li>
+        <li>taboola: <span id="taboola">pending</span></li>
+        <li>scorecard: <span id="scorecard">pending</span></li>
+        <li>adnxs: <span id="adnxs">pending</span></li>
+        <li>control: <span id="control">pending</span></li>
+      </ul>
+    </main>
+    <script>
+      var probes = {
+        gtag: 'https://www.googletagmanager.com/gtag/js?id=G-ZENIUMTEST',
+        analytics: 'https://www.google-analytics.com/analytics.js',
+        adsbygoogle: 'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js',
+        doubleclick: 'https://securepubads.g.doubleclick.net/tag/js/gpt.js',
+        facebook: 'https://connect.facebook.net/en_US/fbevents.js',
+        taboola: 'https://cdn.taboola.com/libtrc/unip/1234/tfa.js',
+        scorecard: 'https://sb.scorecardresearch.com/beacon.js',
+        adnxs: 'https://acdn.adnxs.com/ast/ast.js',
+        control: 'probe-page.css?control=1'
+      }
+      Object.keys(probes).forEach(function (name) {
+        var url = probes[name]
+        var el = document.createElement(name === 'control' ? 'link' : 'script')
+        if (name === 'control') {
+          el.rel = 'stylesheet'
+          el.href = url
+        } else el.src = url
+        el.onload = function () {
+          mark(name, 'loaded')
+        }
+        el.onerror = function () {
+          mark(name, 'error')
+        }
+        document.head.appendChild(el)
+      })
+    </script>
+  </body>
+</html>

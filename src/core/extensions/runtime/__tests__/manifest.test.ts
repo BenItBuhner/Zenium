@@ -93,6 +93,38 @@ describe('parseRuntimeManifest', () => {
     expect(largestIcon(m.icons)).toBe('i128.png')
   })
 
+  it('the document getManifest() serves has its localisable strings resolved, the rest as written', () => {
+    const source = {
+      manifest_version: 3,
+      name: '__MSG_name_release__',
+      short_name: '__MSG_ext_name__',
+      description: '__MSG_ext_name__ blocks ads',
+      version: '4.44.0',
+      default_locale: 'en',
+      action: { default_title: '__MSG_ext_name__' },
+      commands: { toggle: { description: '__MSG_ext_name__ on/off' } },
+      // Not a localised key: stays as written, whatever it looks like.
+      homepage_url: 'https://__MSG_ext_name__.example/'
+    }
+    const m = parseRuntimeManifest(source, {
+      ...messages,
+      name_release: { message: 'Adblock Plus - free ad blocker' }
+    })
+    // Adblock Plus reads `short_name` from getManifest() and wants "Adblock Plus" back.
+    expect(m.raw.short_name).toBe('Dark Reader')
+    expect(m.raw.name).toBe('Adblock Plus - free ad blocker')
+    expect(m.raw.description).toBe('Dark Reader blocks ads')
+    expect(m.raw.action).toEqual({ default_title: 'Dark Reader' })
+    expect(m.raw.commands).toEqual({ toggle: { description: 'Dark Reader on/off' } })
+    expect(m.raw.homepage_url).toBe('https://__MSG_ext_name__.example/')
+    // The source document is not written to.
+    expect(source.short_name).toBe('__MSG_ext_name__')
+    // No `_locales`: the document as written.
+    expect(parseRuntimeManifest({ ...source, name: 'Plain' }, null).raw.short_name).toBe(
+      '__MSG_ext_name__'
+    )
+  })
+
   it('normalises an MV2 manifest (host patterns inside permissions, browser_action, scripts background)', () => {
     const m = parseRuntimeManifest(
       {
@@ -117,6 +149,35 @@ describe('parseRuntimeManifest', () => {
       { resources: ['web_accessible_resources/*'], matches: ['<all_urls>'], useDynamicUrl: false }
     ])
     expect(m.extensionPagesCsp).toBe("script-src 'self'; object-src 'self'")
+  })
+
+  it('leaves out an API permission outside its manifest version, as Chrome refuses to grant it', () => {
+    // Stylus 2.4.11 (MV3) declares webRequestBlocking and asks permissions.contains for it: the
+    // answer Chrome gives is false, and Stylus registers observationally on it.
+    const mv3 = parseRuntimeManifest(
+      {
+        manifest_version: 3,
+        name: 'Stylus',
+        version: '2.4.11',
+        permissions: ['webRequest', 'webRequestBlocking', 'storage', 'scripting'],
+        optional_permissions: ['webRequestBlocking', 'downloads', 'https://x.example/*']
+      },
+      null
+    )
+    expect(mv3.permissions).toEqual(['webRequest', 'storage', 'scripting'])
+    expect(mv3.optionalPermissions).toEqual(['downloads'])
+    expect(mv3.optionalHostPermissions).toEqual(['https://x.example/*'])
+    // The MV3 APIs never existed in MV2; webRequestBlocking is MV2's to keep.
+    const mv2 = parseRuntimeManifest(
+      {
+        manifest_version: 2,
+        name: 'Legacy',
+        version: '1.0',
+        permissions: ['webRequest', 'webRequestBlocking', 'scripting', 'offscreen', 'sidePanel', 'userScripts', 'tabs']
+      },
+      null
+    )
+    expect(mv2.permissions).toEqual(['webRequest', 'webRequestBlocking', 'tabs'])
   })
 
   it('rejects broken manifests with a clear reason', () => {
