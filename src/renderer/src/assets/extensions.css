@@ -202,16 +202,19 @@
 
   /*
    * Rows are main.css's `.zen-v2-row` (§9.34): 32 / 44 with `--v2-row-pad` above and below and
-   * 16 at the sides, the press and hover fill, growing with content – 52 / 64 with a description
-   * (§9.2). What follows is the row's inner anatomy for these surfaces: whatever trails the text
-   * centres on the row (§9.18); the leading glyph or checkbox travels with the text and sits on
-   * its first line, (line − box) / 2 below the line's top – 2 for a 16 box on a 20 line, 0 for
-   * the phone's 20 (§9.2).
+   * 16 at the sides, growing with content – 52 / 64 with a description (§9.2). A row that is a
+   * target (a check row, the menulist sheet's radio rows) takes the primitive's press and hover
+   * fill; a row that is not (a permission warning, a Source value, an "It can:" line) is the
+   * primitive's static form, marked on the element in `v2.tsx` and gated in `main.css`, with no
+   * fill and no pointer cursor. What follows is the row's inner anatomy for these surfaces:
+   * whatever trails the text centres on the row (§9.18); the leading glyph or checkbox travels
+   * with the text and sits on its first line, (line − box) / 2 below the line's top – 2 for a 16
+   * box on a 20 line, 0 for the phone's 20 (§9.2).
    *
    * Rows in a card or a dialog body run edge to edge inside it, as a sheet's do (§9.25, §9.17):
    * the list bleeds through the card's 16 padding, the row's own 16 puts its text back on the
-   * card's gutter – one left edge with the card title – and the fill and the hairlines between
-   * the rows (Zen's add-on detail rows) reach the card's border.
+   * card's gutter – one left edge with the card title – and the hairlines between the rows
+   * (Zen's add-on detail rows) and a target row's fill reach the card's border.
    */
   .zen-v2-card > .zen-v2-rows,
   .zen-ext-dialog-body > .zen-v2-rows {

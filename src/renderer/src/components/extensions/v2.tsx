@@ -255,10 +255,15 @@ export function V2TitleBlock({
 }
 
 /**
- * main.css's `.zen-v2-row` (§9.2, §9.18, §9.34) with the extension surfaces' anatomy inside it:
- * the leading glyph and the text travel together and sit on the first text line – the glyph
- * (line − glyph) / 2 below the line's top – while whatever trails the text centres on the row's
- * height.
+ * The static form of main.css's `.zen-v2-row` (§9.34): a row that is not a target – a permission
+ * warning, a Source value, an "It can:" line – keeps the primitive for its geometry and carries
+ * `data-static`, which turns off the hover fill, the press fill and the pointer cursor; it is a
+ * `div` with no role and nothing focusable of its own (a link in a value is the target, not the
+ * row). A row that navigates, toggles or opens a menu is a `button.zen-v2-row` instead – see
+ * `V2CheckRow` and the menulist's sheet – never this with its fill hidden. Inside, the extension
+ * surfaces' anatomy (§9.2, §9.18): the leading glyph and the text travel together and sit on the
+ * first text line – the glyph (line − glyph) / 2 below the line's top – while whatever trails the
+ * text centres on the row's height.
  */
 export function V2Row({
   label,
@@ -276,7 +281,11 @@ export function V2Row({
   tone?: 'warn' | 'danger'
 }): JSX.Element {
   return (
-    <div className={cn('zen-v2-row', className)} data-lines={description ? '2' : undefined}>
+    <div
+      className={cn('zen-v2-row', className)}
+      data-static=""
+      data-lines={description ? '2' : undefined}
+    >
       <span className="zen-v2-row-body">
         {Lead && <Lead className="zen-v2-row-lead" />}
         <span className="zen-v2-row-text">
