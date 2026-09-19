@@ -765,7 +765,6 @@ describe('the section model', () => {
       'cookies',
       'cookies-related-sites',
       'cookies-add-site',
-      'permissions',
       'https-only',
       'https-only-sites',
       'secure-dns',
@@ -775,6 +774,8 @@ describe('the section model', () => {
       [...order.map((id) => ids.indexOf(id))].sort((a, b) => a - b)
     )
     expect(ids.indexOf('safe-browsing')).toBe(0)
+    // The remembered per-site answers are the Security section's (#62), not a privacy group.
+    expect(ids).not.toContain('permissions')
     expect(privacy.groups.every(groupShows)).toBe(true)
     // Every protection row is one of the five families, and a family never straddles a group.
     const families = ['safe-browsing', 'cookies', 'https-only', 'secure-dns', 'signals']
