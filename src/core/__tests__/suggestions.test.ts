@@ -238,14 +238,17 @@ describe('SuggestionService: answers', () => {
 
   it('answers currency questions from Frankfurter and caches the table', async () => {
     const { suggestions, win, net } = setup('synced', { online: true })
+    // The service refetches a table whose `date` is more than two days old against the real
+    // clock, so the fixture must carry today's date or the cache assertion below expires.
+    const today = new Date().toISOString().slice(0, 10)
     net.routes.push({
       match: 'frankfurter.dev/v1/latest?base=USD',
-      body: { base: 'USD', date: '2026-09-17', rates: { EUR: 0.9 } }
+      body: { base: 'USD', date: today, rates: { EUR: 0.9 } }
     })
     const results = await suggestions.suggest('100 usd to eur', null, win)
     expect(results.find((r) => r.kind === 'answer')).toMatchObject({
       title: '= 90.00 EUR',
-      subtitle: '100 USD · ECB rate of 2026-09-17 · Frankfurter'
+      subtitle: `100 USD · ECB rate of ${today} · Frankfurter`
     })
     await suggestions.suggest('200 usd to eur', null, win)
     expect(net.requests.filter((u) => u.includes('frankfurter')).length).toBe(1)
