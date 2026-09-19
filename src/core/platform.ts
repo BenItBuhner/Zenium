@@ -350,6 +350,11 @@ export interface AgentCaptureOptions {
   format: 'jpeg' | 'png'
 }
 
+/** What `TabView.screenshot` saves: the visible area (default) or the whole page. */
+export interface ScreenshotOptions {
+  fullPage?: boolean
+}
+
 export interface AgentCapture {
   /** Base64 image data (no `data:` prefix). */
   data: string
@@ -566,8 +571,12 @@ export interface TabView {
   savePage(suggestedName: string): Promise<string | null>
   /** Downscaled JPEG data URL of the current paint, for the dimmed preview behind overlays. */
   snapshot(): Promise<string | null>
-  /** Full-resolution PNG saved to the downloads location; resolves with the saved path. */
-  screenshot(fileName: string): Promise<string | null>
+  /**
+   * Full-resolution PNG saved to the downloads location; resolves with the saved path. The
+   * visible area, or with `fullPage` the whole document beyond the viewport (hosts that cannot
+   * paint beyond it – the debugger taken by DevTools – save the visible area instead).
+   */
+  screenshot(fileName: string, options?: ScreenshotOptions): Promise<string | null>
   copyImageAt(x: number, y: number): Promise<boolean>
   replaceMisspelling(word: string): void
   addWordToDictionary(word: string): void

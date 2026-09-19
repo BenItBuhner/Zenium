@@ -889,8 +889,9 @@ export class Menus {
   /** The page's own actions: bookmark, save, print, screenshot, Reader View, Translate Page. */
   private pageGroup(tab: Tab, win: ZenWindow): Template {
     const { state, reader, translate } = this.browser
-    const run = (action: 'page.savePage' | 'page.print' | 'page.screenshot'): void =>
-      this.browser.actions.run(action, { sourceTabId: tab.id, win })
+    const run = (
+      action: 'page.savePage' | 'page.print' | 'page.screenshot' | 'page.captureFullPage'
+    ): void => this.browser.actions.run(action, { sourceTabId: tab.id, win })
     const readerOpen = reader.isReaderUrl(tab.url)
     return [
       {
@@ -903,6 +904,11 @@ export class Menus {
         ? [{ label: 'Print…', action: 'page.print' as const, click: () => run('page.print') }]
         : []),
       { label: 'Take Screenshot', action: 'page.screenshot', click: () => run('page.screenshot') },
+      {
+        label: 'Capture Full Page',
+        action: 'page.captureFullPage',
+        click: () => run('page.captureFullPage')
+      },
       {
         label: readerOpen ? 'Exit Reader View' : 'Enter Reader View',
         enabled: readerOpen || reader.canRead(tab),
@@ -2367,8 +2373,16 @@ export class Menus {
           click: () =>
             active && this.browser.actions.run('page.screenshot', { sourceTabId: active.id, win })
         },
+        {
+          label: 'Capture Full Page',
+          action: 'page.captureFullPage',
+          enabled: Boolean(active),
+          click: () =>
+            active &&
+            this.browser.actions.run('page.captureFullPage', { sourceTabId: active.id, win })
+        },
         // Phone slot: "Add to Home Screen" (W1-7) goes here, ahead of the page controls.
-        ...when(caps.pageControls, ...this.pageControlItems(active)),
+        ...when(caps.pageControls || caps.darkenSites, ...this.pageControlItems(active)),
         { type: 'separator' },
         ...when(caps.resourceGovernor, {
           label: 'Resources',
@@ -2427,19 +2441,21 @@ export class Menus {
    * This Site" is its exception. Both act on the active tab's site, so they wait for a web page.
    */
   private pageControlItems(active: Tab | undefined): Template {
-    const { pageControls } = this.browser
+    const { pageControls, state } = this.browser
     const web = Boolean(active) && siteKey(active!.url) !== null
-    const items: Template = [
-      {
+    const items: Template = []
+    if (state.capabilities.pageControls) {
+      items.push({
         label: 'Desktop Site',
         type: 'checkbox',
         enabled: web,
         checked: web && pageControls.isDesktop(active!),
         click: () =>
           active && pageControls.setDesktopSite(active.id, !pageControls.isDesktop(active))
-      }
-    ]
-    if (pageControls.settings.darkenSites) {
+      })
+    }
+    // The per-site exception shows once the setting is on, on every host that can darken.
+    if (state.capabilities.darkenSites && pageControls.settings.darkenSites) {
       items.push({
         label: 'Dark Theme for This Site',
         type: 'checkbox',

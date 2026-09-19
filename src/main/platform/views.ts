@@ -5,6 +5,7 @@ import {
   clipboard,
   dialog,
   nativeImage,
+  nativeTheme,
   net,
   type BrowserWindow,
   type BrowserWindowConstructorOptions,
@@ -41,6 +42,7 @@ import type { FormsCommand } from '../../shared/forms'
 import type {
   AgentCapture,
   AgentCaptureOptions,
+  ScreenshotOptions,
   AgentFrame,
   AgentInputEvent,
   InputModifier,
@@ -791,12 +793,32 @@ export class ElectronTabView implements TabView {
     }
   }
 
-  async screenshot(fileName: string): Promise<string | null> {
+  /**
+   * The visible area through `capturePage`, or the whole document through the DevTools
+   * protocol (`captureBeyondViewport`, cut at `MAX_CAPTURE_HEIGHT`); a full page the debugger
+   * cannot paint (DevTools holds it, the page is gone) falls back to the visible area.
+   */
+  async screenshot(fileName: string, options: ScreenshotOptions = {}): Promise<string | null> {
     try {
-      const image = await this.wc.capturePage()
-      if (image.isEmpty()) return null
+      let png: Buffer | null = null
+      if (options.fullPage) {
+        try {
+          const capture = await this.captureWithDevtools(
+            { mode: 'fullPage', format: 'png' },
+            'image/png'
+          )
+          png = Buffer.from(capture.data, 'base64')
+        } catch {
+          /* the visible area below */
+        }
+      }
+      if (!png) {
+        const image = await this.wc.capturePage()
+        if (image.isEmpty()) return null
+        png = nativeImage.createFromBuffer(image.toPNG()).toPNG()
+      }
       const filePath = join(downloadDir(), fileName)
-      await writeFile(filePath, nativeImage.createFromBuffer(image.toPNG()).toPNG())
+      await writeFile(filePath, png)
       return filePath
     } catch {
       return null
@@ -955,6 +977,91 @@ export class ElectronTabView implements TabView {
   private cdpPending = 0
   /** Whether the current session was opened by `withDebugger` (and is ours to close). */
   private cdpAttachedHere = false
+
+  // --- dark theme for sites (CT-18) -------------------------------------------------
+
+  /** The core's policy for this page's site ("Apply dark theme to sites" and its exceptions). */
+  private darkening = false
+  /** What the page is rendered with right now (the policy while the chrome is dark). */
+  private darkeningApplied = false
+  /** Resolves once the override in flight has been sent (the next change waits for it). */
+  private darkeningTurn: Promise<void> = Promise.resolve()
+
+  /**
+   * Dark theme for sites: Chromium's auto dark mode over the DevTools protocol
+   * (`Emulation.setAutoDarkModeOverride`), the engine behind Chrome Android's "Auto-darken web
+   * content" – the page's colours are inverted and its images left alone, and a page with a dark
+   * style of its own (`color-scheme: dark`) is left to it. Like the WebView's algorithmic
+   * darkening it acts only while the chrome is dark (`nativeTheme` follows the Appearance
+   * setting; a flip re-applies through the host). Chromium's `WebContentsForceDark` feature
+   * switch would darken Zenium's own chrome too, hence the per-page override.
+   *
+   * The debugger stays attached while the override is on: an emulation override belongs to the
+   * session and goes with it. `withDebugger` shares the attachment with captures and input.
+   */
+  setDarkening(on: boolean): void {
+    this.darkening = on
+    this.refreshDarkening()
+  }
+
+  /** The chrome's scheme or the policy changed: bring the page in line. */
+  refreshDarkening(): void {
+    if (this.wc.isDestroyed()) return
+    const wanted = this.darkening && nativeTheme.shouldUseDarkColors
+    if (wanted === this.darkeningApplied) return
+    this.darkeningApplied = wanted
+    this.darkeningTurn = this.darkeningTurn.then(() => this.sendDarkening(wanted)).catch(() => {})
+  }
+
+  /** Whether the override counts as one pending action in `cdpPending` (its hold). */
+  private darkeningHold = false
+
+  private async sendDarkening(on: boolean): Promise<void> {
+    if (this.wc.isDestroyed()) return
+    const dbg = this.wc.debugger
+    if (on) {
+      // Take a hold of the debugger for as long as the override is on.
+      if (!this.darkeningHold) {
+        if (this.cdpPending === 0 && !dbg.isAttached()) {
+          try {
+            dbg.attach('1.3')
+            this.cdpAttachedHere = true
+          } catch {
+            this.darkeningApplied = false
+            return
+          }
+        }
+        this.cdpPending++
+        this.darkeningHold = true
+      }
+      try {
+        await dbg.sendCommand('Emulation.setAutoDarkModeOverride', { enabled: true })
+        return
+      } catch {
+        /* the page went away, or the debugger is not ours: release the hold, retry on the next change */
+        this.darkeningApplied = false
+      }
+    } else {
+      try {
+        if (dbg.isAttached()) await dbg.sendCommand('Emulation.setAutoDarkModeOverride', {})
+      } catch {
+        /* already gone */
+      }
+    }
+    if (!this.darkeningHold) return
+    this.darkeningHold = false
+    this.cdpPending--
+    if (this.cdpPending === 0 && this.cdpAttachedHere) {
+      this.cdpAttachedHere = false
+      if (!this.wc.isDestroyed() && dbg.isAttached()) {
+        try {
+          dbg.detach()
+        } catch {
+          /* already detached */
+        }
+      }
+    }
+  }
 
   setBackgroundThrottling(allowed: boolean): void {
     if (!this.wc.isDestroyed()) this.wc.setBackgroundThrottling(allowed)
@@ -1317,7 +1424,13 @@ export class ElectronTabViewHost implements TabViewHost {
   constructor(
     private readonly sessions: SessionManager,
     readonly downloads: SaveAsDownloads | null = null
-  ) {}
+  ) {
+    // Dark theme for sites acts only while the chrome is dark: a scheme flip (the OS, the
+    // Appearance setting) turns every page's override on or off.
+    nativeTheme.on('updated', () => {
+      for (const view of this.byWebContentsId.values()) view.refreshDarkening()
+    })
+  }
 
   createView(tab: Tab, events: TabViewEvents, host: WindowHost): TabView {
     const view = new ElectronTabView(

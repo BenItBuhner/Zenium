@@ -143,6 +143,7 @@ export function androidCapabilities({
     defaultBrowser: true,
     requestBlocking: true,
     pageControls: true,
+    darkenSites: true,
     reducedExtensionIsolation: extensions && !isolatedWorlds,
     // One window: private browsing is a tab in it, on a throwaway WebView profile.
     privateTabs: profiles,

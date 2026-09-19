@@ -138,14 +138,21 @@ export class PageControls {
     tab.zoom = this.applyTo(view, tab.url)
   }
 
-  /** Apply the resolved controls for `url` to a live page; returns the effective zoom. */
+  /** Whether pages can be darkened on this host (the "Apply dark theme to sites" rows). */
+  get darkening(): boolean {
+    return this.browser.state.capabilities.darkenSites
+  }
+
+  /**
+   * Apply the resolved controls for `url` to a live page; returns the effective zoom. Darkening
+   * is its own capability (the desktop has it without the rest of the page controls); the host
+   * acts on it only while its chrome is dark.
+   */
   private applyTo(view: TabView, url: string): number {
     const r = this.resolve(url)
     view.setZoom(r.zoom)
-    if (this.enabled) {
-      view.setDarkening?.(r.darken)
-      view.setDesktopMode?.(r.desktop)
-    }
+    if (this.darkening) view.setDarkening?.(r.darken)
+    if (this.enabled) view.setDesktopMode?.(r.desktop)
     return r.zoom
   }
 
@@ -162,7 +169,6 @@ export class PageControls {
       tab.zoom = this.applyTo(view, tab.url)
     }
   }
-
   // ---------------------------------------------------------------------------
   // Commands
   // ---------------------------------------------------------------------------

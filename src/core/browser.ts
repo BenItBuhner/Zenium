@@ -2353,8 +2353,11 @@ export class Browser {
       'window.openUrl': ({ url, kind }, win) => this.openUrlInWindow(url, kind, win),
       'window.moveTabsToSpace': ({ spaceId }, win) => tabs.moveLocalTabsToSpace(win, spaceId),
 
-      'page.screenshot': ({ tabId }, win) =>
-        this.actions.run('page.screenshot', { sourceTabId: tabId, win }),
+      'page.screenshot': ({ tabId, fullPage }, win) =>
+        this.actions.run(fullPage ? 'page.captureFullPage' : 'page.screenshot', {
+          sourceTabId: tabId,
+          win
+        }),
       'page.print': ({ tabId }, win) => this.actions.run('page.print', { sourceTabId: tabId, win }),
       'page.savePage': ({ tabId }, win) =>
         this.actions.run('page.savePage', { sourceTabId: tabId, win }),

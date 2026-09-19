@@ -106,6 +106,13 @@ export interface HostCapabilities {
    */
   pageControls: boolean
   /**
+   * Pages can be darkened algorithmically (Chrome Android's "Auto-darken web content", CT-18):
+   * the WebView's algorithmic darkening; Chromium's auto dark mode over the DevTools protocol on
+   * Electron. Both act only while the chrome itself is dark and leave pages with a dark style of
+   * their own to it. Settings › Look shows "Apply dark theme to sites" and the per-site list.
+   */
+  darkenSites: boolean
+  /**
    * Extensions run, but their content scripts share the page's world (an Android WebView below
    * Chromium 146 has no isolated worlds; the emulation layer falls back to a scope proxy). Pages
    * can then observe the scripts' DOM work; the extensions UI says so.
@@ -1427,6 +1434,8 @@ export type ShortcutAction =
   | 'page.readerMode'
   | 'page.pip'
   | 'page.screenshot'
+  /** Edge's "Capture full page": the whole page, beyond the viewport, saved like a screenshot. */
+  | 'page.captureFullPage'
   | 'page.toggleMute'
   | 'zoom.in'
   | 'zoom.out'
@@ -3297,8 +3306,8 @@ export interface Commands {
     result: void
   }
   /**
-   * Save a screenshot of the page to Downloads: the whole page (Edge's "Capture full page",
-   * beyond the viewport) unless `fullPage` is false, which captures the visible area only.
+   * Save a screenshot of the page to Downloads: the visible area, or with `fullPage` the whole
+   * page beyond the viewport (Edge's "Capture full page"; the visible area when the host cannot).
    */
   'page.screenshot': { args: { tabId: string; fullPage?: boolean }; result: void }
   'page.print': { args: { tabId: string }; result: void }

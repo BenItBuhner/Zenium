@@ -47,7 +47,8 @@ interface Sent {
  */
 function fakePlatform(
   io: StoreIO,
-  host: Host = 'android'
+  host: Host = 'android',
+  darkenSites: boolean = host === 'android'
 ): Platform & { rules: PageRules[]; records: Map<string, Recorded>; sent: Sent[] } {
   const rules: PageRules[] = []
   const records = new Map<string, Recorded>()
@@ -56,7 +57,8 @@ function fakePlatform(
     windows: host === 'desktop',
     updates: false,
     agents: false,
-    pageControls: host === 'android'
+    pageControls: host === 'android',
+    darkenSites
   })
   return {
     rules,
@@ -114,14 +116,15 @@ function fakePlatform(
 
 function start(
   io = memoryIo(),
-  host: Host = 'android'
+  host: Host = 'android',
+  darkenSites: boolean = host === 'android'
 ): {
   browser: Browser
   platform: ReturnType<typeof fakePlatform>
   win: ZenWindow
   io: ReturnType<typeof memoryIo>
 } {
-  const platform = fakePlatform(io, host)
+  const platform = fakePlatform(io, host, darkenSites)
   const browser = new Browser(platform)
   browser.start()
   const win = browser.allWindows()[0] as ZenWindow
@@ -297,6 +300,23 @@ describe('zoom memory on the desktop', () => {
     const record = platform.records.get(tab.id)!
     expect(record.desktop).toEqual([])
     expect(record.darken).toEqual([])
+    expect(platform.rules).toEqual([])
+  })
+
+  it('darkens sites on a desktop host that can, without the rest of the page controls', () => {
+    // Electron's shape: no desktop-site switch or rules of its own, but the DevTools override.
+    const { browser, platform, win } = start(memoryIo(), 'desktop', true)
+    const tab = browser.tabs.createTab({ url: 'https://github.com/', active: true }, win)
+    const record = platform.records.get(tab.id)!
+    expect(record.desktop).toEqual([])
+    expect(last(record.darken)).toBe(false)
+    browser.handleCommand(win, 'settings.update', { pageControls: { darkenSites: true } })
+    expect(last(record.darken)).toBe(true)
+    browser.handleCommand(win, 'tab.setDarkenSite', { tabId: tab.id, on: false })
+    expect(last(record.darken)).toBe(false)
+    expect(browser.state.settings.pageControls.darkenSiteExceptions).toEqual({
+      'github.com': false
+    })
     expect(platform.rules).toEqual([])
   })
 

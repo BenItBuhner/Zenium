@@ -227,6 +227,9 @@ export class Actions {
       case 'page.screenshot':
         if (target) void this.screenshot(target.id, win)
         return
+      case 'page.captureFullPage':
+        if (target) void this.screenshot(target.id, win, { fullPage: true })
+        return
       case 'page.toggleMute':
         if (target) tabs.toggleMute(target.id)
         return
@@ -407,12 +410,22 @@ export class Actions {
     for (const url of rest) this.browser.tabs.createTab({ url, active: false }, win)
   }
 
-  private async screenshot(tabId: string, win: ZenWindow): Promise<void> {
+  /**
+   * "Take Screenshot" saves the visible area; "Capture Full Page" (Edge's) the whole document
+   * beyond the viewport, which the host paints through its capture path (CDP's
+   * `captureBeyondViewport` on Electron, the WebView drawn strip by strip on Android) and cuts
+   * at its texture limit rather than fails. Either lands in Downloads as a PNG.
+   */
+  private async screenshot(
+    tabId: string,
+    win: ZenWindow,
+    options: { fullPage?: boolean } = {}
+  ): Promise<void> {
     const tab = this.browser.tabs.tab(tabId)
     const view = this.browser.tabs.view(tabId)
     if (!view) return
     const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-    const path = await view.screenshot(`Screenshot ${stamp}.png`)
+    const path = await view.screenshot(`Screenshot ${stamp}.png`, options)
     if (path) {
       this.browser.downloads.addCompleted(path, 'image/png', {
         containerId: tab?.containerId,
