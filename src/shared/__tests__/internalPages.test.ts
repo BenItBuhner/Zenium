@@ -26,7 +26,8 @@ describe('the page registry', () => {
   it('registers Settings with stable section ids in nav order', () => {
     expect(Object.keys(INTERNAL_PAGES)).toEqual(['settings'])
     expect(INTERNAL_PAGES.settings.title).toBe('Settings')
-    // Zen's features, Privacy and Security after Search, then the browser-wide group past the
+    // Zen's features, Privacy and Security after Search, Security (the remembered per-site
+    // answers and the session's sign-ins) last among them, then the browser-wide group past the
     // first hairline: Sync, Accessibility, Keyboard Shortcuts, Updates; About past the second.
     expect(SETTINGS_SECTIONS.map((s) => s.id)).toEqual([
       'look',
@@ -44,6 +45,7 @@ describe('the page registry', () => {
       'extensions',
       'agents',
       'passwords',
+      'security',
       'sync',
       'accessibility',
       'shortcuts',
@@ -174,6 +176,8 @@ describe('the section model', () => {
       'containers',
       'boosts',
       'mods',
+      // Ungated, as the desktop Security pane is: every host keeps per-site answers (#62).
+      'security',
       'about'
     ])
     const desktop = availableSections(INTERNAL_PAGES.settings, ALL, 'desktop').map((s) => s.id)
@@ -225,7 +229,7 @@ describe('the landing list', () => {
       run.map((s) => s.id)
     )
     expect(bare).toEqual([
-      ['look', 'tabs', 'downloads', 'search', 'spaces', 'containers', 'boosts', 'mods'],
+      ['look', 'tabs', 'downloads', 'search', 'spaces', 'containers', 'boosts', 'mods', 'security'],
       ['about']
     ])
   })

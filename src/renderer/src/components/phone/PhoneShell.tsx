@@ -34,6 +34,7 @@ import { cn } from '@renderer/lib/utils'
 import { ContentArea } from '../content/ContentArea'
 import { MessageLayer } from '../messages/MessageLayer'
 import { Onboarding } from '../overlays/Onboarding'
+import { BlockedPopupsChip } from '../security/BlockedPopupsPanel'
 import { Favicon } from '../sidebar/Favicon'
 import { TabDialogs } from '../TabDialogs'
 import { PillChip } from '../urlbar/PillChip'
@@ -192,6 +193,13 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
         <div className="relative min-h-0 flex-1">
           <ContentArea state={state} ui={ui} />
         </div>
+        {!barHidden && tab && (
+          <BlockedPopupsChip
+            state={state}
+            tabId={tab.id}
+            className={edge === 'top' ? 'order-first' : ''}
+          />
+        )}
       </main>
       {/* Messages sit on the content frame's box, over the bar and the stage but under sheets. */}
       <div

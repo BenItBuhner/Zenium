@@ -445,10 +445,12 @@ const ADVANCED_TOGGLE_SCRIPT =
   "this.setAttribute('aria-expanded',String(open));this.textContent=open?'Hide advanced':'Advanced'"
 
 /**
- * The certificate interstitial's controls, in Chrome's order of prominence: Back to safety as
- * the one primary button, Advanced revealing the explanation, the certificate and the proceed
- * control, which reads as text so nobody presses it in passing. Back and Proceed post the
- * interstitial message the other warning pages post (`postAction`), which the page script relays.
+ * The certificate interstitial's controls: a page's action row (design language v2 §9.11) with
+ * Back to safety as the one primary button, last, so it trails on both platforms – right-aligned
+ * on desktop, the trailing half of the split row on the phone (`.zen-error-actions`) – and
+ * Advanced before it, revealing the explanation, the certificate and the proceed control, which
+ * reads as text so nobody presses it in passing. Back and Proceed post the interstitial message
+ * the other warning pages post (`postAction`), which the page script relays.
  */
 function interstitialHtml(interstitial: CertificateInterstitial, target: string): string {
   const rows = interstitial.details
@@ -460,8 +462,8 @@ function interstitialHtml(interstitial: CertificateInterstitial, target: string)
     : ''
   return `
   <div class="zen-error-actions">
-    <button type="button" class="zen-v2-button" data-primary onclick="${escapeHtml(postAction('back', target))}">Back to safety</button>
     <button type="button" class="zen-v2-button" aria-expanded="false" aria-controls="zen-error-advanced" onclick="${escapeHtml(ADVANCED_TOGGLE_SCRIPT)}">Advanced</button>
+    <button type="button" class="zen-v2-button" data-primary onclick="${escapeHtml(postAction('back', target))}">Back to safety</button>
   </div>
   <section id="zen-error-advanced" class="zen-error-advanced" hidden>
     <p>${escapeHtml(interstitial.explanation)}</p>${details}${proceed}

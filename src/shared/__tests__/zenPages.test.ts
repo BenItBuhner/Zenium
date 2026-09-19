@@ -277,18 +277,22 @@ describe('errorPageHtml', () => {
     expect(style).toBe(errorPageStyle())
   })
 
-  it('renders the certificate interstitial: Back to safety first, Advanced hiding the details and Proceed', () => {
+  it('renders the certificate interstitial: Advanced then Back to safety last in the action row, the details and Proceed hidden', () => {
     const html = errorPageHtml(parseZenUrl(EXPIRED)!)
     expect(html).toContain('<title>expired.badssl.com</title>')
     expect(html).toContain('<h1>Your connection is not private</h1>')
     expect(html).toContain('<p class="zen-error-code">ERR_CERT_DATE_INVALID</p>')
     expect(html).not.toContain('>Reload</button>')
-    const back = html.indexOf('>Back to safety</button>')
+    // §9.11: the page's action row has its primary last, so it trails on both platforms.
+    const actions = html.indexOf('<div class="zen-error-actions">')
     const advanced = html.indexOf('>Advanced</button>')
+    const back = html.indexOf('>Back to safety</button>')
     const proceed = html.indexOf('>Proceed to expired.badssl.com (unsafe)</button>')
-    expect(back).toBeGreaterThan(0)
-    expect(advanced).toBeGreaterThan(back)
-    expect(proceed).toBeGreaterThan(advanced)
+    expect(actions).toBeGreaterThan(0)
+    expect(advanced).toBeGreaterThan(actions)
+    expect(back).toBeGreaterThan(advanced)
+    expect(back).toBeLessThan(html.indexOf('</div>', actions))
+    expect(proceed).toBeGreaterThan(back)
     // Back is the one primary button; Proceed reads as text inside the hidden Advanced block.
     expect(html).toContain('class="zen-v2-button" data-primary onclick=')
     expect(html).toContain('<section id="zen-error-advanced" class="zen-error-advanced" hidden>')
@@ -386,6 +390,19 @@ describe('errorPageStyle', () => {
     expect(own).not.toMatch(/#[0-9a-f]{3,8}\b/i)
     expect(own).not.toMatch(/rgba?\(/)
     expect(own).not.toMatch(/color-mix\(/)
+  })
+
+  it("right-aligns the certificate interstitial's action row on desktop and splits it on the phone", () => {
+    // §9.11: a page's action row hugs and right-aligns in the content column with the primary
+    // last on desktop; on the phone its two peers split the column at 8, the primary trailing.
+    const actions = style.slice(style.indexOf('.zen-error-actions {'))
+    const rule = actions.slice(0, actions.indexOf('}'))
+    expect(rule).toContain('justify-content: flex-end;')
+    expect(rule).toContain('gap: 8px;')
+    const phone = style.slice(
+      style.indexOf(":root[data-form-factor='phone'] .zen-error-actions > * {")
+    )
+    expect(phone.slice(0, phone.indexOf('}'))).toContain('flex: 1;')
   })
 
   it('is what the built page carries, and degrades to nothing when a marker is gone', () => {

@@ -215,6 +215,21 @@ export const SETTINGS_SECTIONS: readonly InternalPageSection[] = [
     requires: 'passwords'
   },
   {
+    id: 'security',
+    label: 'Security',
+    keywords: [
+      'security',
+      'pop-ups',
+      'popups',
+      'certificates',
+      'sign-in',
+      'http authentication',
+      'external apps',
+      'protocols',
+      'permissions'
+    ]
+  },
+  {
     id: 'sync',
     label: 'Sync',
     keywords: ['devices', 'folder', 'passphrase'],

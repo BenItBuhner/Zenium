@@ -1,3 +1,6 @@
+import type { CertificateDetails, ClientCertificateInfo, Tab, UIState } from '@shared/types'
+import type { Browser } from '@core/browser'
+import { isCertificateError } from '@shared/siteInfo'
 import { run } from '@renderer/lib/api'
 import { dispatchBackEvent, topBackSurface } from '@renderer/lib/back'
 import { dismissOverview, openOverview } from '@renderer/lib/gestures/stage'
@@ -5,6 +8,7 @@ import { abortPull, dispatchPullEvent, PULL_THRESHOLD, pullTravelFor } from '@re
 import { Download, Smartphone, Star } from 'lucide-react'
 import { installBannerShown, presentInstallBanner } from '@renderer/lib/installBanner'
 import { isInternalPageUrl } from '@shared/internalPages'
+import { blockedPopupsOf, closeBlockedPopups, openBlockedPopups } from '@renderer/lib/security'
 import { activeTab } from '@renderer/lib/selectors'
 import {
   browserStore,
@@ -25,7 +29,13 @@ import {
 import type { HostGlobal } from './boot'
 import { PREVIEW_WEB_APP, postPreviewManifest } from './preview'
 import { PREVIEW_DOWNLOAD_EVENT } from './previewDownloads'
-import { parsePreviewSpec, type PreviewStep, type PreviewWebAppSurface } from './previewSpec'
+import {
+  parsePreviewSeed,
+  parsePreviewSpec,
+  type PreviewState,
+  type PreviewStep,
+  type PreviewWebAppSurface
+} from './previewSpec'
 
 /** A pause between steps for a sheet to mount, slide in and settle before the next tap. */
 const STEP_SETTLE_MS = 450
@@ -51,26 +61,30 @@ const SHEET_LEAVE_MS = 1500
  * (the page zoom sheet at that factor), `error=<code>` (the active tab's load failed with that
  * Chromium `net::` code, `url=<target>` naming the URL that failed: the zen://error page is up),
  * the message surfaces and the load bar: `toast=<text>&action=<label>`, `banners=<n>`,
- * `progress=<0…1>`, `webapp=<surface>` (an "Add to Home screen" surface on the active tab) or
- * `download=<file>` (the stand-in downloader starts that transfer; see `PreviewDownloadSpec`). It
- * comes in as the URL hash, `http://localhost:41734/#overlay=history`, or as
+ * `progress=<0…1>`, `webapp=<surface>` (an "Add to Home screen" surface on the active tab),
+ * `download=<file>` (the stand-in downloader starts that transfer; see `PreviewDownloadSpec`),
+ * `popups=<n>` (n pop-ups blocked on the page; `&list` opens the list, `&allowed` remembers the
+ * site) or `prompt=http-auth` / `prompt=certificate` (a security dialog over the page;
+ * `&failed`, `&proxy`, `&secure`). `rules=<n>` on any spec seeds n remembered site permissions
+ * for Settings › Security. It comes in as the URL hash,
+ * `http://localhost:41734/#overlay=history`, or as
  * `window.postMessage({ zenPreview: 'find=coffee' }, '*')`, which also re-applies an unchanged
  * state. Once applied it is echoed in `<html data-preview-state>` so a driver can wait for it;
  * `.github/scripts/android-preview-shots.mjs` is one.
  */
-export function installPreviewStates(): void {
-  window.addEventListener('hashchange', () => apply(location.hash.slice(1)))
+export function installPreviewStates(browser: Browser): void {
+  window.addEventListener('hashchange', () => apply(browser, location.hash.slice(1)))
   window.addEventListener('message', (e: MessageEvent<unknown>) => {
     const data = e.data
     if (data && typeof data === 'object' && 'zenPreview' in data) {
       const spec = (data as { zenPreview: unknown }).zenPreview
-      if (typeof spec === 'string') apply(spec)
+      if (typeof spec === 'string') apply(browser, spec)
     }
   })
-  if (location.hash.length > 1) apply(location.hash.slice(1))
+  if (location.hash.length > 1) apply(browser, location.hash.slice(1))
 }
 
-function apply(spec: string): void {
+function apply(browser: Browser, spec: string): void {
   whenReady(() => {
     // Every spec starts from idle so states do not stack: a pull in flight is put back at once
     // (a `cancel` would spring home, and the next pull would catch that spring part-way); the
@@ -84,7 +98,11 @@ function apply(spec: string): void {
     const state = browserStore.get().state
     const tab = state ? activeTab(state) : null
     clearMessages(tab?.loading ? tab.id : null)
-    closeSheets(() => reach(spec))
+    closeBlockedPopups()
+    const securityAtRest = tab ? resetSecurity(browser, tab) : Promise.resolve()
+    const seed = parsePreviewSeed(spec)
+    if (seed.rules !== null) seedRules(browser, seed.rules)
+    closeSheets(() => reach(browser, spec, securityAtRest))
   })
 }
 
@@ -110,8 +128,12 @@ function closeSheets(then: () => void, deadline = performance.now() + SHEET_LEAV
   setTimeout(gone, 50)
 }
 
-/** Take the chrome, now idle, to the state `spec` names. */
-function reach(spec: string): void {
+/**
+ * Take the chrome, now idle, to the state `spec` names. `securityAtRest` settles once the
+ * previous state's security prompts are cancelled and forgotten (a prompt raised before that
+ * would join the cancelled one's protection space instead of asking).
+ */
+function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): void {
   const state = browserStore.get().state
   const tab = state ? activeTab(state) : null
   const target = parsePreviewSpec(spec)
@@ -185,18 +207,50 @@ function reach(spec: string): void {
     done(spec)
   } else if (target.kind === 'webapp' && tab) {
     applyWebApp(target.surface, tab.id, spec)
+  } else if (target.kind === 'popups' && tab) {
+    seedPopups(browser, tab, target)
+    // The list opens once the store carries what was seeded: over a state still without the
+    // entries it would find nothing to show and leave again (a user opens it from the chip,
+    // which is only there once they are).
+    whenState(
+      (state) => blockedPopupsOf(state, tab.id).length >= target.count,
+      () => {
+        if (target.list) void openBlockedPopups(tab.id, null).then(() => done(spec))
+        else requestAnimationFrame(() => done(spec))
+      }
+    )
+  } else if (target.kind === 'prompt' && tab) {
+    void securityAtRest.then(() => {
+      showPrompt(browser, tab, target)
+      requestAnimationFrame(() => done(spec))
+    })
   } else {
     done(spec)
   }
 }
 
 /**
+ * The certificate the host reports with a certificate error (`failLoad` in `views.ts`), so that
+ * `error=<ERR_CERT_*>` shows the interstitial whole: the Advanced block lists these fields and
+ * offers to proceed. An expired one, as expired.badssl.com serves.
+ */
+const PREVIEW_CERTIFICATE: CertificateDetails = {
+  subjectName: '*.badssl.com',
+  issuerName: 'COMODO RSA Domain Validation Secure Server CA',
+  validStart: Date.UTC(2015, 3, 9),
+  validExpiry: Date.UTC(2015, 3, 12),
+  fingerprint: 'sha256/1DqoEDv6Bl2oL9bHAXqmcK+mfhLl7Ts2kyR6DDzgROo='
+}
+
+/**
  * The load of `url` in the tab failed with `code`, as the host would report it (`failLoad` in
- * `views.ts`): the core answers with the zen://error page for that code, in the tab's frame.
+ * `views.ts`): the core answers with the zen://error page for that code, in the tab's frame – for
+ * a certificate error the interstitial, with the refused certificate's details.
  */
 function failLoad(tabId: string, code: number, url: string): void {
   const host = (window as unknown as { __zenHost: HostGlobal }).__zenHost
-  host.viewEvent(tabId, 'failLoad', JSON.stringify({ code, description: '', url }))
+  const certificate = isCertificateError(code) ? PREVIEW_CERTIFICATE : undefined
+  host.viewEvent(tabId, 'failLoad', JSON.stringify({ code, description: '', url, certificate }))
 }
 
 /** Type `text` into the first element matching `selector` the way a keyboard would. */
@@ -286,10 +340,17 @@ function whenPageRendered(fn: () => void, deadline = performance.now() + PAGE_RE
 
 /** Runs `fn` once the active tab satisfies `test` (at once when it already does). */
 function whenActiveTabIs(test: (url: string) => boolean, fn: () => void): void {
+  whenState((state) => {
+    const tab = activeTab(state)
+    return tab !== null && test(tab.url)
+  }, fn)
+}
+
+/** Runs `fn` once the core's state satisfies `test` (at once when it already does). */
+function whenState(test: (state: UIState) => boolean, fn: () => void): void {
   const check = (): boolean => {
     const state = browserStore.get().state
-    const tab = state ? activeTab(state) : null
-    return tab !== null && test(tab.url)
+    return state !== null && test(state)
   }
   if (check()) {
     fn()
@@ -469,6 +530,169 @@ function whenStore(ready: () => boolean, spec: string): void {
     if (ready()) finish()
   })
   const timer = setTimeout(finish, SURFACE_TIMEOUT_MS)
+}
+
+/**
+ * Put the security surfaces back to rest: no dialog waiting, nothing blocked, the site not
+ * allowed. Resolves once the cancelled prompts have settled: their promises finish on later
+ * microtasks (a cancelled chooser remembers "none" for its host then, and a challenge for the
+ * same space raised before the first one is out of flight would join it instead of asking), so
+ * the session is forgotten and the next prompt raised after them.
+ */
+function resetSecurity(browser: Browser, tab: Tab): Promise<void> {
+  browser.security.cancelForTab(tab.id)
+  browser.popups.dismiss(tab.id)
+  browser.permissions.forget('popups', tab.url)
+  return new Promise((resolve) =>
+    setTimeout(() => {
+      browser.security.forgetSession()
+      resolve()
+    }, 0)
+  )
+}
+
+/**
+ * The answers Settings → Security lists, in the order they are seeded (`rules=<n>` keeps the
+ * first n). Sites are the reserved `example` names, so nothing here names a real service.
+ */
+const DEMO_RULES: ReadonlyArray<
+  Parameters<Browser['permissions']['remember']> extends [infer P, infer U, infer D, ...unknown[]]
+    ? { permission: P; url: U; decision: D; externalUrl?: string; embedderUrl?: string }
+    : never
+> = [
+  { permission: 'popups', url: 'https://meet.example/room/42', decision: 'allow' },
+  {
+    permission: 'openExternal',
+    url: 'https://calendar.example/week',
+    decision: 'allow',
+    externalUrl: 'zoommtg://zoom.us/join?confno=42'
+  },
+  { permission: 'camera', url: 'https://meet.example/room/42', decision: 'deny' },
+  { permission: 'fileSystem', url: 'https://docs.example/editor', decision: 'allow' },
+  {
+    permission: 'storage-access',
+    url: 'https://widgets.example/embed',
+    decision: 'allow',
+    embedderUrl: 'https://news.example/today'
+  },
+  { permission: 'geolocation', url: 'https://maps.example/', decision: 'deny' },
+  { permission: 'notifications', url: 'https://mail.example/inbox', decision: 'allow' },
+  { permission: 'idle-detection', url: 'https://chat.example/', decision: 'deny' }
+]
+
+function seedRules(browser: Browser, count: number): void {
+  browser.permissions.reset()
+  for (const rule of DEMO_RULES.slice(0, count)) {
+    browser.permissions.remember(rule.permission, rule.url, rule.decision, {
+      externalUrl: rule.externalUrl,
+      embedderUrl: rule.embedderUrl
+    })
+  }
+}
+
+/** Pages (and, for the third and every sixth entry, app launches) the blocker refused. */
+function seedPopups(
+  browser: Browser,
+  tab: Tab,
+  target: Extract<PreviewState, { kind: 'popups' }>
+): void {
+  const site = safeHost(tab.url) || 'example.com'
+  for (let i = 0; i < target.count; i++) {
+    if (i % 6 === 2) {
+      browser.popups.record(tab.id, `zoommtg://zoom.us/join?confno=${1000 + i}`, 'external')
+    } else {
+      const path = [
+        'offers/summer-sale',
+        'survey',
+        'newsletter/signup',
+        'promo',
+        'chat',
+        'ads/interstitial'
+      ]
+      browser.popups.record(tab.id, `https://${site}/${path[i % path.length]}?ref=${i + 1}`)
+    }
+  }
+  if (target.allowed) browser.permissions.remember('popups', tab.url, 'allow')
+}
+
+const DEMO_CERTIFICATES: ClientCertificateInfo[] = [
+  {
+    fingerprint: 'preview-cert-ada',
+    subject: 'Ada Lovelace (work)',
+    issuer: 'Zenium Demo CA',
+    serialNumber: '01',
+    validFrom: Date.UTC(2026, 0, 1),
+    validTo: Date.UTC(2027, 0, 1)
+  },
+  {
+    fingerprint: 'preview-cert-client',
+    subject: 'Zenium Demo Client',
+    issuer: 'Zenium Demo CA',
+    serialNumber: '02',
+    validFrom: Date.UTC(2026, 0, 1),
+    validTo: Date.UTC(2028, 0, 1)
+  },
+  {
+    fingerprint: 'preview-cert-old',
+    subject: 'Ada Lovelace (old laptop)',
+    issuer: 'Zenium Demo CA',
+    serialNumber: '03',
+    validFrom: Date.UTC(2023, 0, 1),
+    validTo: Date.UTC(2025, 0, 1)
+  }
+]
+
+/** Raise a security dialog the way a host challenge would; its answer goes nowhere here. */
+function showPrompt(
+  browser: Browser,
+  tab: Tab,
+  target: Extract<PreviewState, { kind: 'prompt' }>
+): void {
+  if (target.prompt === 'certificate') {
+    void browser.security.clientCertificate('secure.example', DEMO_CERTIFICATES, tab.id)
+    return
+  }
+  const challenge = target.proxy
+    ? {
+        host: 'proxy.example',
+        port: 3128,
+        realm: 'Corporate proxy',
+        scheme: 'basic',
+        isProxy: true,
+        secure: false
+      }
+    : {
+        host: 'intranet.example',
+        port: target.secure ? 443 : 80,
+        realm: 'Zenium demo area',
+        scheme: 'basic',
+        isProxy: false,
+        secure: target.secure
+      }
+  if (!target.failed) {
+    void browser.security.httpAuth(challenge, tab.id)
+    return
+  }
+  // A refused answer: sign in once, then be challenged again for the same protection space.
+  const first = browser.security.httpAuth(challenge, tab.id)
+  const pending = browser.security.list().find((p) => p.kind === 'http-auth')
+  if (pending) {
+    browser.security.respond(pending.id, {
+      kind: 'http-auth',
+      username: 'ada',
+      password: 'wrong',
+      remember: false
+    })
+  }
+  void first.then(() => browser.security.httpAuth(challenge, tab.id))
+}
+
+function safeHost(url: string): string {
+  try {
+    return new URL(url).host
+  } catch {
+    return ''
+  }
 }
 
 function done(spec: string): void {

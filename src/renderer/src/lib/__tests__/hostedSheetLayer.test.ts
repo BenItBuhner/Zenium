@@ -40,7 +40,11 @@ const OWN_SCRIM_CONSUMERS = [
   'components/overlays/passwords/shared.tsx',
   'components/pages/settings/sheets.tsx',
   'components/phone/InstallSheet.tsx',
-  'components/phone/PhoneSheet.tsx'
+  'components/phone/PhoneSheet.tsx',
+  // The blocked pop-ups sheet (#62); its sign-in and certificate sheet registers `ownScrim: phone`
+  // (`security/SecurityPromptDialog.tsx`, one component for the dialog and the sheet), which the
+  // literal-`true` match above does not see – it returns the hosted `BottomSheet` to the slot too.
+  'components/security/BlockedPopupsPanel.tsx'
 ]
 
 function sourceFiles(dir: string): string[] {

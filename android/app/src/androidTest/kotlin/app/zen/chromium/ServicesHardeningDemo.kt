@@ -11,35 +11,48 @@ import android.graphics.Rect
 import android.net.Uri
 import android.os.Bundle
 import android.os.SystemClock
+import android.security.KeyChain
 import android.util.Log
 import android.view.InputDevice
 import android.view.KeyCharacterMap
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import java.net.URL
 import kotlin.math.max
 
 /**
- * Records the pop-up blocker, the external-app prompt (tel: and an intent:// with a fallback) and
- * the HTTP sign-in dialog on an emulator, for a caller of the reusable `android-emulator-demo`
- * workflow. Asserts that it could run through the sequence and what the fingers it puts inside
- * the sheets did (the rule in DemoHarness: the external-app sheet's Open lands on the fallback
- * page, the sign-in dialog's field takes the focus); the recording and the screenshots show the
- * rest of what the chrome did.
+ * Records the pop-up blocker (the chip and its sheet), the external-app prompt (tel: and an
+ * intent:// with a fallback), the HTTP sign-in dialog with its retry, the client-certificate
+ * chooser and Settings › Security in the Settings tab (a remembered answer, its sheet, Forget
+ * this answer) on an emulator, for a caller of the reusable `android-emulator-demo` workflow.
+ * Asserts that it could run through the sequence and what the fingers it puts inside the sheets
+ * did (the rule in DemoHarness: the blocked pop-ups sheet's Open and its allow switch bring the
+ * pop-up's page up, the external-app sheet's Open lands on the fallback page, the sign-in
+ * dialog's field takes the focus, the answer sheet's Forget this answer empties the section);
+ * the recording and the screenshots show the rest of what the chrome did.
  *
- * The caller hosts a plain HTTP server on the runner (the emulator reaches it as 10.0.2.2:8787)
- * with three pages: `/popups` opens a window by itself 1.5 s after loading (reporting "The
- * automatic pop-up was blocked." or "The pop-up opened by itself.") and has a button "Open a
- * pop-up (with a tap)"; `/apps` navigates to a `tel:` URL by itself after 1.5 s and links to
- * "Call +1 555 0100" (`tel:`) and "Scan a barcode (intent:// with a fallback)", an `intent://` for
- * an app that is not installed whose `browser_fallback_url` is a page on the same server headed
- * "No app took the intent"; `/protected` answers 401 with a Basic challenge unless signed in as
- * zenium / secret, then shows "Signed in as zenium".
+ * The caller hosts the server in `assets/services-hardening-demo-server.mjs` on the runner (the
+ * emulator reaches it as 10.0.2.2:8787): `/popups` opens a window by itself 1.5 s after loading
+ * (reporting "The automatic pop-up was blocked." or "The pop-up opened by itself.") and has a
+ * button "Open a pop-up (with a tap)"; `/apps` navigates to a `tel:` URL by itself after 1.5 s
+ * and links to "Call +1 555 0100" (`tel:`) and "Scan a barcode (intent:// with a fallback)", an
+ * `intent://` for an app that is not installed whose `browser_fallback_url` is a page on the same
+ * server headed "No app took the intent"; `/protected` answers 401 with a Basic challenge unless
+ * signed in as zenium / secret, then shows "Signed in as zenium"; `/client.p12` is a demo key
+ * pair (password "zenium", alias "Zenium demo") the driver puts into the system credential store
+ * so the chooser has something to list. The certificate request itself comes from
+ * client.badssl.com, a public site with a trusted certificate of its own that asks every visitor
+ * for one (the WebView would not reach the request behind a self-signed server certificate, which
+ * Zenium never proceeds past); the demo pair's issuer carries that site's acceptable-CA name so
+ * the system chooser, which filters by it, lists the pair, and the site refuses the pair it did
+ * not issue with a 400 of its own once it is sent.
  *
  * Handshake with the workflow (files under the app's `files/services-hardening-demo/`), as in
  * GestureDemo: `record` once the warm-up is done, wait for `recording`, `done` at the end.
@@ -60,7 +73,8 @@ class ServicesHardeningDemo {
         val info = ui.serviceInfo
         info.flags = info.flags or
             AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS or
-            AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
+            AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
+            AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
         ui.serviceInfo = info
 
         seedProfile()
@@ -164,16 +178,24 @@ class ServicesHardeningDemo {
         val f = Finger()
 
         // 1. The page opened a pop-up on its own: blocked. With the chrome's chip (the UI branch)
-        //    the chip says so and its list offers Open; without it (the engine branch) the page's
+        //    the chip says so and its sheet offers Open; without it (the engine branch) the page's
         //    own text says so and a tap on the page's button opens one, as a gesture allows.
         waitFor("The automatic pop-up was blocked.", 12_000)
         if (waitFor("Pop-up blocked", 3_000, prefix = true)) {
+            SystemClock.sleep(800)
             shot("01-popup-blocked-chip")
             tapLabel(f, "Pop-up blocked", prefix = true)
-            waitFor("Pop-ups blocked", 5_000)
-            shot("02-popup-blocked-list")
-            tapLabel(f, "Open")
-            SystemClock.sleep(4_000)
+            waitFor("Blocked pop-ups", 5_000)
+            awaitSettled()
+            shot("02-popup-blocked-sheet")
+            // The sheet's injected touch (the rule in DemoHarness): Open under a finger, and the
+            // pop-up's page must come up in a tab of its own on it – a touch that fell through
+            // to the scrim takes the sheet down with nothing opened.
+            val pressed = tapLabel(f, "Open")
+            if (!waitFor("Opened deliberately", 8_000) && pressed) {
+                touchFault("the touch on the blocked pop-ups sheet's Open took the sheet down but opened no pop-up page")
+            }
+            SystemClock.sleep(1_500)
             shot("03-popup-opened-deliberately")
         } else {
             shot("01-popup-blocked-page")
@@ -187,9 +209,10 @@ class ServicesHardeningDemo {
         //    link whose app is not installed asks (the scheme is not one the manifest can see)
         //    and, opened, lands on its fallback page.
         openInApp("http://$SERVER/apps")
-        waitFor("Call +1 555 0100", 12_000)
+        // The page's tree goes with its view once the sheet covers it: either is the page loaded.
+        waitForAny(listOf("Call +1 555 0100", "Not now"), 12_000)
         if (waitFor("Not now", 6_000)) {
-            SystemClock.sleep(800)
+            awaitSettled()
             shot("04-app-launch-on-load-asks")
             answerSheet(f, "Not now")
         } else {
@@ -199,7 +222,7 @@ class ServicesHardeningDemo {
         SystemClock.sleep(1_500)
         tapLabel(f, "Call +1 555 0100")
         if (waitFor("Not now", 6_000)) {
-            SystemClock.sleep(800)
+            awaitSettled()
             shot("06-tel-launch-prompt")
             answerSheet(f, "Not now")
         } else {
@@ -209,7 +232,7 @@ class ServicesHardeningDemo {
         tapLabel(f, "Scan a barcode (intent:// with a fallback)")
         var opened = false
         if (waitFor("Not now", 6_000)) {
-            SystemClock.sleep(800)
+            awaitSettled()
             shot("07-intent-launch-prompt")
             // The external-app sheet's injected touch (the rule in DemoHarness): Open under a
             // finger, and the intent's fallback page must come up on it – a touch that fell
@@ -223,46 +246,273 @@ class ServicesHardeningDemo {
         ensureForeground()
         shot("08-intent-fallback-page")
 
-        // 3. HTTP sign-in: the dialog, a wrong password (asked again, with the notice), then the
-        //    right one. The form is submitted from the password field with Enter, the way a user
-        //    would with the soft keyboard up (it covers the dialog's buttons).
+        // 3. HTTP sign-in: the dialog, a wrong password (asked again, with the validation line
+        //    under the password field, which is cleared and focused), then the right one. While
+        //    the credentials are tried the form is busy (§9.30): its fields go read-only, which
+        //    takes the keyboard down; the refusal's focus brings it back up and the sheet lifts
+        //    the form above it again, which the emulator takes a moment over.
         openInApp("http://$SERVER/protected")
         waitFor("Sign in", 12_000)
-        SystemClock.sleep(1_200)
+        awaitSettled()
         shot("09-http-auth-dialog")
         // The dialog's injected touch (the rule in DemoHarness): a finger on the Password field
-        // must move the focus to it (the dialog opens with the Username field focused, so a touch
-        // the scrim took would leave it there). The values then land through the accessibility
-        // action – a lagging emulator drops keystrokes – and Sign in goes by Enter, else the
-        // button's accessibility action: the soft keyboard covers the dialog's buttons, where no
-        // finger reaches them.
+        // must move the focus to it (the sheet opens with the focus on a control that is not a
+        // text field, §9.22, so a touch the scrim took would leave the field without it). The
+        // values then land through the accessibility action – a lagging emulator drops
+        // keystrokes – and Sign in goes by its accessibility action: the soft keyboard covers
+        // the dialog's buttons, where no finger reaches them.
         touchField(f, "Password")
         fill(f, "Username", "zenium")
         fill(f, "Password", "wrong")
-        submitSignIn()
-        waitFor("The username or password was not accepted. Please try again.", 10_000)
-        SystemClock.sleep(1_200)
+        submitSignIn(RETRY_MESSAGE, 10_000)
+        awaitAboveKeyboard(RETRY_MESSAGE)
         shot("10-http-auth-retry")
         fill(f, "Password", "secret")
-        submitSignIn()
-        waitFor("Signed in as zenium", 15_000)
+        submitSignIn("Signed in as zenium", 15_000)
         SystemClock.sleep(1_500)
         shot("11-http-auth-signed-in")
+
+        // 4. Client certificate: a demo key pair goes into the system credential store first
+        //    (the system installer's own dialogs), then a site that asks for a certificate brings
+        //    up the system KeyChain chooser through Zenium, which never sends one unasked. Picking
+        //    the pair sends it and the site, which did not issue it, refuses it with a page of its
+        //    own; with nothing to pick, Deny sends nothing and the site says so.
+        val installed = installDemoCertificate(f)
+        openInApp(CERT_SITE)
+        if (waitForAny(listOf("Choose certificate", "No certificates found", CERT_NAME), 30_000)) {
+            SystemClock.sleep(1_200)
+            shot("13-certificate-chooser")
+            // The system dialog's buttons read in capitals (SELECT, DENY), and so does their
+            // accessible text.
+            if (installed && tapLabel(f, CERT_NAME)) {
+                SystemClock.sleep(1_000)
+                shot("14-certificate-chooser-picked")
+                tapLabel(f, "Select", ignoreCase = true)
+                waitFor("The SSL certificate error", 20_000)
+            } else {
+                val refusal = if (findByLabel("Deny", ignoreCase = true) != null) "Deny" else "Cancel"
+                val refused = tapLabel(f, refusal, ignoreCase = true)
+                if (!refused) ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+                waitFor("No required SSL certificate was sent", 20_000)
+            }
+            SystemClock.sleep(1_500)
+            shot("15-certificate-site-answer")
+        } else {
+            shot("13-certificate-chooser-missing")
+        }
+
+        // 5. Settings › Security on the phone: the `security` category of the Settings tab (the
+        //    rows this program adds to its builder). A remembered answer first – the site allowed
+        //    to open pop-ups through the switch row of the blocked pop-ups sheet on a fresh load
+        //    of /popups, which opens the blocked page in a tab of its own – then the section by
+        //    its deep link, the answer's row, its sheet, and Forget this answer taking it back.
+        ensureForeground()
+        openInApp("http://$SERVER/popups")
+        waitFor("The automatic pop-up was blocked.", 12_000)
+        if (waitFor("Pop-up blocked", 3_000, prefix = true)) {
+            SystemClock.sleep(800)
+            tapLabel(f, "Pop-up blocked", prefix = true)
+            waitFor("Blocked pop-ups", 5_000)
+            awaitSettled()
+            // The sheet's injected touch (the rule in DemoHarness): the allow switch under a
+            // finger, and allowing opens what was blocked – the pop-up's page must come up in a
+            // tab of its own on it; a touch that fell through to the scrim takes the sheet down
+            // and remembers nothing, and Settings › Security would have no answer to show.
+            val allowed = tapLabel(f, "Always allow pop-ups on", prefix = true)
+            if (!waitFor("Opened deliberately", 8_000) && allowed) {
+                touchFault("the touch on the blocked pop-ups sheet's allow switch took the sheet down but opened no pop-up page: the site was not allowed")
+            }
+            SystemClock.sleep(1_500)
+        }
+        ensureForeground()
+        openInApp("zenium://settings/security")
+        waitFor("Site permissions", 12_000)
+        SystemClock.sleep(1_500)
+        shot("16-settings-security")
+        // A row's accessible text runs its label and description together: the answer's row is
+        // found by its description, the sheet's action row by its label as a prefix. The row's
+        // finger must bring its sheet up (the next level's control), and the sheet's injected
+        // touch (the rule in DemoHarness) is Forget this answer, on which the section must read
+        // empty – the row was the only answer; a touch that fell through to the scrim takes the
+        // sheet down with the row still there.
+        if (tapLabel(f, "May open pop-up windows", contains = true)) {
+            if (!waitFor("Forget this answer", 5_000, prefix = true)) {
+                touchFault("the touch on the answer's row in Settings › Security brought no sheet with Forget this answer")
+            }
+            SystemClock.sleep(1_200)
+            shot("17-settings-security-answer-sheet")
+            val forgot = tapLabel(f, "Forget this answer", prefix = true)
+            if (!waitFor("No site permissions remembered yet", 8_000) && forgot) {
+                touchFault("the touch on the answer sheet's Forget this answer left the answer in Settings › Security")
+            }
+            SystemClock.sleep(1_200)
+            shot("18-settings-security-forgotten")
+        } else {
+            shot("16-settings-security-no-answer")
+        }
+    }
+
+    /** Send the system installer away should one of its dialogs still be up. */
+    private fun leaveInstaller() {
+        repeat(2) {
+            if (ui.rootInActiveWindow?.packageName?.toString() != INSTALLER) return
+            ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+            SystemClock.sleep(800)
+        }
     }
 
     /**
-     * Enter from the password field submits the form. Should the dialog still be up after that
-     * (the key went elsewhere), the Sign in button is pressed through its accessibility action,
-     * which reaches it under the soft keyboard.
+     * Put the demo key pair into the system credential store through the system installer's
+     * dialogs, so the chooser has a certificate to list. Best effort: the chooser comes up either
+     * way, with nothing to choose when this did not go through.
      */
-    private fun submitSignIn() {
-        SystemClock.sleep(600)
+    private fun installDemoCertificate(f: Finger): Boolean {
+        val pkcs12 = runCatching { URL("http://$SERVER/client.p12").readBytes() }.getOrElse {
+            step("no demo key pair to install: $it")
+            return false
+        }
+        val intent = KeyChain.createInstallIntent()
+            .putExtra(KeyChain.EXTRA_PKCS12, pkcs12)
+            .putExtra(KeyChain.EXTRA_NAME, CERT_NAME)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        app.startActivity(intent)
+        step("asked the system to install the demo key pair")
+        // The installer's dialogs in turn, each answered by its OK: the extraction password (a
+        // password field), the certificate type (radios, "VPN & app user certificate" preselected,
+        // no field) and the name (a plain field, filled in from the intent). Which come, and in
+        // what order, differs between Android versions; the loop answers whichever is up until
+        // Zenium's own window has been back in front for a moment. A tap the emulator dropped
+        // leaves the same dialog up, and it is answered again.
+        var passwordGiven = false
+        var passwordTaps = 0
+        var lastAnswer = 0L
+        var homeFor = 0
+        val deadline = SystemClock.uptimeMillis() + 45_000
+        while (SystemClock.uptimeMillis() < deadline) {
+            SystemClock.sleep(400)
+            val root = ui.rootInActiveWindow ?: continue
+            when (root.packageName?.toString()) {
+                app.packageName -> {
+                    if (passwordGiven && ++homeFor >= 5) {
+                        step("the demo key pair is installed")
+                        return true
+                    }
+                    continue
+                }
+                INSTALLER -> homeFor = 0
+                else -> continue
+            }
+            if (SystemClock.uptimeMillis() - lastAnswer < 1_500) continue
+            val fields = editables(root)
+            val password = fields.firstOrNull { it.isPassword }
+            val name = fields.firstOrNull { !it.isPassword }
+            when {
+                password != null && passwordTaps >= 3 -> {
+                    step("the installer refused the password")
+                    leaveInstaller()
+                    return false
+                }
+                password != null -> {
+                    if (!passwordGiven) {
+                        step("the installer asks for the extraction password")
+                        SystemClock.sleep(600)
+                        setEditable(password, CERT_PASSWORD)
+                        SystemClock.sleep(400)
+                        shot("12-certificate-install")
+                        passwordGiven = true
+                    } else {
+                        step("the password dialog is still up; pressing OK again")
+                        if ((password.text?.length ?: 0) != CERT_PASSWORD.length) setEditable(password, CERT_PASSWORD)
+                    }
+                    tapLabel(f, "OK")
+                    passwordTaps++
+                }
+                name != null -> {
+                    step("the installer asks for the name")
+                    if (name.text?.toString() != CERT_NAME) setEditable(name, CERT_NAME)
+                    SystemClock.sleep(300)
+                    tapLabel(f, "OK")
+                }
+                findByLabel("OK") != null -> {
+                    step("the installer asks for the certificate type; taking its default")
+                    tapLabel(f, "OK")
+                }
+                else -> continue
+            }
+            lastAnswer = SystemClock.uptimeMillis()
+        }
+        step("the certificate installer is still up")
+        leaveInstaller()
+        return false
+    }
+
+    private fun setEditable(field: AccessibilityNodeInfo, text: String) {
+        field.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+        SystemClock.sleep(200)
+        val args = Bundle().apply {
+            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+        }
+        field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+    }
+
+    private fun waitForAny(labels: List<String>, timeoutMs: Long): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            val seen = labels.firstOrNull { findByLabel(it) != null }
+            if (seen != null) {
+                step("saw '$seen'")
+                return true
+            }
+            SystemClock.sleep(250)
+        }
+        step("never saw any of $labels within ${timeoutMs}ms")
+        return false
+    }
+
+    /**
+     * Send the sign-in form and wait for what should follow – `expect`: the refusal's validation
+     * line, or the page signed in. The press has to find the sheet at rest. A press on a sheet
+     * whose spring is still running catches the sheet instead: the chassis holds a moving sheet
+     * for the finger that took it (BottomSheet.tsx) and swallows the click that follows, and the
+     * simulated click of an accessibility action comes with a pointer press and release of its
+     * own. The keyboard the fields brought up lifts the sheet on that very spring, and late on the
+     * emulator (the IME's insets arrive seconds after it shows), so a press right after the fill
+     * lands mid-lift and does nothing. So the screen is watched to a standstill first, with a
+     * margin for the spring's last, invisible fraction of a pixel; and a press that nothing
+     * followed is made once more, on a sheet surely at rest by then – a repeat of a press that did
+     * land is nothing, the form having answered already.
+     */
+    private fun submitSignIn(expect: String, timeoutMs: Long): Boolean {
+        for (attempt in 1..2) {
+            awaitSettled(timeoutMs = 8_000, stillMs = 1_500)
+            SystemClock.sleep(750)
+            pressSignIn()
+            if (waitFor(expect, timeoutMs)) return true
+            step("nothing followed the press (attempt $attempt)")
+        }
+        return false
+    }
+
+    /**
+     * Press the dialog's Sign in button through its accessibility action, which lands once and
+     * reaches the button under the soft keyboard should it be up. (Enter from the password field
+     * with a press as the fallback sent the answer twice: the dialog the refused answer brought
+     * back was taken for the one still waiting, and the retry shot caught the change-over.)
+     * The button is told by its class: the dialog's title is "Sign in" too (§9.1 sentence case),
+     * and the sheet it names is focusable, which Android reports as clickable, so the first
+     * clickable node of that name is the sheet, and a click on it only moves the focus. Enter is
+     * the fallback for a tree that does not have the button yet.
+     */
+    private fun pressSignIn() {
+        val button = findNodes("Sign in").firstOrNull {
+            it.isClickable && it.className == "android.widget.Button"
+        }
+        if (button != null && button.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+            step("pressed Sign in")
+            return
+        }
         pressKey(KeyEvent.KEYCODE_ENTER)
-        step("submitted with Enter")
-        SystemClock.sleep(1_500)
-        val button = findNodes("Sign in").firstOrNull { it.isClickable } ?: return
-        step("the dialog is still up; pressing Sign in")
-        button.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        step("no Sign in button to press; submitted with Enter")
     }
 
     /**
@@ -436,19 +686,138 @@ class ServicesHardeningDemo {
     }
 
     /**
+     * A sheet over a live page is in the accessibility tree as soon as it renders, but the chassis
+     * holds it at opacity 0 until the page is covered – a picture of the page painted behind it
+     * (up to 2.5 s on the emulator's software GPU, `COVER_WAIT_MS`), the page views hidden, and
+     * the host's frame without them drawn, or a second's grace from a host that never says so
+     * (`ACK_TIMEOUT_MS`, lib/pageView.ts) – and only then slides it in. A screenshot taken before
+     * that shows the page, not the sheet, and the host's own view state flips a frame or a second
+     * ahead of the slide. So the screen itself is watched: captures 250 ms apart until the scene
+     * has changed from the first (the scrim and the sheet coming) and then three in a row agree
+     * (two, and the emulator may have stalled a frame mid-slide), a blinking caret's worth of
+     * pixels apart. A scene that never changes is taken as settled after `stillMs`, past the
+     * chassis's longest hold (`COVERED_TIMEOUT_MS`): the sheet was up before the first capture.
+     * False when the scene kept changing for `timeoutMs`. The same watch, with a shorter
+     * `stillMs`, lets a sheet the keyboard lifted come to rest before it is pressed
+     * (`submitSignIn`).
+     */
+    private fun awaitSettled(timeoutMs: Long = 10_000, stillMs: Long = 4_500): Boolean {
+        val start = SystemClock.uptimeMillis()
+        val reference = capture() ?: return false
+        var last = reference
+        var moved = false
+        var stillRuns = 0
+        try {
+            while (SystemClock.uptimeMillis() < start + timeoutMs) {
+                SystemClock.sleep(250)
+                val next = capture() ?: continue
+                stillRuns = if (alike(last, next)) stillRuns + 1 else 0
+                if (!moved && !alike(reference, next)) moved = true
+                if (last !== reference) last.recycle()
+                last = next
+                if (moved && stillRuns >= 2) {
+                    step("the scene moved and settled")
+                    return true
+                }
+                if (!moved && SystemClock.uptimeMillis() - start >= stillMs) {
+                    step("the scene held still for ${stillMs}ms")
+                    return true
+                }
+            }
+            step("the scene kept changing for ${timeoutMs}ms")
+            return false
+        } finally {
+            if (last !== reference) last.recycle()
+            reference.recycle()
+        }
+    }
+
+    /** The screen as pixels the test can read (the automation's bitmap may be hardware-backed). */
+    private fun capture(): Bitmap? {
+        val shot = ui.takeScreenshot() ?: return null
+        val copy = shot.copy(Bitmap.Config.ARGB_8888, false)
+        shot.recycle()
+        return copy
+    }
+
+    /**
+     * Whether two captures agree but for a blinking caret and the status bar's clock: fewer than
+     * 0.2 % of the pixels sampled on a 4 px grid differ. A scrim fading or a sheet sliding moves
+     * a good tenth of the screen.
+     */
+    private fun alike(a: Bitmap, b: Bitmap): Boolean {
+        if (a.width != b.width || a.height != b.height) return false
+        val rowA = IntArray(a.width)
+        val rowB = IntArray(b.width)
+        var samples = 0
+        var differing = 0
+        var y = 0
+        while (y < a.height) {
+            a.getPixels(rowA, 0, a.width, 0, y, a.width, 1)
+            b.getPixels(rowB, 0, b.width, 0, y, b.width, 1)
+            var x = 0
+            while (x < a.width) {
+                samples++
+                if (rowA[x] != rowB[x]) differing++
+                x += 4
+            }
+            y += 4
+        }
+        return differing * 500 < samples
+    }
+
+    /**
+     * The node labelled `label` sits clear of the soft keyboard: the keyboard is up and the
+     * sheet has lifted the form so the node's bounds end above it. Polls until it does, then lets
+     * the sheet's spring settle; false when the keyboard never came or the node stayed under it.
+     */
+    private fun awaitAboveKeyboard(label: String, timeoutMs: Long = 8_000): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            val ime = imeInset()
+            val bounds = findByLabel(label)
+            if (ime > 0 && bounds != null && bounds.bottom <= height - ime) {
+                step("'$label' is above the keyboard")
+                SystemClock.sleep(800)
+                return true
+            }
+            SystemClock.sleep(200)
+        }
+        step("'$label' never came above the keyboard within ${timeoutMs}ms")
+        return false
+    }
+
+    /**
+     * The keyboard's height in px, from its window in the accessibility window list
+     * (`FLAG_RETRIEVE_INTERACTIVE_WINDOWS`); 0 while it is down. The decor view's `WindowInsets`
+     * never reported it up on the emulator.
+     */
+    private fun imeInset(): Int {
+        val ime = ui.windows.firstOrNull { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD } ?: return 0
+        val bounds = Rect().also(ime::getBoundsInScreen)
+        return max(0, height - bounds.top)
+    }
+
+    /**
      * Tap the node labelled `label` once it has come to rest (a sheet still sliding in reports
      * bounds a frame behind), inside its bounds but clear of the system navigation bar along
      * the bottom edge, which would take the tap instead.
      */
-    private fun tapLabel(f: Finger, label: String, prefix: Boolean = false): Boolean {
-        var target = findByLabel(label, prefix) ?: run {
+    private fun tapLabel(
+        f: Finger,
+        label: String,
+        prefix: Boolean = false,
+        ignoreCase: Boolean = false,
+        contains: Boolean = false
+    ): Boolean {
+        var target = findByLabel(label, prefix, ignoreCase, contains) ?: run {
             step("no node labelled '$label'")
             return false
         }
         val settleBy = SystemClock.uptimeMillis() + 2_000
         while (SystemClock.uptimeMillis() < settleBy) {
             SystemClock.sleep(150)
-            val again = findByLabel(label, prefix) ?: break
+            val again = findByLabel(label, prefix, ignoreCase, contains) ?: break
             if (again == target) break
             target = again
         }
@@ -478,18 +847,35 @@ class ServicesHardeningDemo {
         log.append(SystemClock.uptimeMillis()).append(' ').append(message).append('\n')
     }
 
-    private fun findByLabel(label: String, prefix: Boolean = false): Rect? =
-        findAllByLabel(label, prefix).firstOrNull()
+    private fun findByLabel(
+        label: String,
+        prefix: Boolean = false,
+        ignoreCase: Boolean = false,
+        contains: Boolean = false
+    ): Rect? = findAllByLabel(label, prefix, ignoreCase, contains).firstOrNull()
 
     /**
      * Breadth-first search of the active window for nodes labelled `label` (aria-label or text).
      * With `prefix`, a node whose text starts with the label and a space matches as well: a button
      * made of several spans ("Pop-up blocked" and "Show") is one node with their texts joined.
+     * With `contains`, a node whose text has the label anywhere in it: a Settings row is one
+     * button whose text runs its label and description together. With `ignoreCase`, a system
+     * button whose text is shown, and read, in capitals matches too.
      */
-    private fun findAllByLabel(label: String, prefix: Boolean = false): List<Rect> =
-        findNodes(label, prefix).map { node -> Rect().also(node::getBoundsInScreen) }
+    private fun findAllByLabel(
+        label: String,
+        prefix: Boolean = false,
+        ignoreCase: Boolean = false,
+        contains: Boolean = false
+    ): List<Rect> =
+        findNodes(label, prefix, ignoreCase, contains).map { node -> Rect().also(node::getBoundsInScreen) }
 
-    private fun findNodes(label: String, prefix: Boolean = false): List<AccessibilityNodeInfo> {
+    private fun findNodes(
+        label: String,
+        prefix: Boolean = false,
+        ignoreCase: Boolean = false,
+        contains: Boolean = false
+    ): List<AccessibilityNodeInfo> {
         // The root is briefly unavailable while the active window changes; that is not "gone".
         var root = ui.rootInActiveWindow
         var tries = 0
@@ -503,7 +889,11 @@ class ServicesHardeningDemo {
         queue.add(root)
         var visited = 0
         val matches = { text: CharSequence? ->
-            text != null && (text.toString() == label || (prefix && text.toString().startsWith("$label ")))
+            text != null && (
+                text.toString().equals(label, ignoreCase) ||
+                    (prefix && text.toString().startsWith("$label ", ignoreCase)) ||
+                    (contains && text.toString().contains(label, ignoreCase))
+                )
         }
         while (queue.isNotEmpty() && visited < 8_000) {
             val node = queue.removeFirst()
@@ -582,6 +972,13 @@ class ServicesHardeningDemo {
         private const val TAG = "ServicesHardeningDemo"
         private const val PILL_LABEL = "Address"
         private const val SERVER = "10.0.2.2:8787"
+        /** The sign-in form's validation line after a refused attempt (`lib/security.ts`). */
+        private const val RETRY_MESSAGE = "The username or password was not accepted. Please try again."
+        /** Asks every visitor for a client certificate; answers 400 to none and to one it did not issue. */
+        private const val CERT_SITE = "https://client.badssl.com/"
+        private const val CERT_NAME = "Zenium demo"
+        private const val CERT_PASSWORD = "zenium"
+        private const val INSTALLER = "com.android.certinstaller"
         private const val STEP_MS = 8L
         /** The 3-button navigation bar's height on the runner's emulator, with room to spare. */
         private const val NAV_BAR_MARGIN = 100

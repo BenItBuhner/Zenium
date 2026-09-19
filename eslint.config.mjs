@@ -103,12 +103,14 @@ export default defineConfig(
   },
   {
     // Plain Node scripts run by the GitHub Actions workflows, the desktop smoke harness,
-    // electron-builder hooks and maintenance tasks; no TypeScript annotations available.
+    // electron-builder hooks and maintenance tasks, and the demo servers kept beside the Android
+    // instrumentation drivers; no TypeScript annotations available.
     files: [
       '.github/scripts/**/*.mjs',
       '.github/smoke/**/*.mjs',
       'build/**/*.mjs',
-      'scripts/**/*.mjs'
+      'scripts/**/*.mjs',
+      'android/app/src/androidTest/assets/**/*.mjs'
     ],
     rules: {
       '@typescript-eslint/explicit-function-return-type': 'off'

@@ -58,6 +58,9 @@ export interface PreviewDownloadSpec {
   private: boolean
 }
 
+/** The most blocked pop-ups a preview seeds on the page (the list scrolls past a handful). */
+export const PREVIEW_POPUPS_MAX = 12
+
 export type PreviewState =
   | { kind: 'idle' }
   | {
@@ -118,9 +121,34 @@ export type PreviewState =
     }
   | { kind: 'webapp'; surface: PreviewWebAppSurface }
   | { kind: 'download'; download: PreviewDownloadSpec }
+  | {
+      kind: 'popups'
+      /** Pop-ups the blocker refused on the active page (the third and every sixth is an app launch). */
+      count: number
+      /** Open the list of them (the sheet on a phone). */
+      list: boolean
+      /** The site has "Always allow pop-ups" remembered. */
+      allowed: boolean
+    }
+  | {
+      kind: 'prompt'
+      prompt: 'http-auth' | 'certificate'
+      /** `http-auth`: the previous answer was refused. */
+      failed: boolean
+      /** `http-auth`: a proxy challenge. */
+      proxy: boolean
+      /** `http-auth`: the credentials travel over TLS (no unencrypted-password notice). */
+      secure: boolean
+    }
 
 /** More sample banners than the stack holds are pointless. */
 const MAX_PREVIEW_BANNERS = 3
+
+/** What a spec seeds before its state is applied; `null` leaves the store as it is. */
+export interface PreviewSeed {
+  /** Remembered site permissions for Settings → Security (0 forgets them all). */
+  rules: number | null
+}
 
 /** Types for the stand-in downloader to report, by extension; anything else is a plain stream. */
 const PREVIEW_MIME_TYPES: Record<string, string> = {
@@ -158,13 +186,16 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * failed, else the tab's own), which puts up the zen://error page, any of `toast=<text>` (with
  * `action=<label>`, `kind=error`), `banners=<n>` and `progress=<0…1>` together for the message
  * surfaces and the load bar, `webapp=<surface>` for one of PREVIEW_WEBAPP_SURFACES ("Add to
- * Home screen"), or `download=<file>` for a transfer the stand-in downloader plays back
+ * Home screen"), `download=<file>` for a transfer the stand-in downloader plays back
  * (`size=<bytes>`, `at=<percent>` already received, `speed=<bytes per second>`, `paused`,
  * `fail=<error>`, `deleted` for a finished file since gone from disk, `private`, `url=<url>`,
- * `mime=<type>`). When several are given, `page` wins
- * over `overlay`, `overlay` over `menu`, `menu` over `find`, `find` over `pull`, `pull` over
- * `zoom`, `zoom` over `error`, `error` over the messages, the messages over `webapp` and `webapp`
- * over `download`. A leading `#` (the URL hash as read) is ignored.
+ * `mime=<type>`), `popups=<n>` for n pop-ups blocked on the active page (`&list` opens the list
+ * of them, `&allowed` remembers the site as allowed), or `prompt=http-auth` /
+ * `prompt=certificate` for a security dialog over the page (`&failed`, `&proxy`, `&secure` vary
+ * the sign-in). When several are given, `page` wins over `overlay`, `overlay` over `menu`, `menu`
+ * over `find`, `find` over `pull`, `pull` over `zoom`, `zoom` over `error`, `error` over the
+ * messages, the messages over `webapp`, `webapp` over `download`, `download` over `popups`, and
+ * `popups` over `prompt`. A leading `#` (the URL hash as read) is ignored.
  */
 export function parsePreviewSpec(spec: string): PreviewState {
   const params = new URLSearchParams(spec.startsWith('#') ? spec.slice(1) : spec)
@@ -244,6 +275,21 @@ export function parsePreviewSpec(spec: string): PreviewState {
   }
   const download = params.get('download')
   if (download) return { kind: 'download', download: parseDownload(download, params) }
+  const popups = params.get('popups')
+  if (popups !== null && popups !== '' && Number.isFinite(Number(popups))) {
+    const count = Math.min(PREVIEW_POPUPS_MAX, Math.max(0, Math.floor(Number(popups))))
+    return { kind: 'popups', count, list: params.has('list'), allowed: params.has('allowed') }
+  }
+  const prompt = params.get('prompt')
+  if (prompt === 'http-auth' || prompt === 'certificate') {
+    return {
+      kind: 'prompt',
+      prompt,
+      failed: params.has('failed'),
+      proxy: params.has('proxy'),
+      secure: params.has('secure')
+    }
+  }
   return { kind: 'idle' }
 }
 
@@ -284,5 +330,17 @@ function parseDownload(filename: string, params: URLSearchParams): PreviewDownlo
     error: error ? error : null,
     deleted: params.has('deleted'),
     private: params.has('private')
+  }
+}
+
+/** The seeding a spec asks for on top of its state: `rules=<n>` remembered site permissions. */
+export function parsePreviewSeed(spec: string): PreviewSeed {
+  const params = new URLSearchParams(spec.startsWith('#') ? spec.slice(1) : spec)
+  const rules = params.get('rules')
+  return {
+    rules:
+      rules !== null && rules !== '' && Number.isFinite(Number(rules))
+        ? Math.max(0, Math.floor(Number(rules)))
+        : null
   }
 }

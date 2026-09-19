@@ -1,10 +1,14 @@
-import { describe, expect, it } from 'vitest'
-import type { PermissionPrompt, PermissionRule, Tab, UIState } from '@shared/types'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { HttpAuthPrompt, PermissionPrompt, PermissionRule, Tab, UIState } from '@shared/types'
+import { uiStore } from '../ui'
 import {
   blockedPopupsOf,
+  closeSecurityPrompt,
   currentPermissionPrompt,
   currentSecurityPrompt,
   describePermissionRule,
+  httpAuthSpace,
+  openSecurityPrompt,
   originOf,
   popupsAllowedFor,
   siteLabel
@@ -68,23 +72,23 @@ describe('describePermissionRule', () => {
   const rule = (permission: string, decision: PermissionRule['decision'] = 'allow'): string =>
     describePermissionRule({ origin: 'https://a.example', permission, decision })
 
-  it('phrases known permissions after may / may not', () => {
-    expect(rule('popups')).toBe('may open pop-up windows')
-    expect(rule('camera', 'deny')).toBe('may not use the camera')
-    expect(rule('fileSystem')).toBe('may write to files and folders you picked')
-    expect(rule('fileSystem:read', 'deny')).toBe('may not view the folders you picked')
+  it('phrases known permissions after may / may not, in sentence case', () => {
+    expect(rule('popups')).toBe('May open pop-up windows')
+    expect(rule('camera', 'deny')).toBe('May not use the camera')
+    expect(rule('fileSystem')).toBe('May write to files and folders you picked')
+    expect(rule('fileSystem:read', 'deny')).toBe('May not view the folders you picked')
   })
 
   it('names the scheme of an external-app rule and the embedder of a storage-access rule', () => {
-    expect(rule('openExternal:zoommtg')).toBe('may hand zoommtg: links to another app')
-    expect(rule('openExternal', 'deny')).toBe('may not hand links to other apps')
+    expect(rule('openExternal:zoommtg')).toBe('May hand zoommtg: links to another app')
+    expect(rule('openExternal', 'deny')).toBe('May not hand links to other apps')
     expect(rule('storage-access:https://embedder.example')).toBe(
-      'may use its cookies inside embedder.example'
+      'May use its cookies inside embedder.example'
     )
   })
 
   it('falls back to the raw permission name, readable', () => {
-    expect(rule('some-new_thing')).toBe('may some new thing')
+    expect(rule('some-new_thing')).toBe('May some new thing')
   })
 })
 
@@ -119,6 +123,42 @@ describe('currentSecurityPrompt', () => {
     })
     expect(currentSecurityPrompt(proxy)?.id).toBe('p0')
     expect(currentSecurityPrompt(state({ tabs: { t1: tab } }))).toBe(null)
+  })
+})
+
+describe('httpAuthSpace', () => {
+  const challenge: HttpAuthPrompt = {
+    id: 'p1',
+    kind: 'http-auth',
+    tabId: 't1',
+    host: 'h',
+    port: 443,
+    realm: 'Staff',
+    scheme: 'basic',
+    isProxy: false,
+    secure: true,
+    failedBefore: false,
+    username: ''
+  }
+
+  it('is the same for a challenge asked again (the refusal), whatever its id and scheme', () => {
+    const refused = {
+      ...challenge,
+      id: 'p2',
+      failedBefore: true,
+      username: 'ann',
+      scheme: 'digest'
+    }
+    expect(httpAuthSpace(refused)).toBe(httpAuthSpace(challenge))
+  })
+
+  it('tells realms, ports, proxies and tabs apart', () => {
+    const space = httpAuthSpace(challenge)
+    expect(httpAuthSpace({ ...challenge, realm: 'Admin' })).not.toBe(space)
+    expect(httpAuthSpace({ ...challenge, port: 8443 })).not.toBe(space)
+    expect(httpAuthSpace({ ...challenge, isProxy: true })).not.toBe(space)
+    expect(httpAuthSpace({ ...challenge, tabId: 't2' })).not.toBe(space)
+    expect(httpAuthSpace({ ...challenge, tabId: null })).not.toBe(space)
   })
 })
 
@@ -159,5 +199,34 @@ describe('currentPermissionPrompt', () => {
       ]
     })
     expect(currentPermissionPrompt(s)).toBe(null)
+  })
+})
+
+describe('openSecurityPrompt', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    closeSecurityPrompt()
+  })
+
+  it('hides the page once the snapshot is in, and a close overtakes an open still waiting', async () => {
+    vi.stubGlobal('window', { zen: { invoke: async () => null } })
+    const opening = openSecurityPrompt('t1')
+    closeSecurityPrompt()
+    await opening
+    expect(uiStore.get().securityPromptOpen).toBe(false)
+
+    await openSecurityPrompt('t1')
+    expect(uiStore.get().securityPromptOpen).toBe(true)
+    closeSecurityPrompt()
+    expect(uiStore.get().securityPromptOpen).toBe(false)
+  })
+
+  it('two opens in flight (the dialog mounted twice) leave the page hidden, not shown', async () => {
+    vi.stubGlobal('window', { zen: { invoke: async () => null } })
+    const first = openSecurityPrompt('t1')
+    closeSecurityPrompt()
+    const second = openSecurityPrompt('t1')
+    await Promise.all([first, second])
+    expect(uiStore.get().securityPromptOpen).toBe(true)
   })
 })

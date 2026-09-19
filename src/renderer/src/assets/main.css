@@ -483,15 +483,21 @@
   cursor: pointer;
 }
 /*
- * The certificate interstitial (the page's ERR_CERT_* variant): the row of Back to safety and
- * Advanced, and the Advanced block – a card holding the explanation, the certificate's fields and
+ * The certificate interstitial (the page's ERR_CERT_* variant): the row of Advanced and Back to
+ * safety – a page's action row (§9.11): on desktop the buttons hug and right-align in the content
+ * column with the primary last; on the phone the two peers split the column at 8 with the primary
+ * trailing – and the Advanced block, a card holding the explanation, the certificate's fields and
  * the proceed control, which is text rather than a button so it is read before it is pressed.
  */
 .zen-error-actions {
   display: flex;
   flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 8px;
   margin: 0 0 16px;
+}
+:root[data-form-factor='phone'] .zen-error-actions > * {
+  flex: 1;
 }
 .zen-error-advanced {
   padding: var(--v2-card-padding);

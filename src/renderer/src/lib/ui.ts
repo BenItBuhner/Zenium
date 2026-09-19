@@ -226,6 +226,11 @@ export interface UiState {
   editingPinnedUrlTabId: string | null
   /** Tab whose icon picker is open. */
   iconPickerTabId: string | null
+  /**
+   * The list of pop-ups the blocker refused for a tab, anchored under the address pill's
+   * indicator (window coordinates) or, without an anchor, as a sheet.
+   */
+  blockedPopupsPanel: { tabId: string; anchor: Rect | null } | null
   /** An HTTP sign-in or certificate dialog is up over the page (the page waits for it). */
   securityPromptOpen: boolean
   /** A page's `alert` / `confirm` / `prompt` or "Leave site?" dialog is up (the page waits for it). */
@@ -366,6 +371,7 @@ export const uiStore = createStore<UiState>(
     renamingFolderId: null,
     editingPinnedUrlTabId: null,
     iconPickerTabId: null,
+    blockedPopupsPanel: null,
     securityPromptOpen: false,
     pageDialogOpen: false,
     windowPromptOpen: false,
@@ -705,6 +711,7 @@ export function chromeNeedsKeyboard(): boolean {
     ui.floatingChrome === 0 &&
     !ui.barEditorOpen &&
     !ui.tabsMenu &&
+    !ui.blockedPopupsPanel &&
     !ui.securityPromptOpen &&
     !ui.permissionPromptOpen &&
     !ui.pageDialogOpen &&
@@ -752,6 +759,7 @@ export function invalidateSnapshot(): void {
     !ui.barEditorOpen &&
     !ui.frameSheetOpen &&
     !ui.tabsMenu &&
+    !ui.blockedPopupsPanel &&
     !ui.securityPromptOpen &&
     !ui.permissionPromptOpen &&
     !ui.pageDialogOpen &&
@@ -1259,6 +1267,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.barEditorOpen ||
     ui.frameSheetOpen ||
     ui.tabsMenu !== null ||
+    ui.blockedPopupsPanel !== null ||
     ui.securityPromptOpen ||
     ui.permissionPromptOpen ||
     ui.pageDialogOpen ||
@@ -1401,11 +1410,13 @@ export function closeTabsMenu(): void {
 }
 
 /**
- * Only anchored panels are up: a bar panel, the star bubble, the zoom bubble, the tab hover
- * card, the downloads bubble, site information. The page behind them is captured all the same
- * (they overlap the live view), but panels draw no scrim, so the capture shows undimmed; dialogs
- * dim it. A chassis sheet's scrim is its own one dim (§11.5), so the same holds under the
- * site-information sheet.
+ * Only anchored panels or a security prompt are up: a bar panel, the star bubble, the zoom
+ * bubble, the tab hover card, the downloads bubble, site information, the blocked pop-ups
+ * popover, or a sign-in or certificate dialog. The page behind them is captured all the same
+ * (they overlap the live view), but panels draw no scrim, so the capture shows undimmed;
+ * dialogs dim it. A chassis sheet's scrim is its own one dim (§11.5), so the same holds under
+ * the site-information sheet, and the security prompt's dim is the frame dialog host's scrim
+ * alone (v2 §9.5, §11.5: one dim layer).
  */
 export function panelAloneOverContent(ui: UiState): boolean {
   return (
@@ -1416,7 +1427,9 @@ export function panelAloneOverContent(ui: UiState): boolean {
       ui.downloadsOpen ||
       // Site information is a popover on a mouse (no scrim, §9.5) and a chassis sheet on a
       // phone, whose own scrim is the one dim over the page (§11.5).
-      ui.siteInfoOpen) &&
+      ui.siteInfoOpen ||
+      ui.blockedPopupsPanel !== null ||
+      ui.securityPromptOpen) &&
     !overlayCoversContent({
       ...ui,
       barMenuOpen: false,
@@ -1424,7 +1437,9 @@ export function panelAloneOverContent(ui: UiState): boolean {
       zoomBubble: null,
       hoverCard: HOVER_CARD_HIDDEN,
       downloadsOpen: false,
-      siteInfoOpen: false
+      siteInfoOpen: false,
+      blockedPopupsPanel: null,
+      securityPromptOpen: false
     })
   )
 }
