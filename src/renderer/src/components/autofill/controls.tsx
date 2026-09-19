@@ -228,9 +228,11 @@ export function TitleBlock({
 }
 
 /**
- * A prompt sheet's title block (§9.23) on the chassis' own class (`.zen-sheet-title-block`,
- * main.css): first in the sheet's body after the grip strip, in place of the 48 header – the
- * glyph (20 on a phone) on the title's first line, the description 4 below.
+ * A sheet's title block (§9.23) on the chassis' own class (`.zen-sheet-title-block`, main.css):
+ * first in the sheet's body after the grip strip, in place of the 48 header – the glyph (20 on
+ * a phone) on the title's first line, the description 4 below, 16 to what follows. A phone sheet
+ * that carries a description opens on it (the prompts, the passphrase ask, the editors, a
+ * menulist's picker for a row with a description); one without keeps `SheetHeader`.
  */
 export function SheetTitleBlock({
   id,
@@ -257,8 +259,9 @@ export function SheetTitleBlock({
 }
 
 /**
- * A form sheet's 48 header after the grip strip (§9.16): the title, centred, on the chassis'
- * class; hand it to `BottomSheet`'s `header`, which wraps it in `.zen-sheet-header`.
+ * A sheet's 48 header after the grip strip (§9.16), for a sheet with no description – a
+ * menulist's picker for a plain form field: the title, centred, on the chassis' class; hand it
+ * to `BottomSheet`'s `header`, which wraps it in `.zen-sheet-header`.
  */
 export function SheetHeader({ id, title }: { id?: string; title: string }): JSX.Element {
   return (
@@ -269,8 +272,9 @@ export function SheetHeader({ id, title }: { id?: string; title: string }): JSX.
 }
 
 /**
- * Body copy (§9.23): the paragraph that introduces a form or rows, under a sheet's 48 header or
- * a dialog's title block – 15/20 in the text colour at the 16 sides, 16 to what it introduces.
+ * Body copy (§9.23): the paragraph that introduces a form or rows under a desktop dialog's title
+ * block (the editor) – 15/20 in the text colour at the 16 sides, 16 to what it introduces. Phone
+ * sheets carry that text as their title block's description instead (`SheetTitleBlock`).
  */
 export function SheetCopy({ children }: { children: ReactNode }): JSX.Element {
   return <p className="zen-v2-af-copy">{children}</p>

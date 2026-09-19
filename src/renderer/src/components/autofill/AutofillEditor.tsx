@@ -25,7 +25,7 @@ import {
   Labelled,
   Menulist,
   SheetCopy,
-  SheetHeader,
+  SheetTitleBlock,
   TextArea,
   TitleBlock,
   useEscape,
@@ -142,11 +142,11 @@ function EditorFooter({ busy, onCancel }: { busy: boolean; onCancel: () => void 
 
 /**
  * The desktop shell: a title block of the title alone, then the body – the paragraph that
- * introduces the form is body copy at 15/400 in the text colour (§9.23), as it is in the phone
- * sheet, not the title block's description – scrolling between the block and the footer, which
- * stays put (a long address form, its validation lines added, runs past a frame 800 tall);
- * §9.7's hairline on the title block once scrolled. The footer draws none: a dialog ends in its
- * actions – the last field, 16, the buttons, 16 to the edge (§9.20's footer ruling).
+ * introduces the form is body copy at 15/400 in the text colour (§9.23), not the title block's
+ * description – scrolling between the block and the footer, which stays put (a long address
+ * form, its validation lines added, runs past a frame 800 tall); §9.7's hairline on the title
+ * block once scrolled. The footer draws none: a dialog ends in its actions – the last field, 16,
+ * the buttons, 16 to the edge (§9.20's footer ruling).
  */
 function EditorDialog({
   copy,
@@ -191,11 +191,14 @@ function EditorDialog({
 }
 
 /**
- * The phone shell: the chassis sheet (§9.11, §9.16) in the frame's dialog host – `TabDialogs`
- * renders the editor inside `FrameDialogHost`, so the sheet is `hosted` and owns its scrim
+ * The phone shell: the chassis sheet (§9.11) in the frame's dialog host – `TabDialogs` renders
+ * the editor inside `FrameDialogHost`, so the sheet is `hosted` and owns its scrim
  * (`useFrameDialog`); the chassis takes focus, traps Tab, holds the chrome inert and lifts the
- * form above the keyboard (#172). The 48 header carries the title; the form follows the body
- * copy and ends in its actions, Cancel leaving through the sheet's own motion.
+ * form above the keyboard (#172). The editor carries a description, so the sheet opens on a
+ * §9.23 title block rather than the 48 header (a phone sheet takes the block when it has a
+ * description and keeps the header when it has none): the glyph on the title's start at the
+ * gutter, the description 4 below, 16 to the form, which ends in its actions, Cancel leaving
+ * through the sheet's own motion.
  */
 function EditorSheet({
   copy,
@@ -229,12 +232,16 @@ function EditorSheet({
       handleLabel="Dismiss"
       labelledBy={titleId}
       className="zen-v2-af zen-v2-af-sheet"
-      header={<SheetHeader id={titleId} title={copy.title} />}
       fitContent
     >
       <InSheet.Provider value>
         <div className="zen-v2-af" data-surface="page">
-          <SheetCopy>{copy.description}</SheetCopy>
+          <SheetTitleBlock
+            id={titleId}
+            icon={copy.icon}
+            title={copy.title}
+            description={copy.description}
+          />
           <form className="zen-v2-af-form" onSubmit={onSubmit}>
             {children}
             <EditorFooter busy={busy} onCancel={dismiss} />
