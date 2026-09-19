@@ -16,6 +16,7 @@ import {
   VenetianMask,
   X
 } from 'lucide-react'
+import { internalPageOf } from '@shared/internalPages'
 import type { Tab, UIState } from '@shared/types'
 import { securityIndicator, type IndicatorState } from '@shared/siteInfo'
 import { addressParts, displayUrl, fullUrl, getDomain } from '@shared/url'
@@ -118,7 +119,10 @@ export function NavRow({
     })
   }
   const tree = useBookmarkTree(state)
-  const bookmarked = Boolean(tab && isWebPage && tree.hasUrl(tab.url))
+  // The star stays on a site and on an internal page whose registry entry keeps it (Chrome shows
+  // it on chrome://settings; the new tab page hides it) – `pill.showStar`, v2 §10.1.
+  const starred = Boolean(tab && (isWebPage || internalPageOf(tab.url)?.pill.showStar))
+  const bookmarked = Boolean(tab && starred && tree.hasUrl(tab.url))
   const menuButton = useRef<HTMLButtonElement>(null)
   useEffect(() => {
     // Alt+F / F10: the menu opens from this button with the keyboard on it, so Escape closes
@@ -331,7 +335,7 @@ export function NavRow({
               </PillChip>
             )}
             {tab && <ZoomChip state={state} tab={tab} />}
-            {tab && isWebPage && (
+            {tab && starred && (
               <StarChip
                 tab={tab}
                 filled={bookmarked}

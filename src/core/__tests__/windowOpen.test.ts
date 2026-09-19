@@ -82,6 +82,18 @@ describe('planWindowOpen', () => {
     expect(planWindowOpen('', 'foreground-tab').action).toBe('deny')
   })
 
+  it('denies the browser’s own pages and documents, as Chrome denies chrome:// to a page', () => {
+    expect(planWindowOpen('zen://settings', 'foreground-tab').action).toBe('deny')
+    expect(planWindowOpen('zenium://settings/privacy', 'new-window').action).toBe('deny')
+    expect(planWindowOpen('ZENIUM://settings', 'background-tab').action).toBe('deny')
+    expect(planWindowOpen('zen://blank', 'foreground-tab').action).toBe('deny')
+    expect(planWindowOpen('zen://error?code=-105', 'foreground-tab').action).toBe('deny')
+    // The user's ways in are not this gate's: a typed address goes through inputToUrl.
+    expect(
+      planWindowOpen('https://example.com/?next=zen://settings', 'foreground-tab').action
+    ).toBe('tab')
+  })
+
   it('lets mailto: through for the external-app prompt, as a tab or a window', () => {
     expect(planWindowOpen('mailto:a@b.c', 'foreground-tab').action).toBe('tab')
     expect(planWindowOpen('mailto:a@b.c', 'new-window').action).toBe('window')

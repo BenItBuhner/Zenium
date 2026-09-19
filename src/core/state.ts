@@ -46,6 +46,7 @@ import type {
 import type { TranslateUIState } from '../shared/translate'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
 import { sanitizeAppIcon } from '../shared/appIcon'
+import { isChromePageUrl, parseInternalPageUrl } from '../shared/internalPages'
 import {
   DEFAULT_CONTAINERS,
   DEFAULT_SETTINGS,
@@ -475,13 +476,18 @@ export class BrowserState {
           ? raw.containerId
           : DEFAULT_CONTAINER_ID,
         // Everything starts unloaded; the active tab is loaded by the TabManager on startup.
-        discarded: true
+        // A chrome page (Settings) holds no page to unload: it never reads as pending.
+        discarded: !isChromePageUrl(typeof raw.url === 'string' ? raw.url : ''),
+        // Opener relationships are a session's own (Chrome forgets them too).
+        openerTabId: null
       })
       tab.splitGroupId = raw.splitGroupId ?? null
       tab.loading = false
       tab.progress = 0
       tab.audible = false
       tab.errorCode = null
+      // A chrome page tab restored inside a section has the landing beneath it (PageService).
+      if (isChromePageUrl(tab.url)) tab.canGoBack = parseInternalPageUrl(tab.url)?.section != null
       tabs[tab.id] = tab
     }
     this.model = {

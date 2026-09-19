@@ -603,6 +603,19 @@ export function snapshotHeld(tabId: string | null): boolean {
   return tabId !== null && ui.snapshotTabId === tabId && ui.snapshot !== null
 }
 
+/** The overlays that are sections of the Settings page: a tab on a host with page tabs. */
+const SETTINGS_OVERLAYS: ReadonlySet<OverlayKind> = new Set(['settings', 'shortcuts', 'sync'])
+
+/**
+ * Whether `kind` opens as an overlay on this host at all. Settings (with Shortcuts and Sync, its
+ * sections) is a tab wherever the host has page tabs (`page.open`, `lib/pages.ts`): the overlay
+ * is the desktop's until its program adopts the tab, and nothing may draw it over a phone.
+ */
+export function overlayAvailable(kind: OverlayKind): boolean {
+  if (!SETTINGS_OVERLAYS.has(kind)) return true
+  return !browserStore.get().state?.capabilities.pageTabs
+}
+
 export async function openOverlay(
   kind: OverlayKind,
   activeTabId: string | null,
@@ -610,6 +623,14 @@ export async function openOverlay(
   folderId: string | null = null,
   section: string | null = null
 ): Promise<void> {
+  if (!overlayAvailable(kind)) {
+    // The Settings page's tab, through the core's one route (a section for Shortcuts / Sync).
+    run('page.open', {
+      id: 'settings',
+      section: kind === 'settings' ? section : kind
+    })
+    return
+  }
   await captureActiveTab(activeTabId)
   // Overlays render over the content area; a phone drawer would sit on top of them.
   uiStore.set({ drawerOpen: false })

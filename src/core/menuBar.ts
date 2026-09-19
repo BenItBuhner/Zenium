@@ -77,8 +77,9 @@ export function applicationMenu(browser: Browser): Template {
       const target = frontWindow(browser) ?? (open ? browser.ensureWindow() : null)
       if (target) fn(target)
     }
-  const overlay = (kind: 'shortcuts' | 'bookmarks' | 'history' | 'downloads'): (() => void) =>
-    withWindow((w) => browser.emit('overlay.open', { kind }, w), true)
+  /** A Settings section: the Settings page, as a tab or its overlay (`PageService.open`). */
+  const settings = (section: string): (() => void) =>
+    withWindow((w) => void browser.pages.open('settings', section, w), true)
 
   const zenium: MenuItemTemplate = {
     label: 'Zenium',
@@ -295,7 +296,7 @@ export function applicationMenu(browser: Browser): Template {
     role: 'help',
     submenu: [
       { label: 'Zenium Help', click: () => browser.platform.shell.openExternal(HELP_URL) },
-      { label: 'Keyboard Shortcuts', click: overlay('shortcuts') },
+      { label: 'Keyboard Shortcuts', click: settings('shortcuts') },
       { type: 'separator' },
       { label: 'Report an Issue…', click: () => browser.platform.shell.openExternal(ISSUES_URL) }
     ]

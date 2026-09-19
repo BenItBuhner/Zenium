@@ -469,8 +469,6 @@ class InputBackDemo : DemoHarness("input-back-demo-state.json", "input-back", "i
         settle()
     }
 
-    private fun chromeSurfaceUp(): Boolean = onMain { host.back.chromeSurfaceUp }
-
     /** Back out of whatever chrome surface is up (a menu, a submenu inside it), a few at most. */
     private fun closeSurfaces() {
         repeat(3) {

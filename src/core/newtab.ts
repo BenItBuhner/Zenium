@@ -415,7 +415,9 @@ export class NewTabService {
         this.browser.menus.showNewTabTileMenu(tabId, action, win)
         return
       case 'customize':
-        this.browser.emit('overlay.open', { kind: 'settings', section: 'newtab' }, win)
+        // The one route for internal pages (`PageService`): the Settings tab at its New Tab
+        // section on a page-tab host, opened by this tab; the overlay where pages are overlays.
+        this.browser.pages.open('settings', 'newtab', win, tabId)
         return
     }
   }

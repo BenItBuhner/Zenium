@@ -740,8 +740,7 @@ export class Menus {
         this.fullUrlsItem(win),
         {
           label: 'Manage Search Engines…',
-          click: () =>
-            this.browser.emit('overlay.open', { kind: 'settings', section: 'search' }, win)
+          click: () => void this.browser.pages.open('settings', 'search', win)
         }
       ])
       this.popup(joinGroups(groups), win, 'urlbar')
@@ -1326,7 +1325,7 @@ export class Menus {
         { type: 'separator' },
         {
           label: 'Space Routing Settings…',
-          click: () => this.browser.emit('overlay.open', { kind: 'settings' }, win)
+          click: () => void this.browser.pages.open('settings', undefined, win)
         },
         { type: 'separator' },
         {
@@ -2036,19 +2035,18 @@ export class Menus {
             { type: 'separator' },
             {
               label: 'Resource Settings…',
-              click: () =>
-                this.browser.emit('overlay.open', { kind: 'settings', section: 'resources' }, win)
+              click: () => void this.browser.pages.open('settings', 'resources', win)
             }
           ]
         }),
         ...desktop({
           label: 'Keyboard Shortcuts',
-          click: () => this.browser.emit('overlay.open', { kind: 'shortcuts' }, win)
+          click: () => void this.browser.pages.open('settings', 'shortcuts', win)
         }),
         {
           label: 'Settings',
           action: 'settings.open',
-          click: () => this.browser.emit('overlay.open', { kind: 'settings' }, win)
+          click: () => void this.browser.pages.open('settings', undefined, win)
         },
         ...when(caps.devtools, {
           label: 'Developer Tools',

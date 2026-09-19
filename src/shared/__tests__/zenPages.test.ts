@@ -71,8 +71,10 @@ describe('overlayForUrl', () => {
   it('names the overlay a zen:// address stands for, without URL.hostname', () => {
     expect(overlayForUrl('zen://history')).toBe('history')
     expect(overlayForUrl('zen://History/?q=x')).toBe('history')
-    expect(overlayForUrl('zen://settings#privacy')).toBe('settings')
     expect(overlayForUrl('zen://downloads')).toBe('downloads')
+    expect(overlayForUrl('zen://bookmarks')).toBe('bookmarks')
+    // Settings is an internal page in a tab of its own (shared/internalPages.ts), not an overlay.
+    expect(overlayForUrl('zen://settings#privacy')).toBeNull()
   })
 
   it('is null for documents and for other schemes', () => {

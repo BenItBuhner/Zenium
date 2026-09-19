@@ -66,7 +66,10 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // DefaultBrowserSection.tsx, content/DefaultBrowserBanner.tsx): the flat card and its inks.
   ['.zen-default-browser-card {', '\n@media (prefers-reduced-motion: reduce) {'],
   // The message cards: toast and banner, their action button, glyph and close (components/messages/*).
-  ['.zen-message {', '.zen-suggestion {']
+  ['.zen-message {', '.zen-suggestion {'],
+  // The Settings tab (components/pages/settings): the page host, the shared v2 rows, fields,
+  // icon buttons and image radio cards it introduces, its sheets and its overview thumbnail.
+  ['.zen-page-host {', ' * History page (design language v2 draft']
 ]
 
 /**
@@ -175,6 +178,7 @@ const SCALE = [
   'weight-heading',
   'row',
   'row-two-line',
+  'row-pad',
   'control',
   'checkbox',
   'nav-item',
@@ -240,12 +244,14 @@ describe('design language v2 tokens', () => {
     const inside = css.slice(lightBlockStart, blockEnd)
     // Inside: the ring, selection and the selected-row fill (light and dark) derive from the
     // accent, the shared focus-ring rule reads the ring, the chassis scrim alias `--zen-scrim`
-    // reads the v2 scrim (§9.28), and the two §9.29 family blocks map the tokens onto the control
-    // roles.
+    // reads the v2 scrim (§9.28), the row padding `--v2-row-pad` derives from the row and the
+    // body line (§9.34, two reads), and the two §9.29 family blocks map the tokens onto the
+    // control roles.
     const familyReads = FAMILIES.map((f) => block(f).match(/var\(--v2-/g)?.length ?? 0)
     expect((inside.match(/var\(--v2-/g) ?? []).length).toBe(
-      6 + familyReads.reduce((a, b) => a + b, 0)
+      8 + familyReads.reduce((a, b) => a + b, 0)
     )
+    expect(inside).toMatch(/--v2-row-pad: calc\(\(var\(--v2-row\) - var\(--v2-line-body\)\) \/ 2\)/)
     expect(inside).toMatch(/--zen-scrim: var\(--v2-scrim\)/)
     expect(inside).toMatch(/\[class\^='zen-v2-'\]:focus-visible/)
   })
@@ -356,6 +362,68 @@ describe('the v2 button', () => {
     // And no `@layer` block anywhere restates the class.
     for (const match of bare.matchAll(/\.zen-v2-button[^{]*\{/g))
       expect(nesting(match.index), `"${match[0].trim()}" is layered`).toBe(0)
+  })
+})
+
+/**
+ * Whether the rule at `index` sits inside an `@layer` block: the headers of the blocks still
+ * open there, innermost last (a `@media` block is not a layer).
+ */
+function layered(index: number): boolean {
+  const stack: string[] = []
+  let headerStart = 0
+  const before = bare.slice(0, index)
+  for (const match of before.matchAll(/[{};]/g)) {
+    if (match[0] === '{') stack.push(before.slice(headerStart, match.index).trim())
+    else if (match[0] === '}') stack.pop()
+    headerStart = match.index + 1
+  }
+  return stack.some((header) => header.startsWith('@layer'))
+}
+
+describe('the v2 primitives (§9.34)', () => {
+  const PRIMITIVES = [
+    '.zen-v2-row',
+    '.zen-v2-field',
+    '.zen-v2-icon-button',
+    '.zen-v2-card-radio',
+    '.zen-v2-switch',
+    '.zen-v2-radio'
+  ]
+
+  it('are one unlayered rule each, tokens only, with no layered or second copy', () => {
+    for (const cls of PRIMITIVES) {
+      // One base rule, and it is the shared one: unscoped, so every program's control takes it.
+      expect(bare.match(new RegExp(`\\n\\${cls} \\{`, 'g')) ?? [], cls).toHaveLength(1)
+      const rules = [...bare.matchAll(new RegExp(`[^\\n]*\\${cls}(?![\\w-])[^{]*\\{`, 'g'))]
+      expect(rules.length, cls).toBeGreaterThan(0)
+      for (const rule of rules) {
+        const selector = rule[0].trim()
+        expect(layered(rule.index), `"${selector}" is layered`).toBe(false)
+        // Tokens only: no literal colour in a primitive's declarations.
+        const body = bare.slice(rule.index + rule[0].length, bare.indexOf('}', rule.index))
+        expect(body, `"${selector}" states a colour`).not.toMatch(/#[0-9a-f]{3,8}\b/i)
+      }
+    }
+  })
+
+  it('pad the row with the --v2-row-pad token, not a local knob', () => {
+    expect(block('.zen-v2-row')).toMatch(/padding: var\(--v2-row-pad\) 16px/)
+    expect(css).not.toMatch(/--zen-settings-pad/)
+  })
+})
+
+describe('the Settings drill-in pane (§10.2)', () => {
+  it('enters by a keyframe animation that does not fill, so the back gesture’s inline transform moves it', () => {
+    // BackDismissal writes `transform` inline as the finger moves and as the commit slides the
+    // pane out; a `forwards` or `both` fill on the entrance would sit over that for the pane's
+    // whole life (the recorded emulator run: the finger moved nothing).
+    for (const side of ['right', 'left']) {
+      const rule = block(`.zen-settings-drill-in[data-from='${side}']`)
+      expect(rule).toMatch(new RegExp(`animation:\\s*zen-settings-enter-${side}\\b`))
+      expect(rule).not.toMatch(/\b(forwards|both)\b/)
+      expect(rule).not.toMatch(/animation-fill-mode/)
+    }
   })
 })
 

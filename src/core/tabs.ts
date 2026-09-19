@@ -44,6 +44,7 @@ import {
   safeBrowsingPageUrl,
   titleForUrl
 } from '../shared/url'
+import { internalPageAliasUrl } from '../shared/internalPages'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
 import { describeNetError, HTTP_FALLBACK_CODES, overlayForUrl } from '../shared/zenPages'
@@ -191,6 +192,11 @@ export class TabManager {
     if (!tab) return undefined
     const existing = this.view(tabId)
     if (existing) return existing
+    if (this.browser.pages.isChromePage(tab)) {
+      // A chrome page is drawn by the chrome: there is nothing to load and never a view.
+      tab.discarded = false
+      return undefined
+    }
     if (opts.background) {
       return this.browser.governor.requestLoad(tabId, win?.id) ? this.view(tabId) : undefined
     }
@@ -204,6 +210,10 @@ export class TabManager {
     if (!tab) return undefined
     const existing = this.view(tabId)
     if (existing) return existing
+    if (this.browser.pages.isChromePage(tab)) {
+      tab.discarded = false
+      return undefined
+    }
     const view = this.createView(tab, win ?? this.windowFor(tabId))
     this.browser.governor.trackLoad(tabId)
     tab.discarded = false
@@ -893,7 +903,8 @@ export class TabManager {
   /** Unload a tab's page while keeping it in the sidebar (Zen's "pending" tabs). */
   discard(tabId: string): void {
     const tab = this.tab(tabId)
-    if (!tab) return
+    // A chrome page tab holds no page: there is nothing to unload and it never reads as pending.
+    if (!tab || this.browser.pages.isChromePage(tab)) return
     // What the page held, for the sleeping row's "memory saved" line; read while it still runs.
     const saved = this.view(tabId) ? this.browser.governor.memoryOf?.(tabId) : null
     if (saved !== null && saved !== undefined && saved > 0) tab.sleepSavedMb = Math.round(saved)
@@ -1367,6 +1378,7 @@ export class TabManager {
     this.browser.state.tabNavigation.delete(tabId)
     this.destroyView(tabId)
     this.browser.governor.onTabRemoved(tabId)
+    this.browser.pages.onTabRemoved(tabId)
     this.browser.agents.onTabRemoved(tabId)
     this.browser.find.forget(tabId)
     this.browser.liveFolders.onTabLeftFolder(tabId, tab.folderId)
@@ -1491,9 +1503,15 @@ export class TabManager {
   ): void {
     const tab = this.tab(tabId)
     if (!tab || !isNavigableUrl(url)) return
-    const overlay = overlayForUrl(url)
+    // An internal page: a chrome page (Settings) lives in a tab of its own, or in its overlay on
+    // hosts without page tabs, and the document in this tab stays where it is; a document page
+    // the window already shows is focused instead. Otherwise the URL loads here like any other.
+    if (this.browser.pages.routeNavigation(tabId, url)) return
+    // `zen://history` and friends are chrome surfaces: open them over the page instead. The
+    // registry is the one route for internal pages, so an address it holds as a document page
+    // (Downloads, once the desktop registers it) loads here and is not an overlay's any more.
+    const overlay = this.browser.pages.parse(url) ? null : overlayForUrl(url)
     if (overlay) {
-      // `zen://history` and friends are chrome surfaces: open them over the page instead.
       this.browser.emit('overlay.open', { kind: overlay }, this.windowFor(tabId))
       return
     }
@@ -1515,6 +1533,12 @@ export class TabManager {
   }
 
   goBack(tabId: string): void {
+    // A chrome page's history is its sections; at the first one the tab stays, and the chrome's
+    // root-back rule (renderer `back.ts`) says what a back does then.
+    if (this.browser.pages.isChromePage(this.tab(tabId))) {
+      this.browser.pages.popSection(tabId)
+      return
+    }
     const view = this.view(tabId)
     if (!view?.canGoBack()) return
     this.thawForNavigation(tabId)
@@ -1522,6 +1546,10 @@ export class TabManager {
   }
 
   goForward(tabId: string): void {
+    if (this.browser.pages.isChromePage(this.tab(tabId))) {
+      this.browser.pages.forward(tabId)
+      return
+    }
     const view = this.view(tabId)
     if (!view?.canGoForward()) return
     this.thawForNavigation(tabId)
@@ -1609,12 +1637,13 @@ export class TabManager {
   /**
    * Zoom a tab's page to an exact factor. A web page's factor is its site's, remembered in the
    * settings and applied to every tab of the site (Chrome's per-host zoom); any other page
-   * (internal pages, files) zooms on its own on the desktop, the tab keeping the factor, and
-   * not at all under the full page controls (the sheet is about sites).
+   * (internal document pages, files) zooms on its own on the desktop, the tab keeping the factor,
+   * and not at all under the full page controls (the sheet is about sites). A chrome page
+   * (Settings) has no page view to zoom: the factor stays 1 and the chip has nothing to show.
    */
   setZoom(tabId: string, factor: number): void {
     const tab = this.tab(tabId)
-    if (!tab) return
+    if (!tab || this.browser.pages.isChromePage(tab)) return
     if (this.browser.pageControls.remembersZoom(tab)) {
       this.browser.pageControls.setZoomFactor(tabId, factor)
       return
@@ -1633,7 +1662,7 @@ export class TabManager {
   /** Zoom In / Zoom Out: one step along the host's ladder (Chrome's presets on the desktop). */
   adjustZoom(tabId: string, direction: number): void {
     const tab = this.tab(tabId)
-    if (!tab) return
+    if (!tab || this.browser.pages.isChromePage(tab)) return
     if (this.browser.pageControls.remembersZoom(tab)) {
       this.browser.pageControls.adjustZoom(tabId, direction)
       return
@@ -2237,6 +2266,8 @@ export class TabManager {
       const t = this.tab(id)
       return (
         t &&
+        // A page tab joins a split as its registry entry allows (a chrome page does not, yet).
+        this.browser.pages.splittable(t) &&
         tabVisibleIn(t, win.id) &&
         (!t.spaceId || !m.localSpaces[t.spaceId] || t.spaceId === space.id)
       )
@@ -2378,6 +2409,7 @@ export class TabManager {
   }
 
   addToSplit(groupId: string, tabId: string): void {
+    if (!this.browser.pages.splittable(this.tab(tabId))) return
     if (addTabToSplit(this.model, groupId, tabId)) {
       const group = this.model.splitGroups[groupId]
       const win = group
@@ -2476,9 +2508,11 @@ export class TabManager {
   copyUrl(tabId: string, markdown = false): void {
     const tab = this.tab(tabId)
     if (!tab) return
+    // An error page copies the address it stands in for; an internal page its user-facing
+    // `zenium://` alias (`zen://` never leaves `tab.url`).
     const url = tab.url.startsWith(ERROR_URL_PREFIX)
       ? (safeParam(tab.url, 'url') ?? tab.url)
-      : tab.url
+      : internalPageAliasUrl(tab.url)
     // The one copy desktop has always confirmed, in its own words.
     this.browser.copyText(
       markdown ? `[${tab.customTitle ?? tab.title}](${url})` : url,

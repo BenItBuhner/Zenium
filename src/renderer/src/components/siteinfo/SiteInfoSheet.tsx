@@ -46,6 +46,7 @@ import { cmd } from '@renderer/lib/api'
 import { useBackSurface } from '@renderer/lib/back'
 import { useViewport } from '@renderer/lib/formFactor'
 import { LevelMotion, type LevelState } from '@renderer/lib/motion/levels'
+import { openSettings as openSettingsPage } from '@renderer/lib/pages'
 import {
   ChromePortal,
   POPOVER_WIDTH,
@@ -70,8 +71,8 @@ import {
 import {
   browserStore,
   closeSiteDataConfirm,
-  openOverlay,
   openSiteDataConfirm,
+  overlayAvailable,
   pushToast,
   type UiState
 } from '@renderer/lib/ui'
@@ -1551,8 +1552,14 @@ function useActions(
         await cmd('site.resetPermissions', { tabId: tab.id, permission })
         refreshSiteInfo()
       }),
-    // Settings (§10): the site's settings live there; opening it replaces the sheet.
-    openSettings: () => void openOverlay('settings', tab.id)
+    // Settings (§10): the site's settings live there; opening it replaces the sheet. Through the
+    // one route for internal pages (lib/pages.ts): on a host with page tabs the Settings tab
+    // comes up in place of this sheet, which leaves first; the desktop's overlay dismisses the
+    // popover itself as it opens (lib/siteInfo.ts).
+    openSettings: () => {
+      if (!overlayAvailable('settings')) dismissSiteInfo()
+      openSettingsPage()
+    }
   }
 }
 

@@ -63,7 +63,9 @@ function fixture(opts: { newTabPage?: boolean; withBackground?: boolean } = {}):
     windows: true,
     updates: false,
     agents: false,
-    newTabPage: opts.newTabPage ?? true
+    newTabPage: opts.newTabPage ?? true,
+    // The desktop: Settings is its overlay, not a tab (the stub's default is a truthy function).
+    pageTabs: false
   })
   const platform: Platform = {
     info: { os: 'linux' as PlatformOs, version: '0.0.0' },

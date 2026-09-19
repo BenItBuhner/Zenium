@@ -299,6 +299,23 @@ export const DEFAULT_CONTAINERS: Container[] = [
   { id: 'shopping', name: 'Shopping', color: 'pink', icon: 'cart' }
 ]
 
+/** Firefox's container glyphs, in the order the pickers offer them. */
+export const CONTAINER_ICONS: readonly Container['icon'][] = [
+  'fingerprint',
+  'briefcase',
+  'dollar',
+  'cart',
+  'circle',
+  'gift',
+  'vacation',
+  'food',
+  'fruit',
+  'pet',
+  'tree',
+  'chill',
+  'fence'
+]
+
 export const CONTAINER_COLORS: Record<Container['color'], string> = {
   blue: '#37adff',
   turquoise: '#00c79a',
