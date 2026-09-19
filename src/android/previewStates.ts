@@ -1,4 +1,10 @@
-import type { CertificateDetails, ClientCertificateInfo, Tab, UIState } from '@shared/types'
+import type {
+  CertificateDetails,
+  ClientCertificateInfo,
+  ExtensionInfo,
+  Tab,
+  UIState
+} from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import type { Browser } from '@core/browser'
 import { isCertificateError } from '@shared/siteInfo'
@@ -120,6 +126,7 @@ function apply(browser: Browser, spec: string): void {
     // a request state a previous spec seeded stops being held, and the permission prompts up
     // are answered as a dismissal, the way a press outside would.
     unseedBlocking()
+    unseedExtensions()
     closeOverlay()
     closeMenu()
     closeUrlbar()
@@ -174,9 +181,12 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
   // The request engine's state the spec asks for is patched in once the target is up (the core's
   // push on the way there would replace an earlier patch) and again before a page's rows are
   // shown or tapped, so a row the seeded state adds is there for `show` and the steps.
-  const blocking = new URLSearchParams(spec.startsWith('#') ? spec.slice(1) : spec).get('blocking')
+  const params = new URLSearchParams(spec.startsWith('#') ? spec.slice(1) : spec)
+  const blocking = params.get('blocking')
+  const extensions = params.get('extensions')
   const seed = (): void => {
     if (blocking) seedBlocking(blocking)
+    if (extensions) seedExtensions(extensions)
   }
   const finish = (): void => {
     seed()
@@ -184,6 +194,9 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
   }
 
   if (target.kind === 'page') {
+    // The Extensions category is only on a host with the capability: the seed turns it on before
+    // the page opens on that section, so the section resolves and its rows are what is waited for.
+    if (extensions) seedExtensions(extensions)
     // The page tab is the state: reached once the active tab is a page tab and the page has its
     // rows (its chunk loads on the first open), then a moment for its drill-in's slide to settle
     // before the search is typed, a row shown or a step taken.
@@ -440,6 +453,286 @@ export function blockingFixture(state: UIState, variant: string, now: number): U
   const tabs = { ...state.tabs }
   if (tab) tabs[tab.id] = { ...tab, blockedCount: blocks ? 12 : 0 }
   return { ...state, settings, blocking, tabs }
+}
+
+// ---------------------------------------------------------------------------
+// Extensions, seeded
+// ---------------------------------------------------------------------------
+
+/** Lets go of the extension state the current spec holds over the core's pushes. */
+let extensionsSeed: (() => void) | null = null
+
+/**
+ * Settings > Extensions in states this stand-in host cannot reach (it has no extension store, so
+ * it reports the capability off and installs nothing): the chrome's copy of the browser state is
+ * patched with the capability on and a set of installed extensions, and patched again over every
+ * state the core pushes while the spec stands, as the request state is. Variants: `installed`
+ * (six extensions: two stores, an unpacked one on Manifest V2, one turned off, one that failed to
+ * load, one whose error console holds errors and warnings), `empty` (the capability on, nothing
+ * installed) and `checking` (the update check running).
+ */
+function seedExtensions(variant: string): void {
+  unseedExtensions()
+  let seeded: UIState | null = null
+  const patch = (): void => {
+    const state = browserStore.get().state
+    if (!state || state === seeded) return
+    seeded = extensionsFixture(state, variant, Date.now())
+    browserStore.set({ state: seeded })
+  }
+  patch()
+  extensionsSeed = browserStore.subscribe(patch)
+}
+
+/** Stop holding a seeded extension state over the core's pushes. */
+function unseedExtensions(): void {
+  extensionsSeed?.()
+  extensionsSeed = null
+}
+
+/** A 48 px icon for a fixture extension: a rounded tile in its colour with its initial. */
+function fixtureIcon(letter: string, fill: string): string {
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">` +
+    `<rect width="48" height="48" rx="10" fill="${fill}"/>` +
+    `<text x="24" y="32" text-anchor="middle" font-family="system-ui, sans-serif" ` +
+    `font-size="24" font-weight="600" fill="#fff">${letter}</text></svg>`
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`
+}
+
+function fixtureExtension(now: number, over: Partial<ExtensionInfo>): ExtensionInfo {
+  return {
+    id: '',
+    name: '',
+    version: '1.0.0',
+    description: '',
+    path: '',
+    enabled: true,
+    icon: null,
+    popup: 'popup.html',
+    error: null,
+    source: 'chrome-web-store',
+    publisher: 'chrome-web-store',
+    updateUrl: 'https://clients2.google.com/service/update2/crx',
+    installedAt: now - 40 * 24 * HOUR_MS,
+    updatedAt: now - 40 * 24 * HOUR_MS,
+    pinned: false,
+    toolbarPinned: false,
+    allowFileAccess: false,
+    allowPrivate: false,
+    allowUserScripts: false,
+    manifestVersion: 3,
+    permissions: ['storage'],
+    hostPermissions: [],
+    optionsPage: null,
+    newTabPage: null,
+    newTabOverride: false,
+    warnings: [],
+    pendingWarnings: null,
+    updateState: 'up-to-date',
+    availableVersion: null,
+    updateError: null,
+    updateCheckedAt: now - 2 * HOUR_MS,
+    errors: [],
+    ...over
+  }
+}
+
+export function extensionsFixture(state: UIState, variant: string, now: number): UIState {
+  const darkReader = 'eimadpbcbfnmbkopoojfekhnkhdbieeh'
+  const tabTools = 'pkmhldhpnjffdmnnpcgfcjoaebbhbmcn'
+  const extensions: ExtensionInfo[] =
+    variant === 'empty'
+      ? []
+      : [
+          fixtureExtension(now, {
+            id: darkReader,
+            name: 'Dark Reader',
+            version: '4.9.132',
+            description:
+              'Dark mode for every website. Take care of your eyes, use dark theme for night and daily browsing.',
+            path: `/data/user/0/app.zen.chromium/files/zen/extensions/${darkReader}`,
+            icon: fixtureIcon('D', '#3f3f52'),
+            permissions: ['alarms', 'contextMenus', 'storage', 'tabs', 'theme', 'fontSettings'],
+            hostPermissions: ['<all_urls>'],
+            optionsPage: 'ui/options/index.html',
+            warnings: [
+              'Read and change all your data on all websites',
+              'Change your settings that control websites’ access to features such as cookies, JavaScript, plugins, geolocation, microphone, camera etc.'
+            ],
+            installedAt: now - 90 * 24 * HOUR_MS,
+            updatedAt: now - 6 * 24 * HOUR_MS,
+            errors: [
+              {
+                id: 1,
+                level: 'warning',
+                source: 'load',
+                message: 'browser_specific_settings: Unrecognized manifest key',
+                url: `chrome-extension://${darkReader}/manifest.json`,
+                line: null,
+                context: null,
+                at: now - 6 * 24 * HOUR_MS,
+                lastAt: now - 6 * 24 * HOUR_MS,
+                count: 1
+              },
+              {
+                id: 2,
+                level: 'error',
+                source: 'worker',
+                message: "Uncaught TypeError: Cannot read properties of undefined (reading 'id')",
+                url: `chrome-extension://${darkReader}/background/index.js`,
+                line: 214,
+                context: `chrome-extension://${darkReader}/background/index.js`,
+                at: now - 3 * HOUR_MS,
+                lastAt: now - 25 * 60 * 1000,
+                count: 3
+              },
+              {
+                id: 3,
+                level: 'error',
+                source: 'page',
+                message:
+                  'Unchecked runtime.lastError: The message port closed before a response was received.',
+                url: `chrome-extension://${darkReader}/ui/popup/index.js`,
+                line: 58,
+                context: `chrome-extension://${darkReader}/ui/popup/index.html`,
+                at: now - 40 * 60 * 1000,
+                lastAt: now - 40 * 60 * 1000,
+                count: 1
+              },
+              {
+                id: 4,
+                level: 'warning',
+                source: 'content',
+                message:
+                  'Deprecated: chrome.extension.sendRequest is not supported; use chrome.runtime.sendMessage',
+                url: `chrome-extension://${darkReader}/inject/index.js`,
+                line: 3,
+                context: 'https://news.ycombinator.com/',
+                at: now - 8 * 60 * 1000,
+                lastAt: now - 4 * 60 * 1000,
+                count: 2
+              }
+            ]
+          }),
+          fixtureExtension(now, {
+            id: 'ddkjiahejlhfcafbddmgiahcphecmpfh',
+            name: 'uBlock Origin Lite',
+            version: '2026.912.1352',
+            description: 'An efficient content blocker. Easy on CPU and memory.',
+            icon: fixtureIcon('U', '#800000'),
+            permissions: ['activeTab', 'declarativeNetRequest', 'scripting', 'storage'],
+            hostPermissions: ['<all_urls>'],
+            optionsPage: 'dashboard.html',
+            warnings: ['Read and change all your data on all websites'],
+            updateState: 'available',
+            availableVersion: '2026.918.1145',
+            installedAt: now - 60 * 24 * HOUR_MS,
+            updatedAt: now - 7 * 24 * HOUR_MS
+          }),
+          fixtureExtension(now, {
+            id: 'nngceckbapebfimnlniiiahkandclblb',
+            name: 'Bitwarden Password Manager',
+            version: '2026.8.2',
+            description:
+              'At home, at work, or on the go, Bitwarden easily secures all your passwords, passkeys and sensitive information.',
+            icon: fixtureIcon('B', '#175ddc'),
+            permissions: [
+              'tabs',
+              'contextMenus',
+              'storage',
+              'clipboardRead',
+              'clipboardWrite',
+              'webRequest',
+              'alarms',
+              'scripting'
+            ],
+            hostPermissions: ['http://*/*', 'https://*/*'],
+            optionsPage: 'popup/index.html#/settings',
+            warnings: [
+              'Read and change all your data on all websites',
+              'Read data you copy and paste',
+              'Modify data you copy and paste'
+            ],
+            installedAt: now - 120 * 24 * HOUR_MS,
+            updatedAt: now - 20 * 24 * HOUR_MS
+          }),
+          fixtureExtension(now, {
+            id: 'gebbhagfogifgggkldgodflihgfeippi',
+            name: 'Return YouTube Dislike',
+            version: '3.0.0.19',
+            description: 'Returns ability to see dislike statistics on YouTube',
+            icon: fixtureIcon('R', '#ff4c4c'),
+            enabled: false,
+            hostPermissions: ['*://*.youtube.com/*', '*://returnyoutubedislikeapi.com/*'],
+            warnings: [
+              'Read and change your data on all youtube.com sites and returnyoutubedislikeapi.com'
+            ],
+            installedAt: now - 200 * 24 * HOUR_MS,
+            updatedAt: now - 200 * 24 * HOUR_MS
+          }),
+          fixtureExtension(now, {
+            id: tabTools,
+            name: 'Zenium Tab Tools',
+            version: '0.4.1',
+            description: 'Sorts and groups the tabs of a Space by site.',
+            path: `/storage/emulated/0/Download/zenium-tab-tools`,
+            icon: fixtureIcon('Z', '#6264dc'),
+            source: 'unpacked',
+            publisher: null,
+            updateUrl: null,
+            updateState: 'unknown',
+            updateCheckedAt: null,
+            manifestVersion: 2,
+            permissions: ['tabs', 'tabGroups', 'storage', 'userScripts'],
+            hostPermissions: [],
+            warnings: ['Read your browsing history'],
+            installedAt: now - 3 * 24 * HOUR_MS,
+            updatedAt: now - 3 * 24 * HOUR_MS
+          }),
+          fixtureExtension(now, {
+            id: 'bfnaelmomeimhlpmgjnjophhpkkoljpa',
+            name: 'Phantom',
+            version: '25.19.0',
+            description: 'A friendly crypto wallet built for DeFi and NFTs.',
+            icon: fixtureIcon('P', '#ab9ff2'),
+            source: 'crx',
+            publisher: 'unknown',
+            updateUrl: null,
+            updateState: 'unknown',
+            updateCheckedAt: null,
+            popup: null,
+            error: 'manifest_version: Required key is missing',
+            permissions: [],
+            hostPermissions: [],
+            warnings: [],
+            installedAt: now - HOUR_MS,
+            updatedAt: now - HOUR_MS,
+            errors: [
+              {
+                id: 1,
+                level: 'error',
+                source: 'load',
+                message: 'manifest_version: Required key is missing',
+                url: `chrome-extension://bfnaelmomeimhlpmgjnjophhpkkoljpa/manifest.json`,
+                line: null,
+                context: null,
+                at: now - HOUR_MS,
+                lastAt: now - HOUR_MS,
+                count: 1
+              }
+            ]
+          })
+        ]
+  return {
+    ...state,
+    capabilities: { ...state.capabilities, extensions: true },
+    extensions,
+    extensionUpdates: {
+      lastCheckedAt: variant === 'empty' ? null : now - 2 * HOUR_MS,
+      checking: variant === 'checking'
+    }
+  }
 }
 
 /**

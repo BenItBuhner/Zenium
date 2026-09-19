@@ -1787,7 +1787,7 @@ describe('the Extensions category', () => {
     expect(item.sheet.title).toBe('Dark Reader')
     expect(item.sheet.description).toBe('Dark mode for every website')
     const groups = sheetOf(item)
-    expect(groups.map((g) => g.heading)).toEqual([null, 'Permissions', 'Source', null])
+    expect(groups.map((g) => g.heading)).toEqual([null, 'Access', 'Source', null])
     // Controls: Enabled, Options (the manifest has a page), Errors; no toolbar on a phone.
     expect(groups[0]!.rows.map((r) => [r.id, r.kind])).toEqual([
       [`extension:${EXT_ID}:enabled`, 'switch'],

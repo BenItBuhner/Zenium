@@ -184,7 +184,9 @@ function detailsGroups(ext: ExtensionInfo, state: UIState): RowGroup[] {
 
   return [
     { id: `${id}-controls`, heading: null, rows: controls },
-    { id: `${id}-access`, heading: 'Permissions', rows: access },
+    // "Access", not "Permissions": the group's first row is the Permissions detail row, and a
+    // heading that repeats the row under it says nothing (§9.26).
+    { id: `${id}-access`, heading: 'Access', rows: access },
     { id: `${id}-source`, heading: 'Source', rows: sourceRows(ext) },
     {
       id: `${id}-remove`,
