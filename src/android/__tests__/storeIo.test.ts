@@ -343,7 +343,11 @@ describe('AndroidStoreIO', () => {
           return this.docs.has(String(args.name))
         case 'storage.writeBegin': {
           const token = ++this.seq
-          this.writes.set(token, { name: String(args.name), parts: [], backup: args.backup === true })
+          this.writes.set(token, {
+            name: String(args.name),
+            parts: [],
+            backup: args.backup === true
+          })
           return token
         }
         case 'storage.writeChunk': {
@@ -448,7 +452,7 @@ describe('AndroidStoreIO', () => {
 
   const big = (chars: number, fill = 'x'): string => fill.repeat(chars)
 
-  describe('documents in pieces (a filter-list extension\'s chrome.storage, tens of megabytes)', () => {
+  describe("documents in pieces (a filter-list extension's chrome.storage, tens of megabytes)", () => {
     it('writes a document that fits one piece with one call, as ever', async () => {
       const bridge = new PieceBridge()
       const files: Record<string, string> = {}
@@ -475,7 +479,10 @@ describe('AndroidStoreIO', () => {
       bridge.waiting.shift()!()
       await Promise.resolve()
       await Promise.resolve()
-      expect(bridge.calls.map((c) => c.method)).toEqual(['storage.writeBegin', 'storage.writeChunk'])
+      expect(bridge.calls.map((c) => c.method)).toEqual([
+        'storage.writeBegin',
+        'storage.writeChunk'
+      ])
       await bridge.settleAll()
       await done
       expect(bridge.calls.map((c) => c.method)).toEqual([
@@ -486,7 +493,11 @@ describe('AndroidStoreIO', () => {
         'storage.writeEnd'
       ])
       const chunks = bridge.calls.filter((c) => c.method === 'storage.writeChunk')
-      expect(chunks.map((c) => String(c.args.text).length)).toEqual([CHUNK_CHARS, CHUNK_CHARS, 5 + 2 + 7])
+      expect(chunks.map((c) => String(c.args.text).length)).toEqual([
+        CHUNK_CHARS,
+        CHUNK_CHARS,
+        5 + 2 + 7
+      ])
       expect(chunks.every((c) => c.args.token === 1)).toBe(true)
       expect(bridge.docs.get('ext-storage/abc.json')).toBe(text)
       expect(bridge.openWrites).toBe(0)
