@@ -12,11 +12,6 @@ name: Android sheet touch audit
 # Gradle cache live in android-emulator-demo.yml; this file only picks the driver.
 on:
   workflow_dispatch:
-  # TEMPORARY: the one run of PR #198 on its branch (a workflow not yet on main cannot be
-  # dispatched); removed before the final head.
-  push:
-    branches:
-      - cursor/android-demo-drivers-real-touch-23d7
 
 permissions:
   contents: read
