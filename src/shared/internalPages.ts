@@ -171,6 +171,20 @@ export const SETTINGS_SECTIONS: readonly InternalPageSection[] = [
     keywords: ['engine', 'suggestions', 'keyword']
   },
   {
+    id: 'languages',
+    label: 'Languages',
+    keywords: [
+      'languages',
+      'translate',
+      'translation',
+      'offer to translate',
+      'never translate',
+      'preferred languages',
+      'spell'
+    ],
+    requires: 'translate'
+  },
+  {
     id: 'privacy',
     label: 'Privacy and Security',
     keywords: ['ads', 'trackers', 'blocking', 'filter', 'permissions', 'site', 'exceptions'],

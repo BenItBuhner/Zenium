@@ -1,7 +1,9 @@
-import type { TranslateStatus, TranslateTabState } from '@shared/translate'
+import { useEffect, useState } from 'react'
+import type { TranslateModelInfo, TranslateStatus, TranslateTabState } from '@shared/translate'
 import type { UIState } from '@shared/types'
 import { languageName, sortedByName } from '@shared/languageNames'
-import { run } from './api'
+import { cmd, run } from './api'
+import { formatBytes } from './utils'
 import {
   captureActiveTab,
   invalidateSnapshot,
@@ -89,6 +91,11 @@ export function errorCaption(error: string | null | undefined): string | null {
 export interface LanguageOption {
   value: string
   label: string
+  /**
+   * A second line under the label – a model's size – which an anchored picker's row clamps to
+   * one line (§9.13) and a phone sheet's row keeps to two (§9.2).
+   */
+  description?: string
 }
 
 /** The registry's languages as menulist options, by name, without `except`. */
@@ -99,6 +106,49 @@ export function languageOptions(
   return sortedByName(codes)
     .filter((code) => code !== except)
     .map((code) => ({ value: code, label: languageName(code) }))
+}
+
+// ---------------------------------------------------------------------------
+// The translation models (Settings > Languages)
+// ---------------------------------------------------------------------------
+
+/** One key per language pair, the value a model picker hands back. */
+export const pairKey = (m: { from: string; to: string }): string => `${m.from}:${m.to}`
+
+/**
+ * The registry's models, read from the core when the component mounts and again whenever `key`
+ * changes (the set on the device moved); null until the first answer, empty when the core has
+ * none to give.
+ */
+export function useRegistryModels(key: string): TranslateModelInfo[] | null {
+  const [models, setModels] = useState<TranslateModelInfo[] | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    cmd('translate.models', undefined).then(
+      (list) => {
+        if (!cancelled) setModels(list)
+      },
+      () => {
+        if (!cancelled) setModels([])
+      }
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [key])
+  return models
+}
+
+/** The pairs neither on the device nor on their way, by name, as options with their size. */
+export function modelOptions(models: readonly TranslateModelInfo[]): LanguageOption[] {
+  return models
+    .filter((m) => !m.installed && !m.downloading)
+    .map((m) => ({
+      value: pairKey(m),
+      label: pairLabel(m.from, m.to),
+      description: formatBytes(m.bytes)
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label))
 }
 
 // ---------------------------------------------------------------------------

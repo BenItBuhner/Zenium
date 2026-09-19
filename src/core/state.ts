@@ -216,6 +216,7 @@ export function emptyTranslateState(): TranslateUIState {
     },
     languages: [],
     installed: [],
+    downloading: [],
     registryDate: '',
     modelLicense: '',
     tabs: {}

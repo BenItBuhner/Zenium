@@ -37,6 +37,7 @@ describe('the page registry', () => {
       'downloads',
       'resources',
       'search',
+      'languages',
       'privacy',
       'spaces',
       'containers',
@@ -200,6 +201,12 @@ describe('the section model', () => {
     expect(ids).not.toContain('accessibility')
     expect(ids).not.toContain('privacy')
     expect(ids).not.toContain('passwords')
+    // #106's Languages follows the translation engine, as the desktop pane does.
+    expect(ids).not.toContain('languages')
+    const translating = new Proxy({} as HostCapabilities, { get: (_t, key) => key === 'translate' })
+    expect(availableSections(INTERNAL_PAGES.settings, translating, 'phone').map((s) => s.id)).toContain(
+      'languages'
+    )
   })
 })
 

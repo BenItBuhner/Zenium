@@ -122,6 +122,12 @@ export interface HostCapabilities {
   pageTabs: boolean
   /** Pages can be pinned to the launcher / Home screen ("Add to Home screen"). */
   pinShortcuts: boolean
+  /**
+   * The host runs the offline translation engine (a `TranslateHost`: the model store and the
+   * chrome-side engine worker), so pages and selections can be translated and Settings has its
+   * Languages section. Every desktop and Android build; a host without it shows neither.
+   */
+  translate: boolean
 }
 
 export interface Rect {

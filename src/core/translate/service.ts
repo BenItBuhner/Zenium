@@ -142,7 +142,6 @@ export class TranslateService {
   private busy = 0
   private sessions = 0
   private readonly tabs = new Map<string, TabEntry>()
-  private installedCache: TranslateModelInfo[] | null = null
 
   constructor(private readonly browser: Browser) {
     this.host = browser.platform.translate ?? null
@@ -186,15 +185,15 @@ export class TranslateService {
     for (const tabId of [...this.tabs.keys()]) {
       if (!this.browser.tabs.tab(tabId)) this.tabs.delete(tabId)
     }
-    if (!this.installedCache)
-      this.installedCache = this.models ? this.models.info().filter((m) => m.installed) : []
+    const models = this.modelInfo()
     const tabs: Record<string, TranslateTabState> = {}
     for (const [tabId, entry] of this.tabs) tabs[tabId] = entry.state
     return {
       available: this.available,
       preferences: this.prefs,
       languages: this.registry.languages(),
-      installed: this.installedCache,
+      installed: models.filter((m) => m.installed),
+      downloading: models.filter((m) => m.downloading),
       registryDate: new Date(this.registry.fetchedAt || Date.parse(ModelRegistry.snapshotDate))
         .toISOString()
         .slice(0, 10),
@@ -208,7 +207,6 @@ export class TranslateService {
   }
 
   private changed(): void {
-    this.installedCache = null
     this.browser.state.commitVolatile()
   }
 
@@ -306,10 +304,16 @@ export class TranslateService {
     }
   }
 
+  /** Fetch a pair ahead of its first use (the Languages settings); the list shows it arriving. */
   async downloadModel(pair: LanguagePair): Promise<void> {
     const models = this.requireModels()
-    await models.ensure(pair)
+    const running = models.ensure(pair)
     this.changed()
+    try {
+      await running
+    } finally {
+      this.changed()
+    }
   }
 
   async removeModel(pair: LanguagePair): Promise<void> {
