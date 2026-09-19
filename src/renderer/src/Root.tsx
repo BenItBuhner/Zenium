@@ -1,5 +1,6 @@
 import React, { type JSX } from 'react'
 import { App } from './App'
+import { DefaultBrowserLayer } from './components/defaultbrowser/DefaultBrowserPrompt'
 import { DownloadBubbleLayer } from './components/downloads/DownloadBubble'
 import { MenuSheet } from './components/menus/MenuSheet'
 import { ExternalProtocolLayer } from './components/protocol/ExternalProtocolSheet'
@@ -14,6 +15,7 @@ export function Root(): JSX.Element {
   return (
     <>
       <App />
+      <DefaultBrowserLayer />
       <SiteInfoLayer />
       <BarEditorLayer />
       <DownloadBubbleLayer />

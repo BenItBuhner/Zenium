@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { HostCapabilities, Suggestion } from '../../shared/types'
 import { BOOKMARKS_BAR_ID, OTHER_BOOKMARKS_ID } from '../../shared/bookmarks'
 import type { NetHost, StoreIO } from '../platform'
@@ -237,18 +237,25 @@ describe('SuggestionService: answers', () => {
   })
 
   it('answers currency questions from Frankfurter and caches the table', async () => {
-    const { suggestions, win, net } = setup('synced', { online: true })
-    net.routes.push({
-      match: 'frankfurter.dev/v1/latest?base=USD',
-      body: { base: 'USD', date: '2026-09-17', rates: { EUR: 0.9 } }
-    })
-    const results = await suggestions.suggest('100 usd to eur', null, win)
-    expect(results.find((r) => r.kind === 'answer')).toMatchObject({
-      title: '= 90.00 EUR',
-      subtitle: '100 USD · ECB rate of 2026-09-17 · Frankfurter'
-    })
-    await suggestions.suggest('200 usd to eur', null, win)
-    expect(net.requests.filter((u) => u.includes('frankfurter')).length).toBe(1)
+    // A rates table is refetched once it is more than two days old, so the clock is pinned to
+    // the fixture's day (only `Date` is faked; the intranet probe's timeout stays real).
+    vi.setSystemTime(Date.parse('2026-09-17T12:00:00Z'))
+    try {
+      const { suggestions, win, net } = setup('synced', { online: true })
+      net.routes.push({
+        match: 'frankfurter.dev/v1/latest?base=USD',
+        body: { base: 'USD', date: '2026-09-17', rates: { EUR: 0.9 } }
+      })
+      const results = await suggestions.suggest('100 usd to eur', null, win)
+      expect(results.find((r) => r.kind === 'answer')).toMatchObject({
+        title: '= 90.00 EUR',
+        subtitle: '100 USD · ECB rate of 2026-09-17 · Frankfurter'
+      })
+      await suggestions.suggest('200 usd to eur', null, win)
+      expect(net.requests.filter((u) => u.includes('frankfurter')).length).toBe(1)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('answers weather and time questions through Open-Meteo', async () => {
