@@ -2,14 +2,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, useState, type JSX, type ReactElement, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import type { MenuDescriptor } from '@shared/types'
+import type { ExternalProtocolRequest, MenuDescriptor } from '@shared/types'
 import { BottomSheet } from '../sheet/BottomSheet'
 import { MenuSheet } from '../menus/MenuSheet'
+import { ExternalProtocolLayer } from '../protocol/ExternalProtocolSheet'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { SheetPresence } from '@renderer/lib/motion/presence'
 import { recedeDepth } from '@renderer/lib/motion/recede'
 import { REDUCED_MOTION_FADE_MS } from '@renderer/lib/motion/sheet'
-import { uiStore } from '@renderer/lib/ui'
+import { cancelExternalProtocol, uiStore } from '@renderer/lib/ui'
 
 /*
  * A sheet's leave outlives its request (design language v2 draft §11.1: the store's `null` means
@@ -583,5 +584,86 @@ describe('the menu (MenuLayer’s shape: the sheet keyed by the menu’s id)', (
     frame()
     frame()
     expect(presence(b)).toBeLessThan(rising)
+  })
+})
+
+describe('the external-protocol confirm (ExternalProtocolLayer: the core’s question, withdrawn by the core)', () => {
+  const request = (id: string): ExternalProtocolRequest => ({
+    requestId: id,
+    url: 'tel:5550100',
+    scheme: 'tel',
+    appName: 'Phone',
+    site: 'news.example',
+    canRemember: true
+  })
+
+  beforeEach(() => {
+    viewportStore.set({ ...viewportStore.get(), coarse: true, formFactor: 'phone' })
+    Object.assign(window, { zen: { invoke: async () => undefined, on: () => () => undefined } })
+  })
+
+  afterEach(() => {
+    uiStore.set({ externalProtocol: null })
+  })
+
+  it('`externalProtocol.cancel` from the core (the tab gone, a newer request) is a leave: the sheet runs down inert, its request already gone, and unmounts on landing', async () => {
+    render(<ExternalProtocolLayer />)
+    act(() => uiStore.set({ externalProtocol: request('r1') }))
+    await settle()
+    frames.run(60)
+    expect(sheets()).toHaveLength(1)
+    expect(recedeVar()).toBe('1.0000')
+    const sheet = sheets()[0]
+
+    act(() => cancelExternalProtocol('r1'))
+    expect(uiStore.get().externalProtocol).toBeNull()
+    expect(sheets()).toHaveLength(1)
+    expect(sheets()[0]).toBe(sheet)
+    expect(sheet.hasAttribute('inert')).toBe(true)
+    expect(layers()[0].hasAttribute('data-leaving')).toBe(true)
+    let last = 1
+    let judged = 0
+    runLeave((p) => {
+      if (sheets().length === 0) return
+      expect(p).toBeCloseTo(presence(sheet), 3)
+      expect(p).toBeLessThanOrEqual(last + 1e-9)
+      last = p
+      judged++
+    })
+    expect(judged).toBeGreaterThan(5)
+    expect(sheets()).toHaveLength(0)
+    expect(recedeDepth()).toBe(0)
+    expect(recedeVar()).toBe('')
+  })
+
+  it('a newer request taking the sheet over rises above the one on its way out; Escape reaches the new one', async () => {
+    render(<ExternalProtocolLayer />)
+    act(() => uiStore.set({ externalProtocol: request('r1') }))
+    await settle()
+    frames.run(60)
+    // The core cancels r1 and asks r2 (one question per tab): two writes, two sheets.
+    act(() => {
+      cancelExternalProtocol('r1')
+      uiStore.set({ externalProtocol: request('r2') })
+    })
+    expect(sheets()).toHaveLength(2)
+    const [old, next] = sheets()
+    expect(layers()[0].hasAttribute('data-leaving')).toBe(true)
+    expect(old.hasAttribute('inert')).toBe(true)
+    await settle()
+    frame()
+    frame()
+    const rising = presence(next)
+    expect(rising).toBeGreaterThan(0)
+    act(() => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      )
+    })
+    frame()
+    frame()
+    expect(presence(next)).toBeLessThan(rising)
+    runLeave()
+    expect(sheets()).toHaveLength(0)
   })
 })
