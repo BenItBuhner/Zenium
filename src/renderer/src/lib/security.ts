@@ -1,5 +1,6 @@
 import type {
   BlockedPopup,
+  HttpAuthPrompt,
   PermissionPrompt,
   PermissionPromptAnswer,
   PermissionRule,
@@ -153,6 +154,26 @@ export function closeSecurityPrompt(): void {
 export function currentSecurityPrompt(state: UIState): SecurityPrompt | null {
   const tabId = activeTab(state)?.id ?? null
   return state.securityPrompts.find((p) => p.tabId === null || p.tabId === tabId) ?? null
+}
+
+/**
+ * How long an answered sign-in form stays up, busy (§9.30), for the server to refuse the
+ * credentials: a refusal challenges the same protection space again within a round trip, and
+ * comes back as a new prompt with `failedBefore`; hearing nothing for this long means they were
+ * accepted, and the form closes. A page that finishes loading behind the form ends the wait
+ * early. A refusal that arrives later still shows – as a fresh dialog with the validation line.
+ */
+export const SIGN_IN_WAIT_MS = 1500
+
+/**
+ * The protection space an HTTP challenge belongs to (RFC 7235: the origin and the realm, a proxy's
+ * apart from a server's), per tab: two prompts with the same space are one question asked twice
+ * – the second is the answer to the first coming back refused – so the dialog stays the same
+ * dialog across them.
+ */
+export function httpAuthSpace(prompt: HttpAuthPrompt): string {
+  const proxy = prompt.isProxy ? 'proxy' : 'server'
+  return `${prompt.tabId ?? ''}|${proxy}|${prompt.host}|${prompt.port}|${prompt.realm}`
 }
 
 /**

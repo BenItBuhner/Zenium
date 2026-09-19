@@ -112,9 +112,19 @@ const V2_FILES: ReadonlyArray<string> = [
   'components/extensions/ExtensionDetails.tsx',
   // The new tab page's shortcut dialog: its validation line in the danger ink (#148).
   'components/newtab/NewTabShortcutDialog.tsx',
+  // Settings → Security on desktop (#62): the status ink of a remembered answer, the pane title.
+  'components/overlays/SecuritySection.tsx',
   // The external-protocol sheet on the v2 sheet chassis (#140): its deemphasised host line.
   'components/protocol/ExternalProtocolSheet.tsx',
-  // The sidebar's tab count badge, drawn in its surface's family through the §9.29 control roles.
+  // The blocked pop-ups popover, sheet and phone bar, and the sign-in and certificate dialogs
+  // (#62): the glyph's size and stroke, the title block's glyph offset, the notice's warn ink,
+  // the ink of an expired certificate; `glyph.ts` is the row glyph they share.
+  'components/security/BlockedPopupsPanel.tsx',
+  'components/security/SecurityPromptDialog.tsx',
+  'components/security/glyph.ts',
+  // The address pill's blocked pop-ups chip and its count (#62) and the sidebar's tab count
+  // badge, drawn in their surface's family through the §9.29 control roles.
+  'components/sidebar/SidebarTop.tsx',
   'components/sidebar/SpacePanel.tsx',
   // Site information (#39): the connection state's ok / warn / danger ink on its glyphs and values.
   'components/siteinfo/SiteInfoSheet.tsx'

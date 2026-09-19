@@ -13,6 +13,7 @@ import {
   placePopover,
   popoverStyle,
   toRect,
+  useFrameDialog,
   useLightDismiss,
   viewportSize
 } from '@renderer/lib/portals'
@@ -26,11 +27,12 @@ import {
 } from '@renderer/lib/security'
 import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
-import { useFocusReach } from '@renderer/hooks/useFocusReach'
-import { useEscapeTrap } from '../bookmarks/escape'
-import { focusAnchor, useScrolled } from '../bookmarks/popover'
+import { useEscape } from '@renderer/hooks/useEscape'
+import { usePopover } from '@renderer/hooks/usePopover'
+import { useScrolled } from '../bookmarks/popover'
+import { V2Button } from '../extensions/v2'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
-import { V2_GLYPH, V2Button, V2Checkbox } from '../v2/controls'
+import { GLYPH } from './glyph'
 
 /** The chip in the address pill the popover hangs from, and where Escape hands the keyboard back. */
 const CHIP = '[data-blocked-popups-chip]'
@@ -41,10 +43,10 @@ type Panel = NonNullable<ReturnType<typeof uiStore.get>['blockedPopupsPanel']>
 
 /**
  * What the pop-up blocker refused for one tab: the pages (and app launches) the site tried to open
- * without being asked, each with an Open button, and the checkbox that lets the site open windows
- * on its own from now on. On desktop a popover under the address pill's chip; on a phone the
- * shared bottom sheet. Rows holding an Open button are the control plus 8 tall (§9.21): 40 on
- * desktop, 48 on a phone.
+ * without being asked, each with an Open button, and the choice that lets the site open windows
+ * on its own from now on – a checkbox on desktop, a switch row on a phone (§10.4). On desktop a
+ * popover under the address pill's chip; on a phone the shared bottom sheet. Rows holding an
+ * Open button are the control plus 8 tall (§9.21): 40 on desktop, 48 on a phone.
  */
 export function BlockedPopupsPanel({
   state,
@@ -98,18 +100,23 @@ function useCloseWhenEmpty(empty: boolean, close: () => void): void {
 }
 
 /**
- * One refused page or app launch: its glyph, the URL, and Open, centred on the row (§9.18). The
- * row grows around its button (§9.21): the larger of the base row and the control plus 8, the 4
- * above and below being the row's own padding, so rows touch. The row itself is not a control,
- * so it has no hover fill; the button carries its own.
+ * One refused page or app launch: its glyph, the URL, and Open. The shared row for a control
+ * (`.zen-v2-control-row`, §9.21, §9.34): the control's height plus 8 – 40 on desktop, 48 on a
+ * phone – the 4 above and below the row's own padding, so rows touch, the button centred on it
+ * (§9.18); inside it the shared row anatomy, the glyph on the URL's line in the deemphasised
+ * ink, 12 before the text. The row is not a target and takes no fill; the button carries its own.
  */
 function Entry({ tab, entry }: { tab: Tab; entry: BlockedPopup }): JSX.Element {
   const Glyph = entry.kind === 'external' ? ExternalLink : AppWindow
   return (
-    <li className="flex min-h-[max(var(--v2-row),calc(var(--v2-control)+8px))] items-center gap-2.5 px-4">
-      <Glyph className={cn(V2_GLYPH, 'text-[var(--v2-text-deemphasized)]')} aria-hidden />
-      <span className="min-w-0 flex-1 truncate text-[15px] leading-5" title={entry.url} dir="ltr">
-        {entry.url}
+    <li className="zen-v2-control-row">
+      <span className="zen-v2-row-body">
+        <Glyph className={cn(GLYPH, 'zen-v2-row-lead')} aria-hidden />
+        <span className="zen-v2-row-text">
+          <span className="zen-v2-label truncate" title={entry.url} dir="ltr">
+            {entry.url}
+          </span>
+        </span>
       </span>
       <V2Button onClick={() => run('popups.open', { tabId: tab.id, url: entry.url })}>
         Open
@@ -118,6 +125,21 @@ function Entry({ tab, entry }: { tab: Tab; entry: BlockedPopup }): JSX.Element {
   )
 }
 
+/** Allowing opens the blocked pages in tabs of their own: the list has nothing left to show. */
+function useAllow(tab: Tab, pages: number, close: () => void): (allow: boolean) => void {
+  return useCallback(
+    (allow: boolean) => {
+      run('popups.setSiteAllowed', { tabId: tab.id, allow })
+      if (allow && pages > 0) close()
+    },
+    [tab.id, pages, close]
+  )
+}
+
+/**
+ * Desktop: the site's standing answer as a checkbox row (`.zen-v2-checkbox`, the shared
+ * primitive) – the box on the label's first line (§9.2), the whole label its target.
+ */
 function AllowCheckbox({
   tab,
   allowed,
@@ -125,36 +147,69 @@ function AllowCheckbox({
   close,
   className
 }: ContentProps & { pages: number; close: () => void; className?: string }): JSX.Element {
+  const allow = useAllow(tab, pages, close)
   const origin = originOf(tab.url)
   if (!origin) return <span className={className} />
   return (
-    <V2Checkbox
-      className={className}
-      checked={allowed}
-      onChange={(e) => {
-        run('popups.setSiteAllowed', { tabId: tab.id, allow: e.target.checked })
-        // Allowing opens the blocked pages in tabs of their own, and the newest of them takes
-        // the page's place: the list has nothing left to show for this tab.
-        if (e.target.checked && pages > 0) close()
-      }}
-      label={`Always allow pop-ups on ${siteLabel(origin)}`}
-    />
+    <label
+      className={cn(
+        'flex min-w-0 cursor-default items-start gap-2.5 text-[length:var(--v2-font-body)] leading-[var(--v2-line-body)]',
+        className
+      )}
+    >
+      <input
+        type="checkbox"
+        className="zen-v2-checkbox"
+        checked={allowed}
+        onChange={(e) => allow(e.target.checked)}
+      />
+      <span className="min-w-0">Always allow pop-ups on {siteLabel(origin)}</span>
+    </label>
+  )
+}
+
+/**
+ * Phone: the same answer as a switch row (§10.4: checkboxes are desktop only) – the shared
+ * `.zen-v2-row` with the shared `.zen-v2-switch` trailing, the whole row its target.
+ */
+function AllowSwitchRow({
+  tab,
+  allowed,
+  pages,
+  close
+}: ContentProps & { pages: number; close: () => void }): JSX.Element | null {
+  const allow = useAllow(tab, pages, close)
+  const origin = originOf(tab.url)
+  if (!origin) return null
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={allowed}
+      className="zen-v2-row"
+      onClick={() => allow(!allowed)}
+    >
+      <span className="min-w-0 flex-1">Always allow pop-ups on {siteLabel(origin)}</span>
+      <span className="zen-v2-switch" aria-hidden />
+    </button>
   )
 }
 
 /**
  * Desktop: a popover (v2 draft §9.20) 400 wide – rows with trailing controls – with its top
  * border on the pill's bottom edge, end-aligned with its chip (which sits in the pill's
- * trailing half), placed by `placePopover` (flip, slide, shrink, 8 px inside the window), no
- * taller than 60% of it; on the 180 ms pop, radius 8, the panel shadow, no scrim (§9.5). Its
- * title block (§9.23) stays put while the rows scroll under it, a hairline appearing at its
- * edge only then (§9.7); a hairline sets the footer apart, as in Firefox's panels (§0.2). It
- * renders through the chrome layer (`ChromePortal`), never inside the frame, and the layer's
- * light dismiss puts it away: a press anywhere else closes it on `pointerdown` and reaches
- * nothing beneath, the chip's own press closes it and keeps the focus, a resize and another
- * popover opening close it too. Focus moves to the first Open button (§9.22) and Escape hands
- * it back to the chip; the chip is measured again on every state push, so the popover keeps
- * its place on a chip whose count changed.
+ * trailing half), placed by `placePopover` (flip, slide, shrink, 8 px inside the window, its
+ * height capped by the placement); on the 180 ms pop, radius 8, the panel shadow, no scrim
+ * (§9.5). Its title block (§9.23) stays put while the rows scroll under it, a hairline appearing
+ * at its edge only then (§9.7). The footer is §9.20's second form: the list's 4 px inset, a
+ * hairline in the gutter, then the checkbox and Dismiss at 12 above and below. It renders
+ * through the chrome layer (`ChromePortal`), never inside the frame, and the layer's light
+ * dismiss puts it away: a press anywhere else closes it on `pointerdown` and reaches nothing
+ * beneath, the chip's own press closes it and keeps the focus, a resize and another popover
+ * opening close it too. The keyboard is `usePopover`'s (§9.22): focus moves to the first Open
+ * button, Tab wraps, and Escape closes it and hands the keyboard back to the chip that opened
+ * it. The chip is measured again on every state push, so the popover keeps its place on a chip
+ * whose count changed.
  */
 function BlockedPopupsPopover({
   tab,
@@ -176,15 +231,12 @@ function BlockedPopupsPopover({
     setBox((prev) => (sameBox(prev, next) ? prev : next))
   }, [state])
 
-  useFocusReach(panelRef)
   const close = useCallback(() => closeBlockedPopups(), [])
   useCloseWhenEmpty(entries.length === 0 && !allowed, close)
 
-  // Escape puts the popover away and hands the keyboard back to the chip (§9.22).
-  useEscapeTrap(true, () => {
-    closeBlockedPopups(false)
-    focusAnchor(CHIP)
-  })
+  // Escape puts the popover away; the chrome keeps the keyboard, which `usePopover` hands back
+  // to the chip the popover was opened from (§9.22).
+  usePopover(panelRef, { onClose: () => closeBlockedPopups(false) })
   // The chrome layer's light dismiss (§9.20 amended): a press anywhere else puts the popover
   // away and the page gets the keyboard back; the chip's own press closes it and the focus
   // stays on the chip, where the press went.
@@ -210,23 +262,26 @@ function BlockedPopupsPopover({
           className="zen-bm-title-block flex items-start gap-2"
           data-scrolled={scrolled || undefined}
         >
-          {/* The glyph sits on the title's 22 px line (§9.23): (22 − glyph) / 2 below its top. */}
-          <AppWindow className={cn(V2_GLYPH, 'mt-[calc((22px-var(--v2-icon))/2)]')} aria-hidden />
+          {/* The glyph sits on the title's line (§9.23): (line − glyph) / 2 below its top. */}
+          <AppWindow
+            className={cn(GLYPH, 'mt-[calc((var(--v2-line-heading)-var(--v2-icon))/2)]')}
+            aria-hidden
+          />
           <div className="min-w-0 flex-1">
             <h2 id="blocked-popups-title" className="zen-bm-title">
-              Blocked Pop-ups
+              Blocked pop-ups
             </h2>
             <p className="zen-bm-title-desc">{summaryOf(entries, allowed)}</p>
           </div>
         </div>
         {entries.length > 0 && (
-          <ul ref={bodyRef} className="zen-bm-popover-body flex flex-col pb-2">
+          <ul ref={bodyRef} className="zen-bm-popover-body flex flex-col pb-1">
             {entries.map((entry) => (
               <Entry key={entry.url} tab={tab} entry={entry} />
             ))}
           </ul>
         )}
-        <div className="flex shrink-0 items-center gap-3 border-t border-[var(--v2-border)] px-4 py-3">
+        <div className="mx-4 flex shrink-0 items-center gap-3 border-t border-[var(--v2-border)] py-3">
           <AllowCheckbox
             tab={tab}
             entries={entries}
@@ -274,12 +329,15 @@ function sameBox(a: PopoverBox, b: PopoverBox): boolean {
 }
 
 /**
- * Phone: the shared bottom sheet, which owns the v2 surface, the grip strip and the 48 header
- * with the title centred (§9.16). The summary is body copy under the header – 15/400 in the
- * page ink, 16 above the rows it introduces (§9.23) – then the rows edge to edge at the sheet's
- * one 16 px gutter (§9.25), a hairline in the gutter before the checkbox row, and the one action
- * filling the §9.11 footer. Rendered through the chrome layer: the sheet is a window-wide layer
- * of its own, not a child of the frame dialog host it is mounted from.
+ * Phone: the shared bottom sheet, which owns the v2 surface, the grip strip, the 48 header with
+ * the title centred (§9.16), the keyboard (focus on open, Tab, the inert chrome behind the
+ * scrim, the lift above the keyboard – §9.22) and the §9.11 footer, where Dismiss sits outside
+ * the scroller. The summary is body copy under the header – 15/400 in the page ink, 16 above
+ * the rows it introduces (§9.23) – then the rows edge to edge at the sheet's one 16 px gutter
+ * (§9.25), a hairline in the gutter, and the site's standing answer as a switch row (§10.4).
+ * A dialog of TabDialogs' `FrameDialogHost` (the shell's box on a phone), drawing the stack's
+ * one scrim itself, which fades with its motion (§9.28); the sheet's layer is a page surface
+ * (§9.29).
  */
 function BlockedPopupsSheet({ tab, entries, allowed }: ContentProps): JSX.Element {
   const sheet = useRef<BottomSheetHandle>(null)
@@ -294,51 +352,51 @@ function BlockedPopupsSheet({ tab, entries, allowed }: ContentProps): JSX.Elemen
     onCommit: () => sheet.current?.commitBack(),
     onCancel: () => sheet.current?.cancelBack()
   })
-  useEscapeTrap(true, dismiss)
+  useEscape(dismiss)
+  useFrameDialog({ onScrimPress: dismiss, ownScrim: true })
 
   const pages = entries.filter((p) => p.kind === 'popup').length
+  // The sheet's layer is the host slot's own child: the host lets the pointer through to a
+  // sheet on its own chassis by that layer (`[data-sheet-layer]`), not to a box around it.
   return (
-    <ChromePortal>
-      <BottomSheet
-        ref={sheet}
-        onDismissed={() => closeBlockedPopups()}
-        contentKey={`${entries.length}|${allowed}`}
-        handleLabel="Resize blocked pop-ups"
-        header={<h2 className="zen-sheet-title">Blocked Pop-ups</h2>}
-      >
-        <p className="px-4 pb-4 text-[15px] leading-5">{summaryOf(entries, allowed)}</p>
-        {entries.length > 0 && (
-          <>
-            <ul className="flex flex-col">
-              {entries.map((entry) => (
-                <Entry key={entry.url} tab={tab} entry={entry} />
-              ))}
-            </ul>
-            <div className="zen-sheet-sep" />
-          </>
-        )}
-        <div className="flex min-h-[var(--v2-row)] items-center px-4">
-          <AllowCheckbox
-            tab={tab}
-            entries={entries}
-            allowed={allowed}
-            pages={pages}
-            close={dismiss}
-            className="min-w-0 flex-1"
-          />
-        </div>
-        <div className="zen-sheet-footer">
-          <V2Button
-            onClick={() =>
-              // The sheet leaves first; the entries go once it is gone.
-              sheet.current?.dismiss(() => run('popups.dismiss', { tabId: tab.id }))
-            }
-          >
-            Dismiss
-          </V2Button>
-        </div>
-      </BottomSheet>
-    </ChromePortal>
+    <BottomSheet
+      ref={sheet}
+      hosted
+      onDismissed={() => closeBlockedPopups()}
+      contentKey={`${entries.length}|${allowed}`}
+      handleLabel="Resize blocked pop-ups"
+      labelledBy="blocked-popups-title"
+      header={
+        <h2 id="blocked-popups-title" className="zen-sheet-title">
+          Blocked pop-ups
+        </h2>
+      }
+      footer={
+        <V2Button
+          onClick={() =>
+            // The sheet leaves first; the entries go once it is gone.
+            sheet.current?.dismiss(() => run('popups.dismiss', { tabId: tab.id }))
+          }
+        >
+          Dismiss
+        </V2Button>
+      }
+    >
+      <p className="px-4 pb-4 text-[length:var(--v2-font-body)] leading-[var(--v2-line-body)]">
+        {summaryOf(entries, allowed)}
+      </p>
+      {entries.length > 0 && (
+        <>
+          <ul className="flex flex-col">
+            {entries.map((entry) => (
+              <Entry key={entry.url} tab={tab} entry={entry} />
+            ))}
+          </ul>
+          <div className="zen-sheet-sep" />
+        </>
+      )}
+      <AllowSwitchRow tab={tab} entries={entries} allowed={allowed} pages={pages} close={dismiss} />
+    </BottomSheet>
   )
 }
 
@@ -367,12 +425,12 @@ export function BlockedPopupsChip({
       <button
         type="button"
         data-surface="page"
-        className="zen-v2-chip zen-animate-pop flex min-h-[var(--v2-row)] w-full items-center gap-3 rounded-[var(--v2-radius-control)] border border-[var(--v2-border)] bg-[var(--v2-panel)] px-3 text-left text-[14px] leading-5 text-[var(--v2-text)] outline-none transition-transform duration-[120ms] active:scale-[.98]"
+        className="zen-animate-pop flex min-h-[var(--v2-row)] w-full items-center gap-3 rounded-[var(--v2-radius-control)] border border-[var(--v2-border)] bg-[var(--v2-panel)] px-3 text-left text-[14px] leading-[var(--v2-line-body)] text-[var(--v2-text)] outline-none transition-transform duration-[120ms] active:scale-[.98]"
         onClick={() => void openBlockedPopups(tabId, null)}
       >
-        <AppWindow className={V2_GLYPH} aria-hidden />
+        <AppWindow className={GLYPH} aria-hidden />
         <span className="min-w-0 flex-1 truncate">{label}</span>
-        <ChevronRight className={cn(V2_GLYPH, 'text-[var(--v2-text-deemphasized)]')} aria-hidden />
+        <ChevronRight className={cn(GLYPH, 'text-[var(--v2-text-deemphasized)]')} aria-hidden />
       </button>
     </div>
   )

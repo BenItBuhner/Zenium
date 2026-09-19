@@ -1,4 +1,4 @@
-import type { ClientCertificateInfo, Tab } from '@shared/types'
+import type { ClientCertificateInfo, Tab, UIState } from '@shared/types'
 import type { Browser } from '@core/browser'
 import { run } from '@renderer/lib/api'
 import { dispatchBackEvent, topBackSurface } from '@renderer/lib/back'
@@ -7,7 +7,7 @@ import { abortPull, dispatchPullEvent, PULL_THRESHOLD, pullTravelFor } from '@re
 import { Download, Smartphone, Star } from 'lucide-react'
 import { installBannerShown, presentInstallBanner } from '@renderer/lib/installBanner'
 import { isInternalPageUrl } from '@shared/internalPages'
-import { closeBlockedPopups, openBlockedPopups } from '@renderer/lib/security'
+import { blockedPopupsOf, closeBlockedPopups, openBlockedPopups } from '@renderer/lib/security'
 import { activeTab } from '@renderer/lib/selectors'
 import {
   browserStore,
@@ -208,8 +208,16 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
     applyWebApp(target.surface, tab.id, spec)
   } else if (target.kind === 'popups' && tab) {
     seedPopups(browser, tab, target)
-    if (target.list) void openBlockedPopups(tab.id, null).then(() => done(spec))
-    else requestAnimationFrame(() => done(spec))
+    // The list opens once the store carries what was seeded: over a state still without the
+    // entries it would find nothing to show and leave again (a user opens it from the chip,
+    // which is only there once they are).
+    whenState(
+      (state) => blockedPopupsOf(state, tab.id).length >= target.count,
+      () => {
+        if (target.list) void openBlockedPopups(tab.id, null).then(() => done(spec))
+        else requestAnimationFrame(() => done(spec))
+      }
+    )
   } else if (target.kind === 'prompt' && tab) {
     void securityAtRest.then(() => {
       showPrompt(browser, tab, target)
@@ -316,10 +324,17 @@ function whenPageRendered(fn: () => void, deadline = performance.now() + PAGE_RE
 
 /** Runs `fn` once the active tab satisfies `test` (at once when it already does). */
 function whenActiveTabIs(test: (url: string) => boolean, fn: () => void): void {
+  whenState((state) => {
+    const tab = activeTab(state)
+    return tab !== null && test(tab.url)
+  }, fn)
+}
+
+/** Runs `fn` once the core's state satisfies `test` (at once when it already does). */
+function whenState(test: (state: UIState) => boolean, fn: () => void): void {
   const check = (): boolean => {
     const state = browserStore.get().state
-    const tab = state ? activeTab(state) : null
-    return tab !== null && test(tab.url)
+    return state !== null && test(state)
   }
   if (check()) {
     fn()

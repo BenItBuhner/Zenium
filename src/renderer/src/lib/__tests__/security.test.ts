@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { PermissionPrompt, PermissionRule, Tab, UIState } from '@shared/types'
+import type { HttpAuthPrompt, PermissionPrompt, PermissionRule, Tab, UIState } from '@shared/types'
 import { uiStore } from '../ui'
 import {
   blockedPopupsOf,
@@ -7,6 +7,7 @@ import {
   currentPermissionPrompt,
   currentSecurityPrompt,
   describePermissionRule,
+  httpAuthSpace,
   openSecurityPrompt,
   originOf,
   popupsAllowedFor,
@@ -122,6 +123,42 @@ describe('currentSecurityPrompt', () => {
     })
     expect(currentSecurityPrompt(proxy)?.id).toBe('p0')
     expect(currentSecurityPrompt(state({ tabs: { t1: tab } }))).toBe(null)
+  })
+})
+
+describe('httpAuthSpace', () => {
+  const challenge: HttpAuthPrompt = {
+    id: 'p1',
+    kind: 'http-auth',
+    tabId: 't1',
+    host: 'h',
+    port: 443,
+    realm: 'Staff',
+    scheme: 'basic',
+    isProxy: false,
+    secure: true,
+    failedBefore: false,
+    username: ''
+  }
+
+  it('is the same for a challenge asked again (the refusal), whatever its id and scheme', () => {
+    const refused = {
+      ...challenge,
+      id: 'p2',
+      failedBefore: true,
+      username: 'ann',
+      scheme: 'digest'
+    }
+    expect(httpAuthSpace(refused)).toBe(httpAuthSpace(challenge))
+  })
+
+  it('tells realms, ports, proxies and tabs apart', () => {
+    const space = httpAuthSpace(challenge)
+    expect(httpAuthSpace({ ...challenge, realm: 'Admin' })).not.toBe(space)
+    expect(httpAuthSpace({ ...challenge, port: 8443 })).not.toBe(space)
+    expect(httpAuthSpace({ ...challenge, isProxy: true })).not.toBe(space)
+    expect(httpAuthSpace({ ...challenge, tabId: 't2' })).not.toBe(space)
+    expect(httpAuthSpace({ ...challenge, tabId: null })).not.toBe(space)
   })
 })
 
