@@ -280,6 +280,8 @@ export function NavRow({
             scope rather than `:has(:focus-visible)`: Chromium blocks a Tab whose target is
             unfocusable in the instant between blurring the old chip and focusing the next, and
             only `:focus-within` on their common ancestor holds through that instant.
+            Every chip after the address carries `zen-pill-chip`: a pill under 130 px drops them
+            all for the address (the container query on `.zen-pill`), the site icon stays.
           */}
           <span className="contents group/chips">
             {isPrivate ? (
@@ -321,7 +323,7 @@ export function NavRow({
                 )}
                 pressed={isReader}
                 className={cn(
-                  'flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
+                  'zen-pill-chip flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
                   isReader && 'text-[var(--zen-accent)] opacity-100'
                 )}
                 onActivate={() => run('reader.toggle', { tabId: tab.id })}
@@ -336,7 +338,7 @@ export function NavRow({
                 popup="dialog"
                 expanded={boostsOpen}
                 className={cn(
-                  'h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
+                  'zen-pill-chip h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
                   boosted
                     ? 'flex text-[var(--zen-accent)] opacity-100'
                     : 'zen-pill-extra hidden group-hover/pill:flex group-focus-within/chips:flex'
@@ -350,7 +352,7 @@ export function NavRow({
               <PillChip
                 label="Copy URL"
                 title={hint('Copy URL', state, 'tab.copyUrl')}
-                className="zen-pill-extra hidden h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)] group-hover/pill:flex group-focus-within/chips:flex"
+                className="zen-pill-chip zen-pill-extra hidden h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)] group-hover/pill:flex group-focus-within/chips:flex"
                 onActivate={() => tab && run('tab.copyUrl', { tabId: tab.id })}
               >
                 <Copy className="h-3 w-3" />

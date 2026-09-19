@@ -31,7 +31,7 @@ export function ZoomChip({ state, tab }: { state: UIState; tab: Tab }): JSX.Elem
       popup="dialog"
       expanded={open}
       data-zoom-chip=""
-      className="flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]"
+      className="zen-pill-chip flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]"
       onActivate={() => {
         // The chip that put the bubble away keeps the keyboard, as the anchor does after
         // Escape (§9.22).
