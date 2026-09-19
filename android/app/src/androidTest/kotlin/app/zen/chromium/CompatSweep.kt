@@ -9,6 +9,8 @@ import android.view.View
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import android.webkit.WebView
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.webkit.WebViewCompat
@@ -1198,6 +1200,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         var answered = false
         var taps = 0
         var tappedAt = 0L
+        // The button's bounds at the previous poll: a sheet still sliding into place is tapped
+        // only once it stands still (a finger on a moving sheet lands where it was, not where it is).
+        var lastRect: Rect? = null
         // Polls the chrome did not answer within chromeJs's 10 s: a JS thread that is busy or gone.
         var silent = 0
         val deadline = SystemClock.uptimeMillis() + timeoutMs
@@ -1233,7 +1238,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                     // The chrome's own sheet or dialog, its button on screen: a finger on it.
                     button != null && button.rect != null && taps < PROMPT_TAPS -> {
                         // A tap that did not take the prompt down: once more, then the command.
-                        if (taps == 0 || SystemClock.uptimeMillis() - tappedAt > PROMPT_RETAP_MS) {
+                        val still = button.rect == lastRect
+                        lastRect = button.rect
+                        if (still && (taps == 0 || SystemClock.uptimeMillis() - tappedAt > PROMPT_RETAP_MS)) {
                             taps++
                             tappedAt = SystemClock.uptimeMillis()
                             onDialog(button.rect)
@@ -1345,7 +1352,33 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             (centre.first - halfW).roundToInt(), (centre.second - halfH).roundToInt(),
             (centre.first + halfW).roundToInt(), (centre.second + halfH).roundToInt()
         )
+        // The chrome draws edge to edge, so its viewport runs under the system bars: a button
+        // there is inside the viewport and still out of a finger's reach (a tap at the bottom edge
+        // pressed the navigation bar's Overview button and the launcher took the screen; the
+        // sweep then ran against a stopped activity).
+        val reach = reachOnScreen(chrome)
+        if (rect.top < reach.top || rect.bottom > reach.bottom) {
+            css.put("underSystemBar", "button ${rect.top}..${rect.bottom} px, reach ${reach.top}..${reach.bottom} px")
+            return PromptButton(null, css)
+        }
         return PromptButton(rect, css)
+    }
+
+    /** The screen strip between the status bar and the navigation bar (system gestures included), in screen px. */
+    private fun reachOnScreen(view: View): Rect {
+        var result = Rect(0, 0, Int.MAX_VALUE, Int.MAX_VALUE)
+        instrumentation.runOnMainSync {
+            val root = view.rootView
+            val location = IntArray(2)
+            root.getLocationOnScreen(location)
+            val insets = ViewCompat.getRootWindowInsets(root)
+                ?.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.systemGestures())
+            result = Rect(
+                location[0] + (insets?.left ?: 0), location[1] + (insets?.top ?: 0),
+                location[0] + root.width - (insets?.right ?: 0), location[1] + root.height - (insets?.bottom ?: 0)
+            )
+        }
+        return result
     }
 
     // --- input and pictures ----------------------------------------------------------------------
