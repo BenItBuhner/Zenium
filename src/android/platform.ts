@@ -133,7 +133,8 @@ export function androidCapabilities({
     privateTabs: profiles,
     secureDns: false,
     // The WebView has no preload bridge for `zen://newtab` yet; new tabs stay URL-bar-only.
-    newTabPage: false
+    newTabPage: false,
+    pageTabs: true
   }
 }
 

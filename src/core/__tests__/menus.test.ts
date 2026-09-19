@@ -64,7 +64,8 @@ const DESKTOP: HostCapabilities = {
   pageControls: false,
   privateTabs: false,
   secureDns: false,
-  newTabPage: true
+  newTabPage: true,
+  pageTabs: false
 }
 
 /**
@@ -101,7 +102,8 @@ const ANDROID: HostCapabilities = {
   pageControls: true,
   privateTabs: true,
   secureDns: false,
-  newTabPage: false
+  newTabPage: false,
+  pageTabs: true
 }
 
 function memoryIo(): StoreIO {
@@ -313,6 +315,22 @@ describe('the app menu', () => {
     expect(appMenu(h)).toContain('Keyboard Shortcuts')
     h.browser.handleCommand(h.win, 'window.formFactor', { formFactor: 'phone' })
     expect(appMenu(h)).not.toContain('Keyboard Shortcuts')
+  })
+
+  it('opens Keyboard Shortcuts through page.open: the Settings overlay on its Shortcuts section on the desktop (a tablet with page tabs gets the tab)', () => {
+    const desktop = pageHarness(DESKTOP)
+    appMenu(desktop)
+    desktop.sent.length = 0
+    desktop.click('Keyboard Shortcuts')
+    expect(desktop.sent).toContain('overlay.open')
+    expect(desktop.browser.tabs.activeTabFor(desktop.win)?.url).toBe(PAGE_URL)
+
+    const tablet = pageHarness(ANDROID, { formFactor: 'tablet' })
+    appMenu(tablet)
+    tablet.sent.length = 0
+    tablet.click('Keyboard Shortcuts')
+    expect(tablet.browser.tabs.activeTabFor(tablet.win)?.url).toBe('zen://settings/shortcuts')
+    expect(tablet.sent).not.toContain('overlay.open')
   })
 
   it('on a phone drops what only a desktop window can use', () => {
@@ -1090,6 +1108,22 @@ describe('the chrome context menus', () => {
       'Manage Search Engines…'
     ])
     expect(item(h.shown(), 'Copy').action).toBe('tab.copyUrl')
+  })
+
+  it('routes Manage Search Engines… through page.open: a Settings tab where the host has page tabs, the overlay elsewhere', async () => {
+    const phone = pageHarness(ANDROID)
+    await show(phone, chromeParams({ target: 'urlpill', tabId: phone.tabId }))
+    phone.click('Manage Search Engines…')
+    const active = phone.browser.tabs.activeTabFor(phone.win)
+    expect(active?.url).toBe('zen://settings/search')
+    expect(phone.sent).not.toContain('overlay.open')
+
+    const desktop = pageHarness(DESKTOP)
+    await show(desktop, chromeParams({ target: 'urlpill', tabId: desktop.tabId }))
+    desktop.sent.length = 0
+    desktop.click('Manage Search Engines…')
+    expect(desktop.sent).toContain('overlay.open')
+    expect(desktop.browser.tabs.activeTabFor(desktop.win)?.url).toBe(PAGE_URL)
   })
 
   it('toggles Always Show Full URLs from the pill and the field', async () => {

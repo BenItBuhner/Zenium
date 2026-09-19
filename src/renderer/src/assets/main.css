@@ -183,6 +183,9 @@
   /* Density (§5, §9.2–9.3): rows and controls; phones override below. */
   --v2-row: 32px;
   --v2-row-two-line: 52px;
+  /* A row's vertical padding (§9.34): what is left of the row around its body line, halved – 6
+     on a mouse, 12 on a phone through the phone block's `--v2-row`, which this calc reads. */
+  --v2-row-pad: calc((var(--v2-row) - var(--v2-line-body)) / 2);
   --v2-control: 32px;
   --v2-checkbox: 16px;
   --v2-nav-item: 34px;
@@ -1826,6 +1829,10 @@
     corner-shape: var(--zen-corner);
     transform-origin: 50% 100%;
     will-change: transform;
+  }
+  /* The dialog takes the focus itself when its first control must not (BottomSheet); no ring. */
+  .zen-sheet:focus {
+    outline: none;
   }
   /*
    * The header after the grip strip: 48 tall, the title 17/600 at line-height 22 centred over
@@ -3763,27 +3770,6 @@
 :root[data-form-factor='phone'] .zen-app-icon-name {
   font-size: 12px;
 }
-/* Settings on a phone: the section list becomes a row of chips above the content. */
-:root[data-form-factor='phone'] .zen-settings > div > div {
-  flex-direction: column;
-}
-:root[data-form-factor='phone'] .zen-settings nav {
-  display: flex;
-  width: auto;
-  gap: 4px;
-  overflow-x: auto;
-  border-right: 0;
-  border-bottom: 1px solid var(--zen-border);
-  scrollbar-width: none;
-}
-:root[data-form-factor='phone'] .zen-settings nav > button {
-  width: auto;
-  flex-shrink: 0;
-  white-space: nowrap;
-}
-:root[data-form-factor='phone'] .zen-settings nav + div {
-  padding: 12px;
-}
 
 @layer components {
   /*
@@ -3925,6 +3911,852 @@
 .zen-bar-editor [data-fade-axis='y'] {
   -webkit-mask-image: none;
   mask-image: none;
+}
+
+/* ---------------------------------------------------------------------------
+ * Settings as a tab (design language v2 draft §10; `components/pages/settings`).
+ *
+ * An internal page tab has no page view: the chrome draws the page where the view would be, an
+ * opaque `--v2-page` surface filling the content frame edge to edge – the frame clips it at its
+ * own radius, so the page adds none. Everything below reads the `--v2-*` tokens through the
+ * shared `zen-v2-*` primitives (§9.34: the row, the field, the icon button, the image radio
+ * card, the switch and the plain radio – one unlayered rule each, tokens only, every program's
+ * to consume) and the page's own `zen-settings-*` classes. Phone geometry (§10.3): rows 44 / 64
+ * with one 16 gutter, groups told apart by a 15/600 heading and air, one tone, no card, no
+ * divider, no fill at rest. The row's vertical padding is the `--v2-row-pad` token (§9.34):
+ * (row − body line) / 2, 12 on a phone and 6 on desktop, so no local knob states it.
+ *
+ * Unlayered on purpose, like `.zen-v2-button` above: a danger button is the v2 button in danger
+ * ink, and only an unlayered rule that comes later can recolour the unlayered button.
+ * ------------------------------------------------------------------------- */
+.zen-page-host {
+  background: var(--v2-page);
+  color: var(--v2-text);
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+  user-select: none;
+}
+
+/* The shared v2 row: the whole row is the target, the press fill is the only tone it takes. */
+.zen-v2-row {
+  position: relative;
+  display: flex;
+  width: 100%;
+  min-height: var(--v2-row);
+  align-items: center;
+  gap: 12px;
+  padding: var(--v2-row-pad) 16px;
+  color: var(--v2-text);
+  text-align: left;
+  font-size: var(--v2-font-body);
+  font-weight: var(--v2-weight-body);
+  line-height: var(--v2-line-body);
+  transition: background 120ms var(--zen-ease);
+}
+.zen-v2-row:active:not([aria-disabled='true']) {
+  background: var(--v2-fill);
+}
+@media (hover: hover) {
+  .zen-v2-row:hover:not([aria-disabled='true']) {
+    background: var(--v2-fill);
+  }
+}
+
+/* The shared v2 field (§9.12): the control height, a hairline, the page behind it. */
+.zen-v2-field {
+  display: block;
+  width: 100%;
+  height: var(--v2-control);
+  padding: 0 12px;
+  border: 1px solid var(--v2-border);
+  border-radius: var(--v2-radius-control);
+  background: var(--v2-page);
+  color: var(--v2-text);
+  font-size: var(--v2-font-body);
+  font-weight: var(--v2-weight-body);
+  line-height: var(--v2-line-body);
+  outline: none;
+}
+.zen-v2-field::placeholder {
+  color: var(--v2-text-deemphasized);
+}
+.zen-v2-field:focus-visible {
+  border-color: var(--v2-accent);
+}
+.zen-v2-field[aria-invalid='true'] {
+  border-color: var(--v2-danger);
+}
+/* Disabled is one number on the whole control (§9.30), as `.zen-v2-button:disabled` above. */
+.zen-v2-field:disabled,
+.zen-v2-icon-button:disabled {
+  opacity: 0.4;
+}
+
+/* The shared v2 icon button (§9.3): the box, its glyph and its stroke are the density tokens. */
+.zen-v2-icon-button {
+  display: inline-flex;
+  width: var(--v2-icon-button);
+  height: var(--v2-icon-button);
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--v2-radius-inner);
+  color: var(--v2-text);
+  transition: background 120ms var(--zen-ease);
+}
+:root[data-form-factor='phone'] .zen-v2-icon-button {
+  border-radius: var(--v2-radius-card);
+}
+.zen-v2-icon-button > svg {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  stroke-width: var(--v2-icon-stroke);
+}
+.zen-v2-icon-button:active:not(:disabled) {
+  background: var(--v2-fill);
+}
+@media (hover: hover) {
+  .zen-v2-icon-button:hover:not(:disabled) {
+    background: var(--v2-fill);
+  }
+}
+
+/* The shared image radio card (§6, §10.4): a card that wears the 2 px accent outline when picked. */
+.zen-v2-card-radio {
+  border-radius: var(--v2-radius-card);
+  transition:
+    box-shadow 120ms var(--zen-ease),
+    background 120ms var(--zen-ease);
+}
+.zen-v2-card-radio:active {
+  background: var(--v2-fill);
+}
+.zen-v2-card-radio[aria-checked='true'] {
+  box-shadow: 0 0 0 2px var(--v2-accent);
+}
+
+/*
+ * The shared switch (§9.34, §10.4): a 36 × 20 track, a 16 thumb inset 2, travel 16, 150 ms.
+ * Its state is `aria-checked` – on the switch itself, or on the row that is the switch (§10.4:
+ * the whole row toggles it), the thumb aria-hidden inside it.
+ */
+.zen-v2-switch {
+  position: relative;
+  display: block;
+  width: 36px;
+  height: 20px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  background: rgb(var(--v2-text-rgb) / 0.25);
+  transition: background 150ms var(--zen-ease);
+}
+.zen-v2-switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--v2-page);
+  transition:
+    transform 150ms var(--zen-ease),
+    background 150ms var(--zen-ease);
+}
+.zen-v2-switch[aria-checked='true'],
+[aria-checked='true'] .zen-v2-switch {
+  background: var(--v2-accent);
+}
+.zen-v2-switch[aria-checked='true']::after,
+[aria-checked='true'] .zen-v2-switch::after {
+  background: var(--v2-on-accent);
+  transform: translateX(16px);
+}
+
+/*
+ * The shared plain radio (§9.34, §9.14): the checkbox-sized circle (16 on a mouse, 20 on a
+ * phone), a hairline at 45 %, checked = an accent ring round a 6 px page-colour dot. In a row it
+ * aligns with the first text line, not the row's centre (§9.2); its state is `aria-checked` on
+ * itself or on the row that is the radio.
+ */
+.zen-v2-radio {
+  display: inline-flex;
+  width: var(--v2-checkbox);
+  height: var(--v2-checkbox);
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin-top: calc((var(--v2-line-body) - var(--v2-checkbox)) / 2);
+  border: 1px solid rgb(var(--v2-text-rgb) / 0.45);
+  border-radius: 50%;
+  background: var(--v2-page);
+  transition:
+    background 120ms var(--zen-ease),
+    box-shadow 120ms var(--zen-ease),
+    border-color 120ms var(--zen-ease);
+}
+.zen-v2-radio[aria-checked='true'],
+[aria-checked='true'] > .zen-v2-radio {
+  border-color: var(--v2-accent);
+  box-shadow: inset 0 0 0 calc((var(--v2-checkbox) - 6px) / 2) var(--v2-accent);
+}
+
+/* The page: the landing stays mounted beneath a drill-in, which slides over it (§10.2). */
+.zen-settings-page {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+.zen-settings-landing,
+.zen-settings-drill-in {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--v2-page);
+}
+.zen-settings-scroll {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-bottom: 24px;
+  scrollbar-width: none;
+}
+.zen-settings-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+/* Landing (§10.2): a title block, the search field, the categories. */
+.zen-settings-page-title {
+  margin: 0;
+  padding: 16px 16px 12px;
+  font-size: var(--v2-font-title);
+  font-weight: var(--v2-weight-heading);
+  line-height: var(--v2-line-title);
+  letter-spacing: -0.01em;
+}
+.zen-settings-search {
+  position: relative;
+  margin: 0 16px 8px;
+}
+.zen-settings-search-glyph {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  stroke-width: var(--v2-icon-stroke);
+  color: var(--v2-text-deemphasized);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+.zen-settings-search-field {
+  padding-left: calc(12px + var(--v2-icon) + 8px);
+  padding-right: var(--v2-icon-button);
+}
+/* The clear button is a v2 icon button (§9.3): 44 box, the 20 px glyph, right-aligned to the field. */
+.zen-settings-search-clear {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+}
+/* Category rows: 44, the glyph at 16, no description, no chevron; Zen's two hairlines between runs. */
+.zen-settings-categories {
+  display: flex;
+  flex-direction: column;
+}
+.zen-settings-category {
+  gap: 12px;
+}
+.zen-settings-category-glyph {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  flex-shrink: 0;
+  stroke-width: var(--v2-icon-stroke);
+}
+.zen-settings-category-label {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.zen-settings-hairline {
+  height: 1px;
+  margin: 8px 16px;
+  border: 0;
+  background: var(--v2-border);
+}
+
+/*
+ * Search results: matching rows from every category, a 13/69 % "Category › Group" caption above
+ * each on its own 20 px line box and nothing more (§5: box to box), so a result row is a row
+ * plus one line – 64 / 84 / 104.
+ */
+.zen-settings-results {
+  display: flex;
+  flex-direction: column;
+}
+.zen-settings-caption {
+  display: block;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-small);
+}
+
+/* Drill-in (§10.2): a 56 bar header – 44 back button at 6, title 17/600 – sticky over the groups. */
+.zen-settings-drill-in {
+  z-index: 1;
+  will-change: transform;
+}
+/*
+ * The entrance is the only keyframe animation on the pane and it must not fill forwards: once
+ * it has run, the pane's transform belongs to the back gesture (BackDismissal writes it inline
+ * as the finger moves and as the commit slides the pane out), and a filled `to` keyframe would
+ * sit over that inline value for as long as the pane lives – the finger would move nothing.
+ */
+.zen-settings-drill-in[data-from='right'] {
+  animation: zen-settings-enter-right 240ms var(--zen-ease);
+}
+.zen-settings-drill-in[data-from='left'] {
+  animation: zen-settings-enter-left 240ms var(--zen-ease);
+}
+@keyframes zen-settings-enter-right {
+  from {
+    transform: translate3d(100%, 0, 0);
+  }
+  to {
+    transform: translate3d(0, 0, 0);
+  }
+}
+@keyframes zen-settings-enter-left {
+  from {
+    transform: translate3d(-100%, 0, 0);
+  }
+  to {
+    transform: translate3d(0, 0, 0);
+  }
+}
+.zen-settings-bar {
+  display: flex;
+  height: calc(var(--v2-icon-button) + 12px);
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 0 6px;
+  transition: box-shadow 120ms var(--zen-ease);
+}
+.zen-settings-drill-in[data-scrolled] .zen-settings-bar {
+  box-shadow: 0 1px 0 var(--v2-border);
+}
+.zen-settings-bar-title {
+  min-width: 0;
+  flex: 1;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--v2-font-heading);
+  font-weight: var(--v2-weight-heading);
+  line-height: var(--v2-line-heading);
+}
+
+/*
+ * Groups (§10.3): a 15/600 heading with 20 above and 4 below; the first sits 8 under the bar. A
+ * heading block that carries a description ends 8 above its first row instead (§9.27).
+ */
+.zen-settings-groups {
+  display: flex;
+  flex-direction: column;
+}
+.zen-settings-group {
+  display: flex;
+  flex-direction: column;
+}
+.zen-settings-heading {
+  margin: 20px 0 4px;
+  padding: 0 16px;
+  font-size: var(--v2-font-body);
+  font-weight: var(--v2-weight-heading);
+  line-height: var(--v2-line-body);
+}
+.zen-settings-body > .zen-settings-group:first-child > .zen-settings-heading {
+  margin-top: 8px;
+}
+.zen-settings-group-description {
+  margin: 0 0 8px;
+  padding: 0 16px;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+}
+/* A group with nothing in it: one plain line where its rows would be, like a row's label at 69 %. */
+.zen-settings-empty {
+  margin: 0;
+  padding: var(--v2-row-pad) 16px;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+}
+/* The page's own empty state (§9.17): one sentence, centred in a 32 gutter, 48 under the field. */
+.zen-settings-empty-page {
+  padding: 48px 32px 0;
+  text-align: center;
+}
+
+/* Rows (§10.4): label 15 on the first line, description 13/69 % under it, at most two lines. */
+.zen-settings-row {
+  display: flex;
+  width: 100%;
+  min-height: var(--v2-row);
+  align-items: center;
+  gap: 12px;
+  padding: var(--v2-row-pad) 16px;
+  text-align: left;
+}
+.zen-settings-row-text {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+}
+.zen-settings-label {
+  display: block;
+  color: var(--v2-text);
+  font-size: var(--v2-font-body);
+  font-weight: var(--v2-weight-body);
+  line-height: var(--v2-line-body);
+  overflow-wrap: anywhere;
+}
+.zen-settings-description {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-small);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.zen-settings-description-full {
+  display: block;
+  -webkit-line-clamp: none;
+}
+.zen-settings-row-danger .zen-settings-label {
+  color: var(--v2-danger);
+}
+/* A dependent row whose parent is off stays laid out at 40 % and takes no press (§10.4). */
+.zen-settings-row-disabled {
+  opacity: 0.4;
+}
+.zen-settings-row-disabled:active {
+  background: transparent;
+}
+/* Leading glyphs and boxes align with the first text line, not the row's centre (§9.2). */
+.zen-settings-leading {
+  display: inline-flex;
+  width: var(--v2-checkbox);
+  height: var(--v2-checkbox);
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  align-self: flex-start;
+  margin-top: calc((var(--v2-line-body) - var(--v2-checkbox)) / 2);
+}
+.zen-settings-leading > svg,
+.zen-settings-glyph {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  stroke-width: var(--v2-icon-stroke);
+}
+.zen-settings-ext-icon {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  border-radius: var(--v2-radius-checkbox);
+}
+.zen-settings-tint,
+.zen-settings-agent-dot {
+  display: block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+/* Whatever trails the text centres on the row (§9.18); a leaving glyph is 16 (§10.4). */
+.zen-settings-trailing {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-small);
+}
+.zen-settings-trailing > svg,
+.zen-settings-trailing-glyph {
+  width: 16px;
+  height: 16px;
+  stroke-width: var(--v2-icon-stroke);
+}
+/*
+ * Three text lines (§9.18): the control leaves the row's centre for the label's line. The row
+ * measures where that line starts in its text block (`rows.tsx`); the control's box is then the
+ * label's line box, so its content centres on it – (line − control) / 2 without stating either.
+ */
+.zen-settings-row[data-lines='3'] > .zen-settings-trailing {
+  align-self: flex-start;
+  min-height: var(--v2-line-body);
+  margin-top: var(--zen-settings-label-top, 0px);
+}
+/* Busy (§9.30): a 16 px spinner where the action's glyph would be; the row keeps its ink. */
+.zen-settings-spinner {
+  animation: zen-spin 900ms linear infinite;
+}
+.zen-settings-ok {
+  color: var(--v2-ok);
+}
+
+/* The switch and the plain radio are the shared `.zen-v2-switch` / `.zen-v2-radio` above (§9.34). */
+.zen-settings-radio-list {
+  display: flex;
+  flex-direction: column;
+}
+.zen-settings-radio-list > .zen-settings-label {
+  margin-bottom: 4px;
+}
+/* Radio rows in a form or a sheet run edge to edge like the page's rows (§9.25). */
+.zen-settings-form .zen-settings-radio-row {
+  margin: 0 -16px;
+  width: calc(100% + 32px);
+}
+
+/* Custom blocks sit in the gutter: image radio grids, the zoom stepper, copy rows, code, forms. */
+.zen-settings-custom {
+  padding: 8px 16px;
+}
+.zen-settings-icon-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.zen-settings-icon-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 4px;
+}
+.zen-settings-app-icon {
+  width: 48px;
+  height: 48px;
+}
+.zen-settings-icon-caption {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-small);
+}
+.zen-settings-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.zen-settings-swatch {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+}
+.zen-settings-glyph-tile {
+  display: inline-flex;
+  width: var(--v2-control);
+  height: var(--v2-control);
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--v2-border);
+  border-radius: var(--v2-radius-control);
+}
+.zen-settings-zoom-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.zen-settings-zoom-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.zen-settings-zoom-value {
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  font-variant-numeric: tabular-nums;
+}
+/*
+ * The stepper (§10.3): the slider spans the row between its two 44 px step buttons. It is the
+ * §10.4 slider row, drawn by the page zoom sheet's rules (`.zen-zoom-slider`, below with that
+ * sheet): the 4 px track in --v2-fill, the travelled part and the 20 px thumb in --v2-accent,
+ * on the page's tokens (§9.29). The sample under it is body text scaled whole, its 15/20 line
+ * box with it (§4: a fixed line-height, here the body's times the sample's factor).
+ */
+.zen-settings-zoom-stepper {
+  margin-top: 8px;
+  gap: 8px;
+}
+.zen-settings-zoom-stepper .zen-zoom-slider [role='slider'] {
+  border-color: var(--v2-page);
+}
+.zen-settings-zoom-preview {
+  margin: 8px 0 0;
+  font-size: calc(var(--v2-font-body) * var(--zen-settings-zoom-sample, 1));
+  line-height: calc(var(--v2-line-body) * var(--zen-settings-zoom-sample, 1));
+}
+.zen-settings-update-status {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.zen-settings-progress {
+  height: 4px;
+  margin-top: 8px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--v2-fill);
+}
+.zen-settings-progress > div {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--v2-accent);
+  transition: width 200ms var(--zen-ease);
+}
+/* A copy row keeps its buttons (§10.4): 88 minimum at the control height, the row grows around them (§9.21). */
+.zen-settings-copy-row {
+  display: flex;
+  min-height: calc(var(--v2-control) + 8px);
+  align-items: center;
+  gap: 12px;
+}
+.zen-settings-copy-text {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+.zen-settings-inline-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+}
+.zen-settings-inline-actions > button {
+  min-width: 88px;
+  padding: 0 12px;
+}
+/*
+ * A copy row's value: one selectable 13/69 % line. A secret (the connection token) is the one
+ * thing set in the platform monospace (§4); an endpoint is body text like any other value.
+ */
+.zen-settings-copy-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-small);
+  user-select: text;
+}
+.zen-settings-mono,
+.zen-settings-pre {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+  font-variant-ligatures: none;
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-small);
+  user-select: text;
+}
+.zen-settings-code {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.zen-settings-code-head {
+  display: flex;
+  min-height: calc(var(--v2-control) + 8px);
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.zen-settings-pre {
+  margin: 0;
+  padding: 12px;
+  overflow-x: auto;
+  border: 1px solid var(--v2-border);
+  border-radius: var(--v2-radius-inner);
+  white-space: pre;
+}
+.zen-settings-textarea {
+  min-height: 160px;
+  height: auto;
+  padding: 8px 12px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+  font-variant-ligatures: none;
+  font-size: var(--v2-font-small);
+  user-select: text;
+}
+
+/* Forms (§9.12): label above, 4 px, the field, its description or validation under it. */
+.zen-settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 0 16px;
+}
+.zen-settings-field-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.zen-settings-input {
+  user-select: text;
+}
+.zen-settings-validation {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 6px;
+  color: var(--v2-danger);
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-small);
+}
+.zen-settings-validation > svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  margin-top: 2px;
+  stroke-width: var(--v2-icon-stroke);
+}
+/*
+ * Footer actions (§9.11): two peers split the width, 8 apart, the primary trailing. In a form
+ * the form's 16 gap and gutter place them; straight in a sheet's body (a prompt, §9.23) they
+ * sit at the sheet's 16 (§9.25), 16 under the title block's own padding.
+ */
+.zen-settings-sheet-actions {
+  display: flex;
+  gap: 8px;
+}
+.zen-settings-sheet-body > .zen-settings-sheet-actions {
+  padding: 0 16px;
+}
+.zen-settings-sheet-actions > * {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.zen-settings-danger-button {
+  color: var(--v2-danger);
+}
+
+/*
+ * The sheets a row opens (§9.13, §9.16, §9.23–9.25) on the phone chassis (`.zen-sheet` above:
+ * the neutral surface, radius 12, the 48 header, §9.7's hairline once the body has scrolled, the
+ * one black scrim): a title block in place of the header when the sheet has a description. The
+ * layer lives in the frame's dialog host, outside the page host, so it states the page's type
+ * and row padding itself.
+ */
+.zen-settings-sheet-layer {
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+  user-select: none;
+}
+/*
+ * The edge takes no layout (§9.25: 16 from the sheet's outer edge, border included, to every
+ * text and control edge): the chassis border goes and a pseudo-element draws the same hairline
+ * on the top and sides, following the radius, so a row's 16 gutter is 16 from the outer edge.
+ */
+.zen-sheet.zen-settings-sheet {
+  border: 0;
+}
+.zen-sheet.zen-settings-sheet::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border: 1px solid var(--v2-border);
+  border-bottom: 0;
+  border-radius: inherit;
+  corner-shape: inherit;
+  pointer-events: none;
+}
+.zen-settings-sheet-body {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 16px;
+  color: var(--v2-text);
+}
+.zen-settings-sheet-rows {
+  display: flex;
+  flex-direction: column;
+}
+/* Where two panes fit (§10.5), the desktop panel's body draws inside the tab on the page surface. */
+.zen-settings-two-pane {
+  height: 100%;
+  color: var(--zen-fg);
+  font-size: 13px;
+  line-height: normal;
+}
+
+/*
+ * The Settings tab's thumbnail (§10.1): the landing drawn small on the card. Sized in container
+ * units from a 412 px page, so it scales with whatever card holds it; decoration only.
+ */
+.zen-settings-preview {
+  container-type: inline-size;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--v2-page);
+  color: var(--v2-text);
+  pointer-events: none;
+}
+.zen-settings-preview-page {
+  --u: calc(100cqw / 412);
+  display: flex;
+  flex-direction: column;
+  padding: calc(4 * var(--u)) calc(16 * var(--u));
+}
+.zen-settings-preview-title {
+  padding: calc(10 * var(--u)) 0 calc(12 * var(--u));
+  font-size: calc(22 * var(--u));
+  font-weight: var(--v2-weight-heading);
+  line-height: calc(28 * var(--u));
+}
+.zen-settings-preview-field {
+  display: flex;
+  height: calc(40 * var(--u));
+  align-items: center;
+  gap: calc(8 * var(--u));
+  margin-bottom: calc(8 * var(--u));
+  padding: 0 calc(12 * var(--u));
+  border: max(1px, calc(1 * var(--u))) solid var(--v2-border);
+  border-radius: calc(6 * var(--u));
+  color: var(--v2-text-deemphasized);
+  font-size: calc(15 * var(--u));
+  line-height: calc(20 * var(--u));
+}
+.zen-settings-preview-row {
+  display: flex;
+  height: calc(44 * var(--u));
+  flex-shrink: 0;
+  align-items: center;
+  gap: calc(12 * var(--u));
+  font-size: calc(15 * var(--u));
+  line-height: calc(20 * var(--u));
+  white-space: nowrap;
+}
+.zen-settings-preview-field > svg,
+.zen-settings-preview-row > svg {
+  width: calc(20 * var(--u));
+  height: calc(20 * var(--u));
+  flex-shrink: 0;
+  stroke-width: 1.75;
 }
 
 /* ---------------------------------------------------------------------------
@@ -4486,7 +5318,9 @@
  * track), no shadow on the thumb – the shared Slider's drop shadow goes, and with it its
  * box-shadow focus ring, so the thumb takes the v2 outline ring (§9.6) here, the shared Slider
  * carrying no zen-v2- class – and a 28 px touch target around the 20 px disc (the whole 40 px
- * row moves it as well, Radix taking the press anywhere on the root).
+ * row moves it as well, Radix taking the press anywhere on the root). The Settings tab's Default
+ * zoom row (`.zen-settings-zoom-stepper`, pages/settings/blocks.tsx) is the same slider row and
+ * shares these rules, its ring in the page's tone since it sits on --v2-page.
  */
 .zen-zoom-slider {
   height: var(--v2-control);

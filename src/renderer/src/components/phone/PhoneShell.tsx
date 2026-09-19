@@ -1,6 +1,7 @@
 import type { CSSProperties, JSX } from 'react'
 import { useEffect, useRef } from 'react'
 import { Globe, Lock, Search } from 'lucide-react'
+import { internalPageOf } from '@shared/internalPages'
 import type { PhoneBarPosition, Space, Tab, UIState } from '@shared/types'
 import { displayHost } from '@shared/url'
 import { run } from '@renderer/lib/api'
@@ -257,9 +258,10 @@ type PillLook = 'docked' | 'well' | 'well-target'
  * sideways to move to the previous / next tab (the neighbour's card follows the finger), pull it
  * towards the middle of the screen for the tab overview, tap it for the URL bar, hold it to
  * carry the whole bar to the other edge. A hold anywhere else on the bar opens the editor that
- * rearranges it (on the Tabs button, its quick menu).
+ * rearranges it (on the Tabs button, its quick menu). Window chrome (v2 §9.29): the bar and the
+ * pill carry `data-surface="window"`, so their chips draw in the window family.
  */
-function PhoneBar({
+export function PhoneBar({
   state,
   edge,
   pill,
@@ -295,6 +297,8 @@ function PhoneBar({
         pillLook !== 'docked' && 'zen-phone-bar-lifted',
         inert && 'pointer-events-none'
       )}
+      // Window chrome: the bar, the pill and their chips draw in the window family (v2 §9.29).
+      data-surface="window"
       aria-hidden={inert || undefined}
       data-shell-chrome
       style={{
@@ -324,6 +328,7 @@ function PhoneBar({
           pillLook !== 'docked' && 'zen-pill-well',
           pillLook === 'well-target' && 'zen-pill-well-target'
         )}
+        data-surface="window"
         {...(inert ? {} : pill)}
       >
         {pillLook === 'docked' && (
@@ -372,6 +377,9 @@ export function PillContent({
   // No lock over a certificate that failed verification (the interstitial, or the page the user
   // proceeded to): the connection is not secure, as site information says.
   const secure = shown?.url.startsWith('https://') && !shown.certificateError
+  // An internal page (Settings): its glyph in the favicon slot and the page's name, no lock and
+  // no site-information chip – there is no site (v2 §10.1); the registry says which glyph.
+  const page = shown ? internalPageOf(shown.url) !== null : false
   const Control = interactive ? 'button' : 'span'
   const controlProps = interactive ? { type: 'button' as const } : {}
   return (
@@ -391,7 +399,14 @@ export function PillContent({
           {url || 'Search or enter address'}
         </span>
       </Control>
-      {shown ? (
+      {shown && page ? (
+        <span
+          className="order-first -ml-1.5 -mr-2 flex h-8 w-8 shrink-0 items-center justify-center"
+          aria-hidden="true"
+        >
+          <Favicon tab={shown} size={16} />
+        </span>
+      ) : shown ? (
         <PillChip
           inert={!interactive}
           label="Site information"
@@ -405,7 +420,7 @@ export function PillContent({
       ) : (
         <Search className="order-first h-4 w-4 shrink-0 opacity-60" />
       )}
-      {url && secure && (
+      {url && secure && !page && (
         <PillChip
           inert={!interactive}
           label="Connection is secure"
@@ -470,6 +485,7 @@ function BarDockLayer({
       <div
         className="zen-phone-pill zen-pill-ghost pointer-events-auto absolute flex items-center gap-2 overflow-hidden rounded-full px-3.5 text-left"
         aria-hidden
+        data-surface="window"
         data-lifted={dock.phase === 'lifted' || dock.phase === 'settling'}
         style={{
           ...pillStyle,

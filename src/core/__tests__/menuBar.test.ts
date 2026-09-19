@@ -78,7 +78,9 @@ function harness(os: PlatformOs = 'darwin', menuBar = true): Harness {
     updates: false,
     agents: false,
     // Without the new tab page, New Tab is the URL bar alone (newtab.test.ts covers the page).
-    newTabPage: false
+    newTabPage: false,
+    // The desktop: Settings is its overlay, not a tab (the stub's default is a truthy function).
+    pageTabs: false
   })
   const platform: Platform = {
     info: { os, version: '1.2.3' },
@@ -234,6 +236,18 @@ describe('the macOS menu bar', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('opens Help › Keyboard Shortcuts through the Settings page’s one route: the overlay on this host, at its Shortcuts section', () => {
+    const h = harness()
+    h.sent.length = 0
+    item(submenu(last(h), 'Help'), 'Keyboard Shortcuts').click?.()
+    // The desktop has no page tabs: `page.open` opens the Settings overlay on the section (the
+    // panel draws the Shortcuts section either way). A host with page tabs gets the tab instead,
+    // from the same call (pages.test.ts).
+    const overlays = h.sent.filter((s) => s.name === 'overlay.open')
+    expect(overlays).toHaveLength(1)
+    expect(overlays[0]!.payload).toEqual({ kind: 'settings', section: 'shortcuts' })
   })
 })
 

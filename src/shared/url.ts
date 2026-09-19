@@ -2,6 +2,13 @@
  * URL helpers shared by main and renderer. No Electron / DOM dependencies.
  */
 import type { CertificateDetails } from './types'
+import {
+  INTERNAL_ALIAS_SCHEME,
+  internalPageAliasUrl,
+  internalPageTitle,
+  internalPageUrl,
+  parseInternalPageUrl
+} from './internalPages'
 
 export const BLANK_URL = 'zen://blank'
 /** The new tab page (`zen://newtab`), a document served like `zen://blank`. */
@@ -10,6 +17,7 @@ export const ERROR_URL_PREFIX = 'zen://error'
 export const READER_URL_PREFIX = 'zen://reader'
 /** The history page: a chrome surface, not a document (see `overlayForUrl` in zenPages). */
 export const HISTORY_URL = 'zen://history'
+/** The Settings page: an internal page that opens as a tab (see `shared/internalPages.ts`). */
 export const SETTINGS_URL = 'zen://settings'
 /** The bookmark manager: typed or linked, it opens the manager instead of navigating (zenPages). */
 export const BOOKMARKS_URL = 'zen://bookmarks'
@@ -27,7 +35,7 @@ const KNOWN_SCHEMES = [
   'https',
   'file',
   'zen',
-  'zenium',
+  INTERNAL_ALIAS_SCHEME,
   'about',
   'ftp',
   'data',
@@ -122,14 +130,23 @@ export function inputToUrl(raw: string): string | null {
       const rest = input.slice('about:'.length).toLowerCase()
       return INTERNAL_PAGE_ALIASES[rest] ?? BLANK_URL
     }
-    // `zenium://` is the name users see for `zen://`; `chrome://settings` and its siblings are
-    // the pages a Chrome user types – both resolve to the canonical `zen://` address.
-    if (scheme === 'zenium' || scheme === 'chrome') {
+    // Internal pages are stored under `zen://`. `zenium://` is the name users see for it, and
+    // `chrome://settings` and its siblings are the pages a Chrome user types from habit: a
+    // registered page resolves to its canonical address, section and all
+    // (`zenium://settings/privacy`, `chrome://settings/privacy`); a page known by an alias by
+    // that name (`zenium://newtab`, `chrome://history`); any other zenium:// address is the
+    // zen:// one, and other chrome:// addresses stay what they are (Chromium answers them).
+    const page = parseInternalPageUrl(input)
+    if (page) return internalPageUrl(page)
+    if (scheme === INTERNAL_ALIAS_SCHEME || scheme === 'chrome') {
       const rest = input.slice(`${scheme}://`.length)
-      const page = rest.split(/[/?#]/, 1)[0].toLowerCase()
-      const alias = INTERNAL_PAGE_ALIASES[page]
-      if (alias) return alias
-      if (scheme === 'zenium') return `zen://${rest}`
+      const name = rest.split(/[/?#]/, 1)[0].toLowerCase()
+      const alias = INTERNAL_PAGE_ALIASES[name]
+      if (alias) {
+        const aliased = parseInternalPageUrl(`${alias}${rest.slice(name.length)}`)
+        return aliased ? internalPageUrl(aliased) : alias
+      }
+      if (scheme === INTERNAL_ALIAS_SCHEME) return `zen://${rest}`
     }
     return input
   }
@@ -152,6 +169,8 @@ export function displayUrl(url: string): string {
       return ''
     }
   }
+  // Internal pages show their user-facing alias (`zenium://settings/privacy`).
+  if (parseInternalPageUrl(url)) return internalPageAliasUrl(url)
   let out = url
   if (out.startsWith('https://')) out = out.slice('https://'.length)
   else if (out.startsWith('http://')) out = out.slice('http://'.length)
@@ -166,7 +185,8 @@ export function displayUrl(url: string): string {
 
 /**
  * The address in full, as Chrome's "Always show full URLs" shows it and as a copy yields it:
- * scheme and `www.` kept, error and Reader View pages replaced by the address they stand in for.
+ * scheme and `www.` kept, error and Reader View pages replaced by the address they stand in for,
+ * an internal page as its user-facing `zenium://` alias (`zen://` never leaves `tab.url`).
  */
 export function fullUrl(url: string): string {
   // An empty tab (the blank page, the new tab page) has no address to show: `zen://newtab` is
@@ -179,7 +199,7 @@ export function fullUrl(url: string): string {
       return ''
     }
   }
-  return url
+  return internalPageAliasUrl(url)
 }
 
 /**
@@ -208,11 +228,14 @@ export function getHost(url: string): string {
  * The address as a phone's URL pill shows it: the site alone, like Chrome's steady-state
  * omnibox, so a long path or query can never push the domain out of the pill. `www.` is trimmed
  * as in `displayUrl`; a non-default port stays (a dev server is told apart by it); error and
- * Reader View pages show the site they stand in for. Other schemes (`file:`, `zen://settings`)
- * have no site to show and fall back to `displayUrl`.
+ * Reader View pages show the site they stand in for. An internal page shows its title
+ * ("Settings"), as Chrome's omnibox names its own pages. Other schemes (`file:`) have no site to
+ * show and fall back to `displayUrl`.
  */
 export function displayHost(url: string): string {
   if (!url || url === BLANK_URL) return ''
+  const pageTitle = internalPageTitle(url)
+  if (pageTitle !== null) return pageTitle
   if (url.startsWith(ERROR_URL_PREFIX) || url.startsWith(READER_URL_PREFIX)) {
     try {
       const original = new URL(url).searchParams.get('url')
@@ -258,6 +281,8 @@ export function isSameSite(a: string, b: string): boolean {
 export function titleForUrl(url: string): string {
   if (isEmptyTabUrl(url)) return 'New Tab'
   if (url.startsWith(ERROR_URL_PREFIX)) return 'Problem loading page'
+  const pageTitle = internalPageTitle(url)
+  if (pageTitle !== null) return pageTitle
   const host = getHost(url)
   return host ? host.replace(/^www\./, '') : url
 }

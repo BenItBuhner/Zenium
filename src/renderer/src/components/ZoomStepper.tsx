@@ -15,9 +15,10 @@ import { Slider } from './ui/slider'
  * Minus, a slider and plus along Chrome's zoom table (50 to 300 percent): the zoom sheet's row
  * and the Accessibility default. The slider's stops are the table's levels, so dragging it lands
  * on the same values the steppers walk; a factor between two levels shows at the nearest one.
- * `stepClassName` is the class of the two step buttons – the Settings instance's toolbar button
- * unless a surface names its own (the sheet's v2 icon button, §9.3) – and `sliderClassName`
- * styles that instance's slider, so no other instance follows.
+ * `stepClassName` is the class of the two step buttons – the desktop Settings panel's toolbar
+ * button unless a surface names its own (the zoom sheet's and the Settings tab's v2 icon button,
+ * §9.3) – and `sliderClassName` styles that instance's slider, so no other instance follows (the
+ * sheet and the tab share one, the §10.4 slider row, `zen-zoom-slider`).
  */
 export function ZoomStepper({
   value,

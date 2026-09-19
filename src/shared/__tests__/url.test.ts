@@ -82,8 +82,17 @@ describe('new tab and settings pages', () => {
   it('resolves the zenium:// name users see and Chrome’s chrome:// pages to zen://', () => {
     expect(inputToUrl('zenium://newtab')).toBe(NEW_TAB_URL)
     expect(inputToUrl('zenium://settings')).toBe(SETTINGS_URL)
-    expect(inputToUrl('zenium://settings/privacy')).toBe(SETTINGS_URL)
+    // A section is part of the address (the deep link adb sends, v2 §10.1).
+    expect(inputToUrl('zenium://settings/privacy')).toBe(`${SETTINGS_URL}/privacy`)
     expect(inputToUrl('ZENIUM://Newtab/')).toBe(NEW_TAB_URL)
+    // A zenium:// address that is not a registered page is exactly the zen:// one and falls
+    // through to that address's own handling: the history page (a chrome surface, zenPages),
+    // an error page with its query intact – never a blank tab.
+    expect(inputToUrl('zenium://history')).toBe(HISTORY_URL)
+    expect(inputToUrl('zenium://history')).toBe(inputToUrl('zen://history'))
+    expect(inputToUrl('zenium://error?url=https%3A%2F%2Fexample.com&code=-105')).toBe(
+      'zen://error?url=https%3A%2F%2Fexample.com&code=-105'
+    )
     expect(inputToUrl('zenium://reader/?id=1')).toBe('zen://reader/?id=1')
     expect(inputToUrl('chrome://settings')).toBe(SETTINGS_URL)
     expect(inputToUrl('chrome://settings/')).toBe(SETTINGS_URL)
@@ -132,7 +141,9 @@ describe('fullUrl / addressParts', () => {
     expect(
       fullUrl('zen://reader/?id=article_1&url=https%3A%2F%2Fen.wikipedia.org%2Fwiki%2FZen')
     ).toBe('https://en.wikipedia.org/wiki/Zen')
-    expect(fullUrl('zen://settings')).toBe('zen://settings')
+    // An internal page is shown and copied under its user-facing alias (v2 §10.1).
+    expect(fullUrl('zen://settings')).toBe('zenium://settings')
+    expect(fullUrl('zen://history')).toBe('zen://history')
   })
 
   it('splits the site from the dimmed path, query and fragment', () => {
@@ -180,11 +191,57 @@ describe('displayHost', () => {
     ).toBe('en.wikipedia.org')
   })
 
+  it('names an internal page as Chrome names its own pages', () => {
+    expect(displayHost('zen://settings')).toBe('Settings')
+    expect(displayHost('zen://settings/privacy')).toBe('Settings')
+  })
+
   it('falls back to the display form where there is no site', () => {
     expect(displayHost(BLANK_URL)).toBe('')
     expect(displayHost('')).toBe('')
-    expect(displayHost('zen://settings')).toBe('zen://settings')
+    expect(displayHost('zen://history')).toBe('zen://history')
     expect(displayHost('file:///home/me/notes.html')).toBe('file:///home/me/notes.html')
+  })
+})
+
+describe('internal pages', () => {
+  it('accepts the zenium:// alias from typed input and stores the zen:// form', () => {
+    expect(inputToUrl('zenium://settings')).toBe('zen://settings')
+    expect(inputToUrl('zenium://settings/privacy')).toBe('zen://settings/privacy')
+    expect(inputToUrl('zen://settings/look')).toBe('zen://settings/look')
+    expect(inputToUrl('ZENIUM://Settings/Look')).toBe('zen://settings/look')
+    // An alias address that names no registered page is still the zen:// address it stands for
+    // (`zenium://reader/?id=1` above): the host answers it as it answers zen://nothing-here.
+    expect(inputToUrl('zenium://nothing-here')).toBe('zen://nothing-here')
+    expect(isProbablyUrl('zenium://settings')).toBe(true)
+  })
+
+  it('takes Chrome’s and Firefox’s addresses for the page, typed from habit', () => {
+    expect(inputToUrl('chrome://settings')).toBe('zen://settings')
+    expect(inputToUrl('chrome://settings/privacy')).toBe('zen://settings/privacy')
+    expect(inputToUrl('chrome://settings/')).toBe('zen://settings')
+    expect(inputToUrl('CHROME://Settings/Look')).toBe('zen://settings/look')
+    expect(inputToUrl('about:preferences')).toBe('zen://settings')
+    expect(inputToUrl('about:settings')).toBe('zen://settings')
+    // Chrome addresses Zenium has no page for stay what they are.
+    expect(inputToUrl('chrome://flags')).toBe('chrome://flags')
+    expect(inputToUrl('chrome://version')).toBe('chrome://version')
+  })
+
+  it('shows the alias in the address bar and the title on the tab', () => {
+    expect(displayUrl('zen://settings')).toBe('zenium://settings')
+    expect(displayUrl('zen://settings/look')).toBe('zenium://settings/look')
+    expect(displayUrl('zen://history')).toBe('zen://history')
+    expect(titleForUrl('zen://settings')).toBe('Settings')
+    expect(titleForUrl('zen://settings/privacy')).toBe('Settings')
+    expect(titleForUrl('zen://settings/unknown')).toBe('Settings')
+  })
+
+  it('copies and shares the alias, never the stored zen:// form', () => {
+    expect(fullUrl('zen://settings')).toBe('zenium://settings')
+    expect(fullUrl('zen://settings/privacy')).toBe('zenium://settings/privacy')
+    expect(fullUrl('https://www.example.com/a?b=c')).toBe('https://www.example.com/a?b=c')
+    expect(fullUrl('zen://history')).toBe('zen://history')
   })
 })
 

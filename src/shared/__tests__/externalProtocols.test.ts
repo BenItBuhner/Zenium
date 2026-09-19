@@ -72,6 +72,9 @@ describe('classifyExternalUrl', () => {
       'file:///etc/passwd',
       'content://media/external/images/1',
       'zen://settings',
+      // The pages' user-facing alias: a web page must not launch the browser's own pages.
+      'zenium://settings/privacy',
+      'ZENIUM://settings',
       'about:blank',
       'data:text/html,hi',
       'blob:https://example.com/x',

@@ -115,8 +115,9 @@ on:
     outputs:
       emulator-died:
         description: >-
-          "true" when the emulator itself went away under the driver (adb lost the device) rather
-          than the driver failing; a caller may boot once more on that alone
+          "true" when the emulator itself went away under the driver (adb lost the device) or
+          never came up for it (the runner action failed before the driver ran) rather than the
+          driver failing; a caller may boot once more on that alone
         value: ${{ jobs.record.outputs.emulator-died }}
 
 permissions:
@@ -216,9 +217,16 @@ jobs:
           heap-size: 512M
           emulator-options: ${{ steps.cmdline.outputs.options }}
           disable-animations: ${{ inputs.disable-animations }}
-          script: bash ${{ inputs.script }}
+          # The marker says the emulator came up and the driver began (the action runs the lines
+          # one by one, once the device is booted); the step below reads it.
+          script: |
+            touch "$RUNNER_TEMP/driver-started"
+            bash ${{ inputs.script }}
       - name: Tell an emulator death from a driver failure
-        # The driver script leaves this marker when adb lost the device (see the script).
+        # The driver script leaves emulator-died when adb lost the device (see the script). A run
+        # the driver never began is the runner's failure too – the action fell over before the
+        # boot handed over (in run 35380869542 the emulator package it installs came down as a
+        # broken zip) – and counts the same way, so a caller's second boot covers both.
         id: emulator
         if: always()
         env:
@@ -227,6 +235,9 @@ jobs:
           if [ -f "$ARTIFACT_PATH/emulator-died" ]; then
             echo "died=true" >> "$GITHUB_OUTPUT"
             echo "::warning::the emulator went away under the driver: $(cat "$ARTIFACT_PATH/emulator-died")"
+          elif [ ! -f "$RUNNER_TEMP/driver-started" ]; then
+            echo "died=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::the emulator never came up: the driver did not run"
           else
             echo "died=false" >> "$GITHUB_OUTPUT"
           fi

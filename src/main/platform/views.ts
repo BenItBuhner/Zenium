@@ -25,6 +25,7 @@ import type {
   Rect,
   Tab
 } from '../../shared/types'
+import { refusedFromDocument } from '../../shared/internalPages'
 import type { SafeBrowsingHit } from '../../shared/privacy'
 import { isCertificateError, type SiteCertificate } from '../../shared/siteInfo'
 import { inPlaceErrorPageScript } from '../../shared/zenPages'
@@ -283,6 +284,12 @@ export class ElectronTabView implements TabView {
     })
     wc.on('update-target-url', (_e, url) => ev.onTargetUrl(url))
     wc.on('will-prevent-unload', (event) => this.onWillPreventUnload(event))
+    // Internal pages are the user's to open, never a web page's (Chrome's rule for chrome://):
+    // a document's own navigation to zen:// or zenium:// is refused; loadURL (typed, a menu, a
+    // deep link) does not raise this event and goes through. One rule with Android's WebView.
+    wc.on('will-navigate', (event, url) => {
+      if (refusedFromDocument(wc.getURL(), url)) event.preventDefault()
+    })
     wc.on('did-start-navigation', (details) => {
       // The page is unloading (its `beforeunload` let it): nothing is left to replay.
       if (!details.isMainFrame || details.isSameDocument) return
