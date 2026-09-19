@@ -209,6 +209,9 @@ class MainActivity : BrowserActivity() {
             Intent.ACTION_WEB_SEARCH -> host.share.onWebSearch(intent)
             // One of Zenium's own buttons in the system share sheet (Android 14).
             Share.ACTION_BROWSER_ACTION -> host.share.onBrowserAction(intent)
+            // The launcher's "New private tab" shortcut (res/xml/shortcuts.xml): the chrome opens
+            // one in the current space, or says why it cannot on a WebView without profiles.
+            PrivateBrowsing.ACTION_NEW_TAB -> host.chrome.newPrivateTab()
             // A tap or a button on an extension's notification card (chrome.notifications).
             ExtensionNotifications.ACTION_OPENED -> host.extensions.onNotificationIntent(intent)
         }

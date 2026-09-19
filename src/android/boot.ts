@@ -61,7 +61,12 @@ export interface HostGlobal {
   pullEvent(tabId: string, phase: string, json: string | null): void
   /** The user tapped the notification / launcher again: bring a URL in. */
   openUrl(url: string): void
+  /** The launcher's "New private tab" shortcut: a private tab in the current space. */
+  newPrivateTab(): void
 }
+
+/** What the shortcut says on a WebView without profiles, where nothing could be kept private. */
+export const PRIVATE_TABS_UNAVAILABLE = 'Private tabs need a newer Android System WebView'
 
 /**
  * Start Zen inside the chrome WebView: build the core on the Android platform, expose the
@@ -291,7 +296,15 @@ function installHostGlobal(
     openUrl: (url) =>
       withPlatform((platform) =>
         platform.browser.openExternalUrl(url, platform.window, { fromIntent: true })
-      )
+      ),
+    // The shortcut is static, so it is offered on a WebView without profiles too, where the core
+    // declines (`capabilities.privateTabs` off): the user hears why instead of getting a tab that
+    // only looks private.
+    newPrivateTab: () =>
+      withPlatform((platform) => {
+        const id = platform.browser.tabs.newPrivateTab(undefined, platform.window)
+        if (id === null) platform.browser.toast(PRIVATE_TABS_UNAVAILABLE, 'error', platform.window)
+      })
   }
   ;(window as unknown as { __zenHost: HostGlobal }).__zenHost = host
   return {
