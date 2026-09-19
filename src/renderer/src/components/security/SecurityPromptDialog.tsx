@@ -61,20 +61,15 @@ type Busy = 'waiting' | 'done' | null
  * stays up busy, keyed by its space rather than the prompt's id, and the refusal lands in the
  * same dialog – the password cleared, the validation line under it – while hearing nothing for
  * `SIGN_IN_WAIT_MS`, or the page finishing its load, means the credentials were accepted and
- * the form closes. A certificate choice is taken as given and its dialog goes at once.
+ * the form closes. A refusal that arrives later, while the form is on its way out, gets a fresh
+ * dialog: the leaving one is not taken over, so its departure cannot answer the new prompt. A
+ * certificate choice is taken as given and its dialog goes at once.
  */
 export function SecurityPrompts({ state }: { state: UIState }): JSX.Element | null {
   const live = currentSecurityPrompt(state)
   const [sent, setSent] = useState<Sent | null>(null)
-
-  // A prompt arriving takes over from the busy form: the refusal (the same space asked again,
-  // which the same dialog answers), or another prompt entirely.
-  const liveId = live?.id ?? null
-  const [seenId, setSeenId] = useState(liveId)
-  if (liveId !== seenId) {
-    setSeenId(liveId)
-    if (liveId && sent) setSent(null)
-  }
+  /** Counts the dialogs a protection space has had: a late refusal opens the next one. */
+  const [generation, setGeneration] = useState(0)
 
   // Nothing refused the answer: the wait ran out, the page finished loading behind the form,
   // or its tab went or was left.
@@ -83,6 +78,19 @@ export function SecurityPrompts({ state }: { state: UIState }): JSX.Element | nu
   const loading = (tabId && state.tabs[tabId]?.loading) || false
   const shown = tabId === null || activeTab(state)?.id === tabId
   const settled = sent !== null && (sent.done || tabGone || !shown || (sent.loading && !loading))
+
+  // A prompt arriving takes over from the busy form: the refusal (the same space asked again,
+  // which the same dialog answers while it waits), or another prompt entirely. A form already
+  // settled is leaving – on a phone the sheet is still sliding away – and is left to it.
+  const liveId = live?.id ?? null
+  const [seenId, setSeenId] = useState(liveId)
+  if (liveId !== seenId) {
+    setSeenId(liveId)
+    if (liveId && sent) {
+      setSent(null)
+      if (settled) setGeneration((g) => g + 1)
+    }
+  }
   const waiting = !live && sent !== null && !settled
   const at = sent?.at ?? 0
   useEffect(() => {
@@ -95,11 +103,24 @@ export function SecurityPrompts({ state }: { state: UIState }): JSX.Element | nu
   }, [waiting, at])
 
   const prompt = live ?? sent?.prompt ?? null
+
+  // The page's views hide under chrome overlays; its snapshot stands in while a dialog is up.
+  // Held over the dialogs of one tab, so a fresh dialog for the same tab does not bring the page
+  // back in between. (An open still waiting for the snapshot when the close comes, or a newer
+  // open, gives way.)
+  const covered = prompt !== null
+  const coverTab = prompt?.tabId ?? null
+  useEffect(() => {
+    if (!covered) return
+    void openSecurityPrompt(coverTab)
+    return closeSecurityPrompt
+  }, [covered, coverTab])
+
   if (!prompt) return null
   const busy: Busy = live || !sent ? null : settled ? 'done' : 'waiting'
   return (
     <SecurityPromptDialog
-      key={prompt.kind === 'http-auth' ? httpAuthSpace(prompt) : prompt.id}
+      key={prompt.kind === 'http-auth' ? `${httpAuthSpace(prompt)}#${generation}` : prompt.id}
       prompt={prompt}
       busy={busy}
       onSent={(p) =>
@@ -155,13 +176,6 @@ function SecurityPromptDialog({
   const ids = useId()
   const titleId = `${ids}-title`
   const formId = `${ids}-form`
-
-  // The page's views hide under chrome overlays; its snapshot stands in while the dialog is up.
-  // (An open still waiting for the snapshot when the dialog is closed, or opened again, gives way.)
-  useEffect(() => {
-    void openSecurityPrompt(prompt.tabId)
-    return closeSecurityPrompt
-  }, [prompt.tabId])
 
   // The same space asked again: the refused answer's dialog takes the new prompt.
   const lastId = useRef(prompt.id)
@@ -491,9 +505,12 @@ function HttpAuthForm({
   const sending = busy !== null
 
   // The refusal: the same dialog, the next prompt (a new id, `failedBefore`) – the password
-  // clears and, once the form has drawn it empty, takes the focus.
+  // clears and, once the form has drawn it empty, takes the focus. A dialog that opens on a
+  // refusal (one that came after the busy form had left) starts there.
   const [seenId, setSeenId] = useState(prompt.id)
-  const [refusedId, setRefusedId] = useState<string | null>(null)
+  const [refusedId, setRefusedId] = useState<string | null>(() =>
+    prompt.failedBefore ? prompt.id : null
+  )
   if (prompt.id !== seenId) {
     setSeenId(prompt.id)
     if (prompt.failedBefore) {
