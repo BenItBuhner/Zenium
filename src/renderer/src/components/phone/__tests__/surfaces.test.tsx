@@ -74,7 +74,8 @@ const state = {
   window: { kind: 'normal', fullscreen: false, htmlFullscreenTabId: null },
   boosts: [],
   extensions: [],
-  bookmarks: []
+  bookmarks: [],
+  translate: { available: true, tabs: {} }
 } as unknown as UIState
 
 let root: Root | null = null
