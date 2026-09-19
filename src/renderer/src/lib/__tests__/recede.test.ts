@@ -103,25 +103,25 @@ describe('the bar fade (§11.1): the bottom-docked bar, and only that one', () =
     return folded.slice(at, folded.indexOf('}', at))
   }
 
-  it('the stylesheet fades the bar by the root value at the bottom edge, and by the recede at no other', () => {
+  it('the stylesheet fades the bar by the root value at the bottom edge, and writes no opacity for the bar at the top', () => {
     const rule = cssRule(":root[data-form-factor='phone'] .zen-phone-bar[data-edge='bottom']")
-    // The recede's product, multiplied by the hide on scroll's own fade (lib/barHide.ts).
-    expect(rule).toMatch(
-      /opacity: calc\( \(1 - var\(--zen-recede, 0\) \* var\(--zen-recede-gain, 1\)\) \* \(1 - var\(--zen-bar-hide, 0\)\) \)/
-    )
-    // No other rule of the bar's reads the recede into an opacity: not one for the top edge,
-    // not one without an edge that a top-docked bar would take. The one other opacity of the
-    // bar's is the hide on scroll at the top edge, which fades by `--zen-bar-hide` alone.
+    expect(rule).toContain('opacity: calc(1 - var(--zen-recede, 0) * var(--zen-recede-gain, 1))')
+    // No other rule of the bar's writes an opacity: not one for the top edge, not one without
+    // an edge that a top-docked bar would take. The hide on scroll (lib/barHide.ts) slides and
+    // clips the bar at either edge and fades nothing: the fade is the sheet's vocabulary.
     const barRules = [...css.matchAll(/[^{}]*\.zen-phone-bar[^{}]*\{[^}]*\}/g)].map((m) => m[0])
     expect(barRules.length).toBeGreaterThan(1)
     const fading = barRules.filter((r) => /opacity\s*:/.test(r))
-    const receding = fading.filter((r) => /opacity\s*:[^;]*--zen-recede/.test(r))
-    expect(receding).toHaveLength(1)
-    expect(receding[0]).toContain("[data-edge='bottom']")
-    const hidingOnly = fading.filter((r) => !/opacity\s*:[^;]*--zen-recede/.test(r))
-    expect(hidingOnly).toHaveLength(1)
-    expect(hidingOnly[0]).toContain("[data-edge='top']")
-    expect(hidingOnly[0]).toMatch(/opacity\s*:[^;]*--zen-bar-hide/)
+    expect(fading).toHaveLength(1)
+    expect(fading[0]).toContain("[data-edge='bottom']")
+    expect(fading[0]).not.toContain('--zen-bar-hide')
+    const hiding = barRules.filter((r) => /--zen-bar-hide-shift/.test(r))
+    expect(hiding).toHaveLength(2)
+    for (const r of hiding) {
+      expect(r).toMatch(/transform\s*:/)
+      expect(r).toMatch(/clip-path\s*:/)
+      expect(r).not.toMatch(/opacity\s*:/)
+    }
   })
 
   it('barFade composes the recede into a fade of the bar’s own at the bottom edge, and at the top edge writes the share alone', () => {
