@@ -6089,14 +6089,13 @@
  * rows are the Settings tab's (§10, `pages/settings/protectionRows.tsx`), drawn by the tab.
  *
  * Ownership (§9.34). The controls are the shared primitives on main – `.zen-v2-row`,
- * `.zen-v2-field`, `.zen-v2-icon-button`, `.zen-v2-radio`, `.zen-v2-button` with its busy
- * label and spinner – read as they are, no copy here. Two interim copies wait for their owners
- * and are dropped on the rebase that follows them: the pane's `.zen-privacy-*` vocabulary
- * (section, headings, rows, card, field, validation) is the blocking groups' (#115), and
- * `.zen-v2-checkbox` is the downloads UI's (#93), copied as it draws it. `.zen-v2-menulist` is
- * the translate UI's (#106) name, drawn here scoped to the pane until its one rule lands. The
- * `.zen-protection-*` rules are this pane's own (components/overlays/ProtectionSection.tsx,
- * overlays/protection/*).
+ * `.zen-v2-field`, `.zen-v2-icon-button`, `.zen-v2-radio`, `.zen-v2-checkbox` (#93),
+ * `.zen-v2-button` with its busy label and spinner – read as they are, no copy here. Two interim
+ * copies wait for their owners and are dropped on the rebase that follows them: the pane's
+ * `.zen-privacy-*` vocabulary (section, headings, rows, card, field, validation) is the blocking
+ * groups' (#115), and `.zen-v2-menulist` is the translate UI's (#106) name, drawn here scoped to
+ * the pane until its one rule lands. The `.zen-protection-*` rules are this pane's own
+ * (components/overlays/ProtectionSection.tsx, overlays/protection/*).
  */
 .zen-privacy {
   display: flex;
@@ -6298,43 +6297,11 @@
   padding: 0 var(--v2-card-padding) 4px;
 }
 /*
- * The Proton checkbox (§6, §9.2; #93's `.zen-v2-checkbox`, copied as it draws it until it
- * lands): 16 at radius 2, accent fill with the on-accent check, (line − box) / 2 below the first
- * text line's top so it never grows a one-line row past 32.
+ * The Proton checkbox is the shared `.zen-v2-checkbox` (#93, §9.34): 16 at radius 2, accent fill
+ * with the on-accent check, (line − box) / 2 below the first text line's top so it never grows a
+ * one-line row past 32. In the pane's rows the box opts out of the row's centring and sits on the
+ * first text line (§9.2).
  */
-.zen-v2-checkbox {
-  appearance: none;
-  position: relative;
-  display: inline-block;
-  width: var(--v2-checkbox);
-  height: var(--v2-checkbox);
-  flex-shrink: 0;
-  margin: calc((var(--v2-line-body) - var(--v2-checkbox)) / 2) 0 0;
-  border: 1px solid rgb(var(--v2-text-rgb) / 0.45);
-  border-radius: var(--v2-radius-checkbox);
-  background: var(--v2-page);
-  transition:
-    background 120ms var(--zen-ease),
-    border-color 120ms var(--zen-ease);
-}
-.zen-v2-checkbox:checked {
-  border-color: var(--v2-accent);
-  background: var(--v2-accent);
-}
-.zen-v2-checkbox:checked::before {
-  content: '';
-  position: absolute;
-  inset: 2px;
-  background: var(--v2-on-accent);
-  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E")
-    center / contain no-repeat;
-  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E")
-    center / contain no-repeat;
-}
-.zen-v2-checkbox:disabled {
-  opacity: 0.4;
-}
-/* In the pane's rows the box opts out of the row's centring and sits on the first text line (§9.2). */
 .zen-privacy-row > .zen-v2-checkbox {
   align-self: flex-start;
 }
