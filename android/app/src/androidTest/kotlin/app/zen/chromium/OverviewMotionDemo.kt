@@ -36,7 +36,7 @@ import kotlin.math.roundToInt
  *     header and colour kept until the end, the card gliding out, the cards below waiting, a
  *     card beside the group gliding at once;
  *  7. a card dropped on a loose card: the group made grows out of their row with its header and
- *     tint off until the glide's end;
+ *     tint off until the glide's end, the dropped card right behind the card it was dropped on;
  *  8. the same close as 1 in the dark scheme, for the design gate's still of a glide in flight.
  *
  * The sequences of 2, 3, 6 and 7 are measured frame by frame: a `requestAnimationFrame` loop in
@@ -335,11 +335,10 @@ class OverviewMotionDemo : DemoHarness("overview-motion-demo-state.json", "overv
      * Gamma dropped on the middle of Home, both loose: the merge ring on Home, and on release the
      * two are a new group across their row. The group card grows out of the bare row on its
      * spring with its header and tint off; Home and Gamma glide into their inner slots; the cards
-     * below the row wait for the height and glide down then; the header and tint come on at the
-     * glide's end (v2 §11.4). The group is made in the tabs' own order – Gamma before Home, as
-     * they lay loose – where a card joining a group is placed right behind the card it was
-     * dropped on (#94's two paths; v2 §11.4 says nothing of the order, and the driver expects
-     * what the code does).
+     * below the row wait for the height and glide down then; the header and tint fade in at the
+     * glide's end (v2 §11.4). The group is made in the order joining one gives – the dropped
+     * card right behind the card it was dropped on, Home then Gamma – so the two gestures read
+     * as one rule (the design lead's ruling on #147; #94 grouped the two where they lay).
      */
     private fun makeGroup() {
         finding("\n7. Gamma dropped on Home: a new group is made")
@@ -366,7 +365,7 @@ class OverviewMotionDemo : DemoHarness("overview-motion-demo-state.json", "overv
         still("new-group-formed")
         val made = folderOf(HOME)
         expect("Home and Gamma are a group", made != null && folderOf(GAMMA) == made)
-        expect("the group is Gamma, Home: the tabs' order, as they lay loose", made != null && groupOrder(made) == listOf(GAMMA, HOME))
+        expect("the group is Home, Gamma: the dropped card right behind its target, as when joining a group", made != null && groupOrder(made) == listOf(HOME, GAMMA))
         expect("the loose cards are Alpha, Beta", looseOrder() == listOf(ALPHA, BETA))
     }
 
