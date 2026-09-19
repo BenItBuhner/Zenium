@@ -7,10 +7,12 @@ import android.util.Log
 import android.view.KeyEvent
 import android.view.View
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import android.webkit.WebView
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.webkit.WebViewCompat
+import app.zen.chromium.blocking.Blocking
 import app.zen.chromium.ext.ExtensionWebView
 import org.json.JSONArray
 import org.json.JSONObject
@@ -21,6 +23,7 @@ import org.junit.runner.RunWith
 import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import kotlin.math.roundToInt
 
 /**
  * The top-30 compatibility sweep on the phone (Wave 3, mirroring the desktop sweep's method in
@@ -64,6 +67,12 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     private val skipInstall = arguments.getString("skipInstall") == "1"
     /** Prompts no reachable button answered on screen, answered through the chrome's command instead. */
     private var promptsAnsweredByCommand = 0
+    /** Why the last prompt went through the command (the button's measurements), for the row's evidence. */
+    private var lastPromptFallback: JSONObject? = null
+    /** `zen()` calls so far: each gets its own answer slot in the chrome. */
+    private var zenCalls = 0
+    /** The text of every native dialog pressed away to get the chrome answering again. */
+    private val dialogsDismissed = JSONArray()
 
     private class Grade(val verdict: String, val note: String, val extra: JSONObject? = null)
 
@@ -130,7 +139,22 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // The table's order, the `last` ids moved to the end (a stable sort keeps the rest in place).
         val list = table.filter { only == null || it.id in only }.sortedBy { if (it.id in last) 1 else 0 }
         results.put("order", JSONArray(list.map { it.id }))
+        results.put("heapAtStartKb", heapKb())
         for ((index, row) in list.withIndex()) {
+            if (!chromeAnswers()) {
+                // The chrome's JS is gone for good (a renderer wedged behind a dialog nothing
+                // could press, a heap with no room left): every row behind this one would spend
+                // its timeouts on nothing. Say so in each and stop.
+                val reason = "the chrome stopped answering before this row" +
+                    (dialogsDismissed.takeIf { it.length() > 0 }?.let { "; dialogs pressed away: $it" } ?: "")
+                Log.e(TAG, "$reason (${row.name})")
+                results.put("stoppedBefore", row.id)
+                for (rest in list.drop(index)) {
+                    rows.put(JSONObject().put("id", rest.id).put("name", rest.name).put("feasible", rest.feasible).put("crash", reason))
+                }
+                write()
+                break
+            }
             val entry = JSONObject().put("id", row.id).put("name", row.name).put("feasible", row.feasible)
             rows.put(entry)
             val started = SystemClock.uptimeMillis()
@@ -143,11 +167,17 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 runCatching { cleanup(row, entry) }.onFailure { entry.put("cleanupError", it.toString()) }
                 entry.put("ms", SystemClock.uptimeMillis() - started)
                 entry.put("pssKbAfter", Debug.getPss())
+                entry.put("heapAfterKb", heapKb())
                 entry.put("grade", listOf("background", "popup", "options", "core").joinToString("/") { entry.optJSONObject(it)?.optString("verdict") ?: "?" })
-                Log.i(TAG, "ROW ${row.name}: install=${entry.optJSONObject("install")?.optString("verdict")} ${entry.optString("grade")}")
+                Log.i(
+                    TAG,
+                    "ROW ${row.name}: install=${entry.optJSONObject("install")?.optString("verdict")} ${entry.optString("grade")}; " +
+                        "heap enabled ${entry.optLong("heapEnabledKb", -1) / 1024} MB, after ${entry.optLong("heapAfterKb") / 1024} MB"
+                )
                 write()
             }
         }
+        results.put("dialogsDismissed", dialogsDismissed)
         // Every row installed (and disabled) on the management page.
         runCatching {
             coreInvoke("urlbar.runCommand", """{"action":"addons.open"}""")
@@ -179,6 +209,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         showTab(fixtureTab)
         core(row, entry, slug)
         evidence(row, entry)
+        // What the extension costs the Java heap while it runs (its units, its rules in the
+        // Kotlin engine), against `heapAfterKb` once it is disabled, and the engine's snapshot.
+        entry.put("heapEnabledKb", heapKb())
+        entry.put("blockingEnabled", runCatching { Blocking.shared(app).stats() }.getOrNull() ?: JSONObject.NULL)
     }
 
     /**
@@ -201,26 +235,34 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val started = SystemClock.uptimeMillis()
         var promptMs = 0L
         var prompted = false
+        var taps = 0
+        lastPromptFallback = null
+        val fallbacksBefore = promptsAnsweredByCommand
         val args = JSONObject().put("ref", row.id)
         if (row.store != null) args.put("store", row.store)
         val outcome = runCatching {
             zen("extension.installFromStore", args, INSTALL_TIMEOUT_MS) { button ->
                 prompted = true
+                taps++
                 val up = SystemClock.uptimeMillis()
                 SystemClock.sleep(900)
-                if (row.id == table.first().id) snap("$slug-prompt")
+                if (row.id == table.first().id && taps == 1) snap("$slug-prompt")
                 tapRect(button)
-                promptMs = SystemClock.uptimeMillis() - up
+                promptMs += SystemClock.uptimeMillis() - up
             }
         }
         val total = SystemClock.uptimeMillis() - started
         val ext = poll(20_000, 400) { extensions().firstOrNull { it.getString("id") == row.id } }
         // `evaluateJavascript` hands the stringified array back as a JSON string: unquote, then parse.
         val toasts = runCatching { JSONArray(JSONTokener(chromeJs("JSON.stringify(window.__toasts||[])")).nextValue() as String) }.getOrDefault(JSONArray())
+        val byCommand = promptsAnsweredByCommand > fallbacksBefore
         val detail = JSONObject()
             .put("ms", total - promptMs)
             .put("promptMs", promptMs)
-            .put("prompted", prompted)
+            .put("prompted", prompted || byCommand)
+            .put("promptAnsweredBy", if (byCommand) "command" else if (prompted) "tap" else JSONObject.NULL)
+            .put("promptTaps", taps)
+            .put("promptFallback", lastPromptFallback ?: JSONObject.NULL)
             .put("toasts", toasts)
             .put("commandError", outcome.exceptionOrNull()?.message ?: JSONObject.NULL)
         if (ext != null) {
@@ -237,14 +279,14 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         when {
             ext == null -> stage(
                 entry, "install", "F",
-                "no record after ${total / 1000} s: ${outcome.exceptionOrNull()?.message ?: "the command settled without one"}${if (toastText.isNotEmpty()) "; toast: $toastText" else ""}${if (!prompted) "; no install prompt was shown" else ""}",
+                "no record after ${total / 1000} s: ${outcome.exceptionOrNull()?.message ?: "the command settled without one"}${if (toastText.isNotEmpty()) "; toast: $toastText" else ""}${if (!prompted && !byCommand) "; no install prompt was shown" else if (byCommand) "; the prompt was answered through the command (${lastPromptFallback?.optString("reason")})" else ""}",
                 detail
             )
             !ext.isNull("error") -> stage(entry, "install", "F", "installed v${ext.optString("version")} but the runtime refused it: ${ext.optString("error")}", detail)
             !ext.getBoolean("enabled") -> stage(entry, "install", "F", "installed v${ext.optString("version")} but not enabled${if (toastText.isNotEmpty()) "; toast: $toastText" else ""}", detail)
             else -> stage(
                 entry, "install", "P",
-                "v${ext.optString("version")} from ${ext.optString("source")} in ${(total - promptMs) / 1000.0} s (+${promptMs} ms in the prompt), ${detail.optInt("files")} files, ${detail.optLong("bytesOnDisk") / 1024} KB",
+                "v${ext.optString("version")} from ${ext.optString("source")} in ${(total - promptMs) / 1000.0} s (+${promptMs} ms in the prompt, answered by ${if (byCommand) "the command: ${lastPromptFallback?.optString("reason")}" else if (prompted) "a tap" else "nobody – none was shown"}), ${detail.optInt("files")} files, ${detail.optLong("bytesOnDisk") / 1024} KB",
                 detail
             )
         }
@@ -387,7 +429,12 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 where = "sheet"
                 return@poll sheet
             }
-            val opened = tabUrls().filterKeys { it !in tabsBefore }.entries.firstOrNull { it.value.contains(".ext.zenium.invalid/") }
+            // The page may put up a dialog (an alert) that blocks the renderer the chrome shares: press it away and look again.
+            val urls = runCatching { tabUrls() }.getOrElse {
+                dismissDialog()?.let { text -> Log.w(TAG, "${row.name} options: a dialog pressed away: $text") }
+                return@poll null
+            }
+            val opened = urls.filterKeys { it !in tabsBefore }.entries.firstOrNull { it.value.contains(".ext.zenium.invalid/") }
             if (opened != null) {
                 var v: TabWebView? = null
                 instrumentation.runOnMainSync { v = host.tabs.get(opened.key) }
@@ -859,7 +906,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // The permission prompt for tabGroups, when it comes.
         var allowed = 0
         poll(8_000, 300) {
-            findPositiveButton()?.let { tapRect(it); allowed++ }
+            (promptButton()?.rect ?: findPositiveButton())?.let { tapRect(it); allowed++ }
             if (tabUrls().values.any { it.contains("onetab.html") }) true else null
         }
         val listTab = poll(15_000, 500) { tabUrls().entries.firstOrNull { it.value.contains("${row.id}.ext.zenium.invalid/onetab.html") } }
@@ -1115,22 +1162,43 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
 
     /**
      * `window.zen.invoke(command, args)` in the chrome, awaited from here for up to `timeoutMs`.
-     * While the call is pending, the install prompt's positive button is handed to `onDialog`
-     * (once) with its bounds on screen. Throws when the command rejects or never answers.
+     * Every call has its own slot (`window.__sweep[token]`), so the answer of one that timed out
+     * cannot be taken for the next call's. While the call is pending, the prompt the chrome puts
+     * up is answered: its accepting button, found through the chrome's own DOM (`[data-accept]`
+     * of the sheet or the dialog) and on screen where a finger can reach it, is handed to
+     * `onDialog` with its bounds and tapped there; a native dialog's button (the store's fallback
+     * prompt) is found through the accessibility tree, only while the chrome says a prompt is
+     * pending, so a matching word elsewhere on screen is never tapped. A prompt whose button is
+     * up but out of reach for [PROMPT_TAP_TIMEOUT_MS] (the sheet's first detent cut it off, the
+     * sheet never drew), or whose tap did not take it down, is answered through the chrome's
+     * command with the picture kept as evidence and `promptsAnsweredByCommand` counting it.
+     * Throws when the command rejects or never answers.
      */
     private fun zen(command: String, args: JSONObject?, timeoutMs: Long, onDialog: (Rect) -> Unit): JSONObject {
         val argsJs = args?.toString() ?: "undefined"
+        val token = ++zenCalls
         chromeJs(
-            "window.__sweep = undefined; window.zen.invoke(${JSONObject.quote(command)}, $argsJs).then(" +
-                "function (v) { window.__sweep = JSON.stringify({ ok: v === undefined ? null : v }); }," +
-                "function (e) { window.__sweep = JSON.stringify({ err: String((e && e.message) || e) }); });'ok'"
+            "window.__sweep = window.__sweep || {}; window.__sweep[$token] = undefined; window.zen.invoke(${JSONObject.quote(command)}, $argsJs).then(" +
+                "function (v) { window.__sweep[$token] = JSON.stringify({ ok: v === undefined ? null : v }); }," +
+                "function (e) { window.__sweep[$token] = JSON.stringify({ err: String((e && e.message) || e) }); });'ok'"
         )
-        var prompted = false
+        var answered = false
+        var taps = 0
+        var tappedAt = 0L
+        // Polls the chrome did not answer within chromeJs's 10 s: a JS thread that is busy or gone.
+        var silent = 0
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         var promptSeenAt = 0L
         while (SystemClock.uptimeMillis() < deadline) {
-            val result = chromeJs("window.__sweep === undefined ? null : window.__sweep")
+            val result = chromeJs("(window.__sweep && window.__sweep[$token] !== undefined) ? window.__sweep[$token] : null")
+            if (result.isEmpty()) {
+                silent++
+                if (silent == 1 || silent % 10 == 0) Log.w(TAG, "$command: the chrome did not answer a poll ($silent so far)")
+                // A page's dialog blocks the renderer the chrome shares: press it away and poll again.
+                dismissDialog()?.let { Log.w(TAG, "$command: a dialog pressed away: $it") }
+            }
             if (result.isNotEmpty() && result != "null") {
+                chromeJs("delete window.__sweep[$token];'ok'")
                 val envelope = JSONObject(JSONTokener(result).nextValue() as String)
                 if (envelope.has("err")) error("$command rejected: ${envelope.getString("err")}")
                 return when (val value = envelope.get("ok")) {
@@ -1139,38 +1207,89 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                     else -> JSONObject().put("value", value)
                 }
             }
-            if (!prompted) {
-                findPositiveButton()?.let { button ->
-                    prompted = true
-                    onDialog(button)
-                }
-            }
-            // The chrome raised a prompt but its sheet has had no reachable positive button for a
-            // while (a long permission list pushes it off screen, or the sheet never drew): answer
-            // through the command the sheet itself would send, and keep the picture as evidence.
-            if (!prompted) {
+            if (!answered) {
+                val button = promptButton()
                 val pending = pendingPrompts()
-                if (pending.length() > 0) {
-                    if (promptSeenAt == 0L) promptSeenAt = SystemClock.uptimeMillis()
-                    else if (SystemClock.uptimeMillis() - promptSeenAt > PROMPT_TAP_TIMEOUT_MS) {
-                        prompted = true
-                        snap("prompt-without-button")
-                        promptsAnsweredByCommand++
-                        answerPrompts(pending)
+                when {
+                    // The chrome's own sheet or dialog, its button on screen: a finger on it.
+                    button != null && button.rect != null && taps < PROMPT_TAPS -> {
+                        // A tap that did not take the prompt down: once more, then the command.
+                        if (taps == 0 || SystemClock.uptimeMillis() - tappedAt > PROMPT_RETAP_MS) {
+                            taps++
+                            tappedAt = SystemClock.uptimeMillis()
+                            onDialog(button.rect)
+                        }
+                    }
+                    button != null && button.rect != null -> {
+                        if (SystemClock.uptimeMillis() - tappedAt > PROMPT_RETAP_MS) {
+                            Log.w(TAG, "$taps tap(s) on the prompt's button did not answer it: ${button.detail}")
+                            answered = true
+                            snap("prompt-tap-did-not-answer")
+                            promptsAnsweredByCommand++
+                            lastPromptFallback = JSONObject().put("reason", "tap did not answer").put("button", button.detail)
+                            answerPrompts(pending)
+                        }
+                    }
+                    // The prompt is up but its button is not where a finger could reach it.
+                    button != null -> {
+                        if (promptSeenAt == 0L) promptSeenAt = SystemClock.uptimeMillis()
+                        else if (SystemClock.uptimeMillis() - promptSeenAt > PROMPT_TAP_TIMEOUT_MS) {
+                            Log.w(TAG, "the prompt's button is out of reach: ${button.detail}")
+                            answered = true
+                            snap("prompt-without-button")
+                            promptsAnsweredByCommand++
+                            lastPromptFallback = JSONObject().put("reason", "button out of reach").put("button", button.detail)
+                            answerPrompts(pending)
+                        }
+                    }
+                    // No chrome sheet: a native dialog (the store's fallback prompt), by the
+                    // accessibility tree, and only while the chrome says a prompt is pending.
+                    pending.length() > 0 -> {
+                        val native = findPositiveButton()
+                        if (native != null && taps == 0) {
+                            taps++
+                            tappedAt = SystemClock.uptimeMillis()
+                            onDialog(native)
+                        } else {
+                            if (promptSeenAt == 0L) promptSeenAt = SystemClock.uptimeMillis()
+                            else if (SystemClock.uptimeMillis() - promptSeenAt > PROMPT_TAP_TIMEOUT_MS) {
+                                Log.w(TAG, "a prompt is pending and nothing on screen answers it: $pending")
+                                answered = true
+                                snap("prompt-without-button")
+                                promptsAnsweredByCommand++
+                                lastPromptFallback = JSONObject().put("reason", "no button on screen").put("pending", pending)
+                                answerPrompts(pending)
+                            }
+                        }
                     }
                 }
             }
             SystemClock.sleep(300)
         }
-        error("$command did not answer within ${timeoutMs / 1000} s")
+        // What the chrome shows and knows at the timeout, for the row's evidence.
+        val button = runCatching { promptButton()?.detail }.getOrNull()
+        val pending = pendingPrompts()
+        Log.w(TAG, "$command timed out: silent polls $silent, prompt taps $taps, answered $answered, button ${button ?: "none"}, pending $pending")
+        error(
+            "$command did not answer within ${timeoutMs / 1000} s" +
+                (if (silent > 0) " ($silent poll(s) the chrome did not answer)" else "") +
+                (if (button != null) "; a prompt button is on screen: $button" else "") +
+                (if (pending.length() > 0) "; prompts pending: $pending" else "")
+        )
     }
 
     /** The prompts the chrome raised since the last answer through the command: `[{kind, id, ok}]`. */
     private fun pendingPrompts(): JSONArray =
         runCatching { JSONArray(JSONTokener(chromeJs("JSON.stringify(window.__prompts||[])")).nextValue() as String) }.getOrDefault(JSONArray())
 
-    /** Accept every prompt in `pending` through the chrome's own answer command (a no-op for one the sheet answered). */
+    /**
+     * Accept the prompt on screen without a finger: a click on the sheet's own accepting button
+     * through the chrome's DOM (the renderer's handler answers exactly as a tap would), and every
+     * prompt in `pending` through the chrome's answer command (a no-op for one already answered).
+     */
     private fun answerPrompts(pending: JSONArray) {
+        val clicked = chromeJs("(function(){var b=document.querySelector('[data-accept]');if(!b)return 'none';b.click();return 'clicked'})()")
+        Log.i(TAG, "prompt button by DOM click: $clicked; pending by id: ${pending.length()}")
         for (i in 0 until pending.length()) {
             val prompt = pending.optJSONObject(i) ?: continue
             val command = if (prompt.optString("kind") == "permission") "extension.respondPermissionRequest" else "extension.confirmInstall"
@@ -1178,6 +1297,36 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 .onFailure { Log.w(TAG, "$command failed: ${it.message}") }
         }
         chromeJs("window.__prompts=[];'ok'")
+    }
+
+    /**
+     * The accepting button of the chrome's prompt, by the chrome's DOM: `rect` is its bounds on
+     * screen when it is drawn, inside the viewport and the topmost thing at its centre (a finger
+     * there presses it); `null` when a prompt is up but the button is not reachable, with the
+     * measurements in `detail` (its CSS box, the viewport, what is on top of it) as evidence.
+     */
+    private class PromptButton(val rect: Rect?, val detail: JSONObject)
+
+    /** The prompt's accepting button when the chrome shows one, else `null`. */
+    private fun promptButton(): PromptButton? {
+        val raw = chromeJs(PROMPT_BUTTON_JS)
+        val json = (runCatching { JSONTokener(raw).nextValue() }.getOrNull() as? String)?.takeIf { it.isNotEmpty() } ?: return null
+        val css = runCatching { JSONObject(json) }.getOrNull() ?: return null
+        if (!css.optBoolean("reachable")) return PromptButton(null, css)
+        val chrome = host.chrome
+        val centre = screenPoint(chrome, css) ?: return PromptButton(null, css)
+        var scale = 1f
+        instrumentation.runOnMainSync {
+            @Suppress("DEPRECATION")
+            scale = chrome.scale.takeIf { it > 0f } ?: chrome.resources.displayMetrics.density
+        }
+        val halfW = css.optDouble("w", 0.0).toFloat() * scale / 2
+        val halfH = css.optDouble("h", 0.0).toFloat() * scale / 2
+        val rect = Rect(
+            (centre.first - halfW).roundToInt(), (centre.second - halfH).roundToInt(),
+            (centre.first + halfW).roundToInt(), (centre.second + halfH).roundToInt()
+        )
+        return PromptButton(rect, css)
     }
 
     // --- input and pictures ----------------------------------------------------------------------
@@ -1215,6 +1364,64 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             result = (location[0] + css.getDouble("x").toFloat() * scale) to (location[1] + css.getDouble("y").toFloat() * scale)
         }
         return result
+    }
+
+    /**
+     * Whether the chrome's JS answers. A page's `alert()` / `confirm()` blocks the renderer's
+     * main thread – WebView runs every WebView of the app, the chrome's included, in one renderer
+     * – until its dialog is dismissed (the base run lost its last nineteen rows behind a dialog
+     * Tampermonkey's options page put up), so a native dialog on screen is pressed away, its
+     * text kept as evidence, and the chrome asked again; three silent polls and it is given up.
+     */
+    private fun chromeAnswers(): Boolean {
+        for (attempt in 1..3) {
+            if (chromeJs("'ok'").isNotEmpty()) return true
+            val dialog = dismissDialog()
+            Log.w(TAG, "the chrome did not answer (poll $attempt)${dialog?.let { "; a dialog pressed away: $it" } ?: ""}")
+        }
+        return false
+    }
+
+    /**
+     * A native dialog on screen (a page's alert or confirm shown by WebView itself, a system
+     * dialog) pressed away by its positive button – OK, Close, Dismiss, else its last button –
+     * and its text returned; null when no such window is up. The activity's own window fills the
+     * screen and is never the one; the chrome's sheets are in its DOM, not windows.
+     */
+    private fun dismissDialog(): String? {
+        val screenHeight = app.resources.displayMetrics.heightPixels
+        for (window in ui.windows) {
+            val root = window.root ?: continue
+            val bounds = Rect().also(window::getBoundsInScreen)
+            if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION || bounds.height() >= screenHeight * 9 / 10) continue
+            val texts = ArrayList<String>()
+            val buttons = ArrayList<AccessibilityNodeInfo>()
+            val queue = ArrayDeque(listOf(root))
+            var visited = 0
+            while (queue.isNotEmpty() && visited++ < 2_000) {
+                val node = queue.removeFirst()
+                node.text?.toString()?.trim()?.takeIf { it.isNotEmpty() }?.let(texts::add)
+                if (node.isClickable && node.className == "android.widget.Button") buttons.add(node)
+                for (i in 0 until node.childCount) node.getChild(i)?.let(queue::add)
+            }
+            val button = buttons.firstOrNull { it.text?.toString()?.trim()?.uppercase() in DIALOG_BUTTONS } ?: buttons.lastOrNull() ?: continue
+            val text = texts.joinToString(" | ").take(300)
+            dialogsDismissed.put(text)
+            snap("dialog-dismissed")
+            tapRect(Rect().also(button::getBoundsInScreen))
+            return text
+        }
+        return null
+    }
+
+    /** The Java heap in use after a full collection, in KB: what the process keeps at this point. */
+    private fun heapKb(): Long {
+        val runtime = Runtime.getRuntime()
+        runtime.gc()
+        SystemClock.sleep(300)
+        runtime.gc()
+        SystemClock.sleep(100)
+        return (runtime.totalMemory() - runtime.freeMemory()) / 1024
     }
 
     /** Breadth-first search of every window on screen (the app and a dialog). */
@@ -1291,6 +1498,26 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val OPTIONS_TIMEOUT_MS = 30_000L
         /** How long a raised prompt may go without a reachable positive button before the command answers it. */
         private const val PROMPT_TAP_TIMEOUT_MS = 8_000L
+        /** Taps on the prompt's own button before the command answers it, and the wait between them. */
+        private const val PROMPT_TAPS = 2
+        private const val PROMPT_RETAP_MS = 3_000L
+        /** The button that takes a native dialog (a page's alert, a system dialog) down. */
+        private val DIALOG_BUTTONS = setOf("OK", "CLOSE", "DISMISS", "GOT IT")
+        /**
+         * The chrome's prompt button as the chrome sees it: `[data-accept]` of the install /
+         * permissions sheet or dialog, its CSS box, the viewport, whether its host is drawn and
+         * takes the pointer (a sheet is at opacity 0 and `pointer-events: none` until presented),
+         * and what `elementFromPoint` finds at its centre – `reachable` when a finger there
+         * presses the button. `null` when no prompt is up.
+         */
+        private const val PROMPT_BUTTON_JS =
+            "(function(){var b=document.querySelector('.zen-sheet-footer [data-accept], .zen-ext-dialog [data-accept], [data-accept]');if(!b)return null;" +
+                "var r=b.getBoundingClientRect();var host=b.closest('.zen-sheet')||b.closest('[role=dialog]')||b;var cs=getComputedStyle(host);" +
+                "var drawn=cs.opacity!=='0'&&cs.visibility!=='hidden'&&cs.pointerEvents!=='none';var cx=r.left+r.width/2,cy=r.top+r.height/2;" +
+                "var top=document.elementFromPoint(cx,cy);var onTop=!!top&&(top===b||b.contains(top));" +
+                "var inside=r.width>0&&r.height>0&&r.top>=0&&r.left>=0&&r.bottom<=innerHeight&&r.right<=innerWidth;" +
+                "return JSON.stringify({x:cx,y:cy,w:r.width,h:r.height,top:r.top,bottom:r.bottom,innerW:innerWidth,innerH:innerHeight,drawn:drawn,onTop:onTop,inside:inside," +
+                "covering:top&&!onTop?(top.tagName+'.'+String(top.className).slice(0,60)):null,label:(b.textContent||'').trim(),reachable:drawn&&onTop&&inside})})()"
         /** The prompts' positive labels (ExtensionPromptDialog, hostStore.ts installPromptText). */
         private val POSITIVE_BUTTONS = setOf("Add extension", "Update extension", "Allow")
         /** The tracker hosts of sweep-ads.html, by the page's own names. */
