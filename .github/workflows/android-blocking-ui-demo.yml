@@ -1,0 +1,52 @@
+name: Android blocking UI demo
+
+# Records the request blocking UI on a hardware-accelerated Android emulator: the address pill's
+# blocked-count chip climbing as the demo page asks nine real ad and tracking hosts again, the
+# Settings tab's Privacy and Security section (the master switch, the level as a picker sheet,
+# the counter, the filter lists as item rows with a sheet each, the sites without blocking), a
+# level change the Kotlin engine follows, the current site excepted from its switch row and
+# blocked again from its item's sheet, and the master switch off and on. Dispatch-only, like the
+# other demos: it takes about ten minutes and says nothing about a change being correct. The
+# build, the emulator and the Gradle cache live in android-emulator-demo.yml; this file only
+# picks the driver and the demo it runs.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-blocking-ui-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Blocking UI demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.BlockingUiDemo
+        DEMO_DIR=blocking-ui-demo
+        DEMO_OUT=artifacts/android-blocking-ui-demo
+        DEMO_VIDEO=services-blocking-android-ui-demo.mp4
+      artifact-name: android-blocking-ui-demo
+      artifact-path: artifacts/android-blocking-ui-demo/
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed: a run is then spent on the demo rather than on the runner.
+  record-again:
+    name: Blocking UI demo, second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.BlockingUiDemo
+        DEMO_DIR=blocking-ui-demo
+        DEMO_OUT=artifacts/android-blocking-ui-demo
+        DEMO_VIDEO=services-blocking-android-ui-demo.mp4
+      artifact-name: android-blocking-ui-demo-second-boot
+      artifact-path: artifacts/android-blocking-ui-demo/

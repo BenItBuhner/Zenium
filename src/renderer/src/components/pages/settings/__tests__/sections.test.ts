@@ -2,7 +2,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { HostCapabilities, Settings, Tab, UIState } from '@shared/types'
 import { INTERNAL_PAGES, availableSections } from '@shared/internalPages'
-import { emptyBlockingStatus } from '@shared/blocking'
+import {
+  DEFAULT_BLOCKING_SETTINGS,
+  customListId,
+  emptyBlockingStatus,
+  type FilterListStatus,
+  type ListTier
+} from '@shared/blocking'
 import {
   DEFAULT_CONTAINERS,
   DEFAULT_SETTINGS,
@@ -161,6 +167,65 @@ function state(patch: Partial<UIState> = {}, settings: Partial<Settings> = {}): 
   } as unknown as UIState
 }
 
+/** A list of the user's own, as the settings keep it and as the engine reports it. */
+const CUSTOM = {
+  id: customListId('https://example.com/annoyances.txt'),
+  url: 'https://example.com/annoyances.txt',
+  name: 'Annoyances',
+  enabled: true
+}
+
+function filterList(id: string, name: string, tier: ListTier | null): FilterListStatus {
+  return {
+    id,
+    name,
+    description: `${name} filters`,
+    url: `https://lists.example/${id}.txt`,
+    homepage: `https://lists.example/${id}`,
+    licence: 'GPL-3.0',
+    tier,
+    enabled: true,
+    version: '202609190000',
+    updatedAt: 1_000_000,
+    filterCount: 1000,
+    bundled: false,
+    updating: false,
+    lastError: null
+  }
+}
+
+/**
+ * The request engine ready and busy (#115): two default lists and a custom one, a site excepted,
+ * two filters of the user's with one line the parser refused, 1,284 requests blocked so far.
+ */
+function blockingState(patch: Partial<UIState> = {}): UIState {
+  return state(
+    {
+      blocking: {
+        ...emptyBlockingStatus(),
+        ready: true,
+        sessionBlocked: 1284,
+        siteExceptions: ['https://news.example'],
+        lastUpdatedAt: 1_000_000,
+        lists: [
+          filterList('easylist', 'EasyList', 'basic'),
+          filterList('easyprivacy', 'EasyPrivacy', 'balanced'),
+          filterList(CUSTOM.id, CUSTOM.name, null)
+        ],
+        userFilterErrors: [{ line: 2, message: 'Unknown option "foo"' }]
+      },
+      ...patch
+    },
+    {
+      blocking: {
+        ...DEFAULT_BLOCKING_SETTINGS,
+        customLists: [CUSTOM],
+        userFilters: '||ads.example^\n||tracker.example^$foo'
+      }
+    }
+  )
+}
+
 /** A context that records what the rows ask of the page; a touch host unless `pointer` says so. */
 function context(
   s: UIState = state(),
@@ -294,6 +359,77 @@ describe('the section model', () => {
       kind: 'info',
       label: 'Default browser'
     })
+  })
+
+  it('carries #115’s Privacy and security groups (tracking-*) at Chrome’s tracking-prevention position, behind requestBlocking', () => {
+    const privacy = section('privacy', blockingState())
+    expect(privacy.groups.map((g) => g.id)).toEqual([
+      'tracking-prevention',
+      'tracking-lists',
+      'tracking-custom-lists',
+      'tracking-filters',
+      'tracking-exceptions',
+      'permissions'
+    ])
+    expect(privacy.groups.map((g) => g.heading)).toEqual([
+      'Tracking prevention',
+      'Filter lists',
+      'Your lists',
+      'Your filters',
+      'Sites without blocking',
+      'Site permissions'
+    ])
+    // The engine's rows are its own groups: every row and every item-sheet row is tracking-*.
+    const own = privacy.groups.filter((g) => g.id.startsWith('tracking-'))
+    for (const r of allRows(own)) expect(r.id, r.label).toMatch(/^tracking-/)
+    expect(row(privacy, 'tracking-enabled')).toMatchObject({
+      kind: 'switch',
+      label: 'Block ads and trackers',
+      checked: true
+    })
+    const level = row(privacy, 'tracking-level')
+    if (level.kind !== 'value') throw new Error('not a value row')
+    expect(currentOptionLabel(level)).toBe('Balanced')
+    expect(level.options.map((o) => o.label)).toEqual(['Off', 'Basic', 'Balanced', 'Strict'])
+    expect(row(privacy, 'tracking-blocked')).toMatchObject({
+      kind: 'info',
+      description: '1,284 requests'
+    })
+    // Each list is one item whose sheet holds its switch, its refresh and its homepage.
+    expect(row(privacy, 'tracking-list:easylist')).toMatchObject({
+      kind: 'item',
+      label: 'EasyList'
+    })
+    expect(row(privacy, 'tracking-list:easylist:enabled').kind).toBe('switch')
+    expect(row(privacy, 'tracking-list:easylist:update').kind).toBe('action')
+    expect(row(privacy, 'tracking-list:easylist:homepage')).toMatchObject({
+      kind: 'action',
+      leaves: 'external'
+    })
+    // A custom list adds a destructive Remove that confirms first; the excepted site an item.
+    expect(row(privacy, `tracking-list:${CUSTOM.id}:remove`)).toMatchObject({
+      kind: 'action',
+      destructive: true,
+      confirm: { action: 'Remove' }
+    })
+    expect(row(privacy, 'tracking-site:https://news.example')).toMatchObject({
+      kind: 'item',
+      label: 'news.example'
+    })
+    expect(row(privacy, 'tracking-add-list').kind).toBe('action')
+    expect(row(privacy, 'tracking-add-site').kind).toBe('action')
+    expect(row(privacy, 'tracking-user-filters')).toMatchObject({
+      kind: 'action',
+      description: '2 filters · 1 line not understood'
+    })
+
+    // Without the engine the category is the other programs' alone.
+    const without = section(
+      'privacy',
+      blockingState({ capabilities: { ...ANDROID, requestBlocking: false } })
+    )
+    expect(without.groups.map((g) => g.id)).toEqual(['permissions'])
+    expect(allRows(without.groups).some((r) => r.id.startsWith('tracking-'))).toBe(false)
   })
 
   it('carries #129’s session rows where the desktop panel has them: Tabs, on a windowed host only', () => {
@@ -866,6 +1002,87 @@ describe('what a row does', () => {
       kind: 'zoom',
       domain: 'a.test'
     })
+  })
+
+  it('the request engine’s rows run the blocking commands or patch `blocking`, and follow the master switch', () => {
+    const c = context(blockingState())
+    const privacy = buildSection(
+      PAGE.sections.find((x) => x.id === 'privacy')!,
+      c.ctx
+    )
+    // The master switch and the exceptions are decisions of the `ads` permission: commands.
+    const master = row(privacy, 'tracking-enabled')
+    if (master.kind !== 'switch') throw new Error('not a switch')
+    master.onChange(false)
+    expect(invoke).toHaveBeenCalledWith('blocking.setEnabled', { enabled: false })
+    const current = row(privacy, 'tracking-site-current')
+    if (current.kind !== 'switch') throw new Error('not a switch')
+    expect(current.label).toBe('Block on news.example')
+    // The site the tab came from is excepted, so the switch is off; on again lifts the exception.
+    expect(current.checked).toBe(false)
+    current.onChange(true)
+    expect(invoke).toHaveBeenCalledWith('blocking.setSiteException', {
+      site: 'https://news.example',
+      excepted: false
+    })
+    const again = row(privacy, 'tracking-site:https://news.example:block')
+    if (again.kind !== 'action') throw new Error('not an action')
+    again.onPress?.()
+    expect(invoke).toHaveBeenLastCalledWith('blocking.setSiteException', {
+      site: 'https://news.example',
+      excepted: false
+    })
+    const update = row(privacy, 'tracking-update-now')
+    if (update.kind !== 'action') throw new Error('not an action')
+    update.onPress?.()
+    expect(invoke).toHaveBeenLastCalledWith('blocking.updateLists', {})
+    const updateOne = row(privacy, 'tracking-list:easylist:update')
+    if (updateOne.kind !== 'action') throw new Error('not an action')
+    updateOne.onPress?.()
+    expect(invoke).toHaveBeenLastCalledWith('blocking.updateLists', { id: 'easylist' })
+
+    // The rest patches `settings.blocking`, keeping the rest of it.
+    const level = row(privacy, 'tracking-level')
+    if (level.kind !== 'value') throw new Error('not a value row')
+    level.onChange('strict')
+    const base = c.ctx.state.settings.blocking
+    expect(c.patches[0]).toEqual({ blocking: { ...base, level: 'strict' } })
+    const auto = row(privacy, 'tracking-auto-update')
+    if (auto.kind !== 'switch') throw new Error('not a switch')
+    auto.onChange(false)
+    expect(c.patches[1]).toEqual({ blocking: { ...base, autoUpdate: false } })
+    const useList = row(privacy, 'tracking-list:easylist:enabled')
+    if (useList.kind !== 'switch') throw new Error('not a switch')
+    useList.onChange(false)
+    expect(c.patches[2]).toMatchObject({ blocking: { lists: { easylist: false } } })
+    const useCustom = row(privacy, `tracking-list:${CUSTOM.id}:enabled`)
+    if (useCustom.kind !== 'switch') throw new Error('not a switch')
+    useCustom.onChange(false)
+    expect(c.patches[3]).toMatchObject({
+      blocking: { customLists: [{ ...CUSTOM, enabled: false }] }
+    })
+    const remove = row(privacy, `tracking-list:${CUSTOM.id}:remove`)
+    if (remove.kind !== 'action') throw new Error('not an action')
+    remove.onPress?.()
+    expect(c.patches[4]).toMatchObject({ blocking: { customLists: [] } })
+    expect(c.patches).toHaveLength(5)
+
+    // With the master switch off the dependent rows stay laid out at 40% and take no press.
+    const off = section(
+      'privacy',
+      blockingState({ blocking: { ...emptyBlockingStatus(), enabled: false } })
+    )
+    for (const id of [
+      'tracking-level',
+      'tracking-auto-update',
+      'tracking-update-now',
+      'tracking-add-list',
+      'tracking-add-site'
+    ])
+      expect(row(off, id).disabled, id).toBe(true)
+    expect(row(off, 'tracking-enabled').disabled).toBeUndefined()
+    // The counter reads the core's state; before the engine is ready it says so instead.
+    expect(row(off, 'tracking-blocked').description).toBe('Filter lists are loading')
   })
 
   it('Boosts offers the site the tab came from, and leaves for it', () => {

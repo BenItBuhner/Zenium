@@ -61,6 +61,10 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // and the default-browser prompts (defaultbrowser/*) are the chassis' prompt composition:
   // neither has rules of its own.
   [' * The first run on a phone', ' * Fading scroll edges'],
+  // Settings > Privacy and Security (components/overlays/PrivacySection.tsx) and the URL bar's
+  // blocked-count chip (components/urlbar/BlockedChip.tsx). Its block sits between the find
+  // bar's and the Default Browser range, so it is cut out before the find bar's, which ends there.
+  ['.zen-privacy {', '/*\n * Settings → Default Browser and the'],
   // Find in page, zoom and fullscreen: the docked find bar (components/content/FindBar.tsx).
   ['.zen-find-bar {', '/*\n * Settings → Default Browser and the'],
   // The phone page zoom sheet, docked under the live page, and its own instance of the stepper
@@ -542,5 +546,23 @@ describe('the fullscreen hint palette', () => {
       expect(palette.text).toBe(value(selector, from, '--v2-text'))
       expect(palette.fill).toBe(value(selector, from, '--v2-fill'))
     }
+  })
+})
+
+describe('live counts (§4)', () => {
+  it('are tabular wherever the request engine writes one, through the slot the count sits in', () => {
+    // "1,284 requests", "116,161 filters", "Updated 2 h ago": a count that changes under the
+    // user must not reflow its row. On a phone the counts sit in the Settings tab's value slot
+    // and group description; on desktop in the pane's card title, detail line and row
+    // descriptions; in the URL bar the chip's badge inherits it from the chip.
+    for (const selector of [
+      '.zen-settings-description',
+      '.zen-settings-group-description',
+      '.zen-privacy-card-title',
+      '.zen-privacy-muted',
+      '.zen-privacy-row-desc',
+      '.zen-v2-blocked-chip'
+    ])
+      expect(block(selector), selector).toMatch(/^ {2}font-variant-numeric: tabular-nums;$/m)
   })
 })
