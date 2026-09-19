@@ -42,7 +42,12 @@ export const SITE_SETTINGS_GROUPS: ReadonlyArray<{
   }
 ]
 
-const WORDS: Record<ContentDefault, string> = { ask: 'Ask', allow: 'Allow', deny: 'Block' }
+/** The one word for a default: what a row's menulist or a picker sheet's option says. */
+export const DEFAULT_WORDS: Record<ContentDefault, string> = {
+  ask: 'Ask',
+  allow: 'Allow',
+  deny: 'Block'
+}
 
 /**
  * What the menulist offers: the catalogue's choices for the row (Chrome offers no "allow every
@@ -51,7 +56,8 @@ const WORDS: Record<ContentDefault, string> = { ask: 'Ask', allow: 'Allow', deny
 export function defaultOptions(setting: ContentSetting): MenulistOption<ContentDefault>[] {
   return setting.choices.map((value) => ({
     value,
-    label: value === setting.builtInDefault ? `${WORDS[value]} (default)` : WORDS[value]
+    label:
+      value === setting.builtInDefault ? `${DEFAULT_WORDS[value]} (default)` : DEFAULT_WORDS[value]
   }))
 }
 
@@ -98,10 +104,14 @@ function order(permission: string): number {
   return at === -1 ? Number.MAX_SAFE_INTEGER : at
 }
 
+/** The catalogue's label for a stored permission ("Camera"; a qualified one names its target). */
+export function permissionName(permission: string): string {
+  return contentSetting(permission)?.label ?? permissionLabel(permission)
+}
+
 /** "Camera: allowed", "Pop-ups: blocked" (a qualified rule names its target: "Open zoommtg links: allowed"). */
 export function describeRule(rule: PermissionRule): string {
-  const label = contentSetting(rule.permission)?.label ?? permissionLabel(rule.permission)
-  return `${label}: ${rule.decision === 'allow' ? 'allowed' : 'blocked'}`
+  return `${permissionName(rule.permission)}: ${rule.decision === 'allow' ? 'allowed' : 'blocked'}`
 }
 
 export function hostOf(origin: string): string {

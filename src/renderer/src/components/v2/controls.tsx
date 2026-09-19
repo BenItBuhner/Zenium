@@ -31,11 +31,10 @@ export interface V2ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElem
 /**
  * The `.zen-v2-button` rule in main.css is the button (box, fill, ink, weight, press); it sits
  * outside the cascade layers and beats utilities, so nothing here restates it: `data-primary`
- * picks the accent fill, and the danger ink (secondary with `--v2-danger`, §6) is set inline,
- * the one place a colour still wins over that rule.
+ * picks the accent fill and `data-danger` the secondary in the danger ink (§6), both the rule's.
  */
 export const V2Button = React.forwardRef<HTMLButtonElement, V2ButtonProps>(function V2Button(
-  { className, variant = 'secondary', type = 'button', style, ...props },
+  { className, variant = 'secondary', type = 'button', ...props },
   ref
 ) {
   return (
@@ -43,11 +42,11 @@ export const V2Button = React.forwardRef<HTMLButtonElement, V2ButtonProps>(funct
       ref={ref}
       type={type}
       data-primary={variant === 'primary' ? '' : undefined}
+      data-danger={variant === 'danger' ? '' : undefined}
       className={cn(
         'zen-v2-button shrink-0 gap-2 outline-none disabled:pointer-events-none [&_svg]:pointer-events-none [&_svg]:shrink-0',
         className
       )}
-      style={variant === 'danger' ? { color: 'var(--v2-danger)', ...style } : style}
       {...props}
     />
   )

@@ -1,5 +1,12 @@
 import type { CSSProperties, JSX, ReactNode, RefObject } from 'react'
-import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useRef,
+  useState
+} from 'react'
 import { ChevronLeft, ChevronRight, LoaderCircle } from 'lucide-react'
 import type { Rect } from '@shared/types'
 import { useEscape } from '@renderer/hooks/useEscape'
