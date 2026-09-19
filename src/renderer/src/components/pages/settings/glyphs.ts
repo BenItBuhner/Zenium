@@ -10,7 +10,6 @@ import {
   Info,
   KeyRound,
   Keyboard,
-  KeyRound,
   Layers,
   LayoutGrid,
   Paintbrush,
