@@ -126,6 +126,7 @@ export class WebNotificationService {
       id,
       origin,
       tabId,
+      url,
       title: text(request.title),
       body: text(request.body),
       icon: typeof request.icon === 'string' && /^https?:/i.test(request.icon) ? request.icon : '',
@@ -147,11 +148,20 @@ export class WebNotificationService {
     this.post(tabId, { type: 'notification', action: 'shown', id: request.id })
   }
 
-  /** The host's word on a notification: the shade's tap (`click`) or swipe (`close`). */
-  onHostEvent(id: string, event: 'click' | 'close'): void {
+  /**
+   * The host's word on a notification: the shade's tap (`click`) or swipe (`close`), or the
+   * quiet `replaced` of one a later notification with the same tag took over. A tap on a
+   * notification this core never showed – it outlived the process – opens its page (`url`).
+   */
+  onHostEvent(id: string, event: 'click' | 'close' | 'replaced', url?: string): void {
     const entry = this.live.get(id)
-    if (!entry) return
+    if (!entry) {
+      if (event === 'click' && url && /^https?:/i.test(url))
+        this.browser.tabs.createTab({ url, active: true }, this.browser.focusedWindow())
+      return
+    }
     this.live.delete(id)
+    if (event === 'replaced') return
     if (event === 'click') this.reveal(entry)
     const view = this.browser.tabs.view(entry.tabId)
     if (view && !view.isDestroyed())

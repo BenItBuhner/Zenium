@@ -210,7 +210,12 @@ export function installNotificationPolyfill(transport: NotificationTransport): v
       }
       case 'click': {
         const n = message.id !== undefined ? live.get(message.id) : undefined
-        if (n) fire(n, 'click')
+        if (!n) return
+        fire(n, 'click')
+        // The shade takes a tapped card down (Android's autoCancel): the notification is closed.
+        live.delete(n.__zenId)
+        ;(n as unknown as { closed: boolean }).closed = true
+        fire(n, 'close')
         return
       }
       case 'close': {

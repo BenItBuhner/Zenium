@@ -198,19 +198,27 @@ class MediaSessions(private val host: Host, private val io: Executor) {
         if (had) updatePictureInPictureParams()
     }
 
-    /** The session, as the system and the notification see it now. */
+    /**
+     * The session, as the system and the notification see it now. Playing, the notification is
+     * the foreground service's – with the app's notifications turned off the card stays unseen,
+     * but the service still keeps the process, and the audio, running behind other apps.
+     */
     private fun publish(info: MediaSessionInfo) {
         session.setMetadata(metadataOf(info))
         session.setPlaybackState(playbackStateOf(info))
         if (!session.isActive) session.isActive = true
-        if (!manager.areNotificationsEnabled()) return
         val notification = notificationOf(info)
         if (info.playing) {
-            if (!MediaPlaybackService.foreground(context, notification)) runCatching { manager.notify(MediaPlaybackService.NOTIFICATION_ID, notification) }
+            if (!MediaPlaybackService.foreground(context, notification)) post(notification)
         } else {
             MediaPlaybackService.background(keepNotification = true)
-            runCatching { manager.notify(MediaPlaybackService.NOTIFICATION_ID, notification) }
+            post(notification)
         }
+    }
+
+    private fun post(notification: Notification) {
+        if (!manager.areNotificationsEnabled()) return
+        runCatching { manager.notify(MediaPlaybackService.NOTIFICATION_ID, notification) }
     }
 
     /** A control pressed (on the notification, the lock screen, a headset, the picture-in-picture window): the core's page carries it out. */
@@ -408,7 +416,7 @@ class MediaSessions(private val host: Host, private val io: Executor) {
     fun onUserLeaveHint() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S || !pictureInPictureSupported || destroyed) return
         val info = current ?: return
-        if (!MediaControls.autoEnterPictureInPicture(info) || activity.isInPictureInPictureMode) return
+        if (!autoEnter(info) || activity.isInPictureInPictureMode) return
         pictureInPictureRequested = info.tabId
         val entered = runCatching { activity.enterPictureInPictureMode(paramsOf(info, autoEnter = false)) }.getOrDefault(false)
         if (!entered) pictureInPictureRequested = null
@@ -440,11 +448,23 @@ class MediaSessions(private val host: Host, private val io: Executor) {
         if (dismissed && current?.tabId == tabId && current?.playing == true) act(MediaControl.PAUSE)
     }
 
+    /** A page's element went fullscreen or came back ([Host.enterFullscreen] / [Host.exitFullscreen]): the auto-enter rule follows. */
+    fun onFullscreenChanged() = updatePictureInPictureParams()
+
+    /**
+     * Chrome's rule for going into the small window by itself when the user leaves: a video
+     * playing fullscreen – by the page's own word ([MediaSessionInfo.fullscreen]) or the
+     * WebView's (the tab's element is in the host's fullscreen layer).
+     */
+    private fun autoEnter(info: MediaSessionInfo?): Boolean =
+        MediaControls.autoEnterPictureInPicture(info) ||
+            (info != null && info.video && info.playing && host.fullscreenTab?.tabId == info.tabId)
+
     /** The activity's params, kept current with the session: the auto-enter rule and the window's actions. */
     private fun updatePictureInPictureParams() {
         if (!pictureInPictureSupported || destroyed) return
         val info = current
-        runCatching { activity.setPictureInPictureParams(paramsOf(info, MediaControls.autoEnterPictureInPicture(info))) }
+        runCatching { activity.setPictureInPictureParams(paramsOf(info, autoEnter(info))) }
     }
 
     private fun paramsOf(info: MediaSessionInfo?, autoEnter: Boolean): PictureInPictureParams {

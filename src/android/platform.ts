@@ -52,6 +52,7 @@ import type {
   PlatformInfo,
   PrivacyHost,
   QrScanHost,
+  PrivateSessionHost,
   ReauthHost,
   SessionHost,
   ShellHost,
@@ -463,10 +464,20 @@ export interface HostEventPayloads {
     seekTime?: number
     seekOffset?: number
   }
-  /** The window entered (`active`) or left picture-in-picture, showing `tabId`'s page (`PictureInPicture.kt`). */
-  'media.pip': { tabId: string; active: boolean }
-  /** The shade's tap (`click`) or swipe (`close`) on a page's notification (`WebNotifications.kt`). */
-  'notification.event': { id: string; event: 'click' | 'close' }
+  /** The window entered (`active`) or left picture-in-picture, showing `tabId`'s page (`MediaSessions.kt`). */
+  'media.pip': { tabId: string; active: boolean; dismissed?: boolean }
+  /** A tap on the media notification: the session's tab comes to the front (`MediaSessions.kt`). */
+  'media.reveal': { tabId: string }
+  /**
+   * The shade's tap (`click`) or swipe (`close`) on a page's notification, or its quiet
+   * replacement by a later one with the same tag (`WebNotifications.kt`); `url` is the page's,
+   * for a tap on a notification that outlived the core.
+   */
+  'notification.event': { id: string; event: 'click' | 'close' | 'replaced'; url?: string }
+  /** The user blocked a site's notification channel in the system settings: the site's permission follows. */
+  'notification.blocked': { origin: string }
+  /** "Close all private tabs" pressed on the private session's notification (`PrivateSession.kt`). */
+  'private.closeAll': Record<string, never>
 }
 
 /**
@@ -831,6 +842,7 @@ export class AndroidPlatform implements Platform {
   readonly qrScan: QrScanHost
   readonly mediaSession: MediaSessionHost
   readonly webNotifications: WebNotificationHost
+  readonly privateSession: PrivateSessionHost
   /** The new tab page's picked wallpaper, in its own document (`newtab-wallpaper.json`). */
   readonly newTabBackground: AndroidNewTabBackground
   browser!: Browser
@@ -1053,6 +1065,9 @@ export class AndroidPlatform implements Platform {
       close: (id) => bridge.send('notification.close', { id }),
       forgetOrigin: (origin) => bridge.send('notification.forgetOrigin', { origin }),
       ensureAllowed: () => bridge.call<boolean>('notification.ensureAllowed')
+    }
+    this.privateSession = {
+      setOpenTabs: (count) => bridge.send('private.setOpenTabs', { count })
     }
     this.events.send('insets', boot.insets)
   }
@@ -1385,12 +1400,32 @@ export class AndroidPlatform implements Platform {
           browser.mediaSession.onPictureInPicture(p.tabId, p.active === true)
         return
       }
-      case 'notification.event': {
-        const p = payload as Partial<HostEventPayloads['notification.event']>
-        if (typeof p.id === 'string' && (p.event === 'click' || p.event === 'close'))
-          browser.webNotifications.onHostEvent(p.id, p.event)
+      case 'media.reveal': {
+        const p = payload as Partial<HostEventPayloads['media.reveal']>
+        if (typeof p.tabId === 'string') browser.revealTab(p.tabId)
         return
       }
+      case 'notification.event': {
+        const p = payload as Partial<HostEventPayloads['notification.event']>
+        if (
+          typeof p.id === 'string' &&
+          (p.event === 'click' || p.event === 'close' || p.event === 'replaced')
+        )
+          browser.webNotifications.onHostEvent(
+            p.id,
+            p.event,
+            typeof p.url === 'string' ? p.url : undefined
+          )
+        return
+      }
+      case 'notification.blocked': {
+        const p = payload as Partial<HostEventPayloads['notification.blocked']>
+        if (typeof p.origin === 'string') browser.permissions.set('notifications', p.origin, 'deny')
+        return
+      }
+      case 'private.closeAll':
+        browser.tabs.closePrivateTabs(this.window)
+        return
       case 'view.adopt': {
         const p = payload as HostEventPayloads['view.adopt']
         // Kotlin created the WebView for a popup. Pick the tab id first and bind it before the

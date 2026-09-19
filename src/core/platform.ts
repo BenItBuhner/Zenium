@@ -1620,6 +1620,8 @@ export interface WebNotificationRequest {
   /** The origin of the page (the channel's identity and the notification's sub text). */
   origin: string
   tabId: string
+  /** The page's URL: what a tap opens when the tab (or the core) is gone by then. */
+  url: string
   title: string
   body: string
   /** Absolute URL of the icon, '' for none; the host fetches and decodes it. */
@@ -1652,6 +1654,16 @@ export interface WebNotificationHost {
    * site was allowed, so the first notification is not lost to a prompt. Resolves the grant.
    */
   ensureAllowed(): Promise<boolean>
+}
+
+/**
+ * The private session as a host shows it outside the chrome (Android: Chrome's "Close all
+ * Incognito tabs" notification while private tabs are open, gone with the last of them). Hosts
+ * with private windows leave it out; the window is the session's presence there.
+ */
+export interface PrivateSessionHost {
+  /** How many private tabs are open now (0: the session ended, the wipe is on its way). */
+  setOpenTabs(count: number): void
 }
 
 export type { MediaSessionAction }
@@ -1703,6 +1715,8 @@ export interface Platform {
   readonly mediaSession?: MediaSessionHost
   /** Web Notifications for pages of a host whose engine lacks the API (Android). */
   readonly webNotifications?: WebNotificationHost
+  /** The private session's presence outside the chrome (Android's notification); optional. */
+  readonly privateSession?: PrivateSessionHost
   /** Source of Mozilla's Readability library for Reader View, or null when unavailable. */
   readabilitySource(file: 'Readability.js' | 'Readability-readerable.js'): string | null
   /** Offline page translation; hosts without it report the feature as unavailable. */

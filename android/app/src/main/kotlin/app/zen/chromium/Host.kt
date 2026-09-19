@@ -71,8 +71,10 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
 
     init {
         // A private session the last run did not get to end (a crash, the system killing the app)
-        // ends now, before any tab exists and while its profile is free to be deleted.
+        // ends now, before any tab exists and while its profile is free to be deleted; the card
+        // that offered to close its tabs goes with it.
         Profiles.wipePrivate(activity)
+        PrivateSession.dismissStale(activity)
     }
 
     /** The launcher icon colour (one enabled `activity-alias`), driven by Settings → Look and Feel. */
@@ -96,6 +98,12 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     }
     /** The share sheet, in both directions (after `io`: it fetches on it). */
     val share = Share(this, io)
+    /** The pages' media on the OS controls: the media notification, the lock screen, picture-in-picture (`media.*`). */
+    val media = MediaSessions(this, io)
+    /** The pages' Web Notifications on the shade, one channel per site (`notification.*`). */
+    val webNotifications = WebNotifications(this, io)
+    /** The private session's card while private tabs are open (`private.*`). */
+    val privateSession = PrivateSession(this)
     /** Links that leave the web: held here while the core (and the user) decide. */
     override val externalProtocols = ExternalProtocols(this)
     /** Device credential and biometric prompts, and the Keystore-wrapped password vault key. */
@@ -111,6 +119,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     val qrScan = QrScan(this, root)
     override var fullscreenTab: TabWebView? = null
         private set
+    /** The page's fullscreen element as the WebView renders it (the view in the fullscreen layer), while there is one. */
+    val fullscreenView: View? get() = fullscreenLayer.getChildAt(0)
     private var fullscreenCallback: WebChromeClient.CustomViewCallback? = null
     override var immersive = false
         private set
@@ -480,6 +490,14 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "qr.layout" -> { qrScan.layout(args); reply(null) }
             "qr.setTorch" -> { qrScan.setTorch(args.bool("on")); reply(null) }
             "qr.openSettings" -> { qrScan.openSettings(); reply(null) }
+            // --- the OS media controls, the pages' notifications, the private session -------------
+            "media.update" -> { media.update(args.optJSONObject("session")); reply(null) }
+            "media.pip" -> media.enterPictureInPicture(args.obj("session"), reply)
+            "notification.show" -> webNotifications.show(args, reply)
+            "notification.close" -> { webNotifications.close(args.str("id")); reply(null) }
+            "notification.forgetOrigin" -> { webNotifications.forgetOrigin(args.str("origin")); reply(null) }
+            "notification.ensureAllowed" -> webNotifications.ensureAllowed(reply)
+            "private.setOpenTabs" -> { privateSession.setOpenTabs(args.num("count").toInt()); reply(null) }
 
             // --- AI agents (MCP server) ------------------------------------------------------------
             "agent.start" -> reply(agentServer.start(args.num("port", 41735.0).toInt(), args.bool("lan")))
@@ -550,8 +568,11 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         fullscreenLayer.addView(view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         fullscreenLayer.visibility = View.VISIBLE
         setSystemBarsHidden(true)
+        // The fullscreen layer covers the picture-in-picture window as it is; the tab's view need not.
+        if (tabs.filling == tab.tabId) tabs.fillWindow(null)
         chrome.viewEvent(tab.tabId, "enterFullscreen", null)
         back.refresh()
+        media.onFullscreenChanged()
     }
 
     override fun exitFullscreen(tab: TabWebView) {
@@ -562,9 +583,18 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         fullscreenCallback = null
         fullscreenTab = null
         if (!immersive) setSystemBarsHidden(false)
+        // Out of fullscreen while the window is the small one: the tab's own view takes it over.
+        if (media.pictureInPictureTab == tab.tabId && tabs.get(tab.tabId) != null) tabs.fillWindow(tab.tabId)
         chrome.viewEvent(tab.tabId, "leaveFullscreen", null)
         back.refresh()
+        media.onFullscreenChanged()
     }
+
+    /** The user is leaving for Home or Recents ([MainActivity.onUserLeaveHint]): Android 8-11's way into picture-in-picture. */
+    fun onUserLeaveHint() = media.onUserLeaveHint()
+
+    /** The window entered or left picture-in-picture ([MainActivity.onPictureInPictureModeChanged]). */
+    fun onPictureInPictureModeChanged(active: Boolean) = media.onPictureInPictureModeChanged(active)
 
     /**
      * The window left the screen (launcher, another app, the lock screen). Fullscreen is a way of
@@ -1126,6 +1156,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     fun destroy() {
         extensions.destroy()
         cancelProbe()
+        media.destroy()
+        webNotifications.destroy()
+        privateSession.destroy()
         voice.destroy()
         qrScan.destroy()
         shortcuts.destroy()

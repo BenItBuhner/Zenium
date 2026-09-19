@@ -695,6 +695,15 @@ export class Browser {
   /** A private tab closed (hosts with `capabilities.privateTabs`). */
   onPrivateTabClosed(): void {
     this.endPrivateSessionIfOver()
+    this.syncPrivateSession()
+  }
+
+  /**
+   * A private tab opened or closed: the host's presence for the session (Android's "Close all
+   * private tabs" notification) follows the count.
+   */
+  syncPrivateSession(): void {
+    this.platform.privateSession?.setOpenTabs(this.tabs.privateTabs().length)
   }
 
   /**

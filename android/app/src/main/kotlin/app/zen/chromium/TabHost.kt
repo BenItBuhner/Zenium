@@ -117,6 +117,7 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
 
     /** Tear a view down (already removed from [views]); the chrome is not told. */
     private fun drop(view: TabWebView) {
+        if (filled?.tabId == view.tabId) filled = null
         host.exitFullscreen(view)
         view.backTransition?.abort()
         view.cover.reset()
@@ -162,28 +163,43 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         val y = (rect.num("y") * d).toInt()
         val w = (rect.num("width") * d).toInt().coerceAtLeast(0)
         val h = (rect.num("height") * d).toInt().coerceAtLeast(0)
-        val lp = (view.layoutParams as? FrameLayout.LayoutParams) ?: FrameLayout.LayoutParams(w, h)
+        // A view filling the window keeps the chrome's bounds for when it is put back.
+        val held = filled?.takeIf { it.tabId == tabId }
+        val lp = held?.bounds ?: (view.layoutParams as? FrameLayout.LayoutParams) ?: FrameLayout.LayoutParams(w, h)
         if (lp.leftMargin == x && lp.topMargin == y && lp.width == w && lp.height == h) return
         lp.leftMargin = x
         lp.topMargin = y
         lp.width = w
         lp.height = h
-        view.layoutParams = lp
+        if (held == null) view.layoutParams = lp
     }
 
     fun setRadius(tabId: String, radiusCss: Double) {
-        views[tabId]?.setRadius((radiusCss * density).toFloat())
+        val px = (radiusCss * density).toFloat()
+        val held = filled?.takeIf { it.tabId == tabId }
+        if (held != null) held.radiusPx = px else views[tabId]?.setRadius(px)
     }
 
     /** Chrome messages cover these strips (CSS px) of the view's edges; see `ContentCover`. */
     fun setCover(tabId: String, cover: JSONObject) {
         val view = views[tabId] ?: return
+        val held = filled?.takeIf { it.tabId == tabId }
+        if (held != null) {
+            held.coverTop = cover.num("top").toFloat()
+            held.coverBottom = cover.num("bottom").toFloat()
+            return
+        }
         // A view that is not showing has nothing to animate: it takes the value for when it is.
         view.cover.set(cover.num("top").toFloat(), cover.num("bottom").toFloat(), snap = view.visibility != View.VISIBLE)
     }
 
     fun setVisible(tabId: String, visible: Boolean) {
         val view = views[tabId] ?: return
+        val held = filled?.takeIf { it.tabId == tabId }
+        if (held != null) {
+            held.visible = visible
+            return
+        }
         // GONE views neither draw nor receive input; JS keeps running so background audio, like
         // in Zen, carries on until the core unloads the tab.
         val next = if (visible) View.VISIBLE else View.GONE
@@ -192,5 +208,44 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
 
     fun bringToFront(tabId: String) {
         views[tabId]?.bringToFront()
+    }
+
+    // --- picture-in-picture ----------------------------------------------------------------------
+
+    /** The tab whose view fills the window ([fillWindow]), with what it had before, to put back. */
+    private class Filled(val tabId: String, val bounds: FrameLayout.LayoutParams, var visible: Boolean, var radiusPx: Float, var coverTop: Float, var coverBottom: Float)
+    private var filled: Filled? = null
+
+    /** The tab whose view fills the window right now, or null. */
+    val filling: String? get() = filled?.tabId
+
+    /**
+     * The window is (or is about to be) the picture-in-picture one: `tabId`'s view alone fills it
+     * – over the chrome, without its corners, its covers or the bounds the core lays it out at
+     * (which keep arriving and are held for later) – so the small window shows nothing but the
+     * page, whose video the core lays over the viewport. `null` puts the view back where the
+     * chrome had it. A view that is gone by then is simply not restored.
+     */
+    fun fillWindow(tabId: String?) {
+        val before = filled
+        if (before != null) {
+            filled = null
+            val view = views[before.tabId]
+            if (view != null) {
+                view.layoutParams = before.bounds
+                view.setRadius(before.radiusPx)
+                view.cover.set(before.coverTop, before.coverBottom, snap = true)
+                view.visibility = if (before.visible) View.VISIBLE else View.GONE
+            }
+        }
+        if (tabId == null) return
+        val view = views[tabId] ?: return
+        val lp = (view.layoutParams as? FrameLayout.LayoutParams) ?: FrameLayout.LayoutParams(0, 0)
+        filled = Filled(tabId, FrameLayout.LayoutParams(lp), view.visibility == View.VISIBLE, view.radiusPx, view.cover.topTarget, view.cover.bottomTarget)
+        view.layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        view.setRadius(0f)
+        view.cover.set(0f, 0f, snap = true)
+        view.visibility = View.VISIBLE
+        view.bringToFront()
     }
 }

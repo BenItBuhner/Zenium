@@ -332,6 +332,12 @@
             android:name=".ShortcutPinnedReceiver"
             android:exported="false" />
 
+        <!-- "Close all private tabs" on the private session's notification (PrivateSession.kt); in the
+             manifest so a press on a card that outlived the process still takes the card down. -->
+        <receiver
+            android:name=".PrivateSessionReceiver"
+            android:exported="false" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.files"

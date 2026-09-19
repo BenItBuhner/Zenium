@@ -554,6 +554,15 @@ export function createPreviewBridge(): NativeBridge {
       setTimeout(() => URL.revokeObjectURL(a.href), 1000)
       return true
     },
+    // The OS media controls and the pages' notifications (MediaSessions.kt, WebNotifications.kt,
+    // PrivateSession.kt) have no stand-in on the desktop: the session is taken, nothing shows.
+    'media.update': () => undefined,
+    'media.pip': () => false,
+    'notification.show': () => true,
+    'notification.close': () => undefined,
+    'notification.forgetOrigin': () => undefined,
+    'notification.ensureAllowed': () => true,
+    'private.setOpenTabs': () => undefined,
     // Passwords: the Android Keystore and BiometricPrompt stand-ins (see `vaultMode`). Refusals
     // answer `{ failure, message }` the way VaultKeystore.kt does.
     'vault.available': () => vaultMode !== 'none',

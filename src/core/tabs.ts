@@ -1036,6 +1036,7 @@ export class TabManager {
     } else if (opts.load !== false && tab.url !== BLANK_URL) {
       this.ensureLoaded(tab.id, win, { background: true })
     }
+    if (this.isPrivate(tab)) this.browser.syncPrivateSession()
     this.browser.state.commit()
     return tab
   }
@@ -1076,6 +1077,7 @@ export class TabManager {
     tab.discarded = false
     delete tab.sleepSavedMb
     if (opts.active) this.activateTab(tab.id, win)
+    if (this.isPrivate(tab)) this.browser.syncPrivateSession()
     this.browser.state.commit()
     win.relayout()
     return { tab, events: this.eventsFor(tab.id) }
