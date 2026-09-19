@@ -1,6 +1,5 @@
 import type { FormEvent, JSX, ReactNode, Ref } from 'react'
 import { useEffect, useId, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { CreditCard, MapPin, type LucideIcon } from 'lucide-react'
 import type {
   AddressEntry,

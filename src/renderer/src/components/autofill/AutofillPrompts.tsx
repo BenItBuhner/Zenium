@@ -1,6 +1,5 @@
 import type { FocusEvent as ReactFocusEvent, JSX, ReactNode } from 'react'
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { useContext, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { CreditCard, Fingerprint, KeyRound, MapPin, type LucideIcon } from 'lucide-react'
 import type {
   AutofillPrompt,
@@ -69,10 +68,12 @@ const PROMPT_POP_MS = 180
  * §9.23 title block with the site's favicon as its glyph, no scrim), put away behind the chip
  * by Escape or a press outside and brought back by it (Chrome's key icon); the passkey chooser
  * is a modal dialog in the frame (`FrameDialogHost`). On phones every one is a sheet on the
- * `BottomSheet` chassis: the same composition as the desktop surface in a sheet's chrome
- * (§9.23 – grip strip, the title block with its 20 px glyph and the description, the body, the
- * full-width footer actions of §9.11, no 48 header); dragging it away is "not now". Answers go
- * to the core (`autofill.respond`), which saves and moves on to the next prompt.
+ * `BottomSheet` chassis, hosted by the same frame dialog host (`useFrameDialog` with
+ * `ownScrim`: the sheet draws the stack's scrim and recedes the page itself): the same
+ * composition as the desktop surface in a sheet's chrome (§9.23 – grip strip, the title block
+ * with its 20 px glyph and the description, the body, the full-width footer actions of §9.11,
+ * no 48 header); dragging it away is "not now". Answers go to the core (`autofill.respond`),
+ * which saves and moves on to the next prompt.
  */
 export function AutofillPrompts({ state }: { state: UIState }): JSX.Element | null {
   const prompt = currentAutofillPrompt(state)
@@ -234,7 +235,10 @@ function titleGlyph(copy: PromptCopy, favicon: string | null): ReactNode {
   return <img src={favicon} alt="" draggable={false} />
 }
 
-/** A static row showing what would be saved: glyph, title line, description line (§9.2). */
+/**
+ * A static row showing what would be saved: glyph, title line, description line (§9.2) – the
+ * shared row, no target, so `data-static` (§9.34).
+ */
 function PreviewRow({
   icon: Icon,
   title,
@@ -245,7 +249,7 @@ function PreviewRow({
   subtitle: string
 }): JSX.Element {
   return (
-    <div className="zen-v2-af-row zen-v2-af-preview">
+    <div className="zen-v2-row zen-v2-af-row zen-v2-af-preview" data-static="">
       <span className="zen-v2-af-row-icon">
         <Icon aria-hidden />
       </span>
@@ -356,8 +360,10 @@ function cardBody(prompt: SaveCardPrompt): { body: ReactNode; actions: Action[] 
 
 /**
  * The passkey chooser's rows: one per account. The first (most recently used) is active and takes
- * the focus as the chooser opens, in the dialog and in the sheet alike (§9.22: a panel of rows
- * focuses its first row; phone sheets behave the same).
+ * the focus as the chooser opens (§9.22: a panel of rows focuses its first row). In the desktop
+ * dialog that is this component's own rule – `FrameDialogHost` moves no focus; in the phone
+ * sheet the chassis does it (#172: the selected option takes the focus as the sheet opens), so
+ * the sheet's rows leave it to the chassis.
  */
 function PasskeyRows({
   prompt,
@@ -368,9 +374,10 @@ function PasskeyRows({
 }): JSX.Element {
   const [active, setActive] = useState(0)
   const first = useRef<HTMLButtonElement>(null)
+  const sheet = useContext(InSheet)
   useEffect(() => {
-    first.current?.focus({ preventScroll: true })
-  }, [])
+    if (!sheet) first.current?.focus({ preventScroll: true })
+  }, [sheet])
   const onKeyDown = (e: React.KeyboardEvent): void => {
     const count = prompt.accounts.length
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -398,7 +405,7 @@ function PasskeyRows({
           role="option"
           aria-selected={active === i}
           data-active={active === i || undefined}
-          className="zen-v2-af-row"
+          className="zen-v2-row zen-v2-af-row"
           tabIndex={active === i || (active < 0 && i === 0) ? 0 : -1}
           onPointerEnter={() => setActive(i)}
           onFocus={() => setActive(i)}
@@ -685,7 +692,10 @@ function PromptDialog({
  * A prompt sheet (§9.23): no 48 header – the grip strip, then the chassis' title block first in
  * the body (its glyph the site's favicon for the login prompts, 20 px on the phone; the
  * description 15 at 69% 4 under the title), the body, the §9.11 footer whose peers share the
- * width.
+ * width. A modal dialog of the frame: it mounts in `FrameDialogHost`'s slot as the sheet on the
+ * chassis (`hosted`, `useFrameDialog` with `ownScrim` – the sheet's scrim is the stack's, its
+ * press the dismissal), and the chassis owns the focus on open (the selected passkey row, else
+ * the first control), the Tab trap, the inert chrome and the keyboard lift under the username.
  */
 function PromptSheet({
   prompt,
@@ -706,6 +716,7 @@ function PromptSheet({
     answer.current = response
     sheet.current?.dismiss()
   }
+  useFrameDialog({ onScrimPress: () => leave(null), ownScrim: true })
   useBackSurface({
     name: 'autofill-prompt',
     onProgress: (p) => sheet.current?.backProgress(p),
@@ -769,27 +780,30 @@ function PromptSheet({
       break
   }
 
-  return createPortal(
-    <BottomSheet
-      ref={sheet}
-      onDismissed={() => respond(answer.current)}
-      handleLabel="Dismiss"
-      className="zen-v2-af zen-v2-af-sheet"
-      fitContent
-    >
-      <InSheet.Provider value>
-        <div className="zen-v2-af" data-surface="page" aria-labelledby={titleId}>
-          <SheetTitleBlock
-            id={titleId}
-            icon={copy.icon}
-            glyph={titleGlyph(copy, favicon)}
-            title={copy.title}
-            description={copy.description}
-          />
-          {content}
-        </div>
-      </InSheet.Provider>
-    </BottomSheet>,
-    document.body
+  return (
+    <div className="zen-v2-af absolute inset-0" data-surface="page">
+      <BottomSheet
+        ref={sheet}
+        hosted
+        onDismissed={() => respond(answer.current)}
+        handleLabel="Dismiss"
+        labelledBy={titleId}
+        className="zen-v2-af zen-v2-af-sheet"
+        fitContent
+      >
+        <InSheet.Provider value>
+          <div className="zen-v2-af" data-surface="page">
+            <SheetTitleBlock
+              id={titleId}
+              icon={copy.icon}
+              glyph={titleGlyph(copy, favicon)}
+              title={copy.title}
+              description={copy.description}
+            />
+            {content}
+          </div>
+        </InSheet.Provider>
+      </BottomSheet>
+    </div>
   )
 }

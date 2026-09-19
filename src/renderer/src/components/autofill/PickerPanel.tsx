@@ -191,7 +191,7 @@ export function PickerPanel({
         <div className="zen-v2-af-rule" role="separator" />
         <button
           type="button"
-          className="zen-v2-af-row"
+          className="zen-v2-row zen-v2-af-row"
           data-nav=""
           data-active={active === picker.items.length || undefined}
           disabled={busy}
@@ -242,7 +242,7 @@ function Row({
       role="option"
       aria-selected={active}
       data-active={active || undefined}
-      className="zen-v2-af-row"
+      className="zen-v2-row zen-v2-af-row"
       disabled={disabled}
       onPointerEnter={onHover}
       onClick={onPick}
