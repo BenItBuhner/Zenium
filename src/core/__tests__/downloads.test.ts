@@ -743,6 +743,53 @@ describe('interrupt reasons', () => {
     expect(item.error).toBeUndefined()
     expect(item.errorMessage).toBeUndefined()
   })
+
+  it('reclassify refines an interrupted row’s reason, persists it and says so; nothing else moves', () => {
+    const item = begin(h)
+    h.service.finish(item.id, 'interrupted', { canResume: false, error: 'server-failed' })
+    expect(item.errorMessage).toBe('Site wasn’t available')
+    h.changes.length = 0
+    h.service.reclassify(item.id, 'server-bad-content')
+    expect(item).toMatchObject({
+      state: 'interrupted',
+      error: 'server-bad-content',
+      errorMessage: 'File wasn’t available on site',
+      canResume: false
+    })
+    expect(h.changes).toEqual([{ id: item.id, kind: 'progress' }])
+    expect(stored(h).items[0]).toMatchObject({ error: 'server-bad-content' })
+    // The same reason again is not news.
+    h.service.reclassify(item.id, 'server-bad-content')
+    expect(h.changes).toHaveLength(1)
+    // A row that went on (retried) or finished keeps its own state.
+    h.service.retry(item.id)
+    h.service.begin({
+      url: item.url,
+      filename: item.filename,
+      totalBytes: 0,
+      mimeType: '',
+      resumes: item.id
+    })
+    h.service.reclassify(item.id, 'server-forbidden')
+    expect(item.state).toBe('progressing')
+    expect(item.error).toBeUndefined()
+    h.service.finish(item.id, 'completed', { receivedBytes: 1000 })
+    h.service.reclassify(item.id, 'server-forbidden')
+    expect(item.error).toBeUndefined()
+    h.service.reclassify('dl_nobody', 'server-forbidden')
+  })
+
+  it('a dead link is noted per tab and URL, taken once, and forgotten after a while', () => {
+    h.service.noteDeadLink('t1', 'https://example.com/gone.zip')
+    h.service.noteDeadLink(null, 'https://example.com/untabbed.zip')
+    expect(h.service.takeDeadLink('t2', 'https://example.com/gone.zip')).toBe(false)
+    expect(h.service.takeDeadLink('t1', 'https://example.com/other.zip')).toBe(false)
+    expect(h.service.takeDeadLink('t1', 'https://example.com/gone.zip')).toBe(true)
+    expect(h.service.takeDeadLink('t1', 'https://example.com/gone.zip')).toBe(false)
+    h.service.noteDeadLink('t1', 'https://example.com/gone.zip')
+    h.clock.now += 10_001
+    expect(h.service.takeDeadLink('t1', 'https://example.com/gone.zip')).toBe(false)
+  })
 })
 
 describe('the file on disk: deleteFile, exists and fileMissing', () => {

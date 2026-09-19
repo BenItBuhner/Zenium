@@ -15,9 +15,10 @@ import kotlin.random.Random
  * through [TextEngine.parse], the connectivity-probes golden fixture, two `ext:` sets shaped
  * like uBlock Origin Lite's static and dynamic rules (big `requestDomains`, `||host^`, regexes
  * with optional separators, initiator-only and excluded-only conditions, tab ids, methods, case
- * sensitivity, `|` literals, partitions), a `user` set and `builtin:site-exceptions`; the index
- * loaded through [IndexReader] as the engine loads it and through [RuleSetInfo.parse] as the
- * fixtures do. Every decision must be the same rule, target and filter, not just the same
+ * sensitivity, `|` literals, partitions, response header conditions the parsers skip), a `user`
+ * set and `builtin:site-exceptions`; the index loaded through [IndexReader] as the engine loads
+ * it and through [RuleSetInfo.parse] as the fixtures do. Every decision must be the same rule,
+ * target and filter, not just the same
  * effect: `matchedRule` feeds `getMatchedRules` and `onRuleMatchedDebug`, and two equal
  * redirects must name the target the desktop names. Adopted from the services review of #164.
  */
@@ -54,6 +55,18 @@ class IndexDifferentialTest {
         val a = JSONObject().put("type", action)
         if (redirect != null) a.put("redirect", JSONObject().put("url", redirect))
         return JSONObject().put("id", id).put("priority", priority).put("action", a).put("condition", condition)
+    }
+
+    /** One `HeaderCondition` on `header`, on its presence alone or on `values`. */
+    private fun headerConditions(header: String, vararg values: String): JSONArray {
+        val condition = JSONObject().put("header", header)
+        if (values.isNotEmpty()) condition.put("values", JSONArray(values.toList()))
+        return JSONArray().put(condition)
+    }
+
+    private fun isHeaderConditioned(rule: JSONObject): Boolean {
+        val c = rule.optJSONObject("condition") ?: return false
+        return c.has("responseHeaders") || c.has("excludedResponseHeaders")
     }
 
     private fun entry(id: String, source: String, priority: Int, rules: JSONArray, partitions: List<String>? = null, updatedAt: Long = 0L): JSONObject {
@@ -96,6 +109,10 @@ class IndexDifferentialTest {
         a.put(rule(id++, "block", JSONObject().put("urlFilter", "|https://").put("requestMethods", JSONArray(listOf("post"))).put("resourceTypes", JSONArray(listOf("xmlhttprequest")))))
         a.put(rule(id++, "block", JSONObject().put("urlFilter", "^track|pixel^")))  // `|` literal inside a filter
         a.put(rule(id++, "block", JSONObject().put("urlFilter", "*/img/*banner*").put("excludedNonUniqueHosts", true)))
+        // Header-conditioned rules need the desktop's headers-received stage: both readers parse
+        // them out, so they count in `declared` but never in the snapshot.
+        a.put(rule(id++, "block", JSONObject().put("urlFilter", "||${hosts[13]}^").put("responseHeaders", headerConditions("x-ads"))))
+        a.put(rule(id++, "allow", JSONObject().put("requestDomains", JSONArray(listOf(hosts[14]))).put("excludedResponseHeaders", headerConditions("content-type", "text/html*")), priority = 3))
         for (i in 0 until 1200) {
             val h = host()
             val cond = JSONObject()
@@ -141,6 +158,8 @@ class IndexDifferentialTest {
             if (action == "allowAllRequests") cond.put("resourceTypes", JSONArray(listOf("main_frame", "sub_frame")))
             b.put(rule(id++, action, cond, 1 + random.nextInt(3), if (action == "redirect") "https://safe.example/b/$i" else null))
         }
+        // Stylus's `.user.css` install redirect, conditioned on the response's content type.
+        b.put(rule(id++, "redirect", JSONObject().put("regexFilter", "\\.user\\.css$").put("resourceTypes", JSONArray(listOf("main_frame"))).put("responseHeaders", headerConditions("content-type", "text/css*")), redirect = "https://safe.example/install-usercss"))
         val sets = JSONArray()
         sets.put(JSONObject(File(repoRoot(), "android/app/src/test/resources/blocking/connectivity-probes.json").readText()))
         sets.put(entry("ext:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:static:ruleset_1", "dnr", 2999, a, partitions = listOf("default", "work"), updatedAt = 1789633817801L))
@@ -174,10 +193,17 @@ class IndexDifferentialTest {
             assertEquals("priority of ${s.id}", d.priority, s.priority)
         }
         val declared = (0 until setsJson.length()).sumOf { setsJson.getJSONObject(it).getJSONArray("rules").length() }
+        // Header-conditioned rules are the desktop's alone: `ruleCount` runs short of `declared`
+        // by exactly those, through the streaming reader and the document parser alike.
+        val headerConditioned = (0 until setsJson.length()).sumOf { s ->
+            val rules = setsJson.getJSONObject(s).getJSONArray("rules")
+            (0 until rules.length()).count { isHeaderConditioned(rules.getJSONObject(it)) }
+        }
+        assertEquals("header-conditioned rules in the corpus", 3, headerConditioned)
         val text = TextEngine.parse(texts)
         val snap = EngineSnapshot(streamed, text)
-        assertEquals("every declared rule compiled (declared $declared)", declared, snap.ruleCount)
-        assertEquals("the document parser's sets decide the same", declared, EngineSnapshot(document, text).ruleCount)
+        assertEquals("every declared rule but the header-conditioned compiled (declared $declared)", declared - headerConditioned, snap.ruleCount)
+        assertEquals("the document parser's sets decide the same", declared - headerConditioned, EngineSnapshot(document, text).ruleCount)
         assertTrue("filters loaded: ${snap.filterCount}", snap.filterCount > 50_000)
 
         val words = listOf("pixel", "track", "ad", "ads", "adsx", "banner", "js", "img", "api", "beacon", "beacon-12", "lib", "main", "generate_204", "collect", "stats", "statsx", "Banner", "trackXpixel", "track|pixel")

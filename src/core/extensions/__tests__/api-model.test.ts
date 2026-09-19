@@ -24,6 +24,7 @@ import {
 } from '../api/storage'
 import { msUntilNext, rescheduleAlarm, scheduleAlarm, splitDue } from '../api/alarms'
 import {
+  availablePermissions,
   manifestPermissionSets,
   missingPermissions,
   normalizePermissionSet,
@@ -306,6 +307,35 @@ describe('permission grants', () => {
       required: { permissions: ['storage'], origins: ['<all_urls>', 'http://c.com/*'] },
       optional: { permissions: ['cookies'], origins: ['https://d.com/*'] }
     })
+  })
+
+  it("leaves out the permissions Chrome refuses to the manifest's version", () => {
+    // Stylus MV3 declares webRequestBlocking and probes for it; Chrome answers false.
+    const stylusLike: ExtensionManifest = {
+      ...manifest,
+      permissions: ['webRequest', 'webRequestBlocking', 'scripting'],
+      optional_permissions: ['webRequestBlocking', 'bookmarks']
+    }
+    expect(manifestPermissionSets(stylusLike)).toEqual({
+      required: { permissions: ['webRequest', 'scripting'], origins: ['https://a.com/*'] },
+      optional: { permissions: ['bookmarks'], origins: ['*://*.b.com/*'] }
+    })
+    const legacy: ExtensionManifest = {
+      ...mv2,
+      permissions: ['webRequest', 'webRequestBlocking', 'scripting', 'sidePanel', '<all_urls>']
+    }
+    expect(manifestPermissionSets(legacy).required).toEqual({
+      permissions: ['webRequest', 'webRequestBlocking'],
+      origins: ['<all_urls>']
+    })
+    expect(availablePermissions(['webRequestBlocking', 'storage', 'offscreen'], 3)).toEqual([
+      'storage',
+      'offscreen'
+    ])
+    expect(availablePermissions(['webRequestBlocking', 'storage', 'offscreen'], 2)).toEqual([
+      'webRequestBlocking',
+      'storage'
+    ])
   })
 
   it('normalises, contains, removes and finds missing entries', () => {

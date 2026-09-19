@@ -99,6 +99,11 @@ export interface ApiHost {
     options: { message: string; detail?: string; okLabel: string; danger?: boolean },
     win?: ZenWindow
   ): Promise<boolean>
+  /**
+   * Chrome's "wants additional permissions" prompt for `permissions.request`, listing the
+   * warnings the new permissions add, through the browser's own dialog (`ExtensionHost`).
+   */
+  confirmPermissions(extensionId: string, warnings: string[], win?: ZenWindow): Promise<boolean>
 }
 
 /**

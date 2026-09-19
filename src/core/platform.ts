@@ -1225,6 +1225,13 @@ export interface ExtensionHost {
   handleKey(input: KeyEventInput, win: ZenWindow): boolean
   /** The user answered an install or permission prompt the host raised. */
   respondPrompt(requestId: string, accept: boolean): void
+  /**
+   * A running extension's `permissions.request` whose new permissions carry warnings (Chrome
+   * prompts only for a privilege increase): the chrome's dialog when a window can show it
+   * (`extensionPermissionRequest`, kind `request`, answered through `respondPrompt`), else a
+   * native message box. Resolves with the user's decision.
+   */
+  confirmPermissionRequest(id: string, warnings: string[], win?: ZenWindow): Promise<boolean>
   flushSync(): void
 }
 

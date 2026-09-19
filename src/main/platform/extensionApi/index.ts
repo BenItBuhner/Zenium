@@ -833,6 +833,10 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     return this.browser.platform.dialogs.confirm({ ...options, cancelLabel: 'Cancel' }, win)
   }
 
+  confirmPermissions(extensionId: string, warnings: string[], win?: ZenWindow): Promise<boolean> {
+    return this.browser.extensions.confirmPermissionRequest(extensionId, warnings, win)
+  }
+
   // ---------------------------------------------------------------------------
   // ExtensionApiHooks (what ExtensionService asks)
   // ---------------------------------------------------------------------------

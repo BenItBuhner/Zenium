@@ -4,7 +4,7 @@
  * into `permissions`; MV3 separates `host_permissions`), plus `contains` / `request` / `remove`
  * set arithmetic. Pure functions; the host persists the grants.
  */
-import type { ExtensionManifest } from '../manifest'
+import { type ExtensionManifest, permissionVersionWarning } from '../manifest'
 import { compileMatchPattern, patternContains } from './matchPattern'
 
 export interface PermissionSet {
@@ -26,15 +26,25 @@ export function emptyPermissionSet(): PermissionSet {
   return { permissions: [], origins: [] }
 }
 
-/** Required and optional sets of a manifest, host patterns separated from API permissions. */
+/** The API permissions of `permissions` that Chrome grants to a manifest of this version. */
+export function availablePermissions(permissions: string[], manifestVersion: 2 | 3): string[] {
+  return permissions.filter((p) => permissionVersionWarning(p, manifestVersion) === null)
+}
+
+/**
+ * Required and optional sets of a manifest, host patterns separated from API permissions, without
+ * the API permissions Chrome refuses to the manifest's version.
+ */
 export function manifestPermissionSets(manifest: ExtensionManifest): ManifestPermissionSets {
   const required = emptyPermissionSet()
   const optional = emptyPermissionSet()
+  const manifestVersion: 2 | 3 = manifest.manifest_version === 2 ? 2 : 3
   const sort = (entries: string[] | undefined, into: PermissionSet): void => {
     for (const entry of entries ?? []) {
       if (typeof entry !== 'string') continue
       if (isHostPattern(entry)) into.origins.push(entry)
-      else into.permissions.push(entry)
+      else if (permissionVersionWarning(entry, manifestVersion) === null)
+        into.permissions.push(entry)
     }
   }
   sort(manifest.permissions, required)

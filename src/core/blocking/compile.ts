@@ -123,6 +123,18 @@ export function compileRule(rule: Rule): { filters: string[]; unsupported: strin
     unsupported.push(
       'excludedRequestDomains cannot be expressed; the filter is broader than the rule'
     )
+  if (
+    (c.topDomains && c.topDomains.length > 0) ||
+    (c.excludedTopDomains && c.excludedTopDomains.length > 0)
+  )
+    unsupported.push('topDomains cannot be expressed; the filter is broader than the rule')
+  if (
+    (c.responseHeaders && c.responseHeaders.length > 0) ||
+    (c.excludedResponseHeaders && c.excludedResponseHeaders.length > 0)
+  )
+    unsupported.push(
+      'response header conditions cannot be expressed; the filter is broader than the rule'
+    )
   if (c.excludedNonUniqueHosts)
     unsupported.push(
       'excludedNonUniqueHosts cannot be expressed; the filter is broader than the rule'
