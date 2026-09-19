@@ -26,7 +26,7 @@ const invoke = vi.fn<(name: string, args?: unknown) => Promise<unknown>>(async (
 Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
-const { Urlbar } = await import('../Urlbar')
+const { HEADER_SWAP_FADE_MS, Urlbar } = await import('../Urlbar')
 const { isShareableUrl, showsPageHeader } = await import('../omniboxHeader')
 const { uiStore } = await import('@renderer/lib/ui')
 
@@ -251,6 +251,49 @@ describe('the search-ready header (OMN-05)', () => {
       { title: 'Example Domain', url: PAGE, tabId: 't1', favicon: undefined }
     ])
     expect(uiStore.get().urlbar.open).toBe(false)
+  })
+})
+
+describe('the header changing in place (v2 §11.4)', () => {
+  it('cross-fades the page row over 120 ms in its slot when the title or address changes under the open bar', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      const loading = tab(PAGE, { title: '', loading: true })
+      const el = await render(phone(loading))
+      const face = (): HTMLElement[] =>
+        Array.from(header(el)!.querySelectorAll<HTMLElement>('.zen-omnibox-page-face'))
+      // Nothing typed yet; the address stands in for the title while the page loads. No ghost.
+      expect(face()).toHaveLength(1)
+      expect(face()[0].textContent).toContain('example.com/some/path')
+
+      // The title arrives: the old face stays as a ghost over the new one, out of the tab order.
+      await act(async () => {
+        root!.render(phone(tab(PAGE, { title: 'Example Domain', loading: false })))
+      })
+      const faces = face()
+      expect(faces).toHaveLength(2)
+      expect(faces[0].textContent).toContain('Example Domain')
+      expect(faces[1].classList.contains('zen-omnibox-page-ghost')).toBe(true)
+      expect(faces[1].getAttribute('aria-hidden')).toBe('true')
+      expect(faces[1].textContent).not.toContain('Example Domain')
+      // The row itself is the same element: the change is in place, not a new row.
+      expect(header(el)!.querySelectorAll('.zen-omnibox-page')).toHaveLength(1)
+
+      // The ghost is gone after the fade's 120 ms.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(HEADER_SWAP_FADE_MS + 20)
+      })
+      expect(face()).toHaveLength(1)
+      expect(face()[0].textContent).toContain('Example Domain')
+
+      // A re-render that changes nothing the face draws starts no fade.
+      await act(async () => {
+        root!.render(phone(tab(PAGE, { title: 'Example Domain', loading: false, audible: true })))
+      })
+      expect(face()).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

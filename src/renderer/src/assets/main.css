@@ -5355,6 +5355,25 @@
 .zen-v2-row.zen-omnibox-page {
   color: var(--v2-control-text);
 }
+/*
+ * The page row's face (glyph and the two lines) is the row's one slot: when what it draws changes
+ * while the header is up, the face it showed is kept as a ghost over the new one and the two
+ * cross-fade on opacity over 120 ms (v2 §11.4; the same under reduced motion – the fade is the
+ * change's only motion, and a cut would read as a glitch). The ghost is out of the flow, clipped
+ * to the row's content box, so the row neither grows nor shifts.
+ */
+.zen-omnibox-page-face {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 12px;
+}
+.zen-omnibox-page-ghost {
+  position: absolute;
+  inset: var(--v2-row-pad) 16px;
+  pointer-events: none;
+}
 .zen-omnibox-page-glyph {
   width: var(--v2-icon);
   height: var(--v2-icon);

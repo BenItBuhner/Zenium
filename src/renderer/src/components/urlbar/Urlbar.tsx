@@ -1,5 +1,5 @@
 import type { JSX, RefObject } from 'react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ArrowRight, ArrowUpLeft, Camera, Globe, Link, Mic, Pencil, Share2, X } from 'lucide-react'
 import type {
   ClipboardContent,
@@ -908,6 +908,68 @@ function fieldGrowFrom(layout: PhoneBarLayout): React.CSSProperties {
   } as React.CSSProperties
 }
 
+/**
+ * Length of the header's cross-fade when the page row's content changes in place – the title
+ * or favicon of a still-loading page arriving, the tab navigating under the open bar (v2 §11.4:
+ * on opacity, in the same slot, no slide and no cut; the same fade under reduced motion).
+ */
+export const HEADER_SWAP_FADE_MS = 120
+
+/**
+ * The page row's face (glyph, title, address) cross-fades when what it draws changes while the
+ * header is up: the face it showed until this commit is kept as a ghost over the new one, the
+ * ghost fading out and the new face in over {@link HEADER_SWAP_FADE_MS}, both in the row's one
+ * slot. `key` is what the face draws; a change of key while mounted starts the fade, the first
+ * render does not (the header itself arrives with the sheet). Returns the ghost to draw (null
+ * when none) with the refs the fade animates.
+ */
+function usePageCrossFade(
+  key: string,
+  face: JSX.Element
+): [
+  ghost: { key: number; face: JSX.Element } | null,
+  faceRef: RefObject<HTMLDivElement | null>,
+  ghostRef: RefObject<HTMLDivElement | null>
+] {
+  const faceRef = useRef<HTMLDivElement | null>(null)
+  const ghostRef = useRef<HTMLDivElement | null>(null)
+  /** What the last commit drew: the face a change of key keeps as the ghost. */
+  const shown = useRef<{ key: string; face: JSX.Element } | null>(null)
+  const [ghost, setGhost] = useState<{ key: number; face: JSX.Element } | null>(null)
+  useLayoutEffect(() => {
+    const last = shown.current
+    shown.current = { key, face }
+    if (last && last.key !== key) {
+      setGhost((g) => ({ key: (g?.key ?? 0) + 1, face: last.face }))
+    }
+  }, [key, face])
+  useLayoutEffect(() => {
+    if (!ghost) return
+    // Started before the paint, so the first frame already has the ghost over the new face.
+    const fade = (el: HTMLElement | null, from: number, to: number): Animation | null =>
+      el?.animate?.([{ opacity: from }, { opacity: to }], {
+        duration: HEADER_SWAP_FADE_MS,
+        easing: 'linear',
+        fill: to === 0 ? 'forwards' : 'none'
+      }) ?? null
+    const anims = [fade(ghostRef.current, 1, 0), fade(faceRef.current, 0, 1)].filter(
+      (a): a is Animation => a !== null
+    )
+    // A cancelled animation rejects its `finished`; nothing waits on it.
+    for (const a of anims) a.finished.catch(() => undefined)
+    // The ghost goes after the fade's length, with or without WAAPI (the unit tests' DOM).
+    const timer = setTimeout(
+      () => setGhost((g) => (g?.key === ghost.key ? null : g)),
+      HEADER_SWAP_FADE_MS
+    )
+    return () => {
+      clearTimeout(timer)
+      for (const a of anims) a.cancel()
+    }
+  }, [ghost])
+  return [ghost, faceRef, ghostRef]
+}
+
 /** A control inside a row or the header keeps the field focused: no blur, no keyboard flicker. */
 const keepFocus = (e: React.PointerEvent): void => {
   e.preventDefault()
@@ -940,6 +1002,30 @@ function PageHeader({
   const url = pageTextFor(tab)
   const shown = displayUrl(url) || url
   const title = tab.customTitle ?? (tab.title || shown)
+  const favicon = tab.favicon && !faviconBroken ? tab.favicon : null
+  const face = (
+    <>
+      {favicon ? (
+        <img
+          src={favicon}
+          alt=""
+          className="zen-omnibox-page-glyph rounded-[3px]"
+          referrerPolicy="no-referrer"
+          onError={() => setFaviconBroken(true)}
+        />
+      ) : (
+        <Globe className="zen-omnibox-page-glyph" aria-hidden="true" />
+      )}
+      <span className="min-w-0 flex-1">
+        <span className="zen-omnibox-page-title block truncate">{title}</span>
+        <span className="zen-omnibox-page-url block truncate">{shown}</span>
+      </span>
+    </>
+  )
+  const [ghost, faceRef, ghostRef] = usePageCrossFade(
+    `${title}\u001f${shown}\u001f${favicon ?? ''}`,
+    face
+  )
   const chip = (label: string, Glyph: typeof Share2, onClick: () => void): JSX.Element => (
     <button
       type="button"
@@ -957,21 +1043,19 @@ function PageHeader({
   return (
     <div className="zen-omnibox-header shrink-0" data-edge={edge} data-testid="urlbar-page-header">
       <div className="zen-v2-row zen-omnibox-page" data-static>
-        {tab.favicon && !faviconBroken ? (
-          <img
-            src={tab.favicon}
-            alt=""
-            className="zen-omnibox-page-glyph rounded-[3px]"
-            referrerPolicy="no-referrer"
-            onError={() => setFaviconBroken(true)}
-          />
-        ) : (
-          <Globe className="zen-omnibox-page-glyph" aria-hidden="true" />
-        )}
-        <span className="min-w-0 flex-1">
-          <span className="zen-omnibox-page-title block truncate">{title}</span>
-          <span className="zen-omnibox-page-url block truncate">{shown}</span>
-        </span>
+        <div className="zen-omnibox-page-face" ref={faceRef}>
+          {face}
+        </div>
+        {ghost ? (
+          <div
+            key={ghost.key}
+            className="zen-omnibox-page-face zen-omnibox-page-ghost"
+            aria-hidden="true"
+            ref={ghostRef}
+          >
+            {ghost.face}
+          </div>
+        ) : null}
       </div>
       <div className="zen-omnibox-chips">
         {onShare ? chip('Share', Share2, onShare) : null}
