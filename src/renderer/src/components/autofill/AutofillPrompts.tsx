@@ -780,30 +780,29 @@ function PromptSheet({
       break
   }
 
+  // The sheet's layer is the host slot's child itself (`data-sheet-layer`).
   return (
-    <div className="zen-v2-af absolute inset-0" data-surface="page">
-      <BottomSheet
-        ref={sheet}
-        hosted
-        onDismissed={() => respond(answer.current)}
-        handleLabel="Dismiss"
-        labelledBy={titleId}
-        className="zen-v2-af zen-v2-af-sheet"
-        fitContent
-      >
-        <InSheet.Provider value>
-          <div className="zen-v2-af" data-surface="page">
-            <SheetTitleBlock
-              id={titleId}
-              icon={copy.icon}
-              glyph={titleGlyph(copy, favicon)}
-              title={copy.title}
-              description={copy.description}
-            />
-            {content}
-          </div>
-        </InSheet.Provider>
-      </BottomSheet>
-    </div>
+    <BottomSheet
+      ref={sheet}
+      hosted
+      onDismissed={() => respond(answer.current)}
+      handleLabel="Dismiss"
+      labelledBy={titleId}
+      className="zen-v2-af zen-v2-af-sheet"
+      fitContent
+    >
+      <InSheet.Provider value>
+        <div className="zen-v2-af" data-surface="page">
+          <SheetTitleBlock
+            id={titleId}
+            icon={copy.icon}
+            glyph={titleGlyph(copy, favicon)}
+            title={copy.title}
+            description={copy.description}
+          />
+          {content}
+        </div>
+      </InSheet.Provider>
+    </BottomSheet>
   )
 }
