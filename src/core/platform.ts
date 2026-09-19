@@ -776,6 +776,7 @@ export type MenuSource =
   | 'space'
   | 'folder'
   | 'newtab'
+  | 'topsite'
   | 'app'
   | 'bookmark'
   | 'history'

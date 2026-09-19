@@ -237,6 +237,38 @@ describe('downloads chrome state', () => {
     expect(downloadsUi.get()).toMatchObject({ open: false, takeFocus: false, highlightId: null })
   })
 
+  it('asks the engine whether the finished files are still on disk as the bubble opens', async () => {
+    const { run } = await import('../api')
+    const existsCalls = (): unknown[] =>
+      vi
+        .mocked(run)
+        .mock.calls.filter(([name]) => name === 'download.exists')
+        .map(([, args]) => args)
+    vi.mocked(run).mockClear()
+    browserStore.set({
+      state: state([
+        item({ id: 'done' }),
+        item({ id: 'gone', fileMissing: true }),
+        item({ id: 'running', state: 'progressing' }),
+        item({ id: 'failed', state: 'interrupted', error: 'network-failed' }),
+        item({ id: 'cancelled', state: 'cancelled' }),
+        item({
+          id: 'flagged',
+          danger: { level: 'dangerous', reason: 'executable', message: 'x' }
+        })
+      ])
+    })
+    await openDownloadBubble({ takeFocus: true })
+    // Every released finished file, marked Deleted or not (a file that came back is un-marked);
+    // rows without a finished file are not asked about.
+    expect(existsCalls()).toEqual([{ id: 'done' }, { id: 'gone' }])
+    dismissDownloadBubble()
+    vi.mocked(run).mockClear()
+    // The notice that opens by itself checks too: its rows are the ones about to be looked at.
+    await openDownloadBubble({ partial: ['done'], autoClose: true })
+    expect(existsCalls()).toEqual([{ id: 'done' }, { id: 'gone' }])
+  })
+
   it('an auto-open is a notice: it takes no keyboard and asks the chrome for none (§9.22)', async () => {
     const { run } = await import('../api')
     const chromeFocusCalls = (): number =>

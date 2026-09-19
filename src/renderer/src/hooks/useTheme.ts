@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { UIState } from '@shared/types'
-import { resolveTheme, themeCssVariables, type ResolvedTheme } from '@shared/theme'
+import {
+  resolveTheme,
+  resolveWallpaper,
+  themeCssVariables,
+  type ResolvedTheme
+} from '@shared/theme'
 import type { FormFactor } from '@renderer/lib/formFactor'
 import { activeSpace, isDarkScheme } from '@renderer/lib/selectors'
 
@@ -22,11 +27,14 @@ export function useTheme(state: UIState, formFactor: FormFactor = 'desktop'): Re
   const systemDark = state.systemDark ?? mediaDark
   const dark = state.settings.colorScheme === 'system' ? systemDark : isDarkScheme(state)
   const resolved = useMemo(() => resolveTheme(space.theme, dark), [space.theme, dark])
+  // The space's gradient at full strength, for surfaces that show it as a wallpaper (the new tab page).
+  const wallpaper = useMemo(() => resolveWallpaper(space.theme, dark), [space.theme, dark])
 
   useEffect(() => {
     const root = document.documentElement
     for (const [key, value] of Object.entries(themeCssVariables(resolved)))
       root.style.setProperty(key, value)
+    root.style.setProperty('--zen-wallpaper', wallpaper)
     root.dataset.theme = resolved.isDark ? 'dark' : 'light'
     root.dataset.material = state.window.material
     root.style.colorScheme = resolved.isDark ? 'dark' : 'light'
@@ -38,6 +46,7 @@ export function useTheme(state: UIState, formFactor: FormFactor = 'desktop'): Re
     root.style.setProperty('--zen-content-radius', borderless ? '0px' : phone ? '14px' : '10px')
   }, [
     resolved,
+    wallpaper,
     formFactor,
     state.settings.sidebarWidth,
     state.settings.borderless,

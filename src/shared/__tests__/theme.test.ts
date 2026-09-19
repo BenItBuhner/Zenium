@@ -13,6 +13,7 @@ import {
   mix,
   panelBase,
   resolveTheme,
+  resolveWallpaper,
   rgbToHex,
   rgbToHsl,
   themeCssVariables,
@@ -87,6 +88,17 @@ describe('resolveTheme', () => {
     expect(multi.background.startsWith('linear-gradient(135deg')).toBe(true)
     const single = resolveTheme(makeTheme('#ff0000'), false)
     expect(single.background).toMatch(/^#[0-9a-f]{6}$/)
+  })
+
+  it('the wallpaper is the gradient at full strength, or the base colour without a theme', () => {
+    const theme = THEME_PRESETS[0].theme
+    const wallpaper = resolveWallpaper(theme, false)
+    expect(wallpaper).toBe(resolveTheme({ ...theme, opacity: 1 }, false).background)
+    expect(wallpaper).not.toBe(resolveTheme(theme, false).background)
+    expect(resolveWallpaper(null, true)).toBe(resolveTheme(null, true).background)
+    expect(resolveWallpaper({ ...theme, colors: [] }, false)).toBe(
+      resolveTheme(null, false).background
+    )
   })
 
   it('emits space-separated rgb channels usable with slash alpha syntax', () => {

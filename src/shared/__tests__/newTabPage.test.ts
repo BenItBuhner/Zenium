@@ -3,8 +3,11 @@ import mainCss from '../../renderer/src/assets/main.css?raw'
 import {
   chromeTokenCss,
   NEW_TAB_PAGE_STYLE,
+  NEW_TAB_RULES_END,
+  NEW_TAB_RULES_START,
   PRIVATE_EXPLAINER,
-  newTabPageHtml
+  newTabPageHtml,
+  newTabSharedCss
 } from '../newTabPage'
 import { PRIVATE_ACCENT, PRIVATE_ACCENT_RGB } from '../newTabPageScript'
 import { PRIVATE_THEME, resolveTheme, themeCssVariables } from '../theme'
@@ -21,6 +24,45 @@ function read(css: string): Set<string> {
 
 describe('zen://newtab tokens', () => {
   const tokens = chromeTokenCss()
+  const shared = newTabSharedCss()
+
+  it("cuts the one .zen-ntp-* vocabulary out of main.css, up to the phone page's additions", () => {
+    // The block the phone page draws with (§9.29: one vocabulary on both platforms): the field's
+    // surface, the tile's fill and states, the caption's and fallbacks' ink, the scrim.
+    expect(mainCss.indexOf(NEW_TAB_RULES_START)).toBeGreaterThan(0)
+    expect(mainCss.indexOf(NEW_TAB_RULES_END)).toBeGreaterThan(mainCss.indexOf(NEW_TAB_RULES_START))
+    expect(shared.startsWith(NEW_TAB_RULES_START)).toBe(true)
+    expect(shared).toMatch(
+      /\.zen-ntp-field \{\n\s+border: 0;\n\s+border-radius: var\(--v2-radius-sheet\);\n\s+background: var\(--v2-urlbar\);\n\s+box-shadow: var\(--v2-shadow-panel\);\n\s+color: var\(--v2-text\);\n\s+\}/
+    )
+    expect(shared).toMatch(
+      /\.zen-ntp-tile \{\n\s+border-radius: var\(--v2-radius-card\);\n\s+background: var\(--v2-control-fill\);/
+    )
+    expect(shared).toMatch(
+      /@media \(hover: hover\) \{\n\s+\.zen-v2-shortcut:hover \.zen-ntp-tile \{\n\s+background: var\(--v2-control-fill-hover\);/
+    )
+    expect(shared).toMatch(
+      /\.zen-v2-shortcut:active \.zen-ntp-tile \{[^}]*transform: scale\(0\.96\);/
+    )
+    expect(shared).toMatch(/\.zen-ntp-caption \{[^}]*color: var\(--v2-control-text-deemphasized\);/)
+    expect(shared).toMatch(/\.zen-ntp-letter \{[^}]*font-size: var\(--v2-font-heading\);/)
+    expect(shared).toMatch(/\.zen-ntp-empty \{[^}]*font-size: var\(--v2-font-body\);/)
+    expect(shared).toMatch(
+      /\.zen-ntp-scrim \{\n\s+background: linear-gradient\(180deg, rgb\(0 0 0 \/ 0\.1\), rgb\(0 0 0 \/ 0\.45\)\);/
+    )
+    // Nothing of the phone's: no size, no form-factor gate, no wallpaper, no stagger, no preview.
+    expect(shared).not.toContain('data-form-factor')
+    expect(shared).not.toMatch(/(?<![a-z-])(height|width): \d/)
+    expect(shared).not.toMatch(
+      /zen-ntp-(site|preview|grow|placeholder|preset|icon-loaded|field-main)/
+    )
+    expect(shared).not.toContain('--zen-bg')
+    expect(shared).not.toContain('/*')
+    expect(shared).not.toContain('@layer')
+    // Gone markers degrade to no shared rules rather than a broken cut.
+    expect(newTabSharedCss('')).toBe('')
+    expect(newTabSharedCss(mainCss.replace(NEW_TAB_RULES_END, '/* gone */'))).toBe('')
+  })
 
   it('takes the chrome token blocks from main.css, light and dark, comments dropped', () => {
     const blocks = tokens.split('\n')
@@ -66,17 +108,20 @@ describe('zen://newtab tokens', () => {
       ...declared(tokens),
       ...Object.keys(themeCssVariables(resolveTheme(null, false)))
     ])
-    for (const name of read(NEW_TAB_PAGE_STYLE)) expect(provided, name).toContain(name)
+    const pageCss = shared + NEW_TAB_PAGE_STYLE
+    expect(declared(shared).size).toBe(0)
+    for (const name of read(pageCss)) expect(provided, name).toContain(name)
     // And every token the page reads it reads from the v2 set or the theme, never a v1 surface colour.
-    for (const name of read(NEW_TAB_PAGE_STYLE))
+    for (const name of read(pageCss))
       expect(name, name).toMatch(/^--(v2-|zen-(fg|fg-rgb|ease|shadow-2)$)/)
   })
 
-  it('serves the tokens before the page rules in one inline stylesheet', () => {
+  it('serves the tokens, then the shared rules, then the page rules in one inline stylesheet', () => {
     const html = newTabPageHtml()
     const style = html.slice(html.indexOf('<style>') + 7, html.indexOf('</style>'))
     expect(style.startsWith(tokens)).toBe(true)
     expect(style.endsWith(NEW_TAB_PAGE_STYLE)).toBe(true)
+    expect(style.slice(tokens.length, style.length - NEW_TAB_PAGE_STYLE.length).trim()).toBe(shared)
     expect(html).toContain("default-src 'none'")
     expect(html).not.toContain('<script')
   })
@@ -108,23 +153,27 @@ describe('zen://newtab tokens', () => {
     expect(html).toMatch(
       /<div class="zen-toast" id="zen-toast" role="status" data-surface="page" hidden>/
     )
-    // The page's own vocabulary is the phone page's: tiles, captions and Customize in the window family.
-    expect(NEW_TAB_PAGE_STYLE).toMatch(
-      /\.zen-ntp-tile \{[^}]*width: 64px; height: 64px;[^}]*background: var\(--v2-control-fill\);/
+    // One vocabulary with the phone page (the shared rules give the look, the page its sizes):
+    // tiles, captions and Customize in the window family, the field a page surface.
+    expect(NEW_TAB_PAGE_STYLE).toMatch(/\.zen-ntp-tile \{[^}]*width: 64px; height: 64px;/)
+    expect(shared).toMatch(/\.zen-ntp-tile \{[^}]*background: var\(--v2-control-fill\);/)
+    expect(NEW_TAB_PAGE_STYLE).toMatch(/\.zen-ntp-icon \{ width: 32px; height: 32px; \}/)
+    expect(shared).toMatch(
+      /\.zen-v2-shortcut:hover \.zen-ntp-tile \{\n\s+background: var\(--v2-control-fill-hover\);/
     )
-    expect(NEW_TAB_PAGE_STYLE).toMatch(/\.zen-ntp-icon \{ width: 32px; height: 32px;/)
-    expect(NEW_TAB_PAGE_STYLE).toMatch(
-      /\.zen-v2-shortcut:hover \.zen-ntp-tile \{ background: var\(--v2-control-fill-hover\); \}/
-    )
-    expect(NEW_TAB_PAGE_STYLE).toMatch(
-      /\.zen-ntp-caption \{[^}]*color: var\(--v2-control-text-deemphasized\);/
-    )
+    expect(shared).toMatch(/\.zen-ntp-caption \{[^}]*color: var\(--v2-control-text-deemphasized\);/)
     expect(NEW_TAB_PAGE_STYLE).toMatch(
       /\.zen-grid \{[^}]*repeat\(4, minmax\(0, 104px\)\); gap: 12px;/
     )
-    expect(NEW_TAB_PAGE_STYLE).toMatch(
-      /\.zen-ntp-field \{[^}]*height: 48px;[^}]*background: var\(--v2-urlbar\);[^}]*border: 0; border-radius: var\(--v2-radius-sheet\); box-shadow: var\(--v2-shadow-panel\);/
+    expect(NEW_TAB_PAGE_STYLE).toMatch(/\.zen-ntp-field \{[^}]*height: 48px;/)
+    expect(shared).toMatch(
+      /\.zen-ntp-field \{[^}]*border: 0;[^}]*border-radius: var\(--v2-radius-sheet\);[^}]*background: var\(--v2-urlbar\);[^}]*box-shadow: var\(--v2-shadow-panel\);/
     )
+    // The page's layout repeats none of the shared look, so the two never disagree.
+    expect(NEW_TAB_PAGE_STYLE).not.toMatch(
+      /^\s*\.zen-ntp-(field|tile|caption|empty|letter|scrim) \{[^}]*(background|color|border-radius|box-shadow|font-size):/m
+    )
+    expect(NEW_TAB_PAGE_STYLE).not.toMatch(/\.zen-v2-shortcut:(hover|active) \.zen-ntp-tile/)
     expect(NEW_TAB_PAGE_STYLE).toMatch(
       /\.zen-customize \{ position: fixed; right: 12px; bottom: 12px;/
     )
@@ -132,8 +181,8 @@ describe('zen://newtab tokens', () => {
       /<button type="button" class="zen-v2-button zen-customize" id="zen-customize"/
     )
     // No card, no hairline around a tile, no label inside the square.
-    expect(NEW_TAB_PAGE_STYLE).not.toMatch(/\.zen-ntp-tile \{[^}]*border: 1px/)
-    expect(NEW_TAB_PAGE_STYLE).not.toContain('--v2-card')
+    expect(shared + NEW_TAB_PAGE_STYLE).not.toMatch(/\.zen-ntp-tile \{[^}]*border: 1px/)
+    expect(shared + NEW_TAB_PAGE_STYLE).not.toContain('--v2-card')
   })
 
   it('says what a private window keeps, where the tiles would be (§9.23 title block)', () => {

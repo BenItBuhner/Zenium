@@ -15,6 +15,7 @@ import {
   DEFAULT_CONTAINER_ID,
   type BookmarkNode,
   type BookmarksBarMode,
+  type DownloadDeleteFileResult,
   type Rect,
   type Settings,
   type Shortcut,
@@ -25,7 +26,8 @@ import { ZOOM_CEILING, ZOOM_FLOOR, formatZoom, siteKey } from '../shared/pageCon
 import { spaceLabel } from '../shared/defaults'
 import { bookmarkUrlCount, isBookmarkRoot } from '../shared/bookmarks'
 import { fileExtension, resolveDownloadSettings } from '../shared/downloads'
-import { canRetry, isInFlight, isQuarantined } from './downloads'
+import { canRetryDownload, deleteFileToast, displayName } from '../shared/downloadsShell'
+import { isInFlight, isQuarantined } from './downloads'
 import { mayAutoOpen } from './downloads/danger'
 import { applicationMenu, menuSignature, runFromMenuBar } from './menuBar'
 
@@ -1288,6 +1290,33 @@ export class Menus {
     )
   }
 
+  /** Long-press on a new tab page tile: open it elsewhere, pin it, or take it off the page. */
+  showTopSiteContextMenu(url: string, title: string, win: ZenWindow): void {
+    if (!isNavigableUrl(url)) return
+    const { tabs, state, newTabPhone } = this.browser
+    const pinned = state.settings.newTabPhone.pinned.some((p) => p.url === url)
+    this.popup(
+      [
+        {
+          label: 'Open in New Tab',
+          click: () => tabs.createTab({ url, active: false }, win)
+        },
+        {
+          label: 'Copy Link',
+          click: () => this.browser.platform.clipboard.writeText(url)
+        },
+        { type: 'separator' },
+        {
+          label: pinned ? 'Unpin Shortcut' : 'Pin Shortcut',
+          click: () => (pinned ? newTabPhone.unpin(url) : newTabPhone.pin(url, title))
+        },
+        { label: 'Remove', click: () => newTabPhone.remove(url) }
+      ],
+      win,
+      'topsite'
+    )
+  }
+
   // ---------------------------------------------------------------------------
   // Spaces & folders
   // ---------------------------------------------------------------------------
@@ -1682,12 +1711,13 @@ export class Menus {
    * downloads-11): Open when done while the transfer runs and Open once the file is on disk,
    * Always open files of this type for the types Chromium lets open by themselves (the engine's
    * `autoOpenTypes`), Show in folder, Copy download link, then the transfer's own verb – Pause,
-   * Resume or Cancel while it runs, Retry once it failed or was cancelled – and Remove from list
-   * for anything settled. A flagged file waiting on Keep / Delete offers only its link and its
-   * removal (Delete on the row is what takes the file away). A finished file the engine found
-   * gone from disk (`fileMissing`) has nothing to open or show and offers Retry instead. The
-   * engine's `download.deleteFile` exists; whether the menu grows a Delete file item is the
-   * desktop UI's call.
+   * Resume or Cancel while it runs, Retry once it was cancelled or failed for a reason a retry
+   * can get past (`canRetryDownload`, the same predicate as the row's controls) – then Delete
+   * file for a finished file on disk (Chrome's, on `download.deleteFile`; the row stays as
+   * Deleted, a toast says when the file would not go) and Remove from list for anything settled.
+   * A flagged file waiting on Keep / Delete offers only its link and its removal (Delete on the
+   * row is what takes the file away). A finished file the engine found gone from disk
+   * (`fileMissing`) has nothing to open, show or delete and offers Retry instead.
    */
   showDownloadContextMenu(
     id: string,
@@ -1700,7 +1730,7 @@ export class Menus {
     const inFlight = isInFlight(item.state)
     const onDisk = item.state === 'completed' && !isQuarantined(item) && !item.fileMissing
     const resumable = item.state === 'paused' || (item.state === 'interrupted' && item.canResume)
-    const retryable = canRetry(item)
+    const retryable = canRetryDownload(item)
     const name = item.finalName || item.filename
     const ext = fileExtension(name)
     const settings = resolveDownloadSettings(this.browser.state.settings)
@@ -1749,12 +1779,40 @@ export class Menus {
         ...(!resumable && retryable ? [{ label: 'Retry', click: () => downloads.retry(id) }] : []),
         ...(inFlight ? [{ label: 'Cancel', click: () => downloads.cancel(id) }] : []),
         { type: 'separator' },
+        ...(item.state === 'completed'
+          ? [
+              {
+                label: 'Delete File',
+                enabled: onDisk && Boolean(item.savePath),
+                click: () => void this.deleteDownloadFile(id, win)
+              }
+            ]
+          : []),
         { label: 'Remove from List', enabled: !inFlight, click: () => downloads.remove(id) }
       ],
       win,
       'download',
       anchor
     )
+  }
+
+  /**
+   * The menu's Delete file: the engine removes the file and marks the row Deleted; when the
+   * file would not go (locked, a folder, no permission) the window is told in a toast.
+   */
+  private async deleteDownloadFile(id: string, win: ZenWindow): Promise<void> {
+    const { downloads } = this.browser
+    const item = downloads.item(id)
+    if (!item) return
+    const name = displayName(item)
+    let result: DownloadDeleteFileResult = 'failed'
+    try {
+      result = await downloads.deleteFile(id)
+    } catch {
+      // The host's delete threw: the file is where it was.
+    }
+    const toast = deleteFileToast(result, name)
+    if (toast) this.browser.toast(toast, 'error', win)
   }
 
   /**

@@ -83,7 +83,9 @@ function bubbleIsOpen(): boolean {
 /**
  * Open the bubble. The live page is captured first so its snapshot can stand in behind the
  * panel (hosts hide page views under chrome overlays). `takeFocus` is for opens the user asked
- * for; the auto-open leaves the keyboard where it was.
+ * for; the auto-open leaves the keyboard where it was. The finished files are checked for
+ * being on disk as the bubble opens (Chrome does the same): a row whose file went since reads
+ * Deleted by the time the user looks.
  */
 export async function openDownloadBubble(
   options: {
@@ -98,6 +100,7 @@ export async function openDownloadBubble(
     exitTimer = null
   }
   const state = browserStore.get().state
+  if (state) downloadsEngine.refreshFiles(downloadsEngine.list(state))
   await captureActiveTab(state ? (activeTab(state)?.id ?? null) : null)
   if (options.takeFocus) run('focus.chrome', undefined)
   uiStore.set({ downloadsOpen: true, drawerOpen: false })

@@ -1,4 +1,9 @@
-import type { DownloadChangeKind, DownloadItem, UIState } from '@shared/types'
+import type {
+  DownloadChangeKind,
+  DownloadDeleteFileResult,
+  DownloadItem,
+  UIState
+} from '@shared/types'
 import { needsDangerDecision } from '@shared/downloadsShell'
 import { cmd, onEvent, run } from './api'
 import { openOverlay } from './ui'
@@ -33,6 +38,17 @@ export interface DownloadsEngine {
   /** Discard a flagged file (or what is left of a failed one) and drop the row. */
   discard: IdCommand
   setOpenWhenDone(id: string, on: boolean): void
+  /**
+   * Chrome's "Delete file": the finished file goes from disk and the row stays, reading
+   * Deleted (`fileMissing`, which the engine's `download.changed` carries). Resolves with what
+   * happened; `failed` leaves the file and the row as they were.
+   */
+  deleteFile(id: string): Promise<DownloadDeleteFileResult>
+  /**
+   * Ask the engine whether the finished files among `items` are still on disk (Chrome checks
+   * when its bubble or page opens); every row whose answer changed follows as `download.changed`.
+   */
+  refreshFiles(items: readonly DownloadItem[]): void
   /** Pick the folder downloads are saved to; null when the dialog was dismissed. */
   chooseDirectory(): Promise<string | null>
   /** The Ctrl+J page (`zen://downloads`). */
@@ -61,6 +77,12 @@ export const downloadsEngine: DownloadsEngine = {
   acceptDanger: (id) => run('download.acceptDanger', { id }),
   discard: (id) => run('download.discard', { id }),
   setOpenWhenDone: (id, on) => run('download.setOpenWhenDone', { id, on }),
+  deleteFile: (id) => cmd('download.deleteFile', { id }),
+  refreshFiles: (items) => {
+    for (const item of items) {
+      if (hasReleasedFile(item)) run('download.exists', { id: item.id })
+    }
+  },
   chooseDirectory: () => cmd('download.chooseDirectory', undefined),
   openPanel: (activeTabId) => void openOverlay('downloads', activeTabId),
   dragOut: (id) => run('download.dragOut', { id }),
@@ -71,6 +93,16 @@ export const downloadsEngine: DownloadsEngine = {
 /** A row shows Keep / Discard instead of its actions while the engine holds its file back. */
 export function showsDangerDecision(item: DownloadItem): boolean {
   return needsDangerDecision(item)
+}
+
+/**
+ * A finished file the engine released to the user – the rows whose presence on disk is worth
+ * a check, marked Deleted or not (a file that came back is un-marked). Never a row still
+ * running, cancelled, failed or waiting behind a warning: `download.exists` says false for
+ * those without looking.
+ */
+function hasReleasedFile(item: DownloadItem): boolean {
+  return item.state === 'completed' && !needsDangerDecision(item)
 }
 
 export interface DownloadChange {
