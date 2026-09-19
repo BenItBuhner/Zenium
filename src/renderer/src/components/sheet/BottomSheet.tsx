@@ -1,4 +1,4 @@
-import type { JSX, PointerEvent as ReactPointerEvent, ReactNode, Ref } from 'react'
+import type { JSX, PointerEvent as ReactPointerEvent, ReactNode, Ref, SyntheticEvent } from 'react'
 import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef } from 'react'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { capturePointer } from '@renderer/lib/gestures/pointerCapture'
@@ -688,8 +688,22 @@ export function BottomSheet({
     syncLock()
   }
 
+  /**
+   * Whether the event happened in this layer's own DOM. React bubbles events through portals
+   * along its own tree: a sheet stacked above this one through `FrameDialogPortal` from a
+   * control in this sheet's body (an editor's menulist opening its list of options) has this
+   * layer for a React ancestor, so its presses arrive here too – with a target outside
+   * `sheetRef`, which read as a press on this sheet's scrim: the dismissal of this sheet under
+   * the one above, and the row's click swallowed with it. A press that did not happen in this
+   * layer is the upper sheet's; it goes unanswered here. Moves and releases need no such guard:
+   * they answer only a pointer this layer's own press began tracking (`touch`), and one released
+   * over a sheet that opened under the finger must still be let go of here.
+   */
+  const inLayer = (e: SyntheticEvent): boolean =>
+    layerRef.current?.contains(e.target as Node) ?? false
+
   const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>): void => {
-    if (e.button !== 0 || touch.current) return
+    if (e.button !== 0 || touch.current || !inLayer(e)) return
     const target = e.target as HTMLElement
     const zone: Zone = !sheetRef.current?.contains(target)
       ? 'scrim'
@@ -794,7 +808,7 @@ export function BottomSheet({
       onPointerUp={(e) => finish(e, false)}
       onPointerCancel={(e) => finish(e, true)}
       onClickCapture={(e) => {
-        if (!swallowClick.current) return
+        if (!swallowClick.current || !inLayer(e)) return
         swallowClick.current = false
         e.preventDefault()
         e.stopPropagation()
