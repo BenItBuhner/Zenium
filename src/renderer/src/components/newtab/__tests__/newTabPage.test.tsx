@@ -5,14 +5,14 @@ import { createRoot, type Root } from 'react-dom/client'
 import type { Tab, UIState } from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import { DEFAULT_NEW_TAB_SETTINGS } from '@shared/newTab'
-import { DEFAULT_PRIVACY_SETTINGS, type ThirdPartyCookieMode } from '@shared/privacy'
+import { DEFAULT_PRIVACY_SETTINGS, emptyPrivacyStatus } from '@shared/privacy'
 import { BLANK_URL } from '@shared/url'
 
 /*
  * The one new tab route keyed on the tab's container (NTP-31): a private tab's blank page is the
  * private page – the explainer in the window family, the search field, the Block third-party
- * cookies switch over the core's setting, no tiles and no gear – and every other blank tab's is
- * the space's page. A blank tab of the other mode mounts the other page.
+ * cookies switch over the core's private-only setting (#218), no tiles and no gear – and every
+ * other blank tab's is the space's page. A blank tab of the other mode mounts the other page.
  */
 
 const invoke = vi.fn<(name: string, args?: unknown) => Promise<unknown>>(async (name) =>
@@ -72,14 +72,18 @@ const state = {
   },
   newTabShortcuts: [],
   newTabHiddenHosts: [],
-  bookmarks: []
+  bookmarks: [],
+  privacy: emptyPrivacyStatus()
 } as unknown as UIState
 
-/** The state with the third-party cookie mode set. */
-function withCookies(thirdPartyCookies: ThirdPartyCookieMode): UIState {
+/**
+ * The state with the private contexts' third-party cookie status as the core publishes it
+ * (`PrivacyStatus.privateThirdPartyCookies`): the switch reads that, not the settings.
+ */
+function withPrivateCookies(blocked: boolean, locked = false): UIState {
   return {
     ...state,
-    settings: { ...state.settings, privacy: { ...state.settings.privacy, thirdPartyCookies } }
+    privacy: { ...state.privacy, privateThirdPartyCookies: { blocked, locked } }
   }
 }
 
@@ -151,8 +155,8 @@ describe('the new tab route keyed on the container', () => {
     expect(uiStore.get().urlbar).toMatchObject({ open: true, tabId: 'p', attached: true })
   })
 
-  it('its Block third-party cookies switch reads the core setting: on in the private-tabs mode, and a press allows them', () => {
-    render(tab('p', PRIVATE_CONTAINER_ID), withCookies('block-private'))
+  it("its Block third-party cookies switch is the private contexts' status: on while they are blocked there, and a press writes allow through the private command", () => {
+    render(tab('p', PRIVATE_CONTAINER_ID), withPrivateCookies(true))
     const row = cookiesRow()
     // A §10.4 switch row on the row primitive with its window modifier: the whole row is the switch.
     expect(row.tagName).toBe('BUTTON')
@@ -162,32 +166,60 @@ describe('the new tab route keyed on the container', () => {
     expect(row.getAttribute('aria-checked')).toBe('true')
     expect(row.getAttribute('aria-disabled')).toBeNull()
     expect(row.textContent).toContain('Block third-party cookies')
-    expect(row.textContent).toContain('Applies to every tab, as in Settings → Privacy.')
+    // Private-only, and the line says so (the interface's wording); nothing about every tab.
+    expect(row.textContent).toContain('Blocks third-party cookies in private tabs.')
+    expect(row.textContent).not.toContain('every tab')
     expect(row.querySelector('.zen-v2-switch')).not.toBeNull()
     act(() => row.click())
-    expect(invoke).toHaveBeenCalledWith('settings.update', {
-      privacy: { ...DEFAULT_PRIVACY_SETTINGS, thirdPartyCookies: 'allow' }
-    })
+    expect(invoke).toHaveBeenCalledTimes(1)
+    expect(invoke).toHaveBeenCalledWith('privacy.setThirdPartyCookiesPrivate', { mode: 'allow' })
+    // The global mode is not what it writes: regular tabs keep theirs.
+    expect(invoke).not.toHaveBeenCalledWith('settings.update', expect.anything())
   })
 
-  it('off while third-party cookies are allowed, and a press blocks them in private tabs', () => {
-    render(tab('p', PRIVATE_CONTAINER_ID), withCookies('allow'))
+  it('off while third-party cookies are allowed in private tabs, and a press writes block – never default', () => {
+    render(tab('p', PRIVATE_CONTAINER_ID), withPrivateCookies(false))
     const row = cookiesRow()
     expect(row.getAttribute('aria-checked')).toBe('false')
+    expect(row.getAttribute('aria-disabled')).toBeNull()
+    expect(row.textContent).toContain('Blocks third-party cookies in private tabs.')
     act(() => row.click())
-    expect(invoke).toHaveBeenCalledWith('settings.update', {
-      privacy: { ...DEFAULT_PRIVACY_SETTINGS, thirdPartyCookies: 'block-private' }
-    })
+    expect(invoke).toHaveBeenCalledTimes(1)
+    expect(invoke).toHaveBeenCalledWith('privacy.setThirdPartyCookiesPrivate', { mode: 'block' })
+    expect(invoke).not.toHaveBeenCalledWith(
+      'privacy.setThirdPartyCookiesPrivate',
+      expect.objectContaining({ mode: 'default' })
+    )
   })
 
-  it('on and locked while Settings blocks them everywhere: it says so and a press changes nothing', () => {
-    render(tab('p', PRIVATE_CONTAINER_ID), withCookies('block'))
+  it('on and disabled while the global mode blocks them everywhere (locked): the line says why, and a tap writes nothing', () => {
+    render(tab('p', PRIVATE_CONTAINER_ID), withPrivateCookies(true, true))
     const row = cookiesRow()
     expect(row.getAttribute('aria-checked')).toBe('true')
+    // §9.30: the whole control disabled – `aria-disabled` is what `.zen-ntp-row` lays out at .4.
     expect(row.getAttribute('aria-disabled')).toBe('true')
     expect(row.textContent).toContain('Blocked in every tab by Settings → Privacy.')
+    expect(row.textContent).not.toContain('Blocks third-party cookies in private tabs.')
     act(() => row.click())
-    expect(invoke).not.toHaveBeenCalledWith('settings.update', expect.anything())
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
+  it('the global mode alone does not drive it: the switch follows the status the core computes with the private override', () => {
+    // Global `block-private` (the old binding's "on") with a private `allow` override: the core
+    // says third-party cookies are allowed in private tabs, and the switch is off.
+    const overridden: UIState = {
+      ...withPrivateCookies(false),
+      settings: {
+        ...state.settings,
+        privacy: {
+          ...DEFAULT_PRIVACY_SETTINGS,
+          thirdPartyCookies: 'block-private',
+          thirdPartyCookiesPrivate: 'allow'
+        }
+      }
+    }
+    render(tab('p', PRIVATE_CONTAINER_ID), overridden)
+    expect(cookiesRow().getAttribute('aria-checked')).toBe('false')
   })
 
   it("a regular blank tab's page is the space's, and the tab changing mode mounts the other page", () => {

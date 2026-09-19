@@ -505,8 +505,10 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
         then.length ? steps(then, finish) : finish()
       )
     }
-    // The cookie setting first, through the settings command as the Settings page writes it,
-    // and the surface once the core says so: the new tab page's switch reads the state.
+    // The global cookie mode first, through the settings command as the Settings page writes it,
+    // and the surface once the core says so: the new tab page's switch reads the private status
+    // the core derives from it in the same state (`privacy.privateThirdPartyCookies`; with no
+    // private override, `allow` is off, `block-private` on, `block` on and locked).
     const cookies = target.cookies
     if (cookies !== undefined && state.settings.privacy.thirdPartyCookies !== cookies) {
       run('settings.update', {

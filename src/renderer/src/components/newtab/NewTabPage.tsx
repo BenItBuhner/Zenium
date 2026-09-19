@@ -223,43 +223,43 @@ function PrivateNewTabPage({ state, tab, hidden }: Props): JSX.Element {
 }
 
 const COOKIES_SWITCH_LABEL = 'Block third-party cookies'
-// One line at 13 px in the row's text column (about 300 px on a 412 px phone): the section is
-// named as the root named it, Privacy, the short form of the Settings nav's "Privacy and Security".
-const COOKIES_SWITCH_DESCRIPTION = 'Applies to every tab, as in Settings → Privacy.'
+// One line each at 13 px in the row's text column (about 300 px on a 412 px phone), a full stop
+// like the page's other description lines; the locked line names the section as the root named
+// it, Privacy, the short form of the Settings nav's "Privacy and Security".
+const COOKIES_SWITCH_DESCRIPTION = 'Blocks third-party cookies in private tabs.'
 const COOKIES_SWITCH_LOCKED = 'Blocked in every tab by Settings → Privacy.'
 
 /**
- * Chrome's Incognito page's "Block third-party cookies" switch (NTP-31) over the core's
- * `privacy.thirdPartyCookies` (#156), the browser-wide setting: on is the private-tabs mode,
- * off allows them everywhere, and the description says so in one line – the switch is bound to
- * the one setting Settings > Privacy and Security writes, not to a private-only field (that is a
- * services engine item; once it lands, a follow-up binds the switch to it and the line goes).
- * Blocked everywhere by Settings, the switch shows on and is locked (§9.30: laid out at .4,
- * inert), the description giving the reason. A §10.4 switch row on the shared row primitive
- * with its window modifier (`.zen-ntp-row`): the whole row is the switch, the glyph on the first
- * line as the explainer rows' are, the description 13 at 69 % under the label (a row's own
- * description, §9.1's stack), the switch centred on the row. The heading is the Settings cookies
- * group's, so the two surfaces name the setting alike.
+ * Chrome's Incognito page's "Block third-party cookies" switch (NTP-31), private-only as
+ * Chrome's is: it reads the core's `privacy.privateThirdPartyCookies` (#218's status of the
+ * private contexts' setting, `Settings.privacy.thirdPartyCookiesPrivate`) – `blocked` is its
+ * position – and writes through `privacy.setThirdPartyCookiesPrivate`: `block` when turned on,
+ * `allow` when turned off, never `default`, so the choice survives a later change of the global
+ * mode. Regular tabs keep the global mode whatever this switch says. While the global mode blocks
+ * third-party cookies everywhere the status is `locked`: the switch shows on and disabled (§9.30:
+ * the whole row laid out at .4, full size, inert), the description giving the reason, and the row
+ * never writes in that state (the engine would keep a write for when the lock lifts, but the
+ * chrome does not offer one). A §10.4 switch row on the shared row primitive with its window
+ * modifier (`.zen-ntp-row`): the whole row is the switch, the glyph on the first line as the
+ * explainer rows' are, the description 13 at 69 % under the label (a row's own description,
+ * §9.1's stack), the switch centred on the row. The heading is the Settings cookies group's, so
+ * the two surfaces name the setting alike.
  */
 function ThirdPartyCookiesRow({ state }: { state: UIState }): JSX.Element {
-  const privacy = state.settings.privacy
-  const checked = privacy.thirdPartyCookies !== 'allow'
-  const locked = privacy.thirdPartyCookies === 'block'
+  const { blocked, locked } = state.privacy.privateThirdPartyCookies
   return (
     <section className="zen-firstrun-group -mx-4 flex flex-col">
       <h2 className="zen-firstrun-heading px-4 pb-1">{PROTECTION_TEXT.cookies.heading}</h2>
       <button
         type="button"
         role="switch"
-        aria-checked={checked}
+        aria-checked={blocked}
         aria-disabled={locked || undefined}
         className="zen-v2-row zen-ntp-row"
         data-testid="private-ntp-cookies"
         onClick={() => {
           if (locked) return
-          run('settings.update', {
-            privacy: { ...privacy, thirdPartyCookies: checked ? 'allow' : 'block-private' }
-          })
+          run('privacy.setThirdPartyCookiesPrivate', { mode: blocked ? 'allow' : 'block' })
         }}
       >
         <span className="zen-firstrun-row-glyph self-start" aria-hidden>
