@@ -205,6 +205,8 @@ export type PreviewState =
       kind: 'voice'
       script: string
     }
+  /** The tab overview over the active page, as a pull on the pill opens it. */
+  | { kind: 'overview' }
 
 /** More sample banners than the stack holds are pointless. */
 const MAX_PREVIEW_BANNERS = 3
@@ -264,15 +266,17 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * (`size=<bytes>`, `at=<percent>` already received, `speed=<bytes per second>`, `paused`,
  * `fail=<error>`, `deleted` for a finished file since gone from disk, `private`, `url=<url>`,
  * `mime=<type>`), `popups=<n>` for n pop-ups blocked on the active page (`&list` opens the list
- * of them, `&allowed` remembers the site as allowed), or `prompt=http-auth` /
- * `prompt=certificate` for a security dialog over the page (`&failed`, `&proxy`, `&secure` vary
- * the sign-in); `prompt=<any other value>` is the permission that page asks for (the permission
- * prompt sheet), and `private=new|<url>` opens a private tab. When several are given, `page`
- * wins over `group`, `group` over `overlay`, `overlay` over `menu`, `menu` over the permission
- * `prompt`, that over `private`, `private` over `autofill`, `autofill` over `find`, `find` over
- * `pull`, `pull` over `zoom`, `zoom` over `error`, `error` over the messages, the messages over
- * `webapp`, `webapp` over `download`, `download` over `popups`, and `popups` over the security
- * `prompt`. A leading `#` (the URL hash as read) is ignored.
+ * of them, `&allowed` remembers the site as allowed), `prompt=http-auth` / `prompt=certificate`
+ * for a security dialog over the page (`&failed`, `&proxy`, `&secure` vary the sign-in);
+ * `prompt=<any other value>` is the permission that page asks for (the permission prompt
+ * sheet), `private=new|<url>` opens a private tab, and `overview` opens the tab overview over
+ * the active page (the grid of cards, with whatever pictures the stand-in host has of the tabs).
+ * When several are given, `page` wins over `group`, `group` over `overlay`, `overlay` over
+ * `menu`, `menu` over the permission `prompt`, that over `private`, `private` over `autofill`,
+ * `autofill` over `find`, `find` over `pull`, `pull` over `zoom`, `zoom` over `error`, `error`
+ * over the messages, the messages over `webapp`, `webapp` over `download`, `download` over
+ * `popups`, `popups` over the security `prompt`, and that over `overview`. A leading `#` (the
+ * URL hash as read) is ignored.
  */
 export function parsePreviewSpec(spec: string): PreviewState {
   const params = new URLSearchParams(spec.startsWith('#') ? spec.slice(1) : spec)
@@ -395,6 +399,7 @@ export function parsePreviewSpec(spec: string): PreviewState {
   }
   const voice = params.get('voice')
   if (voice !== null) return { kind: 'voice', script: voice || 'heard' }
+  if (params.has('overview')) return { kind: 'overview' }
   return { kind: 'idle' }
 }
 

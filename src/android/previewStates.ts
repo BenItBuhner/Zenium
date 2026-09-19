@@ -94,11 +94,12 @@ const VOICE_EVENT_MARGIN_MS = 250
  * (the stand-in downloader starts that transfer; see `PreviewDownloadSpec`), `popups=<n>` (n
  * pop-ups blocked on the page; `&list` opens the list, `&allowed` remembers the site),
  * `prompt=http-auth` / `prompt=certificate` (a security dialog over the page; `&failed`,
- * `&proxy`, `&secure`) or `voice=<script>` (voice search started, the stand-in recogniser
+ * `&proxy`, `&secure`), `voice=<script>` (voice search started, the stand-in recogniser
  * playing that script into the listening sheet: `listening`, `listening-rest`, `partial`,
- * `no-match`, `denied`, …; see `previewVoiceScript`). `rules=<n>` on any spec seeds n remembered
- * site permissions for Settings › Security; `blocking=<variant>` may accompany any spec too (see
- * `seedBlocking`).
+ * `no-match`, `denied`, …; see `previewVoiceScript`) or `overview` (the tab overview open over
+ * the active page, its cards with whatever pictures the stand-in host has of the tabs).
+ * `rules=<n>` on any spec seeds n remembered site permissions for Settings › Security;
+ * `blocking=<variant>` may accompany any spec too (see `seedBlocking`).
  * It comes in as the URL hash, `http://localhost:41734/#overlay=history`, or as
  * `window.postMessage({ zenPreview: 'find=coffee' }, '*')`, which also re-applies an unchanged
  * state. Once applied it is echoed in `<html data-preview-state>` so a driver can wait for it;
@@ -400,6 +401,10 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
     } else {
       whenStore(() => uiStore.get().toasts.length > 0, spec)
     }
+  } else if (target.kind === 'overview' && state) {
+    // The grid mounts on the next render and its cards read their pictures then.
+    openOverview(state)
+    requestAnimationFrame(() => done(spec))
   } else {
     finish()
   }
