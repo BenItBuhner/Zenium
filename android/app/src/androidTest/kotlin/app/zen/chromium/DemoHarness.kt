@@ -604,6 +604,12 @@ abstract class DemoHarness(
      * re-renders, as the suggestions do while their requests answer), and [touchTap] on a stale
      * node touches nothing. Up to three fresh finds within `timeoutMs`; false when none is on
      * screen in time or none stays put for the touch.
+     *
+     * Opt-in, like [awaitClipboardOverlayGone]: nothing in the harness calls either, and
+     * [touchTap], [touchTapLabel] and [awaitNode] are as they were, so a driver that does not
+     * call them runs exactly as before. A driver whose list re-renders under its finger calls
+     * this in place of an `awaitNode` + `touchTap` pair (OmniboxDemo; its fallback to the DOM's
+     * rect when the tree has lost the node is the driver's own, not the harness's).
      */
     protected fun touchTapFresh(timeoutMs: Long = 8_000, matches: (String) -> Boolean): Boolean {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
@@ -624,6 +630,11 @@ abstract class DemoHarness(
      * seconds after every copy) to go, so the next touch near the bottom lands in the app and not on
      * one of the chip's actions (a touch on it sent the clip to Nearby Share, which paused the app).
      * Returns at once when no such window is up; true when it is gone within `timeoutMs`.
+     *
+     * Opt-in: no touch helper waits for the overlay on its own, so a driver that copies nothing,
+     * or touches nowhere near the bottom after a copy, is unaffected; a driver that copies and then
+     * touches there calls this between the two (OmniboxDemo, between the link menu's copy and the
+     * pill).
      */
     protected fun awaitClipboardOverlayGone(timeoutMs: Long = 12_000): Boolean {
         val deadline = SystemClock.uptimeMillis() + timeoutMs

@@ -345,13 +345,21 @@ class OmniboxDemo : DemoHarness("omnibox-demo-state.json", "android-omnibox", "o
             val verbatim = awaitNode(8_000) { it.contains("Search with $ROAST_NAME") } != null
             SystemClock.sleep(1_000)
             shot("14-search-typed")
+            // Whether the keyboard still had the last word composing when Enter came (Gboard keeps
+            // the typed word underlined and lets a hardware Enter through with it open): the field
+            // records the key's isComposing, read back once the editor has gone.
+            chromeJs(
+                "window.__enterComposing=null;var f=document.querySelector('$FIELD');" +
+                    "if(f)f.addEventListener('keydown',function(e){if(e.key==='Enter')window.__enterComposing=e.isComposing},true)"
+            )
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_ENTER)
             val searched = awaitPageUrlPrefix(ROAST_ORIGIN + "/search?q=", 12_000)
             SystemClock.sleep(3_000)
             shot("15-searched")
+            val composing = chromeValue("String(window.__enterComposing)")
             val url = activeCoreTab()?.optString("url").orEmpty()
             val ok = searched && url.contains("single")
-            finding("  verbatim row 'Search with $ROAST_NAME' $verbatim; Enter -> tab URL '$url' ${verdict(ok)}")
+            finding("  verbatim row 'Search with $ROAST_NAME' $verbatim; Enter (isComposing $composing) -> tab URL '$url' ${verdict(ok)}")
             if (!ok) failures += "the search did not go to the picked engine (tab '$url')"
         }
 
