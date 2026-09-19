@@ -11,24 +11,27 @@ import org.junit.Test
 
 /**
  * The selection toolbar's view-free half: the core's item list off the bridge, the plan for the
- * system's menu (after Copy, one Share) across the WebView versions' item orders, and the touch's
- * host event. The menu work itself runs on the emulator (`SelectionDemo`).
+ * system's menu (after the last of Copy and Paste, one Share) across the WebView versions' item
+ * orders, the listing kept current across one mode's selection changes, and the touch's host
+ * event. The menu work itself runs on the emulator (`SelectionDemo`).
  */
 class SelectionToolbarTest {
-    private val strings = SelectionToolbar.Strings(copy = "Copy", share = "Share")
-    private val ours = listOf(Item("search", "Search Zenium"), Item("share", "Share"))
+    private val strings = SelectionToolbar.Strings(copy = "Copy", share = "Share", paste = "Paste")
+    private val ours = listOf(Item("search", "Search DuckDuckGo"), Item("share", "Share"))
 
     /** Chromium's default group, whatever resource id the WebView build gave it. */
     private val defaults = 0x7f0a0042
     /** Another group of the WebView's: a text-processing app's item. */
     private val processText = 0x7f0a0043
+    /** The WebView's `select_action_menu_share` id, as resolved in its package. */
+    private val shareId = 0x02090017
 
     // --- the bridge's list -------------------------------------------------------------------------
 
     @Test
     fun parsesTheCoreListInOrder() {
         val items = SelectionToolbar.parseItems(
-            """[{"id":"search","title":"Search Zenium"},{"id":"share","title":"Share"}]"""
+            """[{"id":"search","title":"Search DuckDuckGo"},{"id":"share","title":"Share"}]"""
         )
         assertEquals(ours, items)
     }
@@ -46,7 +49,7 @@ class SelectionToolbarTest {
     @Test
     fun dropsEntriesWithoutAnIdOrTitleAndRepeatedIds() {
         val items = SelectionToolbar.parseItems(
-            """[{"id":"search","title":" Search Zenium "},{"id":"","title":"Nameless"},{"title":"No id"},
+            """[{"id":"search","title":" Search DuckDuckGo "},{"id":"","title":"Nameless"},{"title":"No id"},
                {"id":"glance","title":"  "},7,null,{"id":"search","title":"Search Again"},{"id":"share","title":"Share"}]"""
         )
         assertEquals(ours, items)
@@ -96,20 +99,42 @@ class SelectionToolbarTest {
     }
 
     @Test
-    fun anEditableSelectionAnchorsOnCopyAmongCutAndPaste() {
+    fun anEditableSelectionAnchorsOnPasteSoCutCopyPasteStayAheadOfOurs() {
+        // Chromium's editable order: Cut, Copy, Paste, Paste as plain text, Select all, Web search, Share.
         val system = listOf(
-            SystemItem(defaults, 11, "Cut"),
-            SystemItem(defaults, 12, "Copy"),
-            SystemItem(defaults, 13, "Paste"),
-            SystemItem(defaults, 14, "Share"),
-            SystemItem(defaults, 15, "Select all"),
-            SystemItem(defaults, 16, "Paste as plain text"),
-            SystemItem(defaults, 17, "Web search")
+            SystemItem(defaults, 0, "Cut"),
+            SystemItem(defaults, 10, "Copy"),
+            SystemItem(defaults, 20, "Paste"),
+            SystemItem(defaults, 30, "Paste as plain text"),
+            SystemItem(defaults, 40, "Select all"),
+            SystemItem(defaults, 50, "Web search"),
+            SystemItem(defaults, 60, "Share")
         )
         val plan = SelectionToolbar.plan(system, ours, strings)
         assertTrue(plan.anchored)
-        assertEquals(12, plan.order)
-        assertEquals(listOf(3), plan.hidden)
+        assertEquals(20, plan.order)
+        assertEquals(listOf(6), plan.hidden)
+    }
+
+    @Test
+    fun anEditableSelectionWithNothingToPasteAnchorsOnCopy() {
+        // An empty clipboard: no Paste item, so Copy is the last of the two.
+        val system = listOf(
+            SystemItem(defaults, 0, "Cut"),
+            SystemItem(defaults, 10, "Copy"),
+            SystemItem(defaults, 40, "Select all"),
+            SystemItem(defaults, 60, "Share")
+        )
+        assertEquals(10, SelectionToolbar.plan(system, ours, strings).order)
+        // A WebView without the Paste string known, or with Paste ahead of Copy: Copy anchors.
+        val noPasteString = SelectionToolbar.Strings(copy = "Copy", share = "Share")
+        val editable = listOf(SystemItem(defaults, 10, "Copy"), SystemItem(defaults, 20, "Paste"))
+        assertEquals(10, SelectionToolbar.plan(editable, ours, noPasteString).order)
+        val pasteFirst = listOf(SystemItem(defaults, 5, "Paste"), SystemItem(defaults, 10, "Copy"))
+        assertEquals(10, SelectionToolbar.plan(pasteFirst, ours, strings).order)
+        // A Paste in another group (a text-processing app of that name) is not the anchor.
+        val other = listOf(SystemItem(defaults, 10, "Copy"), SystemItem(processText, 200, "Paste"))
+        assertEquals(10, SelectionToolbar.plan(other, ours, strings).order)
     }
 
     @Test
@@ -134,34 +159,213 @@ class SelectionToolbarTest {
 
     @Test
     fun theWebViewShareStaysWhenZeniumHasNoShare() {
-        val system = listOf(SystemItem(defaults, 12, "Copy"), SystemItem(defaults, 14, "Share"))
-        val plan = SelectionToolbar.plan(system, listOf(Item("search", "Search Zenium")), strings)
+        val system = listOf(SystemItem(defaults, 12, "Copy"), SystemItem(defaults, 14, "Share", shareId))
+        val withId = SelectionToolbar.Strings(copy = "Copy", share = "Share", paste = "Paste", shareItemId = shareId)
+        val plan = SelectionToolbar.plan(system, listOf(Item("search", "Search DuckDuckGo")), withId)
         assertEquals(emptyList<Int>(), plan.hidden)
-        assertEquals(listOf(Item("search", "Search Zenium")), plan.items)
+        assertEquals(listOf(Item("search", "Search DuckDuckGo")), plan.items)
     }
 
     @Test
-    fun shareIsToldByTheFrameworkStringInAnotherLanguageAndByZeniumsTitleWithoutIt() {
+    fun shareIsToldByItsIdFirstWhateverItsTitleOrGroup() {
+        // The WebView's Share under a translation the framework's string does not share, and
+        // out of the default group: the id names it all the same, and nothing else is hidden.
+        val system = listOf(
+            SystemItem(defaults, 12, "Copy"),
+            SystemItem(processText, 90, "Compartir", shareId),
+            SystemItem(defaults, 14, "Share", 0x02090021)
+        )
+        val withId = SelectionToolbar.Strings(copy = "Copy", share = "Share", paste = "Paste", shareItemId = shareId)
+        assertEquals(listOf(1), SelectionToolbar.plan(system, ours, withId).hidden)
+    }
+
+    @Test
+    fun shareFallsBackToTitlesWhenTheIdIsUnknownOrAbsent() {
+        // No id resolved (0): the title, in Copy's group.
+        val english = listOf(SystemItem(defaults, 12, "Copy", 0x02090011), SystemItem(defaults, 14, "Share", 0x02090017))
+        assertEquals(listOf(1), SelectionToolbar.plan(english, ours, strings).hidden)
+        // An id resolved but on no item (a WebView that renamed it): the title again.
+        val renamed = SelectionToolbar.Strings(copy = "Copy", share = "Share", paste = "Paste", shareItemId = 0x0209ffff)
+        assertEquals(listOf(1), SelectionToolbar.plan(english, ours, renamed).hidden)
+        // The framework string in another language, and Zenium's own title without the string.
         val german = SelectionToolbar.Strings(copy = "Kopieren", share = "Teilen")
         val system = listOf(SystemItem(defaults, 12, "Kopieren"), SystemItem(defaults, 14, "Teilen"), SystemItem(defaults, 17, "Websuche"))
         assertEquals(listOf(1), SelectionToolbar.plan(system, ours, german).hidden)
         val noFrameworkString = SelectionToolbar.Strings(copy = "Copy", share = null)
-        val english = listOf(SystemItem(defaults, 12, "Copy"), SystemItem(defaults, 14, "Share"))
         assertEquals(listOf(1), SelectionToolbar.plan(english, ours, noFrameworkString).hidden)
     }
 
     @Test
-    fun onlyCopysGroupCanHoldTheWebViewShare() {
+    fun onlyCopysGroupCanHoldTheWebViewShareByTitle() {
         // A text-processing app named Share, in the WebView's other group, is not the item.
         val system = listOf(SystemItem(defaults, 12, "Copy"), SystemItem(processText, 201, "Share"))
         assertEquals(emptyList<Int>(), SelectionToolbar.plan(system, ours, strings).hidden)
+    }
+
+    // --- the listing across one mode's selection changes ---------------------------------------------
+
+    /** The view's side of a `Listing`, replies held back until the test lets them through. */
+    private class Bridge {
+        val reads = ArrayList<(String) -> Unit>()
+        val lists = ArrayList<Pair<String, (String?) -> Unit>>()
+        var invalidations = 0
+        val listing = SelectionToolbar.Listing(
+            readSelection = { onText -> reads += onText },
+            listItems = { text, onJson -> lists += text to onJson },
+            invalidate = { invalidations++ }
+        )
+
+        /** The page answers the oldest read with `text`, then the core the list asked for (if one was) with `json`. */
+        fun answer(text: String, json: String?) {
+            reads.removeAt(0)(text)
+            if (lists.isEmpty()) return
+            val (asked, onJson) = lists.removeAt(0)
+            assertEquals(text, asked)
+            onJson(json)
+        }
+    }
+
+    private val textItems = """[{"id":"search","title":"Search DuckDuckGo"},{"id":"share","title":"Share"}]"""
+    private val addressItems = """[{"id":"glance","title":"Open in Glance"},{"id":"share","title":"Share"}]"""
+
+    @Test
+    fun theFirstAnswerIsAppliedAndInvalidatesTheModeOnceAndTheNextPrepareAsksAgainWithoutACycle() {
+        val bridge = Bridge()
+        val listing = bridge.listing
+        listing.onPrepare()
+        assertEquals(1, listing.asks)
+        assertEquals(emptyList<Item>(), listing.items)
+        bridge.answer("quantum", textItems)
+        assertEquals(ours, listing.items)
+        assertEquals("quantum", listing.text)
+        assertEquals(1, bridge.invalidations)
+        // The invalidate's own prepare asks once more; the same answer ends it there.
+        listing.onPrepare()
+        assertEquals(2, listing.asks)
+        bridge.answer("quantum", textItems)
+        assertEquals(1, bridge.invalidations)
+        assertEquals(0, bridge.reads.size)
+    }
+
+    @Test
+    fun aHandleDragOntoAnAddressAndBackChangesTheItemsThroughThePrepareTheWebViewInvalidates() {
+        val bridge = Bridge()
+        val listing = bridge.listing
+        listing.onPrepare()
+        bridge.answer("quantum", textItems)
+        listing.onPrepare()
+        bridge.answer("quantum", textItems)
+        assertEquals(1, bridge.invalidations)
+        // The handle is dragged onto the address: Chromium invalidates the mode it has.
+        listing.onPrepare()
+        assertEquals(3, listing.asks)
+        bridge.answer("https://example.org/docs", addressItems)
+        assertEquals(listOf(Item("glance", "Open in Glance"), Item("share", "Share")), listing.items)
+        assertEquals(2, bridge.invalidations)
+        listing.onPrepare()
+        bridge.answer("https://example.org/docs", addressItems)
+        assertEquals(2, bridge.invalidations)
+        // And back onto the text.
+        listing.onPrepare()
+        bridge.answer("quantum", textItems)
+        assertEquals(ours, listing.items)
+        assertEquals(3, bridge.invalidations)
+        listing.onPrepare()
+        bridge.answer("quantum", textItems)
+        assertEquals(3, bridge.invalidations)
+        assertEquals(6, listing.asks)
+    }
+
+    @Test
+    fun onePrepareDuringAnAskWaitsForItAndAsksAgainAfterAnUnchangedAnswer() {
+        val bridge = Bridge()
+        val listing = bridge.listing
+        listing.onPrepare()
+        bridge.answer("quantum", textItems)
+        listing.onPrepare()
+        // Two more prepares while that ask is in flight: no second ask, one more after it.
+        listing.onPrepare()
+        listing.onPrepare()
+        assertEquals(2, listing.asks)
+        assertEquals(1, bridge.reads.size)
+        bridge.answer("quantum", textItems)
+        assertEquals(1, bridge.invalidations)
+        assertEquals(3, listing.asks)
+        assertEquals(1, bridge.reads.size)
+        // The late prepare was for a selection that changed under the ask: the follow-up sees it.
+        bridge.answer("example.org", addressItems)
+        assertEquals(2, bridge.invalidations)
+        assertEquals(listOf(Item("glance", "Open in Glance"), Item("share", "Share")), listing.items)
+    }
+
+    @Test
+    fun aChangedAnswerDuringAWaitingPrepareInvalidatesInsteadOfAskingTwice() {
+        val bridge = Bridge()
+        val listing = bridge.listing
+        listing.onPrepare()
+        listing.onPrepare()
+        bridge.answer("quantum", textItems)
+        // The invalidate's prepare is the follow-up; nothing asks on its own.
+        assertEquals(1, bridge.invalidations)
+        assertEquals(1, listing.asks)
+        listing.onPrepare()
+        assertEquals(2, listing.asks)
+    }
+
+    @Test
+    fun aBlankSelectionListsNothingAndClearsWhatShowed() {
+        val bridge = Bridge()
+        val listing = bridge.listing
+        listing.onPrepare()
+        bridge.answer("quantum", textItems)
+        listing.onPrepare()
+        bridge.answer("", null)
+        assertEquals(emptyList<Item>(), listing.items)
+        assertEquals(2, bridge.invalidations)
+        assertEquals(0, bridge.lists.size)
+        // Blank from the start: nothing to apply, nothing to invalidate.
+        val fresh = Bridge()
+        fresh.listing.onPrepare()
+        fresh.answer("   ", null)
+        assertEquals(0, fresh.invalidations)
+        assertEquals("   ", fresh.listing.text)
+    }
+
+    @Test
+    fun answersAfterTheModeIsGoneAreDroppedAndNothingAsksAgain() {
+        val bridge = Bridge()
+        val listing = bridge.listing
+        listing.onPrepare()
+        listing.finish()
+        bridge.answer("quantum", textItems)
+        assertEquals(emptyList<Item>(), listing.items)
+        assertEquals(0, bridge.invalidations)
+        listing.onPrepare()
+        assertEquals(1, listing.asks)
+        // Gone between the page's answer and the core's.
+        val late = Bridge()
+        late.listing.onPrepare()
+        late.reads.removeAt(0)("quantum")
+        late.listing.finish()
+        late.lists.removeAt(0).second(textItems)
+        assertEquals(emptyList<Item>(), late.listing.items)
+        assertEquals(0, late.invalidations)
+    }
+
+    @Test
+    fun aMalformedAnswerListsNothing() {
+        val bridge = Bridge()
+        bridge.listing.onPrepare()
+        bridge.answer("quantum", "{not json")
+        assertEquals(emptyList<Item>(), bridge.listing.items)
+        assertEquals(0, bridge.invalidations)
     }
 
     // --- the touch -----------------------------------------------------------------------------------
 
     @Test
     fun menuItemIdsNameTheItemsInOrder() {
-        assertEquals(Item("search", "Search Zenium"), SelectionToolbar.itemAt(ours, SelectionToolbar.FIRST_ITEM_ID))
+        assertEquals(Item("search", "Search DuckDuckGo"), SelectionToolbar.itemAt(ours, SelectionToolbar.FIRST_ITEM_ID))
         assertEquals(Item("share", "Share"), SelectionToolbar.itemAt(ours, SelectionToolbar.FIRST_ITEM_ID + 1))
         assertNull(SelectionToolbar.itemAt(ours, SelectionToolbar.FIRST_ITEM_ID + 2))
         assertNull(SelectionToolbar.itemAt(ours, SelectionToolbar.FIRST_ITEM_ID - 1))

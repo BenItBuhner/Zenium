@@ -29,6 +29,7 @@ import {
   linkCopyItem,
   NAVIGATION_MENU_MAX,
   navigationWindow,
+  SELECTION_TEXT_MAX,
   selectionUrl
 } from '../menus'
 
@@ -1055,17 +1056,40 @@ describe('the selection toolbar', () => {
     ])
   })
 
-  it('on the phone lists Search Zenium then Share for text, and nothing for blank text or a gone tab', () => {
+  it('on the phone lists Search <engine> then Share for text, and nothing for blank text or a gone tab', () => {
     const h = pageHarness(ANDROID, PHONE)
     expect(h.browser.menus.selectionToolbar(h.tabId, '  quantum foam ')).toEqual([
-      { id: 'search', title: 'Search Zenium' },
+      { id: 'search', title: 'Search Google' },
       { id: 'share', title: 'Share' }
     ])
+    // The title names the engine the search goes through, the menu's own (never the browser).
+    h.browser.handleCommand(h.win, 'settings.update', { searchEngineId: 'duckduckgo' })
+    expect(h.browser.menus.selectionToolbar(h.tabId, 'quantum foam')[0]).toEqual({
+      id: 'search',
+      title: 'Search DuckDuckGo'
+    })
+    expect(h.menu(pageParams({ selectionText: 'quantum foam' }))[1]).toBe(
+      'Search DuckDuckGo for “quantum foam”'
+    )
     expect(h.browser.menus.selectionToolbar(h.tabId, '   ')).toEqual([])
     expect(h.browser.menus.selectionToolbar('tab_gone', 'quantum foam')).toEqual([])
   })
 
-  it('Search Zenium opens the query in a background tab next to this one, with it as the opener', () => {
+  it('takes at most SELECTION_TEXT_MAX characters of a host selection', () => {
+    const h = pageHarness(ANDROID, PHONE)
+    const long = 'a'.repeat(SELECTION_TEXT_MAX + 500)
+    expect(h.browser.menus.selectionToolbar(h.tabId, long).map((item) => item.id)).toEqual([
+      'search',
+      'share'
+    ])
+    expect(h.browser.menus.runSelectionAction(h.tabId, 'search', long)).toBe(true)
+    const tabIds = h.win.activeSpace().tabIds
+    const opened = h.browser.tabs.tab(tabIds[tabIds.indexOf(h.tabId) + 1] ?? '')
+    expect(opened?.url).toContain('a'.repeat(SELECTION_TEXT_MAX))
+    expect(opened?.url).not.toContain('a'.repeat(SELECTION_TEXT_MAX + 1))
+  })
+
+  it('Search <engine> opens the query in a background tab next to this one, with it as the opener', () => {
     const h = pageHarness(ANDROID, PHONE)
     expect(h.browser.menus.runSelectionAction(h.tabId, 'search', 'quantum foam')).toBe(true)
     expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(h.tabId)

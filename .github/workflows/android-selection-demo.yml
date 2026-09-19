@@ -2,15 +2,20 @@ name: Android selection toolbar demo
 
 # Records the text-selection toolbar with Zenium's items on an emulator (parity row GN-13, and
 # SH-10's Share): an injected long press on a word brings the system's floating toolbar with
-# Copy, then Search Zenium and Share; a real touch on Search Zenium opens the query in a new
+# Copy, then Search <engine> and Share; a real touch on the search opens the query in a new
 # background tab; a touch on Share brings the system share sheet; a long press on an address
-# written as plain text lists Open in Glance, and a touch on it opens the glance; then the same
-# toolbar in dark for the design record. The driver writes `selection-findings.txt` with a PASS
-# or FAIL per check and fails when any did. Dispatch-only, like the other demos: it takes about
-# ten minutes. The build, the emulator and the Gradle cache live in android-emulator-demo.yml;
-# this file only picks the driver and the demo it runs.
+# written as plain text lists Open in Glance, and a touch on it opens the glance; a real drag of
+# the selection's end handle onto the text and back, and a touch on Select all, show the items
+# following the selection; then the same toolbar in dark for the design record. The driver
+# writes `selection-findings.txt` with a PASS or FAIL per check and fails when any did.
+# Dispatch-only, like the other demos: it takes about ten minutes. The build, the emulator and
+# the Gradle cache live in android-emulator-demo.yml; this file only picks the driver and the
+# demo it runs.
 on:
   workflow_dispatch:
+  # Temporary, for the branch's one retry run; removed before the head that merges.
+  push:
+    branches: [cursor/android-selection-actions-e0c5]
 
 permissions:
   contents: read

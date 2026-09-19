@@ -1104,7 +1104,14 @@ export class AndroidPlatform implements Platform {
         browser.onShareAction(payload as HostEventPayloads['share.action'], this.window)
         return
       case 'selection.action': {
-        const action = payload as HostEventPayloads['selection.action']
+        // The host's payload, checked before it names an action: the text is a page's.
+        const action = payload as Partial<HostEventPayloads['selection.action']>
+        if (
+          typeof action.tabId !== 'string' ||
+          typeof action.id !== 'string' ||
+          typeof action.text !== 'string'
+        )
+          return
         const origin =
           typeof action.originX === 'number' && typeof action.originY === 'number'
             ? { x: action.originX, y: action.originY }

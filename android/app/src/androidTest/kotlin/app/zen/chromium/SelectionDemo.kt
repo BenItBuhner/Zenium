@@ -2,6 +2,7 @@ package app.zen.chromium
 
 import android.graphics.PointF
 import android.graphics.Rect
+import android.graphics.RectF
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
@@ -24,14 +25,19 @@ import java.util.concurrent.TimeUnit
  * (one `PASS` or `FAIL` per check; the test fails at the end when any check did):
  *
  *  - a REAL long press (injected touch) on a word selects it and the system's floating toolbar
- *    shows Copy, then Zenium's `Search Zenium` and `Share` right after it, one Share in all,
- *    each read from the items' content descriptions;
- *  - a real touch on `Search Zenium` opens a NEW tab with the query in the BACKGROUND (this tab
- *    stays active, the new one is its child) and the toolbar goes;
+ *    shows Copy, then Zenium's `Search DuckDuckGo` (the profile's engine) and `Share` right after
+ *    it, one Share in all, each read from the items' content descriptions;
+ *  - a real touch on `Search DuckDuckGo` opens a NEW tab with the query in the BACKGROUND (this
+ *    tab stays active, the new one is its child) and the toolbar goes;
  *  - a real touch on `Share` brings the system share sheet with the text (Zenium's share; the
  *    WebView's own Share is hidden, so there is one to touch);
- *  - a long press on an address written as plain text lists `Open in Glance` instead of the
- *    search, and a real touch on it opens the address in a glance over the page;
+ *  - a long press on an address written as plain text (a `user-select: all` span, so the whole
+ *    address is taken) lists `Open in Glance` instead of the search, and a real touch on it
+ *    opens the address in a glance over the page;
+ *  - the items follow the selection while the toolbar is up: a real drag of the end handle from
+ *    the address onto the text below flips the bar to `Search DuckDuckGo`, a drag back to
+ *    `Open in Glance`, and a real touch on the system's `Select all` over the address flips it
+ *    to the search too (the whole page is no address);
  *  - the same toolbar in dark, for the design record.
  *
  * The pages come from a loopback server inside this process ([DemoServer]); the search goes to
@@ -80,9 +86,11 @@ class SelectionDemo : DemoHarness("selection-demo-state.json", "selection", "sel
     override fun demo() {
         shot("00-page")
         wordToolbar()
-        searchZenium()
+        searchEngine()
         shareFromToolbar()
         addressToGlance()
+        handleDrag()
+        selectAll()
         darkToolbar()
         finding("\nend: ${describeActive()}${if (failures == 0) "" else "; $failures FAIL"}")
     }
@@ -99,7 +107,7 @@ class SelectionDemo : DemoHarness("selection-demo-state.json", "selection", "sel
         finding("  injected long press on 'quantum': selection '$selected' ${verdict(selected == "quantum")}")
         finding("  toolbar (content descriptions, left to right): ${items.describe()}")
         items.orEmpty().forEach { finding("    ${it.label}: ${it.bounds.toShortString()}") }
-        checkZeniumItems(items, first = "Search Zenium")
+        checkZeniumItems(items, first = SEARCH)
         clearSelection()
     }
 
@@ -156,6 +164,28 @@ class SelectionDemo : DemoHarness("selection-demo-state.json", "selection", "sel
         return listed
     }
 
+    /**
+     * A real touch on the toolbar's overflow button, then on the item `label` in the list behind
+     * it; where the finger landed on the item, or null when the list or the item never showed
+     * (the list is closed again then).
+     */
+    private fun touchInOverflow(items: List<ToolbarItem>, label: String): PointF? {
+        val more = items.find { it.label == "More options" } ?: return null
+        touchTapPoint(more.node) ?: return null
+        val deadline = SystemClock.uptimeMillis() + 5_000
+        while (SystemClock.uptimeMillis() < deadline) {
+            SystemClock.sleep(300)
+            if (overflowLabels() != null) break
+        }
+        SystemClock.sleep(500)
+        val node = findInWindows { it == label } ?: run {
+            finding("  '$label' is not behind the overflow: ${overflowLabels()?.joinToString(" | ") ?: "no list"}")
+            findInWindows { it == "Close overflow" }?.let { touchTapPoint(it) }
+            return null
+        }
+        return touchTapPoint(node)
+    }
+
     /** The labels in the toolbar window while its overflow list is open (told by the close arrow), the arrow left out. */
     private fun overflowLabels(): List<String>? {
         for (window in ui.windows) {
@@ -178,15 +208,15 @@ class SelectionDemo : DemoHarness("selection-demo-state.json", "selection", "sel
         return null
     }
 
-    /** A real touch on Search Zenium: a new tab with the query, in the background, this tab's child. */
-    private fun searchZenium() {
-        finding("\nGN-13 Search Zenium: the selection as a query in a new background tab")
+    /** A real touch on Search DuckDuckGo: a new tab with the query, in the background, this tab's child. */
+    private fun searchEngine() {
+        finding("\nGN-13 $SEARCH: the selection as a query in a new background tab")
         ensureForeground()
         val items = longPress("#word") { it.zenium() }
         val known = tabIds()
-        val target = items?.find { it.label == "Search Zenium" }
+        val target = items?.find { it.label == SEARCH }
         val point = target?.let { touchTapPoint(it.node) }
-        finding("  real touch on Search Zenium ${point?.let { "at ${it.x.toInt()},${it.y.toInt()}" } ?: "NOT POSSIBLE (item missing or off screen)"}")
+        finding("  real touch on $SEARCH ${point?.let { "at ${it.x.toInt()},${it.y.toInt()}" } ?: "NOT POSSIBLE (item missing or off screen)"}")
         val created = awaitNewTab(known)
         SystemClock.sleep(1_500)
         shot("02-search-background-tab")
@@ -246,7 +276,7 @@ class SelectionDemo : DemoHarness("selection-demo-state.json", "selection", "sel
         val labels = items.orEmpty().map { it.label }
         val copy = labels.indexOf("Copy")
         check("Open in Glance right after Copy", copy >= 0 && labels.getOrNull(copy + 1) == "Open in Glance")
-        check("no Search Zenium for an address", "Search Zenium" !in labels)
+        check("no $SEARCH for an address", SEARCH !in labels)
         finding("  Share: ${if ("Share" in labels) "in the bar after Open in Glance ${verdict(labels.getOrNull(copy + 2) == "Share")}" else "not in the bar (behind the overflow with the system's items)"}")
         val target = items?.find { it.label == "Open in Glance" }
         val point = target?.let { touchTapPoint(it.node) }
@@ -267,6 +297,162 @@ class SelectionDemo : DemoHarness("selection-demo-state.json", "selection", "sel
         clearSelection()
     }
 
+    // --- GN-13: the items follow the selection ----------------------------------------------------
+
+    /**
+     * The toolbar is up over the address; a REAL drag of the selection's end handle onto the text
+     * below makes the selection no address, and the bar must say so (`Search DuckDuckGo`, no
+     * `Open in Glance`); a drag back onto the address restores `Open in Glance`. The handle is
+     * Chromium's own (drawn under the selection's end), so it is found from the selection's last
+     * client rect and pressed where the handle's bitmap sits. The log tells how the WebView
+     * refreshed the mode each time (created anew, or the same one prepared again).
+     */
+    private fun handleDrag() {
+        finding("\nGN-13 handle drag: the items follow the selection")
+        ensureForeground()
+        val before = longPress("#url") { it.any { item -> item.label == "Open in Glance" } }
+        finding("  toolbar over the address: ${before.describe()}")
+        val addressEnd = selectionEnd()
+        val tail = textBottom("#tail")
+        if (addressEnd == null || tail == null) {
+            check("the selection's end and the text below are known", false)
+            clearSelection()
+            return
+        }
+        val marks = selectionLog().size
+        // Onto the text below.
+        val grabbed = dragHandle(from = addressEnd, to = tail)
+        val onText = awaitToolbar { it.any { item -> item.label == SEARCH } }
+        val selectedOnText = jsonString(tabJs("String(getSelection())"))
+        SystemClock.sleep(800)
+        shot("08-drag-onto-text")
+        finding("  end handle pressed at ${grabbed.x.toInt()},${grabbed.y.toInt()} and dragged to ${tail.x.toInt()},${tail.y.toInt()}")
+        finding("  selection now: '${selectedOnText.replace("\n", "\\n")}'")
+        finding("  toolbar: ${onText.describe()}")
+        val textLabels = onText.orEmpty().map { it.label }
+        check("the selection grew past the address", selectedOnText.startsWith(GLANCE_URL) && selectedOnText.length > GLANCE_URL.length)
+        check("the bar flips to $SEARCH", SEARCH in textLabels)
+        check("Open in Glance is gone from the bar", "Open in Glance" !in textLabels)
+        // And back onto the address: dropped a few characters in from its end (the span is
+        // `user-select: all`, so the whole address is taken again; a drop past the end could
+        // land after the span).
+        val textEnd = selectionEnd()
+        val addressInside = textRect("#url")?.let { PointF(it.right - 12 * density, it.bottom - 1) }
+        if (textEnd == null || addressInside == null) {
+            check("the selection's end and the address are known for the drag back", false)
+            clearSelection()
+            return
+        }
+        val grabbedBack = dragHandle(from = textEnd, to = addressInside)
+        val onAddress = awaitToolbar { it.any { item -> item.label == "Open in Glance" } }
+        val selectedBack = jsonString(tabJs("String(getSelection())"))
+        SystemClock.sleep(800)
+        shot("09-drag-back-onto-address")
+        finding("  end handle pressed at ${grabbedBack.x.toInt()},${grabbedBack.y.toInt()} and dragged back to ${addressInside.x.toInt()},${addressInside.y.toInt()}")
+        finding("  selection now: '${selectedBack.replace("\n", "\\n")}'")
+        finding("  toolbar: ${onAddress.describe()}")
+        val addressLabels = onAddress.orEmpty().map { it.label }
+        val backText = selectedBack.trim()
+        check(
+            "the selection is an address again (${if (backText == GLANCE_URL) "the whole one" else "'$backText'"})",
+            backText.startsWith("$ORIGIN/glance") && !backText.any { it.isWhitespace() }
+        )
+        check("the bar flips back to Open in Glance", "Open in Glance" in addressLabels)
+        check("$SEARCH is gone from the bar", SEARCH !in addressLabels)
+        val log = selectionLog().drop(marks)
+        finding("  the WebView's mode across the two drags: ${log.count { "created" in it }} created, ${log.count { "prepared" in it }} prepared, ${log.count { "destroyed" in it }} destroyed")
+        log.forEach { finding("    $it") }
+        clearSelection()
+    }
+
+    /**
+     * The toolbar over the address; a REAL touch on the system's Select all (in the bar, or behind
+     * the overflow when the system's assist item took its room): the whole page is no address, the
+     * bar says so.
+     */
+    private fun selectAll() {
+        finding("\nGN-13 Select all: the items follow the selection")
+        ensureForeground()
+        val before = longPress("#url") { it.any { item -> item.label == "Open in Glance" } }
+        finding("  toolbar over the address: ${before.describe()}")
+        val marks = selectionLog().size
+        val inBar = before?.find { it.label == "Select all" }
+        val point = inBar?.let { touchTapPoint(it.node) } ?: touchInOverflow(before.orEmpty(), "Select all")
+        finding("  real touch on Select all ${point?.let { "at ${it.x.toInt()},${it.y.toInt()}${if (inBar == null) " (behind the overflow)" else ""}" } ?: "NOT POSSIBLE (item missing or off screen)"}")
+        val after = awaitToolbar { it.any { item -> item.label == SEARCH } }
+        val selected = jsonString(tabJs("String(getSelection())"))
+        SystemClock.sleep(800)
+        shot("10-select-all")
+        finding("  selection now: ${selected.length} characters, ${selected.lines().size} lines")
+        finding("  toolbar: ${after.describe()}")
+        val labels = after.orEmpty().map { it.label }
+        check("the whole page is selected", selected.contains("quantum") && selected.contains(GLANCE_URL) && selected.contains("Nothing below"))
+        check("the bar flips to $SEARCH", SEARCH in labels)
+        check("Open in Glance is gone from the bar", "Open in Glance" !in labels)
+        val log = selectionLog().drop(marks)
+        finding("  the WebView's mode across Select all: ${log.count { "created" in it }} created, ${log.count { "prepared" in it }} prepared, ${log.count { "destroyed" in it }} destroyed")
+        clearSelection()
+    }
+
+    /**
+     * A REAL drag of the selection's end handle: pressed where Chromium draws it – its bitmap
+     * hangs under the selection's end, hotspot a quarter of the way in from its left – moved in
+     * steps to `to` and released; the handle's drag end is what shows the menu again. The point pressed.
+     */
+    private fun dragHandle(from: PointF, to: PointF): PointF {
+        val grab = PointF(from.x + HANDLE_GRAB_DP.x * density, from.y + HANDLE_GRAB_DP.y * density)
+        Log.i(tag, "drag handle from ${grab.x},${grab.y} to ${to.x},${to.y}")
+        Finger().apply {
+            down(grab.x, grab.y)
+            hold(250)
+            moveBy(to.x - from.x, to.y - from.y, 900)
+            hold(300)
+            up()
+        }
+        return grab
+    }
+
+    /** Where the selection ends on screen: the right-bottom corner of its last client rect. */
+    private fun selectionEnd(): PointF? = screenPoint(
+        tabJs(
+            "(function(){var s=getSelection();if(!s.rangeCount)return null;var rs=s.getRangeAt(0).getClientRects();" +
+                "if(!rs.length)return null;var r=rs[rs.length-1];return [r.right,r.bottom]})()"
+        )
+    )
+
+    /** The middle-bottom of the text inside the first element `selector` names (a drop on its line). */
+    private fun textBottom(selector: String): PointF? = textRect(selector)?.let { PointF(it.centerX(), it.bottom - 1) }
+
+    /**
+     * The screen rectangle of the text inside the first element `selector` names (a range over its
+     * contents: the text's own line box, not the element's padding), or null.
+     */
+    private fun textRect(selector: String): RectF? {
+        val raw = tabJs(
+            "(function(){var e=document.querySelector(${JSONObject.quote(selector)});if(!e)return null;" +
+                "var r=document.createRange();r.selectNodeContents(e);var b=r.getBoundingClientRect();return [b.left,b.top,b.right,b.bottom]})()"
+        )
+        val box = runCatching { JSONArray(raw) }.getOrNull()?.takeIf { it.length() == 4 } ?: return null
+        val origin = onMain { shownTabView()?.let { v -> IntArray(2).also(v::getLocationOnScreen) } } ?: return null
+        return RectF(
+            origin[0] + box.getDouble(0).toFloat() * density,
+            origin[1] + box.getDouble(1).toFloat() * density,
+            origin[0] + box.getDouble(2).toFloat() * density,
+            origin[1] + box.getDouble(3).toFloat() * density
+        )
+    }
+
+    /** A page point `[x, y]` (CSS px, the JSON text of it) as a screen point, or null. */
+    private fun screenPoint(raw: String): PointF? {
+        val point = runCatching { JSONArray(raw) }.getOrNull()?.takeIf { it.length() == 2 } ?: return null
+        val origin = onMain { shownTabView()?.let { v -> IntArray(2).also(v::getLocationOnScreen) } } ?: return null
+        return PointF(origin[0] + point.getDouble(0).toFloat() * density, origin[1] + point.getDouble(1).toFloat() * density)
+    }
+
+    /** The wrapper's log of the selection mode's life so far (`TabWebView.SELECTION_TAG`), oldest first. */
+    private fun selectionLog(): List<String> =
+        shell("logcat -d -v raw -s ${TabWebView.SELECTION_TAG}:D").lines().map { it.trim() }.filter { it.startsWith("selection mode") }
+
     // --- the design record -----------------------------------------------------------------------
 
     /** The same toolbar with the system and the chrome in dark: the still for the design record. */
@@ -282,7 +468,7 @@ class SelectionDemo : DemoHarness("selection-demo-state.json", "selection", "sel
         finding("  toolbar: ${items.describe()}")
         val labels = items.orEmpty().map { it.label }
         val copy = labels.indexOf("Copy")
-        check("dark: Search Zenium and Share after Copy", copy >= 0 && labels.getOrNull(copy + 1) == "Search Zenium" && labels.getOrNull(copy + 2) == "Share")
+        check("dark: $SEARCH and Share after Copy", copy >= 0 && labels.getOrNull(copy + 1) == SEARCH && labels.getOrNull(copy + 2) == "Share")
         clearSelection()
         SystemClock.sleep(1_000)
         shell("cmd uimode night no")
@@ -294,7 +480,7 @@ class SelectionDemo : DemoHarness("selection-demo-state.json", "selection", "sel
 
     private fun List<ToolbarItem>?.describe(): String = this?.joinToString(" | ") { it.label } ?: "MISSING"
 
-    private fun List<ToolbarItem>.zenium(): Boolean = any { it.label == "Search Zenium" || it.label == "Open in Glance" }
+    private fun List<ToolbarItem>.zenium(): Boolean = any { it.label == SEARCH || it.label == "Open in Glance" }
 
     /**
      * The floating toolbar's buttons, left to right: the clickable nodes with a content
@@ -408,18 +594,12 @@ class SelectionDemo : DemoHarness("selection-demo-state.json", "selection", "sel
     private fun jsonString(raw: String): String = runCatching { JSONTokener(raw).nextValue() as? String }.getOrNull() ?: raw
 
     /** Where the middle of the first element matching `selector` is on screen, or null. */
-    private fun pagePoint(selector: String): PointF? {
-        val raw = tabJs(
+    private fun pagePoint(selector: String): PointF? = screenPoint(
+        tabJs(
             "(function(){var e=document.querySelector(${JSONObject.quote(selector)});if(!e)return null;" +
                 "var r=e.getBoundingClientRect();return [r.left+r.width/2,r.top+r.height/2]})()"
         )
-        val point = runCatching { JSONArray(raw) }.getOrNull()?.takeIf { it.length() == 2 } ?: return null
-        val origin = onMain { shownTabView()?.let { v -> IntArray(2).also(v::getLocationOnScreen) } } ?: return null
-        return PointF(
-            origin[0] + point.getDouble(0).toFloat() * density,
-            origin[1] + point.getDouble(1).toFloat() * density
-        )
-    }
+    )
 
     private fun awaitLoaded(url: String, timeoutMs: Long = 20_000) {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
@@ -495,5 +675,15 @@ class SelectionDemo : DemoHarness("selection-demo-state.json", "selection", "sel
         private const val PORT = 18135
         private const val ORIGIN = "http://127.0.0.1:$PORT"
         private const val GLANCE_URL = "$ORIGIN/glance.html"
+        /** Zenium's search item names the profile's engine (`selection-demo-state.json`: DuckDuckGo). */
+        private const val SEARCH = "Search DuckDuckGo"
+        /**
+         * Where to press the end handle, from the selection's end (dp): Chromium hangs the right
+         * handle's bitmap (the material theme's is 44 x 22 dp, a quarter of it transparent padding)
+         * under the selection's end with its left edge a quarter of the width to the left
+         * (`HandleViewResources.HANDLE_HORIZONTAL_PADDING_RATIO`), so the bitmap's middle – the
+         * teardrop's – is 11 dp right of the end and 11 dp down; a touch must land inside the bitmap.
+         */
+        private val HANDLE_GRAB_DP = PointF(11f, 11f)
     }
 }

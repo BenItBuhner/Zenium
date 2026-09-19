@@ -699,11 +699,13 @@ export class Menus {
         })
       }
     } else if (engine) {
+      // The toolbar names the engine the search goes through, as the menu does (Chrome's
+      // pattern); Zenium is the browser, not an engine.
       const short = clipLabel(selection, SELECTION_LABEL_MAX)
       actions.push({
         id: 'search',
         label: `Search ${engine.name} for “${short}”`,
-        title: 'Search Zenium',
+        title: `Search ${engine.name}`,
         menu: true,
         toolbar: true,
         run: (surface) => open(buildSearchUrl(engine, selection), surface)
@@ -750,9 +752,10 @@ export class Menus {
   selectionToolbar(tabId: string, selection: string): SelectionToolbarItem[] {
     const { tabs, state } = this.browser
     const tab = tabs.tab(tabId)
-    if (!state.capabilities.selectionToolbar || !tab || !selection.trim()) return []
+    const text = clipSelection(selection)
+    if (!state.capabilities.selectionToolbar || !tab || !text.trim()) return []
     const win = tabs.windowFor(tabId)
-    return this.selectionActions(tab, selection, win)
+    return this.selectionActions(tab, text, win)
       .filter((action) => action.toolbar)
       .sort((a, b) => toolbarRank(a.id) - toolbarRank(b.id))
       .map(({ id, title }) => ({ id, title }))
@@ -773,9 +776,10 @@ export class Menus {
   ): boolean {
     const { tabs, state } = this.browser
     const tab = tabs.tab(tabId)
-    if (!state.capabilities.selectionToolbar || !tab || !selection.trim()) return false
+    const text = clipSelection(selection)
+    if (!state.capabilities.selectionToolbar || !tab || !text.trim()) return false
     const win = tabs.windowFor(tabId)
-    const action = this.selectionActions(tab, selection, win, { origin }).find(
+    const action = this.selectionActions(tab, text, win, { origin }).find(
       (candidate) => candidate.toolbar && candidate.id === id
     )
     if (!action) return false
@@ -2558,6 +2562,17 @@ export function selectionUrl(selection: string): string | null {
 
 function clamp01(value: number): number {
   return Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 0.5
+}
+
+/**
+ * The most of a selection the toolbar's entry points take from a host (the Android host cuts
+ * at the same length, `SelectionToolbar.SELECTION_MAX_CHARS`): a query or a share needs no more,
+ * and a host's text is not to be trusted with the length.
+ */
+export const SELECTION_TEXT_MAX = 10_000
+
+function clipSelection(selection: string): string {
+  return selection.length > SELECTION_TEXT_MAX ? selection.slice(0, SELECTION_TEXT_MAX) : selection
 }
 
 /** Entries the back/forward list shows at most. */
