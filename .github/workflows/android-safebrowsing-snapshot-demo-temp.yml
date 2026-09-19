@@ -1,0 +1,23 @@
+name: Android Safe Browsing snapshot demo (temporary, branch only)
+
+# Temporary caller for one emulator recording of the Safe Browsing snapshot driver
+# (SafeBrowsingSnapshotDemo.kt); removed before the PR is marked ready.
+on:
+  push:
+    branches: [cursor/services-safebrowsing-snapshot-24d1]
+
+permissions:
+  contents: read
+
+jobs:
+  record:
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.SafeBrowsingSnapshotDemo
+        DEMO_DIR=safebrowsing-snapshot-demo
+        DEMO_OUT=artifacts/android-safebrowsing-snapshot-demo
+        DEMO_VIDEO=services-safebrowsing-snapshot-demo.mp4
+      artifact-name: android-safebrowsing-snapshot-demo
+      artifact-path: artifacts/android-safebrowsing-snapshot-demo/
