@@ -1,17 +1,19 @@
 import { describe, expect, it } from 'vitest'
-import type { DownloadsProgress } from '../types'
-import { DEFAULT_DOWNLOAD_SETTINGS, resolveDownloadSettings } from '../downloads'
+import type { DownloadInterruptReason, DownloadsProgress } from '../types'
+import { DEFAULT_DOWNLOAD_SETTINGS, INTERRUPT_REASONS, resolveDownloadSettings } from '../downloads'
 import {
   PROGRESS_ERROR_FLASH_MS,
   allPaused,
   canResumeDownload,
   canRetryDownload,
   completionNotice,
+  deleteFileToast,
   displayName,
   failedProgressBar,
   needsDangerDecision,
   progressBarFor,
   progressFraction,
+  retryableInterrupt,
   sameProgressBar,
   shouldNotifyCompletion
 } from '../downloadsShell'
@@ -73,6 +75,60 @@ describe('rows', () => {
     expect(canResumeDownload(item({ id: 'a', state: 'paused' }))).toBe(true)
     expect(canResumeDownload(item({ id: 'a', state: 'interrupted', canResume: true }))).toBe(true)
     expect(canResumeDownload(item({ id: 'a', state: 'interrupted' }))).toBe(false)
+  })
+
+  it('offers Retry for the reasons a retry can get past and none for a verdict it would meet again', () => {
+    const retryable: DownloadInterruptReason[] = [
+      'network-failed',
+      'network-timeout',
+      'network-disconnected',
+      'network-server-down',
+      'server-failed',
+      'server-no-range',
+      'server-unreachable',
+      'file-failed',
+      'user-canceled',
+      'user-shutdown',
+      'crash'
+    ]
+    const terminal: DownloadInterruptReason[] = [
+      'server-bad-content',
+      'server-unauthorized',
+      'server-forbidden',
+      'file-access-denied',
+      'file-no-space',
+      'file-name-too-long',
+      'file-too-large',
+      'file-virus-infected',
+      'file-blocked',
+      'file-security-check-failed',
+      'file-same-as-source'
+    ]
+    // Every member of the closed set is on one side or the other.
+    expect([...retryable, ...terminal].sort()).toEqual([...INTERRUPT_REASONS].sort())
+    for (const error of retryable) {
+      expect(retryableInterrupt(error)).toBe(true)
+      expect(canRetryDownload(item({ id: 'a', state: 'interrupted', error }))).toBe(true)
+    }
+    for (const error of terminal) {
+      expect(retryableInterrupt(error)).toBe(false)
+      expect(canRetryDownload(item({ id: 'a', state: 'interrupted', error }))).toBe(false)
+    }
+    // A failed row without a reason keeps the Retry it always had.
+    expect(retryableInterrupt(undefined)).toBe(true)
+    // The reason gates failed rows only: a cancelled row retries whatever it last carried.
+    expect(canRetryDownload(item({ id: 'a', state: 'cancelled', error: 'file-blocked' }))).toBe(
+      true
+    )
+  })
+})
+
+describe('what Delete file says', () => {
+  it('toasts only when the file would not go; a deleted or already-missing file shows as the row', () => {
+    expect(deleteFileToast('failed', 'report.pdf')).toBe('Couldn’t delete “report.pdf”')
+    expect(deleteFileToast('deleted', 'report.pdf')).toBeNull()
+    expect(deleteFileToast('missing', 'report.pdf')).toBeNull()
+    expect(deleteFileToast('not-completed', 'report.pdf')).toBeNull()
   })
 })
 

@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import type { DownloadItem } from '@shared/types'
+import type { DownloadInterruptReason, DownloadItem } from '@shared/types'
+import { INTERRUPT_REASONS, interruptMessage } from '@shared/downloads'
+import { canRetryDownload } from '@shared/downloadsShell'
 import { downloadItem } from '@shared/__tests__/downloadFixtures'
 import {
+  INTERRUPT_WORDING,
   blockedStatus,
   bubbleDescription,
   dangerActionLabels,
@@ -16,6 +19,7 @@ import {
   formatSpeed,
   groupDownloadsByDay,
   hasClearable,
+  isDeletedRow,
   isOnDisk,
   splitFileName
 } from '../downloadsView'
@@ -82,84 +86,42 @@ describe('downloadStatus', () => {
     ).toBe('Paused · 30.0 MB of 100 MB')
   })
 
-  it('words the engine failure reasons as Failed – <reason>, in the words of Chrome 112’s bubble', () => {
-    // The Electron host names no reason: a bare Failed, not a guess.
+  it('words every one of the engine’s 22 interrupt reasons as Failed · <reason>, in the words of Chrome 112’s bubble', () => {
+    // Chrome's BubbleStatusTextBuilder groups, one line per member of the closed set.
+    const expected: Record<DownloadInterruptReason, string> = {
+      'network-failed': 'Check internet connection',
+      'network-timeout': 'Check internet connection',
+      'network-disconnected': 'Check internet connection',
+      'network-server-down': 'Site wasn’t available',
+      'server-failed': 'Site wasn’t available',
+      'server-unreachable': 'Site wasn’t available',
+      'server-unauthorized': 'File wasn’t available on site',
+      'server-forbidden': 'File wasn’t available on site',
+      'server-bad-content': 'File wasn’t available on site',
+      'server-no-range': 'Something went wrong',
+      'file-failed': 'Something went wrong',
+      'file-access-denied': 'Needs permission to download',
+      'file-no-space': 'Out of storage space',
+      'file-name-too-long': 'File name or location is too long',
+      'file-too-large': 'File is too big for this device',
+      'file-virus-infected': 'Virus detected',
+      'file-blocked': 'Blocked by your organization',
+      'file-security-check-failed': 'Virus scan failed',
+      'file-same-as-source': 'Already downloaded',
+      'user-canceled': 'Cancelled',
+      'user-shutdown': 'Couldn’t finish download',
+      crash: 'Couldn’t finish download'
+    }
+    expect(INTERRUPT_REASONS).toHaveLength(22)
+    expect(Object.keys(INTERRUPT_WORDING).sort()).toEqual([...INTERRUPT_REASONS].sort())
+    for (const reason of INTERRUPT_REASONS) {
+      expect(describeDownloadError(reason)).toBe(`Failed · ${expected[reason]}`)
+      // The engine's own sentence (DownloadItem.errorMessage) is the same wording, so a row and
+      // a consumer without a table (the Android sheet, extensions) agree.
+      expect(INTERRUPT_WORDING[reason]).toBe(interruptMessage(reason))
+    }
+    // No reason at all (an engine that could not say): a bare Failed, not a guess.
     expect(describeDownloadError(undefined)).toBe('Failed')
-    expect(describeDownloadError('interrupted')).toBe('Failed')
-    // The engine's own reasons read as Chrome's USER_SHUTDOWN and FILE_FAILED do.
-    expect(describeDownloadError('shutdown')).toBe('Failed – Couldn’t finish download')
-    expect(describeDownloadError('file-error')).toBe('Failed – Something went wrong')
-    // The engine's DownloadInterruptReason: Chromium's reasons spelled network-failed, read as
-    // the chrome.downloads names they are one for one with.
-    expect(describeDownloadError('network-failed')).toBe('Failed – Check internet connection')
-    expect(describeDownloadError('network-timeout')).toBe('Failed – Check internet connection')
-    expect(describeDownloadError('network-server-down')).toBe('Failed – Site wasn’t available')
-    expect(describeDownloadError('server-unreachable')).toBe('Failed – Site wasn’t available')
-    expect(describeDownloadError('server-forbidden')).toBe('Failed – File wasn’t available on site')
-    expect(describeDownloadError('file-no-space')).toBe('Failed – Out of storage space')
-    expect(describeDownloadError('file-access-denied')).toBe(
-      'Failed – Needs permission to download'
-    )
-    expect(describeDownloadError('file-security-check-failed')).toBe('Failed – Virus scan failed')
-    expect(describeDownloadError('user-shutdown')).toBe('Failed – Couldn’t finish download')
-    expect(describeDownloadError('crash')).toBe('Failed – Couldn’t finish download')
-    expect(describeDownloadError('server-no-range')).toBe('Failed – Something went wrong')
-    expect(describeDownloadError('file-failed')).toBe('Failed – Something went wrong')
-    // Chrome's interrupt reasons, grouped as its BubbleStatusTextBuilder groups them.
-    expect(describeDownloadError('NETWORK_DISCONNECTED')).toBe('Failed – Check internet connection')
-    expect(describeDownloadError('NETWORK_TIMEOUT')).toBe('Failed – Check internet connection')
-    expect(describeDownloadError('NETWORK_SERVER_DOWN')).toBe('Failed – Site wasn’t available')
-    expect(describeDownloadError('SERVER_CERT_PROBLEM')).toBe('Failed – Site wasn’t available')
-    expect(describeDownloadError('SERVER_BAD_CONTENT')).toBe(
-      'Failed – File wasn’t available on site'
-    )
-    expect(describeDownloadError('SERVER_FORBIDDEN')).toBe('Failed – File wasn’t available on site')
-    expect(describeDownloadError('SERVER_CONTENT_LENGTH_MISMATCH')).toBe(
-      'Failed – Couldn’t finish download'
-    )
-    expect(describeDownloadError('FILE_NO_SPACE')).toBe('Failed – Out of storage space')
-    expect(describeDownloadError('DOWNLOAD_INTERRUPT_REASON_FILE_ACCESS_DENIED')).toBe(
-      'Failed – Needs permission to download'
-    )
-    expect(describeDownloadError('FILE_NAME_TOO_LONG')).toBe(
-      'Failed – File name or location is too long'
-    )
-    expect(describeDownloadError('FILE_TOO_LARGE')).toBe('Failed – File is too big for this device')
-    expect(describeDownloadError('FILE_BLOCKED')).toBe('Failed – Blocked by your organization')
-    expect(describeDownloadError('FILE_VIRUS_INFECTED')).toBe('Failed – Virus detected')
-    expect(describeDownloadError('FILE_SECURITY_CHECK_FAILED')).toBe('Failed – Virus scan failed')
-    expect(describeDownloadError('FILE_SAME_AS_SOURCE')).toBe('Failed – Already downloaded')
-    for (const wrong of [
-      'FILE_TOO_SHORT',
-      'FILE_HASH_MISMATCH',
-      'SERVER_NO_RANGE',
-      'CANNOT_DOWNLOAD'
-    ])
-      expect(describeDownloadError(wrong)).toBe('Failed – Something went wrong')
-    // Chromium net:: names go through the chrome.downloads bridge's reading of them.
-    expect(describeDownloadError('net::ERR_CONNECTION_RESET')).toBe(
-      'Failed – Check internet connection'
-    )
-    expect(describeDownloadError('net::ERR_INTERNET_DISCONNECTED')).toBe(
-      'Failed – Check internet connection'
-    )
-    expect(describeDownloadError('net::ERR_NAME_NOT_RESOLVED')).toBe(
-      'Failed – Site wasn’t available'
-    )
-    expect(describeDownloadError('ERR_CERT_DATE_INVALID')).toBe('Failed – Site wasn’t available')
-    expect(describeDownloadError('net::ERR_HTTP_RESPONSE_CODE_FAILURE')).toBe(
-      'Failed – Site wasn’t available'
-    )
-    expect(describeDownloadError('net::ERR_INVALID_RESPONSE')).toBe(
-      'Failed – File wasn’t available on site'
-    )
-    expect(describeDownloadError('net::ERR_CONTENT_LENGTH_MISMATCH')).toBe(
-      'Failed – Couldn’t finish download'
-    )
-    expect(describeDownloadError('net::ERR_FILE_NO_SPACE')).toBe('Failed – Out of storage space')
-    // Outside every table: Chrome's catch-all, never a raw name.
-    expect(describeDownloadError('net::ERR_UNEXPECTED_THING')).toBe('Failed – Something went wrong')
-    expect(describeDownloadError('SOMETHING_NEW')).toBe('Failed – Something went wrong')
   })
 
   it('words paused, cancelled, failed and done like Chrome', () => {
@@ -173,14 +135,27 @@ describe('downloadStatus', () => {
     })
     expect(downloadStatus(item({ id: 'a', state: 'interrupted' }))).toEqual({
       text: 'Failed',
-      tone: 'danger'
+      tone: 'danger',
+      hint: undefined
+    })
+    // The engine's sentence rides along as the line's tooltip (Chrome's shelf showed one).
+    expect(
+      downloadStatus(
+        item({
+          id: 'a',
+          state: 'interrupted',
+          error: 'user-shutdown',
+          errorMessage: 'Couldn’t finish download'
+        })
+      )
+    ).toEqual({
+      text: 'Failed · Couldn’t finish download',
+      tone: 'danger',
+      hint: 'Couldn’t finish download'
     })
     expect(
-      downloadStatus(item({ id: 'a', state: 'interrupted', error: 'user-shutdown' })).text
-    ).toBe('Failed – Couldn’t finish download')
-    expect(
       downloadStatus(item({ id: 'a', state: 'interrupted', error: 'network-failed' })).text
-    ).toBe('Failed – Check internet connection')
+    ).toBe('Failed · Check internet connection')
     // A finished file the engine found gone from disk.
     expect(downloadStatus(item({ id: 'a', state: 'completed', fileMissing: true }))).toEqual({
       text: 'Deleted',
@@ -333,6 +308,44 @@ describe('isOnDisk', () => {
         })
       )
     ).toBe(false)
+  })
+})
+
+describe('the Deleted row (Chrome’s greyed row for a finished file gone from disk)', () => {
+  it('is a completed row the engine marked fileMissing, and nothing else', () => {
+    expect(isDeletedRow(item({ id: 'a', state: 'completed', fileMissing: true }))).toBe(true)
+    expect(isDeletedRow(item({ id: 'a', state: 'completed', fileMissing: false }))).toBe(false)
+    expect(isDeletedRow(item({ id: 'a', state: 'completed' }))).toBe(false)
+    // The engine never marks a row without a completed file; the derivation does not guess.
+    for (const state of ['progressing', 'paused', 'cancelled', 'interrupted'] as const) {
+      expect(isDeletedRow(item({ id: 'a', state, fileMissing: true }))).toBe(false)
+    }
+  })
+
+  it('reads Deleted in the muted ink, with nothing to open and Retry still offered', () => {
+    const deleted = item({
+      id: 'a',
+      state: 'completed',
+      receivedBytes: 100 * MB,
+      fileMissing: true
+    })
+    expect(downloadStatus(deleted)).toEqual({ text: 'Deleted', tone: 'muted' })
+    expect(isOnDisk(deleted)).toBe(false)
+    expect(canRetryDownload(deleted)).toBe(true)
+    // The file came back (the user restored it): the row is a plain finished one again.
+    const restored = { ...deleted, fileMissing: undefined }
+    expect(downloadStatus(restored)).toEqual({ text: 'Done · 100 MB', tone: 'muted' })
+    expect(isOnDisk(restored)).toBe(true)
+    expect(canRetryDownload(restored)).toBe(false)
+  })
+
+  it('counts as done in the bubble’s description, not as failed', () => {
+    const items = [
+      item({ id: 'a', state: 'completed', fileMissing: true }),
+      item({ id: 'b', state: 'completed' })
+    ]
+    expect(bubbleDescription(items)).toBe('All done')
+    expect(hasClearable(items)).toBe(true)
   })
 })
 
