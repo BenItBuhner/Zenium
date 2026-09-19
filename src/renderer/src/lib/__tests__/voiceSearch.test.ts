@@ -104,7 +104,10 @@ describe('startVoiceSearch', () => {
     await startVoiceSearch({ tabId: 't1' })
     expect(h.closed).toEqual([h.opened[0]!.id])
     expect(h.toasts).toHaveLength(1)
-    expect(h.toasts[0]).toMatchObject({ kind: 'info', message: expect.stringMatching(/microphone/i) })
+    expect(h.toasts[0]).toMatchObject({
+      kind: 'info',
+      message: expect.stringMatching(/microphone/i)
+    })
     expect(h.toasts[0]!.action).toBeUndefined()
     expect(currentVoicePrompt()).toBeNull()
     expect(voiceStore.get().session).toBeNull()
@@ -126,7 +129,10 @@ describe('startVoiceSearch', () => {
     const h = harness('unavailable')
     restore = setVoiceSearchIo(h.io)
     await startVoiceSearch({ tabId: 't1' })
-    expect(h.toasts[0]).toMatchObject({ kind: 'error', message: expect.stringMatching(/not available/) })
+    expect(h.toasts[0]).toMatchObject({
+      kind: 'error',
+      message: expect.stringMatching(/not available/)
+    })
     expect(h.closed).toHaveLength(1)
   })
 
@@ -206,7 +212,10 @@ describe('voiceEvent', () => {
     restore = setVoiceSearchIo(h.io)
     await startVoiceSearch({ tabId: null })
     voiceEvent({ kind: 'result', text: 'example.com' })
-    expect(h.submits[0]).toMatchObject({ input: 'example.com', prompt: { tabId: null, newTab: true } })
+    expect(h.submits[0]).toMatchObject({
+      input: 'example.com',
+      prompt: { tabId: null, newTab: true }
+    })
   })
 
   it('keeps the sheet up as Didn\u2019t catch that after a no-match, and Try again listens once more', async () => {
@@ -242,7 +251,9 @@ describe('voiceEvent', () => {
     await startVoiceSearch({ tabId: 't1' })
     voiceEvent({ kind: 'ready' })
     voiceEvent({ kind: 'error', error: 'network' })
-    expect(h.toasts).toEqual([{ message: expect.stringMatching(/internet/), kind: 'error', action: undefined }])
+    expect(h.toasts).toEqual([
+      { message: expect.stringMatching(/internet/), kind: 'error', action: undefined }
+    ])
     expect(h.closed).toHaveLength(1)
     expect(h.submits).toHaveLength(0)
   })

@@ -54,14 +54,7 @@ export type VoiceEvent =
  * again, toasts the error and goes, or just goes.
  */
 export type VoicePhase =
-  | 'starting'
-  | 'listening'
-  | 'heard'
-  | 'finishing'
-  | 'done'
-  | 'no-match'
-  | 'failed'
-  | 'cancelled'
+  'starting' | 'listening' | 'heard' | 'finishing' | 'done' | 'no-match' | 'failed' | 'cancelled'
 
 export interface VoiceSession {
   phase: VoicePhase
@@ -130,11 +123,13 @@ function clampLevel(level: number): number {
 
 /**
  * How far the mic glyph's halo grows for a level: at rest it sits on the glyph (1), at full
- * level it is a little over twice the glyph (2.2), which is as much as the title block's 16 px
- * padding has room for around a 20 px glyph (§9.23). The spring smooths the steps between.
+ * level it is a 36 px disc (1.8), 8 px past the 20 px glyph on every side – as much as the title
+ * block has room for (§9.23): the 16 px padding above and to the left, the 12 px the sheet keeps
+ * between the glyph and the title, the 4 px to the description below. The spring smooths the
+ * steps between.
  */
 export const VOICE_HALO_REST = 1
-export const VOICE_HALO_FULL = 2.2
+export const VOICE_HALO_FULL = 1.8
 
 export function voiceHaloScale(level: number): number {
   return VOICE_HALO_REST + (VOICE_HALO_FULL - VOICE_HALO_REST) * clampLevel(level)
@@ -145,9 +140,7 @@ export function voiceInput(transcript: string): string {
   return transcript.replace(/\s+/g, ' ').trim()
 }
 
-export type VoiceDestination =
-  | { kind: 'navigate'; url: string }
-  | { kind: 'search'; query: string }
+export type VoiceDestination = { kind: 'navigate'; url: string } | { kind: 'search'; query: string }
 
 /**
  * Where a final transcript goes – the same decision `urlbar.submit` makes for typed text

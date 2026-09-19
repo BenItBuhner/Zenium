@@ -26,11 +26,7 @@ import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
  */
 export function VoiceSearchLayer(): JSX.Element | null {
   const prompt = uiStore.use((s) => s.voice)
-  return (
-    <SheetPresence>
-      {prompt ? <VoiceSheet key={prompt.id} /> : null}
-    </SheetPresence>
-  )
+  return <SheetPresence>{prompt ? <VoiceSheet key={prompt.id} /> : null}</SheetPresence>
 }
 
 function VoiceSheet(): JSX.Element {
@@ -113,7 +109,15 @@ function TitleBlock({
  * each `rms` retargets the spring, so the halo swells and settles rather than stepping, and a
  * level that stops coming (the end of speech) lets it come to rest on the glyph.
  */
-function MicGlyph({ level, live, off }: { level: number; live: boolean; off: boolean }): JSX.Element {
+function MicGlyph({
+  level,
+  live,
+  off
+}: {
+  level: number
+  live: boolean
+  off: boolean
+}): JSX.Element {
   const halo = useRef<HTMLSpanElement>(null)
   const spring = useRef<SpringAnimation | null>(null)
   useEffect(() => {
