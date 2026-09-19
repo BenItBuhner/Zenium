@@ -10,3 +10,14 @@ export const SheetDismissContext = createContext<() => void>(() => undefined)
 export function useSheetDismiss(): () => void {
   return useContext(SheetDismissContext)
 }
+
+/**
+ * Asks the Settings sheet a component sits in to measure its detents again: a form whose body
+ * changed height after the sheet opened (more rows shown, a field appeared) calls it, the way an
+ * item sheet's row count changes its `contentKey`. Provided by `SettingsSheet`.
+ */
+export const SheetRelayoutContext = createContext<() => void>(() => undefined)
+
+export function useSheetRelayout(): () => void {
+  return useContext(SheetRelayoutContext)
+}

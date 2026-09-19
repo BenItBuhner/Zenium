@@ -14,21 +14,19 @@ import { uiStore } from '@renderer/lib/ui'
 import { cn, relativeTime } from '@renderer/lib/utils'
 import { V2_GLYPH, V2Button } from '../v2/controls'
 import { Card, EmptyRow, Group, Pane, Rows, StatusGlyph } from '../siteControls/pane'
-import { usePhone } from '@renderer/lib/surfaces'
 import { BusyButton, ListRow } from '../siteControls/primitives'
 import type { SettingsSection } from './SettingsPanel'
 
 /**
- * Settings > Safety Check (design-language-v2-draft §6, §9.2, §9.18, §9.21, §9.27, §10.3,
- * §10.4): the check's standing – when it last ran and how it went – with Check now, and one row
- * per area from `privacy.safetyCheck`: Updates, Safe Browsing, Passwords, Permissions,
- * Notifications and Extensions, each a status glyph in the §1 status ink, the engine's sentence,
- * and where there is something to do, the action that answers it (download the update, review
- * the sites, check the passwords, open the extensions). On desktop the standing is a card with
- * its button and each row's action a hugging button trailing it; on a phone there are no cards
- * and no inline buttons: a status row, a Check now action row, and result rows that are the
- * action themselves, a chevron on those that leave the pane. The check runs once when the pane
- * opens and again on demand.
+ * Settings > Safety Check on a mouse (design-language-v2-draft §6, §9.2, §9.18, §9.21, §9.27,
+ * §10.3): the check's standing – when it last ran and how it went – as a card with Check now,
+ * and one row per area from `privacy.safetyCheck`: Updates, Safe Browsing, Passwords,
+ * Permissions, Notifications and Extensions, each a status glyph in the §1 status ink, the
+ * engine's sentence, and where there is something to do, a hugging button trailing it that
+ * answers it (download the update, review the sites, check the passwords, open the extensions).
+ * The check runs once when the pane opens and again on demand. The phone's rows are the
+ * Settings builder's (`siteControls/settingsRows.tsx`, the `safety-check-*` groups of Privacy
+ * and Security), reading the state's `lastSafetyCheck`.
  */
 export function SafetyCheckSection({
   state,
@@ -38,7 +36,6 @@ export function SafetyCheckSection({
   setSection: (id: SettingsSection) => void
 }): JSX.Element {
   const { result, running, error, check } = useSafetyCheck()
-  const phone = usePhone()
   const rows = result ? safetyRows(result, state) : []
   const worst = result ? worstState(result) : null
   const act = (action: SafetyAction): void => {
@@ -73,30 +70,18 @@ export function SafetyCheckSection({
       description="Zenium looks for an update, checks Safe Browsing, your saved passwords, the permissions and notifications sites hold, and your extensions."
       data-testid="safety-check"
     >
-      {phone ? (
-        <Rows data-state={worst ?? undefined} data-testid="safety-check-standing">
-          <ListRow label={title} description={when} leading={glyph} />
-          <ListRow
-            label="Check now"
-            onClick={check}
-            busy={running}
-            data-testid="safety-check-now"
-          />
-        </Rows>
-      ) : (
-        <Card
-          glyph={glyph}
-          title={title}
-          description={when}
-          action={
-            <BusyButton busy={running} onClick={check} data-testid="safety-check-now">
-              Check now
-            </BusyButton>
-          }
-          data-state={worst ?? undefined}
-          data-testid="safety-check-standing"
-        />
-      )}
+      <Card
+        glyph={glyph}
+        title={title}
+        description={when}
+        action={
+          <BusyButton busy={running} onClick={check} data-testid="safety-check-now">
+            Check now
+          </BusyButton>
+        }
+        data-state={worst ?? undefined}
+        data-testid="safety-check-standing"
+      />
 
       <Group
         heading="Results"
@@ -109,18 +94,7 @@ export function SafetyCheckSection({
           {rows.length === 0 && running && <EmptyRow>Checking…</EmptyRow>}
           {rows.map((row) => {
             const action = row.action
-            return phone ? (
-              <ListRow
-                key={row.id}
-                label={row.label}
-                description={row.summary}
-                leading={<StatusGlyph state={row.state} />}
-                onClick={action ? () => act(action.act) : undefined}
-                chevron={action?.act.kind === 'section'}
-                data-safety-row={row.id}
-                data-state={row.state}
-              />
-            ) : (
+            return (
               <ListRow
                 key={row.id}
                 label={row.label}

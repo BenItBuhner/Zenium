@@ -3,19 +3,17 @@ import { CircleAlert, CircleCheck, CircleHelp, Info, type LucideIcon } from 'luc
 import type { SafetyState } from '@shared/types'
 import { cn } from '@renderer/lib/utils'
 import { V2_GLYPH } from '../v2/controls'
-import { usePhone } from '@renderer/lib/surfaces'
 
 /**
- * A Settings pane on the design language v2 draft, inside the interim overlay (§9.26, §9.27,
- * §10.3): on desktop a 22/600 section title at line-height 28 with an optional description 15
- * at 69% 4 px under it and 16 px to the first group; on a phone the chip strip names the pane,
- * so there is no 22 and the description opens the page. Groups are 15/600 sub-headings with
- * their description (15 at 69%) 4 under and the first row's box 8 below; groups sit 32 apart
- * (24 on a phone). Rows are the shared `ListRow` inside `Rows`, which lets their boxes run out into the
- * overlay's own padding so the labels share the heading's left edge; a card (§6) is flat, one
- * hairline, radius 8, 16 padding at both form factors, and desktop only where a group has its
- * own actions – a new phone group is rows under its heading (§9.17 as amended, §10.3).
- * Everything reads the page family: the overlay is a page surface.
+ * A Settings pane on the design language v2 draft, in the desktop Settings panel (§9.26, §9.27,
+ * §10.3): a 22/600 section title at line-height 28 with an optional description 15 at 69% 4 px
+ * under it and 16 px to the first group. Groups are 15/600 sub-headings with their description
+ * (15 at 69%) 4 under and the first row's box 8 below; groups sit 32 apart. Rows are the shared
+ * `ListRow` inside `Rows`, which lets their boxes run out into the panel's own padding so the
+ * labels share the heading's left edge; a card (§6) is flat, one hairline, radius 8, 16 padding,
+ * and only where a group has its own actions. Everything reads the page family: the panel is a
+ * page surface. The phone has none of this: its rows are the Settings builder's
+ * (`siteControls/settingsRows.tsx`, §10.4).
  */
 export function Pane({
   title,
@@ -29,7 +27,6 @@ export function Pane({
   className?: string
   children: ReactNode
 } & Record<`data-${string}`, string | undefined>): JSX.Element {
-  const phone = usePhone()
   return (
     <div
       className={cn(
@@ -39,26 +36,18 @@ export function Pane({
       data-surface="page"
       {...data}
     >
-      {(!phone || description) && (
-        // 16 from the title block's last line to the first group's box on desktop (§9.26), where
-        // the groups then sit 32 apart; the phone keeps its 24 throughout.
-        <div className={phone ? 'mb-6' : 'mb-4'}>
-          {!phone && (
-            <h2 className="text-[22px] leading-7 font-semibold tracking-[-0.01em]">{title}</h2>
-          )}
-          {description && (
-            <p
-              className={cn(
-                'text-[15px] leading-5 text-[var(--v2-text-deemphasized)]',
-                !phone && 'mt-1'
-              )}
-            >
-              {description}
-            </p>
-          )}
-        </div>
-      )}
-      <div className={cn('flex flex-col', phone ? 'gap-6' : 'gap-8')}>{children}</div>
+      {/* 16 from the title block's last line to the first group's box (§9.26). */}
+      <div className="mb-4">
+        <h2 className="text-[22px] leading-[var(--v2-line-title)] font-semibold tracking-[-0.01em]">
+          {title}
+        </h2>
+        {description && (
+          <p className="mt-1 text-[15px] leading-5 text-[var(--v2-text-deemphasized)]">
+            {description}
+          </p>
+        )}
+      </div>
+      <div className="flex flex-col gap-8">{children}</div>
     </div>
   )
 }
@@ -103,7 +92,8 @@ export function Group({
 /**
  * A card (§3, §6, §9.27): flat on `--v2-card` with one hairline at radius 8 and 16 padding; a
  * 17/600 title at line-height 22 with its glyph 8 before it names it from inside, the
- * description 15 at 69% under it. A card with a title has nothing above it.
+ * description 15 at 69% under it, the action on the card's trailing side (§9.11). A card with a
+ * title has nothing above it.
  */
 export function Card({
   glyph,
@@ -117,12 +107,10 @@ export function Card({
   glyph?: ReactNode
   title?: ReactNode
   description?: ReactNode
-  /** A button on the card's trailing side (desktop) or under its text (phone), §9.11. */
   action?: ReactNode
   children?: ReactNode
   className?: string
 } & Record<`data-${string}`, string | undefined>): JSX.Element {
-  const phone = usePhone()
   return (
     <section
       className={cn(
@@ -132,24 +120,18 @@ export function Card({
       {...data}
     >
       {(title || description) && (
-        // The glyph 8 before the title (§9.27); the action 8 after the text on desktop.
-        <div className={cn('flex gap-2', phone ? 'flex-wrap items-start' : 'items-center')}>
+        <div className="flex items-center gap-2">
           {glyph && (
             <span
-              className="mt-[calc((22px-var(--v2-icon))/2)] flex shrink-0 self-start"
+              className="mt-[calc((var(--v2-line-heading)-var(--v2-icon))/2)] flex shrink-0 self-start"
               aria-hidden
             >
               {glyph}
             </span>
           )}
-          <div
-            className={cn(
-              'min-w-0 flex-1',
-              phone && glyph && 'basis-[calc(100%-var(--v2-icon)-8px)]'
-            )}
-          >
+          <div className="min-w-0 flex-1">
             {title && (
-              <div className="text-[17px] leading-[22px] font-semibold [font-variant-numeric:tabular-nums]">
+              <div className="text-[17px] leading-[var(--v2-line-heading)] font-semibold [font-variant-numeric:tabular-nums]">
                 {title}
               </div>
             )}
@@ -159,16 +141,7 @@ export function Card({
               </div>
             )}
           </div>
-          {action && (
-            <div
-              className={cn(
-                'flex shrink-0 items-center',
-                phone && glyph && 'ml-[calc(var(--v2-icon)+8px)]'
-              )}
-            >
-              {action}
-            </div>
-          )}
+          {action && <div className="flex shrink-0 items-center">{action}</div>}
         </div>
       )}
       {children}
@@ -179,9 +152,8 @@ export function Card({
 /**
  * The rows of a group (§10.3: "gutter 16 everywhere, page edge to text; nothing inset
  * further"). `ListRow` insets its text 16 from its box; here the boxes reach out into the
- * overlay's padding by that inset – 12 on a phone, where the interim overlay pads 12, 16 on
- * desktop – so a label sits on the heading's left edge and the press fill runs past the text
- * on both sides, the way a settings list's rows do on every platform.
+ * panel's padding by that inset, so a label sits on the heading's left edge and the press fill
+ * runs past the text on both sides, the way a settings list's rows do.
  */
 export function Rows({
   children,
@@ -191,16 +163,8 @@ export function Rows({
   `data-${string}`,
   string | undefined
 >): JSX.Element {
-  const phone = usePhone()
   return (
-    <div
-      className={cn(
-        'flex flex-col',
-        phone ? '-mx-3 [&_.zen-v2-row]:px-3' : '-mx-4 [&_.zen-v2-row]:px-4',
-        className
-      )}
-      {...data}
-    >
+    <div className={cn('-mx-4 flex flex-col [&_.zen-v2-row]:px-4', className)} {...data}>
       {children}
     </div>
   )
@@ -208,8 +172,8 @@ export function Rows({
 
 /**
  * An empty state among rows or inside a card (§9.17 as amended): one plain row at the rows'
- * text edge or the card's own padding, 32 / 44 tall, the sentence 15 at 69% left-aligned like
- * a row's label, no top gap and no centring.
+ * text edge or the card's own padding, 32 tall, the sentence 15 at 69% left-aligned like a
+ * row's label, no top gap and no centring.
  */
 export function EmptyRow({
   children,
@@ -237,7 +201,10 @@ const STATUS_GLYPH: Record<SafetyState, LucideIcon> = {
   unavailable: CircleHelp
 }
 
-/** A row's status glyph (§1 status ink, §9.3 row glyph): ok, an alert, an aside, or unknown. */
+/**
+ * A row's status glyph (§1 status ink, §9.3 row glyph): ok, an alert, an aside, or unknown. On
+ * both platforms: the desktop pane's rows and the phone builder's leading slot.
+ */
 export function StatusGlyph({
   state,
   className
