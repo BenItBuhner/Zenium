@@ -16,10 +16,6 @@ name: Android voice search demo
 # picks the driver.
 on:
   workflow_dispatch:
-  # TEMPORARY, removed before the branch is marked ready: the one budgeted run for PR #204.
-  push:
-    branches:
-      - cursor/android-voice-search-791c
 
 permissions:
   contents: read
