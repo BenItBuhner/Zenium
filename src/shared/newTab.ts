@@ -506,9 +506,10 @@ export interface NewTabDeviceSources {
 
 /**
  * The device-local sets from a profile of any build. A phone's pins become shortcuts after the
- * device's own, in their order, once per address, within the grid's eight; its removed hosts join
- * the block list through the normalising sanitiser (`www.` dropped, so a host it listed twice is
- * one). Pinning a site brings its host back, as it did on the phone.
+ * device's own, in their order, once per address, within the grid's eight (a pin the phone kept
+ * without a title is captioned by its host, as a shortcut pinned on this build is); its removed
+ * hosts join the block list through the normalising sanitiser (`www.` dropped, so a host it
+ * listed twice is one). Pinning a site brings its host back, as it did on the phone.
  */
 export function migrateNewTabDevice(
   sources: NewTabDeviceSources,
@@ -527,6 +528,11 @@ export function migrateNewTabDevice(
     shortcuts: current.shortcuts,
     hiddenHosts: sanitizeHiddenHosts([...current.hiddenHosts, ...phone.hiddenHosts])
   }
-  for (const pin of phone.pinned) device = pinShortcut(device, { id: id(), ...pin })
+  for (const pin of phone.pinned)
+    device = pinShortcut(device, {
+      id: id(),
+      url: pin.url,
+      title: pin.title.trim() || siteHost(pin.url) || pin.url
+    })
   return sanitizeNewTabDevice(device)
 }

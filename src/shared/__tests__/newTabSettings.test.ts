@@ -552,8 +552,8 @@ describe('migrateNewTabDevice', () => {
     expect(out.shortcuts).toHaveLength(MAX_NEW_TAB_SHORTCUTS)
     expect(out.shortcuts.map((s) => s.url)).toEqual(pinned.map((p) => p.url))
     expect(out.shortcuts[0]).toEqual({ id: 'sc_1', url: 'https://p0.example/', title: 'P0' })
-    // A blank title stands in as the address, as the desktop's sanitiser has it.
-    expect(out.shortcuts[3].title).toBe('https://p3.example/')
+    // A blank title is captioned by the host, as a shortcut pinned on this build is.
+    expect(out.shortcuts[3].title).toBe('p3.example')
     expect(out.hiddenHosts).toEqual(['news.example', 'other.example'])
   })
 
