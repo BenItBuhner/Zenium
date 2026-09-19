@@ -38,6 +38,7 @@ import { Input } from '../ui/input'
 import { Switch } from '../ui/switch'
 import { LanguagesSection } from '../translate/LanguagesSection'
 import { AgentsSection } from './AgentsSection'
+import { ClearBrowsingDataSection } from './ClearBrowsingDataSection'
 import { AppIconGroup } from './AppIconPicker'
 import { ExtensionsSection, ModsSection } from './AddonsPanel'
 import { DefaultBrowserSection } from './DefaultBrowserSection'
@@ -52,9 +53,11 @@ import {
 import { PasswordsSection } from './PasswordsSection'
 import { PrivacySection } from './PrivacySection'
 import { ResourcesSection } from './ResourcesSection'
+import { SafetyCheckSection } from './SafetyCheckSection'
 import { SecuritySection } from './SecuritySection'
 import { Choice, Group, MENULIST_HEIGHT, Row, SWITCH_HEIGHT, Segmented } from './SettingsPrimitives'
 import { ShortcutsSection } from './ShortcutsSection'
+import { SiteSettingsSection } from './SiteSettingsSection'
 import { SyncSection } from './SyncSection'
 import { UpdatesSection } from './UpdatesSection'
 
@@ -69,6 +72,9 @@ export type SettingsSection =
   | 'search'
   | 'languages'
   | 'privacy'
+  | 'site-settings'
+  | 'clear-data'
+  | 'safety-check'
   | 'spaces'
   | 'containers'
   | 'boosts'
@@ -94,6 +100,9 @@ const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
   { id: 'search', label: 'Search' },
   { id: 'languages', label: 'Languages' },
   { id: 'privacy', label: 'Privacy and Security' },
+  { id: 'site-settings', label: 'Site Settings' },
+  { id: 'clear-data', label: 'Clear Browsing Data' },
+  { id: 'safety-check', label: 'Safety Check' },
   { id: 'spaces', label: 'Space Routing' },
   { id: 'containers', label: 'Containers' },
   { id: 'boosts', label: 'Boosts' },
@@ -228,6 +237,11 @@ export function SettingsBody({
           {section === 'search' && <SearchSection state={state} set={set} />}
           {section === 'languages' && <LanguagesSection state={state} />}
           {section === 'privacy' && <PrivacySection state={state} set={set} />}
+          {section === 'site-settings' && <SiteSettingsSection state={state} />}
+          {section === 'clear-data' && <ClearBrowsingDataSection state={state} />}
+          {section === 'safety-check' && (
+            <SafetyCheckSection state={state} setSection={setSection} />
+          )}
           {section === 'spaces' && <SpaceRoutingSection state={state} set={set} />}
           {section === 'containers' && <ContainersSection state={state} />}
           {section === 'boosts' && <BoostsSection state={state} />}

@@ -58,6 +58,11 @@ import { languageOptions, pairKey, pairLabel, warmRegistryModels } from '@render
 import { formatBytes, relativeTime } from '@renderer/lib/utils'
 import { ContainerIcon } from '../../ContainerIcon'
 import {
+  clearDataGroups,
+  safetyCheckGroups,
+  siteSettingsGroups
+} from '../../siteControls/settingsRows'
+import {
   APP_ICON_HINT,
   PASSWORD_GRACE_OPTIONS,
   PASSWORDS_COPY,
@@ -1013,17 +1018,25 @@ function downloadsSection({ state, set }: SectionContext): RowGroup[] {
 }
 
 // ---------------------------------------------------------------------------
-// Privacy and Security (ad and tracker blocking; the remembered per-site answers are Security's)
+// Privacy and Security (ad and tracker blocking, the site-controls program's Safety check, Clear
+// browsing data and Site settings blocks; the remembered per-site answers are Security's)
 // ---------------------------------------------------------------------------
 
 /**
  * Groups in Chrome's Privacy and security order – Safety check, Safe Browsing, Tracking
  * prevention, Clear browsing data, Cookies, Site settings, HTTPS-only, Secure DNS, Privacy
- * signals – each program's groups self-contained: the request engine's (`tracking.tsx`) at the
- * tracking-prevention position; the remembered per-site answers are Security's (`securitySection`).
+ * signals – each program's groups self-contained: the site-controls program's
+ * (`siteControls/settingsRows`) at the safety-check, clear-browsing-data and site-settings
+ * positions, the request engine's (`tracking.tsx`) at the tracking-prevention position; the
+ * remembered per-site answers are Security's (`securitySection`).
  */
 function privacySection(ctx: SectionContext): RowGroup[] {
-  return trackingGroups(ctx)
+  return [
+    ...safetyCheckGroups(ctx),
+    ...trackingGroups(ctx),
+    ...clearDataGroups(ctx),
+    ...siteSettingsGroups(ctx)
+  ]
 }
 
 // ---------------------------------------------------------------------------
