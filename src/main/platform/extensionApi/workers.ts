@@ -83,7 +83,12 @@ const WORKER_IPC_EVENTS = ['-ipc-invoke', '-ipc-message', '-ipc-message-sync'] a
 export function acquireOnIncomingIpc(session: Session, acquire: (versionId: number) => void): void {
   const listener = (event: unknown): void => {
     const versionId = workerVersionOfIpcEvent(event)
-    if (versionId !== undefined) acquire(versionId)
+    if (versionId === undefined) return
+    try {
+      acquire(versionId)
+    } catch {
+      /* Electron's dispatch follows this listener; a failure here must not keep it from running. */
+    }
   }
   for (const name of WORKER_IPC_EVENTS) session.prependListener(name, listener)
 }

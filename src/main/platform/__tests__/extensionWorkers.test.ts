@@ -315,6 +315,18 @@ describe('acquireOnIncomingIpc', () => {
     expect(ses.invokeFromWorker(99, CALL)).toBe(`No handler registered for '${CALL}'`)
     expect(engine.created).toHaveLength(0)
   })
+
+  it('never keeps Electron from dispatching, whatever acquiring throws', () => {
+    const { engine, session, wired } = setup()
+    const ses = session as unknown as FakeSession
+    engine.live.set(11, SCOPE)
+    wired.acquire(11, session)
+    acquireOnIncomingIpc(session, () => {
+      throw new Error('wiring failed')
+    })
+    expect(() => ses.invokeFromWorker(11, CALL)).not.toThrow()
+    expect(ses.replies).toEqual([`${CALL}: ok`])
+  })
 })
 
 describe('workerVersionOfIpcEvent', () => {
