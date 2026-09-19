@@ -12,8 +12,8 @@
  * nothing in this file restates them – a layered copy would lose every declaration to the
  * unlayered rule anyway. What is here is the extension surfaces' own: the row's inner anatomy
  * (body, lead, text, label, description, value), the rows-in-a-card hairlines and bleed, the
- * field's leading glyph, the icon button's expanded fill, and the controls the shared set does
- * not have yet (the checkbox, the menulist).
+ * field's leading glyph, the icon button's expanded fill and pressed ink, and the controls the
+ * shared set does not have yet (the checkbox, the menulist).
  *
  * Every hover fill sits inside `@media (hover: hover)` (as main.css's app-icon grid): Chromium
  * keeps a tap's `:hover` on the element until the next touch, so on a phone an ungated rule
@@ -1059,6 +1059,13 @@
 /* A field with a leading glyph (`.zen-v2-field-lead`, 16 at 10 in): the text starts 34 in. */
 .zen-v2-field[data-lead] {
   padding-left: 34px;
+}
+/*
+ * A pressed icon button – the puzzle panel's pin while its extension is on the toolbar – draws
+ * its glyph in the accent; the ink is main.css's, so only an unlayered rule can recolour it.
+ */
+.zen-v2-icon-button[aria-pressed='true'] {
+  color: var(--v2-accent);
 }
 /*
  * Busy is not disabled (§9.30): a working button keeps its opacity, its fill and its width – the

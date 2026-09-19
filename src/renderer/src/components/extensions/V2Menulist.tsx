@@ -166,7 +166,11 @@ function MenulistSheet<T extends string>({
       handleLabel="Resize"
       header={<span className="zen-sheet-title">{label}</span>}
     >
-      {/* Radio rows (§9.13, §9.14): each row is the radio and carries `aria-checked`, which is what draws the shared glyph inside it. */}
+      {/*
+        Radio rows (§9.13, §9.14), as the Settings sheets' (§9.34): each row is the shared
+        `.zen-v2-row` – its `--v2-row-pad` is what seats the flex-start radio on the text line
+        (§9.2) – and the radio itself, carrying `aria-checked`, which draws the glyph inside it.
+      */}
       <div className="zen-v2 flex flex-col pb-1" role="radiogroup" aria-label={label}>
         {options.map((option) => (
           <button
@@ -174,7 +178,7 @@ function MenulistSheet<T extends string>({
             type="button"
             role="radio"
             aria-checked={option.value === value}
-            className="zen-sheet-item"
+            className="zen-v2-row"
             onClick={() => sheet.current?.dismiss(() => onPick(option.value))}
           >
             <V2Radio />
