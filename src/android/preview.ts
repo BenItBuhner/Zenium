@@ -108,25 +108,75 @@ export function createPreviewBridge(): NativeBridge {
   const host = hostGlobal
   const views = new Map<string, HTMLIFrameElement>()
   const density = 1
-  /** What clips each page's frame: how far a pull has moved it down, and the covered strips. */
-  const clips = new Map<string, { pull: number; cover: ContentCover }>()
-  const clipOf = (tabId: string): { pull: number; cover: ContentCover } => {
+  /**
+   * What clips each page's frame: how far a pull has moved it down, the covered strips, and the
+   * strip the hiding bar has not yet left (`bar`, from the frame's bottom, see `chrome.setBarHide`).
+   */
+  interface Clip {
+    pull: number
+    cover: ContentCover
+    bar: number
+  }
+  const clips = new Map<string, Clip>()
+  const clipOf = (tabId: string): Clip => {
     let clip = clips.get(tabId)
-    if (!clip) clips.set(tabId, (clip = { pull: 0, cover: { top: 0, bottom: 0 } }))
+    if (!clip) clips.set(tabId, (clip = { pull: 0, cover: { top: 0, bottom: 0 }, bar: 0 }))
     return clip
   }
   // Like Kotlin's outline: the page shows between the strips, and no lower than the frame's
   // bottom edge while a pull holds it down.
-  const applyClip = (
-    frame: HTMLIFrameElement,
-    clip: { pull: number; cover: ContentCover }
-  ): void => {
+  const applyClip = (frame: HTMLIFrameElement, clip: Clip): void => {
     const radius = frame.style.borderRadius || '0px'
-    const bottom = Math.max(clip.cover.bottom, clip.pull)
+    const bottom = Math.max(clip.cover.bottom, clip.pull, clip.bar)
     frame.style.clipPath =
       clip.cover.top > 0 || bottom > 0
         ? `inset(${clip.cover.top}px 0 ${bottom}px 0 round ${radius})`
         : `inset(0 round ${radius})`
+  }
+  /** The frame each page was last laid out at (CSS px), what `chrome.setBarHide` works from. */
+  const reported = new Map<string, Rect>()
+  /** Where the bar that hides on scroll is, for every page (null: it may not hide). */
+  let barHide: {
+    edge: 'top' | 'bottom'
+    offset: number
+    travel: number
+    shownEdge: number
+  } | null = null
+  /**
+   * Like `TabWebView.applyFrame`: the page's edge on the bar's side follows the bar. Docked at
+   * the bottom the frame grows into the band as the bar leaves it, clipped to the bar's travel
+   * so far; docked at the top the page moves with the bar's bottom edge (its top pinned to it,
+   * its bottom held at the frame's) and grows by the band at its far end.
+   */
+  const applyFrame = (tabId: string): void => {
+    const frame = views.get(tabId)
+    const r = reported.get(tabId)
+    if (!frame || !r) return
+    const clip = clipOf(tabId)
+    let top = r.y
+    let bottom = r.y + r.height
+    let shift = 0
+    clip.bar = 0
+    if (barHide) {
+      const { edge, offset, travel, shownEdge } = barHide
+      const away = offset > 0
+      if (edge === 'bottom') {
+        bottom = away ? shownEdge + travel : shownEdge
+        if (away && offset < travel) clip.bar = bottom - (shownEdge + offset)
+      } else {
+        top = shownEdge
+        bottom = r.y + r.height + (away ? travel : 0)
+        shift = -offset
+        if (away && offset < travel) clip.bar = travel - offset
+      }
+    }
+    frame.style.left = `${r.x / density}px`
+    frame.style.top = `${top / density}px`
+    frame.style.width = `${r.width / density}px`
+    frame.style.height = `${(bottom - top) / density}px`
+    const y = clip.pull + shift
+    frame.style.transform = y !== 0 ? `translate3d(0, ${y}px, 0)` : ''
+    applyClip(frame, clip)
   }
 
   const files: Record<string, string> = {}
@@ -238,6 +288,8 @@ export function createPreviewBridge(): NativeBridge {
     'view.destroy': ({ tabId }) => {
       views.get(String(tabId))?.remove()
       views.delete(String(tabId))
+      reported.delete(String(tabId))
+      clips.delete(String(tabId))
       viewEvent(String(tabId), 'destroyed', null)
     },
     'view.load': ({ tabId, url }) => {
@@ -273,13 +325,22 @@ export function createPreviewBridge(): NativeBridge {
       viewEvent(String(tabId), 'navigated', { ...navState(frame), inPage: false })
     },
     'view.setBounds': ({ tabId, rect }) => {
-      const frame = views.get(String(tabId))
-      const r = rect as Rect
-      if (!frame) return
-      frame.style.left = `${r.x / density}px`
-      frame.style.top = `${r.y / density}px`
-      frame.style.width = `${r.width / density}px`
-      frame.style.height = `${r.height / density}px`
+      reported.set(String(tabId), rect as Rect)
+      applyFrame(String(tabId))
+    },
+    // The bar that hides on scroll (`lib/barHide.ts`) says where it is: every page's edge on the
+    // bar's side follows (Kotlin: `Host.setBarHide`).
+    'chrome.setBarHide': (args) => {
+      barHide =
+        args.enabled === false
+          ? null
+          : {
+              edge: args.edge === 'top' ? 'top' : 'bottom',
+              offset: Number(args.offset) || 0,
+              travel: Number(args.travel) || 0,
+              shownEdge: Number(args.shownEdge) || 0
+            }
+      for (const tabId of views.keys()) applyFrame(tabId)
     },
     'view.setRadius': ({ tabId, radius }) => {
       const frame = views.get(String(tabId))
@@ -293,10 +354,9 @@ export function createPreviewBridge(): NativeBridge {
       const y = Math.max(0, Number(offset))
       const clip = clipOf(String(tabId))
       clip.pull = y
-      frame.style.transform = y > 0 ? `translate3d(0, ${y}px, 0)` : ''
       // The pull follows the finger per frame; nothing eases it.
       frame.style.transition = ''
-      applyClip(frame, clip)
+      applyFrame(String(tabId))
     },
     'chrome.setPullToRefresh': () => undefined,
     // Chrome messages along the frame's edges: the page is clipped out of their strips, eased
