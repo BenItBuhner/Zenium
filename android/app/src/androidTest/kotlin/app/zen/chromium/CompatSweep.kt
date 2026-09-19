@@ -967,6 +967,20 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val found = pollExpr(view, "(function(){var c=document.querySelector('.vsc-controller');var text=(c&&c.shadowRoot&&c.shadowRoot.textContent||'').trim();return JSON.stringify({pass:!!c&&/\\d/.test(text),controller:!!c,text:text.slice(0,20),hidden:c?c.classList.contains('vsc-hidden'):null,video:(function(v){return v?(v.paused?'paused':'playing'):'none'})(document.getElementById('clip'))})})()", 12_000)
         val extra = JSONObject().put("page", found).put("console", JSONArray(consoleOf(view).takeLast(10)))
         if (worlds) worldEval(view, row.id, WORLD_REPORT)?.let { extra.put("world", json(it)) }
+        if (!found.optBoolean("pass")) {
+            // Where the extension stopped: the main world's inject.js leaves window.VSC behind and
+            // asks the isolated-world bridge for its settings over a CustomEvent handshake; the
+            // bridge answers from chrome.storage.sync. Each half is asked again here.
+            extra.put("mainWorld", json(tabEval(view, VSC_MAIN_WORLD_REPORT)))
+            tabEval(view, VSC_HANDSHAKE_PROBE)
+            SystemClock.sleep(2_500)
+            extra.put("handshake", json(tabEval(view, "JSON.stringify(window.__vscProbe||null)")))
+            if (worlds) {
+                worldEval(view, row.id, STORAGE_PROBE)
+                SystemClock.sleep(2_500)
+                worldEval(view, row.id, "JSON.stringify(window.__zenStorageProbe||null)")?.let { extra.put("worldStorage", json(it)) }
+            }
+        }
         return Grade(if (found.optBoolean("pass")) "P" else "F", "speed controller attached to the video: ${found.toString().take(220)}", extra)
     }
 
@@ -1655,6 +1669,17 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         /** What one extension's world sees on a page: the bootstrap's statistics and its `chrome`. */
         private const val WORLD_REPORT =
             "JSON.stringify({stats: window.__zenExtStats || null, chrome: typeof chrome, runtimeId: (typeof chrome === 'object' && chrome && chrome.runtime) ? chrome.runtime.id : null})"
+        /** Video Speed Controller's main world: what inject.js left on window.VSC and the video's state. */
+        private const val VSC_MAIN_WORLD_REPORT =
+            "(function(){var v=document.getElementById('clip');var r=v?v.getBoundingClientRect():null;return JSON.stringify({vsc:window.VSC?Object.keys(window.VSC):null,stats:window.__zenExtStats||null,chrome:typeof chrome," +
+                "videos:document.querySelectorAll('video').length,controllers:document.querySelectorAll('vsc-controller').length,readyState:v?v.readyState:null,networkState:v?v.networkState:null,error:v&&v.error?v.error.code:null,currentSrc:v?v.currentSrc:null,rect:r?Math.round(r.width)+'x'+Math.round(r.height):null})})()"
+        /** Asks the bridge as inject.js does; the answer (or its absence after 2.5 s) lands on window.__vscProbe. */
+        private const val VSC_HANDSHAKE_PROBE =
+            "(function(){var h=document.documentElement;var p=window.__vscProbe={askedAt:Date.now(),answer:null,ms:null};h.addEventListener('VSC_SETTINGS_READY',function(e){p.ms=Date.now()-p.askedAt;try{p.answer=JSON.stringify(e.detail)}catch(x){p.answer='unserialisable: '+x}},{once:true});" +
+                "h.dispatchEvent(new CustomEvent('VSC_REQUEST_SETTINGS'));return 'asked'})()"
+        /** In the extension's world: does chrome.storage.sync.get(null) answer, and how fast. */
+        private const val STORAGE_PROBE =
+            "(function(){var p=window.__zenStorageProbe={askedAt:Date.now(),result:null,error:null,ms:null};try{chrome.storage.sync.get(null).then(function(v){p.ms=Date.now()-p.askedAt;p.result=JSON.stringify(v).slice(0,200)},function(e){p.ms=Date.now()-p.askedAt;p.error=String(e&&e.message||e)})}catch(e){p.error='threw: '+String(e&&e.message||e)}return 'asked'})()"
         private const val ELEMENT_CENTRE =
             "JSON.stringify((function(el){if(!el)return null;var r=el.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2,w:r.width,h:r.height}})(document.querySelector('%SELECTOR%')))"
         private const val KEY_RECORDER =
