@@ -56,7 +56,8 @@ export const ENGINE_SPEC: ApiSpec = {
       requestUpdateCheck: routed(),
       getBackgroundPage: routed(),
       sendNativeMessage: routed(string('application'), object('message')),
-      connectNative: routed(string('application')),
+      /** Synchronous in Chrome (a Port at once); the engine answers with one that disconnects. */
+      connectNative: engine(string('application')),
       restart: routed(),
       restartAfterDelay: routed(integer('seconds')),
       getPackageDirectoryEntry: routed()

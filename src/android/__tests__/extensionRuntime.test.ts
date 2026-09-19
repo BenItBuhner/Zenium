@@ -1135,6 +1135,20 @@ describe('AndroidExtensionRuntime: tabs.detectLanguage', () => {
   })
 })
 
+describe('AndroidExtensionRuntime: native messaging', () => {
+  it('sendNativeMessage fails as Chrome does for a host that does not exist', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1')
+    const sent = await call(h, 'bg1', 'runtime', 'sendNativeMessage', [
+      'com.1password.1password',
+      { hello: 1 }
+    ])
+    expect(sent.ok).toBe(false)
+    expect(sent.error).toBe('Specified native messaging host not found.')
+  })
+})
+
 describe('AndroidExtensionRuntime: popups and options', () => {
   it('opens the manifest popup as a sheet, or raises action.onClicked when there is none', async () => {
     const h = harness()

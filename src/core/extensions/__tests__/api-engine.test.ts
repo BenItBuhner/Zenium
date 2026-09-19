@@ -341,6 +341,33 @@ describe('createEmulatedEngine', () => {
     expect((incoming as unknown as Record<string, unknown>).name).toBe('x')
   })
 
+  it('connectNative hands back a port at once that disconnects as "host not found" (1Password)', async () => {
+    const h = harness({ permissions: ['nativeMessaging'] })
+    const before = h.sent.length
+    const port = (h.chrome.runtime.connectNative as Fn)('com.1password.1password') as Record<
+      string,
+      unknown
+    >
+    // Synchronous, as in Chrome: the extension attaches its listeners to the returned port.
+    expect(typeof (port.onMessage as Listenable).addListener).toBe('function')
+    ;(port.postMessage as Fn)({ hello: 1 })
+    let lastError: unknown = 'unset'
+    let disconnected = 0
+    ;(port.onDisconnect as Listenable).addListener(() => {
+      disconnected += 1
+      lastError = h.chrome.runtime.lastError
+    })
+    expect(disconnected).toBe(0)
+    await flush()
+    expect(disconnected).toBe(1)
+    expect(lastError).toEqual({ message: 'Specified native messaging host not found.' })
+    expect(h.chrome.runtime.lastError).toBeUndefined()
+    expect(() => (port.postMessage as Fn)('x')).toThrow(/disconnected port/)
+    // A native port has no host side: nothing was posted for it.
+    expect(h.sent.length).toBe(before)
+    expect(() => (h.chrome.runtime.connectNative as Fn)()).toThrow(/No matching signature/)
+  })
+
   it('dispatches host events, including storage.<area>.onChanged mirrors and action aliases', () => {
     const h = harness()
     const seen: unknown[] = []

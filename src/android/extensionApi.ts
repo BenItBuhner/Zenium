@@ -10,7 +10,7 @@ import {
   coversAllUrls,
   normalizeCaptureOptions
 } from '@core/extensions/api/capture'
-import type { EngineContextKind } from '@core/extensions/api/engine'
+import { NATIVE_HOST_NOT_FOUND, type EngineContextKind } from '@core/extensions/api/engine'
 import type { LocaleMessages } from '@core/extensions/api/i18n'
 import { globToRegExp, matchesAnyPattern } from '@core/extensions/api/matchPattern'
 import type { ExtensionRecord } from '@core/extensions/registry'
@@ -1227,6 +1227,10 @@ export class ExtensionApi {
           tabId: e.tabId ? this.tabs.chromeIdFor(e.tabId) : -1,
           windowId: 1
         }))
+      // No native messaging hosts on the phone: Chrome's answer for a host that does not exist.
+      case 'sendNativeMessage':
+      case 'connectNative':
+        throw new Error(NATIVE_HOST_NOT_FOUND)
     }
     throw new Error(`chrome.runtime.${method} ${NOT_IMPLEMENTED}`)
   }
