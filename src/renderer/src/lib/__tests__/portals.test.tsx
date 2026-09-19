@@ -112,10 +112,13 @@ function Dialog({
   )
 }
 
+/** The stylesheet, whitespace folded (prettier breaks a long selector over several lines). */
+const cssText = (): string =>
+  readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8').replace(/\s+/g, ' ')
+
 /** The stylesheet's rules for a selector, as one string (`main.css` is not loaded in happy-dom). */
 function cssRule(selector: string): string {
-  // Whitespace folded first: prettier breaks a long selector over several lines.
-  const css = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8').replace(/\s+/g, ' ')
+  const css = cssText()
   const at = css.indexOf(`${selector} {`)
   expect(at, `a rule for ${selector}`).toBeGreaterThan(-1)
   return css.slice(at, css.indexOf('}', at))
@@ -442,14 +445,13 @@ const dialogNames = (): Array<string | undefined> =>
   [...slot().children].map((el) => (el as HTMLElement).dataset.dialog)
 
 /*
- * The way out (lib/portals.tsx, `useLeavingPanels`): a dialog that unmounts its panel the
- * moment its state clears leaves the panel with the host, which keeps the element itself in the
- * slot – `data-leaving`, `inert`, `aria-hidden` – through its exit and drops it at the end: on a
- * mouse the pop in reverse and the scrim's fade, the panel gone as its animation ends; on a
- * phone the slot's slide down on the chassis' spring, gone as it lands at 0 (tested with the
- * chassis below). Until then the host is up for it – it keeps the pointer, the chrome stays
- * inert and the page stays under its picture – and a dialog opening meanwhile ends the way out
- * at once. No dialog needs to know.
+ * The way out on a mouse (lib/portals.tsx, `useLeavingPanels`): a dialog that unmounts its
+ * panel the moment its state clears leaves the panel with the host, which keeps the element
+ * itself in the slot – `data-leaving`, `inert`, `aria-hidden` – through the pop in reverse and
+ * the scrim's fade, and drops it as its animation ends. Until then the host is up for it – it
+ * keeps the pointer, the chrome stays inert and the page stays under its picture – and a dialog
+ * opening meanwhile ends the way out at once. No dialog needs to know. The phone pose is not
+ * the host's (the sheet chassis runs the leave there; tested with the chassis below).
  */
 describe('the way out: the host keeps a closed dialog’s panel through its exit', () => {
   afterEach(() => {
@@ -502,24 +504,36 @@ describe('the way out: the host keeps a closed dialog’s panel through its exit
   })
 
   it('runs the pop in reverse on the kept panel and fades the scrim, the 180 ms of the way in; a 120 ms fade in place under reduced motion; none of it on the phone sheet', () => {
-    expect(cssRule('.zen-frame-dialogs-slot > [data-leaving]')).toContain(
-      'animation: zen-pop-out 180ms var(--zen-ease) forwards'
-    )
-    expect(cssRule('.zen-frame-scrim[data-leaving]')).toContain(
-      'animation: zen-fade-out 180ms var(--zen-ease) forwards'
-    )
+    // The pose rules are the mouse's alone: gated on `:not([data-sheet])`, so a panel the sheet
+    // chassis marks `data-leaving` for its way down on a phone gets nothing from them.
+    expect(
+      cssRule('.zen-frame-dialogs:not([data-sheet]) .zen-frame-dialogs-slot > [data-leaving]')
+    ).toContain('animation: zen-pop-out 180ms var(--zen-ease) forwards')
+    expect(
+      cssRule('.zen-frame-dialogs:not([data-sheet]) .zen-frame-scrim[data-leaving]')
+    ).toContain('animation: zen-fade-out 180ms var(--zen-ease) forwards')
     expect(cssRule('@keyframes zen-pop-out')).toMatch(/from \{ opacity: 1; transform: none;/)
     expect(cssRule('.zen-frame-dialogs[data-open], .zen-frame-dialogs[data-leaving]')).toContain(
       'pointer-events: auto'
     )
     // §11.3: the departure stays a fade, the pop's scale dropped.
     const reduced = cssRule(
-      '.zen-frame-dialogs-slot > [data-leaving], .zen-frame-scrim[data-leaving]'
+      '.zen-frame-dialogs:not([data-sheet]) .zen-frame-dialogs-slot > [data-leaving], .zen-frame-dialogs:not([data-sheet]) .zen-frame-scrim[data-leaving]'
     )
     expect(reduced).toContain('animation-name: zen-fade-out')
     expect(reduced).toContain('animation-duration: 120ms !important')
-    // On a phone the chassis slides the slot: the panels' own animation is off there, the
-    // kept one's included (the rule outranks the `[data-leaving]` one).
+    // Every `[data-leaving]` rule on the slot's panels and the scrim is so gated – none reaches
+    // a sheet host – and on a phone the chassis slides the slot: the panels' own animation is
+    // off there.
+    const text = cssText()
+    const count = (s: string): number => text.split(s).length - 1
+    expect(count('.zen-frame-dialogs-slot > [data-leaving]')).toBeGreaterThan(0)
+    expect(count('.zen-frame-dialogs-slot > [data-leaving]')).toBe(
+      count('.zen-frame-dialogs:not([data-sheet]) .zen-frame-dialogs-slot > [data-leaving]')
+    )
+    expect(count('.zen-frame-scrim[data-leaving]')).toBe(
+      count('.zen-frame-dialogs:not([data-sheet]) .zen-frame-scrim[data-leaving]')
+    )
     expect(cssRule('.zen-frame-dialogs[data-sheet] .zen-frame-dialogs-slot > *')).toContain(
       'animation: none'
     )
@@ -1220,12 +1234,14 @@ describe('FrameDialogHost on a phone (the sheet chassis, §11)', () => {
   })
 
   /*
-   * The way out on the chassis (`useLeavingPanels` driven by `useSheetChassis`): the panel of a
-   * dialog that unmounted it as it closed is kept in the slot and rides the slide down, so the
-   * scrim, the recede and the sheet leave together over a panel, not an empty slot; it goes as
-   * the spring lands at 0, not at its own (turned-off) animation's end.
+   * The way out is not the host's here: on a phone the dialogs are sheets and their leave is
+   * the sheet chassis' (v2 draft §11.1; the Android program's sheet-leave work, #187, on this
+   * same slot). `data-sheet` is the gate – the host keeps, holds and marks nothing – so the
+   * slot's children are what React renders, and whatever the chassis does with the slot's
+   * children is its own.
    */
-  it('keeps the panel of a dialog that unmounted it as it closed: it rides the slot down, and goes as the spring lands at 0', async () => {
+  it('keeps, holds and marks nothing for a dialog that unmounted its panel as it closed: the host retains nothing on a phone', async () => {
+    uiStore.set({ snapshot: 'data:,page', snapshotTabId: 't1' })
     render(
       <Chrome>
         <FrameDialogHost>
@@ -1236,6 +1252,10 @@ describe('FrameDialogHost on a phone (the sheet chassis, §11)', () => {
     await settle()
     frames(60)
     expect(recedeVar()).toBe('1.0000')
+    // The page is the sheet's to cover (`frameSheetOpen`), not the host's (`frameDialogCover`).
+    act(() => uiStore.set({ pageDialogOpen: true }))
+    expect(uiStore.get().frameDialogCover).toBe(0)
+    expect(uiStore.get().frameSheetOpen).toBe(true)
     const panel = slot().querySelector<HTMLElement>('[data-dialog="prompt"]')!
     rerender(
       <Chrome>
@@ -1244,24 +1264,27 @@ describe('FrameDialogHost on a phone (the sheet chassis, §11)', () => {
         </FrameDialogHost>
       </Chrome>
     )
-    // Kept: the element itself, in the slot, taking no press or focus and nothing to AT; the
-    // host still up for it, the chrome still inert, the page still under its cover.
-    expect(panel.parentElement).toBe(slot())
-    expect(panel.hasAttribute('data-leaving')).toBe(true)
-    expect(panel.hasAttribute('inert')).toBe(true)
-    expect(panel.getAttribute('aria-hidden')).toBe('true')
-    expect(host().hasAttribute('data-open')).toBe(false)
-    expect(host().getAttribute('data-leaving')).toBe('true')
-    expect(inert(chrome('sidebar'))).toBe(true)
-    expect(uiStore.get().frameSheetOpen).toBe(true)
-    // Not the desktop's way out: an animation's end means nothing here (main.css runs none on
-    // the sheet); the panel waits for the progress to land.
     act(() => {
-      panel.dispatchEvent(new Event('animationend'))
+      uiStore.set({ pageDialogOpen: false })
+      invalidateSnapshot()
     })
-    expect(panel.parentElement).toBe(slot())
-    // The way down: scrim, recede and slide run back together on the one progress, the panel
-    // riding the slot – the slide still measured from it – for as long as anything shows.
+    // Gone from the slot as React removed it – not put back, not marked – and the host's state
+    // follows its registered dialogs alone: no `data-leaving` anywhere, `open` false, the
+    // chrome let go of by the host (the chassis' own hold from rise to landing is #187's).
+    expect(panel.isConnected).toBe(false)
+    expect(panel.hasAttribute('data-leaving')).toBe(false)
+    expect(panel.hasAttribute('inert')).toBe(false)
+    expect(panel.hasAttribute('aria-hidden')).toBe(false)
+    expect(slot().childElementCount).toBe(0)
+    expect(leaving()).toEqual([])
+    expect(host().hasAttribute('data-open')).toBe(false)
+    expect(host().hasAttribute('data-leaving')).toBe(false)
+    expect(scrim()!.hasAttribute('data-leaving')).toBe(false)
+    expect(chromeInertHeld()).toBe(false)
+    expect(uiStore.get().frameDialogCover).toBe(0)
+    // The sheet's own way down runs as on main: scrim and recede back on the spring, the page
+    // under the sheet's cover until the landing – nothing of it the host's retention.
+    expect(uiStore.get().frameSheetOpen).toBe(true)
     let last = 1
     for (let i = 0; i < 120 && scheduled(); i++) {
       act(() => frames(1))
@@ -1269,26 +1292,17 @@ describe('FrameDialogHost on a phone (the sheet chassis, §11)', () => {
       expect(Number(recedeVar())).toBeCloseTo(p, 4)
       expect(p).toBeLessThanOrEqual(last + 1e-9)
       last = p
-      if (p <= 0) continue
-      expect(panel.parentElement).toBe(slot())
-      expect(translateY()).toBeCloseTo((1 - p) * TRAVEL, 1)
-      expect(host().hasAttribute('data-sheet-up')).toBe(true)
-      expect(uiStore.get().frameSheetOpen).toBe(true)
+      expect(slot().childElementCount).toBe(0)
+      expect(host().hasAttribute('data-leaving')).toBe(false)
     }
     expect(scheduled()).toBe(false)
-    // Landed at 0: gone for good, the host idle, the chrome back, the page let back – all at
-    // the same moment.
-    expect(panel.parentElement).toBeNull()
-    expect(slot().childElementCount).toBe(0)
-    expect(host().hasAttribute('data-leaving')).toBe(false)
     expect(host().hasAttribute('data-sheet-up')).toBe(false)
-    expect(inert(chrome('sidebar'))).toBe(false)
-    expect(chromeInertHeld()).toBe(false)
     expect(uiStore.get().frameSheetOpen).toBe(false)
+    expect(uiStore.get().frameDialogCover).toBe(0)
     expect(recedeVar()).toBe('')
   })
 
-  it('a dialog opening on the way down ends the way out at once: the kept panel goes, the new one takes the spring where it is', async () => {
+  it('a dialog opening again on the way down finds nothing kept: the new panel alone, as rendered', async () => {
     render(
       <FrameDialogHost>
         <Prompt open name="first" />
@@ -1302,51 +1316,84 @@ describe('FrameDialogHost on a phone (the sheet chassis, §11)', () => {
         <Prompt open={false} name="first" />
       </FrameDialogHost>
     )
+    expect(first.isConnected).toBe(false)
     act(() => frames(4))
     const midway = opacity(scrim())
     expect(midway).toBeGreaterThan(0)
     expect(midway).toBeLessThan(1)
-    expect(first.parentElement).toBe(slot())
     rerender(
       <FrameDialogHost>
         <Prompt open name="second" />
       </FrameDialogHost>
     )
-    // No stale panel under the new one, and the host open for it, not leaving.
-    expect(first.parentElement).toBeNull()
     expect(dialogNames()).toEqual(['second'])
+    expect(leaving()).toEqual([])
     expect(host().getAttribute('data-open')).toBe('true')
     expect(host().hasAttribute('data-leaving')).toBe(false)
-    expect(chromeInertHeld()).toBe(true)
-    // The spring turns round where it is: no jump, and the new panel rises to rest.
+    // The chassis turns the spring round where it is, as on main.
     await settle()
     act(() => frames(1))
     expect(Math.abs(opacity(scrim()) - midway)).toBeLessThan(0.2)
     act(() => frames(60))
     expect(recedeVar()).toBe('1.0000')
-    expect(dialogNames()).toEqual(['second'])
     expect(slot().querySelector('[data-dialog="second"]')!.hasAttribute('inert')).toBe(false)
   })
 
-  it('a dialog closed before the sheet came up keeps nothing: no slide to ride, the panel goes at once', async () => {
+  it('the gate follows the pose: a panel kept on a mouse is dropped at once as the host becomes a sheet mid-exit, and a mouse host keeps again', () => {
+    act(() => viewportStore.set({ ...viewportStore.get(), formFactor: 'desktop' }))
     render(
       <FrameDialogHost>
         <Prompt open />
       </FrameDialogHost>
     )
+    const panel = slot().querySelector<HTMLElement>('[data-dialog="prompt"]')!
     rerender(
       <FrameDialogHost>
         <Prompt open={false} />
       </FrameDialogHost>
     )
+    expect(panel.parentElement).toBe(slot())
+    expect(host().getAttribute('data-leaving')).toBe('true')
+    expect(chromeInertHeld()).toBe(true)
+    // The form factor changes under the way out: the sheet chassis owns the leave from here,
+    // and what the mouse pose kept goes with it – nothing stale for the chassis to find.
+    act(() => viewportStore.set({ ...viewportStore.get(), formFactor: 'phone' }))
+    expect(panel.isConnected).toBe(false)
     expect(slot().childElementCount).toBe(0)
+    expect(host().getAttribute('data-sheet')).toBe('true')
     expect(host().hasAttribute('data-leaving')).toBe(false)
     expect(chromeInertHeld()).toBe(false)
-    await settle()
-    act(() => frames(2))
-    expect(opacity(scrim())).toBe(0)
-    expect(document.documentElement.dataset.receding).toBeUndefined()
-    expect(uiStore.get().frameSheetOpen).toBe(false)
+    // A sheet host keeps nothing; back on a mouse the host keeps again.
+    rerender(
+      <FrameDialogHost>
+        <Prompt open name="on-phone" />
+      </FrameDialogHost>
+    )
+    const onPhone = slot().querySelector<HTMLElement>('[data-dialog="on-phone"]')!
+    rerender(
+      <FrameDialogHost>
+        <Prompt open={false} name="on-phone" />
+      </FrameDialogHost>
+    )
+    expect(onPhone.isConnected).toBe(false)
+    expect(leaving()).toEqual([])
+    act(() => viewportStore.set({ ...viewportStore.get(), formFactor: 'desktop' }))
+    rerender(
+      <FrameDialogHost>
+        <Prompt open name="on-mouse" />
+      </FrameDialogHost>
+    )
+    const onMouse = slot().querySelector<HTMLElement>('[data-dialog="on-mouse"]')!
+    rerender(
+      <FrameDialogHost>
+        <Prompt open={false} name="on-mouse" />
+      </FrameDialogHost>
+    )
+    expect(onMouse.parentElement).toBe(slot())
+    expect(onMouse.hasAttribute('data-leaving')).toBe(true)
+    endExit()
+    expect(onMouse.isConnected).toBe(false)
+    expect(chromeInertHeld()).toBe(false)
   })
 })
 

@@ -942,17 +942,19 @@
     background: var(--v2-scrim-modal);
   }
   /*
-   * The way out (lib/portals.tsx, `useLeavingPanels`): the host keeps a closed dialog's panel
-   * in the slot, `data-leaving`, through the pop in reverse – the same 180 ms as the way in –
-   * and fades its scrim with it; the host keeps the pointer meanwhile, so a press during the
-   * fade lands on nothing under it. The kept panel is `inert`: whatever the slot's open rule
-   * says, it takes no press. A chassis that slides the slot on a progress of its own turns the
-   * panel's animation off and reports the progress to the host instead.
+   * The way out on a mouse (lib/portals.tsx, `useLeavingPanels`): the host keeps a closed
+   * dialog's panel in the slot, `data-leaving`, through the pop in reverse – the same 180 ms as
+   * the way in – and fades its scrim with it; the host keeps the pointer meanwhile, so a press
+   * during the fade lands on nothing under it. The kept panel is `inert`: whatever the slot's
+   * open rule says, it takes no press. The pose is the mouse's alone (`:not([data-sheet])`): on
+   * a phone the host's dialogs are sheets, whose leave is the sheet chassis' – the slot's slide
+   * down on its spring – so a panel the chassis marks `data-leaving` for its way down gets no
+   * animation from here (v2 draft §11.1; the Android program's sheet-leave work).
    */
-  .zen-frame-scrim[data-leaving] {
+  .zen-frame-dialogs:not([data-sheet]) .zen-frame-scrim[data-leaving] {
     animation: zen-fade-out 180ms var(--zen-ease) forwards;
   }
-  .zen-frame-dialogs-slot > [data-leaving] {
+  .zen-frame-dialogs:not([data-sheet]) .zen-frame-dialogs-slot > [data-leaving] {
     animation: zen-pop-out 180ms var(--zen-ease) forwards;
   }
   .zen-frame-dialogs-slot {
@@ -6314,11 +6316,12 @@
     transition-duration: 120ms !important;
   }
   /*
-   * A frame dialog's way out stays a departure: the 120 ms fade in place of v2 §11.3, the pop's
-   * scale dropped (lib/portals.tsx keeps the panel until this ends).
+   * A frame dialog's way out on a mouse stays a departure: the 120 ms fade in place of v2 §11.3,
+   * the pop's scale dropped (lib/portals.tsx keeps the panel until this ends). Not the phone's:
+   * there the sheet chassis runs the leave.
    */
-  .zen-frame-dialogs-slot > [data-leaving],
-  .zen-frame-scrim[data-leaving] {
+  .zen-frame-dialogs:not([data-sheet]) .zen-frame-dialogs-slot > [data-leaving],
+  .zen-frame-dialogs:not([data-sheet]) .zen-frame-scrim[data-leaving] {
     animation-name: zen-fade-out;
     animation-duration: 120ms !important;
   }
