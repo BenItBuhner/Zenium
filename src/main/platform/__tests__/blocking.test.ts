@@ -7,6 +7,7 @@ import { RuleEngine, TEXT_MATCH_SET_ID } from '../../../core/blocking/engine'
 import type { Decision, RequestContext, RuleSet } from '../../../core/blocking/rules'
 import { RuleSetStore } from '../../../core/blocking/store'
 import type { StoreIO } from '../../../core/platform'
+import type { DecisionStage } from '../blocking'
 import type { HostRequest } from '../webRequest'
 
 vi.mock('electron', () => ({
@@ -75,7 +76,9 @@ function hostRequest(c: RequestContext, tabId: string | null = 'tab-1'): HostReq
 describe('BlockingHandler', () => {
   function handler(
     decide: (c: RequestContext) => Decision,
-    csp: string | null = null
+    csp: string | null = null,
+    observer:
+      ((request: HostRequest, decision: Decision, stage: DecisionStage) => void) | null = null
   ): {
     handler: InstanceType<typeof BlockingHandler>
     blocked: Array<string | undefined>
@@ -87,7 +90,8 @@ describe('BlockingHandler', () => {
         recordBlocked: (tabId, count = 1) =>
           blocked.push(...Array<string | undefined>(count).fill(tabId))
       },
-      { cspDirectives: () => csp }
+      { cspDirectives: () => csp },
+      observer
     )
     return { handler: h, blocked }
   }
@@ -260,6 +264,55 @@ describe('BlockingHandler', () => {
     h.onBeforeRequest(plain)
     h.onHeadersReceived(plain, { 'x-ads': ['1'] })
     expect(asked.length).toBe(before + 1)
+  })
+
+  it('tells the observer which stage each named decision was taken at', () => {
+    // Rule 1 (request stage, modifyHeaders) also notes a header rule; rule 3 blocks at the
+    // header stage on `x-ads`; rule 9 blocks at the request stage; `late` matches nothing until
+    // the headers are in.
+    const early: Decision = {
+      action: 'modifyHeaders',
+      responseHeaders: [{ header: 'X-Early', operation: 'set', value: '1' }],
+      matched: { setId: 'ext', ruleId: 1 }
+    }
+    const seen: Array<[string, number | undefined, DecisionStage]> = []
+    const { handler: h } = handler(
+      (c) => {
+        if (!c.responseHeaders) {
+          if (c.url.includes('early')) return { ...early, needsHeaders: true }
+          if (c.url.includes('late')) return { action: 'allow', needsHeaders: true }
+          if (c.url.includes('blocked'))
+            return { action: 'block', matched: { setId: 'ext', ruleId: 9 } }
+          return { action: 'allow' }
+        }
+        if (c.responseHeaders['x-ads'])
+          return { action: 'block', matched: { setId: 'ext', ruleId: 3 } }
+        return c.url.includes('early') ? early : { action: 'allow' }
+      },
+      null,
+      (request, decision, stage) => seen.push([request.ctx.url, decision.matched?.ruleId, stage])
+    )
+    const run = (url: string, headers: Record<string, string[]>): void => {
+      const request = hostRequest(ctx(url))
+      if (h.onBeforeRequest(request)) return
+      h.onHeadersReceived(request, headers)
+    }
+    run('https://a.example/blocked.js', {})
+    run('https://a.example/late.js', { 'x-ads': ['1'] })
+    run('https://a.example/late-clean.js', {})
+    run('https://a.example/early.js', {})
+    run('https://a.example/early-ads.js', { 'x-ads': ['1'] })
+    run('https://a.example/plain.js', { 'x-ads': ['1'] })
+    expect(seen).toEqual([
+      ['https://a.example/blocked.js', 9, 'request'],
+      // The request stage's default allow is not reported; the header stage's block is.
+      ['https://a.example/late.js', 3, 'headersReceived'],
+      // The same rule at both stages is reported once.
+      ['https://a.example/early.js', 1, 'request'],
+      // Overturned at the header stage: both stages, in order.
+      ['https://a.example/early-ads.js', 1, 'request'],
+      ['https://a.example/early-ads.js', 3, 'headersReceived']
+    ])
   })
 })
 
