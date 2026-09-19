@@ -40,6 +40,9 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // The tab group strip in the phone bar (components/phone/GroupStrip.tsx, TAB-14): a window
   // surface (§9.29) – the tray in the window fill, the chips in the theme's ink and accent.
   ['.zen-group-strip {', "/* Titles of the phone's overview, drawer and sheets. */"],
+  // The tab overview's Tabs | Private segment and panes (components/phone/TabOverview.tsx,
+  // TAB-02, TAB-03): a tab bar in the window family (§9.29) over the pane's 120 ms fade (§11).
+  ['.zen-overview-pane {', '/*\n   * The phone sheet chassis'],
   // The navigation bar's editor (components/phone/BarEditorSheet.tsx, BarPreview.tsx).
   ['.zen-bar-row {', '/* The editor draws a hairline when its rows scroll under the header'],
   // The zen://error page (shared/zenPages.ts cuts this block, the token block and the v2 button

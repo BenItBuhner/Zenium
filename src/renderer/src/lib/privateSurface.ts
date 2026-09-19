@@ -23,7 +23,11 @@ export function subscribePrivateSurface(listener: (active: boolean) => void): ()
     last = now
     listener(now)
   }
-  const offs = [browserStore.subscribe(check), stageStore.subscribe(check), privateTabsStore.subscribe(check)]
+  const offs = [
+    browserStore.subscribe(check),
+    stageStore.subscribe(check),
+    privateTabsStore.subscribe(check)
+  ]
   return () => offs.forEach((off) => off())
 }
 

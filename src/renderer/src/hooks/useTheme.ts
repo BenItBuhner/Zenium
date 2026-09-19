@@ -80,8 +80,8 @@ export function useTheme(state: UIState, formFactor: FormFactor = 'desktop'): Re
 
   // Where the blend stands: 0 = the space theme, 1 = the private theme.
   const blend = useRef(privateActive ? 1 : 0)
+  // The space theme the blend starts from, as the spring's frames read it.
   const latest = useRef(resolved)
-  latest.current = resolved
   const [paintedDark, setPaintedDark] = useState(target.isDark)
   const paintedDarkRef = useRef(paintedDark)
 
@@ -106,46 +106,49 @@ export function useTheme(state: UIState, formFactor: FormFactor = 'desktop'): Re
     }
   }, [])
 
-  const spring = useMemo(
-    () =>
-      new SpringAnimation(
-        SPRING_THEME_BLEND,
-        (x) => {
-          blend.current = x
-          paint(x, false)
-        },
-        (x) => {
-          blend.current = x
-          paint(x, true)
-        }
-      ),
-    [paint]
-  )
+  // The spring lives for the hook's life; its frames write the blend and paint it.
+  const spring = useRef<SpringAnimation | null>(null)
+  useEffect(() => {
+    const s = new SpringAnimation(
+      SPRING_THEME_BLEND,
+      (x) => {
+        blend.current = x
+        paint(x, false)
+      },
+      (x) => {
+        blend.current = x
+        paint(x, true)
+      }
+    )
+    spring.current = s
+    return () => {
+      s.stop()
+      spring.current = null
+    }
+  }, [paint])
 
   // A private tab came into view (or went): the blend runs to its new end from wherever it
-  // stands, catching a run still in flight. The first run only places the spring at rest.
-  const placed = useRef(false)
+  // stands, catching a run still in flight. A spring's first run only places it at rest (a
+  // fresh spring after StrictMode's remount included, so no blend runs on mount).
+  const placed = useRef<SpringAnimation | null>(null)
   useEffect(() => {
+    const s = spring.current
+    if (!s) return
     const to = privateActive ? 1 : 0
-    if (!placed.current) {
-      placed.current = true
-      spring.start(to, 0, to)
-      spring.stop()
+    if (placed.current !== s) {
+      placed.current = s
+      s.start(to, 0, to)
+      s.stop()
       return
     }
-    spring.retarget(to)
-  }, [privateActive, spring])
-  useEffect(
-    () => () => {
-      spring.stop()
-    },
-    [spring]
-  )
+    s.retarget(to)
+  }, [privateActive, paint])
 
   useEffect(() => {
     const root = document.documentElement
+    latest.current = resolved
     // A blend in flight paints the new space theme itself on its next frame.
-    if (!spring.running) paint(blend.current, true)
+    if (!spring.current?.running) paint(blend.current, true)
     root.style.setProperty('--zen-wallpaper', wallpaper)
     root.dataset.material = state.window.material
     root.style.setProperty('--zen-sidebar-width', `${state.settings.sidebarWidth}px`)
@@ -159,7 +162,6 @@ export function useTheme(state: UIState, formFactor: FormFactor = 'desktop'): Re
     wallpaper,
     formFactor,
     paint,
-    spring,
     state.settings.sidebarWidth,
     state.settings.borderless,
     state.window.fullscreen,

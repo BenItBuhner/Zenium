@@ -468,8 +468,7 @@ function useGlobalKeys(state: UIState): void {
 function useNewTabEvent(): void {
   useEffect(() => {
     const onNewTab = (e: Event): void => {
-      const detail = (e as CustomEvent<{ origin?: Rect; containerId?: string } | undefined>)
-        .detail
+      const detail = (e as CustomEvent<{ origin?: Rect; containerId?: string } | undefined>).detail
       if (isPhone()) {
         void openNewTabPage(detail?.origin ?? null, { containerId: detail?.containerId })
         return
