@@ -4,6 +4,7 @@
  * runtime model is what the injection planner, the chrome.* shim and the hosts consume.
  */
 import { getMessage, localeCandidates, substituteMessages, type LocaleMessages } from '../api/i18n'
+import { buildMessageCatalog, localizeManifest } from '../manifest'
 
 export type ManifestVersion = 2 | 3
 
@@ -90,7 +91,12 @@ export interface RuntimeManifest {
   extensionPagesCsp: string | null
   minimumChromeVersion: string | null
   incognito: 'spanning' | 'split' | 'not_allowed'
-  /** The raw document, for `chrome.runtime.getManifest()`. */
+  /**
+   * The document for `chrome.runtime.getManifest()`: as written, with Chrome's localisable
+   * strings (`name`, `short_name`, `description`, action titles, command descriptions, omnibox
+   * and search-provider strings) resolved from `_locales` the way Chrome resolves them at load.
+   * Adblock Plus reads `short_name` from it and refuses to start on `__MSG_name__`.
+   */
   raw: Record<string, unknown>
 }
 
@@ -296,7 +302,7 @@ export function parseRuntimeManifest(
       typeof source.minimum_chrome_version === 'string' ? source.minimum_chrome_version : null,
     incognito:
       incognitoRaw === 'split' || incognitoRaw === 'not_allowed' ? incognitoRaw : 'spanning',
-    raw: source
+    raw: messages ? localizeManifest(source, buildMessageCatalog([messages])).manifest : source
   }
 }
 

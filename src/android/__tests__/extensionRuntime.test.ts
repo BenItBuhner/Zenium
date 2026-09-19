@@ -477,6 +477,49 @@ describe('AndroidExtensionRuntime: chrome.storage on the shared helpers', () => 
     expect(h.files.has(`ext-storage/${ID}.json`)).toBe(false)
   })
 
+  it('setAccessLevel closes local (or sync) to content scripts and opens it again, as 1Password does at start', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1', ['storage.onChanged'])
+    hello(h, 'doc1.n.abcdefgh', 'content')
+    message(h, 'doc1.n.abcdefgh', { t: 'listen', event: 'storage.onChanged', on: true })
+    // Open by default (Chrome's default for local, sync and managed).
+    expect((await call(h, 'doc1.n.abcdefgh', 'storage', 'get', ['local', null])).ok).toBe(true)
+    // A content script may not change the level.
+    const fromContent = await call(h, 'doc1.n.abcdefgh', 'storage', 'setAccessLevel', [
+      'local',
+      { accessLevel: 'TRUSTED_CONTEXTS' }
+    ])
+    expect(fromContent.ok).toBe(false)
+    expect(String(fromContent.error)).toContain('cannot set the storage access level')
+    const closed = await call(h, 'bg1', 'storage', 'setAccessLevel', [
+      'local',
+      { accessLevel: 'TRUSTED_CONTEXTS' }
+    ])
+    expect(closed.ok).toBe(true)
+    const denied = await call(h, 'doc1.n.abcdefgh', 'storage', 'get', ['local', null])
+    expect(denied.ok).toBe(false)
+    expect(String(denied.error)).toContain('not allowed from this context')
+    // Nor does the content script hear a closed area change; the background still does.
+    await call(h, 'bg1', 'storage', 'set', ['local', { vault: 'locked' }])
+    expect(events(h, 'doc1.n.abcdefgh', 'storage.onChanged')).toHaveLength(0)
+    expect(events(h, 'bg1', 'storage.onChanged')).toHaveLength(1)
+    // Sync is its own switch: still open.
+    expect((await call(h, 'doc1.n.abcdefgh', 'storage', 'get', ['sync', null])).ok).toBe(true)
+    // An unknown level is refused as the schema would refuse it, and changes nothing.
+    const bad = await call(h, 'bg1', 'storage', 'setAccessLevel', ['local', { accessLevel: 'ALL' }])
+    expect(bad.ok).toBe(false)
+    expect(String(bad.error)).toContain('TRUSTED_AND_UNTRUSTED_CONTEXTS')
+    expect((await call(h, 'doc1.n.abcdefgh', 'storage', 'get', ['local', null])).ok).toBe(false)
+    const reopened = await call(h, 'bg1', 'storage', 'setAccessLevel', [
+      'local',
+      { accessLevel: 'TRUSTED_AND_UNTRUSTED_CONTEXTS' }
+    ])
+    expect(reopened.ok).toBe(true)
+    const again = await call(h, 'doc1.n.abcdefgh', 'storage', 'get', ['local', null])
+    expect(again.result).toEqual({ vault: 'locked' })
+  })
+
   it('chrome.extension reads the file-access and private toggles from the record', async () => {
     const h = harness()
     const rec = record(h, { allowFileAccess: true })

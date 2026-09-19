@@ -201,8 +201,12 @@ interface StorageEntry {
   store: JsonStore<StorageDoc>
   doc: StorageDoc
   session: StorageItems
-  /** `storage.session.setAccessLevel`: whether content scripts may use the session area. */
-  sessionUntrusted: boolean
+  /**
+   * The areas content scripts and user scripts may use, as `storage.<area>.setAccessLevel`
+   * leaves them: `local`, `sync` and `managed` open by default, `session` closed (Chrome's
+   * defaults; 1Password closes `local` to content scripts at start, the sweep found).
+   */
+  openToUntrusted: Set<StorageArea>
 }
 
 interface Attached extends AttachedExtension {
@@ -1599,7 +1603,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
         store,
         doc: { local: asRecord(saved?.local), sync: asRecord(saved?.sync) },
         session: {},
-        sessionUntrusted: false
+        openToUntrusted: new Set(['local', 'sync', 'managed'])
       }
       this.storage.set(id, entry)
     }
@@ -1613,8 +1617,8 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     const id = ext.record.id
     const entry = this.storageFor(id)
     const untrusted = endpoint.context === 'content' || endpoint.context === 'userScript'
-    if (area === 'session' && untrusted && !entry.sessionUntrusted)
-      throw new Error('Access to storage is not allowed from this context.')
+    const open = entry.openToUntrusted.has(area)
+    if (untrusted && !open) throw new Error('Access to storage is not allowed from this context.')
     const items: StorageItems =
       area === 'local'
         ? entry.doc.local
@@ -1628,11 +1632,9 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
       else if (area === 'sync') entry.doc.sync = next
       else entry.session = next
       if (area === 'local' || area === 'sync') entry.store.write(entry.doc)
-      // Session changes stay with the trusted contexts until the extension opens the area up.
+      // A closed area's changes stay with the trusted contexts.
       const hears = (e: Endpoint): boolean =>
-        area !== 'session' ||
-        entry.sessionUntrusted ||
-        (e.context !== 'content' && e.context !== 'userScript')
+        open || (e.context !== 'content' && e.context !== 'userScript')
       if (Object.keys(changes).length > 0)
         this.emit(id, 'storage', 'onChanged', [changes, area], hears)
     }
@@ -1678,11 +1680,15 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
         return undefined
       }
       case 'setAccessLevel': {
-        if (area !== 'session')
-          throw new Error('setAccessLevel is only available on storage.session.')
         if (untrusted) throw new Error('Context cannot set the storage access level')
         const level = asRecord(args[1]).accessLevel
-        entry.sessionUntrusted = level === 'TRUSTED_AND_UNTRUSTED_CONTEXTS'
+        if (level !== 'TRUSTED_CONTEXTS' && level !== 'TRUSTED_AND_UNTRUSTED_CONTEXTS')
+          throw new Error(
+            "Error at parameter 'accessOptions': Error at property 'accessLevel': " +
+              'Value must be one of TRUSTED_CONTEXTS, TRUSTED_AND_UNTRUSTED_CONTEXTS.'
+          )
+        if (level === 'TRUSTED_AND_UNTRUSTED_CONTEXTS') entry.openToUntrusted.add(area)
+        else entry.openToUntrusted.delete(area)
         return undefined
       }
     }
