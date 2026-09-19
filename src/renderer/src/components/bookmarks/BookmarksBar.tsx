@@ -252,20 +252,24 @@ export function BookmarksBar({
   // A link, URL text or a file from the OS (Chrome bookmarks a dropped file as `file:`); the
   // data is sealed until the drop, so text that turns out not to be an address is dropped then.
   const carriesUrl = (dt: DataTransfer): boolean => payloadKind(dt.types) !== null
+  // The open folder panel (`BarMenu`) is a portal: its drag events reach these handlers through
+  // the React tree, and it takes them itself. Only what happens over the strip counts here.
+  const overStrip = (e: React.DragEvent): boolean =>
+    Boolean(barRef.current?.contains(e.target as Node | null))
 
   const onDragOver = (e: React.DragEvent): void => {
-    if (!carriesUrl(e.dataTransfer)) return
+    if (!overStrip(e) || !carriesUrl(e.dataTransfer)) return
     e.preventDefault()
     e.dataTransfer.dropEffect = 'copy'
     const { index, folderId } = slotAt(e.clientX)
     setExternal(folderId ? { kind: 'folder', folderId } : { kind: 'slot', index })
   }
   const onDragLeave = (e: React.DragEvent): void => {
-    if (e.currentTarget.contains(e.relatedTarget as Node | null)) return
+    if (!overStrip(e) || e.currentTarget.contains(e.relatedTarget as Node | null)) return
     setExternal(null)
   }
   const onDrop = (e: React.DragEvent): void => {
-    if (!carriesUrl(e.dataTransfer)) return
+    if (!overStrip(e) || !carriesUrl(e.dataTransfer)) return
     e.preventDefault()
     setExternal(null)
     const dropped = droppedBookmark(e.dataTransfer, pathForFile)
