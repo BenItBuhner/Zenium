@@ -73,6 +73,7 @@ import { SyncEngine } from '../sync/engine'
 import { ElectronAgentTransport } from '../agent/server'
 import { ElectronSiteData } from './siteData'
 import { ElectronTranslateHost, focusedChromeWebContents } from './translate'
+import { ElectronPrintingHost } from './printing'
 import { ElectronUpdateHost } from './updates'
 import { applyAppIcon, iconPngPath } from './appIcon'
 import { ElectronDefaultBrowser } from './defaultBrowser'
@@ -170,6 +171,8 @@ export class ElectronPlatform implements Platform {
   readonly translate: ElectronTranslateHost
   /** Chromium's per-session spellchecker, one setting for every session. */
   readonly spellcheck: ElectronSpellcheck
+  /** The print preview's printers and Save as PDF dialog. */
+  readonly printing = new ElectronPrintingHost(browserWindowOf)
   /** Default-browser status and registration on Windows, macOS and Linux. */
   readonly defaultBrowser = new ElectronDefaultBrowser()
   readonly newTabBackground: ElectronNewTabBackground

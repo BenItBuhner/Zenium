@@ -122,8 +122,9 @@ export class PrintService {
       return { ok: false, error: PRINT_MESSAGES.noPages }
     try {
       const pdf = await view.printToPDF(pdfRenderOptions(settings, pageCount))
-      const session = this.sessions.get(tabId)
-      if (session) session.rendered = { settings: JSON.stringify(settings), pdf }
+      const session = this.sessions.get(tabId) ?? { tabId, rendered: null }
+      session.rendered = { settings: JSON.stringify(settings), pdf }
+      this.sessions.set(tabId, session)
       return { ok: true, pdf: base64Encode(pdf) }
     } catch (error) {
       return { ok: false, error: failureText(error, PRINT_MESSAGES.previewFailed) }

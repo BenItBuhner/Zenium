@@ -41,6 +41,15 @@ export interface PrinterDescription {
 
 /** CUPS `printer-type` bit for a printer that prints on both sides (`CUPS_PRINTER_DUPLEX`). */
 const CUPS_PRINTER_DUPLEX = 0x8000
+/** CUPS `printer-type` bit for the server's default destination (`CUPS_PRINTER_DEFAULT`). */
+const CUPS_PRINTER_DEFAULT = 0x20000
+
+/** The `printer-type` bit field of a CUPS printer's option map, or null where there is none. */
+function printerType(options: Record<string, unknown> | null | undefined): number | null {
+  const raw = options?.['printer-type']
+  const type = typeof raw === 'number' ? raw : typeof raw === 'string' ? Number(raw) : NaN
+  return Number.isFinite(type) ? type : null
+}
 
 /**
  * Whether a printer prints on both sides, from the option map Chromium reports for it: CUPS
@@ -48,10 +57,18 @@ const CUPS_PRINTER_DUPLEX = 0x8000
  * that says, so the answer is null there.
  */
 export function printerDuplex(options: Record<string, unknown> | null | undefined): boolean | null {
-  const raw = options?.['printer-type']
-  const type = typeof raw === 'number' ? raw : typeof raw === 'string' ? Number(raw) : NaN
-  if (!Number.isFinite(type)) return null
-  return (type & CUPS_PRINTER_DUPLEX) !== 0
+  const type = printerType(options)
+  return type === null ? null : (type & CUPS_PRINTER_DUPLEX) !== 0
+}
+
+/**
+ * Whether a printer is the system's default, from the same map: CUPS marks the server's default
+ * destination in `printer-type`; hosts without the field say nothing (false), and a list where
+ * no printer says so opens on Save as PDF, as Chrome does without a default printer.
+ */
+export function printerIsDefault(options: Record<string, unknown> | null | undefined): boolean {
+  const type = printerType(options)
+  return type !== null && (type & CUPS_PRINTER_DEFAULT) !== 0
 }
 
 /** The destination list's label for a destination. */
@@ -760,6 +777,7 @@ export function defaultPdfFileName(title: string, url: string): string {
     host = ''
   }
   const base = (title.trim() || host || 'document')
+    // eslint-disable-next-line no-control-regex
     .replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_')
     .replace(/\s+/g, ' ')
     .replace(/^[. ]+|[. ]+$/g, '')
