@@ -272,8 +272,14 @@ class QrDemo : DemoHarness("qr-demo-state.json", "android-qr", "qr-demo") {
      * landed, and a code that comes in front of the camera during the fall loads nothing – the
      * session is over at the touch, so no frame is read and no decode is accepted (the first-line
      * review's blocking finding: the camera used to be released at the landing, decoding all the
-     * way down). The stand-in paints the code the moment Cancel is touched, where a real camera
-     * would see one held up as the user cancels.
+     * way down). The code goes in front of the stand-in once the chrome has taken the touch (the
+     * sheet's phase reads cancelled: the session is over there and the cancel is on its way to
+     * the host), where a real camera would have one held up through the fall: with the fix the
+     * camera is closed by then or within the bridge's hop, and a decode that slips through lands
+     * on no session; before it, the camera stayed open and the chrome submitted all the way down.
+     * Waiting for the phase keeps the step from painting the code before the chrome has even seen
+     * the touch, which on this emulator's jank could be a second later – a decode then would be
+     * the product doing right by a code in view of a live session, not the bug.
      */
     private fun cancelledWithACodeInView() {
         finding("\nCancel with a code in view")
@@ -285,17 +291,35 @@ class QrDemo : DemoHarness("qr-demo-state.json", "android-qr", "qr-demo") {
         if (!up) return
         SystemClock.sleep(1_500)
         val closesBefore = standIn.closes
-        val closedAtTheTouch = touchTapLabelExpecting(CANCEL_LABEL, "the camera is closed", timeoutMs = 4_000) { standIn.closes > closesBefore }
-        standIn.scene = qrBitmap(ADDRESS_PAYLOAD)
+        val touched = touchTapLabel(CANCEL_LABEL)
+        val touchedAt = SystemClock.uptimeMillis()
+        // Taken: the phase reads cancelled, or the sheet is gone already (a leave that outran the poll).
+        val taken = touched && awaitPhase(setOf("cancelled", ""), 4_000)
+        // Not taken in time is the step's own fail below; a code shown to a session still live
+        // would be decoded rightly, which is not what this step is after.
+        if (taken) standIn.scene = qrBitmap(ADDRESS_PAYLOAD)
+        val deadline = touchedAt + 5_000
+        while (standIn.closes == closesBefore && SystemClock.uptimeMillis() < deadline) SystemClock.sleep(50)
+        val closed = standIn.closes > closesBefore
+        // Read the instant the close is seen: the surface stays up through the whole leave, so a
+        // close that came at the touch finds it up, one that came at the landing does not.
+        val stillLeaving = chromeSurfaceUp()
         val framesAtClose = standIn.frames
-        check("Cancel (touched) closes the camera at once", closedAtTheTouch)
-        check("the camera closed while the sheet was still leaving (phase '${phase()}')", chromeSurfaceUp())
-        check("the sheet is down after Cancel", awaitSurface(false, 8_000))
+        check("Cancel is touched and the chrome takes it (phase '${phase()}')", taken)
+        // The close is timed from the touch by the stand-in's own clock: the fix has it at the
+        // touch, the old code at the landing, a leave of several seconds later on this emulator.
+        check(
+            "Cancel closes the camera at once (${if (closed) "${standIn.closedAt - touchedAt} ms after the touch" else "not within 5 s"})",
+            closed
+        )
+        check("the camera closed while the sheet was still leaving", stillLeaving)
+        val down = awaitSurface(false, 8_000)
+        check("the sheet is down after Cancel (${SystemClock.uptimeMillis() - touchedAt} ms after the touch)", down)
         SystemClock.sleep(2_000)
         // A tick already on the camera thread as the close came may feed one more frame, to a
         // listener whose session is over.
         check("no frame was fed after the close (${standIn.frames - framesAtClose} since)", standIn.frames - framesAtClose <= 1)
-        check("the code shown during the fall loaded nothing: ${activeCoreTab()?.optString("url")}", activeCoreTab()?.optString("url").orEmpty() == url)
+        check("the code in view during the fall loaded nothing: ${activeCoreTab()?.optString("url")}", activeCoreTab()?.optString("url").orEmpty() == url)
         standIn.scene = null
         SystemClock.sleep(1_000)
     }
@@ -498,6 +522,8 @@ class QrDemo : DemoHarness("qr-demo-state.json", "android-qr", "qr-demo") {
         @Volatile var torchOn = false
         @Volatile var starts = 0
         @Volatile var closes = 0
+        /** When the last close came (uptime ms), for a step that times it against a touch. */
+        @Volatile var closedAt = 0L
         @Volatile var frames = 0
         /** `ready` has gone for the live session (with the first frame, as the platform's camera reports it). */
         @Volatile private var announced = false
@@ -541,6 +567,7 @@ class QrDemo : DemoHarness("qr-demo-state.json", "android-qr", "qr-demo") {
         }
 
         override fun close() {
+            closedAt = SystemClock.uptimeMillis()
             closes++
             listener = null
             handler.removeCallbacks(tick)
