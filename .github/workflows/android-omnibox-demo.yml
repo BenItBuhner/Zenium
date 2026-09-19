@@ -13,10 +13,6 @@ name: Android omnibox demo
 # android-emulator-demo.yml; this file only picks the driver and the demo it runs.
 on:
   workflow_dispatch:
-  # TEMPORARY: the coordinator's authorised third run (20:55 UTC) for the fixes the spent budget
-  # left unverified; removed before the final head.
-  push:
-    branches: [cursor/android-omnibox-parity-cfe1]
 
 permissions:
   contents: read

@@ -15,6 +15,7 @@ import android.util.Log
 import android.view.InputDevice
 import android.view.MotionEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.test.platform.app.InstrumentationRegistry
@@ -626,30 +627,68 @@ abstract class DemoHarness(
 
     /**
      * Wait for the system's clipboard overlay (Android 13+, SystemUI's "ClipboardOverlay" window:
-     * the copied text's preview chip with its actions at the bottom of the screen, up for about six
-     * seconds after every copy) to go, so the next touch near the bottom lands in the app and not on
-     * one of the chip's actions (a touch on it sent the clip to Nearby Share, which paused the app).
-     * Returns at once when no such window is up; true when it is gone within `timeoutMs`.
+     * the copied text's preview chip with its actions – share, send to a nearby device – along the
+     * bottom of the screen over the phone bar, up for some six seconds after every copy) to go, so
+     * the next touch near the bottom lands in the app and not on one of the chips (a touch on the
+     * nearby-device chip sent the clip to Nearby Share, whose set-up sheet paused the app).
+     * `copiedAt` is [SystemClock.uptimeMillis] at the copy; `target` is where the finger will land
+     * (the pill by default).
+     *
+     * The overlay is a full-screen TYPE_SCREENSHOT window, and the accessibility tree gives it
+     * neither a title (only panels and accessibility overlays carry their WindowManager title over)
+     * nor a type it names, so a wait on the title saw nothing and returned at once. It is told by
+     * its place instead: a window of another package than the app's and the keyboard's (or one the
+     * tree has no root for) whose bounds reach over `target`; the system bars and the corner
+     * decorations never do. As the belt, the wait also runs the overlay's own clock out – it never
+     * returns before [CLIPBOARD_OVERLAY_MS] have passed since the copy – so a window the tree never
+     * reports is waited out all the same. True once nothing foreign is over the target with the
+     * clock run out, within `timeoutMs`; false with it still there (logged), for the caller to say
+     * so and go on.
      *
      * Opt-in: no touch helper waits for the overlay on its own, so a driver that copies nothing,
      * or touches nowhere near the bottom after a copy, is unaffected; a driver that copies and then
      * touches there calls this between the two (OmniboxDemo, between the link menu's copy and the
      * pill).
      */
-    protected fun awaitClipboardOverlayGone(timeoutMs: Long = 12_000): Boolean {
+    protected fun awaitClipboardOverlayGone(copiedAt: Long, target: Rect = pill, timeoutMs: Long = 15_000): Boolean {
+        val clock = copiedAt + CLIPBOARD_OVERLAY_MS
         val deadline = SystemClock.uptimeMillis() + timeoutMs
-        var seen = false
-        while (SystemClock.uptimeMillis() < deadline) {
-            val up = ui.windows.any { it.title?.toString() == CLIPBOARD_OVERLAY_WINDOW }
-            if (!up) {
-                if (seen) Log.i(tag, "the clipboard overlay is gone")
+        var seen: String? = null
+        while (true) {
+            val now = SystemClock.uptimeMillis()
+            val over = foreignWindowsOver(target)
+            if (over.isNotEmpty()) seen = over.joinToString()
+            if (over.isEmpty() && now >= clock) {
+                Log.i(
+                    tag,
+                    if (seen == null) "nothing over $target since the copy (${now - copiedAt} ms)"
+                    else "the window over $target is gone (was $seen; ${now - copiedAt} ms after the copy)"
+                )
                 return true
             }
-            seen = true
+            if (now >= deadline) {
+                Log.w(tag, "still a window over $target $timeoutMs ms on: $seen")
+                return false
+            }
             SystemClock.sleep(250)
         }
-        Log.w(tag, "the clipboard overlay is still up after $timeoutMs ms")
-        return false
+    }
+
+    /**
+     * The windows a touch on `target` could land in instead of the app's: every window the tree
+     * lists whose bounds reach over it, except the app's own and the keyboard's. Each as
+     * "package bounds" ("?" for a window the tree has no root, so no package, for).
+     */
+    private fun foreignWindowsOver(target: Rect): List<String> {
+        val found = ArrayList<String>()
+        for (window in ui.windows) {
+            if (window.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD) continue
+            val pkg = window.root?.packageName?.toString()
+            if (pkg == app.packageName) continue
+            val bounds = Rect().also { window.getBoundsInScreen(it) }
+            if (Rect.intersects(bounds, target)) found += "${pkg ?: "?"} $bounds"
+        }
+        return found
     }
 
     /** Poll up to `timeoutMs` for the first node whose label or text `matches`, with bounds on screen. */
@@ -1067,8 +1106,11 @@ abstract class DemoHarness(
         private const val STEP_MS = 8L
         /** Two reads of a node's bounds this far apart agreeing count as settled ([steadyBounds]). */
         private const val BOUNDS_SETTLE_MS = 350L
-        /** SystemUI's window title for the clipboard overlay (`ClipboardOverlayWindow`, Android 13+). */
-        private const val CLIPBOARD_OVERLAY_WINDOW = "ClipboardOverlay"
+        /**
+         * How long SystemUI keeps the clipboard overlay up after a copy (`ClipboardOverlayController`'s
+         * six seconds), with a margin for its exit animation.
+         */
+        private const val CLIPBOARD_OVERLAY_MS = 7_000L
         /** The 3-button navigation bar's window, in dp, whatever inset it reports (see [touchable]). */
         private const val NAV_BAR_WINDOW_DP = 48
         /** Past the 8 CSS px slop at any plausible density, hardly visible on the track. */

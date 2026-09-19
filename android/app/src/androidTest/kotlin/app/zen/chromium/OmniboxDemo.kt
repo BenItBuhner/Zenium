@@ -238,6 +238,7 @@ class OmniboxDemo : DemoHarness("omnibox-demo-state.json", "android-omnibox", "o
             }
             finding("  long press on the link at ${link.x},${link.y}; '$COPY_LINK_ITEM' $how; clipboard '${clipboardText()}' ${verdict(copied)}")
             if (!copied) error("the link's address did not reach the clipboard")
+            val copiedAt = SystemClock.uptimeMillis()
             SystemClock.sleep(1_500)
             ensureForeground()
             if (chromeSurfaceUp()) {
@@ -245,11 +246,20 @@ class OmniboxDemo : DemoHarness("omnibox-demo-state.json", "android-omnibox", "o
                 SystemClock.sleep(1_000)
             }
             // The system's clipboard overlay sits over the bar for some six seconds after the copy;
-            // the pill's touch waits it out (a touch on its chip sends the clip to Nearby Share).
-            val overlayGone = awaitClipboardOverlayGone()
-            finding("  clipboard overlay gone before the pill $overlayGone")
+            // the pill's touch waits it out (a touch on its nearby-device chip sent the clip to
+            // Nearby Share instead, twice).
+            val overlayGone = awaitClipboardOverlayGone(copiedAt)
+            finding("  clipboard overlay gone before the pill $overlayGone (${SystemClock.uptimeMillis() - copiedAt} ms after the copy)")
             ensureForeground()
             tapPill()
+            // Should a chip have taken the touch all the same (another app's window is up), back
+            // out of it and touch the pill once more; the findings say so.
+            if (awaitSystemWindow(1_500)) {
+                finding("  another app's window (${ui.rootInActiveWindow?.packageName}) came up on the pill's touch; backing out, the pill again")
+                ensureForeground()
+                SystemClock.sleep(800)
+                tapPill()
+            }
             val show = awaitNode(8_000) { it == SHOW_LABEL }
             SystemClock.sleep(1_200)
             shot("08-clipboard-peek")
