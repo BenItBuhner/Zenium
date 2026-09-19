@@ -1378,6 +1378,49 @@ describe('AndroidExtensionRuntime: native messaging', () => {
   })
 })
 
+describe('AndroidExtensionRuntime: chrome.permissions', () => {
+  it('answers false for a permission Chrome refuses to the manifest version, and lists the granted set without it', async () => {
+    // Stylus 2.4.11 (MV3): webRequestBlocking declared, permissions.contains asked, and on a
+    // true a 'blocking' onHeadersReceived listener the webRequest emulation refuses – its async
+    // setup() died on that (background PARTIAL in the compat sweep's run 35455747975). Chrome's
+    // answer is false: the permission is not granted to an MV3 manifest.
+    const h = harness()
+    await h.runtime.attach(
+      record(
+        h,
+        {},
+        manifest({
+          permissions: ['webRequest', 'webRequestBlocking', 'storage'],
+          optional_permissions: ['webRequestBlocking', 'downloads']
+        })
+      )
+    )
+    backgroundUp(h, 'bg1')
+    const blocking = await call(h, 'bg1', 'permissions', 'contains', [
+      { permissions: ['webRequestBlocking'] }
+    ])
+    expect(blocking.result).toBe(false)
+    const observing = await call(h, 'bg1', 'permissions', 'contains', [
+      { permissions: ['webRequest', 'storage'], origins: ['https://example.com/*'] }
+    ])
+    expect(observing.result).toBe(true)
+    const all = await call(h, 'bg1', 'permissions', 'getAll', [])
+    expect(all.result).toEqual({
+      permissions: ['webRequest', 'storage'],
+      origins: ['https://example.com/*']
+    })
+    // Nor can it be requested: it is not a permission of this manifest.
+    const requested = await call(h, 'bg1', 'permissions', 'request', [
+      { permissions: ['webRequestBlocking'] }
+    ])
+    expect(requested.result).toBe(false)
+    const optional = await call(h, 'bg1', 'permissions', 'request', [
+      { permissions: ['downloads'] }
+    ])
+    expect(optional.result).toBe(true)
+  })
+})
+
 describe('AndroidExtensionRuntime: popups and options', () => {
   it('opens the manifest popup as a sheet, or raises action.onClicked when there is none', async () => {
     const h = harness()

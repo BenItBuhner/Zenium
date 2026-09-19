@@ -4,6 +4,7 @@
  * runtime model is what the injection planner, the chrome.* shim and the hosts consume.
  */
 import { getMessage, localeCandidates, substituteMessages, type LocaleMessages } from '../api/i18n'
+import { availablePermissions } from '../api/permissions'
 import { buildMessageCatalog, localizeManifest } from '../manifest'
 
 export type ManifestVersion = 2 | 3
@@ -282,9 +283,19 @@ export function parseRuntimeManifest(
     description: substituteMessages(str(source.description), messages),
     defaultLocale: typeof source.default_locale === 'string' ? source.default_locale : null,
     icons: stringMap(source.icons),
-    // MV2 keeps host patterns inside `permissions`; split them the MV3 way.
-    permissions: permissions.filter((p) => !isHostPattern(p)),
-    optionalPermissions: strings(source.optional_permissions).filter((p) => !isHostPattern(p)),
+    // MV2 keeps host patterns inside `permissions`; split them the MV3 way. An API permission
+    // outside its manifest version (`webRequestBlocking` on MV3, `scripting` on MV2) is not
+    // granted, as Chrome's feature system refuses it with an install warning: an MV3 extension
+    // asking `permissions.contains({ permissions: ['webRequestBlocking'] })` hears `false`
+    // (Stylus does, and registers its observational listener on that answer).
+    permissions: availablePermissions(
+      permissions.filter((p) => !isHostPattern(p)),
+      mv
+    ),
+    optionalPermissions: availablePermissions(
+      strings(source.optional_permissions).filter((p) => !isHostPattern(p)),
+      mv
+    ),
     hostPermissions: [...hostPermissions, ...permissions.filter(isHostPattern)],
     optionalHostPermissions: [
       ...strings(source.optional_host_permissions),

@@ -151,6 +151,35 @@ describe('parseRuntimeManifest', () => {
     expect(m.extensionPagesCsp).toBe("script-src 'self'; object-src 'self'")
   })
 
+  it('leaves out an API permission outside its manifest version, as Chrome refuses to grant it', () => {
+    // Stylus 2.4.11 (MV3) declares webRequestBlocking and asks permissions.contains for it: the
+    // answer Chrome gives is false, and Stylus registers observationally on it.
+    const mv3 = parseRuntimeManifest(
+      {
+        manifest_version: 3,
+        name: 'Stylus',
+        version: '2.4.11',
+        permissions: ['webRequest', 'webRequestBlocking', 'storage', 'scripting'],
+        optional_permissions: ['webRequestBlocking', 'downloads', 'https://x.example/*']
+      },
+      null
+    )
+    expect(mv3.permissions).toEqual(['webRequest', 'storage', 'scripting'])
+    expect(mv3.optionalPermissions).toEqual(['downloads'])
+    expect(mv3.optionalHostPermissions).toEqual(['https://x.example/*'])
+    // The MV3 APIs never existed in MV2; webRequestBlocking is MV2's to keep.
+    const mv2 = parseRuntimeManifest(
+      {
+        manifest_version: 2,
+        name: 'Legacy',
+        version: '1.0',
+        permissions: ['webRequest', 'webRequestBlocking', 'scripting', 'offscreen', 'sidePanel', 'userScripts', 'tabs']
+      },
+      null
+    )
+    expect(mv2.permissions).toEqual(['webRequest', 'webRequestBlocking', 'tabs'])
+  })
+
   it('rejects broken manifests with a clear reason', () => {
     expect(() => parseRuntimeManifest(null, null)).toThrow(ManifestError)
     expect(() =>
