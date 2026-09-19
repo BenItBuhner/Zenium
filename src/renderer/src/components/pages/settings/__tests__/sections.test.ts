@@ -1748,6 +1748,8 @@ describe('searching the rows', () => {
     expect(at('cookies-add-site')).toBe(at('sites-permissions') - 1)
     expect(at('https-only')).toBe(at('sites-own') + 1)
     expect(at('signals')).toBe(ids.length - 1)
+    // The remembered per-site answers are the Security section's (#62), not a privacy group.
+    expect(ids).not.toContain('permissions')
     expect(privacy.groups.every(groupShows)).toBe(true)
     // Every protection row is one of the five families, and a family never straddles a group.
     for (const group of protection) {
@@ -2049,5 +2051,4 @@ describe('searching the rows', () => {
       }
     ])
   })
-
 })
