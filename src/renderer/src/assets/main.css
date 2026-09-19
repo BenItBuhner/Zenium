@@ -5731,9 +5731,41 @@
   overflow-y: auto;
   overscroll-behavior: contain;
 }
+/*
+ * "Find in Settings" (§10.5, §9.12): the column opens with the shared field – 32 tall on the
+ * desktop, its 16 px glyph, the clear icon button – in the text column's 32 margins, sticky at
+ * the column's top on the page tone; §9.7's hairline draws along its bottom edge once the
+ * column has scrolled under it and goes again at the top. The field itself is
+ * `.zen-settings-search` as the phone landing draws it.
+ */
+.zen-settings-find {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 16px 16px 8px;
+  background: var(--v2-page);
+}
+.zen-settings-find > .zen-settings-search {
+  max-width: var(--v2-content-max);
+  margin-bottom: 0;
+}
+.zen-settings-find::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 1px;
+  background: var(--v2-border);
+  opacity: 0;
+  transition: opacity 120ms var(--zen-ease);
+}
+.zen-settings-content[data-scrolled] > .zen-settings-find::after {
+  opacity: 1;
+}
 .zen-settings-pane {
   max-width: calc(var(--v2-content-max) + 2 * 16px);
-  padding: 24px 16px 40px;
+  padding: 8px 16px 40px;
 }
 /*
  * The pane's first element is the category's 22/600 section title on its 28 line (§9.26), 16
