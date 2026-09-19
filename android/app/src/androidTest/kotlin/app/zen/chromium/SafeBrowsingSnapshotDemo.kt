@@ -174,7 +174,8 @@ class SafeBrowsingSnapshotDemo : DemoHarness("safebrowsing-snapshot-demo-state.j
         } else {
             val nav = check.navigation
             note(
-                "after: a navigation to $MALWARE_HOST issued ${check.issuedMs} ms after the activity's creation saw " +
+                "after: a navigation to $MALWARE_HOST issued ${check.issuedMs} ms after the activity's creation " +
+                    "(${nav?.sinceStartMs} ms after the guard's start, inside the activity's onCreate) saw " +
                     "${nav?.entries} prefixes after a wait of ${nav?.waitedMs} ms (load ${if (nav?.loaded == true) "published" else "pending"}) -> " +
                     (check.hit?.let { "stopped by ${it.feedId} (${it.threat}, ${it.expression})" } ?: "UNCHECKED") +
                     ", answered ${check.answeredMs} ms after the creation"

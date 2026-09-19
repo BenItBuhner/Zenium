@@ -452,7 +452,8 @@ class SafeBrowsingTest {
         assertTrue(first.loaded)
         assertEquals(1, first.entries)
         assertTrue(first.waitedMs >= 40)
-        assertTrue(heldLines.any { it.startsWith("first navigation: 1 prefixes from 1 feeds after a wait of") && it.endsWith("(loaded)") })
+        assertEquals(-1L, first.sinceStartMs) // never started: the load was called directly
+        assertTrue(heldLines.any { it.startsWith("first navigation: 1 prefixes from 1 feeds after a wait of") && it.endsWith("ms after start (loaded)") })
 
         // No load in sight: the navigation waits the cap and goes on unchecked.
         val cold = SafeBrowsing(storage)
@@ -498,6 +499,10 @@ class SafeBrowsingTest {
             assertEquals("urlhaus", tables.lookup("cdn.listed.example")!!.feedId)
             assertTrue(safeBrowsing.firstNavigation!!.loaded)
             assertTrue("waited $waited ms", waited < SafeBrowsing.FIRST_NAVIGATION_HOLD_MS)
+            // Started: the check knows how long after start it came (at once, here).
+            val sinceStart = safeBrowsing.firstNavigation!!.sinceStartMs
+            assertTrue("$sinceStart ms after start", sinceStart >= 0 && sinceStart < SafeBrowsing.FIRST_NAVIGATION_HOLD_MS)
+            assertTrue(lines.any { it.startsWith("first navigation: $expected prefixes from 2 feeds after a wait of") && it.contains(" ms after start (loaded)") })
             assertTrue(safeBrowsing.snapshotLoadMs >= 0)
             assertNull(safeBrowsing.snapshotRejected)
             // The documents' load follows on the same thread and finds the snapshot is theirs.

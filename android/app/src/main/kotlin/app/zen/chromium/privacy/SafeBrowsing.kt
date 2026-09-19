@@ -252,6 +252,7 @@ class SafeBrowsing(private val storage: Storage) {
 
     /** The snapshot first, on the loader thread, then the documents as before; returns at once. */
     fun start() {
+        startedAt = System.nanoTime()
         Storage.addChangeListener(onStorageChanged)
         runCatching { loader.execute { loadSnapshotLogged() } }
         scheduleReload(0)
@@ -307,13 +308,14 @@ class SafeBrowsing(private val storage: Storage) {
     fun tablesForNavigation(): SafeBrowsingTables {
         if (firstNavigationPending.compareAndSet(true, false)) {
             val started = System.nanoTime()
+            val sinceStartMs = if (startedAt == 0L) -1 else (started - startedAt) / 1_000_000
             val loaded = firstLoad.count == 0L || awaitFirstLoad()
             val waitedMs = (System.nanoTime() - started) / 1_000_000
             val now = tables
-            firstNavigation = FirstNavigation(now.entries, waitedMs, loaded)
+            firstNavigation = FirstNavigation(now.entries, waitedMs, loaded, sinceStartMs)
             log(
-                "first navigation: ${now.entries} prefixes from ${now.feeds.size} feeds after a wait of $waitedMs ms " +
-                    if (loaded) "(loaded)" else "(load pending: unchecked)"
+                "first navigation: ${now.entries} prefixes from ${now.feeds.size} feeds after a wait of $waitedMs ms, " +
+                    "$sinceStartMs ms after start " + if (loaded) "(loaded)" else "(load pending: unchecked)"
             )
         }
         return tables
@@ -494,8 +496,11 @@ class SafeBrowsing(private val storage: Storage) {
         FAILED
     }
 
-    /** The process's first main-frame check: the prefixes it saw, how long it waited, whether a load had published. */
-    class FirstNavigation(val entries: Int, val waitedMs: Long, val loaded: Boolean)
+    /**
+     * The process's first main-frame check: the prefixes it saw, how long it waited, whether a
+     * load had published, and how long after [start] it came (-1 before a start).
+     */
+    class FirstNavigation(val entries: Int, val waitedMs: Long, val loaded: Boolean, val sinceStartMs: Long)
 
     companion object {
         private const val TAG = "zen-safebrowsing"
