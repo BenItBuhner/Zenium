@@ -535,8 +535,7 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
     pull(tab.id, target.progress, target.released)
     requestAnimationFrame(finish)
   } else if (target.kind === 'barhide' && tab) {
-    barHide(tab.id, target.progress, target.released)
-    requestAnimationFrame(finish)
+    barHide(tab.id, target.progress, target.released, () => requestAnimationFrame(finish))
   } else if (target.kind === 'error' && tab) {
     failLoad(tab.id, target.code, target.url ?? tab.url)
     requestAnimationFrame(finish)
@@ -1465,16 +1464,31 @@ function pull(tabId: string, progress: number, released: boolean): void {
  * A finger's worth of scroll reports for the bar that hides on scroll, as the host would send
  * them (`lib/barHide.ts`): down, one move of the page by the part of the bar's travel that puts
  * it at `progress`, and – released – a lift there, on which the bar snaps to the nearer end.
+ * Sent once the bar's gate is open: a spec in the URL at boot is applied before the shell has
+ * mounted and told the machine it is there, and a scroll the machine hears with its gate shut
+ * is dropped, as a real one would be.
  */
-function barHide(tabId: string, progress: number, released: boolean): void {
-  const time = performance.now()
-  const delta = progress * barHideStore.get().travel
-  dispatchBarScroll(tabId, 'start', null)
-  dispatchBarScroll(tabId, 'move', { delta, time })
-  if (released) {
-    dispatchBarScroll(tabId, 'move', { delta: 0, time: time + 16 })
-    dispatchBarScroll(tabId, 'end', { time: time + 32 })
+function barHide(tabId: string, progress: number, released: boolean, then: () => void): void {
+  const send = (): void => {
+    const time = performance.now()
+    const delta = progress * barHideStore.get().travel
+    dispatchBarScroll(tabId, 'start', null)
+    dispatchBarScroll(tabId, 'move', { delta, time })
+    if (released) {
+      dispatchBarScroll(tabId, 'move', { delta: 0, time: time + 16 })
+      dispatchBarScroll(tabId, 'end', { time: time + 32 })
+    }
+    then()
   }
+  if (barHideStore.get().allowed) {
+    send()
+    return
+  }
+  const unsubscribe = barHideStore.subscribe(() => {
+    if (!barHideStore.get().allowed) return
+    unsubscribe()
+    send()
+  })
 }
 
 /** Scroll the first element whose own text reads `text` to the middle of its scroller. */

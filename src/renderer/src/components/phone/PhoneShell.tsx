@@ -4,6 +4,7 @@ import { Globe, Languages, Lock, Search, VenetianMask } from 'lucide-react'
 import { internalPageOf } from '@shared/internalPages'
 import type { PhoneBarPosition, Space, Tab, UIState } from '@shared/types'
 import { displayHost, isWebPageUrl } from '@shared/url'
+import { chromeGutter } from '@renderer/hooks/useTheme'
 import { run } from '@renderer/lib/api'
 import { setBarHideContext, showBar } from '@renderer/lib/barHide'
 import { extensionPageChrome } from '@renderer/lib/extensions/pages'
@@ -103,18 +104,6 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
     []
   )
 
-  // The bar hides on scroll (lib/barHide.ts) only while this shell shows it: the machine hears
-  // where it is docked and how far it has to go (the band minus the gutter the page keeps).
-  useEffect(() => {
-    setBarHideContext({
-      edge,
-      present: !htmlFullscreen && !onboarding,
-      band: phoneBarHeight(),
-      gutter: cssPx('--zen-padding', 8)
-    })
-  }, [edge, htmlFullscreen, onboarding])
-  useEffect(() => () => setBarHideContext({ present: false }), [])
-
   // The lighter default-browser reminder (DEF-02) is one of the top banners (v2 §9.33), up for
   // as long as the core says a banner is due. Swiping or closing it is the campaign's one
   // dismissal; the action hands over to the system, which ends the campaign either way; and
@@ -172,6 +161,27 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
   // The tab group strip (TAB-14): present while the active tab is grouped, and on its way out for
   // a moment after it leaves; its share of the bar band is published by the hook.
   const strip = useGroupStrip(state)
+  // The bar hides on scroll (lib/barHide.ts) only while this shell shows it: the machine hears
+  // where it is docked and how far it has to go – the band minus the gutter the page keeps. The
+  // band is the row and the group strip together (`phoneBandHeight`, #202's `--zen-phone-band`),
+  // read again at each end of the strip's stay, once the hook has written the strip's share to
+  // the root (its layout effect runs before this one): a bar off its edge keeps its ratio across
+  // the change, so a hidden bar takes the strip off with it and a shown one gains the strip. The
+  // gutter is the theme's rule (`chromeGutter`), not the root's `--zen-padding`: the theme writes
+  // that from the app's effect, which runs after this one on the first mount, and the stylesheet's
+  // default it leaves until then is the desktop's – a travel read off it would be 2 px short of
+  // the distance the stylesheet and the content column move the bar and the page by.
+  const stripUp = strip !== null
+  const borderless = state.settings.borderless || state.window.fullscreen
+  useEffect(() => {
+    setBarHideContext({
+      edge,
+      present: !htmlFullscreen && !onboarding,
+      band: phoneBandHeight(),
+      gutter: chromeGutter('phone', borderless)
+    })
+  }, [edge, htmlFullscreen, onboarding, stripUp, borderless])
+  useEffect(() => () => setBarHideContext({ present: false }), [])
   // The one-time gesture hint (FRE-07) is a toast on the message cards, owed once the chrome is
   // calm: a page in view under nothing, the bar and its pill in place, no drag, overview or prompt.
   useGestureHint(
@@ -320,7 +330,7 @@ function edgePadding(
 ): string {
   const inset = `var(--zen-inset-${side})`
   if (side === barEdge && perFrame)
-    return `calc(${inset} + var(--zen-phone-bar) - var(--zen-bar-hide-shift, 0px))`
+    return `calc(${inset} + var(--zen-phone-band) - var(--zen-bar-hide-shift, 0px))`
   return side === barEdge && !barAway
     ? `calc(${inset} + var(--zen-phone-band))`
     : `calc(${inset} + var(--zen-padding))`

@@ -5213,22 +5213,23 @@
 /*
  * The bar hides on scroll (lib/barHide.ts, Chrome / Edge parity): `--zen-bar-hide` on the root
  * is 0 with the bar in place and 1 with it off its edge, written per frame as the page scrolls
- * and by the spring that snaps it. The bar slides by the band the page gains (the bar band minus
- * the gutter it keeps, `--zen-bar-hide-travel`) – one to one with the page's edge – and is
- * clipped at the line where the system inset begins (the clip grows with the travel, since it
- * moves with the bar): the chrome is drawn edge to edge, so a bar that only slid would stay in
- * view under a status bar or a gesture bar. Slide and clip, no fade: at the full travel the
- * pill's near edge lands on the inset line and only the band's transparent gutter is left in
- * frame, so a fade would remove nothing, would cost legibility at every frame between, and is
- * §11.1's vocabulary for a sheet's arrival (the bottom bar's recede above). Other chrome that
- * slides with the bar (a tab-group strip inside the bar element) rides the same transform; a
- * strip that adds its own band to the bar's adds it to `--zen-bar-hide-travel` too, so the page
- * gains the whole of it. At the hidden rest the root carries `data-bar-hidden`: the bar takes no
+ * and by the spring that snaps it. The bar slides by the band the page gains (the whole bar
+ * band – the row and, while the active tab is grouped, the tab-group strip (`--zen-phone-band`,
+ * #202) – minus the gutter the page keeps, `--zen-bar-hide-travel`), one to one with the page's
+ * edge, and is clipped at the line where the system inset begins (the clip grows with the
+ * travel, since it moves with the bar): the chrome is drawn edge to edge, so a bar that only slid
+ * would stay in view under a status bar or a gesture bar. Slide and clip, no fade: the band's
+ * outer gutter is the bar's own padding (the row's, or the strip's when there is one: the tray
+ * sits a gutter in from the band's edge), so at the full travel the near edge of the pill – or of
+ * the tray – lands on the inset line and only transparent padding is left in frame; a fade would
+ * remove nothing, would cost legibility at every frame between, and is §11.1's vocabulary for a
+ * sheet's arrival (the bottom bar's recede above). The strip rides the bar's transform, being
+ * inside the bar element. At the hidden rest the root carries `data-bar-hidden`: the bar takes no
  * touches (the page has its band) but stays in the accessibility tree, where focus brings it
  * back. Under reduced motion the finger still moves the bar one to one; only the snap jumps.
  */
 :root {
-  --zen-bar-hide-travel: calc(var(--zen-phone-bar) - var(--zen-padding));
+  --zen-bar-hide-travel: calc(var(--zen-phone-band) - var(--zen-padding));
   --zen-bar-hide-shift: calc(var(--zen-bar-hide, 0) * var(--zen-bar-hide-travel));
 }
 :root[data-form-factor='phone'] .zen-phone-bar[data-edge='bottom'] {

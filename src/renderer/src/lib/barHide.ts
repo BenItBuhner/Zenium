@@ -326,7 +326,7 @@ export interface BarHideState {
 }
 
 export const barHideStore = createStore<BarHideState>(
-  { progress: 0, phase: 'rest', edge: 'bottom', travel: 48, allowed: false },
+  { progress: 0, phase: 'rest', edge: 'bottom', travel: 50, allowed: false },
   'bar-hide'
 )
 
@@ -364,12 +364,17 @@ interface BarHideContext {
   edge: PhoneBarPosition
   /** The phone shell is up with its bar (not HTML fullscreen, not onboarding). */
   present: boolean
-  /** The bar band (`--zen-phone-bar`) and the content gutter (`--zen-padding`), CSS px. */
+  /**
+   * The bar band (`--zen-phone-band`: the row and, while the active tab is grouped, the tab
+   * group strip) and the content gutter (`--zen-padding`, the theme's `chromeGutter`), CSS px.
+   * Their difference is the travel; a bar off its edge keeps its ratio when either changes (the
+   * strip entering or leaving under a hidden bar takes it off or brings it in with the row).
+   */
   band: number
   gutter: number
 }
 
-const context: BarHideContext = { edge: 'bottom', present: false, band: 56, gutter: 8 }
+const context: BarHideContext = { edge: 'bottom', present: false, band: 56, gutter: 6 }
 
 function root(): HTMLElement | null {
   return typeof document === 'undefined' ? null : document.documentElement
@@ -450,7 +455,7 @@ const machine = new BarHideMachine(
       publishHost()
     }
   },
-  48
+  50
 )
 
 /** The boolean at rest, on the store and the root together (`uiStore.barHidden`, `data-bar-hidden`). */

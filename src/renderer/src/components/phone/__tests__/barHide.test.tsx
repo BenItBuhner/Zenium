@@ -1,7 +1,10 @@
 // @vitest-environment happy-dom
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_SETTINGS } from '@shared/defaults'
 import type { Space, Tab, UIState } from '@shared/types'
+import { chromeGutter } from '@renderer/hooks/useTheme'
 import {
   barHideStore,
   dispatchBarNavigation,
@@ -141,6 +144,77 @@ describe('the published hide progress', () => {
       travel: 48,
       shownEdge: 915 - 20 - 56
     })
+  })
+
+  it('the tab group strip adds its share to the band and so to the travel; a bar off its edge keeps its ratio across the change (#202)', () => {
+    // The strip enters with the bar shown: the travel is the whole band less the gutter.
+    setBarHideContext({ band: 56 + 50 })
+    expect(barHideStore.get().travel).toBe(98)
+    expect(hostFrames[hostFrames.length - 1]).toMatchObject({
+      offset: 0,
+      travel: 98,
+      shownEdge: 915 - 20 - 106
+    })
+    // Hidden with the strip in the band: the strip is off the edge with the row.
+    scroll([98])
+    now += 16
+    dispatchBarScroll('t1', 'end', { time: now })
+    settle()
+    expect(barHideStore.get()).toMatchObject({ progress: 1, phase: 'rest', travel: 98 })
+    expect(uiStore.get().barHidden).toBe(true)
+    expect(hostFrames[hostFrames.length - 1]).toMatchObject({ offset: 98, travel: 98 })
+    // The strip leaves while the bar rests hidden (the active tab left its group): the bar keeps
+    // its ratio – hidden stays hidden, the root value stays 1 – and the host hears the new travel
+    // and the row-only edge; nothing springs.
+    setBarHideContext({ band: 56 })
+    expect(barHideStore.get()).toMatchObject({ progress: 1, phase: 'rest', travel: 48 })
+    expect(rootVar()).toBe(1)
+    expect(uiStore.get().barHidden).toBe(true)
+    expectAgreement()
+    expect(hostFrames[hostFrames.length - 1]).toMatchObject({
+      offset: 48,
+      travel: 48,
+      shownEdge: 915 - 20 - 56
+    })
+    // Half way when the strip enters: half way still, of the longer travel.
+    scroll([-24])
+    expect(rootVar()).toBeCloseTo(0.5, 3)
+    setBarHideContext({ band: 106 })
+    expect(rootVar()).toBeCloseTo(0.5, 3)
+    expect(barHideStore.get()).toMatchObject({ progress: 0.5, phase: 'dragging', travel: 98 })
+    expect(hostFrames[hostFrames.length - 1]).toMatchObject({ offset: 49, travel: 98 })
+    expectAgreement()
+  })
+
+  it('the gutter the shell hands the machine is the theme’s rule for --zen-padding, not a read of the root', () => {
+    // The theme writes `--zen-padding` from the app's effect, after the shell's own has run on
+    // the first mount: a shell reading the root there would get the stylesheet's 8 and a travel
+    // 2 px short of what the stylesheet and the content column move by (6 on a phone).
+    expect(chromeGutter('phone', false)).toBe(6)
+    expect(chromeGutter('phone', true)).toBe(0)
+    expect(chromeGutter('desktop', false)).toBe(8)
+  })
+
+  it('the stylesheet slides the bar by the band less the gutter and clips it at the inset line, the strip’s share in the band (#202)', () => {
+    const css = readFileSync(resolve(__dirname, '../../../assets/main.css'), 'utf8').replace(
+      /\s+/g,
+      ' '
+    )
+    // The travel is the whole band (`--zen-phone-band`: the row plus the strip's share, #202)
+    // less the gutter, the same distance the content column gives the page at the hidden rest
+    // (`edgePadding`), so the strip is off the edge with the row and the page gains the band.
+    expect(css).toContain(
+      '--zen-bar-hide-travel: calc(var(--zen-phone-band) - var(--zen-padding));'
+    )
+    expect(css).toContain(
+      '--zen-bar-hide-shift: calc(var(--zen-bar-hide, 0) * var(--zen-bar-hide-travel));'
+    )
+    expect(css).toContain(
+      "[data-edge='bottom'] { transform: translate3d(0, var(--zen-bar-hide-shift), 0); clip-path: inset(0 0 calc(var(--zen-inset-bottom) + var(--zen-bar-hide-shift)) 0); }"
+    )
+    expect(css).toContain(
+      "[data-edge='top'] { transform: translate3d(0, calc(-1 * var(--zen-bar-hide-shift)), 0); clip-path: inset(calc(var(--zen-inset-top) + var(--zen-bar-hide-shift)) 0 0 0); }"
+    )
   })
 
   it('the root variable, the store and the boolean agree at every point of a scroll and its snap', () => {

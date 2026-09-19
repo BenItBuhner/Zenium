@@ -621,10 +621,16 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
         return barHiddenAtRest() == hidden
     }
 
-    /** The band the page gains once the bar is hidden, CSS px (`--zen-bar-hide-travel` on the root); 48 when it cannot be read. */
+    /**
+     * The band the page gains once the bar is hidden, CSS px: the chrome's store (`barHideStore.travel`,
+     * what the machine and the host's frame carry). Not `--zen-bar-hide-travel` off the root: an
+     * unregistered property's computed value keeps its `calc()`, which parses to nothing – run 3
+     * printed this fallback while the page grew by 50. 50 (a 56 band less the phone's 6 gutter)
+     * when the store cannot be read.
+     */
     private fun barTravel(): Double {
-        val raw = chromeJs("parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--zen-bar-hide-travel'))")
-        return raw.toDoubleOrNull()?.takeIf { it > 0 } ?: 48.0
+        val raw = chromeJs("(((window.__zenStores||{})['bar-hide']||{get:function(){return {}}}).get()||{}).travel")
+        return raw.toDoubleOrNull()?.takeIf { it > 0 } ?: 50.0
     }
 
     private fun hideSetting(): Boolean? =
@@ -769,10 +775,11 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
         /** A spring on the emulator's software GPU takes a while; the value lands well within this. */
         private const val SETTLE_MS = 5_000L
         /**
-         * Finger travel in dp. The bar's travel is 48 CSS px; the WebView eats the touch slop
-         * (8 dp) before the first scroll, so a drag moves the bar by about its length less 8.
-         * 320 is off many times over; 40 brings the bar about two thirds of the way back; 26 and
-         * 44 hold it about a third and three quarters of the way off.
+         * Finger travel in dp. The bar's travel is 50 CSS px (the 56 band less the phone's 6
+         * gutter); the WebView eats the touch slop (8 dp) before the first scroll, so a drag moves
+         * the bar by about its length less 8. 320 is off many times over; 40 brings the bar about
+         * two thirds of the way back; 26 and 44 hold it about a third and three quarters of the
+         * way off.
          */
         private const val LONG = 320f
         private const val SHORT_BACK = 40f
