@@ -112,25 +112,17 @@ export function PaneHeader({
       className={cn('zen-v2-pw-header flex shrink-0 flex-col gap-3', children && 'pb-3', className)}
       data-scrolled={scrolled}
     >
-      <div
-        className="zen-v2-pw-header-row zen-v2-pw-column flex items-center gap-2"
-        style={{
-          paddingLeft: 'calc(var(--pw-gutter) - (var(--v2-icon-button) - var(--v2-icon)) / 2)',
-          paddingRight: 'calc(var(--pw-gutter) - (var(--v2-icon-button) - var(--v2-icon)) / 2)'
-        }}
-      >
+      <div className="zen-v2-pw-header-row zen-v2-pw-column flex items-center gap-2">
         {onBack && (
           <IconBtn label="Back" onClick={onBack}>
             <ChevronLeft />
           </IconBtn>
         )}
         <div
-          className="flex min-w-0 flex-1 items-center"
-          style={
-            onBack
-              ? undefined
-              : { paddingLeft: 'calc((var(--v2-icon-button) - var(--v2-icon)) / 2)' }
-          }
+          className={cn(
+            'flex min-w-0 flex-1 items-center',
+            !onBack && 'zen-v2-pw-header-title-lead'
+          )}
         >
           {typeof title === 'string' ? <Title>{title}</Title> : title}
         </div>

@@ -5,6 +5,7 @@ import type { ImportConflict, Settings, UIState } from '@shared/types'
 import { cmd, run } from '@renderer/lib/api'
 import { pushToast } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { PASSWORD_GRACE_OPTIONS, PASSWORDS_COPY, vaultProtectionLabel } from '../settingsCopy'
 import { MIN_PASSPHRASE, usePhone } from './lib'
 import {
   Btn,
@@ -18,15 +19,6 @@ import {
   TextField
 } from './shared'
 import type { Gate } from './useReauth'
-
-const GRACE_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: '0', label: 'Every time' },
-  { value: '30', label: 'After 30 seconds' },
-  { value: '60', label: 'After 1 minute' },
-  { value: '300', label: 'After 5 minutes' },
-  { value: '900', label: 'After 15 minutes' },
-  { value: '3600', label: 'After 1 hour' }
-]
 
 const CONFLICT_OPTIONS: Array<{ value: ImportConflict; label: string }> = [
   { value: 'skip', label: 'Keep the saved one' },
@@ -49,16 +41,7 @@ export function ManagerSettings({ state, gate }: { state: UIState; gate: Gate })
   const [exportArmed, setExportArmed] = useState(false)
   const [passphraseOpen, setPassphraseOpen] = useState(false)
 
-  const protection =
-    status.protection.os && status.protection.passphrase
-      ? 'Device keychain and passphrase'
-      : status.protection.os
-        ? 'Device keychain'
-        : status.protection.passphrase
-          ? 'Passphrase'
-          : status.osKeystore
-            ? 'Device keychain, created with the first login'
-            : 'A passphrase, created with the first login'
+  const protection = vaultProtectionLabel(status)
   const verifies = status.osReauth
     ? 'This device can verify you with Touch ID, Windows Hello, a fingerprint or the screen lock.'
     : status.protection.passphrase
@@ -77,8 +60,8 @@ export function ManagerSettings({ state, gate }: { state: UIState; gate: Gate })
     <div className="zen-v2-pw-gutter zen-v2-pw-sections flex flex-col gap-6 pb-8">
       <Section title="Saving">
         <CheckRow
-          label="Offer to save passwords"
-          description="Ask to save logins typed into websites. The prompt itself arrives with in-page filling."
+          label={PASSWORDS_COPY.offerToSave.label}
+          description={PASSWORDS_COPY.offerToSave.description}
           checked={s.offerToSave}
           onChange={(v) => set({ passwords: { ...s, offerToSave: v } })}
         />
@@ -86,19 +69,19 @@ export function ManagerSettings({ state, gate }: { state: UIState; gate: Gate })
 
       <Section title="Security">
         <SettingRow
-          label="Ask again before showing or copying"
-          description="How long one verification covers reveals, copies and exports."
+          label={PASSWORDS_COPY.grace.label}
+          description={PASSWORDS_COPY.grace.description}
           stack={phone}
         >
           <Menulist
-            label="Ask again before showing or copying"
+            label={PASSWORDS_COPY.grace.label}
             value={String(s.reauthGraceSeconds)}
-            options={GRACE_OPTIONS}
+            options={PASSWORD_GRACE_OPTIONS}
             onChange={(v) => set({ passwords: { ...s, reauthGraceSeconds: Number(v) } })}
           />
         </SettingRow>
         <SettingRow
-          label="Vault protection"
+          label={PASSWORDS_COPY.protection.label}
           description={`${protection}. ${verifies}`}
           clamp={false}
           stack={phone || passphraseOpen}
@@ -116,10 +99,7 @@ export function ManagerSettings({ state, gate }: { state: UIState; gate: Gate })
             </Btn>
           )}
         </SettingRow>
-        <SettingRow
-          label="Lock the vault"
-          description="Forget the key until the manager is opened again."
-        >
+        <SettingRow label={PASSWORDS_COPY.lock.label} description={PASSWORDS_COPY.lock.description}>
           <Btn onClick={() => run('passwords.lock', undefined)}>
             <Lock /> Lock now
           </Btn>
@@ -128,8 +108,8 @@ export function ManagerSettings({ state, gate }: { state: UIState; gate: Gate })
 
       <Section title="Import and export">
         <SettingRow
-          label="Import passwords"
-          description="A CSV exported by Chrome, Edge, Firefox, Safari, Bitwarden, LastPass or KeePass."
+          label={PASSWORDS_COPY.importCsv.label}
+          description={PASSWORDS_COPY.importCsv.description}
         >
           <Btn onClick={() => void cmd('passwords.import', { conflict })}>
             <Upload /> Choose file
@@ -148,11 +128,9 @@ export function ManagerSettings({ state, gate }: { state: UIState; gate: Gate })
           />
         </SettingRow>
         <SettingRow
-          label="Export passwords"
+          label={PASSWORDS_COPY.exportCsv.label}
           description={
-            exportArmed
-              ? 'The file is plain text: anyone who opens it can read every password. Delete it once it has been imported elsewhere.'
-              : 'Write every login to a CSV that Chrome and other managers can import.'
+            exportArmed ? PASSWORDS_COPY.exportCsv.armed : PASSWORDS_COPY.exportCsv.description
           }
           clamp={false}
           stack={phone && exportArmed}

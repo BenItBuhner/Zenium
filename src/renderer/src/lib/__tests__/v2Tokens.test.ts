@@ -101,6 +101,9 @@ const V2_FILES: ReadonlyArray<string> = [
   // The extensions UI's own stylesheet, imported by main.css (components/extensions/*, #68):
   // management page and details, toolbar actions and the puzzle panel, popup frame, prompts.
   'assets/extensions.css',
+  // The password manager's own stylesheet, imported by main.css (components/overlays/passwords/*,
+  // #92): the manager's page, panes, rows, dialog, prompt sheet, popover and picker sheet.
+  'assets/passwords.css',
   // The desktop bookmark manager's selection count pill (components/bookmarks/*, #90).
   'components/bookmarks/BookmarkManager.tsx',
   // The window prompts' checkbox accent (§9.5 modals, #129).

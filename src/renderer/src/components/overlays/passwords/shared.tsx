@@ -115,10 +115,7 @@ export function SearchField({
 }: InputHTMLAttributes<HTMLInputElement>): JSX.Element {
   return (
     <div className={cn('relative', className)}>
-      <Search
-        aria-hidden
-        className="zen-v2-pw-deemphasized pointer-events-none absolute left-3 top-1/2 size-[var(--v2-icon)] -translate-y-1/2"
-      />
+      <Search aria-hidden className="zen-v2-pw-deemphasized zen-v2-pw-field-glyph" />
       <input type="search" data-leading="true" className="zen-v2-pw-field" {...rest} />
     </div>
   )
