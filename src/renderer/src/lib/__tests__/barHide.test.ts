@@ -314,6 +314,28 @@ describe('BarHideMachine', () => {
     expect(h.painted[h.painted.length - 1]).toBe(0)
   })
 
+  it('under reduced motion the finger still moves the bar one to one and the snap jumps, no frames between', () => {
+    // The lib tests run without a DOM: the spring's `reducedMotion()` asks `window.matchMedia`.
+    vi.stubGlobal('window', {
+      matchMedia: (query: string) => ({ matches: query.includes('reduce') })
+    })
+    const h = harness()
+    drag(h, 30, 6, 100)
+    expect(h.machine.current).toBe(30)
+    now += 16
+    h.machine.dispatch('end', { time: now })
+    // The spring rests on the release itself: hidden, one paint, nothing queued for a frame.
+    expect(h.machine.state).toBe('rest')
+    expect(h.machine.current).toBe(TRAVEL)
+    expect(h.machine.hidden).toBe(true)
+    expect(h.painted.slice(6)).toEqual([TRAVEL])
+    expect(frames).toHaveLength(0)
+    h.machine.dispatch('show')
+    expect(h.machine.state).toBe('rest')
+    expect(h.machine.current).toBe(0)
+    expect(frames).toHaveLength(0)
+  })
+
   it('the settle velocity tells a lift after a pause from a release into a fling', () => {
     expect(BAR_HIDE_SETTLE_VELOCITY).toBeLessThan(BAR_HIDE_FLING_VELOCITY)
     const h = harness()
