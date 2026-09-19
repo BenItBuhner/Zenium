@@ -1,7 +1,6 @@
 package app.zen.chromium
 
 import android.Manifest
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -293,7 +292,7 @@ class QrDemo : DemoHarness("qr-demo-state.json", "android-qr", "qr-demo") {
     private fun wordsFromOmnibox() {
         finding("\nwords from the omnibox's camera")
         standIn.scene = null
-        Finger().tap(pillCenterX, pillY)
+        touchAddress()
         check("the omnibox opens from the pill", awaitNode(8_000) { it == CLEAR_LABEL } != null)
         SystemClock.sleep(1_000)
         check("Clear is touched", touchTapLabel(CLEAR_LABEL))
@@ -323,7 +322,7 @@ class QrDemo : DemoHarness("qr-demo-state.json", "android-qr", "qr-demo") {
     private fun sentBehindWhileScanning() {
         finding("\nthe app sent behind while scanning")
         standIn.scene = null
-        Finger().tap(pillCenterX, pillY)
+        touchAddress()
         check("the omnibox opens from the pill", awaitNode(8_000) { it == CLEAR_LABEL } != null)
         SystemClock.sleep(800)
         check("Clear is touched", touchTapLabel(CLEAR_LABEL))
@@ -339,7 +338,10 @@ class QrDemo : DemoHarness("qr-demo-state.json", "android-qr", "qr-demo") {
         shell("input keyevent KEYCODE_HOME")
         check("the camera is released as the app leaves the screen", awaitCount(6_000) { standIn.closes > closesBefore })
         SystemClock.sleep(2_000)
-        app.startActivity(Intent(app, MainActivity::class.java).setAction(Intent.ACTION_MAIN).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        // Back through the launcher's intent, from the shell as the error-pages demo does: the
+        // app's own process is in the background now, where it may not start activities.
+        val relaunch = shell("am start -W -n ${activity.componentName.flattenToString()}")
+        Log.i(tag, "relaunch: ${relaunch.lineSequence().firstOrNull { it.contains("Status") || it.contains("Warning") }?.trim()}")
         check("the app is back in front", awaitCount(15_000) { !systemWindowInFront() })
         SystemClock.sleep(2_500)
         val gone = awaitSurface(false, 6_000) && awaitCount(6_000) { phase() == "" }
@@ -348,6 +350,18 @@ class QrDemo : DemoHarness("qr-demo-state.json", "android-qr", "qr-demo") {
     }
 
     // --- the sheet as the chrome has it --------------------------------------------------------------
+
+    /**
+     * Open the omnibox with a touch on the address inside the pill (a button of its own, read
+     * "Address, <host>"), not on the pill's middle: a page's blocked-requests, lock and translate
+     * chips sit there (a search result carries all three), and a touch on them opens site
+     * information instead. The pill's middle only when the tree has no address to aim at.
+     */
+    private fun touchAddress() {
+        if (touchTapLabel(ADDRESS_LABEL_PREFIX, prefix = true, timeoutMs = 4_000)) return
+        Log.w(tag, "the address is not in the accessibility tree; touching the pill's middle")
+        Finger().tap(pillCenterX, pillY)
+    }
 
     private fun systemWindowInFront(): Boolean {
         val top = ui.rootInActiveWindow?.packageName?.toString()
@@ -662,6 +676,8 @@ class QrDemo : DemoHarness("qr-demo-state.json", "android-qr", "qr-demo") {
         /** The new tab page's button and the omnibox's (both "Scan a QR code"; only one is ever on screen). */
         private const val CAMERA_LABEL = "Scan a QR code"
         private const val CLEAR_LABEL = "Clear"
+        /** The address button inside the pill reads "Address, <host>" (`PillContent`); the pill itself is the group "Address". */
+        private const val ADDRESS_LABEL_PREFIX = "Address, "
         private const val CANCEL_LABEL = "Cancel"
         private const val TORCH_LABEL = "Torch"
         private const val OPEN_SETTINGS_LABEL = "Open settings"
