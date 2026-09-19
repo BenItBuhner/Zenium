@@ -25,9 +25,19 @@ object ExtensionScripts {
      */
     const val SOURCE_URL = "zenium-ext://content-scripts/boot.js"
 
-    /** `script` named [SOURCE_URL] for stack frames; last in the text, so a file's own magic comment does not win. */
-    fun named(script: String): String = "$script\n//# sourceURL=$SOURCE_URL"
+    /** The magic comment that names a script [SOURCE_URL]; last in the text, so a file's own magic comment does not win. */
+    private const val SOURCE_URL_TAIL = "\n//# sourceURL=$SOURCE_URL"
 
+    /** `script` named [SOURCE_URL] for stack frames (the `executeScript` wrapper; a document-start script is born named). */
+    fun named(script: String): String = script + SOURCE_URL_TAIL
+
+    /**
+     * The document-start script, named [SOURCE_URL]. Assembled in one builder sized for the whole
+     * text and copied out once: an extension's units can run to ten million characters (Grammarly),
+     * and a 192 MB debug heap that holds the sources, the builder's `char[]` and the string at once
+     * has no room for a second builder growing by doubling on top of them (a `named(toString())`
+     * pass did that, and a 37 MB `char[]` for it was the allocation that failed on the emulator).
+     */
     fun documentStart(
         bootstrap: String,
         configJson: String,
@@ -35,7 +45,10 @@ object ExtensionScripts {
         css: Map<String, String>,
         debug: Boolean
     ): String {
-        val sb = StringBuilder(bootstrap.length + configJson.length + groups.sumOf { g -> g.sources.sumOf { it.length } } + 4096)
+        val sb = StringBuilder(
+            bootstrap.length + configJson.length + groups.sumOf { g -> g.sources.sumOf { it.length } } +
+                css.entries.sumOf { (key, text) -> key.length + text.length + 8 } + SOURCE_URL_TAIL.length + 4096
+        )
         sb.append("(function(){var __zenExtBoot={config:").append(configJson).append(",debug:").append(debug)
         sb.append(",css:{")
         var first = true
@@ -52,8 +65,8 @@ object ExtensionScripts {
             sb.append(JSONObject.quote("${group.extensionId}/${group.index}")).append(':')
             appendGroupFunction(sb, group)
         }
-        sb.append("}};\n").append(bootstrap).append("\n})();")
-        return named(sb.toString())
+        sb.append("}};\n").append(bootstrap).append("\n})();").append(SOURCE_URL_TAIL)
+        return sb.toString()
     }
 
     /**

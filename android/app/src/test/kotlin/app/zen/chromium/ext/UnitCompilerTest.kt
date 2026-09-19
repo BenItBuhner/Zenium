@@ -111,6 +111,26 @@ class UnitCompilerTest {
     }
 
     @Test
+    fun `sources the GC took back are read again and only they - a cached unit needs none of them`() {
+        val compiler = UnitCompiler { "/*boot*/" }
+        compiler.compile(id, "1.0.0", units("k" to listOf("cs.js")), true, read)
+        assertEquals(2, compiler.cachedSources(id))
+        compiler.clearSourcesForTest(id)
+        assertEquals(0, compiler.cachedSources(id))
+        val readsAfterClear = reads
+        // The unit itself is still cached: no source is needed for it.
+        val same = compiler.compile(id, "1.0.0", units("k" to listOf("cs.js")), true, read)
+        assertTrue(same[0].cached)
+        assertEquals(readsAfterClear, reads)
+        // A re-plan that adds a unit reads its files again (cs.js and style.css went; extra.js never was).
+        val more = compiler.compile(id, "1.0.0", units("k" to listOf("cs.js"), "k2" to listOf("extra.js", "cs.js")), true, read)
+        assertEquals(listOf(true, false), more.map { it.cached })
+        assertTrue(more[1].script.contains("console.log('extra')") && more[1].script.contains("console.log('cs')"))
+        assertEquals(readsAfterClear + 3, reads)
+        assertEquals(3, compiler.cachedSources(id))
+    }
+
+    @Test
     fun `a missing file becomes a console error instead of a broken unit and stays cached as missing`() {
         val compiler = UnitCompiler { "/*boot*/" }
         val compiled = compiler.compile(id, "1.0.0", units("k" to listOf("gone.js")), true, read)
