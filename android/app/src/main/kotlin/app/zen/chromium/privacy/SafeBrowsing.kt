@@ -207,6 +207,11 @@ class SafeBrowsing(private val storage: Storage) {
     var lastLoadMs: Long = 0
         private set
 
+    /** Documents the last load parsed (the ones whose version tag had changed), for diagnostics. */
+    @Volatile
+    var lastParsed: Int = 0
+        private set
+
     /** Milliseconds the snapshot took to load and publish, or -1 when none was (yet), for diagnostics. */
     @Volatile
     var snapshotLoadMs: Long = -1
@@ -229,6 +234,13 @@ class SafeBrowsing(private val storage: Storage) {
 
     /** Where the informational lines go: logcat in the app, a list in the tests (no `Log` on the JVM). */
     internal var log: (String) -> Unit = { Log.i(TAG, it) }
+
+    /**
+     * Every document as last parsed, by name, with the version tag ([Storage.etag]) it was
+     * parsed from: a load re-parses only the documents the core rewrote since (a refreshed
+     * feed's), the megabytes of the others – decoded, sorted – stay as they are. Loader thread only.
+     */
+    private val parsed = HashMap<String, Pair<String, FeedTable?>>()
 
     private val loader = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "zen-safebrowsing") }
     private var scheduled: ScheduledFuture<*>? = null
@@ -272,24 +284,44 @@ class SafeBrowsing(private val storage: Storage) {
     private fun reloadLogged() {
         try {
             reload()
-            log("tables: ${tables.entries} prefixes from ${tables.feeds.size} feeds in $lastLoadMs ms; snapshot ${lastSnapshot.name.lowercase()}")
+            log("tables: ${tables.entries} prefixes from ${tables.feeds.size} feeds in $lastLoadMs ms ($lastParsed parsed); snapshot ${lastSnapshot.name.lowercase()}")
         } catch (e: Throwable) {
             Log.e(TAG, "Safe Browsing tables not reloaded", e)
         }
     }
 
-    /** Read every feed document under `safebrowsing/`; called on the loader thread (and in tests). */
+    /**
+     * Read every feed document under `safebrowsing/` whose version tag changed since the last
+     * load, keep the others' tables; called on the loader thread (and in tests).
+     */
     internal fun reload() {
         val started = System.nanoTime()
         val tags = documentTags()
         val feeds = ArrayList<FeedTable>()
+        val present = HashSet<String>()
+        var parsedNow = 0
         for (name in storage.list(DIR).sorted()) {
             if (!name.endsWith(".json")) continue
             val id = name.substringAfterLast('/').removeSuffix(".json")
-            val text = storage.read(name) ?: continue
-            SafeBrowsingTables.parseDocument(text, id)?.let { feeds.add(it) }
+            val tag = storage.etag(name) ?: continue
+            present.add(name)
+            val known = parsed[name]
+            val table = if (known != null && known.first == tag) {
+                known.second
+            } else {
+                val text = storage.read(name) ?: continue
+                parsedNow++
+                val fresh = SafeBrowsingTables.parseDocument(text, id)
+                // Remember the table under the tag only when the file is still the one read: a
+                // write that landed in between is parsed by the load it schedules.
+                if (storage.etag(name) == tag) parsed[name] = tag to fresh else parsed.remove(name)
+                fresh
+            }
+            table?.let { feeds.add(it) }
         }
+        parsed.keys.retainAll(present)
         tables = SafeBrowsingTables(feeds)
+        lastParsed = parsedNow
         lastLoadMs = (System.nanoTime() - started) / 1_000_000
         firstLoad.countDown()
         lastSnapshot = writeSnapshot(feeds, tags)

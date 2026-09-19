@@ -60,6 +60,18 @@ class StorageTest {
     }
 
     @Test
+    fun aDocumentOpensForStreamingWithItsVersionTag() {
+        assertNull(storage.open("extensions.json"))
+        storage.writeSync("extensions.json", registry)
+        val opened = storage.open("extensions.json")!!
+        assertEquals(storage.etag("extensions.json"), opened.etag)
+        assertEquals(registry.toByteArray().size.toLong(), opened.length)
+        assertEquals(registry, opened.stream.use { String(it.readBytes()) })
+        assertNull(storage.open("../escape.json"))
+        assertNull(storage.open("blocking"))
+    }
+
+    @Test
     fun oneDirectoryLevelIsAllowedAndUnsafeCharactersAreReplaced() {
         storage.writeSync("blocking/index.json", """{"lists":[]}""")
         assertEquals("""{"lists":[]}""", storage.read("blocking/index.json"))
