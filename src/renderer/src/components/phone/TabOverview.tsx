@@ -1,6 +1,6 @@
 import type { CSSProperties, JSX } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { PanelLeft, PanelRight, Plus } from 'lucide-react'
+import { PanelLeft, PanelRight, Plus, VenetianMask } from 'lucide-react'
 import type {
   Folder,
   FolderColor,
@@ -10,6 +10,7 @@ import type {
   Tab,
   UIState
 } from '@shared/types'
+import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import { FOLDER_COLORS } from '@shared/defaults'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { cmd, run } from '@renderer/lib/api'
@@ -25,6 +26,14 @@ import { groupColorHex, groupsOf, nextGroupColor } from '@renderer/lib/groups'
 import { overviewColumns } from '@renderer/lib/layout'
 import { FRAME_SHADOW, cardShadow, lerpShadow, shadowCss } from '@renderer/lib/motion/elevation'
 import { reducedMotion } from '@renderer/lib/motion/spring'
+import {
+  overviewPane,
+  pickOverviewPane,
+  privateTabsOf,
+  privateTabsStore,
+  tabsOnPane,
+  type OverviewPane
+} from '@renderer/lib/privateTabs'
 import {
   activeSpace,
   activeTab,
@@ -87,6 +96,8 @@ interface HeldGroup {
 }
 
 interface ShownGroups {
+  /** The pane the grid showed: its groups are that pane's, and the other pane has none. */
+  pane: OverviewPane
   /** The groups holding cards after the last render, by folder id. */
   held: ReadonlyMap<string, HeldGroup>
   /**
@@ -103,15 +114,28 @@ interface ShownGroups {
  * fades in while the page shrinks into the slot of its own card (and grows back out of the card
  * that is picked when leaving), so a half-finished drag always shows exactly where things are
  * going. Cards can be held and dragged onto each other to make groups (see `useCardLift`).
+ *
+ * On a host with private tabs the overview has two panes under a segment (TAB-02, TAB-03): the
+ * space's tabs, and the private ones – the private session is one across the spaces, so that
+ * pane lists every private tab, as loose cards on the private theme's backdrop (the window
+ * surfaces blend to it while the pane is up, §9.29), with an explainer when there are none. A
+ * private card never shows in the regular pane, nor a regular one in the private pane
+ * (`tabsOnPane`); the overview opens on the pane of the tab in view.
  */
 export function TabOverview({ state, overview, area, edge }: Props): JSX.Element {
   const { progress, phase, heroTabId } = overview
   const space = activeSpace(state)
   const active = activeTab(state)
-  const essentials = essentialsFor(state, space)
-  const pinned = pinnedOf(state, space)
-  const regular = regularOf(state, space)
-  const groups = groupsOf(state, space.id)
+  const picked = privateTabsStore.use((s) => s.pane)
+  const hasPrivate = state.capabilities.privateTabs
+  const pane: OverviewPane = hasPrivate ? overviewPane(state, picked) : 'tabs'
+  const privatePane = pane === 'private'
+  // The private pane is a session, not a workspace: its cards are neither pinned nor grouped
+  // here, and a drag moves nothing (`hoverAt`, `dropCard`); the regular pane keeps its structure.
+  const essentials = privatePane ? [] : tabsOnPane(essentialsFor(state, space), 'tabs')
+  const pinned = privatePane ? [] : tabsOnPane(pinnedOf(state, space), 'tabs')
+  const regular = privatePane ? privateTabsOf(state) : tabsOnPane(regularOf(state, space), 'tabs')
+  const groups = privatePane ? [] : groupsOf(state, space.id)
   const count = essentials.length + pinned.length + regular.length
 
   // While a card is dragged its stand-in sits in the slot under the finger, not where the tab
@@ -128,7 +152,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   }
   const membersOf = (folderId: string): Tab[] => regular.filter((t) => t.folderId === folderId)
   const loose = shown(
-    regular.filter((t) => !t.folderId || !state.folders[t.folderId]),
+    privatePane ? regular : regular.filter((t) => !t.folderId || !state.folders[t.folderId]),
     null
   )
   const members = new Map(groups.map((f) => [f.id, shown(membersOf(f.id), f.id)] as const))
@@ -299,6 +323,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   // has lost its last card since the last render must be on the grid in this very render, so it
   // is found here, from the last render's groups, not in an effect after it.
   const [shownGroups, setShownGroups] = useState<ShownGroups>(() => ({
+    pane,
     held: new Map(),
     lingering: new Map()
   }))
@@ -307,28 +332,31 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     const count = members.get(folder.id)?.length ?? 0
     if (count) held.set(folder.id, { folder, count })
   }
-  const lost = [...shownGroups.held].filter(([id]) => !held.has(id))
+  // The other pane's grid is a fresh one: its groups did not dissolve, they are simply not here.
+  const samePane = shownGroups.pane === pane
+  const lost = samePane ? [...shownGroups.held].filter(([id]) => !held.has(id)) : []
   const back = [...shownGroups.lingering.keys()].filter((id) => held.has(id))
-  let lingering = shownGroups.lingering
+  let lingering = samePane ? shownGroups.lingering : new Map<string, HeldGroup>()
   if (lost.length || back.length) {
-    const next = new Map(shownGroups.lingering)
+    const next = new Map(lingering)
     for (const [id, was] of lost) next.set(id, was)
     for (const id of back) next.delete(id)
     lingering = next
   }
   if (
+    !samePane ||
     lingering !== shownGroups.lingering ||
     held.size !== shownGroups.held.size ||
     [...held].some(([id, h]) => shownGroups.held.get(id)?.count !== h.count)
   ) {
-    setShownGroups({ held, lingering })
+    setShownGroups({ pane, held, lingering })
   }
   const dissolvedGroup = (folder: Folder): void =>
     setShownGroups((shown) => {
       if (!shown.lingering.has(folder.id)) return shown
       const next = new Map(shown.lingering)
       next.delete(folder.id)
-      return { held: shown.held, lingering: next }
+      return { ...shown, lingering: next }
     })
   // The group cards, one keyed list: a group that has just lost its last card (or whose folder
   // is gone with it) keeps its element – the same key in the same list – so its card's height
@@ -382,6 +410,8 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     const keep: LiftHover = { target: null, slot: current.slot }
     const grid = scrollRef.current?.getBoundingClientRect()
     if (!grid || x < grid.left || x > grid.right || y < grid.top || y > grid.bottom) return null
+    // Private cards are held for their menu and swiped to close; a drag rearranges nothing.
+    if (privatePane) return keep
     const inside = (r: DOMRect | null): r is DOMRect =>
       r !== null && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom
     // Member cards of an expanded group and the loose cards, as shown right now.
@@ -436,6 +466,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
       }
     }
     const unchanged = (): void => expect(() => true)
+    if (privatePane) return unchanged()
     const regularWithout = regular.filter((t) => t.id !== tab.id)
     /** Move the tab right before `before` (or to the end of the regular tabs), into `folderId`. */
     const moveTo = (folderId: string | null, before: Tab | undefined, after?: Tab): void => {
@@ -508,6 +539,10 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     )
     for (const tab of tabs) run('tab.close', { tabId: tab.id })
   }
+  // "Close other tabs" closes the other cards of this pane – the core's `tab.closeOthers` takes
+  // the whole space, private tabs included, and would end the private session from the regular
+  // pane (or take the space's regular tabs with it from the private one) – then keeps `tab` in
+  // view, as the core's does.
   const closeOthers = (tab: Tab): void => {
     const others = regular.filter((t) => t.id !== tab.id)
     depart(
@@ -516,7 +551,8 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
         return rect ? [{ key: t.id, kind: 'tab' as const, tab: t, rect }] : []
       })
     )
-    run('tab.closeOthers', { tabId: tab.id })
+    for (const t of others) run('tab.close', { tabId: t.id })
+    run('tab.activate', { tabId: tab.id })
   }
   const closeGroup = (folder: Folder): void => {
     const rect = rectOf(flip.element(`group:${folder.id}`))
@@ -593,9 +629,18 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
           }}
         >
           <header className="flex h-14 shrink-0 items-center gap-2.5 px-3" {...handle}>
-            <SpaceGlyph icon={space.icon} size={20} />
-            <span className="zen-title min-w-0 truncate">{space.name}</span>
-            <span className="shrink-0 text-[13px] tabular-nums text-[var(--zen-muted)]">
+            {privatePane ? (
+              <VenetianMask className="h-5 w-5 shrink-0" strokeWidth={1.75} aria-hidden />
+            ) : (
+              <SpaceGlyph icon={space.icon} size={20} />
+            )}
+            <span className="zen-title min-w-0 truncate">
+              {privatePane ? 'Private' : space.name}
+            </span>
+            <span
+              className="shrink-0 text-[13px] tabular-nums text-[var(--zen-muted)]"
+              data-testid="overview-count"
+            >
               {count} tab{count === 1 ? '' : 's'}
             </span>
             <span className="flex-1" />
@@ -612,58 +657,73 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
               )}
             </button>
           </header>
-          {state.spaces.length > 1 && <SpaceStrip spaces={state.spaces} activeId={space.id} />}
-          <div
-            ref={(el) => {
-              scrollRef.current = el
-              return fadeGrid(el)
-            }}
-            className="zen-overview-grid min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-3 pb-4 pt-1"
-            // The card the page morphs into is scrolled into view: keep it clear of the fades.
-            style={{ touchAction: 'pan-y', overscrollBehavior: 'contain', scrollPaddingBlock: 16 }}
-            onScroll={measure}
-          >
-            {essentials.length > 0 && (
-              <div className="mb-3 flex flex-wrap gap-2">
-                {essentials.map((tab) => (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    className="zen-essential h-12 w-12"
-                    data-active={tab.id === active?.id}
-                    data-discarded={tab.discarded}
-                    aria-label={tabTitle(tab)}
-                    onClick={() => pick(tab)}
-                  >
-                    <Favicon tab={tab} size={22} />
-                  </button>
-                ))}
-              </div>
-            )}
+          {hasPrivate && <PaneSegment pane={pane} onPick={pickOverviewPane} />}
+          {!privatePane && state.spaces.length > 1 && (
+            <SpaceStrip spaces={state.spaces} activeId={space.id} />
+          )}
+          {privatePane && count === 0 ? (
+            <PrivateEmpty />
+          ) : (
             <div
-              className="grid gap-3"
-              style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
+              // Each pane is a grid of its own: the one that comes up fades in over the backdrop
+              // (v2 §11, a 120 ms state change) and the cells start fresh with it.
+              key={pane}
+              ref={(el) => {
+                scrollRef.current = el
+                return fadeGrid(el)
+              }}
+              className="zen-overview-grid zen-overview-pane min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-3 pb-4 pt-1"
+              data-pane={pane}
+              // The card the page morphs into is scrolled into view: keep it clear of the fades.
+              style={{
+                touchAction: 'pan-y',
+                overscrollBehavior: 'contain',
+                scrollPaddingBlock: 16
+              }}
+              onScroll={measure}
             >
-              {pinned.map(card)}
-              {groupCards.map(({ folder, tabs, gone }) => (
-                <GroupCard
-                  key={folder.id}
-                  folder={folder}
-                  tabs={tabs}
-                  card={card}
-                  columns={columns}
-                  onMenu={(f) => setSheet({ kind: 'group', folderId: f.id })}
-                  forming={tabs.length > 0 && forming(folder, tabs)}
-                  dissolving={tabs.length === 0}
-                  held={gone?.count}
-                  onDissolved={dissolvedGroup}
-                  onRelease={subscribeRelease}
-                />
-              ))}
-              {loose.map(card)}
-              <NewTabCard />
+              {essentials.length > 0 && (
+                <div className="mb-3 flex flex-wrap gap-2">
+                  {essentials.map((tab) => (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      className="zen-essential h-12 w-12"
+                      data-active={tab.id === active?.id}
+                      data-discarded={tab.discarded}
+                      aria-label={tabTitle(tab)}
+                      onClick={() => pick(tab)}
+                    >
+                      <Favicon tab={tab} size={22} />
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div
+                className="grid gap-3"
+                style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
+              >
+                {pinned.map(card)}
+                {groupCards.map(({ folder, tabs, gone }) => (
+                  <GroupCard
+                    key={folder.id}
+                    folder={folder}
+                    tabs={tabs}
+                    card={card}
+                    columns={columns}
+                    onMenu={(f) => setSheet({ kind: 'group', folderId: f.id })}
+                    forming={tabs.length > 0 && forming(folder, tabs)}
+                    dissolving={tabs.length === 0}
+                    held={gone?.count}
+                    onDissolved={dissolvedGroup}
+                    onRelease={subscribeRelease}
+                  />
+                ))}
+                {loose.map(card)}
+                <NewTabCard pane={pane} />
+              </div>
             </div>
-          </div>
+          )}
         </div>
         <Departures state={state} activeTabId={active?.id ?? null} />
         <LiftGhost state={state} activeTabId={active?.id ?? null} />
@@ -706,6 +766,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
           state={state}
           tab={state.tabs[sheet.tabId]}
           groups={groups}
+          groupable={!privatePane}
           others={regular.length - 1}
           onClose={() => setSheet(null)}
           onNewGroup={(tab) => void makeGroup([tab.id], true)}
@@ -759,6 +820,7 @@ function TabSheet({
   state,
   tab,
   groups,
+  groupable,
   others,
   onClose,
   onNewGroup,
@@ -768,6 +830,8 @@ function TabSheet({
   state: UIState
   tab: Tab
   groups: Folder[]
+  /** Whether the pane groups its cards (the private pane does not). */
+  groupable: boolean
   /** How many other tabs "Close other tabs" would close. */
   others: number
   onClose: () => void
@@ -777,7 +841,7 @@ function TabSheet({
 }): JSX.Element {
   const current = tab.folderId && state.folders[tab.folderId] ? tab.folderId : null
   const actions: SheetAction[] = []
-  if (!tab.pinned && !tab.essential) {
+  if (groupable && !tab.pinned && !tab.essential) {
     actions.push({ id: 'new-group', label: 'New group', onPick: () => onNewGroup(tab) })
     for (const g of groups) {
       if (g.id === current) continue
@@ -893,20 +957,116 @@ function GroupDot({ color }: { color: FolderColor | null | undefined }): JSX.Ele
 
 /**
  * The last card of the grid, a cell like the others (`data-cell`): when cards are rearranged,
- * closed or grouped it glides to its new place on the same spring as they do.
+ * closed or grouped it glides to its new place on the same spring as they do. On the private
+ * pane it opens a private tab (INC-01).
  */
-function NewTabCard(): JSX.Element {
+function NewTabCard({ pane }: { pane: OverviewPane }): JSX.Element {
+  const isPrivate = pane === 'private'
   return (
     <button
       type="button"
       className="zen-overview-new flex flex-col items-center justify-center gap-2 text-[var(--zen-muted)] active:text-[var(--zen-fg)]"
       style={{ aspectRatio: '3 / 4' }}
       data-cell={NEW_TAB_CELL}
-      onClick={() => window.dispatchEvent(new CustomEvent('zen-new-tab'))}
+      data-testid={isPrivate ? 'overview-new-private-tab' : 'overview-new-tab'}
+      onClick={() => newTabOn(pane)}
     >
-      <Plus className="h-6 w-6" />
-      <span className="text-[13px] font-medium">New Tab</span>
+      {isPrivate ? (
+        <VenetianMask className="h-6 w-6" strokeWidth={1.75} />
+      ) : (
+        <Plus className="h-6 w-6" />
+      )}
+      <span className="text-[13px] font-medium">{isPrivate ? 'New Private Tab' : 'New Tab'}</span>
     </button>
+  )
+}
+
+/** Ask for a new tab of the pane's mode: the phone's new tab page comes up over the overview. */
+function newTabOn(pane: OverviewPane): void {
+  window.dispatchEvent(
+    new CustomEvent('zen-new-tab', {
+      detail: pane === 'private' ? { containerId: PRIVATE_CONTAINER_ID } : {}
+    })
+  )
+}
+
+/**
+ * The overview's two panes as a tab bar above the grid (TAB-02): "Tabs" and "Private", text in
+ * the window family – the picked one in the window ink with the 2 px accent line under it, the
+ * other at 69% – switching on a tap with a 120 ms state change (v2 §11); not a segmented pill
+ * (§9.14 has none). Its row is 40 tall at the 16 gutter, each label a 44 target.
+ */
+function PaneSegment({
+  pane,
+  onPick
+}: {
+  pane: OverviewPane
+  onPick: (pane: OverviewPane) => void
+}): JSX.Element {
+  const panes: Array<{ id: OverviewPane; label: string }> = [
+    { id: 'tabs', label: 'Tabs' },
+    { id: 'private', label: 'Private' }
+  ]
+  return (
+    <div
+      role="tablist"
+      aria-label="Tabs and private tabs"
+      className="zen-overview-segment flex h-10 shrink-0 items-stretch gap-2 px-3"
+    >
+      {panes.map(({ id, label }) => (
+        <button
+          key={id}
+          type="button"
+          role="tab"
+          aria-selected={pane === id}
+          data-pane={id}
+          data-testid={`overview-pane-${id}`}
+          className="zen-overview-segment-tab relative flex min-w-[44px] items-center px-2 text-[15px]"
+          onClick={() => {
+            if (pane !== id) onPick(id)
+          }}
+        >
+          <span className="relative">
+            {label}
+            <span className="zen-overview-segment-indicator absolute inset-x-0 -bottom-2 h-0.5 rounded-[1px]" />
+          </span>
+        </button>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * The private pane with nothing in it (TAB-03): a page's empty state (v2 §9.17 – title 22/600,
+ * one 15 description at 69%, one button, the block centred with its middle at 45% of the
+ * pane), in the window family on the private theme's backdrop.
+ */
+function PrivateEmpty(): JSX.Element {
+  return (
+    <div
+      className="zen-overview-pane relative min-h-0 flex-1"
+      data-pane="private"
+      data-testid="overview-private-empty"
+    >
+      <div
+        className="absolute inset-x-0 flex -translate-y-1/2 flex-col items-center px-8 text-center"
+        style={{ top: '45%' }}
+      >
+        <h2 className="text-[22px] font-semibold leading-7 tracking-[-0.012em]">No private tabs</h2>
+        <p className="mt-2 max-w-[360px] text-[15px] leading-5 text-[rgb(var(--zen-fg-rgb)/0.69)]">
+          Pages you open here leave no history, cookies or site data once the last private tab
+          closes
+        </p>
+        <button
+          type="button"
+          className="zen-v2-button mt-4"
+          data-testid="overview-private-empty-new"
+          onClick={() => newTabOn('private')}
+        >
+          New Private Tab
+        </button>
+      </div>
+    </div>
   )
 }
 

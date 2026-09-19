@@ -35,9 +35,26 @@ export function activeTabIsPrivate(state: UIState): boolean {
   return tab !== null && isPrivateTab(tab)
 }
 
-/** The private tabs of the window (across spaces: the private session is one). */
+/**
+ * The private tabs of the window, in the order of the private pane: the private session is one
+ * across the spaces (a private tab opens in the space it was asked for in), so the pane walks
+ * the spaces in their order and each space's tabs in theirs.
+ */
 export function privateTabsOf(state: UIState): Tab[] {
-  return Object.values(state.tabs).filter(isPrivateTab)
+  const listed = new Set<string>()
+  const order: Tab[] = []
+  for (const space of state.spaces)
+    for (const id of space.tabIds) {
+      const tab = state.tabs[id]
+      if (tab && isPrivateTab(tab) && !listed.has(id)) {
+        listed.add(id)
+        order.push(tab)
+      }
+    }
+  // A private tab no space lists (it should not happen) still shows rather than being lost.
+  for (const tab of Object.values(state.tabs))
+    if (isPrivateTab(tab) && !listed.has(tab.id)) order.push(tab)
+  return order
 }
 
 /** The pane the overview shows: the one picked, else the one the tab in view belongs to. */
