@@ -274,9 +274,12 @@ class HistoryBookmarksDemo :
             finding("\nrow action (injected touch): no Remove button on '$removed' ${verdict(false)}")
         } else {
             val point = touchTapPoint(remove)
-            SystemClock.sleep(1_800)
+            // The claim of the touch (the rule in DemoHarness): the row is gone, not "something
+            // happened"; a finger that went in and left the row is a touch fault.
+            val gone = point != null && rowGone(removed)
+            if (point != null && !gone) touchFault("a touch on '$removed''s Remove did not take: the row is still there")
+            SystemClock.sleep(1_200)
             shot("02b-history-row-action-touch")
-            val gone = row(removed) == null
             val undo = clickWhenShown("Undo")
             SystemClock.sleep(1_800)
             finding(
@@ -516,6 +519,16 @@ class HistoryBookmarksDemo :
     private fun row(prefix: String): Rect? =
         findByLabelPrefix(prefix).also { if (it == null) Log.w(tag, "no row starting with '$prefix'") }
 
+    /** Poll until no row starts with `prefix`, for up to `timeoutMs`; false when it is still there. */
+    private fun rowGone(prefix: String, timeoutMs: Long = 5_000): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (findByLabelPrefix(prefix) == null) return true
+            SystemClock.sleep(150)
+        }
+        return false
+    }
+
     /**
      * A panel's search field. The WebView reports an input's label as the EditText's hint (its
      * text is the value), so the label lookups above never see it.
@@ -560,9 +573,10 @@ class HistoryBookmarksDemo :
     /**
      * Open a bookmark row's 3-dot menu with a finger on its button – the shared icon button
      * beside the accessible row – as an injected touch inside the button's bounds (the real-touch
-     * rule), read off the menu that opens. Should the touch open nothing, the tree's click; should
-     * the tree not expose the button, a finger where it is drawn (the 44 box 12 past the row's
-     * text, 9.18). Each path is said in the findings.
+     * rule), read off the menu that opens – the claim of the touch, a touch fault when the finger
+     * went in and no menu came (the rule in DemoHarness), after which the tree's click gets the
+     * demo on; should the tree not expose the button, a finger where it is drawn (the 44 box 12
+     * past the row's text, 9.18). Each path is said in the findings.
      */
     private fun openRowMenu(title: String): Boolean {
         val label = "More options for $title"
@@ -571,6 +585,7 @@ class HistoryBookmarksDemo :
                 finding("row menu for '$title': opened by an injected touch on its 3-dot button ${verdict(true)}")
                 return true
             }
+            touchFault("a touch on '$label' did not take: no row menu came up")
             finding("row menu for '$title': the injected touch on its 3-dot button opened nothing ${verdict(false)}")
         }
         if (click(label)) {
