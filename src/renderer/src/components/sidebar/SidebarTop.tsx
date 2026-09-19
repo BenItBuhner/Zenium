@@ -35,6 +35,7 @@ import { StarChip } from '../bookmarks/StarChip'
 import { useBookmarkTree } from '../bookmarks/tree'
 import { ToolbarActions } from '../extensions/ToolbarActions'
 import { useLongPress } from '../phone/useLongPress'
+import { BlockedChip } from '../urlbar/BlockedChip'
 import { PillChip } from '../urlbar/PillChip'
 import { WindowControls } from '../WindowControls'
 import { ZoomChip } from '../zoom/ZoomChip'
@@ -302,6 +303,9 @@ export function NavRow({
               </PillChip>
             ) : (
               <Search className="order-first h-3 w-3 shrink-0 opacity-60" />
+            )}
+            {tab && isWebPage && state.capabilities.requestBlocking && (
+              <BlockedChip tab={tab} state={state} variant="desktop" />
             )}
             {tab && (tab.readerable || isReader) && (
               <PillChip

@@ -38,6 +38,7 @@ import { Onboarding } from '../overlays/Onboarding'
 import { BlockedPopupsChip } from '../security/BlockedPopupsPanel'
 import { Favicon } from '../sidebar/Favicon'
 import { TabDialogs } from '../TabDialogs'
+import { BlockedChip } from '../urlbar/BlockedChip'
 import { PillChip } from '../urlbar/PillChip'
 import { Urlbar } from '../urlbar/Urlbar'
 import { BarButton } from './BarButton'
@@ -446,6 +447,9 @@ export function PillContent({
         </PillChip>
       ) : (
         <Search className="order-first h-4 w-4 shrink-0 opacity-60" />
+      )}
+      {shown && !page && state.capabilities.requestBlocking && (
+        <BlockedChip tab={shown} state={state} variant="phone" interactive={interactive} />
       )}
       {url && secure && !page && (
         <PillChip
