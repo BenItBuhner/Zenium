@@ -52,8 +52,13 @@ export class AndroidStoreIO implements StoreIO {
     }
   }
 
-  /** Root documents and the rule-set index live in the mirror; every other document stays on disk. */
+  /**
+   * Root documents and the rule-set index live in the mirror; every other document stays on
+   * disk. So does a backup (`state.json.bak`): the host rotates it under a write of its document,
+   * which the mirror would not see, and the core reads it once, when the document is gone.
+   */
   private mirrored(name: string): boolean {
+    if (name.endsWith('.bak')) return false
     return !name.includes('/') || name === INDEX_FILE
   }
 

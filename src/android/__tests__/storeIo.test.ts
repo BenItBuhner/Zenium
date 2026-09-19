@@ -60,7 +60,7 @@ const BIG_STATE = JSON.stringify({
 })
 
 const manifest = (...names: string[]): Array<{ name: string; bytes: number; etag: string }> =>
-  names.map((name) => ({ name, bytes: 100_000, etag: `186a0-1-0` }))
+  names.map((name) => ({ name, bytes: 100_000, etag: `186a0-1a0b95b9f5f` }))
 
 describe('AndroidStoreIO', () => {
   it('serves the payload documents from memory and reads the rest through the bridge', () => {
@@ -73,15 +73,23 @@ describe('AndroidStoreIO', () => {
   })
 
   it('asks the host about a root document the payload did not carry: absent only when the host says so', () => {
-    const { bridge, calls } = fakeBridge({ 'state.json.bak': '{"tabs":[1]}' })
+    const { bridge, calls, disk } = fakeBridge({ 'state.json.bak': '{"tabs":[1]}' })
     const io = new AndroidStoreIO(bridge, { 'state.json': '{"tabs":[]}' })
     expect(io.readSync('missing.json')).toBeNull()
     // The backup the host keeps for the session store is readable, as it is on the desktop.
     expect(io.readSync('state.json.bak')).toBe('{"tabs":[1]}')
     expect(calls.map((c) => c.args.name)).toEqual(['missing.json', 'state.json.bak'])
-    // Once read, a root document is in the mirror.
-    expect(io.readSync('state.json.bak')).toBe('{"tabs":[1]}')
-    expect(calls).toHaveLength(2)
+    // A backup is never mirrored: the host rotates it under a write of the document, and a
+    // read after that must see the rotation, not the copy of before.
+    disk['state.json.bak'] = '{"tabs":[1,2]}'
+    expect(io.readSync('state.json.bak')).toBe('{"tabs":[1,2]}')
+    expect(io.exists('state.json.bak')).toBe(true)
+    expect(calls.map((c) => c.method)).toEqual([
+      'storage.read',
+      'storage.read',
+      'storage.read',
+      'storage.exists'
+    ])
   })
 
   describe('one transfer per boot document', () => {
