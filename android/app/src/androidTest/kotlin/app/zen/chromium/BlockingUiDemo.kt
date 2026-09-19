@@ -459,10 +459,16 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
         return (0 until sites.length()).any { sites.getString(it) == DEMO_ORIGIN }
     }
 
-    /** The chip's accessible label in the pill (`<n> requests blocked on this page · Site information`). */
+    /**
+     * The chip's accessible label in the pill: `<n> requests blocked on this page`, `Nothing
+     * blocked on this page yet`, `Blocking is off for this site` or `Ad and tracker blocking is
+     * off`, each `· Site information` (`blockedChipLabel` in lib/blockingUi.ts).
+     */
     private fun chipLabel(): String? =
-        findNode { it.contains("Site information") && (it.contains("blocked") || it.contains("Nothing")) }
-            ?.let { it.contentDescription ?: it.text }?.toString()
+        findNode {
+            it.contains("Site information") &&
+                (it.contains("blocked") || it.contains("Nothing") || it.contains("locking is off"))
+        }?.let { it.contentDescription ?: it.text }?.toString()
 
     // --- the chrome's bridge --------------------------------------------------------------------
 
