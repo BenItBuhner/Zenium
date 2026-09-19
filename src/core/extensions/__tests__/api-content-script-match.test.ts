@@ -59,6 +59,29 @@ describe('match patterns as content scripts use them', () => {
     expect(parseMatchPattern('foo://*')).toBeNull()
   })
 
+  it("follows Chromium's file grammar: no host, the rest is the path glob", () => {
+    // Violentmonkey's install listener and the common `file://*/*` host permission.
+    expect(matches('file://*/*.user.js', 'file:///home/me/hello.user.js')).toBe(true)
+    expect(matches('file://*/*.user.js', 'file:///hello.user.js')).toBe(true)
+    expect(matches('file://*/*.user.js', 'file:///home/me/hello.js')).toBe(false)
+    expect(matches('file://*/*.user.js', 'https://example.org/hello.user.js')).toBe(false)
+    expect(matches('file://*/*', 'file:///etc/hosts')).toBe(true)
+    expect(matches('file:///*', 'file:///etc/hosts')).toBe(true)
+    expect(matches('file:///etc/*', 'file:///etc/hosts')).toBe(true)
+    expect(matches('file:///etc/*', 'file:///var/log')).toBe(false)
+    // The URL's host is ignored, as Chromium does for file URLs.
+    expect(matches('file:///share/*', 'file://server/share/x')).toBe(true)
+    expect(matches('file://', 'file:///x')).toBe(false)
+    expect(parseMatchPattern('file://*/*.user.js')).toEqual({
+      schemes: ['file'],
+      host: '',
+      port: null,
+      path: '*/*.user.js',
+      matchesAllUrls: false
+    })
+    expect(parseMatchPattern('file://')).toBeNull()
+  })
+
   it('ignores ports without one in the pattern and the fragment, but not the query', () => {
     expect(matches('https://example.org/*', 'https://example.org:8443/x')).toBe(true)
     expect(matches('https://example.org/a', 'https://example.org/a#frag')).toBe(true)

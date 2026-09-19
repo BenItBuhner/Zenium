@@ -23,6 +23,7 @@ import { LoadProgress } from './LoadProgress'
 import { PullIndicator } from './PullIndicator'
 import { SplitChrome } from './SplitChrome'
 import { useLayoutReporter } from './useLayoutReporter'
+import { ZoomSheet } from './ZoomSheet'
 
 interface Props {
   state: UIState
@@ -173,6 +174,9 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
         </div>
         {ui.findOpen && ui.findTabId && state.tabs[ui.findTabId] && (
           <FindBar state={state} tabId={ui.findTabId} ui={ui} docked="content" />
+        )}
+        {ui.zoomTabId && state.capabilities.pageControls && (
+          <ZoomSheet state={state} tabId={ui.zoomTabId} />
         )}
       </div>
       {/* The bar is the frame's edge: it recedes with the frame, and overlays cover both. */}

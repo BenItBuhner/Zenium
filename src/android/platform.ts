@@ -5,10 +5,11 @@ import type {
   HapticKind,
   HostCapabilities,
   PageEnvironment,
+  Platform as PlatformOs,
   ShareAction
 } from '@shared/types'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '@shared/types'
-import { resolveDownloadSettings } from '@shared/downloads'
+import { interruptReasonFrom, resolveDownloadSettings } from '@shared/downloads'
 import { newId } from '@shared/ids'
 import type { SharedIntent } from '@shared/shareTarget'
 import {
@@ -244,6 +245,12 @@ export function statusFrom(raw: unknown): SystemAutofillStatus {
 /** Everything Kotlin hands over synchronously before the chrome renders. */
 export interface BootInfo {
   version: string
+  /**
+   * The OS the chrome reports as its platform. The Kotlin host never sets it (Android); the
+   * preview host may name a desktop OS so a desktop-form-factor capture shows the desktop's
+   * platform-bound rows (`?platform=linux`).
+   */
+  os?: PlatformOs
   /** `Build.VERSION.SDK_INT` of the device (the newest release the preview host stands in for). */
   sdkInt: number
   /** Hex SHA-256 of the certificate this APK is signed with (null in the preview host). */
@@ -317,6 +324,7 @@ export interface HostEventPayloads {
     /** The name the file is actually written under (MediaStore may have made it unique). */
     finalName?: string
     mimeType?: string
+    /** A `DownloadInterruptReason` (Kotlin's `DownloadInterruptReason.wire`) while `interrupted`. */
     error?: string
   }
   'download.done': {
@@ -327,6 +335,7 @@ export interface HostEventPayloads {
     receivedBytes?: number
     totalBytes?: number
     canResume?: boolean
+    /** A `DownloadInterruptReason` when `interrupted`; `dismissed` on a `cancelled` save dialog. */
     error?: string
     mimeType?: string
   }
@@ -740,7 +749,7 @@ export class AndroidPlatform implements Platform {
     private readonly bridge: Bridge,
     boot: BootInfo
   ) {
-    this.info = { os: 'android', version: boot.version }
+    this.info = { os: boot.os ?? 'android', version: boot.version }
     this.extensionsRoot = boot.extensionsRoot || null
     this.capabilities = androidCapabilities({
       sdkInt: boot.sdkInt,
@@ -838,6 +847,14 @@ export class AndroidPlatform implements Platform {
           notify: options.notify
         }),
       deletePartial: (item) => bridge.call('download.discard', describe(item)),
+      // Kotlin resolves the recorded location (a MediaStore or SAF `content:` uri, or a path).
+      exists: (item) => bridge.call<boolean>('download.exists', { savePath: item.savePath }),
+      deleteFile: async (item) => {
+        const result = await bridge.call<string>('download.deleteFile', {
+          savePath: item.savePath
+        })
+        return result === 'deleted' || result === 'missing' ? result : 'failed'
+      },
       open: (item) =>
         bridge.call('download.open', {
           id: item.id,
@@ -1043,7 +1060,7 @@ export class AndroidPlatform implements Platform {
             savePath: p.savePath || undefined,
             finalName: p.finalName || undefined,
             mimeType: p.mimeType || undefined,
-            error: p.error
+            error: p.state === 'interrupted' && p.error ? interruptReasonFrom(p.error) : undefined
           })
         return
       }
@@ -1063,7 +1080,7 @@ export class AndroidPlatform implements Platform {
           receivedBytes: p.receivedBytes,
           totalBytes: p.totalBytes,
           canResume: p.canResume,
-          error: p.error,
+          error: p.state === 'interrupted' && p.error ? interruptReasonFrom(p.error) : undefined,
           mimeType: p.mimeType || undefined
         })
         return

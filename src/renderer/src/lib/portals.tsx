@@ -96,8 +96,16 @@ function subscribeFrameHost(listener: () => void): () => void {
   return () => frameHostListeners.delete(listener)
 }
 
-/** The window chrome roots (§9.29): what goes inert while a frame dialog is open (§9.5). */
-const WINDOW_CHROME_ROOTS = '[data-surface="window"]'
+/**
+ * The window chrome roots: what goes inert while a frame dialog or a sheet is open (§9.5,
+ * §9.22). On a mouse, the window surfaces (§9.29: the toolbar, the sidebar, the bookmarks bar);
+ * on a phone, the shell's chrome under its sheets – the content column, the messages, the bar,
+ * the pill's stage, the drawer, the tabs menu – each marked `data-shell-chrome` where it is
+ * rendered (PhoneShell and the phone components), never the shell itself, which the frame
+ * dialog host and its sheets sit inside. (Not `data-window-chrome`: that is the desktop root's
+ * window-frame mode, and marking the root would make its own dialogs inert.)
+ */
+const WINDOW_CHROME_ROOTS = '[data-surface="window"], [data-shell-chrome]'
 /** Where a window root does not count as chrome to make inert: inside a host or the chrome layer. */
 const NOT_CHROME = '.zen-frame-dialogs, .zen-chrome-layer'
 
@@ -116,10 +124,13 @@ function markWindowChromeInert(): void {
 /**
  * Make the window chrome inert (§9.5: while a dialog is open the sidebar, toolbar, pill and
  * bookmarks bar stay undimmed and inert – no press, hover, focus or shortcut button reaches
- * them) until the returned release runs. Holds nest: the chrome comes back when the last one is
- * released. The roots are the `data-surface="window"` elements outside the dialog hosts and the
- * chrome layer, including any mounted while the hold lasts (a compact-mode sidebar revealed
- * under a prompt); an element that was inert already is left to whoever made it so.
+ * them; §9.22: nothing focusable is left behind a sheet's scrim) until the returned release
+ * runs. Holds nest: the chrome comes back when the last one is released. The roots are the
+ * `WINDOW_CHROME_ROOTS` outside the dialog hosts and the chrome layer, including any mounted
+ * while the hold lasts (a compact-mode sidebar revealed under a prompt); an element that was
+ * inert already is left to whoever made it so. The frame dialog host holds while it has a
+ * dialog, and every `BottomSheet` holds while it is up, so a sheet on the phone shell and one
+ * inside the host are one mechanism.
  */
 export function holdChromeInert(): () => void {
   if (++inertHolds === 1) {
@@ -384,6 +395,15 @@ export type PopoverBox =
 /** Which of the anchor's edges a popover's own edge lines up with (§9.20's horizontal order). */
 export type PopoverAlignment = 'start' | 'end'
 
+export interface PlacePopoverOptions {
+  /**
+   * Whether the 60%-of-window height cap applies (default true). `false` only for the surface
+   * §9.20 exempts by name: an extension's manifest popup at its requested size, capped by the
+   * window minus 16 alone.
+   */
+  capHeight?: boolean
+}
+
 const extent = (width: PopoverExtent): number =>
   typeof width === 'number' ? width : width.measured
 
@@ -402,8 +422,8 @@ const extent = (width: PopoverExtent): number =>
  *
  * Vertically, the same order: below the bar, top edge flush with its bottom (gap 0), as tall as
  * `height` – the popover's own height when it is known (a menu's rows, a manifest popup's
- * document), capped only by the window minus 16 – or, with no `height`, up to 60% of the window
- * (a chassis popover's body scrolls under its title) and never more than the window minus 16.
+ * document) – or, with no `height`, as tall as its content; either way up to 60% of the window
+ * (the body scrolls under its sticky title) and never more than the window minus 16.
  * When that would cross the bottom margin it flips above the bar (bottom edge flush with the
  * bar's top) when there is more room above than below, as Firefox flips panels near the bottom;
  * otherwise it stays below and shrinks to the room left – but never under `POPOVER_HEIGHT_FLOOR`:
@@ -427,7 +447,8 @@ export function placePopover(
   viewport: Size,
   width: PopoverExtent,
   height?: number,
-  preferredAlignment?: PopoverAlignment
+  preferredAlignment?: PopoverAlignment,
+  options: PlacePopoverOptions = {}
 ): PopoverBox & { alignment: PopoverAlignment } {
   // (4) A window narrower than the popover plus the margins: the popover gives, centred.
   const w = Math.max(0, Math.min(extent(width), viewport.width - 2 * POPOVER_MARGIN))
@@ -450,8 +471,12 @@ export function placePopover(
   // the window's edge gets the nearest box there is.
   else left = Math.min(Math.max(minLeft, at[preferred]), maxLeft)
 
+  // The 60% cap holds for every chassis popover, an explicit height included: a long menu or a
+  // known-height panel shrinks to it and scrolls under its sticky title (§9.20). Only a surface
+  // §9.20 exempts by name – an extension's manifest popup, its own document – opts out with
+  // `capHeight: false` and is held by the window minus 16 alone.
   const edge = Math.max(0, viewport.height - 2 * POPOVER_MARGIN)
-  const cap = height === undefined ? Math.min(viewport.height * 0.6, edge) : edge
+  const cap = options.capHeight === false ? edge : Math.min(viewport.height * 0.6, edge)
   const wanted = Math.max(0, Math.min(height ?? cap, cap))
   const below = viewport.height - (bar.y + bar.height) - POPOVER_MARGIN
   const above = bar.y - POPOVER_MARGIN

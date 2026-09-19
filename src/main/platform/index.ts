@@ -422,6 +422,9 @@ export class ElectronPlatform implements Platform {
     extensionService.onChange((event) => extensionApi.registryChanged(event))
     this.requestBlocking = new ElectronBlocking(browser, this.views, this.profileDir)
     this.requestBlocking.start()
+    // How a download's request ends (a refusing status, a `net::` error) names the reason an
+    // interrupted row shows; Electron's download item alone only says "interrupted".
+    this.downloads.observeRequests(this.requestBlocking)
     // Extensions' chrome.webRequest listeners run over the same hook, after the rule engine;
     // so do the request-side effects of chrome.privacy (pings, Referer, DNT).
     extensionApi.webRequest.attach(this.requestBlocking)
@@ -469,7 +472,7 @@ export class ElectronPlatform implements Platform {
       if (this.sessions.isPersistent(containerId)) {
         webstore.attach(ses)
         extensionApi.attachSession(ses, containerId)
-        void (browser.extensions as ExtensionService).attachSession()
+        void (browser.extensions as ExtensionService).attachSession(ses)
       }
     })
     this.sessions.get(DEFAULT_CONTAINER_ID)

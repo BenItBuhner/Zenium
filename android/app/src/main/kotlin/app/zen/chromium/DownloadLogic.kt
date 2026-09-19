@@ -41,7 +41,7 @@ object DownloadLogic {
         object Restart : Continuation()
         /** 416 whose `Content-Range` total (`bytes star/N`) matches what is on disk: nothing left to fetch. */
         object AlreadyComplete : Continuation()
-        data class Fail(val reason: String) : Continuation()
+        data class Fail(val reason: InterruptReason) : Continuation()
     }
 
     /**
@@ -55,7 +55,7 @@ object DownloadLogic {
         status == 206 -> {
             val range = parseContentRange(contentRange)
             when {
-                range == null -> Continuation.Fail("server-bad-content")
+                range == null -> Continuation.Fail(InterruptReason.SERVER_BAD_CONTENT)
                 range.start != offset -> Continuation.Restart
                 knownTotal > 0 && range.total > 0 && range.total != knownTotal -> Continuation.Restart
                 else -> Continuation.Append
@@ -98,8 +98,8 @@ object DownloadLogic {
      * resumable transfer, a bounded number of times in a row, and never over a user's pause or
      * cancel. Anything else surfaces as interrupted.
      */
-    fun shouldAutoResume(reason: String, resumable: Boolean, attemptsSoFar: Int, userStopped: Boolean): Boolean =
-        resumable && !userStopped && reason.startsWith("network-") && attemptsSoFar < MAX_AUTO_RESUMES
+    fun shouldAutoResume(reason: InterruptReason, resumable: Boolean, attemptsSoFar: Int, userStopped: Boolean): Boolean =
+        resumable && !userStopped && reason.isNetwork && attemptsSoFar < MAX_AUTO_RESUMES
 
     /** Back-off before automatic retry number [attempt] (1-based): 1 s, 2 s, 4 s, then 8 s. */
     fun autoResumeDelayMs(attempt: Int): Long = 1000L shl (attempt - 1).coerceIn(0, 3)
@@ -305,27 +305,116 @@ object DownloadLogic {
         return out.toByteArray()
     }
 
-    // --- failures --------------------------------------------------------------------------------
+    // --- the file behind a savePath --------------------------------------------------------------
 
-    /** Chromium's interrupt reasons, in the short form the core and the panel understand. */
-    fun serverReason(status: Int): String = when (status) {
-        401 -> "server-unauthorized"
-        403 -> "server-forbidden"
-        404, 410 -> "server-bad-content"
-        416 -> "server-no-range"
-        in 500..599 -> "server-failed"
-        else -> "server-failed"
+    /** Which store a persisted `savePath` names; `DownloadSink.reopen` builds the matching sink. */
+    enum class SinkKind { MEDIA_STORE, DOCUMENT, FILE, NONE }
+
+    /**
+     * `content://media/…` is a MediaStore.Downloads row (this app's own on API 29+; below that the
+     * public directory was used, so such a uri can only be a document another app handed over),
+     * any other `content:` uri a SAF document, anything else a path on disk.
+     */
+    fun sinkKind(savePath: String, sdk: Int): SinkKind = when {
+        savePath.isBlank() -> SinkKind.NONE
+        savePath.startsWith("content://media/") && sdk >= 29 -> SinkKind.MEDIA_STORE
+        savePath.startsWith("content:") -> SinkKind.DOCUMENT
+        else -> SinkKind.FILE
     }
 
-    fun failureReason(e: Throwable): String = when {
-        e is UnknownHostException -> "network-disconnected"
-        e is SocketTimeoutException -> "network-timeout"
-        e is ConnectException -> "network-failed"
-        e is IOException && (e.message?.contains("ENOSPC") == true || e.message?.contains("No space", ignoreCase = true) == true) -> "file-no-space"
-        e is IOException && (e.message?.contains("EACCES") == true || e.message?.contains("Permission denied", ignoreCase = true) == true) -> "file-access-denied"
-        e is java.io.FileNotFoundException -> "file-failed"
-        e is IOException -> "network-failed"
-        else -> "file-failed"
+    /**
+     * What `download.deleteFile` answers, from whether the file was there before the attempt and
+     * after it: `missing` when there was nothing to delete (the row is marked all the same),
+     * `failed` when it is still there, `deleted` otherwise. The core's `DownloadDeleteFileResult`.
+     */
+    fun deleteResult(existedBefore: Boolean, existsAfter: Boolean): String = when {
+        !existedBefore -> "missing"
+        existsAfter -> "failed"
+        else -> "deleted"
+    }
+
+    // --- failures --------------------------------------------------------------------------------
+
+    /**
+     * Why a download stopped, in the core's words (`DownloadInterruptReason` in src/shared/types.ts,
+     * Chromium's `download_interrupt_reasons.h` in kebab case). `wire` is what crosses the bridge
+     * in `download.progress` / `download.done`; `message` is Chrome's download-bubble wording, kept
+     * here so the notification and the core's row say the same thing.
+     */
+    enum class InterruptReason(val wire: String, val message: String) {
+        NETWORK_FAILED("network-failed", "Check internet connection"),
+        NETWORK_TIMEOUT("network-timeout", "Check internet connection"),
+        NETWORK_DISCONNECTED("network-disconnected", "Check internet connection"),
+        NETWORK_SERVER_DOWN("network-server-down", "Site wasn’t available"),
+        SERVER_FAILED("server-failed", "Site wasn’t available"),
+        SERVER_NO_RANGE("server-no-range", "Something went wrong"),
+        SERVER_BAD_CONTENT("server-bad-content", "File wasn’t available on site"),
+        SERVER_UNAUTHORIZED("server-unauthorized", "File wasn’t available on site"),
+        SERVER_FORBIDDEN("server-forbidden", "File wasn’t available on site"),
+        SERVER_UNREACHABLE("server-unreachable", "Site wasn’t available"),
+        FILE_FAILED("file-failed", "Something went wrong"),
+        FILE_ACCESS_DENIED("file-access-denied", "Needs permission to download"),
+        FILE_NO_SPACE("file-no-space", "Out of storage space"),
+        FILE_NAME_TOO_LONG("file-name-too-long", "File name or location is too long"),
+        FILE_TOO_LARGE("file-too-large", "File is too big for this device"),
+        FILE_VIRUS_INFECTED("file-virus-infected", "Virus detected"),
+        FILE_BLOCKED("file-blocked", "Blocked by your organization"),
+        FILE_SECURITY_CHECK_FAILED("file-security-check-failed", "Virus scan failed"),
+        FILE_SAME_AS_SOURCE("file-same-as-source", "Already downloaded"),
+        USER_CANCELED("user-canceled", "Cancelled"),
+        USER_SHUTDOWN("user-shutdown", "Couldn’t finish download"),
+        CRASH("crash", "Couldn’t finish download");
+
+        /** Network-class failures are the ones the downloader retries on its own (`shouldAutoResume`). */
+        val isNetwork: Boolean get() = wire.startsWith("network-")
+
+        companion object {
+            /** The member behind a wire name; null for anything not in the set. */
+            fun fromWire(wire: String?): InterruptReason? = wire?.trim()?.let { w -> entries.firstOrNull { it.wire == w } }
+        }
+    }
+
+    /**
+     * What an HTTP status says about a download, the way Chromium's download core reads one
+     * (`HandleSuccessfulServerResponse`): 401/407 want credentials, 403 refuses, 404 has nothing,
+     * 416 cannot resume there, a 204/205 has no body to save, everything else 4xx/5xx failed.
+     */
+    fun serverReason(status: Int): InterruptReason = when (status) {
+        204, 205, 404 -> InterruptReason.SERVER_BAD_CONTENT
+        401, 407 -> InterruptReason.SERVER_UNAUTHORIZED
+        403 -> InterruptReason.SERVER_FORBIDDEN
+        416 -> InterruptReason.SERVER_NO_RANGE
+        else -> InterruptReason.SERVER_FAILED
+    }
+
+    /**
+     * The reason behind an exception out of the transfer, read the way Chromium's download core
+     * reads the `net::` error the same condition raises (`ConvertNetErrorToInterruptReason`): a
+     * timeout is `NETWORK_TIMEOUT`, the network being down (ENETDOWN, `ERR_INTERNET_DISCONNECTED`)
+     * `NETWORK_DISCONNECTED`, a certificate or TLS failure the site not being available, and a
+     * refused or reset connection, an unresolved name or an unreachable route the plain
+     * `NETWORK_FAILED` Chromium leaves them at. The file side is errno text on the IOExceptions
+     * the sinks throw (ENOSPC, EACCES, ENAMETOOLONG, EFBIG) and `SecurityException` for a
+     * document whose permission is gone; anything else IO is the network giving up, anything else
+     * at all the file side.
+     */
+    fun failureReason(e: Throwable): InterruptReason {
+        val text = e.message.orEmpty()
+        fun mentions(vararg needles: String) = needles.any { text.contains(it, ignoreCase = true) }
+        return when {
+            e is SocketTimeoutException -> InterruptReason.NETWORK_TIMEOUT
+            e is UnknownHostException || e is ConnectException || e is java.net.NoRouteToHostException -> InterruptReason.NETWORK_FAILED
+            e is javax.net.ssl.SSLException -> InterruptReason.SERVER_FAILED
+            e is SecurityException -> InterruptReason.FILE_ACCESS_DENIED
+            e is IOException && mentions("ENOSPC", "No space") -> InterruptReason.FILE_NO_SPACE
+            e is IOException && mentions("EACCES", "EPERM", "EROFS", "Permission denied", "Read-only") -> InterruptReason.FILE_ACCESS_DENIED
+            e is IOException && mentions("ENAMETOOLONG", "name too long") -> InterruptReason.FILE_NAME_TOO_LONG
+            e is IOException && mentions("EFBIG", "File too large") -> InterruptReason.FILE_TOO_LARGE
+            e is IOException && mentions("ENETDOWN", "Network is down") -> InterruptReason.NETWORK_DISCONNECTED
+            e is java.io.FileNotFoundException -> InterruptReason.FILE_FAILED
+            e is IOException -> InterruptReason.NETWORK_FAILED
+            else -> InterruptReason.FILE_FAILED
+        }
     }
 
     private val CONTENT_RANGE = Regex("bytes\\s+(\\*|\\d+-\\d+)/(\\*|\\d+)", RegexOption.IGNORE_CASE)

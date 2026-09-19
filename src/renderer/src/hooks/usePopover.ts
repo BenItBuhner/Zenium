@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
-import { focusableIn } from '@renderer/lib/popover'
+import { focusableIn, wrapTab } from '@renderer/lib/popover'
 import { useEscape } from './useEscape'
 
 type Initial = 'first' | 'container' | ((root: HTMLElement) => HTMLElement | null)
@@ -66,21 +66,7 @@ export function usePopover(
     if (!active) return
     const onKey = (e: KeyboardEvent): void => {
       const root = ref.current
-      if (!root || e.key !== 'Tab') return
-      const items = focusableIn(root)
-      if (items.length === 0) {
-        e.preventDefault()
-        return
-      }
-      const current = document.activeElement
-      const index = current instanceof HTMLElement ? items.indexOf(current) : -1
-      let next: HTMLElement | undefined
-      if (index === -1 || !root.contains(current)) next = e.shiftKey ? items.at(-1) : items[0]
-      else if (e.shiftKey && index === 0) next = items.at(-1)
-      else if (!e.shiftKey && index === items.length - 1) next = items[0]
-      if (!next) return
-      e.preventDefault()
-      next.focus()
+      if (root) wrapTab(root, e)
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)

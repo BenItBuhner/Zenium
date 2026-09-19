@@ -127,7 +127,9 @@ export class NoExtensions implements ExtensionHost {
     return null
   }
   setAllowPrivate(): void {}
+  setAllowUserScripts(): void {}
   async reload(): Promise<void> {}
+  clearErrors(): void {}
   async checkForUpdates(): Promise<void> {}
   async update(): Promise<void> {}
   updateCheck(): ExtensionUpdateCheck {

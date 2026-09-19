@@ -1,8 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BACK_PEEK, SHEET_CLOSED, SheetMotion, type SheetState } from '../motion/sheet'
 import {
+  SHEET_FIELD_MARGIN,
+  SHEET_MIN_DETENT_GAP,
   SHEET_OVERDRAG,
+  SHEET_PEEK_FRACTION,
   computeDetents,
+  detentForField,
+  fieldOverflow,
   settleDetent,
   sheetBackPosition,
   sheetDragPosition,
@@ -301,6 +306,79 @@ describe('computeDetents', () => {
   it('never asks for more than the layer minus the inset and margin', () => {
     expect(computeDetents(5000, layer, insetTop).expanded).toBe(sheetMaxHeight(layer, insetTop))
     expect(sheetMaxHeight(100, 200)).toBe(0)
+  })
+})
+
+// The keyboard: 340 CSS px of it, reported as the bottom inset, over a 24 px gesture bar.
+const keyboard = 340
+const bar = 24
+
+describe('computeDetents above the bottom inset', () => {
+  it('the peek shows its share of the room above the inset, and pads for the inset underneath', () => {
+    const withBar = computeDetents(1000, layer, insetTop, bar)
+    expect(withBar.collapsed).toBe(bar + Math.round((layer - bar) * SHEET_PEEK_FRACTION))
+    const withKeys = computeDetents(1000, layer, insetTop, keyboard)
+    expect(withKeys.collapsed).toBe(keyboard + Math.round((layer - keyboard) * SHEET_PEEK_FRACTION))
+    // The room above the keys is the same share of what is left, not what is left of the old peek.
+    expect(withKeys.collapsed - keyboard).toBe(Math.round((layer - keyboard) * SHEET_PEEK_FRACTION))
+    expect(withKeys.collapsed - keyboard).toBeGreaterThan(withBar.collapsed - keyboard)
+    // Without an inset nothing changes.
+    expect(computeDetents(1000, layer, insetTop, 0)).toEqual(two)
+    expect(computeDetents(1000, layer, insetTop)).toEqual(two)
+  })
+
+  it('the expanded detent is the content or the top margin, whatever the inset', () => {
+    expect(computeDetents(1000, layer, insetTop, keyboard).expanded).toBe(two.expanded)
+    expect(computeDetents(600, layer, insetTop, keyboard).expanded).toBe(600)
+  })
+
+  it('a form the keyboard leaves only a little taller than the peek stands at one detent, all of it in view', () => {
+    const peek = keyboard + Math.round((layer - keyboard) * SHEET_PEEK_FRACTION)
+    const one = computeDetents(peek + SHEET_MIN_DETENT_GAP - 1, layer, insetTop, keyboard)
+    expect(one.collapsed).toBe(one.expanded)
+    expect(one.expanded).toBe(peek + SHEET_MIN_DETENT_GAP - 1)
+    // Content taller than that keeps its two stops.
+    const still = computeDetents(peek + SHEET_MIN_DETENT_GAP, layer, insetTop, keyboard)
+    expect(still.collapsed).toBe(peek)
+    expect(still.expanded).toBe(peek + SHEET_MIN_DETENT_GAP)
+  })
+
+  it('an inset taller than the layer is clamped, never a negative room', () => {
+    const d = computeDetents(1000, layer, insetTop, layer + 100)
+    expect(d.collapsed).toBe(d.expanded)
+    expect(d.expanded).toBe(two.expanded)
+  })
+})
+
+describe('a focused field above the keyboard', () => {
+  const detents = computeDetents(1000, layer, insetTop, keyboard)
+  const room = (detent: number): number => detent - keyboard - SHEET_FIELD_MARGIN
+
+  it('fieldOverflow is how far the field reaches under the keys at a detent, 0 when it is in view', () => {
+    expect(fieldOverflow(room(detents.collapsed), detents.collapsed, keyboard)).toBe(0)
+    expect(fieldOverflow(room(detents.collapsed) + 10, detents.collapsed, keyboard)).toBe(10)
+    expect(fieldOverflow(room(detents.collapsed) + 10, detents.expanded, keyboard)).toBe(0)
+    expect(fieldOverflow(room(detents.expanded) + 32, detents.expanded, keyboard)).toBe(32)
+    // No keyboard: the whole detent is room, less the margin.
+    expect(fieldOverflow(detents.collapsed - SHEET_FIELD_MARGIN, detents.collapsed, 0)).toBe(0)
+  })
+
+  it('the sheet expands for a field under the keys at its peek, and stays for one in view', () => {
+    const under = room(detents.collapsed) + 1
+    expect(detentForField(under, detents, keyboard, 'collapsed')).toBe('expanded')
+    expect(detentForField(room(detents.collapsed), detents, keyboard, 'collapsed')).toBe(
+      'collapsed'
+    )
+    // Already expanded: nothing taller to go to; the body scrolls the field into view instead.
+    expect(detentForField(room(detents.expanded) + 40, detents, keyboard, 'expanded')).toBe(
+      'expanded'
+    )
+  })
+
+  it('a sheet with one detent has nowhere to expand to', () => {
+    const one = computeDetents(600, layer, insetTop, keyboard)
+    expect(one.collapsed).toBe(one.expanded)
+    expect(detentForField(room(one.collapsed) + 50, one, keyboard, 'collapsed')).toBe('collapsed')
   })
 })
 

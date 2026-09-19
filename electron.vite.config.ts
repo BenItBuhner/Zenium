@@ -1,5 +1,6 @@
 import { resolve } from 'path'
 import { defineConfig } from 'electron-vite'
+import { singleFilePreloads } from './scripts/single-file-preloads'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
@@ -22,6 +23,7 @@ export default defineConfig({
         '@shared': resolve('src/shared')
       }
     },
+    plugins: [singleFilePreloads()],
     build: {
       rollupOptions: {
         input: {

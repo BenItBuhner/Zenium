@@ -1685,8 +1685,10 @@ export class Menus {
    * `autoOpenTypes`), Show in folder, Copy download link, then the transfer's own verb – Pause,
    * Resume or Cancel while it runs, Retry once it failed or was cancelled – and Remove from list
    * for anything settled. A flagged file waiting on Keep / Delete offers only its link and its
-   * removal (Delete on the row is what takes the file away). Deleting a finished file is not an
-   * engine command yet (`download.deleteFile`), so the menu has no such item.
+   * removal (Delete on the row is what takes the file away). A finished file the engine found
+   * gone from disk (`fileMissing`) has nothing to open or show and offers Retry instead. The
+   * engine's `download.deleteFile` exists; whether the menu grows a Delete file item is the
+   * desktop UI's call.
    */
   showDownloadContextMenu(
     id: string,
@@ -1697,7 +1699,7 @@ export class Menus {
     const item = downloads.item(id)
     if (!item) return
     const inFlight = isInFlight(item.state)
-    const onDisk = item.state === 'completed' && !isQuarantined(item)
+    const onDisk = item.state === 'completed' && !isQuarantined(item) && !item.fileMissing
     const resumable = item.state === 'paused' || (item.state === 'interrupted' && item.canResume)
     const retryable = canRetry(item)
     const name = item.finalName || item.filename
@@ -1939,10 +1941,13 @@ export class Menus {
           label: 'Change Theme…',
           click: () => this.browser.emit('theme.open', { spaceId: win.activeSpaceId }, win)
         }),
+        // A host with page controls (the phone) gets Chrome's "Zoom…" sheet in place of the
+        // stepping submenu; the sheet docks under the live page and carries the percentage.
+        ...when(caps.pageControls, ...this.zoomSheetItem(active, win)),
         // Chrome's zoom row (- / percentage / +): a native menu has no inline controls, so the
         // row is a submenu whose label carries the live percentage and whose Reset says where
         // it goes; the Fullscreen item below is the row's fullscreen glyph.
-        {
+        ...when(!caps.pageControls, {
           label: active ? `Zoom (${formatZoom(active.zoom)})` : 'Zoom',
           submenu: [
             {
@@ -1964,7 +1969,7 @@ export class Menus {
               click: () => active && tabs.resetZoom(active.id)
             }
           ]
-        },
+        }),
         ...desktop({
           label: 'Fullscreen',
           type: 'checkbox',
@@ -2095,6 +2100,22 @@ export class Menus {
       })
     }
     return items
+  }
+
+  /**
+   * Chrome's "Zoom…" on a host with page controls: the zoom sheet docked under the live page,
+   * where the desktop has its stepping submenu. It acts on the active tab's site, so it waits for
+   * a web page.
+   */
+  private zoomSheetItem(active: Tab | undefined, win: ZenWindow): Template {
+    const web = Boolean(active) && siteKey(active!.url) !== null
+    return [
+      {
+        label: 'Zoom…',
+        enabled: web,
+        click: () => active && this.browser.emit('zoom.open', { tabId: active.id }, win)
+      }
+    ]
   }
 
   describe(url: string): string {

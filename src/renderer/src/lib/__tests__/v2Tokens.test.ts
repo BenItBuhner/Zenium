@@ -19,14 +19,20 @@ const css = readFileSync(fileURLToPath(new URL('../../assets/main.css', import.m
 const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // The frame dialog host's scrim (lib/portals.tsx), which dims only the content frame (§9.5).
   ['.zen-frame-dialogs {', '.zen-chrome-layer {'],
+  // Site information (components/siteinfo/SiteInfoSheet.tsx, #39): the sheet's row values, glyphs,
+  // headings, empty state and level track after the chassis rows, then the desktop popover's own
+  // rows, header and footer. Cut out before the chassis, whose span encloses them.
+  ['.zen-sheet-item-value {', '/*\n   * Bookmarks, built to the v2 draft'],
   // The phone sheet chassis (components/sheet/BottomSheet.tsx): surface, header, grabber, rows
   // and separators shared by every phone sheet (v2 §6, §9.16, §9.25) – the shell pass.
   ['.zen-sheet {', '/*\n   * Bookmarks, built to the v2 draft'],
   // The pull-to-refresh disc (components/content/PullIndicator.tsx).
   ['.zen-ptr-disc {', '.zen-space-strip {'],
+  // The v2 badge (§9.19): site information's Private badge (components/siteinfo/SiteInfoSheet.tsx).
+  ['.zen-v2-badge {', '/* Safe-area insets pushed by mobile hosts'],
   // The v2 button, shared by every v2 surface (today the Settings > Look and Feel > Navigation bar
   // button, components/overlays/SettingsPanel.tsx); its layering is pinned by the tests below.
-  ['.zen-v2-button {', '/* Safe-area insets pushed by mobile hosts'],
+  ['.zen-v2-button {', '/*\n * The v2 badge (§9.19)'],
   // The Tabs button's hold menu (components/phone/TabsQuickMenu.tsx).
   ['.zen-quick-menu {', '/* The chassis sheet is the v2 surface (§6)'],
   // The navigation bar's editor (components/phone/BarEditorSheet.tsx, BarPreview.tsx).
@@ -45,6 +51,10 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   ['.zen-bm-bar {', '/*\n * Fading scroll edges'],
   // Find in page, zoom and fullscreen: the docked find bar (components/content/FindBar.tsx).
   ['.zen-find-bar {', '/*\n * Settings → Default Browser and the'],
+  // The phone page zoom sheet, docked under the live page, and its own instance of the stepper
+  // (components/content/ZoomSheet.tsx, components/ZoomStepper.tsx). The last block before the
+  // reduced-motion rules, so it is cut out before the Default Browser range that ends there.
+  ['.zen-zoom-sheet {', '\n@media (prefers-reduced-motion: reduce) {'],
   // Settings → Default Browser and the default-browser strip (components/overlays/
   // DefaultBrowserSection.tsx, content/DefaultBrowserBanner.tsx): the flat card and its inks.
   ['.zen-default-browser-card {', '\n@media (prefers-reduced-motion: reduce) {'],
@@ -74,7 +84,9 @@ const V2_FILES: ReadonlyArray<string> = [
   // The external-protocol sheet on the v2 sheet chassis (#140): its deemphasised host line.
   'components/protocol/ExternalProtocolSheet.tsx',
   // The sidebar's tab count badge, drawn in its surface's family through the §9.29 control roles.
-  'components/sidebar/SpacePanel.tsx'
+  'components/sidebar/SpacePanel.tsx',
+  // Site information (#39): the connection state's ok / warn / danger ink on its glyphs and values.
+  'components/siteinfo/SiteInfoSheet.tsx'
 ]
 
 /** The text of the first `selector {` block found after `from`. */
@@ -129,7 +141,8 @@ const SURFACE = [
   'urlpill',
   'nav-active',
   'window-fill',
-  'window-fill-hover'
+  'window-fill-hover',
+  'selected'
 ].map((n) => `--v2-${n}`)
 
 const SCALE = [
@@ -146,6 +159,8 @@ const SCALE = [
   'font-heading',
   'font-body',
   'font-small',
+  'line-title',
+  'line-heading',
   'line-body',
   'line-small',
   'weight-body',
@@ -216,12 +231,13 @@ describe('design language v2 tokens', () => {
     }
     expect(outside.match(/var\(--v2-/g) ?? []).toHaveLength(0)
     const inside = css.slice(lightBlockStart, blockEnd)
-    // Inside: the ring and selection derive from the accent, the shared focus-ring rule reads the
-    // ring, the chassis scrim alias `--zen-scrim` reads the v2 scrim (§9.28), and the two §9.29
-    // family blocks map the tokens onto the control roles.
+    // Inside: the ring, selection and the selected-row fill (light and dark) derive from the
+    // accent, the shared focus-ring rule reads the ring, the chassis scrim alias `--zen-scrim`
+    // reads the v2 scrim (§9.28), and the two §9.29 family blocks map the tokens onto the control
+    // roles.
     const familyReads = FAMILIES.map((f) => block(f).match(/var\(--v2-/g)?.length ?? 0)
     expect((inside.match(/var\(--v2-/g) ?? []).length).toBe(
-      4 + familyReads.reduce((a, b) => a + b, 0)
+      6 + familyReads.reduce((a, b) => a + b, 0)
     )
     expect(inside).toMatch(/--zen-scrim: var\(--v2-scrim\)/)
     expect(inside).toMatch(/\[class\^='zen-v2-'\]:focus-visible/)
