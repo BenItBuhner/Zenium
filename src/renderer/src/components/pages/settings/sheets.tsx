@@ -165,8 +165,8 @@ function HostedSheet({
   const own = useRef<BottomSheetHandle>(null)
   const sheet = sheetRef ?? own
   const titleId = useId()
-  const dismiss = (): void => sheet.current?.dismiss()
-  useFrameDialog({ onScrimPress: dismiss, ownScrim: true })
+  const dismiss = (after?: () => void): void => sheet.current?.dismiss(after)
+  useFrameDialog({ onScrimPress: () => dismiss(), ownScrim: true })
   useBackSurface({
     name,
     onProgress: (progress) => sheet.current?.backProgress(progress),

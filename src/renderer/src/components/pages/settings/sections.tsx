@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Check, Puzzle } from 'lucide-react'
+import { Check, CreditCard, Fingerprint, MapPin, Puzzle } from 'lucide-react'
 import type { InternalPageSection } from '@shared/internalPages'
 import type {
   ColorScheme,
@@ -14,6 +14,7 @@ import type {
   NewTabPreset,
   NewTabSettings,
   NewTabShortcutsMode,
+  PasswordsStatus,
   PermissionRule,
   PhoneBarPosition,
   PinnedCloseBehavior,
@@ -44,6 +45,19 @@ import { inputToUrl } from '@shared/url'
 import { languageName } from '@shared/languageNames'
 import type { TranslatePreferences } from '@shared/translate'
 import { run } from '@renderer/lib/api'
+import {
+  CLIPBOARD_CLEAR_OPTIONS,
+  NETWORK_NAMES,
+  addressRowSubtitle,
+  addressTitle,
+  androidProviderHint,
+  cardSubtitle,
+  cardTitle,
+  openAutofillEdit,
+  passkeySubtitle,
+  vaultGateCopy
+} from '@renderer/lib/autofill'
+import type { AutofillSettingsData, VaultGate } from '@renderer/lib/autofillSettings'
 import { downloadFolderLabel } from '@renderer/lib/downloadText'
 import { downloadsEngine } from '@renderer/lib/downloadsEngine'
 import {
@@ -56,6 +70,7 @@ import { describePermissionRule, siteLabel } from '@renderer/lib/security'
 import { openOverlay } from '@renderer/lib/ui'
 import { languageOptions, pairKey, pairLabel, warmRegistryModels } from '@renderer/lib/translate'
 import { formatBytes, relativeTime } from '@renderer/lib/utils'
+import { VaultPassphraseForm } from '../../autofill/PassphraseForm'
 import { ContainerIcon } from '../../ContainerIcon'
 import {
   clearDataGroups,
@@ -121,6 +136,12 @@ export interface SectionContext {
   openBarEditor(): void
   /** Leave for `tabId` and open the Boost editor on it (Boosts › Boost the site you came from). */
   boost(tabId: string): void
+  /**
+   * What Settings › Autofill reads of the vault – its lists while unlocked, its gate while
+   * locked – and does to it (`useAutofillSettings`); `idleAutofillSettings()` where there is no
+   * vault to read (a test, the landing's search).
+   */
+  autofill: AutofillSettingsData
 }
 
 export function buildSection(section: InternalPageSection, ctx: SectionContext): SectionModel {
@@ -146,6 +167,7 @@ const BUILDERS: Readonly<Record<string, Builder>> = {
   downloads: downloadsSection,
   privacy: privacySection,
   search: searchSection,
+  autofill: autofillSection,
   languages: languagesSection,
   spaces: spaceRoutingSection,
   containers: containersSection,
@@ -1090,6 +1112,325 @@ function searchSection({ state, set }: SectionContext): RowGroup[] {
       ]
     }
   ]
+}
+
+// ---------------------------------------------------------------------------
+// Autofill (services-password-fill, #145)
+// ---------------------------------------------------------------------------
+
+/**
+ * Settings > Autofill on the phone: the rows of the desktop `AutofillSection` in the page's
+ * form – the password switches and the clipboard choice, then, while the vault is locked, its
+ * gate (§9.30: Unlock as an action row that is busy while the device checks, the passphrase form
+ * at the gutter once the vault asks for one), else the vault's addresses, payment methods and
+ * passkeys as item rows with their sheets and the editors behind them. The lists and the gate
+ * come in through `ctx.autofill` (`useAutofillSettings`), fetched while this section is shown.
+ */
+function autofillSection({ state, set, autofill }: SectionContext): RowGroup[] {
+  const s = state.settings.passwords
+  const android = state.platform === 'android'
+  const system = state.autofill.systemAutofill
+  const zenium = s.androidProvider === 'zenium'
+  const groups: RowGroup[] = [
+    {
+      id: 'autofill-passwords',
+      heading: 'Passwords',
+      rows: [
+        {
+          kind: 'switch',
+          id: 'autofill-offer-to-save',
+          label: 'Offer to save passwords',
+          description: 'Ask to save or update a login after you sign in on a site.',
+          keywords: ['save passwords', 'login', 'update'],
+          checked: s.offerToSave,
+          onChange: (v) => set({ passwords: { ...s, offerToSave: v } })
+        },
+        {
+          kind: 'switch',
+          id: 'autofill-auto-sign-in',
+          label: 'Sign in automatically',
+          description:
+            'Fill the one saved login of a site as soon as its form is focused, without the picker.',
+          keywords: ['auto sign-in', 'fill'],
+          checked: s.autoSignIn,
+          onChange: (v) => set({ passwords: { ...s, autoSignIn: v } })
+        },
+        // The Android host alone has a system autofill service that could own the pages instead.
+        ...(android
+          ? [
+              {
+                kind: 'switch',
+                id: 'autofill-android-provider',
+                label: 'Use Zenium to fill passwords in pages',
+                description: androidProviderHint(system, zenium),
+                keywords: ['autofill service', 'provider', 'system', 'google'],
+                checked: !system?.enabled || zenium,
+                disabled: !system?.enabled,
+                onChange: (v) =>
+                  set({ passwords: { ...s, androidProvider: v ? 'zenium' : 'system' } })
+              } satisfies SettingsRow
+            ]
+          : []),
+        choice({
+          id: 'autofill-clipboard-clear',
+          label: 'Clear copied passwords',
+          keywords: ['clipboard', 'card number', 'copy'],
+          value: String(s.clipboardClearSeconds),
+          options: CLIPBOARD_CLEAR_OPTIONS,
+          sheetDescription:
+            'Remove a copied password or card number from the clipboard again after this long.',
+          onChange: (v) => set({ passwords: { ...s, clipboardClearSeconds: Number(v) } })
+        })
+      ]
+    }
+  ]
+  if (state.passwords.locked) return [...groups, vaultGateGroup(state.passwords, autofill.gate)]
+  return [
+    ...groups,
+    ...addressGroups(state, set, autofill),
+    ...cardGroups(state, set, autofill),
+    passkeysGroup(autofill)
+  ]
+}
+
+/**
+ * The vault gate (§9.27 on desktop; here the group's heading names it, §10.3): idle, one Unlock
+ * action row – busy while the device checks (§9.30), not pressable while the vault is unreadable
+ * (`status.error`, which the description then says); once the vault asks for its passphrase, or
+ * for a new one where the device cannot verify the user, the shared passphrase form at the
+ * gutter (`VaultPassphraseForm`), whose Cancel returns to the idle gate.
+ */
+function vaultGateGroup(status: PasswordsStatus, gate: VaultGate): RowGroup {
+  const { title, description } = vaultGateCopy(gate.step, status, gate.error)
+  const keywords = ['vault', 'locked', 'unlock', 'passphrase']
+  return {
+    id: 'autofill-vault',
+    heading: title,
+    description,
+    rows:
+      gate.step === 'idle'
+        ? [
+            {
+              kind: 'action',
+              id: 'autofill-unlock',
+              label: 'Unlock',
+              keywords,
+              busy: gate.busy,
+              disabled: status.error !== null,
+              onPress: () => gate.unlock()
+            }
+          ]
+        : [
+            {
+              kind: 'custom',
+              id: 'autofill-vault-passphrase',
+              label: title,
+              keywords,
+              render: () => <VaultPassphraseForm gate={gate} />
+            }
+          ]
+  }
+}
+
+/**
+ * A vault list as groups (§10.3): the heading with its switch, the entries as item rows under
+ * it (one 20 px glyph column, labels at 48 – §10.4) with the §9.17 empty line once the list has
+ * arrived, and the add action last; the two tails carry no heading, so the three read as one.
+ */
+function vaultListGroups(
+  id: string,
+  head: Omit<RowGroup, 'id'>,
+  entries: SettingsRow[] | null,
+  empty: string,
+  add: SettingsRow | null
+): RowGroup[] {
+  const groups: RowGroup[] = [{ id, ...head }]
+  groups.push({
+    id: `${id}-list`,
+    heading: null,
+    rows: entries ?? [],
+    empty: entries ? empty : undefined
+  })
+  if (add) groups.push({ id: `${id}-add`, heading: null, rows: [add] })
+  return groups
+}
+
+function addressGroups(
+  state: UIState,
+  set: SectionContext['set'],
+  { addresses }: AutofillSettingsData
+): RowGroup[] {
+  const a = state.settings.autofill
+  return vaultListGroups(
+    'autofill-addresses',
+    {
+      heading: 'Addresses',
+      rows: [
+        {
+          kind: 'switch',
+          id: 'autofill-save-addresses',
+          label: 'Save and fill addresses',
+          description:
+            'Offer to save addresses typed into forms, and fill them back into checkouts and sign-ups.',
+          checked: a.addresses,
+          onChange: (v) => set({ autofill: { ...a, addresses: v } })
+        }
+      ]
+    },
+    addresses?.map((address) =>
+      item(
+        `autofill-address:${address.id}`,
+        addressTitle(address),
+        addressRowSubtitle(address),
+        [
+          {
+            kind: 'action',
+            id: `autofill-address:${address.id}:edit`,
+            label: 'Edit address',
+            closesSheet: true,
+            onPress: () => openAutofillEdit({ kind: 'address', id: address.id })
+          },
+          {
+            kind: 'action',
+            id: `autofill-address:${address.id}:delete`,
+            label: 'Delete address',
+            destructive: true,
+            confirm: {
+              title: `Delete ${addressTitle(address)}?`,
+              description: 'Zenium stops filling it into forms.',
+              action: 'Delete'
+            },
+            onPress: () => run('autofill.removeAddress', { id: address.id })
+          }
+        ],
+        {
+          leading: <MapPin className="zen-settings-glyph" aria-hidden="true" />,
+          keywords: [address.organization, address.locality, address.country].filter(Boolean)
+        }
+      )
+    ) ?? null,
+    'No addresses saved yet',
+    {
+      kind: 'action',
+      id: 'autofill-add-address',
+      label: 'Add address',
+      keywords: ['new address'],
+      onPress: () => openAutofillEdit({ kind: 'address', id: null })
+    }
+  )
+}
+
+function cardGroups(
+  state: UIState,
+  set: SectionContext['set'],
+  { cards, copying, copyCard }: AutofillSettingsData
+): RowGroup[] {
+  const a = state.settings.autofill
+  return vaultListGroups(
+    'autofill-cards',
+    {
+      heading: 'Payment methods',
+      description: 'Card numbers stay in the vault; security codes are never saved.',
+      rows: [
+        {
+          kind: 'switch',
+          id: 'autofill-save-cards',
+          label: 'Save and fill payment methods',
+          description:
+            'Offer to save cards typed into checkouts, and fill them back after you verify it is you.',
+          keywords: ['credit card', 'debit card'],
+          checked: a.cards,
+          onChange: (v) => set({ autofill: { ...a, cards: v } })
+        }
+      ]
+    },
+    cards?.map((card) =>
+      item(
+        `autofill-card:${card.id}`,
+        cardTitle(card),
+        cardSubtitle(card),
+        [
+          {
+            kind: 'action',
+            id: `autofill-card:${card.id}:copy`,
+            label: 'Copy card number',
+            description: 'Unlocks with your passphrase where the vault asks for it.',
+            busy: copying === card.id,
+            onPress: () => copyCard(card)
+          },
+          {
+            kind: 'action',
+            id: `autofill-card:${card.id}:edit`,
+            label: 'Edit card',
+            closesSheet: true,
+            onPress: () => openAutofillEdit({ kind: 'card', id: card.id })
+          },
+          {
+            kind: 'action',
+            id: `autofill-card:${card.id}:delete`,
+            label: 'Delete card',
+            destructive: true,
+            confirm: {
+              title: `Delete ${cardTitle(card)}?`,
+              description: 'Zenium stops filling it into checkouts.',
+              action: 'Delete'
+            },
+            onPress: () => run('autofill.removeCard', { id: card.id })
+          }
+        ],
+        {
+          leading: <CreditCard className="zen-settings-glyph" aria-hidden="true" />,
+          keywords: [NETWORK_NAMES[card.network], card.last4, card.name].filter(Boolean)
+        }
+      )
+    ) ?? null,
+    'No cards saved yet',
+    {
+      kind: 'action',
+      id: 'autofill-add-card',
+      label: 'Add card',
+      keywords: ['new card', 'credit card', 'debit card'],
+      onPress: () => openAutofillEdit({ kind: 'card', id: null })
+    }
+  )
+}
+
+function passkeysGroup({ passkeys }: AutofillSettingsData): RowGroup {
+  return {
+    id: 'autofill-passkeys',
+    heading: 'Passkeys',
+    description:
+      "Passkeys created in Zenium. The keys themselves stay with your device's authenticator (Windows Hello, Touch ID, Google Password Manager); this is where they exist and when they were last used.",
+    rows:
+      passkeys?.map((passkey) =>
+        item(
+          `autofill-passkey:${passkey.id}`,
+          passkey.userDisplayName || passkey.userName,
+          passkeySubtitle(passkey),
+          [
+            {
+              kind: 'action',
+              id: `autofill-passkey:${passkey.id}:forget`,
+              label: "Forget this passkey's record",
+              description: 'The passkey itself stays with the authenticator that holds it.',
+              destructive: true,
+              confirm: {
+                title: `Forget the passkey for ${passkey.rpName || passkey.rpId}?`,
+                description:
+                  'Only the record goes; the key itself stays with the authenticator that holds it.',
+                action: 'Forget'
+              },
+              onPress: () => run('autofill.removePasskey', { id: passkey.id })
+            }
+          ],
+          {
+            leading: <Fingerprint className="zen-settings-glyph" aria-hidden="true" />,
+            keywords: [passkey.rpId, passkey.rpName, passkey.userName].filter(Boolean)
+          }
+        )
+      ) ?? [],
+    empty: passkeys ? 'No passkeys yet' : undefined
+  }
 }
 
 // ---------------------------------------------------------------------------

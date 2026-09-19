@@ -73,7 +73,8 @@ const DESKTOP: HostCapabilities = {
   pinShortcuts: false,
   translate: true,
   voiceSearch: false,
-  selectionToolbar: false
+  selectionToolbar: false,
+  popupSurface: true
 }
 
 /**
@@ -116,7 +117,8 @@ const ANDROID: HostCapabilities = {
   pinShortcuts: false,
   translate: true,
   voiceSearch: false,
-  selectionToolbar: true
+  selectionToolbar: true,
+  popupSurface: false
 }
 
 function memoryIo(): StoreIO {

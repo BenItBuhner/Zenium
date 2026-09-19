@@ -1,4 +1,4 @@
-import type { JSX, PointerEvent as ReactPointerEvent, ReactNode, Ref } from 'react'
+import type { JSX, PointerEvent as ReactPointerEvent, ReactNode, Ref, SyntheticEvent } from 'react'
 import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef } from 'react'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { capturePointer } from '@renderer/lib/gestures/pointerCapture'
@@ -75,6 +75,12 @@ interface Props {
    * (`absolute`) instead of the viewport (`fixed`), and the host orders the stack.
    */
   hosted?: boolean
+  /**
+   * Measure the detents again whenever the header or the body changes size – a form that
+   * arrives after the sheet is up, a country with more lines, a validation line – so the sheet
+   * follows its content instead of holding the height it opened at (the scroll offset stays).
+   */
+  fitContent?: boolean
 }
 
 type Zone = 'grip' | 'body' | 'scrim'
@@ -174,12 +180,15 @@ export function BottomSheet({
   fadeEdges = true,
   labelledBy,
   className,
-  hosted = false
+  hosted = false,
+  fitContent = false
 }: Props): JSX.Element {
   const layerRef = useRef<HTMLDivElement>(null)
   const sheetRef = useRef<HTMLDivElement>(null)
   const scrimRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const gripRef = useRef<HTMLDivElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
   const fadeRef = useFadeEdges<HTMLDivElement>({ axis: 'y' })
   /**
    * The body's ref, one for the life of the sheet. A ref that changes identity is detached and
@@ -528,6 +537,26 @@ export function BottomSheet({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the observer reads the latest refs
   }, [])
 
+  // `fitContent`: the grip (with the header) and the body's content are measured again when
+  // they change size, so a sheet whose content arrives or grows after it is up follows it.
+  useEffect(() => {
+    const grip = gripRef.current
+    const content = contentRef.current
+    if (!fitContent || !grip || !content || typeof ResizeObserver !== 'function') return
+    const heightOf = (): number => grip.offsetHeight + content.offsetHeight
+    let last = heightOf()
+    const observer = new ResizeObserver(() => {
+      const height = heightOf()
+      if (height === last) return
+      last = height
+      measure()
+    })
+    observer.observe(grip)
+    observer.observe(content)
+    return () => observer.disconnect()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the observer reads the latest refs
+  }, [fitContent])
+
   // The WebView must not turn a pull on the body into a scroll once the sheet has taken it.
   useEffect(() => {
     const layer = layerRef.current
@@ -659,8 +688,22 @@ export function BottomSheet({
     syncLock()
   }
 
+  /**
+   * Whether the event happened in this layer's own DOM. React bubbles events through portals
+   * along its own tree: a sheet stacked above this one through `FrameDialogPortal` from a
+   * control in this sheet's body (an editor's menulist opening its list of options) has this
+   * layer for a React ancestor, so its presses arrive here too – with a target outside
+   * `sheetRef`, which read as a press on this sheet's scrim: the dismissal of this sheet under
+   * the one above, and the row's click swallowed with it. A press that did not happen in this
+   * layer is the upper sheet's; it goes unanswered here. Moves and releases need no such guard:
+   * they answer only a pointer this layer's own press began tracking (`touch`), and one released
+   * over a sheet that opened under the finger must still be let go of here.
+   */
+  const inLayer = (e: SyntheticEvent): boolean =>
+    layerRef.current?.contains(e.target as Node) ?? false
+
   const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>): void => {
-    if (e.button !== 0 || touch.current) return
+    if (e.button !== 0 || touch.current || !inLayer(e)) return
     const target = e.target as HTMLElement
     const zone: Zone = !sheetRef.current?.contains(target)
       ? 'scrim'
@@ -765,7 +808,7 @@ export function BottomSheet({
       onPointerUp={(e) => finish(e, false)}
       onPointerCancel={(e) => finish(e, true)}
       onClickCapture={(e) => {
-        if (!swallowClick.current) return
+        if (!swallowClick.current || !inLayer(e)) return
         swallowClick.current = false
         e.preventDefault()
         e.stopPropagation()
@@ -789,7 +832,7 @@ export function BottomSheet({
         data-locked="true"
         data-surface="page"
       >
-        <div data-sheet-grip className="zen-sheet-grip shrink-0">
+        <div ref={gripRef} data-sheet-grip className="zen-sheet-grip shrink-0">
           <button
             type="button"
             className="zen-sheet-handle-hit"
@@ -801,7 +844,7 @@ export function BottomSheet({
           {header && <div className="zen-sheet-header">{header}</div>}
         </div>
         <div ref={bodyRef} className="zen-sheet-scroll min-h-0 flex-1 overflow-y-auto">
-          {children}
+          {fitContent ? <div ref={contentRef}>{children}</div> : children}
         </div>
         {footer && <div className="zen-sheet-footer shrink-0">{footer}</div>}
       </div>

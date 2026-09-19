@@ -13,6 +13,7 @@ import {
   DEFAULT_CONTAINERS,
   DEFAULT_SETTINGS,
   emptyAgentServerStatus,
+  emptyAutofillUIState,
   emptyPasswordsStatus,
   emptyResourceSnapshot
 } from '@shared/defaults'
@@ -37,6 +38,7 @@ const { buildSection, buildSections } = await import('../sections')
 const { allRows, currentOptionLabel, findRow, groupShows, rowText, searchRows } =
   await import('../model')
 const { uiStore } = await import('@renderer/lib/ui')
+const { idleAutofillSettings } = await import('@renderer/lib/autofillSettings')
 
 type Model = ReturnType<typeof buildSection>
 type Row = ReturnType<typeof allRows>[number]
@@ -75,7 +77,8 @@ const ANDROID: HostCapabilities = {
   pinShortcuts: false,
   translate: true,
   voiceSearch: false,
-  selectionToolbar: true
+  selectionToolbar: true,
+  popupSurface: false
 }
 
 function tab(id: string, url: string, patch: Partial<Tab> = {}): Tab {
@@ -220,6 +223,7 @@ function state(patch: Partial<UIState> = {}, settings: Partial<Settings> = {}): 
     agentServer: emptyAgentServerStatus(),
     updates: emptyUpdateStatus('0.3.0-test', { os: 'android', arch: 'arm64', kind: 'apk' }),
     passwords: emptyPasswordsStatus(),
+    autofill: emptyAutofillUIState(),
     defaultBrowser: { isDefault: false, prompt: null },
     permissionRules: [],
     permissionDefaults: {},
@@ -293,10 +297,16 @@ function blockingState(patch: Partial<UIState> = {}): UIState {
   )
 }
 
-/** A context that records what the rows ask of the page; a touch host unless `pointer` says so. */
+type AutofillData = Parameters<typeof buildSection>[1]['autofill']
+
+/**
+ * A context that records what the rows ask of the page; a touch host unless `pointer` says so.
+ * The vault reads idle (no lists, the gate idle) unless `autofill` brings some.
+ */
 function context(
   s: UIState = state(),
-  pointer = false
+  pointer = false,
+  autofill: Partial<AutofillData> = {}
 ): {
   ctx: Parameters<typeof buildSection>[1]
   patches: Partial<Settings>[]
@@ -315,7 +325,8 @@ function context(
     openBarEditor: () => {
       record.barEditor += 1
     },
-    boost: (tabId) => boosted.push(tabId)
+    boost: (tabId) => boosted.push(tabId),
+    autofill: { ...idleAutofillSettings(), ...autofill }
   }
   return {
     ctx,
@@ -360,6 +371,7 @@ describe('the section model', () => {
       'tabs',
       'downloads',
       'search',
+      'autofill',
       'languages',
       'privacy',
       'spaces',
@@ -640,6 +652,288 @@ describe('the section model', () => {
       'download-open-on-start',
       'download-always-show-button'
     ])
+  })
+
+  describe('#145’s Autofill category', () => {
+    const AUTOFILL = PAGE.sections.find((x) => x.id === 'autofill')!
+    const unlocked = (): UIState =>
+      state({ passwords: { ...emptyPasswordsStatus(), locked: false } })
+    const address = {
+      id: 'a1',
+      country: 'US',
+      name: 'Ada Lovelace',
+      organization: 'Analytical Engines',
+      streetAddress: '12 Ada Way',
+      locality: 'Springfield',
+      region: 'CA',
+      postalCode: '90210',
+      sortingCode: '',
+      phone: '',
+      email: '',
+      createdAt: 0,
+      updatedAt: 0,
+      lastUsedAt: null
+    }
+    const card = {
+      id: 'c1',
+      last4: '4242',
+      network: 'visa' as const,
+      expMonth: 12,
+      expYear: 2031,
+      expired: false,
+      name: 'Ada Lovelace',
+      nickname: 'Work Visa',
+      createdAt: 0,
+      updatedAt: 0,
+      lastUsedAt: null
+    }
+    const passkey = {
+      id: 'p1',
+      rpId: 'example.com',
+      rpName: 'Example',
+      userName: 'ada@example.com',
+      userDisplayName: 'Ada',
+      credentialId: '',
+      origin: 'https://example.com',
+      createdAt: 0,
+      lastUsedAt: null
+    }
+
+    it('is listed behind the passwords capability, like the desktop section', () => {
+      expect(AUTOFILL.requires).toBe('passwords')
+      const without = state({ capabilities: { ...ANDROID, passwords: false } })
+      expect(phoneSections(without).some((m) => m.section.id === 'autofill')).toBe(false)
+      expect(phoneSections().some((m) => m.section.id === 'autofill')).toBe(true)
+    })
+
+    it('carries the password switches and the clipboard choice, patching inside `passwords`', () => {
+      const c = context(state())
+      const model = buildSection(AUTOFILL, c.ctx)
+      const offer = row(model, 'autofill-offer-to-save')
+      if (offer.kind !== 'switch') throw new Error('not a switch')
+      expect(offer.checked).toBe(DEFAULT_SETTINGS.passwords.offerToSave)
+      offer.onChange(!offer.checked)
+      const auto = row(model, 'autofill-auto-sign-in')
+      if (auto.kind !== 'switch') throw new Error('not a switch')
+      auto.onChange(true)
+      const clear = row(model, 'autofill-clipboard-clear')
+      if (clear.kind !== 'value') throw new Error('not a value row')
+      expect(clear.value).toBe(String(DEFAULT_SETTINGS.passwords.clipboardClearSeconds))
+      expect(clear.options.map((o) => o.value)).toEqual(['0', '30', '60', '120', '300'])
+      clear.onChange('120')
+      expect(c.patches).toEqual([
+        { passwords: { ...DEFAULT_SETTINGS.passwords, offerToSave: !offer.checked } },
+        { passwords: { ...DEFAULT_SETTINGS.passwords, autoSignIn: true } },
+        { passwords: { ...DEFAULT_SETTINGS.passwords, clipboardClearSeconds: 120 } }
+      ])
+    })
+
+    it('offers Zenium as the provider on Android alone: pressable while a system service is set, naming it', () => {
+      const none = buildSection(AUTOFILL, context(state()).ctx)
+      const off = row(none, 'autofill-android-provider')
+      if (off.kind !== 'switch') throw new Error('not a switch')
+      // No service set: Zenium fills either way, so the switch reads on and cannot be moved.
+      expect(off.checked).toBe(true)
+      expect(off.disabled).toBe(true)
+      expect(off.description).toMatch(/No autofill service is set/)
+
+      const google = context(
+        state({
+          autofill: {
+            ...emptyAutofillUIState(),
+            systemAutofill: {
+              enabled: true,
+              service: 'com.google.android.gms/.autofill.service.AutofillService'
+            }
+          }
+        })
+      )
+      const on = row(buildSection(AUTOFILL, google.ctx), 'autofill-android-provider')
+      if (on.kind !== 'switch') throw new Error('not a switch')
+      expect(on.checked).toBe(false)
+      expect(on.disabled).toBeFalsy()
+      expect(on.description).toMatch(/^Google saves and fills passwords/)
+      on.onChange(true)
+      expect(google.patches).toEqual([
+        { passwords: { ...DEFAULT_SETTINGS.passwords, androidProvider: 'zenium' } }
+      ])
+
+      const desktop = buildSection(AUTOFILL, context(state({ platform: 'linux' })).ctx)
+      expect(findRow(desktop.groups, 'autofill-android-provider')).toBeNull()
+    })
+
+    it('while the vault is locked shows its gate – Unlock as an action, the passphrase form once asked – and none of the lists', () => {
+      const unlock = vi.fn()
+      const idle = buildSection(
+        AUTOFILL,
+        context(state(), false, {
+          gate: { step: 'idle', busy: false, error: null, unlock, reset: () => undefined }
+        }).ctx
+      )
+      expect(idle.groups.map((g) => g.id)).toEqual(['autofill-passwords', 'autofill-vault'])
+      expect(idle.groups[1]?.heading).toBe('The vault is locked')
+      const action = row(idle, 'autofill-unlock')
+      if (action.kind !== 'action') throw new Error('not an action')
+      expect(action.busy).toBe(false)
+      action.onPress?.()
+      expect(unlock).toHaveBeenCalledWith()
+      expect(findRow(idle.groups, 'autofill-add-address')).toBeNull()
+
+      // Busy while the device checks; a refusal is the gate's description.
+      const busy = buildSection(
+        AUTOFILL,
+        context(state(), false, {
+          gate: { step: 'idle', busy: true, error: null, unlock, reset: () => undefined }
+        }).ctx
+      )
+      const checking = row(busy, 'autofill-unlock')
+      if (checking.kind !== 'action') throw new Error('not an action')
+      expect(checking.busy).toBe(true)
+      const refused = buildSection(
+        AUTOFILL,
+        context(state(), false, {
+          gate: {
+            step: 'idle',
+            busy: false,
+            error: 'The vault stayed locked.',
+            unlock,
+            reset: () => undefined
+          }
+        }).ctx
+      )
+      expect(refused.groups[1]?.description).toBe('The vault stayed locked.')
+
+      // Once the vault asks for its passphrase the form takes the gate's place, as a custom row.
+      const asked = buildSection(
+        AUTOFILL,
+        context(state(), false, {
+          gate: { step: 'passphrase', busy: false, error: null, unlock, reset: () => undefined }
+        }).ctx
+      )
+      expect(row(asked, 'autofill-vault-passphrase').kind).toBe('custom')
+      expect(findRow(asked.groups, 'autofill-unlock')).toBeNull()
+      const setup = buildSection(
+        AUTOFILL,
+        context(state(), false, {
+          gate: { step: 'setup', busy: false, error: null, unlock, reset: () => undefined }
+        }).ctx
+      )
+      expect(setup.groups[1]?.heading).toBe('Set a vault passphrase')
+
+      // An unreadable vault: the gate says so and Unlock is not pressable.
+      const broken = buildSection(
+        AUTOFILL,
+        context(
+          state({ passwords: { ...emptyPasswordsStatus(), error: 'The vault file is damaged.' } })
+        ).ctx
+      )
+      expect(broken.groups[1]?.description).toBe('The vault file is damaged.')
+      expect(row(broken, 'autofill-unlock').disabled).toBe(true)
+    })
+
+    it('unlocked: the address, payment method and passkey switches and lists, empty until fetched, one line when empty', () => {
+      const c = context(unlocked())
+      const model = buildSection(AUTOFILL, c.ctx)
+      expect(model.groups.map((g) => g.id)).toEqual([
+        'autofill-passwords',
+        'autofill-addresses',
+        'autofill-addresses-list',
+        'autofill-addresses-add',
+        'autofill-cards',
+        'autofill-cards-list',
+        'autofill-cards-add',
+        'autofill-passkeys'
+      ])
+      // Lists not yet fetched draw nothing: no rows and no empty line.
+      const addresses = model.groups.find((g) => g.id === 'autofill-addresses-list')!
+      expect(addresses.rows).toEqual([])
+      expect(addresses.empty).toBeUndefined()
+      expect(groupShows(addresses)).toBe(false)
+      const saveAddresses = row(model, 'autofill-save-addresses')
+      if (saveAddresses.kind !== 'switch') throw new Error('not a switch')
+      saveAddresses.onChange(false)
+      const saveCards = row(model, 'autofill-save-cards')
+      if (saveCards.kind !== 'switch') throw new Error('not a switch')
+      saveCards.onChange(false)
+      expect(c.patches).toEqual([
+        { autofill: { ...DEFAULT_SETTINGS.autofill, addresses: false } },
+        { autofill: { ...DEFAULT_SETTINGS.autofill, cards: false } }
+      ])
+
+      // Fetched and empty: the §9.17 line, one per list.
+      const fetched = buildSection(
+        AUTOFILL,
+        context(unlocked(), false, { addresses: [], cards: [], passkeys: [] }).ctx
+      )
+      const empties = fetched.groups.filter((g) => g.rows.length === 0).map((g) => g.empty)
+      expect(empties).toEqual(['No addresses saved yet', 'No cards saved yet', 'No passkeys yet'])
+      expect(fetched.groups.every(groupShows)).toBe(true)
+    })
+
+    it('lists each entry as an item with a glyph and its sheet: edit closes the sheet for the editor, delete confirms, copy is busy while it runs', async () => {
+      const { uiStore } = await import('@renderer/lib/ui')
+      const copyCard = vi.fn()
+      const c = context(unlocked(), false, {
+        addresses: [address],
+        cards: [card],
+        passkeys: [passkey],
+        copying: 'c1',
+        copyCard
+      })
+      const model = buildSection(AUTOFILL, c.ctx)
+      const ids = allRows(model.groups).map((r) => r.id)
+      expect(new Set(ids).size).toBe(ids.length)
+
+      const a = row(model, 'autofill-address:a1')
+      if (a.kind !== 'item') throw new Error('not an item')
+      expect(a.label).toBe('Ada Lovelace')
+      expect(a.description).toMatch(/12 Ada Way/)
+      expect(a.leading).toBeTruthy()
+      expect(rowText(a)).toMatch(/Analytical Engines/)
+      const edit = findRow(a.sheet.groups, 'autofill-address:a1:edit')
+      if (edit?.kind !== 'action') throw new Error('not an action')
+      expect(edit.closesSheet).toBe(true)
+      edit.onPress?.()
+      expect(uiStore.get().autofillEdit).toEqual({ kind: 'address', id: 'a1' })
+      const remove = findRow(a.sheet.groups, 'autofill-address:a1:delete')
+      if (remove?.kind !== 'action') throw new Error('not an action')
+      expect(remove.destructive).toBe(true)
+      expect(remove.confirm?.action).toBe('Delete')
+      remove.onPress?.()
+      expect(invoke).toHaveBeenCalledWith('autofill.removeAddress', { id: 'a1' })
+
+      const k = row(model, 'autofill-card:c1')
+      if (k.kind !== 'item') throw new Error('not an item')
+      expect(k.label).toBe('Work Visa')
+      expect(k.description).toBe('Ada Lovelace, expires 12/31')
+      // The network and last four are what a search finds it by, nickname or not.
+      expect(rowText(k)).toMatch(/Visa/)
+      expect(rowText(k)).toMatch(/4242/)
+      const copy = findRow(k.sheet.groups, 'autofill-card:c1:copy')
+      if (copy?.kind !== 'action') throw new Error('not an action')
+      expect(copy.busy).toBe(true)
+      copy.onPress?.()
+      expect(copyCard).toHaveBeenCalledWith(card)
+      const editCard = findRow(k.sheet.groups, 'autofill-card:c1:edit')
+      if (editCard?.kind !== 'action') throw new Error('not an action')
+      editCard.onPress?.()
+      expect(uiStore.get().autofillEdit).toEqual({ kind: 'card', id: 'c1' })
+      const add = row(model, 'autofill-add-card')
+      if (add.kind !== 'action') throw new Error('not an action')
+      add.onPress?.()
+      expect(uiStore.get().autofillEdit).toEqual({ kind: 'card', id: null })
+      uiStore.set({ autofillEdit: null })
+
+      const p = row(model, 'autofill-passkey:p1')
+      if (p.kind !== 'item') throw new Error('not an item')
+      expect(p.label).toBe('Ada')
+      expect(rowText(p)).toMatch(/example\.com/)
+      const forget = findRow(p.sheet.groups, 'autofill-passkey:p1:forget')
+      if (forget?.kind !== 'action') throw new Error('not an action')
+      expect(forget.destructive).toBe(true)
+      forget.onPress?.()
+      expect(invoke).toHaveBeenCalledWith('autofill.removePasskey', { id: 'p1' })
+    })
   })
 
   it('carries #148’s New Tab rows on a host that renders the page; the phone has none', () => {

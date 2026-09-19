@@ -120,6 +120,10 @@ const V2_FILES: ReadonlyArray<string> = [
   // the translation bar, the selection popover and sheet, the language menulist's list and
   // picker sheet, the desktop Languages pane.
   'assets/translate.css',
+  // The autofill surfaces' own stylesheet, imported by components/autofill/controls.tsx (#145):
+  // the save / update prompts, the pickers, the passkey and passphrase dialogs, the editors and
+  // Settings > Autofill with its managers.
+  'assets/autofill.css',
   // The desktop bookmark manager's selection count pill (components/bookmarks/*, #90).
   'components/bookmarks/BookmarkManager.tsx',
   // The window prompts' checkbox accent (§9.5 modals, #129).
