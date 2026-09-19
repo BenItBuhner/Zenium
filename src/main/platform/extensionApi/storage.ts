@@ -149,8 +149,10 @@ export class StorageApi {
 
   /**
    * The mirror of a partition is written by the extension's contexts in that partition; where
-   * none is alive the worker is started, and its shim takes the snapshot. The primary partition's
-   * worker is woken by the dispatch itself when it registered the event before it stopped.
+   * none is alive the worker is started through the registry (which wires the wrapper the start
+   * resolves with), and its shim takes the snapshot. The primary partition's worker is woken by
+   * the dispatch itself when it registered the event before it stopped; a partition with no
+   * registration yet is left to its next context.
    */
   private async wakeIdlePartitions(extensionId: string): Promise<void> {
     const loaded = this.host.loaded(extensionId)
@@ -158,15 +160,8 @@ export class StorageApi {
     const live = new Set<Session>()
     for (const frame of this.host.registry.framesOf(extensionId)) live.add(frame.session)
     for (const worker of this.host.registry.workersOf(extensionId)) live.add(worker.session)
-    const scope = `chrome-extension://${extensionId}/`
-    for (const session of loaded.sessions) {
-      if (live.has(session)) continue
-      try {
-        await session.serviceWorkers.startWorkerForScope(scope)
-      } catch {
-        /* no registration in this partition yet: the next context there takes the snapshot */
-      }
-    }
+    const idle = loaded.sessions.filter((session) => !live.has(session))
+    await Promise.all(idle.map((session) => this.host.registry.wakeIn(extensionId, session)))
   }
 
   private get(ctx: ApiContext, area: unknown, keys: unknown): StorageItems {

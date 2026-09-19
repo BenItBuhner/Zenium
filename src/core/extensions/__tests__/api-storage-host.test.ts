@@ -21,18 +21,6 @@ const EXT = 'a'.repeat(32)
 
 interface FakeSession {
   name: string
-  serviceWorkers: { startWorkerForScope: ReturnType<typeof vi.fn> }
-}
-
-function fakeSession(name: string, fails = false): FakeSession {
-  return {
-    name,
-    serviceWorkers: {
-      startWorkerForScope: vi.fn(() =>
-        fails ? Promise.reject(new Error('no registration')) : Promise.resolve({})
-      )
-    }
-  }
 }
 
 function harness(manifestVersion: 2 | 3 = 3): {
@@ -43,15 +31,18 @@ function harness(manifestVersion: 2 | 3 = 3): {
   primary: FakeSession
   other: FakeSession
   live: { frames: FakeSession[]; workers: FakeSession[] }
+  /** The partitions the registry was asked to start the extension's worker in (`wakeIn`). */
+  woken: FakeSession[]
   ctx: (session?: FakeSession) => ApiContext
   flush: () => Promise<void>
 } {
   const sync = new Map<string, StorageItems>()
   const managed: StorageItems = {}
   const out: Dispatched[] = []
-  const primary = fakeSession('primary')
-  const other = fakeSession('other', true)
+  const primary: FakeSession = { name: 'primary' }
+  const other: FakeSession = { name: 'other' }
   const live = { frames: [] as FakeSession[], workers: [] as FakeSession[] }
+  const woken: FakeSession[] = []
   const loaded: LoadedExtension = {
     id: EXT,
     extension: {} as LoadedExtension['extension'],
@@ -70,7 +61,12 @@ function harness(manifestVersion: 2 | 3 = 3): {
     },
     registry: {
       framesOf: () => live.frames.map((session) => ({ session })),
-      workersOf: () => live.workers.map((session) => ({ session }))
+      workersOf: () => live.workers.map((session) => ({ session })),
+      wakeIn: vi.fn((extensionId: string, session: FakeSession): Promise<void> => {
+        expect(extensionId).toBe(EXT)
+        woken.push(session)
+        return Promise.resolve()
+      })
     },
     loaded: (id: string) => (id === EXT ? loaded : undefined),
     dispatch(
@@ -103,6 +99,7 @@ function harness(manifestVersion: 2 | 3 = 3): {
     primary,
     other,
     live,
+    woken,
     ctx,
     flush: () => new Promise((resolve) => setTimeout(resolve, 0))
   }
@@ -196,29 +193,28 @@ describe('StorageApi sync mirror', () => {
     expect(h.out).toEqual([])
   })
 
-  it('starts the worker of a partition with no live context so its mirror catches up', async () => {
+  it('asks the registry to wake the worker of every partition with no live context', async () => {
     h.live.frames.push(h.primary)
     h.api.handlers.set(h.ctx(), 'sync', { theme: 'dark' })
     await h.flush()
-    expect(h.primary.serviceWorkers.startWorkerForScope).not.toHaveBeenCalled()
-    expect(h.other.serviceWorkers.startWorkerForScope).toHaveBeenCalledWith(
-      `chrome-extension://${EXT}/`
-    )
-    // A partition whose registration is not there yet is left to its next context.
+    expect(h.woken).toEqual([h.other])
+    // Every idle partition, in one go; a live worker or frame in it is enough to skip it.
     h.live.frames.length = 0
     h.live.workers.push(h.other)
     h.api.handlers.set(h.ctx(), 'sync', { theme: 'light' })
     await h.flush()
-    expect(h.primary.serviceWorkers.startWorkerForScope).toHaveBeenCalledTimes(1)
-    expect(h.other.serviceWorkers.startWorkerForScope).toHaveBeenCalledTimes(1)
+    expect(h.woken).toEqual([h.other, h.primary])
+    // A write that changes nothing wakes nothing.
+    h.api.handlers.set(h.ctx(), 'sync', { theme: 'light' })
+    await h.flush()
+    expect(h.woken).toHaveLength(2)
   })
 
-  it('does not start workers for an MV2 extension', async () => {
+  it('does not wake workers for an MV2 extension', async () => {
     h = harness(2)
     h.api.handlers.set(h.ctx(), 'sync', { theme: 'dark' })
     await h.flush()
-    expect(h.primary.serviceWorkers.startWorkerForScope).not.toHaveBeenCalled()
-    expect(h.other.serviceWorkers.startWorkerForScope).not.toHaveBeenCalled()
+    expect(h.woken).toEqual([])
     expect(h.out.map((d) => d.event)).toContain('__zen.sync-mirror')
   })
 
