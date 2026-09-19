@@ -18,7 +18,8 @@ import java.util.Locale
  * Voice search's host half (OMN-19): the device's [SpeechRecognizer] behind the chrome's mic
  * buttons. `voice.start` asks for the microphone (the runtime prompt through
  * [Permissions.requestForApp]) and starts the recogniser in the user's language with partial
- * results, preferring the offline engine; what the recogniser then reports goes to the chrome as
+ * results, the engine's own choice of offline or online ([VoiceLogic.recognitionExtras]); what
+ * the recogniser then reports goes to the chrome as
  * `voice.event`s (`VoiceEvent` in `src/shared/voice.ts`): `ready`, `begin`, the sound level from
  * `onRmsChanged` as `rms` (throttled, [VoiceLogic.RmsThrottle]), `partial` transcripts, `end` of
  * speech, then one `result` or one `error` – after which the recogniser is gone. The chrome owns
@@ -209,24 +210,26 @@ class Voice(private val host: Host) {
 
         /** Testing: builds the recogniser instead of the platform's (set before the activity starts). */
         @Volatile
-        var recognizerFactory: ((Context) -> Recognizer)? = null
+        internal var recognizerFactory: ((Context) -> Recognizer)? = null
 
         /** Testing: what [available] answers instead of asking the platform. */
         @Volatile
-        var availabilityOverride: Boolean? = null
+        internal var availabilityOverride: Boolean? = null
 
         /**
-         * `ACTION_RECOGNIZE_SPEECH` for a free-form search in the app's language: partial results
-         * for the sheet's body copy, the offline engine preferred where the device has one (the
-         * platform falls back to the online one where it has not), one result.
+         * `ACTION_RECOGNIZE_SPEECH` with [VoiceLogic.recognitionExtras]: a free-form search in the
+         * app's language with partial results and one result, the engine's own choice of offline
+         * or online (no `EXTRA_PREFER_OFFLINE`, which would mean offline only; see there).
          */
         fun recognitionIntent(context: Context): Intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, appLocale(context).toLanguageTag())
-            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-            putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.packageName)
-            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+            for ((key, value) in VoiceLogic.recognitionExtras(appLocale(context).toLanguageTag(), context.packageName)) {
+                when (value) {
+                    is Boolean -> putExtra(key, value)
+                    is Int -> putExtra(key, value)
+                    is String -> putExtra(key, value)
+                    else -> throw IllegalArgumentException("recognition extra $key: ${value::class.simpleName}")
+                }
+            }
         }
 
         /** The language the app runs in (a per-app language on Android 13+ counts), else the device's. */

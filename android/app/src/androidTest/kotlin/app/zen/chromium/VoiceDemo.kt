@@ -10,6 +10,7 @@ import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.util.Base64
 import android.util.Log
@@ -56,7 +57,10 @@ import kotlin.math.sin
  * driver plays into the stand-in's [RecognitionListener] on the main thread, which is the same
  * listener `Voice` hands the platform's recogniser: from there the events cross the bridge as
  * `voice.event` exactly as a device that can hear would send them, so what the recording shows
- * of the sheet and the submit is the shipped path from the listener on.
+ * of the sheet and the submit is the shipped path from the listener on. The stand-in also reads
+ * the intent each start hands it, so what the engine is asked for is a finding too – the
+ * language, partial results, and no `EXTRA_PREFER_OFFLINE`, which would confine a device without
+ * a downloaded language pack to an error on every session.
  */
 @RunWith(AndroidJUnit4::class)
 class VoiceDemo : DemoHarness("voice-demo-state.json", "android-voice", "voice-demo") {
@@ -199,6 +203,8 @@ class VoiceDemo : DemoHarness("voice-demo-state.json", "android-voice", "voice-d
             shot("05-no-sheet")
             return
         }
+        finding("  the recogniser's request: ${fake.describeIntent()}")
+        check("the request names the language, asks for partial results and lets the engine go online (no EXTRA_PREFER_OFFLINE)", fake.intentLetsTheEngineChoose())
         fake.ready()
         fake.begin()
         check("the sheet reads Listening", waitFor(LISTENING_TITLE, 5_000) != null)
@@ -413,6 +419,32 @@ class VoiceDemo : DemoHarness("voice-demo-state.json", "android-voice", "voice-d
             starts++
             lastIntent = intent
             this.listener = listener
+        }
+
+        /** The last start's request as the platform's engine would read it: what was asked for, and what was not. */
+        fun describeIntent(): String {
+            val intent = lastIntent ?: return "no start yet"
+            val extras = intent.extras ?: Bundle()
+            return "action ${intent.action}; language ${extras.getString(RecognizerIntent.EXTRA_LANGUAGE)}; " +
+                "model ${extras.getString(RecognizerIntent.EXTRA_LANGUAGE_MODEL)}; " +
+                "partial ${extras.getBoolean(RecognizerIntent.EXTRA_PARTIAL_RESULTS)}; " +
+                "max ${extras.getInt(RecognizerIntent.EXTRA_MAX_RESULTS, -1)}; " +
+                "offline-only ${if (extras.containsKey(RecognizerIntent.EXTRA_PREFER_OFFLINE)) extras.getBoolean(RecognizerIntent.EXTRA_PREFER_OFFLINE).toString() else "not asked"}"
+        }
+
+        /**
+         * The engine is free to go online: the request names the app's language and asks for
+         * partial results, and it carries no `EXTRA_PREFER_OFFLINE` – that extra means offline
+         * ONLY, and on a device without a downloaded pack for the language every session would
+         * end in `ERROR_LANGUAGE_UNAVAILABLE` or `ERROR_NETWORK`.
+         */
+        fun intentLetsTheEngineChoose(): Boolean {
+            val intent = lastIntent ?: return false
+            val extras = intent.extras ?: return false
+            return intent.action == RecognizerIntent.ACTION_RECOGNIZE_SPEECH &&
+                !extras.getString(RecognizerIntent.EXTRA_LANGUAGE).isNullOrEmpty() &&
+                extras.getBoolean(RecognizerIntent.EXTRA_PARTIAL_RESULTS) &&
+                !extras.containsKey(RecognizerIntent.EXTRA_PREFER_OFFLINE)
         }
 
         override fun cancel() {

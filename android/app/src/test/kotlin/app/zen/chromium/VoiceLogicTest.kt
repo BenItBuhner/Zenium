@@ -1,5 +1,6 @@
 package app.zen.chromium
 
+import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -30,6 +31,38 @@ class VoiceLogicTest {
         assertEquals("listening", VoiceLogic.outcome(RuntimeGrant.GRANTED))
         assertEquals("denied", VoiceLogic.outcome(RuntimeGrant.DENIED))
         assertEquals("denied-permanently", VoiceLogic.outcome(RuntimeGrant.DENIED_PERMANENTLY))
+    }
+
+    // --- what the recogniser is asked for ---------------------------------------------------------
+
+    @Test
+    fun theIntentAsksForAFreeFormSearchInTheAppsLanguageWithPartialResults() {
+        val extras = VoiceLogic.recognitionExtras("pt-BR", "app.zen.chromium")
+        assertEquals(RecognizerIntent.LANGUAGE_MODEL_FREE_FORM, extras[RecognizerIntent.EXTRA_LANGUAGE_MODEL])
+        assertEquals("pt-BR", extras[RecognizerIntent.EXTRA_LANGUAGE])
+        assertEquals(true, extras[RecognizerIntent.EXTRA_PARTIAL_RESULTS])
+        assertEquals("app.zen.chromium", extras[RecognizerIntent.EXTRA_CALLING_PACKAGE])
+        assertEquals(1, extras[RecognizerIntent.EXTRA_MAX_RESULTS])
+    }
+
+    @Test
+    fun theIntentNeverAsksForAnOfflineOnlyEngine() {
+        // EXTRA_PREFER_OFFLINE means offline only: a device without a downloaded pack for the
+        // language would end every session in ERROR_LANGUAGE_UNAVAILABLE or ERROR_NETWORK.
+        val extras = VoiceLogic.recognitionExtras("en-US", "app.zen.chromium")
+        assertFalse(extras.containsKey(RecognizerIntent.EXTRA_PREFER_OFFLINE))
+        assertFalse(extras.containsKey("android.speech.extra.PREFER_OFFLINE"))
+        // And nothing else that narrows the engine's choice.
+        assertEquals(
+            setOf(
+                RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                RecognizerIntent.EXTRA_LANGUAGE,
+                RecognizerIntent.EXTRA_PARTIAL_RESULTS,
+                RecognizerIntent.EXTRA_CALLING_PACKAGE,
+                RecognizerIntent.EXTRA_MAX_RESULTS,
+            ),
+            extras.keys,
+        )
     }
 
     // --- the recogniser's errors ------------------------------------------------------------------

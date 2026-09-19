@@ -1,14 +1,34 @@
 package app.zen.chromium
 
+import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 
 /**
  * What is pure about voice search on the host side (OMN-19), kept apart from [Voice] so it runs
- * on the JVM: how a refusal of the microphone reads, the recogniser's error codes by the names
- * the chrome knows (`VoiceError` in `src/shared/voice.ts`), the sound level the mic glyph pulses
- * on, and how often that level is worth a trip over the bridge.
+ * on the JVM: how a refusal of the microphone reads, what the recogniser is asked for, the
+ * recogniser's error codes by the names the chrome knows (`VoiceError` in `src/shared/voice.ts`),
+ * the sound level the mic glyph pulses on, and how often that level is worth a trip over the
+ * bridge.
  */
 object VoiceLogic {
+    /**
+     * The extras of the `ACTION_RECOGNIZE_SPEECH` intent a session starts with ([Voice.recognitionIntent]
+     * puts them on the intent): a free-form model in the app's language, partial results for the
+     * sheet's body copy, the calling package, one result. No `EXTRA_PREFER_OFFLINE`: the extra
+     * means offline ONLY, not offline first, so on a device whose engine has no downloaded pack
+     * for the language every session would end in `ERROR_LANGUAGE_UNAVAILABLE` or `ERROR_NETWORK`
+     * with a misleading toast; the engine chooses instead, as it does for Chrome's omnibox.
+     * Preferring the on-device engine where API 33+'s `checkRecognitionSupport` reports the
+     * language installed is a follow-up, not this.
+     */
+    fun recognitionExtras(languageTag: String, callingPackage: String): Map<String, Any> = linkedMapOf(
+        RecognizerIntent.EXTRA_LANGUAGE_MODEL to RecognizerIntent.LANGUAGE_MODEL_FREE_FORM,
+        RecognizerIntent.EXTRA_LANGUAGE to languageTag,
+        RecognizerIntent.EXTRA_PARTIAL_RESULTS to true,
+        RecognizerIntent.EXTRA_CALLING_PACKAGE to callingPackage,
+        RecognizerIntent.EXTRA_MAX_RESULTS to 1,
+    )
+
     /**
      * What `voice.start` answers for the microphone's grant (`VoiceStartOutcome` in
      * `src/shared/voice.ts`): a granted microphone means the recogniser starts and the answer is
