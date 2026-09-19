@@ -216,8 +216,10 @@ export function DlButton({
 }
 
 /**
- * A row's 28 icon button. Disabled is the whole control at .4; busy keeps full opacity, swaps
- * the glyph for the 16px spinner and says `aria-busy` (§9.30), and ignores presses meanwhile.
+ * A row's icon button: the shared `.zen-v2-icon-button` (§9.34), which sizes the box and the
+ * glyph from the density tokens. Disabled is the whole control at .4; busy keeps full opacity,
+ * swaps the glyph for the 16px spinner and says `aria-busy` (§9.30), and ignores presses
+ * meanwhile.
  */
 function IconAction({
   title,
@@ -241,7 +243,7 @@ function IconAction({
   return (
     <button
       type="button"
-      className={cn('zen-toolbar-button', pressed && 'zen-dl-action-on', busy && 'zen-dl-busy')}
+      className={cn('zen-v2-icon-button', pressed && 'zen-dl-action-on', busy && 'zen-dl-busy')}
       title={title}
       aria-label={title}
       aria-pressed={pressed}
@@ -253,9 +255,7 @@ function IconAction({
         if (!busy) onClick()
       }}
     >
-      <span className="zen-dl-button-label flex">
-        <Icon className="h-4 w-4" strokeWidth={1.5} />
-      </span>
+      <Icon aria-hidden />
       {busy && <span className="zen-dl-spinner" aria-hidden />}
     </button>
   )
@@ -378,9 +378,10 @@ export function DangerActions({ item }: { item: DownloadItem }): JSX.Element {
 }
 
 /**
- * One download in a list: a §9.2 two-line row (name over status, 52 tall, growing around a
- * progress bar or a warning's sentence) with the glyph on the first line and the controls
- * centred on the row's height (§9.18); rows touch (§9.21). Enter or a double click opens a
+ * One download in a list: the shared `.zen-v2-row` (§9.34) as a §9.2 two-line row (name over
+ * status, 52 tall, growing around a progress bar or a warning's sentence) with the glyph on the
+ * first line and the controls centred on the row's height (§9.18); rows touch (§9.21), and what
+ * a download row adds is the `.zen-dl-row` modifier. Enter or a double click opens a
  * finished file, the name is a button that opens it, a right click or the menu key asks the
  * core for the row's menu, and on desktop hosts a finished file can be dragged out to the OS.
  * A finished file the engine found gone from disk is Chrome's Deleted row: name and glyph in
@@ -432,7 +433,7 @@ export function DownloadRow({
   return (
     <li
       ref={ref}
-      className={cn('zen-dl-row group/row', highlighted && 'zen-dl-row-marked')}
+      className={cn('zen-v2-row zen-dl-row group/row', highlighted && 'zen-dl-row-marked')}
       data-state={item.state}
       data-download-id={item.id}
       data-flagged={flagged || undefined}

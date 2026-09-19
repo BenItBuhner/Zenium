@@ -65,6 +65,22 @@ afterEach(() => {
   host = null
 })
 
+describe('the row', () => {
+  it('is the shared v2 row with its icon actions the shared icon button (§9.34), the download modifier on top', () => {
+    const row = render(finished())
+    // The class attribute starts with the primitive: that is what the v2 focus-ring selector
+    // (`[class^='zen-v2-']`) and the unlayered modifier rules key on.
+    expect(row.className.split(' ').slice(0, 2)).toEqual(['zen-v2-row', 'zen-dl-row'])
+    const buttons = [...row.querySelectorAll<HTMLButtonElement>('.zen-dl-actions button')]
+    expect(buttons.length).toBeGreaterThan(0)
+    for (const button of buttons) {
+      expect(button.className.split(' ')[0]).toBe('zen-v2-icon-button')
+      // The glyph is the button's own child so the primitive's `> svg` rule sizes it.
+      expect(button.firstElementChild?.tagName.toLowerCase()).toBe('svg')
+    }
+  })
+})
+
 describe('a failed row', () => {
   it('reads Failed · <reason> in the danger ink with the engine’s sentence as its tooltip', () => {
     const row = render(
