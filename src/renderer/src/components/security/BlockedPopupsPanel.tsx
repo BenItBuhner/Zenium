@@ -329,15 +329,15 @@ function sameBox(a: PopoverBox, b: PopoverBox): boolean {
 }
 
 /**
- * Phone: the shared bottom sheet, which owns the v2 surface, the grip strip, the 48 header with
- * the title centred (§9.16), the keyboard (focus on open, Tab, the inert chrome behind the
- * scrim, the lift above the keyboard – §9.22) and the §9.11 footer, where Dismiss sits outside
- * the scroller. The summary is body copy under the header – 15/400 in the page ink, 16 above
- * the rows it introduces (§9.23) – then the rows edge to edge at the sheet's one 16 px gutter
- * (§9.25), a hairline in the gutter, and the site's standing answer as a switch row (§10.4).
- * A dialog of TabDialogs' `FrameDialogHost` (the shell's box on a phone), drawing the stack's
- * one scrim itself, which fades with its motion (§9.28); the sheet's layer is a page surface
- * (§9.29).
+ * Phone: the shared bottom sheet, which owns the v2 surface, the grip strip, the keyboard (focus
+ * on open, Tab, the inert chrome behind the scrim, the lift above the keyboard – §9.22) and the
+ * §9.11 footer, where Dismiss sits outside the scroller. The popover's title block in the
+ * sheet's form (§9.23) – the glyph on the title's start, the summary as its description at the
+ * gutter, no 48 header – so the two platforms are one composition; then the rows edge to edge
+ * at the sheet's one 16 px gutter (§9.25), a hairline in the gutter, and the site's standing
+ * answer as a switch row (§10.4). A dialog of TabDialogs' `FrameDialogHost` (the shell's box on
+ * a phone), drawing the stack's one scrim itself, which fades with its motion (§9.28); the
+ * sheet's layer is a page surface (§9.29).
  */
 function BlockedPopupsSheet({ tab, entries, allowed }: ContentProps): JSX.Element {
   const sheet = useRef<BottomSheetHandle>(null)
@@ -366,11 +366,6 @@ function BlockedPopupsSheet({ tab, entries, allowed }: ContentProps): JSX.Elemen
       contentKey={`${entries.length}|${allowed}`}
       handleLabel="Resize blocked pop-ups"
       labelledBy="blocked-popups-title"
-      header={
-        <h2 id="blocked-popups-title" className="zen-sheet-title">
-          Blocked pop-ups
-        </h2>
-      }
       footer={
         <V2Button
           onClick={() =>
@@ -382,9 +377,13 @@ function BlockedPopupsSheet({ tab, entries, allowed }: ContentProps): JSX.Elemen
         </V2Button>
       }
     >
-      <p className="px-4 pb-4 text-[length:var(--v2-font-body)] leading-[var(--v2-line-body)]">
-        {summaryOf(entries, allowed)}
-      </p>
+      <div className="zen-sheet-title-block">
+        <h2 id="blocked-popups-title">
+          <AppWindow className={GLYPH} aria-hidden />
+          <span className="min-w-0 truncate">Blocked pop-ups</span>
+        </h2>
+        <p>{summaryOf(entries, allowed)}</p>
+      </div>
       {entries.length > 0 && (
         <>
           <ul className="flex flex-col">
