@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { languageCodeOf, offscreenUrl } from '../extensionApi'
 import { pickMessages, type ExtRequestEvent } from '../extensionRuntime'
 import {
   type FakeAuthSheet,
@@ -980,6 +981,157 @@ describe('AndroidExtensionRuntime: chrome.userScripts', () => {
     expect(h.runtime.userScriptMessaging(ID)).toBe(false)
     const off = JSON.parse(String(userUnit().config)) as Record<string, unknown>
     expect(off.userScriptMessaging).toBe(false)
+  })
+})
+
+describe('AndroidExtensionRuntime: chrome.offscreen', () => {
+  it('createDocument puts up one hidden page and resolves on its hello; closeDocument takes it down', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['offscreen'] })))
+    backgroundUp(h, 'bg1')
+    expect((await call(h, 'bg1', 'offscreen', 'hasDocument', [])).result).toBe(false)
+    const closedEarly = await call(h, 'bg1', 'offscreen', 'closeDocument', [])
+    expect(closedEarly.error).toBe('No current offscreen document.')
+    // Tampermonkey's call, its URL a path: the page is up when its bootstrap says hello.
+    const id = nextCallId()
+    message(h, 'bg1', {
+      t: 'call',
+      id,
+      ns: 'offscreen',
+      method: 'createDocument',
+      args: [{ url: 'offscreen.html', reasons: ['BLOBS'], justification: 'blob URLs' }]
+    })
+    await until(() => h.kt.offscreens.has(ID))
+    expect(h.kt.offscreens.get(ID)).toBe(`https://${ID}.ext.zenium.invalid/offscreen.html`)
+    expect(h.kt.to('bg1').find((m) => m.t === 'reply' && m.id === id)).toBeUndefined()
+    // While it loads the document counts as present: a second call is refused, as in Chrome.
+    const second = await call(h, 'bg1', 'offscreen', 'createDocument', [
+      { url: 'offscreen.html', reasons: ['BLOBS'], justification: 'again' }
+    ])
+    expect(second.error).toBe('Only a single offscreen document may be created.')
+    hello(h, 'off1', 'offscreen', { url: `https://${ID}.ext.zenium.invalid/offscreen.html` })
+    await until(() => h.kt.to('bg1').some((m) => m.t === 'reply' && m.id === id))
+    expect(h.kt.to('bg1').find((m) => m.t === 'reply' && m.id === id)?.error).toBeUndefined()
+    expect((await call(h, 'bg1', 'offscreen', 'hasDocument', [])).result).toBe(true)
+    // The page has the extension's chrome: its runtime.sendMessage reaches the background as a
+    // popup's does, with no tab on the sender.
+    message(h, 'off1', { t: 'msg', id: 3, target: {}, data: { blob: 'made' } })
+    const delivered = h.kt.to('bg1').filter((m) => m.t === 'deliver')
+    expect(delivered).toHaveLength(1)
+    expect(delivered[0].data).toEqual({ blob: 'made' })
+    expect((delivered[0].sender as Record<string, unknown>).tab).toBeUndefined()
+    message(h, 'bg1', { t: 'msgReply', id: delivered[0].id, handled: true, response: 'ok' })
+    expect(h.kt.to('off1').find((m) => m.t === 'reply')).toMatchObject({
+      id: 3,
+      ok: true,
+      result: 'ok'
+    })
+    const closed = await call(h, 'bg1', 'offscreen', 'closeDocument', [])
+    expect(closed.error).toBeUndefined()
+    expect(h.kt.offscreens.has(ID)).toBe(false)
+    h.runtime.onGone(['off1'])
+    expect((await call(h, 'bg1', 'offscreen', 'hasDocument', [])).result).toBe(false)
+  })
+
+  it('refuses a page off the extension origin and rejects a page that never loads', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['offscreen'] })))
+    backgroundUp(h, 'bg1')
+    const elsewhere = await call(h, 'bg1', 'offscreen', 'createDocument', [
+      { url: 'https://example.com/x.html', reasons: ['AUDIO_PLAYBACK'], justification: 'no' }
+    ])
+    expect(elsewhere.error).toMatch(/not on this extension's origin/)
+    const other = await call(h, 'bg1', 'offscreen', 'createDocument', [
+      {
+        url: `chrome-extension://${ID2}/off.html`,
+        reasons: ['AUDIO_PLAYBACK'],
+        justification: 'no'
+      }
+    ])
+    expect(other.error).toMatch(/not on this extension's origin/)
+    const noReason = await call(h, 'bg1', 'offscreen', 'createDocument', [
+      { url: 'off.html', reasons: [], justification: 'no' }
+    ])
+    expect(noReason.error).toMatch(/Expected at least one reason/)
+    expect(h.kt.offscreens.size).toBe(0)
+    // Chrome's own scheme names this extension's page.
+    const id = nextCallId()
+    message(h, 'bg1', {
+      t: 'call',
+      id,
+      ns: 'offscreen',
+      method: 'createDocument',
+      args: [
+        {
+          url: `chrome-extension://${ID}/off.html`,
+          reasons: ['AUDIO_PLAYBACK'],
+          justification: 'tts'
+        }
+      ]
+    })
+    await until(() => h.kt.offscreens.has(ID))
+    expect(h.kt.offscreens.get(ID)).toBe(`https://${ID}.ext.zenium.invalid/off.html`)
+    // No hello within the load window: the call rejects and Kotlin's view goes.
+    h.tick(20_000)
+    await until(() => h.kt.to('bg1').some((m) => m.t === 'reply' && m.id === id))
+    expect(h.kt.to('bg1').find((m) => m.t === 'reply' && m.id === id)?.error).toMatch(
+      /did not load/
+    )
+    expect(h.kt.offscreens.has(ID)).toBe(false)
+    expect((await call(h, 'bg1', 'offscreen', 'hasDocument', [])).result).toBe(false)
+  })
+})
+
+describe('offscreenUrl and languageCodeOf', () => {
+  it('maps the forms of createDocument({ url }) onto the served origin and refuses the rest', () => {
+    const origin = `https://${ID}.ext.zenium.invalid`
+    expect(offscreenUrl(ID, 'offscreen.html')).toBe(`${origin}/offscreen.html`)
+    expect(offscreenUrl(ID, '/a/b.html?x=1#y')).toBe(`${origin}/a/b.html?x=1#y`)
+    expect(offscreenUrl(ID, `chrome-extension://${ID}/off.html?q`)).toBe(`${origin}/off.html?q`)
+    expect(offscreenUrl(ID, `chrome-extension://${ID}`)).toBe(`${origin}/`)
+    expect(offscreenUrl(ID, `${origin}/served.html`)).toBe(`${origin}/served.html`)
+    expect(() => offscreenUrl(ID, `chrome-extension://${ID2}/off.html`)).toThrow(
+      /not on this extension's origin/
+    )
+    expect(() => offscreenUrl(ID, 'https://example.com/off.html')).toThrow(
+      /not on this extension's origin/
+    )
+    expect(() => offscreenUrl(ID, 'data:text/html,hi')).toThrow(/not on this extension's origin/)
+  })
+
+  it('reduces a declared language tag to the code detectLanguage answers with', () => {
+    expect(languageCodeOf('en')).toBe('en')
+    expect(languageCodeOf('en-US')).toBe('en')
+    expect(languageCodeOf('pt_BR')).toBe('pt')
+    expect(languageCodeOf(' DE ')).toBe('de')
+    expect(languageCodeOf('ast')).toBe('ast')
+    expect(languageCodeOf('')).toBe('und')
+    expect(languageCodeOf('x-klingon')).toBe('und')
+    expect(languageCodeOf('1234')).toBe('und')
+    expect(languageCodeOf(null)).toBe('und')
+    expect(languageCodeOf({ ran: true })).toBe('und')
+  })
+})
+
+describe('AndroidExtensionRuntime: tabs.detectLanguage', () => {
+  it('answers the language the page declares, as its bare code, and und when it declares none', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1')
+    hello(h, 'c1', 'content')
+    h.kt.execAnswer = () => 'de-DE'
+    const declared = await call(h, 'bg1', 'tabs', 'detectLanguage', [
+      h.runtime.api.tabs.chromeIdFor('t1')
+    ])
+    expect(declared.result).toBe('de')
+    const exec = h.kt.calledWith('ext.exec').at(-1)
+    expect(exec).toMatchObject({ tabId: 't1', ext: ID, kind: 'js', payload: { world: 'ISOLATED' } })
+    expect(String(exec?.code)).toContain("getAttribute('lang')")
+    h.kt.execAnswer = () => ''
+    expect((await call(h, 'bg1', 'tabs', 'detectLanguage', [])).result).toBe('und')
+    // A page the extension cannot ask (no host permission, say) is undetermined, not an error.
+    h.kt.failExec = () => 'Cannot access contents of the page.'
+    expect((await call(h, 'bg1', 'tabs', 'detectLanguage', [])).result).toBe('und')
   })
 })
 

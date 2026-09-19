@@ -99,6 +99,7 @@ import type { ViewEventPayloads } from './views'
  *                                           → { units: [{ key, chars, cached }], ms }
  *  ext.detach { id }
  *  ext.background.start / stop { id }, ext.popup.open { id, url, context, title }, ext.popup.close,
+ *  ext.offscreen.open { id, url } / close { id }   chrome.offscreen's one hidden page per extension
  *  ext.hosts { id, hosts } (optional host permissions granted at runtime)
  *  ext.send { ep, message }, ext.exec {…}, ext.readFile { id, path }, ext.cookies.read / write
  *  ext.observeRequests { on }               every engine decision is reported, not just the rules' matches
@@ -242,6 +243,8 @@ export interface AndroidExtensionRuntimeOptions {
 const RUNTIME_STORE = 'extensions-runtime.json'
 const STORAGE_AREAS: readonly StorageArea[] = ['local', 'sync', 'session', 'managed']
 const NOT_IMPLEMENTED = 'is not implemented on Zenium for Android'
+/** How long `offscreen.createDocument` waits for its page's hello (a first load on a cold WebView takes a few seconds). */
+const OFFSCREEN_LOAD_MS = 20_000
 const CONTEXTS: readonly EngineContextKind[] = [
   'content',
   'userScript',
@@ -348,6 +351,15 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
    */
   private readonly swPorts = new Map<string, { client: string; extensionId: string }>()
   private popupOpen: string | null = null
+  /**
+   * `offscreen.createDocument` calls waiting for their page to say hello, by extension: the
+   * document counts as present from the call on (a second call while it loads is refused, as in
+   * Chrome), and the wait ends with the hello, a close, a detach or the load timeout.
+   */
+  private readonly offscreenOpening = new Map<
+    string,
+    { resolve: () => void; reject: (error: Error) => void; timer: unknown }
+  >()
   private observing = false
   private subscribed = false
   private activeTabId: string | null = null
@@ -568,6 +580,8 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     for (const [port, owner] of [...this.swPorts])
       if (owner.extensionId === id) this.swPorts.delete(port)
     if (this.popupOpen === id) this.closePopup()
+    // Kotlin's detach takes the offscreen page down with the background's.
+    this.settleOffscreen(id, new Error('The extension was unloaded.'))
     this.updateObserving()
     // Its rule sets leave the engine with it (the store persists the removal).
     this.dnr.unload(id)
@@ -1044,6 +1058,44 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     this.bridge.send('ext.popup.close')
   }
 
+  /**
+   * `offscreen.createDocument`: Kotlin puts up a hidden `ExtensionWebView` on the URL (the same
+   * kind of view as the background page's); the promise settles when its bootstrap says hello
+   * as an `offscreen` endpoint, or when [OFFSCREEN_LOAD_MS] pass without one.
+   */
+  openOffscreen(id: string, url: string): Promise<void> {
+    this.settleOffscreen(id, new Error('The offscreen document was replaced.'))
+    return new Promise<void>((resolve, reject) => {
+      const timer = this.timers.setTimeout(() => {
+        if (this.offscreenOpening.get(id)?.timer !== timer) return
+        this.offscreenOpening.delete(id)
+        this.bridge.send('ext.offscreen.close', { id })
+        reject(new Error(`The offscreen document ${url} did not load.`))
+      }, OFFSCREEN_LOAD_MS)
+      this.offscreenOpening.set(id, { resolve, reject, timer })
+      this.bridge.send('ext.offscreen.open', { id, url })
+    })
+  }
+
+  closeOffscreen(id: string): void {
+    this.settleOffscreen(id, new Error('The offscreen document was closed.'))
+    this.bridge.send('ext.offscreen.close', { id })
+  }
+
+  hasOffscreen(id: string): boolean {
+    return this.offscreenOpening.has(id) || this.router.of(id, 'offscreen').length > 0
+  }
+
+  /** The pending `createDocument` of an extension, if any, resolved (its page is up) or rejected. */
+  private settleOffscreen(id: string, error: Error | null): void {
+    const waiting = this.offscreenOpening.get(id)
+    if (!waiting) return
+    this.offscreenOpening.delete(id)
+    this.timers.clearTimeout(waiting.timer)
+    if (error) waiting.reject(error)
+    else waiting.resolve()
+  }
+
   /** The popup path `action.setPopup` left (null when clicks fire `onClicked`); undefined when not attached. */
   popupFor(id: string): string | null | undefined {
     if (!this.extensions.has(id)) return undefined
@@ -1324,6 +1376,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
       }
       this.backgroundEps.set(extensionId, ep)
     }
+    if (context === 'offscreen' && event.top) this.settleOffscreen(extensionId, null)
   }
 
   onGone(eps: string[]): void {

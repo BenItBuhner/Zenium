@@ -184,6 +184,8 @@ class Extensions(private val host: Host) {
     private val worldSlots = WorldSlots(if (isolatedWorlds) WORLD_SLOTS else 0)
     private val endpoints = HashMap<String, Endpoint>()
     private val backgrounds = HashMap<String, ExtensionWebView>()
+    /** `chrome.offscreen`'s hidden page per extension: a background-like view on the URL the extension named. */
+    private val offscreens = HashMap<String, ExtensionWebView>()
     private var popup: ExtensionPopup? = null
     /** The user agent extension pages send (set when the first extension view is built), for the CORS proxy's requests. */
     @Volatile var userAgent: String? = null
@@ -295,6 +297,8 @@ class Extensions(private val host: Host) {
             "ext.background.stop" -> { stopBackground(args.str("id")); reply(null) }
             "ext.popup.open" -> { openPopup(args.str("id"), args.str("url"), args.str("context", "popup"), args.str("title", "")); reply(null) }
             "ext.popup.close" -> { closePopup(); reply(null) }
+            "ext.offscreen.open" -> { openOffscreen(args.str("id"), args.str("url")); reply(null) }
+            "ext.offscreen.close" -> { closeOffscreen(args.str("id")); reply(null) }
             "ext.auth.open" -> { openAuthSheet(args.getInt("viewId"), args.str("id"), args.str("url"), args.str("title")); reply(null) }
             "ext.auth.show" -> { authSheets[args.getInt("viewId")]?.show(); reply(null) }
             "ext.auth.close" -> { authSheets.remove(args.getInt("viewId"))?.close(); reply(null) }
@@ -468,6 +472,7 @@ class Extensions(private val host: Host) {
         served = served - id
         for (view in handlers.keys.toList()) removeExtension(view, id)
         stopBackground(id)
+        closeOffscreen(id)
         if (popup?.extensionId == id) closePopup()
         // The core dropped these endpoints already; the frames keep running what was injected.
         endpoints.entries.removeAll { it.value.extensionId == id }
@@ -1250,6 +1255,28 @@ class Extensions(private val host: Host) {
         view.destroy()
     }
 
+    /**
+     * `ext.offscreen.open`: the extension's one offscreen document (`chrome.offscreen`), a hidden
+     * view like the background's on the page the extension named; its bootstrap says hello as an
+     * `offscreen` endpoint, which is what the core's `createDocument` waits for. An earlier one
+     * under the id is replaced (the core refuses a second `createDocument`; this is its retry).
+     */
+    private fun openOffscreen(id: String, url: String) {
+        val ext = served[id] ?: return
+        closeOffscreen(id)
+        val view = ExtensionWebView(host, this, ext, "offscreen")
+        offscreens[id] = view
+        host.attachHidden(view)
+        view.loadUrl(url)
+    }
+
+    private fun closeOffscreen(id: String) {
+        val view = offscreens.remove(id) ?: return
+        onDocumentGone(view)
+        host.detachHidden(view)
+        view.destroy()
+    }
+
     private fun openPopup(id: String, url: String, context: String, title: String) {
         closePopup()
         val ext = served[id] ?: return
@@ -1300,6 +1327,9 @@ class Extensions(private val host: Host) {
     fun onRendererGone(view: ExtensionWebView) {
         val id = backgrounds.entries.firstOrNull { it.value === view }?.key
         if (id != null) stopBackground(id)
+        // A dead offscreen page goes the same way; `hasDocument` says false once its endpoint is gone.
+        val offscreen = offscreens.entries.firstOrNull { it.value === view }?.key
+        if (offscreen != null) closeOffscreen(offscreen)
         if (popup?.webView === view) closePopup()
     }
 
@@ -1316,6 +1346,7 @@ class Extensions(private val host: Host) {
         closePopup()
         closeAuthSheets()
         for (id in backgrounds.keys.toList()) stopBackground(id)
+        for (id in offscreens.keys.toList()) closeOffscreen(id)
         notifications.destroy()
         io.shutdownNow()
         // The engine outlives the window; a runtime that is gone must not be called (a newer

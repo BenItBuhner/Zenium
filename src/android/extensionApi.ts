@@ -15,7 +15,11 @@ import type { LocaleMessages } from '@core/extensions/api/i18n'
 import { globToRegExp, matchesAnyPattern } from '@core/extensions/api/matchPattern'
 import type { ExtensionRecord } from '@core/extensions/registry'
 import type { RunAt, RuntimeManifest, ScriptWorld } from '@core/extensions/runtime/manifest'
-import { extensionUrl, type RegisteredContentScript } from '@core/extensions/runtime/plan'
+import {
+  extensionOrigin,
+  extensionUrl,
+  type RegisteredContentScript
+} from '@core/extensions/runtime/plan'
 import type { Endpoint, MessageRouter } from '@core/extensions/runtime/router'
 import { ActiveTabGrants } from './extensionActiveTab'
 import { AndroidContextMenus } from './extensionContextMenus'
@@ -110,6 +114,14 @@ export interface ApiHost {
   notificationsAllowed(): Promise<boolean>
   openPopup(id: string): void
   openOptions(id: string): void
+  /**
+   * `chrome.offscreen`: the extension's one hidden document. `openOffscreen` resolves once the
+   * page said hello (Chrome's `createDocument` resolves when the document is created), or
+   * rejects when it never does.
+   */
+  openOffscreen(id: string, url: string): Promise<void>
+  closeOffscreen(id: string): void
+  hasOffscreen(id: string): boolean
   /** `runtime.reload()` and `management.uninstallSelf()`: the store re-reads or removes the extension. */
   reload(id: string): Promise<void>
   uninstall(id: string): Promise<void>
@@ -143,6 +155,20 @@ const DEFAULT_BADGE_BACKGROUND = '#5f6368'
 const DEFAULT_BADGE_TEXT_COLOR = '#ffffff'
 
 const NOT_IMPLEMENTED = 'is not implemented on Zenium for Android'
+
+/** `tabs.detectLanguage`: the page's declared language, read in the extension's world. */
+const DECLARED_LANGUAGE_JS =
+  "(function(){var h=document.documentElement;return (h&&h.getAttribute('lang'))||(document.body&&document.body.getAttribute('lang'))||''})()"
+
+/**
+ * A BCP 47 tag (`en-US`, `pt_BR`, ` DE `) as the bare lower-case language Chrome's
+ * `detectLanguage` answers with; `und` for nothing, or for a value that is no tag.
+ */
+export function languageCodeOf(declared: unknown): string {
+  if (typeof declared !== 'string') return 'und'
+  const primary = declared.trim().split(/[-_]/)[0] ?? ''
+  return /^[a-zA-Z]{2,3}$/.test(primary) ? primary.toLowerCase() : 'und'
+}
 
 export function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {}
@@ -513,9 +539,7 @@ export class ExtensionApi {
         if (method === 'isAllowedIncognitoAccess') return ext.record.allowPrivate === true
         break
       case 'offscreen':
-        if (method === 'hasDocument') return false
-        if (method === 'closeDocument') return undefined
-        break
+        return this.offscreenCall(ext, method, args)
       case 'downloads':
         if (method === 'download') {
           const url = String(asRecord(args[0]).url ?? '')
@@ -654,8 +678,73 @@ export class ExtensionApi {
       }
       case 'captureVisibleTab':
         return this.captureVisibleTab(ext, args[0], args[1])
+      case 'detectLanguage': {
+        const target = targetOrActive(args[0])
+        if (!target) throw new Error('No active tab.')
+        return this.detectLanguage(ext, target)
+      }
     }
     throw new Error(`chrome.tabs.${method} ${NOT_IMPLEMENTED}`)
+  }
+
+  /**
+   * Chrome runs its language detector over the page's text. The phone has none, so the answer
+   * is what the document declares (`<html lang>`, which Blink also fills from a Content-Language
+   * header), as the bare language code Chrome returns – `und` when nothing is declared or the
+   * page cannot be asked. Ghostery and LanguageTool call this on every page they attach to.
+   */
+  private async detectLanguage(ext: AttachedExtension, target: Tab): Promise<string> {
+    let declared: unknown
+    try {
+      declared = await this.host.exec({
+        extensionId: ext.record.id,
+        tabId: target.id,
+        frameId: 0,
+        kind: 'js',
+        payload: { world: 'ISOLATED' },
+        code: DECLARED_LANGUAGE_JS,
+        files: null,
+        funcSource: null,
+        args: null
+      })
+    } catch {
+      return 'und'
+    }
+    return languageCodeOf(declared)
+  }
+
+  /**
+   * `chrome.offscreen`: one hidden page per extension, on its origin, with the same `chrome` as
+   * a popup (Tampermonkey makes its blob URLs in one, Google Translate plays its audio there);
+   * Chrome's errors word for word. `reasons` and `justification` are required by Chrome's
+   * validator but change nothing here.
+   */
+  private async offscreenCall(
+    ext: AttachedExtension,
+    method: string,
+    args: unknown[]
+  ): Promise<unknown> {
+    const id = ext.record.id
+    switch (method) {
+      case 'createDocument': {
+        const params = asRecord(args[0])
+        const url = typeof params.url === 'string' ? params.url.trim() : ''
+        if (!url) throw new Error("Error at parameter 'parameters': Error at property 'url': Invalid or missing url.")
+        const reasons = Array.isArray(params.reasons) ? params.reasons : []
+        if (reasons.length === 0)
+          throw new Error("Error at parameter 'parameters': Error at property 'reasons': Expected at least one reason.")
+        if (this.host.hasOffscreen(id)) throw new Error('Only a single offscreen document may be created.')
+        await this.host.openOffscreen(id, offscreenUrl(id, url))
+        return undefined
+      }
+      case 'closeDocument':
+        if (!this.host.hasOffscreen(id)) throw new Error('No current offscreen document.')
+        this.host.closeOffscreen(id)
+        return undefined
+      case 'hasDocument':
+        return this.host.hasOffscreen(id)
+    }
+    throw new Error(`chrome.offscreen.${method} ${NOT_IMPLEMENTED}`)
   }
 
   /**
@@ -1439,6 +1528,23 @@ function safeOrigin(url: string): string {
   } catch {
     return ''
   }
+}
+
+/**
+ * The page of `offscreen.createDocument({ url })` on the extension's served origin: a path
+ * (`offscreen.html`), a `chrome-extension://<id>/...` URL or the served URL itself
+ * (`runtime.getURL` answers that here). Another extension's id is not this extension's page.
+ */
+export function offscreenUrl(id: string, url: string): string {
+  const origin = extensionOrigin(id)
+  if (url === origin || url.startsWith(origin + '/')) return url
+  const scheme = /^chrome-extension:\/\/([a-p]{32})(\/[^#]*)?/.exec(url)
+  if (scheme) {
+    if (scheme[1] !== id) throw new Error(`Invalid URL: "${url}" is not on this extension's origin.`)
+    return extensionUrl(id, scheme[2] ?? '/')
+  }
+  if (/^[a-z][a-z0-9+.-]*:/i.test(url)) throw new Error(`Invalid URL: "${url}" is not on this extension's origin.`)
+  return extensionUrl(id, url)
 }
 
 export function contextTypeOf(context: EngineContextKind): string {
