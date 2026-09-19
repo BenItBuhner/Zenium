@@ -68,14 +68,17 @@ export class ElectronSpellcheck implements SpellcheckHost {
 
   private applyTo(ses: Session): void {
     if (!this.applied) return
-    ses.setSpellCheckerEnabled(this.enabled)
-    if (this.systemLanguages) return
-    try {
-      ses.setSpellCheckerLanguages(this.languages)
-    } catch {
-      // A code Chromium does not know (the list is filtered against the available ones, so
-      // only a build whose dictionary set shrank gets here): keep what the session had.
+    if (!this.systemLanguages) {
+      try {
+        ses.setSpellCheckerLanguages(this.languages)
+      } catch {
+        // A code Chromium does not know (the list is filtered against the available ones, so
+        // only a build whose dictionary set shrank gets here): keep what the session had.
+      }
     }
+    // Electron's `setSpellCheckerLanguages` flips the checker on (off for an empty list) as a
+    // side effect, so the switch goes last or "off" would not hold.
+    ses.setSpellCheckerEnabled(this.enabled)
   }
 
   private attach(ses: Session, containerId: string): void {
