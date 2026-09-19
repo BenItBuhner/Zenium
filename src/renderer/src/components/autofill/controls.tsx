@@ -568,7 +568,7 @@ function PopoverMenulist<T extends string>({
             id={listId}
             role="listbox"
             aria-label={label}
-            className="zen-v2 zen-v2-panel zen-v2-menulist-popup zen-animate-pop fixed z-[90] select-none"
+            className="zen-v2 zen-v2-panel zen-v2-menulist-popup zen-v2-af-menu-popup zen-animate-pop fixed z-[90] select-none"
             data-surface="page"
             style={popoverStyle(box)}
             onKeyDown={onListKeyDown}
@@ -756,7 +756,7 @@ function HostedMenuSheet<T extends string>({
                 type="button"
                 role="radio"
                 aria-checked={o.value === value}
-                className="zen-v2-af-row"
+                className="zen-v2-row zen-v2-af-row"
                 onClick={() => pick(o.value)}
               >
                 <span className="zen-v2-radio" aria-hidden />
