@@ -264,8 +264,31 @@ class HistoryBookmarksDemo :
             )
         }
 
+        // 2b. A finger on a row's trailing Remove – the shared `.zen-v2-icon-button` beside the
+        //     accessible row, on the shared `.zen-v2-row` – an injected touch inside the button's
+        //     bounds (the real-touch rule), not a click through the tree: the row goes and Undo
+        //     brings it back.
+        val removed = PAGES[2].title
+        val remove = rowAction(removed, "Remove from history")
+        if (remove == null) {
+            finding("\nrow action (injected touch): no Remove button on '$removed' ${verdict(false)}")
+        } else {
+            val point = touchTapPoint(remove)
+            SystemClock.sleep(1_800)
+            shot("02b-history-row-action-touch")
+            val gone = row(removed) == null
+            val undo = clickWhenShown("Undo")
+            SystemClock.sleep(1_800)
+            finding(
+                "\nrow action (injected touch at ${point?.let { "${it.x.toInt()},${it.y.toInt()}" } ?: "nowhere"}): " +
+                    "Remove on '$removed' touched ${verdict(point != null)}, row gone ${verdict(gone)}, " +
+                    "Undo ${verdict(undo)}, row back ${verdict(row(removed) != null)}"
+            )
+        }
+
         // 3. Hold a row: selection mode. Pick a second one, look at the menu, let back close it
-        //    (the selection stays), delete from the header, undo.
+        //    (the selection stays), delete from the header, undo. The hold and the second tap are
+        //    injected touches on the rows themselves.
         row(PAGES[3].title)?.let { first ->
             f.press(first.exactCenterX(), first.exactCenterY())
             f.up()
@@ -273,7 +296,10 @@ class HistoryBookmarksDemo :
             row(PAGES[4].title)?.let { f.tap(it.exactCenterX(), it.exactCenterY()) }
             SystemClock.sleep(1_200)
             shot("04-history-selection")
-            finding("\nlong press: selection header '2 selected' ${verdict(present("2 selected"))}")
+            finding(
+                "\nlong press (injected touch on a row) and a tap (injected) on a second: " +
+                    "selection header '2 selected' ${verdict(present("2 selected"))}"
+            )
             click("More")
             await(MENU_HANDLE_LABEL)
             SystemClock.sleep(1_200)
@@ -394,7 +420,8 @@ class HistoryBookmarksDemo :
             )
         }
 
-        // 7. Into a folder; the system back gesture climbs out again before it closes anything.
+        // 7. Into a folder with an injected touch on its row; the system back gesture climbs out
+        //    again before it closes anything.
         row("Reading, folder")?.let { reading ->
             f.tap(reading.exactCenterX(), reading.exactCenterY())
             SystemClock.sleep(2_000)
@@ -403,7 +430,7 @@ class HistoryBookmarksDemo :
             back()
             SystemClock.sleep(1_800)
             finding(
-                "\nfolder: pushed into Reading ${verdict(inside)}, back climbs out to Mobile bookmarks " +
+                "\nfolder: pushed into Reading by an injected touch on the row ${verdict(inside)}, back climbs out to Mobile bookmarks " +
                     "${verdict(present("Mobile bookmarks") && panelOpen(BOOKMARKS_SEARCH))}"
             )
         }
@@ -518,11 +545,38 @@ class HistoryBookmarksDemo :
     }
 
     /**
-     * Open a bookmark row's 3-dot menu: through its button's label, or – should the tree not
-     * expose the button – with a finger on it (the 44 box 12 past the row's text, 9.18).
+     * The trailing action labelled `label` of the row whose label starts with `rowPrefix`: the
+     * node with that label whose middle lies on the row's line (the selection header's button of
+     * the same name sits above every row).
+     */
+    private fun rowAction(rowPrefix: String, label: String): AccessibilityNodeInfo? {
+        val rowBounds = row(rowPrefix) ?: return null
+        return findNodeWhere { node ->
+            (node.contentDescription?.toString() ?: node.text?.toString()) == label &&
+                Rect().also { node.getBoundsInScreen(it) }.centerY() in rowBounds.top..rowBounds.bottom
+        }
+    }
+
+    /**
+     * Open a bookmark row's 3-dot menu with a finger on its button – the shared icon button
+     * beside the accessible row – as an injected touch inside the button's bounds (the real-touch
+     * rule), read off the menu that opens. Should the touch open nothing, the tree's click; should
+     * the tree not expose the button, a finger where it is drawn (the 44 box 12 past the row's
+     * text, 9.18). Each path is said in the findings.
      */
     private fun openRowMenu(title: String): Boolean {
-        if (click("More options for $title")) return true
+        val label = "More options for $title"
+        if (touchTapLabel(label, timeoutMs = 3_000)) {
+            if (waitFor(MENU_HANDLE_LABEL, 4_000) != null) {
+                finding("row menu for '$title': opened by an injected touch on its 3-dot button ${verdict(true)}")
+                return true
+            }
+            finding("row menu for '$title': the injected touch on its 3-dot button opened nothing ${verdict(false)}")
+        }
+        if (click(label)) {
+            finding("row menu for '$title': opened through the accessibility tree instead")
+            return true
+        }
         val main = row(title) ?: return false
         Finger().tap(main.right + 34 * density, main.exactCenterY())
         finding("row menu for '$title': no button in the accessibility tree, tapped where it is drawn")
