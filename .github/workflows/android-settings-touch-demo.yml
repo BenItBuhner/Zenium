@@ -1,0 +1,60 @@
+name: Android Settings sheet touch check
+
+# A finger on a phone Settings sheet, on a hardware-accelerated Android emulator: the Settings tab
+# from the app menu, Look and Feel, the Colour scheme picker, and a REAL touch (UiAutomation
+# injects the MotionEvents; the WebView hit-tests them as it would a finger's) on the option that
+# is not the current one. The run FAILS unless the picker closes on that touch with the new value
+# on the row and in the core's settings. It is the regression test for #192: from v0.3.42 to
+# v0.3.45 every phone Settings sheet let a tap fall through to the host's scrim while the
+# accessibility clicks the other drivers press with kept working. Dispatch-only, like the other
+# demos; it records the sequence and uploads the frames, the recording and the findings. The
+# build, the emulator and the Gradle cache live in android-emulator-demo.yml; this file only picks
+# the driver.
+on:
+  workflow_dispatch:
+  # TEMPORARY: the worker's token cannot dispatch workflows; removed before the PR is marked ready.
+  push:
+    branches:
+      - cursor/android-settings-sheet-touch-23d7
+      - cursor/android-settings-touch-before-23d7
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-settings-touch-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Settings sheet touch check
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.SettingsTouchDemo
+        DEMO_DIR=settings-touch-demo
+        DEMO_OUT=artifacts/android-settings-touch-demo
+        DEMO_VIDEO=android-settings-touch-demo.mp4
+        DEMO_THEME=light
+      artifact-name: android-settings-touch-demo
+      artifact-path: artifacts/android-settings-touch-demo/
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed: a run is then spent on the check rather than on the runner.
+  record-again:
+    name: Settings sheet touch check, second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.SettingsTouchDemo
+        DEMO_DIR=settings-touch-demo
+        DEMO_OUT=artifacts/android-settings-touch-demo
+        DEMO_VIDEO=android-settings-touch-demo.mp4
+        DEMO_THEME=light
+      artifact-name: android-settings-touch-demo-second-boot
+      artifact-path: artifacts/android-settings-touch-demo/

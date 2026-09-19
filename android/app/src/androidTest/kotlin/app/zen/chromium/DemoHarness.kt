@@ -373,6 +373,67 @@ abstract class DemoHarness(
         return null
     }
 
+    // --- pressing a control: a finger, or the accessibility tree ---------------------------------
+    //
+    // Two ways to press, for two different claims. [touchTap] and [touchTapLabel] inject a REAL
+    // touch – ACTION_DOWN and ACTION_UP through UiAutomation at the middle of the node's bounds,
+    // the path `adb shell input tap` takes – so the WebView hit-tests it as it would a finger:
+    // the chrome's layers, scrims and `pointer-events` cuts all have their say. A step whose
+    // claim is "the user can tap this" uses one of them ([tapLabel] and [Finger.tap] are the same
+    // touch with a caller-owned finger) and reads the outcome afterwards, through the tree or the
+    // core's state (the row's new value, an option's checked state), never off the return value.
+    // [clickByLabel] performs ACTION_CLICK on the accessibility node: no hit test, so it lands on
+    // a control a finger cannot reach, and on bounds that trail a scrolled list. It is for getting
+    // to a state (set-up off camera, a row deep in a list the tree has not caught up with), never
+    // for the claim that a tap works: from v0.3.42 to v0.3.45 no phone Settings sheet took a real
+    // touch (#192: the tap fell through the sheet to the host's scrim), and every driver that
+    // pressed the sheets' rows through the tree passed.
+
+    /**
+     * A real touch on the middle of `node`'s bounds on screen. False, and nothing injected, when
+     * the node has no bounds inside the window (a row below the fold, a tree that has not caught
+     * up with a transition): the caller says so rather than touching a corner.
+     */
+    protected fun touchTap(node: AccessibilityNodeInfo): Boolean {
+        val bounds = Rect().also { node.getBoundsInScreen(it) }
+        if (!boundsOnScreen(bounds)) {
+            Log.w(tag, "no bounds on screen to touch: $bounds")
+            return false
+        }
+        Log.i(tag, "touch at ${bounds.exactCenterX()},${bounds.exactCenterY()} on '${node.text ?: node.contentDescription}'")
+        Finger().tap(bounds.exactCenterX(), bounds.exactCenterY())
+        return true
+    }
+
+    /**
+     * A real touch on the first node whose label or text is `label` – exactly, or with `prefix`
+     * one whose text starts with it (a Settings row reads its label and value as one text) –
+     * waiting up to `timeoutMs` for it to show with bounds on screen; false when none does.
+     */
+    protected fun touchTapLabel(label: String, prefix: Boolean = false, timeoutMs: Long = 8_000): Boolean {
+        val node = awaitNode(timeoutMs) { it == label || (prefix && it.startsWith(label)) } ?: run {
+            Log.w(tag, "nothing on screen reads '$label'")
+            return false
+        }
+        return touchTap(node)
+    }
+
+    /** Poll up to `timeoutMs` for the first node whose label or text `matches`, with bounds on screen. */
+    protected fun awaitNode(timeoutMs: Long = 8_000, matches: (String) -> Boolean): AccessibilityNodeInfo? {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            findNode(matches)?.let { node ->
+                if (boundsOnScreen(Rect().also { node.getBoundsInScreen(it) })) return node
+            }
+            SystemClock.sleep(200)
+        }
+        return null
+    }
+
+    /** Non-empty bounds whose middle is inside the window. */
+    protected fun boundsOnScreen(bounds: Rect): Boolean =
+        !bounds.isEmpty && bounds.centerX() in 0 until width && bounds.centerY() in 0 until height
+
     // Shared by the drivers (moved here from the first-run driver): the API 34 emulator renders
     // in software and the WebView's accessibility tree trails a transition by seconds, so touches
     // wait generously for their label and window changes are polled for, not slept for.
