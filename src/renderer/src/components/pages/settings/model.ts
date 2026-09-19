@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import type { InternalPageSection } from '@shared/internalPages'
 import { matchesQuery } from '@shared/internalPages'
+import type { FormFactor } from '@shared/types'
 
 /**
  * The phone Settings page as data (design language v2 §10.3–10.4). A section builder turns the
@@ -26,6 +27,14 @@ export interface RowBase {
   keywords?: readonly string[]
   /** A dependent row whose parent is off: 40%, still laid out, not pressable (§10.4). */
   disabled?: boolean
+  /**
+   * The chrome layouts the row exists on, when what it sets is a control one shell alone has:
+   * the phone bar's position and its editor are the phone shell's, the URL bar's full addresses
+   * the desktop and tablet shells'. `onLayout` leaves the row out of the other layouts' pages –
+   * and out of their search, which would otherwise offer a phone's row on a desktop (BUG-055).
+   * Absent, the row is on every layout; a context without a form factor keeps every row.
+   */
+  layouts?: readonly FormFactor[]
 }
 
 export interface RowOption {
@@ -154,6 +163,8 @@ export interface RowGroup {
   rows: SettingsRow[]
   /** The §9.17 one-line empty state, when the group's rows come from a list that is empty. */
   empty?: string
+  /** As a row's `layouts`: the whole group is one shell's (the bookmarks bar's rows). */
+  layouts?: readonly FormFactor[]
 }
 
 export interface SectionModel {
@@ -222,6 +233,31 @@ export function searchRows(sections: readonly SectionModel[], query: string): Se
 /** Whether a group draws anything: rows, or an empty state standing in for them. */
 export function groupShows(group: RowGroup): boolean {
   return group.rows.length > 0 || group.empty !== undefined
+}
+
+/**
+ * The groups as the `layout` shell draws them: a group or row whose `layouts` leave the layout
+ * out goes, item sheets included, and a group left with no rows and no empty state goes with
+ * them. Without a layout (a test, a page that has not measured its host) every group stays.
+ */
+export function onLayout(groups: readonly RowGroup[], layout: FormFactor | undefined): RowGroup[] {
+  if (layout === undefined) return [...groups]
+  const on = (layouts: readonly FormFactor[] | undefined): boolean =>
+    layouts === undefined || layouts.includes(layout)
+  const out: RowGroup[] = []
+  for (const group of groups) {
+    if (!on(group.layouts)) continue
+    const rows = group.rows
+      .filter((row) => on(row.layouts))
+      .map((row) =>
+        row.kind === 'item'
+          ? { ...row, sheet: { ...row.sheet, groups: onLayout(row.sheet.groups, layout) } }
+          : row
+      )
+    if (rows.length < group.rows.length && !groupShows({ ...group, rows })) continue
+    out.push({ ...group, rows })
+  }
+  return out
 }
 
 /**
