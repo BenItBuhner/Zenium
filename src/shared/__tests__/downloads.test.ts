@@ -10,9 +10,15 @@ import {
   interruptReasonFrom,
   interruptReasonFromHttpStatus,
   interruptReasonFromNetError,
+  interruptReasonFromRangeResponse,
+  isAttachmentDisposition,
   isInterruptReason,
+  dispositionFilename,
+  filenameForResponse,
   normalizeExtension,
-  resolveDownloadSettings
+  resolveDownloadSettings,
+  sanitizeDownloadName,
+  urlFilename
 } from '../downloads'
 
 describe('interrupt reasons', () => {
@@ -79,6 +85,26 @@ describe('interrupt reasons', () => {
     expect(interruptReasonFromHttpStatus(429)).toBe('server-failed')
     expect(interruptReasonFromHttpStatus(500)).toBe('server-failed')
     expect(interruptReasonFromHttpStatus(503)).toBe('server-failed')
+  })
+
+  it('reads the answer to a resume’s Range request as a reason for the refusal, or none', () => {
+    // A refusing status is the status's reason, whatever the offset.
+    expect(interruptReasonFromRangeResponse(404, null, 524_288)).toBe('server-bad-content')
+    expect(interruptReasonFromRangeResponse(403, null, 524_288)).toBe('server-forbidden')
+    expect(interruptReasonFromRangeResponse(401, null, 0)).toBe('server-unauthorized')
+    expect(interruptReasonFromRangeResponse(416, null, 524_288)).toBe('server-no-range')
+    expect(interruptReasonFromRangeResponse(500, null, 524_288)).toBe('server-failed')
+    // The server serves the range: nothing to blame it for.
+    expect(interruptReasonFromRangeResponse(206, 'bytes 524288-4194303/4194304', 524_288)).toBeNull()
+    // A full answer to a range request from past byte 0 is a server that does not do ranges.
+    expect(interruptReasonFromRangeResponse(200, null, 524_288)).toBe('server-no-range')
+    expect(interruptReasonFromRangeResponse(200, '', 524_288)).toBe('server-no-range')
+    // The same full answer from byte 0 is just the file; so is a 206 that names its range.
+    expect(interruptReasonFromRangeResponse(200, null, 0)).toBeNull()
+    expect(interruptReasonFromRangeResponse(200, 'bytes 524288-4194303/4194304', 524_288)).toBeNull()
+    // Redirects and informational answers are handled earlier in the stack.
+    expect(interruptReasonFromRangeResponse(302, null, 524_288)).toBeNull()
+    expect(interruptReasonFromRangeResponse(100, null, 524_288)).toBeNull()
   })
 
   it('normalises whatever a host or an older file names onto the set', () => {
@@ -178,6 +204,83 @@ describe('file names', () => {
     expect(finalName('report.pdf.zeniumdownload')).toBe('report.pdf')
     expect(finalName('report.pdf')).toBe('report.pdf')
     expect(normalizeExtension(' .TAR.GZ ')).toBe('tar.gz')
+  })
+})
+
+describe('Content-Disposition (RFC 6266)', () => {
+  it('tells an attachment from an inline document, whatever the case and parameters', () => {
+    expect(isAttachmentDisposition('attachment')).toBe(true)
+    expect(isAttachmentDisposition('Attachment; filename="a.pdf"')).toBe(true)
+    expect(isAttachmentDisposition(' ATTACHMENT ;filename=a')).toBe(true)
+    expect(isAttachmentDisposition('inline; filename="a.pdf"')).toBe(false)
+    expect(isAttachmentDisposition('form-data; name="f"')).toBe(false)
+    expect(isAttachmentDisposition('')).toBe(false)
+    expect(isAttachmentDisposition(null)).toBe(false)
+    expect(isAttachmentDisposition(undefined)).toBe(false)
+  })
+
+  it('takes filename* before filename and decodes it, quoted or bare', () => {
+    expect(dispositionFilename('attachment; filename="report.pdf"')).toBe('report.pdf')
+    expect(dispositionFilename('attachment; filename=report.pdf')).toBe('report.pdf')
+    expect(dispositionFilename('attachment;filename="with; semicolon.txt"')).toBe(
+      'with; semicolon.txt'
+    )
+    expect(dispositionFilename('attachment; filename="q\\"uote.txt"')).toBe('q"uote.txt')
+    expect(
+      dispositionFilename("attachment; filename*=UTF-8''r%C3%A9sum%C3%A9.pdf; filename=\"cv.pdf\"")
+    ).toBe('résumé.pdf')
+    expect(
+      dispositionFilename("attachment; filename=\"cv.pdf\"; filename*=utf-8'en'r%C3%A9sum%C3%A9.pdf")
+    ).toBe('résumé.pdf')
+    expect(dispositionFilename("attachment; filename*=iso-8859-1''caf%E9.txt")).toBe('café.txt')
+    // A malformed filename* leaves the plain name standing; nothing named is null.
+    expect(dispositionFilename("attachment; filename*=UTF-8''bad%ZZ; filename=\"ok.txt\"")).toBe(
+      'ok.txt'
+    )
+    expect(dispositionFilename('attachment; filename*=nonsense')).toBeNull()
+    expect(dispositionFilename('attachment')).toBeNull()
+    expect(dispositionFilename('attachment; filename=""')).toBeNull()
+    expect(dispositionFilename(null)).toBeNull()
+  })
+
+  it('falls back to the URL’s last path segment, decoded', () => {
+    expect(urlFilename('https://example.com/files/a%20b.zip?x=1#frag')).toBe('a b.zip')
+    expect(urlFilename('https://example.com/files/')).toBeNull()
+    expect(urlFilename('https://example.com')).toBeNull()
+    expect(urlFilename('https://example.com/a+b.zip')).toBe('a+b.zip')
+    expect(urlFilename('https://example.com/%E0%A4%A.zip')).toBe('%E0%A4%A.zip')
+    expect(urlFilename('not a url')).toBeNull()
+  })
+
+  it('sanitises what no file system takes and what would escape the folder', () => {
+    expect(sanitizeDownloadName('../../etc/passwd')).toBe('_.._etc_passwd')
+    expect(sanitizeDownloadName('  a:b*c?"d<e>f|g.txt  ')).toBe('a_b_c__d_e_f_g.txt')
+    expect(sanitizeDownloadName('.hidden')).toBe('hidden')
+    expect(sanitizeDownloadName('trailing. ')).toBe('trailing')
+    expect(sanitizeDownloadName('con.txt')).toBe('con_.txt')
+    expect(sanitizeDownloadName('LPT1')).toBe('LPT1_')
+    expect(sanitizeDownloadName('a\u0000b\u001fc.txt')).toBe('abc.txt')
+    expect(sanitizeDownloadName('   ')).toBe('')
+    const long = `${'x'.repeat(250)}.tar.gz`
+    const capped = sanitizeDownloadName(long)
+    expect(capped.length).toBeLessThanOrEqual(200)
+    expect(capped.endsWith('.gz')).toBe(true)
+    expect(sanitizeDownloadName('y'.repeat(250)).length).toBe(200)
+  })
+
+  it('names a response the way Chromium would, "download" when there is nothing to go on', () => {
+    expect(
+      filenameForResponse('https://example.com/dl?id=3', 'attachment; filename="report.pdf"')
+    ).toBe('report.pdf')
+    expect(filenameForResponse('https://example.com/files/setup.exe', 'attachment')).toBe(
+      'setup.exe'
+    )
+    expect(filenameForResponse('https://example.com/files/', 'attachment')).toBe('download')
+    expect(filenameForResponse('https://example.com/dl', null)).toBe('dl')
+    expect(filenameForResponse('https://example.com/x/..%2F..%2Fetc', 'attachment')).toBe(
+      '_.._etc'
+    )
+    expect(filenameForResponse('https://example.com/a', 'attachment; filename="   "')).toBe('a')
   })
 })
 

@@ -1,8 +1,10 @@
 import {
   app,
   dialog,
+  net,
   shell,
   type BrowserWindow,
+  type ClientRequest,
   type DownloadItem as ElectronDownloadItem,
   type Session,
   type WebContents
@@ -18,16 +20,19 @@ import {
 } from '../../shared/types'
 import {
   PARTIAL_SUFFIX,
+  filenameForResponse,
   finalName as stripPartial,
   interruptReasonFromHttpStatus,
-  interruptReasonFromNetError
+  interruptReasonFromNetError,
+  interruptReasonFromRangeResponse,
+  isAttachmentDisposition
 } from '../../shared/downloads'
 import type { DownloadHost } from '../../core/platform'
 import type { DownloadService } from '../../core/downloads'
 import type { ZenWindow } from '../../core/window'
 import { APP_ICON_DEFAULT, type AppIconId } from '../../shared/appIcon'
 import { openDownloadsFolder, startFileDrag } from './downloadsShell'
-import type { WebRequestEvent, WebRequestListener } from './webRequest'
+import type { WebRequestDetails, WebRequestEvent, WebRequestListener } from './webRequest'
 import { uniquePath } from './uniquePath'
 
 export { uniquePath } from './uniquePath'
@@ -124,6 +129,21 @@ const START_TIMEOUT_MS = 60_000
 /** How long a refusal seen before its download item exists waits for `will-download`. */
 const PENDING_REASON_MS = 60_000
 const MAX_PENDING_REASONS = 64
+/**
+ * Ask the server what it answered Chromium's refused resume with (see `investigate`): one extra
+ * request per interruption nobody noted a reason for, in exchange for the exact reason Chrome
+ * shows ("No file", "Forbidden", …) instead of the coarse verdict.
+ */
+const PROBE_REFUSED_RESUME = true
+const PROBE_TIMEOUT_MS = 10_000
+/** Requests of ours (probes) and requests we answered for (dead links): their events are not a transfer's. */
+const MAX_IGNORED_REQUESTS = 64
+
+/** What the server answered the probe with; the reason is read from it by `interruptReasonFromRangeResponse`. */
+interface ProbeAnswer {
+  status: number
+  contentRange: string | null
+}
 
 /**
  * Tracks Electron's download items and feeds the core's `DownloadService`. Files are written as
@@ -156,7 +176,16 @@ export class ElectronDownloads implements DownloadHost {
     string,
     { reason: DownloadInterruptReason; at: number }
   >()
+  /**
+   * Request ids whose refusals and errors are not a transfer's: our own probes of a refused
+   * resume, and the frame navigations we made a failed row for (their `onErrorOccurred` follows).
+   */
+  private readonly ignoredRequests = new Set<string>()
+  /** Canonical URLs a probe is in flight for, to know the probe's own request when it starts. */
+  private readonly probing = new Set<string>()
   private readonly sessions = new Map<string, Session>()
+  /** `attach`'s "a download started" hook per container, for the rows made without an item. */
+  private readonly startedHooks = new Map<string, (sourceTabId: string | null) => void>()
   private service: DownloadService | null = null
   /** Set by `park`: Chromium's teardown of the live items is not to be reported as cancels. */
   private quitting = false
@@ -195,29 +224,96 @@ export class ElectronDownloads implements DownloadHost {
    * to the live items by URL (any URL of the redirect chain); a reason seen before the item
    * exists (the first response of a transfer is judged before `will-download`) waits for it.
    * Chromium's own abort of a loader it refused is `ERR_ABORTED`, which names nothing.
+   *
+   * Two kinds of request are not a transfer's and are left out: the host's own probes of a
+   * refused resume (`investigate`; known by URL when they start, then by request id), and a
+   * frame navigation the server refuses with `Content-Disposition: attachment`, for which no
+   * item ever appears – that one becomes the failed row Chrome shows instead (`deadLink`).
    */
   observeRequests(observer: RequestObserver): void {
     const options = { registrant: 'zenium:downloads' }
     observer.addListener(
+      'onBeforeRequest',
+      (details) => {
+        // A probe runs outside any tab; a page's request to the same URL has one.
+        if (details.tabId === null && this.probing.has(canonical(details.url)))
+          this.ignore(details.requestId)
+      },
+      options
+    )
+    observer.addListener(
       'onHeadersReceived',
       (details) => {
-        const reason =
-          details.statusCode === undefined
-            ? null
-            : interruptReasonFromHttpStatus(details.statusCode)
-        if (reason) this.noteReason(details.url, reason)
+        if (this.ignoredRequests.has(details.requestId)) return
+        const status = details.statusCode
+        if (status === undefined) return
+        const reason = interruptReasonFromHttpStatus(status)
+        if (!reason) return
+        if (
+          status >= 400 &&
+          (details.resourceType === 'main_frame' || details.resourceType === 'sub_frame') &&
+          isAttachmentDisposition(header(details.responseHeaders, 'content-disposition'))
+        ) {
+          // The navigation's own failure follows (`ERR_INVALID_RESPONSE`); it is this row's.
+          this.ignore(details.requestId)
+          this.deadLink(details, reason)
+          return
+        }
+        this.noteReason(details.url, reason)
       },
       options
     )
     observer.addListener(
       'onErrorOccurred',
       (details) => {
+        if (this.ignoredRequests.delete(details.requestId)) return
         const error = details.error
         if (!error || /ERR_ABORTED$/.test(error)) return
         this.noteReason(details.url, interruptReasonFromNetError(error))
       },
       options
     )
+  }
+
+  private ignore(requestId: string): void {
+    if (this.ignoredRequests.size >= MAX_IGNORED_REQUESTS) {
+      const oldest = this.ignoredRequests.values().next().value
+      if (oldest !== undefined) this.ignoredRequests.delete(oldest)
+    }
+    this.ignoredRequests.add(requestId)
+  }
+
+  /**
+   * Chrome turns a navigation the server answers with `Content-Disposition: attachment` into a
+   * download whatever the status, so a link to a download the server refuses (a dead download
+   * link) shows in its bubble as "Failed · No file". Electron's Chromium creates no item for it
+   * (the navigation fails with `ERR_INVALID_RESPONSE`, no `will-download`), so the host makes
+   * the record Chrome would have: begun and finished interrupted in one tick, named by the
+   * header (RFC 6266, `filename*` first) or the URL's last segment, typed by `Content-Type`, in
+   * the request's container and from its tab, which the core then leaves as it was (no error
+   * page of ours). Frames only: a fetch or XHR never becomes a download, whatever it answers.
+   */
+  private deadLink(details: WebRequestDetails, reason: DownloadInterruptReason): void {
+    const service = this.service
+    if (!service) return
+    const referrer =
+      [details.documentUrl, details.initiator].find((u) => u && /^https?:/.test(u)) ?? ''
+    const record = service.begin({
+      url: details.url,
+      referrer,
+      filename: filenameForResponse(details.url, header(details.responseHeaders, 'content-disposition')),
+      totalBytes: 0,
+      mimeType: mediaType(header(details.responseHeaders, 'content-type')),
+      sourceTabId: details.tabId,
+      userGesture: null,
+      canResume: false,
+      containerId: details.partition,
+      private: details.partition === PRIVATE_CONTAINER_ID
+    })
+    // Noted before the start hook, which may close a tab that had nothing but this navigation.
+    service.noteDeadLink(details.tabId, details.url)
+    this.startedHooks.get(details.partition)?.(details.tabId)
+    service.finish(record.id, 'interrupted', { canResume: false, error: reason })
   }
 
   private noteReason(url: string, reason: DownloadInterruptReason): void {
@@ -285,6 +381,7 @@ export class ElectronDownloads implements DownloadHost {
 
   attach(ses: Session, containerId: string, onStarted: (sourceTabId: string | null) => void): void {
     this.sessions.set(containerId, ses)
+    this.startedHooks.set(containerId, onStarted)
     ses.on('will-download', (_event, item, source) => {
       const sourceTabId = source && !source.isDestroyed() ? this.tabIdFor(source) : null
       const resumed = this.track(item, ses, containerId, source, sourceTabId)
@@ -459,6 +556,7 @@ export class ElectronDownloads implements DownloadHost {
     item.on('updated', (_e, state) => {
       if (this.quitting) return
       const interrupted = state === 'interrupted'
+      const noted = interrupted ? reason() : undefined
       service.progress(record.id, {
         ...fields(),
         etag: item.getETag() || undefined,
@@ -467,11 +565,15 @@ export class ElectronDownloads implements DownloadHost {
           ? item.canResume()
           : Boolean(item.getETag() || item.getLastModifiedTime()),
         state: interrupted ? 'interrupted' : item.isPaused() ? 'paused' : 'progressing',
-        error: interrupted ? reason() : undefined
+        error: noted
       })
+      // Interrupted but resumable (Electron's `updated`): a network-class reason in Chromium's
+      // book, `network-failed` unless noted – or the server refusing the range (416), which
+      // only asking it tells.
+      if (interrupted && !noted) this.investigate(record, item, true)
     })
     item.once('done', (_e, state) => {
-      const error = reason()
+      const noted = reason()
       this.live.delete(record.id)
       // On quit Chromium cancels the item itself; the record was parked and persisted already.
       if (this.quitting) return
@@ -484,8 +586,95 @@ export class ElectronDownloads implements DownloadHost {
         if (partial.endsWith(PARTIAL_SUFFIX)) void rm(partial, { force: true })
         service.finish(record.id, 'cancelled', fields())
       } else {
+        // Electron's `done` with `interrupted` is Chromium's "cannot resume": Chromium marks
+        // the server's refusals (SERVER_FAILED, SERVER_BAD_CONTENT, SERVER_UNAUTHORIZED,
+        // SERVER_FORBIDDEN) non-resumable and every network failure resumable, so an http(s)
+        // transfer that reached the server and ends here with nothing noted (its resume
+        // requests do not pass the session's `webRequest`) was refused by the server.
+        const error = noted ?? (isHttp(record.url) ? 'server-failed' : undefined)
         service.finish(record.id, 'interrupted', { ...fields(), canResume: false, error })
+        if (!noted) this.investigate(record, item, false)
       }
+    })
+  }
+
+  /**
+   * Chromium's own resume requests never pass the session's `webRequest`, so when a transfer
+   * interrupts with no reason noted the host asks the server itself: one GET of what Chromium's
+   * resume sent (`Range: bytes=<received>-` with the record's validator as `If-Range`, the
+   * referrer, the session's cookies), aborted as soon as the headers arrive. A refusing status
+   * is the exact reason (404 `server-bad-content`, 403 `server-forbidden`, 401 / 407
+   * `server-unauthorized`, 416 `server-no-range`, 5xx `server-failed`), and a full answer with
+   * no `Content-Range` to a request from past byte 0 is `server-no-range`. When the server
+   * answers well the coarse verdict stands for a resumable interruption (`network-failed`),
+   * and a non-resumable one reads `file-failed`: the server did not refuse, and Chromium's
+   * other non-resumable reasons are the file's. A probe that fails on the network changes
+   * nothing. One probe per interruption, http(s) only, `PROBE_TIMEOUT_MS`.
+   */
+  private investigate(record: DownloadItem, item: ElectronDownloadItem, resumable: boolean): void {
+    if (!PROBE_REFUSED_RESUME || !isHttp(record.url)) return
+    const ses = this.sessions.get(record.containerId)
+    if (!ses) return
+    const offset = item.getReceivedBytes()
+    const validator = item.getETag() || item.getLastModifiedTime() || record.etag || record.lastModified
+    void this.probe(record.url, ses, { offset, validator, referrer: record.referrer }).then(
+      (answer) => {
+        if (!answer) return
+        const exact = interruptReasonFromRangeResponse(answer.status, answer.contentRange, offset)
+        const reason = exact ?? (resumable ? null : 'file-failed')
+        if (reason) this.service?.reclassify(record.id, reason)
+      }
+    )
+  }
+
+  /** The request of `investigate`; null when the server could not be asked or did not answer in time. */
+  private probe(
+    url: string,
+    ses: Session,
+    req: { offset: number; validator: string; referrer: string }
+  ): Promise<ProbeAnswer | null> {
+    return new Promise((resolve) => {
+      const key = canonical(url)
+      this.probing.add(key)
+      let request: ClientRequest
+      let timer: ReturnType<typeof setTimeout> | null = null
+      let settled = false
+      const finish = (answer: ProbeAnswer | null): void => {
+        if (settled) return
+        settled = true
+        if (timer) clearTimeout(timer)
+        this.probing.delete(key)
+        resolve(answer)
+      }
+      try {
+        request = net.request({ url, method: 'GET', session: ses, credentials: 'include', cache: 'no-store' })
+      } catch {
+        finish(null)
+        return
+      }
+      if (req.offset > 0) {
+        request.setHeader('Range', `bytes=${req.offset}-`)
+        if (req.validator) request.setHeader('If-Range', req.validator)
+      }
+      if (req.referrer) request.setHeader('Referer', req.referrer)
+      timer = setTimeout(() => {
+        finish(null)
+        request.abort()
+      }, PROBE_TIMEOUT_MS)
+      request.on('response', (response) => {
+        finish({
+          status: response.statusCode,
+          contentRange: firstHeader(response.headers['content-range'])
+        })
+        // The headers were the question; the body is not wanted.
+        request.abort()
+      })
+      // A 401 is an answer, not a question: no credentials, and the response comes through.
+      request.on('login', (_info, callback) => callback())
+      request.on('error', () => finish(null))
+      request.on('abort', () => finish(null))
+      request.on('close', () => finish(null))
+      request.end()
     })
   }
 
@@ -791,6 +980,29 @@ function referrerOf(source: WebContents | undefined, downloadUrl: string): strin
   const url = source.getURL()
   if (!url || url === downloadUrl || !/^https?:/.test(url)) return ''
   return url
+}
+
+function isHttp(url: string): boolean {
+  return /^https?:/i.test(url)
+}
+
+/** The first value of a response header, by name in any case; null when absent or empty. */
+function header(headers: Record<string, string[]> | undefined, name: string): string | null {
+  if (!headers) return null
+  for (const [key, values] of Object.entries(headers)) {
+    if (key.toLowerCase() === name) return firstHeader(values)
+  }
+  return null
+}
+
+function firstHeader(value: string | string[] | undefined): string | null {
+  const first = Array.isArray(value) ? value[0] : value
+  return first !== undefined && first.trim() !== '' ? first : null
+}
+
+/** `application/octet-stream; charset=binary` → `application/octet-stream`. */
+function mediaType(contentType: string | null): string {
+  return (contentType ?? '').split(';', 1)[0]?.trim().toLowerCase() ?? ''
 }
 
 /** URLs as the engine reports them (`HTTP://Example.com/a` and `http://example.com/a` are one). */

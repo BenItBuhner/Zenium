@@ -62,6 +62,8 @@ const SCHEMA_VERSION = 3
 /** Progress events per item are throttled to this (4 Hz); state changes go out at once. */
 const PROGRESS_INTERVAL_MS = 250
 const PERSIST_INTERVAL_MS = 2000
+/** How long a dead download link's note waits for the failure of the navigation it came from. */
+const DEAD_LINK_MS = 10_000
 
 /** Everything a host knows when a transfer starts. */
 export interface DownloadInit {
@@ -221,6 +223,8 @@ export class DownloadService {
   private quitting = false
   /** Completed rows opened or revealed since the last snapshot: their files are checked again then. */
   private readonly recheck = new Set<string>()
+  /** Navigations turned into failed rows (`tabId\nurl` → when), see `noteDeadLink`. */
+  private readonly deadLinks = new Map<string, number>()
   /** The existence sweep over the loaded list, for callers that want to wait for it (tests). */
   readonly loaded: Promise<void>
 
@@ -471,6 +475,42 @@ export class DownloadService {
     }
     this.persist()
     this.onChange(record, 'done')
+  }
+
+  /**
+   * The host learned the exact reason after the row was already interrupted (it asked the
+   * server again what it had answered Chromium's resume with): the row's `error` and wording
+   * follow, as long as it is still interrupted. A row resumed, retried or removed meanwhile
+   * keeps its own state.
+   */
+  reclassify(id: string, reason: DownloadInterruptReason): void {
+    if (this.quitting) return
+    const record = this.item(id)
+    if (!record || record.state !== 'interrupted' || record.error === reason) return
+    this.setError(record, reason)
+    this.persist()
+    this.onChange(record, 'progress')
+  }
+
+  /**
+   * A navigation the host turned into a failed row instead of a page (a link to a download the
+   * server refuses: Chrome shows "Failed · No file" and no error page). The tab service asks
+   * with `takeDeadLink` when that navigation's failure arrives, so the tab is left as it was.
+   */
+  noteDeadLink(tabId: string | null, url: string): void {
+    if (!tabId) return
+    const now = this.now()
+    for (const [key, at] of this.deadLinks) if (now - at > DEAD_LINK_MS) this.deadLinks.delete(key)
+    this.deadLinks.set(`${tabId}\n${url}`, now)
+  }
+
+  /** Whether the failed navigation of `url` in `tabId` is a dead download link noted just now; consumed. */
+  takeDeadLink(tabId: string, url: string): boolean {
+    const key = `${tabId}\n${url}`
+    const at = this.deadLinks.get(key)
+    if (at === undefined) return false
+    this.deadLinks.delete(key)
+    return this.now() - at <= DEAD_LINK_MS
   }
 
   /** Both fields together: the reason and Chrome's wording of it for the row. */

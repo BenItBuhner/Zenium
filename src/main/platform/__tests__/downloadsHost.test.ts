@@ -4,16 +4,55 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { Session, DownloadItem as ElectronDownloadItem } from 'electron'
-import type { DownloadItem } from '../../../shared/types'
+import { PRIVATE_CONTAINER_ID, type DownloadItem } from '../../../shared/types'
 import type { StoreIO } from '../../../core/platform'
 import { DEFAULT_DOWNLOAD_SETTINGS } from '../../../shared/downloads'
 import type { RequestObserver } from '../downloads'
 import type { WebRequestDetails, WebRequestEvent, WebRequestListener } from '../webRequest'
 
+/** Electron's `net.request`, answered by hand: the probe of a refused resume goes through it. */
+const fakeNet = await vi.hoisted(async () => {
+  const { EventEmitter: Emitter } = await import('node:events')
+  class FakeRequest extends Emitter {
+    headers: Record<string, string> = {}
+    ended = false
+    aborted = false
+    constructor(readonly options: Record<string, unknown>) {
+      super()
+    }
+    setHeader(name: string, value: string): void {
+      this.headers[name] = value
+    }
+    end(): void {
+      this.ended = true
+    }
+    abort(): void {
+      this.aborted = true
+      this.emit('abort')
+    }
+    answer(statusCode: number, headers: Record<string, string | string[]> = {}): void {
+      this.emit('response', { statusCode, headers })
+    }
+    fail(): void {
+      this.emit('error', new Error('net::ERR_CONNECTION_REFUSED'))
+    }
+  }
+  const requests: FakeRequest[] = []
+  return {
+    requests,
+    request(options: Record<string, unknown>): FakeRequest {
+      const request = new FakeRequest(options)
+      requests.push(request)
+      return request
+    }
+  }
+})
+
 vi.mock('electron', () => ({
   app: { getPath: () => '/nowhere' },
   dialog: { showSaveDialog: vi.fn(), showOpenDialog: vi.fn() },
-  shell: { showItemInFolder: vi.fn(), openPath: vi.fn() }
+  shell: { showItemInFolder: vi.fn(), openPath: vi.fn() },
+  net: { request: (options: Record<string, unknown>) => fakeNet.request(options) }
 }))
 
 const { ElectronDownloads } = await import('../downloads')
@@ -38,6 +77,12 @@ class FakeItem extends EventEmitter {
   savePath = ''
   state: 'progressing' | 'completed' | 'cancelled' | 'interrupted' = 'progressing'
   paused = false
+  /** Bytes in the partial file (Chromium keeps them over an interruption). */
+  received = 0
+  etag = ''
+  lastModified = ''
+  /** Chromium's verdict on an interrupted item: `updated` when true, `done` when false. */
+  resumable = false
   constructor(
     readonly url: string,
     readonly filename: string,
@@ -58,7 +103,7 @@ class FakeItem extends EventEmitter {
     return 3
   }
   getReceivedBytes(): number {
-    return this.state === 'completed' ? 3 : 0
+    return this.received || (this.state === 'completed' ? 3 : 0)
   }
   getMimeType(): string {
     return 'text/plain'
@@ -73,10 +118,10 @@ class FakeItem extends EventEmitter {
     return false
   }
   getETag(): string {
-    return ''
+    return this.etag
   }
   getLastModifiedTime(): string {
-    return ''
+    return this.lastModified
   }
   isPaused(): boolean {
     return this.paused
@@ -85,7 +130,13 @@ class FakeItem extends EventEmitter {
     return this.state
   }
   canResume(): boolean {
-    return false
+    return this.resumable
+  }
+  /** Interrupted but resumable on request: Chromium reports it through `updated`. */
+  interrupt(): void {
+    this.state = 'interrupted'
+    this.resumable = true
+    this.emit('updated', {}, 'interrupted')
   }
   pause(): void {
     this.paused = true
@@ -164,6 +215,7 @@ async function settled(done: () => boolean, timeoutMs = 5000): Promise<void> {
 const dirs: string[] = []
 afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
+  fakeNet.requests.length = 0
 })
 
 function harness(): {
@@ -199,7 +251,11 @@ function harness(): {
 describe('ElectronDownloads interrupt reasons', () => {
   it('names an interruption from the net error its request ended with', async () => {
     const h = harness()
-    expect(h.observer.registrants).toEqual(['zenium:downloads', 'zenium:downloads'])
+    expect(h.observer.registrants).toEqual([
+      'zenium:downloads',
+      'zenium:downloads',
+      'zenium:downloads'
+    ])
     const item = new FakeItem('https://example.com/a.txt', 'a.txt')
     h.announce(item)
     const record = h.service.items[0]!
@@ -241,7 +297,7 @@ describe('ElectronDownloads interrupt reasons', () => {
     expect(record.errorMessage).toBe('File wasn’t available on site')
   })
 
-  it('keeps a refusal seen before the item existed, and a transfer without one fails plainly', async () => {
+  it('keeps a refusal seen before the item existed; one that ends for good with nothing noted is the server’s', async () => {
     const h = harness()
     // Chromium judges the response before `will-download`: the 404 arrives first.
     h.observer.fire('onHeadersReceived', { url: 'https://example.com/gone.zip', statusCode: 404 })
@@ -261,11 +317,320 @@ describe('ElectronDownloads interrupt reasons', () => {
     ).toMatchObject({
       error: 'server-bad-content'
     })
+    // Electron's `done` with `interrupted` is Chromium's "cannot resume", which it only says of
+    // the server's refusals (network failures resume): coarse `server-failed`, and the probe asks.
     expect(h.service.items.find((i) => i.url.endsWith('plain.zip'))).toMatchObject({
-      error: 'network-failed',
-      errorMessage: 'Check internet connection'
+      error: 'server-failed',
+      errorMessage: 'Site wasn’t available'
+    })
+    // The 404 was noted: no need to ask the server about it.
+    expect(fakeNet.requests.map((r) => r.options['url'])).toEqual([
+      'https://example.com/plain.zip'
+    ])
+  })
+
+  it('a resumable interruption with nothing noted stays a network failure (a probe may refine it)', async () => {
+    const h = harness()
+    const item = new FakeItem('https://example.com/a.bin', 'a.bin')
+    h.announce(item)
+    const record = h.service.items[0]!
+    item.received = 524_288
+    item.etag = '"v1"'
+    item.interrupt()
+    expect(record).toMatchObject({ state: 'interrupted', canResume: true, error: 'network-failed' })
+    // The server serves the range: the network was to blame, as Chromium said.
+    fakeNet.requests[0]!.answer(206, { 'content-range': 'bytes 524288-4194303/4194304' })
+    await flush()
+    expect(record.error).toBe('network-failed')
+    // Resumed and interrupted again, this time the server refuses the range.
+    item.state = 'progressing'
+    item.emit('updated', {}, 'progressing')
+    item.interrupt()
+    expect(fakeNet.requests).toHaveLength(2)
+    fakeNet.requests[1]!.answer(416)
+    await flush()
+    expect(record).toMatchObject({
+      state: 'interrupted',
+      canResume: true,
+      error: 'server-no-range',
+      errorMessage: 'Something went wrong'
     })
   })
+})
+
+describe('ElectronDownloads probe of a refused resume', () => {
+  /** A transfer that received some bytes, then ended non-resumably with nothing noted. */
+  async function refused(): Promise<{
+    h: ReturnType<typeof harness>
+    record: DownloadItem
+    probe: (typeof fakeNet.requests)[number]
+  }> {
+    const h = harness()
+    const item = new FakeItem('https://cdn.example.com/expired.bin', 'expired.bin')
+    h.announce(item)
+    const record = h.service.items[0]!
+    item.received = 524_288
+    item.etag = '"fixture"'
+    item.lastModified = 'Tue, 01 Sep 2026 10:00:00 GMT'
+    item.fail()
+    await flush()
+    expect(record).toMatchObject({ state: 'interrupted', canResume: false, error: 'server-failed' })
+    expect(fakeNet.requests).toHaveLength(1)
+    return { h, record, probe: fakeNet.requests[0]! }
+  }
+
+  it('sends what Chromium’s resume sent, in the record’s session, and stops at the headers', async () => {
+    const { h, record, probe } = await refused()
+    expect(probe.options).toMatchObject({
+      url: 'https://cdn.example.com/expired.bin',
+      method: 'GET',
+      credentials: 'include',
+      cache: 'no-store'
+    })
+    expect(probe.options['session']).toBe(h.session)
+    expect(probe.headers).toEqual({ Range: 'bytes=524288-', 'If-Range': '"fixture"' })
+    expect(probe.ended).toBe(true)
+    probe.answer(404, { 'content-type': 'text/plain' })
+    expect(probe.aborted).toBe(true)
+    await flush()
+    expect(record).toMatchObject({
+      state: 'interrupted',
+      error: 'server-bad-content',
+      errorMessage: 'File wasn’t available on site'
+    })
+  })
+
+  it('maps each answer: the exact status, no range, a good answer as the file’s fault, no answer as nothing', async () => {
+    const cases: Array<[number, Record<string, string>, string]> = [
+      [403, {}, 'server-forbidden'],
+      [401, {}, 'server-unauthorized'],
+      [407, {}, 'server-unauthorized'],
+      [416, {}, 'server-no-range'],
+      [500, {}, 'server-failed'],
+      [503, {}, 'server-failed'],
+      [200, {}, 'server-no-range'],
+      [200, { 'content-range': 'bytes 524288-4194303/4194304' }, 'file-failed'],
+      [206, { 'content-range': 'bytes 524288-4194303/4194304' }, 'file-failed']
+    ]
+    for (const [status, headers, expected] of cases) {
+      const { record, probe } = await refused()
+      probe.answer(status, headers)
+      await flush()
+      expect(record.error, `status ${status}`).toBe(expected)
+      fakeNet.requests.length = 0
+    }
+    // The server could not be reached: Chromium's verdict stands.
+    const { record, probe } = await refused()
+    probe.fail()
+    await flush()
+    expect(record.error).toBe('server-failed')
+  })
+
+  it('a first request that never showed (a programmatic start) is probed from byte 0, without a range', async () => {
+    const h = harness()
+    const pending = h.host.startDownload({ url: 'https://example.com/gone.zip' })
+    const item = new FakeItem('https://example.com/gone.zip', 'gone.zip')
+    h.announce(item)
+    const record = await pending
+    item.fail()
+    await flush()
+    expect(record.error).toBe('server-failed')
+    const probe = fakeNet.requests[0]!
+    expect(probe.headers).toEqual({})
+    probe.answer(404)
+    await flush()
+    expect(record.error).toBe('server-bad-content')
+  })
+
+  it('leaves a row alone that was retried or removed while the server was being asked', async () => {
+    const { h, record, probe } = await refused()
+    h.service.remove(record.id)
+    probe.answer(404)
+    await flush()
+    expect(h.service.items).toHaveLength(0)
+    expect(record.error).toBe('server-failed')
+  })
+
+  it('does not read its own request as the transfer’s refusal', async () => {
+    const { h, record, probe } = await refused()
+    // The probe's request passes the session's webRequest like any other, outside a tab.
+    h.observer.fire('onBeforeRequest', {
+      requestId: 'probe-1',
+      url: 'https://cdn.example.com/expired.bin',
+      resourceType: 'other',
+      tabId: null
+    })
+    h.observer.fire('onHeadersReceived', {
+      requestId: 'probe-1',
+      url: 'https://cdn.example.com/expired.bin',
+      resourceType: 'other',
+      tabId: null,
+      statusCode: 403
+    })
+    probe.answer(403)
+    h.observer.fire('onErrorOccurred', {
+      requestId: 'probe-1',
+      url: 'https://cdn.example.com/expired.bin',
+      error: 'net::ERR_ABORTED'
+    })
+    await flush()
+    expect(record.error).toBe('server-forbidden')
+    // Nothing was parked for the URL: a fresh transfer of it that drops resumably reads plainly.
+    const again = new FakeItem('https://cdn.example.com/expired.bin', 'expired.bin')
+    h.announce(again)
+    again.interrupt()
+    expect(h.service.items[0]!.error).toBe('network-failed')
+  })
+})
+
+describe('ElectronDownloads dead download links', () => {
+  const refusal = (
+    over: Partial<WebRequestDetails> & { url: string; statusCode: number }
+  ): Partial<WebRequestDetails> & { url: string } => ({
+    requestId: 'nav-1',
+    resourceType: 'main_frame',
+    tabId: 't1',
+    partition: 'default',
+    initiator: 'https://example.com',
+    responseHeaders: {
+      'Content-Type': ['application/zip; charset=binary'],
+      'Content-Disposition': ['attachment; filename="gone.zip"']
+    },
+    ...over
+  })
+
+  it('a frame navigation the server refuses with an attachment becomes the failed row Chrome shows', async () => {
+    const h = harness()
+    h.observer.fire('onHeadersReceived', refusal({ url: 'https://example.com/dl/42', statusCode: 404 }))
+    expect(h.service.items).toHaveLength(1)
+    const record = h.service.items[0]!
+    expect(record).toMatchObject({
+      url: 'https://example.com/dl/42',
+      filename: 'gone.zip',
+      finalName: 'gone.zip',
+      mimeType: 'application/zip',
+      state: 'interrupted',
+      error: 'server-bad-content',
+      errorMessage: 'File wasn’t available on site',
+      canResume: false,
+      receivedBytes: 0,
+      totalBytes: 0,
+      savePath: '',
+      referrer: 'https://example.com',
+      containerId: 'default',
+      private: false
+    })
+    expect(record.endedAt).toBeDefined()
+    // Announced like a download that started, from its tab; the tab's failure is this row's.
+    expect(h.started).toEqual(['t1'])
+    expect(h.service.takeDeadLink('t1', 'https://example.com/dl/42')).toBe(true)
+    // The navigation's own error follows and parks nothing: a later transfer of the URL that
+    // ends non-resumably reads by Chromium's verdict, not by a stale note.
+    h.observer.fire('onErrorOccurred', {
+      requestId: 'nav-1',
+      url: 'https://example.com/dl/42',
+      error: 'net::ERR_INVALID_RESPONSE'
+    })
+    h.service.remove(record.id)
+    const again = new FakeItem('https://example.com/dl/42', 'gone.zip')
+    h.announce(again)
+    again.fail()
+    await flush()
+    expect(h.service.items[0]!.error).toBe('server-failed')
+    expect(fakeNet.requests).toHaveLength(1)
+  })
+
+  it('reads the reason from the status and the name from the header or the URL', () => {
+    const h = harness()
+    h.observer.fire(
+      'onHeadersReceived',
+      refusal({
+        requestId: 'a',
+        url: 'https://example.com/files/r%C3%A9sum%C3%A9.pdf',
+        statusCode: 403,
+        resourceType: 'sub_frame',
+        responseHeaders: { 'content-disposition': ['attachment'] }
+      })
+    )
+    h.observer.fire(
+      'onHeadersReceived',
+      refusal({
+        requestId: 'b',
+        url: 'https://example.com/get?id=7',
+        statusCode: 500,
+        responseHeaders: {
+          'Content-Disposition': ["attachment; filename=\"cv.pdf\"; filename*=UTF-8''r%C3%A9sum%C3%A9.pdf"]
+        }
+      })
+    )
+    h.observer.fire(
+      'onHeadersReceived',
+      refusal({
+        requestId: 'c',
+        url: 'https://example.com/',
+        statusCode: 401,
+        responseHeaders: { 'Content-Disposition': ['ATTACHMENT'] }
+      })
+    )
+    expect(h.service.items.map((i) => [i.filename, i.error, i.mimeType])).toEqual([
+      ['download', 'server-unauthorized', ''],
+      ['résumé.pdf', 'server-failed', ''],
+      ['résumé.pdf', 'server-forbidden', '']
+    ])
+  })
+
+  it('is for frames only, for attachments only, and keeps private rows private', () => {
+    const h = harness()
+    // A fetch or XHR never becomes a download, whatever it answers.
+    h.observer.fire(
+      'onHeadersReceived',
+      refusal({ url: 'https://example.com/api/file', statusCode: 404, resourceType: 'xmlhttprequest' })
+    )
+    h.observer.fire(
+      'onHeadersReceived',
+      refusal({ url: 'https://example.com/img.png', statusCode: 404, resourceType: 'image' })
+    )
+    // A page that is simply missing is the tab's business (and its refusal waits for an item).
+    h.observer.fire(
+      'onHeadersReceived',
+      refusal({
+        url: 'https://example.com/missing.html',
+        statusCode: 404,
+        responseHeaders: { 'Content-Type': ['text/html'] }
+      })
+    )
+    h.observer.fire(
+      'onHeadersReceived',
+      refusal({
+        url: 'https://example.com/inline.pdf',
+        statusCode: 404,
+        responseHeaders: { 'Content-Disposition': ['inline; filename="inline.pdf"'] }
+      })
+    )
+    // A response the download proceeds under is no dead link either.
+    h.observer.fire('onHeadersReceived', refusal({ url: 'https://example.com/ok.zip', statusCode: 200 }))
+    expect(h.service.items).toHaveLength(0)
+    expect(h.started).toEqual([])
+    h.observer.fire(
+      'onHeadersReceived',
+      refusal({
+        url: 'https://example.com/secret.zip',
+        statusCode: 403,
+        partition: PRIVATE_CONTAINER_ID,
+        tabId: 't9'
+      })
+    )
+    expect(h.service.items[0]).toMatchObject({
+      private: true,
+      containerId: PRIVATE_CONTAINER_ID,
+      error: 'server-forbidden'
+    })
+    expect(h.service.visibleTo(false)).toEqual([])
+    expect(h.service.takeDeadLink('t9', 'https://example.com/secret.zip')).toBe(true)
+  })
+})
+
+describe('ElectronDownloads interrupt reasons (updated)', () => {
 
   it('reports the reason through the updated event too, once per interruption', async () => {
     const h = harness()
