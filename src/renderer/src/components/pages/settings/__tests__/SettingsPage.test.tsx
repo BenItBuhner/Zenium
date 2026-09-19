@@ -176,6 +176,28 @@ function state(
     updates: emptyUpdateStatus('0.3.0-test', { os: 'linux', arch: 'x64', kind: 'appimage' }),
     passwords: emptyPasswordsStatus(),
     defaultBrowser: { isDefault: false, prompt: null },
+    sync: {
+      enabled: false,
+      folder: null,
+      deviceId: 'device',
+      deviceName: 'Test machine',
+      scope: {
+        spaces: true,
+        folders: true,
+        pinnedTabs: true,
+        essentials: true,
+        openTabs: false,
+        containers: true,
+        bookmarks: true,
+        settings: true,
+        shortcuts: true,
+        boosts: true
+      },
+      lastSyncAt: null,
+      lastError: null,
+      syncing: false,
+      devices: []
+    },
     permissionRules: [],
     blocking: emptyBlockingStatus(),
     pageEnvironment: DEFAULT_PAGE_ENVIRONMENT,
@@ -344,11 +366,30 @@ describe('the two-pane Settings tab (§10.5)', () => {
   })
 
   it("renders a desktop-only category's own content (Keyboard Shortcuts) under its title", () => {
-    const markup = render(state(DESKTOP, 'linux', {}, 'zen://settings/shortcuts'))
+    const s = state(DESKTOP, 'linux', {}, 'zen://settings/shortcuts')
+    s.shortcuts = [
+      {
+        id: 'zen-compact-mode-toggle',
+        action: 'compact.toggle',
+        group: 'zen-compact-mode',
+        label: 'Toggle Compact Mode',
+        binding: { ctrl: true, alt: true, shift: false, meta: false, key: 'c' },
+        extraBindings: []
+      }
+    ]
+    const markup = render(s)
     expect(markup).toContain(
       '<h2 id="zen-settings-section-title" class="zen-settings-section-title">Keyboard Shortcuts</h2>'
     )
-    expect(markup).toContain('zen-settings-desktop-body')
+    // The category is built like every other: the preset menulist, then one group per Zen group
+    // with a `ShortcutRow` (its chord a button that records) for each shortcut.
+    expect(markup).toContain('data-row="shortcut-preset"')
+    expect(markup).toContain('Shortcut set')
+    expect(markup).toContain('data-group="shortcuts-zen-compact-mode"')
+    expect(markup).toContain('data-shortcut-id="zen-compact-mode-toggle"')
+    expect(markup).toContain('zen-settings-chord')
+    expect(markup).toContain('Ctrl + Alt + C')
+    expect(markup).not.toContain('zen-settings-desktop-body')
   })
 })
 

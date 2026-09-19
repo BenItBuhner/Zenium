@@ -4,6 +4,7 @@ import { ChevronRight, ExternalLink, Loader2 } from 'lucide-react'
 import { cn } from '@renderer/lib/utils'
 import { V2Button } from '../../extensions/v2'
 import { V2Menulist } from '../../extensions/V2Menulist'
+import { Slider } from '../../ui/slider'
 import {
   currentOptionLabel,
   groupShows,
@@ -11,6 +12,7 @@ import {
   type FieldRow,
   type RowGroup,
   type SettingsRow,
+  type SliderRow,
   type SwitchRow
 } from './model'
 
@@ -216,10 +218,29 @@ export function RowView({
           {row.trailing && <span className="zen-settings-trailing">{row.trailing}</span>}
         </div>
       )
-    case 'custom':
+    case 'slider':
+      // §10.4's slider row: the value beside the label on the text's first line, the slider on
+      // the 40 px line under the text; the block is the row's, so it keeps its 16 px gutter.
       return (
         <div
-          className={cn('zen-settings-custom', row.disabled && 'zen-settings-row-disabled')}
+          className={cn(
+            'zen-settings-row zen-settings-slider-row zen-v2-row',
+            row.disabled && 'zen-settings-row-disabled'
+          )}
+          data-row={row.id}
+          data-static=""
+        >
+          <SliderControl row={row} caption={caption} labelled />
+        </div>
+      )
+    case 'custom':
+      if (row.bare && !caption) return <>{row.render()}</>
+      return (
+        <div
+          className={cn(
+            row.bare ? 'zen-settings-custom-bare' : 'zen-settings-custom',
+            row.disabled && 'zen-settings-row-disabled'
+          )}
           data-row={row.id}
         >
           {caption && <span className="zen-settings-caption">{caption}</span>}
@@ -308,9 +329,73 @@ function DesktopRowView({
           <InlineField row={row} />
         </ControlRow>
       )
+    case 'slider':
+      // The slider trails the text on the desktop (§9.21), the value as text at its end.
+      return (
+        <ControlRow row={row} caption={caption} description={row.description}>
+          <SliderControl row={row} />
+        </ControlRow>
+      )
     default:
       return <RowView row={row} ctx={ctx} caption={caption} />
   }
+}
+
+/**
+ * The slider of a slider row: the zoom sheet's `zen-zoom-slider` (§10.4) with the value as text
+ * beside it, the text following the drag and the row's `onChange` running when the thumb is let
+ * go. `labelled` draws the phone block – label and value on the first line, the description,
+ * then the slider – where the desktop's control sits in its row's trailing slot.
+ */
+function SliderControl({
+  row,
+  caption,
+  labelled = false
+}: {
+  row: SliderRow
+  caption?: string
+  labelled?: boolean
+}): JSX.Element {
+  const [local, setLocal] = useState(row.value)
+  // The row's value moved under the slider (another window, a reset): follow it.
+  const [seen, setSeen] = useState(row.value)
+  if (row.value !== seen) {
+    setSeen(row.value)
+    setLocal(row.value)
+  }
+  const slider = (
+    <Slider
+      className="zen-zoom-slider zen-settings-slider"
+      aria-label={row.label}
+      aria-valuetext={row.format(local)}
+      min={row.min}
+      max={row.max}
+      step={row.step}
+      value={[local]}
+      disabled={row.disabled}
+      onValueChange={([v]) => v !== undefined && setLocal(v)}
+      onValueCommit={([v]) => v !== undefined && v !== row.value && row.onChange(v)}
+    />
+  )
+  if (!labelled) {
+    return (
+      <span className="zen-settings-slider-control">
+        {slider}
+        <span className="zen-settings-slider-value">{row.format(local)}</span>
+      </span>
+    )
+  }
+  return (
+    <span className="zen-settings-row-text zen-settings-slider-block">
+      {caption && <span className="zen-settings-caption">{caption}</span>}
+      <span className="zen-settings-slider-head">
+        <span className="zen-settings-label">{row.label}</span>
+        <span className="zen-settings-slider-value">{row.format(local)}</span>
+      </span>
+      {row.description && <span className="zen-settings-description">{row.description}</span>}
+      {slider}
+    </span>
+  )
 }
 
 /**

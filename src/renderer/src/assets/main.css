@@ -4833,6 +4833,17 @@
     background: var(--v2-fill);
   }
 }
+/*
+ * The selected row (§9.6): a picked item – the current option in a picker sheet's radio rows, a
+ * row in a selection mode (`aria-selected`) – takes `--v2-selected`, the accent at 12% / 16%,
+ * and keeps it under the pointer: never `--v2-fill` (the press and hover) and never the text
+ * `--v2-selection`. A switch row that is on is not selected, so `aria-checked` counts only on
+ * a radio.
+ */
+.zen-v2-row:is([aria-selected='true'], [role='radio'][aria-checked='true']),
+.zen-v2-row:is([aria-selected='true'], [role='radio'][aria-checked='true']):hover {
+  background: var(--v2-selected);
+}
 
 /* The shared v2 field (§9.12): the control height, a hairline, the page behind it. */
 .zen-v2-field {
@@ -4860,8 +4871,51 @@
 }
 /* Disabled is one number on the whole control (§9.30), as `.zen-v2-button:disabled` above. */
 .zen-v2-field:disabled,
-.zen-v2-icon-button:disabled {
+.zen-v2-icon-button:disabled,
+.zen-v2-menulist:disabled,
+.zen-v2-switch:disabled {
   opacity: 0.4;
+}
+
+/*
+ * The shared menulist trigger (§6, §9.13, §9.34): the rectangular control at the control
+ * height with a hairline at 30 % and its 16 chevron at the end, a button since its popup is the
+ * renderer's – a `--v2-panel` popover on a mouse, a sheet on a finger (`V2Menulist`; the popup's
+ * rules are the extensions stylesheet's) – never the native `<select>`. Expanded and hover take
+ * the page tinted 7 % towards the text.
+ */
+.zen-v2-menulist {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: var(--v2-control);
+  padding: 0 12px;
+  border: 1px solid rgb(var(--v2-text-rgb) / 0.3);
+  border-radius: var(--v2-radius-control);
+  background: var(--v2-page);
+  color: var(--v2-text);
+  text-align: left;
+  font-size: var(--v2-font-body);
+  font-weight: var(--v2-weight-body);
+  line-height: var(--v2-line-body);
+  transition: background 120ms var(--zen-ease);
+}
+.zen-v2-menulist[aria-expanded='true'] {
+  background: color-mix(in srgb, var(--v2-page), var(--v2-text) 7%);
+}
+@media (hover: hover) {
+  .zen-v2-menulist:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--v2-page), var(--v2-text) 7%);
+  }
+}
+.zen-v2-menulist:focus-visible {
+  border-color: var(--v2-accent);
+}
+.zen-v2-menulist > .lucide {
+  flex-shrink: 0;
+  width: var(--v2-icon);
+  height: var(--v2-icon);
 }
 
 /* The shared v2 icon button (§9.3): the box, its glyph and its stroke are the density tokens. */
@@ -5335,6 +5389,9 @@
 .zen-settings-ok {
   color: var(--v2-ok);
 }
+.zen-settings-danger {
+  color: var(--v2-danger);
+}
 
 /* The switch and the plain radio are the shared `.zen-v2-switch` / `.zen-v2-radio` above (§9.34). */
 .zen-settings-radio-list {
@@ -5353,6 +5410,11 @@
 /* Custom blocks sit in the gutter: image radio grids, the zoom stepper, copy rows, code, forms. */
 .zen-settings-custom {
   padding: 8px 16px;
+}
+/* A bare block (a row of its own) under a search result's caption: the caption in the gutter. */
+.zen-settings-custom-bare > .zen-settings-caption {
+  display: block;
+  padding: 8px 16px 0;
 }
 .zen-settings-icon-grid {
   display: grid;
@@ -5802,14 +5864,6 @@
 .zen-settings-pane .zen-settings-heading:not(:has(+ .zen-settings-group-description)) {
   margin-bottom: 8px;
 }
-/* The desktop-only content (Compact Mode, Resources, Sync, Keyboard Shortcuts, Default Browser). */
-.zen-settings-desktop-body {
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
-  padding: 0 16px;
-}
-
 /*
  * Desktop rows (§10.5, `rows.tsx`'s desktop variant), every one the shared `.zen-v2-row`:
  * - a control row (§9.21) is static text trailing its 32 px control, the row grown to the
@@ -5861,6 +5915,123 @@
   font-size: var(--v2-font-small);
   line-height: var(--v2-line-small);
   text-align: right;
+}
+/*
+ * A slider row (§10.4, `rows.tsx`'s `SliderControl`): the zoom sheet's slider (`.zen-zoom-slider`,
+ * its ring in the page's tone here as the Default zoom row's) with the value as 13/69 % text.
+ * On a phone the block is the row's text – label and value on the first line, the slider on
+ * the control line under it; on the desktop the slider trails the text at 160 with the value
+ * at its end, the row grown around the control as any control row.
+ */
+.zen-settings-slider-row {
+  cursor: default;
+}
+.zen-settings-slider-block {
+  gap: 4px;
+}
+.zen-settings-slider-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.zen-settings-slider-value {
+  flex-shrink: 0;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-small);
+  font-variant-numeric: tabular-nums;
+}
+.zen-settings-slider-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+.zen-settings-slider-control > .zen-settings-slider {
+  width: 160px;
+}
+.zen-settings-slider-control > .zen-settings-slider-value {
+  min-width: 40px;
+  text-align: right;
+}
+.zen-settings-slider [role='slider'] {
+  border-color: var(--v2-page);
+}
+/*
+ * Resources › Live usage (`blocks.tsx`'s `ResourceMeter`): label and numbers on one line, the
+ * 4 px bar under them – the accent, the warning ink from 85 % of a budget, the danger ink at
+ * 100 %, half strength with no budget to measure against – and the note at 13/69 %.
+ */
+.zen-settings-meters {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.zen-settings-meter {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.zen-settings-meter-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.zen-settings-meter-value {
+  flex-shrink: 0;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-small);
+  font-variant-numeric: tabular-nums;
+}
+.zen-settings-meter-bar {
+  margin-top: 0;
+}
+.zen-settings-meter[data-tone='near'] > .zen-settings-meter-bar > div {
+  background: var(--v2-warn);
+}
+.zen-settings-meter[data-tone='over'] > .zen-settings-meter-bar > div {
+  background: var(--v2-danger);
+}
+.zen-settings-meter[data-tone='unbudgeted'] > .zen-settings-meter-bar > div {
+  opacity: 0.5;
+}
+/* A folder picked through the host (Sync › Set up sync): the path, truncated, and the button. */
+.zen-settings-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.zen-settings-picker-value {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-small);
+}
+/*
+ * Keyboard Shortcuts › a shortcut row (`ShortcutRow.tsx`): the chord as the row's 32 px button
+ * in tabular figures, 110 wide at least so the column of chords lines up; recording lights the
+ * button's border in the accent, an unbound one reads in the de-emphasised ink, and a row whose
+ * chord another shortcut also holds says so in the warning ink.
+ */
+.zen-settings-chord {
+  min-width: 110px;
+  justify-content: center;
+  font-variant-numeric: tabular-nums;
+}
+.zen-settings-chord[aria-pressed='true'] {
+  box-shadow: inset 0 0 0 1px var(--v2-accent);
+}
+.zen-settings-chord-unbound {
+  color: var(--v2-text-deemphasized);
+}
+.zen-settings-shortcut-row[data-conflict] .zen-settings-description {
+  color: var(--v2-warn);
 }
 
 /*

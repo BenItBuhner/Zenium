@@ -30,8 +30,8 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   ['.zen-ptr-disc {', '.zen-space-strip {'],
   // The v2 badge (§9.19): site information's Private badge (components/siteinfo/SiteInfoSheet.tsx).
   ['.zen-v2-badge {', '/* Safe-area insets pushed by mobile hosts'],
-  // The v2 button, shared by every v2 surface (the Settings > Look and Feel > Navigation bar button,
-  // components/overlays/SettingsPanel.tsx; the first run, overlays/PhoneOnboarding.tsx; the
+  // The v2 button, shared by every v2 surface (the Settings tab's row buttons and dialogs,
+  // components/pages/settings/*; the first run, overlays/PhoneOnboarding.tsx; the
   // default-browser prompts, defaultbrowser/*), with the first run's unlayered override beside it;
   // its layering is pinned by the tests below.
   ['.zen-v2-button {', '/*\n * The v2 badge (§9.19)'],
@@ -112,8 +112,6 @@ const V2_FILES: ReadonlyArray<string> = [
   'components/extensions/ExtensionDetails.tsx',
   // The new tab page's shortcut dialog: its validation line in the danger ink (#148).
   'components/newtab/NewTabShortcutDialog.tsx',
-  // Settings → Security on desktop (#62): the status ink of a remembered answer, the pane title.
-  'components/overlays/SecuritySection.tsx',
   // The external-protocol sheet on the v2 sheet chassis (#140): its deemphasised host line.
   'components/protocol/ExternalProtocolSheet.tsx',
   // The blocked pop-ups popover, sheet and phone bar, and the sign-in and certificate dialogs
@@ -422,7 +420,10 @@ describe('the v2 primitives (§9.34)', () => {
     '.zen-v2-switch',
     '.zen-v2-radio',
     // The checkbox (#93): the extensions UI's layered copy went with it.
-    '.zen-v2-checkbox'
+    '.zen-v2-checkbox',
+    // The menulist trigger (§9.13): the extensions UI's layered rule moved here with the
+    // desktop Settings tab, whose value rows are the first to draw it outside that UI.
+    '.zen-v2-menulist'
   ]
 
   it('are one unlayered rule each, tokens only, with no layered or second copy', () => {

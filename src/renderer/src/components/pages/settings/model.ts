@@ -99,6 +99,22 @@ export interface FieldRow extends RowBase {
   onCommit(value: string): string | undefined
 }
 
+/**
+ * A bounded number on §10.4's slider row: the value as text beside the label, the slider – the
+ * zoom sheet's `zen-zoom-slider` – under the text on a phone and trailing it on the desktop.
+ * The slider commits when the thumb is let go; the text follows the drag.
+ */
+export interface SliderRow extends RowBase {
+  kind: 'slider'
+  value: number
+  min: number
+  max: number
+  step: number
+  /** The value as the row shows it ("70%"). */
+  format(value: number): string
+  onChange(value: number): void
+}
+
 /** A fact: label and description, optionally a trailing glyph or value; nothing to press. */
 export interface InfoRow extends RowBase {
   kind: 'info'
@@ -122,10 +138,12 @@ export interface ItemSheet {
 export interface CustomRow extends RowBase {
   kind: 'custom'
   render(): ReactNode
+  /** The block is a row of its own (it draws `.zen-v2-row` itself): no block padding around it. */
+  bare?: boolean
 }
 
 export type SettingsRow =
-  ValueRow | SwitchRow | ActionRow | FieldRow | InfoRow | ItemRow | CustomRow
+  ValueRow | SwitchRow | ActionRow | FieldRow | SliderRow | InfoRow | ItemRow | CustomRow
 
 export interface RowGroup {
   id: string
@@ -173,6 +191,7 @@ export function rowText(row: SettingsRow): string {
   const parts = [row.label, row.description ?? '', ...(row.keywords ?? [])]
   if (row.kind === 'value') parts.push(...row.options.map((o) => o.label))
   if (row.kind === 'field') parts.push(row.display ?? row.value)
+  if (row.kind === 'slider') parts.push(row.format(row.value))
   return parts.join(' ')
 }
 

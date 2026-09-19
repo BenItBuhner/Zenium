@@ -1,15 +1,29 @@
 import type { CSSProperties, JSX, ReactNode } from 'react'
 import { useState } from 'react'
 import { Check, CircleAlert, Copy } from 'lucide-react'
-import type { ContainerColor, ContainerIcon as ContainerIconName, Space } from '@shared/types'
-import { APP_ICON_VARIANTS, type AppIconId } from '@shared/appIcon'
+import type {
+  ContainerColor,
+  ContainerIcon as ContainerIconName,
+  ResourceGauge,
+  Space,
+  SyncScope
+} from '@shared/types'
+import {
+  APP_ICON_DESKTOP,
+  APP_ICON_INK,
+  APP_ICON_MARK,
+  APP_ICON_VARIANTS,
+  squirclePath,
+  type AppIconId,
+  type AppIconVariant
+} from '@shared/appIcon'
 import { CONTAINER_COLORS, CONTAINER_ICONS, spaceLabel } from '@shared/defaults'
 import { formatZoom } from '@shared/pageControls'
 import { inputToUrl } from '@shared/url'
+import { cmd } from '@renderer/lib/api'
 import { cn } from '@renderer/lib/utils'
 import { ContainerIcon } from '../../ContainerIcon'
 import { ZoomStepper } from '../../ZoomStepper'
-import { AppIconImage } from '../../overlays/AppIconPicker'
 
 /**
  * The blocks of the phone Settings page that are not rows (v2 §10.4's image radio cards and the
@@ -42,6 +56,43 @@ export function AppIconGrid({
         </button>
       ))}
     </div>
+  )
+}
+
+const ICON_VIEW = 100
+const ICON_RING_OUTER = ICON_VIEW * APP_ICON_DESKTOP.ringOuter
+
+/** The desktop icon as vector art, from the same geometry the generated assets come from. */
+export function AppIconImage({
+  variant,
+  className
+}: {
+  variant: AppIconVariant
+  className?: string
+}): JSX.Element {
+  return (
+    <svg
+      viewBox={`0 0 ${ICON_VIEW} ${ICON_VIEW}`}
+      className={className}
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path d={squirclePath(ICON_VIEW)} fill={variant.fill} />
+      <circle
+        cx={ICON_VIEW / 2}
+        cy={ICON_VIEW / 2}
+        r={ICON_RING_OUTER * APP_ICON_MARK.ring}
+        fill="none"
+        stroke={APP_ICON_INK}
+        strokeWidth={ICON_RING_OUTER * APP_ICON_MARK.stroke}
+      />
+      <circle
+        cx={ICON_VIEW / 2}
+        cy={ICON_VIEW / 2}
+        r={ICON_RING_OUTER * APP_ICON_MARK.dot}
+        fill={APP_ICON_INK}
+      />
+    </svg>
   )
 }
 
@@ -572,6 +623,152 @@ export function ShortcutForm({
         />
       </Field>
       <SheetActions action="Add" disabled={!valid} onCancel={close} onAction={submit} />
+    </div>
+  )
+}
+
+/**
+ * Resources › Live usage: a gauge as a 4 px bar at radius 2 in --v2-fill, the used part in the
+ * accent – the warning ink from 85 % of a budget, the danger ink at 100 % – with the label and
+ * the numbers on the line above it and a note under. No budget draws the bar against `fallbackMax`
+ * at half strength; a fallback of 0 draws no bar.
+ */
+export function ResourceMeter({
+  label,
+  gauge,
+  fallbackMax,
+  format,
+  note
+}: {
+  label: string
+  gauge: ResourceGauge
+  /** Scale for the bar when there is no budget (0 = no bar). */
+  fallbackMax: number
+  format: (v: number) => string
+  note?: string
+}): JSX.Element {
+  const max = gauge.budget > 0 ? gauge.budget : fallbackMax
+  const pct = max > 0 ? (gauge.used / max) * 100 : 0
+  const tone =
+    gauge.budget === 0 ? 'unbudgeted' : pct >= 100 ? 'over' : pct >= 85 ? 'near' : undefined
+  return (
+    <div className="zen-settings-meter" data-tone={tone}>
+      <div className="zen-settings-meter-head">
+        <span className="zen-settings-label">{label}</span>
+        <span className="zen-settings-meter-value">
+          {format(gauge.used)}
+          {gauge.budget > 0 ? ` / ${format(gauge.budget)}` : ' · no limit'}
+          {gauge.budget > 0 && gauge.budget !== gauge.configured
+            ? ` (${format(gauge.configured)} on mains)`
+            : ''}
+        </span>
+      </div>
+      {max > 0 && (
+        <div
+          className="zen-settings-progress zen-settings-meter-bar"
+          role="progressbar"
+          aria-label={label}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(Math.max(0, Math.min(100, pct)))}
+        >
+          <div style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} />
+        </div>
+      )}
+      {note && (
+        <span className="zen-settings-description zen-settings-description-full">{note}</span>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Sync › Set up sync (§9.12): the folder a cloud drive keeps in sync, chosen through the host's
+ * picker; the passphrase, typed twice (the second field marked while the two differ); this
+ * device's name; the primary button held until a folder is chosen and the passphrases agree at
+ * eight characters or more. `sync.setup` runs with the scope the settings already hold.
+ */
+export function SyncSetupForm({
+  deviceName: initialDeviceName,
+  scope,
+  close
+}: {
+  deviceName: string
+  scope: SyncScope
+  close: () => void
+}): JSX.Element {
+  const [folder, setFolder] = useState<string | null>(null)
+  const [passphrase, setPassphrase] = useState('')
+  const [confirm, setConfirm] = useState('')
+  const [deviceName, setDeviceName] = useState(initialDeviceName)
+  const [busy, setBusy] = useState(false)
+  const mismatch = confirm.length > 0 && confirm !== passphrase
+  const ready =
+    Boolean(folder) && passphrase.length >= 8 && confirm === passphrase && deviceName.trim() !== ''
+  return (
+    <div className="zen-settings-form">
+      <div className="zen-settings-field-block">
+        <span className="zen-settings-label">Sync folder</span>
+        <div className="zen-settings-picker-row">
+          <span className="zen-settings-picker-value" title={folder ?? undefined}>
+            {folder ?? 'Choose a folder that your cloud drive keeps in sync'}
+          </span>
+          <button
+            type="button"
+            className="zen-v2-button"
+            onClick={() => void cmd('sync.chooseFolder', undefined).then((f) => f && setFolder(f))}
+          >
+            Choose…
+          </button>
+        </div>
+      </div>
+      <Field
+        id="sync-passphrase"
+        label="Passphrase"
+        description="Use the same passphrase on every device. It is never stored in the folder and cannot be recovered – without it the synced data is unreadable."
+      >
+        <input
+          id="sync-passphrase"
+          className="zen-settings-input zen-v2-field"
+          type="password"
+          autoComplete="new-password"
+          placeholder="At least 8 characters"
+          value={passphrase}
+          onChange={(e) => setPassphrase(e.target.value)}
+        />
+      </Field>
+      <Field id="sync-confirm" label="Confirm passphrase">
+        <input
+          id="sync-confirm"
+          className="zen-settings-input zen-v2-field"
+          type="password"
+          autoComplete="new-password"
+          aria-invalid={mismatch || undefined}
+          value={confirm}
+          onChange={(e) => setConfirm(e.target.value)}
+        />
+        {mismatch && <ValidationMessage message="The passphrases differ" />}
+      </Field>
+      <Field id="sync-device" label="This device">
+        <input
+          id="sync-device"
+          className="zen-settings-input zen-v2-field"
+          value={deviceName}
+          onChange={(e) => setDeviceName(e.target.value)}
+        />
+      </Field>
+      <SheetActions
+        action="Start syncing"
+        disabled={!ready || busy}
+        onCancel={close}
+        onAction={() => {
+          if (!folder) return
+          setBusy(true)
+          void cmd('sync.setup', { folder, passphrase, deviceName: deviceName.trim(), scope })
+            .then(() => close())
+            .finally(() => setBusy(false))
+        }}
+      />
     </div>
   )
 }
