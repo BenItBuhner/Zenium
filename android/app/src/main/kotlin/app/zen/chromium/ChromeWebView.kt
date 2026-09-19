@@ -203,6 +203,16 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
         js("window.__zenHost&&__zenHost.pullEvent(${JSONObject.quote(tabId)},${JSONObject.quote(phase)},${JSONObject.quote(encodeResult(payload))})")
     }
 
+    /**
+     * A tab's page scrolled under the bar that hides on scroll: `start` (a finger down), `move`
+     * (the scroll since the last report, CSS px, one report per frame), `end` (the finger lifted)
+     * or `show` (the page pushed against its top); the chrome's `lib/barHide.ts` moves the bar and
+     * hands the page's edge back through `chrome.setBarHide` (see `BarHideGesture.kt`).
+     */
+    fun barScroll(tabId: String, phase: String, payload: JSONObject?) {
+        js("window.__zenHost&&__zenHost.barScroll(${JSONObject.quote(tabId)},${JSONObject.quote(phase)},${JSONObject.quote(encodeResult(payload))})")
+    }
+
     /** Commit the gesture; answers whether the chrome had anything to dismiss or navigate. */
     fun backCommit(callback: (Boolean) -> Unit) {
         evaluateJavascript("window.__zenHost?__zenHost.backEvent('commit',null):false") { result -> callback(result == "true") }
