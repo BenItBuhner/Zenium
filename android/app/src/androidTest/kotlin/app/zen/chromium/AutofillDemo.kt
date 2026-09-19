@@ -361,7 +361,11 @@ class AutofillDemo : DemoHarness("autofill-demo-state.json", "services-password-
     // another way where one exists (the command API) so the recording goes on. No fallback stands
     // in silently for a finger inside a sheet. The tree's click stays for one thing only, the
     // Settings tab's own rows – a page's list, not a sheet's – when the WebView reports a row of
-    // the scrolled list where it was before the scroll ([pressRow] says so in the notes).
+    // the scrolled list where it was before the scroll ([pressRow] says so in the notes). A
+    // control the tree reports where it lies scrolled out of its sheet's body (a long list's
+    // row under the header, a tall form's footer below the fold) is first scrolled into the
+    // body – the tree's show-on-screen, a scroll and not a press – until the chrome's own
+    // hit-test says the finger lands on it, and then touched ([touchInSheet]).
 
     /**
      * Pick the first row of `picker` the way a user does – a finger on the strip's row in the
@@ -512,6 +516,90 @@ class AutofillDemo : DemoHarness("autofill-demo-state.json", "services-password-
             return true
         }
         touchFault("the touch on $what did not take: not $effect within $timeoutMs ms")
+        return false
+    }
+
+    /**
+     * What is painted under a finger at screen point `x`,`y`, as the chrome hit-tests it
+     * (`document.elementFromPoint` at the chrome WebView's own coordinates): the control around
+     * that element – a button, a radio row, a field – read as `tag[role] 'label'` (its
+     * `aria-label`, else its text), the bare element when it is in no control, "nothing" outside
+     * the document. The tree reports a sheet's row where it lies – on screen, or scrolled out of
+     * the sheet's body under its header (`isVisibleToUser` is the row's bounds against the
+     * screen, not the body's clip) – so this is what says where a finger sent there would land.
+     */
+    private fun landing(x: Float, y: Float): String {
+        val origin = IntArray(2)
+        instrumentation.runOnMainSync { (activity as MainActivity).host.chrome.getLocationOnScreen(origin) }
+        val raw = chrome(
+            "(() => { const el = document.elementFromPoint((${x} - ${origin[0]}) / devicePixelRatio, (${y} - ${origin[1]}) / devicePixelRatio); " +
+                "if (!el) return 'nothing'; " +
+                "const c = el.closest('button, [role=\"radio\"], [role=\"option\"], [role=\"menuitem\"], [role=\"switch\"], a, input, textarea, select') || el; " +
+                "const role = c.getAttribute('role'); const label = (c.getAttribute('aria-label') || c.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 60); " +
+                "return c.tagName.toLowerCase() + (role ? '[' + role + ']' : '') + (label ? \" '\" + label + \"'\" : '') })()"
+        )
+        return runCatching { JSONTokener(raw).nextValue() as? String }.getOrNull() ?: "nothing"
+    }
+
+    /** Whether a [landing] is the control reading `label` (its `aria-label` or its text, whole). */
+    private fun landsOn(landing: String, label: String): Boolean =
+        landing.endsWith(" '$label'", ignoreCase = true)
+
+    /**
+     * [touchExpecting] on a control that may lie scrolled out of its sheet's body: a long list
+     * opens scrolled to its current option (the country sheet, to the address's country, the row
+     * before it under the header) and a form taller than the sheet at its peek keeps its footer
+     * below the fold (the address editor's Cancel). The tree reports such a row visible, with
+     * bounds where it lies, and a finger sent there lands on what is painted at the spot – run
+     * 35459039110's finger for "United Kingdom" landed on the country sheet's header. So the spot
+     * where the finger would land is checked against the chrome's own hit-test ([landing]) and,
+     * while it is not the control, the row is scrolled into the body through the tree's
+     * show-on-screen (a scroll, not a press: the press stays the finger's) and looked at again.
+     * Then the touch, asserted as [touchExpecting] does. A control that could not be brought under
+     * a finger within the tries is a touch fault as well: it is in the sheet and cannot be reached
+     * (noted, with what stood where the finger would have gone).
+     */
+    private fun touchInSheet(
+        label: String,
+        effect: String,
+        timeoutMs: Long = 6_000,
+        promptShot: String = "pin-prompt",
+        took: () -> Boolean
+    ): Boolean {
+        val inApp = { node: AccessibilityNodeInfo ->
+            node.packageName?.toString() == app.packageName && node.reads { it.equals(label, ignoreCase = true) }
+        }
+        // The lowest of the nodes reading the label: the sheet on top is the lowest surface, and
+        // a row below the fold lies lower still.
+        var node: AccessibilityNodeInfo = awaitInTree(8_000, inApp)?.let {
+            nodes(inApp).maxByOrNull { n -> Rect().also(n::getBoundsInScreen).centerY() }
+        } ?: run {
+            note("nothing in the tree reads '$label' to touch")
+            return false
+        }
+        var under = "nothing"
+        for (attempt in 0 until 4) {
+            val bounds = steadyBounds(node) ?: run {
+                note("'$label' went from the tree before it could be touched")
+                return false
+            }
+            val point = touchPoint(bounds)
+            under = if (point == null) "no part of $bounds inside the touchable window" else landing(point.x, point.y)
+            if (point != null && landsOn(under, label)) {
+                if (attempt > 0) note("'$label' scrolled into its sheet's body for the finger ($attempt show-on-screen)")
+                return touchExpecting(node, "'$label'", effect, timeoutMs, promptShot, took)
+            }
+            note("a finger at $bounds for '$label' would land on $under; scrolling the row into the sheet's body")
+            node.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.id)
+            SystemClock.sleep(1_200)
+            if (!node.refresh()) {
+                node = awaitInTree(3_000, inApp) ?: run {
+                    note("'$label' went from the tree while it was scrolled into view")
+                    return false
+                }
+            }
+        }
+        touchFault("'$label' could not be brought under a finger: $under stands where the finger would land")
         return false
     }
 
@@ -719,15 +807,15 @@ class AutofillDemo : DemoHarness("autofill-demo-state.json", "services-password-
                 }
             }
             if (editing()) {
-                SystemClock.sleep(1_200)
+                awaitEditorShown("Country")
                 snap("editor-address-saved")
                 note("the editor from the item sheet holds the street line '${editorLine("Street address")}', the ${editorLine("City")?.let { "city '$it'" } ?: "no City line"}")
                 countryToured = countryTour()
                 // Cancel: the editor leaves and the vault keeps the address as it was – still the
                 // United States after the form went to the United Kingdom's lines (Save would
-                // have written GB).
+                // have written GB). The footer is below the fold at the sheet's peek: touchInSheet.
                 val left = { editorLine("Street address") == null && savedAddressCountry() == "US" }
-                if (!touchExpecting("Cancel", "the editor is gone and the vault's address is still US", timeoutMs = 8_000, took = left) && !left()) {
+                if (!touchInSheet("Cancel", "the editor is gone and the vault's address is still US", timeoutMs = 8_000, took = left) && !left()) {
                     back()
                     SystemClock.sleep(800)
                 }
@@ -744,11 +832,11 @@ class AutofillDemo : DemoHarness("autofill-demo-state.json", "services-password-
         // "Add address" (the page's row) opens the editor empty; the country flow runs here when
         // the saved address's editor was not reached; Cancel adds nothing to the vault.
         if (pressRow("Add address", "the empty editor is up") { editorLine("Street address") == "" }) {
-            SystemClock.sleep(1_200)
+            awaitEditorShown("Country")
             snap("editor-address")
             if (!countryToured) countryToured = countryTour()
             val left = { editorLine("Street address") == null && zenArray("autofill.listAddresses", JSONObject()).length() == 1 }
-            if (!touchExpecting("Cancel", "the editor is gone with no address added", timeoutMs = 8_000, took = left) && !left()) {
+            if (!touchInSheet("Cancel", "the editor is gone with no address added", timeoutMs = 8_000, took = left) && !left()) {
                 back()
                 SystemClock.sleep(800)
             }
@@ -776,11 +864,11 @@ class AutofillDemo : DemoHarness("autofill-demo-state.json", "services-password-
                     }
                 }
                 if (editing()) {
-                    SystemClock.sleep(1_200)
+                    awaitEditorShown("Cancel")
                     snap("editor-card-saved")
                     note("the card editor holds the name '${editorLine("Name on card")}'; the number line is empty for the saved number: '${editorLine("Card number")}'")
                     val left = { editorLine("Name on card") == null }
-                    if (!touchExpecting("Cancel", "the card editor is gone", timeoutMs = 8_000, took = left) && !left()) {
+                    if (!touchInSheet("Cancel", "the card editor is gone", timeoutMs = 8_000, took = left) && !left()) {
                         back()
                         SystemClock.sleep(800)
                     }
@@ -802,10 +890,11 @@ class AutofillDemo : DemoHarness("autofill-demo-state.json", "services-password-
      * The editor's Country menulist under a finger (the editor sheet's injected touch: the
      * button labelled Country, not the line's label above it) must stack the country sheet,
      * which opens scrolled to the current country; "United Kingdom", the row above "United
-     * States", under a finger (the country sheet's injected touch) must give the form the
-     * United Kingdom's lines – a Post town, a Postal code, no State – with the values kept.
-     * True when both took (or the tree stood in after a fault, so the recording goes on); false
-     * when the menulist was not there to touch.
+     * States" – under the sheet's header until it is scrolled into the body – under a finger (the
+     * country sheet's injected touch) must give the form the United Kingdom's lines – a Post
+     * town, a Postal code, no State – with the values kept. True when both took (or the tree
+     * stood in after a fault, so the recording goes on); false when the menulist was not there
+     * to touch.
      */
     private fun countryTour(): Boolean {
         // The button named Country (its `aria-label`; the tree may run its value after the name),
@@ -830,8 +919,10 @@ class AutofillDemo : DemoHarness("autofill-demo-state.json", "services-password-
         }
         SystemClock.sleep(1_200)
         snap("editor-country-sheet")
+        // The list opens scrolled to the current country: "United Kingdom", the row before "United
+        // States", lies under the sheet's header until it is scrolled into the body (touchInSheet).
         val relabelled = { editorHas("Post town") && editorHas("Postal code") && !editorHas("State") }
-        if (!touchExpecting("United Kingdom", "the form has the United Kingdom's lines (Post town, Postal code, no State)", timeoutMs = 8_000, took = relabelled) && !relabelled()) {
+        if (!touchInSheet("United Kingdom", "the form has the United Kingdom's lines (Post town, Postal code, no State)", timeoutMs = 8_000, took = relabelled) && !relabelled()) {
             if (clickByLabel("United Kingdom")) note("United Kingdom picked through the tree's click after the touch fault")
             awaitTook(6_000, "pin-prompt", relabelled)
         }
@@ -839,6 +930,22 @@ class AutofillDemo : DemoHarness("autofill-demo-state.json", "services-password-
         snap("editor-address-uk")
         note("the form's lines after the pick: Post town ${editorHas("Post town")}, Postal code ${editorHas("Postal code")}, State ${editorHas("State")}; post town holds '${editorLine("Post town")}'")
         return true
+    }
+
+    /**
+     * Wait for the editor sheet's content to be on screen – the button reading `control` (an
+     * address form's Country menulist, a card form's Cancel) with bounds a finger reaches – before
+     * its still: the chrome document holds the form from the request on, the sheet rises after it
+     * (run 35459039110's still of the empty editor caught the bare sheet mid-rise). False, noted,
+     * when it never shows in time; the flow goes on regardless.
+     */
+    private fun awaitEditorShown(control: String): Boolean {
+        val shown = lowestNode(8_000) { node ->
+            node.className?.toString() == "android.widget.Button" && node.reads { it.startsWith(control) }
+        } != null
+        if (!shown) note("the editor's '$control' never showed on screen for the still")
+        SystemClock.sleep(600)
+        return shown
     }
 
     /**
