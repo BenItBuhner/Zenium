@@ -77,7 +77,9 @@ import {
   createSpace,
   cycleSpace,
   deleteFolder,
+  folderTabs,
   getSpace,
+  nextFolderColor,
   orderedTabsForSpace,
   reorderContainer,
   reorderSpace,
@@ -142,6 +144,7 @@ const FOCUS_CHROME_EVENTS = new Set<EventName>([
   'space.edit',
   'tab.startRename',
   'folder.startRename',
+  'folder.edit',
   'tab.editPinnedUrl',
   'tab.pickIcon',
   'menu.show',
@@ -1158,6 +1161,12 @@ export class Browser {
     }
   }
 
+  /**
+   * A new folder – a tab group (tabs-13) – in the space, wearing the next free colour as
+   * Chrome's new groups do unless the caller picked one. Unless `rename` is off (a folder made
+   * by a gesture), the chrome then shows the folder's editor: the group editor bubble on
+   * desktop, the inline rename on the phone.
+   */
   createFolder(
     spaceId: string,
     name: string,
@@ -1165,17 +1174,55 @@ export class Browser {
     win?: ZenWindow,
     options: { color?: FolderColor; rename?: boolean } = {}
   ): Folder {
-    const folder = createFolder(this.state.model, spaceId, name, icon, options.color)
+    const color = options.color ?? nextFolderColor(this.state.model, spaceId)
+    const folder = createFolder(this.state.model, spaceId, name, icon, color)
     this.state.commit()
-    if (options.rename !== false) this.emit('folder.startRename', { folderId: folder.id }, win)
+    if (options.rename !== false) this.emit('folder.edit', { folderId: folder.id }, win)
     return folder
   }
 
+  /** Chrome's "Add tab to new group": a new folder around the tab, its editor open. */
   newFolderWithTab(spaceId: string, tabId: string, win?: ZenWindow): void {
-    const folder = createFolder(this.state.model, spaceId, 'New Folder', '📁')
+    const folder = createFolder(
+      this.state.model,
+      spaceId,
+      'New Folder',
+      '📁',
+      nextFolderColor(this.state.model, spaceId)
+    )
     this.tabs.moveToFolder(tabId, folder.id)
     this.state.commit()
-    this.emit('folder.startRename', { folderId: folder.id }, win)
+    this.emit('folder.edit', { folderId: folder.id }, win)
+  }
+
+  /**
+   * Chrome's "New tab in group" (tabs-13): a new tab at the end of the folder – after its last
+   * member, in that member's container – active, with the new tab page (or the URL bar) as any
+   * new tab. Resolves with the tab's id.
+   */
+  newTabInFolder(folderId: string, win: ZenWindow = this.focusedWindow()): string {
+    const folder = this.state.model.folders[folderId]
+    if (!folder) throw new Error('Folder not found')
+    const members = folderTabs(this.state.model, folderId)
+    const last = members[members.length - 1]
+    const created = this.tabs.createTab(
+      {
+        url: this.newTab.homeUrl() ?? BLANK_URL,
+        spaceId: folder.spaceId,
+        active: true,
+        afterTabId: last?.id,
+        containerId: last?.containerId,
+        folderId
+      },
+      win
+    )
+    if (folder.collapsed) this.updateFolder(folderId, { collapsed: false })
+    if (this.newTab.enabled) {
+      this.state.afterBroadcast(() => this.emit('newtab.opened', { tabId: created.id }, win))
+    } else {
+      this.emit('urlbar.toggle', { mode: 'edit', text: '' }, win)
+    }
+    return created.id
   }
 
   updateFolder(
@@ -2064,6 +2111,7 @@ export class Browser {
       'folder.update': ({ folderId, patch }) => this.updateFolder(folderId, patch),
       'folder.delete': ({ folderId, unpack }) => this.deleteFolder(folderId, unpack),
       'folder.contextMenu': ({ folderId }, win) => this.menus.showFolderContextMenu(folderId, win),
+      'folder.newTab': ({ folderId }, win) => this.newTabInFolder(folderId, win),
       'newtab.contextMenu': (_a, win) => this.menus.showNewTabContextMenu(win),
       'newtab.tileContextMenu': ({ url, title }, win) =>
         this.menus.showTopSiteContextMenu(url, title, win),

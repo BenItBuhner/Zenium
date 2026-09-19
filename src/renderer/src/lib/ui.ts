@@ -360,6 +360,12 @@ export interface UiState {
    * itself (`useFloatingChrome`).
    */
   tabSearch: { keyboard: boolean } | null
+  /**
+   * The group editor bubble (tabs-13) is up beside a folder's header row in the sidebar.
+   * `keyboard`: the header had the focus when it opened (Space or Enter, the folder menu from
+   * the keyboard), so Escape hands the keyboard back to it. A request only, as `tabSearch`.
+   */
+  groupEditor: { folderId: string; keyboard: boolean } | null
   /** Safe-area insets of the host window (status bar, gesture bar, IME). */
   insets: Insets
   /**
@@ -457,6 +463,7 @@ export const uiStore = createStore<UiState>(
     install: null,
     translateSelection: null,
     tabSearch: null,
+    groupEditor: null,
     insets: { top: 0, right: 0, bottom: 0, left: 0 },
     stageActive: false,
     hoverCard: HOVER_CARD_HIDDEN,

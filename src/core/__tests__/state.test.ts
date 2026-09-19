@@ -4,7 +4,7 @@ import { DEFAULT_SETTINGS } from '../../shared/defaults'
 import { DEFAULT_NEW_TAB_SETTINGS } from '../../shared/newTab'
 import type { StoreIO } from '../platform'
 import { BrowserState, PERSISTED_VERSION, type Persisted } from '../state'
-import { createSpace, createTabRecord } from '../model'
+import { createFolder, createSpace, createTabRecord, nextFolderColor } from '../model'
 import { closedTabEntry } from '../session'
 
 function fakeIo(initial: string | null = null): StoreIO & { writes: string[] } {
@@ -172,6 +172,48 @@ describe('recently closed persistence', () => {
     const { doc } = profile()
     const { s } = stateFrom({ ...doc, version: 3, recentlyClosed: 'oops' })
     expect(s.recentlyClosed).toEqual([])
+  })
+})
+
+describe('folder (tab group) persistence', () => {
+  it('round-trips a folder’s name, colour, collapsed state and membership (session-22)', async () => {
+    const { doc, spaceId, ids } = profile()
+    const [, a, b] = ids
+    const { s, io } = stateFrom(doc)
+    const folder = createFolder(s.model, spaceId, 'Research', '📁', 'purple')
+    folder.collapsed = true
+    s.model.tabs[a].folderId = folder.id
+    s.model.tabs[b].folderId = folder.id
+    s.commit()
+    await tick()
+    await s.flush()
+    const written = JSON.parse(io.writes[io.writes.length - 1]) as Persisted
+    expect(written.folders).toEqual([
+      { id: folder.id, spaceId, name: 'Research', icon: '📁', color: 'purple', collapsed: true }
+    ])
+    const reloaded = stateFrom(written).s
+    expect(reloaded.model.folders[folder.id]).toEqual(folder)
+    expect(reloaded.model.tabs[a].folderId).toBe(folder.id)
+    expect(reloaded.model.tabs[b].folderId).toBe(folder.id)
+    expect(nextFolderColor(reloaded.model, spaceId)).toBe('grey')
+  })
+
+  it('drops a folder whose space is gone and the membership that pointed at it', () => {
+    const { doc, spaceId, ids } = profile()
+    const [, a] = ids
+    const tabs = (doc.tabs as Array<Record<string, unknown>>).map((t) =>
+      t.id === a ? { ...t, folderId: 'folder_orphan' } : t
+    )
+    const { s } = stateFrom({
+      ...doc,
+      tabs,
+      folders: [
+        { id: 'folder_orphan', spaceId: 'space_gone', name: 'Old', icon: '📁', collapsed: false },
+        { id: 'folder_kept', spaceId, name: 'Kept', icon: '📁', color: 'red', collapsed: false }
+      ]
+    })
+    expect(Object.keys(s.model.folders)).toEqual(['folder_kept'])
+    expect(s.model.tabs[a].folderId).toBeNull()
   })
 })
 

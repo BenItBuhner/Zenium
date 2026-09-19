@@ -6,6 +6,7 @@ import { FOLDER_COLORS } from '@shared/defaults'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { run } from '@renderer/lib/api'
 import { dropStore, listMotions } from '@renderer/lib/drag'
+import { openGroupEditor } from '@renderer/lib/groupEditor'
 import { SlideMotion } from '@renderer/lib/motion/slide'
 import { pinnedOf, regularOf } from '@renderer/lib/selectors'
 import { useHint } from '@renderer/lib/shortcuts'
@@ -13,6 +14,7 @@ import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { SpaceGlyph } from '../SpaceGlyph'
 import { ListMotionContext } from './listMotion'
+import { walkRows } from './rowKeys'
 import { TabItem } from './TabItem'
 
 interface Props {
@@ -263,25 +265,53 @@ function FolderRow({
   liveError
 }: FolderRowProps): JSX.Element {
   const renaming = uiStore.use((s) => s.renamingFolderId === folder.id)
+  const editing = uiStore.use((s) => s.groupEditor?.folderId === folder.id)
   const lastClick = useRef(0)
+  const collapsedBeforeClick = useRef(folder.collapsed)
   const containsActive = tabs.some((t) => t.id === activeTabId)
   const isDropTarget = dropKey === `folder:${folder.id}`
+  const toggle = (): void =>
+    run('folder.update', { folderId: folder.id, patch: { collapsed: !folder.collapsed } })
+  // The header is a tab group's (tabs-14): a press, Space or Enter folds or unfolds it; the
+  // second press of a double-click undoes the first's fold and opens the group editor bubble
+  // (tabs-13) instead, as does the folder menu's Edit Folder…. It joins the list's keyboard walk
+  // (§9.22): the arrows reach it from the tab rows, and it is the list's tab stop while it
+  // stands for the active tab (folded around it).
   return (
     <div className="flex flex-col gap-0.5">
       <div
         className={cn('zen-tab h-8', compact && 'justify-center px-0')}
+        role="button"
+        tabIndex={containsActive && folder.collapsed ? 0 : -1}
+        aria-expanded={!folder.collapsed}
+        aria-label={`${folder.name}, folder, ${tabs.length} ${tabs.length === 1 ? 'tab' : 'tabs'}`}
         data-active={containsActive && folder.collapsed}
+        data-editing={editing || undefined}
         data-drop-into={isDropTarget || undefined}
         data-tab-folder={folder.id}
         onClick={() => {
           const now = performance.now()
           if (now - lastClick.current < 400) {
             lastClick.current = 0
-            uiStore.set({ renamingFolderId: folder.id })
+            run('folder.update', {
+              folderId: folder.id,
+              patch: { collapsed: collapsedBeforeClick.current }
+            })
+            openGroupEditor(folder.id)
             return
           }
           lastClick.current = now
-          run('folder.update', { folderId: folder.id, patch: { collapsed: !folder.collapsed } })
+          collapsedBeforeClick.current = folder.collapsed
+          toggle()
+        }}
+        onKeyDown={(e) => {
+          if (e.target !== e.currentTarget) return
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            toggle()
+            return
+          }
+          if (walkRows(e.currentTarget, e.key)) e.preventDefault()
         }}
         onContextMenu={(e) => {
           e.preventDefault()

@@ -31,6 +31,7 @@ import { languageName, sortedByName } from '../shared/languageNames'
 import { isInFlight, isQuarantined } from './downloads'
 import { mayAutoOpen } from './downloads/danger'
 import { applicationMenu, menuSignature, runFromMenuBar } from './menuBar'
+import { folderTabs } from './model'
 
 type Template = MenuItemTemplate[]
 
@@ -1200,26 +1201,35 @@ export class Menus {
       ...(local
         ? []
         : [
-            {
-              label: 'Move to Folder',
-              enabled: !tab.essential && !tab.pinned,
-              submenu: [
-                ...folders.map((f) => ({
-                  label: `${f.icon} ${f.name}`,
-                  type: 'checkbox' as const,
-                  checked: tab.folderId === f.id,
-                  click: () => tabs.moveToFolder(tabId, tab.folderId === f.id ? null : f.id)
-                })),
-                ...(folders.length ? [{ type: 'separator' as const }] : []),
-                {
-                  label: 'New Folder…',
+            // Chrome's group items (context-menus-91): "Add tab to new group" while the space
+            // has no folder, else "Add tab to group ›" – a new folder first, then the space's
+            // folders, the tab's own checked – and "Remove from group" beside it.
+            folders.length === 0
+              ? {
+                  label: 'Add Tab to New Folder',
+                  enabled: !tab.essential && !tab.pinned,
                   click: () => this.browser.newFolderWithTab(space.id, tabId, win)
+                }
+              : {
+                  label: 'Move to Folder',
+                  enabled: !tab.essential && !tab.pinned,
+                  submenu: [
+                    {
+                      label: 'New Folder…',
+                      click: () => this.browser.newFolderWithTab(space.id, tabId, win)
+                    },
+                    { type: 'separator' as const },
+                    ...folders.map((f) => ({
+                      label: `${f.icon} ${f.name}`,
+                      type: 'checkbox' as const,
+                      checked: tab.folderId === f.id,
+                      click: () => tabs.moveToFolder(tabId, tab.folderId === f.id ? null : f.id)
+                    }))
+                  ]
                 },
-                ...(tab.folderId
-                  ? [{ label: 'Remove from Folder', click: () => tabs.moveToFolder(tabId, null) }]
-                  : [])
-              ]
-            },
+            ...(tab.folderId
+              ? [{ label: 'Remove from Folder', click: () => tabs.moveToFolder(tabId, null) }]
+              : []),
             {
               label: 'Add Route for Domain',
               enabled: Boolean(domain) && !state.settings.spaceRouting[domain],
@@ -1573,11 +1583,22 @@ export class Menus {
     const folder = state.model.folders[folderId]
     if (!folder) return
     const live = this.browser.liveFolders.get(folderId)
+    const count = folderTabs(state.model, folderId).length
     this.popup(
       [
+        // Chrome's group editor bubble (tabs-13): name, colour and the group's actions in one
+        // surface beside the header; the desktop chrome draws it, the phone its group sheet.
+        {
+          label: 'Edit Folder…',
+          click: () => this.browser.emit('folder.edit', { folderId }, win)
+        },
         {
           label: 'Rename Folder…',
           click: () => this.browser.emit('folder.startRename', { folderId }, win)
+        },
+        {
+          label: 'New Tab in Folder',
+          click: () => this.browser.newTabInFolder(folderId, win)
         },
         {
           label: folder.collapsed ? 'Expand Folder' : 'Collapse Folder',
@@ -1620,8 +1641,14 @@ export class Menus {
               }
             ]) as Template),
         { type: 'separator' },
+        // Chrome's Ungroup and Close group: the tabs stay, or go (to the recently closed list).
         { label: 'Unpack Folder', click: () => this.browser.deleteFolder(folderId, true) },
-        { label: 'Delete Folder', click: () => this.browser.deleteFolder(folderId, false) }
+        {
+          label: count
+            ? `Close Folder (${count} ${count === 1 ? 'Tab' : 'Tabs'})`
+            : 'Delete Folder',
+          click: () => this.browser.deleteFolder(folderId, false)
+        }
       ],
       win,
       'folder'

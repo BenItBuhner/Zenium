@@ -16,7 +16,14 @@ import { cn } from '@renderer/lib/utils'
 /** What the favicon is drawn from: a tab, or a row that carries the same fields (tab search). */
 export type FaviconSource = Pick<
   Tab,
-  'url' | 'title' | 'favicon' | 'customIcon' | 'customTitle' | 'loading' | 'discarded' | 'containerId'
+  | 'url'
+  | 'title'
+  | 'favicon'
+  | 'customIcon'
+  | 'customTitle'
+  | 'loading'
+  | 'discarded'
+  | 'containerId'
 >
 
 export function Favicon({

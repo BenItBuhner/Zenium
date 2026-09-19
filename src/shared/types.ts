@@ -2719,6 +2719,8 @@ export interface Commands {
       pinned?: boolean
       essential?: boolean
       afterTabId?: string
+      /** The folder (tab group) the new tab belongs to; one of the space's folders. */
+      folderId?: string
     }
     result: string
   }
@@ -2883,6 +2885,11 @@ export interface Commands {
   }
   'folder.delete': { args: { folderId: string; unpack: boolean }; result: void }
   'folder.contextMenu': { args: { folderId: string }; result: void }
+  /**
+   * Chrome's "New tab in group" (tabs-13): a new tab at the end of the folder, active, in the
+   * folder's space and the container of its last member. Resolves with the new tab's id.
+   */
+  'folder.newTab': { args: { folderId: string }; result: string }
   'newtab.contextMenu': { args: void; result: void }
   /** Long-press on a phone new tab page tile: pin / unpin, remove, open in a new tab. */
   'newtab.tileContextMenu': { args: { url: string; title: string }; result: void }
@@ -3757,6 +3764,13 @@ export interface Events {
    */
   'tab.dragOver': TabDragOver | null
   'folder.startRename': { folderId: string }
+  /**
+   * Show the folder's editor (tabs-13): Chrome opens its group editor bubble when a group is
+   * made from the tab menu and from the group header's own menu. The desktop chrome opens the
+   * bubble beside the folder's header row; the phone, whose group sheet holds the colours, starts
+   * the inline rename on the group card.
+   */
+  'folder.edit': { folderId: string }
   /** Open the pinned-URL editor for a pinned/essential tab. */
   'tab.editPinnedUrl': { tabId: string }
   /** Open the emoji/icon picker for a tab. */

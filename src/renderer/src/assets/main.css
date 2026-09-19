@@ -3011,6 +3011,45 @@
   .zen-tab-search-empty {
     color: var(--v2-text-deemphasized);
   }
+  /*
+   * The group editor bubble (components/sidebar/GroupEditorBubble.tsx; tabs-13): the shared
+   * `.zen-bm-popover` chrome and title block, the shared `.zen-bm-form` with its `.zen-bm-label`
+   * (§9.12) over the shared `.zen-v2-field`, the shared `.zen-v2-row` for the actions with a
+   * leading 16 px glyph (§9.34). Only what those do not say lives here: the form's 12 to the
+   * hairline under it (the swatches are a row of controls, not text), the hairline in the gutter
+   * with 4 below (§6, §9.20's list panel), the swatch row's geometry (nine 28 px targets at an
+   * 8 px gap; the swatch itself is the card radio's swatch form, unlayered further down), the
+   * actions' 4 px inset below, and the tab count trailing the close row. The header row the
+   * bubble hangs from keeps its hover fill while the bubble is up, as an anchor does (§9.20).
+   */
+  .zen-group-editor-form {
+    padding-bottom: 12px;
+  }
+  .zen-group-editor-swatches {
+    display: flex;
+    gap: 8px;
+  }
+  .zen-group-editor-actions {
+    display: flex;
+    flex-direction: column;
+    padding-bottom: 4px;
+  }
+  .zen-group-editor-actions::before {
+    content: '';
+    display: block;
+    margin: 0 16px 4px;
+    border-top: 1px solid var(--v2-border);
+  }
+  .zen-group-editor-action {
+    flex-shrink: 0;
+  }
+  .zen-group-editor-count {
+    margin-left: auto;
+    flex-shrink: 0;
+  }
+  .zen-tab[data-editing]:not([data-active='true']) {
+    background: var(--zen-element-bg);
+  }
   /* A list popover's body: 16 around 32px rows (§9.20); the empty line 32 below the top (§9.17). */
   .zen-bm-popover-list {
     padding: 16px;
@@ -5320,6 +5359,46 @@
 }
 .zen-v2-card-radio[aria-checked='true'] {
   box-shadow: 0 0 0 2px var(--v2-accent);
+}
+/*
+ * The group editor's colour swatches (components/sidebar/GroupEditorBubble.tsx; §9.14's swatch
+ * form of the image radio, tabs-13): the card radio made round – a 28 px target with the colour
+ * as a 20 px disc inside – the picked one's 2 px accent outline moved to the disc, 2 px outside
+ * its edge with the panel showing between (concentric), the fill of a mouse's hover on the
+ * target. Unlayered, after the card radio, as the only rule that can move its outline.
+ */
+.zen-v2-card-radio.zen-group-editor-swatch {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+}
+.zen-v2-card-radio.zen-group-editor-swatch[aria-checked='true'] {
+  box-shadow: none;
+}
+.zen-group-editor-swatch-disc {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--zen-swatch);
+  transition: box-shadow 120ms var(--zen-ease);
+}
+.zen-group-editor-swatch[aria-checked='true'] > .zen-group-editor-swatch-disc {
+  box-shadow:
+    0 0 0 2px var(--v2-panel),
+    0 0 0 4px var(--v2-accent);
+}
+@media (hover: hover) {
+  .zen-v2-card-radio.zen-group-editor-swatch:hover {
+    background: var(--v2-fill);
+  }
+}
+/* Chrome's Close group: a destructive action row in the danger ink (§6); its count stays deemphasised. */
+.zen-v2-row.zen-group-editor-action[data-danger] {
+  color: var(--v2-danger);
 }
 
 /*

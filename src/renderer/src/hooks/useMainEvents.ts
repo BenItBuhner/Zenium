@@ -37,6 +37,7 @@ import {
   uiStore
 } from '@renderer/lib/ui'
 import { activeTab } from '@renderer/lib/selectors'
+import { openGroupEditor } from '@renderer/lib/groupEditor'
 import { toggleTabSearch } from '@renderer/lib/tabSearch'
 import { openTranslateSelection } from '@renderer/lib/translate'
 import { browserStore } from '@renderer/lib/ui'
@@ -164,6 +165,12 @@ export function useMainEvents(): void {
       onEvent('tab.dragOver', (over) => remoteDragOver(over)),
       onEvent('tab.startRename', ({ tabId }) => uiStore.set({ renamingTabId: tabId })),
       onEvent('folder.startRename', ({ folderId }) => uiStore.set({ renamingFolderId: folderId })),
+      onEvent('folder.edit', ({ folderId }) => {
+        // Chrome's group editor bubble (tabs-13) beside the folder's header; the phone's group
+        // sheet holds the colours, so a new group there starts its inline rename as before.
+        if (isPhone()) uiStore.set({ renamingFolderId: folderId })
+        else openGroupEditor(folderId)
+      }),
       onEvent('tab.editPinnedUrl', ({ tabId }) => uiStore.set({ editingPinnedUrlTabId: tabId })),
       onEvent('tab.pickIcon', ({ tabId }) => uiStore.set({ iconPickerTabId: tabId })),
       onEvent('bookmark.star', (star) => {
