@@ -5206,7 +5206,34 @@
  * carry composes its share into the same product at the bottom edge (`barFade`, recede.ts).
  */
 :root[data-form-factor='phone'] .zen-phone-bar[data-edge='bottom'] {
-  opacity: calc(1 - var(--zen-recede, 0) * var(--zen-recede-gain, 1));
+  opacity: calc(
+    (1 - var(--zen-recede, 0) * var(--zen-recede-gain, 1)) * (1 - var(--zen-bar-hide, 0))
+  );
+}
+
+/*
+ * The bar hides on scroll (lib/barHide.ts, Chrome / Edge parity): `--zen-bar-hide` on the root
+ * is 0 with the bar in place and 1 with it off its edge, written per frame as the page scrolls
+ * and by the spring that snaps it. The bar translates by the band the page gains (the bar band
+ * minus the gutter it keeps, `--zen-bar-hide-travel`) – one to one with the page's edge – and
+ * fades over the same travel, since a status bar or gesture bar drawn edge-to-edge would show
+ * what slid under it. Other chrome that slides with the bar (a tab-group strip) reads the same
+ * variable. At the hidden rest the root carries `data-bar-hidden`: the bar takes no touches
+ * (the page has its band) but stays in the accessibility tree, where focus brings it back.
+ * Under reduced motion the finger still moves the bar one to one; only the snap jumps.
+ */
+:root {
+  --zen-bar-hide-travel: calc(var(--zen-phone-bar) - var(--zen-padding));
+}
+:root[data-form-factor='phone'] .zen-phone-bar[data-edge='bottom'] {
+  transform: translate3d(0, calc(var(--zen-bar-hide, 0) * var(--zen-bar-hide-travel)), 0);
+}
+:root[data-form-factor='phone'] .zen-phone-bar[data-edge='top'] {
+  opacity: calc(1 - var(--zen-bar-hide, 0));
+  transform: translate3d(0, calc(-1 * var(--zen-bar-hide, 0) * var(--zen-bar-hide-travel)), 0);
+}
+:root[data-bar-hidden] .zen-phone-bar {
+  pointer-events: none;
 }
 
 /* Mobile hosts: keep the chrome out of the status bar, cutouts, gesture bar and keyboard. */

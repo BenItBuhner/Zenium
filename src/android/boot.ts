@@ -20,6 +20,12 @@ import {
 } from '@renderer/lib/back'
 import { privateSurfaceNow, subscribePrivateSurface } from '@renderer/lib/privateSurface'
 import {
+  dispatchBarScroll,
+  setBarHideHost,
+  type BarScrollPayload,
+  type BarScrollPhase
+} from '@renderer/lib/barHide'
+import {
   dispatchPullEvent,
   setPullHost,
   type PullEventPayload,
@@ -61,6 +67,12 @@ export interface HostGlobal {
    * finger's travel, then `release` or `cancel` (see `PullGestureClassifier.kt`).
    */
   pullEvent(tabId: string, phase: string, json: string | null): void
+  /**
+   * The active page's scroll as the host reports it for the bar that hides on scroll: `start`
+   * (a finger down), `move` (the scroll since the last report), `end` (the finger lifted) or
+   * `show` (the page pushed against its top: the bar comes back). See `BarHideGesture.kt`.
+   */
+  barScroll(tabId: string, phase: string, json: string | null): void
   /** The user tapped the notification / launcher again: bring a URL in. */
   openUrl(url: string): void
   /**
@@ -111,6 +123,7 @@ export async function bootAndroid(): Promise<{ browser: Browser; api: ZenApi; pr
   syncPrivateSurface(bridge)
   syncBackState(bridge)
   syncPullToRefresh(bridge, platform)
+  syncBarHide(bridge)
   browser.start()
   hostGlobal.flush()
 
@@ -254,6 +267,18 @@ function syncPullToRefresh(bridge: Bridge, platform: AndroidPlatform): void {
 }
 
 /**
+ * The bar that hides on scroll (`lib/barHide.ts`): the host streams the active page's scroll in
+ * and hears back, per frame, where the bar is – it moves the page's edge on the bar's side to
+ * match, and watches (or, with the bar docked at the top, takes over) the page's touches only
+ * while the frame says the bar may hide (`null` turns it off).
+ */
+function syncBarHide(bridge: Bridge): void {
+  setBarHideHost({
+    apply: (frame) => bridge.send('chrome.setBarHide', frame ?? { enabled: false })
+  })
+}
+
+/**
  * Install `window.__zenHost`. What Kotlin sends before the platform exists – a view event, an
  * insets change, the URL the app was launched with – waits in order and is delivered by
  * `flush()` once the core has started (before the boot fetched documents, nothing could arrive
@@ -297,6 +322,8 @@ function installHostGlobal(
       dispatchBackEvent(phase as BackPhase, parse<BackEventPayload | null>(json)),
     pullEvent: (tabId, phase, json) =>
       dispatchPullEvent(tabId, phase as PullEventPhase, parse<PullEventPayload | null>(json)),
+    barScroll: (tabId, phase, json) =>
+      dispatchBarScroll(tabId, phase as BarScrollPhase, parse<BarScrollPayload | null>(json)),
     openUrl: (url) =>
       withPlatform((platform) =>
         platform.browser.openExternalUrl(url, platform.window, { fromIntent: true })
