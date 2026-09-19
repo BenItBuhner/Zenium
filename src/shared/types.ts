@@ -117,6 +117,12 @@ export interface HostCapabilities {
   pageTabs: boolean
   /** Pages can be pinned to the launcher / Home screen ("Add to Home screen"). */
   pinShortcuts: boolean
+  /**
+   * Selected page text gets the system's floating toolbar (Android's action mode) rather than
+   * the page context menu; the host asks the core for Zenium's items in it and dispatches the
+   * one touched (`Menus.selectionToolbar` / `runSelectionAction`). Desktop hosts show the menu.
+   */
+  selectionToolbar: boolean
 }
 
 export interface Rect {

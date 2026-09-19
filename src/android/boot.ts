@@ -8,6 +8,7 @@ import type {
 } from '@shared/types'
 import { cssColorToHex, resolveTheme, rgbToHex } from '@shared/theme'
 import { Browser } from '@core/browser'
+import type { SelectionToolbarItem } from '@core/menus'
 import type { KeyEventInput } from '@core/platform'
 import {
   backStore,
@@ -59,6 +60,12 @@ export interface HostGlobal {
   pullEvent(tabId: string, phase: string, json: string | null): void
   /** The user tapped the notification / launcher again: bring a URL in. */
   openUrl(url: string): void
+  /**
+   * Zenium's items for the floating toolbar over a page's selected text (`{ text }`): `[{ id,
+   * title }]` in order, `[]` before the core has started. Answered in place: the host reads the
+   * evaluation's result (the array as JSON text) while the system's action mode is coming up.
+   */
+  selectionMenu(tabId: string, json: string | null): SelectionToolbarItem[]
 }
 
 /**
@@ -262,7 +269,14 @@ function installHostGlobal(
     openUrl: (url) =>
       withPlatform((platform) =>
         platform.browser.openExternalUrl(url, platform.window, { fromIntent: true })
-      )
+      ),
+    selectionMenu: (tabId, json) =>
+      queued === null
+        ? (platformRef.current?.selectionMenu(
+            tabId,
+            parse<{ text?: unknown } | undefined>(json) ?? {}
+          ) ?? [])
+        : []
   }
   ;(window as unknown as { __zenHost: HostGlobal }).__zenHost = host
   return {
