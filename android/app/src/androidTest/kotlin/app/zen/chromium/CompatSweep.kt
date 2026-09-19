@@ -1523,10 +1523,13 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     }
 
     /**
-     * A native dialog on screen (a page's alert or confirm shown by WebView itself, a system
-     * dialog) pressed away by its positive button – OK, Close, Dismiss, else its last button –
-     * and its text returned; null when no such window is up. The activity's own window fills the
-     * screen and is never the one; the chrome's sheets are in its DOM, not windows.
+     * A native dialog on screen (a page's alert, confirm or prompt shown by WebView itself, a
+     * system dialog) pressed away and its text returned with the button pressed; null when no
+     * such window is up. A confirm is declined (Cancel, No): OK runs the page's positive path,
+     * and Tampermonkey's internal-error confirm opened its forum – a github.com issue page – on
+     * every OK, nine tabs in one 113 job (run 35446468306) with the eight rows after it timed
+     * out behind them. An alert has OK alone. The activity's own window fills the screen and is
+     * never the one; the chrome's sheets are in its DOM, not windows.
      */
     private fun dismissDialog(): String? {
         val screenHeight = app.resources.displayMetrics.heightPixels
@@ -1544,8 +1547,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 if (node.isClickable && node.className == "android.widget.Button") buttons.add(node)
                 for (i in 0 until node.childCount) node.getChild(i)?.let(queue::add)
             }
-            val button = buttons.firstOrNull { it.text?.toString()?.trim()?.uppercase() in DIALOG_BUTTONS } ?: buttons.lastOrNull() ?: continue
-            val text = texts.joinToString(" | ").take(300)
+            val button = dialogButton(buttons.map { it.text?.toString()?.trim().orEmpty() })?.let(buttons::get) ?: continue
+            val text = "${texts.joinToString(" | ").take(300)} || pressed: ${button.text?.toString()?.trim().orEmpty()}"
             dialogsDismissed.put(text)
             snap("dialog-dismissed")
             tapRect(Rect().also(button::getBoundsInScreen))
@@ -1645,8 +1648,23 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val NAV_BAR_WINDOW_DP = 48
         /** A button's part inside the touchable band has to be this tall for a finger to aim at it. */
         private const val MIN_TOUCH_OVERLAP_DP = 12
-        /** The button that takes a native dialog (a page's alert, a system dialog) down. */
+        /** The buttons that turn a page's confirm or prompt down (WebView's JsDialogHelper labels them Cancel). */
+        private val DECLINE_BUTTONS = setOf("CANCEL", "NO")
+        /** The button that takes a one-button dialog (a page's alert, a system dialog) down. */
         private val DIALOG_BUTTONS = setOf("OK", "CLOSE", "DISMISS", "GOT IT")
+
+        /**
+         * Which of a dialog's buttons, by label, to press: the decline of a confirm first, then
+         * the acknowledgement of an alert, else the last button (a beforeunload's "Leave this
+         * Page", a dialog with labels of its own); null for a dialog without buttons.
+         */
+        internal fun dialogButton(labels: List<String>): Int? {
+            if (labels.isEmpty()) return null
+            val upper = labels.map { it.trim().uppercase() }
+            return upper.indexOfFirst { it in DECLINE_BUTTONS }.takeIf { it >= 0 }
+                ?: upper.indexOfFirst { it in DIALOG_BUTTONS }.takeIf { it >= 0 }
+                ?: labels.lastIndex
+        }
         /**
          * The chrome's prompt button as the chrome sees it: `[data-accept]` of the install /
          * permissions sheet or dialog, its CSS box, the viewport, whether its host is drawn and
