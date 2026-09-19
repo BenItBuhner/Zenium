@@ -6,7 +6,6 @@ import {
   dialog,
   nativeImage,
   net,
-  webContents,
   type BrowserWindow,
   type BrowserWindowConstructorOptions,
   type LoadURLOptions,
@@ -39,6 +38,7 @@ import {
   type PageDialogCall
 } from '../../shared/pageDialogIpc'
 import type { FormsCommand } from '../../shared/forms'
+import { defer } from '../../core/platform'
 import type {
   AgentCapture,
   AgentCaptureOptions,
@@ -129,20 +129,6 @@ function snapshotEntry(entry: Electron.NavigationEntry): NavigationSnapshotEntry
   return out
 }
 
-/**
- * The page or chrome of `win` that has the keyboard: the window's own contents or one of the
- * views in it. Null when the keyboard is in no page or in another window's.
- */
-function focusedContentsOf(win: BrowserWindow): WebContents | null {
-  const focused = webContents.getFocusedWebContents()
-  if (!focused || focused.isDestroyed()) return null
-  if (focused === win.webContents) return focused
-  const inWindow = win.contentView.children.some(
-    (child) => (child as Partial<WebContentsView>).webContents === focused
-  )
-  return inWindow ? focused : null
-}
-
 interface HostNavigation {
   at: number
   reload: boolean
@@ -223,6 +209,22 @@ export class ElectronTabView implements TabView {
     this.wc = this.view.webContents
     this.webContentsId = this.wc.id
     this.view.setVisible(false)
+    this.wc.on('blur', () => {
+      const win = this.win
+      if (win) this.owner.keyboardLeft(win, this.wc)
+    })
+    this.wc.on('focus', () => {
+      if (this.visible) return
+      // A page that is not on screen took the keyboard. Electron 44 gives a new WebContentsView
+      // the keyboard once its renderer is up, hidden or not, so a tab opened in the background
+      // (a middle-clicked link, `target=_blank`) would leave the next Ctrl+1..9 or Ctrl+W with a
+      // page nobody sees. Deferred: a tab being activated is focused and shown in one task.
+      defer(() => {
+        const win = this.win
+        if (!win || this.visible || this.wc.isDestroyed() || !this.wc.isFocused()) return
+        this.owner.keyboardTaken(win, this.wc)
+      })
+    })
   }
 
   get webContents(): WebContents {
@@ -699,14 +701,8 @@ export class ElectronTabView implements TabView {
     this.host = target
     const win = this.win
     if (!win) return
-    // Adding a WebContentsView gives its page the keyboard, hidden or not (Electron 44): a tab
-    // opened in the background – a middle-clicked link, a page's `target=_blank` – would take it
-    // from the page or the chrome the user is typing in, and the shortcuts pressed next (Ctrl+1,
-    // Ctrl+W) would go to a page that is not on screen. The keyboard goes back where it was; the
-    // core focuses the page it shows on its own (`ZenWindow.focusContent`).
-    const keyboard = focusedContentsOf(win)
+    this.owner.watchKeyboard(win)
     win.contentView.addChildView(this.view)
-    if (keyboard && keyboard !== this.wc && !keyboard.isDestroyed()) keyboard.focus()
   }
 
   detach(): void {
@@ -1336,11 +1332,53 @@ export class ElectronTabViewHost implements TabViewHost {
   private readonly byTabId = new Map<string, ElectronTabView>()
   private readonly tabIds = new Map<number, string>()
   private readonly viewListeners = new Set<(view: ElectronTabView) => void>()
+  /** Per window, the page or chrome that last lost the keyboard – a hidden page gives it back there. */
+  private readonly lastKeyboard = new WeakMap<BrowserWindow, WebContents>()
+  private readonly keyboardWatched = new WeakSet<BrowserWindow>()
 
   constructor(
     private readonly sessions: SessionManager,
     readonly downloads: SaveAsDownloads | null = null
   ) {}
+
+  /** Follow the window's own chrome for the keyboard, as every tab page in it is followed. */
+  watchKeyboard(win: BrowserWindow): void {
+    if (this.keyboardWatched.has(win)) return
+    this.keyboardWatched.add(win)
+    win.webContents.on('blur', () => this.keyboardLeft(win, win.webContents))
+  }
+
+  keyboardLeft(win: BrowserWindow, contents: WebContents): void {
+    this.lastKeyboard.set(win, contents)
+  }
+
+  /**
+   * A page not on screen has the keyboard: back to the page or chrome that lost it, when that
+   * is still something the user can see; the chrome otherwise (its shortcuts always work).
+   */
+  keyboardTaken(win: BrowserWindow, taker: WebContents): void {
+    if (win.isDestroyed()) return
+    if (!win.isFocused()) {
+      // Focusing a page focuses its window as well (Linux, macOS): when the user is in another
+      // window, the keyboard stays there and the hidden page is looked at again on their return.
+      win.once('focus', () => {
+        const view = this.byWebContentsId.get(taker.id)
+        if (view && !view.isVisible() && !taker.isDestroyed() && taker.isFocused()) {
+          this.keyboardTaken(win, taker)
+        }
+      })
+      return
+    }
+    const previous = this.lastKeyboard.get(win)
+    const view = previous ? this.byWebContentsId.get(previous.id) : undefined
+    const visible =
+      previous !== undefined &&
+      !previous.isDestroyed() &&
+      previous !== taker &&
+      (previous === win.webContents || (view !== undefined && view.isVisible()))
+    if (visible) previous.focus()
+    else win.webContents.focus()
+  }
 
   createView(tab: Tab, events: TabViewEvents, host: WindowHost): TabView {
     const view = new ElectronTabView(

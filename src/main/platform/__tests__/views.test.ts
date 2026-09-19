@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { EventEmitter } from 'node:events'
 import type { Tab } from '../../../shared/types'
 import type { TabViewEvents, WindowHost, WindowOpenTicket } from '../../../core/platform'
 import type { SessionManager } from '../sessions'
@@ -7,8 +8,21 @@ import { ElectronTabViewHost, type ElectronTabView } from '../views'
 /** The options every `WebContentsView` in the test was constructed with, in order. */
 const constructed: Array<Record<string, unknown>> = []
 
-/** Which page has the keyboard, as `webContents.getFocusedWebContents()` reports it. */
-const keyboard = vi.hoisted(() => ({ current: null as unknown }))
+/**
+ * Which page has the keyboard. `takeKeyboard` moves it the way Chromium does: the holder gets
+ * `blur`, the taker `focus`.
+ */
+const { keyboard, takeKeyboard } = vi.hoisted(() => {
+  const keyboard = { current: null as { emit(event: string): unknown } | null }
+  const takeKeyboard = (taker: { emit(event: string): unknown }): void => {
+    const previous = keyboard.current
+    if (previous === taker) return
+    keyboard.current = taker
+    previous?.emit('blur')
+    taker.emit('focus')
+  }
+  return { keyboard, takeKeyboard }
+})
 
 vi.mock('electron', async () => {
   const { EventEmitter } = await import('node:events')
@@ -68,7 +82,7 @@ vi.mock('electron', async () => {
     focusCalls = 0
     focus(): void {
       this.focusCalls++
-      keyboard.current = this
+      takeKeyboard(this)
     }
     isFocused(): boolean {
       return keyboard.current === this
@@ -94,49 +108,58 @@ vi.mock('electron', async () => {
     get webContents(): FakeWebContents | undefined {
       return this.contents
     }
-    setVisible(): undefined {
-      return undefined
+    private visible = false
+    setVisible(visible: boolean): void {
+      this.visible = visible
+    }
+    getVisible(): boolean {
+      return this.visible
     }
   }
-  return {
-    WebContentsView: FakeWebContentsView,
-    webContents: { getFocusedWebContents: () => keyboard.current }
-  }
+  return { WebContentsView: FakeWebContentsView }
 })
 
-/**
- * A window as `attachTo` sees it: its chrome page and its `contentView`. Adding a child view
- * gives the added page the keyboard, as Electron 44 does, hidden or not.
- */
-function fakeWindow(): WindowHost & {
-  chrome: { focusCalls: number }
-  children: unknown[]
-} {
-  const chrome = { focusCalls: 0, isDestroyed: () => false, focus: (): void => undefined }
-  chrome.focus = () => {
-    chrome.focusCalls++
-    keyboard.current = chrome
+/** A window's chrome page: the keyboard's home when no page on screen has it. */
+class FakeChrome extends EventEmitter {
+  focusCalls = 0
+  isDestroyed(): boolean {
+    return false
   }
-  const children: unknown[] = []
-  const win = {
-    isDestroyed: () => false,
-    webContents: chrome,
-    contentView: {
-      children,
-      addChildView(view: { webContents: unknown }): void {
-        children.push(view)
-        keyboard.current = view.webContents
-      },
-      removeChildView(view: unknown): void {
-        const at = children.indexOf(view)
-        if (at >= 0) children.splice(at, 1)
-      }
+  focus(): void {
+    this.focusCalls++
+    takeKeyboard(this)
+  }
+}
+
+/** A BrowserWindow as `attachTo` sees it: its chrome page, its `contentView`, its focus. */
+class FakeBrowserWindow extends EventEmitter {
+  focused = true
+  readonly children: unknown[] = []
+  readonly contentView = {
+    children: this.children,
+    addChildView: (view: unknown): void => {
+      this.children.push(view)
+    },
+    removeChildView: (view: unknown): void => {
+      const at = this.children.indexOf(view)
+      if (at >= 0) this.children.splice(at, 1)
     }
   }
-  return { win, chrome, children } as unknown as WindowHost & {
-    chrome: { focusCalls: number }
-    children: unknown[]
+  constructor(readonly webContents: FakeChrome) {
+    super()
   }
+  isDestroyed(): boolean {
+    return false
+  }
+  isFocused(): boolean {
+    return this.focused
+  }
+}
+
+function fakeWindow(): WindowHost & { win: FakeBrowserWindow; chrome: FakeChrome } {
+  const chrome = new FakeChrome()
+  const win = new FakeBrowserWindow(chrome)
+  return { win, chrome } as unknown as WindowHost & { win: FakeBrowserWindow; chrome: FakeChrome }
 }
 
 /** A page Chromium made for a script `window.open`, before any tab adopted it. */
@@ -168,65 +191,123 @@ describe('ElectronTabViewHost', () => {
 })
 
 /**
- * Electron gives a newly added WebContentsView the keyboard even while it is hidden, so a tab
- * opened in the background (a middle-clicked link) would leave the next Ctrl+1 or Ctrl+W with a
- * page that is not on screen. `attachTo` puts the keyboard back where it was (tabs-31).
+ * Electron 44 gives a new WebContentsView the keyboard once its renderer is up, hidden or not,
+ * so a tab opened in the background (a middle-clicked link) would leave the next Ctrl+1 or
+ * Ctrl+W with a page that is not on screen. A hidden page that finds itself with the keyboard
+ * gives it back to whoever lost it (tabs-31).
  */
-describe('ElectronTabView.attachTo and the keyboard', () => {
-  const pageOf = (view: ElectronTabView): { focusCalls: number } =>
-    view.webContents as unknown as { focusCalls: number }
-  const setup = (): { host: ElectronTabViewHost; window: ReturnType<typeof fakeWindow> } => {
+describe('a hidden tab page and the keyboard', () => {
+  type Page = { focusCalls: number; emit(event: string): unknown }
+  const pageOf = (view: ElectronTabView): Page => view.webContents as unknown as Page
+  const settle = (): Promise<void> => new Promise((r) => setImmediate(r))
+  const setup = (): {
+    host: ElectronTabViewHost
+    window: ReturnType<typeof fakeWindow>
+    background: () => ElectronTabView
+  } => {
     keyboard.current = null
-    return { host: new ElectronTabViewHost(sessions), window: fakeWindow() }
+    const host = new ElectronTabViewHost(sessions)
+    const window = fakeWindow()
+    let n = 0
+    const background = (): ElectronTabView =>
+      host.createView(
+        { id: `tab_bg${++n}`, containerId: 'default' } as Tab,
+        noEvents,
+        window
+      ) as ElectronTabView
+    return { host, window, background }
   }
 
-  it('gives the keyboard back to the chrome that had it', () => {
-    const { host, window } = setup()
-    keyboard.current = window.chrome
-    const view = host.createView({ id: 'tab_bg', containerId: 'default' } as Tab, noEvents, window)
-    expect(window.children).toHaveLength(1)
+  it('gives the keyboard back to the chrome that lost it', async () => {
+    const { window, background } = setup()
+    window.chrome.focus()
+    const bg = background()
+    // The background page's renderer comes up and takes the keyboard.
+    takeKeyboard(pageOf(bg))
+    expect(keyboard.current).toBe(pageOf(bg))
+    await settle()
     expect(keyboard.current).toBe(window.chrome)
-    expect(window.chrome.focusCalls).toBe(1)
-    expect(pageOf(view as ElectronTabView).focusCalls).toBe(0)
+    expect(window.chrome.focusCalls).toBe(2)
   })
 
-  it('gives it back to the page that had it', () => {
-    const { host, window } = setup()
-    const shown = host.createView(
-      { id: 'tab_shown', containerId: 'default' } as Tab,
-      noEvents,
-      window
-    ) as ElectronTabView
+  it('gives it back to the page on screen that lost it', async () => {
+    const { window, background } = setup()
+    const shown = background()
+    shown.setVisible(true)
     shown.focus()
-    expect(keyboard.current).toBe(shown.webContents)
-    host.createView({ id: 'tab_bg', containerId: 'default' } as Tab, noEvents, window)
-    expect(keyboard.current).toBe(shown.webContents)
+    const bg = background()
+    takeKeyboard(pageOf(bg))
+    await settle()
+    expect(keyboard.current).toBe(pageOf(shown))
     expect(pageOf(shown).focusCalls).toBe(2)
-  })
-
-  it("leaves the keyboard alone when it is in no page or in another window's", () => {
-    const { host, window } = setup()
-    host.createView({ id: 'tab_first', containerId: 'default' } as Tab, noEvents, window)
-    // The add itself moved the keyboard into the new page; nothing to give it back to.
-    expect(window.chrome.focusCalls).toBe(0)
-
-    const elsewhere = { focusCalls: 0, isDestroyed: () => false, focus: (): void => undefined }
-    elsewhere.focus = () => {
-      elsewhere.focusCalls++
-    }
-    keyboard.current = elsewhere
-    host.createView({ id: 'tab_bg', containerId: 'default' } as Tab, noEvents, window)
-    expect(elsewhere.focusCalls).toBe(0)
     expect(window.chrome.focusCalls).toBe(0)
   })
 
-  it('does nothing for a view attached to a window that is gone', () => {
-    const { host, window } = setup()
-    keyboard.current = window.chrome
-    expect(() =>
-      host.createView({ id: 'tab_late', containerId: 'default' } as Tab, noEvents, detachedWindow)
-    ).not.toThrow()
-    expect(window.chrome.focusCalls).toBe(0)
+  it('falls back to the chrome when the page that lost it is off screen too', async () => {
+    const { window, background } = setup()
+    const hidden = background()
+    hidden.focus()
+    const bg = background()
+    takeKeyboard(pageOf(bg))
+    await settle()
+    expect(keyboard.current).toBe(window.chrome)
+    expect(pageOf(hidden).focusCalls).toBe(1)
+  })
+
+  it('leaves a page alone that is shown by the time it is checked (a tab being activated)', async () => {
+    const { window, background } = setup()
+    window.chrome.focus()
+    const next = background()
+    takeKeyboard(pageOf(next))
+    next.setVisible(true)
+    await settle()
+    expect(keyboard.current).toBe(pageOf(next))
+    expect(window.chrome.focusCalls).toBe(1)
+  })
+
+  it('waits for the user to come back to a window that is not focused', async () => {
+    const { window, background } = setup()
+    window.chrome.focus()
+    window.win.focused = false
+    const bg = background()
+    takeKeyboard(pageOf(bg))
+    await settle()
+    // Nothing yet: focusing the chrome would pull the window to the front.
+    expect(keyboard.current).toBe(pageOf(bg))
+    expect(window.chrome.focusCalls).toBe(1)
+    window.win.focused = true
+    window.win.emit('focus')
+    expect(keyboard.current).toBe(window.chrome)
+    expect(window.chrome.focusCalls).toBe(2)
+  })
+
+  it('does nothing once the keyboard has moved on or the page is gone', async () => {
+    const { window, background } = setup()
+    window.chrome.focus()
+    const bg = background()
+    takeKeyboard(pageOf(bg))
+    // Something else (the core showing a tab) already took it back.
+    window.chrome.focus()
+    await settle()
+    expect(window.chrome.focusCalls).toBe(2)
+    const late = background()
+    takeKeyboard(pageOf(late))
+    late.destroy()
+    await settle()
+    expect(window.chrome.focusCalls).toBe(2)
+  })
+
+  it('is quiet for a view whose window is gone', async () => {
+    keyboard.current = null
+    const host = new ElectronTabViewHost(sessions)
+    const view = host.createView(
+      { id: 'tab_late', containerId: 'default' } as Tab,
+      noEvents,
+      detachedWindow
+    ) as ElectronTabView
+    expect(() => takeKeyboard(pageOf(view))).not.toThrow()
+    await settle()
+    expect(keyboard.current).toBe(pageOf(view))
   })
 })
 
