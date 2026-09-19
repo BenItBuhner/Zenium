@@ -11,6 +11,10 @@ name: Android site controls demo
 # Gradle cache live in android-emulator-demo.yml; this file only picks the driver.
 on:
   workflow_dispatch:
+  # TEMPORARY (round #134 on PR #135): one recording on the branch's head for the Android stills;
+  # removed once the run has been read.
+  push:
+    branches: [cursor/services-site-controls-ui-24d1]
 
 permissions:
   contents: read
