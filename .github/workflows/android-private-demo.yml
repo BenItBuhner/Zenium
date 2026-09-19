@@ -1,0 +1,70 @@
+name: Android private tabs demo
+
+# Records private tabs on the phone on a hardware-accelerated Android emulator and uploads the
+# video, screenshots and findings: a regular tab bakes a cookie on a loopback site; New Private
+# Tab from the app menu blends the chrome onto the private theme (sampled from the chrome as it
+# runs) and shows the private new tab page; the private tab visits the site on its own WebView
+# profile and finds no cookie, bakes one that never reaches the default jar; the window's
+# screenshot guard stands while the surface is private; the overview opens on its Private pane
+# and the segment switches panes; closing the last private card wipes the private profile (the
+# next private tab, from the Tabs button's quick menu, finds the jar empty); a relaunch wipes it
+# again at boot; the launcher's static shortcut opens a private tab; Close Private Tabs ends the
+# session. A check that fails in the driver fails the run (private-findings.txt in the artifact).
+#
+# The engine. Private tabs run on a WebView profile of their own (Profiles.kt), which needs
+# WebViewFeature.MULTI_PROFILE, and the API 34 images' WebView 113 does not have it (measured by
+# the extension runtime's EngineProbe: false on 113.0.5672.136, true on the Chromium snapshot),
+# so the core offers no private tabs there. The demo therefore runs on an AOSP image with a
+# Chromium snapshot SystemWebView.apk swapped in (android-webview-swap.sh, as the extension
+# runtime demo's modern-webview job does). On that image the snapshot WebView under the shared
+# swangle default draws one chrome frame every 1.3-3.5 s with a sheet up (the extension runtime
+# demo's measurement, against a normal frame rate under swiftshader_indirect; the google_apis
+# image is the one swiftshader_indirect crashes), so this job asks for swiftshader_indirect.
+# Dispatch-only, like the other demos: it takes about a quarter of an hour and says nothing
+# about a change being correct. The build, the emulator and the Gradle cache live in
+# android-emulator-demo.yml; this file picks the driver and the engine.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - cursor/android-private-tabs-ac7a
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-private-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: private tabs demo (Chromium snapshot WebView on an AOSP image)
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      target: default
+      emulator-gpu: swiftshader_indirect
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.PrivateTabsDemo
+        DEMO_DIR=private-demo
+        DEMO_OUT=artifacts/android-private-demo
+        DEMO_VIDEO=android-private-demo.mp4
+        WEBVIEW_APK=artifacts/webview/SystemWebView.apk
+      # The plain `Android` snapshot is armeabi-v7a only and its libwebviewchromium.so cannot be
+      # dlopen'ed on an x86_64 emulator; `AndroidDesktop_x64` ships the same com.android.webview
+      # (minSdk 29) with x86_64 and x86 native code.
+      setup-script: |
+        base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
+        rev=$(curl -fsSL "$base/LAST_CHANGE")
+        echo "chromium snapshot revision $rev"
+        curl -fsSL -o /tmp/chrome-android-desktop.zip "$base/$rev/chrome-android-desktop.zip"
+        mkdir -p artifacts/webview
+        unzip -j -o /tmp/chrome-android-desktop.zip chrome-android-desktop/apks/SystemWebView.apk -d artifacts/webview
+        rm -f /tmp/chrome-android-desktop.zip
+        curl -fsSL "$base/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
+        unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
+        ls -la artifacts/webview
+      artifact-name: android-private-demo
+      artifact-path: artifacts/android-private-demo/
+      timeout-minutes: 60
