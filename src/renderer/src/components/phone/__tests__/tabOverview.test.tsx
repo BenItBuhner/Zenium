@@ -1494,7 +1494,9 @@ describe('the chrome switch in the stylesheet', () => {
   const rules = rulesOf(
     readFileSync(resolve(__dirname, '../../../assets/main.css'), 'utf8')
   ).filter((r) =>
-    r.selectors.some((s) => s === '*' || s === '.zen-overview' || s.startsWith('.zen-group'))
+    r.selectors.some(
+      (s) => s === '*' || s.startsWith('.zen-overview') || s.startsWith('.zen-group')
+    )
   )
   const forSelector = (selector: string, reduced: boolean): CssRule[] =>
     rules.filter((r) => r.reduced === reduced && r.selectors.includes(selector))
@@ -1587,5 +1589,22 @@ describe('the chrome switch in the stylesheet', () => {
       value: '120ms',
       important: true
     })
+  })
+
+  it('the panes and the segment change in place on a 120 ms opacity fade with no movement, the same under reduced motion (v2 §11.4)', () => {
+    // A pane coming up: the 120 ms fade, held past the sheet's closing cut.
+    expect(declared('.zen-overview-pane', 'animation')).toMatch(/^zen-fade 120ms/)
+    expect(
+      forSelector('.zen-overview-pane', true)
+        .map((r) => r.declarations.get('animation-duration'))
+        .find(Boolean)
+    ).toEqual({ value: '120ms', important: true })
+    // The segment: the label's ink and the line's opacity, nothing that moves.
+    expect([...transitions('.zen-overview-segment-tab').entries()]).toEqual([['color', 120]])
+    expect([...transitions('.zen-overview-segment-indicator').entries()]).toEqual([
+      ['opacity', 120]
+    ])
+    expect(transitions('.zen-overview-segment-tab', true).get('color')).toBe(120)
+    expect(transitions('.zen-overview-segment-indicator', true).get('opacity')).toBe(120)
   })
 })

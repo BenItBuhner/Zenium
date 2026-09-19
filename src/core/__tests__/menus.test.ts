@@ -433,6 +433,7 @@ describe('the app menu', () => {
     expect(appMenu(harness(ANDROID, 'phone'))).toEqual([
       'New Tab',
       'New Private Tab',
+      'Close Private Tabs',
       'New Space…',
       '-',
       'Bookmarks',
@@ -473,12 +474,17 @@ describe('the app menu', () => {
     )
     const h = harness(ANDROID, 'phone')
     expect(appMenu(h)).toContain('New Private Tab')
-    // Nothing to close until a private tab is open.
-    expect(appMenu(h)).not.toContain('Close Private Tabs')
+    // Nothing to close until a private tab is open: the row stays, greyed (v2 §9.17 – a menu
+    // row whose count is zero is disabled, not hidden), and comes alive with the first one.
+    const closeRow = (): MenuItemTemplate | undefined => {
+      appMenu(h)
+      return h.shown().find((item) => item.label === 'Close Private Tabs')
+    }
+    expect(closeRow()).toMatchObject({ enabled: false })
     h.browser.handleCommand(h.win, 'tab.newPrivate', {})
-    expect(appMenu(h)).toContain('Close Private Tabs')
+    expect(closeRow()).toMatchObject({ enabled: true })
     h.browser.handleCommand(h.win, 'tab.closePrivate', undefined)
-    expect(appMenu(h)).not.toContain('Close Private Tabs')
+    expect(closeRow()).toMatchObject({ enabled: false })
   })
 
   it('on a phone follows the capabilities, not the platform name', () => {

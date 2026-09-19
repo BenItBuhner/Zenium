@@ -2250,10 +2250,12 @@
   }
   /*
    * The overview's panes (TAB-02, TAB-03): the one coming up fades in over the backdrop – a 120 ms
-   * state change (v2 §11), which reduced motion keeps as every appearance – while the window
-   * surfaces blend to the pane's theme. The segment above them is a tab bar in the window
-   * family (§9.29): the picked label in the window ink under a 2 px accent line, the other at
-   * 69%; the switch is the same 120 ms, opacity and colour only, no movement.
+   * state change (v2 §11.4: content changing in place on a window strip cross-fades on opacity,
+   * no slide and no cut), which reduced motion keeps (the sheet's closing block holds these
+   * durations past its cut) – while the window surfaces blend to the pane's theme. The segment
+   * above them is a tab bar in the window family (§9.29): the picked label in the window ink
+   * under a 2 px accent line, the other at 69%; the switch is the same 120 ms, opacity and colour
+   * only, no movement.
    */
   .zen-overview-pane {
     animation: zen-fade 120ms var(--zen-ease);
@@ -7793,6 +7795,18 @@
     transition-duration: 1ms, 120ms !important;
   }
   .zen-group::before {
+    transition-duration: 120ms !important;
+  }
+  /*
+   * The overview's panes and its segment (TAB-02, TAB-03): content changing in place on a window
+   * strip fades the same under reduced motion (v2 §11.4) – a pane coming up keeps its 120 ms
+   * fade, the segment's ink and its line their 120 ms; neither moves in full motion either.
+   */
+  .zen-overview-pane {
+    animation-duration: 120ms !important;
+  }
+  .zen-overview-segment-tab,
+  .zen-overview-segment-indicator {
     transition-duration: 120ms !important;
   }
 }
