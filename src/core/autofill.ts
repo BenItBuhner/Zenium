@@ -562,7 +562,8 @@ export class AutofillService {
 
   /**
    * The picker's "Manage…" row: the picker goes and Settings opens on its Autofill section in
-   * the window the picker was for (`win` is the caller's, the popup surface's window on desktop).
+   * the window the picker was for (`win` is the caller's, the popup surface's window on desktop)
+   * – through the pages' one route, which is the desktop's overlay or the phone's Settings tab.
    */
   manage(win?: ZenWindow): void {
     const target = this.picker ? this.windowOf(this.picker.tabId) : undefined
@@ -571,7 +572,7 @@ export class AutofillService {
       this.closePicker()
       restoreFocus?.focusContent()
     }
-    this.browser.emit('overlay.open', { kind: 'settings', section: 'autofill' }, target ?? win)
+    this.browser.pages.open('settings', 'autofill', target ?? win)
   }
 
   /**

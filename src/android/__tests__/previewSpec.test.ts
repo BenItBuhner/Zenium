@@ -227,6 +227,28 @@ describe('parsePreviewSpec', () => {
     expect(parsePreviewSpec('page=settings&then=wave')).toEqual({ kind: 'page', page: 'settings' })
   })
 
+  it('stages an autofill surface, a manager one scrolled and stepped through like a page', () => {
+    expect(parsePreviewSpec('autofill=save-login')).toEqual({
+      kind: 'autofill',
+      surface: 'save-login'
+    })
+    expect(
+      parsePreviewSpec(
+        'autofill=manager&show=Payment%20methods&then=tap:Visa%20%E2%80%A2%E2%80%A2%E2%80%A2%E2%80%A2%204242'
+      )
+    ).toEqual({
+      kind: 'autofill',
+      surface: 'manager',
+      show: 'Payment methods',
+      then: [{ kind: 'tap', text: 'Visa \u2022\u2022\u2022\u2022 4242' }]
+    })
+    expect(parsePreviewSpec('autofill=manager&show=&then=')).toEqual({
+      kind: 'autofill',
+      surface: 'manager'
+    })
+    expect(parsePreviewSpec('autofill=bogus')).toEqual({ kind: 'idle' })
+  })
+
   it('asks for a sheet on its expanded detent', () => {
     expect(parsePreviewSpec('overlay=downloads&expand')).toEqual({
       kind: 'overlay',
