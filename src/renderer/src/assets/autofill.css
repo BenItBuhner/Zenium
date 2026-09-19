@@ -291,8 +291,9 @@ textarea.zen-v2-field {
   padding: 0 16px 16px;
 }
 /*
- * Body copy under a 48 header or a title block (§9.23): a paragraph that introduces a form or
- * rows, 15/400 in the text colour at the 16 gutter, 16 px from what it introduces.
+ * Body copy under a desktop dialog's title block (§9.23): a paragraph that introduces a form,
+ * 15/400 in the text colour at the 16 gutter, 16 px from what it introduces. A phone sheet
+ * with that text opens on the chassis' title block instead and carries it as the description.
  */
 .zen-v2-af-copy {
   padding: 0 16px 16px;
