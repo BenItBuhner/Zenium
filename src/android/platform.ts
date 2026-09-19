@@ -166,6 +166,8 @@ export function androidCapabilities({
     pinShortcuts: false,
     translate: true,
     voiceSearch: false,
+    screenCapture: false,
+    shareSheet: false,
     // The WebView's floating action mode, with Zenium's items added after Copy (`TabWebView.kt`).
     selectionToolbar: true,
     // One document: the picker is drawn in the chrome, above the keyboard.

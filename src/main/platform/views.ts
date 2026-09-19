@@ -28,6 +28,7 @@ import type {
   Tab
 } from '../../shared/types'
 import { refusedFromDocument } from '../../shared/internalPages'
+import { PAGE_HOST_CHANNEL } from '../../shared/pageScript'
 import type { SafeBrowsingHit } from '../../shared/privacy'
 import { isCertificateError, type SiteCertificate } from '../../shared/siteInfo'
 import { inPlaceErrorPageScript } from '../../shared/zenPages'
@@ -52,6 +53,7 @@ import type {
   KeyEventInput,
   NavigationIntent,
   PageFlags,
+  PageHostMessage,
   PageMessage,
   TabView,
   TabViewEvents,
@@ -670,6 +672,11 @@ export class ElectronTabView implements TabView {
 
   sendFormsCommand(command: FormsCommand): void {
     if (!this.wc.isDestroyed()) this.wc.send('zen:forms', command)
+  }
+
+  /** To the top document's page script (`preload/page.ts` listens on `PAGE_HOST_CHANNEL`). */
+  postToPage(message: PageHostMessage): void {
+    if (!this.wc.isDestroyed()) this.wc.send(PAGE_HOST_CHANNEL, message)
   }
 
   setZapMode(on: boolean): void {

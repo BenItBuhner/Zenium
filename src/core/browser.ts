@@ -67,6 +67,9 @@ import { FullscreenService } from './fullscreen'
 import { WebAppService } from './webapp'
 import { MediaSessionService } from './mediaSession'
 import { WebNotificationService } from './webNotifications'
+import { ScreenCaptureService } from './screenCapture'
+import { ShareService } from './share'
+import { GeolocationService } from './geolocation'
 import { UpdateService } from './updates'
 import { ExternalProtocolService } from './externalProtocols'
 import { PasswordService } from './credentials/service'
@@ -266,6 +269,12 @@ export class Browser {
   readonly webNotifications: WebNotificationService
   /** The user's search engines: OpenSearch discovery, the Settings > Search form, the clipboard row's reads. */
   readonly searchEngines: SearchEngineService
+  /** The screen-capture picker (MW-19). */
+  readonly screenCapture: ScreenCaptureService
+  /** The chrome's share sheet (MW-21). */
+  readonly shares: ShareService
+  /** The network location provider behind `navigator.geolocation` where the engine has none (MW-04). */
+  readonly geolocation: GeolocationService
   readonly windows = new Map<string, ZenWindow>()
   /** Set by `shutdown()`: the app is going away, windows close without further questions. */
   quitting = false
@@ -380,6 +389,9 @@ export class Browser {
     this.mediaSession = new MediaSessionService(this)
     this.webNotifications = new WebNotificationService(this)
     this.searchEngines = new SearchEngineService(this)
+    this.screenCapture = new ScreenCaptureService(this)
+    this.shares = new ShareService(this)
+    this.geolocation = new GeolocationService(this)
     this.state.extras = (win) => ({
       boosts: this.boosts.all(),
       zappingTabId: this.boosts.zappingTabId(),
@@ -401,6 +413,8 @@ export class Browser {
       permissionPrompts: this.permissionPrompts.list(),
       securityPrompts: this.security.list(),
       pageDialogs: this.pageDialogs.list(),
+      screenCaptureRequests: this.screenCapture.list(),
+      shareRequests: this.shares.listFor(win),
       crashRestore: this.session.crashRestoreOffer(),
       autofill: this.autofill.uiState(),
       blocking: this.blocking.status(),
@@ -1034,6 +1048,11 @@ export class Browser {
     this.translate.onNavigated(tabId)
     this.autofill.onNavigated(tabId)
     this.fullscreen.onNavigated(tabId)
+    this.geolocation.onNavigated(tabId, inPage)
+    if (!inPage) {
+      this.screenCapture.cancelForTab(tabId)
+      this.shares.cancelForTab(tabId)
+    }
   }
 
   /**
@@ -1612,6 +1631,12 @@ export class Browser {
       }
       return
     }
+    // A desktop has no share target of the OS's own: the chrome's sheet (copy, QR, email, the
+    // system sheet on macOS) stands in for it.
+    if (this.state.capabilities.shareSheet) {
+      this.shares.open(payload, win)
+      return
+    }
     const text = payload.url ?? payload.imageUrl ?? payload.text
     if (text) this.copyText(text, 'Link copied', win)
   }
@@ -2047,6 +2072,14 @@ export class Browser {
         )
       return
     }
+    if (message.type === 'share') {
+      this.shares.handleMessage(tabId, message.share)
+      return
+    }
+    if (message.type === 'geolocation') {
+      this.geolocation.handleMessage(tabId, message.geolocation)
+      return
+    }
     if (message.type === 'zap') {
       if (typeof message.selector === 'string') this.boosts.onZapped(tabId, message.selector)
       return
@@ -2087,8 +2120,12 @@ export class Browser {
     }
     if (message.type === 'media') {
       if (!this.tabs.view(tabId)) return
-      tab.audible = Boolean(message.playing)
-      this.governor.onMedia(tabId, Boolean(message.playing))
+      // A host whose engine reports audibility itself (Electron's `audio-state-changed`) sends
+      // the Media Session report alone; `playing` is the page script's word where it tracks it.
+      if (message.playing !== undefined) {
+        tab.audible = Boolean(message.playing)
+        this.governor.onMedia(tabId, Boolean(message.playing))
+      }
       if (message.media) this.mediaSession.onReport(tabId, message.media)
       this.state.commitVolatile()
       this.updateMedia()
@@ -2360,8 +2397,19 @@ export class Browser {
           )
           .catch(() => undefined)
       },
-      'media.action': ({ tabId, action, seekTime }) =>
-        this.mediaSession.act(tabId, action, { seekTime }),
+      'screenCapture.respond': ({ id, sourceId, audio }) =>
+        this.screenCapture.respond(id, sourceId, Boolean(audio)),
+      'share.respond': ({ id, answer }) => this.shares.respond(id, answer),
+      'share.open': ({ tabId, payload }, win) => {
+        if (payload) void this.share(payload, win)
+        else if (tabId) this.shareTab(tabId, win)
+        else {
+          const active = tabs.activeTabFor(win)
+          if (active) this.shareTab(active.id, win)
+        }
+      },
+      'media.action': ({ tabId, action, seekTime, seekOffset }) =>
+        this.mediaSession.act(tabId, action, { seekTime, seekOffset }),
       'media.pictureInPicture': ({ tabId }) => this.mediaSession.enterPictureInPicture(tabId),
 
       'split.create': ({ tabIds, layout }, win) => tabs.createSplit(tabIds, layout, win),

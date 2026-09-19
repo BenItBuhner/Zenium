@@ -972,6 +972,9 @@ export class TabManager {
     this.browser.pageDialogs.cancelForTab(tabId)
     this.browser.autofill.onTabGone(tabId)
     this.browser.fullscreen.onTabGone(tabId)
+    this.browser.screenCapture.cancelForTab(tabId)
+    this.browser.shares.cancelForTab(tabId)
+    this.browser.geolocation.onTabGone(tabId)
     if (this.owners.has(tabId)) view.detach()
     this.owners.delete(tabId)
     if (!view.isDestroyed()) {

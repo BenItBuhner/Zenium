@@ -90,6 +90,10 @@ import { ElectronBlocking, ElectronBundledLists, bundledListsDirectory } from '.
 import { supportsWindowMaterial } from './appShell'
 import { ElectronPrivacy } from './privacy'
 import { ElectronSpellcheck } from './spellcheck'
+import { ElectronScreenCapture } from './screenCapture'
+import { ElectronShareSheet } from './shareSheet'
+import { ElectronGeolocation } from './geolocation'
+import { ElectronMpris } from './mpris'
 
 export const ELECTRON_CAPABILITIES: HostCapabilities = {
   windowControls: true,
@@ -138,6 +142,8 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   translate: true,
   // No speech recogniser on the desktop hosts; the mic buttons stay away.
   voiceSearch: false,
+  screenCapture: true,
+  shareSheet: true,
   // Selected text gets the page context menu on the desktop; the floating toolbar is Android's.
   selectionToolbar: false,
   // The autofill picker floats in a `WebContentsView` above the pages (`ElectronWindow.setPopupSurface`).
@@ -180,6 +186,14 @@ export class ElectronPlatform implements Platform {
   readonly defaultBrowser = new ElectronDefaultBrowser()
   /** Installed web apps' launchers and icons (MW-22). */
   readonly shortcuts: ElectronShortcuts
+  /** `getDisplayMedia`: the sources behind the core's picker and the grant to the engine (MW-19). */
+  readonly screenCapture: ElectronScreenCapture
+  /** Shared files to the downloads folder; macOS's own share sheet (MW-21). */
+  readonly shareSheet: ElectronShareSheet
+  /** The Wi-Fi scan behind the network location provider; Linux and Windows have a scanner (MW-04). */
+  readonly geolocation = new ElectronGeolocation()
+  /** Linux: Zenium as an MPRIS player on the session bus (MW-18). */
+  readonly mediaSession?: ElectronMpris
   readonly newTabBackground: ElectronNewTabBackground
   /** Taskbar progress, dock badge and completion notifications for downloads. */
   downloadsShell: ElectronDownloadsShell | null = null
@@ -212,6 +226,13 @@ export class ElectronPlatform implements Platform {
     )
     // The views hand "Save … As…" downloads to the downloads host, which then asks where to save.
     this.views = new ElectronTabViewHost(this.sessions, this.downloads)
+    this.screenCapture = new ElectronScreenCapture(this.views, () => this.browser.screenCapture)
+    this.shareSheet = new ElectronShareSheet(
+      () =>
+        resolveDownloadSettings(this.browser.state.settings).directory ?? app.getPath('downloads'),
+      (win) => browserWindowOf(win)
+    )
+    if (process.platform === 'linux') this.mediaSession = new ElectronMpris(() => this.browser)
     // The core's Safe Browsing service exists once the browser does (`start`); no request runs before.
     this.privacy = new ElectronPrivacy(this.views, {
       lookup: (url) => (this.browser ? this.browser.protection.safeBrowsing.lookup(url) : null)
@@ -510,6 +531,8 @@ export class ElectronPlatform implements Platform {
       // The one webRequest listener set of the session; every request hook goes through it.
       this.requestBlocking.attach(ses, containerId)
       this.attachPermissions(ses)
+      // `getDisplayMedia` goes to the core's picker instead of Electron's flat refusal.
+      this.screenCapture.attach(ses)
       attachWebAuthnHandlers(browser, this.views, ses)
       this.downloads.attach(ses, containerId, (sourceTabId) =>
         browser.onDownloadStarted(sourceTabId)

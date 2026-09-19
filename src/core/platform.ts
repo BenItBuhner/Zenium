@@ -33,6 +33,7 @@ import type {
   Platform as PlatformOs,
   Rect,
   ResourceSnapshot,
+  ScreenCaptureSource,
   SharePayload,
   ShortcutAction,
   SidePanelInfo,
@@ -72,6 +73,8 @@ import type { PrivacyFlags, SafeBrowsingHit } from '../shared/privacy'
 import type { RawWebAppManifest, ShortcutIconKind } from '../shared/webApp'
 import type { VoiceStartOutcome } from '../shared/voice'
 import type { SpellcheckDictionaryStatus } from '../shared/spellcheck'
+import type { GeoPosition, GeolocationErrorCode, WifiAccessPoint } from '../shared/geolocation'
+import type { ShareFile } from '../shared/share'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
 import type { AgentHttpRequest, AgentHttpResponse } from './agent/http'
@@ -167,6 +170,10 @@ export interface PageMessage {
      * address, `title` the link's title if any. The core fetches and parses it (`shared/search`).
      */
     | 'opensearch'
+    /** The page called `navigator.share` (`shared/share`): a share sheet request. */
+    | 'share'
+    /** The page's `navigator.geolocation` shim asks for, watches or drops a position (`shared/geolocation`). */
+    | 'geolocation'
   url?: string
   /** `opensearch`: the link's `title` attribute, the engine's name when the XML has none. */
   title?: string
@@ -203,25 +210,45 @@ export interface PageMessage {
   reader?: unknown
   /** `pdf`: the viewer's state (page count and page, zoom, find results, the outline). */
   pdf?: PdfViewerReport
+  /** `share`: what the page asked to share (validated by the core). */
+  share?: unknown
+  /** `geolocation`: the shim's request (validated by the core). */
+  geolocation?: unknown
 }
 
-/** Browser → page for the web-app polyfill. */
+/** The web-app polyfill's messages: `installable` fires `beforeinstallprompt`, `result` settles a `prompt()`, `installed` fires `appinstalled`. */
 export interface WebAppHostMessage {
   type: 'webapp'
-  /**
-   * `installable`: fire `beforeinstallprompt`; `result`: settle a pending `prompt()` with
-   * `outcome`; `installed`: fire `appinstalled`.
-   */
   action: 'installable' | 'result' | 'installed'
   outcome?: 'accepted' | 'dismissed'
 }
 
+/** How a `navigator.share` call ended: the page's promise resolves (`shared`) or rejects. */
+export interface ShareHostMessage {
+  type: 'share'
+  id: string
+  result: 'shared' | 'aborted'
+}
+
+/** A position, or an error, for one request of the page's geolocation shim. */
+export interface GeolocationHostMessage {
+  type: 'geolocation'
+  id: string
+  position?: GeoPosition
+  error?: { code: GeolocationErrorCode; message: string }
+}
+
 /**
- * Messages the browser posts into a page for its page script: the web-app polyfill's events,
- * the media session's actions (the OS controls, the in-app player) and the notification
- * polyfill's answers and events.
+ * Messages the browser posts into a page for its page scripts (`TabView.postToPage`): the
+ * web-app polyfill's events, the media session's actions (the OS controls, the in-app player),
+ * the notification polyfill's answers and events, a share call's outcome, a position.
  */
-export type PageHostMessage = WebAppHostMessage | MediaSessionHostMessage | NotificationHostMessage
+export type PageHostMessage =
+  | WebAppHostMessage
+  | MediaSessionHostMessage
+  | NotificationHostMessage
+  | ShareHostMessage
+  | GeolocationHostMessage
 
 /** What a host reports when a page calls `alert`, `confirm` or `prompt`. */
 export interface PageDialogRequest {
@@ -1121,6 +1148,9 @@ export interface NetHost {
        * bounds the transfer and not only what is kept of it. Unset: the host's own limit.
        */
       maxBytes?: number
+      /** `POST` with `body` (the network location query); GET without. */
+      method?: 'GET' | 'POST'
+      body?: string
     }
   ): Promise<{
     ok: boolean
@@ -1779,11 +1809,13 @@ export interface PrintingHost {
 }
 
 /**
- * The OS media controls on a host whose engine feeds none of its own (the Android WebView; the
- * desktop's Chromium drives SMTC / Now Playing / MPRIS itself). The core resolves one session –
- * the page playing, or the last one that did – from the pages' reports and hands it over; the
- * host shows it (a `MediaSessionCompat` behind a media-style notification, the lock screen and
- * the headset buttons) and sends the controls' actions back through `Browser.mediaSession.act`.
+ * The OS media controls on a host whose engine feeds none of its own (the Android WebView), or
+ * whose own instance Zenium replaces (Linux MPRIS, so the desktop sees "Zenium" and one player;
+ * Windows' SMTC and macOS's Now Playing stay Chromium's). The core resolves one session – the
+ * page playing, or the last one that did – from the pages' reports and hands it over; the host
+ * shows it (a `MediaSessionCompat` behind a media-style notification, the lock screen and the
+ * headset buttons; a D-Bus player) and sends the controls' actions back through
+ * `Browser.mediaSession.act`.
  */
 export interface MediaSessionHost {
   /** Show `session` on the OS controls, or take them down with null. */
@@ -1851,6 +1883,52 @@ export interface PrivateSessionHost {
 
 export type { MediaSessionAction }
 
+// ---------------------------------------------------------------------------
+// Screen capture, share sheet, network location (desktop platform rows)
+// ---------------------------------------------------------------------------
+
+/**
+ * The host's side of screen capture (MW-19): it lists what can be shared and hands the picked
+ * source to the engine. The core owns the picker (`ScreenCaptureService`), one request at a time
+ * per tab.
+ */
+export interface ScreenCaptureHost {
+  /**
+   * The screens and windows the OS offers right now, with thumbnails. On Wayland the portal's
+   * own dialog is what the user sees; the list then holds the one source it granted.
+   */
+  sources(kinds: Array<'screen' | 'window'>): Promise<ScreenCaptureSource[]>
+  /** Whether a screen share may come with the system's audio (Windows' loopback). */
+  systemAudio(): boolean
+}
+
+/**
+ * Extras behind the chrome's share sheet (`capabilities.shareSheet`): the files a page shared
+ * go to the downloads folder, and an OS with a share sheet of its own (macOS) offers it too.
+ */
+export interface ShareSheetHost {
+  /** Write shared files to the downloads folder; resolves with where they landed. */
+  saveFiles(files: ShareFile[]): Promise<string[]>
+  /**
+   * The OS's share sheet for the payload, anchored to the window (macOS's `ShareMenu`);
+   * resolves once the sheet is up. Hosts without one leave it out and the chrome offers no
+   * "More…" row.
+   */
+  system?(
+    payload: { title: string; text: string; url: string; files: ShareFile[] },
+    win: ZenWindow
+  ): Promise<void>
+}
+
+/**
+ * What a network location provider needs from the host (MW-04, Linux): the Wi-Fi networks in
+ * range. Hosts whose engine locates on its own (Windows, macOS, Android) leave the whole host out.
+ */
+export interface GeolocationHost {
+  /** The access points in range (BSSID, signal, frequency); empty when there is no Wi-Fi or no scanner. */
+  scanWifi(): Promise<WifiAccessPoint[]>
+}
+
 export interface Platform {
   readonly info: PlatformInfo
   readonly capabilities: HostCapabilities
@@ -1908,6 +1986,12 @@ export interface Platform {
   readonly spellcheck?: SpellcheckHost
   /** The print preview's printers and Save as PDF; omit when `capabilities.printPreview` is off. */
   readonly printing?: PrintingHost
+  /** Screens, windows and tabs a page may capture (`capabilities.screenCapture`). */
+  readonly screenCapture?: ScreenCaptureHost
+  /** Extras of the chrome's share sheet: saving shared files, the OS's own sheet where there is one. */
+  readonly shareSheet?: ShareSheetHost
+  /** A network location source's inputs (the Wi-Fi networks in range) for hosts whose engine has no location provider. */
+  readonly geolocation?: GeolocationHost
   /** Host-backed services; omit for the built-in no-op versions. */
   createGovernor?(browser: Browser): Governor
   createExtensions?(browser: Browser): ExtensionHost

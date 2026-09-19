@@ -1,12 +1,17 @@
 import { contextBridge, ipcRenderer, webFrame } from 'electron'
-import type { PageMessage } from '../core/platform'
+import type { PageHostMessage, PageMessage } from '../core/platform'
 import type { PageHint } from '../shared/fullscreenHint'
 import {
+  PAGE_HOST_CHANNEL,
   installActivationReporter,
   installPageScript,
   type PageScriptFlags,
   type PageScriptMessage
 } from '../shared/pageScript'
+import { installInstallPromptShim } from '../shared/installPrompt'
+import { installMediaSessionBridge, installMediaSessionShim } from '../shared/mediaSessionShim'
+import { installShareBridge, installShareShim } from '../shared/share'
+import { installGeolocationBridge, installGeolocationShim } from '../shared/geolocation'
 import { NOTIFICATION_PERMISSION_CHANNEL } from '../shared/notifications'
 import { installNotificationBridge, installNotificationShim } from './notifications'
 import {
@@ -83,17 +88,57 @@ if (!process.isMainFrame) {
 }
 
 if (process.isMainFrame) {
+  // Browser → page messages (`TabView.postToPage`), one channel told apart by `type`: the
+  // web-app install events, media controls, share results and geolocation answers.
+  type HostType = PageHostMessage['type']
+  const hostListeners = new Map<HostType, Array<(message: PageHostMessage) => void>>()
+  ipcRenderer.on(PAGE_HOST_CHANNEL, (_event, message: PageHostMessage) => {
+    if (!message || typeof message !== 'object' || typeof message.type !== 'string') return
+    for (const listener of hostListeners.get(message.type) ?? []) listener(message)
+  })
+  const onHost = <T extends HostType>(
+    type: T,
+    listener: (message: Extract<PageHostMessage, { type: T }>) => void
+  ): void => {
+    const list = hostListeners.get(type) ?? []
+    list.push(listener as (message: PageHostMessage) => void)
+    hostListeners.set(type, list)
+  }
+  const inMainWorld = <A extends unknown[]>(func: (...args: A) => void, args: A): void => {
+    try {
+      contextBridge.executeInMainWorld({ func, args })
+    } catch (error) {
+      console.warn('[zen] page shim unavailable:', (error as Error).message)
+    }
+  }
+
   installPageScript({
     send,
     onFlags: (listener) =>
       ipcRenderer.on('zen:page-flags', (_event, next: PageScriptFlags) => listener(next)),
     onZap: (listener) => ipcRenderer.on('zen:zap', (_event, on: boolean) => listener(on)),
     onHint: (listener) =>
-      ipcRenderer.on('zen:page-hint', (_event, hint: PageHint | null) => listener(hint))
+      ipcRenderer.on('zen:page-hint', (_event, hint: PageHint | null) => listener(hint)),
+    // Web apps (MW-22): the manifest probe here, the install events in the page's world.
+    onWebApp: (listener) =>
+      onHost('webapp', (message) =>
+        listener({ type: 'webapp', action: message.action, outcome: message.outcome })
+      ),
+    installInstallPromptShim: (events) => inMainWorld(installInstallPromptShim, [events])
   })
   installLeaveSite(send)
-  // Web notifications are a web-site matter; the browser's own pages have none.
-  if (location.protocol === 'https:' || location.protocol === 'http:') {
+  const webPage = location.protocol === 'https:' || location.protocol === 'http:'
+  // The media hub and MPRIS (MW-16, MW-18) read the page's Media Session; a local video file
+  // counts too. The report leaves the tab's audible flag to the engine's own events.
+  if (webPage || location.protocol === 'file:') {
+    installMediaSessionBridge({
+      send: (report) => ipcRenderer.send('zen:page', { type: 'media', media: report }),
+      onControl: (listener) => onHost('mediaSession', listener),
+      installShim: (events, actions) => inMainWorld(installMediaSessionShim, [events, actions])
+    })
+  }
+  // Web notifications, sharing and location are a web-site matter; the browser's own pages have none.
+  if (webPage) {
     installNotificationBridge({
       status: () => ipcRenderer.sendSync(NOTIFICATION_PERMISSION_CHANNEL),
       onStatus: (listener) =>
@@ -104,6 +149,25 @@ if (process.isMainFrame) {
       installShim: (events) =>
         contextBridge.executeInMainWorld({ func: installNotificationShim, args: [events] })
     })
+    // `navigator.share` / `canShare` (MW-21): Electron's engine has none; the chrome's sheet answers.
+    installShareBridge({
+      send: (call) => ipcRenderer.send('zen:page', { type: 'share', share: call }),
+      onResult: (listener) => onHost('share', (message) => listener(message.id, message.result)),
+      installShim: (events) => inMainWorld(installShareShim, [events])
+    })
+    // Geolocation (MW-04): Linux has no location provider in the engine, so every call is
+    // answered by Zenium's network provider; Windows and macOS ask the OS first and fall back.
+    installGeolocationBridge(
+      {
+        send: (call) => ipcRenderer.send('zen:page', { type: 'geolocation', geolocation: call }),
+        onResult: (listener) =>
+          onHost('geolocation', (message) =>
+            listener({ id: message.id, position: message.position, error: message.error })
+          ),
+        installShim: (events, mode) => inMainWorld(installGeolocationShim, [events, mode])
+      },
+      process.platform === 'linux' ? 'replace' : 'fallback'
+    )
   }
   installFormsScript({
     send: (forms) => ipcRenderer.send('zen:page', { type: 'forms', forms }),
