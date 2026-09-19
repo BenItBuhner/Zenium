@@ -50,7 +50,8 @@ export function TabSearchLayer(): JSX.Element | null {
  * trailing close button – hanging from the sidebar's top row, start-aligned with it, placed by
  * `placePopover` (flip, slide, shrink, 8 px inside the window, its height capped by the
  * placement); on the 180 ms pop, radius 8, the panel shadow, no scrim (§9.5). Its title block
- * (§9.23) – "Search tabs" over the field (§9.12) – stays put while the rows scroll under it,
+ * (§9.23) – "Search tabs" over the field, whose placeholder is example text, "Title or address"
+ * (§9.12) – stays put while the rows scroll under it,
  * a hairline appearing at its edge only then (§9.7). The rows are the shared `.zen-v2-row`
  * (§9.34): the favicon on the title's line, the host under it in the small deemphasised type,
  * a 28 px icon button to close the tab trailing. It renders through the chrome layer
@@ -208,7 +209,7 @@ function TabSearchPopover({
             ref={fieldRef}
             type="text"
             className="zen-v2-field mt-3"
-            placeholder="Search tabs"
+            placeholder="Title or address"
             aria-label="Search tabs"
             role="combobox"
             aria-expanded="true"
