@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Space, Tab, UIState } from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import { PRIVATE_THEME, blendResolvedThemes, resolveTheme } from '@shared/theme'
@@ -7,6 +7,7 @@ import { SPRING_THEME_BLEND } from '@renderer/hooks/useTheme'
 import {
   activeTabIsPrivate,
   isPrivateTab,
+  openInPrivateItems,
   overviewPane,
   pickOverviewPane,
   privateSurfaceActive,
@@ -173,5 +174,43 @@ describe('the private theme blend (MOT-14)', () => {
     // The way back runs on the same spring and ends on the space theme again.
     const back = run(1, 0)
     expect(blendResolvedThemes(space, privateTheme, back[back.length - 1])).toBe(space)
+  })
+})
+
+describe('the "Open in Private Tab" row of the history and bookmark menus (INC-08)', () => {
+  const invoke = vi.fn<(name: string, args?: unknown) => Promise<unknown>>(async () => null)
+  Object.assign(globalThis, { window: { zen: { invoke, on: () => () => undefined } } })
+
+  afterEach(() => {
+    invoke.mockClear()
+  })
+
+  it('is one row on a host with private tabs, none on a host without one or with nothing to open', () => {
+    expect(openInPrivateItems({ privateTabs: false }, ['https://a.example/'])).toEqual([])
+    expect(openInPrivateItems({ privateTabs: true }, [])).toEqual([])
+    expect(openInPrivateItems({ privateTabs: true }, ['', ''])).toEqual([])
+    const [one] = openInPrivateItems({ privateTabs: true }, ['https://a.example/'])
+    expect(one.label).toBe('Open in Private Tab')
+    const [all] = openInPrivateItems({ privateTabs: true }, [
+      'https://a.example/',
+      '',
+      'https://b.example/'
+    ])
+    expect(all.label).toBe('Open All in Private (2)')
+  })
+
+  it('picked, it opens each address as a private tab through the core and then runs the follow-up', () => {
+    const after = vi.fn()
+    const [item] = openInPrivateItems(
+      { privateTabs: true },
+      ['https://a.example/', 'https://b.example/'],
+      after
+    )
+    item.onSelect()
+    expect(invoke.mock.calls).toEqual([
+      ['tab.newPrivate', { url: 'https://a.example/' }],
+      ['tab.newPrivate', { url: 'https://b.example/' }]
+    ])
+    expect(after).toHaveBeenCalledTimes(1)
   })
 })

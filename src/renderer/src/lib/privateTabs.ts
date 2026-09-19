@@ -1,7 +1,9 @@
 import type { Tab, UIState } from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
+import { run } from './api'
 import { activeTab } from './selectors'
 import { createStore } from './store'
+import type { LocalMenuItem } from './ui'
 
 /**
  * Private tabs on the phone (INC-01 … INC-08, TAB-02/03). The core models private browsing as a
@@ -88,6 +90,39 @@ export function tabsOnPane(tabs: readonly Tab[], pane: OverviewPane): Tab[] {
  */
 export function sameModeAs(tab: Pick<Tab, 'containerId'>, order: readonly Tab[]): Tab[] {
   return tabsOnPane(order, isPrivateTab(tab) ? 'private' : 'tabs')
+}
+
+/**
+ * Open each of `urls` in a private tab of its own (INC-08): the core's `tab.newPrivate`, which
+ * makes each the tab in view as it comes, so the last one opened is the one in view – the
+ * private session starting, if it was not on, with the first.
+ */
+export function openInPrivateTabs(urls: readonly string[]): void {
+  for (const url of urls) if (url) run('tab.newPrivate', { url })
+}
+
+/**
+ * The "Open in Private Tab" row of a phone panel's row or selection menu (INC-08: the history
+ * and bookmark panels), for `urls`: one item, in Title Case as the panels' menus are (§9.1) –
+ * "Open All in Private (N)" for several – or none at all on a host without private tabs, or with
+ * nothing to open. `after` runs once the tabs are asked for (the panel leaving its selection).
+ */
+export function openInPrivateItems(
+  capabilities: Pick<UIState['capabilities'], 'privateTabs'>,
+  urls: readonly string[],
+  after?: () => void
+): LocalMenuItem[] {
+  const open = urls.filter(Boolean)
+  if (!capabilities.privateTabs || open.length === 0) return []
+  return [
+    {
+      label: open.length === 1 ? 'Open in Private Tab' : `Open All in Private (${open.length})`,
+      onSelect: () => {
+        openInPrivateTabs(open)
+        after?.()
+      }
+    }
+  ]
 }
 
 /**
