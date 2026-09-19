@@ -136,6 +136,12 @@ export interface HostCapabilities {
    * (`voice.start`, `shared/voice.ts`). Off, no mic button shows anywhere.
    */
   voiceSearch: boolean
+  /**
+   * Selected page text gets the system's floating toolbar (Android's action mode) rather than
+   * the page context menu; the host asks the core for Zenium's items in it and dispatches the
+   * one touched (`Menus.selectionToolbar` / `runSelectionAction`). Desktop hosts show the menu.
+   */
+  selectionToolbar: boolean
 }
 
 export interface Rect {

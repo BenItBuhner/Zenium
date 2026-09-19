@@ -40,7 +40,8 @@ const DESKTOP: HostCapabilities = {
   pageTabs: false,
   pinShortcuts: false,
   translate: true,
-  voiceSearch: false
+  voiceSearch: false,
+  selectionToolbar: false
 }
 
 const ANDROID: HostCapabilities = {
@@ -65,7 +66,8 @@ const ANDROID: HostCapabilities = {
   privateTabs: true,
   secureDns: false,
   newTabPage: false,
-  pageTabs: true
+  pageTabs: true,
+  selectionToolbar: true
 }
 
 function state(capabilities: HostCapabilities, platform: UIState['platform']): UIState {

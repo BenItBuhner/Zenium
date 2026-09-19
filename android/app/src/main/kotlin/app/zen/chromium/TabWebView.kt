@@ -2,6 +2,7 @@ package app.zen.chromium
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.res.Resources
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
@@ -15,9 +16,12 @@ import android.os.Message
 import android.os.SystemClock
 import android.util.Base64
 import android.util.Log
+import android.view.ActionMode
 import android.view.InputDevice
 import android.view.KeyCharacterMap
 import android.view.KeyEvent
+import android.view.Menu
+import android.view.MenuItem
 import android.view.MotionEvent
 import android.view.PixelCopy
 import android.view.View
@@ -643,6 +647,123 @@ class TabWebView(
             }
         }
         return false
+    }
+
+    // --- the text-selection toolbar (see SelectionToolbar.kt) ------------------------------------
+
+    /**
+     * The WebView starts the system's floating action mode over selected text with its own
+     * callback (Copy, Share, Select all, Web search); wrapped, so Zenium's items from the core
+     * join them after Copy. The mode itself – floating type, handles, position – is the system's.
+     * Anything else (a primary action mode, another caller's callback) passes through untouched.
+     */
+    override fun startActionMode(callback: ActionMode.Callback, type: Int): ActionMode? {
+        if (type != ActionMode.TYPE_FLOATING || callback !is ActionMode.Callback2) return super.startActionMode(callback, type)
+        return super.startActionMode(SelectionActionMode(callback), type)
+    }
+
+    /**
+     * The WebView's selection callback with Zenium's items added (`SelectionToolbar.plan`). The
+     * items come from the core for the text selected, and again on every prepare of a selection
+     * menu (`SelectionToolbar.Listing`): the WebView keeps one mode across selection changes – a
+     * handle drag, Select all – and invalidates it, so the list is re-read then and the mode
+     * invalidated once more when the items change (the system's items show at once; Zenium's
+     * join within the toolbar's own entrance). A touch on one reads the selection again, sends
+     * `selection.action` to the core and finishes the mode, which clears the selection as the
+     * system's items do.
+     */
+    private inner class SelectionActionMode(private val system: ActionMode.Callback2) : ActionMode.Callback2() {
+        private var mode: ActionMode? = null
+        private var finished = false
+        /** The core's items, kept current with the selection across the mode's life. */
+        private val listing = SelectionToolbar.Listing(
+            readSelection = { onText -> evaluateJavascript(SelectionToolbar.SELECTION_SCRIPT) { raw -> onText(SelectionToolbar.selectionText(raw)) } },
+            listItems = { text, onJson -> host.selectionMenu(tabId, text, onJson) },
+            invalidate = { mode?.invalidate() }
+        )
+        /** Where the selection sits on this view (`onGetContentRect`), for a glance's origin. */
+        private val selectionRect = Rect()
+        private val strings by lazy { frameworkStrings() }
+
+        override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean {
+            this.mode = mode
+            Log.d(SELECTION_TAG, "selection mode of $tabId created")
+            return system.onCreateActionMode(mode, menu)
+        }
+
+        override fun onPrepareActionMode(mode: ActionMode, menu: Menu): Boolean {
+            val prepared = system.onPrepareActionMode(mode, menu)
+            menu.removeGroup(SelectionToolbar.GROUP)
+            val systemItems = (0 until menu.size()).map(menu::getItem)
+            val plan = SelectionToolbar.plan(
+                systemItems.map { SelectionToolbar.SystemItem(it.groupId, it.order, it.title?.toString() ?: "", it.itemId) },
+                listing.items,
+                strings
+            )
+            Log.d(SELECTION_TAG, "selection mode of $tabId prepared: anchored ${plan.anchored}, items ${plan.items.map { it.id }}")
+            // A menu with Copy is a text selection: ask for the items for the selection as it is
+            // now (a Paste toolbar or a password field gets nothing); the menu shows the last
+            // answer meanwhile, and a different one invalidates the mode again.
+            if (plan.anchored) listing.onPrepare()
+            for (index in plan.hidden) systemItems[index].isVisible = false
+            plan.items.forEachIndexed { index, item ->
+                menu.add(SelectionToolbar.GROUP, SelectionToolbar.FIRST_ITEM_ID + index, plan.order, item.title).apply {
+                    setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS or MenuItem.SHOW_AS_ACTION_WITH_TEXT)
+                    contentDescription = item.title
+                }
+            }
+            return prepared || !plan.isEmpty
+        }
+
+        override fun onActionItemClicked(mode: ActionMode, item: MenuItem): Boolean {
+            if (item.groupId != SelectionToolbar.GROUP) return system.onActionItemClicked(mode, item)
+            val action = SelectionToolbar.itemAt(listing.items, item.itemId) ?: return true
+            val originX = SelectionToolbar.fraction(selectionRect.exactCenterX(), width)
+            val originY = SelectionToolbar.fraction(selectionRect.exactCenterY(), height)
+            evaluateJavascript(SelectionToolbar.SELECTION_SCRIPT) { raw ->
+                val selected = SelectionToolbar.selectionText(raw).ifEmpty { listing.text }
+                if (selected.isNotBlank()) host.hostEvent("selection.action", SelectionToolbar.action(tabId, action.id, selected, originX, originY))
+                if (!finished) mode.finish()
+            }
+            return true
+        }
+
+        override fun onDestroyActionMode(mode: ActionMode) {
+            finished = true
+            listing.finish()
+            this.mode = null
+            Log.d(SELECTION_TAG, "selection mode of $tabId destroyed after ${listing.asks} ask(s)")
+            system.onDestroyActionMode(mode)
+        }
+
+        override fun onGetContentRect(mode: ActionMode, view: View, outRect: Rect) {
+            system.onGetContentRect(mode, view, outRect)
+            selectionRect.set(outRect)
+        }
+    }
+
+    /**
+     * What the system's selection items are told by (see `SelectionToolbar.plan`): Copy and Paste
+     * are the public `android.R.string.copy` and `android.R.string.paste`; the WebView's Share is
+     * its own `select_action_menu_share` id, resolved in the WebView package's resources (loaded
+     * into this process as a shared library, so the id is the one its items carry; 0 when the
+     * lookup fails); the framework's own Share string (its text fields' item) is not public, so it
+     * is looked up by name and may be missing – the title fallback for the id.
+     */
+    private fun frameworkStrings(): SelectionToolbar.Strings {
+        val share = Resources.getSystem().let { system ->
+            system.getIdentifier("share", "string", "android").takeIf { it != 0 }?.let { id -> runCatching { system.getString(id) }.getOrNull() }
+        }
+        val shareItemId = runCatching {
+            val webViewPackage = WebView.getCurrentWebViewPackage()?.packageName ?: return@runCatching 0
+            resources.getIdentifier(SelectionToolbar.SHARE_ITEM_ID_NAME, "id", webViewPackage)
+        }.getOrDefault(0)
+        return SelectionToolbar.Strings(
+            copy = context.getString(android.R.string.copy),
+            share = share,
+            paste = context.getString(android.R.string.paste),
+            shareItemId = shareItemId
+        )
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
@@ -1488,6 +1609,8 @@ class TabWebView(
 
     companion object {
         private const val PULL_TAG = "ZenPull"
+        /** The text-selection action mode's life, for the emulator driver's record (`SelectionDemo`). */
+        const val SELECTION_TAG = "ZenSelection"
         /** The core's error pages and interstitials (`ERROR_URL_PREFIX` in `src/shared/url.ts`). */
         private const val ERROR_PAGE_PREFIX = "zen://error"
         /** The object the page script posts to (and the wrappers in [evaluate] and [postToPage] name). */

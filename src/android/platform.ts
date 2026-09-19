@@ -23,6 +23,7 @@ import {
 import { Browser } from '@core/browser'
 import type { HostExternalRequest } from '@core/externalProtocols'
 import { NoExtensions } from '@core/hostDefaults'
+import type { SelectionToolbarItem } from '@core/menus'
 import { RendererMenuHost } from '@core/rendererMenus'
 import type { ZenWindow } from '@core/window'
 import type {
@@ -147,7 +148,9 @@ export function androidCapabilities({
     pageTabs: true,
     pinShortcuts: false,
     translate: true,
-    voiceSearch: false
+    voiceSearch: false,
+    // The WebView's floating action mode, with Zenium's items added after Copy (`TabWebView.kt`).
+    selectionToolbar: true
   }
 }
 
@@ -318,6 +321,18 @@ export interface HostEventPayloads {
   'externalProtocol.request': HostExternalRequest
   /** A tap on one of Zenium's own buttons in the system share sheet (Android 14). */
   'share.action': ShareAction
+  /**
+   * A Zenium item of a page's floating text-selection toolbar was touched (`TabWebView.kt`,
+   * the items `selectionMenu` listed): the action's id, the text selected at the touch and
+   * where the selection sits in the page (0…1 of its width and height).
+   */
+  'selection.action': {
+    tabId: string
+    id: string
+    text: string
+    originX?: number
+    originY?: number
+  }
   pause: void
   /** The window is coming back on screen after being hidden (screen off, another app in front). */
   resume: void
@@ -1020,6 +1035,16 @@ export class AndroidPlatform implements Platform {
     if (name === 'destroyed') this.views.forget(tabId)
   }
 
+  /**
+   * Zenium's items for the floating toolbar over a page's selected text (`TabWebView.kt` asks
+   * as the system's action mode comes up, and again as the selection changes): ids and titles
+   * in order, from the one list the page context menu draws from (`Menus.selectionToolbar`).
+   */
+  selectionMenu(tabId: string, request: { text?: unknown }): SelectionToolbarItem[] {
+    const text = typeof request.text === 'string' ? request.text : ''
+    return this.browser.menus.selectionToolbar(tabId, text)
+  }
+
   /** A physical key pressed while a page WebView had focus (already matched by Kotlin). */
   viewKey(tabId: string | null, input: KeyEventInput): boolean {
     if (tabId === null) return this.browser.keys.handle(input, null, this.window)
@@ -1078,6 +1103,22 @@ export class AndroidPlatform implements Platform {
       case 'share.action':
         browser.onShareAction(payload as HostEventPayloads['share.action'], this.window)
         return
+      case 'selection.action': {
+        // The host's payload, checked before it names an action: the text is a page's.
+        const action = payload as Partial<HostEventPayloads['selection.action']>
+        if (
+          typeof action.tabId !== 'string' ||
+          typeof action.id !== 'string' ||
+          typeof action.text !== 'string'
+        )
+          return
+        const origin =
+          typeof action.originX === 'number' && typeof action.originY === 'number'
+            ? { x: action.originX, y: action.originY }
+            : undefined
+        browser.menus.runSelectionAction(action.tabId, action.id, action.text, origin)
+        return
+      }
       case 'pause':
         browser.flushSync()
         return
