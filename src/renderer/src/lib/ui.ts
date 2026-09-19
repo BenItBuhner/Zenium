@@ -331,6 +331,8 @@ export interface UiState {
   externalProtocol: ExternalProtocolRequest | null
   /** Voice search: the listening sheet is up, for the search it will load (`lib/voiceSearch.ts`). */
   voice: VoicePrompt | null
+  /** QR scanning: the scan sheet is up, for the payload it will load (`lib/qrScan.ts`). */
+  qrScan: QrPrompt | null
   /** Phone layout: the sheet that rearranges the bar's controls is up. */
   barEditorOpen: boolean
   /**
@@ -455,6 +457,7 @@ export const uiStore = createStore<UiState>(
     siteInfoOpen: false,
     externalProtocol: null,
     voice: null,
+    qrScan: null,
     barEditorOpen: false,
     frameSheetOpen: false,
     tabsMenu: null,
@@ -773,6 +776,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.siteInfoOpen &&
     !ui.externalProtocol &&
     !ui.voice &&
+    !ui.qrScan &&
     ui.extensionPrompts.length === 0 &&
     !ui.extensionPopup &&
     ui.floatingChrome === 0 &&
@@ -825,6 +829,7 @@ export function invalidateSnapshot(): void {
     !ui.siteInfoOpen &&
     !ui.externalProtocol &&
     !ui.voice &&
+    !ui.qrScan &&
     ui.extensionPrompts.length === 0 &&
     !ui.extensionPopup &&
     ui.floatingChrome === 0 &&
@@ -1250,6 +1255,40 @@ export function closeVoiceSheet(id: number): void {
 }
 
 // ---------------------------------------------------------------------------
+// QR scanning (the scan sheet; `lib/qrScan.ts` runs the session)
+// ---------------------------------------------------------------------------
+
+/** The scan sheet's request: one per start, and where the decoded payload goes. */
+export interface QrPrompt {
+  /** Each start is a new sheet. */
+  id: number
+  /** The tab the address or search loads in (null: there is none, a new tab opens). */
+  tabId: string | null
+  /** Load the result in a new tab rather than `tabId` (the bar was in new-tab mode). */
+  newTab: boolean
+}
+
+/**
+ * Put the scan sheet up over a capture of the page (the sheet dims it like a menu). The omnibox
+ * closes if it was the opener: the sheet takes the frame from it, the capture it held carrying
+ * over.
+ */
+export async function openQrSheet(prompt: QrPrompt): Promise<void> {
+  await captureActiveTab(prompt.tabId)
+  run('focus.chrome', undefined)
+  uiStore.set({ qrScan: prompt, drawerOpen: false })
+  if (uiStore.get().urlbar.open) closeUrlbar()
+}
+
+/** The sheet's request is over (a payload submitted, Cancel, an error toasted): take it down. */
+export function closeQrSheet(id: number): void {
+  if (uiStore.get().qrScan?.id !== id) return
+  uiStore.set({ qrScan: null })
+  invalidateSnapshot()
+  returnFocusToPage()
+}
+
+// ---------------------------------------------------------------------------
 // External protocols (a page wants to open another app)
 // ---------------------------------------------------------------------------
 
@@ -1370,6 +1409,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.siteInfoOpen ||
     ui.externalProtocol !== null ||
     ui.voice !== null ||
+    ui.qrScan !== null ||
     ui.extensionPrompts.length > 0 ||
     ui.extensionPopup !== null ||
     ui.floatingChrome > 0 ||

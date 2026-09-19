@@ -130,7 +130,9 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   // Selected text gets the page context menu on the desktop; the floating toolbar is Android's.
   selectionToolbar: false,
   // The autofill picker floats in a `WebContentsView` above the pages (`ElectronWindow.setPopupSurface`).
-  popupSurface: true
+  popupSurface: true,
+  // No camera to scan with on the desktop hosts; the camera buttons stay away.
+  qrScan: false
 }
 
 /**

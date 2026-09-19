@@ -88,6 +88,7 @@ import {
 } from './model'
 import { BLANK_URL, getDomain, inputToUrl, isEmptyTabUrl } from '../shared/url'
 import type { VoiceStartOutcome } from '../shared/voice'
+import type { QrStartOutcome } from '../shared/qrScan'
 import { internalPageAliasUrl } from '../shared/internalPages'
 import { overlayForUrl } from '../shared/zenPages'
 import { openAllPrompt, sortedByNameOrder, toggledBookmarksBarMode } from '../shared/bookmarkViews'
@@ -1503,6 +1504,16 @@ export class Browser {
     return voice.start()
   }
 
+  /**
+   * QR scanning (OMN-22): the host's camera opens once it is granted. A host without a back
+   * camera – or one whose capability is off – answers `unavailable`, which the sheet toasts.
+   */
+  async startQrScan(): Promise<QrStartOutcome> {
+    const { qrScan } = this.platform
+    if (!qrScan || !this.state.capabilities.qrScan) return 'unavailable'
+    return qrScan.start()
+  }
+
   /** The system's screen for which links open in this app (Android's "Open by default"). */
   openAppLinkSettings(win: ZenWindow): void {
     const { shell } = this.platform
@@ -1996,6 +2007,13 @@ export class Browser {
       'voice.start': () => this.startVoiceSearch(),
       'voice.cancel': () => this.platform.voice?.cancel(),
       'voice.openSettings': () => this.platform.voice?.openSettings(),
+      // QR scanning (OMN-22): the host's camera scans (`QrScanHost`); the chrome's sheet acts on
+      // the `qr.event`s and submits the payload through `urlbar.submit` like typed text.
+      'qr.start': () => this.startQrScan(),
+      'qr.cancel': () => this.platform.qrScan?.cancel(),
+      'qr.layout': (slot) => this.platform.qrScan?.layout(slot),
+      'qr.setTorch': ({ on }) => this.platform.qrScan?.setTorch(on),
+      'qr.openSettings': () => this.platform.qrScan?.openSettings(),
       'externalProtocol.respond': ({ requestId, allow, always }) =>
         this.externalProtocols.respond(requestId, allow, always),
       'layout.report': (report, win) => win.applyLayout(report),
