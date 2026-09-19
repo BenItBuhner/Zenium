@@ -138,6 +138,77 @@ describe('RuleEngine conditions', () => {
     ).toBe('block')
   })
 
+  it('matches topDomains against the top-level document, falling back to the initiator', () => {
+    const e = new RuleEngine()
+    e.setRuleSet(
+      set('top', [
+        // Privacy Badger's shape: a tracker is blocked everywhere but on its own site.
+        block(1, { requestDomains: ['tracker.example'], excludedTopDomains: ['tracker.example'] }),
+        block(2, { urlFilter: '/on-news', topDomains: ['news.example'] })
+      ])
+    )
+    const tracker = 'https://cdn.tracker.example/p.js'
+    expect(e.decide(req(tracker, { documentUrl: 'https://www.news.example/story' })).action).toBe(
+      'block'
+    )
+    expect(e.decide(req(tracker, { documentUrl: 'https://www.tracker.example/' })).action).toBe(
+      'allow'
+    )
+    // A frame of the tracker inside a news page: the top-level document decides, not the initiator.
+    expect(
+      e.decide(
+        req(tracker, {
+          initiator: 'https://embed.tracker.example/',
+          documentUrl: 'https://www.news.example/story'
+        })
+      ).action
+    ).toBe('block')
+    expect(
+      e.decide(
+        req(tracker, {
+          initiator: 'https://www.news.example/',
+          documentUrl: 'https://www.tracker.example/'
+        })
+      ).action
+    ).toBe('allow')
+    // Without a top-level document the initiator stands in, as in Chrome.
+    expect(e.decide(req(tracker, { initiator: 'https://www.tracker.example/' })).action).toBe(
+      'allow'
+    )
+    expect(e.decide(req(tracker, { initiator: 'https://www.news.example/' })).action).toBe('block')
+    // Nothing known about the page: an exclusion list has nothing to exclude.
+    expect(e.decide(req(tracker)).action).toBe('block')
+    // A main-frame navigation's top-level host is its own (Chrome's
+    // `top_level_frame_or_initiator_host`): going to the tracker's own site is not blocked, even
+    // when the navigation came from elsewhere.
+    expect(e.decide(req('https://www.tracker.example/', { type: 'main_frame' })).action).toBe(
+      'allow'
+    )
+    expect(
+      e.decide(
+        req('https://www.tracker.example/', {
+          type: 'main_frame',
+          initiator: 'https://www.news.example/'
+        })
+      ).action
+    ).toBe('allow')
+
+    expect(
+      e.decide(req('https://a/on-news', { documentUrl: 'https://news.example/' })).action
+    ).toBe('block')
+    expect(
+      e.decide(req('https://a/on-news', { documentUrl: 'https://shop.example/' })).action
+    ).toBe('allow')
+    // A `topDomains` list needs a known top-level document (or initiator) to match at all.
+    expect(e.decide(req('https://a/on-news')).action).toBe('allow')
+    expect(e.decide(req('https://news.example/on-news', { type: 'main_frame' })).action).toBe(
+      'block'
+    )
+    expect(e.decide(req('https://shop.example/on-news', { type: 'main_frame' })).action).toBe(
+      'allow'
+    )
+  })
+
   it('computes third-party from the registrable domains when the host did not', () => {
     const e = new RuleEngine()
     e.setRuleSet(
@@ -425,6 +496,252 @@ describe('RuleEngine priority resolution', () => {
   })
 })
 
+describe('RuleEngine headers-received stage', () => {
+  // Stylus's usercss installer: redirect a `.user.css` document served as text (not HTML).
+  const usercss: Rule = {
+    id: 1,
+    action: {
+      type: 'redirect',
+      redirect: { regexSubstitution: 'chrome-extension://stylus/install-usercss.html#\\0' }
+    },
+    condition: {
+      regexFilter: '^.*\\.user\\.css$',
+      resourceTypes: ['main_frame'],
+      responseHeaders: [
+        { header: 'content-type', values: ['text/*'], excludedValues: ['text/html*'] }
+      ]
+    }
+  }
+  const page = (url: string, headers?: Record<string, string[]>): RequestContext =>
+    req(url, { type: 'main_frame', responseHeaders: headers })
+
+  it('leaves header-conditioned rules to the headers-received stage and says so', () => {
+    const e = new RuleEngine()
+    e.setRuleSet(set('stylus', [usercss]))
+    // Request stage: the rule's other conditions pass, so the host must ask again.
+    const early = e.decide(page('https://a.example/theme.user.css'))
+    expect(early).toEqual({ action: 'allow', needsHeaders: true })
+    // A request the rule would never match needs no second round.
+    expect(e.decide(page('https://a.example/index.html'))).toEqual({ action: 'allow' })
+    expect(e.decide(req('https://a.example/theme.user.css')).needsHeaders).toBeUndefined()
+    // Headers-received stage: the content type decides.
+    const css = e.decide(page('https://a.example/theme.user.css', { 'Content-Type': ['text/css'] }))
+    expect(css.action).toBe('redirect')
+    expect(css.redirectUrl).toBe(
+      'chrome-extension://stylus/install-usercss.html#https://a.example/theme.user.css'
+    )
+    expect(css.matched).toEqual({ setId: 'stylus', ruleId: 1 })
+    expect(css.needsHeaders).toBeUndefined()
+    expect(
+      e.decide(
+        page('https://a.example/theme.user.css', { 'content-type': ['text/html; charset=utf-8'] })
+      ).action
+    ).toBe('allow')
+    expect(e.decide(page('https://a.example/theme.user.css', {})).action).toBe('allow')
+  })
+
+  it('lets a request-stage allow of equal or higher priority cap the header stage', () => {
+    const e = new RuleEngine()
+    e.setRuleSet(
+      set('a', [
+        {
+          id: 1,
+          priority: 2,
+          action: { type: 'block' },
+          condition: { urlFilter: '||ads.example^', responseHeaders: [{ header: 'x-ads' }] }
+        },
+        allow(2, { urlFilter: '||ads.example/allowed' }, 2),
+        allow(3, { urlFilter: '||ads.example/weakly-allowed' }, 1)
+      ])
+    )
+    const headers = { 'x-ads': ['1'] }
+    expect(e.decide(req('https://ads.example/x.js', { responseHeaders: headers })).action).toBe(
+      'block'
+    )
+    const allowed = e.decide(req('https://ads.example/allowed', { responseHeaders: headers }))
+    expect(allowed.action).toBe('allow')
+    expect(allowed.matched).toEqual({ setId: 'a', ruleId: 2 })
+    // The allow already decided at the request stage, so no second round is needed either.
+    expect(e.decide(req('https://ads.example/allowed')).needsHeaders).toBeUndefined()
+    expect(
+      e.decide(req('https://ads.example/weakly-allowed', { responseHeaders: headers })).action
+    ).toBe('block')
+  })
+
+  it('merges the header edits of both stages and lets a header-stage block or allow cap them', () => {
+    const e = new RuleEngine()
+    e.setRuleSet(
+      set('h', [
+        {
+          id: 1,
+          priority: 3,
+          action: {
+            type: 'modifyHeaders',
+            responseHeaders: [{ header: 'Set-Cookie', operation: 'remove' }]
+          },
+          condition: { urlFilter: '||h.example^' }
+        },
+        {
+          id: 2,
+          priority: 2,
+          action: {
+            type: 'modifyHeaders',
+            responseHeaders: [{ header: 'X-Frame-Options', operation: 'remove' }]
+          },
+          condition: { urlFilter: '||h.example^', responseHeaders: [{ header: 'x-frame-options' }] }
+        },
+        {
+          id: 3,
+          priority: 1,
+          action: {
+            type: 'modifyHeaders',
+            responseHeaders: [{ header: 'X-Low', operation: 'set', value: '1' }]
+          },
+          condition: { urlFilter: '||h.example^' }
+        },
+        {
+          id: 4,
+          priority: 5,
+          action: { type: 'block' },
+          condition: {
+            urlFilter: '||h.example/blocked',
+            responseHeaders: [{ header: 'content-type', values: ['application/x-bad'] }]
+          }
+        },
+        {
+          id: 5,
+          priority: 2,
+          action: { type: 'allow' },
+          condition: { urlFilter: '||h.example/late-allow', responseHeaders: [{ header: 'x-ok' }] }
+        }
+      ])
+    )
+    const early = e.decide(req('https://h.example/page'))
+    expect(early.action).toBe('modifyHeaders')
+    expect(early.needsHeaders).toBe(true)
+    expect(early.responseHeaders).toEqual([
+      { header: 'Set-Cookie', operation: 'remove' },
+      { header: 'X-Low', operation: 'set', value: '1' }
+    ])
+    // With the headers in, the header-stage edit slots in by priority.
+    const late = e.decide(
+      req('https://h.example/page', { responseHeaders: { 'X-Frame-Options': ['DENY'] } })
+    )
+    expect(late.action).toBe('modifyHeaders')
+    expect(late.responseHeaders).toEqual([
+      { header: 'Set-Cookie', operation: 'remove' },
+      { header: 'X-Frame-Options', operation: 'remove' },
+      { header: 'X-Low', operation: 'set', value: '1' }
+    ])
+    expect(late.matched).toEqual({ setId: 'h', ruleId: 1 })
+    expect(late.needsHeaders).toBeUndefined()
+    // Without the header the header-stage rule drops out again.
+    expect(
+      e.decide(req('https://h.example/page', { responseHeaders: {} })).responseHeaders
+    ).toEqual(early.responseHeaders)
+    // A header-stage block wins over every header edit.
+    expect(
+      e.decide(
+        req('https://h.example/blocked', {
+          responseHeaders: { 'content-type': ['application/x-bad'] }
+        })
+      ).action
+    ).toBe('block')
+    // A header-stage allow (priority 2) keeps the request stage's edits of equal or higher
+    // priority and drops the lower ones, as Chrome's RulesetManager does.
+    const capped = e.decide(
+      req('https://h.example/late-allow', {
+        responseHeaders: { 'x-ok': ['1'], 'x-frame-options': ['DENY'] }
+      })
+    )
+    expect(capped.action).toBe('modifyHeaders')
+    expect(capped.responseHeaders).toEqual([{ header: 'Set-Cookie', operation: 'remove' }])
+  })
+
+  it('lets a header-conditioned rule edit the response only', () => {
+    // Chrome refuses such a rule's `requestHeaders` at parse
+    // (ERROR_RESPONSE_HEADER_RULE_CANNOT_MODIFY_REQUEST_HEADERS); a set written by hand gets the
+    // same treatment: the request is out by the time the rule decides.
+    const e = new RuleEngine()
+    e.setRuleSet(
+      set('r', [
+        {
+          id: 1,
+          priority: 2,
+          action: {
+            type: 'modifyHeaders',
+            requestHeaders: [{ header: 'Cookie', operation: 'remove' }],
+            responseHeaders: [{ header: 'Set-Cookie', operation: 'remove' }]
+          },
+          condition: { urlFilter: '||r.example^', responseHeaders: [{ header: 'set-cookie' }] }
+        },
+        {
+          id: 2,
+          priority: 1,
+          action: {
+            type: 'modifyHeaders',
+            requestHeaders: [{ header: 'X-Early', operation: 'set', value: '1' }]
+          },
+          condition: { urlFilter: '||r.example^' }
+        }
+      ])
+    )
+    const early = e.decide(req('https://r.example/'))
+    expect(early.requestHeaders).toEqual([{ header: 'X-Early', operation: 'set', value: '1' }])
+    expect(early.needsHeaders).toBe(true)
+    const late = e.decide(req('https://r.example/', { responseHeaders: { 'Set-Cookie': ['a=1'] } }))
+    expect(late.action).toBe('modifyHeaders')
+    expect(late.responseHeaders).toEqual([{ header: 'Set-Cookie', operation: 'remove' }])
+    expect(late.requestHeaders).toEqual([{ header: 'X-Early', operation: 'set', value: '1' }])
+  })
+
+  it('keeps allowAllRequests document exceptions out of the header stage', () => {
+    const e = new RuleEngine()
+    e.setRuleSet(
+      set('x', [
+        block(1, { urlFilter: '||ads.example^', responseHeaders: [{ header: 'x-ads' }] }, 1),
+        {
+          id: 2,
+          priority: 2,
+          action: { type: 'allowAllRequests' },
+          condition: { urlFilter: '||trusted.example^', resourceTypes: ['main_frame'] }
+        }
+      ])
+    )
+    const under = req('https://ads.example/x.js', {
+      documentUrl: 'https://trusted.example/',
+      responseHeaders: { 'x-ads': ['1'] }
+    })
+    // The document exception (request stage) still shields sub-resources...
+    expect(e.decide(under).action).toBe('allow')
+    // ...and a header-conditioned allowAllRequests only ever matches the frame request itself.
+    e.setRuleSet(
+      set('y', [
+        {
+          id: 1,
+          priority: 3,
+          action: { type: 'allowAllRequests' },
+          condition: {
+            urlFilter: '||other.example^',
+            resourceTypes: ['main_frame'],
+            responseHeaders: [{ header: 'x-trust' }]
+          }
+        },
+        block(2, { urlFilter: '||other.example/blocked.js' }, 1)
+      ])
+    )
+    expect(
+      e.decide(req('https://other.example/blocked.js', { documentUrl: 'https://other.example/' }))
+        .action
+    ).toBe('block')
+    expect(
+      e.decide(
+        req('https://other.example/', { type: 'main_frame', responseHeaders: { 'x-trust': ['1'] } })
+      ).action
+    ).toBe('allow')
+  })
+})
+
 describe('RuleEngine text matcher', () => {
   function matcher(answer: (ctx: RequestContext) => TextMatch | null): { match: typeof answer } {
     return { match: answer }
@@ -656,6 +973,229 @@ describe('RuleEngine partition scope', () => {
       action: 'block',
       matched: { setId: 'ext:a:static:one' }
     })
+  })
+})
+
+describe('RuleEngine indexes', () => {
+  /** A set over the inline limit: `||hostN.example^` blocks plus a few token and wildcard rules. */
+  function large(id: string, count: number, extra: Partial<RuleSet> = {}): RuleSet {
+    const rules: Rule[] = []
+    for (let i = 1; i <= count; i++) rules.push(block(i, { urlFilter: `||host${i}.example^` }))
+    rules.push(block(count + 1, { urlFilter: '/banner/' }))
+    rules.push(block(count + 2, { urlFilter: '*', resourceTypes: ['ping'] }))
+    rules.push(allow(count + 3, { urlFilter: '||host7.example^' }, 2))
+    return set(id, rules, extra)
+  }
+
+  const probes = (): RequestContext[] => [
+    req('https://cdn.host7.example/x.js'),
+    req('https://host12.example/x.js'),
+    req('https://other.example/banner/x.js'),
+    req('https://other.example/p', { type: 'ping' }),
+    req('https://other.example/x.js')
+  ]
+
+  it('indexes nothing until the engine decides, then small sets on the spot', () => {
+    const e = new RuleEngine()
+    e.setRuleSet(
+      set('a', [block(1, { urlFilter: '||ads.example^' }), block(2, { urlFilter: '/banner/' })])
+    )
+    expect(e.indexOf('a')).toBeNull()
+    expect(e.indexOf('missing')).toBeUndefined()
+    // The linear scan never builds one.
+    expect(e.decideLinear(req('https://ads.example/x.js')).action).toBe('block')
+    expect(e.indexOf('a')).toBeNull()
+    expect(e.decide(req('https://ads.example/x.js'))).toEqual(
+      e.decideLinear(req('https://ads.example/x.js'))
+    )
+    const index = e.indexOf('a')
+    expect(index?.hostCount).toBe(1)
+    expect(index?.tokenIndexedCount).toBe(1)
+    // A set added afterwards is indexed as it comes; enabling and disabling keep the index.
+    e.setRuleSet(set('b', [block(1, { requestDomains: ['t.example'] })]))
+    expect(e.indexOf('b')?.hostCount).toBe(1)
+    e.setEnabled('a', false)
+    e.setEnabled('a', true)
+    expect(e.indexOf('a')).toBe(index)
+    // Replacing a set replaces its index.
+    e.setRuleSet(set('a', [block(1, { urlFilter: '||ads.example^' })]))
+    expect(e.indexOf('a')).not.toBe(index)
+    expect(e.indexOf('a')?.tokenIndexedCount).toBe(0)
+  })
+
+  it('scans a large set until its index is built in slices off the tick, then swaps it in', async () => {
+    const e = new RuleEngine()
+    e.setRuleSet(large('big', 2_500))
+    const linear = probes().map((p) => e.decideLinear(p))
+    expect(linear.map((d) => d.action)).toEqual(['allow', 'block', 'block', 'block', 'allow'])
+    // The first decision turns indexing on; the large set is queued, not built inline.
+    expect(probes().map((p) => e.decide(p))).toEqual(linear)
+    expect(e.indexOf('big')).toBeNull()
+    // The slices run on timers; each decision meanwhile is scanned and right.
+    for (let i = 0; i < 50 && e.indexOf('big') === null; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 1))
+      expect(probes().map((p) => e.decide(p))).toEqual(linear)
+    }
+    const index = e.indexOf('big')
+    expect(index).not.toBeNull()
+    expect(index?.hostCount).toBe(2_500)
+    expect(index?.tokenIndexedCount).toBe(1)
+    expect(index?.wildcardCount).toBe(1)
+    expect(probes().map((p) => e.decide(p))).toEqual(linear)
+  })
+
+  it('finishes pending builds on demand and drops the build of a set replaced meanwhile', () => {
+    const e = new RuleEngine()
+    e.setRuleSet(large('big', 2_500))
+    e.setRuleSet(large('other', 2_200, { priority: 6 }))
+    e.decide(req('https://host1.example/x.js'))
+    expect(e.indexOf('big')).toBeNull()
+    expect(e.indexOf('other')).toBeNull()
+    // `big` is replaced while its build is pending: the pending build is dropped, the new set
+    // (small) is indexed inline.
+    e.setRuleSet(set('big', [block(1, { urlFilter: '||host1.example^' })]))
+    expect(e.indexOf('big')?.hostCount).toBe(1)
+    e.buildIndexes()
+    expect(e.indexOf('big')?.hostCount).toBe(1)
+    expect(e.indexOf('other')?.hostCount).toBe(2_200)
+    // Removing a set with a pending build is fine too.
+    e.setRuleSet(large('gone', 2_100))
+    e.removeRuleSet('gone')
+    e.buildIndexes()
+    expect(e.indexOf('gone')).toBeUndefined()
+    // Nothing pending: a no-op.
+    e.buildIndexes()
+    for (const p of probes()) expect(e.decide(p)).toEqual(e.decideLinear(p))
+  })
+
+  it('agrees with the scan on a URL with user information, which the ||host^ matcher can meet there', () => {
+    const e = new RuleEngine()
+    e.setRuleSet(set('a', [block(1, { urlFilter: '||ads.example^' })]))
+    // Not the request host, but the desktop pattern matches the URL – on both paths alike.
+    const url = 'https://ads.example@evil.example/x.js'
+    expect(e.decideLinear(req(url)).action).toBe('block')
+    expect(e.decide(req(url))).toEqual(e.decideLinear(req(url)))
+    expect(e.decide(req('https://user@cdn.ads.example/x.js')).action).toBe('block')
+  })
+
+  it('builds indexes on demand even before the first decision', () => {
+    const e = new RuleEngine()
+    e.setRuleSet(set('a', [block(1, { urlFilter: '||ads.example^' })]))
+    e.buildIndexes()
+    expect(e.indexOf('a')?.hostCount).toBe(1)
+  })
+
+  it('agrees with the scan on topDomains and header-conditioned rules at both stages', () => {
+    // Privacy Badger's shape over the inline limit (indexed under the request domains) plus
+    // header-conditioned rules of every kind and a topDomains-only rule the index can only keep
+    // in its wildcard list.
+    const rules: Rule[] = []
+    for (let i = 1; i <= 2_100; i++)
+      rules.push(
+        block(i, {
+          requestDomains: [`tracker${i}.example`],
+          excludedTopDomains: [`tracker${i}.example`]
+        })
+      )
+    rules.push(block(3001, { urlFilter: '*on-news*', topDomains: ['news.example'] }))
+    rules.push({
+      id: 3002,
+      priority: 3,
+      action: { type: 'block' },
+      condition: { urlFilter: '||cdn.example^', responseHeaders: [{ header: 'x-ads' }] }
+    })
+    rules.push({
+      id: 3003,
+      priority: 2,
+      action: {
+        type: 'modifyHeaders',
+        responseHeaders: [{ header: 'Set-Cookie', operation: 'remove' }]
+      },
+      condition: { urlFilter: '||cdn.example^', responseHeaders: [{ header: 'set-cookie' }] }
+    })
+    rules.push({
+      id: 3004,
+      priority: 2,
+      action: {
+        type: 'modifyHeaders',
+        requestHeaders: [{ header: 'DNT', operation: 'set', value: '1' }]
+      },
+      condition: { urlFilter: '||cdn.example^' }
+    })
+    rules.push({
+      id: 3005,
+      priority: 4,
+      action: { type: 'allowAllRequests' },
+      condition: {
+        urlFilter: '||frame.example^',
+        resourceTypes: ['sub_frame'],
+        responseHeaders: [{ header: 'x-ok' }]
+      }
+    })
+    // A header-stage allow of the lowest priority: it caps nothing above it.
+    rules.push(
+      allow(
+        3006,
+        { urlFilter: '||cdn.example^', excludedResponseHeaders: [{ header: 'x-ads' }] },
+        1
+      )
+    )
+    const probes: RequestContext[] = [
+      req('https://cdn.tracker7.example/p.js', { documentUrl: 'https://news.example/story' }),
+      req('https://cdn.tracker7.example/p.js', { documentUrl: 'https://www.tracker7.example/' }),
+      req('https://www.tracker7.example/', {
+        type: 'main_frame',
+        initiator: 'https://news.example/'
+      }),
+      req('https://a.example/on-news', { documentUrl: 'https://m.news.example/' }),
+      req('https://a.example/on-news', { documentUrl: 'https://shop.example/' }),
+      req('https://a.example/on-news', { type: 'main_frame' }),
+      req('https://cdn.example/x.js'),
+      req('https://cdn.example/x.js', { responseHeaders: { 'X-Ads': ['1'] } }),
+      req('https://cdn.example/x.js', { responseHeaders: { 'Set-Cookie': ['a=1'] } }),
+      req('https://cdn.example/x.js', { responseHeaders: { 'Content-Type': ['text/plain'] } }),
+      req('https://frame.example/f', { type: 'sub_frame' }),
+      req('https://frame.example/f', { type: 'sub_frame', responseHeaders: { 'X-Ok': ['1'] } }),
+      req('https://x.example/i.js', {
+        documentUrl: 'https://frame.example/f',
+        responseHeaders: { 'X-Ok': ['1'] }
+      })
+    ]
+    const e = new RuleEngine()
+    e.setRuleSet(set('pb', rules))
+    const linear = probes.map((p) => e.decideLinear(p))
+    expect(linear.map((d) => d.action)).toEqual([
+      'block',
+      'allow',
+      'allow',
+      'block',
+      'allow',
+      'allow',
+      'modifyHeaders',
+      'block',
+      'modifyHeaders',
+      'modifyHeaders',
+      'allow',
+      'allow',
+      'allow'
+    ])
+    expect(linear[6].needsHeaders).toBe(true)
+    expect(linear[8].responseHeaders).toEqual([{ header: 'Set-Cookie', operation: 'remove' }])
+    expect(linear[8].requestHeaders).toEqual([{ header: 'DNT', operation: 'set', value: '1' }])
+    // Without the cookie the header-stage edit is out; the request stage's stays reported.
+    expect(linear[9].responseHeaders).toEqual([])
+    expect(linear[9].matched).toEqual({ setId: 'pb', ruleId: 3004 })
+    expect(linear[10].needsHeaders).toBe(true)
+    expect(linear[11].matched).toEqual({ setId: 'pb', ruleId: 3005 })
+    // The document exception is not extended from a header-conditioned rule.
+    expect(linear[12].matched).toBeUndefined()
+    // Scanned while the build is pending, then through the index: the same decisions.
+    expect(probes.map((p) => e.decide(p))).toEqual(linear)
+    expect(e.indexOf('pb')).toBeNull()
+    e.buildIndexes()
+    expect(e.indexOf('pb')?.hostCount).toBe(2_101)
+    expect(e.indexOf('pb')?.wildcardCount).toBe(1)
+    expect(probes.map((p) => e.decide(p))).toEqual(linear)
   })
 })
 

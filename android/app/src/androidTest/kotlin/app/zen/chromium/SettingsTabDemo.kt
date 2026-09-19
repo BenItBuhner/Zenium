@@ -367,17 +367,17 @@ class SettingsTabDemo : DemoHarness("settings-tab-demo-state.json", "android-set
                 finding("  the confirmation never came up")
                 return@step
             }
-            // The chassis stack (BottomSheet.tsx, §9.24 / §11.2): the upper sheet writes the lower
-            // one's recede onto the lower sheet itself (`--zen-sheet-recede`, scale .97, inert,
+            // The chassis stack (lib/motion/recede.ts, §9.24 / §11.2): the upper sheet's progress
+            // is written onto the lower sheet itself (`--zen-layer-recede`, scale .97, inert,
             // data-recessed) and, on the same progress, takes over the scrim – the lower sheet's
             // fades out as the upper's fades in, so one scrim is lit over page and lower sheet.
             // The upper sheet's spring is waited out (64 ms a frame at most, long frames here).
-            awaitChrome("(function(){var s=document.querySelectorAll('.zen-sheet');return s.length===2&&+s[0].style.getPropertyValue('--zen-sheet-recede')>0.9})()", 8_000)
+            awaitChrome("(function(){var s=document.querySelectorAll('.zen-sheet');return s.length===2&&+s[0].style.getPropertyValue('--zen-layer-recede')>0.9})()", 8_000)
             SystemClock.sleep(600)
             val stackJson = chromeValue(
                 "(function(){var s=Array.from(document.querySelectorAll('.zen-sheet'));var l=s[0];" +
                     "var scrims=Array.from(document.querySelectorAll('.zen-sheet-scrim')).map(function(e){return Math.round(+getComputedStyle(e).opacity*100)/100});" +
-                    "return JSON.stringify({sheets:s.length,recede:l?l.style.getPropertyValue('--zen-sheet-recede').trim():''," +
+                    "return JSON.stringify({sheets:s.length,recede:l?l.style.getPropertyValue('--zen-layer-recede').trim():''," +
                     "recessed:!!(l&&l.dataset.recessed==='true'&&l.inert),scrims:scrims,lit:scrims.filter(function(o){return o>0.05}).length})})()"
             )
             val stack = runCatching { JSONObject(stackJson) }.getOrNull()
@@ -387,7 +387,7 @@ class SettingsTabDemo : DemoHarness("settings-tab-demo-state.json", "android-set
             val lit = stack?.optInt("lit", -1) ?: -1
             shot("13-stacked-sheet")
             finding(
-                "  sheets up: $sheets; the lower sheet's --zen-sheet-recede '$recede', recessed and inert $recessed; " +
+                "  sheets up: $sheets; the lower sheet's --zen-layer-recede '$recede', recessed and inert $recessed; " +
                     "scrims lit ${if (lit >= 0) lit else "?"} of ${stack?.optJSONArray("scrims")?.length() ?: "?"} (opacities ${stack?.optJSONArray("scrims") ?: "?"}) " +
                     verdict(sheets == 2 && recede.toDoubleOrNull()?.let { it > 0.9 } == true && recessed && lit == 1)
             )

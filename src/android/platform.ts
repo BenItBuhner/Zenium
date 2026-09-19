@@ -303,6 +303,8 @@ export interface HostEventPayloads {
   pause: void
   /** The window is coming back on screen after being hidden (screen off, another app in front). */
   resume: void
+  /** A page view's visibility change (`view.setVisible`) is on screen (`Host.setTabVisible`). */
+  'view.drawn': { tabId: string; visible: boolean }
   'download.started': {
     token: string
     url: string
@@ -979,6 +981,9 @@ export class AndroidPlatform implements Platform {
     switch (name) {
       case 'insets':
         this.events.send('insets', payload as HostEventPayloads['insets'])
+        return
+      case 'view.drawn':
+        this.events.send('view.drawn', payload as HostEventPayloads['view.drawn'])
         return
       case 'environment':
         browser.pageControls.setEnvironment(payload as HostEventPayloads['environment'])

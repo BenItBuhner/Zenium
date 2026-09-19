@@ -17,13 +17,9 @@ import {
   SPLIT_GAP_TOUCH,
   viewCover
 } from '@renderer/lib/layout'
+import { pageOffScreen, pageViewStore } from '@renderer/lib/pageView'
 import { activeTab, visibleTabIds } from '@renderer/lib/selectors'
-import {
-  contentAreaStore,
-  coverBandStore,
-  overlayCoversContent,
-  type UiState
-} from '@renderer/lib/ui'
+import { contentAreaStore, coverBandStore, pageHidden, type UiState } from '@renderer/lib/ui'
 
 export interface LayoutInfo {
   /** Viewport rect in window coordinates (null before first measure). */
@@ -31,7 +27,9 @@ export interface LayoutInfo {
   /**
    * Whether chrome covers the content area, so the chrome paints the page's picture there. On
    * Android the host is told to hide the page views a little later than this turns true: once
-   * that picture is painted (see `lib/cover.ts`).
+   * that picture is painted (see `lib/cover.ts`); and it stays true a little after the chrome
+   * has uncovered the page: until the host has drawn the live view back (`lib/pageView.ts`), so
+   * the picture never leaves before the page is there to take its place.
    */
   contentHidden: boolean
 }
@@ -115,13 +113,19 @@ export function useLayoutReporter(
     }
   }, [sidePanelRef, panelOpen, formFactor, state.settings.sidebarSide])
 
-  const contentHidden = overlayCoversContent(ui) || ui.compactHover || ui.toolbarHover
+  // Under a chrome overlay, a revealed compact sidebar or toolbar, or a frame dialog host that
+  // keeps the page behind its capture while a panel it placed is still on its way out, after
+  // the dialog's own flag has cleared (`holdFrameDialogCover`).
+  const contentHidden = pageHidden(ui)
   // The strips the chrome's message cards cover at the frame's edges (see `coverBandStore`).
   const band = coverBandStore.use()
   // Where the chrome lies under the pages – the Android chassis, whatever its form factor – the
   // live page is swapped for its cover, so the hide follows the cover's paint. The desktop hosts
   // report the hide the moment it is wanted, as they always have.
   const followsCover = chromeUnderPages(state.platform)
+  // ... and the cover stays until the host has drawn the live page back where it was.
+  const activeTabId = activeTab(state)?.id ?? null
+  const pageAway = pageViewStore.use((s) => followsCover && pageOffScreen(s, activeTabId))
   /** What the last report said about the page views (the latch of `decideHidden`). */
   const reportedHidden = useRef(false)
   /** When the current wait for a cover began, or null outside one. */
@@ -235,5 +239,5 @@ export function useLayoutReporter(
     formFactor
   ])
 
-  return { area, contentHidden }
+  return { area, contentHidden: contentHidden || pageAway }
 }

@@ -2,6 +2,7 @@ import type { ContentCover, Rect } from '@shared/types'
 import type { NativeBridge, NativeCall } from './bridge'
 import type { BootInfo } from './platform'
 import type { Platform } from '@shared/types'
+import { createPreviewDownloads } from './previewDownloads'
 
 interface HostGlobal {
   resolve(id: number, json: string | null): void
@@ -17,6 +18,8 @@ const RELOAD_DELAY_MS = 3000
 const PAGE_ROUTE = '/__zen/page/'
 /** Whether the preview "holds the browser role" (outside the file store: it is not profile data). */
 const DEFAULT_BROWSER_KEY = 'zen-preview-default-browser'
+/** Where the stand-in downloader says files go (`BootInfo.downloadsDir`). */
+const DOWNLOADS_DIR = '/Downloads'
 
 const hostGlobal = (): HostGlobal => (window as unknown as { __zenHost: HostGlobal }).__zenHost
 
@@ -97,8 +100,9 @@ export function postPreviewManifest(tabId: string, app: boolean): void {
 /**
  * A stand-in for the Kotlin host so the Android chrome can run in an ordinary desktop browser
  * (`npm run dev:android`): tab views are `<iframe>`s stacked above the chrome, persistence goes
- * to `localStorage`, dialogs use `window.confirm`. Handy for developing the mobile layout with
- * DevTools' device emulation; not a browser you would want to use.
+ * to `localStorage`, dialogs use `window.confirm`, downloads are played back by
+ * `previewDownloads.ts`. Handy for developing the mobile layout with DevTools' device emulation;
+ * not a browser you would want to use.
  */
 export function createPreviewBridge(): NativeBridge {
   const host = hostGlobal
@@ -181,7 +185,7 @@ export function createPreviewBridge(): NativeBridge {
       profiles: true,
       pinShortcuts: true,
       files,
-      downloadsDir: '/Downloads',
+      downloadsDir: DOWNLOADS_DIR,
       insets: { top: 0, right: 0, bottom: 0, left: 0 },
       fullscreen: false,
       environment: { largeScreen: false, pointerAndKeyboard: false, fontScale: 1 }
@@ -296,9 +300,17 @@ export function createPreviewBridge(): NativeBridge {
       frame.style.transition = clip.pull > 0 ? '' : 'clip-path 320ms cubic-bezier(0.2, 0, 0, 1)'
       applyClip(frame, clip)
     },
+    // The Kotlin host reports the frame that carries the change as drawn (`view.drawn`, which
+    // `lib/pageView.ts` times the swap between the live page and its picture by); here the flip
+    // is on screen at the next frame, and the chrome hears so then rather than waiting out its
+    // ack timeout with every sheet held a second.
     'view.setVisible': ({ tabId, visible }) => {
       const frame = views.get(String(tabId))
-      if (frame) frame.style.display = visible ? 'block' : 'none'
+      if (!frame) return
+      frame.style.display = visible ? 'block' : 'none'
+      requestAnimationFrame(() =>
+        host().hostEvent('view.drawn', JSON.stringify({ tabId: String(tabId), visible }))
+      )
     },
     'view.bringToFront': ({ tabId }) => {
       const frame = views.get(String(tabId))
@@ -412,7 +424,7 @@ export function createPreviewBridge(): NativeBridge {
         return { ok: false, text: '' }
       }
     },
-    'download.open': () => undefined,
+    ...createPreviewDownloads(host, DOWNLOADS_DIR),
     'profile.clear': () => undefined,
     'profile.clearBrowsingData': () => undefined,
     // No jar or cache to measure in the preview, as on a device (the WebView cannot list cookies).
@@ -531,10 +543,14 @@ export function createPreviewBridge(): NativeBridge {
       const ctx = canvas.getContext('2d')
       if (!ctx) return null
       ctx.fillStyle = background || '#fff'
+      // The canvas reads the colour back normalised: `rgba(…)` only when it has an alpha. A page
+      // drawn over the chrome's wallpaper (zen://newtab, background `#00000000`) keeps its
+      // transparency the way the WebView's bitmap does; JPEG would flatten it to black.
+      const translucent = String(ctx.fillStyle).startsWith('rgba(')
       ctx.fillRect(0, 0, canvas.width, canvas.height)
       ctx.scale(scale, scale)
       ctx.drawImage(image, 0, 0)
-      return canvas.toDataURL('image/jpeg', 0.7)
+      return translucent ? canvas.toDataURL('image/png') : canvas.toDataURL('image/jpeg', 0.7)
     } catch {
       return null
     }

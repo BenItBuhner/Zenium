@@ -64,6 +64,10 @@ export class RuleSetStore {
   private readonly index: JsonStore<IndexFile>
   private entries = new Map<string, IndexEntry>()
   private unsubscribe: (() => void) | null = null
+  /** Text-file writes and removals started and not landed yet (see `whenSettled`). */
+  private readonly inflight = new Set<Promise<void>>()
+  /** An index write was asked for since `whenSettled` last flushed. */
+  private indexDirty = false
 
   constructor(private readonly io: StoreIO) {
     this.index = new JsonStore<IndexFile>(io, INDEX_FILE, 200)
@@ -157,7 +161,7 @@ export class RuleSetStore {
       const entry = this.entries.get(change.id)
       if (!entry) return
       this.entries.delete(change.id)
-      if (entry.file) void this.remove(`${BLOCKING_DIR}/${entry.file}`)
+      if (entry.file) this.track(this.remove(`${BLOCKING_DIR}/${entry.file}`))
       this.writeIndex()
       return
     }
@@ -188,9 +192,9 @@ export class RuleSetStore {
       entry.hasFilterText = true
       entry.filterCount = countNetworkFilters(set.filterText)
       entry.file = fileNameFor(set.id)
-      void this.io.write(`${BLOCKING_DIR}/${entry.file}`, JSON.stringify(set))
+      this.track(this.io.write(`${BLOCKING_DIR}/${entry.file}`, JSON.stringify(set)))
     } else if (previous?.file) {
-      void this.remove(`${BLOCKING_DIR}/${previous.file}`)
+      this.track(this.remove(`${BLOCKING_DIR}/${previous.file}`))
     }
     this.entries.set(set.id, entry)
     this.writeIndex()
@@ -201,7 +205,20 @@ export class RuleSetStore {
     else await this.io.write(name, '{}')
   }
 
+  /** A text file's write or removal runs in the background; a failure is logged, not thrown. */
+  private track(work: Promise<void>): void {
+    const tracked: Promise<void> = work
+      .catch((error: unknown) => {
+        console.warn('[zenium] blocking store write failed:', error)
+      })
+      .finally(() => {
+        this.inflight.delete(tracked)
+      })
+    this.inflight.add(tracked)
+  }
+
   private writeIndex(): void {
+    this.indexDirty = true
     this.index.write({ version: 1, sets: [...this.entries.values()] })
   }
 
@@ -211,6 +228,19 @@ export class RuleSetStore {
 
   flushSync(): void {
     this.index.flushSync()
+  }
+
+  /**
+   * Resolves once everything the store has been asked to write has landed: the index's pending
+   * document is written now rather than after its debounce, and the text files' writes and
+   * removals in flight are waited for – including what a change during the wait added.
+   */
+  async whenSettled(): Promise<void> {
+    do {
+      this.indexDirty = false
+      await this.index.flush()
+      await Promise.all([...this.inflight])
+    } while (this.inflight.size > 0 || this.indexDirty)
   }
 
   private toRuleSet(entry: IndexEntry): RuleSet {

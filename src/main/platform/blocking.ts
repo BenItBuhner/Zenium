@@ -42,6 +42,7 @@ import {
   applyResponseHeaderOps,
   type BeforeRequestResult,
   type HeaderRewriteOptions,
+  type HeadersReceivedResult,
   type HostRequest,
   type ListenerOptions,
   type RequestHandler,
@@ -70,6 +71,13 @@ export { BLOCKING_EVENTS, WEB_REQUEST_EVENTS } from './webRequest'
 
 const DECISION_KEY = 'blocking.decision'
 
+/**
+ * Where a decision was taken: `request` at `onBeforeRequest`, `headersReceived` at
+ * `onHeadersReceived`, when a header-conditioned rule made the engine decide again with the
+ * response headers in hand. Both stages of one request can be reported, in that order.
+ */
+export type DecisionStage = 'request' | 'headersReceived'
+
 /** What the handler needs from the core: decisions and the counters. */
 export interface BlockingDecider {
   decide(ctx: RequestContext): Decision
@@ -89,15 +97,20 @@ export class BlockingHandler implements RequestHandler {
   constructor(
     private readonly decider: BlockingDecider,
     private readonly csp: CspSource | null,
-    /** Told about every decision a named rule took, with the request it was about. */
-    private readonly observer: ((request: HostRequest, decision: Decision) => void) | null = null
+    /**
+     * Told about every decision a named rule took, with the request it was about and the stage
+     * it was taken at. A request decided by a header-conditioned rule is reported at both stages
+     * unless the same rule decided both.
+     */
+    private readonly observer:
+      ((request: HostRequest, decision: Decision, stage: DecisionStage) => void) | null = null
   ) {}
 
   onBeforeRequest(request: HostRequest): BeforeRequestResult {
     const { ctx } = request
     if (!/^(https?|wss?):/i.test(ctx.url)) return undefined
     const decision = this.decider.decide(ctx)
-    if (decision.matched && this.observer) this.observer(request, decision)
+    if (decision.matched && this.observer) this.observer(request, decision, 'request')
     switch (decision.action) {
       case 'block':
         this.decider.recordBlocked(request.tabId)
@@ -116,6 +129,9 @@ export class BlockingHandler implements RequestHandler {
         request.state.set(DECISION_KEY, decision)
         return undefined
       default:
+        // An allow that a header-conditioned rule may still overturn once the response headers
+        // are in: keep it so onHeadersReceived knows to ask the engine again.
+        if (decision.needsHeaders) request.state.set(DECISION_KEY, decision)
         return undefined
     }
   }
@@ -126,10 +142,38 @@ export class BlockingHandler implements RequestHandler {
     return undefined
   }
 
-  onHeadersReceived(request: HostRequest, headers: Record<string, string[]>): undefined {
-    const decision = request.state.get(DECISION_KEY) as Decision | undefined
-    if (decision?.responseHeaders?.length) applyResponseHeaderOps(headers, decision.responseHeaders)
+  onHeadersReceived(
+    request: HostRequest,
+    headers: Record<string, string[]>
+  ): HeadersReceivedResult | undefined {
     const { ctx } = request
+    let decision = request.state.get(DECISION_KEY) as Decision | undefined
+    if (decision?.needsHeaders) {
+      // The headers-received stage: the engine decides again with the response headers, merging
+      // the header-conditioned rules with what it found at the request stage; that decision's
+      // header edits replace the request stage's (they contain them). Reported under its stage
+      // when a different rule decided it: a header-conditioned modifyHeaders rule stacked behind
+      // the request stage's rule stays unreported (Chrome records every header action).
+      const late = this.decider.decide({ ...ctx, responseHeaders: headers })
+      if (late.matched && this.observer && !sameMatch(late.matched, decision.matched))
+        this.observer(request, late, 'headersReceived')
+      switch (late.action) {
+        case 'block':
+          this.decider.recordBlocked(request.tabId)
+          return { cancel: true }
+        case 'redirect':
+        case 'upgrade':
+          if (late.redirectUrl && late.redirectUrl !== ctx.url) {
+            if (late.matched?.setId === TEXT_MATCH_SET_ID) this.decider.recordBlocked(request.tabId)
+            return { redirectURL: late.redirectUrl }
+          }
+          break
+        default:
+          break
+      }
+      decision = late
+    }
+    if (decision?.responseHeaders?.length) applyResponseHeaderOps(headers, decision.responseHeaders)
     if (this.csp && (ctx.type === 'main_frame' || ctx.type === 'sub_frame')) {
       const csp = this.csp.cspDirectives(ctx)
       if (csp)
@@ -139,6 +183,10 @@ export class BlockingHandler implements RequestHandler {
     }
     return undefined
   }
+}
+
+function sameMatch(a: Decision['matched'], b: Decision['matched']): boolean {
+  return a?.setId === b?.setId && a?.ruleId === b?.ruleId && a?.filter === b?.filter
 }
 
 // ---------------------------------------------------------------------------
@@ -432,8 +480,17 @@ export function bundledListsDirectory(): string {
 // Wiring
 // ---------------------------------------------------------------------------
 
-/** A decision that named a rule, with the request (in `chrome.webRequest` shape) it was about. */
-export type DecisionListener = (request: WebRequestBase, decision: Decision) => void
+/**
+ * A decision that named a rule, with the request (in `chrome.webRequest` shape) it was about and
+ * the {@link DecisionStage} it was taken at. Listeners that do not tell the stages apart may
+ * ignore the third argument; those that do see one request twice when a header-conditioned rule
+ * overturned or extended the request stage's decision.
+ */
+export type DecisionListener = (
+  request: WebRequestBase,
+  decision: Decision,
+  stage: DecisionStage
+) => void
 
 /** Everything desktop blocking needs, created once per app and attached to every session. */
 export class ElectronBlocking {
@@ -461,8 +518,8 @@ export class ElectronBlocking {
           recordBlocked: (tabId, count) => blocking.recordBlocked(tabId, count)
         },
         this.matcher,
-        (request, decision) => {
-          for (const listener of this.decisionListeners) listener(request.base, decision)
+        (request, decision, stage) => {
+          for (const listener of this.decisionListeners) listener(request.base, decision, stage)
         }
       )
     )
@@ -471,9 +528,9 @@ export class ElectronBlocking {
   }
 
   /**
-   * Follow the decisions the engine took by a named rule (the default allow is not reported);
-   * the extensions' declarativeNetRequest layer keeps its matched-rule log from them. Returns
-   * the function that stops following.
+   * Follow the decisions the engine took by a named rule (the default allow is not reported),
+   * each with the stage it was taken at; the extensions' declarativeNetRequest layer keeps its
+   * matched-rule log from them. Returns the function that stops following.
    */
   onDecision(listener: DecisionListener): () => void {
     this.decisionListeners.add(listener)

@@ -6,10 +6,12 @@
  * resources are rewritten on the way in to the origin Zenium serves them from
  * (`resourceOrigin.ts`, the sink's `RuleSetRewriter`); Chromium refuses them at the static
  * `chrome-extension://<id>/` URL. Decisions come back through `ElectronBlocking.onDecision`
- * into `DeclarativeNetRequestHostApi.decided`.
+ * into `DeclarativeNetRequestHostApi.decided`. Sets persisted for extensions that are gone are
+ * dropped at start (`DeclarativeNetRequestHostApi.reconcile`, over `DNR_OWNERSHIP`).
  */
 export {
   createDnrSink,
+  DNR_OWNERSHIP,
   InMemoryRuleSink,
   type DnrSinkScope,
   type EngineDecisionReport,

@@ -679,6 +679,55 @@ describe('WebRequestMultiplexer listeners', () => {
     expect(mux.inFlight).toBe(2)
   })
 
+  it("turns a handler's headers-received redirect into a 302 before the listeners see it", () => {
+    const { mux, ses } = setup()
+    const seen: string[] = []
+    mux.register({
+      id: 'engine',
+      order: 100,
+      onHeadersReceived: (request, headers) => {
+        headers['x-engine'] = ['1']
+        return request.ctx.url.endsWith('.user.css')
+          ? { redirectURL: 'chrome-extension://stylus/install-usercss.html#' + request.ctx.url }
+          : undefined
+      }
+    })
+    mux.addListener(
+      'onHeadersReceived',
+      (d) => {
+        seen.push(d.url)
+        return { responseHeaders: { ...d.responseHeaders, 'x-listener': '1' } }
+      },
+      { registrant: 'listener', priority: 1, blocking: true }
+    )
+    expect(
+      ses.headersReceived({
+        url: 'https://site.example/theme.user.css',
+        responseHeaders: { 'content-type': ['text/css'] }
+      })
+    ).toEqual({
+      statusLine: 'HTTP/1.1 302 Found',
+      responseHeaders: {
+        'content-type': ['text/css'],
+        'x-engine': ['1'],
+        Location: [
+          'chrome-extension://stylus/install-usercss.html#https://site.example/theme.user.css'
+        ]
+      }
+    })
+    expect(seen).toEqual([])
+    // Other responses still reach the listeners with the handler's edits in place.
+    expect(
+      ses.headersReceived({
+        url: 'https://site.example/page',
+        responseHeaders: { 'content-type': ['text/html'] }
+      })
+    ).toEqual({
+      responseHeaders: { 'content-type': ['text/html'], 'x-engine': ['1'], 'x-listener': ['1'] }
+    })
+    expect(seen).toEqual(['https://site.example/page'])
+  })
+
   it('dispatches the observe-only events with their fields and installs them lazily', () => {
     const { mux, ses, log } = setup()
     expect(ses.listeners.onSendHeaders.length).toBe(0)

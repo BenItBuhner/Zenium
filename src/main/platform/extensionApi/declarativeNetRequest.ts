@@ -28,7 +28,7 @@ import type { WebRequestBase } from '../blocking'
 import type { ActionApi } from './action'
 import type { ActiveTabGrants } from './activeTab'
 import { createDnrFileIO, dnrStateFile } from './dnrIo'
-import type { ScopedRuleSink } from './dnrSink'
+import { DNR_OWNERSHIP, type ScopedRuleSink } from './dnrSink'
 import {
   ApiError,
   type ApiContext,
@@ -101,6 +101,21 @@ export class DeclarativeNetRequestHostApi {
   // ---------------------------------------------------------------------------
   // Lifecycle
   // ---------------------------------------------------------------------------
+
+  /**
+   * At start, once the engine has loaded its persisted sets: the sets of extensions that are not
+   * enabled any more (removed or disabled while Zenium was closed) leave the engine before the
+   * enabled ones load and replace theirs (`BlockingService.reconcileOwners`).
+   */
+  reconcile(): void {
+    const alive = this.host.browser.extensions
+      .list()
+      .filter((info) => info.enabled)
+      .map((info) => info.id)
+    const dropped = this.host.browser.blocking.reconcileOwners(DNR_OWNERSHIP, alive)
+    if (dropped.length > 0)
+      console.info(`[zen] declarativeNetRequest: ${dropped.length} stale rule set(s) removed`)
+  }
 
   /** An extension loaded: build its state when it holds the permission, then mirror its sets. */
   load(ext: LoadedExtension): void {
@@ -247,14 +262,7 @@ export class DeclarativeNetRequestHostApi {
       .then(async () => {
         if (this.entries.get(extensionId) !== entry) return
         const rank = this.installOrder().indexOf(extensionId)
-        const report = await this.translator.sync(
-          entry.state.translateInput(rank < 0 ? undefined : rank)
-        )
-        if (report.skipped.length > 0) {
-          console.info(
-            `[zen] declarativeNetRequest ${extensionId}: ${report.skipped.length} rule(s) the engine cannot evaluate were left out`
-          )
-        }
+        await this.translator.sync(entry.state.translateInput(rank < 0 ? undefined : rank))
       })
       .catch((error: unknown) => {
         console.warn(`[zen] declarativeNetRequest ${extensionId}: sync failed`, error)

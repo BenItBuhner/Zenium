@@ -905,6 +905,35 @@ export class AndroidExtensions implements ExtensionHost {
   }
 
   /**
+   * A running extension's `permissions.request` as the chrome's sheet (kind `request`), else the
+   * native confirm. The runtime's own `permissions.request` grants declared optional permissions
+   * without asking for now; this is the question a host raises when it does ask.
+   */
+  confirmPermissionRequest(id: string, warnings: string[], win?: ZenWindow): Promise<boolean> {
+    const record = this.record(id)
+    const name = record?.name || id
+    // A worker has no window; the question goes to the one window the user is in.
+    const target = win?.alive ? win : this.browser.allWindows()[0]
+    if (target)
+      return this.prompts.ask(
+        { kind: 'request', name, icon: this.details.get(id)?.icon ?? null, warnings },
+        target
+      )
+    return this.browser.platform.dialogs.confirm(
+      {
+        message: `"${name}" wants additional permissions`,
+        detail:
+          warnings.length > 0
+            ? `It can:\n${warnings.map((w) => `\u2022 ${w}`).join('\n')}`
+            : undefined,
+        okLabel: 'Allow',
+        cancelLabel: 'Cancel'
+      },
+      win
+    )
+  }
+
+  /**
    * The runtime's `chrome.*` layer (contextMenus, commands) is not the store half's; the runtime
    * subclass answers these, and an override may not take more parameters than its base, so the
    * store half spells the full signature out.

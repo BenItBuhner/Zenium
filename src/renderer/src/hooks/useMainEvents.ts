@@ -3,10 +3,12 @@ import type { Rect, UIState } from '@shared/types'
 import { onEvent, run } from '@renderer/lib/api'
 import { starredOnPhone } from '@renderer/lib/bookmarkEdit'
 import { offerChromeShortcut } from '@renderer/lib/chromeShortcuts'
+import { chromeUnderPages } from '@renderer/lib/cover'
 import { remoteDragOver } from '@renderer/lib/drag'
 import { startDownloadsUi } from '@renderer/lib/downloads'
 import { isPhone } from '@renderer/lib/formFactor'
 import { presentInstallBanner, retireInstallBanner } from '@renderer/lib/installBanner'
+import { onLayoutApplied, onViewDrawn } from '@renderer/lib/pageView'
 import { APP_MENU_EVENT } from '@renderer/lib/shortcuts'
 import { openSettings } from '@renderer/lib/pages'
 import {
@@ -39,6 +41,11 @@ import {
 function currentActiveTabId(): string | null {
   const state: UIState | null = browserStore.get().state
   return state ? (activeTab(state)?.id ?? null) : null
+}
+
+function followsCover(): boolean {
+  const state: UIState | null = browserStore.get().state
+  return state !== null && chromeUnderPages(state.platform)
 }
 
 /** Wire main-process events into the renderer UI store. */
@@ -231,6 +238,14 @@ export function useMainEvents(): void {
         root.setProperty('--zen-inset-right', `${insets.right}px`)
         root.setProperty('--zen-inset-bottom', `${insets.bottom}px`)
         root.setProperty('--zen-inset-left', `${insets.left}px`)
+      }),
+      // Where the chrome lies under the pages, the swap between a live page and its cover is
+      // timed from these (lib/pageView.ts); the desktop hosts swap the moment they are asked.
+      onEvent('layout.applied', (applied) => {
+        if (followsCover()) onLayoutApplied(applied)
+      }),
+      onEvent('view.drawn', ({ tabId, visible }) => {
+        if (followsCover()) onViewDrawn(tabId, visible)
       })
     ]
     return () => offs.forEach((off) => off())

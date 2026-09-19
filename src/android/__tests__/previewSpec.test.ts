@@ -210,4 +210,58 @@ describe('parsePreviewSpec', () => {
     expect(parsePreviewSpec('page=settings&then=')).toEqual({ kind: 'page', page: 'settings' })
     expect(parsePreviewSpec('page=settings&then=wave')).toEqual({ kind: 'page', page: 'settings' })
   })
+
+  it('asks for a sheet on its expanded detent', () => {
+    expect(parsePreviewSpec('overlay=downloads&expand')).toEqual({
+      kind: 'overlay',
+      overlay: 'downloads',
+      expand: true
+    })
+    expect(parsePreviewSpec('overlay=downloads')).not.toHaveProperty('expand')
+  })
+
+  it('describes a transfer for the stand-in downloader, with sensible defaults', () => {
+    expect(parsePreviewSpec('download=zenium-0.3.14-arm64.apk')).toEqual({
+      kind: 'download',
+      download: {
+        filename: 'zenium-0.3.14-arm64.apk',
+        url: 'https://downloads.example.com/zenium-0.3.14-arm64.apk',
+        mimeType: 'application/vnd.android.package-archive',
+        totalBytes: 48_217_088,
+        receivedBytes: Math.round(48_217_088 * 0.4),
+        bytesPerSecond: 2_400_000,
+        paused: false,
+        error: null,
+        deleted: false,
+        private: false
+      }
+    })
+    expect(
+      parsePreviewSpec(
+        'download=notes.txt&size=1000&at=25&speed=10&paused&fail=network-timeout&deleted&private&url=https%3A%2F%2Fx.test%2Fn&mime=text%2Fmarkdown'
+      )
+    ).toEqual({
+      kind: 'download',
+      download: {
+        filename: 'notes.txt',
+        url: 'https://x.test/n',
+        mimeType: 'text/markdown',
+        totalBytes: 1000,
+        receivedBytes: 250,
+        bytesPerSecond: 10,
+        paused: true,
+        error: 'network-timeout',
+        deleted: true,
+        private: true
+      }
+    })
+    // Junk numbers fall back; a percentage past the whole file is the whole file; a pull wins.
+    const junk = parsePreviewSpec('download=a.bin&size=big&at=140')
+    expect(junk.kind === 'download' && junk.download.totalBytes).toBe(48_217_088)
+    expect(junk.kind === 'download' && junk.download.receivedBytes).toBe(48_217_088)
+    expect(junk.kind === 'download' && junk.download.mimeType).toBe('application/octet-stream')
+    expect(parsePreviewSpec('pull=40&download=a.bin').kind).toBe('pull')
+    expect(parsePreviewSpec('error=-105&download=a.bin').kind).toBe('error')
+    expect(parsePreviewSpec('download=')).toEqual({ kind: 'idle' })
+  })
 })

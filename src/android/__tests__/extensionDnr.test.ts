@@ -337,39 +337,6 @@ describe('AndroidDeclarativeNetRequest: rule sets in the engine', () => {
     await expect(dnr.call(ext, 'getEnabledRulesets', [])).rejects.toThrow(/permission is required/)
   })
 
-  it('prunes engine sets of extensions the store no longer has and leaves the known ones', () => {
-    const { engine, dnr } = setUp()
-    const stale = engineSetId(ID2, { kind: 'static', rulesetId: 'old' })
-    for (const id of [STATIC, stale]) {
-      engine.setRuleSet({
-        id,
-        source: 'dnr',
-        name: id,
-        enabled: true,
-        priority: 1,
-        rules: [],
-        updatedAt: 0
-      } as never)
-    }
-    engine.setRuleSet({
-      id: 'builtin:x',
-      source: 'builtin',
-      name: 'x',
-      enabled: true,
-      priority: 1,
-      rules: [],
-      updatedAt: 0
-    } as never)
-    const removed = dnr.prune(
-      (extensionId) => extensionId === ID,
-      engine.listRuleSets().map((s) => s.id)
-    )
-    expect(removed).toEqual([stale])
-    expect(engine.has(STATIC)).toBe(true)
-    expect(engine.has(stale)).toBe(false)
-    expect(engine.has('builtin:x')).toBe(true)
-  })
-
   it('a newer install ranks above an older one; the order change re-bands the sets', async () => {
     const { host, engine, dnr } = setUp()
     const first = attached(host)

@@ -1,0 +1,71 @@
+name: Android sheet recede demo
+
+# Records the phone sheets on the recede chassis over one page – the app menu, the
+# site-information sheet, a picker (the tab's context menu, then the icon picker: the frame
+# dialog host's full-height slide), a stack of two sheets, the menu dragged part of the way
+# down and let go, the predictive back gesture over a sheet, the bookmark editor with the
+# keyboard up under its focused field, and the menu over a bar docked at the top edge, whose
+# fade is measured frame by frame – on an Android 15 emulator, and uploads the video, the driver's timed
+# screenshots (as fast as the emulator gives them, with the time since the event in the name),
+# frames cut from the video around every event and the measurements of both. The judgement
+# has no clock in it, since the emulator paints only a few frames a second: the driver puts a
+# progress swatch into the chrome (a bar as wide as `--zen-recede`), and every frame of the
+# screenshots and of the video must show the page as dark as that swatch says its sheet is up,
+# and never the window gradient where the page or its picture should be (the old close's stall
+# and pop, the old open's step, the swap seen). Dispatch-only, like the snapshot swap demo: it
+# takes about ten minutes. The build, the emulator and the Gradle cache live in
+# android-emulator-demo.yml; this file only picks the driver and the colour scheme.
+on:
+  workflow_dispatch:
+    inputs:
+      theme:
+        description: Colour scheme of the chrome
+        type: choice
+        default: light
+        options:
+          - light
+          - dark
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-sheet-recede-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Sheet recede demo (${{ inputs.theme || 'light' }})
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-sheet-recede-demo.sh
+      script-env: |
+        DEMO_THEME=${{ inputs.theme || 'light' }}
+        DEMO_OUT=artifacts/android-sheet-recede-demo
+        DEMO_VIDEO=android-motion-sheets-${{ inputs.theme || 'light' }}.mp4
+      setup-script: |
+        sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg
+      # Android 15: predictive back animations are the default, and the back gesture is one of
+      # the things recorded.
+      api-level: '35'
+      artifact-name: android-sheet-recede-demo-${{ inputs.theme || 'light' }}
+      artifact-path: artifacts/android-sheet-recede-demo/
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed: a run is then spent on the demo rather than on the runner.
+  record-again:
+    name: Sheet recede demo (${{ inputs.theme || 'light' }}), second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-sheet-recede-demo.sh
+      script-env: |
+        DEMO_THEME=${{ inputs.theme || 'light' }}
+        DEMO_OUT=artifacts/android-sheet-recede-demo
+        DEMO_VIDEO=android-motion-sheets-${{ inputs.theme || 'light' }}.mp4
+      setup-script: |
+        sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg
+      api-level: '35'
+      artifact-name: android-sheet-recede-demo-${{ inputs.theme || 'light' }}-second-boot
+      artifact-path: artifacts/android-sheet-recede-demo/

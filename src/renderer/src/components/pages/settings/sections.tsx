@@ -42,6 +42,7 @@ import { formatZoom } from '@shared/pageControls'
 import { describeUpdateTarget, type UpdateChannel } from '@shared/updates'
 import { inputToUrl } from '@shared/url'
 import { run } from '@renderer/lib/api'
+import { downloadFolderLabel } from '@renderer/lib/downloadText'
 import { downloadsEngine } from '@renderer/lib/downloadsEngine'
 import {
   NEW_TAB_LAYOUT_HINT,
@@ -900,7 +901,9 @@ function downloadsSection({ state, set }: SectionContext): RowGroup[] {
       kind: 'action',
       id: 'download-directory',
       label: 'Save files to',
-      description: d.directory ?? 'The system Downloads folder',
+      // Android keeps a picked folder as a document-tree URI: the row reads its relative path.
+      description:
+        d.directory === null ? 'The system Downloads folder' : downloadFolderLabel(d.directory),
       keywords: ['folder', 'location', 'directory'],
       onPress: () => {
         // A dismissed picker keeps the folder as it is.

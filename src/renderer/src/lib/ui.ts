@@ -15,6 +15,8 @@ import type { Anchor } from './anchor'
 import type { PopoverAlignment } from './portals'
 import { cmd, onEvent, run } from './api'
 import { afterKeyRelease } from './keyRelease'
+import { pageCovered, pageOffScreen, pageViewStore, type Hold } from './pageView'
+import { activeTab } from './selectors'
 import { createStore } from './store'
 import { rememberThumbnail, thumbnailOf } from './thumbnails'
 
@@ -289,6 +291,12 @@ export interface UiState {
   externalProtocol: ExternalProtocolRequest | null
   /** Phone layout: the sheet that rearranges the bar's controls is up. */
   barEditorOpen: boolean
+  /**
+   * Phone layout: a `FrameDialogHost` sheet holds the page under its cover, from before it
+   * rises until it has left the screen (`coverPageUnderSheet`); the dialogs it hosts set their
+   * own flags later and drop them sooner than the sheet's motion runs.
+   */
+  frameSheetOpen: boolean
   /** Phone layout: the Tabs button's quick menu is up, anchored to the button (window px). */
   tabsMenu: Rect | null
   /** The downloads bubble (anchored under the toolbar button) is up. */
@@ -316,6 +324,16 @@ export interface UiState {
    * the view is hidden and the frame shows its capture, as for the main-process menus.
    */
   floatingChrome: number
+  /**
+   * Frame dialog hosts keeping the page under its picture (lib/portals.tsx,
+   * `holdFrameDialogCover`): a host holds from the moment some overlay covers the page while it
+   * has a dialog until that dialog's panel has finished its way out, so the view stays hidden
+   * and the capture stays for the exit that the dialog's own flag (`pageDialogOpen`,
+   * `starDialog`, …) no longer covers. Counted, one per host. Not in `overlayCoversContent`:
+   * the hold only ever outlasts a cover some flag there began, and nothing that reads the flags
+   * to tell panels from dialogs (`panelAloneOverContent`) should change its answer for it.
+   */
+  frameDialogCover: number
 }
 
 /** Where the content area is, in window coordinates (measured by the layout reporter). */
@@ -369,6 +387,7 @@ export const uiStore = createStore<UiState>(
     siteInfoOpen: false,
     externalProtocol: null,
     barEditorOpen: false,
+    frameSheetOpen: false,
     tabsMenu: null,
     downloadsOpen: false,
     defaultBrowserPrompt: false,
@@ -378,7 +397,8 @@ export const uiStore = createStore<UiState>(
     hoverCard: HOVER_CARD_HIDDEN,
     extensionPopup: null,
     extensionPrompts: [],
-    floatingChrome: 0
+    floatingChrome: 0,
+    frameDialogCover: 0
   },
   'ui'
 )
@@ -583,6 +603,9 @@ function holdMessage(id: number, held: boolean, fire: () => void): void {
  */
 export const coverBandStore = createStore<ContentCover>({ top: 0, bottom: 0 }, 'cover-band')
 
+/** Captures in flight, per tab: a sheet and the dialog it hosts asking together pay for one. */
+const captures = new Map<string, Promise<void>>()
+
 /** Capture the active tab before a chrome overlay hides it. */
 export async function captureActiveTab(tabId: string | null): Promise<void> {
   if (!tabId) {
@@ -590,11 +613,19 @@ export async function captureActiveTab(tabId: string | null): Promise<void> {
     return
   }
   if (snapshotHeld(tabId)) return
-  const data = await cmd('overlay.snapshot', { tabId }).catch(() => null)
-  if (data) rememberThumbnail(tabId, data)
-  // A page that is already hidden (behind the gesture stage) cannot be captured: show what it
-  // looked like the last time it was.
-  uiStore.set({ snapshot: data ?? thumbnailOf(tabId), snapshotTabId: tabId })
+  const pending = captures.get(tabId)
+  if (pending) return pending
+  const capture = (async (): Promise<void> => {
+    const data = await cmd('overlay.snapshot', { tabId }).catch(() => null)
+    if (data) rememberThumbnail(tabId, data)
+    // A page that is already hidden (behind the gesture stage) cannot be captured: show what it
+    // looked like the last time it was.
+    uiStore.set({ snapshot: data ?? thumbnailOf(tabId), snapshotTabId: tabId })
+  })().finally(() => {
+    captures.delete(tabId)
+  })
+  captures.set(tabId, capture)
+  return capture
 }
 
 /**
@@ -694,7 +725,15 @@ export function returnFocusToPage(): void {
   if (!chromeNeedsKeyboard()) run('focus.content', undefined)
 }
 
-/** Drop the cached snapshot once nothing needs it, so the next overlay gets a fresh capture. */
+/** A snapshot nothing needs any more, kept only until the host draws the page back. */
+let snapshotStale = false
+
+/**
+ * Drop the cached snapshot once nothing needs it, so the next overlay gets a fresh capture.
+ * Where the chrome lies under the pages the picture stays a little longer: until the host has
+ * drawn the live page back in its place (`lib/pageView.ts`), so the frame between shows the
+ * page's picture and not the window behind it; the drop then follows on its own.
+ */
 export function invalidateSnapshot(): void {
   const ui = uiStore.get()
   if (
@@ -711,6 +750,7 @@ export function invalidateSnapshot(): void {
     !ui.extensionPopup &&
     ui.floatingChrome === 0 &&
     !ui.barEditorOpen &&
+    !ui.frameSheetOpen &&
     !ui.tabsMenu &&
     !ui.securityPromptOpen &&
     !ui.permissionPromptOpen &&
@@ -724,9 +764,134 @@ export function invalidateSnapshot(): void {
     ui.hoverCard.tabId === null &&
     !ui.newTabShortcutDialog &&
     !ui.siteDataConfirm &&
-    !bookmarkChromeOpen(ui)
+    !bookmarkChromeOpen(ui) &&
+    ui.frameDialogCover === 0
   ) {
+    if (ui.snapshotTabId && pageOffScreen(pageViewStore.get(), ui.snapshotTabId)) {
+      snapshotStale = true
+      return
+    }
+    snapshotStale = false
     uiStore.set({ snapshot: null, snapshotTabId: null })
+  }
+}
+
+/**
+ * Wait for the active page's live view to be off the screen before a sheet comes up over its
+ * picture (`pageCovered`): resolves at once when no chrome surface is covering the page – then
+ * nothing is going to take the view down – or where the swap needs no timing.
+ */
+export function activePageCovered(): Hold {
+  const state = browserStore.get().state
+  const ui = uiStore.get()
+  if (!state || !overlayCoversContent(ui)) return { promise: Promise.resolve(), cancel: () => {} }
+  return pageCovered(activeTab(state)?.id ?? null, state.platform)
+}
+
+export interface SheetCover {
+  /** Resolves once the live page is off the screen under the sheet's cover; never rejects. */
+  promise: Promise<void>
+  /** The sheet has left the screen (or never came up): let the page back. */
+  release(): void
+}
+
+/** Sheets holding the page under their cover (`coverPageUnderSheet`) right now. */
+let sheetCovers = 0
+
+/**
+ * A chassis sheet that mounts before anything covers the page – `FrameDialogHost` on a phone,
+ * whose dialogs capture the page and set their own flag only after they are up, and drop it
+ * the moment they go – takes the cover itself, in the order every other surface keeps: the live
+ * page is captured first, then `frameSheetOpen` asks the host to hide the page views (the
+ * layout reporter hides them once the picture is painted, `lib/cover.ts`), and the promise
+ * resolves once they are down (`pageCovered`), so the recede never starts on a page about to
+ * be swapped. `release` drops the flag: call it once the sheet has left the screen, so the page
+ * comes back at the transform it left at, and the picture goes once the host has drawn it.
+ */
+export function coverPageUnderSheet(): SheetCover {
+  const state = browserStore.get().state
+  const tabId = state ? (activeTab(state)?.id ?? null) : null
+  let live = true
+  let taken = false
+  let hold: Hold | null = null
+  const promise = captureActiveTab(tabId).then(() => {
+    if (!live) return
+    taken = true
+    sheetCovers++
+    if (!uiStore.get().frameSheetOpen) uiStore.set({ frameSheetOpen: true })
+    // No session yet (or no page in it): nothing to wait for.
+    if (!state) return
+    hold = pageCovered(tabId, state.platform)
+    return hold.promise
+  })
+  return {
+    promise,
+    release() {
+      if (!live) return
+      live = false
+      hold?.cancel()
+      if (!taken) return
+      taken = false
+      if (--sheetCovers > 0) return
+      uiStore.set({ frameSheetOpen: false })
+      invalidateSnapshot()
+    }
+  }
+}
+
+const snapshotFlags = globalThis as unknown as { __zenSnapshotWired?: boolean }
+if (!snapshotFlags.__zenSnapshotWired) {
+  snapshotFlags.__zenSnapshotWired = true
+  pageViewStore.subscribe(() => {
+    if (snapshotStale) invalidateSnapshot()
+  })
+}
+
+/**
+ * Whether the page views are hidden under the chrome right now – what `useLayoutReporter`
+ * reports as `contentHidden`: a chrome overlay covers the content, a compact sidebar or the
+ * toolbar is revealed over it, or a frame dialog host keeps the page under its picture for a
+ * panel's way out (`holdFrameDialogCover`).
+ */
+export function pageHidden(ui: UiState): boolean {
+  return overlayCoversContent(ui) || ui.compactHover || ui.toolbarHover || ui.frameDialogCover > 0
+}
+
+/**
+ * Keep the page under its picture for a frame dialog host (lib/portals.tsx) until the returned
+ * release runs – from the moment a chrome overlay covers the page while the host has a dialog,
+ * to the end of the last panel's way out. The dialogs' own flags (`pageDialogOpen`,
+ * `windowPromptOpen`, `bookmarkAllTabs`, …) hide the page and keep its capture only while they
+ * are set, and clear as the dialog closes – for some the flag is the dialog's very state,
+ * cleared before its panel has left – so the host holds from the open: nothing is captured or
+ * hidden here (over a page that shows live the host holds nothing, since hiding the page then
+ * would show a blank frame for the way out); the count only outlasts a cover some flag began,
+ * keeping the view hidden (`useLayoutReporter`) and the capture (`invalidateSnapshot`) until
+ * the release, which drops the capture if nothing else needs it. Focus is not touched: the
+ * dialogs hand it to the page through the core as they close, and the core gives it once the
+ * page shows again.
+ */
+export function holdFrameDialogCover(): () => void {
+  let live = true
+  let taken = false
+  let unsubscribe: (() => void) | null = null
+  const take = (): void => {
+    if (taken || !overlayCoversContent(uiStore.get())) return
+    taken = true
+    unsubscribe?.()
+    unsubscribe = null
+    uiStore.set((s) => ({ frameDialogCover: s.frameDialogCover + 1 }))
+  }
+  take()
+  if (!taken) unsubscribe = uiStore.subscribe(take)
+  return () => {
+    if (!live) return
+    live = false
+    unsubscribe?.()
+    unsubscribe = null
+    if (!taken) return
+    uiStore.set((s) => ({ frameDialogCover: Math.max(0, s.frameDialogCover - 1) }))
+    invalidateSnapshot()
   }
 }
 
@@ -1092,6 +1257,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.extensionPopup !== null ||
     ui.floatingChrome > 0 ||
     ui.barEditorOpen ||
+    ui.frameSheetOpen ||
     ui.tabsMenu !== null ||
     ui.securityPromptOpen ||
     ui.permissionPromptOpen ||

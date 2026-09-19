@@ -58,6 +58,9 @@
       "autoCheck": false,
       "autoDownload": false,
       "channel": "stable"
+    },
+    "privacy": {
+      "httpsOnly": "off"
     }
   },
   "shortcutOverrides": {},

@@ -28,16 +28,17 @@
  * expressed in the engine's model; see the dnr-translator report for the engine changes that
  * would close both gaps.
  *
- * Rules the engine cannot evaluate yet are left out of the set and reported: response header
- * conditions (they need a headers-received stage) and `topDomains`. `redirect.transform` rules
- * are emitted with the transform carried along; until the engine applies transforms they decide
- * nothing.
+ * Response header conditions travel with the rule: the engine decides such rules at its
+ * headers-received stage and merges them with the request stage as Chrome does.
+ * `redirect.transform` rules are emitted with the transform carried along; until the engine
+ * applies transforms they decide nothing.
  */
 import {
   ENGINE_DNR_BAND_SIZE,
   ENGINE_DNR_PRIORITY,
   dnrAttribution,
   engineSetId,
+  type EngineHeaderCondition,
   type EngineRule,
   type EngineRuleAction,
   type EngineRuleCondition,
@@ -48,6 +49,7 @@ import {
 import {
   actionTypePriority,
   type CompiledRule,
+  type HeaderInfo,
   type ModifyHeaderInfo,
   type RulesetSource
 } from './rules'
@@ -80,19 +82,16 @@ export interface TranslateExtension {
   installRank?: number
 }
 
-export type SkipReason = 'responseHeaderCondition' | 'topDomains'
-
-export interface SkippedRule {
-  ruleId: number
-  reason: SkipReason
-}
-
 export interface RulesetTranslation {
   set: EngineRuleSet
-  /** Rules left out because the engine has no way to evaluate them. */
-  skipped: SkippedRule[]
   /** Rules emitted with a `redirect.transform` the engine does not apply yet. */
   transforms: number[]
+  /**
+   * Rules emitted with `responseHeaders` / `excludedResponseHeaders` conditions. The desktop
+   * engine decides them at its headers-received stage; the Android engine (`Rules.kt`), which
+   * decides in `shouldInterceptRequest` before any response exists, leaves them out.
+   */
+  headerConditioned: number[]
 }
 
 export interface TranslateOptions {
@@ -138,6 +137,16 @@ function list<T>(values: readonly T[] | undefined): T[] | undefined {
   return values && values.length > 0 ? [...values] : undefined
 }
 
+function headerConditions(infos: readonly HeaderInfo[]): EngineHeaderCondition[] | undefined {
+  if (infos.length === 0) return undefined
+  return infos.map((info) => {
+    const out: EngineHeaderCondition = { header: info.header }
+    if (info.values !== undefined) out.values = [...info.values]
+    if (info.excludedValues !== undefined) out.excludedValues = [...info.excludedValues]
+    return out
+  })
+}
+
 function translateCondition(rule: CompiledRule): EngineRuleCondition {
   const source = rule.rule.condition
   const condition: EngineRuleCondition = {}
@@ -150,10 +159,14 @@ function translateCondition(rule: CompiledRule): EngineRuleCondition {
   const excludedInitiatorDomains = list(rule.excludedInitiatorDomains)
   const requestDomains = list(rule.requestDomains)
   const excludedRequestDomains = list(rule.excludedRequestDomains)
+  const topDomains = list(rule.topDomains)
+  const excludedTopDomains = list(rule.excludedTopDomains)
   if (initiatorDomains) condition.initiatorDomains = initiatorDomains
   if (excludedInitiatorDomains) condition.excludedInitiatorDomains = excludedInitiatorDomains
   if (requestDomains) condition.requestDomains = requestDomains
   if (excludedRequestDomains) condition.excludedRequestDomains = excludedRequestDomains
+  if (topDomains) condition.topDomains = topDomains
+  if (excludedTopDomains) condition.excludedTopDomains = excludedTopDomains
   const resourceTypes = list(source.resourceTypes)
   const excludedResourceTypes = list(source.excludedResourceTypes)
   if (resourceTypes) condition.resourceTypes = resourceTypes
@@ -168,17 +181,15 @@ function translateCondition(rule: CompiledRule): EngineRuleCondition {
   if (rule.domainType !== undefined) condition.domainType = rule.domainType
   if (rule.tabIds.size > 0) condition.tabIds = [...rule.tabIds]
   if (rule.excludedTabIds.size > 0) condition.excludedTabIds = [...rule.excludedTabIds]
+  const responseHeaders = headerConditions(rule.responseHeaders)
+  const excludedResponseHeaders = headerConditions(rule.excludedResponseHeaders)
+  if (responseHeaders) condition.responseHeaders = responseHeaders
+  if (excludedResponseHeaders) condition.excludedResponseHeaders = excludedResponseHeaders
   return condition
 }
 
-/** Translate one compiled rule; undefined when the engine cannot evaluate it. */
-export function translateRule(rule: CompiledRule): EngineRule | SkippedRule {
-  if (rule.responseHeaders.length > 0 || rule.excludedResponseHeaders.length > 0) {
-    return { ruleId: rule.id, reason: 'responseHeaderCondition' }
-  }
-  if (rule.topDomains.length > 0 || rule.excludedTopDomains.length > 0) {
-    return { ruleId: rule.id, reason: 'topDomains' }
-  }
+/** Translate one compiled rule. */
+export function translateRule(rule: CompiledRule): EngineRule {
   const out: EngineRule = {
     id: rule.id,
     action: translateAction(rule),
@@ -186,10 +197,6 @@ export function translateRule(rule: CompiledRule): EngineRule | SkippedRule {
   }
   if (rule.priority !== 1) out.priority = rule.priority
   return out
-}
-
-function isSkipped(value: EngineRule | SkippedRule): value is SkippedRule {
-  return 'reason' in value
 }
 
 /**
@@ -221,18 +228,16 @@ export function translateRuleset(
   ruleset: TranslateRuleset,
   options: TranslateOptions = {}
 ): RulesetTranslation {
-  const skipped: SkippedRule[] = []
   const transforms: number[] = []
+  const headerConditioned: number[] = []
   const rules: EngineRule[] = []
   const ordered = [...ruleset.rules].sort(compareForEmission)
   for (const compiled of ordered) {
     if (ruleset.disabledRuleIds?.has(compiled.id)) continue
     const translated = translateRule(compiled)
-    if (isSkipped(translated)) {
-      skipped.push(translated)
-      continue
-    }
     if (translated.action.redirect?.transform) transforms.push(compiled.id)
+    if (translated.condition.responseHeaders || translated.condition.excludedResponseHeaders)
+      headerConditioned.push(compiled.id)
     rules.push(translated)
   }
   const kind = setKindOf(ruleset)
@@ -249,7 +254,7 @@ export function translateRuleset(
   }
   if (extension.version !== undefined) set.version = extension.version
   if (options.now) set.updatedAt = options.now()
-  return { set, skipped, transforms }
+  return { set, transforms, headerConditioned }
 }
 
 /** Every set an extension should have in the engine right now (empty rulesets produce none). */
@@ -271,8 +276,9 @@ export interface ExtensionTranslationReport {
   updated: string[]
   /** Set ids removed from the sink by this sync. */
   removed: string[]
-  skipped: SkippedRule[]
   transforms: number[]
+  /** Rule ids with response header conditions across the extension's sets (see {@link RulesetTranslation}). */
+  headerConditioned: number[]
 }
 
 interface EmittedSet {
@@ -348,8 +354,8 @@ export class DnrTranslator {
       extensionId: input.extensionId,
       updated: [],
       removed: [],
-      skipped: [],
-      transforms: []
+      transforms: [],
+      headerConditioned: []
     }
     const wanted = new Set<string>()
     for (const ruleset of input.rulesets) {
@@ -357,8 +363,8 @@ export class DnrTranslator {
       const translation = translations.find((t) => t.set.id === setId)
       if (!translation) continue
       wanted.add(setId)
-      report.skipped.push(...translation.skipped)
       report.transforms.push(...translation.transforms)
+      report.headerConditioned.push(...translation.headerConditioned)
       const before = emitted.get(setId)
       const next: EmittedSet = {
         rules: ruleset.rules,

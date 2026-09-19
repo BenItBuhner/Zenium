@@ -17,11 +17,7 @@ import {
 } from '@core/extensions/dnr/args'
 import type { ScopedRuleSink } from '@core/extensions/dnr/engineSink'
 import { parsePersistedState } from '@core/extensions/dnr/persist'
-import {
-  parseEngineSetId,
-  routeDecision,
-  type EngineDecisionAction
-} from '@core/extensions/dnr/sink'
+import { routeDecision, type EngineDecisionAction } from '@core/extensions/dnr/sink'
 import {
   DnrState,
   createGlobalStaticRulePool,
@@ -274,21 +270,6 @@ export class AndroidDeclarativeNetRequest {
     else if (io.readSync(doc) !== null) await io.write(doc, '{}').catch(() => undefined)
   }
 
-  /**
-   * Engine sets left by extensions the store no longer has (an uninstall the runtime never saw
-   * finish, an older build): removed at startup so they do not filter anything.
-   */
-  prune(known: (extensionId: string) => boolean, engineSetIds: readonly string[]): string[] {
-    const removed: string[] = []
-    for (const setId of engineSetIds) {
-      const parsed = parseEngineSetId(setId)
-      if (!parsed || known(parsed.extensionId)) continue
-      void this.sink.removeRuleSet(setId)
-      removed.push(setId)
-    }
-    return removed
-  }
-
   /** The install order changed (Chrome ranks newer extensions' rules above older ones'). */
   installOrderChanged(): void {
     this.translator.setInstallOrder(this.host.installOrder()).catch(() => undefined)
@@ -403,9 +384,11 @@ export class AndroidDeclarativeNetRequest {
         const report = await this.translator.sync(
           entry.state.translateInput(rank < 0 ? undefined : rank)
         )
-        if (report.skipped.length > 0) {
+        // The Kotlin engine decides in `shouldInterceptRequest`, before any response exists, so
+        // `Rules.kt` leaves rules with response header conditions out of its compiled sets.
+        if (report.headerConditioned.length > 0) {
           console.info(
-            `[zen] declarativeNetRequest ${extensionId}: ${report.skipped.length} rule(s) the engine cannot evaluate were left out`
+            `[zen] declarativeNetRequest ${extensionId}: ${report.headerConditioned.length} rule(s) with response header conditions are left out on Android`
           )
         }
       })
