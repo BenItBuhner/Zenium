@@ -6,7 +6,8 @@ import type {
   EventName,
   Events,
   HistoryDayGroup,
-  HistoryVisit
+  HistoryVisit,
+  TopSite
 } from '@shared/types'
 import { cmd, onEvent } from './api'
 import { dayKey, dayLabel, type DayGroup, type DayGroupOptions } from './historyGroups'
@@ -17,10 +18,11 @@ import { dayKey, dayLabel, type DayGroup, type DayGroupOptions } from './history
  * `history.clear`, `session.recentlyClosed` / `restoreClosed`, and the `history.changed` /
  * `session.recentlyClosedChanged` events that say when to look again). The core buckets visits
  * by calendar day; the renderer only names the days ("Today", a weekday, a date), which is a
- * matter of the device's language and zone rather than of the model.
+ * matter of the device's language and zone rather than of the model. The new tab page's most
+ * visited sites come through the same seam (`topSites`, below) and nowhere else.
  */
 
-export type { ClosedEntrySummary, HistoryDayGroup, HistoryVisit }
+export type { ClosedEntrySummary, HistoryDayGroup, HistoryVisit, TopSite }
 
 /** What the list renders: the contract's visit. */
 export type HistoryRow = HistoryVisit
@@ -99,3 +101,19 @@ export function createHistoryAdapter(invoke: Invoke, on: Subscribe): HistoryAdap
 
 /** The app's adapter, over the chrome's bridge to the core. */
 export const historyAdapter: HistoryAdapter = createHistoryAdapter(cmd, onEvent)
+
+/**
+ * The most visited sites for the new tab page's tiles, `n` at most, without the hosts the user
+ * removed: `history.topSites { n, excludedHosts } -> TopSite[]`, folded by host and ranked by
+ * frecency in the core (contract v0). A failed call (logged by `cmd`) reads as no sites, so the
+ * page shows its empty state rather than nothing.
+ */
+export async function topSites(
+  n: number,
+  excludedHosts: readonly string[] = []
+): Promise<TopSite[]> {
+  return cmd('history.topSites', {
+    n,
+    excludedHosts: excludedHosts.length ? [...excludedHosts] : undefined
+  }).catch(() => [])
+}

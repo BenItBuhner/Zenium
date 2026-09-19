@@ -22,6 +22,13 @@ import app.zen.chromium.Host
 import app.zen.chromium.Profiles
 import app.zen.chromium.TabWebView
 import app.zen.chromium.arr
+import app.zen.chromium.blocking.BlockingTab
+import app.zen.chromium.blocking.Decision
+import app.zen.chromium.blocking.DecisionObserver
+import app.zen.chromium.blocking.Domains
+import app.zen.chromium.blocking.RedirectExecutor
+import app.zen.chromium.blocking.Request
+import app.zen.chromium.blocking.ResourceType
 import app.zen.chromium.bool
 import app.zen.chromium.json
 import app.zen.chromium.obj
@@ -35,6 +42,7 @@ import java.security.SecureRandom
 import java.util.Locale
 import java.util.WeakHashMap
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * The Kotlin half of the extension runtime. The browser core (`src/android/extensionRuntime.ts`,
@@ -59,14 +67,17 @@ import java.util.concurrent.Executors
  *    predates the extension's world finds an unspoofable bridge;
  *  - hidden background WebViews (started and stopped by the core's lifecycle policy) and the
  *    popup / options bottom sheet;
- *  - declarativeNetRequest on the request path (static rulesets read from the extension
- *    directory, dynamic rules from the core) and, on demand, observational `webRequest` events.
+ *  - the extension seams of the request engine (`blocking/`): declarativeNetRequest itself is
+ *    the core's translator writing `ext:` rule sets into the persisted index the engine
+ *    compiles, scoped to the partitions the extension runs in; this class hears the engine's
+ *    decisions ([DecisionObserver]) and reports the ones an extension's rule took – and, while
+ *    an extension listens for `webRequest`, every one – as `ext.request`, and substitutes the
+ *    response of a redirected subresource ([RedirectExecutor], see [redirect]).
  *
  * Protocol (the core → here), keyed by extension id where it applies: `ext.env`, `ext.open`,
  * `ext.configure`, `ext.detach`, `ext.background.start` / `stop`, `ext.popup.open` / `close`,
- * `ext.send`, `ext.exec`, `ext.readFile`, `ext.cookies.get` / `set`, `ext.setRules`,
- * `ext.observeRequests`. Here → the core (host events): `ext.message`, `ext.gone`,
- * `ext.popupClosed`, `ext.request`.
+ * `ext.send`, `ext.exec`, `ext.readFile`, `ext.cookies.get` / `set`, `ext.observeRequests`.
+ * Here → the core (host events): `ext.message`, `ext.gone`, `ext.popupClosed`, `ext.request`.
  */
 class Extensions(private val host: Host) {
     /** Every bridge message carries this; pages never see it (it lives in closures only). */
@@ -89,9 +100,6 @@ class Extensions(private val host: Host) {
     private val compiler = UnitCompiler { bootstrap }
     private val main = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor { r -> Thread(r, "zen-ext") }
-    private val rulesIo = Executors.newSingleThreadExecutor { r -> Thread(r, "zen-ext-rules") }
-    /** Static rulesets parsed in this process: file path → (size.mtime fingerprint, rules). Rules thread only. */
-    private val staticRules = HashMap<String, Pair<String, List<NetRules.Rule>>>()
 
     /**
      * One document-start script of one extension, injected into frames whose origin matches
@@ -156,11 +164,13 @@ class Extensions(private val host: Host) {
     @Volatile private var served: Map<String, Served> = emptyMap()
     /** Per extension, the units currently installed on every tab (main thread). */
     private val units = LinkedHashMap<String, List<ScriptUnit>>()
-    /** Every extension's rules, for the requests of ordinary tabs and of extension pages. */
-    @Volatile private var rules: NetRules? = null
-    /** The rules of the extensions allowed in private tabs, for those tabs' requests. */
-    @Volatile private var privateRules: NetRules? = null
+    /**
+     * Whether an extension listens for `webRequest` right now (`ext.observeRequests`): then every
+     * decision of the engine is reported, not only those an extension's rule took.
+     */
     @Volatile private var observeRequests = false
+    /** `ext.request` ids: one sequence per process, like Chrome's request ids. */
+    private val requestIds = AtomicLong(1)
     /** The `identity.launchWebAuthFlow` sheets open right now, by the runtime's view id (`ext.auth.*`). */
     private val authSheets = HashMap<Int, ExtensionAuthSheet>()
     @Volatile var debug = true
@@ -212,7 +222,12 @@ class Extensions(private val host: Host) {
             override fun store(url: String, setCookie: String) = CookieManager.getInstance().setCookie(url, setCookie)
         }
     ) { userAgent }
-    /** Last request decisions ("allow|block|… type micros url"), kept while `debug` for instrumentation. */
+    /**
+     * The engine's last decisions on the tabs' requests ("allow|block|redirect|upgrade type
+     * <micros>us <cpuMicros>cpu url": the wall-clock time `EngineSnapshot.decide` took and the
+     * CPU time the thread spent in it, `?cpu` where the platform cannot tell), kept while `debug`
+     * for instrumentation (the demo's latency figures).
+     */
     val decisions = ArrayDeque<String>()
     /** While `debug`: the CORS proxy's last answers ("<ext> METHOD status url"), for instrumentation. */
     val proxied = ArrayDeque<String>()
@@ -240,6 +255,17 @@ class Extensions(private val host: Host) {
 
     val origin = ORIGIN_SUFFIX
 
+    /** The engine's extension seams, this runtime's (see the class comment). */
+    private val observer = DecisionObserver { tab, request, decision, elapsedNanos, cpuNanos -> onDecision(tab, request, decision, elapsedNanos, cpuNanos) }
+    private val redirector = RedirectExecutor { tab, request, target, type -> redirect(target, request, type, tab) }
+
+    init {
+        // The engine is the process's; the window's runtime is the one that hears it (a custom
+        // tab has no extensions, its requests are still decided by the same snapshot).
+        host.blocking.observer = observer
+        host.blocking.redirector = redirector
+    }
+
     // ---------------------------------------------------------------------------------------------
     // Native methods (from the core)
     // ---------------------------------------------------------------------------------------------
@@ -263,7 +289,6 @@ class Extensions(private val host: Host) {
             "ext.open" -> open(args.str("id"), args.str("path"), reply)
             "ext.configure" -> configure(args, reply)
             "ext.detach" -> { detachExtension(args.str("id")); reply(null) }
-            "ext.setRules" -> setRules(args, reply)
             "ext.observeRequests" -> { observeRequests = args.bool("on"); reply(null) }
             "ext.send" -> { send(args.str("ep"), args.str("message")); reply(null) }
             "ext.background.start" -> { startBackground(args.str("id")); reply(null) }
@@ -470,122 +495,8 @@ class Extensions(private val host: Host) {
         endpoints.clear()
         worldSlots.clear()
         configureStats.clear()
-        rules = null
-        privateRules = null
         observeRequests = false
         closeAuthSheets()
-    }
-
-    /**
-     * `{ extensions: [{ ext, allowPrivate, paths: [ruleset json paths], dynamic: [normalised
-     * rules] }] }`, one entry per declarativeNetRequest extension. Static rulesets are Chrome's
-     * rule format read from the extension directory; dynamic and session rules arrive normalised
-     * from the core's translator. Two sets come out: everyone's rules, and those of the
-     * extensions allowed in private tabs (a private tab's requests see only the latter).
-     */
-    private fun setRules(args: JSONObject, reply: (Any?) -> Unit) {
-        // Its own thread: tens of thousands of rules parse in the hundreds of milliseconds, and
-        // the `ext.open` / `ext.configure` of the next extension must not wait behind them.
-        rulesIo.execute {
-            val started = System.nanoTime()
-            val all = ArrayList<NetRules.Rule>()
-            val private = ArrayList<NetRules.Rule>()
-            var privateExtensions = 0
-            val extensions = args.arr("extensions")
-            var files = 0
-            var cached = 0
-            val wanted = HashSet<String>()
-            for (i in 0 until extensions.length()) {
-                val entry = extensions.optJSONObject(i) ?: continue
-                val ext = entry.str("ext")
-                val allowPrivate = entry.bool("allowPrivate")
-                val mine = ArrayList<NetRules.Rule>()
-                val paths = entry.arr("paths")
-                for (j in 0 until paths.length()) {
-                    val file = fileFor(ext, paths.optString(j, "")) ?: continue
-                    if (!file.isFile) continue
-                    wanted.add(file.path)
-                    val loaded = loadStaticRuleset(ext, file) ?: continue
-                    files++
-                    if (loaded.second) cached++
-                    mine.addAll(loaded.first)
-                }
-                val dynamic = entry.arr("dynamic")
-                for (j in 0 until dynamic.length()) {
-                    val o = dynamic.optJSONObject(j) ?: continue
-                    runCatching { NetRules.parse(o) }.getOrNull()?.let(mine::add)
-                }
-                all.addAll(mine)
-                if (allowPrivate) {
-                    private.addAll(mine)
-                    privateExtensions++
-                }
-            }
-            // Rulesets no longer wanted (a disabled ruleset, a detached extension) leave memory.
-            staticRules.keys.retainAll(wanted)
-            val compiled = if (all.isEmpty()) null else NetRules(all)
-            // Every extension allowed in private tabs: the one set serves both kinds of tab.
-            val compiledPrivate = when {
-                private.isEmpty() -> null
-                private.size == all.size -> compiled
-                else -> NetRules(private)
-            }
-            val ms = (System.nanoTime() - started) / 1_000_000
-            main.post {
-                rules = compiled
-                privateRules = compiledPrivate
-                Log.i(
-                    TAG,
-                    "rules: ${compiled?.rules?.size ?: 0} from $files file(s) ($cached cached), " +
-                        "${private.size} of $privateExtensions extension(s) in private tabs, in $ms ms"
-                )
-                reply(
-                    json(
-                        "rules" to (compiled?.rules?.size ?: 0), "privateRules" to private.size,
-                        "files" to files, "cached" to cached, "ms" to ms
-                    )
-                )
-            }
-        }
-    }
-
-    /**
-     * One static ruleset: Chrome's rule format normalised to the model `NetRules.parse` reads.
-     * The normalised form is cached next to the app's storage keyed by the file's size and mtime,
-     * so warm starts skip the Chrome→model conversion (regexes compile lazily either way).
-     * Returns the rules and whether they came from the cache.
-     */
-    private fun loadStaticRuleset(ext: String, file: File): Pair<List<NetRules.Rule>, Boolean>? {
-        val fingerprint = "${file.length()}.${file.lastModified()}"
-        // Every `ext.setRules` re-sends every extension's rulesets: a file parsed once in this
-        // process is not parsed again while it is unchanged.
-        staticRules[file.path]?.let { (seen, rules) -> if (seen == fingerprint) return rules to true }
-        val cacheDir = File(host.activity.cacheDir, "ext-rules/$ext").apply { mkdirs() }
-        val cacheFile = File(cacheDir, "${file.name}.$fingerprint.json")
-        runCatching {
-            if (cacheFile.isFile) {
-                val arr = JSONArray(cacheFile.readText())
-                val rules = ArrayList<NetRules.Rule>(arr.length())
-                for (k in 0 until arr.length()) arr.optJSONObject(k)?.let { rules.add(NetRules.parse(it)) }
-                staticRules[file.path] = fingerprint to rules
-                return rules to true
-            }
-        }
-        val text = runCatching { file.readText() }.getOrNull() ?: return null
-        val raw = runCatching { JSONArray(text) }.getOrNull() ?: return null
-        val normalised = JSONArray()
-        val rules = ArrayList<NetRules.Rule>(raw.length())
-        for (k in 0 until raw.length()) {
-            val o = NetRules.fromChromeRule(raw.optJSONObject(k) ?: continue, "https://$ext$ORIGIN_SUFFIX") ?: continue
-            normalised.put(o)
-            runCatching { NetRules.parse(o) }.getOrNull()?.let(rules::add)
-        }
-        runCatching {
-            cacheDir.listFiles()?.filter { it.name.startsWith(file.name + ".") }?.forEach { it.delete() }
-            cacheFile.writeText(normalised.toString())
-        }
-        staticRules[file.path] = fingerprint to rules
-        return rules to false
     }
 
     /** Host → endpoint: the reply proxy of the frame that said hello. A dead frame reports `ext.gone`. */
@@ -1017,16 +928,20 @@ class Extensions(private val host: Host) {
     }
 
     // ---------------------------------------------------------------------------------------------
-    // Request path: the extension origin and declarativeNetRequest
+    // Request path: the extension origin, the CORS proxy, and the engine's extension seams
     // ---------------------------------------------------------------------------------------------
 
     /**
-     * Every WebView's `shouldInterceptRequest` (background thread). Tab pages: a top-level
-     * navigation to an extension origin gets any file (Chrome lets any extension page open as a
-     * tab), other frames only its web-accessible resources; then the DNR decision. Extension
-     * WebViews: any file, and the background view's document is the generated background page
-     * wherever the core put it (`backgroundDocument`: an MV3 worker's page lives at the worker
-     * script's URL, so `self.location` reads as in Chrome).
+     * Every WebView's `shouldInterceptRequest` (background thread), ahead of the request engine.
+     * Tab pages: a top-level navigation to an extension origin gets any file (Chrome lets any
+     * extension page open as a tab), other frames only its web-accessible resources; a fetch of
+     * an extension page to a permitted host goes through the CORS proxy. Extension WebViews: any
+     * file, and the background view's document is the generated background page wherever the
+     * core put it (`backgroundDocument`: an MV3 worker's page lives at the worker script's URL,
+     * so `self.location` reads as in Chrome). Null for everything else: a tab's request then
+     * goes to `Blocking.intercept`, where the extensions' declarativeNetRequest sets are among
+     * the rule sets; an extension page's request goes out as it is (Chrome exempts an
+     * extension's own requests from its rules).
      */
     fun intercept(
         request: WebResourceRequest,
@@ -1081,46 +996,67 @@ class Extensions(private val host: Host) {
                 }
             }
         }
-        if (extensionPage != null) return null
-        val rules = if (tab?.isPrivateTab == true) privateRules else this.rules
-        val observe = observeRequests
-        if (rules == null && !observe) return null
-        val initiator = tab?.currentUrl
-        val type = NetRules.guessResourceType(
-            url.toString(), request.requestHeaders?.get("Accept"), request.isForMainFrame, isSubFrame = false
-        )
-        val started = System.nanoTime()
-        val decision = rules?.decide(url.toString(), initiator, type, request.method ?: "GET")
-        val micros = (System.nanoTime() - started) / 1_000
-        if (debug) synchronized(decisions) {
-            if (decisions.size >= 400) decisions.removeFirst()
-            decisions.addLast("${decisionName(decision)} $type ${micros}us $url")
-        }
-        if (observe) {
-            val payload = json(
-                "tabId" to tab?.tabId, "url" to url.toString(), "type" to type, "method" to (request.method ?: "GET"),
-                "initiator" to initiator, "decision" to decisionName(decision), "micros" to micros
-            )
-            main.post { host.chrome.hostEvent("ext.request", payload) }
-        }
-        return when (decision) {
-            null, NetRules.Decision.Allow -> null
-            NetRules.Decision.Block -> blocked()
-            NetRules.Decision.UpgradeScheme ->
-                if (url.scheme == "http") redirect(url.buildUpon().scheme("https").build().toString(), request, type) else null
-            is NetRules.Decision.Redirect -> redirect(decision.url, request, type)
-        }
+        return null
     }
 
     /**
-     * WebView cannot answer an intercepted request with a real redirect: `WebResourceResponse`
-     * throws for any status in 300..399 (measured; it took the process down). Redirects are
-     * therefore emulated: documents get a page that replaces itself with the target, targets on an
-     * extension origin are served in place, and other subresources are fetched here on the
-     * intercept thread and their body substituted. Non-GET requests are let through unchanged.
+     * The engine decided a tab's request ([DecisionObserver], on the IO thread that took it).
+     * A decision an extension's rule took (`ext:` set) always reaches the core – it is that
+     * extension's matched rule, action count and `onRuleMatchedDebug` event; while an extension
+     * listens for `webRequest`, every decision does, as the material of the observational events.
+     * The rest is only counted here while `debug`.
+     *
+     * Every event carries the tab's document generation the request belonged to
+     * (`BlockingTab.documentGeneration`): the core tells one document's matches from the
+     * next's by it, since the tab's `navigated` event, posted at commit, often lands after the
+     * new page's first decisions.
      */
-    private fun redirect(location: String, request: WebResourceRequest, type: String): WebResourceResponse? {
-        if (type == "main_frame" || type == "sub_frame") {
+    private fun onDecision(tab: BlockingTab, request: Request, decision: Decision, elapsedNanos: Long, cpuNanos: Long) {
+        val micros = elapsedNanos / 1_000
+        val cpuMicros = if (cpuNanos < 0) null else cpuNanos / 1_000
+        val action = when (decision.action) {
+            Decision.Action.ALLOW -> "allow"
+            Decision.Action.BLOCK -> "block"
+            Decision.Action.REDIRECT -> "redirect"
+            Decision.Action.UPGRADE -> "upgrade"
+        }
+        val type = request.type.dnrName
+        if (debug) synchronized(decisions) {
+            if (decisions.size >= 400) decisions.removeFirst()
+            decisions.addLast("$action $type ${micros}us ${cpuMicros ?: "?"}cpu ${request.url}")
+        }
+        val extensionRule = decision.matchedSet?.startsWith(EXT_SET_PREFIX) == true
+        if (!extensionRule && !observeRequests) return
+        val payload = json(
+            "tabId" to tab.tabId,
+            "requestId" to requestIds.getAndIncrement().toString(),
+            "url" to request.url,
+            "type" to type,
+            "method" to request.method,
+            // Chrome's `initiator` is the requesting document's origin, none for a navigation.
+            "initiator" to request.documentUrl?.let { Domains.originOf(it) },
+            "mainFrame" to (request.type == ResourceType.MAIN_FRAME),
+            "document" to request.documentGeneration,
+            "action" to action,
+            "matchedSet" to (decision.matchedSet?.takeIf { extensionRule }),
+            "matchedRule" to (if (extensionRule) decision.matchedRule else null),
+            "micros" to micros,
+            "cpuMicros" to cpuMicros
+        )
+        main.post { host.chrome.hostEvent("ext.request", payload) }
+    }
+
+    /**
+     * The engine's redirect executor ([RedirectExecutor]): a `redirect` or `upgradeScheme` rule
+     * of a subresource, which WebView cannot answer with a real redirect (`WebResourceResponse`
+     * throws for any status in 300..399; measured, it took the process down). Redirects are
+     * therefore emulated: frames get a page that replaces itself with the target, targets on an
+     * extension origin are served in place (uBlock Origin Lite's neutered scripts), and other
+     * subresources are fetched here on the intercept thread and their body substituted. Non-GET
+     * requests, and a target the fetch cannot stand in for, are let through unchanged.
+     */
+    private fun redirect(location: String, request: WebResourceRequest, type: ResourceType, tab: BlockingTab): WebResourceResponse? {
+        if (type == ResourceType.MAIN_FRAME || type == ResourceType.SUB_FRAME) {
             val html = "<!doctype html><meta charset=\"utf-8\"><script>location.replace(${JSONObject.quote(location)})</script>"
             return response("text/html", 200, "OK", html.toByteArray())
         }
@@ -1128,6 +1064,9 @@ class Extensions(private val host: Host) {
         val targetHost = target.host ?: return null
         if (targetHost.endsWith(ORIGIN_SUFFIX)) {
             val ext = served[targetHost.removeSuffix(ORIGIN_SUFFIX)] ?: return notFound()
+            // The rule applied in this partition, so the extension runs there; the private check
+            // is the same one a page's own fetch of the resource would meet.
+            if (tab.containerId == Profiles.PRIVATE_CONTAINER && !ext.allowPrivate) return notFound()
             return serve(ext, (target.path ?: "/").trimStart('/'))
         }
         return fetchSubstitute(location, request)
@@ -1186,17 +1125,6 @@ class Extensions(private val host: Host) {
 
     private fun notFound() = response("text/plain", 404, "Not Found", ByteArray(0))
 
-    /** Chrome answers a blocked request with net::ERR_BLOCKED_BY_CLIENT; the closest WebView has is an empty 403. */
-    private fun blocked() = response("text/plain", 403, "Blocked by extension", ByteArray(0))
-
-    private fun decisionName(decision: NetRules.Decision?): String = when (decision) {
-        null -> "none"
-        NetRules.Decision.Allow -> "allow"
-        NetRules.Decision.Block -> "block"
-        NetRules.Decision.UpgradeScheme -> "upgradeScheme"
-        is NetRules.Decision.Redirect -> "redirect"
-    }
-
     /**
      * A record's directory, or null when the path is not a directory under the store's install
      * root (`files/zen/extensions`): the runtime only serves what the store installed.
@@ -1233,8 +1161,25 @@ class Extensions(private val host: Host) {
     /** The document-start script units currently installed in every tab, across extensions. */
     fun scriptUnits(): List<ScriptUnit> = units.values.flatten()
 
-    /** `[rules, rules without an indexing token]` of the current set, for instrumentation. */
-    fun ruleCounts(): IntArray = rules.let { intArrayOf(it?.rules?.size ?: 0, it?.looseCount ?: 0) }
+    /**
+     * The extensions' rule sets in the engine's current snapshot, for instrumentation: per set,
+     * its rule count and how many of its rules the index cannot bucket (`wildcard`), with the
+     * partitions it is scoped to.
+     */
+    fun ruleSetStats(): JSONArray {
+        val out = JSONArray()
+        for (set in host.blocking.snapshot.ruleSets) {
+            if (!set.id.startsWith(EXT_SET_PREFIX)) continue
+            out.put(
+                json(
+                    "id" to set.id, "rules" to set.rules.size, "wildcard" to set.index.wildcardCount,
+                    "hosts" to set.index.hostCount, "priority" to set.priority,
+                    "partitions" to (set.partitions?.let { JSONArray(it.sorted()) })
+                )
+            )
+        }
+        return out
+    }
 
     /** The WebView of the open popup / options sheet, if any. */
     fun popupView(): ExtensionWebView? = popup?.webView
@@ -1339,7 +1284,10 @@ class Extensions(private val host: Host) {
         for (id in backgrounds.keys.toList()) stopBackground(id)
         notifications.destroy()
         io.shutdownNow()
-        rulesIo.shutdownNow()
+        // The engine outlives the window; a runtime that is gone must not be called (a newer
+        // window's runtime may already have taken the seams over).
+        if (host.blocking.observer === observer) host.blocking.observer = null
+        if (host.blocking.redirector === redirector) host.blocking.redirector = null
     }
 
     companion object {
@@ -1361,6 +1309,8 @@ class Extensions(private val host: Host) {
         )
         const val ORIGIN_SUFFIX = ".ext.zenium.invalid"
         const val GENERATED_BACKGROUND = "_generated_background_page.html"
+        /** The id prefix of the extensions' rule sets in the engine (`engineSetId` in `core/extensions/dnr/sink.ts`). */
+        const val EXT_SET_PREFIX = "ext:"
         val VALID_ID = Regex("^[a-p]{32}$")
         /** `_locales/<dir>`: a language tag with underscores, nothing that could leave the directory. */
         val LOCALE_DIR = Regex("^[A-Za-z0-9_]{1,16}$")

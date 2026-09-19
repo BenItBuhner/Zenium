@@ -20,6 +20,7 @@ import { BLANK_URL } from '@shared/url'
 import { run } from '@renderer/lib/api'
 import { openSpacesDrawer } from '@renderer/lib/gestures/drawer'
 import { toggleOverview } from '@renderer/lib/gestures/stage'
+import { prepareNewTabGrow } from '@renderer/lib/newtab'
 import { activeSpace, activeTab, essentialsFor, tabsOf } from '@renderer/lib/selectors'
 import { openFindBar, openOverlay, openUrlbar } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
@@ -50,7 +51,10 @@ export interface BarItem {
   name?: (ctx: BarItemContext) => string
   /** Toggle buttons report their state. */
   pressed?: (ctx: BarItemContext) => boolean
-  run: (ctx: BarItemContext) => void
+  /** Runs as the finger lands, before `run`: work the tap must find done (a capture). */
+  press?: (ctx: BarItemContext) => void
+  /** The tap; `target` is the button in the bar, for an item whose surface grows out of it. */
+  run: (ctx: BarItemContext, target?: HTMLElement) => void
 }
 
 const glyph = 'h-5 w-5'
@@ -148,7 +152,14 @@ export const BAR_ITEMS: Record<PhoneBarItemId, BarItem> = {
     id: 'new-tab',
     label: 'New tab',
     glyph: () => <Plus className={glyph} />,
-    run: () => window.dispatchEvent(new CustomEvent('zen-new-tab'))
+    // The new tab page grows out of this button (MOT-03): the page behind is captured as the
+    // finger lands, and the button's bounds travel with the event as the surface's origin.
+    press: prepareNewTabGrow,
+    run: (_ctx, target) => {
+      const r = target?.getBoundingClientRect()
+      const origin = r ? { x: r.left, y: r.top, width: r.width, height: r.height } : undefined
+      window.dispatchEvent(new CustomEvent('zen-new-tab', { detail: { origin } }))
+    }
   },
   menu: {
     id: 'menu',

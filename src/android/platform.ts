@@ -9,7 +9,7 @@ import type {
   ShareAction
 } from '@shared/types'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '@shared/types'
-import { resolveDownloadSettings } from '@shared/downloads'
+import { interruptReasonFrom, resolveDownloadSettings } from '@shared/downloads'
 import { newId } from '@shared/ids'
 import type { SharedIntent } from '@shared/shareTarget'
 import {
@@ -48,6 +48,7 @@ import type {
   ReauthHost,
   SessionHost,
   ShellHost,
+  ShortcutHost,
   SystemAutofillStatus,
   UpdateHost,
   WindowHost,
@@ -133,7 +134,9 @@ export function androidCapabilities({
     privateTabs: profiles,
     secureDns: false,
     // The WebView has no preload bridge for `zen://newtab` yet; new tabs stay URL-bar-only.
-    newTabPage: false
+    newTabPage: false,
+    pageTabs: true,
+    pinShortcuts: false
   }
 }
 
@@ -261,6 +264,8 @@ export interface BootInfo {
   profiles?: boolean
   /** The launcher icon colour whose alias is enabled right now (the core re-applies its own). */
   appIcon?: string
+  /** The launcher accepts pinned shortcuts (`ShortcutManagerCompat.isRequestPinShortcutSupported`). */
+  pinShortcuts?: boolean
   /** Persisted JSON documents by name (state.json, history.json, …). */
   files: Record<string, string>
   downloadsDir: string
@@ -297,6 +302,8 @@ export interface HostEventPayloads {
   pause: void
   /** The window is coming back on screen after being hidden (screen off, another app in front). */
   resume: void
+  /** A page view's visibility change (`view.setVisible`) is on screen (`Host.setTabVisible`). */
+  'view.drawn': { tabId: string; visible: boolean }
   'download.started': {
     token: string
     url: string
@@ -324,6 +331,7 @@ export interface HostEventPayloads {
     /** The name the file is actually written under (MediaStore may have made it unique). */
     finalName?: string
     mimeType?: string
+    /** A `DownloadInterruptReason` (Kotlin's `DownloadInterruptReason.wire`) while `interrupted`. */
     error?: string
   }
   'download.done': {
@@ -334,6 +342,7 @@ export interface HostEventPayloads {
     receivedBytes?: number
     totalBytes?: number
     canResume?: boolean
+    /** A `DownloadInterruptReason` when `interrupted`; `dismissed` on a `cancelled` save dialog. */
     error?: string
     mimeType?: string
   }
@@ -380,6 +389,8 @@ export interface HostEventPayloads {
   'ext.notification': { id: string; notificationId: string; event: string; index?: number }
   /** Bytes of a translation model file arriving (`translate.download` in flight). */
   'translate.progress': TranslateProgressEvent
+  /** The launcher confirmed a `shortcut.pin` request (the user accepted the system dialog). */
+  'shortcut.pinned': { id: string }
 }
 
 /**
@@ -730,6 +741,7 @@ export class AndroidPlatform implements Platform {
   readonly blocking: BlockingHost
   readonly privacy: PrivacyHost
   readonly translate: AndroidTranslateHost
+  readonly shortcuts: ShortcutHost
   browser!: Browser
   private windowHost: AndroidWindowHost | null = null
   private zenWindow: ZenWindow | null = null
@@ -749,12 +761,15 @@ export class AndroidPlatform implements Platform {
   ) {
     this.info = { os: boot.os ?? 'android', version: boot.version }
     this.extensionsRoot = boot.extensionsRoot || null
-    this.capabilities = androidCapabilities({
-      sdkInt: boot.sdkInt,
-      extensions: this.extensionsRoot !== null,
-      isolatedWorlds: boot.isolatedWorlds === true,
-      profiles: boot.profiles
-    })
+    this.capabilities = {
+      ...androidCapabilities({
+        sdkInt: boot.sdkInt,
+        extensions: this.extensionsRoot !== null,
+        isolatedWorlds: boot.isolatedWorlds === true,
+        profiles: boot.profiles
+      }),
+      pinShortcuts: boot.pinShortcuts === true
+    }
     this.bootEnvironment = boot.environment ?? null
     this.io = new AndroidStoreIO(bridge, boot.files)
     this.agentTransport = new AndroidAgentTransport(bridge)
@@ -845,6 +860,14 @@ export class AndroidPlatform implements Platform {
           notify: options.notify
         }),
       deletePartial: (item) => bridge.call('download.discard', describe(item)),
+      // Kotlin resolves the recorded location (a MediaStore or SAF `content:` uri, or a path).
+      exists: (item) => bridge.call<boolean>('download.exists', { savePath: item.savePath }),
+      deleteFile: async (item) => {
+        const result = await bridge.call<string>('download.deleteFile', {
+          savePath: item.savePath
+        })
+        return result === 'deleted' || result === 'missing' ? result : 'failed'
+      },
       open: (item) =>
         bridge.call('download.open', {
           id: item.id,
@@ -877,6 +900,9 @@ export class AndroidPlatform implements Platform {
       isDefaultBrowser: () => bridge.call<boolean | null>('app.isDefaultBrowser'),
       // Resolves when the role dialog / default-apps screen hands control back to the app.
       requestDefaultBrowser: () => bridge.call<boolean | null>('app.requestDefaultBrowser')
+    }
+    this.shortcuts = {
+      pin: (request) => bridge.call<boolean>('shortcut.pin', request)
     }
     this.events.send('insets', boot.insets)
   }
@@ -951,6 +977,9 @@ export class AndroidPlatform implements Platform {
     switch (name) {
       case 'insets':
         this.events.send('insets', payload as HostEventPayloads['insets'])
+        return
+      case 'view.drawn':
+        this.events.send('view.drawn', payload as HostEventPayloads['view.drawn'])
         return
       case 'environment':
         browser.pageControls.setEnvironment(payload as HostEventPayloads['environment'])
@@ -1050,7 +1079,7 @@ export class AndroidPlatform implements Platform {
             savePath: p.savePath || undefined,
             finalName: p.finalName || undefined,
             mimeType: p.mimeType || undefined,
-            error: p.error
+            error: p.state === 'interrupted' && p.error ? interruptReasonFrom(p.error) : undefined
           })
         return
       }
@@ -1070,7 +1099,7 @@ export class AndroidPlatform implements Platform {
           receivedBytes: p.receivedBytes,
           totalBytes: p.totalBytes,
           canResume: p.canResume,
-          error: p.error,
+          error: p.state === 'interrupted' && p.error ? interruptReasonFrom(p.error) : undefined,
           mimeType: p.mimeType || undefined
         })
         return
@@ -1147,6 +1176,9 @@ export class AndroidPlatform implements Platform {
         return
       case 'translate.progress':
         this.translate.onProgress(payload as HostEventPayloads['translate.progress'])
+        return
+      case 'shortcut.pinned':
+        browser.webApps.onPinned((payload as HostEventPayloads['shortcut.pinned']).id)
         return
       case 'view.adopt': {
         const p = payload as HostEventPayloads['view.adopt']

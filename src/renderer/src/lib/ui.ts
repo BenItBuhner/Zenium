@@ -8,12 +8,15 @@ import type {
   OverlayKind,
   Rect,
   UIState,
-  UrlbarOpenMode
+  UrlbarOpenMode,
+  WebAppInstallPrompt
 } from '@shared/types'
 import type { Anchor } from './anchor'
 import type { PopoverAlignment } from './portals'
 import { cmd, onEvent, run } from './api'
 import { afterKeyRelease } from './keyRelease'
+import { pageCovered, pageOffScreen, pageViewStore, type Hold } from './pageView'
+import { activeTab } from './selectors'
 import { createStore } from './store'
 import { rememberThumbnail, thumbnailOf } from './thumbnails'
 
@@ -288,10 +291,20 @@ export interface UiState {
   externalProtocol: ExternalProtocolRequest | null
   /** Phone layout: the sheet that rearranges the bar's controls is up. */
   barEditorOpen: boolean
+  /**
+   * Phone layout: a `FrameDialogHost` sheet holds the page under its cover, from before it
+   * rises until it has left the screen (`coverPageUnderSheet`); the dialogs it hosts set their
+   * own flags later and drop them sooner than the sheet's motion runs.
+   */
+  frameSheetOpen: boolean
   /** Phone layout: the Tabs button's quick menu is up, anchored to the button (window px). */
   tabsMenu: Rect | null
   /** The downloads bubble (anchored under the toolbar button) is up. */
   downloadsOpen: boolean
+  /** The default-browser promo (sheet or dialog) is up over a capture of the page. */
+  defaultBrowserPrompt: boolean
+  /** "Add to Home screen": the install sheet (manifest) or the name-edit sheet, when open. */
+  install: WebAppInstallPrompt | null
   /** Safe-area insets of the host window (status bar, gesture bar, IME). */
   insets: Insets
   /**
@@ -364,8 +377,11 @@ export const uiStore = createStore<UiState>(
     siteInfoOpen: false,
     externalProtocol: null,
     barEditorOpen: false,
+    frameSheetOpen: false,
     tabsMenu: null,
     downloadsOpen: false,
+    defaultBrowserPrompt: false,
+    install: null,
     insets: { top: 0, right: 0, bottom: 0, left: 0 },
     stageActive: false,
     hoverCard: HOVER_CARD_HIDDEN,
@@ -576,6 +592,9 @@ function holdMessage(id: number, held: boolean, fire: () => void): void {
  */
 export const coverBandStore = createStore<ContentCover>({ top: 0, bottom: 0 }, 'cover-band')
 
+/** Captures in flight, per tab: a sheet and the dialog it hosts asking together pay for one. */
+const captures = new Map<string, Promise<void>>()
+
 /** Capture the active tab before a chrome overlay hides it. */
 export async function captureActiveTab(tabId: string | null): Promise<void> {
   if (!tabId) {
@@ -583,11 +602,19 @@ export async function captureActiveTab(tabId: string | null): Promise<void> {
     return
   }
   if (snapshotHeld(tabId)) return
-  const data = await cmd('overlay.snapshot', { tabId }).catch(() => null)
-  if (data) rememberThumbnail(tabId, data)
-  // A page that is already hidden (behind the gesture stage) cannot be captured: show what it
-  // looked like the last time it was.
-  uiStore.set({ snapshot: data ?? thumbnailOf(tabId), snapshotTabId: tabId })
+  const pending = captures.get(tabId)
+  if (pending) return pending
+  const capture = (async (): Promise<void> => {
+    const data = await cmd('overlay.snapshot', { tabId }).catch(() => null)
+    if (data) rememberThumbnail(tabId, data)
+    // A page that is already hidden (behind the gesture stage) cannot be captured: show what it
+    // looked like the last time it was.
+    uiStore.set({ snapshot: data ?? thumbnailOf(tabId), snapshotTabId: tabId })
+  })().finally(() => {
+    captures.delete(tabId)
+  })
+  captures.set(tabId, capture)
+  return capture
 }
 
 /**
@@ -600,6 +627,19 @@ export function snapshotHeld(tabId: string | null): boolean {
   return tabId !== null && ui.snapshotTabId === tabId && ui.snapshot !== null
 }
 
+/** The overlays that are sections of the Settings page: a tab on a host with page tabs. */
+const SETTINGS_OVERLAYS: ReadonlySet<OverlayKind> = new Set(['settings', 'shortcuts', 'sync'])
+
+/**
+ * Whether `kind` opens as an overlay on this host at all. Settings (with Shortcuts and Sync, its
+ * sections) is a tab wherever the host has page tabs (`page.open`, `lib/pages.ts`): the overlay
+ * is the desktop's until its program adopts the tab, and nothing may draw it over a phone.
+ */
+export function overlayAvailable(kind: OverlayKind): boolean {
+  if (!SETTINGS_OVERLAYS.has(kind)) return true
+  return !browserStore.get().state?.capabilities.pageTabs
+}
+
 export async function openOverlay(
   kind: OverlayKind,
   activeTabId: string | null,
@@ -607,6 +647,14 @@ export async function openOverlay(
   folderId: string | null = null,
   section: string | null = null
 ): Promise<void> {
+  if (!overlayAvailable(kind)) {
+    // The Settings page's tab, through the core's one route (a section for Shortcuts / Sync).
+    run('page.open', {
+      id: 'settings',
+      section: kind === 'settings' ? section : kind
+    })
+    return
+  }
   await captureActiveTab(activeTabId)
   // Overlays render over the content area; a phone drawer would sit on top of them.
   uiStore.set({ drawerOpen: false })
@@ -651,6 +699,8 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.pageDialogOpen &&
     !ui.windowPromptOpen &&
     !ui.downloadsOpen &&
+    !ui.defaultBrowserPrompt &&
+    !ui.install &&
     !ui.stageActive &&
     !ui.zoomBubble &&
     !ui.newTabShortcutDialog &&
@@ -664,7 +714,15 @@ export function returnFocusToPage(): void {
   if (!chromeNeedsKeyboard()) run('focus.content', undefined)
 }
 
-/** Drop the cached snapshot once nothing needs it, so the next overlay gets a fresh capture. */
+/** A snapshot nothing needs any more, kept only until the host draws the page back. */
+let snapshotStale = false
+
+/**
+ * Drop the cached snapshot once nothing needs it, so the next overlay gets a fresh capture.
+ * Where the chrome lies under the pages the picture stays a little longer: until the host has
+ * drawn the live page back in its place (`lib/pageView.ts`), so the frame between shows the
+ * page's picture and not the window behind it; the drop then follows on its own.
+ */
 export function invalidateSnapshot(): void {
   const ui = uiStore.get()
   if (
@@ -681,12 +739,15 @@ export function invalidateSnapshot(): void {
     !ui.extensionPopup &&
     ui.floatingChrome === 0 &&
     !ui.barEditorOpen &&
+    !ui.frameSheetOpen &&
     !ui.tabsMenu &&
     !ui.securityPromptOpen &&
     !ui.permissionPromptOpen &&
     !ui.pageDialogOpen &&
     !ui.windowPromptOpen &&
     !ui.downloadsOpen &&
+    !ui.defaultBrowserPrompt &&
+    !ui.install &&
     !ui.stageActive &&
     !ui.zoomBubble &&
     ui.hoverCard.tabId === null &&
@@ -694,8 +755,84 @@ export function invalidateSnapshot(): void {
     !ui.siteDataConfirm &&
     !bookmarkChromeOpen(ui)
   ) {
+    if (ui.snapshotTabId && pageOffScreen(pageViewStore.get(), ui.snapshotTabId)) {
+      snapshotStale = true
+      return
+    }
+    snapshotStale = false
     uiStore.set({ snapshot: null, snapshotTabId: null })
   }
+}
+
+/**
+ * Wait for the active page's live view to be off the screen before a sheet comes up over its
+ * picture (`pageCovered`): resolves at once when no chrome surface is covering the page – then
+ * nothing is going to take the view down – or where the swap needs no timing.
+ */
+export function activePageCovered(): Hold {
+  const state = browserStore.get().state
+  const ui = uiStore.get()
+  if (!state || !overlayCoversContent(ui)) return { promise: Promise.resolve(), cancel: () => {} }
+  return pageCovered(activeTab(state)?.id ?? null, state.platform)
+}
+
+export interface SheetCover {
+  /** Resolves once the live page is off the screen under the sheet's cover; never rejects. */
+  promise: Promise<void>
+  /** The sheet has left the screen (or never came up): let the page back. */
+  release(): void
+}
+
+/** Sheets holding the page under their cover (`coverPageUnderSheet`) right now. */
+let sheetCovers = 0
+
+/**
+ * A chassis sheet that mounts before anything covers the page – `FrameDialogHost` on a phone,
+ * whose dialogs capture the page and set their own flag only after they are up, and drop it
+ * the moment they go – takes the cover itself, in the order every other surface keeps: the live
+ * page is captured first, then `frameSheetOpen` asks the host to hide the page views (the
+ * layout reporter hides them once the picture is painted, `lib/cover.ts`), and the promise
+ * resolves once they are down (`pageCovered`), so the recede never starts on a page about to
+ * be swapped. `release` drops the flag: call it once the sheet has left the screen, so the page
+ * comes back at the transform it left at, and the picture goes once the host has drawn it.
+ */
+export function coverPageUnderSheet(): SheetCover {
+  const state = browserStore.get().state
+  const tabId = state ? (activeTab(state)?.id ?? null) : null
+  let live = true
+  let taken = false
+  let hold: Hold | null = null
+  const promise = captureActiveTab(tabId).then(() => {
+    if (!live) return
+    taken = true
+    sheetCovers++
+    if (!uiStore.get().frameSheetOpen) uiStore.set({ frameSheetOpen: true })
+    // No session yet (or no page in it): nothing to wait for.
+    if (!state) return
+    hold = pageCovered(tabId, state.platform)
+    return hold.promise
+  })
+  return {
+    promise,
+    release() {
+      if (!live) return
+      live = false
+      hold?.cancel()
+      if (!taken) return
+      taken = false
+      if (--sheetCovers > 0) return
+      uiStore.set({ frameSheetOpen: false })
+      invalidateSnapshot()
+    }
+  }
+}
+
+const snapshotFlags = globalThis as unknown as { __zenSnapshotWired?: boolean }
+if (!snapshotFlags.__zenSnapshotWired) {
+  snapshotFlags.__zenSnapshotWired = true
+  pageViewStore.subscribe(() => {
+    if (snapshotStale) invalidateSnapshot()
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -745,6 +882,20 @@ export function closeBookmarkChrome(
   uiStore.set(patch)
   invalidateSnapshot()
   if (!opts.keepFocus) returnFocusToPage()
+}
+
+/** The "Add to Home screen" sheet dims the page behind it like a menu: the snapshot comes first. */
+export async function openInstallSheet(prompt: WebAppInstallPrompt): Promise<void> {
+  await captureActiveTab(prompt.tabId)
+  run('focus.chrome', undefined)
+  uiStore.set({ install: prompt, drawerOpen: false })
+}
+
+export function closeInstallSheet(tabId: string): void {
+  if (uiStore.get().install?.tabId !== tabId) return
+  uiStore.set({ install: null })
+  invalidateSnapshot()
+  returnFocusToPage()
 }
 
 export async function openUrlbar(
@@ -1046,12 +1197,15 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.extensionPopup !== null ||
     ui.floatingChrome > 0 ||
     ui.barEditorOpen ||
+    ui.frameSheetOpen ||
     ui.tabsMenu !== null ||
     ui.securityPromptOpen ||
     ui.permissionPromptOpen ||
     ui.pageDialogOpen ||
     ui.windowPromptOpen ||
     ui.downloadsOpen ||
+    ui.defaultBrowserPrompt ||
+    ui.install !== null ||
     ui.stageActive ||
     ui.zoomBubble !== null ||
     ui.hoverCard.tabId !== null ||

@@ -9,6 +9,8 @@ import type { EngineRelayRequest, EngineRelayResponse } from './translateEngine'
 import type { UpdateSettings, UpdateStatus } from './updates'
 import type { BlockingSettings, BlockingStatus } from './blocking'
 import type { PrivacySettings, PrivacyStatus } from './privacy'
+import type { InternalPageId } from './internalPages'
+import type { WebAppInfo } from './webApp'
 
 export type Platform = 'linux' | 'win32' | 'darwin' | 'android'
 
@@ -106,6 +108,15 @@ export interface HostCapabilities {
    * Without it new tabs stay blank and the URL bar alone stands in for a new tab page.
    */
   newTabPage: boolean
+  /**
+   * The chrome can draw an internal page inside the content area, so chrome-rendered pages
+   * (Settings) open as tabs of their own rather than as an overlay above the current tab
+   * (`shared/internalPages.ts`, `render: 'chrome'`). Android has this; the desktop keeps its
+   * overlay until its program adopts the page model. Document pages are tabs on every host.
+   */
+  pageTabs: boolean
+  /** Pages can be pinned to the launcher / Home screen ("Add to Home screen"). */
+  pinShortcuts: boolean
 }
 
 export interface Rect {
@@ -269,12 +280,15 @@ export interface Tab {
   /** Requests the blocking engine stopped for the current document (resets on navigation). */
   blockedCount: number
   /**
-   * Tab whose page opened this one (a link into a new tab, `window.open`). Mobile system back at
-   * the tab's first page closes it and returns there, as Chrome does for a child tab.
+   * Tab whose page opened this one (a link into a new tab, `window.open`; the tab an internal
+   * page such as Settings was opened from). Mobile system back at the tab's first page closes it
+   * and returns there, as Chrome does for a child tab. A session's own: not persisted.
    */
   openerTabId: string | null
   /** Opened by another app's intent or share; system back at its first page returns to that app. */
   fromIntent: boolean
+  /** The web app manifest of the current page, once its page script has posted it; not persisted. */
+  webApp: WebAppInfo | null
 }
 
 /** Colours a tab group (folder) can wear; the phone chrome paints group cards with them. */
@@ -451,6 +465,47 @@ export interface ExtensionInfo {
   commands?: ExtensionCommandInfo[]
   /** Why some commands stayed unbound (a Zenium shortcut or another extension holds the key). */
   commandConflicts?: string[]
+  /**
+   * The extension's error console (Chrome's "Errors" on the details page): the last hundred
+   * load failures, uncaught exceptions, unhandled rejections and `console.error` / `console.warn`
+   * lines from its worker, its pages and its content scripts, oldest first, repeats collapsed
+   * (`count`). `extension.clearErrors` empties it.
+   */
+  errors: ExtensionErrorEntry[]
+}
+
+export type ExtensionErrorLevel = 'warning' | 'error'
+
+/**
+ * Where an error console line came from: `load` (the extension could not be loaded), `worker`
+ * (the MV3 service worker), `page` (an extension page: popup, options, background page, side
+ * panel, offscreen document), `content` (a content script or user script of the extension
+ * running in a tab page).
+ */
+export type ExtensionErrorSource = 'load' | 'worker' | 'page' | 'content'
+
+/** One line of an extension's error console (`ExtensionInfo.errors`). */
+export interface ExtensionErrorEntry {
+  /** Increasing within the extension's console; a cleared console starts over. */
+  id: number
+  level: ExtensionErrorLevel
+  source: ExtensionErrorSource
+  message: string
+  /** The script the line came from, or null when unknown (the extension's own files keep their `chrome-extension://` URL). */
+  url: string | null
+  /** 1-based line in `url`, or null. */
+  line: number | null
+  /**
+   * The context it happened in: the extension page's URL, the worker's script URL, or the tab
+   * page a content script ran in; null when unknown.
+   */
+  context: string | null
+  /** First occurrence, ms since epoch. */
+  at: number
+  /** Latest occurrence; equals `at` until the line repeats. */
+  lastAt: number
+  /** How many times the same line was seen (identical level, source, message, url, line, context). */
+  count: number
 }
 
 /** The extension side panel a window is showing (`chrome.sidePanel`), beside the page. */
@@ -1065,6 +1120,48 @@ export interface DownloadDanger {
   message: string
 }
 
+/**
+ * Why an interrupted download stopped: Chromium's `download_interrupt_reasons` in kebab case,
+ * grouped as Chromium groups them. `network-*` failures of a resumable transfer are retried by
+ * the hosts on their own before they reach the row; `user-shutdown` is a transfer the browser
+ * quit over (Resume continues from the kept bytes); `crash` is one the browser did not get to
+ * shut down. The hosts map their engine's errors onto this set (Electron: the item's state and
+ * the `net::` error or HTTP status its request ended with; Android: the downloader's
+ * exceptions and HTTP statuses); `interruptMessage` in `shared/downloads.ts` words each for
+ * the row and `DownloadItem.errorMessage` carries that wording.
+ */
+export type DownloadInterruptReason =
+  | 'network-failed'
+  | 'network-timeout'
+  | 'network-disconnected'
+  | 'network-server-down'
+  | 'server-failed'
+  | 'server-no-range'
+  | 'server-bad-content'
+  | 'server-unauthorized'
+  | 'server-forbidden'
+  | 'server-unreachable'
+  | 'file-failed'
+  | 'file-access-denied'
+  | 'file-no-space'
+  | 'file-name-too-long'
+  | 'file-too-large'
+  | 'file-virus-infected'
+  | 'file-blocked'
+  | 'file-security-check-failed'
+  | 'file-same-as-source'
+  | 'user-canceled'
+  | 'user-shutdown'
+  | 'crash'
+
+/**
+ * What `download.deleteFile` did: the file is gone now, was gone already (`missing`, the row is
+ * marked `fileMissing` either way), could not be removed (`failed`: locked, a folder, no
+ * permission), or the row has no completed file to delete (`not-completed`: unknown id, in
+ * flight, cancelled, interrupted or still quarantined behind a danger warning).
+ */
+export type DownloadDeleteFileResult = 'deleted' | 'missing' | 'failed' | 'not-completed'
+
 export interface DownloadItem {
   id: string
   url: string
@@ -1090,8 +1187,17 @@ export interface DownloadItem {
   mimeType: string
   /** The server honours Range requests, so paused and interrupted transfers can continue. */
   canResume: boolean
-  /** Why an interrupted download stopped (Chromium's `net::` error name or a short reason). */
-  error?: string
+  /** Why an interrupted download stopped; set exactly while `state` is `interrupted`. */
+  error?: DownloadInterruptReason
+  /** `error` in the words of Chrome's download bubble ("Check internet connection"), for the row. */
+  errorMessage?: string
+  /**
+   * The completed file is no longer where `savePath` says: deleted through `download.deleteFile`
+   * or found missing by an existence check (when the list loads, when the row is opened or
+   * revealed, on `download.exists`). Chrome greys such a row "Deleted" and offers Retry, which
+   * downloads the file again into the same row.
+   */
+  fileMissing?: boolean
   danger: DownloadDanger
   /** The user chose "Keep" for a flagged file: it left quarantine and may be opened. */
   dangerAccepted: boolean
@@ -1465,6 +1571,47 @@ export type NewTabPageAction =
  */
 export type NewTabPageCommand = { type: 'remove-tile'; id: string }
 
+// ---------------------------------------------------------------------------
+// New tab page (phone): a quiet surface on the space gradient, customisable per Chrome / Edge
+// ---------------------------------------------------------------------------
+
+/**
+ * Layout presets. `focused` is the search field and the top-site tiles on the bare space
+ * gradient; `inspirational` adds a wallpaper; `informational` would add a feed on top of that
+ * (no feed core exists, so it is offered as "not available" and renders like `inspirational`);
+ * `custom` shows exactly the `modules` the user toggled.
+ */
+export type NewTabPreset = 'focused' | 'inspirational' | 'informational' | 'custom'
+/** Which sites the tiles show: history frecency (pins first) or only the pinned ones. */
+export type NewTabShortcutStyle = 'most-visited' | 'my-shortcuts'
+/** The wallpaper the wallpaper presets draw: one derived from the space theme, or a picked image. */
+export type NewTabWallpaper = 'space' | 'image'
+
+export interface NewTabModules {
+  searchBox: boolean
+  shortcuts: boolean
+  wallpaper: boolean
+  /** Reserved for a feed core; nothing renders it yet. */
+  feed: boolean
+}
+
+export interface NewTabPinnedSite {
+  url: string
+  title: string
+}
+
+export interface NewTabPhoneSettings {
+  preset: NewTabPreset
+  /** Sections the `custom` preset shows; the named presets ignore them. */
+  modules: NewTabModules
+  shortcutStyle: NewTabShortcutStyle
+  wallpaper: NewTabWallpaper
+  /** Sites pinned to the front of the tiles, in order. */
+  pinned: NewTabPinnedSite[]
+  /** Hosts the user removed from the most-visited tiles. */
+  hiddenHosts: string[]
+}
+
 export interface Settings {
   colorScheme: ColorScheme
   /** Colour of the app icon (launcher alias on Android, window / Dock icon on desktop). */
@@ -1562,6 +1709,10 @@ export interface Settings {
   privacy: PrivacySettings
   /** The new tab page: whether it opens, what its grid shows, what it paints behind. */
   newTab: NewTabSettings
+  /** The phone's new tab page (preset, sections, wallpaper, pinned and removed sites). */
+  newTabPhone: NewTabPhoneSettings
+  /** The one-time gesture hint (a toast after the first page) has been shown (phones). */
+  gestureHintDone: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -2410,6 +2561,7 @@ export interface MenuDescriptor {
     | 'space'
     | 'folder'
     | 'newtab'
+    | 'topsite'
     | 'app'
     | 'bookmark'
     | 'history'
@@ -2636,6 +2788,12 @@ export interface Commands {
   'folder.delete': { args: { folderId: string; unpack: boolean }; result: void }
   'folder.contextMenu': { args: { folderId: string }; result: void }
   'newtab.contextMenu': { args: void; result: void }
+  /** Long-press on a new tab page tile: pin / unpin, remove, open in a new tab. */
+  'newTabPhone.tileContextMenu': { args: { url: string; title: string }; result: void }
+  /** The picked new tab wallpaper image as a data URL (null when none was picked). */
+  'newTabPhone.wallpaper': { args: void; result: string | null }
+  /** Store (or with null, forget) the picked wallpaper image; the settings pick when it shows. */
+  'newTabPhone.setWallpaper': { args: { dataUrl: string | null }; result: void }
   /**
    * The "⋯" application menu. `anchor` is the menu button in chrome CSS pixels: the menu opens
    * along its bottom edge; without it the menu opens at the pointer. `keyboard` marks a menu
@@ -2889,6 +3047,16 @@ export interface Commands {
   /** "Discard": delete a flagged file (or what is left of a failed one) and drop the row. */
   'download.discard': { args: { id: string }; result: void }
   'download.setOpenWhenDone': { args: { id: string; on: boolean }; result: void }
+  /**
+   * Delete a completed download's file from disk (Chrome's "Delete file"); the row stays and
+   * reads `fileMissing`. Resolves with what happened, `missing` when the file was gone already.
+   */
+  'download.deleteFile': { args: { id: string }; result: DownloadDeleteFileResult }
+  /**
+   * Whether a completed download's file is still on disk, checked now; the row's `fileMissing`
+   * follows the answer. False for rows without a completed file.
+   */
+  'download.exists': { args: { id: string }; result: boolean }
   /** Let the user pick the default downloads folder; resolves with it (or null when dismissed). */
   'download.chooseDirectory': { args: void; result: string | null }
   /** Show the downloads panel (Ctrl/Cmd+J, the app menu, a completion notification). */
@@ -2945,6 +3113,31 @@ export interface Commands {
   /** Blank windows: move every local tab back into one of the real spaces. */
   'window.moveTabsToSpace': { args: { spaceId: string }; result: void }
 
+  /**
+   * Open an internal page (`shared/internalPages.ts`) in its tab. A page with `reuse: 'window'`
+   * that the window already has (in any of its spaces) is focused and, when `section` is given,
+   * moved to that section; otherwise a new tab opens after `openerTabId` (default: the active
+   * tab) and remembers it as its opener (`Tab.openerTabId`), so a back at the page's first entry
+   * closes it back to that tab. `section: null` is the landing page; leaving it out keeps the
+   * section a reused tab is on. A chrome page's section history is the tab's history: `tab.back`
+   * / `tab.forward` step through it and `Tab.canGoBack` reads it. A chrome page on a host
+   * without `capabilities.pageTabs` opens as its overlay instead. Resolves with the tab id, or
+   * null when an overlay was opened.
+   */
+  'page.open': {
+    args: { id: InternalPageId; section?: string | null; openerTabId?: string | null }
+    result: string | null
+  }
+  /**
+   * Move a page tab to a section of its page (`null` is the landing page): a new history entry,
+   * or with `replace` the current one rewritten – the two-pane layout's nav switches categories
+   * without stacking them (v2 §10.5, Firefox's `about:preferences#category`). A document page
+   * loads the section's address in its view.
+   */
+  'page.navigate': {
+    args: { tabId: string; section: string | null; replace?: boolean }
+    result: void
+  }
   'page.screenshot': { args: { tabId: string }; result: void }
   'page.print': { args: { tabId: string }; result: void }
   'page.savePage': { args: { tabId: string }; result: void }
@@ -3042,6 +3235,8 @@ export interface Commands {
   'extension.closePopup': { args: void; result: void }
   /** Context menu of an extension's toolbar button (its `contextMenus` items plus Zenium's). */
   'extension.actionContextMenu': { args: { id: string; x?: number; y?: number }; result: void }
+  /** Empties the extension's error console (`ExtensionInfo.errors`). */
+  'extension.clearErrors': { args: { id: string }; result: void }
   // ---- PROVISIONAL: extensions UI (PR #68) ------------------------------------------------------
   // Added by the UI wave ahead of the engine; `src/main/platform/extensions.ts` implements them
   // as they stand. The API layer (#91) landed without competing names (`ExtensionAction` above is
@@ -3285,6 +3480,14 @@ export interface Commands {
   'translate.removeModel': { args: { from: string; to: string }; result: void }
   /** The chrome renderer hands back an answer of the engine worker it runs for the core. */
   'translate.engineResponse': { args: EngineRelayResponse; result: void }
+  /** Open the install / name-edit sheet for a tab (the ambient banner's "Add"). */
+  'webapp.openInstall': { args: { tabId: string }; result: void }
+  /** Pin the tab's page to the Home screen under `title` (the sheet's primary button). */
+  'webapp.pin': { args: { tabId: string; title: string }; result: void }
+  /** The install sheet closed without pinning (a site's deferred `prompt()` learns "dismissed"). */
+  'webapp.cancelInstall': { args: { tabId: string }; result: void }
+  /** The ambient banner went away: swiped (starts the cooldown) or timed out. */
+  'webapp.dismissBanner': { args: { tabId: string; reason: 'swipe' | 'timeout' }; result: void }
 }
 
 export type CommandName = keyof Commands
@@ -3382,6 +3585,19 @@ export interface Events {
   'session.recentlyClosedChanged': void
   /** Safe-area insets of the host window in CSS pixels (mobile status bar, IME, cutouts). */
   insets: { top: number; right: number; bottom: number; left: number }
+  /**
+   * The core placed the page views as a `layout.report` asked: `hid` and `shown` name the tabs
+   * whose views it took down or brought back under that report (a tab without a view, or one
+   * already where the report wanted it, is in neither). The host's own word that a change is on
+   * screen follows as `view.drawn` where the chrome lies under the pages (`lib/pageView.ts`).
+   */
+  'layout.applied': { contentHidden: boolean; hid: string[]; shown: string[] }
+  /**
+   * The host has drawn the frame in which `tabId`'s page view is `visible` (or gone) at its
+   * place – raised by the Android host after every `view.setVisible`, for the chrome to time
+   * the swap between the live page and its cover.
+   */
+  'view.drawn': { tabId: string; visible: boolean }
   /** A login was deleted; `passwords.restore` brings it back for a while. */
   'passwords.removed': { id: string; site: string }
   /**
@@ -3401,9 +3617,43 @@ export interface Events {
   /** An install finished; the renderer toasts it with a Pin action while it is not in the toolbar. */
   'extension.installed': { id: string; name: string; toolbarPinned: boolean }
   // ---- end PROVISIONAL ----------------------------------------------------------------------------
+  /** Show the install sheet (with a manifest) or the lighter name-edit sheet (without one). */
+  'webapp.install': WebAppInstallPrompt
+  /** Show the ambient "Add <app> to Home screen" banner over the page. */
+  'webapp.banner': WebAppBanner
+  /** Take the banner down (navigation left the app, or it was pinned another way). */
+  'webapp.bannerHide': { tabId: string }
+  /**
+   * The launcher confirmed a Home screen shortcut (NOT-20): the chrome toasts "Added <name> to
+   * Home screen" with an Open action that takes `tabId` to `url`, the shortcut's own.
+   */
+  'webapp.pinned': { tabId: string | null; name: string; url: string | null }
 }
 
 export type EventName = keyof Events
+
+/** Everything the install sheet shows; a snapshot so it survives the tab navigating on. */
+export interface WebAppInstallPrompt {
+  tabId: string
+  /** Suggested launcher title (the manifest's short name, else the page title or host). */
+  title: string
+  url: string
+  origin: string
+  /** Icon to preview: a manifest icon, else the page's favicon, else null for a letter tile. */
+  icon: string | null
+  /** The manifest, when the page has one; null selects the name-edit sheet. */
+  info: WebAppInfo | null
+  /** Colour behind the letter tile (the manifest's theme colour or the space accent). */
+  tint: string | null
+}
+
+export interface WebAppBanner {
+  tabId: string
+  name: string
+  origin: string
+  icon: string | null
+  tint: string | null
+}
 
 // ---------------------------------------------------------------------------
 // Recently closed tabs and windows (persisted in state.json, summaries in the snapshot)

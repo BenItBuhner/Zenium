@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import type { LayoutReport, Rect, UIState } from '@shared/types'
+import { BLANK_URL } from '@shared/url'
 import { run } from '@renderer/lib/api'
 import {
   chromeUnderPages,
@@ -16,6 +17,7 @@ import {
   SPLIT_GAP_TOUCH,
   viewCover
 } from '@renderer/lib/layout'
+import { pageOffScreen, pageViewStore } from '@renderer/lib/pageView'
 import { activeTab, visibleTabIds } from '@renderer/lib/selectors'
 import {
   contentAreaStore,
@@ -30,7 +32,9 @@ export interface LayoutInfo {
   /**
    * Whether chrome covers the content area, so the chrome paints the page's picture there. On
    * Android the host is told to hide the page views a little later than this turns true: once
-   * that picture is painted (see `lib/cover.ts`).
+   * that picture is painted (see `lib/cover.ts`); and it stays true a little after the chrome
+   * has uncovered the page: until the host has drawn the live view back (`lib/pageView.ts`), so
+   * the picture never leaves before the page is there to take its place.
    */
   contentHidden: boolean
 }
@@ -121,6 +125,9 @@ export function useLayoutReporter(
   // live page is swapped for its cover, so the hide follows the cover's paint. The desktop hosts
   // report the hide the moment it is wanted, as they always have.
   const followsCover = chromeUnderPages(state.platform)
+  // ... and the cover stays until the host has drawn the live page back where it was.
+  const activeTabId = activeTab(state)?.id ?? null
+  const pageAway = pageViewStore.use((s) => followsCover && pageOffScreen(s, activeTabId))
   /** What the last report said about the page views (the latch of `decideHidden`). */
   const reportedHidden = useRef(false)
   /** When the current wait for a cover began, or null outside one. */
@@ -182,6 +189,10 @@ export function useLayoutReporter(
           const c = viewCover(area, p.rect, band)
           return c ? { ...p, cover: c } : p
         })
+        // The phone draws its new tab page in the chrome (`NewTabPage`); the blank page's view
+        // would only cover it.
+        if (formFactor === 'phone')
+          placements = placements.filter((p) => state.tabs[p.tabId]?.url !== BLANK_URL)
         let glance: LayoutReport['glance'] = null
         if (state.glance) {
           // The parent is frozen behind the glance card; the card itself appears once its open
@@ -226,8 +237,9 @@ export function useLayoutReporter(
     contentHidden,
     gap,
     band,
-    followsCover
+    followsCover,
+    formFactor
   ])
 
-  return { area, contentHidden }
+  return { area, contentHidden: contentHidden || pageAway }
 }

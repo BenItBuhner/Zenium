@@ -15,6 +15,7 @@ import {
   DEFAULT_CONTAINER_ID,
   type BookmarkNode,
   type BookmarksBarMode,
+  type DownloadDeleteFileResult,
   type Rect,
   type Settings,
   type Shortcut,
@@ -25,7 +26,8 @@ import { ZOOM_CEILING, ZOOM_FLOOR, formatZoom, siteKey } from '../shared/pageCon
 import { spaceLabel } from '../shared/defaults'
 import { bookmarkUrlCount, isBookmarkRoot } from '../shared/bookmarks'
 import { fileExtension, resolveDownloadSettings } from '../shared/downloads'
-import { canRetry, isInFlight, isQuarantined } from './downloads'
+import { canRetryDownload, deleteFileToast, displayName } from '../shared/downloadsShell'
+import { isInFlight, isQuarantined } from './downloads'
 import { mayAutoOpen } from './downloads/danger'
 import { applicationMenu, menuSignature, runFromMenuBar } from './menuBar'
 
@@ -740,8 +742,7 @@ export class Menus {
         this.fullUrlsItem(win),
         {
           label: 'Manage Search Engines…',
-          click: () =>
-            this.browser.emit('overlay.open', { kind: 'settings', section: 'search' }, win)
+          click: () => void this.browser.pages.open('settings', 'search', win)
         }
       ])
       this.popup(joinGroups(groups), win, 'urlbar')
@@ -1289,6 +1290,33 @@ export class Menus {
     )
   }
 
+  /** Long-press on a new tab page tile: open it elsewhere, pin it, or take it off the page. */
+  showTopSiteContextMenu(url: string, title: string, win: ZenWindow): void {
+    if (!isNavigableUrl(url)) return
+    const { tabs, state, newTabPhone } = this.browser
+    const pinned = state.settings.newTabPhone.pinned.some((p) => p.url === url)
+    this.popup(
+      [
+        {
+          label: 'Open in New Tab',
+          click: () => tabs.createTab({ url, active: false }, win)
+        },
+        {
+          label: 'Copy Link',
+          click: () => this.browser.platform.clipboard.writeText(url)
+        },
+        { type: 'separator' },
+        {
+          label: pinned ? 'Unpin Shortcut' : 'Pin Shortcut',
+          click: () => (pinned ? newTabPhone.unpin(url) : newTabPhone.pin(url, title))
+        },
+        { label: 'Remove', click: () => newTabPhone.remove(url) }
+      ],
+      win,
+      'topsite'
+    )
+  }
+
   // ---------------------------------------------------------------------------
   // Spaces & folders
   // ---------------------------------------------------------------------------
@@ -1326,7 +1354,7 @@ export class Menus {
         { type: 'separator' },
         {
           label: 'Space Routing Settings…',
-          click: () => this.browser.emit('overlay.open', { kind: 'settings' }, win)
+          click: () => void this.browser.pages.open('settings', undefined, win)
         },
         { type: 'separator' },
         {
@@ -1683,10 +1711,13 @@ export class Menus {
    * downloads-11): Open when done while the transfer runs and Open once the file is on disk,
    * Always open files of this type for the types Chromium lets open by themselves (the engine's
    * `autoOpenTypes`), Show in folder, Copy download link, then the transfer's own verb – Pause,
-   * Resume or Cancel while it runs, Retry once it failed or was cancelled – and Remove from list
-   * for anything settled. A flagged file waiting on Keep / Delete offers only its link and its
-   * removal (Delete on the row is what takes the file away). Deleting a finished file is not an
-   * engine command yet (`download.deleteFile`), so the menu has no such item.
+   * Resume or Cancel while it runs, Retry once it was cancelled or failed for a reason a retry
+   * can get past (`canRetryDownload`, the same predicate as the row's controls) – then Delete
+   * file for a finished file on disk (Chrome's, on `download.deleteFile`; the row stays as
+   * Deleted, a toast says when the file would not go) and Remove from list for anything settled.
+   * A flagged file waiting on Keep / Delete offers only its link and its removal (Delete on the
+   * row is what takes the file away). A finished file the engine found gone from disk
+   * (`fileMissing`) has nothing to open, show or delete and offers Retry instead.
    */
   showDownloadContextMenu(
     id: string,
@@ -1697,9 +1728,9 @@ export class Menus {
     const item = downloads.item(id)
     if (!item) return
     const inFlight = isInFlight(item.state)
-    const onDisk = item.state === 'completed' && !isQuarantined(item)
+    const onDisk = item.state === 'completed' && !isQuarantined(item) && !item.fileMissing
     const resumable = item.state === 'paused' || (item.state === 'interrupted' && item.canResume)
-    const retryable = canRetry(item)
+    const retryable = canRetryDownload(item)
     const name = item.finalName || item.filename
     const ext = fileExtension(name)
     const settings = resolveDownloadSettings(this.browser.state.settings)
@@ -1748,12 +1779,40 @@ export class Menus {
         ...(!resumable && retryable ? [{ label: 'Retry', click: () => downloads.retry(id) }] : []),
         ...(inFlight ? [{ label: 'Cancel', click: () => downloads.cancel(id) }] : []),
         { type: 'separator' },
+        ...(item.state === 'completed'
+          ? [
+              {
+                label: 'Delete File',
+                enabled: onDisk && Boolean(item.savePath),
+                click: () => void this.deleteDownloadFile(id, win)
+              }
+            ]
+          : []),
         { label: 'Remove from List', enabled: !inFlight, click: () => downloads.remove(id) }
       ],
       win,
       'download',
       anchor
     )
+  }
+
+  /**
+   * The menu's Delete file: the engine removes the file and marks the row Deleted; when the
+   * file would not go (locked, a folder, no permission) the window is told in a toast.
+   */
+  private async deleteDownloadFile(id: string, win: ZenWindow): Promise<void> {
+    const { downloads } = this.browser
+    const item = downloads.item(id)
+    if (!item) return
+    const name = displayName(item)
+    let result: DownloadDeleteFileResult = 'failed'
+    try {
+      result = await downloads.deleteFile(id)
+    } catch {
+      // The host's delete threw: the file is where it was.
+    }
+    const toast = deleteFileToast(result, name)
+    if (toast) this.browser.toast(toast, 'error', win)
   }
 
   /**
@@ -1805,6 +1864,31 @@ export class Menus {
       win,
       'history'
     )
+  }
+
+  /**
+   * "Add to Home screen" on hosts that pin shortcuts, for web pages outside private windows.
+   * Inside the scope of an app that is already on the Home screen the item reads
+   * "Open <app>" and goes to the app's start URL instead (PWA-11).
+   */
+  private homeScreenItems(active: Tab | undefined, win: ZenWindow): Template {
+    const { webApps } = this.browser
+    if (!active || !webApps.canPin(active, win)) return []
+    const pinned = webApps.pinnedFor(active.url)
+    if (pinned) {
+      return [
+        {
+          label: `Open ${pinned.name}`,
+          click: () => this.browser.tabs.navigate(active.id, pinned.startUrl)
+        }
+      ]
+    }
+    return [
+      {
+        label: 'Add to Home Screen',
+        click: () => webApps.openInstall(active.id, win)
+      }
+    ]
   }
 
   /**
@@ -1993,6 +2077,7 @@ export class Menus {
           enabled: Boolean(active) && /^https?:/i.test(active!.url),
           click: () => active && this.browser.shareTab(active.id, win)
         }),
+        ...this.homeScreenItems(active, win),
         ...when(caps.print, {
           label: 'Print…',
           action: 'page.print',
@@ -2034,19 +2119,18 @@ export class Menus {
             { type: 'separator' },
             {
               label: 'Resource Settings…',
-              click: () =>
-                this.browser.emit('overlay.open', { kind: 'settings', section: 'resources' }, win)
+              click: () => void this.browser.pages.open('settings', 'resources', win)
             }
           ]
         }),
         ...desktop({
           label: 'Keyboard Shortcuts',
-          click: () => this.browser.emit('overlay.open', { kind: 'shortcuts' }, win)
+          click: () => void this.browser.pages.open('settings', 'shortcuts', win)
         }),
         {
           label: 'Settings',
           action: 'settings.open',
-          click: () => this.browser.emit('overlay.open', { kind: 'settings' }, win)
+          click: () => void this.browser.pages.open('settings', undefined, win)
         },
         ...when(caps.devtools, {
           label: 'Developer Tools',

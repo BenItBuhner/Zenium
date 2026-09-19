@@ -1,4 +1,5 @@
-import type { ExtensionInfo, Tab } from '@shared/types'
+import type { Container, ExtensionInfo, Tab } from '@shared/types'
+import { RuleEngine } from '@core/blocking/engine'
 import type { Browser } from '@core/browser'
 import type { StoreIO } from '@core/platform'
 import type { ZenWindow } from '@core/window'
@@ -32,9 +33,6 @@ export class FakeKotlin implements RuntimeBridge {
   worldSlots = 16
   /** The fake WebView has the navigation listener (`navigation` view events carry webNavigation). */
   navigationListener = false
-  /** Pending `ext.setRules` replies while `holdRules` is on (to observe coalescing). */
-  holdRules = false
-  readonly heldRules: Array<() => void> = []
   readonly calls: Array<{ method: string; args: Record<string, unknown> }> = []
   /** Every message the runtime sent to an endpoint, decoded. */
   readonly sent: Sent[] = []
@@ -77,16 +75,7 @@ export class FakeKotlin implements RuntimeBridge {
       if (rejection !== null) return Promise.reject(new Error(rejection))
     }
     const result = this.dispatch(method, (args ?? {}) as Record<string, unknown>) as T
-    if (method === 'ext.setRules' && this.holdRules) {
-      return new Promise<T>((resolve) => this.heldRules.push(() => resolve(result)))
-    }
     return Promise.resolve(result)
-  }
-
-  /** Answer every held `ext.setRules`. */
-  releaseRules(): void {
-    const held = this.heldRules.splice(0)
-    for (const release of held) release()
   }
 
   send(method: string, args?: unknown): void {
@@ -143,7 +132,6 @@ export class FakeKotlin implements RuntimeBridge {
         return undefined
       case 'ext.readFile':
         return this.files.get(`${args.id}/${args.path}`) ?? null
-      case 'ext.setRules':
       case 'ext.observeRequests':
       case 'ext.popup.open':
       case 'ext.popup.close':
@@ -312,6 +300,10 @@ export interface Harness {
   files: Map<string, string>
   tabs: Record<string, Tab>
   active: { id: string | null }
+  /** The core's request-blocking engine the declarativeNetRequest sink feeds (`browser.blocking.engine`). */
+  engine: RuleEngine
+  /** The user's containers in the model (`state.model.containers`); private is not one. */
+  containers: Container[]
   /** Every `tabs.createTab` the runtime made, in order: the new tab's id and whether it was activated. */
   created: Array<{ id: string; active: boolean }>
   clock: { now: number }
@@ -367,6 +359,8 @@ export function harness(
   const listeners: Array<() => void> = []
   const toasts: string[] = []
   const infos: ExtensionInfo[] = []
+  const engine = new RuleEngine()
+  const containers: Container[] = []
   const notifyState = (): void => listeners.forEach((fn) => fn())
   const win = {
     isPrivate: false,
@@ -379,6 +373,7 @@ export function harness(
   const browser = {
     platform: { io },
     state: {
+      model: { containers },
       subscribe: (fn: () => void) => {
         listeners.push(fn)
         return () => undefined
@@ -428,6 +423,9 @@ export function harness(
       if (timer) timer.cleared = true
     }
   })
+  // As in the Browser constructor: `createExtensions` (this runtime) runs before the blocking
+  // service exists, so the engine is attached afterwards and must be read lazily.
+  ;(browser as unknown as { blocking: { engine: RuleEngine } }).blocking = { engine }
   const tick = (ms: number): void => {
     clock.now += ms
     for (;;) {
@@ -445,6 +443,8 @@ export function harness(
     files,
     tabs,
     active,
+    engine,
+    containers,
     created,
     clock,
     timers,

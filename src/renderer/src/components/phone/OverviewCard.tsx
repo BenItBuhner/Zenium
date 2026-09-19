@@ -24,14 +24,13 @@ interface Props {
   /** The card was swiped off the grid (it is out of sight already): close its tab. */
   onSwipeClose?: (tab: Tab) => void
   lift: Omit<CardLiftOptions, 'tab' | 'onSwipeClose'>
-  ref: (el: HTMLDivElement | null) => void
 }
 
 /**
  * One tab in the overview grid: title row above the thumbnail. Tap to switch to it; hold to pick
  * it up, swipe it sideways to close it (see `useCardLift`). While it is in the hand the slot
  * shows a faint stand-in, and a card that another card is about to be dropped on tucks itself in
- * a little.
+ * a little. The outer box is the grid's cell, keyed by the tab id for the glide and the morph.
  */
 export function OverviewCard({
   tab,
@@ -40,8 +39,7 @@ export function OverviewCard({
   onPick,
   onClose,
   onSwipeClose,
-  lift,
-  ref
+  lift
 }: Props): JSX.Element {
   const handlers = useCardLift({ tab, ...lift, onSwipeClose: (t) => onSwipeClose?.(t) })
   const held = liftStore.use((s) => (s.tabId === tab.id ? s.phase : 'idle'))
@@ -51,7 +49,12 @@ export function OverviewCard({
   if (hidden || departing || held === 'dropping') style.opacity = 0
   else if (held !== 'idle') style.opacity = 0.35
   return (
-    <div ref={ref} className="relative" style={{ aspectRatio: '3 / 4' }} data-tab-id={tab.id}>
+    <div
+      className="relative"
+      style={{ aspectRatio: '3 / 4' }}
+      data-tab-id={tab.id}
+      data-cell={tab.id}
+    >
       <div
         role="button"
         tabIndex={0}

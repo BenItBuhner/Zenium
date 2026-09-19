@@ -59,6 +59,8 @@ import { TranslateService } from './translate/service'
 import { PageControls } from './pageControls'
 import { FindMemory } from './find'
 import { FullscreenService } from './fullscreen'
+import { NewTabPhoneService } from './newTabPhone'
+import { WebAppService } from './webapp'
 import { UpdateService } from './updates'
 import { ExternalProtocolService } from './externalProtocols'
 import { PasswordService } from './credentials/service'
@@ -82,8 +84,10 @@ import {
   tabVisibleIn
 } from './model'
 import { BLANK_URL, getDomain, inputToUrl, isEmptyTabUrl } from '../shared/url'
+import { internalPageAliasUrl } from '../shared/internalPages'
 import { overlayForUrl } from '../shared/zenPages'
 import { openAllPrompt, sortedByNameOrder, toggledBookmarksBarMode } from '../shared/bookmarkViews'
+import { PageService } from './pages'
 import { buildSearchUrl, matchKeyword } from '../shared/search'
 import { routeSharedIntent, type SharedIntent } from '../shared/shareTarget'
 import { copyConfirmation } from '../shared/clipboard'
@@ -105,6 +109,7 @@ import { sanitizePromoState } from '../shared/defaultBrowser'
 import { sanitizeBlockingSettings } from '../shared/blocking'
 import { isShortcutPreset } from '../shared/shortcuts'
 import { sanitizePrivacySettings } from '../shared/privacy'
+import { sanitizeNewTabPhoneSettings } from '../shared/newTabPhone'
 import type { ExtensionHost, Governor, PageMessage, Platform, SyncHost } from './platform'
 import { JsonStore } from './store/JsonStore'
 
@@ -141,7 +146,8 @@ const FOCUS_CHROME_EVENTS = new Set<EventName>([
   'menu.show',
   'menu.app',
   'bookmark.star',
-  'bookmark.edit'
+  'bookmark.edit',
+  'webapp.install'
 ])
 
 /**
@@ -177,6 +183,8 @@ export class Browser {
   readonly tabs: TabManager
   /** A sidebar tab drag in flight, followed across windows (drops into them, tear-offs). */
   readonly tabDrag: TabDragController
+  /** Internal pages (Settings) as tabs of their own, or as overlays where the host has no page tabs. */
+  readonly pages: PageService
   /** Recently closed tabs and windows (Ctrl+Shift+T, the app menu's submenu, the history page). */
   readonly session: SessionService
   readonly actions: Actions
@@ -216,6 +224,10 @@ export class Browser {
   readonly find = new FindMemory()
   /** Fullscreen hints (F11, a page's element) and the Esc hold that leaves the window's fullscreen. */
   readonly fullscreen: FullscreenService
+  /** The new tab page's pins, removals and wallpaper. */
+  readonly newTabPhone: NewTabPhoneService
+  /** Web app manifests, "Add to Home screen" and the ambient install prompt. */
+  readonly webApps: WebAppService
   readonly windows = new Map<string, ZenWindow>()
   /** Set by `shutdown()`: the app is going away, windows close without further questions. */
   quitting = false
@@ -284,6 +296,7 @@ export class Browser {
     this.windowPrompts = new WindowPrompts(this)
     this.pageControls = new PageControls(this)
     this.fullscreen = new FullscreenService(this)
+    this.pages = new PageService(this)
     this.tabs = new TabManager(this)
     this.tabDrag = new TabDragController(this)
     this.session = new SessionService(this)
@@ -316,6 +329,8 @@ export class Browser {
     this.protection = new ProtectionService(this)
     this.translate = new TranslateService(this)
     this.privacy = new PrivacyService(this)
+    this.newTabPhone = new NewTabPhoneService(this)
+    this.webApps = new WebAppService(this, platform.io)
     this.state.extras = (win) => ({
       boosts: this.boosts.all(),
       zappingTabId: this.boosts.zappingTabId(),
@@ -441,7 +456,8 @@ export class Browser {
             from?.compactEnabled ??
             this.state.settings.compactMode.enabled),
       localSpace,
-      cascadeFrom: opts.bounds ? undefined : from
+      cascadeFrom: opts.bounds ? undefined : from,
+      opener: from
     })
     this.windows.set(id, win)
     const theme = resolveTheme(win.activeSpace().theme, this.darkScheme())
@@ -837,9 +853,12 @@ export class Browser {
     this.autofill.onPageReady(tabId)
   }
 
-  onNavigated(tabId: string): void {
+  onNavigated(tabId: string, inPage = false): void {
     const tab = this.tabs.tab(tabId)
-    if (tab) tab.readerable = false
+    if (tab) {
+      tab.readerable = false
+      this.webApps.onNavigated(tabId, tab.url, inPage)
+    }
     this.extensions.closePopup()
     this.translate.onNavigated(tabId)
     this.autofill.onNavigated(tabId)
@@ -894,7 +913,7 @@ export class Browser {
   /** Ctrl+D without a star dialog: add to the default folder, or remove every copy again. */
   toggleBookmark(tabId: string, win: ZenWindow = this.tabs.windowFor(tabId)): void {
     const tab = this.tabs.tab(tabId)
-    if (!tab || tab.url.startsWith('zen://')) return
+    if (!tab || !this.bookmarkable(tab.url)) return
     if (this.bookmarks.has(tab.url)) {
       this.bookmarks.removeByUrl(tab.url)
       this.toast('Bookmark removed', 'info', win)
@@ -909,13 +928,21 @@ export class Browser {
   }
 
   /**
+   * What the star and Ctrl+D take: a site, and an internal page whose registry entry keeps the
+   * star (`pill.showStar` – Chrome bookmarks chrome://settings); no other `zen://` document.
+   */
+  bookmarkable(url: string): boolean {
+    return !url.startsWith('zen://') || this.pages.pageAt(url)?.pill.showStar === true
+  }
+
+  /**
    * The star: bookmark the page into the default folder when it is not bookmarked yet, then let
    * the star dialog rename, refile or remove it. A second press edits the existing bookmark
    * instead of adding another one.
    */
   starTab(tabId: string, win: ZenWindow = this.tabs.windowFor(tabId)): void {
     const tab = this.tabs.tab(tabId)
-    if (!tab || tab.url.startsWith('zen://')) return
+    if (!tab || !this.bookmarkable(tab.url)) return
     let node: BookmarkNode | null = this.bookmarks.findByUrl(tab.url)[0] ?? null
     const created = !node
     if (!node) {
@@ -1271,12 +1298,16 @@ export class Browser {
     win: ZenWindow = this.ensureWindow(),
     opts: { fromIntent?: boolean } = {}
   ): void {
-    const routed = win.localSpace ? null : this.routeSpaceFor(url)
-    const tab = this.tabs.createTab(
-      { url, active: true, spaceId: routed ?? undefined, fromIntent: Boolean(opts.fromIntent) },
-      win
-    )
-    if (routed && routed !== win.activeSpaceId) this.tabs.switchSpace(routed, win, tab.id)
+    // A `zenium://settings/privacy` deep link opens (or reuses) the page's tab, no opener;
+    // `fromIntent` travels with it, so back at its landing returns to the app that sent it.
+    if (!this.pages.openUrl(url, win, null, { fromIntent: opts.fromIntent })) {
+      const routed = win.localSpace ? null : this.routeSpaceFor(url)
+      const tab = this.tabs.createTab(
+        { url, active: true, spaceId: routed ?? undefined, fromIntent: Boolean(opts.fromIntent) },
+        win
+      )
+      if (routed && routed !== win.activeSpaceId) this.tabs.switchSpace(routed, win, tab.id)
+    }
     win.host.show()
     win.host.focus()
   }
@@ -1359,17 +1390,21 @@ export class Browser {
     if (text) this.copyText(text, 'Link copied', win)
   }
 
-  /** Share a tab's page: its title and address, with its favicon as the preview. */
+  /**
+   * Share a tab's page: its title and address, with its favicon as the preview. An internal
+   * page shares its user-facing `zenium://` address – the deep link another app or device opens
+   * it by; `zen://` never leaves `tab.url`.
+   */
   shareTab(tabId: string, win: ZenWindow = this.tabs.windowFor(tabId)): void {
     const tab = this.tabs.tab(tabId)
-    if (!tab || !/^https?:/i.test(tab.url)) {
+    if (!tab || !(/^https?:/i.test(tab.url) || this.pages.isPageTab(tab))) {
       this.toast('This page cannot be shared', 'info', win)
       return
     }
     void this.share(
       {
         title: tab.customTitle ?? tab.title,
-        url: tab.url,
+        url: internalPageAliasUrl(tab.url),
         tabId,
         favicon: tab.favicon ?? undefined
       },
@@ -1440,6 +1475,8 @@ export class Browser {
     this.passwords.flushSync()
     this.blocking.flushSync()
     this.translate.flushSync()
+    this.newTabPhone.flushSync()
+    this.webApps.flushSync()
   }
 
   private syncShortcuts(): void {
@@ -1502,9 +1539,23 @@ export class Browser {
       }
     }
     if (!url) return
-    const overlay = overlayForUrl(url)
+    // `zenium://settings/…` typed into the bar: a chrome page opens (or reuses) its own tab with
+    // the current tab as opener, whatever tab the text was typed into; a document page loads
+    // like any document, in this tab or a new one, unless the window already shows the one it
+    // keeps (`routeNavigation`).
+    const pageRef = this.pages.parse(url)
+    if (pageRef) {
+      const page = this.pages.pages[pageRef.id]
+      if (page.render === 'chrome') {
+        this.pages.open(pageRef.id, pageRef.section, win, tabId ?? null)
+        return
+      }
+      if (tabId && !newTab && this.pages.routeNavigation(tabId, url)) return
+    }
+    // `zen://history` opens its chrome surface; no tab is spent on it. A registered document
+    // page is the registry's, never the overlay table's, and loads as a document below.
+    const overlay = pageRef ? null : overlayForUrl(url)
     if (overlay) {
-      // `zen://history` / `zen://settings` open their chrome surface; no tab is spent on them.
       this.emit('overlay.open', { kind: overlay }, win)
       return
     }
@@ -1587,6 +1638,10 @@ export class Browser {
   handlePageMessage(tabId: string, message: PageMessage): void {
     const tab = this.tabs.tab(tabId)
     if (!tab || !message || typeof message.type !== 'string') return
+    if (message.type === 'webapp') {
+      this.webApps.handleMessage(tabId, message)
+      return
+    }
     if (message.type === 'zap') {
       if (typeof message.selector === 'string') this.boosts.onZapped(tabId, message.selector)
       return
@@ -1842,6 +1897,10 @@ export class Browser {
       'folder.delete': ({ folderId, unpack }) => this.deleteFolder(folderId, unpack),
       'folder.contextMenu': ({ folderId }, win) => this.menus.showFolderContextMenu(folderId, win),
       'newtab.contextMenu': (_a, win) => this.menus.showNewTabContextMenu(win),
+      'newTabPhone.tileContextMenu': ({ url, title }, win) =>
+        this.menus.showTopSiteContextMenu(url, title, win),
+      'newTabPhone.wallpaper': () => this.newTabPhone.wallpaperImage(),
+      'newTabPhone.setWallpaper': ({ dataUrl }) => this.newTabPhone.setWallpaperImage(dataUrl),
       'app.menu': ({ anchor, keyboard }, win) =>
         this.menus.showAppMenu(win, { anchor, keyboard: Boolean(keyboard) }),
       'focus.content': (_a, win) => win.focusContent(),
@@ -1949,6 +2008,12 @@ export class Browser {
       'history.deleteDay': ({ dayKey }) => this.history.deleteDay(dayKey),
       'history.deleteRange': ({ fromMs, toMs }) => this.history.deleteRange(fromMs, toMs),
       'history.open': (_a, win) => this.emit('overlay.open', { kind: 'history' }, win),
+
+      'page.open': ({ id, section, openerTabId }, win) =>
+        this.pages.open(id, section, win, openerTabId),
+      'page.navigate': ({ tabId, section, replace }) =>
+        this.pages.navigate(tabId, section, replace ?? false),
+
       'history.contextMenu': ({ visitId, url }, win) =>
         this.menus.showHistoryContextMenu(visitId, url, win),
       'history.dayMenu': ({ dayKey, count }, win) =>
@@ -2010,6 +2075,8 @@ export class Browser {
       'download.acceptDanger': ({ id }) => this.downloads.acceptDanger(id),
       'download.discard': ({ id }) => this.downloads.discard(id),
       'download.setOpenWhenDone': ({ id, on }) => this.downloads.setOpenWhenDone(id, on),
+      'download.deleteFile': ({ id }) => this.downloads.deleteFile(id),
+      'download.exists': ({ id }) => this.downloads.exists(id),
       'download.chooseDirectory': (_args, win) => this.downloads.chooseDirectory(win),
       'download.openPanel': (_args, win) => this.emit('overlay.open', { kind: 'downloads' }, win),
       'download.dragOut': ({ id }, win) => {
@@ -2165,6 +2232,7 @@ export class Browser {
       'extension.setAllowUserScripts': ({ id, allowed }) =>
         this.extensions.setAllowUserScripts(id, allowed),
       'extension.reload': ({ id }) => this.extensions.reload(id),
+      'extension.clearErrors': ({ id }) => this.extensions.clearErrors(id),
       'extension.checkForUpdates': (_a, win) => this.extensions.checkForUpdates(win),
       'extension.update': ({ id }, win) => this.extensions.update(id, win),
       'extension.openOptions': ({ id }, win) => this.extensions.openOptions(id, win),
@@ -2252,6 +2320,10 @@ export class Browser {
       'translate.downloadModel': ({ from, to }) => this.translate.downloadModel({ from, to }),
       'translate.removeModel': ({ from, to }) => this.translate.removeModel({ from, to }),
       'translate.engineResponse': (response) => this.translate.onRelayResponse(response),
+      'webapp.openInstall': ({ tabId }, win) => this.webApps.openInstall(tabId, win),
+      'webapp.pin': ({ tabId, title }, win) => this.webApps.pin(tabId, title, win),
+      'webapp.cancelInstall': ({ tabId }) => this.webApps.cancelInstall(tabId),
+      'webapp.dismissBanner': ({ tabId, reason }) => this.webApps.dismissBanner(tabId, reason),
 
       'onboarding.complete': ({ searchEngineId, colorScheme, essentials }, win) => {
         if (state.searchEngines.some((e) => e.id === searchEngineId))
@@ -2360,6 +2432,11 @@ export class Browser {
         s.newTab = sanitizeNewTabSettings({
           ...s.newTab,
           ...(value as Partial<Settings['newTab']>)
+        })
+      } else if (key === 'newTabPhone' && value && typeof value === 'object') {
+        s.newTabPhone = sanitizeNewTabPhoneSettings({
+          ...s.newTabPhone,
+          ...(value as Partial<Settings['newTabPhone']>)
         })
       } else if (key === 'downloads' && value && typeof value === 'object') {
         // The block is partial: a one-key patch from a Settings row must not drop the others.

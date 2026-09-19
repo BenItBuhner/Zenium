@@ -63,6 +63,10 @@
           <p>pixel.png?dyn=1 must not load.</p>
         </section>
         <section class="card">
+          <h2>Session rule</h2>
+          <p>pixel.png?sess=1 must not load.</p>
+        </section>
+        <section class="card">
           <h2>Control</h2>
           <p>pixel.png?ok=1 must load.</p>
         </section>
@@ -74,7 +78,7 @@
         ;(function () {
           var token = '&t=' + Date.now()
           var holder = document.getElementById('pixels')
-          ;['ads', 'dyn', 'ok'].forEach(function (name) {
+          ;['ads', 'dyn', 'sess', 'ok'].forEach(function (name) {
             var img = document.createElement('img')
             img.alt = ''
             img.width = 24

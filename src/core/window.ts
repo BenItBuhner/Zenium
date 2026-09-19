@@ -43,6 +43,8 @@ export interface WindowInit {
   localSpace: Space | null
   /** Window to offset the new one from (new windows cascade like Firefox). */
   cascadeFrom?: ZenWindow
+  /** The window this one was opened from (a popup's parent), when one was. */
+  opener?: ZenWindow
 }
 
 /**
@@ -97,6 +99,11 @@ export class ZenWindow {
   readonly initialDisplayId: number | null
   readonly initialMaximized: boolean
   readonly cascadeFrom: ZenWindow | null
+  /**
+   * The window this one was opened from, for what a toolbar-only popup cannot hold itself: an
+   * internal page asked for from a popup opens in its opener (`PageService.hostWindowFor`).
+   */
+  readonly opener: ZenWindow | null
   private savedBounds: Rect | null
   private savedDisplayId: number | null
   private lastLayout: LayoutReport | null = null
@@ -125,6 +132,7 @@ export class ZenWindow {
     this.savedDisplayId = init.displayId
     this.initialMaximized = init.maximized
     this.cascadeFrom = init.cascadeFrom ?? null
+    this.opener = init.opener ?? null
   }
 
   get isPrivate(): boolean {
@@ -325,6 +333,9 @@ export class ZenWindow {
     const tabs = this.browser.tabs
     const owned = tabs.viewsOwnedBy(this)
     const fullscreenTabId = this.htmlFullscreenTabId
+    // The views this report takes down or brings back: told to the chrome once they are placed.
+    const hid: string[] = []
+    const shown: string[] = []
     if (fullscreenTabId && owned.has(fullscreenTabId)) {
       // An element in HTML fullscreen covers the whole window, chrome included, save for the
       // strip a docked find bar asked for.
@@ -338,11 +349,14 @@ export class ZenWindow {
           view.setBounds({ x: 0, y: 0, width, height })
           view.setBorderRadius(0)
           view.setCover?.(NO_COVER)
+          if (!view.isVisible()) shown.push(tabId)
           view.setVisible(true)
         } else if (view.isVisible()) {
           view.setVisible(false)
+          hid.push(tabId)
         }
       }
+      this.send('layout.applied', { contentHidden: false, hid, shown })
       return
     }
     // The extension side panel sits beside the page and hides with it.
@@ -370,10 +384,14 @@ export class ZenWindow {
         view.setBounds(roundRect(placement.rect))
         view.setBorderRadius(Math.round(placement.radius))
         view.setCover?.(placement.cover)
-        if (!view.isVisible()) view.setVisible(true)
+        if (!view.isVisible()) {
+          view.setVisible(true)
+          shown.push(tabId)
+        }
       } else if (view.isVisible()) {
         if (view.isFocused?.()) coveredTyping = true
         view.setVisible(false)
+        hid.push(tabId)
         covered = true
       }
     }
@@ -384,12 +402,18 @@ export class ZenWindow {
         view.setBounds(roundRect(glance.rect))
         view.setBorderRadius(Math.round(glance.radius))
         view.setCover?.(glance.cover ?? NO_COVER)
-        if (!view.isVisible()) view.setVisible(true)
+        if (!view.isVisible()) {
+          view.setVisible(true)
+          shown.push(glance.tabId)
+        }
       }
     }
+    // The chrome sequences its page cover against the host's frames from this (lib/pageView.ts).
+    this.send('layout.applied', { contentHidden: report.contentHidden, hid, shown })
     if (this.pendingContentFocus && !report.contentHidden) this.focusContent()
     // With no page visible (empty space / chrome overlay / preview of a page shown in another
-    // window) keyboard input must go to the chrome, otherwise shortcuts stop working.
+    // window / a page tab the chrome itself draws) keyboard input must go to the chrome,
+    // otherwise shortcuts stop working.
     const showsOwnPage = [...wanted.keys()].some((id) => owned.has(id))
     if (report.contentHidden) {
       // Chrome UI covers the page: the keyboard goes with it, but only when a page that was
@@ -404,7 +428,9 @@ export class ZenWindow {
         if (coveredTyping) this.pendingContentFocus = true
         this.focusChrome()
       }
-    } else if (!showsOwnPage && !glance) {
+    } else if (!showsOwnPage && !glance && !this.keyboardHeldElsewhere(owned)) {
+      // The same guard here: a chrome page tab (Settings) reports no placement on every layout
+      // – a resize, a sheet – and an extension popup open over it must keep the keyboard.
       this.focusChrome()
     }
   }

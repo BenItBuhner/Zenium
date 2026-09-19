@@ -55,6 +55,7 @@ import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.roundToInt
 
 /**
@@ -77,6 +78,14 @@ class TabWebView(
     /** The document the page's requests belong to; written on the main thread, read on IO threads. */
     @Volatile
     private var currentDocument: String? = null
+    /**
+     * The document generation the request engine stamps its decisions with (see
+     * [BlockingTab.documentGeneration]): advanced on the IO thread by every main-frame request
+     * the engine decides, and at commit for a document whose request it never saw (a non-http
+     * page, an extension page). [committedGeneration] is the one the last commit reported.
+     */
+    private val documentGeneration = AtomicLong(0)
+    private var committedGeneration = 0L
     private val blockedPending = AtomicInteger(0)
     private val blockedFlushScheduled = AtomicBoolean(false)
     private var lastTouchX = 0f
@@ -523,8 +532,8 @@ class TabWebView(
         postToPage(formsConfig())
     }
 
-    /** Deliver a browser → page message over the reply proxy (or the legacy bridge). */
-    private fun postToPage(payload: String) {
+    /** Deliver a browser → page message (JSON text) over the reply proxy (or the legacy bridge). */
+    fun postToPage(payload: String) {
         val proxy = replyProxy
         if (proxy != null) {
             runCatching { proxy.postMessage(payload) }
@@ -1069,6 +1078,9 @@ class TabWebView(
     override val documentUrl: String?
         get() = currentDocument
 
+    override fun documentGeneration(newDocument: Boolean): Long =
+        if (newDocument) documentGeneration.incrementAndGet() else documentGeneration.get()
+
     /** Coalesce the IO threads' counts into one `blocked` event per beat for the chrome. */
     override fun onRequestsBlocked(count: Int) {
         blockedPending.addAndGet(count)
@@ -1142,6 +1154,21 @@ class TabWebView(
                     if (interceptNavigation(request)) return true
                     false
                 }
+                DeepLinks.INTERNAL_SCHEME, DeepLinks.PAGE_SCHEME -> {
+                    // The browser's own pages are the user's to open (typed, a menu, a deep link
+                    // from another app), never a web page's: Chrome's rule for chrome://. Only
+                    // one of Zenium's own documents may link to a page, and that goes the way a
+                    // deep link does – a VIEW intent to the browser window, which a custom tab
+                    // has no chrome to draw it in either. Nothing under these schemes is ever
+                    // loaded from here.
+                    val target = url.toString()
+                    if (DeepLinks.refusedFromDocument(currentDocument, target)) {
+                        Log.i("ZenTab", "refused a navigation from web content to an internal page in $tabId")
+                    } else if (request.isForMainFrame) {
+                        host.openExternal(DeepLinks.aliasOf(target))
+                    }
+                    true
+                }
                 else -> {
                     // mailto:, tel:, intent://, a custom scheme: held until the core (and the user) agree.
                     host.externalProtocols.request(this@TabWebView, url.toString(), request.hasGesture())
@@ -1192,9 +1219,9 @@ class TabWebView(
         }
 
         /**
-         * Network thread. The extension layer answers first: it serves the extension origins and,
-         * until W2-3 moves declarativeNetRequest onto the request engine, decides its rules; anything
-         * it leaves alone goes to the request engine.
+         * Network thread. The extension layer answers first: it serves the extension origins and
+         * the CORS proxy of extension pages; anything it leaves alone goes to the request engine,
+         * whose rule sets include the extensions' declarativeNetRequest rules.
          */
         override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
             host.extensions?.intercept(request, this@TabWebView, null) ?: host.blocking.intercept(this@TabWebView, request)
@@ -1251,7 +1278,13 @@ class TabWebView(
             failedUrl = null
             interstitial = false
             refusedCertificateUrl = null
-            host.viewEvent(tabId, "navigated", navState().put("url", url).put("inPage", inPage))
+            if (!inPage) {
+                // A document whose main-frame request the engine never decided (non-http, an
+                // extension page) opens its generation here; one it did has opened it already.
+                if (documentGeneration.get() == committedGeneration) documentGeneration.incrementAndGet()
+                committedGeneration = documentGeneration.get()
+            }
+            host.viewEvent(tabId, "navigated", navState().put("url", url).put("inPage", inPage).put("document", committedGeneration))
             host.backChanged()
         }
 

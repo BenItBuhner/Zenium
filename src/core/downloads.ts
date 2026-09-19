@@ -3,13 +3,20 @@ import {
   PRIVATE_CONTAINER_ID,
   type DownloadChangeKind,
   type DownloadDanger,
+  type DownloadDeleteFileResult,
+  type DownloadInterruptReason,
   type DownloadItem,
   type DownloadSettings,
   type DownloadState,
   type DownloadsProgress,
   type Platform as PlatformOs
 } from '../shared/types'
-import { fileExtension, finalName as stripPartial } from '../shared/downloads'
+import {
+  fileExtension,
+  finalName as stripPartial,
+  interruptMessage,
+  interruptReasonFrom
+} from '../shared/downloads'
 import { newId } from '../shared/ids'
 import { JsonStore } from './store/JsonStore'
 import type { DownloadHost, StoreIO } from './platform'
@@ -26,20 +33,32 @@ import {
   type DangerVerdictRegistry
 } from './downloads/danger'
 
+/** Earlier schemas are read field by field; their rows are whatever an older build wrote. */
 interface PersistedV1 {
   version: 1
-  items: Array<Record<string, unknown>>
+  items: unknown[]
 }
 
+/** Version 2 had the version 3 shape with a free-form `error` string and no `fileMissing`. */
 interface PersistedV2 {
   version: 2
+  items: unknown[]
+}
+
+/**
+ * Version 3 (interrupt reasons): `error` is a `DownloadInterruptReason`, `fileMissing` is kept,
+ * and `shutdown()` writes the in-flight rows as interrupted by `user-shutdown` before the app
+ * quits, so a row still in flight in the file means the browser never got to shut down (`crash`).
+ */
+interface PersistedV3 {
+  version: 3
   items: DownloadItem[]
 }
 
-type Persisted = PersistedV1 | PersistedV2
+type Persisted = PersistedV1 | PersistedV2 | PersistedV3
 
 const MAX_ITEMS = 100
-const SCHEMA_VERSION = 2
+const SCHEMA_VERSION = 3
 /** Progress events per item are throttled to this (4 Hz); state changes go out at once. */
 const PROGRESS_INTERVAL_MS = 250
 const PERSIST_INTERVAL_MS = 2000
@@ -200,6 +219,10 @@ export class DownloadService {
   private readonly now: () => number
   /** Set by `shutdown()`: the rows are frozen as persisted, later host reports are teardown noise. */
   private quitting = false
+  /** Completed rows opened or revealed since the last snapshot: their files are checked again then. */
+  private readonly recheck = new Set<string>()
+  /** The existence sweep over the loaded list, for callers that want to wait for it (tests). */
+  readonly loaded: Promise<void>
 
   constructor(
     io: StoreIO,
@@ -211,6 +234,10 @@ export class DownloadService {
     this.registry = deps.verdicts ?? dangerVerdicts
     this.store = new JsonStore<Persisted>(io, 'downloads.json', 1000)
     this.items = migrate(this.store.readSync(), this.now())
+    // Files deleted while the browser was closed: the loaded rows are checked as the list loads
+    // (the host answers asynchronously), so the first snapshot goes out at once and the rows
+    // that lost their file follow as changes.
+    this.loaded = this.refreshFiles([...this.items])
   }
 
   /** Safe Browsing and friends register here (or on the registry directly). */
@@ -226,8 +253,17 @@ export class DownloadService {
     return this.items.filter((i) => isInFlight(i.state))
   }
 
-  /** The list a window may show: private windows see everything, the rest no private item. */
+  /**
+   * The list a window may show: private windows see everything, the rest no private item. A
+   * snapshot after a row was opened or revealed checks that row's file again (the user may have
+   * deleted it from the file manager); a change follows when it is gone.
+   */
   visibleTo(privateWindow: boolean): DownloadItem[] {
+    if (this.recheck.size > 0) {
+      const again = [...this.recheck].map((id) => this.item(id)).filter(isDefined)
+      this.recheck.clear()
+      void this.refreshFiles(again)
+    }
     return privateWindow ? this.items : this.items.filter((i) => !i.private)
   }
 
@@ -316,7 +352,8 @@ export class DownloadService {
   /** A resume after a restart or a retry picks the old record up where it was. */
   private continueRecord(record: DownloadItem, init: DownloadInit): DownloadItem {
     record.state = 'progressing'
-    delete record.error
+    this.clearError(record)
+    delete record.fileMissing
     delete record.endedAt
     delete record.completedAt
     if (init.savePath) record.savePath = init.savePath
@@ -385,8 +422,8 @@ export class DownloadService {
     assignFields(record, fields)
     this.rename(record, finalName)
     record.state = state
-    if (state === 'progressing') delete record.error
-    else if (state === 'interrupted' && !record.error) record.error = 'interrupted'
+    if (state === 'interrupted') this.setError(record, record.error ?? 'network-failed')
+    else this.clearError(record)
     if (transfer) {
       if (stateChanged) transfer.rate.reset(record.receivedBytes, now)
       else transfer.rate.update(record.receivedBytes, now)
@@ -425,15 +462,26 @@ export class DownloadService {
     record.state = state
     record.endedAt = this.now()
     if (state === 'cancelled') {
-      delete record.error
+      this.clearError(record)
       const partial = record.savePath
       record.savePath = ''
       if (partial) void this.host.deletePartial({ ...record, savePath: partial })
-    } else if (!record.error) {
-      record.error = 'interrupted'
+    } else {
+      this.setError(record, record.error ?? 'network-failed')
     }
     this.persist()
     this.onChange(record, 'done')
+  }
+
+  /** Both fields together: the reason and Chrome's wording of it for the row. */
+  private setError(record: DownloadItem, reason: DownloadInterruptReason): void {
+    record.error = reason
+    record.errorMessage = interruptMessage(reason)
+  }
+
+  private clearError(record: DownloadItem): void {
+    delete record.error
+    delete record.errorMessage
   }
 
   /** Register a file we produced ourselves (e.g. a screenshot) so it shows in the panel. */
@@ -492,7 +540,7 @@ export class DownloadService {
     if (!item) return
     if (item.state === 'paused' || (item.state === 'interrupted' && item.canResume))
       this.host.resume(item)
-    else if (item.state === 'interrupted' || item.state === 'cancelled') this.retry(id)
+    else if (canRetry(item)) this.retry(id)
   }
 
   cancel(id: string): void {
@@ -507,7 +555,8 @@ export class DownloadService {
   retry(id: string): void {
     const item = this.item(id)
     if (!item || !canRetry(item)) return
-    if (item.savePath) void this.host.deletePartial(item)
+    // A completed row retries only once its file is gone: nothing of ours is left to delete.
+    if (item.savePath && item.state !== 'completed') void this.host.deletePartial(item)
     item.savePath = ''
     item.receivedBytes = 0
     item.canResume = false
@@ -552,15 +601,75 @@ export class DownloadService {
     this.onChange(item, 'progress')
   }
 
+  /** Reveal the file; a completed row is checked for its file now and again at the next snapshot. */
   showInFolder(id: string): void {
     const item = this.item(id)
-    if (item?.savePath) this.host.showInFolder(item)
+    if (!item?.savePath) return
+    if (hasCompletedFile(item)) {
+      this.recheck.add(id)
+      void this.checkFile(item)
+    }
+    this.host.showInFolder(item)
   }
 
+  /** Open a completed file; a row whose file turns out to be gone reads `fileMissing` instead. */
   async open(id: string): Promise<void> {
     const item = this.item(id)
-    if (item?.savePath && item.state === 'completed' && !isQuarantined(item))
-      await this.host.open(item)
+    if (!item?.savePath || !hasCompletedFile(item)) return
+    if (!(await this.checkFile(item))) return
+    this.recheck.add(id)
+    await this.host.open(item)
+  }
+
+  /**
+   * Chrome's "Delete file": remove a completed download's file from disk and mark the row
+   * `fileMissing` (it stays in the list, greyed "Deleted", with Retry). Says what happened; a
+   * file that was gone already is `missing`, and the row is marked all the same.
+   */
+  async deleteFile(id: string): Promise<DownloadDeleteFileResult> {
+    const item = this.item(id)
+    if (!item?.savePath || !hasCompletedFile(item)) return 'not-completed'
+    if (item.fileMissing) return 'missing'
+    const result = await this.host.deleteFile(item)
+    if (this.item(id) === item && result !== 'failed') this.setFileMissing(item, true)
+    return result
+  }
+
+  /** Whether a completed row's file is still on disk, checked now; `fileMissing` follows. */
+  async exists(id: string): Promise<boolean> {
+    const item = this.item(id)
+    if (!item?.savePath || !hasCompletedFile(item)) return false
+    return this.checkFile(item)
+  }
+
+  /**
+   * Check the files of completed rows (every released one by default) and mark those that are
+   * gone; a row whose file came back is un-marked. Runs when the list loads and on demand.
+   */
+  async refreshFiles(items: DownloadItem[] = this.items): Promise<void> {
+    await Promise.all(
+      items.filter((i) => i.savePath && hasCompletedFile(i)).map((i) => this.checkFile(i))
+    )
+  }
+
+  /** One row's existence check; resolves with whether the file is there. Host failures change nothing. */
+  private async checkFile(item: DownloadItem): Promise<boolean> {
+    let present: boolean
+    try {
+      present = await this.host.exists(item)
+    } catch {
+      return !item.fileMissing
+    }
+    if (this.item(item.id) === item) this.setFileMissing(item, !present)
+    return present
+  }
+
+  private setFileMissing(item: DownloadItem, missing: boolean): void {
+    if (Boolean(item.fileMissing) === missing) return
+    if (missing) item.fileMissing = true
+    else delete item.fileMissing
+    this.persist()
+    this.onChange(item, 'progress')
   }
 
   /** Take the row out of the list. A running transfer is cancelled; a finished file stays. */
@@ -650,24 +759,30 @@ export class DownloadService {
   /**
    * The app is quitting. The host's engine is about to cancel every in-flight transfer and
    * delete its partial file (Chromium does on shutdown), so each regular in-flight row asks the
-   * host to keep the file and records where it went; the row then loads as `interrupted` with
-   * `error: 'shutdown'` and "Resume" continues from the kept bytes. Private rows are not kept.
-   * Reports arriving after this point are ignored, so the teardown cannot mark the rows cancelled
-   * or delete what was just kept. Followed by `flushSync()`.
+   * host to keep the file and records where it went, and is written as `interrupted` by
+   * `user-shutdown`: "Resume" continues from the kept bytes next time. A row the next launch
+   * still finds in flight was never shut down this way and loads as `crash`. Private rows are
+   * not kept. Reports arriving after this point are ignored, so the teardown cannot mark the
+   * rows cancelled or delete what was just kept; nothing is broadcast, the windows are closing.
+   * Followed by `flushSync()`.
    */
   shutdown(): void {
     if (this.quitting) return
     this.quitting = true
     const park = this.host.park?.bind(this.host)
-    if (!park) return
     let changed = false
     for (const item of this.items) {
-      if (!isInFlight(item.state) || item.private || !item.savePath) continue
-      const kept = park(item)
-      if (kept && kept !== item.savePath) {
-        item.savePath = kept
-        changed = true
+      if (!isInFlight(item.state) || item.private) continue
+      if (park && item.savePath) {
+        const kept = park(item)
+        if (kept && kept !== item.savePath) item.savePath = kept
       }
+      item.state = 'interrupted'
+      item.endedAt = this.now()
+      item.bytesPerSecond = 0
+      item.etaMs = null
+      this.setError(item, 'user-shutdown')
+      changed = true
     }
     if (changed) this.persist()
   }
@@ -726,7 +841,7 @@ export class DownloadService {
         record.finalName = released.finalName || record.finalName
       } else {
         record.state = 'interrupted'
-        record.error = 'file-error'
+        this.setError(record, 'file-failed')
         record.canResume = false
         delete record.completedAt
         this.persist()
@@ -798,11 +913,23 @@ export function isQuarantined(item: DownloadItem): boolean {
   return item.state === 'completed' && item.danger.level !== 'safe' && !item.dangerAccepted
 }
 
-/** Failed or cancelled downloads can be started over, except `blob:` ones (the page's object is gone). */
+/** A completed row whose file was released to the user (not quarantined): the one "Delete file" acts on. */
+export function hasCompletedFile(item: DownloadItem): boolean {
+  return item.state === 'completed' && !isQuarantined(item)
+}
+
+/**
+ * Failed and cancelled downloads can be started over, and so can a completed one whose file is
+ * gone (Chrome's Retry on a "Deleted" row); never `blob:` ones (the page's object is gone).
+ */
 export function canRetry(item: DownloadItem): boolean {
-  return (
-    (item.state === 'cancelled' || item.state === 'interrupted') && !item.url.startsWith('blob:')
-  )
+  if (item.url.startsWith('blob:')) return false
+  if (item.state === 'cancelled' || item.state === 'interrupted') return true
+  return item.state === 'completed' && item.fileMissing === true
+}
+
+function isDefined<T>(value: T | undefined): value is T {
+  return value !== undefined
 }
 
 export function estimateEta(item: DownloadItem): number | null {
@@ -833,14 +960,23 @@ export function basename(path: string): string {
  * Read `downloads.json` from any schema. Version 1 records lack the fields added in version 2;
  * whatever was in flight when the browser last quit comes back as interrupted, resumable when
  * the host had told us the server supports ranges (the partial file is checked on resume).
- * Private items are never on disk, so nothing loaded is private.
+ * Versions 1 and 2 named the reason loosely (`interrupted`, `shutdown`, `file-error`, at times
+ * a `net::` error): each becomes the closest `DownloadInterruptReason`, `network-failed` when
+ * nothing closer is known. Rows in flight in a version 3 file were never shut down (`crash`);
+ * in older files the shutdown did not write them, so they read `user-shutdown`. Private items
+ * are never on disk, so nothing loaded is private.
  */
 export function migrate(data: Persisted | null, now: number): DownloadItem[] {
   if (!data || !Array.isArray(data.items)) return []
   const items: DownloadItem[] = []
-  for (const raw of data.items as Array<Record<string, unknown>>) {
-    if (!raw || typeof raw !== 'object' || typeof raw['id'] !== 'string') continue
-    const item = data.version === 1 ? fromV1(raw, now) : fromV2(raw, now)
+  for (const entry of data.items as unknown[]) {
+    if (!entry || typeof entry !== 'object') continue
+    const raw = entry as Record<string, unknown>
+    if (typeof raw['id'] !== 'string') continue
+    const item =
+      data.version === 1
+        ? fromV1(raw, now)
+        : fromV2(raw, now, data.version >= 3 ? 'crash' : 'user-shutdown')
     if (item) items.push(item)
   }
   return items.slice(0, MAX_ITEMS)
@@ -878,11 +1014,19 @@ function fromV1(raw: Record<string, unknown>, now: number): DownloadItem | null 
     lastModified: ''
   }
   if (finalState === 'completed') item.completedAt = startedAt
-  if (finalState === 'interrupted') item.error = inFlight ? 'shutdown' : 'interrupted'
+  if (finalState === 'interrupted') stampError(item, inFlight ? 'user-shutdown' : 'network-failed')
   return item
 }
 
-function fromV2(raw: Record<string, unknown>, now: number): DownloadItem | null {
+/**
+ * Versions 2 and 3 share a shape; `inFlightReason` is what a row still in flight in the file
+ * means (the writer's shutdown stamps rows since version 3, so there it is a crash).
+ */
+function fromV2(
+  raw: Record<string, unknown>,
+  now: number,
+  inFlightReason: DownloadInterruptReason
+): DownloadItem | null {
   const state = raw['state']
   const inFlight = state === 'progressing' || state === 'in-progress' || state === 'paused'
   const finalState: DownloadState =
@@ -921,15 +1065,19 @@ function fromV2(raw: Record<string, unknown>, now: number): DownloadItem | null 
     etag: str(raw['etag']),
     lastModified: str(raw['lastModified'])
   }
-  if (finalState === 'completed')
+  if (finalState === 'completed') {
     item.completedAt = typeof raw['completedAt'] === 'number' ? raw['completedAt'] : endedAt
+    if (raw['fileMissing'] === true && savePath !== '') item.fileMissing = true
+  }
   if (finalState === 'interrupted')
-    item.error = inFlight
-      ? 'shutdown'
-      : typeof raw['error'] === 'string' && raw['error']
-        ? raw['error']
-        : 'interrupted'
+    stampError(item, inFlight ? inFlightReason : interruptReasonFrom(raw['error']))
   return item
+}
+
+/** The wording is never trusted from disk: it follows this build's table. */
+function stampError(item: DownloadItem, reason: DownloadInterruptReason): void {
+  item.error = reason
+  item.errorMessage = interruptMessage(reason)
 }
 
 const REASONS = new Set<DownloadDanger['reason']>([

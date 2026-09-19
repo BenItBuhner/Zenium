@@ -6,6 +6,7 @@ import { resolveTheme, rgbToHex } from '@shared/theme'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { run } from '@renderer/lib/api'
 import { dropStore } from '@renderer/lib/drag'
+import { openSettings } from '@renderer/lib/pages'
 import { activeTab, isLocalWindow, tabTitle } from '@renderer/lib/selectors'
 import { claimMessageCards, openOverlay, pickToastAction, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
@@ -141,7 +142,7 @@ function AgentPill({
         compact && 'justify-center px-0'
       )}
       title={`${label}: ${agents.map((a) => `${a.name} (${a.mode})`).join(', ')}. Click to manage.`}
-      onClick={() => void openOverlay('settings', null, null, null, 'agents')}
+      onClick={() => openSettings('agents')}
     >
       <span className="relative flex h-4 w-4 shrink-0 items-center justify-center">
         <Bot className="h-4 w-4 text-[var(--zen-accent)]" />

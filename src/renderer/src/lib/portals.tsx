@@ -12,7 +12,13 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import type { Rect } from '@shared/types'
+import { useBackSurface } from './back'
+import { useViewport } from './formFactor'
+import { registerRecedeLayer, type RecedeHandle, type RecedeLayerFrame } from './motion/recede'
+import { sheetBackPosition } from './motion/sheet'
+import { SPRING_GENTLE, SpringAnimation, type SpringConfig } from './motion/spring'
 import { closeAllPopovers } from './popoverStore'
+import { coverPageUnderSheet, type SheetCover } from './ui'
 
 export {
   closeAllPopovers,
@@ -65,9 +71,16 @@ interface FrameDialogEntry {
   onScrimPress: () => void
   /**
    * The dialog draws the stack's one scrim itself – a sheet whose scrim fades with its own
-   * motion (§9.24, §9.28) – so the host draws none while it is on top.
+   * motion (§9.24, §9.28) – so the host draws none while it is on top, and on a phone keeps its
+   * own chassis down for it (the sheet is on the chassis already).
    */
   ownScrim: boolean
+  /**
+   * Whether the dialog gave a scrim handler at all: a dialog that did is light-dismissable, and
+   * on a phone the sheet chassis answers the system back gesture for it the way the scrim
+   * press does. A prompt without one keeps its own back handling (`useBackSurface`).
+   */
+  dismissable: boolean
 }
 
 interface FrameDialogHostApi {
@@ -81,7 +94,8 @@ const FrameDialogHostContext = createContext<FrameDialogHostApi | null>(null)
 /*
  * The frame's own host – the one TabDialogs mounts over the content frame (the shell on
  * phones) – published for `FrameDialogPortal`, which a dialog whose state lives inside the
- * frame (a page's or panel's sheets) reaches from outside every host's subtree.
+ * frame (a page's or panel's sheets, the new tab page's customise sheet) reaches from outside
+ * every host's subtree.
  */
 let frameHost: FrameDialogHostApi | null = null
 const frameHostListeners = new Set<() => void>()
@@ -96,8 +110,16 @@ function subscribeFrameHost(listener: () => void): () => void {
   return () => frameHostListeners.delete(listener)
 }
 
-/** The window chrome roots (§9.29): what goes inert while a frame dialog is open (§9.5). */
-const WINDOW_CHROME_ROOTS = '[data-surface="window"]'
+/**
+ * The window chrome roots: what goes inert while a frame dialog or a sheet is open (§9.5,
+ * §9.22). On a mouse, the window surfaces (§9.29: the toolbar, the sidebar, the bookmarks bar);
+ * on a phone, the shell's chrome under its sheets – the content column, the messages, the bar,
+ * the pill's stage, the drawer, the tabs menu – each marked `data-shell-chrome` where it is
+ * rendered (PhoneShell and the phone components), never the shell itself, which the frame
+ * dialog host and its sheets sit inside. (Not `data-window-chrome`: that is the desktop root's
+ * window-frame mode, and marking the root would make its own dialogs inert.)
+ */
+const WINDOW_CHROME_ROOTS = '[data-surface="window"], [data-shell-chrome]'
 /** Where a window root does not count as chrome to make inert: inside a host or the chrome layer. */
 const NOT_CHROME = '.zen-frame-dialogs, .zen-chrome-layer'
 
@@ -116,10 +138,13 @@ function markWindowChromeInert(): void {
 /**
  * Make the window chrome inert (§9.5: while a dialog is open the sidebar, toolbar, pill and
  * bookmarks bar stay undimmed and inert – no press, hover, focus or shortcut button reaches
- * them) until the returned release runs. Holds nest: the chrome comes back when the last one is
- * released. The roots are the `data-surface="window"` elements outside the dialog hosts and the
- * chrome layer, including any mounted while the hold lasts (a compact-mode sidebar revealed
- * under a prompt); an element that was inert already is left to whoever made it so.
+ * them; §9.22: nothing focusable is left behind a sheet's scrim) until the returned release
+ * runs. Holds nest: the chrome comes back when the last one is released. The roots are the
+ * `WINDOW_CHROME_ROOTS` outside the dialog hosts and the chrome layer, including any mounted
+ * while the hold lasts (a compact-mode sidebar revealed under a prompt); an element that was
+ * inert already is left to whoever made it so. The frame dialog host holds while it has a
+ * dialog, and every `BottomSheet` holds while it is up, so a sheet on the phone shell and one
+ * inside the host are one mechanism.
  */
 export function holdChromeInert(): () => void {
   if (++inertHolds === 1) {
@@ -147,6 +172,250 @@ export function chromeInertHeld(): boolean {
 }
 
 /**
+ * The sheet spring for a 0…1 progress: `SPRING_GENTLE`'s motion, its rest thresholds – set in
+ * px for a sheet that travels some 400 px – scaled to the unit, so the value settles to within
+ * a thousandth instead of snapping the last 40 % of the way.
+ */
+export const SHEET_PROGRESS_SPRING: SpringConfig = {
+  ...SPRING_GENTLE,
+  restDelta: 0.001,
+  restSpeed: 0.02
+}
+
+const LAYER_AT_REST: RecedeLayerFrame = { recede: 0, scrim: 0, inert: false }
+
+interface SheetChassis {
+  hostRef: RefObject<HTMLDivElement | null>
+  scrimRef: RefObject<HTMLDivElement | null>
+  slotRef: RefObject<HTMLDivElement | null>
+}
+
+/**
+ * How far (px) the host's slot travels between closed and resting: the sheet's full height
+ * across the frame's bottom edge (§11.1: `p` is a surface's progress over its own travel, and a
+ * phone dialog is a §9.23 sheet), measured as the distance from the top edge of the highest
+ * panel in the slot to the slot's bottom edge, so at 0 nothing of any panel is above the edge
+ * and at 1 the panels stand where they are laid out. A sheet on its own chassis
+ * (`[data-sheet-layer]`) runs its own track and does not count. With no panel in the slot (the
+ * way down after the last dialog has gone) the last measure stands, so the empty slot keeps
+ * its geometry; 0 with nothing ever measured.
+ */
+function slotTravel(slot: HTMLElement, last: number): number {
+  let top = Infinity
+  for (const child of slot.children) {
+    if (!(child instanceof HTMLElement) || child.hasAttribute('data-sheet-layer')) continue
+    top = Math.min(top, child.offsetTop)
+  }
+  return top === Infinity ? last : Math.max(0, slot.clientHeight - top)
+}
+
+/**
+ * The host as a phone sheet on the recede chassis (design language v2 draft §11.1, §11.5): one
+ * progress value `p`, run 0 → 1 on `SPRING_GENTLE` when a dialog opens and back to 0 when the
+ * last one closes, is the scrim's opacity, the slot's slide over its full height across the
+ * frame's bottom edge (`slotTravel`; a phone dialog is a §9.23 sheet and slides like one, the
+ * desktop dialog keeps its 24 px pop) and – through the recede registry – the page's recede and
+ * the bottom bar's fade; a sheet above recedes the slot and makes it inert like any lower sheet
+ * (§11.2). The sheet holds the page under its cover for as long as anything of it shows
+ * (`coverPageUnderSheet`): the dialogs it hosts mount before they capture the page and set
+ * their own flag, and drop that flag the moment they go, so the sheet captures the page itself
+ * before it rises, waits for the live page to have given way to its picture (the recede never
+ * starts on a page about to be swapped), and lets the page back only once the spring has landed
+ * at 0 (the page comes back at the transform it left at). Everything is written straight to the
+ * three elements the returned refs are put on; React renders none of it. While anything of the
+ * sheet shows the host carries `data-sheet-up` (main.css: it takes the pointer, so a press
+ * during the way down lands on the scrim and not on the page under it). Under reduced motion
+ * the spring jumps: the slot arrives in place and its opacity steps 0 → 1, which main.css
+ * turns into the 120 ms fade of §11.3 (as it does the scrim's, both ways).
+ *
+ * The system back gesture (#24) drives the same `p` while the dialog on top is dismissable: the
+ * finger peeks the sheet down its track (`sheetBackPosition`, as `SheetMotion` does), the page
+ * coming back with it; letting go before the threshold springs it back to 1, and a commit – or
+ * the back button – is the scrim press, so the same spring runs everything down from where the
+ * finger left it. A prompt that gave no scrim handler is left to its own `useBackSurface`.
+ */
+function useSheetChassis(active: boolean, open: boolean, top?: FrameDialogEntry): SheetChassis {
+  const hostRef = useRef<HTMLDivElement>(null)
+  const scrimRef = useRef<HTMLDivElement>(null)
+  const slotRef = useRef<HTMLDivElement>(null)
+  const p = useRef(0)
+  const layer = useRef<RecedeLayerFrame>(LAYER_AT_REST)
+  const recede = useRef<RecedeHandle | null>(null)
+  /** The page's cover, held from before the rise; `leaving` while the spring runs it back down. */
+  const cover = useRef<SheetCover | null>(null)
+  const leaving = useRef<SheetCover | null>(null)
+  const spring = useRef<SpringAnimation | null>(null)
+  /** Whether the chassis is wanted up (the latest `open`, for the spring's rest). */
+  const up = useRef(false)
+  /** Where the back gesture caught the sheet; null while no finger holds it. */
+  const backOrigin = useRef<number | null>(null)
+  /** The slot's travel (px) as last measured (`slotTravel`). */
+  const travel = useRef(0)
+
+  const paint = (): void => {
+    const host = hostRef.current
+    const scrim = scrimRef.current
+    const slot = slotRef.current
+    const q = layer.current
+    // The spring overshoots a hair: the slide shows it, the opacities stop at their ends.
+    const share = Math.min(1, Math.max(0, p.current))
+    // The stack shows one scrim: this one's share (the registry's, from the same `p`) gives way
+    // as a sheet above fades its own in.
+    if (scrim) scrim.style.opacity = q.scrim.toFixed(4)
+    if (slot) {
+      travel.current = slotTravel(slot, travel.current)
+      // Below the edge at 0, the step to full opacity shows nothing (and under reduced motion,
+      // where the spring has jumped the slot into place, main.css fades it in – §11.3).
+      slot.style.opacity = share > 0 ? '1' : '0'
+      slot.style.transform = `translate3d(0, ${((1 - p.current) * travel.current).toFixed(2)}px, 0) scale(var(--zen-layer-scale, 1))`
+      slot.style.setProperty('--zen-layer-recede', q.recede.toFixed(4))
+      slot.toggleAttribute('inert', q.inert)
+    }
+    // Nothing of it shows at 0 (the wait for the page's cover): nothing of it takes a press.
+    if (host) host.toggleAttribute('data-sheet-up', p.current > 0)
+  }
+
+  /**
+   * Nothing of the chassis left on the elements: the slot is shown as rendered again (a sheet
+   * that brings its own chassis may be placed in it next), the scrim at nothing.
+   */
+  const reset = (): void => {
+    const scrim = scrimRef.current
+    if (scrim) scrim.style.opacity = '0'
+    const slot = slotRef.current
+    if (slot) {
+      slot.style.removeProperty('opacity')
+      slot.style.removeProperty('transform')
+      slot.style.removeProperty('--zen-layer-recede')
+      slot.removeAttribute('inert')
+    }
+    hostRef.current?.removeAttribute('data-sheet-up')
+  }
+
+  const motion = (): SpringAnimation =>
+    (spring.current ??= new SpringAnimation(
+      SHEET_PROGRESS_SPRING,
+      (x) => {
+        p.current = x
+        recede.current?.progress(x)
+        paint()
+      },
+      (x) => {
+        // Down and at rest, and nothing has opened meanwhile (a dialog that opened on the way
+        // down keeps the layer and the cover; its rise comes once the page is covered): off the
+        // stack, and the page may come back.
+        if (x > 0 || up.current) return
+        recede.current?.release()
+        recede.current = null
+        leaving.current?.release()
+        leaving.current = null
+        reset()
+      }
+    ))
+
+  /**
+   * Run `p` to `target` on the spring from wherever it is: a motion in flight keeps its
+   * velocity, a value a finger left (the spring stopped) starts from rest there.
+   */
+  const settleTo = (target: number): void => {
+    const m = motion()
+    if (m.running) m.retarget(target)
+    else m.start(p.current, 0, target)
+  }
+
+  // The back gesture over a dismissable dialog: the finger holds `p` where the spring is
+  // frozen, cancel springs it back, commit is the scrim press (the close path runs the spring
+  // down from where the finger left it).
+  useBackSurface(
+    active && open && top?.dismissable
+      ? {
+          name: 'frame-sheet',
+          onStart: () => {
+            motion().stop()
+            backOrigin.current = p.current
+          },
+          onProgress: (progress) => {
+            motion().stop()
+            backOrigin.current ??= p.current
+            p.current = sheetBackPosition(backOrigin.current, progress)
+            recede.current?.progress(p.current)
+            paint()
+          },
+          onCancel: () => {
+            backOrigin.current = null
+            settleTo(1)
+          },
+          onCommit: () => {
+            backOrigin.current = null
+            top.onScrimPress()
+          }
+        }
+      : null
+  )
+
+  const clear = (): void => {
+    spring.current?.stop()
+    recede.current?.release()
+    recede.current = null
+    cover.current?.release()
+    cover.current = null
+    leaving.current?.release()
+    leaving.current = null
+    p.current = 0
+    backOrigin.current = null
+    layer.current = LAYER_AT_REST
+    reset()
+    // Not a sheet (or gone): the scrim, if any, is the desktop's, drawn as rendered.
+    scrimRef.current?.style.removeProperty('opacity')
+  }
+
+  useLayoutEffect(() => {
+    up.current = active && open
+    if (!active) {
+      clear()
+      return
+    }
+    if (open) {
+      // On the stack from the open, above whatever is up already (§11.2), and painted at 0
+      // before the first frame shows – the panel must not stand there before its rise.
+      recede.current ??= registerRecedeLayer((frame) => {
+        layer.current = frame
+        paint()
+      })
+      paint()
+      if (cover.current) return
+      // The cover is taken once per stay on screen: a dialog opening on the way down keeps the
+      // one being let go of, and the spring turns round where it is.
+      const c = leaving.current ?? coverPageUnderSheet()
+      leaving.current = null
+      cover.current = c
+      void c.promise.then(() => {
+        if (cover.current !== c) return
+        settleTo(1)
+      })
+      return
+    }
+    // The last dialog went: the same spring runs the scrim and the recede back to 0, from
+    // wherever they are – mid-rise, or where a back gesture left the sheet – and lets the page
+    // back when it lands (a host still waiting for its cover lands at once).
+    if (cover.current) {
+      leaving.current?.release()
+      leaving.current = cover.current
+      cover.current = null
+    }
+    backOrigin.current = null
+    if (recede.current) settleTo(0)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only refs besides `active` and `open`
+  }, [active, open])
+
+  // Unmounted (the shell changed): no frame writes into a gone tree, the page is released.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- `clear` touches refs only; once, at unmount
+  useEffect(() => clear, [])
+
+  return { hostRef, scrimRef, slotRef }
+}
+
+/**
  * The layer modal dialogs render into: `absolute; inset: 0` over the box it is placed in (the
  * content frame on desktop, the whole shell on phones, where dialogs are sheets), its own
  * stacking context, taking the pointer only while a dialog is open. It draws the §9.5 scrim
@@ -166,10 +435,19 @@ export function chromeInertHeld(): boolean {
  * is open the window chrome outside the frame is inert (`holdChromeInert`, §9.5) and every open
  * popover closes; Escape and the dialog's own controls stay live.
  *
- * A dialog that draws the stack's one scrim itself – a phone sheet, whose scrim fades with its
- * motion (§9.24, §9.28) – registers with `ownScrim`, and the host draws none while it is on top.
- * `frame` marks the frame's host (TabDialogs'): `FrameDialogPortal` reaches it from anywhere in
- * the tree, for a dialog whose state lives inside the content frame.
+ * On a phone the host is a sheet on the recede chassis (`data-sheet`, `useSheetChassis`,
+ * v2 draft §11): its scrim is the sheet scrim at the sheet's progress, the slot slides in over
+ * its panels' full height from the frame's bottom edge and the page recedes on the same spring,
+ * all reversed on close – a dialog placed through it inherits the slide and the recede without
+ * a line of its own, and cannot leave them out. (A dialog's panel is the surface's to keep: one
+ * that unmounts it the moment it closes leaves the scrim and the recede to run back alone.)
+ *
+ * A dialog that is a sheet on the chassis already – `BottomSheet` placed `hosted`, which drives
+ * the recede and draws the stack's one scrim itself, fading with its motion (§9.24, §9.28) –
+ * registers with `ownScrim`: the host draws no scrim of its own while it is on top, and on a
+ * phone its chassis stays down for it (the sheet is the chassis; two would recede the page
+ * twice). `frame` marks the frame's host (TabDialogs'): `FrameDialogPortal` reaches it from
+ * anywhere in the tree, for a dialog whose state lives inside the content frame.
  *
  * Modal dialogs render in the content frame through FrameDialogHost (scrim dims the frame only).
  * Popovers, menus, toasts and anything anchored to chrome outside the frame render through
@@ -215,20 +493,41 @@ export function FrameDialogHost({
     if (count > seen.current) closeAllPopovers('all')
     seen.current = count
   }, [count])
+  const sheet = useViewport().formFactor === 'phone'
+  // The host's own chassis runs for a dialog that has none; a sheet on the chassis already
+  // (`ownScrim`) recedes the page, draws the scrim and answers the back gesture itself.
+  const chassisOpen = dialogs.some((d) => !d.ownScrim)
+  const { hostRef, scrimRef, slotRef } = useSheetChassis(
+    sheet,
+    chassisOpen,
+    top && !top.ownScrim ? top : undefined
+  )
   return (
     <FrameDialogHostContext.Provider value={api}>
       <div
+        ref={hostRef}
         className="zen-frame-dialogs absolute inset-0 z-50"
         data-surface="page"
         data-open={top ? 'true' : undefined}
+        data-sheet={sheet ? 'true' : undefined}
       >
-        {top && !top.ownScrim && (
+        {/* On a phone the scrim is always there, at nothing, and is written per frame with the
+            chassis' progress: it has to outlast the last dialog by the way down. */}
+        {(sheet || (top && !top.ownScrim)) && (
           <div
-            className="zen-frame-scrim zen-animate-in"
-            onPointerDown={() => top.onScrimPress()}
+            ref={scrimRef}
+            className={sheet ? 'zen-frame-scrim' : 'zen-frame-scrim zen-animate-in'}
+            style={sheet ? { opacity: 0 } : undefined}
+            onPointerDown={() => top?.onScrimPress()}
           />
         )}
-        <div ref={setElement} className="zen-frame-dialogs-slot">
+        <div
+          ref={(el) => {
+            slotRef.current = el
+            setElement(el)
+          }}
+          className="zen-frame-dialogs-slot"
+        >
           {children}
         </div>
       </div>
@@ -240,10 +539,14 @@ export function FrameDialogHost({
  * Place the calling dialog through the nearest `FrameDialogHost`: while `active` the host shows
  * its scrim, makes the window chrome inert and takes the pointer, and a press on the scrim – on
  * `pointerdown`, mouse, touch or pen alike – runs `onScrimPress` of the dialog on top (omit it
- * for a prompt the page waits on, which only its buttons and Escape answer). Renders nothing
- * itself: the dialog returns its panel, which the host centres above the scrim. `ownScrim` is
- * for a sheet that draws the stack's one scrim itself, fading with its motion: the host then
- * draws none while that sheet is on top, and the sheet's scrim takes the press.
+ * for a prompt the page waits on, which only its buttons and Escape answer). On a phone the
+ * host's sheet answers the system back gesture for a dialog that gave one, the same way (#24):
+ * the finger peeks the sheet and un-recedes the page, a commit runs `onScrimPress`; a prompt
+ * without one registers its own `useBackSurface`. Renders nothing itself: the dialog returns
+ * its panel, which the host centres above the scrim. `ownScrim` is for a sheet that draws the
+ * stack's one scrim itself, fading with its motion (`BottomSheet` placed `hosted`): the host
+ * then draws none while that sheet is on top, keeps its own chassis and back surface down for
+ * it, and the sheet's scrim takes the press.
  *
  * Modal dialogs render in the content frame through FrameDialogHost (scrim dims the frame only).
  * Popovers, menus, toasts and anything anchored to chrome outside the frame render through
@@ -259,10 +562,11 @@ export function useFrameDialog({
   useLayoutEffect(() => {
     latest.current = onScrimPress
   }, [onScrimPress])
+  const dismissable = onScrimPress !== undefined
   useLayoutEffect(() => {
     if (!active || !host) return
-    return host.register({ onScrimPress: () => latest.current?.(), ownScrim })
-  }, [active, host, ownScrim])
+    return host.register({ onScrimPress: () => latest.current?.(), ownScrim, dismissable })
+  }, [active, host, ownScrim, dismissable])
 }
 
 /**

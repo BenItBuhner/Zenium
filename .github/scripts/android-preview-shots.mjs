@@ -14,14 +14,23 @@
 //
 // Options
 //   --out <dir>        where the PNGs go (required); files are <prefix><label>-<light|dark>.png
-//   --states <list>    comma-separated `label:state` pairs; a state is `idle`, `overlay=<kind>`
+//   --states <list>    comma-separated `label:state` pairs; a state is `idle`, `page=settings`
+//                      (the Settings tab; `&section=<id>` opens a section, `&search=<text>` types
+//                      into Find in Settings, `&show=<text>` scrolls a row into view, and
+//                      `&then=tap:<text>;back;overview;urlbar` takes steps on the open page –
+//                      a tap on a row opens its sheet, a second one stacks another, `back`
+//                      closes the top sheet, `overview` opens the tab overview, `urlbar` the pill
+//                      for editing), `overlay=<kind>`
 //                      (history, bookmarks, downloads, settings, addons, …; `&section=<id>` picks
 //                      a Settings section, `&show=<text>` scrolls a row into view), `menu=app`
 //                      (`&show=<text>` scrolls an item into view), `find=<text>`, `pull=<n>`,
 //                      `zoom=<factor>` (the page zoom sheet), `error=<code>&url=<failed url>`
 //                      (the zen://error page; see `previewSpec.ts`) or the messages and the load
 //                      bar: `toast=<text>&action=<label>` (`&kind=error`), `banners=<n>`,
-//                      `progress=<0…1>`, in any combination.
+//                      `progress=<0…1>`, in any combination. `&pressed=<selector>;<selector>`
+//                      (the script's own key, not the page's) draws the elements those
+//                      selectors match in their pressed state for the still – `:active` forced
+//                      through DevTools – for a record of a press fill or its absence.
 //                      The label defaults to the state with punctuation turned into dashes.
 //                      Default: history:overlay=history,bookmarks:overlay=bookmarks,
 //                               downloads:overlay=downloads,find:find=coffee
@@ -386,7 +395,6 @@ async function inner(opts) {
         if (isMainFrame && code !== -3) reject(new Error(`${code} ${description}`))
       })
     })
-  const js = (code) => wc.executeJavaScript(code, true)
 
   // Seed the profile: the host keeps its files in localStorage under `zen-preview:`, so it has
   // to be written from the origin and the chrome booted again on top of it.
@@ -398,6 +406,33 @@ async function inner(opts) {
   await wc.loadURL(opts.url)
   await first
 
+  // Everything the page is asked goes through DevTools, bounded: `webContents.executeJavaScript`
+  // holds its answer back while any frame of the page is loading (a tab's iframe fetching a site
+  // counts), and an input event the renderer never acks would otherwise wait forever.
+  wc.debugger.attach('1.3')
+  const cdp = (method, params = {}, timeoutMs = 10_000) =>
+    Promise.race([
+      wc.debugger.sendCommand(method, params),
+      new Promise((_, reject) =>
+        setTimeout(
+          () => reject(new Error(`${method} did not come back in ${timeoutMs} ms`)),
+          timeoutMs
+        )
+      )
+    ])
+  const js = async (code) => {
+    const result = await cdp('Runtime.evaluate', {
+      expression: code,
+      returnByValue: true,
+      awaitPromise: true
+    })
+    if (result.exceptionDetails) {
+      const detail = result.exceptionDetails
+      throw new Error(detail.exception?.description ?? detail.text)
+    }
+    return result.result.value
+  }
+
   // A Pixel-sized phone with a finger on it: metrics through Electron, touch through DevTools.
   // Only after the first load: emulating an empty WebContents crashes Electron 44.
   wc.enableDeviceEmulation({
@@ -408,8 +443,6 @@ async function inner(opts) {
     viewSize: { width: opts.width, height: opts.height },
     scale: 1
   })
-  wc.debugger.attach('1.3')
-  const cdp = (method, params = {}) => wc.debugger.sendCommand(method, params)
   await cdp('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 })
   await cdp('Emulation.setEmitTouchEventsForMouse', { enabled: true, configuration: 'mobile' })
 
@@ -434,6 +467,71 @@ async function inner(opts) {
   console.log(`chrome up: form factor ${formFactor}, pointer ${pointer}`)
   if (pointer !== 'coarse') console.warn('warning: the chrome does not see a coarse pointer')
 
+  // A finger has focused a control before a state is taken. Chromium draws a focus ring
+  // (`:focus-visible`) on an element focused by script unless the last focus came from a pointer,
+  // so without this a state's taps (script clicks) and the focus a sheet takes as it opens would
+  // read as a keyboard's: a ring on the sheet's Cancel that no phone shows. A tap that focuses
+  // nothing sets no modality, and the chrome has no control a tap may land on for free, so the
+  // finger taps a transient, invisible button of its own in the top-left corner (above any sheet
+  // a previous state left up), which then goes: the modality stays with the document. Touch, not
+  // a mouse press – under touch emulation the first mouse press is never acked.
+  const pointerModality = async () => {
+    const PRIMER = 'zen-shot-primer'
+    await js(`(() => {
+      const button = document.createElement('button')
+      button.id = ${JSON.stringify(PRIMER)}
+      button.tabIndex = -1
+      button.setAttribute('aria-hidden', 'true')
+      button.style.cssText =
+        'position:fixed;left:0;top:0;width:12px;height:12px;opacity:0;border:0;padding:0;' +
+        'background:transparent;z-index:2147483647'
+      document.body.appendChild(button)
+    })()`)
+    try {
+      await cdp(
+        'Input.dispatchTouchEvent',
+        { type: 'touchStart', touchPoints: [{ x: 6, y: 6 }] },
+        3000
+      )
+      await cdp('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }, 3000)
+      await sleep(200)
+      const focused = await js(`document.activeElement?.id === ${JSON.stringify(PRIMER)}`)
+      if (!focused) console.warn('warning: the primer tap focused nothing; focus rings may show')
+    } finally {
+      await js(`document.getElementById(${JSON.stringify(PRIMER)})?.remove()`)
+    }
+  }
+
+  // `pressed=<selector>;<selector>` in a state (a key the page does not read; `;`-separated
+  // because `,` separates the states): the elements those selectors match are drawn in their
+  // pressed state while the still is taken – `:active` forced through DevTools, as the Styles
+  // pane's :hov toggle does – for a record of a press fill, or of its absence on a row that is
+  // not a target (§9.34). Returns the release, or null when the state names nothing.
+  const press = async (state) => {
+    const selector = new URLSearchParams(state).get('pressed')
+    if (!selector) return null
+    await cdp('DOM.enable')
+    await cdp('CSS.enable')
+    const { root } = await cdp('DOM.getDocument', { depth: 0 })
+    const { nodeIds } = await cdp('DOM.querySelectorAll', {
+      nodeId: root.nodeId,
+      selector: selector.split(';').join(',')
+    })
+    if (nodeIds.length === 0) throw new Error(`pressed: nothing matches ${selector}`)
+    const force = (forcedPseudoClasses) =>
+      Promise.all(
+        nodeIds.map((nodeId) => cdp('CSS.forcePseudoState', { nodeId, forcedPseudoClasses }))
+      )
+    await force(['active'])
+    // The fill's 120 ms transition.
+    await sleep(300)
+    return async () => {
+      await force([])
+      await cdp('CSS.disable')
+      await cdp('DOM.disable')
+    }
+  }
+
   let failures = 0
   for (const scheme of schemes) {
     nativeTheme.themeSource = scheme
@@ -444,7 +542,9 @@ async function inner(opts) {
     ).catch((e) => console.warn(e.message))
     for (const { label, state } of states) {
       const file = path.join(opts.out, `${opts.prefix}${label}-${scheme}.png`)
+      let release = null
       try {
+        await pointerModality()
         await js(`document.documentElement.dataset.previewState = ''`)
         await js(`window.postMessage({ zenPreview: ${JSON.stringify(state)} }, '*')`)
         await waitFor(
@@ -453,12 +553,15 @@ async function inner(opts) {
           `state ${state}`
         )
         await sleep(opts.settle)
+        release = await press(state)
         const png = (await wc.capturePage()).toPNG()
         fs.writeFileSync(file, png)
         console.log(`shot ${file} (${png.readUInt32BE(16)}x${png.readUInt32BE(20)})`)
       } catch (e) {
         failures++
         console.error(`failed ${label} ${scheme}: ${e.message}`)
+      } finally {
+        await release?.().catch((e) => console.warn(`release: ${e.message}`))
       }
     }
   }

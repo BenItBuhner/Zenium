@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sheets over a page</title>
+<style>
+  /*
+   * A page for the sheet demo's camera: white, text from the very first line down, so that the
+   * band the driver measures (the upper part of the page, which no sheet reaches) is full of text
+   * edges and grey-white pixels – what the page looks like, live or as its picture – and never
+   * smooth. Nothing on it is coloured: the window gradient behind the receding frame is the one
+   * saturated thing in the frame, and a frame of it where the page should be is the failure.
+   */
+  html { background: #fff; }
+  body { margin: 0; padding: 12px 20px 40px; font: 17px/1.45 -apple-system, Roboto, sans-serif; color: #15141a; }
+  h1 { margin: 0 0 6px; font-size: 24px; line-height: 1.2; }
+  h2 { margin: 18px 0 4px; font-size: 18px; }
+  p { margin: 0 0 10px; }
+  .meta { font-size: 13px; color: #5b5b66; margin-bottom: 10px; }
+  table { border-collapse: collapse; width: 100%; margin: 6px 0 12px; font-size: 15px; }
+  td, th { border: 1px solid #d7d7dc; padding: 5px 8px; text-align: left; }
+</style>
+</head>
+<body>
+<h1>Sheets over a page: the recede</h1>
+<p class="meta">A demo page served from inside the browser's own process. Nothing here is fetched from the network.</p>
+<p>When a sheet comes up over this page the page moves back a little: it scales to 97 percent about its centre and its corners round off by six pixels more, while a scrim darkens it and the bottom bar fades. All of that runs on one value, the sheet's own progress, so a sheet dragged halfway has the page halfway back, and letting go settles both on the same spring.</p>
+<p>The live page and its picture must never be told apart. Before the sheet rises the page is photographed and the picture takes its place at the same size and position; only then does anything move. On the way out the picture stays until the page has been drawn again where the picture was, and only then does it go. A frame that shows the window behind the page, or a frame in which the page jumps in brightness, is a failure of that promise.</p>
+<h2>What the camera measures</h2>
+<p>The upper part of the page never has a sheet over it. Its mean brightness should fall as the scrim fades in and rise as the scrim fades out, smoothly, and it should look like a page in every frame: grey and white pixels, with the edges of letters, never the smooth tinted gradient of the window.</p>
+<table>
+  <tr><th>Surface</th><th>Chassis</th><th>Closed by</th></tr>
+  <tr><td>App menu</td><td>Bottom sheet</td><td>System back</td></tr>
+  <tr><td>Site information</td><td>Sheet motion</td><td>A press on the scrim</td></tr>
+  <tr><td>Icon picker</td><td>Frame dialog host</td><td>System back</td></tr>
+  <tr><td>Second sheet</td><td>Stacked</td><td>System back, twice</td></tr>
+</table>
+<p>Two sheets at once make a stack of depth two. The sheet on top owns the one scrim; the sheet beneath it recedes the way the page did for the first, and takes no input while it is under. The page itself does not move again for the second sheet.</p>
+<h2>Reduced motion</h2>
+<p>With reduced motion on, the page does not recede and the bar does not fade; a sheet arrives in place and its scrim fades in over a short time. The same values are still written each frame; their gain is simply zero.</p>
+<p>Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur.</p>
+<p>Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum. Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo.</p>
+<p>Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit, sed quia consequuntur magni dolores eos qui ratione voluptatem sequi nesciunt. Neque porro quisquam est, qui dolorem ipsum quia dolor sit amet, consectetur, adipisci velit, sed quia non numquam eius modi tempora incidunt ut labore et dolore magnam aliquam quaerat voluptatem.</p>
+</body>
+</html>

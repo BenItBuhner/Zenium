@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { PREVIEW_OVERLAYS, PREVIEW_PULL_MAX, parsePreviewSpec } from '../previewSpec'
+import {
+  PREVIEW_OVERLAYS,
+  PREVIEW_PULL_MAX,
+  PREVIEW_WEBAPP_SURFACES,
+  parsePreviewSpec,
+  parsePreviewSteps
+} from '../previewSpec'
 
 describe('parsePreviewSpec', () => {
   it('opens a known overlay by name', () => {
@@ -26,16 +32,23 @@ describe('parsePreviewSpec', () => {
     expect(parsePreviewSpec('#find=x')).toEqual({ kind: 'find', text: 'x' })
   })
 
-  it('lands on a Settings section when one is named', () => {
-    expect(parsePreviewSpec('overlay=settings&section=accessibility')).toEqual({
+  it('lands on an overlay’s section when one is named', () => {
+    expect(parsePreviewSpec('overlay=history&section=host:a.test')).toEqual({
       kind: 'overlay',
-      overlay: 'settings',
-      section: 'accessibility'
+      overlay: 'history',
+      section: 'host:a.test'
     })
-    expect(parsePreviewSpec('overlay=settings&section=')).toEqual({
+    expect(parsePreviewSpec('overlay=history&section=')).toEqual({
       kind: 'overlay',
-      overlay: 'settings'
+      overlay: 'history'
     })
+  })
+
+  it('knows no Settings, Shortcuts or Sync overlay: on this host Settings is a tab (page=settings)', () => {
+    expect(parsePreviewSpec('overlay=settings')).toEqual({ kind: 'idle' })
+    expect(parsePreviewSpec('overlay=settings&section=accessibility')).toEqual({ kind: 'idle' })
+    expect(parsePreviewSpec('overlay=shortcuts')).toEqual({ kind: 'idle' })
+    expect(parsePreviewSpec('overlay=sync')).toEqual({ kind: 'idle' })
   })
 
   it('opens the zoom sheet at a factor, or as it is', () => {
@@ -80,6 +93,14 @@ describe('parsePreviewSpec', () => {
     expect(parsePreviewSpec('find=x&toast=y')).toEqual({ kind: 'find', text: 'x' })
   })
 
+  it('raises an "Add to Home screen" surface by name', () => {
+    for (const surface of PREVIEW_WEBAPP_SURFACES) {
+      expect(parsePreviewSpec(`webapp=${surface}`)).toEqual({ kind: 'webapp', surface })
+    }
+    expect(parsePreviewSpec('webapp=splash')).toEqual({ kind: 'idle' })
+    expect(parsePreviewSpec('find=x&webapp=banner')).toEqual({ kind: 'find', text: 'x' })
+  })
+
   it('treats idle, an unknown overlay and junk as idle', () => {
     expect(parsePreviewSpec('idle')).toEqual({ kind: 'idle' })
     expect(parsePreviewSpec('')).toEqual({ kind: 'idle' })
@@ -88,14 +109,14 @@ describe('parsePreviewSpec', () => {
   })
 
   it('scrolls a row of an overlay into view when asked', () => {
-    expect(parsePreviewSpec('overlay=settings&show=Pull%20to%20refresh')).toEqual({
+    expect(parsePreviewSpec('overlay=addons&show=Dark%20Reader')).toEqual({
       kind: 'overlay',
-      overlay: 'settings',
-      show: 'Pull to refresh'
+      overlay: 'addons',
+      show: 'Dark Reader'
     })
-    expect(parsePreviewSpec('overlay=settings&show=')).toEqual({
+    expect(parsePreviewSpec('overlay=addons&show=')).toEqual({
       kind: 'overlay',
-      overlay: 'settings'
+      overlay: 'addons'
     })
   })
 
@@ -142,5 +163,105 @@ describe('parsePreviewSpec', () => {
       progress: 0.4,
       released: false
     })
+  })
+
+  it('opens an internal page in its tab, on a section, searched, scrolled, then stepped through', () => {
+    expect(parsePreviewSpec('page=settings')).toEqual({ kind: 'page', page: 'settings' })
+    expect(parsePreviewSpec('page=settings&section=look&search=dark&show=Enable%20Glance')).toEqual(
+      {
+        kind: 'page',
+        page: 'settings',
+        section: 'look',
+        search: 'dark',
+        show: 'Enable Glance'
+      }
+    )
+    // The page wins over an overlay and a find in the same spec; an unknown page is not a page.
+    expect(parsePreviewSpec('page=settings&overlay=history&find=x').kind).toBe('page')
+    expect(parsePreviewSpec('page=nope&find=x')).toEqual({ kind: 'find', text: 'x' })
+
+    expect(
+      parsePreviewSpec('page=settings&section=containers&then=tap:Work;tap:Delete%20container')
+    ).toEqual({
+      kind: 'page',
+      page: 'settings',
+      section: 'containers',
+      then: [
+        { kind: 'tap', text: 'Work' },
+        { kind: 'tap', text: 'Delete container' }
+      ]
+    })
+    expect(parsePreviewSpec('page=settings&then=overview')).toEqual({
+      kind: 'page',
+      page: 'settings',
+      then: [{ kind: 'overview' }]
+    })
+    expect(parsePreviewSpec('page=settings&then=urlbar;back')).toEqual({
+      kind: 'page',
+      page: 'settings',
+      then: [{ kind: 'urlbar' }, { kind: 'back' }]
+    })
+    // Blanks, an empty tap and unknown steps are dropped; no steps means no `then` at all.
+    expect(parsePreviewSteps(' tap:Colour scheme ; ; tap: ; wave ; back ')).toEqual([
+      { kind: 'tap', text: 'Colour scheme' },
+      { kind: 'back' }
+    ])
+    expect(parsePreviewSteps(null)).toEqual([])
+    expect(parsePreviewSpec('page=settings&then=')).toEqual({ kind: 'page', page: 'settings' })
+    expect(parsePreviewSpec('page=settings&then=wave')).toEqual({ kind: 'page', page: 'settings' })
+  })
+
+  it('asks for a sheet on its expanded detent', () => {
+    expect(parsePreviewSpec('overlay=downloads&expand')).toEqual({
+      kind: 'overlay',
+      overlay: 'downloads',
+      expand: true
+    })
+    expect(parsePreviewSpec('overlay=downloads')).not.toHaveProperty('expand')
+  })
+
+  it('describes a transfer for the stand-in downloader, with sensible defaults', () => {
+    expect(parsePreviewSpec('download=zenium-0.3.14-arm64.apk')).toEqual({
+      kind: 'download',
+      download: {
+        filename: 'zenium-0.3.14-arm64.apk',
+        url: 'https://downloads.example.com/zenium-0.3.14-arm64.apk',
+        mimeType: 'application/vnd.android.package-archive',
+        totalBytes: 48_217_088,
+        receivedBytes: Math.round(48_217_088 * 0.4),
+        bytesPerSecond: 2_400_000,
+        paused: false,
+        error: null,
+        deleted: false,
+        private: false
+      }
+    })
+    expect(
+      parsePreviewSpec(
+        'download=notes.txt&size=1000&at=25&speed=10&paused&fail=network-timeout&deleted&private&url=https%3A%2F%2Fx.test%2Fn&mime=text%2Fmarkdown'
+      )
+    ).toEqual({
+      kind: 'download',
+      download: {
+        filename: 'notes.txt',
+        url: 'https://x.test/n',
+        mimeType: 'text/markdown',
+        totalBytes: 1000,
+        receivedBytes: 250,
+        bytesPerSecond: 10,
+        paused: true,
+        error: 'network-timeout',
+        deleted: true,
+        private: true
+      }
+    })
+    // Junk numbers fall back; a percentage past the whole file is the whole file; a pull wins.
+    const junk = parsePreviewSpec('download=a.bin&size=big&at=140')
+    expect(junk.kind === 'download' && junk.download.totalBytes).toBe(48_217_088)
+    expect(junk.kind === 'download' && junk.download.receivedBytes).toBe(48_217_088)
+    expect(junk.kind === 'download' && junk.download.mimeType).toBe('application/octet-stream')
+    expect(parsePreviewSpec('pull=40&download=a.bin').kind).toBe('pull')
+    expect(parsePreviewSpec('error=-105&download=a.bin').kind).toBe('error')
+    expect(parsePreviewSpec('download=')).toEqual({ kind: 'idle' })
   })
 })

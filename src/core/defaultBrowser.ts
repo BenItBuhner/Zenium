@@ -14,16 +14,21 @@ import {
 import type { Browser } from './browser'
 
 /**
- * Whether the chrome has surfaces that render `prompt` – the promo sheet and the banner. It does
- * not yet: until they land, the campaign stays inert. Sessions are still counted (so the first
- * sheet comes up on schedule once there is one), but nothing is decided, marked as shown or
- * dismissed, since a showing with nothing on screen would burn the user's turn. Flipped on in the
- * same change that adds the surfaces.
+ * Whether the chrome has surfaces that render `prompt` – the promo sheet
+ * (`components/defaultbrowser`) and the top banner `PhoneShell` raises. Off, the campaign stays
+ * inert: sessions are still counted, but nothing is decided, marked as shown or dismissed, since
+ * a showing with nothing on screen would burn the user's turn. On since the surfaces landed –
+ * and they are the Android chrome's, so the campaign runs on Android only: the desktop program
+ * asks with its own strip (`components/content/DefaultBrowserBanner.tsx`, remembered per feature
+ * release in `defaultBrowserPromptDismissed`), and two campaigns on one window would nag twice.
  */
-export const PROMPT_SURFACES = false
+export const PROMPT_SURFACES = true
 
 export interface DefaultBrowserServiceOptions {
-  /** The chrome can show a sheet and a banner (`PROMPT_SURFACES` unless a test says otherwise). */
+  /**
+   * The chrome can show a sheet and a banner: `PROMPT_SURFACES` on Android, off elsewhere,
+   * unless a test says otherwise.
+   */
   promptSurfaces?: boolean
 }
 
@@ -31,21 +36,21 @@ export interface DefaultBrowserServiceOptions {
  * The default-browser role, host-neutral half. Counts sessions, asks the host whether Zenium
  * holds the role (at start and whenever the app returns to the foreground, since the user may
  * have changed it in the system settings), and turns the rules in `shared/defaultBrowser.ts`
- * into the one `DefaultBrowserStatus` the chrome renders: the settings row reads `isDefault`;
- * the promo sheet and the banner read `prompt`, once they exist (`PROMPT_SURFACES`). Hosts
- * without the capability keep it inert.
+ * into the one `DefaultBrowserStatus` the chrome renders: the settings row reads `isDefault`,
+ * the promo sheet and the banner read `prompt` (`PROMPT_SURFACES`). Hosts without the capability
+ * keep it inert.
  */
 export class DefaultBrowserService {
   private isDefault: boolean | null = null
   private prompt: DefaultBrowserPrompt = null
   private checking: Promise<boolean | null> | null = null
-  private readonly promptSurfaces: boolean
+  private readonly surfaces: boolean | undefined
 
   constructor(
     private readonly browser: Browser,
     options: DefaultBrowserServiceOptions = {}
   ) {
-    this.promptSurfaces = options.promptSurfaces ?? PROMPT_SURFACES
+    this.surfaces = options.promptSurfaces
   }
 
   status(): DefaultBrowserStatus {
@@ -54,6 +59,11 @@ export class DefaultBrowserService {
 
   private get supported(): boolean {
     return this.browser.state.capabilities.defaultBrowser === true
+  }
+
+  /** The chrome on this platform renders the prompts (see `PROMPT_SURFACES`). */
+  private get promptSurfaces(): boolean {
+    return this.surfaces ?? (PROMPT_SURFACES && this.browser.state.platform === 'android')
   }
 
   /** The app started: one more session (once onboarding is behind the user), then decide. */

@@ -1,13 +1,14 @@
 import type { JSX } from 'react'
 import { useCallback, useEffect, useRef } from 'react'
 import { Minimize } from 'lucide-react'
-import type { Events, UIState } from '@shared/types'
+import type { Events, Rect, UIState } from '@shared/types'
 import type { ResolvedTheme } from '@shared/theme'
 import { bookmarksBarVisible } from '@shared/bookmarkViews'
 import { formatBinding } from '@shared/shortcuts'
 import { run } from '@renderer/lib/api'
 import { closeExtensionPopup } from '@renderer/lib/extensions/popup'
-import { useFormFactorReport, useViewport } from '@renderer/lib/formFactor'
+import { isPhone, useFormFactorReport, useViewport } from '@renderer/lib/formFactor'
+import { openNewTabPage } from '@renderer/lib/newtab'
 import { activeTab } from '@renderer/lib/selectors'
 import {
   captureActiveTab,
@@ -457,10 +458,18 @@ function useGlobalKeys(state: UIState): void {
  * comes back as `newtab.opened` with the URL bar over it), Zen's floating URL bar in new-tab mode
  * when the page is off (`urlbar.toggle`), or the page an extension overrides new tabs with.
  * Closing the bar first keeps the toggle from swallowing the request while it is open.
+ * The phone opens its own new tab page instead (the WebView has no `zen://newtab` yet) – grown
+ * out of the control that asked for it when the event says where that was (`detail.origin`,
+ * window coordinates).
  */
 function useNewTabEvent(): void {
   useEffect(() => {
-    const onNewTab = (): void => {
+    const onNewTab = (e: Event): void => {
+      if (isPhone()) {
+        const origin = (e as CustomEvent<{ origin?: Rect } | undefined>).detail?.origin ?? null
+        void openNewTabPage(origin)
+        return
+      }
       closeUrlbar()
       run('tab.new', undefined)
     }

@@ -1,8 +1,10 @@
 import type { CSSProperties, JSX } from 'react'
 import { useEffect, useRef } from 'react'
-import { Lock, Search } from 'lucide-react'
+import { Globe, Lock, Search } from 'lucide-react'
+import { internalPageOf } from '@shared/internalPages'
 import type { PhoneBarPosition, Space, Tab, UIState } from '@shared/types'
 import { displayHost } from '@shared/url'
+import { run } from '@renderer/lib/api'
 import {
   contentShift,
   cssPx,
@@ -12,15 +14,19 @@ import {
 } from '@renderer/lib/gestures/dock'
 import { closeOverview, overviewIsOpen, stageStore } from '@renderer/lib/gestures/stage'
 import { closeSpacesDrawer } from '@renderer/lib/gestures/drawer'
+import { barFade } from '@renderer/lib/motion/recede'
 import { activeSpace, activeTab } from '@renderer/lib/selectors'
 import { openSiteInfo } from '@renderer/lib/siteInfo'
 import {
   closeBarEditor,
   closeTabsMenu,
   contentAreaStore,
+  dismissBanner,
   openBarEditor,
   openTabsMenu,
   openUrlbar,
+  overlayCoversContent,
+  showBanner,
   uiStore,
   type UiState
 } from '@renderer/lib/ui'
@@ -39,6 +45,7 @@ import { SpacesDrawer } from './SpacesDrawer'
 import { TabPreview } from './TabPreview'
 import { TabsQuickMenu } from './TabsQuickMenu'
 import { useBarHold, type BarHoldHandlers } from './useBarHold'
+import { useGestureHint } from './useGestureHint'
 import { usePillGestures, type PillGestureHandlers } from './usePillGestures'
 import './phonePanels.css'
 
@@ -84,6 +91,33 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
     []
   )
 
+  // The lighter default-browser reminder (DEF-02) is one of the top banners (v2 §9.33), up for
+  // as long as the core says a banner is due. Swiping or closing it is the campaign's one
+  // dismissal; the action hands over to the system, which ends the campaign either way; and
+  // when the core takes the prompt down itself – after the request, or once Zenium holds the
+  // role – the card leaves as `'program'`, which counts for nothing. A third banner pushing it
+  // off (`'replaced'`) is not the user's answer either.
+  const bannerDue = state.defaultBrowser.prompt === 'banner' && !onboarding
+  useEffect(() => {
+    if (!bannerDue) return
+    const id = showBanner({
+      title: 'Open links in Zenium',
+      detail: 'Make it your default browser',
+      icon: Globe,
+      action: {
+        label: 'Set as default',
+        onPick: () => run('defaultBrowser.request', { source: 'banner' })
+      },
+      key: 'default-browser',
+      duration: null,
+      onDismiss: (reason) => {
+        if (reason === 'swipe' || reason === 'close')
+          run('defaultBrowser.dismiss', { prompt: 'banner' })
+      }
+    })
+    return () => dismissBanner(id)
+  }, [bannerDue])
+
   // A hold on the Tabs button: its quick menu, anchored to the button; any other hold, the editor.
   const hold = useBarHold({
     onHold: (item, rect) => {
@@ -105,9 +139,24 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
     }
   })
 
+  const barHidden = ui.urlbar.open
+  // The one-time gesture hint (FRE-07) is a toast on the message cards, owed once the chrome is
+  // calm: a page in view under nothing, the bar and its pill in place, no drag, overview or prompt.
+  useGestureHint(
+    state,
+    edge,
+    !onboarding &&
+      !htmlFullscreen &&
+      !barHidden &&
+      tab !== null &&
+      !overlayCoversContent(ui) &&
+      !overviewOpen &&
+      dock.phase === 'idle' &&
+      state.defaultBrowser.prompt !== 'sheet'
+  )
+
   if (htmlFullscreen) return <div className="h-full w-full bg-black" />
 
-  const barHidden = ui.urlbar.open
   // The pill is off its slot and Settings still name the edge it left: the bar there fades out
   // as a preview of the bar at the other edge fades in. Once the new edge is committed the bar
   // simply renders there, under the ghost that is setting down on it.
@@ -125,7 +174,11 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
       }}
     >
       <div className="zen-texture" />
+      {/* The chrome under the sheets – the content column, the messages, the stage, the bar, the
+          drawer and the tabs menu – carries `data-shell-chrome`: it goes inert while a sheet or
+          a frame dialog is up (§9.22, `holdChromeInert` in lib/portals.tsx). */}
       <main
+        data-shell-chrome
         className="relative flex min-h-0 flex-1 flex-col"
         style={{
           // The bar's edge reserves the bar band (the URL bar's field takes it over while the bar
@@ -142,6 +195,7 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
       </main>
       {/* Messages sit on the content frame's box, over the bar and the stage but under sheets. */}
       <div
+        data-shell-chrome
         className="zen-message-frame pointer-events-none absolute z-[36]"
         style={{
           top: edgePadding('top', edge),
@@ -153,6 +207,12 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
         <MessageLayer />
       </div>
       <PhoneStage state={state} />
+      {/* The bar's opacity is the chassis rule in main.css: docked at the bottom edge, where a
+          sheet arrives, it fades by `1 − recede`, the sheet's progress (v2 draft §11.1); docked
+          at the top it is not in the sheet's path and stays, inert under the scrim (ruled
+          23:50). At rest nothing is written over it; while the pill is carried the carry's own
+          fade goes through `barFade`, which composes the recede into it at the bottom edge
+          only, so a sheet coming up mid-carry fades the bar there all the same. */}
       {!barHidden && (
         <PhoneBar
           state={state}
@@ -161,7 +221,7 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
           hold={hold}
           overviewOpen={overviewOpen}
           pillLook={dock.phase === 'idle' ? 'docked' : 'well'}
-          style={{ opacity: fromHere ? 1 - p : 1 }}
+          style={fromHere ? { opacity: barFade(edge, 1 - p) } : undefined}
         />
       )}
       {!barHidden && fromHere && (
@@ -173,7 +233,7 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
           overviewOpen={overviewOpen}
           pillLook={p >= 0.5 ? 'well-target' : 'well'}
           inert
-          style={{ opacity: p }}
+          style={{ opacity: barFade(dock.from === 'bottom' ? 'top' : 'bottom', p) }}
         />
       )}
       {barHidden && <Urlbar state={state} urlbar={ui.urlbar} area={null} phoneEdge={edge} />}
@@ -205,9 +265,10 @@ type PillLook = 'docked' | 'well' | 'well-target'
  * sideways to move to the previous / next tab (the neighbour's card follows the finger), pull it
  * towards the middle of the screen for the tab overview, tap it for the URL bar, hold it to
  * carry the whole bar to the other edge. A hold anywhere else on the bar opens the editor that
- * rearranges it (on the Tabs button, its quick menu).
+ * rearranges it (on the Tabs button, its quick menu). Window chrome (v2 §9.29): the bar and the
+ * pill carry `data-surface="window"`, so their chips draw in the window family.
  */
-function PhoneBar({
+export function PhoneBar({
   state,
   edge,
   pill,
@@ -243,7 +304,12 @@ function PhoneBar({
         pillLook !== 'docked' && 'zen-phone-bar-lifted',
         inert && 'pointer-events-none'
       )}
+      // Window chrome: the bar, the pill and their chips draw in the window family (v2 §9.29).
+      data-surface="window"
+      // The edge it is docked at: main.css fades the bottom-docked bar with a sheet (§11.1).
+      data-edge={edge}
       aria-hidden={inert || undefined}
+      data-shell-chrome
       style={{
         ...style,
         left: 'var(--zen-inset-left)',
@@ -271,6 +337,7 @@ function PhoneBar({
           pillLook !== 'docked' && 'zen-pill-well',
           pillLook === 'well-target' && 'zen-pill-well-target'
         )}
+        data-surface="window"
         {...(inert ? {} : pill)}
       >
         {pillLook === 'docked' && (
@@ -319,6 +386,9 @@ export function PillContent({
   // No lock over a certificate that failed verification (the interstitial, or the page the user
   // proceeded to): the connection is not secure, as site information says.
   const secure = shown?.url.startsWith('https://') && !shown.certificateError
+  // An internal page (Settings): its glyph in the favicon slot and the page's name, no lock and
+  // no site-information chip – there is no site (v2 §10.1); the registry says which glyph.
+  const page = shown ? internalPageOf(shown.url) !== null : false
   const Control = interactive ? 'button' : 'span'
   const controlProps = interactive ? { type: 'button' as const } : {}
   return (
@@ -338,7 +408,14 @@ export function PillContent({
           {url || 'Search or enter address'}
         </span>
       </Control>
-      {shown ? (
+      {shown && page ? (
+        <span
+          className="order-first -ml-1.5 -mr-2 flex h-8 w-8 shrink-0 items-center justify-center"
+          aria-hidden="true"
+        >
+          <Favicon tab={shown} size={16} />
+        </span>
+      ) : shown ? (
         <PillChip
           inert={!interactive}
           label="Site information"
@@ -352,7 +429,7 @@ export function PillContent({
       ) : (
         <Search className="order-first h-4 w-4 shrink-0 opacity-60" />
       )}
-      {url && secure && (
+      {url && secure && !page && (
         <PillChip
           inert={!interactive}
           label="Connection is secure"
@@ -399,7 +476,7 @@ function BarDockLayer({
   const scale = 1 + 0.04 * dock.lift
   const { style: pillStyle, ...pillHandlers } = pill
   return (
-    <div className="pointer-events-none absolute inset-0 z-[35]">
+    <div className="pointer-events-none absolute inset-0 z-[35]" data-shell-chrome>
       {hero && area && (
         <div
           className="zen-stage-card absolute"
@@ -417,6 +494,7 @@ function BarDockLayer({
       <div
         className="zen-phone-pill zen-pill-ghost pointer-events-auto absolute flex items-center gap-2 overflow-hidden rounded-full px-3.5 text-left"
         aria-hidden
+        data-surface="window"
         data-lifted={dock.phase === 'lifted' || dock.phase === 'settling'}
         style={{
           ...pillStyle,

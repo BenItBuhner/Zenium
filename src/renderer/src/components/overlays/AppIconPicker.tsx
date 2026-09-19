@@ -10,19 +10,8 @@ import {
   type AppIconId,
   type AppIconVariant
 } from '@shared/appIcon'
+import { APP_ICON_HINT } from './settingsCopy'
 import { Group, Row } from './SettingsPrimitives'
-
-/** What changing the icon does on this host, in one breath. */
-const HINT: Record<Platform, string> = {
-  android:
-    'Changes the icon on your home screen and in the app list at once. Some launchers take a moment to redraw it, and a home screen shortcut may need adding again.',
-  win32:
-    'Applies to the window and the taskbar now. The Start menu and desktop shortcuts keep the icon the installer gave them until the next update, when they take this one.',
-  darwin:
-    'Applies to the Dock while Zenium is running. Finder and Launchpad keep the icon inside the app bundle.',
-  linux:
-    'Applies to the window and its dock entry now. The app menu keeps the icon the package installed.'
-}
 
 /**
  * Settings → Look and Feel → App icon: a row naming the current colour, then every colour as
@@ -40,7 +29,7 @@ export function AppIconGroup({
 }): JSX.Element {
   return (
     <Group title="App icon">
-      <Row label="Colour" hint={HINT[platform]}>
+      <Row label="Colour" hint={APP_ICON_HINT[platform]}>
         <span className="text-[12.5px] text-[var(--zen-muted)]">{appIconVariant(value).name}</span>
       </Row>
       <div role="radiogroup" aria-label="App icon colour" className="zen-app-icon-grid p-3">

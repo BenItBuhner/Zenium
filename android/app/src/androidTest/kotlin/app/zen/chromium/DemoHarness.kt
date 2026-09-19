@@ -396,6 +396,28 @@ abstract class DemoHarness(
         ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
     }
 
+    /**
+     * The host's own word on whether the chrome has a surface a back would dismiss (a menu, a
+     * sheet, a panel, a Settings section over its landing): what `back.update` last told
+     * [PredictiveBack]. The accessibility tree trails a transition by seconds on the emulator's
+     * software GPU; this does not.
+     */
+    protected fun chromeSurfaceUp(): Boolean {
+        var up = false
+        instrumentation.runOnMainSync { up = (activity as? MainActivity)?.host?.back?.chromeSurfaceUp ?: false }
+        return up
+    }
+
+    /** Poll the host until the chrome reports a surface up or not (`up`); false when it does not in time. */
+    protected fun awaitSurface(up: Boolean, timeoutMs: Long = 6_000): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (chromeSurfaceUp() == up) return true
+            SystemClock.sleep(150)
+        }
+        return chromeSurfaceUp() == up
+    }
+
     /** Another app's window (a system dialog) is in front; false when none comes within the time. */
     protected fun awaitSystemWindow(timeoutMs: Long = 8_000): Boolean {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
@@ -595,6 +617,9 @@ abstract class DemoHarness(
         fun hold(ms: Long) = SystemClock.sleep(ms)
 
         fun up() = inject(MotionEvent.ACTION_UP, SystemClock.uptimeMillis())
+
+        /** The system takes the touch away (a palm, a notification shade): the WebView sees a pointercancel. */
+        fun cancel() = inject(MotionEvent.ACTION_CANCEL, SystemClock.uptimeMillis())
 
         fun tap(x: Float, y: Float) {
             down(x, y)

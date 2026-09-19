@@ -64,7 +64,9 @@ const DESKTOP: HostCapabilities = {
   pageControls: false,
   privateTabs: false,
   secureDns: false,
-  newTabPage: true
+  newTabPage: true,
+  pageTabs: false,
+  pinShortcuts: false
 }
 
 /**
@@ -101,7 +103,10 @@ const ANDROID: HostCapabilities = {
   pageControls: true,
   privateTabs: true,
   secureDns: false,
-  newTabPage: false
+  newTabPage: false,
+  pageTabs: true,
+  // Kotlin's boot info turns this on where the launcher can pin (ShortcutManagerCompat).
+  pinShortcuts: false
 }
 
 function memoryIo(): StoreIO {
@@ -313,6 +318,22 @@ describe('the app menu', () => {
     expect(appMenu(h)).toContain('Keyboard Shortcuts')
     h.browser.handleCommand(h.win, 'window.formFactor', { formFactor: 'phone' })
     expect(appMenu(h)).not.toContain('Keyboard Shortcuts')
+  })
+
+  it('opens Keyboard Shortcuts through page.open: the Settings overlay on its Shortcuts section on the desktop (a tablet with page tabs gets the tab)', () => {
+    const desktop = pageHarness(DESKTOP)
+    appMenu(desktop)
+    desktop.sent.length = 0
+    desktop.click('Keyboard Shortcuts')
+    expect(desktop.sent).toContain('overlay.open')
+    expect(desktop.browser.tabs.activeTabFor(desktop.win)?.url).toBe(PAGE_URL)
+
+    const tablet = pageHarness(ANDROID, { formFactor: 'tablet' })
+    appMenu(tablet)
+    tablet.sent.length = 0
+    tablet.click('Keyboard Shortcuts')
+    expect(tablet.browser.tabs.activeTabFor(tablet.win)?.url).toBe('zen://settings/shortcuts')
+    expect(tablet.sent).not.toContain('overlay.open')
   })
 
   it('on a phone drops what only a desktop window can use', () => {
@@ -1092,6 +1113,22 @@ describe('the chrome context menus', () => {
     expect(item(h.shown(), 'Copy').action).toBe('tab.copyUrl')
   })
 
+  it('routes Manage Search Engines… through page.open: a Settings tab where the host has page tabs, the overlay elsewhere', async () => {
+    const phone = pageHarness(ANDROID)
+    await show(phone, chromeParams({ target: 'urlpill', tabId: phone.tabId }))
+    phone.click('Manage Search Engines…')
+    const active = phone.browser.tabs.activeTabFor(phone.win)
+    expect(active?.url).toBe('zen://settings/search')
+    expect(phone.sent).not.toContain('overlay.open')
+
+    const desktop = pageHarness(DESKTOP)
+    await show(desktop, chromeParams({ target: 'urlpill', tabId: desktop.tabId }))
+    desktop.sent.length = 0
+    desktop.click('Manage Search Engines…')
+    expect(desktop.sent).toContain('overlay.open')
+    expect(desktop.browser.tabs.activeTabFor(desktop.win)?.url).toBe(PAGE_URL)
+  })
+
   it('toggles Always Show Full URLs from the pill and the field', async () => {
     const h = pageHarness()
     const settings: Settings = h.browser.state.settings
@@ -1335,6 +1372,27 @@ describe('the download row menu', () => {
     expect(shown).not.toContain('Retry')
   })
 
+  it('offers Retry only for a reason a retry can get past, as the row’s controls do', () => {
+    const h = harness(DESKTOP)
+    const dropped = start(h)
+    h.browser.downloads.finish(dropped, 'interrupted', { error: 'network-timeout' })
+    expect(menu(h, dropped)).toContain('Retry')
+    const blocked = start(h)
+    h.browser.downloads.finish(blocked, 'interrupted', { error: 'file-blocked' })
+    expect(menu(h, blocked)).toEqual([
+      'Open',
+      'Always Open Files of This Type',
+      'Show in Folder',
+      '-',
+      'Copy Download Link',
+      '-',
+      'Remove from List'
+    ])
+    const full = start(h)
+    h.browser.downloads.finish(full, 'interrupted', { error: 'file-no-space' })
+    expect(menu(h, full)).not.toContain('Retry')
+  })
+
   it('has no Retry for a blob: download – the page object is gone', () => {
     const h = harness(DESKTOP)
     const id = start(h, 'blob:https://example.com/0b1')
@@ -1360,10 +1418,12 @@ describe('the download row menu', () => {
       '-',
       'Copy Download Link',
       '-',
+      'Delete File',
       'Remove from List'
     ])
     expect(enabled(h, 'Open')).toBe(true)
     expect(enabled(h, 'Show in Folder')).toBe(true)
+    expect(enabled(h, 'Delete File')).toBe(true)
     let copied = ''
     h.browser.platform.clipboard.writeText = (text: string) => void (copied = text)
     h.shown()
@@ -1371,6 +1431,64 @@ describe('the download row menu', () => {
       ?.click?.()
     await settle()
     expect(copied).toBe('file:///tmp/shot.png')
+  })
+
+  it('Delete File takes the finished file away and leaves the row as Deleted', async () => {
+    const h = harness(DESKTOP)
+    h.browser.platform.downloads.deleteFile = () => Promise.resolve('deleted')
+    const id = h.browser.downloads.addCompleted('/tmp/shot.png', 'image/png').id
+    menu(h, id)
+    h.sent.length = 0
+    h.shown()
+      .find((item) => item.label === 'Delete File')
+      ?.click?.()
+    await settle()
+    expect(h.browser.downloads.item(id)?.fileMissing).toBe(true)
+    // The row says it; no toast.
+    expect(h.sent).not.toContain('toast')
+    // The Deleted row: nothing to open, show or delete again, Retry instead.
+    expect(menu(h, id)).toEqual([
+      'Open',
+      'Always Open Files of This Type',
+      'Show in Folder',
+      '-',
+      'Copy Download Link',
+      '-',
+      'Retry',
+      '-',
+      'Delete File',
+      'Remove from List'
+    ])
+    expect(enabled(h, 'Open')).toBe(false)
+    expect(enabled(h, 'Show in Folder')).toBe(false)
+    expect(enabled(h, 'Delete File')).toBe(false)
+    expect(enabled(h, 'Remove from List')).toBe(true)
+  })
+
+  it('Delete File tells the window in a toast when the file would not go', async () => {
+    const h = harness(DESKTOP)
+    h.browser.platform.downloads.deleteFile = () => Promise.resolve('failed')
+    const id = h.browser.downloads.addCompleted('/tmp/shot.png', 'image/png').id
+    menu(h, id)
+    h.sent.length = 0
+    h.shown()
+      .find((item) => item.label === 'Delete File')
+      ?.click?.()
+    await settle()
+    expect(h.browser.downloads.item(id)?.fileMissing).toBeUndefined()
+    expect(h.sent).toContain('toast')
+  })
+
+  it('has no Delete File for a row without a finished file', () => {
+    const h = harness(DESKTOP)
+    const running = start(h)
+    expect(menu(h, running)).not.toContain('Delete File')
+    const failed = start(h)
+    h.browser.downloads.finish(failed, 'interrupted')
+    expect(menu(h, failed)).not.toContain('Delete File')
+    const cancelled = start(h)
+    h.browser.downloads.finish(cancelled, 'cancelled')
+    expect(menu(h, cancelled)).not.toContain('Delete File')
   })
 
   it('shows nothing for an unknown record', () => {

@@ -17,6 +17,7 @@ import android.print.PrintManager
 import android.provider.MediaStore
 import android.provider.Settings
 import android.util.Log
+import android.view.Choreographer
 import android.view.HapticFeedbackConstants
 import android.view.View
 import android.view.ViewGroup
@@ -95,6 +96,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     val vault = VaultKeystore(activity, reauth, io, main)
     /** The extension store's files and downloads (installs live under `files/zen/extensions`). */
     val extStore = ExtensionStore(this, io, main)
+    /** Home-screen shortcuts; the launcher's confirmations reach it through `ShortcutPinnedReceiver`. */
+    val shortcuts = Shortcuts(activity, io)
     override var fullscreenTab: TabWebView? = null
         private set
     private var fullscreenCallback: WebChromeClient.CustomViewCallback? = null
@@ -117,8 +120,14 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         private set
     /** Previews of the pages a back gesture would return to. */
     override val snapshots = HistorySnapshots(activity)
-    /** Page views go behind the chrome no earlier than with the chrome's next drawn frame. */
-    private val pageVisibility = PageVisibility { tabId, visible -> tabs.setVisible(tabId, visible) }
+    /**
+     * Page views go behind the chrome no earlier than with the chrome's next drawn frame, and the
+     * chrome hears when the frame carrying each change is on screen (`view.drawn`, [reportDrawn]).
+     */
+    private val pageVisibility = PageVisibility { tabId, visible, change ->
+        tabs.setVisible(tabId, visible)
+        reportDrawn(tabId, visible, change)
+    }
     /** Last: it reads the tabs and fullscreen state above when it decides what back would do. */
     val back = PredictiveBack(activity, this, chrome = { chrome }, onLeave = { activity.moveTaskToBack(true) })
     val lifecycle = HostLifecycle()
@@ -158,7 +167,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "isolatedWorlds" to extensions.isolatedWorlds,
             "insets" to activity.currentInsets(),
             "fullscreen" to immersive,
-            "environment" to activity.environment()
+            "environment" to activity.environment(),
+            "pinShortcuts" to shortcuts.supported
         )
         "storage.writeSync" -> {
             storage.writeSync(args.str("name"), args.str("text"))
@@ -232,6 +242,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 reply(null)
             }
             "view.setPopupsAllowed" -> { tab?.setPopupsAllowed(args.bool("allowed")); reply(null) }
+            "view.postMessage" -> { tab?.postToPage(args.obj("message").toString()); reply(null) }
             "view.setBackground" -> {
                 tab?.setBackgroundColor(parseColor(args.str("color", "#ffffff")))
                 reply(null)
@@ -329,6 +340,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "download.retry" -> { downloads.retry(args); reply(null) }
             "download.release" -> downloads.release(args, reply)
             "download.discard" -> downloads.discard(args, reply)
+            "download.exists" -> downloads.exists(args.str("savePath"), reply)
+            "download.deleteFile" -> downloads.deleteFile(args.str("savePath"), reply)
             "download.chooseDirectory" -> downloads.chooseDirectory(reply)
             "download.open" -> { downloads.open(args.str("savePath"), args.str("mimeType")); reply(null) }
             "download.showAll" -> { downloads.showAll(); reply(null) }
@@ -361,6 +374,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 security.allowCertificate(args.str("containerId"), args.str("url"), args.str("fingerprint"))
                 reply(null)
             }
+            "shortcut.pin" -> shortcuts.pin(args, reply)
 
             // --- AI agents (MCP server) ------------------------------------------------------------
             "agent.start" -> reply(agentServer.start(args.num("port", 41735.0).toInt(), args.bool("lan")))
@@ -743,6 +757,50 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         })
     }
 
+    /**
+     * Tell the chrome once the frame carrying `change` – `tabId`'s view now `visible` or gone – is
+     * on screen (`view.drawn`; the renderer's `lib/pageView.ts` times the swap between the live page
+     * and its picture from it). A visibility change takes effect with the next traversal, which
+     * runs after the frame callbacks of that frame, so the second frame callback from here is the
+     * first to run with the frame submitted. A view coming back must have content to draw in that
+     * frame: its own visual-state callback says when it has (the next draw after it reflects the
+     * page), and the frames are counted from there. A renderer that never answers (gone, or the
+     * window on its way out) is not waited on past [PageVisibility.DRAWN_DEADLINE_MS]; the change
+     * is reported once whichever comes first, and not at all when a newer change to the same tab
+     * has overtaken it – that one's frame is the one that matters.
+     */
+    private fun reportDrawn(tabId: String, visible: Boolean, change: Long) {
+        val report = Runnable {
+            if (pageVisibility.drawn(tabId, change)) chrome.hostEvent("view.drawn", json("tabId" to tabId, "visible" to visible))
+        }
+        main.postDelayed(report, PageVisibility.DRAWN_DEADLINE_MS)
+        val onFrame = {
+            afterFrames(2) {
+                main.removeCallbacks(report)
+                report.run()
+            }
+        }
+        val view = if (visible) tabs.get(tabId) else null
+        if (view == null) {
+            onFrame()
+            return
+        }
+        view.postVisualStateCallback(change, object : WebView.VisualStateCallback() {
+            override fun onComplete(requestId: Long) = onFrame()
+        })
+    }
+
+    /** Run `then` at the start of the `count`-th frame from now. */
+    private fun afterFrames(count: Int, then: () -> Unit) {
+        val choreographer = Choreographer.getInstance()
+        var left = count
+        choreographer.postFrameCallback(object : Choreographer.FrameCallback {
+            override fun doFrame(frameTimeNanos: Long) {
+                if (--left <= 0) then() else choreographer.postFrameCallback(this)
+            }
+        })
+    }
+
     private var probeRun: Runnable? = null
     private var probeDeadline: Runnable? = null
     private var pendingRepair: Runnable? = null
@@ -921,6 +979,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     fun destroy() {
         extensions.destroy()
         cancelProbe()
+        shortcuts.destroy()
         agentServer.stop()
         downloads.destroy()
         updates.shutdown()

@@ -81,7 +81,12 @@ function fixture(hostTellsFocus = true): Fixture {
   const views: RecordedView[] = []
   const keyboard: Keyboard = { document: 'chrome' }
   let chromeFocus = 0
-  const capabilities = stub<HostCapabilities>({ windows: true, updates: false, agents: false })
+  const capabilities = stub<HostCapabilities>({
+    windows: true,
+    updates: false,
+    agents: false,
+    pageTabs: true
+  })
   const platform: Platform = {
     info: { os: 'linux' as PlatformOs, version: '0.0.0' },
     capabilities,
@@ -315,6 +320,42 @@ describe('keyboard focus on layout reports', () => {
     const focused = page.focusCalls
     f.win.applyLayout(shown([page.tabId]))
     expect(page.focusCalls).toBe(focused)
+  })
+
+  it('moves the keyboard to the chrome when a page tab the chrome draws replaces the page', () => {
+    const f = fixture()
+    const page = f.openPage('https://example.com')
+    typingIn(f, page)
+    const before = f.chromeFocusCalls()
+    const id = f.browser.handleCommand(f.win, 'page.open', { id: 'settings' }) as string
+    // Activating a tab without a view hands the keyboard to the chrome at once (as for a tab
+    // whose view has no document yet)…
+    expect(f.chromeFocusCalls()).toBe(before + 1)
+    expect(f.keyboard.document).toBe('chrome')
+    // …and the layout that follows places nothing: the page that was showing is hidden and the
+    // keyboard stays with the chrome.
+    f.win.applyLayout(shown([]))
+    expect(f.views.find((v) => v.tabId === id)).toBeUndefined()
+    expect(page.visible).toBe(false)
+    expect(f.chromeFocusCalls()).toBe(before + 2)
+    expect(f.keyboard.document).toBe('chrome')
+  })
+
+  it('does not take the keyboard from an extension popup open over a page tab (#111’s rule)', () => {
+    const f = fixture()
+    const page = f.openPage('https://example.com')
+    f.browser.handleCommand(f.win, 'page.open', { id: 'settings' })
+    f.win.applyLayout(shown([]))
+    expect(page.visible).toBe(false)
+    // An extension popup's view took the keyboard; the chrome page tab keeps reporting no
+    // placement on every layout (a resize, a sheet) and must not blur it.
+    f.keyboard.document = 'other'
+    page.focused = false
+    const before = f.chromeFocusCalls()
+    f.win.applyLayout(shown([]))
+    f.win.applyLayout({ placements: [], glance: null, contentHidden: false })
+    expect(f.chromeFocusCalls()).toBe(before)
+    expect(f.keyboard.document).toBe('other')
   })
 
   it('hands the keyboard back to the page once the overlay that hid it closes', () => {

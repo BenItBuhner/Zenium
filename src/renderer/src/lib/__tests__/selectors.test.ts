@@ -36,6 +36,7 @@ function tab(id: string, patch: Partial<Tab> = {}): Tab {
     blockedCount: 0,
     openerTabId: null,
     fromIntent: false,
+    webApp: null,
     ...patch
   }
 }

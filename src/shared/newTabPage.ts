@@ -13,9 +13,11 @@ import chromeCss from '../renderer/src/assets/main.css?raw'
  * over 600 ms like the chrome, with the tiles, captions and Customize in the window's ink and
  * fills, and the search field a page surface on it. The page defines no token of its own: its
  * stylesheet starts with the chrome's token blocks, taken verbatim from main.css at build time
- * (`chromeTokenCss`), and reads `--v2-*` for every surface, radius, size and weight; the space
- * theme's `--zen-*` values arrive inline from the page script. Motion is v1 §7: 120 ms state
- * changes, 180 ms pop for the toast, springs for the drag.
+ * (`chromeTokenCss`), then the new tab page's shared rules – the one `.zen-ntp-*` vocabulary the
+ * phone page draws with, cut from main.css as well (`newTabSharedCss`) – and reads `--v2-*` for
+ * every surface, radius, size and weight; the space theme's `--zen-*` values arrive inline from
+ * the page script. Motion is v1 §7: 120 ms state changes, 180 ms pop for the toast, springs for
+ * the drag.
  */
 
 /** A token block's selector: `:root`, `:root[attribute]`, or a `data-surface` family root (§9.29). */
@@ -53,10 +55,39 @@ export function chromeTokenCss(css: string = chromeCss): string {
 }
 
 /**
- * The page's own rules. Every colour, radius, size and weight is a token read from the blocks
- * above; the only literals are the page's layout (the field's 48 × 560 at radius 12, the four
- * by two grid of 64 px tiles at a 12 gap, the 32 px favicon, the 8 under a tile, the 12 in from
- * the corner) and the v1 motion timings.
+ * Where the new tab page's shared rules start in main.css: the one `.zen-ntp-*` block both pages
+ * draw with (`v2Tokens.test.ts` lists it among the v2 surfaces). The rules run from the field to
+ * the comment that opens the phone page's own additions, which are gated on the phone form factor
+ * and never wanted here.
+ */
+export const NEW_TAB_RULES_START = '.zen-ntp-field {'
+export const NEW_TAB_RULES_END = "/*\n   * The phone's page (components/newtab/NewTabPage.tsx)"
+
+/**
+ * The new tab page's shared rules, cut from the chrome's stylesheet (design language v2 §9.29,
+ * one vocabulary on both platforms): the field's surface, radius, shadow and no border; the
+ * tile's fill, radius, hover and press; the caption's, the empty sentence's and the fallbacks'
+ * ink; the picture's scrim. Comments dropped, blank lines collapsed. Every size is left to each
+ * platform's layout (`NEW_TAB_PAGE_STYLE` here, the phone page's classes there). An empty string
+ * when a marker is gone – the page then degrades to its layout over the tokens rather than
+ * failing (`newTabPage.test.ts` fails instead).
+ */
+export function newTabSharedCss(css: string = chromeCss): string {
+  const start = css.indexOf(NEW_TAB_RULES_START)
+  const end = start === -1 ? -1 : css.indexOf(NEW_TAB_RULES_END, start)
+  if (end === -1) return ''
+  return css
+    .slice(start, end)
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\n(?:[ \t]*\n)+/g, '\n')
+    .trim()
+}
+
+/**
+ * The page's own rules: its layout. Every colour, radius and weight comes from the shared rules
+ * or is a token read from the blocks above; the only literals are the page's sizes (the field's
+ * 48 × 560, the four by two grid of 64 px tiles at a 12 gap, the 32 px favicon, the 8 under a
+ * tile, the 12 in from the corner – the desktop's numbers in §9.29) and the v1 motion timings.
  *
  * The page is the window (design language v2 §9.29): its root is `data-surface="window"`, so
  * the tiles, captions, empty sentence, explainer and Customize draw in the window's ink and
@@ -64,7 +95,7 @@ export function chromeTokenCss(css: string = chromeCss): string {
  * are page surfaces on it. Over a picture the ink is white and the fills white alphas under a
  * neutral scrim. The class names are the phone page's (`NewTabPage.tsx`, #51) so the two pages
  * are one vocabulary: `zen-ntp-field`, `zen-v2-shortcut`, `zen-ntp-tile`, `zen-ntp-caption`,
- * `zen-ntp-empty`, `zen-ntp-icon`, `zen-ntp-letter`.
+ * `zen-ntp-empty`, `zen-ntp-icon`, `zen-ntp-letter`, `zen-ntp-scrim`.
  */
 export const NEW_TAB_PAGE_STYLE = `
   :root { color-scheme: light; }
@@ -104,8 +135,8 @@ export const NEW_TAB_PAGE_STYLE = `
   .zen-bg { position: fixed; inset: 0; z-index: -2; background-position: center; background-size: cover; background-repeat: no-repeat; }
   #zen-bg-next { opacity: 0; transition: opacity 600ms var(--zen-ease); }
   #zen-bg-next[data-fading] { opacity: 1; }
-  /* The legibility scrim over a picture: neutral black, 10 % → 45 % towards the captions. */
-  .zen-ntp-scrim { position: fixed; inset: 0; z-index: -1; background: linear-gradient(180deg, rgb(0 0 0 / 0.1), rgb(0 0 0 / 0.45)); }
+  /* The legibility scrim over a picture (its gradient is the shared rule's). */
+  .zen-ntp-scrim { position: fixed; inset: 0; z-index: -1; }
   body:not([data-bg='image']) .zen-ntp-scrim { display: none; }
 
   .zen-ntp {
@@ -119,15 +150,13 @@ export const NEW_TAB_PAGE_STYLE = `
   }
 
   /*
-   * The resting field is the floating URL bar's field (§9.29): 48 tall, at most 560 wide, radius
-   * 12, the URL bar's surface with the panel shadow and no border, a 20 px glyph, the placeholder
-   * 15/400 at 69 %. A page surface on the window: it takes the page family.
+   * The resting field is the floating URL bar's field (§9.29): 48 tall, at most 560 wide, a 20 px
+   * glyph, the placeholder 15/400 at 69 %; its surface, radius 12, panel shadow and no border are
+   * the shared rule's. A page surface on the window: it takes the page family.
    */
   .zen-ntp-field {
     display: flex; align-items: center; gap: 12px; box-sizing: border-box;
     width: min(560px, 100%); height: 48px; padding: 0 16px;
-    background: var(--v2-urlbar); color: var(--v2-text);
-    border: 0; border-radius: var(--v2-radius-sheet); box-shadow: var(--v2-shadow-panel);
   }
   .zen-ntp-field svg { width: 20px; height: 20px; color: var(--v2-text-deemphasized); flex: none; }
   .zen-ntp-field input {
@@ -136,8 +165,8 @@ export const NEW_TAB_PAGE_STYLE = `
   }
   .zen-ntp-field input::placeholder { color: var(--v2-text-deemphasized); opacity: 1; }
 
-  /* Empty state (§9.17): one sentence at 15/400 in the deemphasised window ink, 32 under the field. */
-  .zen-ntp-empty { margin: 32px 0 0; text-align: center; color: var(--v2-control-text-deemphasized); }
+  /* Empty state (§9.17): the shared rule's one sentence in the deemphasised window ink, 32 under the field. */
+  .zen-ntp-empty { margin: 32px 0 0; }
 
   /*
    * A private window's explainer stands where the tiles would (§9.29): a title block (§9.23) –
@@ -166,24 +195,14 @@ export const NEW_TAB_PAGE_STYLE = `
   }
   .zen-v2-shortcut:focus-visible { outline: none; }
   .zen-v2-shortcut:focus-visible .zen-ntp-tile { outline: 2px solid var(--v2-ring); outline-offset: 2px; }
-  /* The tile: a 64 square in the window's fill at radius 8 holding the 32 favicon; hover deepens the fill. */
-  .zen-ntp-tile {
-    display: grid; place-items: center; flex: none; box-sizing: border-box; width: 64px; height: 64px;
-    border-radius: var(--v2-radius-card); background: var(--v2-control-fill);
-    transition: background-color 120ms var(--zen-ease), transform 120ms var(--zen-ease), box-shadow 200ms var(--zen-ease);
-  }
-  .zen-v2-shortcut:hover .zen-ntp-tile { background: var(--v2-control-fill-hover); }
-  .zen-v2-shortcut:active .zen-ntp-tile { transform: scale(0.96); }
-  .zen-ntp-icon { width: 32px; height: 32px; object-fit: contain; }
-  /* The fallbacks – the site's letter, or the globe when there is none – in the deemphasised ink. */
-  .zen-ntp-tile svg { width: 32px; height: 32px; color: var(--v2-control-text-deemphasized); }
+  /* The tile: a 64 square holding the 32 favicon; its fill, radius, hover and press are the shared rules'. */
+  .zen-ntp-tile { display: grid; place-items: center; flex: none; box-sizing: border-box; width: 64px; height: 64px; }
+  .zen-ntp-icon { width: 32px; height: 32px; }
+  /* The fallbacks – the site's letter, or the globe when there is none – at 32, in the shared rules' ink. */
+  .zen-ntp-tile svg { width: 32px; height: 32px; }
   .zen-tile-add .zen-ntp-tile svg { width: 24px; height: 24px; }
-  .zen-ntp-letter { font-size: var(--v2-font-heading); font-weight: var(--v2-weight-heading); line-height: 1; color: var(--v2-control-text-deemphasized); }
-  /* The caption: 13 in the deemphasised window ink, one line with an ellipsis. */
-  .zen-ntp-caption {
-    display: block; max-width: 100%; font-size: var(--v2-font-small); line-height: var(--v2-line-small);
-    color: var(--v2-control-text-deemphasized); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  }
+  /* The caption: the shared rules' 13 in the deemphasised window ink, one line with an ellipsis. */
+  .zen-ntp-caption { display: block; max-width: 100%; }
   /* Dragging (v2 §9.4): the tile lifts to v1 level 2 at 90%; the page script adds scale(1.02). */
   .zen-tile[data-dragging] { z-index: 2; }
   .zen-tile[data-dragging] .zen-v2-shortcut { opacity: 0.9; }
@@ -253,7 +272,7 @@ export const PRIVATE_EXPLAINER = {
 
 /** The `zen://newtab` document. Everything dynamic is added by the page script. */
 export function newTabPageHtml(): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src * data: zen:;"><title>New Tab</title><style>${chromeTokenCss()}${NEW_TAB_PAGE_STYLE}</style></head>
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src * data: zen:;"><title>New Tab</title><style>${chromeTokenCss()}\n${newTabSharedCss()}${NEW_TAB_PAGE_STYLE}</style></head>
 <body data-surface="window">
 <div class="zen-bg" id="zen-bg-current"></div><div class="zen-bg" id="zen-bg-next"></div><div class="zen-ntp-scrim" aria-hidden="true"></div>
 <main class="zen-ntp" id="zen-ntp">

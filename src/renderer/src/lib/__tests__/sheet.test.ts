@@ -1,8 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BACK_PEEK, SHEET_CLOSED, SheetMotion, type SheetState } from '../motion/sheet'
 import {
+  SHEET_FIELD_MARGIN,
+  SHEET_MIN_DETENT_GAP,
   SHEET_OVERDRAG,
+  SHEET_PEEK_FRACTION,
   computeDetents,
+  detentForField,
+  fieldOverflow,
   settleDetent,
   sheetBackPosition,
   sheetDragPosition,
@@ -253,6 +258,165 @@ describe('SheetMotion', () => {
     })
   })
 
+  /*
+   * The sheet's presence `p` (`frame().scrim`, the page's recede) under a detent that moves
+   * while the sheet rests – the keyboard coming up measures the peek above the keys, going
+   * lowers it again (design language v2 draft §11.1, ruled 23:50): `p` is clamped at 1 once at
+   * rest, the sheet follows on its own value and the recede never breathes with the keyboard;
+   * a dismissal from the raised pose runs `p` 1 → 0 over the travel the sheet actually has
+   * there, not over the detent it rested at before.
+   */
+  describe('p under a detent that moves at rest (the keyboard)', () => {
+    const live = { collapsed: 300, expanded: 300 }
+    let sheet: SheetMotion
+    /** Every frame of the spring's remaining run, the scrim share after it. */
+    const eachFrame = (fn: (scrim: number) => void): number => {
+      let n = 0
+      for (; n < 200 && frames.scheduled; n++) {
+        frames.run(1)
+        fn(sheet.frame().scrim)
+      }
+      return n
+    }
+
+    beforeEach(() => {
+      live.collapsed = 300
+      live.expanded = 300
+      states = []
+      sheet = new SheetMotion({
+        detents: () => live,
+        onChange: (s) => states.push(s),
+        onClosed: () => closed++
+      })
+      sheet.present()
+      frames.run(120)
+      expect(sheet.frame()).toEqual({ height: 300, translateY: 0, scrim: 1 })
+    })
+    // A spring left running would be cranked by the next test's frames.
+    afterEach(() => frames.run(300))
+
+    it('the detent raised under a resting sheet moves the sheet on its own value while p holds at 1', () => {
+      live.collapsed = 650
+      live.expanded = 650
+      sheet.refresh()
+      expect(sheet.current.phase).toBe('settling')
+      // The sheet grows up from the edge, laid out at the new height and pushed down the
+      // difference; the page under it does not move by a hair.
+      expect(sheet.frame()).toEqual({ height: 650, translateY: 350, scrim: 1 })
+      const judged = eachFrame((scrim) => expect(scrim).toBe(1))
+      expect(judged).toBeGreaterThan(5)
+      expect(sheet.frame()).toEqual({ height: 650, translateY: 0, scrim: 1 })
+      expect(sheet.current).toEqual({ phase: 'open', progress: 0 })
+    })
+
+    it('the detent lowered again (the keyboard going) is followed with p at 1 as well', () => {
+      live.collapsed = 650
+      live.expanded = 650
+      sheet.refresh()
+      frames.run(120)
+      live.collapsed = 300
+      live.expanded = 300
+      sheet.refresh()
+      expect(sheet.current.phase).toBe('settling')
+      eachFrame((scrim) => expect(scrim).toBe(1))
+      expect(sheet.frame()).toEqual({ height: 300, translateY: 0, scrim: 1 })
+    })
+
+    it('a dismissal from the raised pose runs p 1 → 0 over the travel the sheet actually has, not the detent it rested at before', () => {
+      live.collapsed = 650
+      live.expanded = 650
+      sheet.refresh()
+      frames.run(120)
+      sheet.dismiss()
+      let last = 1
+      let below = 0
+      eachFrame((scrim) => {
+        const { translateY } = sheet.frame()
+        // Measured over the 650 px the sheet stands at: with 300 it would sit at 1 until the
+        // sheet had slid 350 px and then fall over the rest.
+        if (translateY < 650) expect(scrim).toBeCloseTo(1 - translateY / 650, 6)
+        expect(scrim).toBeLessThanOrEqual(last + 1e-9)
+        expect(last - scrim).toBeLessThan(0.25)
+        if (translateY > 300 && scrim > 0) below++
+        last = scrim
+      })
+      expect(below).toBeGreaterThan(0)
+      expect(closed).toBe(1)
+      expect(sheet.current).toEqual(SHEET_CLOSED)
+    })
+
+    it('a dismissal that catches the follow in flight runs p from 1 over the travel from where the sheet is', () => {
+      live.collapsed = 650
+      live.expanded = 650
+      sheet.refresh()
+      frames.run(6)
+      const caught = sheet.frame()
+      expect(caught.scrim).toBe(1)
+      const where = 650 - caught.translateY
+      expect(where).toBeGreaterThan(300)
+      expect(where).toBeLessThan(650)
+      sheet.dismiss()
+      // Nothing jumps: the first frames are a hair under 1, and every frame is the sheet's
+      // height over the height it was caught at.
+      let last = 1
+      eachFrame((scrim) => {
+        const visible = 650 - sheet.frame().translateY
+        expect(scrim).toBeCloseTo(Math.min(1, Math.max(0, visible / where)), 6)
+        expect(scrim).toBeLessThanOrEqual(last + 1e-9)
+        expect(last - scrim).toBeLessThan(0.25)
+        last = scrim
+      })
+      expect(closed).toBe(1)
+    })
+
+    it('a finger that catches the follow holds p where it is and drags it down over the travel from there', () => {
+      live.collapsed = 650
+      live.expanded = 650
+      sheet.refresh()
+      frames.run(6)
+      const where = 650 - sheet.frame().translateY
+      sheet.beginDrag()
+      expect(sheet.frame().scrim).toBe(1)
+      sheet.drag(where / 2)
+      expect(sheet.frame().scrim).toBeCloseTo(0.5, 6)
+      // Dragged back up past where it was caught: present in full, and no further.
+      sheet.drag(-100)
+      expect(sheet.frame().scrim).toBe(1)
+    })
+
+    it('a sheet still on its way in when the detent rises keeps running p over the travel it set out on, and clamps at 1', () => {
+      const fresh = new SheetMotion({
+        detents: () => live,
+        onChange: (s) => states.push(s),
+        onClosed: () => closed++
+      })
+      fresh.present()
+      frames.run(4)
+      const midway = fresh.frame().scrim
+      expect(midway).toBeGreaterThan(0)
+      expect(midway).toBeLessThan(1)
+      live.collapsed = 650
+      live.expanded = 650
+      fresh.refresh()
+      // No jump on the retarget…
+      expect(fresh.frame().scrim).toBeCloseTo(midway, 6)
+      let last = midway
+      for (let i = 0; i < 200 && frames.scheduled; i++) {
+        frames.run(1)
+        const { scrim } = fresh.frame()
+        // …p keeps rising to 1 and holds there while the sheet grows on to 650.
+        expect(scrim).toBeGreaterThanOrEqual(last - 1e-9)
+        last = scrim
+      }
+      expect(fresh.frame()).toEqual({ height: 650, translateY: 0, scrim: 1 })
+      // At rest the travel is the height it stands at: a dismissal runs over all of it.
+      fresh.dismiss()
+      frames.run(3)
+      const f = fresh.frame()
+      expect(f.scrim).toBeCloseTo(1 - f.translateY / 650, 6)
+    })
+  })
+
   it('ignores gestures while closed and closes at once on demand', () => {
     expect(motion.beginDrag()).toBe(false)
     motion.drag(50)
@@ -301,6 +465,79 @@ describe('computeDetents', () => {
   it('never asks for more than the layer minus the inset and margin', () => {
     expect(computeDetents(5000, layer, insetTop).expanded).toBe(sheetMaxHeight(layer, insetTop))
     expect(sheetMaxHeight(100, 200)).toBe(0)
+  })
+})
+
+// The keyboard: 340 CSS px of it, reported as the bottom inset, over a 24 px gesture bar.
+const keyboard = 340
+const bar = 24
+
+describe('computeDetents above the bottom inset', () => {
+  it('the peek shows its share of the room above the inset, and pads for the inset underneath', () => {
+    const withBar = computeDetents(1000, layer, insetTop, bar)
+    expect(withBar.collapsed).toBe(bar + Math.round((layer - bar) * SHEET_PEEK_FRACTION))
+    const withKeys = computeDetents(1000, layer, insetTop, keyboard)
+    expect(withKeys.collapsed).toBe(keyboard + Math.round((layer - keyboard) * SHEET_PEEK_FRACTION))
+    // The room above the keys is the same share of what is left, not what is left of the old peek.
+    expect(withKeys.collapsed - keyboard).toBe(Math.round((layer - keyboard) * SHEET_PEEK_FRACTION))
+    expect(withKeys.collapsed - keyboard).toBeGreaterThan(withBar.collapsed - keyboard)
+    // Without an inset nothing changes.
+    expect(computeDetents(1000, layer, insetTop, 0)).toEqual(two)
+    expect(computeDetents(1000, layer, insetTop)).toEqual(two)
+  })
+
+  it('the expanded detent is the content or the top margin, whatever the inset', () => {
+    expect(computeDetents(1000, layer, insetTop, keyboard).expanded).toBe(two.expanded)
+    expect(computeDetents(600, layer, insetTop, keyboard).expanded).toBe(600)
+  })
+
+  it('a form the keyboard leaves only a little taller than the peek stands at one detent, all of it in view', () => {
+    const peek = keyboard + Math.round((layer - keyboard) * SHEET_PEEK_FRACTION)
+    const one = computeDetents(peek + SHEET_MIN_DETENT_GAP - 1, layer, insetTop, keyboard)
+    expect(one.collapsed).toBe(one.expanded)
+    expect(one.expanded).toBe(peek + SHEET_MIN_DETENT_GAP - 1)
+    // Content taller than that keeps its two stops.
+    const still = computeDetents(peek + SHEET_MIN_DETENT_GAP, layer, insetTop, keyboard)
+    expect(still.collapsed).toBe(peek)
+    expect(still.expanded).toBe(peek + SHEET_MIN_DETENT_GAP)
+  })
+
+  it('an inset taller than the layer is clamped, never a negative room', () => {
+    const d = computeDetents(1000, layer, insetTop, layer + 100)
+    expect(d.collapsed).toBe(d.expanded)
+    expect(d.expanded).toBe(two.expanded)
+  })
+})
+
+describe('a focused field above the keyboard', () => {
+  const detents = computeDetents(1000, layer, insetTop, keyboard)
+  const room = (detent: number): number => detent - keyboard - SHEET_FIELD_MARGIN
+
+  it('fieldOverflow is how far the field reaches under the keys at a detent, 0 when it is in view', () => {
+    expect(fieldOverflow(room(detents.collapsed), detents.collapsed, keyboard)).toBe(0)
+    expect(fieldOverflow(room(detents.collapsed) + 10, detents.collapsed, keyboard)).toBe(10)
+    expect(fieldOverflow(room(detents.collapsed) + 10, detents.expanded, keyboard)).toBe(0)
+    expect(fieldOverflow(room(detents.expanded) + 32, detents.expanded, keyboard)).toBe(32)
+    // No keyboard: the whole detent is room, less the margin.
+    expect(fieldOverflow(detents.collapsed - SHEET_FIELD_MARGIN, detents.collapsed, 0)).toBe(0)
+  })
+
+  it('the sheet expands for a field under the keys at its peek, and stays for one in view', () => {
+    const under = room(detents.collapsed) + 1
+    expect(detentForField(under, detents, keyboard, 'collapsed')).toBe('expanded')
+    expect(detentForField(room(detents.collapsed), detents, keyboard, 'collapsed')).toBe(
+      'collapsed'
+    )
+    // Already expanded: nothing taller to go to; the body scrolls the field into view instead.
+    expect(detentForField(room(detents.expanded) + 40, detents, keyboard, 'expanded')).toBe(
+      'expanded'
+    )
+  })
+
+  it('a sheet with one detent has nowhere to expand to', () => {
+    const one = computeDetents(600, layer, insetTop, keyboard)
+    expect(one.collapsed).toBe(one.expanded)
+    expect(detentForField(room(one.collapsed) + 50, one, keyboard, 'collapsed')).toBe('collapsed')
   })
 })
 

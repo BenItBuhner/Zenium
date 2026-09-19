@@ -1,5 +1,7 @@
 package app.zen.chromium
 
+import android.util.Log
+import java.io.IOException
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
@@ -10,26 +12,30 @@ import java.net.Socket
  * process, so a driver can serve its own pages and need nothing from the network or the runner.
  *
  * `routes` maps a path (`/`, `/second.html`) to a content type and body; anything else is a 404.
- * Everything is `Cache-Control: no-store`, so a reload fetches again. A path in `delays` answers
- * that many milliseconds late: a slow script or image, for a page that takes its time to load.
+ * Everything is `Cache-Control: no-store`, so a reload fetches again. `address` is the loopback
+ * address to listen on – 127.0.0.1 unless a demo needs several sites, which are told apart by
+ * host: any 127.x.y.z is the loopback too, so one server per address on one port gives each
+ * site its own host. A path in `delays` answers that many milliseconds late: a slow script or
+ * image, for a page that takes its time to load.
  */
 class DemoServer(
     private val port: Int,
     private val routes: Map<String, Pair<String, ByteArray>>,
+    private val address: String = "127.0.0.1",
     private val delays: Map<String, Long> = emptyMap()
-) : Thread("demo-server-$port") {
+) : Thread("demo-server-$address-$port") {
     // Android's InetAddress.getLoopbackAddress() is ::1; a socket bound to it alone refuses the
     // 127.0.0.1 the pages' URLs name, so bind the IPv4 loopback explicitly.
-    private val socket = ServerSocket(port, 16, InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1)))
+    private val socket = ServerSocket(port, 16, InetAddress.getByAddress(ipv4(address)))
     @Volatile private var closed = false
 
-    val origin: String get() = "http://127.0.0.1:$port"
+    val origin: String get() = "http://$address:$port"
 
     /** Fetch `/` the way the WebView will and describe the outcome. */
     fun selfCheck(): String = runCatching {
-        Socket("127.0.0.1", port).use { s ->
+        Socket(address, port).use { s ->
             s.soTimeout = 5_000
-            s.getOutputStream().write("GET / HTTP/1.1\r\nHost: 127.0.0.1:$port\r\n\r\n".toByteArray())
+            s.getOutputStream().write("GET / HTTP/1.1\r\nHost: $address:$port\r\n\r\n".toByteArray())
             s.getOutputStream().flush()
             val status = s.getInputStream().bufferedReader().readLine()
             "listening on ${socket.localSocketAddress}, GET / -> $status"
@@ -43,12 +49,22 @@ class DemoServer(
             } catch (_: Exception) {
                 if (closed) return else continue
             }
-            Thread { serve(client) }.start()
+            // A client that hangs up mid-request (a fetch the WebView gave up on, a TLS hello
+            // meant for an https server) is its own business: uncaught, the exception would end
+            // the instrumentation process, and the demo with it.
+            Thread {
+                try {
+                    serve(client)
+                } catch (e: IOException) {
+                    Log.i("DemoServer", "client of $origin went away: $e")
+                }
+            }.start()
         }
     }
 
     private fun serve(client: Socket) {
         client.use {
+            it.soTimeout = 10_000
             val request = it.getInputStream().bufferedReader()
             val line = request.readLine() ?: return
             while (true) {
@@ -76,6 +92,13 @@ class DemoServer(
     }
 
     companion object {
+        /** The four bytes of a dotted IPv4 address (no name lookup, which would go to the network). */
+        private fun ipv4(address: String): ByteArray {
+            val parts = address.split('.')
+            require(parts.size == 4) { "not a dotted IPv4 address: $address" }
+            return ByteArray(4) { parts[it].toInt().toByte() }
+        }
+
         /** A minimal HTML document with a heading, and `body` after it. */
         fun page(title: String, body: String = ""): Pair<String, ByteArray> =
             "text/html; charset=utf-8" to (

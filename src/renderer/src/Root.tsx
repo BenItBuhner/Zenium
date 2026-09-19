@@ -1,7 +1,10 @@
 import React, { type JSX } from 'react'
 import { App } from './App'
+import { DefaultBrowserLayer } from './components/defaultbrowser/DefaultBrowserPrompt'
 import { DownloadBubbleLayer } from './components/downloads/DownloadBubble'
 import { MenuSheet } from './components/menus/MenuSheet'
+import { NewTabCustomizeLayer } from './components/newtab/CustomizeSheet'
+import { NewTabGrowLayer } from './components/newtab/NewTabGrowLayer'
 import { ExternalProtocolLayer } from './components/protocol/ExternalProtocolSheet'
 import { BarEditorLayer } from './components/phone/BarEditorSheet'
 import { SiteInfoLayer } from './components/siteinfo/SiteInfoSheet'
@@ -14,6 +17,9 @@ export function Root(): JSX.Element {
   return (
     <>
       <App />
+      <NewTabGrowLayer />
+      <NewTabCustomizeLayer />
+      <DefaultBrowserLayer />
       <SiteInfoLayer />
       <BarEditorLayer />
       <DownloadBubbleLayer />

@@ -2,6 +2,7 @@ import type { ContentCover, Rect } from '@shared/types'
 import type { NativeBridge, NativeCall } from './bridge'
 import type { BootInfo } from './platform'
 import type { Platform } from '@shared/types'
+import { createPreviewDownloads } from './previewDownloads'
 
 interface HostGlobal {
   resolve(id: number, json: string | null): void
@@ -17,15 +18,94 @@ const RELOAD_DELAY_MS = 3000
 const PAGE_ROUTE = '/__zen/page/'
 /** Whether the preview "holds the browser role" (outside the file store: it is not profile data). */
 const DEFAULT_BROWSER_KEY = 'zen-preview-default-browser'
+/** Where the stand-in downloader says files go (`BootInfo.downloadsDir`). */
+const DOWNLOADS_DIR = '/Downloads'
+
+const hostGlobal = (): HostGlobal => (window as unknown as { __zenHost: HostGlobal }).__zenHost
+
+/** Demo images the dev server serves straight from the source tree (never part of a build). */
+const previewAsset = (name: string): string => `${location.origin}/preview-assets/webapp/${name}`
+
+/**
+ * The web app the preview's pages can "declare": a cross-origin iframe cannot post its own
+ * manifest, so the preview states post this one for the active tab the way a page script would
+ * (`postPreviewManifest`). Written against `https://example.com/`, the tab the default profile
+ * opens on, with a vector icon for the chrome and a raster maskable one for the launcher.
+ */
+export const PREVIEW_WEB_APP = {
+  manifestUrl: 'https://example.com/app/manifest.webmanifest',
+  manifest: {
+    id: '/app/',
+    name: 'Sketch Studio',
+    short_name: 'Sketch',
+    description:
+      'Draw, ink and colour on an endless canvas. Sketches sync between your devices and open offline.',
+    start_url: '/app/',
+    scope: '/',
+    display: 'standalone',
+    theme_color: '#2f6f8f',
+    background_color: '#e8f1f5',
+    icons: [
+      { src: previewAsset('icon.svg'), sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
+      {
+        src: previewAsset('icon-192.png'),
+        sizes: '192x192',
+        type: 'image/png',
+        purpose: 'maskable'
+      }
+    ],
+    screenshots: [
+      {
+        src: previewAsset('shot-canvas.svg'),
+        sizes: '540x1080',
+        type: 'image/svg+xml',
+        form_factor: 'narrow',
+        label: 'An ink sketch on the canvas'
+      },
+      {
+        src: previewAsset('shot-colours.svg'),
+        sizes: '540x1080',
+        type: 'image/svg+xml',
+        form_factor: 'narrow',
+        label: 'The colour palette'
+      },
+      {
+        src: previewAsset('shot-gallery.svg'),
+        sizes: '540x1080',
+        type: 'image/svg+xml',
+        form_factor: 'narrow',
+        label: 'The sketch gallery'
+      }
+    ]
+  }
+}
+
+/**
+ * Post a manifest for `tabId` as its page script would: the demo app's, or none (an empty
+ * manifest describes no app) so the tab is a plain page again.
+ */
+export function postPreviewManifest(tabId: string, app: boolean): void {
+  hostGlobal().viewEvent(
+    tabId,
+    'pageMessage',
+    JSON.stringify({
+      type: 'webapp',
+      webapp: 'manifest',
+      manifestUrl: PREVIEW_WEB_APP.manifestUrl,
+      manifest: app ? PREVIEW_WEB_APP.manifest : {}
+    })
+  )
+}
 
 /**
  * A stand-in for the Kotlin host so the Android chrome can run in an ordinary desktop browser
  * (`npm run dev:android`): tab views are `<iframe>`s stacked above the chrome, persistence goes
- * to `localStorage`, dialogs use `window.confirm`. Handy for developing the mobile layout with
- * DevTools' device emulation; not a browser you would want to use.
+ * to `localStorage`, dialogs use `window.confirm`, downloads are played back by
+ * `previewDownloads.ts`. Handy for developing the mobile layout with DevTools' device emulation;
+ * not a browser you would want to use.
  */
 export function createPreviewBridge(): NativeBridge {
-  const host = (): HostGlobal => (window as unknown as { __zenHost: HostGlobal }).__zenHost
+  const host = hostGlobal
   const views = new Map<string, HTMLIFrameElement>()
   const density = 1
   /** What clips each page's frame: how far a pull has moved it down, and the covered strips. */
@@ -103,8 +183,9 @@ export function createPreviewBridge(): NativeBridge {
       signer: null,
       packageName: null,
       profiles: true,
+      pinShortcuts: true,
       files,
-      downloadsDir: '/Downloads',
+      downloadsDir: DOWNLOADS_DIR,
       insets: { top: 0, right: 0, bottom: 0, left: 0 },
       fullscreen: false,
       environment: { largeScreen: false, pointerAndKeyboard: false, fontScale: 1 }
@@ -158,6 +239,12 @@ export function createPreviewBridge(): NativeBridge {
       viewEvent(String(tabId), 'startLoading', null)
       frame.src = String(url)
       viewEvent(String(tabId), 'navigated', { ...navState(frame), inPage: false })
+    },
+    'view.postMessage': () => undefined,
+    // The launcher's dialog stands in for itself: a pin is accepted a moment later.
+    'shortcut.pin': ({ id }) => {
+      setTimeout(() => host().hostEvent('shortcut.pinned', JSON.stringify({ id })), 700)
+      return true
     },
     'view.reload': ({ tabId }) => {
       const frame = views.get(String(tabId))
@@ -213,9 +300,17 @@ export function createPreviewBridge(): NativeBridge {
       frame.style.transition = clip.pull > 0 ? '' : 'clip-path 320ms cubic-bezier(0.2, 0, 0, 1)'
       applyClip(frame, clip)
     },
+    // The Kotlin host reports the frame that carries the change as drawn (`view.drawn`, which
+    // `lib/pageView.ts` times the swap between the live page and its picture by); here the flip
+    // is on screen at the next frame, and the chrome hears so then rather than waiting out its
+    // ack timeout with every sheet held a second.
     'view.setVisible': ({ tabId, visible }) => {
       const frame = views.get(String(tabId))
-      if (frame) frame.style.display = visible ? 'block' : 'none'
+      if (!frame) return
+      frame.style.display = visible ? 'block' : 'none'
+      requestAnimationFrame(() =>
+        host().hostEvent('view.drawn', JSON.stringify({ tabId: String(tabId), visible }))
+      )
     },
     'view.bringToFront': ({ tabId }) => {
       const frame = views.get(String(tabId))
@@ -329,7 +424,7 @@ export function createPreviewBridge(): NativeBridge {
         return { ok: false, text: '' }
       }
     },
-    'download.open': () => undefined,
+    ...createPreviewDownloads(host, DOWNLOADS_DIR),
     'profile.clear': () => undefined,
     'profile.clearBrowsingData': () => undefined,
     // No jar or cache to measure in the preview, as on a device (the WebView cannot list cookies).

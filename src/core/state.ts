@@ -46,6 +46,7 @@ import type {
 import type { TranslateUIState } from '../shared/translate'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
 import { sanitizeAppIcon } from '../shared/appIcon'
+import { isChromePageUrl, parseInternalPageUrl } from '../shared/internalPages'
 import {
   DEFAULT_CONTAINERS,
   DEFAULT_SETTINGS,
@@ -92,6 +93,7 @@ import {
 } from '../shared/blocking'
 import { DEFAULT_PAGE_ENVIRONMENT, sanitizePageControls } from '../shared/pageControls'
 import { emptyPrivacyStatus, sanitizePrivacySettings, type PrivacyStatus } from '../shared/privacy'
+import { sanitizeNewTabPhoneSettings } from '../shared/newTabPhone'
 import { defer, type StoreIO } from './platform'
 import { sanitizeClosedEntries, sanitizeSnapshot, summarizeClosed } from './session'
 import type { ZenWindow } from './window'
@@ -435,6 +437,7 @@ export class BrowserState {
       : []
     this.settings.privacy = sanitizePrivacySettings(data.settings?.privacy)
     this.settings.newTab = sanitizeNewTabSettings(data.settings?.newTab)
+    this.settings.newTabPhone = sanitizeNewTabPhoneSettings(data.settings?.newTabPhone)
     this.shortcutOverrides = data.shortcutOverrides ?? {}
     const preset = migrateShortcutPreset(data.settings?.shortcutPreset, this.shortcutOverrides)
     this.settings.shortcutPreset = preset.preset
@@ -475,13 +478,18 @@ export class BrowserState {
           ? raw.containerId
           : DEFAULT_CONTAINER_ID,
         // Everything starts unloaded; the active tab is loaded by the TabManager on startup.
-        discarded: true
+        // A chrome page (Settings) holds no page to unload: it never reads as pending.
+        discarded: !isChromePageUrl(typeof raw.url === 'string' ? raw.url : ''),
+        // Opener relationships are a session's own (Chrome forgets them too).
+        openerTabId: null
       })
       tab.splitGroupId = raw.splitGroupId ?? null
       tab.loading = false
       tab.progress = 0
       tab.audible = false
       tab.errorCode = null
+      // A chrome page tab restored inside a section has the landing beneath it (PageService).
+      if (isChromePageUrl(tab.url)) tab.canGoBack = parseInternalPageUrl(tab.url)?.section != null
       tabs[tab.id] = tab
     }
     this.model = {
@@ -809,6 +817,8 @@ export class BrowserState {
           blockedCount: 0,
           // Restored by us, not sent by an app that is long gone (Chrome: FROM_RESTORE).
           fromIntent: false,
+          // The page posts its manifest again on the next load; the document stays compact.
+          webApp: null,
           url: t.url.startsWith('zen://error') ? (safeOriginalUrl(t.url) ?? BLANK_URL) : t.url
         })),
       essentialTabIds: m.essentialTabIds,

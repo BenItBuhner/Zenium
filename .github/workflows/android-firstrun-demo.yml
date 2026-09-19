@@ -1,0 +1,29 @@
+name: Android first run demo
+
+# Records the phone chrome's first run and the default-browser prompts on a hardware-accelerated
+# Android emulator and uploads the video, screenshots and findings: the welcome flow from a
+# cleared profile (a look picked, the Set as default step left with Skip), the gesture hint on
+# the first page, then the app started again until the promo sheet is due in the third session,
+# "Not now", the top banner in the session after swiped away, and the Settings row still offering
+# the role. Dispatch-only, like the other demos: it takes ten to fifteen minutes and has nothing
+# to say about a change being correct. Same caveats as the gesture demo about frame rate and the
+# software GPU (the shared job picks the renderer). The build, the emulator and the Gradle cache
+# live in android-emulator-demo.yml; this file only picks the driver.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-firstrun-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: First run demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-firstrun-demo.sh
+      artifact-name: android-firstrun-demo
+      artifact-path: artifacts/android-firstrun-demo/

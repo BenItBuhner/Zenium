@@ -11,6 +11,7 @@
  * `danger: 'accepted'` once kept. `cancelled` is Chrome's `interrupted` + `USER_CANCELED`.
  */
 import type { DownloadDanger, DownloadItem } from '../../../shared/types'
+import { chromeInterruptReasonName } from '../../../shared/downloads'
 
 export type ChromeDownloadState = 'in_progress' | 'interrupted' | 'complete'
 
@@ -99,13 +100,14 @@ export interface ChromeDownloadItem {
   byExtensionName?: string
 }
 
-/** What the host knows about a record beyond the model: its Chrome id, target path, file state. */
+/**
+ * What the host knows about a record beyond the model: its Chrome id, target path, starter.
+ * Whether the completed file is still there is the model's own `fileMissing`.
+ */
 export interface DownloadView {
   id: number
   /** Where the file is meant to end up while in flight (the model only carries the base name). */
   targetPath: string | null
-  /** The completed file was deleted (`removeFile`, or found missing by `search`). */
-  fileGone: boolean
   byExtension?: { id: string; name: string }
 }
 
@@ -196,35 +198,18 @@ export function chromeDanger(danger: DownloadDanger, accepted: boolean): ChromeD
   return danger.level === 'dangerous' ? 'file' : 'uncommon'
 }
 
-/** Chromium `net::` error names the hosts report, onto Chrome's interrupt reasons. */
-const NET_ERRORS: Record<string, ChromeInterruptReason> = {
-  ERR_TIMED_OUT: 'NETWORK_TIMEOUT',
-  ERR_CONNECTION_TIMED_OUT: 'NETWORK_TIMEOUT',
-  ERR_INTERNET_DISCONNECTED: 'NETWORK_DISCONNECTED',
-  ERR_NETWORK_CHANGED: 'NETWORK_DISCONNECTED',
-  ERR_CONNECTION_REFUSED: 'SERVER_UNREACHABLE',
-  ERR_NAME_NOT_RESOLVED: 'SERVER_UNREACHABLE',
-  ERR_ADDRESS_UNREACHABLE: 'SERVER_UNREACHABLE',
-  ERR_HTTP_RESPONSE_CODE_FAILURE: 'SERVER_FAILED',
-  ERR_INVALID_RESPONSE: 'SERVER_BAD_CONTENT',
-  ERR_CONTENT_LENGTH_MISMATCH: 'SERVER_CONTENT_LENGTH_MISMATCH',
-  ERR_UNSAFE_REDIRECT: 'SERVER_CROSS_ORIGIN_REDIRECT',
-  ERR_ACCESS_DENIED: 'FILE_ACCESS_DENIED',
-  ERR_FILE_NO_SPACE: 'FILE_NO_SPACE',
-  ERR_FILE_TOO_BIG: 'FILE_TOO_LARGE',
-  ERR_FILE_VIRUS_INFECTED: 'FILE_VIRUS_INFECTED',
-  ERR_BLOCKED_BY_CLIENT: 'FILE_BLOCKED',
-  ERR_ABORTED: 'USER_CANCELED'
-}
-
+/**
+ * The model's reason in Chrome's spelling: every `DownloadInterruptReason` is one of Chrome's
+ * (`network-failed` → `NETWORK_FAILED`); a cancelled row is `USER_CANCELED`, an interrupted one
+ * without a reason (never written by this build) a plain network failure.
+ */
 export function chromeInterruptReason(item: DownloadItem): ChromeInterruptReason | undefined {
   if (item.state === 'cancelled') return 'USER_CANCELED'
   if (item.state !== 'interrupted') return undefined
-  const error = item.error ?? ''
-  if (error === 'shutdown') return 'USER_SHUTDOWN'
-  if (error === 'file-error') return 'FILE_FAILED'
-  if (/^ERR_CERT_|^ERR_SSL_/.test(error)) return 'SERVER_CERT_PROBLEM'
-  return NET_ERRORS[error] ?? 'NETWORK_FAILED'
+  const name = item.error ? chromeInterruptReasonName(item.error) : 'NETWORK_FAILED'
+  return INTERRUPT_REASONS.includes(name as ChromeInterruptReason)
+    ? (name as ChromeInterruptReason)
+    : 'NETWORK_FAILED'
 }
 
 function directoryOf(path: string): string {
@@ -268,7 +253,7 @@ export function toChromeDownloadItem(
     bytesReceived: item.receivedBytes,
     totalBytes: known,
     fileSize: complete ? known : -1,
-    exists: complete ? !view.fileGone : true
+    exists: complete ? item.fileMissing !== true : true
   }
   if (state !== 'in_progress' && item.endedAt !== undefined)
     result.endTime = new Date(item.endedAt).toISOString()

@@ -56,6 +56,7 @@ import type {
 import type { UpdateAsset, UpdateProgress, UpdateRelease, UpdateTarget } from '../shared/updates'
 import type { InterstitialAction } from '../shared/interstitial'
 import type { PrivacyFlags, SafeBrowsingHit } from '../shared/privacy'
+import type { RawWebAppManifest, ShortcutIconKind } from '../shared/webApp'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
 import type { AgentHttpRequest, AgentHttpResponse } from './agent/http'
@@ -137,6 +138,8 @@ export interface PageMessage {
     | 'navigate-intent'
     /** The forms script reports fields, submissions and passkey requests (`forms`). */
     | 'forms'
+    /** The page script posted the web app manifest, or the site's `beforeinstallprompt` moves. */
+    | 'webapp'
   url?: string
   x?: number
   y?: number
@@ -151,6 +154,25 @@ export interface PageMessage {
   intent?: NavigationIntent
   /** `forms`: what the forms script saw (a focused field, a submit, a passkey). */
   forms?: FormsEvent
+  /**
+   * `webapp`: `manifest` carries the page's web app manifest (or only its URL when the page
+   * could not fetch it), `deferred` says the site took over the install prompt
+   * (`beforeinstallprompt` was cancelled) and `prompt` that it now wants the prompt shown.
+   */
+  webapp?: 'manifest' | 'deferred' | 'prompt'
+  manifestUrl?: string
+  manifest?: RawWebAppManifest | null
+}
+
+/** Messages the browser posts into a page for its page script (the web-app polyfill). */
+export interface PageHostMessage {
+  type: 'webapp'
+  /**
+   * `installable`: fire `beforeinstallprompt`; `result`: settle a pending `prompt()` with
+   * `outcome`; `installed`: fire `appinstalled`.
+   */
+  action: 'installable' | 'result' | 'installed'
+  outcome?: 'accepted' | 'dismissed'
 }
 
 /** What a host reports when a page calls `alert`, `confirm` or `prompt`. */
@@ -586,6 +608,8 @@ export interface TabView {
   sendNewTabState?(state: NewTabPageState): void
   /** Tell a `zen://newtab` page to carry out what its tile menu picked (remove, with Undo). */
   sendNewTabCommand?(command: NewTabPageCommand): void
+  // Web apps (optional): browser → page-script messages for the install-prompt polyfill.
+  postToPage?(message: PageHostMessage): void
 }
 
 export type { PageRules } from '../shared/types'
@@ -752,6 +776,7 @@ export type MenuSource =
   | 'space'
   | 'folder'
   | 'newtab'
+  | 'topsite'
   | 'app'
   | 'bookmark'
   | 'history'
@@ -946,6 +971,17 @@ export interface DownloadHost {
   ): Promise<{ savePath: string; finalName: string } | null>
   /** Delete the partial or quarantined file (nothing to do when it is already gone). */
   deletePartial(item: DownloadItem): Promise<void>
+  /**
+   * Whether a completed download's file is still at `item.savePath` (a stat on desktop, a
+   * content query on Android): cheap, run over the list when it loads and on demand.
+   */
+  exists(item: DownloadItem): Promise<boolean>
+  /**
+   * Delete a completed download's file (Chrome's "Delete file"; desktop `fs.rm`, Android the
+   * MediaStore or SAF document behind the recorded URI): `missing` when it was gone already,
+   * `failed` when it is still there (locked, a folder, no permission).
+   */
+  deleteFile(item: DownloadItem): Promise<'deleted' | 'missing' | 'failed'>
   open(item: DownloadItem): Promise<void>
   showInFolder(item: DownloadItem): void
   /** Folder picker for Settings › Downloads; resolves with the chosen directory or null. */
@@ -1145,6 +1181,8 @@ export interface ExtensionHost {
   /** Chrome's "Allow user scripts": whether `chrome.userScripts` works for the extension. */
   setAllowUserScripts(id: string, allowed: boolean): void
   reload(id: string): Promise<void>
+  /** Empties the extension's error console (`ExtensionInfo.errors`). */
+  clearErrors(id: string): void
   checkForUpdates(win?: ZenWindow): Promise<void>
   update(id: string, win?: ZenWindow): Promise<void>
   /** The last update check across all extensions, for the management page's caption. */
@@ -1428,6 +1466,32 @@ export interface TranslateHost {
   onRelayResponse?(response: EngineRelayResponse): void
 }
 
+/** What the host needs to put a page on the launcher / Home screen. */
+export interface ShortcutRequest {
+  /** Stable id (the app's manifest id or the page URL); pinning it again updates the tile. */
+  id: string
+  /** URL the shortcut opens (an ACTION_VIEW back into the browser on Android). */
+  url: string
+  title: string
+  /** Icon image to fetch and decode; null draws a letter tile. */
+  iconUrl: string | null
+  /** How the icon is meant to be drawn (see `shortcutIcon`); ignored without an icon. */
+  iconKind: ShortcutIconKind | null
+  /** Colour behind an inset `any` icon / the letter tile: manifest theme, else the space accent. */
+  background: string
+  /** The `any` icon's own background when the manifest names one (fills the safe zone edges). */
+  iconBackground: string | null
+}
+
+/**
+ * Launcher shortcuts (Android's `ShortcutManagerCompat.requestPinShortcut`). `pin` resolves once
+ * the request reached the launcher; the launcher's confirmation arrives later through
+ * `Browser.webApps.onPinned` because the system dialog has no cancel callback.
+ */
+export interface ShortcutHost {
+  pin(request: ShortcutRequest): Promise<boolean>
+}
+
 export interface Platform {
   readonly info: PlatformInfo
   readonly capabilities: HostCapabilities
@@ -1463,6 +1527,8 @@ export interface Platform {
   readonly privacy?: PrivacyHost
   /** The new tab page's custom background image; hosts without it offer no "Image" option. */
   readonly newTabBackground?: NewTabBackgroundHost
+  /** Home-screen shortcuts; hosts without it hide "Add to Home screen". */
+  readonly shortcuts?: ShortcutHost
   /** Source of Mozilla's Readability library for Reader View, or null when unavailable. */
   readabilitySource(file: 'Readability.js' | 'Readability-readerable.js'): string | null
   /** Offline page translation; hosts without it report the feature as unavailable. */

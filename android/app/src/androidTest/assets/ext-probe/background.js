@@ -18,6 +18,11 @@ var report = {
   tabUpdates: 0,
   tabs: null,
   dynamicRules: null,
+  // W2-3: the session rule the background adds next to the dynamic one, the rule matches the
+  // engine reports (`onRuleMatchedDebug`, unpacked only: rule id, ruleset id, request url per
+  // match, bounded), and what `getMatchedRules` returns when the driver asks (`__matchedRules`).
+  sessionRules: null,
+  ruleMatches: [],
   execResult: null,
   libLoaded: false,
   indexedDB: null,
@@ -443,3 +448,61 @@ chrome.declarativeNetRequest
   .catch(function (e) {
     report.errors.push('declarativeNetRequest: ' + e.message)
   })
+
+// A session rule next to the dynamic one: it lives in the engine for this run only (the
+// probe page's sess=1 pixel is graded against it) and never in the persisted record.
+chrome.declarativeNetRequest
+  .updateSessionRules({
+    removeRuleIds: [2000],
+    addRules: [
+      {
+        id: 2000,
+        priority: 1,
+        action: { type: 'block' },
+        condition: { urlFilter: 'sess=1', resourceTypes: ['image'] }
+      }
+    ]
+  })
+  .then(function () {
+    return chrome.declarativeNetRequest.getSessionRules()
+  })
+  .then(function (rules) {
+    report.sessionRules = rules.length
+  })
+  .catch(function (e) {
+    report.errors.push('declarativeNetRequest.session: ' + e.message)
+  })
+
+// Every match the engine credits to this extension, as Chrome reports it to an unpacked
+// extension: which rule of which ruleset, on which request.
+try {
+  chrome.declarativeNetRequest.onRuleMatchedDebug.addListener(function (info) {
+    if (report.ruleMatches.length >= 40) return
+    report.ruleMatches.push({
+      ruleId: info.rule.ruleId,
+      rulesetId: info.rule.rulesetId,
+      url: info.request.url,
+      type: info.request.type,
+      tabId: info.request.tabId
+    })
+  })
+} catch (e) {
+  report.errors.push('onRuleMatchedDebug: ' + e.message)
+}
+
+// The driver asks for the matched rules of a tab (`declarativeNetRequestFeedback`): the
+// result lands in `__matchedRules` for it to read back.
+self.__matchedRules = null
+self.__askMatchedRules = function (tabId) {
+  self.__matchedRules = null
+  return chrome.declarativeNetRequest
+    .getMatchedRules(tabId === undefined ? {} : { tabId: tabId })
+    .then(function (result) {
+      self.__matchedRules = result.rulesMatchedInfo.map(function (m) {
+        return { ruleId: m.rule.ruleId, rulesetId: m.rule.rulesetId, tabId: m.tabId, timeStamp: m.timeStamp }
+      })
+    })
+    .catch(function (e) {
+      self.__matchedRules = { error: e.message }
+    })
+}

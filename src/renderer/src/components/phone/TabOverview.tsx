@@ -1,5 +1,5 @@
 import type { CSSProperties, JSX } from 'react'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { PanelLeft, PanelRight, Plus } from 'lucide-react'
 import type {
   Folder,
@@ -15,6 +15,7 @@ import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { cmd, run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
 import { openSpacesDrawer } from '@renderer/lib/gestures/drawer'
+import type { DropOutcome } from '@renderer/lib/gestures/dropTarget'
 import {
   closeOverview,
   overviewInteractive,
@@ -23,6 +24,7 @@ import {
 import { groupColorHex, groupsOf, nextGroupColor } from '@renderer/lib/groups'
 import { overviewColumns } from '@renderer/lib/layout'
 import { FRAME_SHADOW, cardShadow, lerpShadow, shadowCss } from '@renderer/lib/motion/elevation'
+import { reducedMotion } from '@renderer/lib/motion/spring'
 import {
   activeSpace,
   activeTab,
@@ -42,19 +44,14 @@ import { DEFAULT_FOLDER_ICON, GroupCard } from './GroupCard'
 import { CARD_HEADER, CARD_RADIUS, CardBody, OverviewCard } from './OverviewCard'
 import { OverviewSheet, type SheetAction } from './OverviewSheet'
 import { TabPreview } from './TabPreview'
-import {
-  cancelLift,
-  liftStore,
-  settleLift,
-  type LiftHover,
-  type LiftSlot,
-  type LiftTarget
-} from './useCardLift'
+import { cancelLift, liftStore, retargetLift, settleLift, type LiftHover } from './useCardLift'
 import { useFlip } from './useFlip'
 import { useOverviewHandle } from './usePillGestures'
 
 /** Name a group gets when a gesture makes it; the header renames it in a tap. */
 const NEW_GROUP_NAME = 'Group'
+/** Cell key of the New Tab card: the last cell of the grid, in the glide with the rest. */
+export const NEW_TAB_CELL = 'new-tab'
 /** How long a dropped card waits for the browser to confirm its new place before it lands anyway. */
 const DROP_TIMEOUT_MS = 900
 /**
@@ -78,7 +75,25 @@ type Sheet = { kind: 'tab'; tabId: string } | { kind: 'group'; folderId: string 
 interface PendingDrop {
   /** True once the browser state shows the drop – then the card's new slot can be measured. */
   landed: (state: UIState) => boolean
+  /** When to stop waiting for the browser (`performance.now()`), and whether that has come. */
   deadline: number
+  expired: boolean
+}
+
+/** A group as the grid last showed it holding cards. */
+interface HeldGroup {
+  folder: Folder
+  count: number
+}
+
+interface ShownGroups {
+  /** The groups holding cards after the last render, by folder id. */
+  held: ReadonlyMap<string, HeldGroup>
+  /**
+   * Groups that have lost their last card while on screen and are shrinking to nothing
+   * (v2 §11.4), at the span and count they had, until their spring has settled.
+   */
+  lingering: ReadonlyMap<string, HeldGroup>
 }
 
 /**
@@ -130,11 +145,12 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   const rootRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const fadeGrid = useFadeEdges<HTMLDivElement>({ axis: 'y' })
-  const cells = useRef(new Map<string, HTMLElement>())
   const [heroCell, setHeroCell] = useState<Rect | null>(null)
   const [sheet, setSheet] = useState<Sheet | null>(null)
   const handle = useOverviewHandle({ edge })
-  const flip = useFlip(cells, scrollRef, settled)
+  // Every `data-cell` under the grid – page and blank-tab cards, group cards, the New Tab card –
+  // is one set on one spring; the same set answers where a card is for the morph and the exits.
+  const flip = useFlip(scrollRef, settled)
 
   // Where the hero's own card sits, in layout space (the root's entrance scale divided out). A
   // hero inside a collapsed group has no card to land on: it heads for the group's card instead
@@ -145,7 +161,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   const cardsKey = [...essentials, ...pinned, ...regular].map((t) => t.id).join('|')
   const measure = (): void => {
     const root = rootRef.current
-    const cell = heroCellKey ? cells.current.get(heroCellKey) : undefined
+    const cell = heroCellKey ? flip.element(heroCellKey) : null
     if (!root || !cell) {
       setHeroCell(null)
       return
@@ -163,7 +179,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     })
   }
   useLayoutEffect(() => {
-    const cell = heroCellKey ? cells.current.get(heroCellKey) : undefined
+    const cell = heroCellKey ? flip.element(heroCellKey) : null
     // The page morphs out of / into its card: make sure that card is fully on screen first.
     const morphing = (phase === 'dragging' && progress < 0.05) || phase === 'settling'
     if (cell && morphing) cell.scrollIntoView({ block: 'nearest' })
@@ -204,50 +220,130 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     []
   )
 
-  // A dropped card flies to its new slot once the browser has moved it there.
+  // A dropped card flies to its new slot once the browser has moved it there: to where its
+  // stand-in is drawn, and after it while the stand-in glides (the cells below a group set off
+  // once its height has settled, v2 §11.4), so the ghost lands on the card wherever that is.
+  // The stand-in's slot goes with the confirmation, before that slot is measured: the browser
+  // shows the card where the drop put it, which for a drop on a target is not the slot the
+  // stand-in held – kept, the card would stand in the old slot for one more render (a group made
+  // from it would form with the other card alone) and glide to the new one when the ghost had
+  // landed, in a second step.
   const liftPhase = liftStore.use((s) => s.phase)
   const pendingDrop = useRef<PendingDrop | null>(null)
+  const standInRect = (tabId: string): Rect | null => {
+    // Before the grid has settled nothing is tracked yet and the cell's own box is the answer.
+    const rect = flip.drawnRect(tabId) ?? flip.element(tabId)?.getBoundingClientRect()
+    return rect ? { x: rect.left, y: rect.top, width: rect.width, height: rect.height } : null
+  }
   useLayoutEffect(() => {
     const pending = pendingDrop.current
     if (!pending || liftPhase !== 'dropping' || !liftTabId) return
-    if (!pending.landed(state) && performance.now() < pending.deadline) return
+    if (!pending.landed(state) && !pending.expired && performance.now() < pending.deadline) return
+    if (liftSlot) {
+      // The render this asks for lays the card out where the tab is; it lands there.
+      liftStore.set({ slot: null })
+      return
+    }
     pendingDrop.current = null
-    // The slot as laid out (any glide in flight stripped); before the grid has settled nothing
-    // is tracked yet and the cell's own box is the answer.
-    const rect = flip.layoutRect(liftTabId) ?? cells.current.get(liftTabId)?.getBoundingClientRect()
-    const origin = liftStore.get().origin
-    const to = rect ? { x: rect.left, y: rect.top, width: rect.width, height: rect.height } : origin
+    const to = standInRect(liftTabId) ?? liftStore.get().origin
     if (to) settleLift(to)
     else cancelLift()
   })
   useEffect(() => {
-    // The browser may never confirm (the command failed): land the card where its stand-in is.
+    // The browser may never confirm (the command failed): land the card where the tab is.
     const pending = pendingDrop.current
     if (!pending || liftPhase !== 'dropping') return
     const timer = setTimeout(
       () => {
-        if (pendingDrop.current === pending) {
-          pendingDrop.current = null
-          const s = liftStore.get()
-          if (s.phase !== 'dropping') return
-          const rect = s.tabId ? flip.layoutRect(s.tabId) : null
-          const to = rect
-            ? { x: rect.left, y: rect.top, width: rect.width, height: rect.height }
-            : s.origin
-          if (to) settleLift(to)
-          else cancelLift()
+        if (pendingDrop.current !== pending) return
+        pending.expired = true
+        const s = liftStore.get()
+        if (s.phase !== 'dropping') return
+        if (s.slot) {
+          // The layout effect above lands the card on the render this asks for.
+          liftStore.set({ slot: null })
+          return
         }
+        pendingDrop.current = null
+        const to = (s.tabId ? standInRect(s.tabId) : null) ?? s.origin
+        if (to) settleLift(to)
+        else cancelLift()
       },
       Math.max(0, pending.deadline - performance.now())
     )
     return () => clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- standInRect reads the tracker, which is stable
+  }, [liftPhase, flip])
+  useEffect(() => {
+    if (liftPhase !== 'dropping') return
+    return flip.onFrame(() => {
+      const s = liftStore.get()
+      if (s.phase !== 'dropping' || !s.tabId) return
+      const to = standInRect(s.tabId)
+      if (to) retargetLift(to)
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- standInRect reads the tracker, which is stable
   }, [liftPhase, flip])
 
-  const pick = (tab: Tab): void => closeOverview(tab.id)
-  const register = (id: string) => (el: HTMLElement | null) => {
-    if (el) cells.current.set(id, el)
-    else cells.current.delete(id)
+  // Groups made or emptied while the grid is on screen (v2 §11.4). A group whose card the
+  // tracker has not seen, holding cards it has, was just made from them: it grows out of their
+  // row with its header and tint off until the tracker's release at the end of the glide. A group
+  // that has just lost its last card lingers, shrinking to nothing on its spring while the card
+  // glides out and the cells below wait; it leaves once it has settled.
+  const forming = (folder: Folder, tabs: Tab[]): boolean =>
+    settled &&
+    flip.element(`group:${folder.id}`) === null &&
+    tabs.some((t) => flip.element(t.id) !== null)
+  const subscribeRelease = useCallback((fn: () => void) => flip.onRelease(fn), [flip])
+  // The groups holding cards after the last render, and the ones lingering since: a group that
+  // has lost its last card since the last render must be on the grid in this very render, so it
+  // is found here, from the last render's groups, not in an effect after it.
+  const [shownGroups, setShownGroups] = useState<ShownGroups>(() => ({
+    held: new Map(),
+    lingering: new Map()
+  }))
+  const held = new Map<string, HeldGroup>()
+  for (const folder of groups) {
+    const count = members.get(folder.id)?.length ?? 0
+    if (count) held.set(folder.id, { folder, count })
   }
+  const lost = [...shownGroups.held].filter(([id]) => !held.has(id))
+  const back = [...shownGroups.lingering.keys()].filter((id) => held.has(id))
+  let lingering = shownGroups.lingering
+  if (lost.length || back.length) {
+    const next = new Map(shownGroups.lingering)
+    for (const [id, was] of lost) next.set(id, was)
+    for (const id of back) next.delete(id)
+    lingering = next
+  }
+  if (
+    lingering !== shownGroups.lingering ||
+    held.size !== shownGroups.held.size ||
+    [...held].some(([id, h]) => shownGroups.held.get(id)?.count !== h.count)
+  ) {
+    setShownGroups({ held, lingering })
+  }
+  const dissolvedGroup = (folder: Folder): void =>
+    setShownGroups((shown) => {
+      if (!shown.lingering.has(folder.id)) return shown
+      const next = new Map(shown.lingering)
+      next.delete(folder.id)
+      return { held: shown.held, lingering: next }
+    })
+  // The group cards, one keyed list: a group that has just lost its last card (or whose folder
+  // is gone with it) keeps its element – the same key in the same list – so its card's height
+  // spring runs on from where the card is rather than starting over in a fresh mount.
+  const groupCards: Array<{ folder: Folder; tabs: Tab[]; gone: HeldGroup | undefined }> = []
+  for (const folder of groups) {
+    const tabs = members.get(folder.id) ?? []
+    const gone = lingering.get(folder.id)
+    if (tabs.length || gone) groupCards.push({ folder, tabs, gone })
+  }
+  for (const gone of lingering.values())
+    if (!groups.some((f) => f.id === gone.folder.id))
+      groupCards.push({ folder: gone.folder, tabs: [], gone })
+
+  const pick = (tab: Tab): void => closeOverview(tab.id)
 
   const groupTabs = (tabIds: string[], folderId: string): void => {
     for (const tabId of tabIds) run('tab.moveToFolder', { tabId, folderId })
@@ -279,12 +375,13 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
    * What the finger is over, from the slots of the last layout (the glide in flight ignored, so
    * cards passing under the finger cannot flip the answer). On another card: its middle merges
    * into it, its edges put the card before or after it; on a group's own chrome: into the group;
-   * past the last card: the end; anywhere else (a gutter, the stand-in): no change.
+   * on the New Tab card or past the last card: the end; anywhere else (a gutter, the stand-in):
+   * no change. Off the grid altogether: null, and nothing is targeted.
    */
-  const hoverAt = (tab: Tab, x: number, y: number, current: LiftHover): LiftHover => {
+  const hoverAt = (tab: Tab, x: number, y: number, current: LiftHover): LiftHover | null => {
     const keep: LiftHover = { target: null, slot: current.slot }
     const grid = scrollRef.current?.getBoundingClientRect()
-    if (!grid || x < grid.left || x > grid.right || y < grid.top || y > grid.bottom) return keep
+    if (!grid || x < grid.left || x > grid.right || y < grid.top || y > grid.bottom) return null
     const inside = (r: DOMRect | null): r is DOMRect =>
       r !== null && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom
     // Member cards of an expanded group and the loose cards, as shown right now.
@@ -315,22 +412,28 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     }
     if (inside(flip.layoutRect(tab.id))) return keep
     const looseWithout = loose.filter((t) => t.id !== tab.id)
+    const end: LiftHover = { target: null, slot: { folderId: null, index: looseWithout.length } }
+    if (inside(flip.layoutRect(NEW_TAB_CELL))) return end
     const lastGroup = groups.filter((f) => (members.get(f.id) ?? []).length > 0).at(-1)
     const lastKey =
       looseWithout.at(-1)?.id ?? (lastGroup ? `group:${lastGroup.id}` : pinned.at(-1)?.id)
     const last = lastKey ? flip.layoutRect(lastKey) : null
-    if (!last || y > last.bottom || (y >= last.top && x > last.right))
-      return { target: null, slot: { folderId: null, index: looseWithout.length } }
+    if (!last || y > last.bottom || (y >= last.top && x > last.right)) return end
     return keep
   }
 
   /**
-   * A card was dropped: act on the target (or the slot), then let the settle effect above fly the
-   * ghost to the card's slot once the browser shows it there (straight away when nothing changes).
+   * A card was dropped: act on the outcome (a target, a slot, or nothing), then let the settle
+   * effect above fly the ghost to the card's slot once the browser shows it there (straight away
+   * when nothing changes).
    */
-  const dropCard = (tab: Tab, target: LiftTarget | null, slot: LiftSlot | null): void => {
+  const dropCard = (tab: Tab, outcome: DropOutcome): void => {
     const expect = (landed: (s: UIState) => boolean): void => {
-      pendingDrop.current = { landed, deadline: performance.now() + DROP_TIMEOUT_MS }
+      pendingDrop.current = {
+        landed,
+        deadline: performance.now() + DROP_TIMEOUT_MS,
+        expired: false
+      }
     }
     const unchanged = (): void => expect(() => true)
     const regularWithout = regular.filter((t) => t.id !== tab.id)
@@ -344,6 +447,8 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
       run('tab.move', { tabId: tab.id, spaceId: space.id, section: 'regular', index })
       if (groupIdOf(tab) !== folderId) run('tab.moveToFolder', { tabId: tab.id, folderId })
     }
+    const target = outcome.kind === 'target' ? outcome.target : null
+    const slot = outcome.kind === 'slot' ? outcome.slot : null
     if (target?.startsWith('group:')) {
       const folderId = target.slice('group:'.length)
       if (!state.folders[folderId] || groupIdOf(tab) === folderId) return unchanged()
@@ -359,6 +464,15 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
         moveTo(theirs, undefined, other)
         return expect((s) => groupIdOf(s.tabs[tab.id] ?? tab, s) === theirs)
       }
+      // Dropped on a loose card: the two make a group, the dropped card right behind the other –
+      // the order joining a group gives, so the two gestures read as one rule (v2 §11.4). The
+      // stand-in holds its slot until the group shows, so the move is not seen on its own.
+      run('tab.move', {
+        tabId: tab.id,
+        spaceId: space.id,
+        section: 'regular',
+        index: regularWithout.indexOf(other) + 1
+      })
       void makeGroup([other.id, tab.id], false)
       return expect((s) => {
         const mine = s.tabs[tab.id]?.folderId
@@ -388,7 +502,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   const closeTabs = (tabs: Tab[]): void => {
     depart(
       tabs.flatMap((tab) => {
-        const rect = closesForReal(tab) ? rectOf(cells.current.get(tab.id)) : null
+        const rect = closesForReal(tab) ? rectOf(flip.element(tab.id)) : null
         return rect ? [{ key: tab.id, kind: 'tab' as const, tab, rect }] : []
       })
     )
@@ -398,14 +512,14 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     const others = regular.filter((t) => t.id !== tab.id)
     depart(
       others.flatMap((t) => {
-        const rect = rectOf(cells.current.get(t.id))
+        const rect = rectOf(flip.element(t.id))
         return rect ? [{ key: t.id, kind: 'tab' as const, tab: t, rect }] : []
       })
     )
     run('tab.closeOthers', { tabId: tab.id })
   }
   const closeGroup = (folder: Folder): void => {
-    const rect = rectOf(cells.current.get(`group:${folder.id}`))
+    const rect = rectOf(flip.element(`group:${folder.id}`))
     if (rect)
       depart([
         {
@@ -425,7 +539,6 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   const card = (tab: Tab): JSX.Element => (
     <OverviewCard
       key={tab.id}
-      ref={register(tab.id)}
       tab={tab}
       active={tab.id === active?.id}
       hidden={tab.id === heroTabId && p < 1}
@@ -471,9 +584,12 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
         <div
           ref={rootRef}
           className="zen-overview absolute inset-0 flex flex-col"
+          // The overview backdrop is window chrome (v2 §9.29): its controls draw in the window family.
+          data-surface="window"
           style={{
             opacity: Math.min(1, p * 1.6),
-            transform: `scale(${0.94 + 0.06 * p})`
+            // Under reduced motion the grid appears at scale 1 with a 120 ms fade (v2 §11.3).
+            transform: reducedMotion() ? undefined : `scale(${0.94 + 0.06 * p})`
           }}
         >
           <header className="flex h-14 shrink-0 items-center gap-2.5 px-3" {...handle}>
@@ -529,27 +645,27 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
               style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
             >
               {pinned.map(card)}
-              {groups.map((folder) => {
-                const tabs = members.get(folder.id) ?? []
-                if (tabs.length === 0) return null
-                return (
-                  <GroupCard
-                    key={folder.id}
-                    ref={register(`group:${folder.id}`)}
-                    folder={folder}
-                    tabs={tabs}
-                    card={card}
-                    columns={columns}
-                    onMenu={(f) => setSheet({ kind: 'group', folderId: f.id })}
-                  />
-                )
-              })}
+              {groupCards.map(({ folder, tabs, gone }) => (
+                <GroupCard
+                  key={folder.id}
+                  folder={folder}
+                  tabs={tabs}
+                  card={card}
+                  columns={columns}
+                  onMenu={(f) => setSheet({ kind: 'group', folderId: f.id })}
+                  forming={tabs.length > 0 && forming(folder, tabs)}
+                  dissolving={tabs.length === 0}
+                  held={gone?.count}
+                  onDissolved={dissolvedGroup}
+                  onRelease={subscribeRelease}
+                />
+              ))}
               {loose.map(card)}
               <NewTabCard />
             </div>
           </div>
         </div>
-        <Departures activeTabId={active?.id ?? null} />
+        <Departures state={state} activeTabId={active?.id ?? null} />
         <LiftGhost state={state} activeTabId={active?.id ?? null} />
       </div>
       {hero && heroRect && p < 1 && (
@@ -775,12 +891,17 @@ function GroupDot({ color }: { color: FolderColor | null | undefined }): JSX.Ele
   return <span className="h-2.5 w-2.5 rounded-full" style={{ background: groupColorHex(color) }} />
 }
 
+/**
+ * The last card of the grid, a cell like the others (`data-cell`): when cards are rearranged,
+ * closed or grouped it glides to its new place on the same spring as they do.
+ */
 function NewTabCard(): JSX.Element {
   return (
     <button
       type="button"
       className="zen-overview-new flex flex-col items-center justify-center gap-2 text-[var(--zen-muted)] active:text-[var(--zen-fg)]"
       style={{ aspectRatio: '3 / 4' }}
+      data-cell={NEW_TAB_CELL}
       onClick={() => window.dispatchEvent(new CustomEvent('zen-new-tab'))}
     >
       <Plus className="h-6 w-6" />

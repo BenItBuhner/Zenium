@@ -2,25 +2,26 @@ import { rm } from 'node:fs/promises'
 import type { Decision } from '../../../core/blocking/rules'
 import {
   createDeclarativeNetRequestApi,
-  type DeclarativeNetRequestApi,
-  type RegexOptions,
-  type TestMatchRequestDetails
+  type DeclarativeNetRequestApi
 } from '../../../core/extensions/dnr/api'
-import type { RequestMethod, ResourceType } from '../../../core/extensions/dnr/rules'
+import {
+  actionOptions,
+  matchedActionType,
+  matchedFilter,
+  regexOptions,
+  ruleUpdate,
+  rulesFilter,
+  rulesetUpdate,
+  staticOptions,
+  testRequest
+} from '../../../core/extensions/dnr/args'
 import { routeDecision } from '../../../core/extensions/dnr/sink'
 import {
   DnrState,
   createGlobalStaticRulePool,
   UNKNOWN_TAB_ID,
   type DnrExtensionInfo,
-  type ExtensionActionOptions,
-  type GetRulesFilter,
-  type MatchRecord,
-  type MatchedRulesFilter,
-  type RequestDetails,
-  type UpdateRuleOptions,
-  type UpdateRulesetOptions,
-  type UpdateStaticRulesOptions
+  type RequestDetails
 } from '../../../core/extensions/dnr/state'
 import { DnrTranslator } from '../../../core/extensions/dnr/translate'
 import type { WebRequestBase } from '../blocking'
@@ -30,7 +31,6 @@ import { createDnrFileIO, dnrStateFile } from './dnrIo'
 import type { ScopedRuleSink } from './dnrSink'
 import {
   ApiError,
-  isRecord,
   type ApiContext,
   type ApiHost,
   type LoadedExtension,
@@ -263,161 +263,4 @@ export class DeclarativeNetRequestHostApi {
       .sort((a, b) => b.installedAt - a.installedAt)
       .map((info) => info.id)
   }
-}
-
-/** The rule action a decision stands for, in `chrome.declarativeNetRequest.RuleActionType` terms. */
-function matchedActionType(decision: Decision): NonNullable<MatchRecord['actionType']> {
-  switch (decision.action) {
-    case 'block':
-      return 'block'
-    case 'redirect':
-      return 'redirect'
-    case 'upgrade':
-      return 'upgradeScheme'
-    case 'modifyHeaders':
-      return 'modifyHeaders'
-    case 'allow':
-      return 'allow'
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Argument shapes: the state validates rules and ids; these settle the container types.
-// ---------------------------------------------------------------------------
-
-function record(raw: unknown): Record<string, unknown> {
-  if (!isRecord(raw)) throw new ApiError('Invalid options.')
-  return raw
-}
-
-function integerList(raw: unknown, name: string): number[] | undefined {
-  if (raw === undefined || raw === null) return undefined
-  if (!Array.isArray(raw)) throw new ApiError(`Invalid value for '${name}'.`)
-  const out: number[] = []
-  for (const value of raw) {
-    if (typeof value !== 'number' || !Number.isInteger(value)) {
-      throw new ApiError(`Invalid value for '${name}'.`)
-    }
-    out.push(value)
-  }
-  return out
-}
-
-function stringList(raw: unknown, name: string): string[] | undefined {
-  if (raw === undefined || raw === null) return undefined
-  if (!Array.isArray(raw)) throw new ApiError(`Invalid value for '${name}'.`)
-  const out: string[] = []
-  for (const value of raw) {
-    if (typeof value !== 'string') throw new ApiError(`Invalid value for '${name}'.`)
-    out.push(value)
-  }
-  return out
-}
-
-function ruleUpdate(raw: unknown): UpdateRuleOptions {
-  const options = record(raw)
-  const out: UpdateRuleOptions = {}
-  const remove = integerList(options.removeRuleIds, 'removeRuleIds')
-  if (remove) out.removeRuleIds = remove
-  if (options.addRules !== undefined && options.addRules !== null) {
-    if (!Array.isArray(options.addRules)) throw new ApiError("Invalid value for 'addRules'.")
-    out.addRules = options.addRules as unknown[]
-  }
-  return out
-}
-
-function rulesFilter(raw: unknown): GetRulesFilter | undefined {
-  if (raw === undefined || raw === null) return undefined
-  const out: GetRulesFilter = {}
-  const ids = integerList(record(raw).ruleIds, 'ruleIds')
-  if (ids) out.ruleIds = ids
-  return out
-}
-
-function rulesetUpdate(raw: unknown): UpdateRulesetOptions {
-  const options = record(raw)
-  const out: UpdateRulesetOptions = {}
-  const disable = stringList(options.disableRulesetIds, 'disableRulesetIds')
-  if (disable) out.disableRulesetIds = disable
-  const enable = stringList(options.enableRulesetIds, 'enableRulesetIds')
-  if (enable) out.enableRulesetIds = enable
-  return out
-}
-
-function staticOptions(raw: unknown): UpdateStaticRulesOptions {
-  const options = record(raw)
-  if (typeof options.rulesetId !== 'string') {
-    throw new ApiError("Missing required property 'rulesetId'.")
-  }
-  const out: UpdateStaticRulesOptions = { rulesetId: options.rulesetId }
-  const disable = integerList(options.disableRuleIds, 'disableRuleIds')
-  if (disable) out.disableRuleIds = disable
-  const enable = integerList(options.enableRuleIds, 'enableRuleIds')
-  if (enable) out.enableRuleIds = enable
-  return out
-}
-
-function matchedFilter(raw: unknown): MatchedRulesFilter | undefined {
-  if (raw === undefined || raw === null) return undefined
-  const options = record(raw)
-  const out: MatchedRulesFilter = {}
-  if (options.tabId !== undefined && options.tabId !== null) {
-    if (typeof options.tabId !== 'number' || !Number.isInteger(options.tabId)) {
-      throw new ApiError("Invalid value for 'tabId'.")
-    }
-    out.tabId = options.tabId
-  }
-  if (options.minTimeStamp !== undefined && options.minTimeStamp !== null) {
-    if (typeof options.minTimeStamp !== 'number')
-      throw new ApiError("Invalid value for 'minTimeStamp'.")
-    out.minTimeStamp = options.minTimeStamp
-  }
-  return out
-}
-
-function actionOptions(raw: unknown): ExtensionActionOptions {
-  const options = record(raw)
-  const out: ExtensionActionOptions = {}
-  if (options.displayActionCountAsBadgeText !== undefined) {
-    if (typeof options.displayActionCountAsBadgeText !== 'boolean') {
-      throw new ApiError("Invalid value for 'displayActionCountAsBadgeText'.")
-    }
-    out.displayActionCountAsBadgeText = options.displayActionCountAsBadgeText
-  }
-  if (options.tabUpdate !== undefined && options.tabUpdate !== null) {
-    const update = record(options.tabUpdate)
-    if (
-      typeof update.tabId !== 'number' ||
-      !Number.isInteger(update.tabId) ||
-      typeof update.increment !== 'number' ||
-      !Number.isInteger(update.increment)
-    ) {
-      throw new ApiError("Invalid value for 'tabUpdate'.")
-    }
-    out.tabUpdate = { tabId: update.tabId, increment: update.increment }
-  }
-  return out
-}
-
-function regexOptions(raw: unknown): RegexOptions {
-  const options = record(raw)
-  if (typeof options.regex !== 'string') throw new ApiError("Missing required property 'regex'.")
-  const out: RegexOptions = { regex: options.regex }
-  if (typeof options.isCaseSensitive === 'boolean') out.isCaseSensitive = options.isCaseSensitive
-  if (typeof options.requireCapturing === 'boolean') out.requireCapturing = options.requireCapturing
-  return out
-}
-
-function testRequest(raw: unknown): TestMatchRequestDetails {
-  const options = record(raw)
-  if (typeof options.url !== 'string') throw new ApiError("Missing required property 'url'.")
-  if (typeof options.type !== 'string') throw new ApiError("Missing required property 'type'.")
-  const out: TestMatchRequestDetails = { url: options.url, type: options.type as ResourceType }
-  if (typeof options.initiator === 'string') out.initiator = options.initiator
-  if (typeof options.method === 'string') out.method = options.method as RequestMethod
-  if (typeof options.tabId === 'number') out.tabId = options.tabId
-  if (isRecord(options.responseHeaders)) {
-    out.responseHeaders = options.responseHeaders as TestMatchRequestDetails['responseHeaders']
-  }
-  return out
 }

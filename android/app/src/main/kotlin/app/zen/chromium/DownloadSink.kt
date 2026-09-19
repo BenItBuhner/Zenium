@@ -56,7 +56,8 @@ sealed class DownloadSink {
             context.contentResolver.openFileDescriptor(uri, "r")?.use { it.statSize }
         }.getOrNull() ?: -1L
 
-        override fun exists(): Boolean = runCatching {
+        /** The row must be there and openable: a row whose file was removed underneath it is gone too. */
+        override fun exists(): Boolean = openable(context, uri) && runCatching {
             context.contentResolver.query(uri, arrayOf(MediaStore.MediaColumns._ID), null, null, null)?.use { it.moveToFirst() }
         }.getOrNull() == true
 
@@ -89,7 +90,7 @@ sealed class DownloadSink {
         }
 
         override fun size(): Long = if (partial.exists()) partial.length() else -1L
-        override fun exists(): Boolean = partial.exists()
+        override fun exists(): Boolean = partial.isFile
 
         override fun finish(mimeType: String, sourceUrl: String, referrer: String): Pair<String, String> {
             val dir = partial.parentFile ?: throw IOException("download folder is gone")
@@ -139,7 +140,8 @@ sealed class DownloadSink {
             context.contentResolver.openFileDescriptor(uri, "r")?.use { it.statSize }
         }.getOrNull() ?: -1L
 
-        override fun exists(): Boolean = runCatching {
+        /** Providers answer a query for a deleted document differently; being able to open it is the test. */
+        override fun exists(): Boolean = openable(context, uri) && runCatching {
             context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { it.moveToFirst() }
         }.getOrNull() == true
 
@@ -186,15 +188,19 @@ sealed class DownloadSink {
 
         /** Back from a persisted `savePath`; null when the file is gone. */
         fun reopen(context: Context, savePath: String, displayName: String): DownloadSink? {
-            if (savePath.isEmpty()) return null
-            val sink: DownloadSink = when {
-                savePath.startsWith("content://media/") && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q ->
-                    MediaStoreSink(context, Uri.parse(savePath), displayName)
-                savePath.startsWith("content:") -> DocumentSink(context, Uri.parse(savePath), displayName)
-                else -> FileSink(context, File(savePath), displayName)
-            }
+            val sink = sinkFor(context, savePath, displayName) ?: return null
             return if (sink.exists()) sink else null
         }
+
+        /** The sink a persisted `savePath` names, whether or not its file is still there. */
+        fun sinkFor(context: Context, savePath: String, displayName: String): DownloadSink? =
+            when (DownloadLogic.sinkKind(savePath, Build.VERSION.SDK_INT)) {
+                DownloadLogic.SinkKind.NONE -> null
+                DownloadLogic.SinkKind.MEDIA_STORE ->
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) MediaStoreSink(context, Uri.parse(savePath), displayName) else null
+                DownloadLogic.SinkKind.DOCUMENT -> DocumentSink(context, Uri.parse(savePath), displayName)
+                DownloadLogic.SinkKind.FILE -> FileSink(context, File(savePath), displayName)
+            }
 
         fun publicDownloads(context: Context): File {
             val public = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
@@ -218,5 +224,9 @@ sealed class DownloadSink {
             }
         }.getOrNull()
 
+        /** A descriptor can be opened for reading: the bytes are really there, whatever the index says. */
+        fun openable(context: Context, uri: Uri): Boolean = runCatching {
+            context.contentResolver.openFileDescriptor(uri, "r")?.use { true } ?: false
+        }.getOrDefault(false)
     }
 }

@@ -7,6 +7,7 @@ import { THEME_PRESETS, resolveTheme } from '@shared/theme'
 import { formatBinding } from '@shared/shortcuts'
 import { run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
+import { openSettings } from '@renderer/lib/pages'
 import {
   isTouchOnly,
   tourFeatures,
@@ -14,9 +15,9 @@ import {
   type TourFeature,
   type TourStep
 } from '@renderer/lib/onboarding'
-import { openOverlay } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { Button } from '../ui/button'
+import { PhoneOnboarding } from './PhoneOnboarding'
 
 const FEATURES: Record<TourFeature, { icon: typeof Layers; title: string; text: string }> = {
   spaces: {
@@ -52,12 +53,24 @@ const FEATURES: Record<TourFeature, { icon: typeof Layers; title: string; text: 
 }
 
 /**
- * First-run experience mirroring Zen 1.22's onboarding: look, search engine, Essentials, a tour
- * of Spaces / Boosts / Live Folders, sync where the host has it and the key shortcuts where
- * there is a keyboard to press them on (`lib/onboarding.ts` has the rules).
+ * The first run. Phones get a short full-screen flow of their own; everything else gets the
+ * tour mirroring Zen 1.22's onboarding – look, search engine, Essentials, a tour of Spaces /
+ * Boosts / Live Folders, sync where the host has it and the key shortcuts where there is a
+ * keyboard to press them on.
  */
 export function Onboarding({ state }: { state: UIState }): JSX.Element {
-  const touchOnly = isTouchOnly(useViewport())
+  const viewport = useViewport()
+  if (viewport.formFactor === 'phone') return <PhoneOnboarding state={state} />
+  return <DesktopOnboarding state={state} touchOnly={isTouchOnly(viewport)} />
+}
+
+function DesktopOnboarding({
+  state,
+  touchOnly
+}: {
+  state: UIState
+  touchOnly: boolean
+}): JSX.Element {
   const sync = state.capabilities.sync
   const steps = useMemo(() => tourSteps({ sync }, touchOnly), [sync, touchOnly])
   const features = useMemo(() => tourFeatures({ sync }, touchOnly), [sync, touchOnly])
@@ -83,7 +96,7 @@ export function Onboarding({ state }: { state: UIState }): JSX.Element {
       patch: { theme: THEME_PRESETS[presetIndex].theme }
     })
     run('onboarding.complete', { searchEngineId: engine, colorScheme: scheme, essentials: picked })
-    if (sync && setupSync) setTimeout(() => void openOverlay('sync', null), 400)
+    if (sync && setupSync) setTimeout(() => openSettings('sync'), 400)
   }
 
   const highlights = state.shortcuts.filter((s) =>

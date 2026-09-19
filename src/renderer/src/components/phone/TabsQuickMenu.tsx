@@ -79,6 +79,7 @@ export function TabsQuickMenu({
   return (
     <div
       className="absolute inset-0 z-[60]"
+      data-shell-chrome
       onClick={onClose}
       // The hold that opened the menu ends with the platform's long-press (a context menu
       // event) landing here: not a dismissal, and not the WebView's own menu either.
