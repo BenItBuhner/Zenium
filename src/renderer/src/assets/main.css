@@ -3815,10 +3815,17 @@
   .zen-downloads-main[data-dim] .zen-downloads-name {
     color: var(--v2-text-deemphasized);
   }
-  /* Trailing icon buttons hang 12 into the gutter, so the glyph sits on it (§9.25). */
+  /*
+   * Trailing icon buttons centre on the row (§9.18) inside its 64 rather than growing it – a 44
+   * button in a 40 content box overhangs the row's padding by 2 each side, which its negative
+   * block margin allows (§9.21: the row's floor is the larger of 64 and 44 + 8) – and hang 12
+   * into the gutter, so the glyph sits on it (§9.25).
+   */
   .zen-downloads-actions {
     display: flex;
     flex-shrink: 0;
+    align-self: center;
+    margin-block: -6px;
     margin-right: -12px;
   }
   /*
@@ -3889,15 +3896,17 @@
 /*
  * What a download row adds to the shared v2 row (§9.34: a variant is a modifier on the
  * primitive, unlayered beside it, never a copy): the §9.2 two-line floor; a flagged row wraps
- * so its Keep / Delete footer takes the next line; a pressed control inside the row fills
- * itself and not the row around it; and a sheet being dragged takes no press fill on the row
- * under the finger.
+ * so its Keep / Delete footer takes the next line, without the primitive's 12 gap becoming a
+ * row gap there (the footer keeps its own 8 to the text); a pressed control inside the row
+ * fills itself and not the row around it; and a sheet being dragged takes no press fill on the
+ * row under the finger.
  */
 .zen-v2-row.zen-downloads-row {
   min-height: var(--v2-row-two-line);
 }
 .zen-v2-row.zen-downloads-row[data-flagged] {
   flex-wrap: wrap;
+  row-gap: 0;
 }
 .zen-v2-row.zen-downloads-row:has(button:active) {
   background: transparent;
