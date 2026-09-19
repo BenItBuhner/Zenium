@@ -2,17 +2,24 @@ import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_PRIVACY_SETTINGS,
   SECURE_DNS_PROVIDERS,
+  emptyPrivacyStatus,
   hostInSites,
+  isThirdPartyCookiePrivateMode,
   isValidDohTemplate,
   normalizePrivacySite,
+  privateThirdPartyCookieStatus,
   sanitizePrivacySettings,
   secureDnsServers,
-  siteMatchesHost
+  siteMatchesHost,
+  thirdPartyCookiesBlockedIn,
+  type ThirdPartyCookieMode,
+  type ThirdPartyCookiePrivateMode
 } from '../privacy'
 
 describe('sanitizePrivacySettings', () => {
   it('returns the defaults for nothing and for junk', () => {
     expect(sanitizePrivacySettings(undefined)).toEqual(DEFAULT_PRIVACY_SETTINGS)
+    expect(DEFAULT_PRIVACY_SETTINGS.thirdPartyCookiesPrivate).toBe('default')
     expect(
       sanitizePrivacySettings({
         safeBrowsingEnabled: 'yes',
@@ -20,11 +27,29 @@ describe('sanitizePrivacySettings', () => {
         secureDnsMode: 'dns',
         secureDnsProvider: 'nobody',
         thirdPartyCookies: 'maybe',
+        thirdPartyCookiesPrivate: 'block-private',
         thirdPartyCookieExceptions: 'example.com',
         gpc: 1,
         dnt: null
       } as never)
     ).toEqual(DEFAULT_PRIVACY_SETTINGS)
+    // A settings file from before the private field has none: it follows the global mode.
+    expect(sanitizePrivacySettings({ thirdPartyCookies: 'allow' }).thirdPartyCookiesPrivate).toBe(
+      'default'
+    )
+    for (const junk of ['sometimes', 'Block', '', 7, null, undefined, {}])
+      expect(
+        sanitizePrivacySettings({ thirdPartyCookiesPrivate: junk as never })
+          .thirdPartyCookiesPrivate,
+        String(junk)
+      ).toBe('default')
+    for (const mode of ['default', 'allow', 'block'] as const)
+      expect(
+        sanitizePrivacySettings({ thirdPartyCookiesPrivate: mode }).thirdPartyCookiesPrivate
+      ).toBe(mode)
+    expect(isThirdPartyCookiePrivateMode('allow')).toBe(true)
+    expect(isThirdPartyCookiePrivateMode('block-private')).toBe(false)
+    expect(isThirdPartyCookiePrivateMode(undefined)).toBe(false)
   })
 
   it('keeps valid values, normalises the exception sites and drops a malformed key', () => {
@@ -36,6 +61,7 @@ describe('sanitizePrivacySettings', () => {
       secureDnsProvider: 'quad9',
       secureDnsCustomUrl: ' https://dns.example/dns-query ',
       thirdPartyCookies: 'block',
+      thirdPartyCookiesPrivate: 'allow',
       thirdPartyCookieExceptions: [
         'https://Login.Example.com/path',
         'example.com',
@@ -54,6 +80,7 @@ describe('sanitizePrivacySettings', () => {
       secureDnsProvider: 'quad9',
       secureDnsCustomUrl: 'https://dns.example/dns-query',
       thirdPartyCookies: 'block',
+      thirdPartyCookiesPrivate: 'allow',
       thirdPartyCookieExceptions: ['login.example.com', 'example.com'],
       gpc: true,
       dnt: true
@@ -64,6 +91,43 @@ describe('sanitizePrivacySettings', () => {
     expect(sanitizePrivacySettings({ secureDnsProvider: 'custom' }).secureDnsProvider).toBe(
       'custom'
     )
+  })
+})
+
+describe('third-party cookies in private contexts', () => {
+  // [global mode, private override, blocked in a regular context, blocked in a private one].
+  const table: Array<[ThirdPartyCookieMode, ThirdPartyCookiePrivateMode, boolean, boolean]> = [
+    ['allow', 'default', false, false],
+    ['allow', 'allow', false, false],
+    ['allow', 'block', false, true],
+    ['block-private', 'default', false, true],
+    ['block-private', 'allow', false, false],
+    ['block-private', 'block', false, true],
+    ['block', 'default', true, true],
+    ['block', 'allow', true, true],
+    ['block', 'block', true, true]
+  ]
+
+  it.each(table)(
+    'global %s with private %s blocks: regular %s, private %s',
+    (thirdPartyCookies, thirdPartyCookiesPrivate, regular, isPrivate) => {
+      const policy = { thirdPartyCookies, thirdPartyCookiesPrivate }
+      expect(thirdPartyCookiesBlockedIn(policy, false)).toBe(regular)
+      expect(thirdPartyCookiesBlockedIn(policy, true)).toBe(isPrivate)
+      // The switch shows the private answer; only the global block locks it.
+      expect(privateThirdPartyCookieStatus(policy)).toEqual({
+        blocked: isPrivate,
+        locked: thirdPartyCookies === 'block'
+      })
+    }
+  )
+
+  it('starts from the defaults: blocked in private, not locked', () => {
+    expect(emptyPrivacyStatus().privateThirdPartyCookies).toEqual({ blocked: true, locked: false })
+    expect(privateThirdPartyCookieStatus(DEFAULT_PRIVACY_SETTINGS)).toEqual({
+      blocked: true,
+      locked: false
+    })
   })
 })
 

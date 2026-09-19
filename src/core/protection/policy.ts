@@ -1,7 +1,7 @@
 import { hostnameOf, isThirdParty } from '../blocking/domain'
 import type { RequestContext } from '../blocking/rules'
 import { isNonUniqueHost } from '../../shared/nonUniqueHost'
-import { hostInSites, type PrivacyFlags } from '../../shared/privacy'
+import { hostInSites, thirdPartyCookiesBlockedIn, type PrivacyFlags } from '../../shared/privacy'
 
 /**
  * The per-request questions the hosts put to a {@link PrivacyFlags} document. Pure, so the
@@ -10,13 +10,13 @@ import { hostInSites, type PrivacyFlags } from '../../shared/privacy'
 
 /**
  * Whether the request's cookies are to be withheld: it is a third-party request (its site is
- * not the top document's), the mode blocks third-party cookies in this partition, and neither
- * the request's site nor the document's is on the exception list. Main-frame navigations are
- * never third party.
+ * not the top document's), the policy blocks third-party cookies in this partition (the global
+ * mode, or in a private window the private override: `thirdPartyCookiesBlockedIn`), and
+ * neither the request's site nor the document's is on the exception list. Main-frame
+ * navigations are never third party.
  */
 export function blocksThirdPartyCookies(flags: PrivacyFlags, ctx: RequestContext): boolean {
-  if (flags.thirdPartyCookies === 'allow') return false
-  if (flags.thirdPartyCookies === 'block-private' && !ctx.isPrivate) return false
+  if (!thirdPartyCookiesBlockedIn(flags, ctx.isPrivate === true)) return false
   if (ctx.type === 'main_frame') return false
   const document = ctx.documentUrl ?? ctx.initiator
   if (!document) return false

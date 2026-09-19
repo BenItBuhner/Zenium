@@ -53,7 +53,8 @@ interface Fixture {
   applied: PrivacyFlags[]
 }
 
-function fixture(): Fixture {
+/** `io` shared between two fixtures is a restart: the second reads what the first persisted. */
+function fixture(io: StoreIO = memoryIo()): Fixture {
   const views: Recorded[] = []
   const applied: PrivacyFlags[] = []
   const capabilities = stub<HostCapabilities>({
@@ -65,7 +66,7 @@ function fixture(): Fixture {
   const platform: Platform = {
     info: { os: 'linux' as PlatformOs, version: '0.0.0' },
     capabilities,
-    io: memoryIo(),
+    io,
     windows: {
       create: () =>
         stub<WindowHost>({
@@ -179,6 +180,7 @@ describe('ProtectionService: the policy the hosts get', () => {
       httpsOnly: 'ask',
       httpsOnlyAllowed: [],
       thirdPartyCookies: 'block-private',
+      thirdPartyCookiesPrivate: 'default',
       gpc: false,
       dnt: false,
       secureDnsMode: 'automatic',
@@ -191,6 +193,84 @@ describe('ProtectionService: the policy the hosts get', () => {
     setPrivacy(f, { gpc: true, dnt: true })
     expect(f.applied).toHaveLength(2)
     expect(f.applied[1]).toMatchObject({ gpc: true, dnt: true })
+  })
+
+  it('reports the private switch: on when private contexts block, locked under the global block', () => {
+    const f = fixture()
+    const status = (): { blocked: boolean; locked: boolean } =>
+      f.browser.protection.status().privateThirdPartyCookies
+    // The defaults: block-private blocks in private, nothing is locked.
+    expect(status()).toEqual({ blocked: true, locked: false })
+    expect(
+      f.browser.state.snapshot(f.browser.focusedWindow()).privacy.privateThirdPartyCookies
+    ).toEqual({
+      blocked: true,
+      locked: false
+    })
+
+    setPrivacy(f, { thirdPartyCookies: 'allow' })
+    expect(status()).toEqual({ blocked: false, locked: false })
+    setPrivacy(f, { thirdPartyCookiesPrivate: 'block' })
+    expect(status()).toEqual({ blocked: true, locked: false })
+    setPrivacy(f, { thirdPartyCookies: 'block-private', thirdPartyCookiesPrivate: 'allow' })
+    expect(status()).toEqual({ blocked: false, locked: false })
+
+    // The global block wins and locks the switch on, whatever the private choice.
+    for (const thirdPartyCookiesPrivate of ['default', 'allow', 'block'] as const) {
+      setPrivacy(f, { thirdPartyCookies: 'block', thirdPartyCookiesPrivate })
+      expect(status(), thirdPartyCookiesPrivate).toEqual({ blocked: true, locked: true })
+    }
+    // Back from the global block, the private choice made under it still stands.
+    setPrivacy(f, { thirdPartyCookies: 'block-private' })
+    expect(status()).toEqual({ blocked: true, locked: false })
+    setPrivacy(f, { thirdPartyCookies: 'allow' })
+    expect(status()).toEqual({ blocked: true, locked: false })
+  })
+
+  it('takes the private switch through privacy.setThirdPartyCookiesPrivate and pushes the flags', () => {
+    const io = memoryIo()
+    const f = fixture(io)
+    const win = f.browser.focusedWindow()
+    expect(f.applied).toHaveLength(1)
+
+    f.browser.handleCommand(win, 'privacy.setThirdPartyCookiesPrivate', { mode: 'block' })
+    expect(f.browser.state.settings.privacy.thirdPartyCookiesPrivate).toBe('block')
+    expect(f.applied).toHaveLength(2)
+    expect(f.applied[1]).toMatchObject({
+      thirdPartyCookies: 'block-private',
+      thirdPartyCookiesPrivate: 'block'
+    })
+    // The same mode again changes nothing and pushes nothing.
+    f.browser.handleCommand(win, 'privacy.setThirdPartyCookiesPrivate', { mode: 'block' })
+    expect(f.applied).toHaveLength(2)
+
+    f.browser.handleCommand(win, 'privacy.setThirdPartyCookiesPrivate', { mode: 'allow' })
+    expect(f.browser.state.settings.privacy.thirdPartyCookiesPrivate).toBe('allow')
+    expect(f.applied[2]).toMatchObject({ thirdPartyCookiesPrivate: 'allow' })
+    expect(f.browser.protection.status().privateThirdPartyCookies).toEqual({
+      blocked: false,
+      locked: false
+    })
+    // Regular browsing is untouched by any of it.
+    expect(f.browser.state.settings.privacy.thirdPartyCookies).toBe('block-private')
+
+    // An unknown mode is refused and changes nothing.
+    for (const mode of ['sometimes', 'block-private', '', 7, null, undefined])
+      expect(() =>
+        f.browser.handleCommand(win, 'privacy.setThirdPartyCookiesPrivate', { mode })
+      ).toThrow(/Unknown private third-party cookie mode/)
+    expect(f.browser.state.settings.privacy.thirdPartyCookiesPrivate).toBe('allow')
+    expect(f.applied).toHaveLength(3)
+
+    f.browser.handleCommand(win, 'privacy.setThirdPartyCookiesPrivate', { mode: 'default' })
+    expect(f.applied[3]).toMatchObject({ thirdPartyCookiesPrivate: 'default' })
+
+    // A restart keeps the private choice.
+    f.browser.handleCommand(win, 'privacy.setThirdPartyCookiesPrivate', { mode: 'block' })
+    f.browser.state.flushSync()
+    const restarted = fixture(io)
+    expect(restarted.browser.state.settings.privacy.thirdPartyCookiesPrivate).toBe('block')
+    expect(restarted.applied[0]).toMatchObject({ thirdPartyCookiesPrivate: 'block' })
   })
 
   it('resolves the secure DNS provider into templates and falls back to automatic without one', () => {
