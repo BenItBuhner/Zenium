@@ -134,14 +134,76 @@ class NavigationStateTest {
         assertNull(NavigationState.stepsTo(0, -1, 0))
     }
 
+    // --- the restored list against the snapshot ---------------------------------------------------
+
     @Test
-    fun restoredListMatchesByTheItemOrTheShownUrl() {
-        assertTrue(NavigationState.restoredMatches("https://a.example/", "https://a.example/", "https://a.example/"))
-        // An internal page: the item is a data: URL, the view shows the zen:// one the core named.
-        assertTrue(NavigationState.restoredMatches("data:text/html,x", "zen://settings", "zen://settings"))
-        assertFalse(NavigationState.restoredMatches("https://b.example/", "https://b.example/", "https://a.example/"))
-        assertFalse(NavigationState.restoredMatches(null, null, "https://a.example/"))
-        assertFalse(NavigationState.restoredMatches("", "", ""))
+    fun restoredListMatchesTheSnapshotPositionForPosition() {
+        val pages = listOf("https://a.example/", "https://b.example/", "https://c.example/")
+        assertTrue(NavigationState.restoredMatches(pages, 2, pages, 2))
+        assertTrue(NavigationState.restoredMatches(pages, 0, pages, 0))
+        // Not the same current entry, not the same length, not the same pages: not the list described.
+        assertFalse(NavigationState.restoredMatches(pages, 1, pages, 2))
+        assertFalse(NavigationState.restoredMatches(pages.take(2), 1, pages, 1))
+        assertFalse(NavigationState.restoredMatches(pages, 2, pages.take(2), 2))
+        assertFalse(NavigationState.restoredMatches(listOf("https://a.example/", "https://x.example/", "https://c.example/"), 2, pages, 2))
+        assertFalse(NavigationState.restoredMatches(listOf("https://a.example/", null, "https://c.example/"), 2, pages, 2))
+        assertFalse(NavigationState.restoredMatches(listOf("https://a.example/", "", "https://c.example/"), 2, pages, 2))
+        assertFalse(NavigationState.restoredMatches(emptyList(), -1, emptyList(), -1))
+        assertFalse(NavigationState.restoredMatches(emptyList(), 0, listOf("https://a.example/"), 0))
+    }
+
+    @Test
+    fun anInternalEntryIsMatchedByItsDataDocumentNotByWhatTheViewShows() {
+        // A reader page on top of the article it was made from: the list holds the page as its
+        // data: document, the snapshot names it zen://reader?…, and nothing is asked of getUrl().
+        val reader = "zen://reader?id=article_1&url=https%3A%2F%2Fa.example%2Fstory"
+        val items = listOf("https://a.example/story", "data:text/html;charset=utf-8,%3C!doctype%20html%3E%3Ch1%3EStory%3C%2Fh1%3E")
+        assertTrue(NavigationState.restoredMatches(items, 1, listOf("https://a.example/story", reader), 1))
+        // An internal page behind the current one, too.
+        assertTrue(NavigationState.restoredMatches(items + "https://b.example/", 2, listOf("https://a.example/story", reader, "https://b.example/"), 2))
+        // A data: page nobody remembered the name of is about:blank in the snapshot: still its document.
+        assertTrue(NavigationState.restoredMatches(items, 1, listOf("https://a.example/story", NavigationState.BLANK_URL), 1))
+        // A data: item is not a web page's stand-in, and a web page is not an internal entry's.
+        assertFalse(NavigationState.restoredMatches(items, 1, listOf("https://a.example/story", "https://a.example/reader"), 1))
+        assertFalse(NavigationState.restoredMatches(listOf("https://a.example/story", "https://a.example/reader"), 1, listOf("https://a.example/story", reader), 1))
+    }
+
+    @Test
+    fun aDataItemStandsInForAnInternalEntryOrTheBlankOne() {
+        assertTrue(NavigationState.standsInForInternal("data:text/html,x", "zen://history"))
+        assertTrue(NavigationState.standsInForInternal("data:text/html,x", NavigationState.BLANK_URL))
+        assertFalse(NavigationState.standsInForInternal("data:text/html,x", "https://a.example/"))
+        assertFalse(NavigationState.standsInForInternal("data:text/html,x", "data:text/html,x"))
+        assertFalse(NavigationState.standsInForInternal("https://a.example/", "zen://history"))
+        assertFalse(NavigationState.standsInForInternal("", "zen://history"))
+    }
+
+    @Test
+    fun theInternalNamesOfARestoredListComeFromTheSnapshot() {
+        val doc1 = "data:text/html,one"
+        val doc2 = "data:text/html,two"
+        val items = listOf("https://a.example/", doc1, doc2, "data:text/html,short")
+        val entries = listOf("https://a.example/", "zen://reader?id=1", "zen://image?id=2", "data:text/html,short")
+        val names = NavigationState.internalNamesOf(items, entries)
+        assertEquals(
+            mapOf(NavigationState.dataUrlKey(doc1) to "zen://reader?id=1", NavigationState.dataUrlKey(doc2) to "zen://image?id=2"),
+            names
+        )
+        // What publicUrl then gives the fresh view's list: the names, and the short data: page as itself.
+        assertEquals(entries, items.map { NavigationState.publicUrl(it!!) { key -> names[key] } })
+        // A data: page named about:blank has no name to remember; a null item is skipped.
+        assertTrue(NavigationState.internalNamesOf(listOf(doc1, null), listOf(NavigationState.BLANK_URL, "zen://history")).isEmpty())
+    }
+
+    @Test
+    fun theUrlsOfARestorePayload() {
+        val entries = JSONArray()
+            .put(JSONObject().put("url", "https://a.example/").put("title", "A"))
+            .put(JSONObject().put("title", "no url"))
+            .put("not an entry")
+            .put(JSONObject().put("url", "zen://history"))
+        assertEquals(listOf("https://a.example/", "", "", "zen://history"), NavigationState.entryUrls(entries))
+        assertEquals(emptyList<String>(), NavigationState.entryUrls(JSONArray()))
     }
 
     // --- the internal pages ----------------------------------------------------------------------

@@ -1054,9 +1054,11 @@ class TabWebView(
     /**
      * `view.restoreNavigation`: the whole list from `hostState`, when there is one and it is
      * ours ([NavigationState.decodeHostState]), this view is still empty, `restoreState` accepts
-     * it and the list it gives back ends on `entries[index]` (true). Anything else is false and
-     * loads nothing: the core loads the current entry itself then (`loadURL`, which is also what
-     * gives an internal page its document), so a load here would be a second one. Main thread.
+     * it and the list it gives back is the one `entries` describes, position for position, the
+     * current one at `index` ([NavigationState.restoredMatches]; an internal page's item is its
+     * `data:` document where the entry names the `zen://` page) (true). Anything else is false
+     * and loads nothing: the core loads the current entry itself then (`loadURL`, which is also
+     * what gives an internal page its document), so a load here would be a second one. Main thread.
      */
     fun restoreNavigation(entries: JSONArray, index: Int, hostState: String?): Boolean {
         val restored = restoreFromHostState(entries, index, hostState)
@@ -1087,10 +1089,15 @@ class TabWebView(
             Log.i("ZenTab", "restoreState refused the state of $tabId: ${e.javaClass.simpleName}")
             null
         } ?: return false
-        if (!NavigationState.restoredMatches(restored.currentItem?.url, url, wanted)) {
-            Log.i("ZenTab", "the restored list of $tabId does not end on the expected entry (${restored.size} entries); the core loads it")
+        val items = (0 until restored.size).map { restored.getItemAtIndex(it)?.url }
+        val names = NavigationState.entryUrls(entries)
+        if (!NavigationState.restoredMatches(items, restored.currentIndex, names, index)) {
+            Log.i("ZenTab", "the restored list of $tabId is not the one described (${restored.size} entries, current ${restored.currentIndex}; ${names.size} expected, current $index); the core loads the entry")
             return false
         }
+        // The internal pages' names, from the snapshot: their items are their `data:` documents,
+        // and the view that saved the list is not this one (see internalUrls).
+        internalUrls.putAll(NavigationState.internalNamesOf(items, names))
         onHistoryCommitted()
         pushHistory(force = true)
         Log.i("ZenTab", "restored the list of $tabId: ${restored.size} entries, current ${restored.currentIndex}")

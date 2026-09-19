@@ -26,7 +26,9 @@ import java.util.concurrent.TimeUnit
  * The `hostState` round trip on real WebViews: a three-page list saved (`WebView.saveState`),
  * marshalled and base64-encoded ([NavigationState.hostStateOf]), decoded and unmarshalled again
  * ([NavigationState.decodeHostState], [NavigationState.bundleOf]) and restored into a fresh
- * WebView (`restoreState`), which then has the same three entries with the same current one. And
+ * WebView (`restoreState`), which then has the same three entries with the same current one; the
+ * same with an internal page (`loadDataWithBaseURL`, a `data:` item shown as `zen://…`) on top,
+ * matched to the snapshot's entries off the lists alone and back as one document. And
  * the refusals: a bundle that is not a WebView's (another host's, a hand-made one) unmarshals but
  * `restoreState` returns null for it; bytes that are not a bundle at all never reach the WebView;
  * a private tab's view has no state to give. The pages come from `shouldInterceptRequest`, so
@@ -71,8 +73,10 @@ class NavigationStateWebViewTest {
         assertEquals(3, restored!!.size)
         assertEquals(2, restored.currentIndex)
         assertEquals(PAGES[2], restored.currentItem?.url)
-        assertTrue(NavigationState.restoredMatches(restored.currentItem?.url, onMain { fresh.url }, PAGES[2]))
-        assertEquals(listOf(PAGES[0], PAGES[1], PAGES[2]), (0 until 3).map { restored.getItemAtIndex(it).url })
+        val items = (0 until 3).map { restored.getItemAtIndex(it).url }
+        assertEquals(listOf(PAGES[0], PAGES[1], PAGES[2]), items)
+        assertTrue(NavigationState.restoredMatches(items, restored.currentIndex, PAGES, 2))
+        assertFalse("another current entry is not the list described", NavigationState.restoredMatches(items, restored.currentIndex, PAGES, 1))
         assertTrue(onMain { fresh.canGoBack() })
         assertFalse(onMain { fresh.canGoForward() })
 
@@ -81,6 +85,64 @@ class NavigationStateWebViewTest {
         assertEquals(1, onMain { fresh.copyBackForwardList().currentIndex })
         assertEquals(PAGES[1], onMain { fresh.url })
         assertNotNull(afterBack)
+    }
+
+    /**
+     * An internal page as the current entry (a reader page over the article it was made from):
+     * the list holds it as its `data:` document while the view shows it under its `zen://` name,
+     * the way `TabWebView.loadHtml` puts one there. Restored into a fresh WebView, the list is
+     * matched to the snapshot's entries off the two lists alone – the item's `data:` document
+     * where the snapshot names the `zen://` page – with nothing asked of `getUrl()`, whose word
+     * right after `restoreState` is logged for the record; the page comes back as one document
+     * with its title, under its name, and the snapshot gives the fresh view the name to publish.
+     */
+    @Test
+    fun anInternalPageOnTopOfTheListComesBackAsItsOwnDocument() {
+        val source = webView()
+        load(source) { it.loadUrl(PAGES[0]) }
+        load(source) { it.loadDataWithBaseURL(READER, READER_HTML, "text/html", "utf-8", READER) }
+        val list = onMain { source.copyBackForwardList() }
+        assertEquals(2, list.size)
+        val document = list.getItemAtIndex(1).url
+        assertTrue("the list holds the page as its data: document, not: $document", document.startsWith("data:"))
+        assertEquals("the view shows it under its name", READER, onMain { source.url })
+        assertTrue(NavigationState.standsInFor(document, READER))
+        // What the snapshot names the two entries by (the saving view's publicUrl).
+        val entries = listOf(PAGES[0], READER)
+
+        val hostState = onMain { NavigationState.hostStateOf(source, private = false) }
+        assertNotNull("a list with an internal page on top has a state to give", hostState)
+        assertTrue("within the cap: ${hostState!!.length} chars", hostState.length <= NavigationState.HOST_STATE_MAX)
+        Log.i(TAG, "hostState of a page and a reader page: ${hostState.length} chars")
+        val bundle = NavigationState.bundleOf(NavigationState.decodeHostState(hostState)!!)
+        assertNotNull(bundle)
+
+        val fresh = webView()
+        var shownRightAfter: String? = null
+        val restored = load(fresh) { view -> view.restoreState(bundle!!).also { shownRightAfter = view.url } }
+        assertNotNull("restoreState accepts a list with a data: document in it", restored)
+        Log.i(TAG, "right after restoreState the view shows ${if (shownRightAfter == READER) "the internal page's name" else "'$shownRightAfter'"} for the internal entry")
+        assertEquals(2, restored!!.size)
+        assertEquals(1, restored.currentIndex)
+        val items = (0 until restored.size).map { restored.getItemAtIndex(it).url }
+        assertEquals("the same data: document", document, items[1])
+        assertTrue("the restored list is the one the snapshot describes", NavigationState.restoredMatches(items, restored.currentIndex, entries, 1))
+        // A snapshot that named the entry as a web page would not be matched by the document.
+        assertFalse(NavigationState.restoredMatches(items, restored.currentIndex, listOf(PAGES[0], "https://nav-snapshot.test/reader"), 1))
+
+        // One document, with its title, under its name: nothing for the core to load on top.
+        assertEquals(READER, onMain { fresh.url })
+        assertEquals("Story", onMain { fresh.title })
+        assertEquals(2, onMain { fresh.copyBackForwardList().size })
+        assertTrue(onMain { fresh.canGoBack() })
+        // The fresh view names the entry the way the snapshot does, from its first list on.
+        val names = NavigationState.internalNamesOf(items, entries)
+        assertEquals(entries, items.map { NavigationState.publicUrl(it) { key -> names[key] } })
+
+        // And the list is live: back is the article.
+        load(fresh) { it.goBack() }
+        assertEquals(PAGES[0], onMain { fresh.url })
+        assertEquals(0, onMain { fresh.copyBackForwardList().currentIndex })
     }
 
     @Test
@@ -173,5 +235,8 @@ class NavigationStateWebViewTest {
     private companion object {
         private const val TAG = "NavStateTest"
         private val PAGES = listOf("https://nav-snapshot.test/one", "https://nav-snapshot.test/two", "https://nav-snapshot.test/three")
+        /** A reader page's name, the way the core makes one (`zen://reader?id=…&url=…`). */
+        private const val READER = "zen://reader?id=article_test&url=https%3A%2F%2Fnav-snapshot.test%2Fone"
+        private const val READER_HTML = "<!doctype html><html><head><meta charset=\"utf-8\"><title>Story</title></head><body><h1>Story</h1><p>The article, read.</p></body></html>"
     }
 }

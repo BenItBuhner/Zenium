@@ -40,6 +40,9 @@ object NavigationState {
     /** What a `data:` entry too long to keep becomes in the snapshot. */
     const val BLANK_URL = "about:blank"
 
+    /** The internal pages' scheme: what the view shows for a `loadDataWithBaseURL` document of the chrome's. */
+    const val INTERNAL_URL_PREFIX = "zen://"
+
     /** How many internal pages a tab remembers the `data:` URL of (a stack rarely holds more). */
     const val INTERNAL_URLS_MAX = 32
 
@@ -74,6 +77,10 @@ object NavigationState {
         if (index < 0 || index >= entries.length()) return null
         return entries.optJSONObject(index)?.strOrNull("url")?.takeIf { it.isNotEmpty() }
     }
+
+    /** The URLs of a `view.restoreNavigation` payload's entries, in order ("" for a malformed one). */
+    fun entryUrls(entries: JSONArray): List<String> =
+        (0 until entries.length()).map { entries.optJSONObject(it)?.strOrNull("url") ?: "" }
 
     // --- hostState ------------------------------------------------------------------------------
 
@@ -164,12 +171,45 @@ object NavigationState {
     // --- restore and traversal ------------------------------------------------------------------
 
     /**
-     * Whether a list `restoreState` gave back is the one the snapshot describes: its current
-     * item is the entry the core expects, by the item's own URL or by the URL the view shows
-     * for it (an internal page's item is its `data:` URL; the view shows the `zen://` one).
+     * Whether the list `restoreState` gave back (`items`: its URLs, `currentIndex`) is the one
+     * the snapshot describes (`entries`: the URLs the core names them by, `index`): as long,
+     * current at the same place, and at every position the item is the entry, or its
+     * `data:` document is the internal entry's ([standsInForInternal]). Read off the two lists
+     * alone: not off `getUrl()`, the view's word on its visible entry, which has a timing of its
+     * own right after a restore. The core hands `hostState` over only with the whole list it was
+     * taken with (`sanitizeSnapshot` drops it when an entry went), so position for position is
+     * the test; a list that fails it is not restored, and the core loads the current entry.
      */
-    fun restoredMatches(restoredUrl: String?, shownUrl: String?, wanted: String): Boolean =
-        wanted.isNotEmpty() && (restoredUrl == wanted || shownUrl == wanted)
+    fun restoredMatches(items: List<String?>, currentIndex: Int, entries: List<String>, index: Int): Boolean {
+        if (entries.isEmpty() || items.size != entries.size || currentIndex != index) return false
+        return items.indices.all { i ->
+            val item = items[i]
+            !item.isNullOrEmpty() && (item == entries[i] || standsInForInternal(item, entries[i]))
+        }
+    }
+
+    /**
+     * Whether `itemUrl`, a list item's URL, is the document of the internal entry the snapshot
+     * names `entryUrl`: a `data:` URL where the snapshot has a `zen://` page ([publicUrl] gave
+     * it the name the view showed) or [BLANK_URL] (a `data:` page nobody remembered the name of).
+     */
+    fun standsInForInternal(itemUrl: String, entryUrl: String): Boolean =
+        itemUrl.startsWith("data:") && (entryUrl.startsWith(INTERNAL_URL_PREFIX) || entryUrl == BLANK_URL)
+
+    /**
+     * The names of the internal pages in a restored list, from the snapshot's entries: the key
+     * of each `data:` item's URL ([dataUrlKey]) to the `zen://` URL the entry at its position
+     * names it by, the way the view that saved the list remembered them (`internalUrls`), so the
+     * fresh view names them the same from its first push. Positions that do not match are skipped.
+     */
+    fun internalNamesOf(items: List<String?>, entries: List<String>): Map<Long, String> {
+        val names = LinkedHashMap<Long, String>()
+        for (i in 0 until minOf(items.size, entries.size)) {
+            val item = items[i] ?: continue
+            if (item.startsWith("data:") && entries[i].startsWith(INTERNAL_URL_PREFIX)) names[dataUrlKey(item)] = entries[i]
+        }
+        return names
+    }
 
     /** `goBackOrForward`'s argument for a jump to `index`, or null when `index` is not in the list. */
     fun stepsTo(index: Int, currentIndex: Int, size: Int): Int? =
