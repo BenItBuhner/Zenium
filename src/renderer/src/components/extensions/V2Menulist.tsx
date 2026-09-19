@@ -43,7 +43,8 @@ export function V2Menulist<T extends string>({
   value,
   options,
   onChange,
-  className
+  className,
+  disabled = false
 }: {
   /** What the list chooses (the accessible name of the control and the phone sheet's title). */
   label: string
@@ -51,6 +52,8 @@ export function V2Menulist<T extends string>({
   options: readonly MenulistOption<T>[]
   onChange: (value: T) => void
   className?: string
+  /** A dependent control whose parent is off (§9.30): .4 on the whole control, no popup. */
+  disabled?: boolean
 }): JSX.Element {
   const [anchor, setAnchor] = useState<Anchor | null>(null)
   const viewport = useViewport()
@@ -74,6 +77,7 @@ export function V2Menulist<T extends string>({
         aria-label={label}
         aria-haspopup={viewport.coarse ? 'dialog' : 'listbox'}
         aria-expanded={anchor !== null || undefined}
+        disabled={disabled}
         onClick={(e) => setAnchor(anchorOf(e.currentTarget))}
       >
         <span className="min-w-0 flex-1 truncate">{current?.label ?? ''}</span>

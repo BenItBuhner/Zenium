@@ -5610,12 +5610,246 @@
   display: flex;
   flex-direction: column;
 }
-/* Where two panes fit (§10.5), the desktop panel's body draws inside the tab on the page surface. */
+/*
+ * Where two panes fit (§10.5, Zen's about:preferences; `pages/settings/desktop.tsx`): the nav
+ * column and the content column side by side on the one page surface, each scrolling on its
+ * own. Nothing here states a row's or a control's size – those are the primitives' tokens, at
+ * their desktop base values (32 rows, 32 controls, 16 boxes and glyphs) – only the layout the
+ * two panes add: the 234 column, its 34 px items, the content column's 664 and the title sizes
+ * §9.26 sets for a pane.
+ */
 .zen-settings-two-pane {
+  display: flex;
   height: 100%;
-  color: var(--zen-fg);
-  font-size: 13px;
-  line-height: normal;
+}
+/* The nav (§10.5): 234 wide, the gear and "Settings" 22/600 at its top, the categories under. */
+.zen-settings-nav {
+  display: flex;
+  width: 234px;
+  flex-shrink: 0;
+  flex-direction: column;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 16px 0 24px;
+  scrollbar-width: none;
+}
+.zen-settings-nav::-webkit-scrollbar {
+  display: none;
+}
+.zen-settings-nav-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px 12px;
+}
+.zen-settings-nav-title > h1 {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--v2-font-title);
+  font-weight: var(--v2-weight-heading);
+  line-height: var(--v2-line-title);
+  letter-spacing: -0.01em;
+}
+.zen-settings-nav-title-glyph {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  flex-shrink: 0;
+  stroke-width: var(--v2-icon-stroke);
+}
+.zen-settings-nav-list {
+  display: flex;
+  flex-direction: column;
+}
+/*
+ * A nav item (§10.5): 34 tall, the 16 glyph then the Title Case label 12 after it in the 16
+ * gutter, the hover fill; the open one on the `--v2-nav-active` fill with a 3 px accent bar down
+ * its leading edge (§6). Edge to edge in the column, no radius: the bar is the column's edge.
+ */
+.zen-settings-nav-item {
+  position: relative;
+  display: flex;
+  width: 100%;
+  height: var(--v2-nav-item);
+  flex-shrink: 0;
+  align-items: center;
+  gap: 12px;
+  padding: 0 16px;
+  color: var(--v2-text);
+  text-align: left;
+  font-size: var(--v2-font-body);
+  font-weight: var(--v2-weight-body);
+  line-height: var(--v2-line-body);
+  transition: background 120ms var(--zen-ease);
+}
+@media (hover: hover) {
+  .zen-settings-nav-item:hover {
+    background: var(--v2-fill);
+  }
+}
+.zen-settings-nav-item:active {
+  background: var(--v2-fill);
+}
+.zen-settings-nav-item[aria-current='page'],
+.zen-settings-nav-item[aria-current='page']:hover {
+  background: var(--v2-nav-active);
+}
+.zen-settings-nav-item[aria-current='page']::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 3px;
+  background: var(--v2-accent);
+}
+.zen-settings-nav-item-glyph {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  flex-shrink: 0;
+  stroke-width: var(--v2-icon-stroke);
+}
+.zen-settings-nav-item-label {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/*
+ * The content column (§10.5, §5): scrolls on its own; its text column is 664 at most inside 32
+ * side margins – the pane's 16 plus the rows' own 16 gutter, so a row's hover fill runs 16
+ * past its text on both sides, as Zen's do, and the section title, the sub-headings and the
+ * rows' labels share one left edge at 32. Left-aligned as Zen's, not centred.
+ */
+.zen-settings-content {
+  position: relative;
+  min-width: 0;
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.zen-settings-pane {
+  max-width: calc(var(--v2-content-max) + 2 * 16px);
+  padding: 24px 16px 40px;
+}
+/*
+ * The pane's first element is the category's 22/600 section title on its 28 line (§9.26), 16
+ * from its last line to the first sub-heading's box; the first heading then drops the 20 it
+ * would put above itself, and a first group without a heading starts its rows 16 under the
+ * title the same way.
+ */
+.zen-settings-section-title {
+  margin: 0;
+  padding: 0 16px;
+  font-size: var(--v2-font-title);
+  font-weight: var(--v2-weight-heading);
+  line-height: var(--v2-line-title);
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+.zen-settings-pane > .zen-settings-body {
+  margin-top: 16px;
+}
+.zen-settings-pane > .zen-settings-body > .zen-settings-group:first-child > .zen-settings-heading {
+  margin-top: 0;
+}
+/*
+ * Sub-headings in a pane (§9.27): the 15/600 heading's box ends 8 above the first row's box
+ * (14 to its text through the row's 6 padding, Zen's Vertical Tabs group); one that carries a
+ * description keeps the phone's 4 to the description and the description's 8 to the row.
+ */
+.zen-settings-pane .zen-settings-heading:not(:has(+ .zen-settings-group-description)) {
+  margin-bottom: 8px;
+}
+/* The desktop-only content (Compact Mode, Resources, Sync, Keyboard Shortcuts, Default Browser). */
+.zen-settings-desktop-body {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding: 0 16px;
+}
+
+/*
+ * Desktop rows (§10.5, `rows.tsx`'s desktop variant), every one the shared `.zen-v2-row`:
+ * - a control row (§9.21) is static text trailing its 32 px control, the row grown to the
+ *   control plus 8 – the 4 above and below its own padding – so rows still touch; with a
+ *   description it is the two-line row's 52;
+ * - a check row is Zen's 16 px checkbox left of its label, the box on the first text line (§9.2),
+ *   the whole row its label;
+ * - an inline field (§9.12) is the one short field the desktop keeps beside its label: 96 for a
+ *   number, 160 at most for text; its validation message takes the line under the field.
+ */
+.zen-settings-control-row {
+  min-height: max(var(--v2-row), calc(var(--v2-control) + 8px));
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+.zen-settings-control-row:has(.zen-settings-description) {
+  min-height: max(var(--v2-row-two-line), calc(var(--v2-control) + 8px));
+}
+.zen-settings-control {
+  color: var(--v2-text);
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+}
+/* A menulist in a row sizes to its longest option (Zen's), up to half the text column. */
+.zen-settings-menulist {
+  width: auto;
+  min-width: 0;
+  max-width: calc(var(--v2-content-max) / 2);
+}
+.zen-settings-check-row {
+  align-items: flex-start;
+  cursor: default;
+}
+.zen-settings-inline-field {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+.zen-settings-field-number {
+  width: 96px;
+}
+.zen-settings-field-text {
+  width: 160px;
+}
+.zen-settings-inline-error {
+  max-width: 240px;
+  color: var(--v2-danger);
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-small);
+  text-align: right;
+}
+
+/*
+ * The dialogs a desktop row opens (`dialogs.tsx`, §9.5, §9.23): the shared `.zen-v2-dialog`
+ * chassis at the form width in the frame's dialog host, a title block over a body that scrolls
+ * between the title and its footer, 16 under the last control (§9.25). The layer sits outside
+ * the page host, so it states the page's type itself, as the phone sheets do.
+ */
+.zen-settings-dialog {
+  display: flex;
+  max-width: calc(100% - 32px);
+  max-height: calc(100% - 32px);
+  flex-direction: column;
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+  user-select: none;
+}
+.zen-settings-dialog-body {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-bottom: 16px;
+}
+.zen-settings-dialog-body > .zen-settings-sheet-actions {
+  padding: 0 16px;
 }
 
 /*

@@ -9,13 +9,14 @@ import {
   type InternalPageDefinition,
   type InternalPageSection
 } from '@shared/internalPages'
-import type { Tab, UIState } from '@shared/types'
+import type { FormFactor, Tab, UIState } from '@shared/types'
+import { useElementWidth } from '@renderer/hooks/useElementWidth'
 import { run } from '@renderer/lib/api'
 import { BackDismissal, useBackSurface } from '@renderer/lib/back'
 import { useChromeShortcut } from '@renderer/lib/chromeShortcuts'
 import { useViewport } from '@renderer/lib/formFactor'
 import { openBarEditor, openOverlay } from '@renderer/lib/ui'
-import { SettingsBody } from '../../overlays/SettingsPanel'
+import { DesktopSettings } from './desktop'
 import { SECTION_GLYPH, SECTION_GLYPHS } from './glyphs'
 import { searchRows, type SectionModel } from './model'
 import { GroupList, RowView, type RowContext } from './rows'
@@ -34,8 +35,10 @@ import { useSheetStack } from './useSheetStack'
  * it never focuses on its own: on tap, or when the tab claims Ctrl+F / "Find in Page"
  * (`useChromeShortcut('find.open')`) as "Find in Settings".
  *
- * Wider than {@link TWO_PANE_MIN_WIDTH} (tablets, a phone in landscape): the desktop panel's nav
- * and content inside the tab (§10.5); the nav switches sections without a history entry.
+ * From {@link TWO_PANE_MIN_WIDTH} of the page's own width (a desktop window, a tablet, a phone
+ * in landscape): the two-pane layout (`desktop.tsx`, §10.5) – the nav column and the content
+ * column, the nav switching sections without a history entry. The page measures itself rather
+ * than the window, so a split or a narrow window falls back to the landing and drill-ins.
  */
 
 /** Width from which the tab shows the two-pane layout (v2 §10.2, §10.5). */
@@ -47,23 +50,41 @@ interface Props {
 }
 
 export function SettingsPage({ state, tab }: Props): JSX.Element {
-  const { width, formFactor, hover } = useViewport()
+  const { width: windowWidth, formFactor, hover } = useViewport()
+  const root = useRef<HTMLDivElement>(null)
+  // The window's width stands in until the page has measured its own (0 before the first
+  // layout), so the first paint is already the right layout for a window that is not split.
+  const measured = useElementWidth(root)
+  const width = measured || windowWidth
   const page = INTERNAL_PAGES.settings
-  const sections = availableSections(page, state.capabilities, formFactor)
+  const sections = availableSections(page, state.capabilities, formFactor, state.platform)
   const ref = parseInternalPageUrl(tab.url)
   const current = sections.find((s) => s.id === ref?.section) ?? null
-  if (width >= TWO_PANE_MIN_WIDTH) {
-    return <TwoPane state={state} tab={tab} current={current} />
-  }
+  const twoPane = width >= TWO_PANE_MIN_WIDTH
   return (
-    <PhoneSettings
-      state={state}
-      tab={tab}
-      page={page}
-      sections={sections}
-      current={current}
-      pointer={hover}
-    />
+    <div ref={root} className="zen-settings-page" data-layout={twoPane ? 'two-pane' : 'phone'}>
+      {twoPane ? (
+        <DesktopSettings
+          state={state}
+          tab={tab}
+          page={page}
+          sections={sections}
+          current={current}
+          pointer={hover}
+          formFactor={formFactor}
+        />
+      ) : (
+        <PhoneSettings
+          state={state}
+          tab={tab}
+          page={page}
+          sections={sections}
+          current={current}
+          pointer={hover}
+          formFactor={formFactor}
+        />
+      )}
+    </div>
   )
 }
 
@@ -77,13 +98,15 @@ function PhoneSettings({
   page,
   sections,
   current,
-  pointer
+  pointer,
+  formFactor
 }: Props & {
   page: InternalPageDefinition
   sections: InternalPageSection[]
   current: InternalPageSection | null
   /** The host's primary pointer hovers (a mouse): rows may describe mouse gestures. */
   pointer: boolean
+  formFactor: FormFactor
 }): JSX.Element {
   const sheets = useSheetStack()
   const [query, setQuery] = useState('')
@@ -101,6 +124,7 @@ function PhoneSettings({
     state,
     tab,
     pointer,
+    formFactor,
     set: (patch) => run('settings.update', patch),
     navigate: (section) => run('page.navigate', { tabId: tab.id, section }),
     openBarEditor: () => void openBarEditor(tab.id),
@@ -124,7 +148,7 @@ function PhoneSettings({
   useEffect(() => closeAll(), [sectionId, closeAll])
 
   return (
-    <div className="zen-settings-page" data-section={sectionId ?? 'landing'}>
+    <div className="zen-settings-phone" data-section={sectionId ?? 'landing'}>
       <Landing
         page={page}
         sections={sections}
@@ -358,33 +382,5 @@ function DrillIn({
         <GroupList groups={model.groups} ctx={ctx} className="zen-settings-body" />
       </div>
     </section>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Two panes (tablet, landscape)
-// ---------------------------------------------------------------------------
-
-/**
- * The desktop panel's nav and content inside the tab (§10.5): no landing – the first category
- * shows when the URL names none – and the nav rewrites the tab's URL without a history entry.
- */
-function TwoPane({
-  state,
-  tab,
-  current
-}: Props & { current: InternalPageSection | null }): JSX.Element {
-  // Ctrl+F is the page's here too: the find bar has no page text to search. The pane carries no
-  // "Find in Settings" field yet (the landing's is phone-only; the two-pane gets it in the
-  // Android follow-up), so the key is taken and idle rather than opening a bar that finds nothing.
-  useChromeShortcut('find.open', (find) => find.tabId === tab.id)
-  return (
-    <div className="zen-settings-page zen-settings-two-pane">
-      <SettingsBody
-        state={state}
-        section={current?.id ?? null}
-        onSection={(id) => run('page.navigate', { tabId: tab.id, section: id, replace: true })}
-      />
-    </div>
   )
 }

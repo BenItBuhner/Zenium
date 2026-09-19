@@ -2,12 +2,14 @@ import type { ReactNode } from 'react'
 import { Check, Puzzle } from 'lucide-react'
 import type { InternalPageSection } from '@shared/internalPages'
 import type {
+  BookmarksBarMode,
   ColorScheme,
   ContainerColor,
   ContainerIcon as ContainerIconName,
   CrashRestoreMode,
   DesktopSiteDefault,
   DownloadSettings,
+  FormFactor,
   GlanceTrigger,
   NewTabBackgroundKind,
   NewTabPosition,
@@ -38,7 +40,7 @@ import {
   setNewTabSection,
   setNewTabShortcutsMode
 } from '@shared/newTab'
-import { formatZoom } from '@shared/pageControls'
+import { formatZoom, zoomChoices, zoomKey } from '@shared/pageControls'
 import { describeUpdateTarget, type UpdateChannel } from '@shared/updates'
 import { inputToUrl } from '@shared/url'
 import { run } from '@renderer/lib/api'
@@ -97,6 +99,11 @@ export interface SectionContext {
    * gesture – double-click, Alt + Click – keep it; a touch host reads its own gesture instead.
    */
   pointer: boolean
+  /**
+   * The chrome's layout: the phone shell has the phone bar (its editor row) and no bookmarks bar;
+   * the desktop and tablet shells the other way round. Absent, every row shows.
+   */
+  formFactor?: FormFactor
   set(patch: Partial<Settings>): void
   /** Move the page to another category (About › Check for updates lands on Updates). */
   navigate(section: string): void
@@ -109,6 +116,15 @@ export interface SectionContext {
 export function buildSection(section: InternalPageSection, ctx: SectionContext): SectionModel {
   const builder = BUILDERS[section.id]
   return { section, groups: builder ? builder(ctx) : [] }
+}
+
+/**
+ * Whether the section is defined as rows here. One that is not (Compact Mode, Resources, Sync,
+ * Keyboard Shortcuts, Default Browser) is a desktop-only category the two-pane layout draws
+ * with the desktop's own content (`SettingsBody`); the phone never lists it.
+ */
+export function hasRows(sectionId: string): boolean {
+  return sectionId in BUILDERS
 }
 
 /** Every listed section, built; what the landing's search filters. */
@@ -175,10 +191,17 @@ function item(
  * Groups in the order the design lead set for the tab: identity (Appearance, App icon), then the
  * chrome (URL bar, Pages), then page behaviour (Sites, Site exceptions), Glance last.
  */
-function lookSection({ state, set, pointer, openBarEditor }: SectionContext): RowGroup[] {
+function lookSection({
+  state,
+  set,
+  pointer,
+  formFactor,
+  openBarEditor
+}: SectionContext): RowGroup[] {
   const s = state.settings
   const caps = state.capabilities
   const pc = s.pageControls
+  const phoneShell = formFactor === 'phone'
   const patchControls = (patch: Partial<typeof pc>): void =>
     set({ pageControls: { ...pc, ...patch } })
   const groups: RowGroup[] = [
@@ -239,6 +262,49 @@ function lookSection({ state, set, pointer, openBarEditor }: SectionContext): Ro
       ]
     }
   ]
+  if (caps.windowMaterial) {
+    groups[0].rows.push({
+      kind: 'switch',
+      id: 'window-material',
+      label: 'Use Windows transparency effects',
+      description: 'Let the desktop show through the window frame (Mica). Applies to new windows.',
+      keywords: ['mica', 'acrylic', 'transparent'],
+      checked: s.windowMaterial === 'mica',
+      onChange: (v) => set({ windowMaterial: v ? 'mica' : 'none' })
+    })
+  }
+  if (!caps.pageControls) {
+    // Chrome's Page zoom menulist and the per-site zooms, under Appearance where the host has no
+    // page-controls sheet (the desktop); a host with one keeps the zoom under Accessibility.
+    groups[0].rows.push(
+      choice({
+        id: 'page-zoom',
+        label: 'Page zoom',
+        description: 'Sites without a zoom of their own open at this size.',
+        keywords: ['zoom', 'default zoom', 'text size'],
+        value: zoomKey(pc.zoom),
+        options: zoomChoices(pc.zoom),
+        onChange: (v) => patchControls({ zoom: Number(v) / 100 })
+      })
+    )
+    groups.push({
+      id: 'site-zooms',
+      heading: 'Sites with their own zoom',
+      rows: sorted(pc.siteZooms).map(([domain, factor]) =>
+        item(`site-zoom:${domain}`, domain, formatZoom(factor), [
+          {
+            kind: 'action',
+            id: `site-zoom:${domain}:forget`,
+            label: 'Remove zoom',
+            description: 'The site opens at the page zoom again.',
+            button: 'Remove',
+            onPress: () => run('pageControls.forgetSite', { kind: 'zoom', domain })
+          }
+        ])
+      ),
+      empty: 'No sites yet. Zooming a page remembers the zoom for its site here.'
+    })
+  }
   groups.push({
     id: 'app-icon',
     heading: 'App icon',
@@ -253,43 +319,84 @@ function lookSection({ state, set, pointer, openBarEditor }: SectionContext): Ro
       }
     ]
   })
-  groups.push({
-    id: 'url-bar',
-    heading: 'URL bar',
-    rows: [
-      choice<UrlbarBehavior>({
-        id: 'urlbar-behaviour',
-        label: 'Floating behaviour',
-        value: s.urlbarBehavior,
-        options: [
-          { value: 'float-typing', label: 'Floating only when typing' },
-          { value: 'always-float', label: 'Always floating' },
-          { value: 'normal', label: 'Normal (attached to top)' }
-        ],
-        onChange: (v) => set({ urlbarBehavior: v })
-      }),
-      choice<PhoneBarPosition>({
-        id: 'phone-bar-position',
-        label: 'Position on phones',
-        keywords: ['address bar', 'bottom', 'top'],
-        value: s.phoneBarPosition,
-        sheetDescription: 'Hold the address bar to carry it to the other edge.',
-        options: [
-          { value: 'bottom', label: 'Bottom' },
-          { value: 'top', label: 'Top' }
-        ],
-        onChange: (v) => set({ phoneBarPosition: v })
-      }),
-      {
-        kind: 'action',
-        id: 'navigation-bar',
-        label: 'Navigation bar',
-        description: 'Choose the controls beside the address bar and their order.',
-        keywords: ['customise', 'toolbar items', 'buttons'],
-        onPress: openBarEditor
-      }
-    ]
-  })
+  if (!phoneShell) {
+    // The bookmarks bar is the desktop and tablet shells' (App.tsx); the phone shell has none.
+    groups.push({
+      id: 'bookmarks',
+      heading: 'Bookmarks',
+      rows: [
+        choice<BookmarksBarMode>({
+          id: 'bookmarks-bar',
+          label: 'Show bookmarks bar',
+          keywords: ['toolbar', 'favourites'],
+          value: s.bookmarksBar,
+          sheetDescription:
+            'Always, only on the new tab page, or never. Compact mode hides it with the toolbar.',
+          options: [
+            { value: 'always', label: 'Always' },
+            { value: 'newtab', label: 'Only on new tab page' },
+            { value: 'never', label: 'Never' }
+          ],
+          onChange: (v) => set({ bookmarksBar: v })
+        }),
+        {
+          kind: 'action',
+          id: 'bookmarks-import',
+          label: 'Import bookmarks',
+          description: 'From a Netscape HTML file, which Chrome, Edge and Firefox all export.',
+          keywords: ['html', 'chrome', 'firefox', 'edge'],
+          button: 'Import…',
+          onPress: () => void run('bookmark.import', undefined)
+        },
+        {
+          kind: 'action',
+          id: 'bookmarks-export',
+          label: 'Export bookmarks',
+          description: 'To a Netscape HTML file other browsers can import.',
+          keywords: ['html', 'backup'],
+          button: 'Export…',
+          onPress: () => void run('bookmark.export', undefined)
+        }
+      ]
+    })
+  }
+  const urlBar: SettingsRow[] = [
+    choice<UrlbarBehavior>({
+      id: 'urlbar-behaviour',
+      label: 'Floating behaviour',
+      value: s.urlbarBehavior,
+      options: [
+        { value: 'float-typing', label: 'Floating only when typing' },
+        { value: 'always-float', label: 'Always floating' },
+        { value: 'normal', label: 'Normal (attached to top)' }
+      ],
+      onChange: (v) => set({ urlbarBehavior: v })
+    }),
+    choice<PhoneBarPosition>({
+      id: 'phone-bar-position',
+      label: 'Position on phones',
+      keywords: ['address bar', 'bottom', 'top'],
+      value: s.phoneBarPosition,
+      sheetDescription: 'Hold the address bar to carry it to the other edge.',
+      options: [
+        { value: 'bottom', label: 'Bottom' },
+        { value: 'top', label: 'Top' }
+      ],
+      onChange: (v) => set({ phoneBarPosition: v })
+    })
+  ]
+  // The bar editor rearranges the phone bar's controls: a row on the phone shell alone.
+  if (formFactor === undefined || phoneShell) {
+    urlBar.push({
+      kind: 'action',
+      id: 'navigation-bar',
+      label: 'Navigation bar',
+      description: 'Choose the controls beside the address bar and their order.',
+      keywords: ['customise', 'toolbar items', 'buttons'],
+      onPress: openBarEditor
+    })
+  }
+  groups.push({ id: 'url-bar', heading: 'URL bar', rows: urlBar })
   if (caps.pullToRefresh) {
     groups.push({
       id: 'pages',
@@ -917,6 +1024,7 @@ function downloadsSection({ state, set }: SectionContext): RowGroup[] {
       description:
         d.directory === null ? 'The system Downloads folder' : downloadFolderLabel(d.directory),
       keywords: ['folder', 'location', 'directory'],
+      button: 'Change…',
       onPress: () => {
         // A dismissed picker keeps the folder as it is.
         void downloadsEngine.chooseDirectory().then((dir) => {
@@ -929,6 +1037,7 @@ function downloadsSection({ state, set }: SectionContext): RowGroup[] {
       id: 'download-directory-default',
       label: 'Use the default folder',
       disabled: d.directory === null,
+      button: 'Use default',
       onPress: () => patch({ directory: null })
     },
     {
@@ -939,6 +1048,18 @@ function downloadsSection({ state, set }: SectionContext): RowGroup[] {
       onChange: (v) => set({ askWhereToSave: v })
     }
   ]
+  if (state.platform !== 'android') {
+    // A desktop OS has a file manager to show the folder in; Android's picked folder is a
+    // document tree with no such window.
+    saving.splice(1, 0, {
+      kind: 'action',
+      id: 'download-open-folder',
+      label: 'Open the downloads folder',
+      keywords: ['reveal', 'file manager', 'explorer', 'finder'],
+      leaves: 'external',
+      onPress: () => downloadsEngine.openFolder()
+    })
+  }
   if (d.autoOpenTypes.length > 0) {
     saving.push({
       kind: 'action',
@@ -1127,37 +1248,45 @@ function privacySection({ state, set }: SectionContext): RowGroup[] {
 // Search
 // ---------------------------------------------------------------------------
 
-function searchSection({ state, set }: SectionContext): RowGroup[] {
+function searchSection({ state, set, formFactor }: SectionContext): RowGroup[] {
   const s = state.settings
-  return [
+  const rows: SettingsRow[] = [
+    choice({
+      id: 'search-engine',
+      label: 'Default search engine',
+      value: s.searchEngineId,
+      options: state.searchEngines.map((e) => ({ value: e.id, label: e.name })),
+      onChange: (v) => set({ searchEngineId: v })
+    }),
     {
-      id: 'search',
-      heading: 'Search',
-      rows: [
-        choice({
-          id: 'search-engine',
-          label: 'Default search engine',
-          value: s.searchEngineId,
-          options: state.searchEngines.map((e) => ({ value: e.id, label: e.name })),
-          onChange: (v) => set({ searchEngineId: v })
-        }),
-        {
-          kind: 'switch',
-          id: 'search-suggestions',
-          label: 'Show search suggestions',
-          description: 'Sends what you type to the search engine as you type.',
-          checked: s.searchSuggestions,
-          onChange: (v) => set({ searchSuggestions: v })
-        },
-        {
-          kind: 'info',
-          id: 'search-keywords',
-          label: 'Engine keywords',
-          description: `Type a keyword, then a space: ${state.searchEngines.map((e) => e.keyword).join(' · ')}`
-        }
-      ]
+      kind: 'switch',
+      id: 'search-suggestions',
+      label: 'Show search suggestions',
+      description: 'Sends what you type to the search engine as you type.',
+      checked: s.searchSuggestions,
+      onChange: (v) => set({ searchSuggestions: v })
     }
   ]
+  // The desktop URL bar shows the whole URL at rest (§10.1); the phone pill shows hosts only,
+  // so the row is the desktop and tablet shells'.
+  if (formFactor !== 'phone') {
+    rows.push({
+      kind: 'switch',
+      id: 'full-urls',
+      label: 'Always show full URLs',
+      description: 'Keep the scheme and www. in the address bar instead of hiding them.',
+      keywords: ['scheme', 'https', 'www', 'address bar'],
+      checked: Boolean(s.showFullUrls),
+      onChange: (v) => set({ showFullUrls: v })
+    })
+  }
+  rows.push({
+    kind: 'info',
+    id: 'search-keywords',
+    label: 'Engine keywords',
+    description: `Type a keyword, then a space: ${state.searchEngines.map((e) => e.keyword).join(' · ')}`
+  })
+  return [{ id: 'search', heading: 'Search', rows }]
 }
 
 // ---------------------------------------------------------------------------
@@ -2099,7 +2228,9 @@ function aboutSection({ state, navigate }: SectionContext): RowGroup[] {
       }
     })
   }
-  if (state.capabilities.defaultBrowser) {
+  // The browser role has a category of its own on the desktop OSes (Default Browser, the
+  // desktop's content); Android keeps the one row here.
+  if (state.capabilities.defaultBrowser && state.platform === 'android') {
     rows.push(
       state.defaultBrowser.isDefault
         ? {

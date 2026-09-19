@@ -60,6 +60,13 @@ export interface ActionRow extends RowBase {
   /** A trailing 16 px glyph, only when the action leaves the page (§10.4). */
   leaves?: 'external' | 'chevron'
   /**
+   * The desktop's 32 px button (§10.5, Zen's about:preferences: "Check for updates", "Clear
+   * Data…"): the row keeps its label and description and trails this button, which runs the
+   * action – its confirmation dialog first for a destructive one. Without it a desktop action
+   * row is the whole-row target the phone draws, with its leaving glyph; a phone never reads it.
+   */
+  button?: string
+  /**
    * The action is running (§9.30): the row keeps its ink, trails a 16 px spinner in place of
    * its glyph, is `aria-busy` and takes no press – busy is not disabled.
    */
