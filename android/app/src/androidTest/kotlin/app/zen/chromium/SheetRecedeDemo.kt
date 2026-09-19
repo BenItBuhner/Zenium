@@ -631,18 +631,6 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
     /** [recedeValue] as a number: 0 when unset. */
     private fun recedeNumber(): Double = recedeValue().toDoubleOrNull() ?: 0.0
 
-    /** Poll the host for whether the chrome reports a dismissable surface. */
-    private fun awaitSurface(up: Boolean, timeoutMs: Long): Boolean {
-        val deadline = SystemClock.uptimeMillis() + timeoutMs
-        while (SystemClock.uptimeMillis() < deadline) {
-            var state = false
-            instrumentation.runOnMainSync { state = host.back.chromeSurfaceUp }
-            if (state == up) return true
-            SystemClock.sleep(150)
-        }
-        return false
-    }
-
     /**
      * Poll `--zen-recede` until `settled` accepts it, or `timeoutMs` has passed; true when it
      * did. The value is what the chassis paints from, so it says when a spring has landed
