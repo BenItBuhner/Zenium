@@ -1,3 +1,4 @@
+import { cpSync, mkdirSync } from 'fs'
 import { resolve } from 'path'
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
@@ -49,6 +50,29 @@ function previewPages(): Plugin {
   }
 }
 
+/** Where the PDF viewer's files go (`shared/pdfPage.ts` names them; `PdfViewer.kt` serves them). */
+const PDF_ASSETS_DIR = resolve('android/app/src/main/assets/pdf')
+
+/**
+ * The parts of pdf.js the viewer needs beside its own script: the worker, and the data the
+ * worker asks for as documents need it (CJK character maps, the fourteen standard fonts,
+ * the JPEG 2000 / JBIG2 / colour-management decoders as WebAssembly, the default ICC profile).
+ * Copied from the package once the viewer bundle is written.
+ */
+function pdfViewerFiles(): Plugin {
+  const dist = resolve('node_modules/pdfjs-dist')
+  return {
+    name: 'zen-pdf-viewer-files',
+    apply: 'build',
+    closeBundle() {
+      mkdirSync(PDF_ASSETS_DIR, { recursive: true })
+      cpSync(resolve(dist, 'legacy/build/pdf.worker.min.mjs'), resolve(PDF_ASSETS_DIR, 'pdf.worker.mjs'))
+      for (const dir of ['cmaps', 'standard_fonts', 'wasm', 'iccs'])
+        cpSync(resolve(dist, dir), resolve(PDF_ASSETS_DIR, dir), { recursive: true })
+    }
+  }
+}
+
 /**
  * Builds the Android chrome: the React renderer plus the browser core, bundled for the chrome
  * WebView. Output lands in the Android app's assets so Gradle can package it.
@@ -56,6 +80,7 @@ function previewPages(): Plugin {
  *   vite build  -c vite.android.config.ts                 → android/app/src/main/assets/www
  *   vite build  -c vite.android.config.ts --mode page     → android/app/src/main/assets/page.js
  *   vite build  -c vite.android.config.ts --mode ext      → android/app/src/main/assets/ext.js
+ *   vite build  -c vite.android.config.ts --mode pdf      → android/app/src/main/assets/pdf/
  *   vite        -c vite.android.config.ts                 → dev server with the iframe preview host
  */
 const aliases = {
@@ -86,6 +111,27 @@ export default defineConfig(({ mode }) => {
           formats: ['iife'],
           fileName: () => (janitor ? 'ext-janitor.js' : 'ext.js')
         }
+      }
+    }
+  }
+  if (mode === 'pdf') {
+    // The PDF viewer document's script (`src/android/pdfViewer.ts`), an ES module the shell
+    // loads from the viewer's origin, with pdf.js bundled in; the worker and data ride along.
+    return {
+      resolve: { alias: aliases },
+      define: { 'process.env.NODE_ENV': JSON.stringify('production') },
+      plugins: [pdfViewerFiles()],
+      build: {
+        outDir: PDF_ASSETS_DIR,
+        emptyOutDir: true,
+        minify: true,
+        target: 'es2020',
+        lib: {
+          entry: resolve('src/android/pdfViewer.ts'),
+          formats: ['es'],
+          fileName: () => 'viewer.mjs'
+        },
+        rollupOptions: { output: { inlineDynamicImports: true } }
       }
     }
   }

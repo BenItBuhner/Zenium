@@ -379,6 +379,14 @@ export interface HostEventPayloads {
     resumes?: string
     savePath?: string
     canResume?: boolean
+    /**
+     * The response the tab's own navigation produced (the WebView's `DownloadListener`, no
+     * `download` attribute behind it), as against a "Download link" or a retry: what decides
+     * whether a PDF opens in the viewer (`core/pdf.ts`).
+     */
+    navigation?: boolean
+    /** The response's Content-Disposition type, when it named one. */
+    disposition?: 'inline' | 'attachment' | null
   }
   'download.progress': {
     token: string
@@ -975,6 +983,21 @@ export class AndroidPlatform implements Platform {
           savePath: item.savePath,
           mimeType: item.mimeType
         }),
+      // The PDF viewer's "Open with" (the system chooser, every app that takes the file) and
+      // its share sheet, with the file itself.
+      openWith: (item) =>
+        bridge.call('download.openWith', {
+          id: item.id,
+          savePath: item.savePath,
+          mimeType: item.mimeType
+        }),
+      share: (item) =>
+        bridge.call('download.share', {
+          id: item.id,
+          savePath: item.savePath,
+          mimeType: item.mimeType,
+          name: item.finalName || item.filename
+        }),
       showInFolder: () => bridge.send('download.showAll'),
       chooseDirectory: () => bridge.call<string | null>('download.chooseDirectory')
     }
@@ -1034,6 +1057,7 @@ export class AndroidPlatform implements Platform {
     this.browser = browser
     this.views.pages.reader = (id) => browser.reader.pageHtml(id)
     this.views.pages.image = (id) => browser.sharedImage(id)
+    this.views.pages.pdf = (id) => browser.pdf.document(id)
     if (this.bootEnvironment) browser.pageControls.setEnvironment(this.bootEnvironment)
   }
 
@@ -1208,7 +1232,10 @@ export class AndroidPlatform implements Platform {
           canResume: p.canResume,
           containerId,
           private: containerId === PRIVATE_CONTAINER_ID,
-          resumes: p.resumes
+          resumes: p.resumes,
+          navigation: p.navigation === true,
+          disposition:
+            p.disposition === 'inline' || p.disposition === 'attachment' ? p.disposition : null
         })
         this.downloadTokens.set(p.token, record.id)
         // Where the file goes: the system save dialog, the folder from Settings, or the default.

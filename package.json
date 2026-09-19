@@ -25,7 +25,7 @@
     "build:mac": "electron-vite build && electron-builder --mac",
     "build:linux": "electron-vite build && electron-builder --linux",
     "dev:android": "vite -c vite.android.config.ts",
-    "build:android:web": "vite build -c vite.android.config.ts && vite build -c vite.android.config.ts --mode page && vite build -c vite.android.config.ts --mode ext && vite build -c vite.android.config.ts --mode ext-janitor",
+    "build:android:web": "vite build -c vite.android.config.ts && vite build -c vite.android.config.ts --mode page && vite build -c vite.android.config.ts --mode ext && vite build -c vite.android.config.ts --mode ext-janitor && vite build -c vite.android.config.ts --mode pdf",
     "build:android": "npm run build:android:web && cd android && ./gradlew assembleDebug -PskipWeb",
     "build:android:release": "npm run build:android:web && cd android && ./gradlew assembleRelease -PskipWeb",
     "icons": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/app-icons.ts",

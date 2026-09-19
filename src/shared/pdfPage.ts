@@ -22,7 +22,7 @@ export const PDF_VIEWER_DOCUMENT_PATH = '/document.pdf'
 
 /** The viewer's files, as the host ships them (`android/app/src/main/assets/pdf/`). */
 export const PDF_VIEWER_ASSETS = {
-  script: 'viewer.js',
+  script: 'viewer.mjs',
   worker: 'pdf.worker.mjs'
 } as const
 
@@ -73,8 +73,11 @@ export function pdfViewerRequestFor(url: string): PdfViewerRequest {
   const path = url.slice(PDF_VIEWER_ORIGIN.length).split(/[?#]/, 1)[0]
   if (path === PDF_VIEWER_DOCUMENT_PATH) return { kind: 'document' }
   if (path.startsWith(PDF_VIEWER_ASSET_PREFIX)) {
+    // The viewer's own files, and pdf.js's data one folder down (`cmaps/`, `standard_fonts/`,
+    // `wasm/`, `iccs/`); nothing that could climb out of the assets folder.
     const name = path.slice(PDF_VIEWER_ASSET_PREFIX.length)
-    if (/^[A-Za-z0-9_.-]+$/.test(name) && !name.startsWith('.')) return { kind: 'asset', name }
+    if (/^[A-Za-z0-9_-][A-Za-z0-9_.-]*(?:\/[A-Za-z0-9_-][A-Za-z0-9_.-]*)?$/.test(name))
+      return { kind: 'asset', name }
   }
   return null
 }
@@ -85,6 +88,9 @@ export function pdfViewerAssetMime(name: string): string {
   if (name.endsWith('.css')) return 'text/css'
   if (name.endsWith('.json')) return 'application/json'
   if (name.endsWith('.svg')) return 'image/svg+xml'
+  if (name.endsWith('.wasm')) return 'application/wasm'
+  if (name.endsWith('.ttf')) return 'font/ttf'
+  if (name.endsWith('.icc')) return 'application/vnd.iccprofile'
   return 'application/octet-stream'
 }
 
@@ -113,17 +119,18 @@ export function pdfViewerPageHtml(doc: Pick<PdfDocumentInfo, 'id' | 'name'>): st
   :root { color-scheme: light dark; }
   html, body { margin: 0; min-height: 100%; background: light-dark(#525659, #3b3b3d); touch-action: pan-x pan-y; overscroll-behavior: contain; }
   body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: light-dark(#1e1e24, #f0f0f5); }
-  #pages { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 8px 0 24px; transform-origin: 0 0; }
-  .zen-pdf-page { position: relative; background: #fff; box-shadow: 0 1px 4px #0006; overflow: hidden; }
-  .zen-pdf-page > canvas { display: block; }
-  .zen-pdf-hits { position: absolute; inset: 0; pointer-events: none; }
+  #pages { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 8px 8px 24px; box-sizing: border-box; width: max-content; min-width: 100%; transform-origin: 0 0; }
+  .zen-pdf-page { position: relative; flex: none; background: #fff; box-shadow: 0 1px 4px #0006; overflow: hidden; }
+  .zen-pdf-page > canvas { display: block; width: 100%; height: 100%; }
+  .zen-pdf-hits, .zen-pdf-links { position: absolute; inset: 0; pointer-events: none; }
   .zen-pdf-hit { position: absolute; background: #ffeb3b80; }
   .zen-pdf-hit.current { background: #ff980099; outline: 1px solid #ff9800; }
+  .zen-pdf-link { position: absolute; display: block; pointer-events: auto; }
   .zen-pdf-status { position: fixed; inset: 0; display: grid; place-items: center; text-align: center; padding: 32px; color: #f0f0f5; }
   .zen-pdf-status p { max-width: 420px; line-height: 1.5; margin: 0; }
 </style><script>window.__zeniumPdfDocument=${config}</script></head>
 <body><div id="pages"></div><div id="status" class="zen-pdf-status"><p>Loading…</p></div>
-<script src="${pdfViewerAssetUrl(PDF_VIEWER_ASSETS.script)}"></script></body></html>`
+<script type="module" src="${pdfViewerAssetUrl(PDF_VIEWER_ASSETS.script)}"></script></body></html>`
 }
 
 /** The page for a viewer address whose download is gone (deleted, cleared from the list). */

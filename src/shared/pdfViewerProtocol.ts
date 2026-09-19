@@ -33,7 +33,8 @@ export type PdfFitMode = 'width' | 'page'
 
 /** Where the viewer stands, as it tells the browser after every change. */
 export interface PdfViewerReport {
-  state: 'loading' | 'ready' | 'error'
+  /** `password`: the document is encrypted and waits for one (`password` command). */
+  state: 'loading' | 'password' | 'ready' | 'error'
   /** 0 until the document is open. */
   pageCount: number
   /** The page most in view, 1-based; 0 until the document is open. */
@@ -49,6 +50,8 @@ export interface PdfViewerReport {
   outline: PdfOutlineItem[]
   /** `error`: what went wrong, in the viewer's words. */
   error?: string
+  /** `password`: the one given was wrong (as against none given yet). */
+  passwordWrong?: boolean
 }
 
 export type PdfViewerCommand =
@@ -64,6 +67,10 @@ export type PdfViewerCommand =
   | { kind: 'stopFind' }
   /** Turn every page a quarter turn clockwise (Chrome's rotate). */
   | { kind: 'rotate' }
+  /** The password for an encrypted document. */
+  | { kind: 'password'; password: string }
+  /** Post the current report again (a chrome that attached after the last one). */
+  | { kind: 'report' }
 
 /** Chrome's zoom presets, the steps `zoomBy` moves along. */
 export const PDF_ZOOM_STEPS: readonly number[] = [
@@ -96,7 +103,8 @@ export function pdfReportOf(data: unknown): PdfViewerReport | null {
   const report = (data as Record<string, unknown>)[PDF_VIEWER_MESSAGE_KEY]
   if (!report || typeof report !== 'object') return null
   const r = report as Record<string, unknown>
-  if (r.state !== 'loading' && r.state !== 'ready' && r.state !== 'error') return null
+  if (r.state !== 'loading' && r.state !== 'password' && r.state !== 'ready' && r.state !== 'error')
+    return null
   if (typeof r.pageCount !== 'number' || typeof r.page !== 'number' || typeof r.zoom !== 'number')
     return null
   return report as PdfViewerReport

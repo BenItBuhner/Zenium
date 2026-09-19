@@ -74,7 +74,9 @@ export class PdfViewerService {
     if (kind !== 'done' || !this.pending.has(item.id)) return
     const tabId = this.pending.get(item.id) ?? null
     this.pending.delete(item.id)
-    if (item.state !== 'completed' || !item.savePath) return
+    // A file held behind a danger warning stays in Downloads until the user keeps it, as in
+    // Chrome; the viewer never opens it on its own.
+    if (item.state !== 'completed' || !item.savePath || item.danger.level !== 'safe') return
     this.show(item, tabId)
   }
 
@@ -95,8 +97,7 @@ export class PdfViewerService {
    */
   document(id: string): PdfDocumentInfo | null {
     const item = this.browser.downloads.item(id)
-    if (!item || item.state !== 'completed' || item.removed || item.fileMissing || !item.savePath)
-      return null
+    if (!item || !viewable(item)) return null
     return { id, name: item.finalName || item.filename, path: item.savePath }
   }
 
@@ -105,7 +106,7 @@ export class PdfViewerService {
     const tab = this.browser.tabs.tab(tabId)
     const id = tab ? pdfPageDownloadId(tab.url) : null
     const item = id ? this.browser.downloads.item(id) : undefined
-    return item && item.state === 'completed' && !item.removed ? item : undefined
+    return item && viewable(item) ? item : undefined
   }
 
   /** Chrome's "Open with": the system's chooser for the file (the plain open where there is none). */
@@ -159,4 +160,15 @@ export class PdfViewerService {
     this.reports.delete(tabId)
     for (const [id, owner] of this.pending) if (owner === tabId) this.pending.set(id, null)
   }
+}
+
+/** A completed download whose file is there to be shown (not held behind a danger warning). */
+function viewable(item: DownloadItem): boolean {
+  return (
+    item.state === 'completed' &&
+    !item.removed &&
+    !item.fileMissing &&
+    item.savePath !== '' &&
+    (item.danger.level === 'safe' || item.dangerAccepted)
+  )
 }

@@ -296,7 +296,10 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "view.destroy" -> { tabs.destroy(args.str("tabId")); reply(null) }
             "view.bind" -> { tabs.bind(args.str("viewId"), args.str("tabId")); reply(null) }
             "view.load" -> { tab?.loadUrl(args.str("url")); reply(null) }
-            "view.loadHtml" -> { tab?.loadHtml(args.str("url"), args.str("html")); reply(null) }
+            "view.loadHtml" -> {
+                tab?.loadHtml(args.str("url"), args.str("html"), args.strOrNull("baseUrl"), args.optJSONObject("document")?.let(PdfViewer::documentOf))
+                reply(null)
+            }
             "view.back" -> { if (tab?.canGoBack() == true) tab.goBack(); reply(null) }
             "view.forward" -> { if (tab?.canGoForward() == true) tab.goForward(); reply(null) }
             "view.reload" -> {
@@ -438,6 +441,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "download.deleteFile" -> downloads.deleteFile(args.str("savePath"), reply)
             "download.chooseDirectory" -> downloads.chooseDirectory(reply)
             "download.open" -> { downloads.open(args.str("savePath"), args.str("mimeType")); reply(null) }
+            "download.openWith" -> { downloads.openWith(args.str("savePath"), args.str("mimeType")); reply(null) }
+            "download.share" -> { downloads.share(args.str("savePath"), args.str("mimeType"), args.str("name")); reply(null) }
             "download.showAll" -> { downloads.showAll(); reply(null) }
             "profile.clear" -> {
                 security.forgetCertificates(args.str("containerId"))
