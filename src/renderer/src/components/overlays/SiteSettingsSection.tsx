@@ -1,7 +1,11 @@
 import type { JSX } from 'react'
 import { useMemo } from 'react'
 import type { UIState } from '@shared/types'
-import { contentSettingsFor, type ContentDefault, type ContentSetting } from '@shared/contentSettings'
+import {
+  contentSettingsFor,
+  type ContentDefault,
+  type ContentSetting
+} from '@shared/contentSettings'
 import { cmd, run } from '@renderer/lib/api'
 import {
   SITE_SETTINGS_GROUPS,
