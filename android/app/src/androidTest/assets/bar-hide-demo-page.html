@@ -7,9 +7,14 @@
 <style>
   /*
    * A long page for the bar-hide demo's camera: numbered sections down a few screens, so a drag
-   * has somewhere to scroll to at every step, and a badge fixed to the viewport's bottom edge
-   * that reads the viewport's height – it rides the page's edge as the bar leaves and returns,
-   * so the recording shows the page gaining the bar's band and the driver reads the same number
+   * has somewhere to scroll to at every step; an inner scroller near the top, whose own scroll
+   * must move no bar (Chrome's controls take a scroll only once it has reached the viewport);
+   * a last line the driver checks it can reach at the page's end with the bar hidden; and a
+   * badge fixed to the viewport's bottom edge that reads the viewport's height. The page is laid
+   * out tall once, on the first frame of a hide, and clipped to the bar's edge from then on: a
+   * fixed element is revealed by the clip as the bar leaves and covered as it returns, not
+   * carried with the bar's edge (a WebView has no per-frame viewport adjustment), so the badge
+   * shows the page gaining the bar's band at the two rests and the driver reads the same number
    * through `innerHeight`. Nothing here is fetched from the network.
    */
   html { background: #fff; color: #15141a; }
@@ -28,15 +33,31 @@
     letter-spacing: 0.01em;
   }
   #edge b { font-variant-numeric: tabular-nums; }
+  #inner {
+    height: 200px; overflow-y: auto; margin: 0 0 12px; padding: 0 12px;
+    border: 1px solid rgba(127, 127, 140, 0.5); border-radius: 10px;
+    background: rgba(127, 127, 140, 0.08);
+  }
+  #inner p { margin: 8px 0; font-size: 15px; }
+  #last { font-weight: 600; }
 </style>
 </head>
 <body>
 <h1>The bar that hides on scroll</h1>
 <p class="meta">A demo page served from inside the browser's own process. Scroll down and the address bar slides off its edge one to one with the page; scroll up a little and it comes back; let go part way and it snaps whichever way is nearer.</p>
+<p>The box below scrolls on its own. A finger inside it scrolls the box and moves no bar, as in Chrome; the bar follows the page's own scroll only.</p>
+<div id="inner"></div>
 <p>The blue band at the bottom is fixed to the viewport's bottom edge and reads the viewport's height. When the bar has gone the page has its band, so the number grows by the band's height and the blue edge sits where the bar was; when the bar is back the number is what it was.</p>
 <div id="body"></div>
+<p id="last">The last line of the page.</p>
 <div id="edge">viewport <b id="h">0</b> px tall</div>
 <script>
+  var inner = document.getElementById('inner')
+  for (var j = 1; j <= 40; j++) {
+    var line = document.createElement('p')
+    line.textContent = 'Inner line ' + j + ' of 40: scrolls inside the box.'
+    inner.appendChild(line)
+  }
   var words = ['The page scrolls under a finger and the bar follows the scroll.', 'Any scroll up brings the bar back before the page moves on.', 'A release part way snaps the bar in or out on a spring.', 'The new tab page and the browser\u2019s own pages keep their bar in place.', 'A sheet, the omnibox, a docked panel or the keyboard hold the bar shown.', 'A fling that runs out at the top of the page brings the bar back.']
   var body = document.getElementById('body')
   for (var i = 1; i <= 60; i++) {

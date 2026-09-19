@@ -102,13 +102,23 @@ class BarHideGesture(
     private var pending = 0.0
     private var flushPosted = false
 
+    /** The last three `move` deltas sent to the chrome (CSS px), oldest first: what a record of a bar that stayed off reads (the demo's warm-up). */
+    val recentMoves = ArrayDeque<Double>(3)
+
     private val flush = Runnable {
         flushPosted = false
         if (pending == 0.0) return@Runnable
         val delta = (pending * 100).roundToInt() / 100.0
         pending = 0.0
-        if (delta != 0.0) emit("move", json("delta" to delta, "time" to SystemClock.uptimeMillis()))
+        if (delta == 0.0) return@Runnable
+        if (recentMoves.size == 3) recentMoves.removeFirst()
+        recentMoves.addLast(delta)
+        emit("move", json("delta" to delta, "time" to SystemClock.uptimeMillis()))
     }
+
+    /** One line on where this side stands, for a run's record. */
+    fun describe(): String =
+        "frame=${frame?.let { "${it.edge} ${it.offsetPx}/${it.travelPx}px" } ?: "null"} touching=${filter.touching} hiding=${filter.hiding} mirror=${share.mirror} taking=${share.taking} rootScrolled=${share.rootScrolled} remaining=${view.scrollRemaining()} moves=$recentMoves"
 
     /** Every touch on the page as it arrives, before anything else has had it. */
     fun onTouch(event: MotionEvent) {

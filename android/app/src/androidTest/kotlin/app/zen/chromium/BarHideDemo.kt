@@ -6,14 +6,17 @@ import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import org.json.JSONObject
 import org.json.JSONTokener
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
 import java.io.FileInputStream
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -33,11 +36,20 @@ import kotlin.math.roundToInt
  *     row inside the sheet does what the row says (the audit rule after #194);
  *  5. Settings › Look and Feel › URL bar › Hide toolbar when scrolling (a finger on the row's
  *     switch) turns it off – the same drag moves no bar – and back on, and the bar's position
- *     row carries the bar to the top, where 1 to 4 run again against the top edge.
+ *     row carries the bar to the top, where 1 to 4 run again against the top edge;
+ *  6. a drag inside the page's own inner scroller scrolls the box and moves no bar (Chrome's
+ *     controls take a scroll only once it has reached the viewport; a top-docked bar here takes
+ *     a drag's travel only once the page's own scroller has moved under the finger);
+ *  7. the page's end: a finger landing within the bar's travel of it starts no hide and nothing
+ *     twitches (the value is sampled through the gesture, a frame log), the last line is reached
+ *     with the bar shown; a drag from higher up to the very end takes the bar off on the way,
+ *     the value climbs without a reversal, and the last line is reached with the bar hidden.
  *
  * A fling's outcome and the bar's return under accessibility focus are read and written down,
  * not judged: on the software-GPU emulator the fling's scroll arrives in lumps, and what the
- * WebView does with `ACTION_ACCESSIBILITY_FOCUS` is Chromium's call.
+ * WebView does with `ACTION_ACCESSIBILITY_FOCUS` is Chromium's call. A bar found off its edge
+ * where it should be home is written down with both sides' state (the chrome's store, the
+ * host's gesture), so a bar stuck hidden can be told from the emulator's jank.
  *
  * `findings.txt` carries every number read; a claim that did not hold fails the run once the
  * recording is done (like [touchFault]). The `theme` instrumentation argument (`light`, the
@@ -97,9 +109,13 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
 
     override fun demo() {
         dockSequence("bottom")
+        innerScrollerSequence("bottom")
+        pageEndSequence("bottom")
         sheetSequence("bottom")
         settingsSequence()
         dockSequence("top")
+        innerScrollerSequence("top")
+        pageEndSequence("top")
         sheetSequence("top")
     }
 
@@ -252,6 +268,117 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
     }
 
     /**
+     * Step 6 at `edge`: a finger inside the page's inner scroller (its `overflow: auto` box near
+     * the top) scrolls the box and moves no bar. The page's own `onScrollChanged` never fires for
+     * an inner scroller, so a bottom-docked bar has nothing to follow, and a top-docked bar takes
+     * nothing from a drag the page has not scrolled under ([BarHideShare]). Starts with the bar
+     * shown, puts the page at its top by script (no finger: the bar stays), and leaves the page
+     * scrolled past the box with the bar shown, so the drags after it are the page's own.
+     */
+    private fun innerScrollerSequence(edge: String) {
+        settleBar(0.0, "$edge before the inner scroller")
+        pageJs("window.scrollTo(0, 0)")
+        SystemClock.sleep(900)
+        val box = pageRect("inner")
+        if (box == null) {
+            check("$edge: the page's inner scroller is on screen", false, "no #inner box read from the page")
+            return
+        }
+        val before = pageNumber("document.getElementById('inner').scrollTop")
+        finding("[$edge] inner scroller at $box on screen, scrollTop $before, page at ${pageNumber("document.scrollingElement.scrollTop")}, hide ${hideValue()}")
+        val log = frameLog {
+            Finger().apply {
+                down(box.exactCenterX(), box.exactCenterY())
+                moveBy(0f, -INNER_DRAG * density, 600)
+                hold(700)
+                shot("$edge-11-inner-scroller")
+                up()
+            }
+        }
+        SystemClock.sleep(800)
+        val after = pageNumber("document.getElementById('inner').scrollTop")
+        val pageTop = pageNumber("document.scrollingElement.scrollTop")
+        check("$edge: a ${INNER_DRAG.roundToInt()} dp drag inside the page's inner scroller scrolls the box", after - before >= INNER_DRAG * 0.4, "scrollTop $before -> $after")
+        check(
+            "$edge: the same drag moves no bar (the box's scroll never reaches the page)",
+            log.all { it <= 0.005 } && hideNumber() <= 0.005,
+            "hide max ${log.maxOrNull() ?: 0.0} over ${log.size} frames, now ${hideValue()}, page scrollTop $pageTop"
+        )
+        // Past the box: a drag from mid-screen after this must scroll the page itself.
+        pageJs("window.scrollTo(0, document.getElementById('inner').getBoundingClientRect().bottom + document.scrollingElement.scrollTop + 40)")
+        SystemClock.sleep(900)
+    }
+
+    /**
+     * Step 7 at `edge`: the page's end. A finger landing with less than the bar's travel left to
+     * scroll starts no hide – the page laid out a band taller would have that band less to
+     * scroll, and Chromium would clamp the scroll back, which a run before this one never drove
+     * ([BarHideScrollFilter]) – and nothing twitches: the value is sampled through the gesture,
+     * and the page's last line is reached with the bar shown. Then, from higher up, a drag to
+     * the very end takes the bar off on the way, the value climbs without a reversal, and the
+     * last line is reached with the bar hidden. Starts with the bar shown; leaves the page at its
+     * end with the bar hidden.
+     */
+    private fun pageEndSequence(edge: String) {
+        settleBar(0.0, "$edge before the page's end")
+        val travel = barTravel()
+        pageJs("window.scrollTo(0, document.scrollingElement.scrollHeight - window.innerHeight - ${(travel / 2).roundToInt()})")
+        SystemClock.sleep(900)
+        finding("[$edge] near the end: ${pageRemaining()} CSS px left to scroll (travel $travel), hide ${hideValue()}")
+        val nearLog = frameLog {
+            Finger().apply {
+                down(pageX, pageY)
+                moveBy(0f, -NEAR_END_DRAG * density, 900)
+                hold(700)
+                shot("$edge-12-near-end-held")
+                up()
+            }
+        }
+        SystemClock.sleep(900)
+        check(
+            "$edge: a slow ${NEAR_END_DRAG.roundToInt()} dp drag from within the bar's travel of the page's end starts no hide",
+            nearLog.all { it <= 0.005 } && hideNumber() <= 0.005,
+            "hide max ${nearLog.maxOrNull() ?: 0.0} over ${nearLog.size} frames, now ${hideValue()}"
+        )
+        check("$edge: nothing twitches near the end (the frame log holds one direction)", reversals(nearLog) == 0, "reversals ${reversals(nearLog)} in ${nearLog.size} frames")
+        check(
+            "$edge: the page's last line is reached with the bar shown",
+            lastLineReached(),
+            "remaining ${pageRemaining()} CSS px, last line's bottom ${lastLineBottom()} in a page ${pageInnerHeight()} tall"
+        )
+        shot("$edge-13-end-bar-shown")
+
+        pageJs("window.scrollTo(0, document.scrollingElement.scrollHeight - window.innerHeight - ${FROM_ABOVE_END.roundToInt()})")
+        SystemClock.sleep(900)
+        finding("[$edge] above the end: ${pageRemaining()} CSS px left to scroll, hide ${hideValue()}")
+        var held = 0.0
+        val endLog = frameLog {
+            Finger().apply {
+                down(pageX, pageY)
+                moveBy(0f, -LONG * density, 900)
+                hold(700)
+                held = hideNumber()
+                shot("$edge-14-end-dragged-off")
+                up()
+            }
+        }
+        check("$edge: a drag to the very end of the page takes the bar off on the way", held >= 0.98, "hide $held")
+        check("$edge: the bar rests hidden at the page's end", awaitHide(SETTLE_MS) { it >= 0.995 }, "hide ${hideValue()}")
+        check(
+            "$edge: the value climbed to the end without a reversal (the frame log)",
+            reversals(endLog) == 0,
+            "reversals ${reversals(endLog)} in ${endLog.size} frames: ${endLog.joinToString(" ") { "%.2f".format(it) }}"
+        )
+        SystemClock.sleep(900)
+        check(
+            "$edge: the page's last line is reached with the bar hidden",
+            lastLineReached(),
+            "remaining ${pageRemaining()} CSS px, last line's bottom ${lastLineBottom()} in a page ${pageInnerHeight()} tall"
+        )
+        shot("$edge-15-end-hidden")
+    }
+
+    /**
      * Step 5: Settings › Look and Feel › URL bar. A finger on the Hide toolbar when scrolling
      * switch turns it off (the core's settings say so), the same drag then moves no bar, a
      * finger turns it back on, and the bar's position row's picker (a finger on Top) carries the
@@ -328,13 +455,57 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
         SystemClock.sleep(1_000)
     }
 
-    /** Wait for the bar to rest at `target` (0 or 1); a bar left elsewhere is dragged home and noted. */
+    /**
+     * Wait for the bar to rest at `target` (0 or 1); a bar left elsewhere is dragged home and
+     * noted with both sides' state – the chrome's store (phase, allowed, progress) and the host's
+     * gesture (its frame, the finger, the mirror, the last three moves) – so a bar stuck off its
+     * edge in the field reads differently from a drag the emulator's frames swallowed.
+     */
     private fun settleBar(target: Double, where: String) {
         val near = { v: Double -> abs(v - target) <= 0.005 }
         if (awaitHide(SETTLE_MS, near)) return
-        finding("$where: the bar rests at ${hideValue()}, not $target; dragging it ${if (target == 0.0) "back" else "off"}")
+        finding("$where: the bar rests at ${hideValue()}, not $target; chrome ${chromeBarHide()}; host ${hostBarHide()}; dragging it ${if (target == 0.0) "back" else "off"}")
         if (target == 0.0) toTop() else drag(-LONG * density, 500)
-        if (!awaitHide(SETTLE_MS, near)) finding("$where: the bar still rests at ${hideValue()}")
+        if (!awaitHide(SETTLE_MS, near)) finding("$where: the bar still rests at ${hideValue()}; chrome ${chromeBarHide()}; host ${hostBarHide()}")
+    }
+
+    /**
+     * `--zen-bar-hide` sampled about every 40 ms on a thread of its own while `during` runs (the
+     * finger's moves are injected from this one): the frame log of a gesture, oldest first.
+     */
+    private fun frameLog(during: () -> Unit): List<Double> {
+        val samples = CopyOnWriteArrayList<Double>()
+        val on = AtomicBoolean(true)
+        val sampler = Thread {
+            while (on.get()) {
+                samples += hideNumber()
+                SystemClock.sleep(40)
+            }
+        }
+        sampler.start()
+        try {
+            during()
+        } finally {
+            on.set(false)
+            sampler.join(3_000)
+        }
+        return samples.toList()
+    }
+
+    /** How often a sampled value turned around by more than a hair: 0 for one that only ever climbed, or only ever fell. */
+    private fun reversals(log: List<Double>): Int {
+        var count = 0
+        var direction = 0
+        var last = log.firstOrNull() ?: return 0
+        for (v in log.drop(1)) {
+            val d = v - last
+            if (abs(d) < 0.02) continue
+            val dir = if (d > 0) 1 else -1
+            if (direction != 0 && dir != direction) count++
+            direction = dir
+            last = v
+        }
+        return count
     }
 
     /** Accessibility focus on the address pill with the bar hidden (what TalkBack's swipe does): the bar's answer, written down. */
@@ -459,23 +630,84 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
     private fun hideSetting(): Boolean? =
         coreState().optJSONObject("settings")?.let { if (it.has("hideToolbarOnScroll")) it.getBoolean("hideToolbarOnScroll") else null }
 
-    /** The page's own viewport height, CSS px, as its script sees it (`innerHeight`); -1 when it did not answer. */
-    private fun pageInnerHeight(): Int {
-        var result = -1
+    /** Evaluate in the demo page's WebView; the raw JSON-encoded result ("" when it never answered). */
+    private fun pageJs(code: String): String {
+        var result = ""
         val latch = CountDownLatch(1)
         instrumentation.runOnMainSync {
             val view = host.tabs.get(TAB_ID)
             if (view == null) {
                 latch.countDown()
             } else {
-                view.evaluateJavascript("window.innerHeight") { value ->
-                    result = value?.toIntOrNull() ?: -1
+                view.evaluateJavascript(code) { value ->
+                    result = value ?: ""
                     latch.countDown()
                 }
             }
         }
         latch.await(5, TimeUnit.SECONDS)
         return result
+    }
+
+    /** A number read from the page (`pageJs`); -1 when it did not answer with one. */
+    private fun pageNumber(code: String): Double = pageJs(code).toDoubleOrNull() ?: -1.0
+
+    /** The page's own viewport height, CSS px, as its script sees it (`innerHeight`); -1 when it did not answer. */
+    private fun pageInnerHeight(): Int = pageNumber("window.innerHeight").toInt()
+
+    /** How much further the page can scroll, CSS px (0 at its end). */
+    private fun pageRemaining(): Int =
+        pageNumber("Math.round(document.scrollingElement.scrollHeight - window.innerHeight - document.scrollingElement.scrollTop)").toInt()
+
+    /** The bottom of the page's last line in its viewport, CSS px. */
+    private fun lastLineBottom(): Int = pageNumber("Math.round(document.getElementById('last').getBoundingClientRect().bottom)").toInt()
+
+    /** The page's last line is on screen, above the 40 px badge fixed to the viewport's bottom edge. */
+    private fun lastLineReached(): Boolean {
+        val bottom = lastLineBottom()
+        return bottom > 0 && bottom <= pageInnerHeight() - 40
+    }
+
+    /**
+     * Where the page element `id` is on the screen (device px): its rect in the page's viewport,
+     * scaled by the density (the page is at scale 1), from the WebView's place on the screen.
+     * Null when the page did not answer.
+     */
+    private fun pageRect(id: String): Rect? {
+        val raw = pageJs("JSON.stringify((r=>({x:r.left,y:r.top,w:r.width,h:r.height}))(document.getElementById('$id').getBoundingClientRect()))")
+        val text = JSONTokener(raw).nextValue() as? String ?: return null
+        val rect = runCatching { JSONObject(text) }.getOrNull() ?: return null
+        var left = 0
+        var top = 0
+        var found = false
+        instrumentation.runOnMainSync {
+            val view = host.tabs.get(TAB_ID) ?: return@runOnMainSync
+            val at = IntArray(2)
+            view.getLocationOnScreen(at)
+            left = at[0]
+            top = at[1]
+            found = true
+        }
+        if (!found) return null
+        val x = left + rect.getDouble("x") * density
+        val y = top + rect.getDouble("y") * density
+        return Rect(x.roundToInt(), y.roundToInt(), (x + rect.getDouble("w") * density).roundToInt(), (y + rect.getDouble("h") * density).roundToInt())
+    }
+
+    /** The chrome's bar-hide store (`barHideStore`: progress, phase, edge, travel, allowed), for the record. */
+    private fun chromeBarHide(): String {
+        val raw = chromeJs("JSON.stringify(((window.__zenStores||{})['bar-hide']||{get:function(){return null}}).get())")
+        return (JSONTokener(raw).nextValue() as? String) ?: raw
+    }
+
+    /** The host's side of the bar on the page (`BarHideGesture.describe`) and the tab host's frame, for the record. */
+    private fun hostBarHide(): String {
+        var line = "(no page view)"
+        instrumentation.runOnMainSync {
+            val view = host.tabs.get(TAB_ID) ?: return@runOnMainSync
+            line = view.barHide.describe() + " tabHost=" + (host.tabs.barHide?.let { "${it.edge} ${it.offsetPx}/${it.travelPx}px" } ?: "null")
+        }
+        return line
     }
 
     /** The page WebView's laid-out height in device px, less what it is translated by (its frame on screen at rest). */
@@ -546,6 +778,12 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
         private const val SHORT_BACK = 40f
         private const val MID_LOW = 26f
         private const val MID_HIGH = 44f
+        /** Inside the inner scroller: well past the slop, well short of the box's own end. */
+        private const val INNER_DRAG = 120f
+        /** Near the page's end: more than the half travel left, so the page reaches its end under the finger and the rest overscrolls. */
+        private const val NEAR_END_DRAG = 60f
+        /** Where the drag to the very end starts from, CSS px above it: room for the hide (travel plus slop) and the rest of the page. */
+        private const val FROM_ABOVE_END = 240f
         private val THEME = InstrumentationRegistry.getArguments().getString("theme").let {
             if (it == "dark") "dark" else "light"
         }

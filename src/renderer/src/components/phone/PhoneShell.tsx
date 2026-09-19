@@ -242,13 +242,16 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
           />
         )}
       </main>
-      {/* Messages sit on the content frame's box, over the bar and the stage but under sheets. */}
+      {/* Messages sit on the content frame's box, over the bar and the stage but under sheets.
+          On the bar's edge the box rides the bar as it hides (`--zen-bar-hide-shift`, per frame,
+          like the bar itself), so a toast showing mid-gesture moves with the bar instead of
+          jumping the band at the rest; at either rest it is the content column's edge. */}
       <div
         data-shell-chrome
         className="zen-message-frame pointer-events-none absolute z-[36]"
         style={{
-          top: edgePadding('top', edge, barAway),
-          bottom: edgePadding('bottom', edge, barAway),
+          top: edgePadding('top', edge, barAway, true),
+          bottom: edgePadding('bottom', edge, barAway, true),
           left: 'var(--zen-padding)',
           right: 'var(--zen-padding)'
         }}
@@ -303,10 +306,21 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
 /**
  * What the content column leaves free at `side`: the bar band on the bar's edge – the bar and,
  * while the active tab is grouped, the group strip (`--zen-phone-band`) – a gutter elsewhere,
- * and a gutter on the bar's edge too while the bar rests hidden off it (`barAway`).
+ * and a gutter on the bar's edge too while the bar rests hidden off it (`barAway`). With
+ * `perFrame` the bar's edge follows the bar's hide as it happens (`--zen-bar-hide-shift`,
+ * lib/barHide.ts): the band less the shift, which is the band at the shown rest and the gutter
+ * at the hidden one, the same two values, with every frame between – for a box that should
+ * move with the bar rather than be laid out twice per hide, as the content column is.
  */
-function edgePadding(side: PhoneBarPosition, barEdge: PhoneBarPosition, barAway = false): string {
+function edgePadding(
+  side: PhoneBarPosition,
+  barEdge: PhoneBarPosition,
+  barAway = false,
+  perFrame = false
+): string {
   const inset = `var(--zen-inset-${side})`
+  if (side === barEdge && perFrame)
+    return `calc(${inset} + var(--zen-phone-bar) - var(--zen-bar-hide-shift, 0px))`
   return side === barEdge && !barAway
     ? `calc(${inset} + var(--zen-phone-band))`
     : `calc(${inset} + var(--zen-padding))`
