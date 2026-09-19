@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, type JSX, type ReactElement } from 'react'
+import { act, useEffect, useRef, type JSX, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { PageDialog, UIState } from '@shared/types'
 import { PageDialogs } from '@renderer/components/dialogs/PageDialog'
@@ -290,6 +290,44 @@ describe('the frame dialog host keeps a panel for the way down (§11.1)', () => 
     runDown()
     expect(chrome.hasAttribute('inert')).toBe(false)
     expect(active()).toBe(opener)
+  })
+
+  it('a focus a dialog moves into its panel before the rise leaves the chrome where it stood: the browser’s scroll into view is put back before the frame paints', async () => {
+    /** A prompt that focuses its control as it mounts, the way the permission prompt does. */
+    function Prompt(): JSX.Element {
+      const button = useRef<HTMLButtonElement>(null)
+      useFrameDialog({})
+      useEffect(() => {
+        button.current?.focus()
+        // The browser scrolls the panel into view right after `focusin`, before `focus()`
+        // returns: the slot stands 300 px below the edge, so the chrome's scroll container –
+        // and the document – would move by that much. Done by hand here (happy-dom lays
+        // nothing out).
+        mount!.scrollTop = TRAVEL
+        document.documentElement.scrollTop = TRAVEL
+      }, [])
+      return (
+        <div data-dialog="prompt">
+          <button ref={button} type="button">
+            Allow
+          </button>
+        </div>
+      )
+    }
+    render(
+      <FrameDialogHost>
+        <Prompt />
+      </FrameDialogHost>
+    )
+    // Painted at 0 before the first frame: the slot below the edge, the focus in it.
+    expect(translateY()).toBe(TRAVEL)
+    expect(active()?.textContent).toBe('Allow')
+    expect(mount!.scrollTop).toBe(TRAVEL)
+    await settle()
+    // The microtask has put the offsets back; the focus stays where the dialog moved it.
+    expect(mount!.scrollTop).toBe(0)
+    expect(document.documentElement.scrollTop).toBe(0)
+    expect(active()?.textContent).toBe('Allow')
   })
 
   it('a panel going while another dialog stays open is not kept: the host is up', async () => {

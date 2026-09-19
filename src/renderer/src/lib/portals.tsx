@@ -452,9 +452,12 @@ function slotTravel(slot: HTMLElement, last: number): number {
  * mutations; a sheet on its own chassis, `[data-sheet-layer]`, is left to `SheetPresence`). No
  * dialog grows a leaving phase of its own. The window chrome stays inert from the rise to the
  * landing, and focus returns then – not at the request's clearing – to the control that opened
- * the first dialog, if the panel's going left it nowhere (§9.22). A dialog opening on the way
- * down turns the spring round and takes the slot for itself: what was kept for the way down is
- * dropped there. Under reduced motion the way down is the 120 ms fade in place, then the jump
+ * the first dialog, if the panel's going left it nowhere (§9.22). A focus a dialog moves into
+ * its panel while the slot still stands below the edge (its own effect, before the rise) never
+ * scrolls the chrome to bring the panel into view: the ancestors' offsets are put back in the
+ * same task. A dialog opening on the way down turns the spring round and takes the slot for
+ * itself: what was kept for the way down is dropped there. Under reduced motion the way down
+ * is the 120 ms fade in place, then the jump
  * (§11.3): the slot's and the scrim's opacity step to 0 on main.css's transition with the
  * panels still in the slot, and the spring jumps once the fade is over.
  */
@@ -737,6 +740,33 @@ function useSheetChassis(
     const observer = new MutationObserver(retain)
     observer.observe(slot, { childList: true })
     return () => observer.disconnect()
+  }, [active])
+
+  // A focus moving into the slot while it stands below the frame's edge – a dialog's own effect
+  // focusing its control before the rise (§9.22) – must not scroll the chrome to bring it into
+  // view: the slide is the chassis' and the chrome never scrolls for it. `focus()` fires
+  // `focusin` before it scrolls (the HTML focusing steps, then the scroll into view), so the
+  // ancestors' offsets are read here and put back in a microtask, which runs before the frame
+  // paints. Nothing inside the host is touched: a panel's own scroll container may scroll. A
+  // layout effect, so the listener is on before any dialog's effect focuses, a dialog mounted
+  // with the host included.
+  useLayoutEffect(() => {
+    const host = hostRef.current
+    if (!active || !host) return
+    const guard = (): void => {
+      const offsets: Array<[Element, number, number]> = []
+      for (let el = host.parentElement; el; el = el.parentElement) {
+        offsets.push([el, el.scrollTop, el.scrollLeft])
+      }
+      queueMicrotask(() => {
+        for (const [el, top, left] of offsets) {
+          if (el.scrollTop !== top) el.scrollTop = top
+          if (el.scrollLeft !== left) el.scrollLeft = left
+        }
+      })
+    }
+    host.addEventListener('focusin', guard)
+    return () => host.removeEventListener('focusin', guard)
   }, [active])
 
   // Unmounted (the shell changed): no frame writes into a gone tree, the page is released.
