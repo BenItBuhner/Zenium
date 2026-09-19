@@ -42,9 +42,12 @@ class BlockingTest {
     /** A policy that lists `listed.example` (and its subdomains) and allows `plain.example` over plaintext. */
     private class FakePolicy : RequestPolicy {
         val asked = ArrayList<String>()
+        /** The `navigation` mark of each question, in order. */
+        val navigations = ArrayList<Boolean>()
 
-        override fun unsafe(url: String): SafeBrowsingHit? {
+        override fun unsafe(url: String, navigation: Boolean): SafeBrowsingHit? {
             asked.add(url)
+            navigations.add(navigation)
             val host = Domains.hostnameOf(url) ?: return null
             return if (host == "listed.example" || host.endsWith(".listed.example")) SafeBrowsingHit("urlhaus", "malware", "listed.example") else null
         }
@@ -259,6 +262,9 @@ class BlockingTest {
         // Other subresources of a listed host are not the guard's business (the document never loaded).
         assertSame(Verdict.Pass, Blocking.evaluate(snapshot, tab, "https://listed.example/a.js", false, "*/*", "GET", policy))
         assertEquals(2, policy.asked.size)
+        // The document's question is marked as the navigation it is (the process's first may wait
+        // for the tables); the frame's is not.
+        assertEquals(listOf(true, false), policy.navigations)
         // The guard runs even without rule sets, and ahead of them: an unlisted host is the engine's as before.
         assertTrue(Blocking.evaluate(EngineSnapshot.EMPTY, tab, "https://listed.example/", true, "text/html", "GET", policy) is Verdict.Empty)
         assertSame(Verdict.Pass, Blocking.evaluate(EngineSnapshot.EMPTY, tab, "https://news.example/", true, "text/html", "GET", policy))
@@ -366,7 +372,7 @@ class BlockingTest {
         )
         val flags = app.zen.chromium.privacy.PrivacyFlags.parse(JSONObject("""{"httpsOnly":"ask"}"""))
         val policy = object : RequestPolicy {
-            override fun unsafe(url: String): SafeBrowsingHit? = null
+            override fun unsafe(url: String, navigation: Boolean): SafeBrowsingHit? = null
             override fun plaintextAllowed(url: String): Boolean = flags.plaintextAllowed(url)
         }
         val decision = Blocking.decideNavigation(stale, tab, "http://192.168.0.10/status")

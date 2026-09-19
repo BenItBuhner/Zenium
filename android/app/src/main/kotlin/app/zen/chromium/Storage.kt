@@ -79,6 +79,40 @@ class Storage(private val dir: File) {
         notifyChanged(name)
     }
 
+    /**
+     * The bytes of a file the host keeps beside the documents (the Safe Browsing snapshot,
+     * `safebrowsing/tables.bin`), or null when there is none.
+     */
+    fun readBytes(name: String): ByteArray? {
+        val file = fileFor(name) ?: return null
+        return runCatching { if (file.isFile) file.readBytes() else null }.getOrNull()
+    }
+
+    /**
+     * Write such a file whole, on the caller's thread: a temp file renamed over the target like
+     * the documents, but with no change notification – a cache the Kotlin side owns is nobody's
+     * document. True when the bytes landed.
+     */
+    fun writeBytes(name: String, bytes: ByteArray): Boolean {
+        val target = fileFor(name) ?: return false
+        return runCatching {
+            target.parentFile?.mkdirs()
+            val tmp = File(target.parentFile, "${target.name}.tmp")
+            tmp.writeBytes(bytes)
+            if (!tmp.renameTo(target)) {
+                target.delete()
+                tmp.renameTo(target)
+            }
+            target.isFile
+        }.getOrDefault(false)
+    }
+
+    /** Delete such a file at once, silently; true when nothing is left under the name. */
+    fun deleteBytes(name: String): Boolean {
+        val file = fileFor(name) ?: return false
+        return runCatching { !file.exists() || file.delete() }.getOrDefault(false)
+    }
+
     fun remove(name: String, done: () -> Unit) {
         executor.execute {
             runCatching { fileFor(name)?.delete() }
