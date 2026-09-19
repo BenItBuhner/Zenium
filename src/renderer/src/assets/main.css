@@ -3159,6 +3159,22 @@
     display: none;
   }
 }
+/*
+ * Narrower still, the tools after the address – the star, zoom, Reader View, Boost, Copy – go as
+ * well: a pill this narrow is the address, or the name of one of Zenium's pages, and nothing
+ * else, as the phone pill is (v2 §10.1); the site icon keeps the favicon slot, and the blocked
+ * pop-ups chip stays, a notice rather than a tool (#62). The queries read
+ * the pill's content box, 20 px inside its border box (`px-2.5`): 110 here is a 130 px pill. At
+ * the default sidebar width the pill is 100 px, and the star's 26 px are what "Settings" (48 px)
+ * is short of. 130: with the star the field would keep under 58 px, which no host fits, and the
+ * shortest internal address (`zenium://settings`, 102 px) still needs a 149 px pill without the
+ * star, so a sidebar dragged wider never trades the address for the title and back.
+ */
+@container (width < 110px) {
+  .zen-pill-chip {
+    display: none;
+  }
+}
 
 /*
  * The manager page's header (v2 §9.7): a 22/600 title and no hairline at rest. Unlayered on

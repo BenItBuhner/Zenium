@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, createElement, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -23,6 +25,7 @@ const { PillChip } = await import('../urlbar/PillChip')
 const { openUrlbar, uiStore } = await import('@renderer/lib/ui')
 const { closeSiteInfo, siteInfoStore } = await import('@renderer/lib/siteInfo')
 const { defaultShortcuts } = await import('@shared/shortcuts')
+const { DEFAULT_PAGE_CONTROLS } = await import('@shared/pageControls')
 
 function tab(url: string, patch: Partial<Tab> = {}): Tab {
   return {
@@ -411,6 +414,68 @@ describe('desktop pill (NavRow)', () => {
     expect(order[0].textContent).toBe('Search or enter address')
   })
 
+  /*
+   * The pill yields its chips to the address as it narrows, in tiers of a container query on
+   * `.zen-pill` (main.css; content-box widths, 20 px inside the pill): the hover-only chips under
+   * 170, the "Not secure" label under 220, and under 110 – a 130 px pill – every tool after the
+   * address (the star, zoom, Reader View, Boost, Copy), so a pill at the default sidebar width
+   * (100 px) is the address, or one of Zenium's pages' name, and the site icon (v2 §10.1's
+   * favicon slot). The blocked pop-ups chip is the one chip after the address that stays: a
+   * notice, not a tool, and the only word of a pop-up the page tried to open (#62). happy-dom
+   * evaluates no container query, so the markers and the rule are pinned here; the widths are
+   * measured on the packaged build.
+   */
+  it('marks every tool after the address for the narrow pill’s tier; the site icon and the blocked pop-ups notice stay', () => {
+    // Zoomed away from the default, so the zoom chip is in the pill too; two pop-ups refused,
+    // so the notice is.
+    const zoomed = tab('https://example.com/some/path', { readerable: true, zoom: 1.25 })
+    const s = withBlocked(zoomed, 2)
+    s.settings = { ...s.settings, pageControls: DEFAULT_PAGE_CONTROLS }
+    const el = render(<NavRow state={s} tab={zoomed} compact={false} />)
+    const pill = el.querySelector<HTMLElement>('[role="group"]')!
+    const chips = Array.from(pill.querySelectorAll<HTMLElement>('[data-pill-chip]'))
+    expect(labels(chips)).toEqual([
+      'Site information',
+      'Reader View',
+      '2 pop-ups blocked',
+      'Boost this site',
+      'Copy URL',
+      'Zoom: 125%',
+      'Bookmark this tab'
+    ])
+    const stays = new Set(['Site information', '2 pop-ups blocked'])
+    for (const chip of chips)
+      expect(chip.classList.contains('zen-pill-chip'), chip.ariaLabel ?? undefined).toBe(
+        !stays.has(chip.ariaLabel ?? '')
+      )
+    // The address itself is never a chip.
+    expect(focusable(pill)[0].classList.contains('zen-pill-chip')).toBe(false)
+
+    // The tier is one container rule below the hover-only chips' 170 (content-box widths: 20 px
+    // inside the pill) – unlayered, as its siblings are, to beat the `flex` and `group-hover`
+    // utilities that draw the chips.
+    const css = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8').replace(
+      /\/\*[\s\S]*?\*\//g,
+      ''
+    )
+    const tiers = [
+      ...css.matchAll(
+        /@container \(width < (\d+)px\) \{\s*\.zen-pill-(\w+) \{\s*display: none;\s*\}\s*\}/g
+      )
+    ]
+    expect(tiers.map((m) => [m[2], Number(m[1])])).toEqual([
+      ['extra', 170],
+      ['label', 220],
+      ['chip', 110]
+    ])
+    for (const tier of tiers) {
+      const before = css.slice(0, tier.index)
+      const open = (before.match(/\{/g) ?? []).length - (before.match(/\}/g) ?? []).length
+      expect(open, `the ${tier[2]} tier is nested`).toBe(0)
+    }
+    expect(css.match(/\.zen-pill-chip\b/g)).toHaveLength(1)
+  })
+
   // Design language v2 §9.29: a chip takes the token family of the surface it sits on, read from
   // the `data-surface` of its nearest surface root; the pill's root is window chrome either way.
   it('sits on a window surface at the top of the sidebar', () => {
@@ -483,7 +548,8 @@ describe('desktop pill on an internal page', () => {
     expect(field.getAttribute('data-reads')).toBe('title')
     // `zenium://`, never the canonical `zen://` the tab carries (§10.1).
     expect(pill.getAttribute('title')).toBe('zenium://settings/privacy')
-    // The star stays: Chrome keeps it on chrome://settings, the registry says so for Settings.
+    // The star is kept: Chrome keeps it on chrome://settings, the registry says so for Settings.
+    // Whether a narrow pill draws it is the width tier's (the test above), not the text's.
     expect(pill.querySelector('[aria-label="Bookmark this tab"]')).not.toBeNull()
   })
 

@@ -288,6 +288,10 @@ export function NavRow({
             only `:focus-within` on their common ancestor holds through that instant. They stay
             as well while a chip has its popover up (`aria-expanded`), so the chips do not shift
             under a popover that was placed on one of them (§9.20).
+            Every tool after the address – Reader View, Boost, Copy, the zoom, the star – carries
+            `zen-pill-chip`: a pill under 130 px drops them all for the address (the container
+            query on `.zen-pill`). The site icon stays, and so does the blocked pop-ups chip: a
+            notice rather than a tool, and the only word of a pop-up the page tried to open.
           */}
           <span className="contents group/chips">
             {isPrivate ? (
@@ -329,7 +333,7 @@ export function NavRow({
                 )}
                 pressed={isReader}
                 className={cn(
-                  'flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
+                  'zen-pill-chip flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
                   isReader && 'text-[var(--zen-accent)] opacity-100'
                 )}
                 onActivate={() => run('reader.toggle', { tabId: tab.id })}
@@ -381,7 +385,7 @@ export function NavRow({
                 popup="dialog"
                 expanded={boostsOpen}
                 className={cn(
-                  'h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
+                  'zen-pill-chip h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
                   boosted
                     ? 'flex text-[var(--zen-accent)] opacity-100'
                     : 'zen-pill-extra hidden group-hover/pill:flex group-focus-within/chips:flex group-has-[[aria-expanded=true]]/chips:flex'
@@ -395,7 +399,7 @@ export function NavRow({
               <PillChip
                 label="Copy URL"
                 title={hint('Copy URL', state, 'tab.copyUrl')}
-                className="zen-pill-extra hidden h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)] group-hover/pill:flex group-focus-within/chips:flex group-has-[[aria-expanded=true]]/chips:flex"
+                className="zen-pill-chip zen-pill-extra hidden h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)] group-hover/pill:flex group-focus-within/chips:flex group-has-[[aria-expanded=true]]/chips:flex"
                 onActivate={() => tab && run('tab.copyUrl', { tabId: tab.id })}
               >
                 <Copy className="h-3 w-3" />
