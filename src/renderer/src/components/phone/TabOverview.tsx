@@ -165,7 +165,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   const [sheet, setSheet] = useState<Sheet | null>(null)
   /**
    * A sheet has left: forget it – unless the row it was dismissed for has put the next sheet up
-   * already (the menu's "Close all tabs" opens the question as the menu goes).
+   * already (the menu's "Close All Tabs" opens the question as the menu goes).
    */
   const leaveSheet = (kind: Sheet['kind']): void =>
     setSheet((current) => (current?.kind === kind ? null : current))
@@ -552,7 +552,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     departAll(others)
     undoable(others, () => run('tab.closeOthers', { tabId: tab.id }))
   }
-  /** "Close all tabs": every unpinned tab of the space goes (Zen's Clear tabs); pinned ones stay. */
+  /** "Close All Tabs": every unpinned tab of the space goes (Zen's Clear tabs); pinned ones stay. */
   const closeAll = (): void => {
     departAll(regular)
     undoable(regular, () => run('space.closeUnpinned', { spaceId: space.id }))
@@ -827,8 +827,10 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
 }
 
 /**
- * The header's menu: the recently closed list (matrix TAB-22, TAB-23) and "Close all tabs" (TAB-06);
- * "Close other tabs" stays on a card's own menu, where it names the card it keeps.
+ * The header's menu: the recently closed list (matrix TAB-22, TAB-23) and "Close All Tabs" (TAB-06);
+ * "Close other tabs" stays on a card's own menu, where it names the card it keeps. The rows are
+ * menu items, so Title Case (v2 §9.1; the card menus' rows from #94/#147 take the rule in a
+ * follow-up); a row with nothing to act on keeps no count and is disabled, never hidden (§9.17).
  */
 function OverviewMenuSheet({
   title,
@@ -839,7 +841,7 @@ function OverviewMenuSheet({
   onCloseAll
 }: {
   title: string
-  /** How many tabs "Close all tabs" would close (the unpinned ones). */
+  /** How many tabs "Close All Tabs" would close (the unpinned ones). */
   open: number
   /** How many tabs the recently closed list holds. */
   closed: number
@@ -850,13 +852,13 @@ function OverviewMenuSheet({
   const actions: SheetAction[] = [
     {
       id: 'recently-closed',
-      label: closed > 0 ? `Recently closed (${closed})` : 'Recently closed',
+      label: closed > 0 ? `Recently Closed (${closed})` : 'Recently Closed',
       disabled: closed === 0,
       onPick: onRecentlyClosed
     },
     {
       id: 'close-all',
-      label: open > 0 ? `Close all tabs (${open})` : 'Close all tabs',
+      label: open > 0 ? `Close All Tabs (${open})` : 'Close All Tabs',
       destructive: true,
       disabled: open === 0,
       onPick: onCloseAll

@@ -23,12 +23,12 @@ import kotlin.math.roundToInt
  *     at its index;
  *  2. a card of the Research group swiped off the grid: the same toast; Undo puts it back into
  *     the group at its index;
- *  3. the header menu's Close all tabs: the `Close 7 tabs?` prompt; a touch on Close all closes
+ *  3. the header menu's Close All Tabs: the `Close 7 tabs?` prompt; a touch on Close all closes
  *     every unpinned tab of the space (Essentials stay), one `7 tabs closed` toast; Undo brings
  *     the seven back in their order, group included;
  *  4. the prompt's Don't ask again: touched, then Close all; `settings.confirmCloseAll` is off
  *     in the core; Undo; the next Close all closes without a prompt; Undo;
- *  5. Recently closed: a card closed with its X, the menu's row opens the sheet, a touch on the
+ *  5. Recently Closed: a card closed with its X, the menu's row opens the sheet, a touch on the
  *     entry restores the tab and the overview leaves on it.
  *
  * Positions come from the chrome's DOM (`getBoundingClientRect`, checked once against the
@@ -138,7 +138,7 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
     /** 3. Close all tabs from the header menu, the prompt, Close all touched, one toast, Undo. */
     private fun closeAllWithPrompt(start: List<Pair<String, String?>>) {
         finding("\n3. Close all tabs: the prompt, Close all, one toast, Undo restores the seven")
-        openMenuRow("Close all tabs") { promptUp() }
+        openMenuRow("Close All Tabs") { promptUp() }
         expect("the prompt asks 'Close 7 tabs?'", awaitText(".zen-frame-dialogs", PROMPT))
         expect("the prompt carries Don't ask again, unticked", awaitDom("$CHECKBOX_IN_DOM && !$CHECKBOX_CHECKED"))
         still("closeall-prompt")
@@ -163,7 +163,7 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
     /** 4. Don't ask again touched: the setting turns off with the close; the next Close all has no prompt. */
     private fun dontAskAgain(start: List<Pair<String, String?>>) {
         finding("\n4. Don't ask again, then Close all twice: the second time without the prompt")
-        openMenuRow("Close all tabs") { promptUp() }
+        openMenuRow("Close All Tabs") { promptUp() }
         expect("the prompt is up", awaitText(".zen-frame-dialogs", PROMPT))
         val ticked = touchUntil("the Don't ask again checkbox", { steadyRect({ domRect(CHECKBOX) }) }, { isChecked() })
         expect("the checkbox is ticked by the touch", ticked)
@@ -179,7 +179,7 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
 
         // The prompt is watched for from the touch on the row to the toast: it must never show.
         openMenu()
-        val second = closeAllThenUndo("'Close all tabs' in the menu", { steadyRect { menuRow("Close all tabs") } }, "closeall-noprompt-toast")
+        val second = closeAllThenUndo("'Close All Tabs' in the menu", { steadyRect { menuRow("Close All Tabs") } }, "closeall-noprompt-toast")
         expect("the toast reads '7 tabs closed': '${second.toast}'", second.toast.startsWith(BULK_TOAST))
         expect("with no prompt on the way", !second.promptSeen)
         expectClosedAtToast(second)
@@ -368,7 +368,7 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
         closeWithX(HN, "Hacker News")
         expect("the tab is closed", awaitTab(HN, exists = false))
         awaitToastGone()
-        openMenuRow("Recently closed") { inDom(ROW) }
+        openMenuRow("Recently Closed") { inDom(ROW) }
         expect("the sheet lists the entry", awaitText(ROW, "Hacker News", timeoutMs = 8_000) ||
             awaitText(ROW, "news.ycombinator.com", timeoutMs = 1_000))
         still("recent-list")
@@ -460,7 +460,8 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
 
     /**
      * Open the overview header's menu with a touch on More, then touch the row whose label
-     * starts with `row` (`Close all tabs (7)`, `Recently closed (1)`) once the sheet has risen;
+     * starts with `row` (`Close All Tabs (7)`, `Recently Closed (1)`, the menu's Title Case, v2 §9.1)
+     * once the sheet has risen;
      * `took` says what the row's touch brings about (the prompt, the list).
      */
     private fun openMenuRow(row: String, took: () -> Boolean) {

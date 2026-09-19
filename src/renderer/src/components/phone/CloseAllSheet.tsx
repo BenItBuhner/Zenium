@@ -5,7 +5,7 @@ import type { BottomSheetHandle } from '../sheet/BottomSheet'
 import { PhoneSheet } from './PhoneSheet'
 
 /**
- * "Close all tabs" asks first (matrix TAB-06): a prompt sheet on the frame's dialog host (v2
+ * The menu's "Close All Tabs" asks first (matrix TAB-06): a prompt sheet on the frame's dialog host (v2
  * draft §9.23 – grip strip, title block with the glyph, the one paragraph, the §9.11 footer)
  * saying how many tabs go, with a "Don't ask again" checkbox row that turns the question off
  * for good (`settings.confirmCloseAll`) – switched off only by an answer that goes ahead, as

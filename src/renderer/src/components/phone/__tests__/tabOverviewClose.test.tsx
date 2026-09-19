@@ -9,7 +9,7 @@ import { BLANK_URL } from '@shared/url'
 /*
  * Closing tabs from the phone overview (matrix TAB-05, TAB-06, TAB-22, TAB-23; v2 draft §9.23, §9.33,
  * §11.4): a card's X closes at once and departs, and the toast that follows the core's filing
- * offers Undo; the header's menu carries "Recently closed" and "Close all tabs"; Close all asks
+ * offers Undo; the header's menu carries "Recently Closed" and "Close All Tabs"; Close all asks
  * first on a prompt sheet with a "Don't ask again" row bound to `settings.confirmCloseAll`, and
  * then departs every unpinned card through `space.closeUnpinned` with one toast for the lot;
  * the recently closed sheet lists the contract's entries and a tap restores one. Rendered for
@@ -333,7 +333,7 @@ async function pick(text: string): Promise<void> {
 // --- the header menu ---------------------------------------------------------------------------
 
 describe('the header menu', () => {
-  it('carries Recently closed and Close all tabs, counted; each is off with nothing to act on', async () => {
+  it('carries Recently Closed and Close All Tabs (Title Case, §9.1), counted; each is off with nothing to act on (§9.17)', async () => {
     show(three())
     closed = [entry(tab('x', 'https://x.example/', { title: 'X' }), NOW - 60_000)]
     // The button says it opens a menu, and whether that menu is up.
@@ -343,8 +343,8 @@ describe('the header menu', () => {
     expect(byLabel('More').getAttribute('aria-expanded')).toBe('true')
     const rows = sheetRows()
     expect(rows.map((r) => [r.textContent?.trim(), r.hasAttribute('disabled')])).toEqual([
-      ['Recently closed (1)', false],
-      ['Close all tabs (3)', false]
+      ['Recently Closed (1)', false],
+      ['Close All Tabs (3)', false]
     ])
     // Close all is the destructive row (§10.4).
     expect(rows[1].style.color).toContain('--zen-danger')
@@ -356,8 +356,8 @@ describe('the header menu', () => {
     show(stateOf([tab('p', 'https://pinned.example/', { pinned: true })]))
     await openMenu()
     expect(sheetRows().map((r) => [r.textContent?.trim(), r.hasAttribute('disabled')])).toEqual([
-      ['Recently closed', true],
-      ['Close all tabs', true]
+      ['Recently Closed', true],
+      ['Close All Tabs', true]
     ])
   })
 })
@@ -368,7 +368,7 @@ describe('Close all tabs', () => {
   it('asks first on a prompt sheet; Cancel keeps every tab and the setting', async () => {
     show(three())
     await openMenu()
-    await pick('Close all tabs (3)')
+    await pick('Close All Tabs (3)')
     // The menu has gone and the question stands on the frame's dialog host (§9.23).
     expect(sheetRows()).toEqual([])
     expect(dialogTitle()).toBe('Close 3 tabs?')
@@ -387,7 +387,7 @@ describe('Close all tabs', () => {
   it('Close all departs every unpinned card, closes them through the space, and one toast offers to undo the lot', async () => {
     show(three())
     await openMenu()
-    await pick('Close all tabs (3)')
+    await pick('Close All Tabs (3)')
     await pick('Close all')
     // The question is gone; the cards depart where they stand – the pinned one stays.
     expect(dialogTitle()).toBeUndefined()
@@ -415,7 +415,7 @@ describe('Close all tabs', () => {
   it("Don't ask again turns the setting off with the close; with it off the menu's row closes at once", async () => {
     show(three())
     await openMenu()
-    await pick('Close all tabs (3)')
+    await pick('Close All Tabs (3)')
     const checkbox = document.querySelector<HTMLInputElement>(
       '.zen-frame-dialogs input[type="checkbox"]'
     )!
@@ -432,7 +432,7 @@ describe('Close all tabs', () => {
     act(() => clearDepartures())
     show(three({ confirmCloseAll: false }))
     await openMenu()
-    await pick('Close all tabs (3)')
+    await pick('Close All Tabs (3)')
     expect(dialogTitle()).toBeUndefined()
     expect(commands()).toEqual([['space.closeUnpinned', { spaceId: SPACE }]])
     expect(departStore.get().items.map((i) => i.key)).toEqual(['a', 'b', 'c'])
@@ -459,7 +459,7 @@ describe('Recently closed', () => {
       }
     ]
     await openMenu()
-    await pick('Recently closed (2)')
+    await pick('Recently Closed (2)')
     expect(dialogTitle()).toBe('Recently closed')
     const rows = [...document.querySelectorAll<HTMLElement>('.zen-frame-dialogs .zen-phone-row')]
     // Tab entries only, the list's order kept; a row is its title, then host and time (§9.13).
@@ -497,7 +497,7 @@ describe('Recently closed', () => {
     const y = tab('y', 'https://y.example/', { title: 'Y' })
     closed = [entry(x, NOW), entry(y, NOW - 1000)]
     await openMenu()
-    await pick('Recently closed (2)')
+    await pick('Recently Closed (2)')
     expect(document.querySelectorAll('.zen-frame-dialogs .zen-phone-row')).toHaveLength(2)
     closed = [entry(y, NOW - 1000)]
     act(() => {
