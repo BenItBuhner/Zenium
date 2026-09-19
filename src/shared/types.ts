@@ -1654,6 +1654,8 @@ export interface Settings {
   privacy: PrivacySettings
   /** The new tab page: whether it opens, what its grid shows, what it paints behind. */
   newTab: NewTabSettings
+  /** The one-time gesture hint (a toast after the first page) has been shown (phones). */
+  gestureHintDone: boolean
 }
 
 // ---------------------------------------------------------------------------
