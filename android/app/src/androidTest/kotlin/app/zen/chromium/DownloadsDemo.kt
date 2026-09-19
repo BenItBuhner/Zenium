@@ -19,7 +19,7 @@ import org.junit.runner.RunWith
 
 /**
  * Drives the Zenium downloader on an emulator and checks what lands in `MediaStore.Downloads`:
- * a throttled file paused and resumed from the downloads panel, a file whose connection the
+ * a throttled file paused and resumed from the downloads sheet, a file whose connection the
  * server cuts halfway (resumed on our own with `Range`), a `data:` link and a `blob:` link named
  * from their anchors, the progress and completion notifications, a file whose server dies on
  * every attempt until the row fails with Chrome's reason and wording (`network-failed`, "Check
@@ -29,7 +29,9 @@ import org.junit.runner.RunWith
  * the system Downloads app. The page and the files come from a small Node server on the runner
  * (`.github/scripts/downloads-demo-server.mjs`, reached at `10.0.2.2:18923` from inside the
  * emulator), which generates every byte from the same formula as [expectedByte], so a resumed
- * file is checked byte for byte.
+ * file is checked byte for byte. The server speaks plain HTTP, so the seeded profile turns
+ * HTTPS-only mode off; at its default "ask" the first navigation would stop on the upgrade's
+ * interstitial instead of the page.
  *
  * The panel on screen is the shared downloads page (`DownloadRow`): each row is one focusable
  * node labelled `<name>. <status>` on the accessibility tree with its controls as children, so
@@ -193,14 +195,19 @@ class DownloadsDemo : DemoHarness("downloads-demo-state.json", "downloads", "dow
 
     // --- driving ---------------------------------------------------------------------------------
 
-    /** Click a labelled element through the accessibility tree, else tap where it is. */
+    /**
+     * Click a labelled element through the accessibility tree, else tap where it is. The tree
+     * trails the screen by a second or two after a transition on the software-rendered emulator,
+     * so a label that is not there yet is waited for before it counts as missing.
+     */
     private fun click(label: String) {
         if (clickByLabel(label)) return
-        val where = findByLabel(label)
+        val where = waitFor(label, 8_000)
         if (where == null) {
             fail("nothing labelled \"$label\" on screen")
             return
         }
+        if (clickByLabel(label)) return
         Finger().tap(where.exactCenterX(), where.exactCenterY())
     }
 
@@ -284,9 +291,18 @@ class DownloadsDemo : DemoHarness("downloads-demo-state.json", "downloads", "dow
         }
     }
 
-    /** The panel fills the content area on a phone; it must go before the next link can be tapped. */
+    /**
+     * The downloads surface must go before the next link can be tapped. Every download opens it
+     * (the default setting), so it may still be on its way in when the file has already landed.
+     * On a phone it is the v2 bottom sheet, which the back gesture dismisses (its header's
+     * settings button is how we know it is up); with a pointer it is the panel with a close
+     * button. Its dismissal is a spring and the frame's return, which the tree trails, so this
+     * waits for the surface to be gone rather than for a fixed time.
+     */
     private fun closePanel() {
-        if (findByLabel(CLOSE) != null) click(CLOSE)
+        if (findByLabel(CLOSE) != null) click(CLOSE) else if (waitFor(SHEET_SETTINGS, 4_000) != null) back()
+        val deadline = SystemClock.uptimeMillis() + 6_000
+        while (SystemClock.uptimeMillis() < deadline && findAny(SHEET_SETTINGS, CLOSE) != null) SystemClock.sleep(200)
         SystemClock.sleep(1_200)
     }
 
@@ -426,6 +442,8 @@ class DownloadsDemo : DemoHarness("downloads-demo-state.json", "downloads", "dow
         const val CLOSE = "Close (Esc)"
         /** The panel's status line for a `network-failed` row: Chrome's wording behind "Failed –". */
         const val FAILED_NETWORK = "Failed \u2013 Check internet connection"
+        /** The phone sheet's header button (its label): how the driver knows the sheet is up. */
+        const val SHEET_SETTINGS = "Downloads settings"
         const val SLOW_SIZE = 3L * 1024 * 1024
         const val FLAKY_SIZE = 2L * 1024 * 1024
         const val DEAD_SIZE = 1L * 1024 * 1024

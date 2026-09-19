@@ -303,13 +303,13 @@
 /*
  * The v2 button (design-language-v2-draft §6): the control's height and radius from the density
  * tokens (40 tall and radius 6 under a finger), the button weight, the text at 10 percent as the
- * secondary; `data-primary` for the one accent button of a view. This is the only rule for the
- * class, and it stays outside the cascade layers on purpose: a `Button` that carries the class
- * keeps its utilities (`h-8`, `px-3.5`, `rounded-lg`, `bg-[…]`), and only an unlayered rule beats
- * them. For the same reason a second copy inside `@layer components` would lose every declaration
- * to this one – its `[data-primary]` included, which turned primaries into secondaries – so a
- * surface that wants the button reads this rule and adds nothing. The focus ring is the shared
- * `zen-v2-*` rule above.
+ * secondary; `data-primary` for the one accent button of a view, `data-danger` for a secondary
+ * in danger ink (a destructive Discard). This is the only rule for the class, and it stays
+ * outside the cascade layers on purpose: a `Button` that carries the class keeps its utilities
+ * (`h-8`, `px-3.5`, `rounded-lg`, `bg-[…]`), and only an unlayered rule beats them. For the same
+ * reason a second copy inside `@layer components` would lose every declaration to this one – its
+ * `[data-primary]` included, which turned primaries into secondaries – so a surface that wants
+ * the button reads this rule and adds nothing. The focus ring is the shared `zen-v2-*` rule above.
  */
 .zen-v2-button {
   display: inline-flex;
@@ -3710,6 +3710,436 @@
   .zen-firstrun-tile[aria-checked='true'] .zen-firstrun-tile-image {
     outline: 2px solid var(--v2-control-accent);
     outline-offset: 2px;
+  }
+}
+
+/*
+ * Design language v2 (docs/design-language-v2-draft.md §1–§3, §6, §9): the Android downloads
+ * sheet and the Downloads settings rows (components/downloads/). The sheet is the phone chassis
+ * (`BottomSheet`, .zen-sheet above): its surface, scrim, grabber, 48 header with the centred
+ * title and trailing control, and the hairline once the body scrolls under the header are all
+ * the chassis's; this block is what sits inside it. Rows are 44, or 64 with a description, which
+ * wraps to two lines and then ellipsizes (§9.2); icon buttons are the phone's 44 box with a 20
+ * glyph (§9.3); buttons and fields are Proton (§6): 40 tall, radius 6, weight 500, a 1 px border
+ * on fields and menulists, 20 px checkboxes with an accent fill. One gutter (§9.25): 16 from
+ * the sheet's outer edge, its 1 px border included, to every text and control edge – rows run
+ * edge to edge and their press fill reaches the border, a trailing 44 icon button hangs 12 into
+ * the gutter so its 20 px glyph sits on it. Motion is unchanged (v1 §7): the sheet's spring and
+ * recede are the primitive's; presses are the 120 ms fill and `scale(.98)`.
+ */
+@layer components {
+  .zen-sheet.zen-v2-sheet {
+    /* The 16 gutter measured from the outer edge: what is left of it inside the border. */
+    --zen-v2-gutter: calc(16px - 1px);
+  }
+  /*
+   * The empty state (§9.17): one sentence at 15 / 69 %, centred in a 32 px gutter from the outer
+   * edge, its first line 48 below the header and anchored there, so the peek and the expanded
+   * sheet show it in the same place.
+   */
+  .zen-v2-empty {
+    padding: 48px calc(var(--zen-v2-gutter, 16px) + 16px);
+    text-align: center;
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
+    color: var(--v2-text-deemphasized);
+  }
+
+  /*
+   * Rows (§9.2): a leading glyph on the first text line, text, then trailing 44 controls. The
+   * row is its padding around 20 px lines: 6 + 20 + 6 = 32 on desktop, 12 + 20 + 12 = 44 on
+   * phones, and a second 20 px line (the description) makes the two-line row's 52 / 64, so the
+   * padding is what the row token leaves around one line. A leading checkbox or glyph sits
+   * (line − box) / 2 below the first line's top – 2 for a 16 px box, 0 for a 20 px one – and
+   * never grows the line.
+   */
+  .zen-v2-row {
+    --zen-row-pad: calc((var(--v2-row) - var(--v2-line-body)) / 2);
+    display: flex;
+    width: 100%;
+    min-height: var(--v2-row);
+    align-items: flex-start;
+    gap: 12px;
+    padding: var(--zen-row-pad) var(--zen-v2-gutter, 16px);
+    color: var(--v2-text);
+    text-align: left;
+    transition: background 120ms var(--zen-ease);
+  }
+  /* A pressed openable body fills its whole row, border to border (§9.25). */
+  .zen-v2-row:has(> .zen-v2-row-text > button.zen-v2-row-body:active) {
+    background: var(--v2-fill);
+  }
+  /* A row with a description is the two-line row: 52 on desktop, 64 on phones. */
+  .zen-v2-row-two-line {
+    min-height: var(--v2-row-two-line);
+  }
+  /*
+   * A row holding a trailing control taller than its line grows around it (§9.21): its minimum
+   * is the larger of the base and the control plus 8 – 40 on desktop around a 32 px menulist,
+   * 48 on phones around a 40 px one – and the 4 above and below is the row's own padding, so
+   * rows touch and the control and the label centre on the row (§9.18).
+   */
+  .zen-v2-row-control {
+    min-height: max(var(--v2-row), calc(var(--v2-control) + 8px));
+    align-items: center;
+    padding-block: 4px;
+  }
+  .zen-v2-row-control > .zen-v2-row-text {
+    justify-content: center;
+  }
+  .zen-v2-row-glyph {
+    width: var(--v2-icon);
+    height: var(--v2-icon);
+    flex-shrink: 0;
+    margin-top: calc((var(--v2-line-body) - var(--v2-icon)) / 2);
+    color: var(--v2-text-deemphasized);
+  }
+  .zen-v2-row-glyph[data-level='suspicious'] {
+    color: var(--v2-warn);
+  }
+  .zen-v2-row-glyph[data-level='dangerous'] {
+    color: var(--v2-danger);
+  }
+  /* The text column spans the row, so an openable body below can be the whole row's target. */
+  .zen-v2-row-text {
+    min-width: 0;
+    flex: 1;
+    align-self: stretch;
+    display: flex;
+    flex-direction: column;
+  }
+  /* The text block itself; a button when a tap opens the file. */
+  .zen-v2-row-body {
+    display: flex;
+    width: 100%;
+    min-width: 0;
+    flex-direction: column;
+    color: inherit;
+    text-align: left;
+  }
+  /*
+   * An openable body is the row's full height (the 44 target, v1 §5); the row's padding is what
+   * it reaches into, and the press fill is the row's (above), not the body's own.
+   */
+  button.zen-v2-row-body {
+    flex: 1;
+    margin-block: calc(-1 * var(--zen-row-pad));
+    padding-block: var(--zen-row-pad);
+  }
+  /*
+   * An action row (§10.4) after the chassis hairline: one 15/400 label on the 44 row, the whole
+   * row its target, and it clears the list rather than the files, so plain ink, not danger.
+   */
+  .zen-v2-row-action {
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-body);
+    line-height: var(--v2-line-body);
+  }
+  .zen-v2-row-action:active {
+    background: var(--v2-fill);
+  }
+  .zen-v2-row-label {
+    display: block;
+    min-width: 0;
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-body);
+    line-height: var(--v2-line-body);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .zen-v2-row-label-wrap {
+    white-space: normal;
+  }
+  /* The description is the row's second 20 px line; it wraps to two lines, then an ellipsis (§9.2). */
+  .zen-v2-row-description {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+    font-variant-numeric: tabular-nums;
+    color: var(--v2-text-deemphasized);
+  }
+  /* Trailing icon buttons hang 12 into the gutter, so the glyph sits on it (§9.25). */
+  .zen-v2-row-actions {
+    display: flex;
+    flex-shrink: 0;
+    align-self: center;
+    margin-block: -6px;
+    margin-right: -12px;
+  }
+
+  /* Icon buttons (§9.3): the hit area and the fill are the same box. */
+  .zen-v2-icon-button {
+    display: inline-flex;
+    width: var(--v2-icon-button);
+    height: var(--v2-icon-button);
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    color: var(--v2-text);
+    transition:
+      background 120ms var(--zen-ease),
+      transform 120ms var(--zen-ease);
+  }
+  .zen-v2-icon-button > svg {
+    width: var(--v2-icon);
+    height: var(--v2-icon);
+  }
+  .zen-v2-icon-button:active:not(:disabled) {
+    background: var(--v2-fill);
+    transform: scale(0.98);
+  }
+  :root[data-hover='hover'] .zen-v2-icon-button:hover:not(:disabled) {
+    background: var(--v2-fill);
+  }
+  .zen-v2-icon-button:disabled {
+    opacity: 0.4;
+  }
+
+  /* The buttons (§6) are the app-wide .zen-v2-button, defined with the tokens above the layers. */
+
+  /* Progress under a running row: a 3 px track, the bar scales along it (transform only, §7.4). */
+  .zen-v2-progress {
+    position: relative;
+    height: 3px;
+    margin-top: 6px;
+    overflow: hidden;
+    border-radius: 1.5px;
+    background: var(--v2-fill);
+  }
+  .zen-v2-progress-bar {
+    position: absolute;
+    inset: 0;
+    border-radius: 1.5px;
+    background: var(--v2-accent);
+    transform-origin: 0 50%;
+    transition: transform 250ms linear;
+  }
+  .zen-v2-progress[data-paused] .zen-v2-progress-bar {
+    background: var(--v2-text-deemphasized);
+  }
+  .zen-v2-progress[data-indeterminate] .zen-v2-progress-bar {
+    width: 30%;
+    transition: none;
+    animation: zen-v2-progress-slide 1.4s var(--zen-ease) infinite;
+  }
+  @keyframes zen-v2-progress-slide {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(333%);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .zen-v2-progress-bar {
+      transition: none;
+    }
+    .zen-v2-progress[data-indeterminate] .zen-v2-progress-bar {
+      animation: none;
+      transform: none;
+      width: 100%;
+      opacity: 0.5;
+    }
+  }
+
+  /*
+   * A flagged file's warning line, in the description's place and on its 20 px line (§9.2), and
+   * its Keep / Discard row; the level picks the ink (§1 status).
+   */
+  .zen-v2-warning {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+    color: var(--v2-warn);
+  }
+  .zen-v2-warning[data-level='dangerous'] {
+    color: var(--v2-danger);
+  }
+  .zen-v2-warning > svg {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    margin-top: calc((var(--v2-line-small) - 16px) / 2);
+  }
+  .zen-v2-row-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 10px;
+  }
+
+  /* Badges are the one use of the pill (§2). */
+  .zen-v2-badge {
+    display: inline-flex;
+    height: 20px;
+    flex-shrink: 0;
+    align-items: center;
+    padding: 0 8px;
+    border-radius: 9999px;
+    background: var(--v2-fill);
+    color: var(--v2-text-deemphasized);
+    font-size: var(--v2-font-small);
+    font-weight: var(--v2-weight-heading);
+    line-height: 20px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /*
+   * Proton checkbox (§6): 20 px on phones, radius 2, accent fill with an on-accent check. It sits
+   * (line − box) / 2 below the first text line's top (§9.2): 2 for the 16 px box on desktop, 0
+   * for the 20 px one on phones, so it never grows a one-line row past 32 / 44.
+   */
+  .zen-v2-checkbox {
+    appearance: none;
+    position: relative;
+    display: inline-block;
+    width: var(--v2-checkbox);
+    height: var(--v2-checkbox);
+    flex-shrink: 0;
+    margin: calc((var(--v2-line-body) - var(--v2-checkbox)) / 2) 0 0;
+    border: 1px solid rgb(var(--v2-text-rgb) / 0.45);
+    border-radius: var(--v2-radius-checkbox);
+    background: var(--v2-page);
+    transition:
+      background 120ms var(--zen-ease),
+      border-color 120ms var(--zen-ease);
+  }
+  .zen-v2-checkbox:checked {
+    border-color: var(--v2-accent);
+    background: var(--v2-accent);
+  }
+  .zen-v2-checkbox:checked::before {
+    content: '';
+    position: absolute;
+    inset: 2px;
+    background: var(--v2-on-accent);
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E")
+      center / contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E")
+      center / contain no-repeat;
+  }
+  .zen-v2-checkbox:disabled {
+    opacity: 0.4;
+  }
+  /* A checkbox row is one label: the whole row toggles it. */
+  .zen-v2-check-row {
+    cursor: default;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-v2-check-row:active {
+    background: var(--v2-fill);
+  }
+
+  /* Fields and menulists (§6): 40 tall on phones, a 1 px border, radius 6, the page's fill. */
+  .zen-v2-field,
+  .zen-v2-menulist {
+    height: var(--v2-control);
+    min-width: 0;
+    padding: 0 12px;
+    border: 1px solid var(--v2-border);
+    border-radius: var(--v2-radius-control);
+    background: var(--v2-page);
+    color: var(--v2-text);
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-body);
+    line-height: var(--v2-line-body);
+  }
+  .zen-v2-field {
+    width: 100%;
+    margin-top: 10px;
+  }
+  .zen-v2-field::placeholder {
+    color: var(--v2-text-deemphasized);
+  }
+  /* Disabled is one number on the whole control (§9.30). */
+  .zen-v2-field:disabled,
+  .zen-v2-menulist:disabled {
+    opacity: 0.4;
+  }
+  /* A trailing menulist: its row grows around it (§9.21, .zen-v2-row-control) and centres it. */
+  .zen-v2-menulist-wrap {
+    position: relative;
+    display: inline-flex;
+    max-width: 60%;
+    flex-shrink: 0;
+    align-self: center;
+  }
+  .zen-v2-menulist {
+    appearance: none;
+    width: 100%;
+    padding-right: 32px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .zen-v2-menulist-wrap::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    right: 10px;
+    width: 16px;
+    height: 16px;
+    margin-top: -8px;
+    background: var(--v2-text-deemphasized);
+    pointer-events: none;
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")
+      center / contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")
+      center / contain no-repeat;
+  }
+
+  /*
+   * The Downloads settings rows, inside the shipped Settings panel. With a pointer (a tablet's
+   * two-pane layout, 24 px content padding) the pane opens on its 22/600 section title at
+   * line-height 28 with 16 to the first row's box (§9.26); 4 px more than the padding puts the
+   * rows at the panel's inset, and a pressed row fills at the inner radius.
+   */
+  .zen-v2-settings {
+    display: flex;
+    flex-direction: column;
+  }
+  .zen-v2-settings-title {
+    padding: 0 4px 16px;
+    font-size: var(--v2-font-title);
+    font-weight: var(--v2-weight-heading);
+    line-height: 28px;
+  }
+  .zen-v2-settings .zen-v2-row {
+    padding-left: 4px;
+    padding-right: 4px;
+  }
+  .zen-v2-settings .zen-v2-check-row {
+    border-radius: var(--v2-radius-inner);
+  }
+  /*
+   * On a phone there is no 22 below the landing title (§9.26, §10.3): the chip strip names the
+   * pane and the group takes a 15/600 heading at line-height 20, 8 under the strip's hairline
+   * (the panel's 12 px padding less 4) and 4 above the first row. Rows run edge to edge through
+   * the panel's 12 px padding with their text at the page's 16 gutter, and the press fill is
+   * the page's one other tone: no radius, edge to edge.
+   */
+  :root[data-form-factor='phone'] .zen-v2-settings-title {
+    margin-top: -4px;
+    padding: 0 4px 4px;
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
+  }
+  :root[data-form-factor='phone'] .zen-v2-settings .zen-v2-row {
+    width: auto;
+    margin-inline: -12px;
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+  :root[data-form-factor='phone'] .zen-v2-settings .zen-v2-check-row {
+    border-radius: 0;
   }
 }
 

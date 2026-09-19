@@ -38,6 +38,23 @@ export type PreviewStep =
 export const PREVIEW_WEBAPP_SURFACES = ['install', 'name', 'banner', 'pinned'] as const
 export type PreviewWebAppSurface = (typeof PREVIEW_WEBAPP_SURFACES)[number]
 
+/** A download the preview host's stand-in downloader plays back (`download=<file>`). */
+export interface PreviewDownloadSpec {
+  filename: string
+  url: string
+  mimeType: string
+  totalBytes: number
+  /** Bytes already there when the transfer shows up. */
+  receivedBytes: number
+  bytesPerSecond: number
+  /** The transfer stops right away, paused where it is. */
+  paused: boolean
+  /** The transfer fails where it is, with this error (`network-timeout`, `file-no-space`, …). */
+  error: string | null
+  /** The file comes from the private container. */
+  private: boolean
+}
+
 export type PreviewState =
   | { kind: 'idle' }
   | {
@@ -59,6 +76,8 @@ export type PreviewState =
       section?: string
       /** Text of an element in the overlay to scroll into view once it is open. */
       show?: string
+      /** A sheet that opens at its peek detent: tap its handle so it rests expanded. */
+      expand?: boolean
     }
   | {
       kind: 'menu'
@@ -95,28 +114,53 @@ export type PreviewState =
       progress: number | null
     }
   | { kind: 'webapp'; surface: PreviewWebAppSurface }
+  | { kind: 'download'; download: PreviewDownloadSpec }
 
 /** More sample banners than the stack holds are pointless. */
 const MAX_PREVIEW_BANNERS = 3
+
+/** Types for the stand-in downloader to report, by extension; anything else is a plain stream. */
+const PREVIEW_MIME_TYPES: Record<string, string> = {
+  apk: 'application/vnd.android.package-archive',
+  pdf: 'application/pdf',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  mp4: 'video/mp4',
+  mp3: 'audio/mpeg',
+  zip: 'application/zip',
+  txt: 'text/plain',
+  csv: 'text/csv',
+  json: 'application/json',
+  html: 'text/html',
+  exe: 'application/x-msdownload',
+  sh: 'application/x-sh'
+}
 
 /**
  * A preview state spec is a query string: `idle` (or anything unrecognised), `page=<id>` for an
  * internal page opened in its tab (`section=<id>` for one of its sections, `search=<text>` types
  * into its search field, `show=<text>` scrolls a row into view, `then=<steps>` takes steps on it
  * afterwards, `;`-separated: `tap:<text>`, `back`, `overview`, `urlbar`), `overlay=<kind>` for
- * one of PREVIEW_OVERLAYS (with `section=<id>` for an overlay that has sections and `show=<text>`
- * to scroll a row of the overlay into view), `menu=app` for the app menu sheet (with `show=<text>` to
- * scroll an item into view), `find=<text>` for the find bar with that text typed (`find=` opens it
- * empty), `pull=<n>` for the active page held pulled down at n percent of the refresh threshold
+ * one of PREVIEW_OVERLAYS (with `section=<id>` for an overlay that has sections, `show=<text>`
+ * to scroll a row of the overlay into view, and `expand` to rest a sheet that opened at its peek
+ * detent on its expanded one), `menu=app` for the app menu sheet (with `show=<text>` to scroll an
+ * item into view), `find=<text>` for the find bar with that text typed (`find=` opens it empty),
+ * `pull=<n>` for the active page held pulled down at n percent of the refresh threshold
  * (`pull=refresh` pulls past it and lets go), `zoom=<factor>` for the page zoom sheet with the
  * active tab's site at that factor (`zoom=` opens it as it is), `error=<code>` for the active
  * tab's load failing with that Chromium `net::` code (with `url=<target>` for the URL that
- * failed, else the tab's own), which puts up the zen://error page, or any of `toast=<text>` (with
+ * failed, else the tab's own), which puts up the zen://error page, any of `toast=<text>` (with
  * `action=<label>`, `kind=error`), `banners=<n>` and `progress=<0…1>` together for the message
- * surfaces and the load bar, or `webapp=<surface>` for one of PREVIEW_WEBAPP_SURFACES ("Add to
- * Home screen"). When several are given, `page` wins over `overlay`, `overlay` over `menu`,
- * `menu` over `find`, `find` over `pull`, `pull` over `zoom`, `zoom` over `error`, `error` over
- * the messages and the messages over `webapp`. A leading `#` (the URL hash as read) is ignored.
+ * surfaces and the load bar, `webapp=<surface>` for one of PREVIEW_WEBAPP_SURFACES ("Add to
+ * Home screen"), or `download=<file>` for a transfer the stand-in downloader plays back
+ * (`size=<bytes>`, `at=<percent>` already received, `speed=<bytes per second>`, `paused`,
+ * `fail=<error>`, `private`, `url=<url>`, `mime=<type>`). When several are given, `page` wins
+ * over `overlay`, `overlay` over `menu`, `menu` over `find`, `find` over `pull`, `pull` over
+ * `zoom`, `zoom` over `error`, `error` over the messages, the messages over `webapp` and `webapp`
+ * over `download`. A leading `#` (the URL hash as read) is ignored.
  */
 export function parsePreviewSpec(spec: string): PreviewState {
   const params = new URLSearchParams(spec.startsWith('#') ? spec.slice(1) : spec)
@@ -146,6 +190,7 @@ export function parsePreviewSpec(spec: string): PreviewState {
     if (section) state.section = section
     const show = params.get('show')
     if (show) state.show = show
+    if (params.has('expand')) state.expand = true
     return state
   }
   if (params.get('menu') === 'app') {
@@ -193,6 +238,8 @@ export function parsePreviewSpec(spec: string): PreviewState {
   if (webapp !== null && (PREVIEW_WEBAPP_SURFACES as readonly string[]).includes(webapp)) {
     return { kind: 'webapp', surface: webapp as PreviewWebAppSurface }
   }
+  const download = params.get('download')
+  if (download) return { kind: 'download', download: parseDownload(download, params) }
   return { kind: 'idle' }
 }
 
@@ -210,4 +257,27 @@ export function parsePreviewSteps(list: string | null): PreviewStep[] {
     }
   }
   return steps
+}
+
+function parseDownload(filename: string, params: URLSearchParams): PreviewDownloadSpec {
+  const number = (key: string, fallback: number): number => {
+    const raw = params.get(key)
+    const value = raw === null || raw === '' ? NaN : Number(raw)
+    return Number.isFinite(value) && value >= 0 ? value : fallback
+  }
+  const totalBytes = Math.round(number('size', 48_217_088))
+  const at = Math.min(100, number('at', 40))
+  const ext = filename.toLowerCase().split('.').pop() ?? ''
+  const error = params.get('fail')
+  return {
+    filename,
+    url: params.get('url') || `https://downloads.example.com/${encodeURIComponent(filename)}`,
+    mimeType: params.get('mime') || PREVIEW_MIME_TYPES[ext] || 'application/octet-stream',
+    totalBytes,
+    receivedBytes: Math.round((totalBytes * at) / 100),
+    bytesPerSecond: Math.round(number('speed', 2_400_000)),
+    paused: params.has('paused'),
+    error: error ? error : null,
+    private: params.has('private')
+  }
 }

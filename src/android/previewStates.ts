@@ -24,6 +24,7 @@ import {
 } from '@renderer/lib/ui'
 import type { HostGlobal } from './boot'
 import { PREVIEW_WEB_APP, postPreviewManifest } from './preview'
+import { PREVIEW_DOWNLOAD_EVENT } from './previewDownloads'
 import { parsePreviewSpec, type PreviewStep, type PreviewWebAppSurface } from './previewSpec'
 
 /** A pause between steps for a sheet to mount, slide in and settle before the next tap. */
@@ -43,18 +44,19 @@ const SHEET_LEAVE_MS = 1500
  * on a row opens its sheet and a second tap stacks one, `back` closes the top sheet, `overview`
  * opens the tab overview, `urlbar` the pill for editing), `overlay=<kind>` (history, bookmarks,
  * downloads, addons, …: the chrome overlays a phone still has – Settings is not one, it is
- * `page=settings`; `show=<text>` scrolls the row with that text into view), `menu=app` (the app
- * menu sheet; `show=<text>` scrolls an item into
- * view), `find=<text>` (the find bar with that text typed), `pull=<n>` (the page held pulled down
- * at n percent of the refresh threshold; `pull=refresh` lets go past it), `zoom=<factor>` (the
- * page zoom sheet at that factor), `error=<code>` (the active tab's load failed with that
- * Chromium `net::` code, `url=<target>` naming the URL that failed: the zen://error page is up)
- * or the message surfaces and the load bar: `toast=<text>&action=<label>`, `banners=<n>`,
- * `progress=<0…1>`, or `webapp=<surface>` (an "Add to Home screen" surface on the active tab). It
- * comes in as the URL hash,
- * `http://localhost:41734/#overlay=history`, or as `window.postMessage({ zenPreview: 'find=coffee' }, '*')`,
- * which also re-applies an unchanged state. Once applied it is echoed in `<html data-preview-state>`
- * so a driver can wait for it; `.github/scripts/android-preview-shots.mjs` is one.
+ * `page=settings`; `show=<text>` scrolls the row with that text into view, `expand` rests a
+ * sheet on its expanded detent), `menu=app` (the app menu sheet; `show=<text>` scrolls an item
+ * into view), `find=<text>` (the find bar with that text typed), `pull=<n>` (the page held pulled
+ * down at n percent of the refresh threshold; `pull=refresh` lets go past it), `zoom=<factor>`
+ * (the page zoom sheet at that factor), `error=<code>` (the active tab's load failed with that
+ * Chromium `net::` code, `url=<target>` naming the URL that failed: the zen://error page is up),
+ * the message surfaces and the load bar: `toast=<text>&action=<label>`, `banners=<n>`,
+ * `progress=<0…1>`, `webapp=<surface>` (an "Add to Home screen" surface on the active tab) or
+ * `download=<file>` (the stand-in downloader starts that transfer; see `PreviewDownloadSpec`). It
+ * comes in as the URL hash, `http://localhost:41734/#overlay=history`, or as
+ * `window.postMessage({ zenPreview: 'find=coffee' }, '*')`, which also re-applies an unchanged
+ * state. Once applied it is echoed in `<html data-preview-state>` so a driver can wait for it;
+ * `.github/scripts/android-preview-shots.mjs` is one.
  */
 export function installPreviewStates(): void {
   window.addEventListener('hashchange', () => apply(location.hash.slice(1)))
@@ -139,9 +141,14 @@ function reach(spec: string): void {
     void openOverlay(target.overlay, tab?.id ?? null, null, null, target.section ?? null).then(
       () => {
         if (target.show) requestAnimationFrame(() => show(target.show))
-        done(spec)
+        if (target.expand) expandSheet(() => done(spec))
+        else done(spec)
       }
     )
+  } else if (target.kind === 'download') {
+    // The stand-in host (preview.ts) plays the transfer back; it reports like Kotlin would.
+    window.dispatchEvent(new CustomEvent(PREVIEW_DOWNLOAD_EVENT, { detail: target.download }))
+    done(spec)
   } else if (target.kind === 'menu') {
     // The core answers with `menu.show`; the state is reached once the descriptor is in the store.
     const unsubscribe = uiStore.subscribe(() => {
@@ -313,6 +320,21 @@ function pull(tabId: string, progress: number, released: boolean): void {
 }
 
 /** Scroll the first element whose own text reads `text` to the middle of its scroller. */
+/**
+ * A sheet presents at its peek detent when its body is taller than that. Once the presenting
+ * spring has settled, tap the handle so it rests expanded; a sheet already resting expanded
+ * (`data-locked="false"`, its body scrolls on its own) is left alone, since a tap would close it.
+ */
+function expandSheet(then: () => void): void {
+  setTimeout(() => {
+    const handle = document.querySelector<HTMLButtonElement>(
+      '.zen-sheet[data-locked="true"] .zen-sheet-handle-hit'
+    )
+    handle?.click()
+    then()
+  }, 900)
+}
+
 function show(text: string | undefined): void {
   if (!text) return
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
