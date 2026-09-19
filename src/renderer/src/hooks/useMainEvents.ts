@@ -40,6 +40,7 @@ import { activeTab } from '@renderer/lib/selectors'
 import { openTranslateSelection } from '@renderer/lib/translate'
 import { browserStore } from '@renderer/lib/ui'
 import { voiceEvent } from '@renderer/lib/voiceSearch'
+import { qrEvent } from '@renderer/lib/qrScan'
 import {
   closeExtensionPopup,
   enqueueExtensionPrompt,
@@ -229,6 +230,7 @@ export function useMainEvents(): void {
       ),
       onEvent('externalProtocol.cancel', ({ requestId }) => cancelExternalProtocol(requestId)),
       onEvent('voice.event', (event) => voiceEvent(event)),
+      onEvent('qr.event', (event) => qrEvent(event)),
       onEvent('webapp.install', (prompt) => {
         closeUrlbar()
         retireInstallBanner(prompt.tabId)

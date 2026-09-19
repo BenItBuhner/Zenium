@@ -30,10 +30,13 @@
 //                      (the zen://error page; see `previewSpec.ts`), `overview` (the tab
 //                      overview over the active page) or the messages and the load
 //                      bar: `toast=<text>&action=<label>` (`&kind=error`), `banners=<n>`,
-//                      `progress=<0…1>`, in any combination, or `voice=<script>` (voice search
+//                      `progress=<0…1>`, in any combination, `voice=<script>` (voice search
 //                      started on the active tab, the stand-in recogniser playing `listening`,
 //                      `partial`, `no-match`, `denied`, `denied-permanently`, … into the listening
-//                      sheet; the state is reached at the script's end, so the still shows it).
+//                      sheet; the state is reached at the script's end, so the still shows it)
+//                      or `qr=<script>` (QR scanning started, the stand-in camera playing
+//                      `scanning`, `torch`, `starting`, `denied`, `denied-permanently`, … into
+//                      the scan sheet, a drawn still in the window where a device's preview is).
 //                      A comma inside a state is written `%2C`. `&pressed=<selector>;<selector>`
 //                      (the script's own key, not the page's) draws the elements those
 //                      selectors match in their pressed state for the still – `:active` forced

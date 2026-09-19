@@ -6,6 +6,7 @@ import { MenuSheet } from './components/menus/MenuSheet'
 import { NewTabCustomizeLayer } from './components/newtab/CustomizeSheet'
 import { NewTabGrowLayer } from './components/newtab/NewTabGrowLayer'
 import { ExternalProtocolLayer } from './components/protocol/ExternalProtocolSheet'
+import { QrScanLayer } from './components/qr/QrScanSheet'
 import { BarEditorLayer } from './components/phone/BarEditorSheet'
 import { SiteInfoLayer } from './components/siteinfo/SiteInfoSheet'
 import { VoiceSearchLayer } from './components/voice/VoiceSearchSheet'
@@ -30,6 +31,7 @@ export function Root(): JSX.Element {
       <MenuLayer />
       <ExternalProtocolLayer />
       <VoiceSearchLayer />
+      <QrScanLayer />
     </>
   )
 }
