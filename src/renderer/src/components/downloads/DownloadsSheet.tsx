@@ -199,8 +199,14 @@ function HostedDownloadsSheet({ state }: { state: UIState }): JSX.Element {
  * lesser one, the deemphasised ink otherwise; a flagged row shows the verdict's sentence there
  * and says Chrome's blocked status in its name. A record without a file dims its glyph, and a
  * cancelled or Deleted one its name too, as the desktop row does.
+ *
+ * The row is a target only while its file opens: then the whole row takes the primitive's press
+ * fill. Every other row – running, paused, failed, cancelled, Deleted, waiting on a verdict – is
+ * the static form (§9.34, `data-static`): its icon buttons or its Keep / Delete are the targets,
+ * the row around them draws no fill and no pointer cursor, and its body keeps no role; the body
+ * stays a focusable box so the row reads as one unit (`<name>. <status>`) before its controls.
  */
-function DownloadRow({ item, now }: { item: DownloadItem; now: number }): JSX.Element {
+export function DownloadRow({ item, now }: { item: DownloadItem; now: number }): JSX.Element {
   const active = isActiveDownload(item)
   const flagged = showsDangerDecision(item)
   const deleted = isDeletedRow(item)
@@ -232,6 +238,7 @@ function DownloadRow({ item, now }: { item: DownloadItem; now: number }): JSX.El
     <li
       className="zen-v2-row zen-downloads-row"
       data-state={item.state}
+      data-static={openable ? undefined : ''}
       data-flagged={flagged || undefined}
       data-deleted={deleted || undefined}
     >
