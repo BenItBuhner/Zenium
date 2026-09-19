@@ -46,6 +46,8 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
     private val builder = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "zen-blocking") }
     private var scheduled: ScheduledFuture<*>? = null
     private var cachedText: Pair<String, TextEngine>? = null
+    /** Builder thread only: keeps the compiled rules of the sets the last read saw. */
+    private val indexReader = IndexReader()
 
     /** The listener registry; one for every tab and profile, like the desktop multiplexer. */
     val listeners = WebRequestListeners().also { registry ->
@@ -137,17 +139,16 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
         builds++
     }
 
+    /**
+     * The index set by set; the compiled rules of a set that did not change since the previous
+     * read are the previous read's ([IndexReader]). An unreadable index is an empty one, as before.
+     */
     private fun readIndex(): List<RuleSetInfo> {
         val raw = storage.read(Storage.BLOCKING_INDEX) ?: return emptyList()
-        val index = runCatching { JSONObject(raw) }.getOrNull() ?: return emptyList()
-        if (index.optInt("version") != 1) return emptyList()
-        val arr = index.optJSONArray("sets") ?: return emptyList()
-        val out = ArrayList<RuleSetInfo>(arr.length())
-        for (i in 0 until arr.length()) {
-            val o = arr.optJSONObject(i) ?: continue
-            RuleSetInfo.parse(o)?.let { out.add(it) }
+        return runCatching { indexReader.read(raw) }.getOrElse { e ->
+            Log.w(TAG, "blocking index unreadable", e)
+            emptyList()
         }
-        return out
     }
 
     private fun readFilterText(set: RuleSetInfo): String? {

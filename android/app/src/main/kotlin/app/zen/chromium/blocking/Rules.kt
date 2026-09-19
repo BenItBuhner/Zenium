@@ -183,6 +183,43 @@ class DnrRule(
 }
 
 /**
+ * A set's structured rules compiled for matching, in resolution order (highest effective
+ * priority first, then the action's rank), with their [RuleIndex]. Built on the engine's
+ * builder thread and immutable after; a set that [IndexReader] recognises as unchanged keeps
+ * the same instance across snapshot rebuilds, `fingerprint` naming what it was compiled from
+ * (null when the set must be compiled at every read).
+ */
+class CompiledRules private constructor(val rules: List<DnrRule>, val fingerprint: String?) {
+    val index: RuleIndex = RuleIndex(rules)
+
+    companion object {
+        /** No rules, compiled from nothing. */
+        val NONE = CompiledRules(emptyList(), null)
+
+        private val RESOLUTION_ORDER = compareByDescending<DnrRule> { it.effective }.thenByDescending { it.action.rank }
+
+        /** Takes ownership of `rules` and sorts them into resolution order. */
+        fun of(rules: MutableList<DnrRule>, fingerprint: String? = null): CompiledRules {
+            if (rules.isEmpty() && fingerprint == null) return NONE
+            rules.sortWith(RESOLUTION_ORDER)
+            return CompiledRules(rules, fingerprint)
+        }
+
+        /** Compiles the `rules` array of a set with `priority`; rules that cannot be evaluated are left out. */
+        fun parse(arr: JSONArray?, priority: Int, fingerprint: String? = null): CompiledRules {
+            val rules = ArrayList<DnrRule>(arr?.length() ?: 0)
+            if (arr != null) {
+                for (i in 0 until arr.length()) {
+                    val rule = arr.optJSONObject(i) ?: continue
+                    DnrRule.parse(rule, priority)?.let { rules.add(it) }
+                }
+            }
+            return of(rules, fingerprint)
+        }
+    }
+}
+
+/**
  * A rule set as the core persists it (`blocking/index.json` entry or a `blocking.sync` change):
  * metadata, compiled structured rules (and their [RuleIndex]), the partitions it is scoped to,
  * and where its filter text lives.
@@ -192,7 +229,8 @@ class RuleSetInfo(
     val source: String,
     val priority: Int,
     val enabled: Boolean,
-    val rules: List<DnrRule>,
+    /** The structured rules compiled for matching; shared with the previous snapshot while the set is unchanged. */
+    val compiled: CompiledRules,
     val hasFilterText: Boolean,
     /** File under the profile (`blocking/<name>.json`) with the full set when `hasFilterText`. */
     val file: String?,
@@ -206,11 +244,14 @@ class RuleSetInfo(
      */
     val partitions: Set<String>? = null
 ) {
+    /** The compiled rules in resolution order. */
+    val rules: List<DnrRule> get() = compiled.rules
+
+    /** The rules indexed for lookup. */
+    val index: RuleIndex get() = compiled.index
+
     /** Changes to any of these mean the filter text must be re-read. */
     val textFingerprint: String get() = "$file:$updatedAt:$filterCount"
-
-    /** The rules indexed for lookup; built once with the set, on the builder thread. */
-    val index: RuleIndex = RuleIndex(rules)
 
     /** Whether the set takes part in requests of `partition` (`appliesToPartition` in `engine.ts`). */
     fun appliesTo(partition: String?): Boolean {
@@ -219,18 +260,11 @@ class RuleSetInfo(
     }
 
     companion object {
+        /** One entry of the index as an `org.json` document (the tests' fixtures; the engine reads the file through [IndexReader]). */
         fun parse(o: JSONObject): RuleSetInfo? {
             val id = o.optString("id")
             if (id.isEmpty() || !o.has("priority")) return null
             val priority = o.optInt("priority")
-            val rules = ArrayList<DnrRule>()
-            o.optJSONArray("rules")?.let { arr ->
-                for (i in 0 until arr.length()) {
-                    val rule = arr.optJSONObject(i) ?: continue
-                    DnrRule.parse(rule, priority)?.let { rules.add(it) }
-                }
-            }
-            rules.sortWith(compareByDescending<DnrRule> { it.effective }.thenByDescending { it.action.rank })
             val hasText = o.optBoolean("hasFilterText", false)
             val partitions = o.optJSONArray("partitions")?.let { arr ->
                 val out = HashSet<String>()
@@ -245,7 +279,7 @@ class RuleSetInfo(
                 source = o.optString("source", "filter-list"),
                 priority = priority,
                 enabled = o.optBoolean("enabled", true),
-                rules = rules,
+                compiled = CompiledRules.parse(o.optJSONArray("rules"), priority),
                 hasFilterText = hasText,
                 file = o.optString("file").takeIf { hasText && it.isNotEmpty() },
                 updatedAt = o.optLong("updatedAt", 0L),
