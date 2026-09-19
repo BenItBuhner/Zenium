@@ -451,6 +451,47 @@ export interface ExtensionInfo {
   commands?: ExtensionCommandInfo[]
   /** Why some commands stayed unbound (a Zenium shortcut or another extension holds the key). */
   commandConflicts?: string[]
+  /**
+   * The extension's error console (Chrome's "Errors" on the details page): the last hundred
+   * load failures, uncaught exceptions, unhandled rejections and `console.error` / `console.warn`
+   * lines from its worker, its pages and its content scripts, oldest first, repeats collapsed
+   * (`count`). `extension.clearErrors` empties it.
+   */
+  errors: ExtensionErrorEntry[]
+}
+
+export type ExtensionErrorLevel = 'warning' | 'error'
+
+/**
+ * Where an error console line came from: `load` (the extension could not be loaded), `worker`
+ * (the MV3 service worker), `page` (an extension page: popup, options, background page, side
+ * panel, offscreen document), `content` (a content script or user script of the extension
+ * running in a tab page).
+ */
+export type ExtensionErrorSource = 'load' | 'worker' | 'page' | 'content'
+
+/** One line of an extension's error console (`ExtensionInfo.errors`). */
+export interface ExtensionErrorEntry {
+  /** Increasing within the extension's console; a cleared console starts over. */
+  id: number
+  level: ExtensionErrorLevel
+  source: ExtensionErrorSource
+  message: string
+  /** The script the line came from, or null when unknown (the extension's own files keep their `chrome-extension://` URL). */
+  url: string | null
+  /** 1-based line in `url`, or null. */
+  line: number | null
+  /**
+   * The context it happened in: the extension page's URL, the worker's script URL, or the tab
+   * page a content script ran in; null when unknown.
+   */
+  context: string | null
+  /** First occurrence, ms since epoch. */
+  at: number
+  /** Latest occurrence; equals `at` until the line repeats. */
+  lastAt: number
+  /** How many times the same line was seen (identical level, source, message, url, line, context). */
+  count: number
 }
 
 /** The extension side panel a window is showing (`chrome.sidePanel`), beside the page. */
@@ -3103,6 +3144,8 @@ export interface Commands {
   'extension.closePopup': { args: void; result: void }
   /** Context menu of an extension's toolbar button (its `contextMenus` items plus Zenium's). */
   'extension.actionContextMenu': { args: { id: string; x?: number; y?: number }; result: void }
+  /** Empties the extension's error console (`ExtensionInfo.errors`). */
+  'extension.clearErrors': { args: { id: string }; result: void }
   // ---- PROVISIONAL: extensions UI (PR #68) ------------------------------------------------------
   // Added by the UI wave ahead of the engine; `src/main/platform/extensions.ts` implements them
   // as they stand. The API layer (#91) landed without competing names (`ExtensionAction` above is

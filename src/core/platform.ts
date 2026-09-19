@@ -1156,6 +1156,8 @@ export interface ExtensionHost {
   /** Chrome's "Allow user scripts": whether `chrome.userScripts` works for the extension. */
   setAllowUserScripts(id: string, allowed: boolean): void
   reload(id: string): Promise<void>
+  /** Empties the extension's error console (`ExtensionInfo.errors`). */
+  clearErrors(id: string): void
   checkForUpdates(win?: ZenWindow): Promise<void>
   update(id: string, win?: ZenWindow): Promise<void>
   /** The last update check across all extensions, for the management page's caption. */

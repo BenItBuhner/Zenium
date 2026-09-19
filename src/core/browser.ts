@@ -2167,6 +2167,7 @@ export class Browser {
       'extension.setAllowUserScripts': ({ id, allowed }) =>
         this.extensions.setAllowUserScripts(id, allowed),
       'extension.reload': ({ id }) => this.extensions.reload(id),
+      'extension.clearErrors': ({ id }) => this.extensions.clearErrors(id),
       'extension.checkForUpdates': (_a, win) => this.extensions.checkForUpdates(win),
       'extension.update': ({ id }, win) => this.extensions.update(id, win),
       'extension.openOptions': ({ id }, win) => this.extensions.openOptions(id, win),
