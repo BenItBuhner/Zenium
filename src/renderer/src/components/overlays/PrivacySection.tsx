@@ -281,7 +281,9 @@ function CheckRow({
 /**
  * A row with a label, a description and trailing controls (§9.2, §9.18). The controls centre on
  * the row until the description wraps: on three text lines they centre on the label's line
- * instead, which the row learns by measuring its text block.
+ * instead, which the row learns by measuring its text block. The row is not itself a target –
+ * its box, its label and its icon buttons are – so it is the primitive's static form
+ * (`data-static`, §9.34): no hover or press fill, no pointer cursor, no role.
  */
 function Row({
   label,
@@ -307,7 +309,7 @@ function Row({
     return () => observer.disconnect()
   }, [])
   return (
-    <div className="zen-v2-row zen-privacy-row" data-wrapped={wrapped || undefined}>
+    <div className="zen-v2-row zen-privacy-row" data-static="" data-wrapped={wrapped || undefined}>
       {leading}
       <div ref={text} className="zen-privacy-row-text">
         <div className="zen-privacy-row-label">{label}</div>

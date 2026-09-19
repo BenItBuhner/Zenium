@@ -548,3 +548,21 @@ describe('the fullscreen hint palette', () => {
     }
   })
 })
+
+describe('live counts (§4)', () => {
+  it('are tabular wherever the request engine writes one, through the slot the count sits in', () => {
+    // "1,284 requests", "116,161 filters", "Updated 2 h ago": a count that changes under the
+    // user must not reflow its row. On a phone the counts sit in the Settings tab's value slot
+    // and group description; on desktop in the pane's card title, detail line and row
+    // descriptions; in the URL bar the chip's badge inherits it from the chip.
+    for (const selector of [
+      '.zen-settings-description',
+      '.zen-settings-group-description',
+      '.zen-privacy-card-title',
+      '.zen-privacy-muted',
+      '.zen-privacy-row-desc',
+      '.zen-v2-blocked-chip'
+    ])
+      expect(block(selector), selector).toMatch(/^ {2}font-variant-numeric: tabular-nums;$/m)
+  })
+})
