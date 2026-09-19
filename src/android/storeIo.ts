@@ -1,5 +1,5 @@
 import { INDEX_FILE } from '@core/blocking/store'
-import type { StoreIO } from '@core/platform'
+import type { StoreIO, StoreWriteOptions } from '@core/platform'
 import type { Bridge } from './bridge'
 
 /**
@@ -25,8 +25,8 @@ import type { Bridge } from './bridge'
  * The mirror is a cache of the disk, never the other way round: a document the payload listed
  * as deferred and that the core reads before its file has arrived ({@link adopt} not yet called)
  * is read through the bridge – the pre-handoff path – rather than reported absent, and a root
- * name the payload did not carry at all is asked of the host too. A document is absent only
- * when the host says so.
+ * name the payload did not carry at all (`state.json.bak`, kept by the host for the stores that
+ * ask for a backup) is asked of the host too. A document is absent only when the host says so.
  */
 export class AndroidStoreIO implements StoreIO {
   /** Deferred folder documents, held until the core reads them. */
@@ -94,15 +94,19 @@ export class AndroidStoreIO implements StoreIO {
     return this.bridge.callSync<boolean | undefined>('storage.exists', { name }) === true
   }
 
-  async write(name: string, text: string): Promise<void> {
+  async write(name: string, text: string, options?: StoreWriteOptions): Promise<void> {
     if (this.unchanged(name, text)) return
-    await this.bridge.call('storage.write', { name, text })
+    await this.bridge.call('storage.write', { name, text, backup: options?.backup === true })
     this.remember(name, text)
   }
 
-  writeSync(name: string, text: string): void {
+  writeSync(name: string, text: string, options?: StoreWriteOptions): void {
     if (this.unchanged(name, text)) return
-    const ok = this.bridge.callSync<boolean | undefined>('storage.writeSync', { name, text })
+    const ok = this.bridge.callSync<boolean | undefined>('storage.writeSync', {
+      name,
+      text,
+      backup: options?.backup === true
+    })
     // The host answers `true` once the file is replaced; anything else (it threw, and the bridge
     // reports a failed synchronous call as no answer) leaves the file – and the mirror – as they were.
     if (ok !== true) {

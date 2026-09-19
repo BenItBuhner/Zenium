@@ -64,6 +64,51 @@ class StorageTest {
     }
 
     @Test
+    fun aBackupKeepsThePreviousDocumentAcrossAWrite() {
+        val first = """{"version":1,"tabs":["a"]}"""
+        val second = """{"version":1,"tabs":["a","b"]}"""
+        val third = """{"version":1,"tabs":["a","b","c"]}"""
+        // Nothing to keep the first time: the document appears, no backup.
+        storage.writeSync("state.json", first, backup = true)
+        assertEquals(first, storage.read("state.json"))
+        assertNull(storage.read("state.json.bak"))
+        // The document that was there becomes the backup, whole; the write itself replaces the document.
+        storage.writeSync("state.json", second, backup = true)
+        assertEquals(second, storage.read("state.json"))
+        assertEquals(first, storage.read("state.json.bak"))
+        val done = CountDownLatch(1)
+        storage.write("state.json", third, backup = true) { done.countDown() }
+        assertTrue(done.await(10, TimeUnit.SECONDS))
+        assertEquals(third, storage.read("state.json"))
+        assertEquals(second, storage.read("state.json.bak"))
+        // A write without the option leaves the backup as it was; the payload never carries backups.
+        storage.writeSync("state.json", first)
+        assertEquals(second, storage.read("state.json.bak"))
+        assertEquals(setOf("state.json"), storage.readAll().keys().asSequence().toSet())
+        assertFalse(storage.isBootDocument("state.json.bak"))
+        assertEquals(setOf("state.json", "state.json.bak"), dir.list()!!.toSet())
+    }
+
+    @Test
+    fun aRewriteReplacesTheDocumentWhole() {
+        storage.writeSync("extensions.json", registry)
+        storage.writeSync("extensions.json", """{"version":2,"extensions":[],"lastUpdateCheck":5}""")
+        assertEquals("""{"version":2,"extensions":[],"lastUpdateCheck":5}""", storage.read("extensions.json"))
+        assertEquals(listOf("extensions.json"), dir.list()!!.toList())
+    }
+
+    @Test
+    fun namesThatEscapeTheDirectoryAreRefused() {
+        runCatching { storage.writeSync("../escape.json", "{}") }
+        assertFalse(File(dir.parentFile, "escape.json").exists())
+        assertNull(storage.read("../escape.json"))
+        assertNull(storage.fileFor("../escape.json"))
+        assertNull(storage.fileFor("a/b/c.json"))
+        assertEquals(emptyList<String>(), dir.list()!!.toList())
+        assertNull(storage.read("missing.json"))
+    }
+
+    @Test
     fun aDocumentOpensForStreamingWithItsVersionTag() {
         assertNull(storage.open("extensions.json"))
         storage.writeSync("extensions.json", registry)

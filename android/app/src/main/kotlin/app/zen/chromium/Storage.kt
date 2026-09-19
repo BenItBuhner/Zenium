@@ -147,11 +147,12 @@ class Storage(private val dir: File) {
 
     /**
      * Replace a document on the storage thread; `done` hears the failure, if any, so the chrome
-     * can reject the write instead of remembering it as made.
+     * can reject the write instead of remembering it as made. With `backup`, the document that
+     * was there is kept as `<name>.bak` (see [writeAtomic]).
      */
-    fun write(name: String, text: String, done: (Throwable?) -> Unit) {
+    fun write(name: String, text: String, backup: Boolean = false, done: (Throwable?) -> Unit) {
         executor.execute {
-            val failure = runCatching { writeAtomic(name, text) }.exceptionOrNull()
+            val failure = runCatching { writeAtomic(name, text, backup) }.exceptionOrNull()
             if (failure == null) notifyChanged(name)
             done(failure)
         }
@@ -161,8 +162,8 @@ class Storage(private val dir: File) {
      * Called on the bridge thread when the app is being backgrounded; must finish before
      * returning. Throws when the document could not be replaced (the file is as it was).
      */
-    fun writeSync(name: String, text: String) {
-        writeAtomic(name, text)
+    fun writeSync(name: String, text: String, backup: Boolean = false) {
+        writeAtomic(name, text, backup)
         notifyChanged(name)
     }
 
@@ -215,13 +216,18 @@ class Storage(private val dir: File) {
 
     /**
      * The text goes to a temp file that is renamed over the target, so a crash mid-write never
-     * leaves a torn document. Throws when the document could not be replaced.
+     * leaves a torn document. With `backup` the document that was there is renamed to
+     * `<name>.bak` first (two renames, no copying, as the Electron host does): the previous
+     * version survives a write that the document itself does not, and the core reads the backup
+     * when the document is gone or unreadable (`JsonStore`, `backup: true`). Throws when the
+     * document could not be replaced.
      */
-    private fun writeAtomic(name: String, text: String) {
+    private fun writeAtomic(name: String, text: String, backup: Boolean) {
         val target = fileFor(name) ?: throw IOException("not a document name: $name")
         target.parentFile?.mkdirs()
         val tmp = File(target.parentFile, "${target.name}.tmp")
         tmp.writeText(text)
+        if (backup && target.isFile) target.renameTo(File(target.parentFile, "${target.name}.bak"))
         if (!tmp.renameTo(target)) {
             target.delete()
             if (!tmp.renameTo(target)) {

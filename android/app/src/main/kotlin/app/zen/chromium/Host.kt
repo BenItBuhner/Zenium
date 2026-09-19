@@ -186,7 +186,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         // Answers `true` once the file is replaced; a failure throws, which the bridge reports as
         // no answer, and the chrome keeps its mirror as it was (`AndroidStoreIO.writeSync`).
         "storage.writeSync" -> {
-            storage.writeSync(args.str("name"), args.str("text"))
+            storage.writeSync(args.str("name"), args.str("text"), args.bool("backup"))
             true
         }
         // Documents outside the boot payload (the rule-set files under blocking/), and a boot
@@ -202,7 +202,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         val tab = tabId?.let { tabs.get(it) }
         when (method) {
             // A write that failed rejects the call: the chrome must not remember it as made.
-            "storage.write" -> storage.write(args.str("name"), args.str("text")) { failure ->
+            "storage.write" -> storage.write(args.str("name"), args.str("text"), args.bool("backup")) { failure ->
                 main.post { reply(if (failure == null) null else Rejection(failure.message ?: failure.javaClass.simpleName)) }
             }
             "storage.remove" -> storage.remove(args.str("name")) { main.post { reply(null) } }

@@ -146,7 +146,7 @@ describe('AndroidStoreIO', () => {
       expect(calls).toEqual([
         {
           method: 'storage.write',
-          args: { name: 'blocking/index.json', text: changed }
+          args: { name: 'blocking/index.json', text: changed, backup: false }
         }
       ])
       await io.write('blocking/index.json', changed)
@@ -156,7 +156,7 @@ describe('AndroidStoreIO', () => {
       expect(calls).toHaveLength(2)
       expect(calls[1]).toEqual({
         method: 'storage.writeSync',
-        args: { name: 'blocking/index.json', text: INDEX }
+        args: { name: 'blocking/index.json', text: INDEX, backup: false }
       })
     })
 
@@ -245,6 +245,22 @@ describe('AndroidStoreIO', () => {
       expect(warn).toHaveBeenCalledTimes(2)
       warn.mockRestore()
     })
+  })
+
+  it('asks the host to keep a backup for the stores that want one', async () => {
+    const { bridge, calls } = fakeBridge()
+    const io = new AndroidStoreIO(bridge, { 'state.json': '{}' })
+    await io.write('state.json', '{"tabs":[1]}', { backup: true })
+    io.writeSync('state.json', '{"tabs":[2]}', { backup: true })
+    await io.write('history.json', '[]')
+    expect(calls).toEqual([
+      { method: 'storage.write', args: { name: 'state.json', text: '{"tabs":[1]}', backup: true } },
+      {
+        method: 'storage.writeSync',
+        args: { name: 'state.json', text: '{"tabs":[2]}', backup: true }
+      },
+      { method: 'storage.write', args: { name: 'history.json', text: '[]', backup: false } }
+    ])
   })
 
   it('forgets a removed document, handed or mirrored, and tells the host', async () => {
