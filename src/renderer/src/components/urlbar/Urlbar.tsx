@@ -46,7 +46,15 @@ interface Props {
   phoneEdge?: PhoneBarPosition
 }
 
-/** Zen remembers what you typed until you navigate away. */
+/**
+ * Zen remembers what you typed until you navigate away: the desktop bar's per-tab draft, kept
+ * through Escape, an outside press or the back gesture and restored, selected, on the next open
+ * over the same page. On the PHONE a dismissed bar discards the draft instead, as Chrome for
+ * Android does (a program default of 19 Sep 2026): the pill opens search-ready every time, with
+ * the header (OMN-05) and the clipboard row (OMN-14), which a restored draft would hide until it
+ * is cleared. Nothing is written or read here for the phone; a submit, Edit and the header chips
+ * are as they are on either.
+ */
 const drafts = new Map<string, string>()
 let keywordSeq = 0
 
@@ -78,10 +86,11 @@ function restTextFor(tab: Tab, phone: boolean): string {
 
 function initialTextFor(state: UIState, urlbar: UrlbarState, phone: boolean): string {
   if (urlbar.initialText !== undefined) return urlbar.initialText
-  if (urlbar.mode !== 'edit' || !urlbar.tabId) return drafts.get('new') ?? ''
+  // The phone restores no draft (see `drafts`), not even one a desktop layout left behind.
+  if (urlbar.mode !== 'edit' || !urlbar.tabId) return (phone ? undefined : drafts.get('new')) ?? ''
   const tab = state.tabs[urlbar.tabId]
   if (!tab) return ''
-  const draft = drafts.get(`${tab.id}|${tab.url}`)
+  const draft = phone ? undefined : drafts.get(`${tab.id}|${tab.url}`)
   if (draft !== undefined) return draft
   return restTextFor(tab, phone)
 }
@@ -263,16 +272,18 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
 
   // A new-tab draft is shared by every new tab page, as it is for the bar without a tab.
   const draftKey = tab && urlbar.mode !== 'new-tab' ? `${tab.id}|${tab.url}` : 'new'
+  // `keepDraft` is the desktop's: the phone discards what was typed on every dismissal (see
+  // `drafts`), so the system back, the scrim and the pill's close all reopen it search-ready.
   const close = useCallback(
     (keepDraft: boolean) => {
-      if (keepDraft && text.trim() && (!tab || text !== pageTextFor(tab))) {
+      if (keepDraft && !phone && text.trim() && (!tab || text !== pageTextFor(tab))) {
         drafts.set(draftKey, text)
       } else drafts.delete(draftKey)
       // An extension's omnibox session, if one was on, ends without an entry.
       run('urlbar.cancel', undefined)
       closeUrlbar()
     },
-    [draftKey, tab, text]
+    [draftKey, phone, tab, text]
   )
 
   // The system back gesture lifts the bar away like a sheet off the top edge, fading as it goes;

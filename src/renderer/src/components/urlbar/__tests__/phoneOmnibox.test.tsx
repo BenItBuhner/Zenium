@@ -499,6 +499,94 @@ describe('the URL keyboard (OMN-25)', () => {
   })
 })
 
+/*
+ * The draft after a dismissal (a program default of 19 Sep 2026): the phone discards what was
+ * typed, as Chrome for Android does, so the next focus on the same page is search-ready with the
+ * header and the clipboard row; the desktop keeps Zen's per-tab draft. The scrim press and the
+ * back gesture's `dismissed` share the one close path, so the scrim stands in for both here.
+ */
+describe('the draft after a dismissal', () => {
+  const clipRow = (): Suggestion => ({
+    ...row('clipboard', 'Link you copied', '', null),
+    id: 'clipboard'
+  })
+  /** The bar's backdrop: a press on it, outside the sheet or the panel, dismisses the bar. */
+  const scrim = (el: HTMLElement): HTMLElement => el.firstElementChild as HTMLElement
+  async function dismiss(el: HTMLElement): Promise<void> {
+    await act(async () => {
+      scrim(el).dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+      await Promise.resolve()
+    })
+    expect(commands()).toContain('urlbar.cancel')
+    expect(commands()).not.toContain('urlbar.submit')
+    // The bar is closed; the next render is the next open.
+    await act(async () => root!.unmount())
+    host!.remove()
+    invoke.mockClear()
+    uiStore.set((s) => ({ urlbar: { ...s.urlbar, open: true } }))
+  }
+  const desktop = (t: Tab): ReactElement =>
+    createElement(Urlbar, {
+      state: state(t),
+      urlbar: urlbarState('edit'),
+      area: { x: 0, y: 0, width: 1200, height: 800 },
+      phoneEdge: undefined
+    })
+
+  it('phone: dismissed with text typed, the pill reopens search-ready, with the header and the clipboard row', async () => {
+    suggestions = (q) => (q === '' ? [clipRow()] : [])
+    let el = await render(phone(tab(PAGE)))
+    await type(input(el), 'how to brew coffee')
+    expect(header(el)).toBeNull()
+    await dismiss(el)
+
+    el = await render(phone(tab(PAGE)))
+    expect(input(el).value).toBe('')
+    expect(header(el)).not.toBeNull()
+    await act(async () => {
+      await vi.waitFor(() => expect(rows(el)).toHaveLength(1))
+    })
+    expect(rows(el)[0].getAttribute('data-kind')).toBe('clipboard')
+    expect(rows(el)[0].textContent).toContain('Link you copied')
+    expect(button(rows(el)[0], 'Show')).toBeDefined()
+  })
+
+  it('phone: a draft a desktop layout kept for the page is not restored either', async () => {
+    let el = await render(desktop(tab(PAGE)))
+    await type(input(el), 'how to brew coffee')
+    await dismiss(el)
+
+    el = await render(phone(tab(PAGE)))
+    expect(input(el).value).toBe('')
+    expect(header(el)).not.toBeNull()
+    // The phone's dismissal drops it for good.
+    await dismiss(el)
+    el = await render(desktop(tab(PAGE)))
+    expect(input(el).value).toBe(PAGE)
+  })
+
+  it('desktop: the draft comes back, selected, on the next open over the same page', async () => {
+    let el = await render(desktop(tab(PAGE)))
+    await type(input(el), 'how to brew coffee')
+    await dismiss(el)
+
+    el = await render(desktop(tab(PAGE)))
+    const field = input(el)
+    expect(field.value).toBe('how to brew coffee')
+    expect([field.selectionStart, field.selectionEnd]).toEqual([0, 'how to brew coffee'.length])
+    expect(header(el)).toBeNull()
+    // Escape restores the page's address and drops the draft, as before.
+    await act(async () => {
+      field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      await Promise.resolve()
+    })
+    expect(field.value).toBe(PAGE)
+    await dismiss(el)
+    el = await render(desktop(tab(PAGE)))
+    expect(input(el).value).toBe(PAGE)
+  })
+})
+
 describe('the desktop bar is as it was', () => {
   it('opens on the page address, selected, with no header and no Refine arrows', async () => {
     suggestions = () => [
