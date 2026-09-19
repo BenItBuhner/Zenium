@@ -23,8 +23,11 @@ const fakeNet = await vi.hoisted(async () => {
     setHeader(name: string, value: string): void {
       this.headers[name] = value
     }
+    /** Like Electron's: a Node writable that auto-destroys once flushed, `close` before any response. */
     end(): void {
       this.ended = true
+      this.emit('finish')
+      this.emit('close')
     }
     abort(): void {
       this.aborted = true

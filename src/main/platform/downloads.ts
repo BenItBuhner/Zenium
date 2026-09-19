@@ -708,7 +708,8 @@ export class ElectronDownloads implements DownloadHost {
       request.on('login', (_info, callback) => callback())
       request.on('error', () => finish(null))
       request.on('abort', () => finish(null))
-      request.on('close', () => finish(null))
+      // Not `close`: Electron's request is a Node writable that auto-destroys once the request
+      // body is flushed, so `finish` and `close` arrive right after `end()`, before the response.
       request.end()
     })
   }
