@@ -745,6 +745,60 @@ describe('the section model', () => {
     expect(findRow(desktop.groups, 'bookmarks-bar')?.kind).toBe('value')
   })
 
+  it('keeps a shell’s controls to its layout: the phone bar’s rows never reach the desktop page or its search (BUG-055)', () => {
+    const host = state({
+      platform: 'linux',
+      capabilities: { ...ANDROID, windows: true, pageControls: false, pullToRefresh: false }
+    })
+    const on = (layout: 'desktop' | 'tablet' | 'phone'): Model[] =>
+      buildSections(availableSections(PAGE, host.capabilities, layout, 'linux'), {
+        ...context(host).ctx,
+        formFactor: layout
+      })
+    const ids = (models: Model[]): string[] =>
+      models.flatMap((m) => allRows(m.groups).map((r) => r.id))
+
+    // The desktop two-pane (§10.5): no phone bar, so neither its position nor its editor – and
+    // no row anywhere on the page that names another layout as its own.
+    const desktop = on('desktop')
+    expect(ids(desktop)).not.toContain('phone-bar-position')
+    expect(ids(desktop)).not.toContain('navigation-bar')
+    for (const model of desktop) {
+      for (const r of allRows(model.groups)) {
+        expect(r.layouts === undefined || r.layouts.includes('desktop'), r.id).toBe(true)
+      }
+      for (const g of model.groups) {
+        expect(g.layouts === undefined || g.layouts.includes('desktop'), g.id).toBe(true)
+        expect(groupShows(g), `${model.section.id}/${g.id}`).toBe(true)
+      }
+    }
+    // The URL bar group stays for its desktop rows; the bar's rows sit beside them elsewhere.
+    const look = desktop.find((m) => m.section.id === 'look')!
+    expect(look.groups.find((g) => g.id === 'url-bar')?.rows.map((r) => r.id)).toEqual([
+      'urlbar-behaviour'
+    ])
+    expect(findRow(look.groups, 'bookmarks-bar')).not.toBeNull()
+    const search = desktop.find((m) => m.section.id === 'search')!
+    expect(findRow(search.groups, 'full-urls')).not.toBeNull()
+    // "Find in Settings" reads the same filtered rows: "phones" finds no phone-bar row here…
+    expect(searchRows(desktop, 'phones').map((h) => h.row.id)).toEqual([])
+    expect(searchRows(desktop, 'address bar').map((h) => h.row.id)).toEqual(['full-urls'])
+
+    // …the tablet shell is the desktop's (no phone bar, a bookmarks bar)…
+    const tablet = on('tablet')
+    expect(ids(tablet)).not.toContain('phone-bar-position')
+    expect(ids(tablet)).not.toContain('navigation-bar')
+    expect(ids(tablet)).toContain('bookmarks-bar')
+    expect(ids(tablet)).toContain('full-urls')
+
+    // …and the phone shell has the bar and neither of the desktop's.
+    const phone = on('phone')
+    expect(searchRows(phone, 'phones').map((h) => h.row.id)).toEqual(['phone-bar-position'])
+    expect(ids(phone)).toContain('navigation-bar')
+    expect(ids(phone)).not.toContain('bookmarks-bar')
+    expect(ids(phone)).not.toContain('full-urls')
+  })
+
   it('tells a touch host its own gestures: no double-click, Glance from the link menu', () => {
     const touch = section('look')
     expect(row(touch, 'sidebar-expanded').description).toBe('Show tab titles next to their icons.')

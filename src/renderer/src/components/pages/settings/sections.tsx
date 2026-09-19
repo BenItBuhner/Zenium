@@ -102,7 +102,14 @@ import {
   UrlForm,
   ZoomBlock
 } from './blocks'
-import { choice, type FieldRow, type RowGroup, type SectionModel, type SettingsRow } from './model'
+import {
+  choice,
+  onLayout,
+  type FieldRow,
+  type RowGroup,
+  type SectionModel,
+  type SettingsRow
+} from './model'
 import { ShortcutRow } from './ShortcutRow'
 
 /**
@@ -127,8 +134,11 @@ export interface SectionContext {
    */
   pointer: boolean
   /**
-   * The chrome's layout: the phone shell has the phone bar (its editor row) and no bookmarks bar;
-   * the desktop and tablet shells the other way round. Absent, every row shows.
+   * The chrome's layout: the phone shell has the phone bar (its position and its editor row) and
+   * no bookmarks bar; the desktop and tablet shells the other way round. A builder says which
+   * shells a row or group belongs to with `layouts`, and `buildSection` keeps the layout's own
+   * (`onLayout`), so a phone's row never reaches a desktop's page or its search (BUG-055).
+   * Absent, every row shows.
    */
   formFactor?: FormFactor
   set(patch: Partial<Settings>): void
@@ -142,7 +152,7 @@ export interface SectionContext {
 
 export function buildSection(section: InternalPageSection, ctx: SectionContext): SectionModel {
   const builder = BUILDERS[section.id]
-  return { section, groups: builder ? builder(ctx) : [] }
+  return { section, groups: builder ? onLayout(builder(ctx), ctx.formFactor) : [] }
 }
 
 /** Every listed section, built; what the landing's search filters. */
@@ -246,17 +256,10 @@ function numberRow(
  * Groups in the order the design lead set for the tab: identity (Appearance, App icon), then the
  * chrome (URL bar, Pages), then page behaviour (Sites, Site exceptions), Glance last.
  */
-function lookSection({
-  state,
-  set,
-  pointer,
-  formFactor,
-  openBarEditor
-}: SectionContext): RowGroup[] {
+function lookSection({ state, set, pointer, openBarEditor }: SectionContext): RowGroup[] {
   const s = state.settings
   const caps = state.capabilities
   const pc = s.pageControls
-  const phoneShell = formFactor === 'phone'
   const patchControls = (patch: Partial<typeof pc>): void =>
     set({ pageControls: { ...pc, ...patch } })
   const groups: RowGroup[] = [
@@ -374,84 +377,87 @@ function lookSection({
       }
     ]
   })
-  if (!phoneShell) {
-    // The bookmarks bar is the desktop and tablet shells' (App.tsx); the phone shell has none.
-    groups.push({
-      id: 'bookmarks',
-      heading: 'Bookmarks',
-      rows: [
-        choice<BookmarksBarMode>({
-          id: 'bookmarks-bar',
-          label: 'Show bookmarks bar',
-          keywords: ['toolbar', 'favourites'],
-          value: s.bookmarksBar,
-          sheetDescription:
-            'Always, only on the new tab page, or never. Compact mode hides it with the toolbar.',
-          options: [
-            { value: 'always', label: 'Always' },
-            { value: 'newtab', label: 'Only on new tab page' },
-            { value: 'never', label: 'Never' }
-          ],
-          onChange: (v) => set({ bookmarksBar: v })
-        }),
-        {
-          kind: 'action',
-          id: 'bookmarks-import',
-          label: 'Import bookmarks',
-          description: 'From a Netscape HTML file, which Chrome, Edge and Firefox all export.',
-          keywords: ['html', 'chrome', 'firefox', 'edge'],
-          button: 'Import…',
-          onPress: () => void run('bookmark.import', undefined)
-        },
-        {
-          kind: 'action',
-          id: 'bookmarks-export',
-          label: 'Export bookmarks',
-          description: 'To a Netscape HTML file other browsers can import.',
-          keywords: ['html', 'backup'],
-          button: 'Export…',
-          onPress: () => void run('bookmark.export', undefined)
-        }
-      ]
-    })
-  }
-  const urlBar: SettingsRow[] = [
-    choice<UrlbarBehavior>({
-      id: 'urlbar-behaviour',
-      label: 'Floating behaviour',
-      value: s.urlbarBehavior,
-      options: [
-        { value: 'float-typing', label: 'Floating only when typing' },
-        { value: 'always-float', label: 'Always floating' },
-        { value: 'normal', label: 'Normal (attached to top)' }
-      ],
-      onChange: (v) => set({ urlbarBehavior: v })
-    }),
-    choice<PhoneBarPosition>({
-      id: 'phone-bar-position',
-      label: 'Position on phones',
-      keywords: ['address bar', 'bottom', 'top'],
-      value: s.phoneBarPosition,
-      sheetDescription: 'Hold the address bar to carry it to the other edge.',
-      options: [
-        { value: 'bottom', label: 'Bottom' },
-        { value: 'top', label: 'Top' }
-      ],
-      onChange: (v) => set({ phoneBarPosition: v })
-    })
-  ]
-  // The bar editor rearranges the phone bar's controls: a row on the phone shell alone.
-  if (formFactor === undefined || phoneShell) {
-    urlBar.push({
-      kind: 'action',
-      id: 'navigation-bar',
-      label: 'Navigation bar',
-      description: 'Choose the controls beside the address bar and their order.',
-      keywords: ['customise', 'toolbar items', 'buttons'],
-      onPress: openBarEditor
-    })
-  }
-  groups.push({ id: 'url-bar', heading: 'URL bar', rows: urlBar })
+  // The bookmarks bar is the desktop and tablet shells' (App.tsx); the phone shell has none.
+  groups.push({
+    id: 'bookmarks',
+    heading: 'Bookmarks',
+    layouts: ['desktop', 'tablet'],
+    rows: [
+      choice<BookmarksBarMode>({
+        id: 'bookmarks-bar',
+        label: 'Show bookmarks bar',
+        keywords: ['toolbar', 'favourites'],
+        value: s.bookmarksBar,
+        sheetDescription:
+          'Always, only on the new tab page, or never. Compact mode hides it with the toolbar.',
+        options: [
+          { value: 'always', label: 'Always' },
+          { value: 'newtab', label: 'Only on new tab page' },
+          { value: 'never', label: 'Never' }
+        ],
+        onChange: (v) => set({ bookmarksBar: v })
+      }),
+      {
+        kind: 'action',
+        id: 'bookmarks-import',
+        label: 'Import bookmarks',
+        description: 'From a Netscape HTML file, which Chrome, Edge and Firefox all export.',
+        keywords: ['html', 'chrome', 'firefox', 'edge'],
+        button: 'Import…',
+        onPress: () => void run('bookmark.import', undefined)
+      },
+      {
+        kind: 'action',
+        id: 'bookmarks-export',
+        label: 'Export bookmarks',
+        description: 'To a Netscape HTML file other browsers can import.',
+        keywords: ['html', 'backup'],
+        button: 'Export…',
+        onPress: () => void run('bookmark.export', undefined)
+      }
+    ]
+  })
+  // The phone bar is the phone shell's alone: where it sits and which controls it carries are
+  // its rows (BUG-055 – the desktop drew "Position on phones" for a bar it does not have).
+  groups.push({
+    id: 'url-bar',
+    heading: 'URL bar',
+    rows: [
+      choice<UrlbarBehavior>({
+        id: 'urlbar-behaviour',
+        label: 'Floating behaviour',
+        value: s.urlbarBehavior,
+        options: [
+          { value: 'float-typing', label: 'Floating only when typing' },
+          { value: 'always-float', label: 'Always floating' },
+          { value: 'normal', label: 'Normal (attached to top)' }
+        ],
+        onChange: (v) => set({ urlbarBehavior: v })
+      }),
+      choice<PhoneBarPosition>({
+        id: 'phone-bar-position',
+        label: 'Position on phones',
+        keywords: ['address bar', 'bottom', 'top'],
+        layouts: ['phone'],
+        value: s.phoneBarPosition,
+        sheetDescription: 'Hold the address bar to carry it to the other edge.',
+        options: [
+          { value: 'bottom', label: 'Bottom' },
+          { value: 'top', label: 'Top' }
+        ],
+        onChange: (v) => set({ phoneBarPosition: v })
+      }),
+      {
+        kind: 'action',
+        id: 'navigation-bar',
+        label: 'Navigation bar',
+        description: 'Choose the controls beside the address bar and their order.',
+        keywords: ['customise', 'toolbar items', 'buttons'],
+        layouts: ['phone'],
+        onPress: openBarEditor
+      }
+    ]
+  })
   if (caps.pullToRefresh) {
     groups.push({
       id: 'pages',
@@ -1806,7 +1812,7 @@ function privacySection({ state, set }: SectionContext): RowGroup[] {
 // Search
 // ---------------------------------------------------------------------------
 
-function searchSection({ state, set, formFactor }: SectionContext): RowGroup[] {
+function searchSection({ state, set }: SectionContext): RowGroup[] {
   const s = state.settings
   const rows: SettingsRow[] = [
     choice({
@@ -1827,17 +1833,16 @@ function searchSection({ state, set, formFactor }: SectionContext): RowGroup[] {
   ]
   // The desktop URL bar shows the whole URL at rest (§10.1); the phone pill shows hosts only,
   // so the row is the desktop and tablet shells'.
-  if (formFactor !== 'phone') {
-    rows.push({
-      kind: 'switch',
-      id: 'full-urls',
-      label: 'Always show full URLs',
-      description: 'Keep the scheme and www. in the address bar instead of hiding them.',
-      keywords: ['scheme', 'https', 'www', 'address bar'],
-      checked: Boolean(s.showFullUrls),
-      onChange: (v) => set({ showFullUrls: v })
-    })
-  }
+  rows.push({
+    kind: 'switch',
+    id: 'full-urls',
+    label: 'Always show full URLs',
+    description: 'Keep the scheme and www. in the address bar instead of hiding them.',
+    keywords: ['scheme', 'https', 'www', 'address bar'],
+    layouts: ['desktop', 'tablet'],
+    checked: Boolean(s.showFullUrls),
+    onChange: (v) => set({ showFullUrls: v })
+  })
   rows.push({
     kind: 'info',
     id: 'search-keywords',
