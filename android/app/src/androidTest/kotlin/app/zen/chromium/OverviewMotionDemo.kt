@@ -176,6 +176,15 @@ class OverviewMotionDemo : DemoHarness("overview-motion-demo-state.json", "overv
      * card – "the end", another slot – under the still finger; the slot belongs to the finger
      * (v2 §11.4), so the stand-in stays before Home and the release lands Gamma there: the loose
      * cards are Gamma, Home. The hover must not outlive the release.
+     *
+     * The finger comes to Home's edge in one step from the group's own edge, where nothing is
+     * pending. The emulator's UI thread stalls for 400–700 ms at a time under the software GPU
+     * (its `Davey!` frames) and hands the touch's moves over late in a batch; a slow approach
+     * across Home's edge had the slot's dwell run out during such a stall, with the finger's
+     * last moves still undelivered – the slot took hold, the grid reflowed, and the moves then
+     * delivered re-targeted a finger that was, to the chrome, still on its way (run 35407008758:
+     * Gamma landed after Home). One move cannot be interrupted, so the dwell it starts is the
+     * resting finger's, as it would be under a phone's input pipeline.
      */
     private fun outOfGroup() {
         finding("\n3. Gamma out of the group, the finger resting at Home's left edge (the slot before Home)")
@@ -184,7 +193,12 @@ class OverviewMotionDemo : DemoHarness("overview-motion-demo-state.json", "overv
         val gamma = box(card(GAMMA))
         sample(mapOf(GROUP_KEY to GROUP, "Gamma" to card(GAMMA), "Home" to card(HOME), NEW_TAB_KEY to NEW_TAB))
         val base = snapshot()
-        val f = carry(gamma, PointF(home.left + 0.12f * home.width(), home.exactCenterY()))
+        // Over its own group's edge (or the gutter under it) the card is at home: no slot, no ring.
+        val edgeX = home.left + 0.12f * home.width()
+        val restY = (gamma.bottom + home.top) / 2f
+        val f = carry(gamma, PointF(edgeX, restY))
+        f.hold(EDGE_PAUSE)
+        f.moveBy(0f, home.exactCenterY() - restY, 0)
         // The slot takes hold once the finger has rested for the dwell; the sequence runs under
         // the still finger.
         stillWhen("out-of-group-glide") { it.heightChanged(base, 12f) && !it.moved(NEW_TAB_KEY, base, 2f) }
@@ -201,9 +215,18 @@ class OverviewMotionDemo : DemoHarness("overview-motion-demo-state.json", "overv
         val glided = glides(log, "Gamma")
         record(
             "  the stand-in stayed in the slot the finger chose while the grid reflowed under the still finger:" +
-                " glided $glided time(s), rests before Home",
+                " glided $glided time(s), rests ${if (beforeHome) "before" else "not before"} Home",
             glided == 1 && beforeHome
         )
+        if (!(glided == 1 && beforeHome)) {
+            // Where the stand-in and Home were drawn on the frames the stand-in moved, for the record.
+            val trace = movesOf(log, "Gamma").joinToString(" ") { i ->
+                val fr = log[i]
+                "${fr.t}ms:${fr.boxes["Gamma"]?.let { "${it.x.toInt()},${it.y.toInt()}" } ?: "-"}" +
+                    "/Home:${fr.boxes["Home"]?.let { "${it.x.toInt()},${it.y.toInt()}" } ?: "-"}"
+            }
+            finding("    (the stand-in's moves, ms after sampling began, stand-in x,y / Home x,y: $trace)")
+        }
         f.up()
         SystemClock.sleep(GLIDE_PEEK)
         still("out-of-group-release")
@@ -835,6 +858,8 @@ class OverviewMotionDemo : DemoHarness("overview-motion-demo-state.json", "overv
         private const val MAX_OFFSET = 200f
         /** Taps on the Tabs button [openOverview] tries before giving up (each may be read as a hold). */
         private const val OPEN_ATTEMPTS = 4
+        /** The finger's pause at its own group's edge before its one step to the slot (see [outOfGroup]). */
+        private const val EDGE_PAUSE = 400L
 
         // The seeded profile's ids, and the DOM of the grid.
         private const val ALPHA = "tab_alpha"
