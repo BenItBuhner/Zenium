@@ -1,5 +1,6 @@
 package app.zen.chromium
 
+import android.content.Intent
 import android.graphics.Rect
 import android.os.Debug
 import android.os.SystemClock
@@ -13,6 +14,8 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+import androidx.test.runner.lifecycle.Stage
 import androidx.webkit.WebViewCompat
 import app.zen.chromium.blocking.Blocking
 import app.zen.chromium.ext.ExtensionWebView
@@ -75,6 +78,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     private var zenCalls = 0
     /** The text of every native dialog pressed away to get the chrome answering again. */
     private val dialogsDismissed = JSONArray()
+    /** Each time something else had the screen when a finger was due (the launcher, Overview) and the browser was brought back. */
+    private val screenRestored = JSONArray()
 
     private class Grade(val verdict: String, val note: String, val extra: JSONObject? = null)
 
@@ -102,6 +107,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             memory.stop()
             results.put("appProcessMemory", memory.report())
             results.put("promptsAnsweredByCommand", promptsAnsweredByCommand)
+            results.put("screenRestored", screenRestored)
             write()
         }
     }
@@ -169,6 +175,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             rows.put(entry)
             val started = SystemClock.uptimeMillis()
             try {
+                // A row's core check is read off a page on screen: the browser back in front first.
+                onScreen("before ${row.name}")
                 sweep(index + 1, row, entry)
             } catch (e: Throwable) {
                 Log.e(TAG, "${row.name}: the sweep threw", e)
@@ -785,7 +793,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val button = "(function(){var b=document.getElementById('gtx-trans');return JSON.stringify({pass:!!b&&b.offsetParent!==null,selection:String(getSelection()).trim().slice(0,40),button:!!b})})()"
         var found = JSONObject()
         var how = "none"
-        if (point != null) {
+        if (point != null && onScreen("Google Translate: the long press")) {
             val f = Finger()
             f.press(point.first, point.second)
             f.up()
@@ -1241,9 +1249,19 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                         val still = button.rect == lastRect
                         lastRect = button.rect
                         if (still && (taps == 0 || SystemClock.uptimeMillis() - tappedAt > PROMPT_RETAP_MS)) {
-                            taps++
-                            tappedAt = SystemClock.uptimeMillis()
-                            onDialog(button.rect)
+                            if (onScreen("$command: the prompt's button")) {
+                                taps++
+                                tappedAt = SystemClock.uptimeMillis()
+                                onDialog(button.rect)
+                            } else {
+                                // The browser is gone from the screen for good: no finger can reach the button.
+                                Log.w(TAG, "$command: the browser is off screen, the prompt goes through the command")
+                                answered = true
+                                snap("prompt-browser-off-screen")
+                                promptsAnsweredByCommand++
+                                lastPromptFallback = JSONObject().put("reason", "browser off screen").put("button", button.detail)
+                                answerPrompts(pending)
+                            }
                         }
                     }
                     button != null && button.rect != null -> {
@@ -1364,7 +1382,12 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         return PromptButton(rect, css)
     }
 
-    /** The screen strip between the status bar and the navigation bar (system gestures included), in screen px. */
+    /**
+     * The screen strip between the status bar and the navigation bar (system gestures included),
+     * in screen px, less [NAV_TOUCH_MARGIN_DP] more at the bottom: the taps the system took for
+     * its own (Overview opened, the launcher on screen) were both within 50 dp of the bottom edge,
+     * above the bar's drawn bounds, where its touch target still reaches.
+     */
     private fun reachOnScreen(view: View): Rect {
         var result = Rect(0, 0, Int.MAX_VALUE, Int.MAX_VALUE)
         instrumentation.runOnMainSync {
@@ -1373,9 +1396,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             root.getLocationOnScreen(location)
             val insets = ViewCompat.getRootWindowInsets(root)
                 ?.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.systemGestures())
+            val margin = (NAV_TOUCH_MARGIN_DP * root.resources.displayMetrics.density).roundToInt()
             result = Rect(
                 location[0] + (insets?.left ?: 0), location[1] + (insets?.top ?: 0),
-                location[0] + root.width - (insets?.right ?: 0), location[1] + root.height - (insets?.bottom ?: 0)
+                location[0] + root.width - (insets?.right ?: 0), location[1] + root.height - (insets?.bottom ?: 0) - margin
             )
         }
         return result
@@ -1393,13 +1417,51 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         .minByOrNull { it.width() * it.height() }
 
     private fun tapRect(rect: Rect) {
+        if (!onScreen("tap at $rect")) return
         Finger().tap(rect.exactCenterX(), rect.exactCenterY())
         SystemClock.sleep(700)
     }
 
-    private fun tap(x: Float, y: Float) = Finger().tap(x, y)
+    private fun tap(x: Float, y: Float) {
+        if (onScreen("tap at $x,$y")) Finger().tap(x, y)
+    }
+
+    /**
+     * The browser's activity is the one on screen (resumed) before a finger goes down. A tap the
+     * system's navigation took hands the screen to the launcher or to Overview; the fingers that
+     * follow then start other apps or swipe the browser's task away (the run before this check
+     * lost fourteen rows' taps to the launcher and then the activity itself), while the chrome's
+     * JS keeps answering from the background and grades pages nobody can see. The singleTask
+     * activity is brought back with its own intent; false when it has been destroyed.
+     */
+    private fun onScreen(context: String): Boolean {
+        var stage: Stage? = null
+        instrumentation.runOnMainSync { stage = ActivityLifecycleMonitorRegistry.getInstance().getLifecycleStageOf(activity) }
+        if (stage == Stage.RESUMED) return true
+        if (stage == Stage.DESTROYED) {
+            Log.e(TAG, "$context: the browser's activity is destroyed")
+            return false
+        }
+        Log.w(TAG, "$context: the browser is not on screen ($stage); bringing it back")
+        snap("browser-off-screen")
+        val intent = Intent(app, MainActivity::class.java).setAction(Intent.ACTION_MAIN)
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+        app.startActivity(intent)
+        val deadline = SystemClock.uptimeMillis() + 10_000
+        var back = false
+        while (!back && SystemClock.uptimeMillis() < deadline) {
+            SystemClock.sleep(250)
+            instrumentation.runOnMainSync { back = ActivityLifecycleMonitorRegistry.getInstance().getLifecycleStageOf(activity) == Stage.RESUMED }
+        }
+        // The sheet or page that was up settles after the return.
+        if (back) SystemClock.sleep(1_000)
+        screenRestored.put(JSONObject().put("at", context).put("stage", stage.toString()).put("restored", back))
+        Log.w(TAG, "$context: the browser is ${if (back) "back on screen" else "still not on screen"}")
+        return back
+    }
 
     private fun key(code: Int) {
+        if (!onScreen("key $code")) return
         val now = SystemClock.uptimeMillis()
         ui.injectInputEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, code, 0), true)
         ui.injectInputEvent(KeyEvent(now, SystemClock.uptimeMillis(), KeyEvent.ACTION_UP, code, 0), true)
@@ -1553,6 +1615,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         /** Taps on the prompt's own button before the command answers it, and the wait between them. */
         private const val PROMPT_TAPS = 2
         private const val PROMPT_RETAP_MS = 3_000L
+        /** How far above the navigation bar's insets a finger keeps clear of its touch target (see [reachOnScreen]). */
+        private const val NAV_TOUCH_MARGIN_DP = 56
         /** The button that takes a native dialog (a page's alert, a system dialog) down. */
         private val DIALOG_BUTTONS = setOf("OK", "CLOSE", "DISMISS", "GOT IT")
         /**
