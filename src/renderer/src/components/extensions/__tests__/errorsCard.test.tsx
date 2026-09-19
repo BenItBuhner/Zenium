@@ -246,7 +246,9 @@ describe('the Options card’s private-windows switch', () => {
 
   it('is disabled while the extension failed to load, as the file-URLs switch is', () => {
     const h = details(ext({ error: 'Manifest file is missing or unreadable' }))
-    const boxes = [...h.querySelectorAll<HTMLInputElement>('.zen-v2-check-row input[type="checkbox"]')]
+    const boxes = [
+      ...h.querySelectorAll<HTMLInputElement>('.zen-v2-check-row input[type="checkbox"]')
+    ]
     expect(boxes).toHaveLength(2)
     expect(boxes.map((b) => b.disabled)).toEqual([true, true])
     expect(privateRow(h).getAttribute('aria-disabled')).toBe('true')
