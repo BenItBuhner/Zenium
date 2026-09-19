@@ -48,6 +48,7 @@ import type {
   ReauthHost,
   SessionHost,
   ShellHost,
+  ShortcutHost,
   SystemAutofillStatus,
   UpdateHost,
   WindowHost,
@@ -134,7 +135,8 @@ export function androidCapabilities({
     secureDns: false,
     // The WebView has no preload bridge for `zen://newtab` yet; new tabs stay URL-bar-only.
     newTabPage: false,
-    pageTabs: true
+    pageTabs: true,
+    pinShortcuts: false
   }
 }
 
@@ -262,6 +264,8 @@ export interface BootInfo {
   profiles?: boolean
   /** The launcher icon colour whose alias is enabled right now (the core re-applies its own). */
   appIcon?: string
+  /** The launcher accepts pinned shortcuts (`ShortcutManagerCompat.isRequestPinShortcutSupported`). */
+  pinShortcuts?: boolean
   /** Persisted JSON documents by name (state.json, history.json, …). */
   files: Record<string, string>
   downloadsDir: string
@@ -383,6 +387,8 @@ export interface HostEventPayloads {
   'ext.notification': { id: string; notificationId: string; event: string; index?: number }
   /** Bytes of a translation model file arriving (`translate.download` in flight). */
   'translate.progress': TranslateProgressEvent
+  /** The launcher confirmed a `shortcut.pin` request (the user accepted the system dialog). */
+  'shortcut.pinned': { id: string }
 }
 
 /**
@@ -733,6 +739,7 @@ export class AndroidPlatform implements Platform {
   readonly blocking: BlockingHost
   readonly privacy: PrivacyHost
   readonly translate: AndroidTranslateHost
+  readonly shortcuts: ShortcutHost
   browser!: Browser
   private windowHost: AndroidWindowHost | null = null
   private zenWindow: ZenWindow | null = null
@@ -752,12 +759,15 @@ export class AndroidPlatform implements Platform {
   ) {
     this.info = { os: boot.os ?? 'android', version: boot.version }
     this.extensionsRoot = boot.extensionsRoot || null
-    this.capabilities = androidCapabilities({
-      sdkInt: boot.sdkInt,
-      extensions: this.extensionsRoot !== null,
-      isolatedWorlds: boot.isolatedWorlds === true,
-      profiles: boot.profiles
-    })
+    this.capabilities = {
+      ...androidCapabilities({
+        sdkInt: boot.sdkInt,
+        extensions: this.extensionsRoot !== null,
+        isolatedWorlds: boot.isolatedWorlds === true,
+        profiles: boot.profiles
+      }),
+      pinShortcuts: boot.pinShortcuts === true
+    }
     this.bootEnvironment = boot.environment ?? null
     this.io = new AndroidStoreIO(bridge, boot.files)
     this.agentTransport = new AndroidAgentTransport(bridge)
@@ -888,6 +898,9 @@ export class AndroidPlatform implements Platform {
       isDefaultBrowser: () => bridge.call<boolean | null>('app.isDefaultBrowser'),
       // Resolves when the role dialog / default-apps screen hands control back to the app.
       requestDefaultBrowser: () => bridge.call<boolean | null>('app.requestDefaultBrowser')
+    }
+    this.shortcuts = {
+      pin: (request) => bridge.call<boolean>('shortcut.pin', request)
     }
     this.events.send('insets', boot.insets)
   }
@@ -1158,6 +1171,9 @@ export class AndroidPlatform implements Platform {
         return
       case 'translate.progress':
         this.translate.onProgress(payload as HostEventPayloads['translate.progress'])
+        return
+      case 'shortcut.pinned':
+        browser.webApps.onPinned((payload as HostEventPayloads['shortcut.pinned']).id)
         return
       case 'view.adopt': {
         const p = payload as HostEventPayloads['view.adopt']

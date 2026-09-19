@@ -815,6 +815,8 @@ export class BrowserState {
           blockedCount: 0,
           // Restored by us, not sent by an app that is long gone (Chrome: FROM_RESTORE).
           fromIntent: false,
+          // The page posts its manifest again on the next load; the document stays compact.
+          webApp: null,
           url: t.url.startsWith('zen://error') ? (safeOriginalUrl(t.url) ?? BLANK_URL) : t.url
         })),
       essentialTabIds: m.essentialTabIds,

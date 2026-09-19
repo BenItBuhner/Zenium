@@ -7,6 +7,7 @@ import {
   type InterstitialAction,
   type InterstitialMessage
 } from './interstitial'
+import { MANIFEST_FIELDS, type RawWebAppManifest } from './webApp'
 
 /**
  * Runs inside every web page. It implements the click behaviours Zen adds on top of the engine:
@@ -15,6 +16,8 @@ import {
  *  - Media: reports play/pause so hosts without native audio events can show the media player.
  *  - Boosts "zap element": pick an element to hide it on this site for good.
  *  - Fullscreen hints: the browser's "is now full screen" toast, drawn over the page.
+ *  - Web apps: posts the page's manifest and polyfills `beforeinstallprompt` / `appinstalled`
+ *    on hosts that pin pages to the Home screen.
  *
  * The transport is injected: Electron's preload uses `ipcRenderer`, Android a `WebMessageListener`.
  * No page-visible globals are created by this module itself.
@@ -36,6 +39,7 @@ export interface PageScriptMessage {
     | 'popup-blocked'
     | 'interstitial'
     | 'focus'
+    | 'webapp'
   url?: string
   x?: number
   y?: number
@@ -45,6 +49,17 @@ export interface PageScriptMessage {
   selector?: string
   /** `interstitial`: the button pressed on a Zenium warning page (`zen://error`). */
   action?: InterstitialAction
+  /** `webapp`: see `PageMessage` in the core. */
+  webapp?: 'manifest' | 'deferred' | 'prompt'
+  manifestUrl?: string
+  manifest?: RawWebAppManifest | null
+}
+
+/** Browser → page messages for the web-app polyfill (mirrors `PageHostMessage` in the core). */
+export interface PageScriptHostMessage {
+  type: 'webapp'
+  action: 'installable' | 'result' | 'installed'
+  outcome?: 'accepted' | 'dismissed'
 }
 
 export interface PageScriptTransport {
@@ -64,6 +79,11 @@ export interface PageScriptTransport {
    * the script runs in the page's world there and can watch `window.open` return null.
    */
   reportBlockedPopups?: boolean
+  /**
+   * Hosts that pin pages to the Home screen: the script posts the page's manifest and turns the
+   * host's `installable` / `result` / `installed` messages into the standard install events.
+   */
+  onWebApp?(listener: (message: PageScriptHostMessage) => void): void
 }
 
 /** Keys that never count as a gesture in Chromium's user-activation model. */
@@ -126,6 +146,7 @@ export function installPageScript(transport: PageScriptTransport): void {
   if (transport.reportBlockedPopups) installPopupObserver(transport)
   installInterstitialRelay(transport)
   if (transport.onHint) installHint(transport.onHint.bind(transport))
+  if (transport.onWebApp) installWebApp(transport)
 
   window.addEventListener(
     'click',
@@ -426,4 +447,236 @@ function installZap(transport: PageScriptTransport): { active: () => boolean } {
 
   transport.onZap?.((on) => (on ? start() : stop()))
   return { active: () => zapping }
+}
+
+// ---------------------------------------------------------------------------
+// Web apps: manifest probe and the install-prompt polyfill
+// ---------------------------------------------------------------------------
+
+/** Manifests bigger than this are not apps but mistakes; the browser ignores them. */
+const MAX_MANIFEST_CHARS = 256 * 1024
+const MAX_MANIFEST_ICONS = 32
+const MAX_MANIFEST_SCREENSHOTS = 8
+
+type InstallOutcome = 'accepted' | 'dismissed'
+interface InstallChoice {
+  outcome: InstallOutcome
+  platform: string
+}
+
+/**
+ * Only the fields the browser reads leave the page, with the lists capped, so a manifest never
+ * carries more across the bridge than the install sheet can show.
+ */
+export function manifestSubset(json: unknown): RawWebAppManifest | null {
+  if (!json || typeof json !== 'object' || Array.isArray(json)) return null
+  const source = json as Record<string, unknown>
+  const subset: Record<string, unknown> = {}
+  for (const key of MANIFEST_FIELDS) {
+    if (!(key in source)) continue
+    const value = source[key]
+    if (key === 'icons' || key === 'screenshots') {
+      if (!Array.isArray(value)) continue
+      const cap = key === 'icons' ? MAX_MANIFEST_ICONS : MAX_MANIFEST_SCREENSHOTS
+      subset[key] = value.slice(0, cap).map((entry) => {
+        if (!entry || typeof entry !== 'object') return null
+        const e = entry as Record<string, unknown>
+        return {
+          src: e.src,
+          sizes: e.sizes,
+          type: e.type,
+          purpose: e.purpose,
+          form_factor: e.form_factor,
+          label: e.label
+        }
+      })
+    } else if (typeof value === 'string') {
+      subset[key] = value.slice(0, 2048)
+    }
+  }
+  return subset
+}
+
+/** Whether a `<link>`'s `rel` names a manifest (token list, case-insensitive). */
+export function isManifestLink(rel: string): boolean {
+  return rel
+    .toLowerCase()
+    .split(/\s+/)
+    .some((token) => token === 'manifest')
+}
+
+/**
+ * Everything here is best effort and must never throw into the page: the probe runs in the top
+ * frame of http(s) documents only, the fetch uses the page's own credentials rules (`crossorigin`)
+ * and reports the manifest URL alone when the page's CSP blocks it so the host can fetch instead.
+ */
+function installWebApp(transport: PageScriptTransport): void {
+  try {
+    if (window !== window.top) return
+    if (location.protocol !== 'https:' && location.protocol !== 'http:') return
+  } catch {
+    return
+  }
+  // Pages sometimes wrap fetch; the browser's own copy is captured at document start.
+  const nativeFetch = typeof window.fetch === 'function' ? window.fetch.bind(window) : null
+
+  let probed = false
+  const probe = (): void => {
+    if (probed) return
+    let link: HTMLLinkElement | null = null
+    try {
+      for (const candidate of document.querySelectorAll('link[rel]')) {
+        const l = candidate as HTMLLinkElement
+        if (isManifestLink(l.getAttribute('rel') ?? '') && l.href) {
+          link = l
+          break
+        }
+      }
+    } catch {
+      return
+    }
+    if (!link) return
+    probed = true
+    const manifestUrl = link.href
+    const useCredentials =
+      (link.getAttribute('crossorigin') ?? '').toLowerCase() === 'use-credentials'
+    const post = (manifest: RawWebAppManifest | null): void =>
+      transport.send({ type: 'webapp', webapp: 'manifest', manifestUrl, manifest })
+    if (!nativeFetch) {
+      post(null)
+      return
+    }
+    try {
+      nativeFetch(manifestUrl, {
+        mode: 'cors',
+        credentials: useCredentials ? 'include' : 'omit',
+        cache: 'default'
+      })
+        .then((response) => (response.ok ? response.text() : Promise.reject(new Error('status'))))
+        .then((text) => {
+          if (text.length > MAX_MANIFEST_CHARS) throw new Error('too large')
+          post(manifestSubset(JSON.parse(text)))
+        })
+        .catch(() => post(null))
+    } catch {
+      post(null)
+    }
+  }
+  if (document.readyState === 'loading')
+    document.addEventListener('DOMContentLoaded', probe, { once: true })
+  else probe()
+  // Frameworks that inject the link late still get one more look.
+  window.addEventListener('load', probe, { once: true })
+
+  // --- beforeinstallprompt / appinstalled --------------------------------------------------------
+
+  let pendingPrompt: ZenBeforeInstallPromptEvent | null = null
+  let lastEvent: ZenBeforeInstallPromptEvent | null = null
+  let fired = false
+  /** The event whose `prompt()` is waiting for the sheet's outcome. */
+  const awaitOutcome = (event: ZenBeforeInstallPromptEvent): void => {
+    pendingPrompt = event
+  }
+
+  class ZenBeforeInstallPromptEvent extends Event {
+    readonly platforms = ['web']
+    private settled = false
+    private prompted = false
+    private resolveChoice!: (choice: InstallChoice) => void
+    readonly userChoice: Promise<InstallChoice>
+
+    constructor() {
+      super('beforeinstallprompt', { cancelable: true })
+      this.userChoice = new Promise<InstallChoice>((resolve) => {
+        this.resolveChoice = resolve
+      })
+    }
+
+    prompt(): Promise<InstallChoice> {
+      if (this.prompted) {
+        return Promise.reject(
+          new DOMException('The prompt() method may only be called once.', 'InvalidStateError')
+        )
+      }
+      const activation = (navigator as { userActivation?: { isActive: boolean } }).userActivation
+      if (activation && !activation.isActive) {
+        return Promise.reject(
+          new DOMException('prompt() requires a user gesture.', 'NotAllowedError')
+        )
+      }
+      this.prompted = true
+      awaitOutcome(this)
+      transport.send({ type: 'webapp', webapp: 'prompt' })
+      return this.userChoice
+    }
+
+    settle(outcome: InstallOutcome): void {
+      if (this.settled) return
+      this.settled = true
+      this.resolveChoice({ outcome, platform: 'web' })
+    }
+  }
+
+  // `window.onbeforeinstallprompt = fn` works like the native handler attribute would.
+  const defineHandlerAttribute = (type: string): void => {
+    const name = `on${type}`
+    if (name in window) return
+    let handler: EventListener | null = null
+    try {
+      Object.defineProperty(window, name, {
+        configurable: true,
+        enumerable: true,
+        get: () => handler,
+        set: (value: unknown) => {
+          if (handler) window.removeEventListener(type, handler)
+          handler = typeof value === 'function' ? (value as EventListener) : null
+          if (handler) window.addEventListener(type, handler)
+        }
+      })
+    } catch {
+      /* a frozen window keeps the standard listener path */
+    }
+  }
+  defineHandlerAttribute('beforeinstallprompt')
+  defineHandlerAttribute('appinstalled')
+
+  const fire = (): void => {
+    if (fired) return
+    fired = true
+    try {
+      const event = new ZenBeforeInstallPromptEvent()
+      lastEvent = event
+      const proceed = window.dispatchEvent(event)
+      if (!proceed) transport.send({ type: 'webapp', webapp: 'deferred' })
+    } catch {
+      /* a listener threw; the browser's own prompt still applies */
+    }
+  }
+
+  transport.onWebApp?.((message) => {
+    try {
+      switch (message.action) {
+        case 'installable':
+          if (document.readyState === 'loading')
+            document.addEventListener('DOMContentLoaded', fire, { once: true })
+          else fire()
+          return
+        case 'result': {
+          const outcome: InstallOutcome = message.outcome === 'accepted' ? 'accepted' : 'dismissed'
+          const target = pendingPrompt ?? lastEvent
+          pendingPrompt = null
+          target?.settle(outcome)
+          return
+        }
+        case 'installed':
+          pendingPrompt?.settle('accepted')
+          lastEvent?.settle('accepted')
+          pendingPrompt = null
+          window.dispatchEvent(new Event('appinstalled'))
+          return
+      }
+    } catch {
+      /* never let the polyfill throw into the page */
+    }
+  })
 }

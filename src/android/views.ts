@@ -20,6 +20,7 @@ import type {
   KeyEventInput,
   PageContextParams,
   PageFlags,
+  PageHostMessage,
   PageMessage,
   TabView,
   TabViewEvents,
@@ -388,6 +389,10 @@ export class AndroidTabView implements TabView {
   /** Autofill: a fill for the page's forms script, or its on/off configuration (Kotlin keeps the latter for new documents). */
   sendFormsCommand(command: FormsCommand): void {
     this.bridge.send('view.forms', { tabId: this.tabId, command })
+  }
+
+  postToPage(message: PageHostMessage): void {
+    this.bridge.send('view.postMessage', { tabId: this.tabId, message })
   }
 
   setBackgroundColor(color: string): void {

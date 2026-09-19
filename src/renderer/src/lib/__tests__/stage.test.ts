@@ -64,7 +64,8 @@ function tab(id: string): UIState['tabs'][string] {
     readerable: false,
     blockedCount: 0,
     openerTabId: null,
-    fromIntent: false
+    fromIntent: false,
+    webApp: null
   }
 }
 

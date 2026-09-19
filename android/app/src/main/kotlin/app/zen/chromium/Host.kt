@@ -95,6 +95,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     val vault = VaultKeystore(activity, reauth, io, main)
     /** The extension store's files and downloads (installs live under `files/zen/extensions`). */
     val extStore = ExtensionStore(this, io, main)
+    /** Home-screen shortcuts; the launcher's confirmations reach it through `ShortcutPinnedReceiver`. */
+    val shortcuts = Shortcuts(activity, io)
     override var fullscreenTab: TabWebView? = null
         private set
     private var fullscreenCallback: WebChromeClient.CustomViewCallback? = null
@@ -158,7 +160,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "isolatedWorlds" to extensions.isolatedWorlds,
             "insets" to activity.currentInsets(),
             "fullscreen" to immersive,
-            "environment" to activity.environment()
+            "environment" to activity.environment(),
+            "pinShortcuts" to shortcuts.supported
         )
         "storage.writeSync" -> {
             storage.writeSync(args.str("name"), args.str("text"))
@@ -232,6 +235,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 reply(null)
             }
             "view.setPopupsAllowed" -> { tab?.setPopupsAllowed(args.bool("allowed")); reply(null) }
+            "view.postMessage" -> { tab?.postToPage(args.obj("message").toString()); reply(null) }
             "view.setBackground" -> {
                 tab?.setBackgroundColor(parseColor(args.str("color", "#ffffff")))
                 reply(null)
@@ -363,6 +367,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 security.allowCertificate(args.str("containerId"), args.str("url"), args.str("fingerprint"))
                 reply(null)
             }
+            "shortcut.pin" -> shortcuts.pin(args, reply)
 
             // --- AI agents (MCP server) ------------------------------------------------------------
             "agent.start" -> reply(agentServer.start(args.num("port", 41735.0).toInt(), args.bool("lan")))
@@ -923,6 +928,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     fun destroy() {
         extensions.destroy()
         cancelProbe()
+        shortcuts.destroy()
         agentServer.stop()
         downloads.destroy()
         updates.shutdown()

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 540 1080" width="540" height="1080" font-family="system-ui, sans-serif">
+  <rect width="540" height="1080" fill="#e8f1f5"/>
+  <rect width="540" height="128" fill="#2f6f8f"/>
+  <text x="32" y="82" fill="#fff" font-size="36" font-weight="600">Untitled sketch</text>
+  <circle cx="488" cy="66" r="22" fill="#bfe3f2"/>
+  <rect x="24" y="160" width="492" height="700" rx="24" fill="#fff"/>
+  <path d="M90 620 C 140 420, 220 400, 260 520 S 360 700, 430 520" fill="none" stroke="#1e2a33" stroke-width="10" stroke-linecap="round"/>
+  <path d="M120 300 C 200 240, 300 260, 380 330" fill="none" stroke="#2f6f8f" stroke-width="14" stroke-linecap="round"/>
+  <path d="M140 760 L 400 760" fill="none" stroke="#c9d9e2" stroke-width="8" stroke-linecap="round" stroke-dasharray="4 28"/>
+  <circle cx="330" cy="430" r="46" fill="none" stroke="#e0705a" stroke-width="12"/>
+  <rect x="24" y="900" width="492" height="132" rx="28" fill="#fff"/>
+  <circle cx="98" cy="966" r="30" fill="#2f6f8f"/>
+  <circle cx="186" cy="966" r="30" fill="#1e2a33"/>
+  <circle cx="274" cy="966" r="30" fill="#e0705a"/>
+  <circle cx="362" cy="966" r="30" fill="#f2c14e"/>
+  <circle cx="450" cy="966" r="30" fill="#c9d9e2"/>
+  <circle cx="98" cy="966" r="38" fill="none" stroke="#2f6f8f" stroke-width="4"/>
+</svg>
