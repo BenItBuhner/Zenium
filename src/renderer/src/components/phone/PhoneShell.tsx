@@ -179,9 +179,14 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
   // between the host moves the page's edge frame by frame (`--zen-bar-hide`); the column changes
   // only at the two rests, so the page is laid out twice per hide, never per frame.
   const barAway = ui.barHidden && !barHidden
+  // `overflow: clip`, not `hidden`: a hidden bar is translated past the window's edge and would
+  // make a hidden-overflow window scrollable by script, so accessibility focus landing on the
+  // pill (TalkBack, or the demo's focus action) would scroll the whole chrome to reach it and
+  // drag the page's reported frame along. A clipped window cannot scroll; the bar comes back
+  // through `showBar` instead.
   return (
     <div
-      className="zen-window relative flex h-full w-full flex-col overflow-hidden"
+      className="zen-window relative flex h-full w-full flex-col overflow-clip"
       data-dark={isDark}
       style={{
         paddingTop: 0,

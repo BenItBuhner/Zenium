@@ -213,6 +213,11 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
         js("window.__zenHost&&__zenHost.barScroll(${JSONObject.quote(tabId)},${JSONObject.quote(phase)},${JSONObject.quote(encodeResult(payload))})")
     }
 
+    /** Accessibility focus landed in the chrome with the bar hidden: the bar comes back on its spring (`lib/barHide.ts` `showBar`). */
+    fun barShow() {
+        js("window.__zenHost&&__zenHost.barShow()")
+    }
+
     /** Commit the gesture; answers whether the chrome had anything to dismiss or navigate. */
     fun backCommit(callback: (Boolean) -> Unit) {
         evaluateJavascript("window.__zenHost?__zenHost.backEvent('commit',null):false") { result -> callback(result == "true") }

@@ -21,6 +21,7 @@ import android.view.Choreographer
 import android.view.HapticFeedbackConstants
 import android.view.View
 import android.view.ViewGroup
+import android.view.accessibility.AccessibilityEvent
 import android.view.inputmethod.InputMethodManager
 import android.webkit.WebChromeClient
 import android.webkit.WebView
@@ -73,6 +74,20 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         // A private session the last run did not get to end (a crash, the system killing the app)
         // ends now, before any tab exists and while its profile is free to be deleted.
         Profiles.wipePrivate(activity)
+        // Accessibility focus (TalkBack's swipe, or a service's focus action) landing in the
+        // chrome while the bar that hides on scroll is off its edge: the bar comes back, as
+        // Chrome's controls do, so what was focused is on screen. Chromium raises the event
+        // through the WebView's parent; with the bar off nothing else of the chrome is up to land
+        // on (a sheet or a panel keeps the bar shown), so the pill and its buttons are the only
+        // way here. The event goes on to the system unchanged.
+        root.accessibilityDelegate = object : View.AccessibilityDelegate() {
+            override fun onRequestSendAccessibilityEvent(host: ViewGroup, child: View, event: AccessibilityEvent): Boolean {
+                if (child === chrome && event.eventType == AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED && tabs.barHide?.away == true) {
+                    chrome.barShow()
+                }
+                return super.onRequestSendAccessibilityEvent(host, child, event)
+            }
+        }
     }
 
     /** The launcher icon colour (one enabled `activity-alias`), driven by Settings → Look and Feel. */

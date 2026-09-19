@@ -19,6 +19,7 @@ import {
 import {
   dispatchBarScroll,
   setBarHideHost,
+  showBar,
   type BarScrollPayload,
   type BarScrollPhase
 } from '@renderer/lib/barHide'
@@ -69,6 +70,11 @@ export interface HostGlobal {
    * `show` (the page pushed against its top: the bar comes back). See `BarHideGesture.kt`.
    */
   barScroll(tabId: string, phase: string, json: string | null): void
+  /**
+   * Accessibility focus (TalkBack) landed in the chrome while the bar that hides on scroll was
+   * off its edge: the bar comes back so what was focused is on screen (see `Host.kt`).
+   */
+  barShow(): void
   /** The user tapped the notification / launcher again: bring a URL in. */
   openUrl(url: string): void
 }
@@ -286,6 +292,7 @@ function installHostGlobal(
       dispatchPullEvent(tabId, phase as PullEventPhase, parse<PullEventPayload | null>(json)),
     barScroll: (tabId, phase, json) =>
       dispatchBarScroll(tabId, phase as BarScrollPhase, parse<BarScrollPayload | null>(json)),
+    barShow: () => showBar(),
     openUrl: (url) =>
       withPlatform((platform) =>
         platform.browser.openExternalUrl(url, platform.window, { fromIntent: true })
