@@ -24,6 +24,11 @@
 // one scrim while it comes and goes. (Two sheets moving at once would dim the page by their
 // summed presence while the swatch shows the larger; no window of this demo does that.)
 //
+// An event marked `record` is one the driver judges by a rule of its own – the keyboard growing
+// a sheet up towards the band, the bar docked at the top edge with the page moved down under
+// it – so its window is cut for looking at (the shell script) but read by neither rule here,
+// and its frames do not enter the brightness references; the window still ends the one before.
+//
 //   node android-sheet-recede-frames.mjs <video.mp4> <marks.txt> <geometry.txt> <findings.txt>
 //
 // The findings carry every frame's numbers; the exit code is 1 when any frame failed. The
@@ -67,7 +72,12 @@ const marks = readFileSync(marksPath, 'utf8')
   .split('\n')
   .map((line) => line.trim().split(/\s+/))
   .filter((parts) => parts.length >= 2 && /^\d+$/.test(parts[0]))
-  .map(([ms, name, kind]) => ({ at: Number(ms) / 1000 + OFFSET_S, name, held: kind === 'held' }))
+  .map(([ms, name, kind]) => ({
+    at: Number(ms) / 1000 + OFFSET_S,
+    name,
+    held: kind === 'held',
+    judged: kind !== 'record'
+  }))
 
 const probe = spawnSync(
   'ffprobe',
@@ -184,6 +194,10 @@ for (let i = 0; i < marks.length; i++) {
   const next = marks[i + 1]
   const end = next ? next.at - 0.02 : mark.at + LAST_S
   if (end <= start) continue
+  if (!mark.judged) {
+    say(`${mark.name}: recorded only; judged by the driver's own rule`)
+    continue
+  }
   const ffmpeg = spawnSync(
     'ffmpeg',
     [

@@ -10,6 +10,7 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import org.json.JSONObject
 import org.json.JSONTokener
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -20,6 +21,7 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
 /**
  * Records the phone sheets on the recede chassis over one page and measures the page while each
@@ -27,8 +29,19 @@ import kotlin.math.roundToInt
  * closed by a press on its scrim), a picker (the tab's context menu, then the icon picker it
  * opens), a stack of two (the external-protocol confirm – or, with no app for `tel:` on the
  * device, the location prompt – over the open menu, taken down one at a time), the menu dragged
- * a third of the way down by its handle, held and let go, and the predictive back gesture over
- * the site-information sheet: peeked and cancelled, then committed.
+ * a third of the way down by its handle, held and let go, the predictive back gesture over the
+ * site-information sheet: peeked and cancelled, then committed; then the bookmark editor (a
+ * `PhoneSheet` form) with its Address field tapped, so the keyboard comes up under a focused
+ * field and the sheet grows to keep it above the keys; and the menu once more with the bar
+ * docked at the top edge, where nothing covers the bar as it fades with the sheet (§11.1).
+ *
+ * Besides the page, three things are read from the chrome as they go: where the focus is once
+ * a sheet is up (§9.22: inside it – the review of #168 found the bookmark editor and the
+ * clear-history prompt keeping it on their opener), the frame-dialog host's slot while the
+ * picker rises and leaves (its slide's offset against the whole of its height, the 22:49
+ * ruling), and the bar's computed opacity at either edge. The bar at the top edge is also
+ * measured in every frame: the texture left in its band, against the bar at rest, must be
+ * `(1 − p)(1 − a·p)` – the bar at `1 − p` under the scrim at `a·p` – and nothing at p = 1.
  *
  * The judgement is made frame by frame, with no clock in it, because the emulator that records
  * this paints two to five frames a second: any spring sampled that sparsely shows big steps
@@ -48,10 +61,12 @@ import kotlin.math.roundToInt
  * the rule: the page holds its recede and the stack's one scrim while it comes and goes.
  *
  * `marks.txt` lists when each event happened, relative to the start of the sequence (`<ms>
- * <name> <transition|held>`), and `geometry.txt` the band and the swatch in display pixels, so
- * the workflow can cut and read the recording at its own, finer frame rate with the same two
- * rules (android-sheet-recede-frames.mjs). `sheets-findings.txt` carries every screenshot's
- * numbers.
+ * <name> <transition|held|record>`), and `geometry.txt` the band and the swatch in display
+ * pixels, so the workflow can cut and read the recording at its own, finer frame rate with the
+ * same two rules (android-sheet-recede-frames.mjs); a `record` event's frames are cut but not
+ * judged by the band (the keyboard grows a sheet up towards it, and the top-docked bar moves
+ * the page under it), the driver judges those by the step's own rule. `sheets-findings.txt`
+ * carries every screenshot's numbers.
  *
  * Driven by the `android-sheet-recede-demo` workflow; see [DemoHarness] for the plumbing. The
  * page comes from a loopback server in this process ([DemoServer]). The `theme` instrumentation
@@ -171,12 +186,16 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
         // 1. The app menu, closed by system back.
         probe("menu-open", Kind.TRANSITION) { f.tap(menuButton()) }
         settleUp()
+        focusReport("menu")
+        finding("bar (bottom edge) with the menu up: --zen-recede ${recedeValue()}, computed opacity ${barOpacity()}")
         probe("menu-close", Kind.TRANSITION) { back() }
         settleDown()
+        finding("bar (bottom edge) with no sheet: computed opacity ${barOpacity()}")
 
         // 2. Site information, closed by a press on its scrim.
         probe("siteinfo-open", Kind.TRANSITION) { f.tap(siteIcon()) }
         settleUp()
+        focusReport("site information")
         probe("siteinfo-close", Kind.TRANSITION) { f.tap(scrimPoint()) }
         settleDown()
 
@@ -187,34 +206,48 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
         probe("context-open", Kind.TRANSITION) { coreInvoke("tab.contextMenu", "{\"tabId\":\"$TAB_ID\"}") }
         settleUp()
         var pickerUp = false
+        // The frame-dialog host's slot as the picker rises and leaves: the whole of its height
+        // slides in across the frame's bottom edge (the 22:49 ruling), sampled with every frame.
+        val slide = ArrayList<String>()
         if (findNode { it == CHANGE_ICON } != null) {
-            probe("picker-open", Kind.TRANSITION) {
+            probe("picker-open", Kind.TRANSITION, sample = { slotPose().also { slide += it } }) {
                 if (!clickByLabel(CHANGE_ICON)) Log.w(tag, "'$CHANGE_ICON' took no click through the tree")
             }
             settleUp()
             pickerUp = waitFor(PICKER_TITLE, 2_000) != null
             finding(
-                if (pickerUp) "picker: '$PICKER_TITLE' is up, --zen-recede ${recedeValue()}"
+                if (pickerUp) "picker: '$PICKER_TITLE' is up, --zen-recede ${recedeValue()}, slot ${slotPose()}"
                 else "picker: '$PICKER_TITLE' never came up"
             )
         } else {
             finding("no '$CHANGE_ICON' row in the context menu")
         }
         if (pickerUp) {
+            judgeSlide("picker-open", slide, arriving = true)
+            slide.clear()
             // System back when the chrome holds a surface for it (the chassis registers one for
             // the picker); a press on the scrim when it does not, as a back would leave the app.
             if (awaitSurface(up = true, timeoutMs = 1_000)) {
                 finding("picker: closed by system back")
-                probe("picker-close", Kind.TRANSITION) { back() }
+                probe("picker-close", Kind.TRANSITION, sample = { slotPose().also { slide += it } }) { back() }
             } else {
                 finding("picker: no back surface for it; closed by a press on the scrim")
-                probe("picker-close", Kind.TRANSITION) { f.tap(scrimPoint()) }
+                probe("picker-close", Kind.TRANSITION, sample = { slotPose().also { slide += it } }) { f.tap(scrimPoint()) }
             }
+            judgeSlide("picker-close", slide, arriving = false)
         } else if (awaitSurface(up = true, timeoutMs = 500)) {
             finding("closing the context menu instead")
             probe("context-close", Kind.TRANSITION) { back() }
         }
         settleDown()
+        if (pickerUp) {
+            // Idle again: the host is not promoted (§9.33), and its slot takes no input.
+            val idle = slotPose()
+            finding("frame dialog host idle: $idle")
+            if (idle.contains("\"willChange\":\"") && !idle.contains("\"willChange\":\"auto\"")) {
+                failures += "the frame dialog host stays promoted while idle: $idle"
+            }
+        }
 
         // 4. A stack: the menu, then a second sheet over it, taken down one at a time. The
         //    second sheet is asked for by the page's script while the menu is up.
@@ -267,6 +300,272 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
         } else {
             finding("no surface up for the back gesture: skipping it")
         }
+
+        // 7. A sheet with a focused field over the keyboard: the star saves the page and its
+        //    toast offers Edit, which opens the bookmark editor (a PhoneSheet form in the frame
+        //    dialog host; focus lands on the dialog, §9.22). Its Address field tapped, the
+        //    keyboard comes up under the focused field and the sheet grows to keep the field
+        //    above the keys (the 18:24 detents rule); back takes the keyboard down, then the sheet.
+        coreInvoke("bookmark.star", "{\"tabId\":\"$TAB_ID\"}")
+        if (waitFor(EDIT_LABEL, 5_000) != null) {
+            probe("editor-open", Kind.TRANSITION) {
+                if (!clickByLabel(EDIT_LABEL)) Log.w(tag, "'$EDIT_LABEL' took no click through the tree")
+            }
+            settleUp()
+            if (!focusReport("bookmark editor")) failures += "bookmark editor: the focus did not move into the sheet on open (§9.22)"
+            val field = addressField()
+            if (field != null) {
+                finding("editor before the keyboard: ${editorPose()}, keyboard inset ${imeInset()} px")
+                probe("editor-keyboard", Kind.RECORD, KEYBOARD_MS, sample = { editorPose() }) {
+                    f.tap(field.exactCenterX(), field.exactCenterY())
+                }
+                awaitIme(shown = true)
+                SystemClock.sleep(800)
+                judgeKeyboard(editorPose())
+                ui.takeScreenshot()?.let { save(it, "editor-keyboard-up"); it.recycle() }
+                back()
+                awaitIme(shown = false)
+                SystemClock.sleep(1_200)
+                finding("editor after the keyboard: ${editorPose()}, keyboard inset ${imeInset()} px")
+            } else {
+                finding("no address field in the editor: the keyboard is not measured")
+            }
+            probe("editor-close", Kind.TRANSITION) { back() }
+            settleDown()
+        } else {
+            finding("the star's toast offered no '$EDIT_LABEL': the editor is not measured")
+        }
+
+        // 8. The bar docked at the top edge: the menu up and down once more. Nothing covers the
+        //    bar there, so its fade is in every frame: the texture left in its band against the
+        //    bar at rest must be the bar at 1 − p under the scrim at a·p, and nothing at p = 1.
+        //    The move itself is a recorded event, so the page band – laid out for the bottom bar,
+        //    and under the bar from here on – is judged by no window past this point.
+        probe("bar-dock-top", Kind.RECORD, 2_500) { coreInvoke("settings.update", "{\"phoneBarPosition\":\"top\"}") }
+        SystemClock.sleep(1_000)
+        val bar = barRect()
+        if (bar != null) {
+            ui.takeScreenshot()?.let {
+                barRest = measureBand(it, bar).spread
+                save(it, "bar-top-rest")
+                it.recycle()
+            }
+            finding("bar docked top: $bar, texture at rest %.2f, computed opacity ${barOpacity()}".format(barRest))
+            val frames = ArrayList<Frame>()
+            frames += probe("bar-top-menu-open", Kind.RECORD, extra = bar) { f.tap(menuButton()) }
+            settleUp()
+            ui.takeScreenshot()?.let {
+                val share = measureBand(it, bar).spread / barRest
+                finding("bar (top edge) with the menu up: --zen-recede ${recedeValue()}, texture %.3f of the bar at rest, computed opacity ${barOpacity()}".format(share))
+                if (share > BAR_GONE) failures += "bar-top: the bar still shows at p = 1 (texture %.3f of the bar at rest; spec 0)".format(share)
+                save(it, "bar-top-menu-up")
+                it.recycle()
+            }
+            frames += probe("bar-top-menu-close", Kind.RECORD, extra = bar) { back() }
+            settleDown()
+            judgeBar("bar-top", frames)
+        } else {
+            finding("no bar to measure at the top edge")
+        }
+        coreInvoke("settings.update", "{\"phoneBarPosition\":\"bottom\"}")
+        SystemClock.sleep(1_500)
+    }
+
+    // --- the chrome, read as it goes -------------------------------------------------------------
+
+    /**
+     * Where the focus is with a sheet up (§9.22): the active element and whether it is inside a
+     * sheet (the dialog, a row, a control; the review of #168 found it left on the opener). True
+     * when it is inside.
+     */
+    private fun focusReport(label: String): Boolean {
+        val raw = chromeJs(
+            "(function(){var a=document.activeElement;if(!a||a===document.body)return 'nothing (body)';" +
+                "var d=a.closest('.zen-sheet,[role=dialog]');" +
+                "var name=a.getAttribute('aria-label')||a.getAttribute('placeholder')||(a.textContent||'').trim().slice(0,40);" +
+                "return a.tagName.toLowerCase()+(a.getAttribute('role')?'[role='+a.getAttribute('role')+']':'')+" +
+                "(name?' \"'+name+'\"':'')+(d?' inside the sheet':' OUTSIDE any sheet');})()"
+        )
+        val where = (JSONTokener(raw).nextValue() as? String) ?: raw
+        finding("$label: focus on $where")
+        return where.endsWith("inside the sheet")
+    }
+
+    /** The bar's computed opacity: main.css's `1 − recede` at rest, whatever the shell writes over it. */
+    private fun barOpacity(): String {
+        val raw = chromeJs("(function(){var b=document.querySelector('.zen-phone-bar');return b?getComputedStyle(b).opacity:'no bar';})()")
+        return (JSONTokener(raw).nextValue() as? String) ?: raw
+    }
+
+    /** The scrim token's alpha (`--zen-scrim-alpha`): .4 light, .55 dark. */
+    private fun scrimAlpha(): Double {
+        val raw = chromeJs("getComputedStyle(document.documentElement).getPropertyValue('--zen-scrim-alpha').trim()")
+        return (JSONTokener(raw).nextValue() as? String)?.toDoubleOrNull() ?: 0.4
+    }
+
+    /**
+     * The frame-dialog host's slot as the chassis last painted it, as JSON: the root's
+     * `--zen-recede`, the slide's offset `ty` (CSS px, from the inline transform), its `travel`
+     * (the slot's height above the highest panel's top edge: the whole of the sheet), the slot's
+     * height and the panel's top, its opacity, `will-change`, and whether the host is up.
+     */
+    private fun slotPose(): String {
+        val raw = chromeJs(
+            "(function(){var s=document.querySelector('.zen-frame-dialogs[data-sheet] .zen-frame-dialogs-slot');" +
+                "if(!s)return 'no slot';var m=/translate3d\\(0(?:px)?, ?(-?[\\d.]+)px/.exec(s.style.transform||'');" +
+                "var top=Infinity;for(var i=0;i<s.children.length;i++){var c=s.children[i];if(c.hasAttribute('data-sheet-layer'))continue;top=Math.min(top,c.offsetTop);}" +
+                "var cs=getComputedStyle(s);return JSON.stringify({p:+getComputedStyle(document.documentElement).getPropertyValue('--zen-recede')||0," +
+                "ty:m?+m[1]:null,travel:top===Infinity?null:s.clientHeight-top,slot:s.clientHeight,top:top===Infinity?null:top," +
+                "opacity:+cs.opacity,willChange:cs.willChange,up:s.parentElement.hasAttribute('data-sheet-up')});})()"
+        )
+        return (JSONTokener(raw).nextValue() as? String) ?: raw
+    }
+
+    /**
+     * The slide, from the poses sampled while the picker came (`arriving`) or went: the travel is
+     * the sheet's whole height (hundreds of px, not the desktop dialog's 24), every offset lies on
+     * that track (a hair past its ends for the spring's overshoot), the offsets run one way but
+     * for the spring's return from its overshoot, and the slot is opaque wherever it is up. The
+     * root's `--zen-recede` is logged with each pose but not judged against it: while the picker
+     * rises the context menu is still leaving, and the root carries the larger of the two
+     * presences. A dialog that unmounts its panel the moment it closes (the picker does) leaves
+     * the slot to run back empty: the travel is then the last measure's, and the way back is
+     * described, not judged.
+     */
+    private fun judgeSlide(name: String, poses: List<String>, arriving: Boolean) {
+        val all = poses.mapNotNull { runCatching { JSONObject(it) }.getOrNull() }.filter { !it.isNull("ty") }
+        val samples = all.filter { !it.isNull("travel") }
+        findings.append("$name slide: ${all.size} poses of ${poses.size} samples, ${samples.size} with a panel in the slot\n")
+        for (s in all) {
+            findings.append(
+                "  p %.3f ty %7.2f of travel %s (slot %.0f, panel top %s) opacity %.2f will-change %s%s\n".format(
+                    s.getDouble("p"), s.getDouble("ty"),
+                    if (s.isNull("travel")) "-" else "%.0f".format(s.getDouble("travel")), s.getDouble("slot"),
+                    if (s.isNull("top")) "-" else "%.0f".format(s.getDouble("top")),
+                    s.getDouble("opacity"), s.getString("willChange"), if (s.getBoolean("up")) " up" else ""
+                )
+            )
+        }
+        // Judged while the host is up: before that (the wait for the page's cover) the slot's
+        // transform is whatever the last dialog left it at.
+        val moving = samples.filter { it.getBoolean("up") }
+        if (moving.size < 2) {
+            if (arriving) failures += "$name: the frame dialog host's slot could not be read while the picker moved (${poses.size} samples, ${moving.size} up)"
+            else finding("$name: the panel left with its dialog; the slot's way back ran empty (${all.size} poses)")
+            return
+        }
+        val travel = moving.last().getDouble("travel")
+        if (travel < MIN_TRAVEL_CSS_PX) failures += "$name: the slide's travel is %.0f px, not the sheet's height".format(travel)
+        val slack = SLIDE_OVERSHOOT * travel + 1
+        var previous = Double.NaN
+        for (s in moving) {
+            val ty = s.getDouble("ty")
+            if (ty < -slack || ty > travel + slack) failures += "$name: the slot is at %.1f px, off its %.0f px track".format(ty, travel)
+            if (s.getBoolean("up") && s.getDouble("opacity") < 0.999) failures += "$name: the slot is up but at opacity %.2f".format(s.getDouble("opacity"))
+            if (!previous.isNaN()) {
+                val step = ty - previous
+                // Past its end the spring turns round: only a reversal short of the end counts.
+                if (arriving && step > 1 && previous > slack) failures += "$name: the slide turned back up by %.1f px at %.1f".format(step, previous)
+                if (!arriving && step < -1 && previous < travel - slack) failures += "$name: the slide turned back down by %.1f px at %.1f".format(-step, previous)
+            }
+            previous = ty
+        }
+        val last = moving.last().getDouble("ty")
+        if (arriving && abs(last) > slack) failures += "$name: the slot came to rest at %.1f px, not in place".format(last)
+        findings.append("  travel %.0f px, offsets %.1f → %.1f over ${moving.size} poses up\n".format(travel, moving.first().getDouble("ty"), last))
+    }
+
+    /** The bookmark editor's Address field in the accessibility tree: the EditText holding the page's address. */
+    private fun addressField(): Rect? =
+        findNodeWhere { node ->
+            node.className == "android.widget.EditText" &&
+                listOfNotNull(node.text, node.hintText).any { it.toString().startsWith("http") }
+        }?.let { node -> Rect().also { node.getBoundsInScreen(it) } }
+
+    /**
+     * The editor and its focused field as JSON: the root's `--zen-recede`, the active element,
+     * the field's bottom edge (CSS px, when a field has the focus), the sheet's top and height,
+     * and the chrome's viewport height.
+     */
+    private fun editorPose(): String {
+        val raw = chromeJs(
+            "(function(){var a=document.activeElement;var s=document.querySelector('.zen-sheet');" +
+                "var r=a?a.getBoundingClientRect():null;var sr=s?s.getBoundingClientRect():null;" +
+                "return JSON.stringify({p:+getComputedStyle(document.documentElement).getPropertyValue('--zen-recede')||0," +
+                "active:a?a.tagName.toLowerCase():null,field:a&&a.tagName==='INPUT'?Math.round(r.bottom):null," +
+                "sheetTop:sr?Math.round(sr.top):null,sheetHeight:sr?Math.round(sr.height):null,vh:innerHeight});})()"
+        )
+        return (JSONTokener(raw).nextValue() as? String) ?: raw
+    }
+
+    /**
+     * With the keyboard up under the editor's focused field: the field's bottom edge stands above
+     * the keys (the sheet grew to a detent that keeps it in view, the body scrolled the rest),
+     * by the 8 px the chassis leaves. A keyboard that never came up is noted, not failed: the
+     * emulator's, not the chassis's.
+     */
+    private fun judgeKeyboard(pose: String) {
+        val ime = imeInset()
+        val s = runCatching { JSONObject(pose) }.getOrNull()
+        if (s == null) {
+            failures += "editor-keyboard: the editor could not be read: $pose"
+            return
+        }
+        val vh = s.getDouble("vh")
+        val keysTop = min(vh, ((height - ime) / density).toDouble())
+        val field = if (s.isNull("field")) Double.NaN else s.getDouble("field")
+        finding(
+            "editor with the keyboard: inset $ime px, keys from %.0f css px (viewport %.0f), focused %s, field bottom %s, sheet top %s height %s, --zen-recede %.3f".format(
+                keysTop, vh, s.optString("active", "nothing"),
+                if (field.isNaN()) "-" else "%.0f".format(field), s.opt("sheetTop"), s.opt("sheetHeight"), s.getDouble("p")
+            )
+        )
+        when {
+            ime <= 0 -> finding("editor-keyboard: the keyboard never came up; the field's place above it is not measured")
+            field.isNaN() -> failures += "editor-keyboard: no field holds the focus with the keyboard up (${s.optString("active")})"
+            field > keysTop - FIELD_CLEARANCE_CSS_PX + 1 -> failures += "editor-keyboard: the focused field's bottom (%.0f) is under the keys (from %.0f)".format(field, keysTop)
+        }
+    }
+
+    /** The bar's box on the screen (display px), below the status bar; null with no bar. */
+    private fun barRect(): Rect? {
+        val raw = chromeJs(
+            "(function(){var b=document.querySelector('.zen-phone-bar');if(!b)return null;var r=b.getBoundingClientRect();" +
+                "return JSON.stringify({l:r.left,t:r.top,r:r.right,b:r.bottom});})()"
+        )
+        val s = runCatching { JSONObject((JSONTokener(raw).nextValue() as? String) ?: return null) }.getOrNull() ?: return null
+        val rect = Rect(
+            (s.getDouble("l") * density).roundToInt(), (s.getDouble("t") * density).roundToInt(),
+            (s.getDouble("r") * density).roundToInt(), (s.getDouble("b") * density).roundToInt()
+        )
+        // Not the status bar, where the swatch is.
+        rect.top = max(rect.top, windowInsets().top + 2)
+        return if (rect.isEmpty || rect.height() < 8) null else rect
+    }
+
+    /**
+     * The top-docked bar, frame by frame: the texture left in its band (the spread of its
+     * brightness against the bar at rest) is the bar's opacity times the scrim's remainder,
+     * `(1 − p)(1 − a·p)` with `p` the sheet's progress the swatch shows in the same frame.
+     */
+    private fun judgeBar(name: String, frames: List<Frame>) {
+        val a = scrimAlpha()
+        var worst = 0.0
+        var judged = 0
+        for (frame in frames) {
+            val bar = frame.extra ?: continue
+            if (frame.progress.isNaN() || barRest.isNaN() || barRest <= 0) continue
+            val share = bar.spread / barRest
+            val expected = (1 - frame.progress) * (1 - a * frame.progress)
+            val gap = abs(share - expected)
+            worst = max(worst, gap)
+            judged++
+            if (gap > BAR_TOLERANCE) {
+                failures += "$name at ${frame.at} ms: the bar shows %.0f%% of its texture while the sheet's progress %.2f asks for %.0f%%".format(share * 100, frame.progress, expected * 100)
+            }
+        }
+        findings.append("$name: $judged frames of the bar judged against (1 − p)(1 − %.2f p), largest disagreement %.0f%%\n".format(a, worst * 100))
+        if (judged == 0) failures += "$name: no frame of the top-docked bar could be judged"
     }
 
     // --- the surfaces ----------------------------------------------------------------------------
@@ -487,20 +786,41 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
 
     // --- frames ----------------------------------------------------------------------------------
 
-    private enum class Kind { TRANSITION, HELD }
+    /**
+     * How an event's frames are judged: a `TRANSITION` or a `HELD` finger by the band's rules
+     * (here and in the recording); a `RECORD` event's frames are cut and described only, and the
+     * step judges them by a rule of its own (the bar's fade, the field above the keyboard).
+     */
+    private enum class Kind { TRANSITION, HELD, RECORD }
 
-    private class Metrics(val luminance: Double, val chroma: Double, val edges: Double, val pageLike: Double)
+    /** [spread] is the standard deviation of the luminance: the texture left in a region. */
+    private class Metrics(val luminance: Double, val chroma: Double, val edges: Double, val pageLike: Double, val spread: Double)
 
-    private class Frame(val at: Long, val band: Metrics, val progress: Double)
+    /** [extra] measures a second region (the top-docked bar) and [note] carries a sample read from the chrome. */
+    private class Frame(val at: Long, val band: Metrics, val progress: Double, val extra: Metrics? = null, val note: String? = null)
+
+    /** The top-docked bar's texture with no sheet up, from the step that measures it. */
+    private var barRest = Double.NaN
 
     /**
      * Screenshot the page just before `action`, run it, then screenshot for `probeMs` as fast as
-     * the emulator allows, reading every frame, and judge the frames. A frame's time is the
-     * middle of the call that took it, since the event; the event is marked for the workflow.
+     * the emulator allows, reading every frame – the band, `extra` if given, and `sample` from
+     * the chrome – and judge the frames. A frame's time is the middle of the call that took it,
+     * since the event; the event is marked for the workflow. The frames are returned for a
+     * judgement of the step's own.
      */
-    private fun probe(name: String, kind: Kind, probeMs: Long = PROBE_MS, action: () -> Unit) {
+    private fun probe(
+        name: String,
+        kind: Kind,
+        probeMs: Long = PROBE_MS,
+        extra: Rect? = null,
+        sample: (() -> String)? = null,
+        action: () -> Unit
+    ): List<Frame> {
         val before = ui.takeScreenshot()
-        val reference = before?.let { Frame(0, measureBand(it, band()), progress(it)) }
+        val reference = before?.let { shot ->
+            Frame(0, measureBand(shot, band()), progress(shot), extra?.let { r -> measureBand(shot, r) })
+        }
         before?.let { save(it, "$name-before") }
         before?.recycle()
         val t0 = SystemClock.uptimeMillis()
@@ -510,12 +830,22 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
         while (SystemClock.uptimeMillis() - t0 < probeMs) {
             val started = SystemClock.uptimeMillis()
             val shot = ui.takeScreenshot() ?: continue
+            val note = sample?.invoke()
             val at = (started + SystemClock.uptimeMillis()) / 2 - t0
-            frames += Frame(at, measureBand(shot, band()), progress(shot))
+            frames += Frame(at, measureBand(shot, band()), progress(shot), extra?.let { measureBand(shot, it) }, note)
             save(shot, "$name-${at}ms")
             shot.recycle()
         }
-        judge(name, reference, frames)
+        if (kind == Kind.RECORD) describeOnly(name, reference, frames) else judge(name, reference, frames)
+        return frames
+    }
+
+    /** A `RECORD` event: every frame's numbers, no verdict by the band. */
+    private fun describeOnly(name: String, reference: Frame?, frames: List<Frame>) {
+        findings.append("$name: ${frames.size} frames (recorded; judged by the step's rule)\n")
+        reference?.let { findings.append(describe(it, "before")) }
+        for (frame in frames) findings.append(describe(frame))
+        if (frames.isEmpty()) failures += "$name: no frame could be taken"
     }
 
     /** The content frame: below the status bar and above the bar. */
@@ -542,16 +872,18 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
 
     /**
      * Mean luminance, mean chroma (max − min channel), edge density (share of sampled pixels
-     * whose right neighbour differs by more than 40 in luminance) and the share of page-like
-     * pixels (bright and grey) over `rect`, sampled every third pixel.
+     * whose right neighbour differs by more than 40 in luminance), the share of page-like
+     * pixels (bright and grey) and the spread of the luminance over `rect`, sampled every
+     * third pixel.
      */
     private fun measureBand(bitmap: Bitmap, rect: Rect): Metrics {
         val r = Rect(rect)
         r.intersect(0, 0, bitmap.width, bitmap.height)
-        if (r.isEmpty) return Metrics(0.0, 0.0, 0.0, 0.0)
+        if (r.isEmpty) return Metrics(0.0, 0.0, 0.0, 0.0, 0.0)
         val row = IntArray(r.width())
         var n = 0L
         var lum = 0.0
+        var lumSquares = 0.0
         var chroma = 0.0
         var edges = 0L
         var pageLike = 0L
@@ -567,6 +899,7 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
                 val l = 0.299 * red + 0.587 * green + 0.114 * blue
                 val c = max(red, max(green, blue)) - min(red, min(green, blue))
                 lum += l
+                lumSquares += l * l
                 chroma += c
                 if (l > 90 && c < 24) pageLike++
                 if (x + 3 < row.size) {
@@ -579,7 +912,8 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
             }
             y += 3
         }
-        return Metrics(lum / n, chroma / n, edges.toDouble() / n, pageLike.toDouble() / n)
+        val mean = lum / n
+        return Metrics(mean, chroma / n, edges.toDouble() / n, pageLike.toDouble() / n, sqrt(max(0.0, lumSquares / n - mean * mean)))
     }
 
     /** How far the band has gone dark, 0 (the page with no sheet) to 1 (under a sheet fully up). */
@@ -625,11 +959,20 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
         )
     }
 
-    private fun describe(frame: Frame, label: String = "${frame.at} ms"): String =
-        "  %10s  p %.3f dark %.3f  lum %5.1f chroma %5.1f edges %.4f page-like %.2f\n".format(
-            label, frame.progress, darkness(frame.band.luminance),
-            frame.band.luminance, frame.band.chroma, frame.band.edges, frame.band.pageLike
+    private fun describe(frame: Frame, label: String = "${frame.at} ms"): String {
+        val line = StringBuilder(
+            "  %10s  p %.3f dark %.3f  lum %5.1f chroma %5.1f edges %.4f page-like %.2f".format(
+                label, frame.progress, darkness(frame.band.luminance),
+                frame.band.luminance, frame.band.chroma, frame.band.edges, frame.band.pageLike
+            )
         )
+        frame.extra?.let {
+            line.append("  bar lum %5.1f spread %5.2f".format(it.luminance, it.spread))
+            if (!barRest.isNaN() && barRest > 0) line.append(" (%.3f of rest)".format(it.spread / barRest))
+        }
+        frame.note?.let { line.append("  ").append(it) }
+        return line.append('\n').toString()
+    }
 
     /** JPEG: a PNG of the window takes the emulator longer than the next frame. */
     private fun save(bitmap: Bitmap, name: String) {
@@ -655,6 +998,24 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
         private const val CHANGE_ICON = "Change Icon…"
         /** The icon picker's heading. */
         private const val PICKER_TITLE = "Change icon"
+        /** The star's toast action, which opens the bookmark editor. */
+        private const val EDIT_LABEL = "Edit"
+        /** The keyboard's rise and the sheet's growth under a focused field, recorded. */
+        private const val KEYBOARD_MS = 4_000L
+        /** The chassis keeps a focused field this far (CSS px) above the keys. */
+        private const val FIELD_CLEARANCE_CSS_PX = 8.0
+        /** A frame-dialog slide is the sheet's whole height: at least this (CSS px), not a 24 px pop. */
+        private const val MIN_TRAVEL_CSS_PX = 120.0
+        /** How far past its track's ends the slot may stand for the spring's overshoot, as a share of the travel. */
+        private const val SLIDE_OVERSHOOT = 0.04
+        /** The texture the top-docked bar may still show at p = 1 (the recorder's noise), as a share of the bar at rest. */
+        private const val BAR_GONE = 0.12
+        /**
+         * How far the bar's texture may stand from `(1 − p)(1 − a·p)` in one frame: the spread of a
+         * composite is linear in the bar's opacity over a flat ground, the emulator's dithering
+         * and the pill's own state (a pressed Menu button) add a little.
+         */
+        private const val BAR_TOLERANCE = 0.18
         /** Inside the system's back-gesture inset on any density. */
         private const val EDGE_X = 2f
         /**
