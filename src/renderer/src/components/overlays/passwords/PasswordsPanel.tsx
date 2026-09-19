@@ -4,8 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Dices, KeyRound, Plus, Settings2, ShieldCheck } from 'lucide-react'
 import type { CredentialSummary, UIState } from '@shared/types'
 import { cmd, onEvent } from '@renderer/lib/api'
-import { closeOverlay, uiStore } from '@renderer/lib/ui'
-import { cn } from '@renderer/lib/utils'
+import { closeOverlay, pushToast, uiStore } from '@renderer/lib/ui'
 import { Checkup } from './Checkup'
 import { Generator } from './Generator'
 import { usePhone, useScrolled } from './lib'
@@ -29,15 +28,14 @@ const VIEWS: Array<{ id: View; label: string; title: string; icon: JSX.Element }
   { id: 'settings', label: 'Settings', title: 'Password Settings', icon: <Settings2 /> }
 ]
 
-/** How long the undo bar for a deleted login stays (the core keeps it restorable for a minute). */
-const UNDO_VISIBLE_MS = 8_000
-
 /**
  * The password manager: Chrome's information architecture (saved logins, checkup, settings, plus
  * the generator) as a v2 in-content page. The vault itself is `PasswordService` in the core,
  * reached only through `passwords.*` commands; this surface never holds a secret longer than a
  * reveal. A desktop shows the categories in a 234 px nav column, a phone picks them from a
- * menulist in the header; a login opens as a pane pushed over the list on both.
+ * menulist in the header; a login opens as a pane pushed over the list on both. A deleted login
+ * is offered back in the shell's message (`pushToast` with an Undo action: the phone's card,
+ * the desktop's toast), not in a bar of the manager's own.
  */
 export function PasswordsPanel({ state }: { state: UIState }): JSX.Element {
   const phone = usePhone()
@@ -92,7 +90,6 @@ function Manager({
 }): JSX.Element {
   const status = state.passwords
   const [all, setAll] = useState<CredentialSummary[]>([])
-  const [undo, setUndo] = useState<{ id: string; site: string } | null>(null)
   const { scrolled, onScroll } = useScrolled()
 
   // Every change to the vault bumps `revision`; the list is small enough to fetch whole.
@@ -106,13 +103,30 @@ function Manager({
     }
   }, [status.revision])
 
-  useEffect(() => onEvent('passwords.removed', (payload) => setUndo(payload)), [])
+  const show = (id: string): void => {
+    setView('logins')
+    setPane({ kind: 'detail', id })
+  }
 
-  useEffect(() => {
-    if (!undo) return
-    const timer = setTimeout(() => setUndo(null), UNDO_VISIBLE_MS)
-    return () => clearTimeout(timer)
-  }, [undo])
+  // A deletion is offered back for as long as a toast with an action stays (the core keeps the
+  // login restorable for a minute); Undo restores it and opens it again.
+  useEffect(
+    () =>
+      onEvent('passwords.removed', ({ id, site }) =>
+        pushToast(`Deleted the login for ${site}`, 'info', {
+          action: {
+            label: 'Undo',
+            onPick: () => {
+              void cmd('passwords.restore', { id }).then((restored) => {
+                if (restored) show(id)
+              })
+            }
+          }
+        })
+      ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `show` only sets state
+    []
+  )
 
   const selected = pane?.kind === 'detail' ? (all.find((c) => c.id === pane.id) ?? null) : null
   const current = VIEWS.find((v) => v.id === view) ?? VIEWS[0]!
@@ -120,11 +134,6 @@ function Manager({
     () => new Set(state.passwords.checkup.compromised).size,
     [state.passwords.checkup.compromised]
   )
-
-  const show = (id: string): void => {
-    setView('logins')
-    setPane({ kind: 'detail', id })
-  }
   const pick = (next: View): void => {
     setPane(null)
     setView(next)
@@ -159,10 +168,9 @@ function Manager({
             >
               {item.icon}
               <span className="min-w-0 flex-1 truncate">{item.label}</span>
+              {/* The count badge (§9.19): the shared badge, ink only – no red pill. */}
               {item.id === 'checkup' && alerts > 0 && (
-                <span className="zen-v2-pw-badge" data-tone="danger">
-                  {alerts}
-                </span>
+                <span className="zen-v2-badge">{alerts}</span>
               )}
             </button>
           ))}
@@ -235,28 +243,6 @@ function Manager({
               onCreated={(created) => setPane({ kind: 'detail', id: created.id })}
             />
           </PushedPane>
-        )}
-
-        {undo && (
-          <div
-            role="status"
-            className={cn(
-              'zen-v2-pw-snackbar zen-animate-in absolute left-1/2 z-[3] flex w-max max-w-[calc(100%-32px)] -translate-x-1/2 items-center gap-3 py-2 pl-4 pr-2',
-              phone ? 'bottom-4' : 'bottom-3'
-            )}
-          >
-            <span className="min-w-0 truncate">Deleted the login for {undo.site}</span>
-            <Btn
-              onClick={() => {
-                void cmd('passwords.restore', { id: undo.id }).then((restored) => {
-                  if (restored) show(undo.id)
-                })
-                setUndo(null)
-              }}
-            >
-              Undo
-            </Btn>
-          </div>
         )}
       </div>
     </div>

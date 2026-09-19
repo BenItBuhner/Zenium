@@ -8,8 +8,8 @@ import type {
   RefObject,
   TextareaHTMLAttributes
 } from 'react'
-import { useId, useLayoutEffect, useRef, useState } from 'react'
-import { Check, ChevronDown, CircleAlert, Search } from 'lucide-react'
+import { useId, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react'
+import { Check, ChevronDown, ChevronRight, CircleAlert, ExternalLink, Search } from 'lucide-react'
 import type { Rect } from '@shared/types'
 import { useEscape } from '@renderer/hooks/useEscape'
 import { useArrowKeys, usePopover } from '@renderer/hooks/usePopover'
@@ -239,16 +239,19 @@ interface MenulistOption<T extends string> {
  * resize or another popover opening closes it too). On a phone it is never a popover: the list
  * is a picker sheet on the shared `BottomSheet` in the frame's dialog host – 44 px rows with a
  * radio glyph on the current option, picking one closes it – the top of a depth-two stack over
- * the manager's page (§9.24). Either way the open list is the topmost surface and takes the
- * keyboard (§9.22): focus lands on the current option, arrows move, Enter or Space picks, Escape
- * and the system back close it and hand focus back to the trigger, and nothing under it hears
- * the key – the popover through `usePopover`, the sheet through its chassis.
+ * the manager's page (§9.24); a menulist whose row has a `description` makes it the sheet's
+ * title block (§9.13). Either way the open list is the topmost surface and takes the keyboard
+ * (§9.22): focus lands on the current option, arrows move, Enter or Space picks, Escape and the
+ * system back close it and hand focus back to the trigger, and nothing under it hears the key
+ * – the popover through `usePopover`, the sheet through its chassis. On a phone settings view
+ * the trigger itself is not drawn (§10.4): `ChoiceRow` opens the same sheet from a value row.
  */
 export function Menulist<T extends string>({
   value,
   options,
   onChange,
   label,
+  description,
   disabled,
   title,
   className
@@ -258,6 +261,8 @@ export function Menulist<T extends string>({
   onChange: (value: T) => void
   /** Name for assistive tech (a row label is not associated with the control); a sheet's title. */
   label: string
+  /** What the row explained beside the control: the picker sheet's description (§9.13). */
+  description?: string
   disabled?: boolean
   /** The phone header's category picker: the title itself is the menulist (§6). */
   title?: boolean
@@ -272,7 +277,16 @@ export function Menulist<T extends string>({
   const surface = `passwords-menu-${listId}`
   const close = (): void => setOpen(false)
   const current = options.find((o) => o.value === value)
-  const list = { id: listId, label, surface, options, value, onPick: onChange, onClose: close }
+  const list = {
+    id: listId,
+    label,
+    description,
+    surface,
+    options,
+    value,
+    onPick: onChange,
+    onClose: close
+  }
   return (
     <>
       <button
@@ -308,6 +322,8 @@ export function Menulist<T extends string>({
 interface OpenList<T extends string> {
   id: string
   label: string
+  /** The sheet's title-block description (§9.13); the desktop popover has no place for it. */
+  description?: string
   /** The back-registry name of this list while it is open. */
   surface: string
   options: Array<MenulistOption<T>>
@@ -404,11 +420,12 @@ function MenulistPopover<T extends string>({
  * The open phone list (§9.13): a picker sheet on the shared `BottomSheet` chassis, mounted in
  * the frame's dialog host through `FrameDialogPortal` (lib/portals.tsx) – over the manager's
  * page, outside the overlay's stacking context – with the §9.16 48 header naming it under the
- * grabber and 44 px radio rows (the shared row and radio) edge to edge at the 16 gutter (§9.25).
- * It draws the stack's one scrim itself (`ownScrim`, §9.24, §9.28); the chassis focuses the
- * current option as it opens, wraps Tab, holds the page under it inert and hands the focus back
- * to the trigger when it has gone. A drag, a fling, the scrim, Escape or the back gesture close
- * it; a pick applies at once and lets the sheet leave.
+ * grabber, or the §9.23 title block when the row it came from has a description, and 44 px
+ * radio rows (the shared row and radio) edge to edge at the 16 gutter (§9.25). It draws the
+ * stack's one scrim itself (`ownScrim`, §9.24, §9.28); the chassis focuses the current option as
+ * it opens, wraps Tab, holds the page under it inert and hands the focus back to the trigger
+ * when it has gone. A drag, a fling, the scrim, Escape or the back gesture close it; a pick
+ * applies at once and lets the sheet leave.
  */
 function MenulistSheet<T extends string>(props: OpenList<T>): JSX.Element {
   // The sheet registers with the host it renders in (`useFrameDialog` reads the portal's
@@ -423,6 +440,7 @@ function MenulistSheet<T extends string>(props: OpenList<T>): JSX.Element {
 function PickerSheet<T extends string>({
   id,
   label,
+  description,
   surface,
   options,
   value,
@@ -447,13 +465,24 @@ function PickerSheet<T extends string>({
         hosted
         labelledBy={titleId}
         handleLabel="Dismiss"
+        // #134's `.zen-settings-sheet` (main.css): the chassis border drawn as an inset hairline,
+        // so the rows' 16 is 16 from the sheet's outer edge (§9.25).
+        className="zen-settings-sheet"
         header={
-          <h2 id={titleId} className="zen-sheet-title">
-            {label}
-          </h2>
+          description ? undefined : (
+            <h2 id={titleId} className="zen-sheet-title">
+              {label}
+            </h2>
+          )
         }
         onDismissed={onClose}
       >
+        {description && (
+          <div className="zen-sheet-title-block">
+            <h2 id={titleId}>{label}</h2>
+            <p>{description}</p>
+          </div>
+        )}
         <div id={id} role="radiogroup" aria-labelledby={titleId} className="zen-v2-pw-sheet-rows">
           {options.map((o) => (
             <button
@@ -472,6 +501,103 @@ function PickerSheet<T extends string>({
             </button>
           ))}
         </div>
+      </BottomSheet>
+    </div>
+  )
+}
+
+/** What a `PromptSheet` hands its opener: a way to close it from inside (a Cancel, a pick). */
+export interface PromptSheetHandle {
+  dismiss(): void
+}
+
+/**
+ * A prompt sheet (§9.23, §9.24): what a dialog is on a phone – a title block (an optional glyph,
+ * the 17/600 title, a description), the body, a footer – on the shared `BottomSheet` chassis in
+ * the frame's dialog host, the top of a depth-two stack over the manager's page. It draws the
+ * stack's one scrim itself (`ownScrim`, §9.28) and mounts the chassis's title block, the one
+ * every prompt sheet opens on. The chassis moves the focus in (§9.22), wraps Tab, holds the page
+ * under it inert and hands the focus back once the sheet has gone; a drag, a fling, the scrim,
+ * Escape (the shared LIFO hook, so a pane under it keeps its own turn) and the back gesture
+ * close it, `dismiss` on the handle closes it from inside, and `onClosed` runs once it has left.
+ */
+export function PromptSheet({
+  ref,
+  name,
+  title,
+  description,
+  glyph,
+  children,
+  onClosed
+}: {
+  ref?: Ref<PromptSheetHandle>
+  /** The back-registry name of this sheet while it is open. */
+  name: string
+  title: string
+  description?: string
+  glyph?: ReactNode
+  children: ReactNode
+  onClosed: () => void
+}): JSX.Element {
+  return (
+    <FrameDialogPortal>
+      <HostedPromptSheet
+        ref={ref}
+        name={name}
+        title={title}
+        description={description}
+        glyph={glyph}
+        onClosed={onClosed}
+      >
+        {children}
+      </HostedPromptSheet>
+    </FrameDialogPortal>
+  )
+}
+
+function HostedPromptSheet({
+  ref,
+  name,
+  title,
+  description,
+  glyph,
+  children,
+  onClosed
+}: {
+  ref?: Ref<PromptSheetHandle>
+  name: string
+  title: string
+  description?: string
+  glyph?: ReactNode
+  children: ReactNode
+  onClosed: () => void
+}): JSX.Element {
+  const sheet = useRef<BottomSheetHandle>(null)
+  const titleId = useId()
+  const dismiss = (): void => sheet.current?.dismiss()
+  useImperativeHandle(ref, () => ({ dismiss }), [])
+  useFrameDialog({ onScrimPress: dismiss, ownScrim: true })
+  useBackSurface({
+    name,
+    onProgress: (progress) => sheet.current?.backProgress(progress),
+    onCommit: () => sheet.current?.commitBack(),
+    onCancel: () => sheet.current?.cancelBack()
+  })
+  useEscape(dismiss)
+  return (
+    <div className="zen-v2-pw zen-v2-pw-sheet-layer absolute inset-0" data-surface="page">
+      <BottomSheet
+        ref={sheet}
+        hosted
+        labelledBy={titleId}
+        handleLabel="Dismiss"
+        className="zen-settings-sheet"
+        onDismissed={onClosed}
+      >
+        <TitleBlock id={titleId} glyph={glyph} description={description}>
+          {title}
+        </TitleBlock>
+        {children}
       </BottomSheet>
     </div>
   )
@@ -496,8 +622,8 @@ export function Rows({ className, ...rest }: HTMLAttributes<HTMLDivElement>): JS
 
 /**
  * A row's text: the label on the first line at the row's 15/20, the description under it the
- * shared `.zen-v2-description` (13/20), wrapping to two lines then an ellipsis (§9.2,
- * `.zen-v2-pw-clamp`) unless it is the explanation itself.
+ * shared `.zen-v2-description` (13/20), which wraps to two lines then an ellipsis (§9.2) unless
+ * it is the explanation itself (`full`, passwords.css lifts the clamp).
  */
 export function RowText({
   label,
@@ -513,7 +639,7 @@ export function RowText({
     <span className="flex min-w-0 flex-1 flex-col">
       <span className="block [overflow-wrap:anywhere]">{label}</span>
       {description && (
-        <span className={cn('zen-v2-description', !full && 'zen-v2-pw-clamp')}>{description}</span>
+        <span className={cn('zen-v2-description', full && 'zen-v2-pw-full')}>{description}</span>
       )}
     </span>
   )
@@ -663,6 +789,170 @@ export function ListRow({
       {children}
     </button>
   )
+}
+
+/**
+ * A choice among a few options (§9.13): on the desktop a settings row with the shared menulist
+ * trailing its text; on a phone §10.4's value row – the whole row the target, the label on the
+ * first line, the current option as its description, no control and no chevron – opening the
+ * same picker sheet, which takes a title block with the row's description when it has one.
+ */
+export function ChoiceRow<T extends string>({
+  label,
+  description,
+  value,
+  options,
+  onChange,
+  disabled = false,
+  className
+}: {
+  label: string
+  /** The explanation beside the desktop menulist; on a phone the picker sheet's description. */
+  description?: string
+  value: T
+  options: Array<MenulistOption<T>>
+  onChange: (value: T) => void
+  disabled?: boolean
+  className?: string
+}): JSX.Element {
+  const phone = usePhone()
+  const [open, setOpen] = useState(false)
+  const listId = useId()
+  const current = options.find((o) => o.value === value)
+  if (!phone) {
+    return (
+      <SettingRow label={label} description={description} className={className}>
+        <Menulist
+          label={label}
+          description={description}
+          value={value}
+          options={options}
+          onChange={onChange}
+          disabled={disabled}
+        />
+      </SettingRow>
+    )
+  }
+  return (
+    <>
+      <button
+        type="button"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-controls={open ? listId : undefined}
+        aria-disabled={disabled || undefined}
+        className={cn('zen-v2-row zen-v2-pw-row', className)}
+        onClick={() => !disabled && setOpen(true)}
+      >
+        <RowText label={label} description={current?.label ?? ''} />
+      </button>
+      {open && (
+        <MenulistSheet
+          id={listId}
+          label={label}
+          description={description}
+          surface={`passwords-choice-${listId}`}
+          options={options}
+          value={value}
+          onPick={onChange}
+          onClose={() => setOpen(false)}
+        />
+      )}
+    </>
+  )
+}
+
+/**
+ * A phone action row (§10.4): the whole row does the thing – label and description, a trailing
+ * 16 px glyph only when it leaves the page – a destructive one in the danger ink and confirmed
+ * in a sheet, never by an inline button. Disabled is the row at .4, laid out and not pressable
+ * (§9.30); busy keeps its ink, trails the spinner in place of its glyph and takes no press.
+ */
+export function ActionRow({
+  label,
+  description,
+  leaves,
+  destructive = false,
+  disabled = false,
+  busy = false,
+  onPress,
+  className
+}: {
+  label: ReactNode
+  description?: ReactNode
+  leaves?: 'chevron' | 'external'
+  destructive?: boolean
+  disabled?: boolean
+  busy?: boolean
+  onPress: () => void
+  className?: string
+}): JSX.Element {
+  return (
+    <button
+      type="button"
+      aria-disabled={disabled || undefined}
+      aria-busy={busy || undefined}
+      data-danger={destructive || undefined}
+      className={cn('zen-v2-row zen-v2-pw-row', className)}
+      onClick={() => !disabled && !busy && onPress()}
+    >
+      <RowText label={label} description={description} />
+      {busy ? (
+        <span className="zen-v2-spinner" aria-hidden />
+      ) : leaves === 'chevron' ? (
+        <ChevronRight className="zen-v2-pw-deemphasized" />
+      ) : leaves === 'external' ? (
+        <ExternalLink className="zen-v2-pw-deemphasized" />
+      ) : null}
+    </button>
+  )
+}
+
+/**
+ * An empty state (§9.17): one sentence, sentence case, no full stop, 15/400 at 69 %, centred in
+ * a 32 gutter, top-anchored with its first line 32 below the header on the desktop and 48 on a
+ * phone (passwords.css counts the scroller's 16), and one optional follow-up 16 under it where
+ * there is one obvious next step – a secondary button, never primary. No glyph, no title.
+ */
+export function EmptyState({
+  action,
+  children,
+  className
+}: {
+  action?: { label: ReactNode; onPress: () => void }
+  children: ReactNode
+  className?: string
+}): JSX.Element {
+  return (
+    <div className={cn('zen-v2-pw-empty', className)}>
+      <p>{children}</p>
+      {action && <Btn onClick={action.onPress}>{action.label}</Btn>}
+    </div>
+  )
+}
+
+/** A group's empty state on a page (§9.17): one plain static row at the group's gutter, one sentence. */
+export function EmptyRow({ children }: { children: ReactNode }): JSX.Element {
+  return (
+    <div className="zen-v2-row zen-v2-pw-row" data-static="">
+      <span className="zen-v2-pw-deemphasized min-w-0 flex-1">{children}</span>
+    </div>
+  )
+}
+
+/**
+ * The actions of a form on the page (§9.11): on the desktop hugging the end, 8 apart; on a
+ * phone two peers splitting the width at an 8 gap, the primary trailing. `children` are the
+ * buttons, the primary last.
+ */
+export function FormActions({
+  className,
+  children
+}: {
+  className?: string
+  children: ReactNode
+}): JSX.Element {
+  return <div className={cn('zen-v2-pw-form-actions', className)}>{children}</div>
 }
 
 /** A page or pane title: 22/600 on 28 (§9.26). */

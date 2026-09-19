@@ -74,8 +74,7 @@ export function useReauth(): { gate: Gate; prompt: JSX.Element | null } {
           if (set.status === 'ok') return { kind: 'accepted', value: passphrase }
           return {
             kind: 'refused',
-            reason:
-              (set.status === 'denied' && set.reason) || 'That passphrase could not be set.'
+            reason: (set.status === 'denied' && set.reason) || 'That passphrase could not be set.'
           }
         })
         if (created === null) return null

@@ -5,7 +5,7 @@ import type { CredentialSummary } from '@shared/types'
 import { cn } from '@renderer/lib/utils'
 import { Generator } from './Generator'
 import { domainFromInput, usePhone } from './lib'
-import { Btn, Field, IconBtn, TextArea, TextField } from './shared'
+import { Btn, Field, FormActions, IconBtn, TextArea, TextField } from './shared'
 
 export interface LoginFormValues {
   url: string
@@ -15,8 +15,11 @@ export interface LoginFormValues {
 }
 
 /**
- * Add or edit a login. When editing, the password field starts empty and only a typed or
- * generated value replaces the stored one (the form never holds the current secret).
+ * Add or edit a login: §9.12 form fields 16 apart, the password field with its Show and Generate
+ * icon buttons beside it on both form factors, the generator unfolding under it – in a card on
+ * the desktop (§6), as plain rows on a phone (§9.17: no new phone cards) – and the §9.11 actions
+ * last. When editing, the password field starts empty and only a typed or generated value
+ * replaces the stored one (the form never holds the current secret).
  */
 export function LoginForm({
   existing,
@@ -44,77 +47,80 @@ export function LoginForm({
         if (ready) onSubmit({ url: url.trim(), username: username.trim(), password, notes })
       }}
     >
-      <Field label="Site" htmlFor="login-url">
-        <TextField
-          id="login-url"
-          autoFocus={!existing && !phone}
-          placeholder="https://example.com/login"
-          value={url}
-          autoCapitalize="none"
-          autoCorrect="off"
-          inputMode="url"
-          onChange={(e) => setUrl(e.target.value)}
-        />
-      </Field>
-      <Field label="Username" htmlFor="login-username">
-        <TextField
-          id="login-username"
-          placeholder="name@example.com"
-          value={username}
-          autoCapitalize="none"
-          autoCorrect="off"
-          autoComplete="off"
-          onChange={(e) => setUsername(e.target.value)}
-        />
-      </Field>
-      <Field label="Password" htmlFor="login-password">
-        <div className="flex items-center gap-1">
+      <Field id="login-url" label="Site">
+        {(aria) => (
           <TextField
-            id="login-password"
-            type={show ? 'text' : 'password'}
-            autoComplete="new-password"
-            placeholder={existing ? 'Leave empty to keep the current one' : undefined}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className={cn(show && 'zen-v2-pw-secret')}
-          />
-          <IconBtn label={show ? 'Hide' : 'Show'} onClick={() => setShow((s) => !s)}>
-            {show ? <EyeOff /> : <Eye />}
-          </IconBtn>
-          <IconBtn
-            label="Generate a strong password"
-            active={generating}
-            onClick={() => setGenerating((g) => !g)}
-          >
-            <Dices />
-          </IconBtn>
-        </div>
-        {generating && (
-          <Generator
-            domain={domain}
-            className="zen-v2-pw-card mt-2"
-            onUse={(value) => {
-              setPassword(value)
-              setShow(true)
-              setGenerating(false)
-            }}
+            {...aria}
+            autoFocus={!existing && !phone}
+            placeholder="https://example.com/login"
+            value={url}
+            autoCapitalize="none"
+            autoCorrect="off"
+            inputMode="url"
+            onChange={(e) => setUrl(e.target.value)}
           />
         )}
       </Field>
-      <Field label="Notes" htmlFor="login-notes">
-        <TextArea
-          id="login-notes"
-          rows={2}
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-        />
+      <Field id="login-username" label="Username">
+        {(aria) => (
+          <TextField
+            {...aria}
+            placeholder="name@example.com"
+            value={username}
+            autoCapitalize="none"
+            autoCorrect="off"
+            autoComplete="off"
+            onChange={(e) => setUsername(e.target.value)}
+          />
+        )}
       </Field>
-      <div className={cn('flex gap-2 pt-2', phone ? 'flex-col-reverse' : 'justify-end')}>
+      <Field id="login-password" label="Password">
+        {(aria) => (
+          <span className="flex min-w-0 flex-1 items-center gap-1">
+            <TextField
+              {...aria}
+              type={show ? 'text' : 'password'}
+              autoComplete="new-password"
+              placeholder={existing ? 'Leave empty to keep the current one' : undefined}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className={cn(show && 'zen-v2-pw-secret')}
+            />
+            <IconBtn label={show ? 'Hide' : 'Show'} onClick={() => setShow((s) => !s)}>
+              {show ? <EyeOff /> : <Eye />}
+            </IconBtn>
+            <IconBtn
+              label="Generate a strong password"
+              pressed={generating}
+              onClick={() => setGenerating((g) => !g)}
+            >
+              <Dices />
+            </IconBtn>
+          </span>
+        )}
+      </Field>
+      {generating && (
+        <Generator
+          domain={domain}
+          className={cn('zen-animate-fade', !phone && 'zen-v2-pw-card')}
+          onUse={(value) => {
+            setPassword(value)
+            setShow(true)
+            setGenerating(false)
+          }}
+        />
+      )}
+      <Field id="login-notes" label="Notes">
+        {(aria) => (
+          <TextArea {...aria} rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
+        )}
+      </Field>
+      <FormActions className="pt-2">
         <Btn onClick={onCancel}>Cancel</Btn>
         <Btn type="submit" variant="primary" disabled={!ready}>
           {existing ? 'Save changes' : 'Save login'}
         </Btn>
-      </div>
+      </FormActions>
     </form>
   )
 }

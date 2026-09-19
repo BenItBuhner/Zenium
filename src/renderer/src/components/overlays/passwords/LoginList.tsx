@@ -1,27 +1,28 @@
 import type { JSX } from 'react'
 import { useMemo, useState } from 'react'
-import { ChevronRight, KeyRound, Plus, Upload, X } from 'lucide-react'
+import { ChevronRight, X } from 'lucide-react'
 import type { CredentialSummary, UIState } from '@shared/types'
-import { cmd, run } from '@renderer/lib/api'
+import { run } from '@renderer/lib/api'
 import { groupBySite, hostOf, matchLogins, usePhone } from './lib'
 import {
   Btn,
   Description,
+  EmptyState,
   Heading,
   IconBtn,
   ListRow,
   Rows,
   SearchField,
   SiteIcon,
-  StatusGlyph,
   TextField
 } from './shared'
 
 /**
  * Saved logins grouped by site with a search over site, address, username and notes; the empty
- * state; and the sites the manager never offers to save for (Chrome's "Declined sites"). The
- * rows are the shared `.zen-v2-row` in `Rows`, bleeding 16 into the gutter so their text sits on
- * the gutter line under the group's heading (§9.25, §10.3).
+ * state (§9.17: one sentence and the one obvious next step, Add login); and the sites the
+ * manager never offers to save for (Chrome's "Declined sites"). The rows are the shared
+ * `.zen-v2-row` in `Rows`, bleeding 16 into the gutter so their text sits on the gutter line
+ * under the group's heading (§9.25, §10.3).
  */
 export function LoginList({
   state,
@@ -43,7 +44,9 @@ export function LoginList({
   if (status.count === 0) {
     return (
       <div className="zen-v2-pw-gutter pb-8">
-        <Empty onAdd={onAdd} onImport={() => void cmd('passwords.import', { conflict: 'skip' })} />
+        <EmptyState action={{ label: 'Add login', onPress: onAdd }}>
+          No saved passwords yet
+        </EmptyState>
         {status.neverSave.length > 0 && <NeverSave domains={status.neverSave} />}
       </div>
     )
@@ -67,9 +70,7 @@ export function LoginList({
         )}
       </div>
       {groups.length === 0 ? (
-        <Description className="py-10 text-center">
-          No logins match &ldquo;{query}&rdquo;.
-        </Description>
+        <EmptyState>No logins match &ldquo;{query}&rdquo;</EmptyState>
       ) : (
         groups.map((group) => (
           <section key={group.domain} className="flex flex-col">
@@ -103,33 +104,6 @@ export function LoginList({
         ))
       )}
       {!query && <NeverSave domains={status.neverSave} />}
-    </div>
-  )
-}
-
-/** The first run: the page's one primary is Add here; Import is the secondary. */
-function Empty({ onAdd, onImport }: { onAdd: () => void; onImport: () => void }): JSX.Element {
-  const phone = usePhone()
-  return (
-    <div className="zen-animate-fade flex flex-col items-center gap-5 px-4 py-12 text-center">
-      <StatusGlyph tone="accent" hero>
-        <KeyRound />
-      </StatusGlyph>
-      <div className="flex max-w-[400px] flex-col gap-1">
-        <h3 className="zen-v2-pw-panel-title">No saved passwords yet</h3>
-        <Description>
-          Logins you add here are encrypted on this device. Bring the ones you already have from
-          another browser or password manager.
-        </Description>
-      </div>
-      <div className={phone ? 'flex w-full max-w-[320px] flex-col gap-2' : 'flex gap-2'}>
-        <Btn variant="primary" onClick={onAdd}>
-          <Plus /> Add login
-        </Btn>
-        <Btn onClick={onImport}>
-          <Upload /> Import passwords
-        </Btn>
-      </div>
     </div>
   )
 }

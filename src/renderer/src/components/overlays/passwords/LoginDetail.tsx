@@ -1,5 +1,5 @@
 import type { JSX, ReactNode } from 'react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Copy, Eye, EyeOff, ExternalLink, Pencil, Trash2 } from 'lucide-react'
 import type { CredentialSummary, UIState } from '@shared/types'
 import { cmd, run } from '@renderer/lib/api'
@@ -14,7 +14,18 @@ import {
 } from './lib'
 import { LoginForm } from './LoginForm'
 import { PaneHeader } from './PageShell'
-import { Btn, Description, ErrorNote, IconBtn, Secret, SiteIcon, Title } from './shared'
+import {
+  Btn,
+  Description,
+  ErrorNote,
+  IconBtn,
+  PromptSheet,
+  type PromptSheetHandle,
+  Rows,
+  Secret,
+  SiteIcon,
+  Title
+} from './shared'
 import type { Gate } from './useReauth'
 
 /** How long a revealed password stays on screen before it is masked again. */
@@ -22,7 +33,9 @@ const REVEAL_MS = 30_000
 
 /**
  * One saved login as a pushed pane. Mounted with a key of the entry's id and `updatedAt`, so a
- * different entry or an edit that may have changed the password starts masked again.
+ * different entry or an edit that may have changed the password starts masked again. Deleting
+ * asks first: inline under the header on the desktop, in a confirmation sheet on a phone
+ * (§10.4: a destructive action is never an inline button there).
  */
 export function LoginDetail({
   state,
@@ -103,7 +116,7 @@ export function LoginDetail({
               </IconBtn>
               <IconBtn
                 label="Delete"
-                active={confirmDelete}
+                pressed={confirmDelete}
                 onClick={() => setConfirmDelete((c) => !c)}
               >
                 <Trash2 />
@@ -114,19 +127,22 @@ export function LoginDetail({
       />
       <div className="zen-v2-pw-column min-h-0 flex-1 overflow-y-auto pt-4" onScroll={onScroll}>
         <div className="zen-v2-pw-gutter flex flex-col gap-4 pb-8">
-          {confirmDelete && (
-            <div className="zen-v2-pw-inner-box zen-animate-fade flex flex-wrap items-center gap-3">
-              <ErrorNote className="min-w-0 flex-1 basis-[200px]">
-                Delete this login? You can undo for a minute.
-              </ErrorNote>
-              <div className="flex gap-2">
-                <Btn onClick={() => setConfirmDelete(false)}>Keep</Btn>
-                <Btn variant="danger" onClick={remove}>
-                  Delete
-                </Btn>
+          {confirmDelete &&
+            (phone ? (
+              <DeleteSheet onKeep={() => setConfirmDelete(false)} onDelete={remove} />
+            ) : (
+              <div className="zen-v2-pw-inner-box zen-animate-fade flex flex-wrap items-center gap-3">
+                <ErrorNote className="min-w-0 flex-1 basis-[200px]">
+                  Delete this login? You can undo for a minute.
+                </ErrorNote>
+                <div className="flex gap-2">
+                  <Btn onClick={() => setConfirmDelete(false)}>Keep</Btn>
+                  <Btn variant="danger" onClick={remove}>
+                    Delete
+                  </Btn>
+                </div>
               </div>
-            </div>
-          )}
+            ))}
 
           {editing ? (
             <LoginForm
@@ -147,7 +163,7 @@ export function LoginDetail({
             />
           ) : (
             <>
-              <div className="flex flex-col">
+              <Rows>
                 <FieldRow
                   label="Username"
                   value={
@@ -193,8 +209,8 @@ export function LoginDetail({
                 {credential.realm && (
                   <FieldRow label="HTTP authentication realm" value={credential.realm} />
                 )}
-              </div>
-              <div className="zen-v2-pw-meta flex flex-col gap-0.5">
+              </Rows>
+              <div className="flex flex-col gap-0.5">
                 <Description>Saved {formatDate(credential.createdAt)}</Description>
                 <Description>Changed {relativeTimeInSentence(credential.updatedAt)}</Description>
                 <Description>
@@ -224,7 +240,11 @@ export function LoginDetail({
   )
 }
 
-/** A field as a row on the surface: caption over the value, its controls trailing. */
+/**
+ * A field as a row on the surface: the shared row in its static form (§9.34) – the value is not
+ * a target, its icon buttons are – with the caption the 13/20 first line and the value the
+ * 15/20 second, the controls centred on the row (§9.18, §9.21).
+ */
 function FieldRow({
   label,
   value,
@@ -235,12 +255,46 @@ function FieldRow({
   actions?: ReactNode
 }): JSX.Element {
   return (
-    <div className="zen-v2-pw-row">
-      <div className="zen-v2-pw-row-text">
-        <Description>{label}</Description>
-        <div className="min-w-0 [overflow-wrap:anywhere]">{value}</div>
-      </div>
+    <div className="zen-v2-row zen-v2-pw-row" data-static="">
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="zen-v2-description">{label}</span>
+        <span className="min-w-0 [overflow-wrap:anywhere]">{value}</span>
+      </span>
       {actions && <div className="zen-v2-pw-row-control flex-nowrap">{actions}</div>}
     </div>
+  )
+}
+
+/** The phone's delete confirmation (§10.4, §9.23): a prompt sheet, Delete in the danger ink. */
+function DeleteSheet({
+  onKeep,
+  onDelete
+}: {
+  onKeep: () => void
+  onDelete: () => void
+}): JSX.Element {
+  const sheet = useRef<PromptSheetHandle>(null)
+  const deleting = useRef(false)
+  return (
+    <PromptSheet
+      ref={sheet}
+      name="passwords-delete"
+      title="Delete this login?"
+      description="You can undo for a minute."
+      onClosed={() => (deleting.current ? onDelete() : onKeep())}
+    >
+      <div className="zen-sheet-footer">
+        <Btn onClick={() => sheet.current?.dismiss()}>Keep</Btn>
+        <Btn
+          variant="danger"
+          onClick={() => {
+            deleting.current = true
+            sheet.current?.dismiss()
+          }}
+        >
+          Delete
+        </Btn>
+      </div>
+    </PromptSheet>
   )
 }

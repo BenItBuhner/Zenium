@@ -9,10 +9,11 @@ import { Slider } from '../../ui/slider'
 import {
   Btn,
   CheckRow,
+  ChoiceRow,
   Description,
   IconBtn,
-  Menulist,
   RadioRow,
+  Rows,
   Secret,
   SettingRow
 } from './shared'
@@ -43,7 +44,9 @@ let remembered: GeneratorOptions = DEFAULT_OPTIONS
 /**
  * Strong password generator: character classes and length, or an EFF-wordlist passphrase. With
  * a `domain` the site's published rules (apple/password-manager-resources) are applied and named.
- * The output sits in an inner box; the options are Proton radios, checkboxes and a menulist.
+ * The output sits in an inner box; the options are the shared rows – radios, checkboxes (a
+ * phone's switches), the slider row of §10.4 and, for the separator, a choice row: the menulist
+ * on the desktop, the value row that opens a picker sheet on a phone (§9.13, §10.4).
  */
 export function Generator({
   domain,
@@ -97,7 +100,7 @@ export function Generator({
         </IconBtn>
       </div>
 
-      <div role="radiogroup" aria-label="Kind" className="flex flex-col">
+      <Rows role="radiogroup" aria-label="Kind">
         <RadioRow
           checked={options.mode === 'password'}
           onSelect={() => set({ mode: 'password' })}
@@ -110,10 +113,10 @@ export function Generator({
           label="Passphrase"
           description="Words from the EFF list, easier to type"
         />
-      </div>
+      </Rows>
 
       {options.mode === 'password' ? (
-        <div className="flex flex-col">
+        <Rows>
           <SettingRow label="Length">
             <Slider
               min={8}
@@ -146,9 +149,9 @@ export function Generator({
             checked={options.symbols}
             onChange={(v) => toggleClass('symbols', v)}
           />
-        </div>
+        </Rows>
       ) : (
-        <div className="flex flex-col">
+        <Rows>
           <SettingRow label="Words">
             <Slider
               min={3}
@@ -171,15 +174,13 @@ export function Generator({
             checked={options.includeDigit}
             onChange={(v) => set({ includeDigit: v })}
           />
-          <SettingRow label="Separator">
-            <Menulist
-              label="Separator"
-              value={options.separator}
-              options={SEPARATORS}
-              onChange={(separator) => set({ separator })}
-            />
-          </SettingRow>
-        </div>
+          <ChoiceRow
+            label="Separator"
+            value={options.separator}
+            options={SEPARATORS}
+            onChange={(separator) => set({ separator })}
+          />
+        </Rows>
       )}
 
       {rules && <Description>Site rules from {rules}</Description>}

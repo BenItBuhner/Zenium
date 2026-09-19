@@ -3,13 +3,24 @@ import { CircleCheck, ExternalLink, ShieldAlert, ShieldOff, Repeat2 } from 'luci
 import type { CredentialSummary, UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { openSite, relativeTimeInSentence, usePhone } from './lib'
-import { Btn, Description, Heading, ListRow, Progress, Rows, SiteIcon, StatusGlyph } from './shared'
+import {
+  Btn,
+  Description,
+  EmptyRow,
+  Heading,
+  ListRow,
+  Progress,
+  Rows,
+  SiteIcon,
+  StatusGlyph
+} from './shared'
 
 /**
  * Password checkup: compromised (HIBP Pwned Passwords, k-anonymity range lookups), reused and
  * weak (zxcvbn) logins with a way to the site's password change. The headline counts distinct
- * logins – one login can be compromised, weak and reused at once – then a row group per finding.
- * Nothing here selects a row (§9.6 has no case): a finding's row opens the login or its site.
+ * logins – one login can be compromised, weak and reused at once – then a row group per finding,
+ * an empty group one plain row (§9.17). Nothing here selects a row (§9.6 has no case): a
+ * finding's row opens the login or its site.
  */
 export function Checkup({
   state,
@@ -99,11 +110,13 @@ export function Checkup({
             title="Compromised"
             count={compromised.length}
             hint="Found in a known data breach. Change these first."
-            empty="No compromised passwords."
+            empty="No compromised passwords"
           >
-            {compromised.map((c) => (
-              <IssueRow key={c.id} state={state} credential={c} onShow={onShow} />
-            ))}
+            <Rows>
+              {compromised.map((c) => (
+                <IssueRow key={c.id} state={state} credential={c} onShow={onShow} />
+              ))}
+            </Rows>
           </Findings>
           <Findings
             icon={<Repeat2 />}
@@ -111,7 +124,7 @@ export function Checkup({
             title="Reused"
             count={reused.reduce((n, g) => n + g.length, 0)}
             hint="One leak would open every account sharing the password."
-            empty="No reused passwords."
+            empty="No reused passwords"
           >
             {reused.map((group, i) => (
               <div key={i} className={i > 0 ? 'mt-2' : undefined}>
@@ -130,11 +143,13 @@ export function Checkup({
             title="Weak"
             count={weak.length}
             hint="Easy to guess. Replace them with generated passwords."
-            empty="No weak passwords."
+            empty="No weak passwords"
           >
-            {weak.map((c) => (
-              <IssueRow key={c.id} state={state} credential={c} onShow={onShow} />
-            ))}
+            <Rows>
+              {weak.map((c) => (
+                <IssueRow key={c.id} state={state} credential={c} onShow={onShow} />
+              ))}
+            </Rows>
           </Findings>
         </>
       )}
@@ -142,7 +157,10 @@ export function Checkup({
   )
 }
 
-/** A headed row group for one kind of finding; the glyph carries the status ink. */
+/**
+ * A headed row group for one kind of finding; the glyph carries the status ink. With nothing
+ * found the group is one plain row saying so (§9.17), at the rows' gutter.
+ */
 function Findings({
   icon,
   tone,
@@ -163,20 +181,30 @@ function Findings({
   return (
     <section className="flex flex-col">
       <Heading
-        className="px-3"
         trailing={<Description className="tabular-nums">{count}</Description>}
-        description={count === 0 ? empty : hint}
+        description={hint}
       >
         <span className="flex min-w-0 items-center gap-2">
           <StatusGlyph tone={count === 0 ? 'muted' : tone}>{icon}</StatusGlyph>
           <span className="truncate">{title}</span>
         </span>
       </Heading>
-      {count > 0 && <div className="flex flex-col">{children}</div>}
+      {count > 0 ? (
+        <div className="flex flex-col">{children}</div>
+      ) : (
+        <Rows>
+          <EmptyRow>{empty}</EmptyRow>
+        </Rows>
+      )}
     </section>
   )
 }
 
+/**
+ * A finding: the shared row in its static form (§9.34) – its two targets are the text, which
+ * opens the login, and the Change button, which opens the site – with the site tile on the
+ * first text line and the username the 13/20 second line.
+ */
 function IssueRow({
   state,
   credential,
@@ -188,16 +216,20 @@ function IssueRow({
 }): JSX.Element {
   return (
     <ListRow>
-      <SiteIcon domain={credential.domain} favicon={credential.favicon} />
+      <SiteIcon
+        domain={credential.domain}
+        favicon={credential.favicon}
+        className="zen-v2-pw-row-site"
+      />
       <button
         type="button"
-        className="zen-v2-pw-list-row-open min-w-0 flex-1 text-left"
+        className="zen-v2-pw-list-row-open flex min-w-0 flex-1 flex-col justify-center text-left"
         onClick={() => onShow(credential.id)}
       >
-        <div className="truncate">{credential.domain}</div>
-        <div className="zen-v2-pw-row-description truncate" data-clamp="false">
+        <span className="truncate">{credential.domain}</span>
+        <span className="zen-v2-description zen-v2-pw-one-line">
           {credential.username || 'No username'}
-        </div>
+        </span>
       </button>
       <Btn onClick={() => openSite(state, credential)}>
         <ExternalLink /> Change
