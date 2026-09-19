@@ -192,6 +192,15 @@ export interface BookmarkEditRequest {
   type: BookmarkNodeType
 }
 
+/** A selection the core asked the chrome to translate (the `translate.selection` event). */
+export interface TranslateSelectionRequest {
+  tabId: string
+  text: string
+  /** Where the user asked, in CSS pixels of the page view; null when unknown. */
+  x: number | null
+  y: number | null
+}
+
 export interface UiState {
   overlay: OverlayKind
   overlaySpaceId: string | null
@@ -310,6 +319,12 @@ export interface UiState {
   defaultBrowserPrompt: boolean
   /** "Add to Home screen": the install sheet (manifest) or the name-edit sheet, when open. */
   install: WebAppInstallPrompt | null
+  /**
+   * The selection the core asked the chrome to translate: the selection popover (desktop) or
+   * sheet (phone) is up for it. A request only – the surface holds the page's capture and the
+   * keyboard itself while it is up (`useFloatingChrome`, counted in `floatingChrome`).
+   */
+  translateSelection: TranslateSelectionRequest | null
   /** Safe-area insets of the host window (status bar, gesture bar, IME). */
   insets: Insets
   /**
@@ -398,6 +413,7 @@ export const uiStore = createStore<UiState>(
     downloadsOpen: false,
     defaultBrowserPrompt: false,
     install: null,
+    translateSelection: null,
     insets: { top: 0, right: 0, bottom: 0, left: 0 },
     stageActive: false,
     hoverCard: HOVER_CARD_HIDDEN,
@@ -1413,10 +1429,12 @@ export function closeTabsMenu(): void {
  * Only anchored panels or a security prompt are up: a bar panel, the star bubble, the zoom
  * bubble, the tab hover card, the downloads bubble, site information, the blocked pop-ups
  * popover, or a sign-in or certificate dialog. The page behind them is captured all the same
- * (they overlap the live view), but panels draw no scrim, so the capture shows undimmed;
- * dialogs dim it. A chassis sheet's scrim is its own one dim (§11.5), so the same holds under
- * the site-information sheet, and the security prompt's dim is the frame dialog host's scrim
- * alone (v2 §9.5, §11.5: one dim layer).
+ * (they overlap the live view), but panels and popovers draw no scrim (v2 §9.5, §9.20), so the
+ * capture shows undimmed; dialogs dim it. A chassis sheet's scrim is its own one dim (§11.5), so
+ * the same holds under the site-information sheet, and the security prompt's dim is the frame
+ * dialog host's scrim alone (v2 §9.5, §11.5: one dim layer). The chrome layer's popovers and
+ * menus (the translate selection popover, a menulist's list) count in `floatingChrome` and are
+ * the extensions' counterpart's case (`extensionChromeAloneOverContent`).
  */
 export function panelAloneOverContent(ui: UiState): boolean {
   return (

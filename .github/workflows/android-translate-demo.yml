@@ -1,15 +1,26 @@
 name: Android translate demo
 
 # Records offline page translation in the phone chrome on a hardware-accelerated Android emulator
-# and uploads the video, the screenshots and the driver's measurements (translate-results.json):
-# a Spanish article with a lang attribute and a German one without, auto-detected, translated with
-# models downloaded on first use (then read back from files/translate/), late content picked up,
-# reverted, plus a selection. The driver speaks to the core through window.zen.invoke, the way the
-# translate bar will. Dispatch-only: it takes about ten minutes and has nothing to say about a
-# change being correct. The build, the emulator and the Gradle cache live in
-# android-emulator-demo.yml; this file only picks the driver.
+# and uploads the video, the screenshots and the driver's measurements (translate-results.json).
+# Two sequences: `engine` speaks to the core through window.zen.invoke, the way the translate bar
+# does, and measures the engine on its own (a Spanish article with a lang attribute and a German
+# one without, auto-detected, translated with models downloaded on first use and then read back
+# from files/translate/, late content picked up, reverted, plus a selection); `ui` works the
+# translate bar itself with real touches (raised from the app menu and the glyph at the end of
+# the URL pill, Translate, Original, the options sheet, Settings > Languages). Dispatch-only: it
+# takes about ten minutes and has nothing to say about a change being correct. The build, the
+# emulator and the Gradle cache live in android-emulator-demo.yml; this file only picks the driver.
 on:
   workflow_dispatch:
+    inputs:
+      sequence:
+        description: Which driver runs
+        required: true
+        type: choice
+        options:
+          - engine
+          - ui
+        default: engine
 
 permissions:
   contents: read
@@ -24,6 +35,7 @@ jobs:
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
       script: .github/scripts/android-translate-demo.sh
+      script-env: TRANSLATE_SEQUENCE=${{ inputs.sequence }}
       artifact-name: android-translate-demo
       artifact-path: artifacts/android-translate-demo/
       timeout-minutes: 50

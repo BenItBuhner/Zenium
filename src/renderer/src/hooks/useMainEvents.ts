@@ -31,6 +31,7 @@ import {
   uiStore
 } from '@renderer/lib/ui'
 import { activeTab } from '@renderer/lib/selectors'
+import { openTranslateSelection } from '@renderer/lib/translate'
 import { browserStore } from '@renderer/lib/ui'
 import {
   closeExtensionPopup,
@@ -231,6 +232,10 @@ export function useMainEvents(): void {
               : undefined
         })
       ),
+      onEvent('translate.selection', ({ tabId, text, x, y }) => {
+        closeUrlbar()
+        openTranslateSelection({ tabId, text, x, y })
+      }),
       onEvent('insets', (insets) => {
         uiStore.set({ insets })
         const root = document.documentElement.style

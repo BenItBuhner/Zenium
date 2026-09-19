@@ -98,7 +98,16 @@ describe('ModelManager', () => {
     expect(manager.isInstalled(manager.registry.find(pair)!)).toBe(false)
     expect(manager.bytesToDownload([pair])).toBe(60)
     const progress: number[] = []
-    await manager.ensure(pair, (received, total) => progress.push(received * 1000 + total))
+    const info = (): { installed: boolean; downloading: boolean } | undefined =>
+      manager.info().find((m) => m.from === 'es' && m.to === 'en')
+    expect(info()).toMatchObject({ installed: false, downloading: false })
+    const running = manager.ensure(pair, (received, total) =>
+      progress.push(received * 1000 + total)
+    )
+    // Flagged from the call on, so a list drawn in the same tick shows the pair arriving.
+    expect(info()).toMatchObject({ installed: false, downloading: true })
+    await running
+    expect(info()).toMatchObject({ installed: true, downloading: false })
     expect(store.downloads).toEqual([
       'es_en_1.0_model.bin',
       'es_en_1.0_lex.bin',
