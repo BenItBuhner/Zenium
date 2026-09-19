@@ -1,0 +1,53 @@
+name: Android services-hardening UI demo
+
+# Temporary, removed before the branch is marked ready: records the blocked pop-up chip and its
+# sheet, the app-launch prompt, the HTTP sign-in dialog with its retry, the client-certificate
+# chooser and Settings › Security in the Settings tab on an emulator. The pages come from the
+# server kept beside the driver (android/app/src/androidTest/assets/services-hardening-demo-server.mjs),
+# started on the runner before the emulator boots (the emulator reaches it as 10.0.2.2:8787); the
+# certificate request comes from client.badssl.com, and the demo key pair the driver installs for
+# the chooser is minted here. The build, the emulator and the Gradle cache live in
+# android-emulator-demo.yml.
+on:
+  push:
+    branches: [cursor/services-hardening-ui-24d1]
+
+permissions:
+  contents: read
+
+jobs:
+  record:
+    name: Services hardening UI demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.ServicesHardeningDemo
+        DEMO_DIR=services-hardening-demo
+        DEMO_OUT=artifacts/android-services-hardening-ui-demo
+        DEMO_VIDEO=services-hardening-android-ui-demo.mp4
+      # The demo server must answer before the emulator boots; its log rides along in the artifact.
+      # The key pair's issuer carries the certificate site's acceptable-CA name so the system
+      # chooser, which filters by it, lists the pair; the site refuses a pair it did not issue.
+      setup-script: |
+        out=artifacts/android-services-hardening-ui-demo
+        keys=/tmp/services-hardening-demo
+        mkdir -p "$out" "$keys"
+        openssl req -x509 -newkey rsa:2048 -sha256 -days 7 -nodes \
+          -subj '/C=US/ST=California/L=San Francisco/O=BadSSL/CN=BadSSL Client Root Certificate Authority' \
+          -keyout "$keys/ca.key" -out "$keys/ca.crt" 2> /dev/null
+        openssl req -newkey rsa:2048 -nodes -subj '/CN=Zenium Demo Client/O=Zenium' \
+          -keyout "$keys/client.key" -out "$keys/client.csr" 2> /dev/null
+        openssl x509 -req -in "$keys/client.csr" -CA "$keys/ca.crt" -CAkey "$keys/ca.key" -CAcreateserial \
+          -days 7 -sha256 -out "$keys/client.crt" 2> /dev/null
+        openssl pkcs12 -export -inkey "$keys/client.key" -in "$keys/client.crt" -certfile "$keys/ca.crt" \
+          -name 'Zenium demo' -passout pass:zenium -certpbe PBE-SHA1-3DES -keypbe PBE-SHA1-3DES -macalg sha1 \
+          -out "$keys/client.p12"
+        (DEMO_P12="$keys/client.p12" setsid nohup node android/app/src/androidTest/assets/services-hardening-demo-server.mjs > "$out/server.log" 2>&1 &)
+        sleep 2
+        curl -sf -o /dev/null http://127.0.0.1:8787/popups
+        curl -sf -o /dev/null http://127.0.0.1:8787/client.p12
+        echo "demo server answering on 8787"
+      artifact-name: android-services-hardening-ui-demo
+      artifact-path: artifacts/android-services-hardening-ui-demo/
