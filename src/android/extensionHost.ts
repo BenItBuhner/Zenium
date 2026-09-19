@@ -52,6 +52,7 @@ import {
   type ExtensionRecord,
   type ExtensionRegistry
 } from '@core/extensions/registry'
+import { extensionUrl } from '@core/extensions/runtime/plan'
 import {
   STORE_UPDATE_URLS,
   isExtensionId,
@@ -793,14 +794,24 @@ export class AndroidExtensions implements ExtensionHost {
     this.browser.state.commitVolatile()
   }
 
-  /** The flag is the desktop's registry schema; the Android host does not route new tabs yet. */
   setNewTabOverride(id: string, enabled: boolean): void {
     if (setNewTabOverride(this.registry.extensions, id, enabled).length === 0) return
     this.persist()
     this.browser.state.commitVolatile()
   }
 
+  /**
+   * The page a new tab opens instead of Zenium's, as Chrome's `chrome_url_overrides.newtab`: the
+   * one enabled record that opted in (`setNewTabOverride`), on the emulated extension origin a
+   * tab serves. A record the runtime could not attach has no page to serve, so the new tab page
+   * is better than an error there.
+   */
   newTabUrl(): string | null {
+    for (const record of this.registry.extensions) {
+      if (!record.enabled || !record.newTabOverride || !record.newTabPage) continue
+      if (!this.attached.has(record.id)) continue
+      return extensionUrl(record.id, record.newTabPage)
+    }
     return null
   }
 

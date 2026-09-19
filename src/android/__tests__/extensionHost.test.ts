@@ -827,6 +827,51 @@ describe('AndroidExtensions: managing installs', () => {
     expect(h.opened).toEqual([`chrome-extension://${ID}/options.html`])
   })
 
+  it('routes new tabs to the override page once opted in, on the origin a tab serves', async () => {
+    const h = harness()
+    const crx = await buildCrx({
+      zip: sampleExtensionZip({
+        name: 'New Tab',
+        version: '1.0.0',
+        chrome_url_overrides: { newtab: 'newtab.html' }
+      }),
+      rsaKeys: [key]
+    })
+    await storeFront(h.kt, { cws: crx })
+    await h.ext.installFromStore(ID, null)
+    // Declared is not opted in: the record carries the page, the browser keeps its own new tab.
+    expect(h.ext.list()[0].newTabPage).toBe('newtab.html')
+    expect(h.ext.newTabUrl()).toBeNull()
+    h.ext.setNewTabOverride(ID, true)
+    expect(h.ext.newTabUrl()).toBe(`https://${ID}.ext.zenium.invalid/newtab.html`)
+    expect(h.registry().extensions[0].newTabOverride).toBe(true)
+    // Disabled, the page is not served: back to the browser's own.
+    await h.ext.setEnabled(ID, false)
+    expect(h.ext.newTabUrl()).toBeNull()
+    await h.ext.setEnabled(ID, true)
+    expect(h.ext.newTabUrl()).toBe(`https://${ID}.ext.zenium.invalid/newtab.html`)
+    h.ext.setNewTabOverride(ID, false)
+    expect(h.ext.newTabUrl()).toBeNull()
+  })
+
+  it('shows the browser new tab while the override extension failed to attach', async () => {
+    const h = harness()
+    const crx = await buildCrx({
+      zip: sampleExtensionZip({
+        name: 'New Tab',
+        version: '1.0.0',
+        chrome_url_overrides: { newtab: 'newtab.html' }
+      }),
+      rsaKeys: [key]
+    })
+    await storeFront(h.kt, { cws: crx })
+    h.runtime.refuse = () => 'no worker'
+    await h.ext.installFromStore(ID, null)
+    h.ext.setNewTabOverride(ID, true)
+    expect(h.ext.list()[0].error).toBe('no worker')
+    expect(h.ext.newTabUrl()).toBeNull()
+  })
+
   it('comes back from the registry on the next start and attaches what is enabled', async () => {
     const h = await installed()
     await h.ext.setEnabled(ID, false)
