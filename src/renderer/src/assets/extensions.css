@@ -379,9 +379,11 @@
    * The menulist trigger is main.css's `.zen-v2-menulist` (§6, §9.13, §9.34): the rectangular
    * control, 32 (40 on a phone) with a 1px border and a 16 chevron at its end, one unlayered
    * rule there like the other primitives. What is here is its popup: a panel at radius 12 with
-   * 6 padding, 28 rows at radius 6, a trailing check on the current option.
+   * 6 padding, 28 rows at radius 6, a trailing check on the current option. The compound
+   * selector outranks `.zen-v2-panel` (further down this layer, `--v2-radius-card` 8) so the
+   * §9.13 radius wins; the popup measured 8 while both were single-class rules.
    */
-  .zen-v2-menulist-popup {
+  .zen-v2-panel.zen-v2-menulist-popup {
     display: flex;
     flex-direction: column;
     padding: 6px;
