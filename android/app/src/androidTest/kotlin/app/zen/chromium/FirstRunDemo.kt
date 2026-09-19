@@ -163,7 +163,11 @@ class FirstRunDemo : DemoHarness(stateAsset = null, shotPrefix = "firstrun", han
         f.moveBy(0f, -0.6f * height, 500)
         f.up()
         beat()
-        if (!clickByLabel("Settings")) {
+        // A finger on the row (the menu flow's injected touch): the Settings tab comes up with its
+        // section chips. The tree's click when the row is not on screen to touch.
+        if (!touchTapLabelExpecting("Settings", "the Settings tab is up with its About section", timeoutMs = 10_000) { findByLabel("About") != null } &&
+            findByLabel("About") == null && !clickByLabel("Settings")
+        ) {
             Log.w(tag, "no Settings row")
             back()
             return

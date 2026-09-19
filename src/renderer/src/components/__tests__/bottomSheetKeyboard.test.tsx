@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  StrictMode,
   act,
   createRef,
   useState,
@@ -13,7 +14,12 @@ import { createRoot, type Root } from 'react-dom/client'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 import { PhoneSheet } from '../phone/PhoneSheet'
 import { viewportStore } from '@renderer/lib/formFactor'
-import { FrameDialogHost, chromeInertHeld } from '@renderer/lib/portals'
+import {
+  FrameDialogHost,
+  FrameDialogPortal,
+  chromeInertHeld,
+  useFrameDialog
+} from '@renderer/lib/portals'
 import { uiStore } from '@renderer/lib/ui'
 
 /*
@@ -249,6 +255,84 @@ const rows = (...labels: string[]): JSX.Element => (
   </ul>
 )
 
+/**
+ * A hosted sheet, as the Settings tab's pickers and sheets, `PhoneSheet`, the install and the
+ * downloads sheets place theirs (components/pages/settings/sheets.tsx `HostedSheet`): through
+ * `FrameDialogPortal` into the frame's dialog host, registered with it as a dialog that draws
+ * its own scrim, the `BottomSheet` inside placed `hosted`. Its footer's Cancel dismisses it.
+ */
+function Hosted({
+  open,
+  handle,
+  children,
+  onClosed
+}: {
+  open: boolean
+  handle: RefObject<BottomSheetHandle | null>
+  children: ReactNode
+  onClosed?: () => void
+}): JSX.Element | null {
+  const [up, setUp] = useState(open)
+  const [wasOpen, setWasOpen] = useState(open)
+  if (open !== wasOpen) {
+    setWasOpen(open)
+    if (open) setUp(true)
+  }
+  if (!up) return null
+  return (
+    <FrameDialogPortal>
+      <HostedBody
+        handle={handle}
+        onDismissed={() => {
+          setUp(false)
+          onClosed?.()
+        }}
+      >
+        {children}
+      </HostedBody>
+    </FrameDialogPortal>
+  )
+}
+
+function HostedBody({
+  handle,
+  onDismissed,
+  children
+}: {
+  handle: RefObject<BottomSheetHandle | null>
+  onDismissed: () => void
+  children: ReactNode
+}): JSX.Element {
+  const dismiss = (): void => handle.current?.dismiss()
+  useFrameDialog({ onScrimPress: dismiss, ownScrim: true })
+  return (
+    <div className="absolute inset-0" data-sheet-layer="true">
+      <BottomSheet
+        ref={handle}
+        hosted
+        onDismissed={onDismissed}
+        footer={
+          <button type="button" onClick={() => handle.current?.dismiss()}>
+            Cancel
+          </button>
+        }
+      >
+        {children}
+      </BottomSheet>
+    </div>
+  )
+}
+
+const press = (el: Element, type = 'pointerdown'): boolean =>
+  el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, button: 0 }))
+const scrims = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>('.zen-sheet-scrim')]
+/** A tap on a control: the WebView focuses it, then clicks it. */
+const tap = (el: HTMLElement): void =>
+  act(() => {
+    el.focus()
+    el.click()
+  })
+
 describe('focus moves into the sheet as it opens (§9.22)', () => {
   it('lands on the first row, not on the grabber', () => {
     render(<BottomSheet onDismissed={() => undefined}>{rows('Copy', 'Share')}</BottomSheet>)
@@ -434,6 +518,110 @@ describe('focus returns to the opener (§9.22, §9.24)', () => {
     act(() => frames.run(120))
     expect(active()).toBe(elsewhere)
     elsewhere.remove()
+  })
+
+  /*
+   * A hosted sheet (the frame dialog host, `ownScrim`): the host used to hold the chrome inert
+   * for it too, and that hold still stood – the host's state clears a commit after the sheet's
+   * own layout cleanup – as the sheet returned the focus, so the opener under the inert chrome
+   * refused it and focus fell to `body`. The sheet's hold is the one hold: released, then the
+   * return, in the one cleanup, whichever way the sheet was closed.
+   */
+  describe('a hosted sheet returns it too, the host holding nothing over it', () => {
+    beforeEach(() => {
+      viewportStore.set({ ...viewportStore.get(), formFactor: 'phone' })
+    })
+
+    it('closed by its Cancel, by a scrim press and by predictive back', async () => {
+      const handle = createRef<BottomSheetHandle>()
+      const onClosed = vi.fn()
+      const view = (open: boolean): ReactElement => (
+        <>
+          <FrameDialogHost frame />
+          <Hosted open={open} handle={handle} onClosed={onClosed}>
+            {rows('Light', 'Dark')}
+          </Hosted>
+        </>
+      )
+      const opened = async (): Promise<void> => {
+        // The surface's `open` went false with the close; the opener is pressed again.
+        rerender(view(false))
+        act(() => opener.focus())
+        rerender(view(true))
+        await settle()
+        act(() => frames.run(60))
+        expect(sheets()).toHaveLength(1)
+        expect(active()).toBe(byText('Light'))
+        expect(chrome.hasAttribute('inert')).toBe(true)
+      }
+      const gone = (closes: number): void => {
+        expect(onClosed).toHaveBeenCalledTimes(closes)
+        expect(sheets()).toHaveLength(0)
+        expect(chrome.hasAttribute('inert')).toBe(false)
+        expect(chromeInertHeld()).toBe(false)
+        expect(active()).toBe(opener)
+      }
+      render(view(false))
+      await opened()
+      tap(byText('Cancel'))
+      act(() => frames.run(120))
+      gone(1)
+
+      await opened()
+      act(() => {
+        press(scrims()[0]!)
+      })
+      act(() => frames.run(120))
+      gone(2)
+
+      await opened()
+      act(() => handle.current!.backProgress(0.4))
+      act(() => handle.current!.commitBack())
+      act(() => frames.run(120))
+      gone(3)
+    })
+
+    it('stacked: the picker gives the focus back to the item sheet’s row, the item sheet to the opener (§9.24)', async () => {
+      const lower = createRef<BottomSheetHandle>()
+      const upper = createRef<BottomSheetHandle>()
+      const view = (second: boolean): ReactElement => (
+        <>
+          <FrameDialogHost frame />
+          <Hosted open handle={lower}>
+            {rows('Name', 'Colour')}
+          </Hosted>
+          <Hosted open={second} handle={upper}>
+            {rows('Blue', 'Green')}
+          </Hosted>
+        </>
+      )
+      render(view(false))
+      await settle()
+      act(() => frames.run(60))
+      expect(active()).toBe(byText('Name'))
+      act(() => byText('Colour').focus())
+      rerender(view(true))
+      await settle()
+      act(() => frames.run(60))
+      const [item, picker] = sheets()
+      expect(active()).toBe(byText('Blue'))
+      expect(item!.hasAttribute('inert')).toBe(true)
+      expect(picker!.hasAttribute('inert')).toBe(false)
+      expect(chrome.hasAttribute('inert')).toBe(true)
+
+      tap(byText('Green'))
+      act(() => upper.current!.dismiss())
+      act(() => frames.run(120))
+      expect(sheets()).toHaveLength(1)
+      expect(item!.hasAttribute('inert')).toBe(false)
+      expect(active()).toBe(byText('Colour'))
+      expect(chrome.hasAttribute('inert')).toBe(true)
+
+      dismissAndSettle(lower.current!)
+      expect(sheets()).toHaveLength(0)
+      expect(chrome.hasAttribute('inert')).toBe(false)
+      expect(active()).toBe(opener)
+    })
   })
 })
 
@@ -708,5 +896,117 @@ describe('keyboard-relative detents', () => {
     expect(body.scrollTop).toBe(248)
     act(() => frames.run(60))
     expect(sheet.style.height).toBe('760px')
+  })
+})
+
+/**
+ * A ResizeObserver for happy-dom, which has none: every `observe` goes on record, with whether
+ * it was made inside a delivery, and a test delivers a target's resize by hand, as the WebView
+ * does at the end of a frame.
+ */
+class FakeResizeObserver implements ResizeObserver {
+  static observed: Element[] = []
+  static observedInDelivery: Element[] = []
+  private static readonly live = new Set<FakeResizeObserver>()
+  private static delivering = false
+  private readonly targets = new Set<Element>()
+
+  constructor(private readonly callback: ResizeObserverCallback) {}
+
+  observe(target: Element): void {
+    this.targets.add(target)
+    FakeResizeObserver.live.add(this)
+    FakeResizeObserver.observed.push(target)
+    if (FakeResizeObserver.delivering) FakeResizeObserver.observedInDelivery.push(target)
+  }
+
+  unobserve(target: Element): void {
+    this.targets.delete(target)
+  }
+
+  disconnect(): void {
+    this.targets.clear()
+    FakeResizeObserver.live.delete(this)
+  }
+
+  static reset(): void {
+    FakeResizeObserver.observed = []
+    FakeResizeObserver.observedInDelivery = []
+    FakeResizeObserver.live.clear()
+    FakeResizeObserver.delivering = false
+  }
+
+  /** `target` changed size: one delivery to each of its observers. */
+  static deliver(target: Element): void {
+    FakeResizeObserver.delivering = true
+    try {
+      for (const o of FakeResizeObserver.live) if (o.targets.has(target)) o.callback([], o)
+    } finally {
+      FakeResizeObserver.delivering = false
+    }
+  }
+}
+
+describe("the keyboard lift and the sheet's observers", () => {
+  const bodyObservations = (body: Element): number =>
+    FakeResizeObserver.observed.filter((t) => t === body).length
+
+  beforeEach(() => {
+    FakeResizeObserver.reset()
+    vi.stubGlobal('ResizeObserver', FakeResizeObserver)
+  })
+
+  for (const strict of [false, true]) {
+    it(`the body is observed once for the life of the sheet, not once per frame of the lift${strict ? ' (under <StrictMode>)' : ''}`, async () => {
+      const sheet = (
+        <BottomSheet onDismissed={() => undefined}>
+          <input aria-label="Name" />
+        </BottomSheet>
+      )
+      render(strict ? <StrictMode>{sheet}</StrictMode> : sheet)
+      await settle()
+      act(() => frames.run(60))
+      const body = document.querySelector<HTMLElement>('.zen-sheet-scroll')!
+      const layer = document.querySelector<HTMLElement>('[data-sheet-layer]')!
+      const mounted = bodyObservations(body)
+      // StrictMode rehearses the ref: attached, let go of and attached again.
+      expect(mounted).toBe(strict ? 2 : 1)
+
+      // The keyboard's lift: the host streams the inset frame by frame, the sheet renders on
+      // each, and the layer's own observer sees it shrink.
+      for (let i = 1; i <= 12; i++) {
+        keyboard(i * 25)
+        act(() => FakeResizeObserver.deliver(layer))
+        act(() => frames.run(1))
+      }
+      expect(bodyObservations(body)).toBe(mounted)
+      expect(FakeResizeObserver.observedInDelivery).toEqual([])
+    })
+  }
+
+  it("a sheet rendered again inside a resize delivery – the layout reporter's flush – observes nothing anew", async () => {
+    render(
+      <BottomSheet onDismissed={() => undefined}>
+        <input aria-label="Name" />
+      </BottomSheet>
+    )
+    await settle()
+    act(() => frames.run(60))
+    const body = document.querySelector<HTMLElement>('.zen-sheet-scroll')!
+    const mounted = bodyObservations(body)
+
+    // The content frame's observer (`useLayoutReporter`) fires as the frame shrinks under the
+    // keyboard and writes a store the shell renders from, synchronously: the sheet renders again
+    // in that flush, inside the delivery. An observation made there, on an element no deeper
+    // than the frame, is one the delivery has already passed: the WebView's
+    // `ResizeObserver loop limit exceeded`.
+    const frame = new FakeResizeObserver(() => {
+      act(() => uiStore.set((s) => ({ insets: { ...s.insets, bottom: s.insets.bottom + 40 } })))
+    })
+    frame.observe(chrome)
+    for (let i = 0; i < 8; i++) FakeResizeObserver.deliver(chrome)
+    expect(uiStore.get().insets.bottom).toBe(320)
+    expect(FakeResizeObserver.observedInDelivery).toEqual([])
+    expect(bodyObservations(body)).toBe(mounted)
   })
 })

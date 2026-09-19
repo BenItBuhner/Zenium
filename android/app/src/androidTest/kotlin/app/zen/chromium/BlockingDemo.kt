@@ -122,11 +122,17 @@ class BlockingDemo : DemoHarness("blocking-demo-state.json", "services-blocking-
         tapSiteIcon(f)
         SystemClock.sleep(3_000)
         shot("04-site-info-ads-exception")
-        if (clickByLabel("Reset Ads and trackers permission")) {
-            SystemClock.sleep(2_500)
+        // A finger on the row's reset control (the sheet flow's injected touch): the exception
+        // must leave the core's list on it. The command is the fallback for a control the tree
+        // does not carry, never for a touch that did not take (that is a fault of the run).
+        val reset = touchTapLabelExpecting("Reset Ads and trackers permission", "the site's exception is gone from the core") {
+            blockingStatus().getJSONArray("siteExceptions").length() == 0
+        }
+        if (reset) {
+            SystemClock.sleep(1_500)
             note("  reset from the sheet: siteExceptions=${blockingStatus().getJSONArray("siteExceptions")}")
         } else {
-            Log.w(tag, "no reset button in the sheet; resetting through the command")
+            Log.w(tag, "the sheet's reset did not do it; resetting through the command")
             invoke("blocking.setSiteException", """{"site":"$DEMO_URL","excepted":false}""")
         }
         dismissSheet(f)

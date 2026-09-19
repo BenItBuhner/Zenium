@@ -82,7 +82,11 @@ class ZoomSheetDemo : PageControlsDemo("zoom-demo-state.json", "zoom", "zoom-dem
         // 2. App menu -> Zoom…: the sheet docks under the page, which shrinks by its height and
         //    stays live.
         if (!pickMenuItem(ZOOM_ITEM, "menu-zoom")) return
-        if (!awaitSheet()) return
+        // What the touched menu item does, asserted (the rule in DemoHarness): the sheet comes up.
+        if (!awaitSheet()) {
+            touchFault("$ZOOM_ITEM under a finger opened no zoom sheet")
+            return
+        }
         snap("zoom-sheet-default")
         beat()
 
@@ -94,8 +98,9 @@ class ZoomSheetDemo : PageControlsDemo("zoom-demo-state.json", "zoom", "zoom-dem
         snap("zoom-sheet-150-by-slider")
         beat()
 
-        // 4. Plus steps to 175; Reset goes back to the default and greys itself out.
-        tapControl("Zoom in")
+        // 4. Plus steps to 175 – the zoom sheet's injected touch, the header's reading asserted to
+        //    move on it; Reset goes back to the default and greys itself out.
+        tapControl("Zoom in", stepping = true)
         SystemClock.sleep(1_200)
         probe("stepped to 175")
         Log.i(tag, "sheet reads ${sheetValue()} after the step")
@@ -188,8 +193,10 @@ class ZoomSheetDemo : PageControlsDemo("zoom-demo-state.json", "zoom", "zoom-dem
     /**
      * A finger on the middle of the sheet's control labelled `label` (the tree's bounds are exact
      * for the sheet, which does not scroll), or the tree's click when the tree has no bounds.
+     * With `stepping` the touch is the sheet flow's asserted one (the rule in DemoHarness): the
+     * header's reading must move on it.
      */
-    private fun tapControl(label: String) {
+    private fun tapControl(label: String, stepping: Boolean = false) {
         val bounds = waitFor(label, 5_000)
         if (bounds == null) {
             Log.w(tag, "no $label in the sheet")
@@ -199,7 +206,15 @@ class ZoomSheetDemo : PageControlsDemo("zoom-demo-state.json", "zoom", "zoom-dem
             if (!clickByLabel(label)) Log.w(tag, "$label could not be clicked")
             return
         }
+        val before = sheetValue()
         Finger().tap(bounds.exactCenterX(), bounds.exactCenterY())
+        if (stepping) {
+            val deadline = SystemClock.uptimeMillis() + 5_000
+            while (SystemClock.uptimeMillis() < deadline && sheetValue() == before) SystemClock.sleep(150)
+            val after = sheetValue()
+            if (after == before) touchFault("the touch on the zoom sheet's $label left the header at $before")
+            else Log.i(tag, "the touch on $label took: the sheet reads $after, from $before")
+        }
     }
 
     /**

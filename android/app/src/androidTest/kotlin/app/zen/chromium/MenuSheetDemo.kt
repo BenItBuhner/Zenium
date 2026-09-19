@@ -34,8 +34,9 @@ import kotlin.math.roundToInt
  * once the warm-up is done, `recording` from the workflow once screenrecord is rolling, `done`
  * when the sequence is over. Screenshots land next to them as `menu-sheet-<theme>-*.png`; the
  * `theme` instrumentation argument (`light`, the default, or `dark`) picks the colour scheme the
- * profile is seeded with. It only asserts that it could run; what the chrome does with the
- * touches is what the recording is for.
+ * profile is seeded with. It asserts that it could run and that the one finger it puts on a row
+ * of the sheet (the Bookmarks submenu's) took; what the chrome does with the other touches is
+ * what the recording is for.
  */
 @RunWith(AndroidJUnit4::class)
 class MenuSheetDemo {
@@ -71,6 +72,9 @@ class MenuSheetDemo {
         handshake()
         demo()
         Log.i(TAG, "done")
+        if (touchFaults.isNotEmpty()) {
+            throw AssertionError("${touchFaults.size} touch(es) did not take: ${touchFaults.joinToString("; ")}")
+        }
     }
 
     // --- setup -----------------------------------------------------------------------------------
@@ -242,8 +246,14 @@ class MenuSheetDemo {
         f.up()
         beat()
 
-        // 8. A submenu: the sheet shrinks to fit it, the title row grows a back chevron.
-        if (clickByLabel("Zoom")) {
+        // 8. A submenu: the sheet shrinks to fit it, the title row grows a back chevron. Bookmarks
+        //    is the phone menu's one submenu (the Zoom row is the zoom sheet's on a host with page
+        //    controls), third from the top and so inside the peek: the menu flow's injected touch
+        //    (the rule in DemoHarness), the submenu's rows asserted to be up on it. The tree's
+        //    click gets there when the touch did not take, so the rest is recorded.
+        if (touchLabelExpecting("Bookmarks", "the Bookmarks submenu is up") { findByLabel("Show Bookmarks") != null } ||
+            findByLabel("Show Bookmarks") != null || clickByLabel("Bookmarks")
+        ) {
             SystemClock.sleep(1_500)
             shot("submenu")
             clickByLabel("Back", enabledOnly = true)
@@ -360,6 +370,46 @@ class MenuSheetDemo {
         while (!node.isClickable) node = node.parent ?: return false
         return node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
     }
+
+    /**
+     * A real touch on the middle of the node labelled `label`, then up to `timeoutMs` for `took`
+     * to hold – the step's claim, named by `effect` (DemoHarness's `touchTapLabelExpecting`, for
+     * this driver of its own). True when it held. False without a touch when nothing on screen
+     * reads `label`; false with a fault noted when the touch went in and `took` never held – the
+     * run fails on it once the recording is done ([record]).
+     */
+    private fun touchLabelExpecting(label: String, effect: String, timeoutMs: Long = 5_000, took: () -> Boolean): Boolean {
+        var bounds = findByLabel(label)
+        if (bounds == null) {
+            Log.w(TAG, "nothing on screen reads '$label' to touch")
+            return false
+        }
+        // The finger goes in once two reads of the row's bounds agree: the sheet may still be
+        // springing back from the pull before, and the tree lags it on the emulator.
+        val settle = SystemClock.uptimeMillis() + 3_000
+        while (SystemClock.uptimeMillis() < settle) {
+            SystemClock.sleep(350)
+            val again = findByLabel(label) ?: break
+            if (again == bounds) break
+            bounds = again
+        }
+        Finger().tap(bounds.exactCenterX(), bounds.exactCenterY())
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (took()) {
+                Log.i(TAG, "the touch on '$label' at $bounds took: $effect")
+                return true
+            }
+            SystemClock.sleep(150)
+        }
+        val fault = "a touch on '$label' at $bounds did not take: not $effect within $timeoutMs ms"
+        Log.e(TAG, "TOUCH FAULT: $fault")
+        touchFaults += fault
+        return false
+    }
+
+    /** The touches that did not take; [record] fails on them once the recording is done. */
+    private val touchFaults = ArrayList<String>()
 
     private fun shot(name: String) {
         val bitmap = ui.takeScreenshot() ?: return

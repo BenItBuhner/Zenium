@@ -13,10 +13,11 @@ import java.io.File
 
 /**
  * Shows the phone chrome's touch fixes on a device so the `android-touchfix-demo` workflow can
- * record them: the History, Bookmarks and Downloads panels with their per-row Remove buttons
- * visible under a finger (no hover on a touch screen), one history entry and one bookmark removed
- * by tapping that button, and the find bar in its phone layout (flexing field, 44 px buttons, a
- * compact n/m counter, the keyboard's search key) stepping through the matches on example.com.
+ * record them: the History and Downloads panels with their per-row Remove buttons visible under
+ * a finger (no hover on a touch screen), one history entry removed by tapping that button, one
+ * bookmark removed through its row's 3-dot menu (#90's panel has no Remove button on a row), and
+ * the find bar in its phone layout (flexing field, 44 px buttons, a compact n/m counter, the
+ * keyboard's search key) stepping through the matches on example.com.
  *
  * The profile is seeded with a few visits, bookmarks and downloads (the `touchfix-demo-*.json`
  * assets; `{{now-Nh}}` stamps become timestamps N hours before the run so the panels show
@@ -66,21 +67,27 @@ class TouchFixDemo : DemoHarness("touchfix-demo-state.json", "touchfix-$THEME", 
     }
 
     override fun demo() {
-        // 1. History: every row shows its Remove button; tapping one removes the entry.
+        // 1. History: every row shows its Remove button; tapping one removes the entry – the
+        //    panel sheet's injected touch (the rule in DemoHarness), the panel asserted to list
+        //    one row fewer on it.
         openPanel("History", "Remove from history")
         dismissKeyboard()
         shot("01-history")
-        tapFirst("Remove from history")
+        removeFirst("Remove from history")
         SystemClock.sleep(1_500)
         shot("02-history-removed")
         back()
         SystemClock.sleep(1_500)
 
-        // 2. Bookmarks, the same way.
-        openPanel("Bookmarks", "Remove bookmark")
+        // 2. Bookmarks: the panel is one level down, under the Bookmarks submenu, and since #90
+        //    its rows carry a 3-dot menu button (as Chrome's) rather than a Remove button. The
+        //    first row's button under a finger – the panel's injected touch, its row menu up on it
+        //    – then the menu's Delete under another – the row menu's injected touch – and the
+        //    panel lists one row fewer.
+        openPanel("Bookmarks", BOOKMARKS_TITLE, via = "Show Bookmarks")
         dismissKeyboard()
         shot("03-bookmarks")
-        tapFirst("Remove bookmark")
+        deleteFirstBookmark()
         SystemClock.sleep(1_500)
         shot("04-bookmarks-removed")
         back()
@@ -142,10 +149,13 @@ class TouchFixDemo : DemoHarness("touchfix-demo-state.json", "touchfix-$THEME", 
     }
 
     /**
-     * Open the menu, expand it so the whole list is in reach, tap the item labelled `item`, and
-     * wait for `expect` (something only the opened surface has) to show up.
+     * Open the menu, expand it so the whole list is in reach, tap the item labelled `item` with a
+     * finger – then, when `item` opens a submenu, the submenu's row `via` with another (once the
+     * submenu has slid in and the sheet shrunk to it, on bounds that hold still) – and wait for
+     * `expect` (something only the opened surface has) to show up: the menu flow's injected
+     * touch, its result asserted (the run errors out without `expect`).
      */
-    private fun openPanel(item: String, expect: String) {
+    private fun openPanel(item: String, expect: String, via: String? = null) {
         openMenu()
         waitFor(HANDLE_LABEL, 6_000) ?: error("the menu never opened")
         SystemClock.sleep(1_200)
@@ -158,7 +168,11 @@ class TouchFixDemo : DemoHarness("touchfix-demo-state.json", "touchfix-$THEME", 
         SystemClock.sleep(2_000)
         val target = reveal(item) ?: error("no $item in the menu")
         Finger().tap(target.exactCenterX(), target.exactCenterY())
-        waitFor(expect, 8_000) ?: error("$item opened nothing with $expect")
+        if (via != null) {
+            SystemClock.sleep(1_500)
+            if (!touchTapLabel(via)) error("$item opened no submenu with $via")
+        }
+        waitFor(expect, 8_000) ?: error("${via ?: item} opened nothing with $expect")
         SystemClock.sleep(2_000)
     }
 
@@ -168,6 +182,46 @@ class TouchFixDemo : DemoHarness("touchfix-demo-state.json", "touchfix-$THEME", 
         Finger().tap(target.exactCenterX(), target.exactCenterY())
     }
 
+    /**
+     * [tapFirst] on a row's Remove control, the panel asserted to carry exactly one fewer of them
+     * within five seconds: the row went with its entry (a panel that left the tree altogether
+     * would read none, not one fewer). A touch that left the count is a fault of the run (the
+     * panel did not take the finger); the recording goes on.
+     */
+    private fun removeFirst(label: String) {
+        val before = findNodes(label).size
+        tapFirst(label)
+        val deadline = SystemClock.uptimeMillis() + 5_000
+        var now = before
+        while (SystemClock.uptimeMillis() < deadline) {
+            now = findNodes(label).size
+            if (now == before - 1) {
+                Log.i(tag, "the touch on the first '$label' took: $before -> $now rows")
+                return
+            }
+            SystemClock.sleep(200)
+        }
+        touchFault("the touch on the panel's first '$label' left $now of $before rows in place")
+    }
+
+    /**
+     * Delete the bookmarks panel's first row through its 3-dot menu, both presses a finger's: the
+     * row's button (named `More options for <title>`, so the rows are counted by that prefix),
+     * whose menu must come up with its Delete; then Delete, after which the panel must list one
+     * row fewer (the menu leaves on a touch through to the scrim too, but then every row stays).
+     * The panel is inert under the menu and out of the tree until the menu has left, so the
+     * count is read once it is back.
+     */
+    private fun deleteFirstBookmark() {
+        val rows = { findNodes { it.startsWith(ROW_MENU_PREFIX) } }
+        val before = rows().size
+        val first = rows().firstOrNull() ?: error("no bookmark row with a menu button in the panel")
+        val button = (first.contentDescription ?: first.text).toString()
+        if (!touchTapLabelExpecting(button, "the row menu is up with its Delete", timeoutMs = 6_000) { findByLabel("Delete") != null }) return
+        SystemClock.sleep(1_200)
+        touchTapLabelExpecting("Delete", "the panel lists ${before - 1} rows, from $before", timeoutMs = 8_000) { rows().size == before - 1 }
+    }
+
     companion object {
         private val THEME = InstrumentationRegistry.getArguments().getString("theme").let {
             if (it == "dark") "dark" else "light"
@@ -175,5 +229,9 @@ class TouchFixDemo : DemoHarness("touchfix-demo-state.json", "touchfix-$THEME", 
         private val STAMP = Regex("\"\\{\\{now(?:-(\\d+)h)?\\}\\}\"")
         private const val MENU_LABEL = "Menu"
         private const val HANDLE_LABEL = "Resize menu"
+        /** The bookmarks panel's header (#90: the mobile folder is what opens). */
+        private const val BOOKMARKS_TITLE = "Mobile bookmarks"
+        /** A bookmark row's 3-dot button is named after its row: `More options for <title>`. */
+        private const val ROW_MENU_PREFIX = "More options for "
     }
 }

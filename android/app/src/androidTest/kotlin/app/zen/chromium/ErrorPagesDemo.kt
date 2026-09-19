@@ -103,9 +103,12 @@ class ErrorPagesDemo : DemoHarness("share-demo-state.json", "errors", "errors-de
         SystemClock.sleep(1_800)
         shot("06-screenshot-toast")
         SystemClock.sleep(1_500)
-        menuItem("Downloads")
+        val touched = menuItem("Downloads")
         val row = awaitText(SCREENSHOT_ROW, 8_000)
         Log.i(tag, "downloads row for the screenshot: ${row ?: "none"}; numeric rows: ${texts(NUMERIC_ROW)}")
+        // The menu flow's injected touch (the rule in DemoHarness): its result is the panel with
+        // the screenshot's row, not the menu going away (a touch through to the scrim does that too).
+        if (touched && row == null) touchFault("the touch on the menu's Downloads row opened no panel with the screenshot's row")
         SystemClock.sleep(800)
         shot("07-downloads")
         dismissKeyboard()
@@ -293,14 +296,18 @@ class ErrorPagesDemo : DemoHarness("share-demo-state.json", "errors", "errors-de
     }
 
     /**
-     * Open the menu, expand it so the whole list is in reach, and tap the item labelled `label`
-     * (through accessibility when the tap left the menu open: bounds of scrolled content lag).
+     * Open the menu, expand it so the whole list is in reach, and touch the item labelled `label`
+     * – the menu flow's injected touch (the rule in DemoHarness); the caller asserts what the item
+     * did. True when a finger went in; false when the menu or the item never showed, or the row
+     * had no bounds on screen to touch (the tree's click then gets to the item's page, with no
+     * touch to assert). A touch that left the menu open is a fault of the run, and the tree's
+     * click then gets to the item's page.
      */
-    private fun menuItem(label: String) {
+    private fun menuItem(label: String): Boolean {
         openMenu()
         if (waitFor(HANDLE_LABEL, 6_000) == null) {
             Log.w(tag, "the menu never opened for $label")
-            return
+            return false
         }
         SystemClock.sleep(1_200)
         val handle = findByLabel(HANDLE_LABEL)
@@ -316,15 +323,24 @@ class ErrorPagesDemo : DemoHarness("share-demo-state.json", "errors", "errors-de
         if (target == null) {
             Log.w(tag, "no $label in the menu")
             back()
-            return
+            return false
         }
-        Finger().tap(target.exactCenterX(), target.exactCenterY())
-        SystemClock.sleep(1_500)
-        if (findByLabel(HANDLE_LABEL) != null) {
-            Log.w(tag, "the tap on $label left the menu open; clicking it")
+        // The finger goes in once the row's bounds hold still (the tree lags the menu's scroll on
+        // the emulator) and inside the touchable window (touchTapLabel).
+        if (!touchTapLabel(label)) {
+            Log.w(tag, "no bounds on screen to touch for $label at $target; clicking it through the tree")
+            clickByLabel(label)
+            SystemClock.sleep(1_500)
+            return false
+        }
+        // The menu's leave takes three seconds on the software GPU and the tree reports it
+        // later still, so the menu is polled for going rather than read once.
+        if (!waitForGone(HANDLE_LABEL, 10_000)) {
+            touchFault("the touch on the menu's $label row left the menu open")
             clickByLabel(label)
             SystemClock.sleep(1_500)
         }
+        return true
     }
 
     private fun tapByLabel(label: String) {
@@ -419,7 +435,8 @@ class ErrorPagesDemo : DemoHarness("share-demo-state.json", "errors", "errors-de
         private const val ERROR_PREFIX = "zen://error"
         /** WebView's built-in error page's title: must not reach history or the zero-suggest. */
         private const val INTERSTITIAL_TITLE = "Webpage not available"
-        private val SCREENSHOT_ROW = Regex("^Screenshot .*\\.png$")
+        /** The downloads sheet's row for the screenshot: its name, then its status and summary in one label (`<name>. <status>. <summary>`). */
+        private val SCREENSHOT_ROW = Regex("^Screenshot .*\\.png")
         private val NUMERIC_ROW = Regex("^\\d{6,}$")
         private val FAILED_URLS = Regex("nonexistent\\.invalid|localhost:1|localhost:81")
     }

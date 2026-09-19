@@ -24,6 +24,7 @@ import {
 } from '@renderer/lib/pull'
 import { Bridge, getNativeBridge } from './bridge'
 import { fetchDeferredDocuments } from './handoff'
+import { installKeyboardPolicy } from './keyboard'
 import { AndroidPlatform, type BootInfo, type HostEventPayloads } from './platform'
 import { createPreviewBridge } from './preview'
 import { AndroidStoreIO, readDocument } from './storeIo'
@@ -124,17 +125,8 @@ export async function bootAndroid(): Promise<{ browser: Browser; api: ZenApi; pr
 
   // Chrome inputs (URL bar, rename, settings) are focused programmatically after an async
   // snapshot, i.e. outside the tap's user-gesture window, so the WebView would not raise the
-  // keyboard on its own.
-  if (!preview) {
-    const isEditable = (el: EventTarget | null): boolean =>
-      el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement
-    document.addEventListener('focusin', (e) => {
-      if (isEditable(e.target)) bridge.send('chrome.showKeyboard')
-    })
-    document.addEventListener('focusout', (e) => {
-      if (isEditable(e.target) && !isEditable(e.relatedTarget)) bridge.send('chrome.hideKeyboard')
-    })
-  }
+  // keyboard on its own; and a busy form's field turned editable again gets it back (keyboard.ts).
+  if (!preview) installKeyboardPolicy((message) => bridge.send(message))
 
   const api: ZenApi = {
     invoke: (name, args) =>

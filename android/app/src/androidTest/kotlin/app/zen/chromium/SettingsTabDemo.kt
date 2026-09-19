@@ -178,11 +178,14 @@ class SettingsTabDemo : DemoHarness("settings-tab-demo-state.json", "android-set
             }
             SystemClock.sleep(1_000)
             shot("04-picker-sheet")
-            tapText("Dark", exact = true)
+            // The picker sheet's injected touch (the rule in DemoHarness): the option under a
+            // finger, and the core's scheme must flip on it – a finding, and a fault of the run.
+            val touched = tapText("Dark", exact = true)
             SystemClock.sleep(1_800)
             val now = colorScheme()
             shot("05-dark-scheme")
             finding("  colorScheme $was -> $now ${verdict(was == "light" && now == "dark")}")
+            if (touched && now != "dark") touchFault("the touch on the Colour scheme picker's Dark left colorScheme '$now'")
         }
 
         // 5. The predictive back gesture slides the drill-in out with the finger.

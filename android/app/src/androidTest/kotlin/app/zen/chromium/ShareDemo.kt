@@ -63,11 +63,16 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
         if (waitFor(HANDLE_LABEL, 6_000) != null) {
             SystemClock.sleep(1_500)
             shot("01-app-menu")
-            if (clickByLabel("Share…")) {
-                SystemClock.sleep(5_000)
+            // The menu flow's injected touch (the rule in DemoHarness): the system's chooser,
+            // another package's window, must come in front on it.
+            if (touchTapLabelExpecting("Share…", "the system chooser is in front", timeoutMs = 8_000) {
+                    ui.rootInActiveWindow?.packageName?.toString().let { it != null && it != app.packageName }
+                }
+            ) {
+                SystemClock.sleep(4_000)
                 shot("02-share-chooser")
             } else {
-                Log.w(tag, "no Share… in the app menu")
+                Log.w(tag, "no chooser for Share… under a finger")
             }
             dismiss()
         }
@@ -93,7 +98,11 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
             if (waitFor(DECLINE_LABEL, 6_000) != null) {
                 SystemClock.sleep(1_200)
                 shot("05-mailto-sheet")
-                clickByLabel(ALWAYS_LABEL)
+                // The prompt sheet's injected touch: the Always allow switch under a finger must
+                // read checked afterwards (a touch through to the scrim closes the sheet instead).
+                if (!touchTapLabelExpecting(ALWAYS_LABEL, "the $ALWAYS_LABEL switch is on") { findNode { it == ALWAYS_LABEL }?.isChecked == true }) {
+                    clickByLabel(ALWAYS_LABEL)
+                }
                 SystemClock.sleep(1_200)
                 shot("06-mailto-always")
                 clickByLabel(DECLINE_LABEL)

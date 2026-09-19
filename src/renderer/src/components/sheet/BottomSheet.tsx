@@ -1,5 +1,5 @@
 import type { JSX, PointerEvent as ReactPointerEvent, ReactNode, Ref } from 'react'
-import { useEffect, useImperativeHandle, useLayoutEffect, useRef } from 'react'
+import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef } from 'react'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { capturePointer } from '@renderer/lib/gestures/pointerCapture'
 import {
@@ -181,6 +181,22 @@ export function BottomSheet({
   const scrimRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const fadeRef = useFadeEdges<HTMLDivElement>({ axis: 'y' })
+  /**
+   * The body's ref, one for the life of the sheet. A ref that changes identity is detached and
+   * attached again on every render, and `attachFadeEdges` observes the body afresh each time
+   * with a new ResizeObserver. The sheet renders on every frame of the keyboard's lift (the
+   * insets), some of them in a sync flush inside a resize delivery (the layout reporter's
+   * callback, the content frame shrinking under the keyboard): a body observed anew from there,
+   * at the frame's own depth, is a notification that delivery can no longer reach, and the
+   * WebView logs `ResizeObserver loop limit exceeded` for it – once per such frame.
+   */
+  const bodyRef = useCallback(
+    (el: HTMLDivElement | null) => {
+      scrollRef.current = el
+      return fadeEdges ? fadeRef(el) : undefined
+    },
+    [fadeEdges, fadeRef]
+  )
   const touch = useRef<Touch | null>(null)
   const swallowClick = useRef(false)
   const detents = useRef<SheetDetents>({ collapsed: 0, expanded: 0 })
@@ -784,13 +800,7 @@ export function BottomSheet({
           </button>
           {header && <div className="zen-sheet-header">{header}</div>}
         </div>
-        <div
-          ref={(el) => {
-            scrollRef.current = el
-            return fadeEdges ? fadeRef(el) : undefined
-          }}
-          className="zen-sheet-scroll min-h-0 flex-1 overflow-y-auto"
-        >
+        <div ref={bodyRef} className="zen-sheet-scroll min-h-0 flex-1 overflow-y-auto">
           {children}
         </div>
         {footer && <div className="zen-sheet-footer shrink-0">{footer}</div>}
