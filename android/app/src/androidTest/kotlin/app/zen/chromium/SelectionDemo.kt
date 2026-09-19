@@ -160,18 +160,21 @@ class SelectionDemo : DemoHarness("selection-demo-state.json", "selection", "sel
 
     /**
      * A real touch on the toolbar's overflow button; the labels of the list behind it, top to
-     * bottom, or null when the list never showed. The arrow closes it again.
+     * bottom, or null when the list never showed. The arrow closes it again. The list's items
+     * become visible one by one while the panel grows in (the close arrow leads them), so the
+     * read waits for a non-empty list and is repeated once the panel has settled.
      */
     private fun openOverflow(items: List<ToolbarItem>): List<String>? {
         val more = items.find { it.label == "More options" } ?: return null
         touchTapPoint(more.node) ?: return null
         val deadline = SystemClock.uptimeMillis() + 5_000
         var listed: List<String>? = null
-        while (SystemClock.uptimeMillis() < deadline && listed == null) {
+        while (SystemClock.uptimeMillis() < deadline && listed.isNullOrEmpty()) {
             SystemClock.sleep(300)
             listed = overflowLabels()
         }
         SystemClock.sleep(700)
+        listed = overflowLabels()?.takeIf { it.isNotEmpty() } ?: listed
         shot("01b-overflow")
         findInWindows { it == "Close overflow" }?.let { touchTapPoint(it) }
         SystemClock.sleep(800)
