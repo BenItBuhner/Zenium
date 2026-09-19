@@ -124,8 +124,10 @@ class NavSnapshotDemo : DemoHarness("nav-snapshot-demo-state.json", "nav-snapsho
         val tabs = tabsButton() ?: error("no Tabs button on the bar")
         val opened = holdUntil(tabs, "the Tabs button") { inDom(QUICK_MENU) }
         expect("a hold on Tabs opens its quick menu", opened)
+        // The menu pops in over a few frames: the still once its rows are at rest.
+        val closeTab = steadyRect { textRect("$QUICK_MENU-item", "Close Tab") }
         still("quick-menu")
-        val closed = touchUntil("Close Tab in the quick menu", { steadyRect { textRect("$QUICK_MENU-item", "Close Tab") } }, { !tabExists(TAB) })
+        val closed = touchUntil("Close Tab in the quick menu", { closeTab ?: steadyRect { textRect("$QUICK_MENU-item", "Close Tab") } }, { !tabExists(TAB) })
         expect("the touch on Close Tab closes the tab at once", closed)
         val toast = awaitToast("Closed ")
         expect("the toast reads 'Closed Page three' with Undo: '${toast.orEmpty()}'", toast == "Closed Page three" && awaitRect({ undoRect() }, 3_000) != null)
@@ -179,6 +181,11 @@ class NavSnapshotDemo : DemoHarness("nav-snapshot-demo-state.json", "nav-snapsho
             if (editor) "  a hold on Back opens the bar editor ('In the bar'), as a hold on any bar button does: the phone has no long-press history list (the desktop's); none is built here (separate row)"
             else "  a hold on Back opened nothing the driver knows (no bar editor, no list): the phone has no long-press history list; none is built here (separate row)"
         )
+        // The editor is a sheet on its way up when its heading enters the DOM: the still once it rests.
+        if (editor) {
+            steadyRect { domRect(BAR_EDITOR) }
+            SystemClock.sleep(800)
+        }
         still("hold-on-back")
         val core = coreList()
         expect("the full stack such a list would draw is in the core: ${describe(core)}", urlsOf(core) == listOf(ONE, TWO, THREE) && core.optInt("index") == 0)
