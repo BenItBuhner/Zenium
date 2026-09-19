@@ -117,6 +117,19 @@ class UrlPatternTest {
         // Lowercased for the index over the lowercased URL, and nothing from a top-level alternation.
         assertEquals(listOf("track"), UrlPattern.requiredTokensOf("/Track/"))
         assertNull(UrlPattern.requiredTokensOf("/track/|/pixel/"))
+        // A separator the expression may leave out (`/?`, `\.?`, `/*`, `/{0,1}`) bounds nothing:
+        // `/ads/?` matches `/adsx`, whose token is longer. `+` keeps at least one.
+        assertNull(UrlPattern.requiredTokensOf("/ads/?"))
+        assertNull(UrlPattern.requiredTokensOf("\\/ads\\/?"))
+        assertNull(UrlPattern.requiredTokensOf("/ads/*"))
+        assertNull(UrlPattern.requiredTokensOf("/ads/{0,1}"))
+        assertNull(UrlPattern.requiredTokensOf("/beacon-?[0-9]*\\.gif"))
+        assertEquals(listOf("https", "cdn", "example"), UrlPattern.requiredTokensOf("^https://cdn\\.example/lib\\.?js"))
+        assertEquals(listOf("ads"), UrlPattern.requiredTokensOf("/ads/+"))
+        assertEquals(listOf("ads"), UrlPattern.requiredTokensOf("/ads\\.+x"))
+        // The literal every match contains is unaffected: it needs no boundary.
+        assertEquals("ads", UrlPattern.requiredLiteralOf("/ads/?"))
+        assertEquals("beacon", UrlPattern.requiredLiteralOf("/beacon-?[0-9]*\\.gif"))
         // The tokens reach the pattern's index tokens.
         val p = UrlPattern.regex("^https://[a-z]+\\.tracker\\.example/", caseSensitive = false)!!
         assertEquals(Tokens.tokenize("https tracker example").toList(), p.tokens().toList())

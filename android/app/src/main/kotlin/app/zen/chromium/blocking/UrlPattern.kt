@@ -266,8 +266,9 @@ class UrlPattern private constructor(
         /**
          * The runs of [requiredLiteralOf]'s kind that are also complete tokens of every matching
          * URL – bounded on both sides by an anchor (`^`, `$`) or a character the expression
-         * matches literally and the tokenizer does not count (`/`, `.` escaped, `=`, `-`, …) –
-         * lowercased for the index. Null when the expression vouches for none.
+         * matches literally, at least once, and the tokenizer does not count (`/`, `.` escaped,
+         * `=`, `-`, …; not `/?` or `\.?`, which the URL may leave out) – lowercased for the index.
+         * Null when the expression vouches for none.
          */
         internal fun requiredTokensOf(source: String): List<String>? {
             val runs = requiredRuns(source) ?: return null
@@ -302,13 +303,21 @@ class UrlPattern private constructor(
                 runStart = -1
             }
             // Whether the element starting at `at` is certainly a token boundary: `$`, an escaped
-            // non-alphanumeric character, or an unescaped literal separator.
+            // non-alphanumeric character, or an unescaped literal separator – and not made
+            // optional by the quantifier after it (`/?`, `\.?`, `/*`, `/{0,1}`: the URL may run
+            // straight on, `/ads/?` matches `/adsx`). `+` keeps at least one, so it keeps the
+            // boundary; any `{n,m}` is taken as optional rather than read.
             fun boundaryAt(at: Int): Boolean {
                 if (at >= source.length) return false
                 val c = source[at]
-                if (c == '$') return true
-                if (c == '\\') return at + 1 < source.length && !isAlnum(source[at + 1])
-                return isLiteralSeparator(c)
+                val separator = when {
+                    c == '$' -> true
+                    c == '\\' -> at + 1 < source.length && !isAlnum(source[at + 1])
+                    else -> isLiteralSeparator(c)
+                }
+                if (!separator) return false
+                val next = at + if (c == '\\') 2 else 1
+                return next >= source.length || source[next] !in "?*{"
             }
             while (i < source.length) {
                 val c = source[i]
@@ -347,7 +356,7 @@ class UrlPattern private constructor(
                     }
                     '|' -> { endRun(i, false); if (depth == 0) return null; boundary = false }
                     '^' -> { endRun(i, false); boundary = true }
-                    '$' -> { endRun(i, true); boundary = false }
+                    '$' -> { endRun(i, boundaryAt(i)); boundary = false }
                     else -> {
                         val alnum = isAlnum(c)
                         if (alnum && depth == 0) {
