@@ -266,7 +266,11 @@ class NewTabDemo : DemoHarness("newtab-demo-state.json", "android-ntp", "newtab-
         if (reveal("Inspirational") != null && tapLabel(Finger(), "Inspirational", 4_000)) {
             SystemClock.sleep(2_000)
             shot("07-preset-inspirational")
-            finding("  Inspirational: ${newTabSettings()} ${verdict(newTabSetting("preset") == "inspirational")}")
+            // The customise sheet's injected touch (the rule in DemoHarness): the preset card
+            // under a finger, and the setting must follow – a finding, and a fault of the run.
+            val preset = newTabSetting("preset")
+            finding("  Inspirational: ${newTabSettings()} ${verdict(preset == "inspirational")}")
+            if (preset != "inspirational") touchFault("the touch on the customise sheet's Inspirational card left the preset '$preset'")
         } else {
             finding("  no Inspirational card in reach")
         }

@@ -309,7 +309,9 @@ class HistoryBookmarksDemo :
                 "\nClear history: prompt 'Clear all history?' ${verdict(present("Clear all history?"))}, " +
                     "Cancel ${verdict(present("Cancel"))}, Clear all ${verdict(present("Clear all"))}"
             )
-            click("Clear all")
+            // The prompt sheet's injected touch (the rule in DemoHarness): Clear all under a
+            // finger, and the panel must show its empty note on it.
+            touch("Clear all", "the history is empty") { present("Pages you visit will show up here") }
             SystemClock.sleep(2_000)
             shot("08-history-empty")
             finding(
@@ -343,8 +345,8 @@ class HistoryBookmarksDemo :
                 "row menu: Edit… ${verdict(present("Edit…"))}, Open in New Tab ${verdict(present("Open in New Tab"))}, " +
                     "Copy Link ${verdict(present("Copy Link"))}, Share… ${seen("Share…")}, Delete ${verdict(present("Delete"))}"
             )
-            click("Edit…")
-            await("Save")
+            // The row menu's injected touch: Edit… under a finger opens the editor (its Save).
+            touch("Edit…", "the editor is up with its Save", timeoutMs = 10_000) { present("Save") }
             SystemClock.sleep(1_800)
             shot("11-bookmarks-edit-sheet")
             finding("editor: title 'Edit Bookmark' ${verdict(present("Edit Bookmark"))}, name field ${verdict(nameField("Hacker News") != null)}")
@@ -355,7 +357,15 @@ class HistoryBookmarksDemo :
                 instrumentation.sendStringSync(" daily")
                 SystemClock.sleep(1_200)
             }
-            click("Save")
+            // The editor's injected touch: Save under a finger, and the core must hold the new name.
+            // The keyboard the field raised goes first (back takes the keys down, not the sheet):
+            // a finger cannot reach a button under it.
+            if (imeInset() > 0) {
+                back()
+                awaitIme(shown = false)
+                SystemClock.sleep(800)
+            }
+            touch("Save", "the core holds the renamed bookmark") { bookmarkTitle("b_hn") == "Hacker News daily" }
             SystemClock.sleep(2_000)
             shot("12-bookmarks-edited")
             val title = bookmarkTitle("b_hn")
@@ -551,6 +561,17 @@ class HistoryBookmarksDemo :
 
     private fun click(label: String): Boolean =
         clickByLabel(label, enabledOnly = true).also { if (!it) Log.w(tag, "nothing to click for '$label'") }
+
+    /**
+     * A sheet's control under a finger, its `effect` asserted (the rule in DemoHarness): the
+     * findings record the miss too, and [click] then gets the demo to the state so the rest of
+     * the sequence is recorded – the run has failed by then.
+     */
+    private fun touch(label: String, effect: String, timeoutMs: Long = 5_000, took: () -> Boolean) {
+        if (touchTapLabelExpecting(label, effect, timeoutMs, took = took)) return
+        finding("a finger on '$label': $effect ${verdict(false)} (clicked through the tree to go on)")
+        if (!took()) click(label)
+    }
 
     /**
      * Click the highest node labelled `label`: the selection header's button carries the same

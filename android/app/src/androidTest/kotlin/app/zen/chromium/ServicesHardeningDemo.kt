@@ -27,8 +27,10 @@ import kotlin.math.max
 /**
  * Records the pop-up blocker, the external-app prompt (tel: and an intent:// with a fallback) and
  * the HTTP sign-in dialog on an emulator, for a caller of the reusable `android-emulator-demo`
- * workflow. Only asserts that it could run through the sequence; the recording and the
- * screenshots show what the chrome did.
+ * workflow. Asserts that it could run through the sequence and what the fingers it puts inside
+ * the sheets did (the rule in DemoHarness: the external-app sheet's Open lands on the fallback
+ * page, the sign-in dialog's field takes the focus); the recording and the screenshots show the
+ * rest of what the chrome did.
  *
  * The caller hosts a plain HTTP server on the runner (the emulator reaches it as 10.0.2.2:8787)
  * with three pages: `/popups` opens a window by itself 1.5 s after loading (reporting "The
@@ -73,6 +75,18 @@ class ServicesHardeningDemo {
         }
         SystemClock.sleep(3_000)
         Log.i(TAG, "done")
+        if (touchFaults.isNotEmpty()) {
+            throw AssertionError("${touchFaults.size} touch(es) did not take: ${touchFaults.joinToString("; ")}")
+        }
+    }
+
+    /** The touches inside a sheet that did not take; [record] fails on them once the recording is done. */
+    private val touchFaults = ArrayList<String>()
+
+    private fun touchFault(message: String) {
+        step("TOUCH FAULT: $message")
+        Log.e(TAG, "TOUCH FAULT: $message")
+        touchFaults += message
     }
 
     // --- setup -----------------------------------------------------------------------------------
@@ -193,12 +207,18 @@ class ServicesHardeningDemo {
         }
         SystemClock.sleep(1_500)
         tapLabel(f, "Scan a barcode (intent:// with a fallback)")
+        var opened = false
         if (waitFor("Not now", 6_000)) {
             SystemClock.sleep(800)
             shot("07-intent-launch-prompt")
-            answerSheet(f, "Open")
+            // The external-app sheet's injected touch (the rule in DemoHarness): Open under a
+            // finger, and the intent's fallback page must come up on it – a touch that fell
+            // through to the scrim takes the sheet down with nothing opened.
+            opened = answerSheet(f, "Open")
         }
-        waitFor("No app took the intent", 12_000)
+        if (!waitFor("No app took the intent", 12_000) && opened) {
+            touchFault("the touch on the external-app sheet's Open took the sheet down but brought no fallback page")
+        }
         SystemClock.sleep(1_500)
         ensureForeground()
         shot("08-intent-fallback-page")
@@ -210,6 +230,13 @@ class ServicesHardeningDemo {
         waitFor("Sign in", 12_000)
         SystemClock.sleep(1_200)
         shot("09-http-auth-dialog")
+        // The dialog's injected touch (the rule in DemoHarness): a finger on the Password field
+        // must move the focus to it (the dialog opens with the Username field focused, so a touch
+        // the scrim took would leave it there). The values then land through the accessibility
+        // action – a lagging emulator drops keystrokes – and Sign in goes by Enter, else the
+        // button's accessibility action: the soft keyboard covers the dialog's buttons, where no
+        // finger reaches them.
+        touchField(f, "Password")
         fill(f, "Username", "zenium")
         fill(f, "Password", "wrong")
         submitSignIn()
@@ -247,9 +274,7 @@ class ServicesHardeningDemo {
     private fun fill(f: Finger, label: String, text: String) {
         // The dialog has one password field and one plain field; with the labels not exposed
         // (the tree is mid-update), the field is told by kind.
-        val field = findNodes(label).firstOrNull { it.isEditable }
-            ?: findNodes(label).firstNotNullOfOrNull { editableWithin(it) }
-            ?: ui.rootInActiveWindow?.let(::editables)?.firstOrNull { it.isPassword == (label == "Password") }
+        val field = fieldNamed(label)
         if (field == null) {
             step("no field labelled '$label'")
             return
@@ -282,11 +307,38 @@ class ServicesHardeningDemo {
 
     /** Whether the field named `label` holds `text` (a password field reports it masked). */
     private fun holds(label: String, text: String): Boolean {
-        val field = findNodes(label).firstOrNull { it.isEditable }
-            ?: ui.rootInActiveWindow?.let(::editables)?.firstOrNull { it.isPassword == (label == "Password") }
-            ?: return false
+        val field = fieldNamed(label) ?: return false
         val value = field.text?.toString() ?: return false
         return value == text || (field.isPassword && value.length == text.length)
+    }
+
+    /** The dialog's input named `label` (its label's text), told by kind when the tree is mid-update. */
+    private fun fieldNamed(label: String): AccessibilityNodeInfo? =
+        findNodes(label).firstOrNull { it.isEditable }
+            ?: findNodes(label).firstNotNullOfOrNull { editableWithin(it) }
+            ?: ui.rootInActiveWindow?.let(::editables)?.firstOrNull { it.isPassword == (label == "Password") }
+
+    /**
+     * A real touch on the middle of the field named `label`, which must hold the input focus
+     * within four seconds of it; a fault of the run when it does not (the finger did not reach
+     * the field). No touch goes in for a field that is not there.
+     */
+    private fun touchField(f: Finger, label: String) {
+        val field = fieldNamed(label) ?: run {
+            step("no field labelled '$label' to touch")
+            return
+        }
+        val bounds = Rect().also(field::getBoundsInScreen)
+        f.tap(bounds.exactCenterX(), bounds.exactCenterY())
+        val deadline = SystemClock.uptimeMillis() + 4_000
+        while (SystemClock.uptimeMillis() < deadline) {
+            SystemClock.sleep(200)
+            if (fieldNamed(label)?.isFocused == true) {
+                step("the touch on '$label' at $bounds took: the field holds the focus")
+                return
+            }
+        }
+        touchFault("the touch on the sign-in dialog's '$label' field at $bounds did not focus it")
     }
 
     private fun editableWithin(node: AccessibilityNodeInfo): AccessibilityNodeInfo? =
@@ -307,14 +359,18 @@ class ServicesHardeningDemo {
     }
 
     /**
-     * Answer the external-app sheet. A lagging emulator drops a tap now and then; the sheet
-     * still being up says so, and the tap is repeated. The tree going away for a moment (the
-     * active window changing hands) is not the sheet closing; another window in front is sent
-     * back first. The last resort for a refusal is the back gesture, which the sheet answers.
+     * Answer the external-app sheet with a real touch on its button. A lagging emulator drops a
+     * tap now and then; the sheet still being up says so, and the tap is repeated. The tree going
+     * away for a moment (the active window changing hands) is not the sheet closing; another
+     * window in front is sent back first. True when a touch took the sheet down (the caller
+     * asserts what the button did beyond that: the sheet's own scrim takes it down too); false
+     * with no touch when the button is not there, and false with a fault noted when three
+     * touches left the sheet up – the last resort for a refusal is then the back gesture, which
+     * the sheet answers, so the sequence goes on.
      */
-    private fun answerSheet(f: Finger, label: String) {
+    private fun answerSheet(f: Finger, label: String): Boolean {
         for (attempt in 1..3) {
-            if (!tapLabel(f, label)) return
+            if (!tapLabel(f, label)) return false
             val deadline = SystemClock.uptimeMillis() + 3_000
             var gone = false
             while (SystemClock.uptimeMillis() < deadline) {
@@ -330,14 +386,16 @@ class ServicesHardeningDemo {
                     break
                 }
             }
-            if (gone) return
+            if (gone) return true
             step("the sheet is still up after '$label' (attempt $attempt)")
         }
+        touchFault("three touches on the external-app sheet's '$label' left the sheet up")
         if (label == "Not now") {
             ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
             step("sent back to close the sheet")
             SystemClock.sleep(1_000)
         }
+        return false
     }
 
     private fun type(text: String) {

@@ -136,13 +136,18 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
 
         // 8. Open in Zenium: the live page moves into the browser window.
         openMenu()
-        if (clickByLabel(OPEN_IN_ZENIUM_LABEL)) {
-            waitForWindow(app.packageName, 10_000)
+        // A finger on the row (the menu sheet's injected touch, the rule in DemoHarness): the
+        // browser's own window, with its address pill, must come up on it (the custom tab shares
+        // the package, so the window in front does not tell). The other rows go through the tree.
+        if (touchTapLabelExpecting(OPEN_IN_ZENIUM_LABEL, "the browser's window with its address pill is up", timeoutMs = 12_000) {
+                findByLabelPrefix(PILL_LABEL) != null
+            }
+        ) {
             SystemClock.sleep(6_000)
             shot("08-open-in-zenium")
             Log.i(tag, "browser window shows ${findByLabelPrefix(PILL_LABEL)}")
         } else {
-            Log.w(tag, "no $OPEN_IN_ZENIUM_LABEL in the menu")
+            Log.w(tag, "$OPEN_IN_ZENIUM_LABEL did not hand the page over under a finger")
             dismissSheet()
         }
         beat()

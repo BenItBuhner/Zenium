@@ -89,12 +89,19 @@ class SwipeReorderDemo : DemoHarness("overview-demo-state.json", "overview-swipe
         SystemClock.sleep(3_500)
 
         // 6. Hold Hacker News and drop it on the middle of Example: the merge preview, then a
-        //    group of the two.
+        //    group of the two. The finger crosses to Example's middle in ONE move from a pause
+        //    over its own stand-in, where nothing is pending (as OverviewMotionDemo.carry does,
+        //    since #147's drop-target machine): under the emulator's batched input a slow
+        //    approach crosses Example's edge band – a slot – and a stall there lets the slot's
+        //    dwell run out with the next moves undelivered, so the gap opens, Example glides
+        //    off, and the moves then delivered find the stand-in's own slot where Example was: a
+        //    reorder and no group (the audit's first run: three loose cards after the drop).
         val exampleAgain = show("Example Domain", "example.com")
         val hn = find("Hacker News", "news.ycombinator.com")
         f.press(hn.exactCenterX(), hn.exactCenterY())
         f.moveBy(0f, -n, 120)
-        f.moveBy(exampleAgain.exactCenterX() - hn.exactCenterX(), exampleAgain.exactCenterY() + n - hn.exactCenterY(), 800)
+        f.hold(EDGE_PAUSE)
+        f.moveBy(exampleAgain.exactCenterX() - hn.exactCenterX(), exampleAgain.exactCenterY() + n - hn.exactCenterY(), 0)
         f.hold(1_200)
         shot("04-merge-target")
         f.up()
@@ -108,8 +115,21 @@ class SwipeReorderDemo : DemoHarness("overview-demo-state.json", "overview-swipe
         f.hold(300)
         f.up()
         SystemClock.sleep(2_000)
-        tap("Close group (2 tabs)")
-        SystemClock.sleep(3_500)
+        // The group sheet's injected touch (the rule in DemoHarness): its row under a finger, and
+        // the group's card must leave the grid on it. The grid is inert under the sheet and so
+        // out of the tree: the sheet leaves first (a fall through to the scrim closes it too),
+        // then the grid is back with its other cards, and only then does the card's absence
+        // mean the group closed.
+        if (!touchTapLabel("Close group (2 tabs)")) error("no Close group row in the group sheet")
+        waitForGone("Close group (2 tabs)", 8_000)
+        if (!gridBack(6_000)) {
+            touchFault("the grid did not come back into the tree after the group sheet")
+        } else if (waitForGone("Group Group", 6_000)) {
+            Log.i(tag, "the group closed under the finger")
+        } else {
+            touchFault("the touch on the group sheet's Close group left the group's card in the grid")
+        }
+        SystemClock.sleep(1_500)
         shot("06-end")
     }
 
@@ -121,6 +141,16 @@ class SwipeReorderDemo : DemoHarness("overview-demo-state.json", "overview-swipe
     private fun show(vararg labels: String): Rect =
         reveal(*labels) ?: error("none of ${labels.joinToString()} exists")
 
+    /** Whether the grid's other cards (the folded Research group, the RFC card) are back in the tree within `timeoutMs`. */
+    private fun gridBack(timeoutMs: Long): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (findAny("Group Research", RFC_TITLE) != null) return true
+            SystemClock.sleep(200)
+        }
+        return false
+    }
+
     /** Tap the element with this label once it exists, scrolled into view if it is in the grid. */
     private fun tap(label: String) {
         waitFor(label) ?: error("no $label to tap")
@@ -130,5 +160,7 @@ class SwipeReorderDemo : DemoHarness("overview-demo-state.json", "overview-swipe
 
     private companion object {
         const val RFC_TITLE = "RFC 2324: Hyper Text Coffee Pot Control Protocol (HTCPCP/1.0)"
+        /** The lifted finger's pause where nothing is pending before its one move onto the merge target (step 6). */
+        const val EDGE_PAUSE = 400L
     }
 }

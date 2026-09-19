@@ -1,0 +1,64 @@
+name: Android sheet touch audit
+
+# The demo drivers whose sheet flows put a real finger on a control, chained on one emulator boot:
+# the rule in DemoHarness.kt has every sheet flow include at least one injected touch (UiAutomation
+# MotionEvents, hit-tested by the WebView as a finger's would be) and assert the result of that
+# touch, so that a sheet which lets a tap fall through to its scrim (#192) fails the driver where
+# an accessibility click would have passed it. android-sheet-touch-audit.sh runs each driver
+# through the shared driver script under its own directory of the artifact and fails the job when
+# any did not pass; summary.txt at the artifact's root lists them. Dispatch-only, like the other
+# demos, and one boot more only when the emulator itself went away. The downloads demo's test
+# server is started before the boot, as its own workflow does. The build, the emulator and the
+# Gradle cache live in android-emulator-demo.yml; this file only picks the driver.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-sheet-touch-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Sheet touch audit
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-sheet-touch-audit.sh
+      script-env: |
+        AUDIT_OUT=artifacts/android-sheet-touch-audit
+      # The downloads demo's server must answer before the emulator boots; its log rides along.
+      setup-script: |
+        mkdir -p artifacts/android-sheet-touch-audit/downloads-demo
+        (setsid nohup node .github/scripts/downloads-demo-server.mjs 18923 > artifacts/android-sheet-touch-audit/downloads-demo/server.log 2>&1 &)
+        sleep 2
+        curl -sf -o /dev/null http://127.0.0.1:18923/page.html
+        curl -sf -o /dev/null -H 'Range: bytes=1048576-' http://127.0.0.1:18923/flaky.bin
+        echo "download test server answering on 18923"
+      artifact-name: android-sheet-touch-audit
+      artifact-path: artifacts/android-sheet-touch-audit/
+      # Eighteen drivers of two to five minutes each, after the build and the boot.
+      timeout-minutes: 150
+
+  # One more boot when the emulator itself went away under a driver (adb lost the device), and
+  # never when a driver failed: a run is then spent on the audit rather than on the runner.
+  record-again:
+    name: Sheet touch audit, second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-sheet-touch-audit.sh
+      script-env: |
+        AUDIT_OUT=artifacts/android-sheet-touch-audit
+      setup-script: |
+        mkdir -p artifacts/android-sheet-touch-audit/downloads-demo
+        (setsid nohup node .github/scripts/downloads-demo-server.mjs 18923 > artifacts/android-sheet-touch-audit/downloads-demo/server.log 2>&1 &)
+        sleep 2
+        curl -sf -o /dev/null http://127.0.0.1:18923/page.html
+        curl -sf -o /dev/null -H 'Range: bytes=1048576-' http://127.0.0.1:18923/flaky.bin
+        echo "download test server answering on 18923"
+      artifact-name: android-sheet-touch-audit-second-boot
+      artifact-path: artifacts/android-sheet-touch-audit/
+      timeout-minutes: 150

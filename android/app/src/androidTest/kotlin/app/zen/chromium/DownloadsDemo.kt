@@ -220,12 +220,15 @@ class DownloadsDemo : DemoHarness("downloads-demo-state.json", "downloads", "dow
     }
 
     /**
-     * Press a row's control (Pause, Resume, Retry): through the accessibility tree (a click on
-     * the node, else a touch on its bounds) when `viaTree`, else straight through the engine
-     * command the control runs – while a row moves, the emulator's tree cannot be traversed in
-     * time (a node fetch waits on the busy WebView thread), so Pause on a running transfer goes
-     * that way. Either way the engine's row for `name` must satisfy `took` within five seconds,
-     * else the command runs outright. The log says which way the press went.
+     * Press a row's control (Pause, Resume, Retry): a real touch on it when `viaTree` (the sheet
+     * flow's injected touch, the rule in DemoHarness: the engine's row for `name` must satisfy
+     * `took` within five seconds of the finger, else the touch did not take and the run fails at
+     * its end; the command then runs so the demo goes on), the tree's click for a control the
+     * tree carries without bounds on screen, and straight through the engine command the control
+     * runs when the tree is not read – while a row moves, the emulator's tree cannot be traversed
+     * in time (a node fetch waits on the busy WebView thread), so Pause on a running transfer
+     * goes that way. Either way the row must satisfy `took` within five seconds, else the command
+     * runs outright. The log says which way the press went.
      */
     private fun press(
         label: String,
@@ -240,16 +243,12 @@ class DownloadsDemo : DemoHarness("downloads-demo-state.json", "downloads", "dow
                 downloadCommand(command, id)
                 "$command (the row is moving; the tree is not read)"
             }
-            clickByLabel(label) -> "a click on the row's control"
+            touchTapLabelExpecting(label, "the engine's row for $name answered the control") { rowFor(name)?.let(took) == true } ->
+                "a touch on the row's control"
+            clickByLabel(label) -> "a click on the row's control (after a touch that did not take, or with no bounds on screen to touch)"
             else -> {
-                val where = findByLabel(label)
-                if (where != null) {
-                    Finger().tap(where.exactCenterX(), where.exactCenterY())
-                    "a touch on the row's control at $where"
-                } else {
-                    downloadCommand(command, id)
-                    "$command (the control is not on the accessibility tree)"
-                }
+                downloadCommand(command, id)
+                "$command (the control is not on the accessibility tree)"
             }
         }
         Log.i(tag, "$label: $how")

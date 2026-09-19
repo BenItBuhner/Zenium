@@ -86,7 +86,10 @@ abstract class DemoHarness(
     /** A chance to prepare the device once the profile is seeded and before the app starts. */
     protected open fun beforeLaunch() {}
 
-    /** Seed, launch, warm up, hand over to the recorder, run the sequence. */
+    /**
+     * Seed, launch, warm up, hand over to the recorder, run the sequence. Fails once the
+     * recording is done when a touch a step injected did not take ([touchFault]).
+     */
     protected fun runDemo() {
         val info = ui.serviceInfo
         info.flags = info.flags or
@@ -108,6 +111,9 @@ abstract class DemoHarness(
         File(out, "done").writeText("done\n")
         SystemClock.sleep(4_000)
         Log.i(tag, "done")
+        if (touchFaults.isNotEmpty()) {
+            throw AssertionError("${touchFaults.size} touch(es) did not take: ${touchFaults.joinToString("; ")}")
+        }
     }
 
     // --- setup -----------------------------------------------------------------------------------
@@ -299,10 +305,11 @@ abstract class DemoHarness(
     protected fun findNode(matches: (String) -> Boolean): AccessibilityNodeInfo? =
         findNodes(matches).firstOrNull()
 
-    /** Every node in the active window labelled `label`, breadth first. */
-    private fun findNodes(label: String): List<AccessibilityNodeInfo> = findNodes { it == label }
+    /** Every node in the active window labelled `label`, breadth first (a panel's per-row controls). */
+    protected fun findNodes(label: String): List<AccessibilityNodeInfo> = findNodes { it == label }
 
-    private fun findNodes(matches: (String) -> Boolean): List<AccessibilityNodeInfo> =
+    /** Every node in the active window whose label or text satisfies `matches`, breadth first (per-row controls named after their row). */
+    protected fun findNodes(matches: (String) -> Boolean): List<AccessibilityNodeInfo> =
         findNodesWhere(accept = labelled(matches))
 
     /** Accepts a node whose content description or text satisfies `matches`. */
@@ -396,6 +403,16 @@ abstract class DemoHarness(
         return null
     }
 
+    /** Poll until nothing on screen reads `label`, for up to `timeoutMs`; false when it is still there. */
+    protected fun waitForGone(label: String, timeoutMs: Long = 5_000): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (findByLabel(label) == null) return true
+            SystemClock.sleep(200)
+        }
+        return false
+    }
+
     // --- pressing a control: a finger, or the accessibility tree ---------------------------------
     //
     // Two ways to press, for two different claims. [touchTap] and [touchTapLabel] inject a REAL
@@ -417,6 +434,67 @@ abstract class DemoHarness(
     // to settle ([steadyBounds]); and it aims at the middle of the bounds' part inside
     // [touchable], not of the bounds themselves, since a sheet's bottom row runs under the
     // navigation bar's window and a touch there never reaches the app ([touchPoint]).
+    //
+    // The rule for a driver (the audit after #194): a sheet flow must include at least one
+    // injected touch, and the result of that touch is asserted. A sheet flow is every sequence
+    // that presses a control inside a sheet – the app menu and its submenus, a picker, a prompt,
+    // the site-information sheet, an editor, a panel on the phone, a native sheet of the app's –
+    // and the touch is a finger on a control inside it ([touchTapLabelExpecting] is the shape of
+    // such a step; a driver with a finger of its own reports the miss with [touchFault]). The
+    // result is what that control does – the row's new value, the next level's control, the
+    // window that came up, the core's state – never "the sheet went away", which a touch that
+    // fell through to the scrim does too. A flow that keeps [clickByLabel] for one of its steps
+    // says why at the step: a row the tree still reports where it was before a scroll, a control
+    // under the soft keyboard, a row that must stay below the fold for what is measured.
+
+    /**
+     * A real touch on the node reading `label` ([touchTapLabel]), then up to `timeoutMs` for
+     * `took` to hold – the claim of the step, named by `effect` ("the row reads Dark"). True when
+     * it held. When nothing on screen reads `label` within `findTimeoutMs` no touch goes in: false
+     * and a warning, and the caller may reach the state another way. When the touch went in and
+     * `took` never held, the sheet did not take the touch: a [touchFault], and false; the caller
+     * may still reach the state another way so the recording goes on, the run fails regardless.
+     */
+    protected fun touchTapLabelExpecting(
+        label: String,
+        effect: String,
+        timeoutMs: Long = 5_000,
+        prefix: Boolean = false,
+        findTimeoutMs: Long = 8_000,
+        took: () -> Boolean
+    ): Boolean {
+        if (!touchTapLabel(label, prefix, findTimeoutMs)) return false
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (took()) {
+                Log.i(tag, "the touch on '$label' took: $effect")
+                return true
+            }
+            SystemClock.sleep(150)
+        }
+        touchFault("a touch on '$label' did not take: not $effect within $timeoutMs ms")
+        return false
+    }
+
+    /**
+     * Whether a Settings row labelled `label` reads `value`: the tree runs a row's label and value
+     * together ("Colour scheme Dark"), so the row is the node whose text starts with the one and
+     * ends with the other. What a picker's touch is checked against once the picker has closed.
+     */
+    protected fun rowReads(label: String, value: String): Boolean =
+        findNode { it.startsWith(label) && it.endsWith(value) } != null
+
+    /** The touches that did not take, in the order they were reported; [runDemo] fails on them at the end. */
+    private val touchFaults = ArrayList<String>()
+
+    /**
+     * Report that a touch a step injected did not do what the step claims. The run goes on so the
+     * recording covers the rest, and fails once it is done ([runDemo]).
+     */
+    protected fun touchFault(message: String) {
+        Log.e(tag, "TOUCH FAULT: $message")
+        touchFaults += message
+    }
 
     /**
      * A real touch inside `node`'s bounds, where a finger's would land (see [touchPoint]). False,
@@ -636,11 +714,16 @@ abstract class DemoHarness(
             SystemClock.sleep(2_000)
         }
         for ((index, item) in path.withIndex()) {
-            val target = reveal(item) ?: run {
+            if (reveal(item) == null) {
                 Log.w(tag, "no $item in the menu")
                 return false
             }
-            Finger().tap(target.exactCenterX(), target.exactCenterY())
+            // The finger goes in once the row's bounds hold still (the tree lags the menu's pull
+            // and scroll on the emulator) and inside the touchable window ([touchTapLabel]).
+            if (!touchTapLabel(item)) {
+                Log.w(tag, "no bounds on screen to touch for $item")
+                return false
+            }
             // A submenu slides in; give it a moment before looking for its items.
             if (index < path.lastIndex) SystemClock.sleep(1_200)
         }

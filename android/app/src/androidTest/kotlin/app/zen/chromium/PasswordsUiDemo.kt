@@ -147,7 +147,7 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
         SystemClock.sleep(1_200)
         expandSheet(f)
         snap("app-menu")
-        openMenuRow(f, "Passwords")
+        openMenuRow("Passwords")
 
         // 2. The gate tries the device key at once; the Keystore asks for the PIN when the key
         //    wants an authentication, and the list follows.
@@ -364,12 +364,17 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
         SystemClock.sleep(1_600)
     }
 
-    /** Tap a menu row (scrolled into view first); the accessibility click is the fallback. */
-    private fun openMenuRow(f: Finger, label: String) {
-        val row = reveal(label)
-        if (row != null && row.top >= 0 && row.bottom <= height) {
-            f.tap(row.exactCenterX(), row.exactCenterY())
+    /**
+     * A finger on a menu row (scrolled into view first, touched once its bounds hold still and
+     * inside the touchable window – the menu flow's injected touch, the rule in DemoHarness), and
+     * the manager must come up on it: else a touch fault the run fails on at its end, and the
+     * accessibility click is the way on so the recording goes on. The tree's click alone when
+     * the row has no bounds on screen to touch.
+     */
+    private fun openMenuRow(label: String) {
+        if (reveal(label) != null && touchTapLabel(label)) {
             if (awaitManager(6_000)) return
+            touchFault("the touch on the menu's '$label' row did not open the manager")
             step("the tap on the '$label' row did not open the manager; clicking it through accessibility")
         }
         if (!clickByLabel(label)) {
@@ -468,6 +473,13 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
      * bottom edge: its rows are in the tree before they are at rest, so the option is tapped
      * where it has stopped, not where it was first seen (a touch on a moving sheet catches the
      * sheet instead of picking).
+     *
+     * The first attempt's finger is the picker's injected touch (the rule in DemoHarness): an
+     * option at rest that did not apply under it is the sheet not taking the touch – a touch
+     * fault the run fails on at its end (#92's own recording before #192 had the Settings tab's
+     * grace picker close on the finger with the old value, the tree's click then standing in
+     * unseen); the tree's click stays the way on so the recording goes on. An option still
+     * moving after 3 s is the stated exception: a finger there may catch the sheet instead.
      */
     private fun pickOption(
         f: Finger,
@@ -492,7 +504,7 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
             }
             if (snapMenu != null && attempt == 1) snap(snapMenu)
             if (attempt == 1) {
-                f.tap(option.exactCenterX(), option.exactCenterY())
+                f.tap(option.bounds.exactCenterX(), option.bounds.exactCenterY())
             } else {
                 // The finger did not pick last time (the sheet left under it): the second
                 // attempt clicks the option through accessibility instead.
@@ -501,6 +513,7 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
             }
             if (applied()) return true
             step("'$label' did not apply (attempt $attempt)")
+            if (attempt == 1 && option.atRest) touchFault("the touch on the picker's '$label' option did not apply")
             if (clickOption(label) && applied()) return true
             if (optionNode(label) != null) {
                 // The picker is still open: back closes it and nothing else.
@@ -525,12 +538,15 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
         return null
     }
 
+    /** Where a picker's option is, and whether it had stopped moving when read ([awaitOptionAtRest]). */
+    private class OptionSpot(val bounds: Rect, val atRest: Boolean)
+
     /**
      * The option's bounds once they have stopped moving – three readings 150 ms apart agreeing –
-     * or the last reading when the sheet is still in motion after 3 s; null once the option has
-     * gone from the tree.
+     * or the last reading (marked not at rest) when the sheet is still in motion after 3 s; null
+     * once the option has gone from the tree.
      */
-    private fun awaitOptionAtRest(label: String): Rect? {
+    private fun awaitOptionAtRest(label: String): OptionSpot? {
         val deadline = SystemClock.uptimeMillis() + 3_000
         var last: Rect? = null
         var agreed = 0
@@ -538,11 +554,11 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
             val now = optionNode(label)?.let { Rect().also(it::getBoundsInScreen) } ?: return null
             agreed = if (now == last) agreed + 1 else 0
             last = now
-            if (agreed >= 2) return now
+            if (agreed >= 2) return OptionSpot(now, atRest = true)
             SystemClock.sleep(150)
         }
         step("the option '$label' was still moving after 3 s; tapping it where it is")
-        return last
+        return last?.let { OptionSpot(it, atRest = false) }
     }
 
     private fun clickOption(label: String): Boolean =
@@ -615,14 +631,20 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
      * holds is read back from the chrome's DOM after typing – Continue lights up on the first
      * character, so it says nothing about the rest – and the missing tail is typed again until
      * the whole passphrase is in place, the field cleared first when what landed is not a prefix.
+     *
+     * The first tap on the field is the prompt sheet's injected touch (the rule in DemoHarness):
+     * a finger once the field's bounds hold still, and the focus must land in the field on it,
+     * else a touch fault the run fails on at its end (the typing goes on regardless: the next
+     * attempts tap again).
      */
     private fun answerPassphraseSheet() {
         var typed = 0
         for (attempt in 1..4) {
             if (!passphraseFieldFocused()) {
                 val field = editableInApp() ?: error("no passphrase field in the sheet")
-                Finger().tap(field.exactCenterX(), field.exactCenterY())
+                if (!touchTap(field)) error("the passphrase field has no bounds on screen to touch")
                 SystemClock.sleep(900)
+                if (attempt == 1 && !passphraseFieldFocused()) touchFault("the touch on the passphrase sheet's field did not focus it")
             }
             typeText(PASSPHRASE.substring(typed))
             SystemClock.sleep(600)
@@ -885,12 +907,10 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
         node.packageName?.toString() == app.packageName && node.isEnabled && node.isNamed(label)
     }.isNotEmpty()
 
-    /** The app's editable field (the sheet's passphrase input), if one is on screen. */
-    private fun editableInApp(): Rect? = nodes { node ->
+    /** The app's editable field (the sheet's passphrase input), if one is on screen with a place to touch. */
+    private fun editableInApp(): AccessibilityNodeInfo? = nodes { node ->
         node.packageName?.toString() == app.packageName && node.isEditable && node.isVisibleToUser
-    }
-        .map { Rect().also(it::getBoundsInScreen) }
-        .firstOrNull { it.width() > 0 && it.height() > 0 }
+    }.firstOrNull { node -> Rect().also(node::getBoundsInScreen).let { it.width() > 0 && it.height() > 0 } }
 
     private fun waitGone(label: String, timeoutMs: Long): Boolean {
         val deadline = SystemClock.uptimeMillis() + timeoutMs

@@ -51,11 +51,20 @@ import kotlin.math.max
  * composed from the same pieces rather than a copy of them.
  */
 @RunWith(AndroidJUnit4::class)
-open class PageControlsDemo(
-    stateAsset: String = "pagecontrols-demo-state.json",
-    shotPrefix: String = "pagecontrols",
-    handshakeDir: String = "pagecontrols-demo"
+open class PageControlsDemo protected constructor(
+    stateAsset: String,
+    shotPrefix: String,
+    handshakeDir: String
 ) : DemoHarness(stateAsset, shotPrefix, handshakeDir) {
+    /**
+     * JUnit's constructor: the demo on its own profile. The composing constructor above is
+     * protected, and the parameters carry no defaults, so the class has exactly one public
+     * constructor – JUnit 4 refuses a test class with more ("Test class can only have one
+     * constructor"), and defaulted parameters would have the compiler add a public no-argument
+     * one beside the three-argument one.
+     */
+    constructor() : this("pagecontrols-demo-state.json", "pagecontrols", "pagecontrols-demo")
+
     override val tag = "PageControlsDemo"
 
     /** Serves the page that forbids pinching; starts when the seeded profile asks for its address. */
@@ -116,7 +125,8 @@ open class PageControlsDemo(
         // 2. App menu -> Desktop Site: the user agent switches and the page is asked again from
         //    the URL the tab was opened with, so the desktop site answers.
         if (!pickMenuItem("Desktop Site", "menu-desktop-site")) return
-        if (awaitWikipedia("desktop", 40_000)) SystemClock.sleep(2_500) else Log.w(tag, "no desktop Wikipedia in time")
+        // What the touched item does, asserted (the rule in DemoHarness): the desktop site answers.
+        if (awaitWikipedia("desktop", 40_000)) SystemClock.sleep(2_500) else touchFault("Desktop Site under a finger brought no desktop Wikipedia in 40 s")
         probe("wikipedia desktop")
         snap("wikipedia-desktop")
         beat()
@@ -185,11 +195,12 @@ open class PageControlsDemo(
         snap("light-page-not-darkened")
         beat()
         if (openSettings("Look and Feel")) {
-            if (reveal(CERN_SITE) != null) {
+            if (revealRow(CERN_SITE) != null) {
                 SystemClock.sleep(800)
                 snap("look-and-feel-site-exceptions")
             } else {
-                Log.w(tag, "no $CERN_SITE exception in Look and Feel")
+                // What the touched item does, asserted: the site's exception is listed.
+                touchFault("Dark Theme for This Site under a finger left no $CERN_SITE exception in Look and Feel")
             }
             ensureChromeClear()
             SystemClock.sleep(1_500)
@@ -296,12 +307,16 @@ open class PageControlsDemo(
      * pause: the first recording lost its second half when Settings, closing under a colour
      * scheme change on the software GPU, reported its surface down 1.7 s after the back – past
      * the pause – and the next back went to the system, which put the app away.
+     *
+     * With every surface down, the Settings tab may still be in front (a back at a section only
+     * pops it to the landing): [leaveSettingsTab] on every way out, not just the last – the
+     * audit's second run left it in front from here, and the menu's page items did nothing.
      */
     protected fun ensureChromeClear(): Boolean {
         for (attempt in 1..4) {
             val handle = findByLabel(HANDLE_LABEL)
             val surface = chromeSurfaceUp()
-            if (!surface && handle == null) return true
+            if (!surface && handle == null) return leaveSettingsTab()
             Log.i(tag, "chrome surface up (host=$surface, handle=${handle != null}); clearing, attempt $attempt")
             when {
                 surface && attempt <= 2 -> backWhileSurfaceUp()
@@ -314,12 +329,54 @@ open class PageControlsDemo(
         }
         val clear = !chromeSurfaceUp()
         if (!clear) Log.w(tag, "a chrome surface stayed up")
-        return clear
+        return clear && leaveSettingsTab()
     }
 
     /** Back, unless the host has meanwhile dropped its surface (the back would then leave the app). */
     private fun backWhileSurfaceUp() {
         if (chromeSurfaceUp()) back() else Log.i(tag, "the chrome surface went on its own; no back")
+    }
+
+    /**
+     * Settings is a tab since #134: a back at its section pops it to the landing (the host's
+     * surface goes down) and the tab stays in front, where the menu's page items (Zoom…, Dark
+     * Theme for This Site) take no press. A back at the landing closes the tab to the one that
+     * opened it (`rootBackAction`'s opener rule), waited out on the core's word of which tab is
+     * active. True once no Settings tab is in front.
+     */
+    private fun leaveSettingsTab(): Boolean {
+        if (!settingsTabActive()) return true
+        for (attempt in 1..2) {
+            Log.i(tag, "the Settings tab is in front; back to its opener, attempt $attempt")
+            back()
+            val deadline = SystemClock.uptimeMillis() + 6_000
+            while (SystemClock.uptimeMillis() < deadline) {
+                if (!settingsTabActive()) {
+                    SystemClock.sleep(1_000)
+                    return true
+                }
+                SystemClock.sleep(200)
+            }
+        }
+        Log.w(tag, "the Settings tab stayed in front")
+        return false
+    }
+
+    /** Whether the core's active tab is the Settings page (`zen://settings`, any section). */
+    private fun settingsTabActive(): Boolean =
+        runCatching { activeCoreTab()?.optString("url").orEmpty().startsWith(SETTINGS_URL) }.getOrDefault(false)
+
+    /**
+     * Scroll the Settings row whose text starts with `label` into view and return where it is;
+     * null when there is none. A phone Settings row is one button whose label and value (or
+     * description) run together in the tree ("Colour scheme Light"), so [reveal]'s exact label
+     * finds nothing.
+     */
+    protected fun revealRow(label: String): Rect? {
+        val node = findNode { it.startsWith(label) } ?: return null
+        node.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.id)
+        SystemClock.sleep(1_500)
+        return findNode { it.startsWith(label) }?.let { row -> Rect().also { row.getBoundsInScreen(it) } }
     }
 
     /** Open the app menu from a clear chrome; true once the host and the tree both show it. */
@@ -354,7 +411,7 @@ open class PageControlsDemo(
      * submenu path), and with two strings Kotlin resolves to that one over a `(String, String?)`
      * of this name – it would tap the item and then hunt the menu for the screenshot's name.
      */
-    protected fun pickMenuItem(label: String, shotName: String?): Boolean {
+    protected fun pickMenuItem(label: String, shotName: String?, took: () -> Boolean = { findByLabel(HANDLE_LABEL) == null }): Boolean {
         if (!openMenu()) return false
         if (reveal(label) == null) {
             Log.w(tag, "no $label in the app menu")
@@ -362,8 +419,16 @@ open class PageControlsDemo(
             return false
         }
         if (shotName != null) snap(shotName)
-        if (!clickByLabel(label)) {
-            Log.w(tag, "$label could not be clicked")
+        // The menu flow's injected touch (the rule in DemoHarness), its result `took` asserted –
+        // by default the menu leaving on the item, a caller passing what the item does. A row
+        // without bounds on screen to touch goes through the tree. The wait is long: the menu's
+        // leave takes three seconds on the software GPU and the tree reports it seconds later.
+        if (!touchTapLabelExpecting(label, "the menu's $label did what it does", timeoutMs = 12_000, took = took) && !took()) {
+            if (findByLabel(HANDLE_LABEL) != null && clickByLabel(label)) {
+                SystemClock.sleep(1_500)
+                return true
+            }
+            Log.w(tag, "$label could not be pressed")
             ensureChromeClear()
             return false
         }
@@ -371,9 +436,12 @@ open class PageControlsDemo(
         return true
     }
 
-    /** Settings from the app menu, then the section with that tab label. */
+    /**
+     * Settings from the app menu (the Settings tab up on its landing, `section` among its rows),
+     * then the section over the landing. [ensureChromeClear] leaves the tab again afterwards.
+     */
     protected fun openSettings(section: String): Boolean {
-        if (!pickMenuItem("Settings", null)) return false
+        if (!pickMenuItem("Settings", null) { findByLabel(section) != null }) return false
         if (waitFor(section, 6_000) == null || !clickByLabel(section)) {
             Log.w(tag, "no $section section in Settings")
             return false
@@ -389,7 +457,7 @@ open class PageControlsDemo(
      * at its bounds should the tree's click not have flipped it. False when the row is not there.
      */
     protected fun toggleSwitch(row: String, shotName: String?): Boolean {
-        val bounds = reveal(row)
+        val bounds = revealRow(row)
         if (bounds == null) {
             Log.w(tag, "no $row row in Settings")
             return false
@@ -415,25 +483,34 @@ open class PageControlsDemo(
         return true
     }
 
-    /** The checkable node labelled `label` (a `role=switch` with that `aria-label`). */
+    /**
+     * The checkable node for the row `label`: a `role=switch` with that `aria-label`, or the phone
+     * Settings row itself (a `role=switch` button whose text runs the label and its description).
+     */
     private fun findSwitch(label: String): AccessibilityNodeInfo? = findNodeWhere { node ->
-        node.isCheckable && (node.contentDescription?.toString() == label || node.text?.toString() == label)
+        node.isCheckable && (node.contentDescription?.toString()?.startsWith(label) == true || node.text?.toString()?.startsWith(label) == true)
     }
 
     /**
-     * Pick `next` in the menulist of a Settings row that reads `current`. The trigger and then
-     * the option are clicked through the tree (the list opens on a click from anything but a
-     * mouse), each with a finger at its bounds should the tree's click not have taken. False when
-     * the row, the trigger or the option is not there; true once the row reads `next`.
+     * Pick `next` in the picker of a Settings row that reads `current`. The trigger is clicked
+     * through the tree (the picker opens on a click from anything but a mouse), with a finger at
+     * its bounds should the tree's click not have taken; the option is then under a finger – the
+     * picker's injected touch (the rule in DemoHarness): the picker must close on it with the
+     * row reading `next` (a touch through to the host's scrim, #192, closes it with `current`),
+     * else the run fails at its end and the tree's click sets the value for the rest of the
+     * recording. False when the row, the trigger or the option is not there; true once the row
+     * reads `next`.
      */
     protected fun chooseOption(row: String, current: String, next: String): Boolean {
-        if (reveal(row) == null) {
+        if (revealRow(row) == null) {
             Log.w(tag, "no $row row in Settings")
             return false
         }
         SystemClock.sleep(600)
-        val trigger = findByLabel(current)
-        if (trigger == null || !clickByLabel(current)) {
+        val trigger = findByLabel(current) ?: findNode { it.startsWith(row) && it.endsWith(current) }?.let { node ->
+            Rect().also { node.getBoundsInScreen(it) }
+        }
+        if (trigger == null || !clickByLabel(current) && !rowClicked(row, current)) {
             Log.w(tag, "no $row menulist reading $current")
             return false
         }
@@ -445,17 +522,21 @@ open class PageControlsDemo(
                 return false
             }
         }
-        val option = findByLabel(next)
-        clickByLabel(next)
-        SystemClock.sleep(900)
-        if (findByLabel(current) != null && option != null) {
-            Log.w(tag, "$next did not take through the tree; tapping it")
-            Finger().tap(option.exactCenterX(), option.exactCenterY())
+        val reads = { rowReads(row, next) && findByLabel(current) == null }
+        if (!touchTapLabelExpecting(next, "the picker closed with the $row row reading $next", timeoutMs = 6_000, took = reads) && !reads()) {
+            clickByLabel(next)
             SystemClock.sleep(900)
         }
-        val reads = findByLabel(next) != null && findByLabel(current) == null
-        Log.i(tag, "$row: $current -> ${if (reads) next else "still $current"}")
-        return reads
+        val took = reads()
+        Log.i(tag, "$row: $current -> ${if (took) next else "still $current"}")
+        return took
+    }
+
+    /** Click the Settings row that reads `label` and `value` as one text (the picker's trigger on a phone). */
+    private fun rowClicked(label: String, value: String): Boolean {
+        var node: AccessibilityNodeInfo? = findNode { it.startsWith(label) && it.endsWith(value) } ?: return false
+        while (node != null && !node.isClickable) node = node.parent
+        return node?.performAction(AccessibilityNodeInfo.ACTION_CLICK) ?: false
     }
 
     /** The colour scheme the page sees (`prefers-color-scheme`), or null without a page. */
@@ -663,9 +744,14 @@ open class PageControlsDemo(
      * The one page of a site that forbids pinching, served on the loopback interface from a port
      * the system picks: `user-scalable=no` and a pinned `maximum-scale` in the HTML, as many sites
      * ship them. Every request gets the page; the socket closes with the process.
+     *
+     * Bound to 127.0.0.1 by its bytes, as [DemoServer] is: Android's `getLoopbackAddress()` is
+     * `::1`, and a socket there refuses the `127.0.0.1` the address below names – every
+     * recording of this driver until the audit had the locked tab on ERR_CONNECTION_REFUSED and
+     * skipped its zoom and font sections.
      */
     private class LockedPageServer : Thread("locked-page") {
-        private val socket = ServerSocket(0, 8, InetAddress.getLoopbackAddress())
+        private val socket = ServerSocket(0, 8, InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1)))
         val url: String = "http://127.0.0.1:${socket.localPort}/"
 
         init {
@@ -720,6 +806,8 @@ open class PageControlsDemo(
         internal const val LOCKED_HOST = "127.0.0.1"
         /** Stands for the locked page's address in the seeded profile until the server has a port. */
         private const val LOCKED_PAGE_PLACEHOLDER = "http://locked-page.invalid/"
+        /** The Settings tab's page (`zen://settings`, a section under it), since #134. */
+        private const val SETTINGS_URL = "zen://settings"
 
         internal val THEME = InstrumentationRegistry.getArguments().getString("theme").let {
             if (it == "light") "light" else "dark"

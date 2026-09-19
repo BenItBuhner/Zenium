@@ -145,6 +145,10 @@ class InputBackDemo : DemoHarness("input-back-demo-state.json", "input-back", "i
             // Give a focus-on-open keyboard every chance to come before deciding it did not.
             val keyboard = awaitIme(shown = true, timeoutMs = 3_000)
             val surface = chromeSurfaceUp()
+            // The menu flow's injected touch (the rule in DemoHarness): the item under a finger
+            // must bring its panel up, a surface of the chrome's – a touch through to the scrim
+            // only closes the menu. A finding, and a fault of the run.
+            if (!surface) touchFault("the touch on the menu's $item brought no surface up")
             shot(name)
             back()
             SystemClock.sleep(2_500)
@@ -244,6 +248,9 @@ class InputBackDemo : DemoHarness("input-back-demo-state.json", "input-back", "i
             return
         }
         val preview = awaitSystemWindow(20_000)
+        // The touch on Print… must at least have taken the menu down on its way to the system's
+        // preview; the preview's own arrival stays a finding (the spooler's timing on the emulator).
+        if (!preview && waitFor(MENU_HANDLE_LABEL, 500) != null) touchFault("the touch on the menu's Print… left the menu up")
         val started = SystemClock.uptimeMillis()
         val rendered = awaitPreviewOutcome(30_000)
         val took = SystemClock.uptimeMillis() - started
