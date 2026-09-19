@@ -11,6 +11,8 @@ import type {
   GlanceTrigger,
   NewTabBackgroundKind,
   NewTabPosition,
+  NewTabPreset,
+  NewTabSettings,
   NewTabShortcutsMode,
   PhoneBarPosition,
   PinnedCloseBehavior,
@@ -24,19 +26,30 @@ import type {
 } from '@shared/types'
 import { DEFAULT_CONTAINER_ID } from '@shared/types'
 import { TRACKING_LEVEL_LABELS, type TrackingLevel } from '@shared/blocking'
-import {
-  CONTAINER_COLORS,
-  CONTAINER_ICONS,
-  MAX_NEW_TAB_SHORTCUTS,
-  spaceLabel
-} from '@shared/defaults'
+import { CONTAINER_COLORS, CONTAINER_ICONS, spaceLabel } from '@shared/defaults'
 import { resolveDownloadSettings } from '@shared/downloads'
+import {
+  MAX_NEW_TAB_SHORTCUTS,
+  newTabPresetChoices,
+  newTabSections,
+  newTabShortcutsMode,
+  pickNewTabPreset,
+  setNewTabBackground,
+  setNewTabSection,
+  setNewTabShortcutsMode
+} from '@shared/newTab'
 import { formatZoom } from '@shared/pageControls'
 import { describeUpdateTarget, type UpdateChannel } from '@shared/updates'
 import { inputToUrl } from '@shared/url'
 import { run } from '@renderer/lib/api'
 import { downloadFolderLabel } from '@renderer/lib/downloadText'
 import { downloadsEngine } from '@renderer/lib/downloadsEngine'
+import {
+  NEW_TAB_LAYOUT_HINT,
+  NEW_TAB_PRESET_DESCRIPTIONS,
+  NEW_TAB_PRESET_LABELS,
+  newTabBackgroundValue
+} from '@renderer/lib/newTabSettings'
 import { describePermissionRule } from '@renderer/lib/security'
 import { formatBytes, relativeTime } from '@renderer/lib/utils'
 import { ContainerIcon } from '../../ContainerIcon'
@@ -458,22 +471,24 @@ function accessibilitySection({ state, set }: SectionContext): RowGroup[] {
 // ---------------------------------------------------------------------------
 
 /**
- * Settings › New Tab, on a host that renders `zen://newtab` (`newTabPage`; #148's desktop
- * section row for row): the page on or off, the shortcuts source, the background and the
- * greeting, then the "My shortcuts" tiles as item rows – each with its address, its place in the
- * grid and a confirmed removal – and an Add shortcut form. The image background is offered only
- * where the host can pick a file; choosing it there opens the host's picker.
+ * Settings › New Tab, on a host that renders `zen://newtab` (`newTabPage`; the desktop overlay's
+ * section row for row, `NewTabSection.tsx`): the page on or off, the layout (the preset the
+ * phone's sheet picks too), the shortcuts source, the background and the greeting – rows that
+ * write the one model's sections through the same toggles as the phone's sheet – then the
+ * shortcut tiles as item rows – each with its address, its place in the grid and a confirmed
+ * removal – and an Add shortcut form. The image background is offered only where the host can
+ * pick a file; choosing it there opens the host's picker.
  */
 function newTabSection({ state, set }: SectionContext): RowGroup[] {
   const prefs = state.settings.newTab
-  const update = (patch: Partial<Settings['newTab']>): void =>
-    set({ newTab: { ...prefs, ...patch } })
+  const write = (next: NewTabSettings): void => set({ newTab: next })
   const { image, canPick } = state.newTabBackground
   const backgroundOptions: Array<{ value: NewTabBackgroundKind; label: string }> = [
     { value: 'space', label: 'Space gradient' },
     { value: 'solid', label: 'Solid colour' }
   ]
   if (canPick) backgroundOptions.push({ value: 'image', label: 'Image from file' })
+  const background = newTabBackgroundValue(prefs, image)
   const shortcuts = state.newTabShortcuts
   const full = shortcuts.length >= MAX_NEW_TAB_SHORTCUTS
   return [
@@ -487,34 +502,49 @@ function newTabSection({ state, set }: SectionContext): RowGroup[] {
           label: 'Open the new tab page',
           description: 'Off, a new tab shows only the address bar.',
           checked: prefs.enabled,
-          onChange: (v) => update({ enabled: v })
+          onChange: (v) => write({ ...prefs, enabled: v })
         },
+        choice<NewTabPreset>({
+          id: 'newtab-layout',
+          label: 'Layout',
+          keywords: ['preset', 'focused', 'inspirational', 'custom'],
+          value: prefs.preset,
+          options: newTabPresetChoices(prefs).map((value) => ({
+            value,
+            label: NEW_TAB_PRESET_LABELS[value],
+            description: NEW_TAB_PRESET_DESCRIPTIONS[value]
+          })),
+          sheetDescription: NEW_TAB_LAYOUT_HINT,
+          onChange: (v) => write(pickNewTabPreset(prefs, v))
+        }),
         choice<NewTabShortcutsMode>({
           id: 'newtab-shortcuts',
           label: 'Shortcuts',
-          value: prefs.shortcuts,
+          value: newTabShortcutsMode(prefs),
           options: [
             { value: 'most-visited', label: 'Most visited' },
-            { value: 'custom', label: 'My shortcuts' },
+            { value: 'my-shortcuts', label: 'My shortcuts' },
             { value: 'hidden', label: 'Hide' }
           ],
-          onChange: (v) => update({ shortcuts: v })
+          sheetDescription:
+            'Your shortcuts take the first tiles; the most visited sites fill the rest.',
+          onChange: (v) => write(setNewTabShortcutsMode(prefs, v))
         }),
         choice<NewTabBackgroundKind>({
           id: 'newtab-background',
           label: 'Background',
-          keywords: ['image', 'gradient', 'colour', 'color'],
-          value: prefs.background === 'image' && !image ? 'space' : prefs.background,
+          keywords: ['image', 'gradient', 'colour', 'color', 'wallpaper'],
+          value: background,
           options: backgroundOptions,
           sheetDescription:
-            prefs.background === 'image' && image
+            background === 'image' && image
               ? 'Your image is stored on this device only.'
               : undefined,
           onChange: (v) => {
             // Picking the file sets the background once a file was chosen; a cancelled picker
             // keeps the current choice.
             if (v === 'image' && !image) void run('newtab.pickBackgroundImage', undefined)
-            else update({ background: v })
+            else write(setNewTabBackground(prefs, v))
           }
         }),
         {
@@ -529,15 +559,15 @@ function newTabSection({ state, set }: SectionContext): RowGroup[] {
           id: 'newtab-greeting',
           label: 'Show a greeting',
           description: 'A line above the search box that follows the hour.',
-          checked: prefs.greeting,
-          onChange: (v) => update({ greeting: v })
+          checked: newTabSections(prefs).greeting,
+          onChange: (v) => write(setNewTabSection(prefs, 'greeting', v))
         }
       ]
     },
     {
       id: 'newtab-shortcuts',
       heading: 'My shortcuts',
-      description: 'The sites on every new tab when Shortcuts is set to My shortcuts.',
+      description: 'The sites on every new tab: the first tiles, ahead of the most visited.',
       rows: shortcuts.map((shortcut, i) => {
         const move = (dir: -1 | 1): void => {
           const ids = shortcuts.map((x) => x.id)

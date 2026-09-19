@@ -66,6 +66,15 @@ export interface ShimOptions {
    * (`__zen.toggles`). Absent: every toggled namespace is simply installed.
    */
   toggles?: Record<string, boolean>
+  /**
+   * The content-script storage prelude the extension's install directory carries (its file
+   * name at the extension root, `CONTENT_SCRIPT_PRELUDE_FILE`), when it does. With it, this
+   * context puts the prelude first in the `scripting` / `tabs.executeScript` injections it makes
+   * into isolated worlds, mirrors the host's `storage.sync` and `storage.managed` into the
+   * partition's native `local` under the prelude's reserved keys, and answers the prelude's
+   * proxied writes. Absent: none of that, and the reserved keys are still kept out of sight.
+   */
+  storagePrelude?: string
 }
 
 /**
@@ -578,11 +587,18 @@ export function installExtensionApi(
     options: {
       nativeDelivers: boolean
       nativeHandles?: (args: unknown[]) => boolean
+      /**
+       * With `nativeDelivers`: what a listener sees of the engine's delivery (`null` drops it).
+       * The storage events use it to keep the mirror's reserved keys out of sight.
+       */
+      nativeMap?: (args: unknown[]) => unknown[] | null
       /** `EventSpec.filters`: the event takes URL filters; others ignore a second argument. */
       filters?: boolean
     }
   ): EventObject {
     const listeners = new Map<Listener, number | null>()
+    /** The function registered on the engine's event for a listener (itself, or a mapping proxy). */
+    const nativeProxies = new Map<Listener, Listener>()
     const record: EventRecord = {
       object: null as unknown as EventObject,
       listeners,
@@ -595,10 +611,20 @@ export function installExtensionApi(
       for (const id of listeners.values()) if (id === null) count += 1
       return count
     }
+    const nativeProxy = (fn: Listener): Listener => {
+      const map = options.nativeMap
+      if (!map) return fn
+      const proxy: Listener = (...args: unknown[]) => {
+        const mapped = map(args)
+        return mapped ? fn(...mapped) : undefined
+      }
+      nativeProxies.set(fn, proxy)
+      return proxy
+    }
     const object: EventObject = {
       addListener(fn: unknown, ...rest: unknown[]): void {
         if (!isFunction(fn) || listeners.has(fn)) return
-        if (record.nativeDelivers) safely(() => native?.addListener(fn, ...rest))
+        if (record.nativeDelivers) safely(() => native?.addListener(nativeProxy(fn), ...rest))
         const filters = options.filters ? urlFilters(fullName, rest[0]) : null
         if (filters) {
           filterIds += 1
@@ -626,7 +652,11 @@ export function installExtensionApi(
       },
       removeListener(fn: unknown): void {
         if (!isFunction(fn)) return
-        if (record.nativeDelivers) safely(() => native?.removeListener(fn))
+        if (record.nativeDelivers) {
+          const proxy = nativeProxies.get(fn) ?? fn
+          nativeProxies.delete(fn)
+          safely(() => native?.removeListener(proxy))
+        }
         if (!listeners.has(fn)) return
         const filterId = listeners.get(fn) ?? null
         listeners.delete(fn)
@@ -1586,12 +1616,80 @@ export function installExtensionApi(
     return area
   }
 
-  function wrapNativeArea(area: Record<string, unknown>, areaName: string): void {
+  // The content-script storage prelude (`contentScriptStorage.ts`) keeps `sync` and `managed`
+  // for content scripts under these reserved keys of native `local`; spelled out again here
+  // because the shim is stringified. The extension never sees them through `local`.
+  const RESERVED_KEY_PREFIX = '__zenium_'
+  const SYNC_KEY_PREFIX = '__zenium_sync__/'
+  const MANAGED_KEY_PREFIX = '__zenium_managed__/'
+  const SYNC_OUTBOX_KEY = '__zenium_sync_outbox__'
+  const SYNC_CHANNEL = 'zenium:storage.sync'
+
+  function isReservedKey(key: unknown): boolean {
+    return typeof key === 'string' && key.startsWith(RESERVED_KEY_PREFIX)
+  }
+
+  function withoutReserved(items: StorageItems): StorageItems {
+    const out: StorageItems = {}
+    for (const key of Object.keys(items)) if (!isReservedKey(key)) out[key] = items[key]
+    return out
+  }
+
+  /** Native storage changes with the reserved keys taken out; null when nothing is left. */
+  function visibleChanges(changes: unknown): StorageChanges | null {
+    if (!isObject(changes)) return null
+    const out: StorageChanges = {}
+    let any = false
+    for (const key of Object.keys(changes)) {
+      if (isReservedKey(key)) continue
+      out[key] = changes[key] as StorageChanges[string]
+      any = true
+    }
+    return any ? out : null
+  }
+
+  /** Chrome's byte count of items: key length plus the length of the value's JSON. */
+  function bytesOfItems(items: StorageItems): number {
+    let total = 0
+    for (const key of Object.keys(items)) {
+      let length = 0
+      try {
+        const text = JSON.stringify(items[key])
+        length = text === undefined ? 0 : text.length
+      } catch {
+        /* not serialisable */
+      }
+      total += key.length + length
+    }
+    return total
+  }
+
+  /** The engine's `local`, as captured before the extension-facing wrappers replace its members. */
+  interface NativeLocal {
+    area: Record<string, unknown>
+    get: (...args: unknown[]) => unknown
+    set: (...args: unknown[]) => unknown
+    remove: ((...args: unknown[]) => unknown) | undefined
+    getKeys: ((...args: unknown[]) => unknown) | undefined
+  }
+
+  /**
+   * The engine's `local` / `session` with change notifications for the host (workers never get
+   * the engine's events) and, for `local`, the mirror's reserved keys kept out of `get`, `set`,
+   * `remove`, `clear`, `getBytesInUse`, `getKeys` and the change events.
+   */
+  function wrapNativeArea(
+    area: Record<string, unknown>,
+    areaName: string,
+    hidden: boolean
+  ): NativeLocal | null {
     const nativeSet = safely(() => area.set)
     const nativeGet = safely(() => area.get)
     const nativeRemove = safely(() => area.remove)
     const nativeClear = safely(() => area.clear)
-    if (!isFunction(nativeSet) || !isFunction(nativeGet)) return
+    const nativeBytes = safely(() => area.getBytesInUse)
+    const nativeKeys = safely(() => area.getKeys)
+    if (!isFunction(nativeSet) || !isFunction(nativeGet)) return null
     const read = async (keys: unknown): Promise<StorageItems> => {
       const items = await callNativeArea(area, nativeGet, [keys])
       return isObject(items) ? items : {}
@@ -1600,17 +1698,43 @@ export function installExtensionApi(
       if (Object.keys(changes).length > 0)
         host.notify('storage-changed', { area: areaName, changes })
     }
+    const keyList = (keys: unknown): string[] | null =>
+      typeof keys === 'string'
+        ? [keys]
+        : Array.isArray(keys)
+          ? keys.filter((k): k is string => typeof k === 'string')
+          : null
+    if (hidden) {
+      define(area, 'get', function (...raw: unknown[]): unknown {
+        const callback = takeCallback(raw)
+        const keys = raw[0]
+        const work = (async (): Promise<StorageItems> => {
+          let request: unknown = keys
+          if (typeof keys === 'string') {
+            if (isReservedKey(keys)) return {}
+          } else if (Array.isArray(keys)) {
+            request = keys.filter((k) => !isReservedKey(k))
+          } else if (isObject(keys)) {
+            request = withoutReserved(keys)
+          }
+          return withoutReserved(await read(request))
+        })()
+        return settle(`storage.${areaName}.get`, work, callback)
+      })
+    }
     define(area, 'set', function (...raw: unknown[]): unknown {
       const callback = takeCallback(raw)
       const items = raw[0]
       const work = (async (): Promise<void> => {
         if (!isObject(items)) throw signatureError(`storage.${areaName}.set(object items)`)
-        const keys = Object.keys(items)
+        const allowed = hidden ? withoutReserved(items) : items
+        const keys = Object.keys(allowed)
+        if (keys.length === 0 && Object.keys(items).length > 0) return
         const before = await read(keys)
-        await callNativeArea(area, nativeSet, [items])
+        await callNativeArea(area, nativeSet, [allowed])
         const changes: StorageChanges = {}
         for (const key of keys) {
-          const newValue = items[key]
+          const newValue = allowed[key]
           if (newValue === undefined) continue
           const had = Object.prototype.hasOwnProperty.call(before, key)
           if (had && sameJson(before[key], newValue)) continue
@@ -1625,17 +1749,14 @@ export function installExtensionApi(
         const callback = takeCallback(raw)
         const keys = raw[0]
         const work = (async (): Promise<void> => {
-          const list: string[] | null =
-            typeof keys === 'string'
-              ? [keys]
-              : Array.isArray(keys)
-                ? keys.filter((k): k is string => typeof k === 'string')
-                : null
+          const list = keyList(keys)
           if (!list) throw signatureError(`storage.${areaName}.remove(string|array keys)`)
-          const before = await read(list)
-          await callNativeArea(area, nativeRemove, [keys])
+          const allowed = hidden ? list.filter((k) => !isReservedKey(k)) : list
+          if (allowed.length === 0) return
+          const before = await read(allowed)
+          await callNativeArea(area, nativeRemove, [hidden ? allowed : keys])
           const changes: StorageChanges = {}
-          for (const key of list) {
+          for (const key of allowed) {
             if (Object.prototype.hasOwnProperty.call(before, key))
               changes[key] = { oldValue: before[key] }
           }
@@ -1648,13 +1769,40 @@ export function installExtensionApi(
       define(area, 'clear', function (...raw: unknown[]): unknown {
         const callback = takeCallback(raw)
         const work = (async (): Promise<void> => {
-          const before = await read(null)
-          await callNativeArea(area, nativeClear, [])
+          const before = hidden ? withoutReserved(await read(null)) : await read(null)
+          if (hidden && isFunction(nativeRemove)) {
+            const keys = Object.keys(before)
+            if (keys.length > 0) await callNativeArea(area, nativeRemove, [keys])
+          } else {
+            await callNativeArea(area, nativeClear, [])
+          }
           const changes: StorageChanges = {}
           for (const key of Object.keys(before)) changes[key] = { oldValue: before[key] }
           notify(changes)
         })()
         return settle(`storage.${areaName}.clear`, work, callback)
+      })
+    }
+    if (hidden && isFunction(nativeBytes)) {
+      define(area, 'getBytesInUse', function (...raw: unknown[]): unknown {
+        const callback = takeCallback(raw)
+        const keys = raw[0]
+        const work =
+          keys === null || keys === undefined
+            ? read(null).then((items) => bytesOfItems(withoutReserved(items)))
+            : callNativeArea(area, nativeBytes, [
+                (keyList(keys) ?? []).filter((k) => !isReservedKey(k))
+              ])
+        return settle(`storage.${areaName}.getBytesInUse`, work, callback)
+      })
+    }
+    if (hidden && isFunction(nativeKeys)) {
+      define(area, 'getKeys', function (...raw: unknown[]): unknown {
+        const callback = takeCallback(raw)
+        const work = callNativeArea(area, nativeKeys, []).then((keys) =>
+          Array.isArray(keys) ? keys.filter((k) => !isReservedKey(k)) : []
+        )
+        return settle(`storage.${areaName}.getKeys`, work, callback)
       })
     }
     const onChanged = safely(() => area.onChanged)
@@ -1665,18 +1813,34 @@ export function installExtensionApi(
         `storage.${areaName}.onChanged`,
         isNativeEvent(onChanged) ? onChanged : undefined,
         {
-          nativeDelivers: host.kind === 'frame'
+          nativeDelivers: host.kind === 'frame',
+          nativeMap: hidden
+            ? (args) => {
+                const changes = visibleChanges(args[0])
+                return changes ? [changes] : null
+              }
+            : undefined
         }
       )
     )
+    return {
+      area,
+      get: nativeGet,
+      set: nativeSet,
+      remove: isFunction(nativeRemove) ? nativeRemove : undefined,
+      getKeys: isFunction(nativeKeys) ? nativeKeys : undefined
+    }
   }
 
+  let nativeLocal: NativeLocal | null = null
   {
     const primaryStorage = namespaceOn(roots[0], 'storage')
     for (const areaName of ['local', 'session']) {
       const native = safely(() => primaryStorage[areaName])
-      if (native && typeof native === 'object') wrapNativeArea(native, areaName)
-      else hostArea(primaryStorage, areaName)
+      if (native && typeof native === 'object') {
+        const wrapped = wrapNativeArea(native, areaName, areaName === 'local')
+        if (areaName === 'local') nativeLocal = wrapped
+      } else hostArea(primaryStorage, areaName)
     }
     for (const areaName of ['sync', 'managed']) hostArea(primaryStorage, areaName)
     const nativeOnChanged = safely(() => primaryStorage.onChanged)
@@ -1686,7 +1850,12 @@ export function installExtensionApi(
       createEvent('storage.onChanged', nativeOnChanged, {
         nativeDelivers: host.kind === 'frame',
         // Documents get local/session changes from the engine; sync/managed only exist host-side.
-        nativeHandles: (args) => args[1] === 'local' || args[1] === 'session'
+        nativeHandles: (args) => args[1] === 'local' || args[1] === 'session',
+        nativeMap: (args) => {
+          if (args[1] !== 'local') return args
+          const changes = visibleChanges(args[0])
+          return changes ? [changes, 'local'] : null
+        }
       })
     )
     define(primaryStorage, 'AccessLevel', {
@@ -1697,6 +1866,348 @@ export function installExtensionApi(
       const other = namespaceOn(root, 'storage')
       for (const key of ['local', 'session', 'sync', 'managed', 'onChanged', 'AccessLevel'])
         define(other, key, primaryStorage[key])
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // The content scripts' side of sync/managed: the mirror in this partition's `local`, the
+  // channel their writes arrive on, and the prelude first in every injection
+  // ---------------------------------------------------------------------------
+
+  const storagePrelude: string | null =
+    typeof options?.storagePrelude === 'string' && options.storagePrelude.length > 0
+      ? options.storagePrelude
+      : null
+
+  interface MirrorPayload {
+    seq: number
+    sync?: StorageChanges
+    managed?: StorageChanges
+  }
+
+  function mirrorPayload(value: unknown): MirrorPayload | null {
+    if (!isObject(value) || typeof value.seq !== 'number') return null
+    const payload: MirrorPayload = { seq: value.seq }
+    if (isObject(value.sync)) payload.sync = value.sync as StorageChanges
+    if (isObject(value.managed)) payload.managed = value.managed as StorageChanges
+    return payload
+  }
+
+  /**
+   * The mirror: the host's `storage.sync` and `storage.managed` of this extension, kept under
+   * the reserved keys of this partition's native `local`, where the prelude reads them. One
+   * context per partition writes it (the host addresses the worker or background page first);
+   * every write here goes through one promise chain, so the host's changes land in order. A
+   * change whose sequence number skips one means a missed delivery: the snapshot is taken again.
+   */
+  function createMirror(local: NativeLocal): {
+    start(): Promise<void>
+    apply(payload: unknown): Promise<void>
+  } {
+    let chain: Promise<void> = Promise.resolve()
+    let appliedSeq = -1
+    const enqueue = (work: () => Promise<void>): Promise<void> => {
+      chain = chain.then(work, work).catch(() => undefined)
+      return chain
+    }
+    const call = (
+      method: ((...args: unknown[]) => unknown) | undefined,
+      args: unknown[]
+    ): Promise<unknown> =>
+      method ? callNativeArea(local.area, method, args) : Promise.resolve(undefined)
+    const mirrored = (key: string): boolean =>
+      key.startsWith(SYNC_KEY_PREFIX) || key.startsWith(MANAGED_KEY_PREFIX)
+
+    async function mirroredKeys(): Promise<string[]> {
+      if (local.getKeys) {
+        const keys = await call(local.getKeys, [])
+        return Array.isArray(keys)
+          ? keys.filter((k): k is string => typeof k === 'string' && mirrored(k))
+          : []
+      }
+      const all = await call(local.get, [null])
+      return isObject(all) ? Object.keys(all).filter(mirrored) : []
+    }
+
+    async function write(set: StorageItems, remove: string[]): Promise<void> {
+      if (remove.length > 0) await call(local.remove, [remove])
+      if (Object.keys(set).length > 0) await call(local.set, [set])
+    }
+
+    /** Writes made by the prelude while no context could relay them go to the host first. */
+    async function flushOutbox(): Promise<void> {
+      const stored = await call(local.get, [SYNC_OUTBOX_KEY])
+      const queue =
+        isObject(stored) && Array.isArray(stored[SYNC_OUTBOX_KEY]) ? stored[SYNC_OUTBOX_KEY] : []
+      if (queue.length === 0) return
+      for (const item of queue) {
+        if (!isObject(item) || typeof item.op !== 'string') continue
+        const args = Array.isArray(item.args) ? item.args : []
+        await invoke('storage', 'syncWrite', [item.op, args]).catch(() => undefined)
+      }
+      await call(local.remove, [SYNC_OUTBOX_KEY])
+    }
+
+    async function reconcile(): Promise<void> {
+      await flushOutbox()
+      const snapshot = await invoke('storage', 'syncMirror', [])
+      if (!isObject(snapshot)) return
+      const desired: StorageItems = {}
+      const sync = isObject(snapshot.sync) ? snapshot.sync : {}
+      const managed = isObject(snapshot.managed) ? snapshot.managed : {}
+      for (const key of Object.keys(sync)) desired[SYNC_KEY_PREFIX + key] = sync[key]
+      for (const key of Object.keys(managed)) desired[MANAGED_KEY_PREFIX + key] = managed[key]
+      const existing = await mirroredKeys()
+      const stale = existing.filter((k) => !Object.prototype.hasOwnProperty.call(desired, k))
+      const wanted = Object.keys(desired)
+      const current = wanted.length > 0 ? await call(local.get, [wanted]) : {}
+      const set: StorageItems = {}
+      for (const key of wanted) {
+        if (!isObject(current) || !Object.prototype.hasOwnProperty.call(current, key)) {
+          set[key] = desired[key]
+        } else if (!sameJson(current[key], desired[key])) set[key] = desired[key]
+      }
+      await write(set, stale)
+      if (typeof snapshot.seq === 'number') appliedSeq = snapshot.seq
+    }
+
+    async function applyChanges(payload: MirrorPayload): Promise<void> {
+      const set: StorageItems = {}
+      const remove: string[] = []
+      const areas: Array<[string, StorageChanges | undefined]> = [
+        [SYNC_KEY_PREFIX, payload.sync],
+        [MANAGED_KEY_PREFIX, payload.managed]
+      ]
+      for (const [prefix, changes] of areas) {
+        if (!changes) continue
+        for (const key of Object.keys(changes)) {
+          const change = changes[key]
+          if (isObject(change) && change.newValue !== undefined) set[prefix + key] = change.newValue
+          else remove.push(prefix + key)
+        }
+      }
+      await write(set, remove)
+      appliedSeq = payload.seq
+    }
+
+    return {
+      start: () => enqueue(reconcile),
+      apply: (value) =>
+        enqueue(async () => {
+          const payload = mirrorPayload(value)
+          if (!payload || payload.seq <= appliedSeq) return
+          if (appliedSeq >= 0 && payload.seq > appliedSeq + 1) {
+            await reconcile()
+            return
+          }
+          await applyChanges(payload)
+        })
+    }
+  }
+
+  const mirror = storagePrelude && nativeLocal ? createMirror(nativeLocal) : null
+
+  function isSyncChannelMessage(message: unknown): message is Record<string, unknown> {
+    return isObject(message) && message.__zenium === SYNC_CHANNEL
+  }
+
+  /**
+   * `runtime.onMessage`: the prelude's proxied writes never reach the extension's listeners, and
+   * the extension's worker or background page (every document when it has neither) answers
+   * them after the host committed and this partition's mirror carries the change, so the
+   * content script's read after its write sees it.
+   */
+  function wrapRuntimeOnMessage(event: NativeEvent, answers: boolean): void {
+    const proxies = new WeakMap<Listener, Listener>()
+    const nativeAdd = event.addListener
+    const nativeRemove = event.removeListener
+    const nativeHas: unknown = safely(
+      () => (event as unknown as Record<string, unknown>).hasListener
+    )
+    define(event, 'addListener', function (fn: unknown, ...rest: unknown[]): void {
+      if (!isFunction(fn)) return
+      let proxy = proxies.get(fn)
+      if (!proxy) {
+        proxy = (message: unknown, ...args: unknown[]) =>
+          isSyncChannelMessage(message) ? undefined : fn(message, ...args)
+        proxies.set(fn, proxy)
+      }
+      nativeAdd.call(event, proxy, ...rest)
+    })
+    define(event, 'removeListener', function (fn: unknown): void {
+      if (!isFunction(fn)) return
+      const proxy = proxies.get(fn)
+      if (proxy) nativeRemove.call(event, proxy)
+    })
+    if (isFunction(nativeHas)) {
+      define(event, 'hasListener', function (fn: unknown): boolean {
+        if (!isFunction(fn)) return false
+        const proxy = proxies.get(fn)
+        return proxy ? Boolean(nativeHas.call(event, proxy)) : false
+      })
+    }
+    if (!answers || !mirror) return
+    const answer = (message: unknown, _sender: unknown, sendResponse: unknown): unknown => {
+      if (!isSyncChannelMessage(message) || !isFunction(sendResponse)) return undefined
+      const op = typeof message.op === 'string' ? message.op : ''
+      const args = Array.isArray(message.args) ? message.args : []
+      invoke('storage', 'syncWrite', [op, args]).then(
+        async (result) => {
+          await mirror.apply(result)
+          sendResponse({ __zenium: SYNC_CHANNEL, ok: true })
+        },
+        (error: unknown) => {
+          sendResponse({
+            __zenium: SYNC_CHANNEL,
+            ok: false,
+            error: error instanceof Error ? error.message : String(error)
+          })
+        }
+      )
+      return true
+    }
+    nativeAdd.call(event, answer)
+  }
+
+  if (mirror) {
+    const answers = host.kind === 'worker' || isBackgroundPage || background === null
+    const seen = new Set<object>()
+    for (const root of roots) {
+      const event: unknown = safely(() => root.runtime?.onMessage)
+      if (!isNativeEvent(event) || seen.has(event)) continue
+      seen.add(event)
+      wrapRuntimeOnMessage(event, answers)
+    }
+    void mirror.start()
+  }
+
+  /** A `files` list with the prelude first (unchanged when it already leads). */
+  function withPreludeFirst(files: unknown[]): unknown[] {
+    return files[0] === storagePrelude ? files : [storagePrelude, ...files]
+  }
+
+  function wantsPrelude(entry: Record<string, unknown>, listKey: string): boolean {
+    if (entry.world === 'MAIN') return false
+    const list = entry[listKey]
+    return Array.isArray(list) && list.some((item) => typeof item === 'string')
+  }
+
+  /** A native method awaited through its callback; `runtime.lastError` becomes the rejection. */
+  function callNativeMethod(
+    target: object,
+    method: (...args: unknown[]) => unknown,
+    args: unknown[]
+  ): Promise<unknown> {
+    return callNativeArea(target, method, args)
+  }
+
+  /**
+   * `scripting`: registrations and file injections into isolated worlds get the prelude first
+   * (what `getRegisteredContentScripts` returns has it taken out again); a function injection
+   * that mentions `storage` runs after a separate injection of the prelude file.
+   */
+  function wrapScripting(scripting: Record<string, unknown>): void {
+    const withLists = (scripts: unknown): unknown =>
+      Array.isArray(scripts)
+        ? scripts.map((entry: unknown) =>
+            isObject(entry) && wantsPrelude(entry, 'js')
+              ? { ...entry, js: withPreludeFirst(entry.js as unknown[]) }
+              : entry
+          )
+        : scripts
+    for (const name of ['registerContentScripts', 'updateContentScripts']) {
+      const native = safely(() => scripting[name])
+      if (!isFunction(native)) continue
+      define(scripting, name, function (...raw: unknown[]): unknown {
+        if (raw.length > 0) raw[0] = withLists(raw[0])
+        return native.apply(scripting, raw)
+      })
+    }
+    const nativeGet = safely(() => scripting.getRegisteredContentScripts)
+    if (isFunction(nativeGet)) {
+      const strip = (scripts: unknown): unknown =>
+        Array.isArray(scripts)
+          ? scripts.map((entry: unknown) =>
+              isObject(entry) && Array.isArray(entry.js)
+                ? { ...entry, js: entry.js.filter((file) => file !== storagePrelude) }
+                : entry
+            )
+          : scripts
+      define(scripting, 'getRegisteredContentScripts', function (...raw: unknown[]): unknown {
+        const callback = takeCallback(raw)
+        const work = callNativeMethod(scripting, nativeGet, raw).then(strip)
+        return settle(
+          'scripting.getRegisteredContentScripts(optional object filter, optional function callback)',
+          work,
+          callback
+        )
+      })
+    }
+    const nativeExecute = safely(() => scripting.executeScript)
+    if (isFunction(nativeExecute)) {
+      const qualified = 'scripting.executeScript(object injection, optional function callback)'
+      define(scripting, 'executeScript', function (...raw: unknown[]): unknown {
+        const injection = raw[0]
+        if (!isObject(injection) || injection.world === 'MAIN') {
+          return nativeExecute.apply(scripting, raw)
+        }
+        if (wantsPrelude(injection, 'files')) {
+          raw[0] = { ...injection, files: withPreludeFirst(injection.files as unknown[]) }
+          return nativeExecute.apply(scripting, raw)
+        }
+        const func = injection.func ?? injection.function
+        if (!isFunction(func) || !/\bstorage\b/.test(String(func))) {
+          return nativeExecute.apply(scripting, raw)
+        }
+        const callback = takeCallback(raw)
+        const first: Record<string, unknown> = { target: injection.target, files: [storagePrelude] }
+        if (injection.world !== undefined) first.world = injection.world
+        if (injection.injectImmediately !== undefined)
+          first.injectImmediately = injection.injectImmediately
+        const work = callNativeMethod(scripting, nativeExecute, [first]).then(() =>
+          callNativeMethod(scripting, nativeExecute, [injection])
+        )
+        return settle(qualified, work, callback)
+      })
+    }
+  }
+
+  /**
+   * MV2 `tabs.executeScript`: a file injection, or code that mentions `storage`, runs after a
+   * separate injection of the prelude into the same frames (`allFrames`, `frameId`, `runAt` and
+   * the rest of the details carry over).
+   */
+  function wrapTabsExecuteScript(tabs: Record<string, unknown>): void {
+    const native = safely(() => tabs.executeScript)
+    if (!isFunction(native)) return
+    const qualified =
+      'tabs.executeScript(optional integer tabId, object details, optional function callback)'
+    define(tabs, 'executeScript', function (...raw: unknown[]): unknown {
+      const callback = takeCallback(raw)
+      const detailsAt = raw.length >= 2 ? 1 : 0
+      const details = raw[detailsAt]
+      const wants =
+        isObject(details) &&
+        (typeof details.file === 'string' ||
+          (typeof details.code === 'string' && /\bstorage\b/.test(details.code)))
+      if (!wants) return native.apply(tabs, callback ? [...raw, callback] : raw)
+      const prelude: Record<string, unknown> = { ...(details as Record<string, unknown>) }
+      delete prelude.code
+      prelude.file = storagePrelude
+      const before = raw.slice(0, detailsAt)
+      const work = callNativeMethod(tabs, native, [...before, prelude]).then(() =>
+        callNativeMethod(tabs, native, [...before, details])
+      )
+      return settle(qualified, work, callback)
+    })
+  }
+
+  if (storagePrelude) {
+    for (const root of roots) {
+      const scripting: unknown = safely(() => root.scripting)
+      if (isObject(scripting)) wrapScripting(scripting)
+      const tabs: unknown = safely(() => root.tabs)
+      if (manifestVersion === 2 && isObject(tabs)) wrapTabsExecuteScript(tabs)
     }
   }
 
@@ -1786,6 +2297,7 @@ export function installExtensionApi(
       if (event === 'views' && Array.isArray(args[0])) views = args[0] as ExtensionView[]
       else if (event === 'toggles' && isObject(args[0])) applyToggles(args[0])
       else if (event === 'us-port') userScriptPortEvent(args[0])
+      else if (event === 'sync-mirror' && mirror) void mirror.apply(args[0])
       return
     }
     if (namespace === 'webRequest') {
@@ -1823,6 +2335,9 @@ export function installExtensionApi(
     isBackgroundPage,
     browserAliased
   })
+  // Every context keeps the mirror of its partition; a worker that registered this before it
+  // stopped is woken for the next change, as for any event it listens to.
+  if (mirror) host.notify('listen', { event: '__zen.sync-mirror' })
 
   return { installed: true, browserAliased, roots: roots.length, manifestVersion }
 }

@@ -3,23 +3,41 @@ import { useState } from 'react'
 import { ArrowDown, ArrowUp, Pencil, Plus, Trash2 } from 'lucide-react'
 import type {
   NewTabBackgroundKind,
+  NewTabPreset,
+  NewTabSettings,
   NewTabShortcut,
   NewTabShortcutsMode,
   Settings,
   UIState
 } from '@shared/types'
-import { MAX_NEW_TAB_SHORTCUTS } from '@shared/defaults'
+import {
+  MAX_NEW_TAB_SHORTCUTS,
+  newTabPresetChoices,
+  newTabSections,
+  newTabShortcutsMode,
+  pickNewTabPreset,
+  setNewTabBackground,
+  setNewTabSection,
+  setNewTabShortcutsMode
+} from '@shared/newTab'
 import { inputToUrl } from '@shared/url'
 import { run } from '@renderer/lib/api'
+import {
+  NEW_TAB_LAYOUT_HINT,
+  NEW_TAB_PRESET_LABELS,
+  newTabBackgroundValue
+} from '@renderer/lib/newTabSettings'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Switch } from '../ui/switch'
 import { Choice, Group, Row } from './SettingsPrimitives'
 
 /**
- * Settings → New Tab, what the page's Customize control opens: the shortcuts source, background
- * and greeting, the switch that turns the page off, and a list editor for the "My shortcuts"
- * tiles for those who prefer forms to the grid.
+ * Settings → New Tab, what the page's Customize control opens: the layout (the preset the phone's
+ * sheet picks too, so a layout synced from a phone has its switch here), the shortcuts source,
+ * background and greeting – rows that write the one model's sections through the same toggles as
+ * the phone's sheet, so changing one makes the layout Custom – the switch that turns the page
+ * off, and a list editor for the shortcut tiles for those who prefer forms to the grid.
  */
 export function NewTabSection({
   state,
@@ -29,8 +47,7 @@ export function NewTabSection({
   set: (patch: Partial<Settings>) => void
 }): JSX.Element {
   const prefs = state.settings.newTab
-  const update = (patch: Partial<Settings['newTab']>): void =>
-    set({ newTab: { ...prefs, ...patch } })
+  const write = (next: NewTabSettings): void => set({ newTab: next })
   const { image, canPick } = state.newTabBackground
   const backgroundOptions: Array<{ value: NewTabBackgroundKind; label: string }> = [
     { value: 'space', label: 'Space gradient' },
@@ -44,8 +61,9 @@ export function NewTabSection({
       void run('newtab.pickBackgroundImage', undefined)
       return
     }
-    update({ background: v })
+    write(setNewTabBackground(prefs, v))
   }
+  const background = newTabBackgroundValue(prefs, image)
   return (
     <>
       <Group title="New Tab">
@@ -53,15 +71,31 @@ export function NewTabSection({
           label="Open the new tab page"
           hint="Off, a new tab shows only the address bar, as before."
         >
-          <Switch checked={prefs.enabled} onCheckedChange={(v) => update({ enabled: v })} />
+          <Switch
+            checked={prefs.enabled}
+            onCheckedChange={(v) => write({ ...prefs, enabled: v })}
+          />
         </Row>
-        <Row label="Shortcuts">
+        <Row label="Layout" hint={NEW_TAB_LAYOUT_HINT}>
+          <Choice<NewTabPreset>
+            value={prefs.preset}
+            onChange={(v) => write(pickNewTabPreset(prefs, v))}
+            options={newTabPresetChoices(prefs).map((value) => ({
+              value,
+              label: NEW_TAB_PRESET_LABELS[value]
+            }))}
+          />
+        </Row>
+        <Row
+          label="Shortcuts"
+          hint="Your shortcuts take the first tiles; the most visited sites fill the rest."
+        >
           <Choice<NewTabShortcutsMode>
-            value={prefs.shortcuts}
-            onChange={(v) => update({ shortcuts: v })}
+            value={newTabShortcutsMode(prefs)}
+            onChange={(v) => write(setNewTabShortcutsMode(prefs, v))}
             options={[
               { value: 'most-visited', label: 'Most visited' },
-              { value: 'custom', label: 'My shortcuts' },
+              { value: 'my-shortcuts', label: 'My shortcuts' },
               { value: 'hidden', label: 'Hide' }
             ]}
           />
@@ -69,9 +103,7 @@ export function NewTabSection({
         <Row
           label="Background"
           hint={
-            prefs.background === 'image' && image
-              ? 'Your image, stored on this device only.'
-              : undefined
+            background === 'image' && image ? 'Your image, stored on this device only.' : undefined
           }
         >
           <div className="flex items-center gap-2">
@@ -94,14 +126,17 @@ export function NewTabSection({
               </>
             )}
             <Choice<NewTabBackgroundKind>
-              value={prefs.background === 'image' && !image ? 'space' : prefs.background}
+              value={background}
               onChange={onBackground}
               options={backgroundOptions}
             />
           </div>
         </Row>
         <Row label="Show a greeting" hint="A line above the search box that follows the hour.">
-          <Switch checked={prefs.greeting} onCheckedChange={(v) => update({ greeting: v })} />
+          <Switch
+            checked={newTabSections(prefs).greeting}
+            onCheckedChange={(v) => write(setNewTabSection(prefs, 'greeting', v))}
+          />
         </Row>
       </Group>
       <ShortcutsGroup shortcuts={state.newTabShortcuts} />
@@ -123,7 +158,7 @@ function ShortcutsGroup({ shortcuts }: { shortcuts: NewTabShortcut[] }): JSX.Ele
       {shortcuts.length === 0 && editing !== 'new' && (
         <Row
           label="No shortcuts yet"
-          hint='Choose "My shortcuts" above and add the sites you want on every new tab.'
+          hint="Add the sites you want on every new tab; they take the first tiles of the grid."
         >
           <span />
         </Row>

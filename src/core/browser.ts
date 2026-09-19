@@ -59,7 +59,6 @@ import { TranslateService } from './translate/service'
 import { PageControls } from './pageControls'
 import { FindMemory } from './find'
 import { FullscreenService } from './fullscreen'
-import { NewTabPhoneService } from './newTabPhone'
 import { WebAppService } from './webapp'
 import { UpdateService } from './updates'
 import { ExternalProtocolService } from './externalProtocols'
@@ -96,10 +95,10 @@ import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
 import {
   ONBOARDING_ESSENTIALS,
   sanitizeAutofillSettings,
-  sanitizeNewTabSettings,
   sanitizePasswordSettings,
   spaceLabel
 } from '../shared/defaults'
+import { sanitizeNewTabSettings } from '../shared/newTab'
 import { sanitizePhoneBar } from '../shared/phoneBar'
 import { PRIVATE_THEME, captionColors, resolveTheme, rgbToHex } from '../shared/theme'
 import { newId } from '../shared/ids'
@@ -109,7 +108,6 @@ import { sanitizePromoState } from '../shared/defaultBrowser'
 import { sanitizeBlockingSettings } from '../shared/blocking'
 import { isShortcutPreset } from '../shared/shortcuts'
 import { sanitizePrivacySettings } from '../shared/privacy'
-import { sanitizeNewTabPhoneSettings } from '../shared/newTabPhone'
 import type { ExtensionHost, Governor, PageMessage, Platform, SyncHost } from './platform'
 import { JsonStore } from './store/JsonStore'
 
@@ -160,7 +158,10 @@ const FOCUS_CHROME_EVENTS = new Set<EventName>([
 export class Browser {
   readonly state: BrowserState
   readonly history: HistoryService
-  /** `zen://newtab`: its state, its shortcuts, the pages preloaded for Ctrl+T. */
+  /**
+   * The new tab page on both platforms: `zen://newtab`'s state and the pages preloaded for
+   * Ctrl+T (desktop), the shortcuts, the removed hosts and the background image (both).
+   */
   readonly newTab: NewTabService
   readonly bookmarks: BookmarkService
   readonly downloads: DownloadService
@@ -224,8 +225,6 @@ export class Browser {
   readonly find = new FindMemory()
   /** Fullscreen hints (F11, a page's element) and the Esc hold that leaves the window's fullscreen. */
   readonly fullscreen: FullscreenService
-  /** The new tab page's pins, removals and wallpaper. */
-  readonly newTabPhone: NewTabPhoneService
   /** Web app manifests, "Add to Home screen" and the ambient install prompt. */
   readonly webApps: WebAppService
   readonly windows = new Map<string, ZenWindow>()
@@ -329,7 +328,6 @@ export class Browser {
     this.protection = new ProtectionService(this)
     this.translate = new TranslateService(this)
     this.privacy = new PrivacyService(this)
-    this.newTabPhone = new NewTabPhoneService(this)
     this.webApps = new WebAppService(this, platform.io)
     this.state.extras = (win) => ({
       boosts: this.boosts.all(),
@@ -1475,7 +1473,6 @@ export class Browser {
     this.passwords.flushSync()
     this.blocking.flushSync()
     this.translate.flushSync()
-    this.newTabPhone.flushSync()
     this.webApps.flushSync()
   }
 
@@ -1897,10 +1894,8 @@ export class Browser {
       'folder.delete': ({ folderId, unpack }) => this.deleteFolder(folderId, unpack),
       'folder.contextMenu': ({ folderId }, win) => this.menus.showFolderContextMenu(folderId, win),
       'newtab.contextMenu': (_a, win) => this.menus.showNewTabContextMenu(win),
-      'newTabPhone.tileContextMenu': ({ url, title }, win) =>
+      'newtab.tileContextMenu': ({ url, title }, win) =>
         this.menus.showTopSiteContextMenu(url, title, win),
-      'newTabPhone.wallpaper': () => this.newTabPhone.wallpaperImage(),
-      'newTabPhone.setWallpaper': ({ dataUrl }) => this.newTabPhone.setWallpaperImage(dataUrl),
       'app.menu': ({ anchor, keyboard }, win) =>
         this.menus.showAppMenu(win, { anchor, keyboard: Boolean(keyboard) }),
       'focus.content': (_a, win) => win.focusContent(),
@@ -2038,6 +2033,8 @@ export class Browser {
       'newtab.reorderShortcuts': ({ ids }) => this.newTab.reorderShortcuts(ids),
       'newtab.pickBackgroundImage': (_a, win) => this.newTab.pickBackgroundImage(win),
       'newtab.clearBackgroundImage': () => this.newTab.clearBackgroundImage(),
+      'newtab.backgroundImage': () => this.newTab.backgroundImage(),
+      'newtab.setBackgroundImage': ({ dataUrl }) => this.newTab.setBackgroundImage(dataUrl),
 
       'bookmark.toggle': ({ tabId }, win) => this.toggleBookmark(tabId, win),
       'bookmark.star': ({ tabId }, win) => this.starTab(tabId, win),
@@ -2429,14 +2426,12 @@ export class Browser {
           ...(value as Partial<Settings['privacy']>)
         })
       } else if (key === 'newTab' && value && typeof value === 'object') {
+        // A one-section patch (`modules: { greeting: true }`) must not drop the other sections.
+        const incoming = value as Partial<Settings['newTab']>
         s.newTab = sanitizeNewTabSettings({
           ...s.newTab,
-          ...(value as Partial<Settings['newTab']>)
-        })
-      } else if (key === 'newTabPhone' && value && typeof value === 'object') {
-        s.newTabPhone = sanitizeNewTabPhoneSettings({
-          ...s.newTabPhone,
-          ...(value as Partial<Settings['newTabPhone']>)
+          ...incoming,
+          modules: { ...s.newTab.modules, ...incoming.modules }
         })
       } else if (key === 'downloads' && value && typeof value === 'object') {
         // The block is partial: a one-key patch from a Settings row must not drop the others.

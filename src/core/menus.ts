@@ -262,7 +262,9 @@ export class Menus {
       )
     }
     const manage: Template = []
-    if (state.settings.newTab.shortcuts === 'custom') {
+    // One of the user's own tiles (the whole grid under "My shortcuts", the leading tiles under
+    // "Most visited") can be edited; a most-visited tile can only be removed.
+    if (this.browser.newTab.isShortcut(tile.id)) {
       manage.push({
         label: 'Edit Shortcut',
         click: () => this.browser.newTab.openShortcutDialog(tabId, tile.id, win)
@@ -1293,8 +1295,8 @@ export class Menus {
   /** Long-press on a new tab page tile: open it elsewhere, pin it, or take it off the page. */
   showTopSiteContextMenu(url: string, title: string, win: ZenWindow): void {
     if (!isNavigableUrl(url)) return
-    const { tabs, state, newTabPhone } = this.browser
-    const pinned = state.settings.newTabPhone.pinned.some((p) => p.url === url)
+    const { tabs, state, newTab } = this.browser
+    const pinned = state.newTabDevice.shortcuts.some((s) => s.url === url)
     this.popup(
       [
         {
@@ -1308,9 +1310,9 @@ export class Menus {
         { type: 'separator' },
         {
           label: pinned ? 'Unpin Shortcut' : 'Pin Shortcut',
-          click: () => (pinned ? newTabPhone.unpin(url) : newTabPhone.pin(url, title))
+          click: () => (pinned ? newTab.unpin(url) : newTab.pin(url, title))
         },
-        { label: 'Remove', click: () => newTabPhone.remove(url) }
+        { label: 'Remove', click: () => newTab.remove(url) }
       ],
       win,
       'topsite'

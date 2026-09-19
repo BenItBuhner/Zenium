@@ -12,6 +12,7 @@ import type {
   WindowOpenTicket
 } from './platform'
 import type {
+  NewTabDeviceState,
   NewTabPageAction,
   NewTabPageShortcut,
   NewTabPageState,
@@ -25,18 +26,27 @@ import type {
 } from '../shared/types'
 import type { SafeBrowsingHit } from '../shared/privacy'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
-import { NEW_TAB_URL, getHost, inputToUrl, isNewTabUrl } from '../shared/url'
+import { NEW_TAB_URL, inputToUrl, isNewTabUrl } from '../shared/url'
 import { resolveTheme, themeCssVariables } from '../shared/theme'
 import { newId } from '../shared/ids'
-import { MAX_NEW_TAB_SHORTCUTS } from '../shared/defaults'
+import {
+  MAX_NEW_TAB_SHORTCUTS,
+  hideSite,
+  newTabBackground,
+  newTabSections,
+  newTabShortcutsMode,
+  pinShortcut,
+  removeSite,
+  sanitizeNewTabDevice,
+  sanitizeNewTabSettings,
+  siteHost,
+  toggleNewTabModule,
+  unhideSite,
+  unpinShortcut
+} from '../shared/newTab'
 import { createTabRecord, getSpace } from './model'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
-
-/** `www.` and case do not make a different site (matches `topSites` in history). */
-function normalizeHost(host: string): string {
-  return host.toLowerCase().replace(/^www\./, '')
-}
 
 /** The grid shows at most this many tiles, whichever source fills it (shared with the chrome). */
 export { MAX_NEW_TAB_SHORTCUTS }
@@ -180,17 +190,21 @@ export function normalizeShortcutInput(
     return null
   }
   const trimmed = title.trim()
-  return { title: trimmed || normalizeHost(getHost(canonical)) || canonical, url: canonical }
+  return { title: trimmed || siteHost(canonical) || canonical, url: canonical }
 }
 
 /**
- * The new tab page: `zen://newtab` in a real tab, its state (theme, settings, shortcuts, most
- * visited) pushed into the page, the actions the page sends back, and one page preloaded off
- * screen per window so Ctrl+T shows it in the same frame.
+ * The new tab page's service on both platforms, over the one model (`shared/newTab.ts`): the
+ * user's shortcuts and removed hosts (`BrowserState.newTabDevice`, device-local) and the
+ * background image behind the host's `NewTabBackgroundHost`, for the phone's page – which the
+ * chrome draws from the state – as much as for the desktop's.
  *
- * The page is its own document; the browser never reaches into it. Everything the page shows
- * arrives as one `NewTabPageState` (synchronously before its first paint, then pushed after each
- * state commit that changed it) and everything the page wants is a `NewTabPageAction`.
+ * On the desktop the page is `zen://newtab` in a real tab, its state (theme, settings,
+ * shortcuts, most visited) pushed into the page, the actions the page sends back, and one page
+ * preloaded off screen per window so Ctrl+T shows it in the same frame. The page is its own
+ * document; the browser never reaches into it. Everything the page shows arrives as one
+ * `NewTabPageState` (synchronously before its first paint, then pushed after each state commit
+ * that changed it) and everything the page wants is a `NewTabPageAction`.
  */
 export class NewTabService {
   private readonly preloads = new Map<string, Preload>()
@@ -204,7 +218,7 @@ export class NewTabService {
   constructor(private readonly browser: Browser) {
     browser.state.newTabBackgroundFor = () => {
       const host = browser.platform.newTabBackground
-      return { image: Boolean(host?.current()), canPick: Boolean(host) }
+      return { image: Boolean(host?.current()), canPick: Boolean(host?.pick) }
     }
     browser.history.onChange(() => {
       this.historyVersion += 1
@@ -219,6 +233,42 @@ export class NewTabService {
 
   private get settings(): NewTabSettings {
     return this.browser.state.settings.newTab
+  }
+
+  private get device(): NewTabDeviceState {
+    return this.browser.state.newTabDevice
+  }
+
+  /**
+   * The one write path of the device-local sets: the next document is sanitised (the caps, the
+   * host normalisation, one tile per address) and replaces the current one whole, so nothing
+   * else holds a reference that a mutation could leave stale.
+   */
+  private updateDevice(mutate: (device: NewTabDeviceState) => NewTabDeviceState): void {
+    const { state } = this.browser
+    state.newTabDevice = sanitizeNewTabDevice(mutate(state.newTabDevice))
+    state.commit()
+  }
+
+  /** The one write path of the settings from this service: sanitised on every write. */
+  private setSettings(patch: Partial<NewTabSettings>): void {
+    const { state } = this.browser
+    state.settings.newTab = sanitizeNewTabSettings({ ...state.settings.newTab, ...patch })
+    state.commit()
+  }
+
+  /**
+   * An image the user just picked is meant to be seen: the source becomes the image and, on a
+   * layout without a wallpaper, the wallpaper section comes on (the `custom` preset seeded from
+   * the layout the user is leaving, as the phone's sheet did).
+   */
+  private showImage(): void {
+    const settings = this.settings
+    const shown = newTabSections(settings).wallpaper
+    this.setSettings({
+      ...(shown ? settings : toggleNewTabModule(settings, 'wallpaper', true)),
+      background: 'image'
+    })
   }
 
   // ---------------------------------------------------------------------------
@@ -283,23 +333,33 @@ export class NewTabService {
     return null
   }
 
+  /**
+   * The settings resolved for a page: the preset's sections (`newTabSections`, never `modules`
+   * directly), the grid's mode – `hidden` while the shortcuts section is off – and what to paint.
+   */
   private build(theme: SpaceTheme | null, isPrivate: boolean): NewTabPageState {
     const settings = this.settings
-    const background = this.browser.platform.newTabBackground
+    const sections = newTabSections(settings)
+    const shortcutsMode = newTabShortcutsMode(settings)
+    const host = this.browser.platform.newTabBackground
+    const backgroundImage = host?.current() ?? null
+    const background = newTabBackground(settings)
+    // A private window's page has no tiles: neither what was browsed elsewhere nor the user's
+    // own shortcuts – its explainer stands where the grid would (design language v2 §9.29).
+    const shortcuts = !isPrivate && shortcutsMode !== 'hidden' ? this.shortcuts() : []
     return {
       light: this.variant(theme, false),
       dark: this.variant(theme, true),
       colorScheme: this.browser.state.settings.colorScheme,
       isPrivate,
-      shortcutsMode: settings.shortcuts,
-      background: settings.background,
-      greeting: settings.greeting,
-      // A private window's page has no tiles: neither what was browsed elsewhere nor the user's
-      // own shortcuts – its explainer stands where the grid would (design language v2 §9.29).
-      shortcuts: !isPrivate && settings.shortcuts === 'custom' ? this.shortcuts() : [],
-      topSites: !isPrivate && settings.shortcuts === 'most-visited' ? this.topSites() : [],
-      backgroundImage: background?.current() ?? null,
-      canPickImage: Boolean(background)
+      shortcutsMode,
+      // An image source with no image on this device paints the space gradient, never a blank.
+      background: background === 'image' && !backgroundImage ? 'space' : background,
+      greeting: sections.greeting,
+      shortcuts,
+      topSites: shortcutsMode === 'most-visited' && !isPrivate ? this.topSites(shortcuts) : [],
+      backgroundImage,
+      canPickImage: Boolean(host?.pick)
     }
   }
 
@@ -308,18 +368,27 @@ export class NewTabService {
     return { vars: themeCssVariables(resolved), isDark: resolved.isDark }
   }
 
-  private topSites(): TopSite[] {
-    const hidden = this.browser.state.newTabHiddenHosts
-    const key = `${this.historyVersion}|${hidden.join(',')}`
+  /**
+   * The most visited sites that fill the grid after the shortcuts: other hosts only (a shortcut
+   * fronts the grid in place of its host's tile), none the user removed.
+   */
+  private topSites(shortcuts: readonly NewTabShortcut[]): TopSite[] {
+    const n = MAX_NEW_TAB_SHORTCUTS - shortcuts.length
+    if (n <= 0) return []
+    const excluded = [
+      ...this.device.hiddenHosts,
+      ...shortcuts.map((s) => siteHost(s.url)).filter((host) => host !== '')
+    ]
+    const key = `${this.historyVersion}|${n}|${excluded.join(',')}`
     if (this.topSitesCache?.key === key) return this.topSitesCache.sites
-    const sites = this.browser.history.topSites(MAX_NEW_TAB_SHORTCUTS, hidden)
+    const sites = this.browser.history.topSites(n, excluded)
     this.topSitesCache = { key, sites }
     return sites
   }
 
-  /** The custom tiles with the favicons history knows. */
+  /** The user's shortcuts with the favicons history knows. */
   private shortcuts(): NewTabPageShortcut[] {
-    const list = this.browser.state.newTabShortcuts.slice(0, MAX_NEW_TAB_SHORTCUTS)
+    const list = this.device.shortcuts.slice(0, MAX_NEW_TAB_SHORTCUTS)
     const key = `${this.historyVersion}|${list.map((s) => s.url).join('\n')}`
     if (this.shortcutsCache?.key === key) {
       const favicons = this.shortcutsCache.favicons
@@ -395,7 +464,7 @@ export class NewTabService {
       case 'restore-shortcut':
         this.restoreShortcut(
           { id: action.id, title: action.title, url: action.url },
-          Number.isFinite(action.index) ? action.index : this.browser.state.newTabShortcuts.length
+          Number.isFinite(action.index) ? action.index : this.device.shortcuts.length
         )
         return
       case 'reorder-shortcuts':
@@ -428,7 +497,7 @@ export class NewTabService {
    * for an add on a full grid.
    */
   openShortcutDialog(tabId: string, id: string | null, win: ZenWindow): void {
-    const list = this.browser.state.newTabShortcuts
+    const list = this.device.shortcuts
     const shortcut = id ? list.find((s) => s.id === id) : undefined
     if (id ? !shortcut : list.length >= MAX_NEW_TAB_SHORTCUTS) return
     this.browser.emit(
@@ -443,61 +512,76 @@ export class NewTabService {
     this.browser.tabs.view(tabId)?.sendNewTabCommand?.({ type: 'remove-tile', id })
   }
 
-  private updateSettings(patch: Partial<NewTabSettings>, win: ZenWindow): void {
-    this.browser.updateSettings({ newTab: { ...this.settings, ...patch } }, win)
+  /** Whether a tile id names one of the user's shortcuts (the chrome's tile menu offers Edit). */
+  isShortcut(id: string): boolean {
+    return this.device.shortcuts.some((s) => s.id === id)
   }
 
   // ---------------------------------------------------------------------------
-  // My shortcuts
+  // Shortcuts (the desktop's grid and the phone's pins: one list)
   // ---------------------------------------------------------------------------
 
-  /** Add a tile; null when the address is not a web address or the grid is full. */
+  /**
+   * Add a tile; null when the address is not a web address or the grid is full. A site that
+   * already has a tile is not added twice: its tile's id comes back.
+   */
   addShortcut(title: string, url: string): string | null {
     const input = normalizeShortcutInput(title, url)
     if (!input) return null
-    const list = this.browser.state.newTabShortcuts
-    if (list.length >= MAX_NEW_TAB_SHORTCUTS) return null
+    const existing = this.device.shortcuts.find((s) => s.url === input.url)
+    if (existing) return existing.id
+    if (this.device.shortcuts.length >= MAX_NEW_TAB_SHORTCUTS) return null
     const shortcut: NewTabShortcut = { id: newId('shortcut'), ...input }
-    list.push(shortcut)
-    this.browser.state.commit()
+    this.updateDevice((d) => pinShortcut(d, shortcut))
     return shortcut.id
   }
 
+  /** Edit a tile; false when it is gone, the address is not one, or another tile has it. */
   updateShortcut(id: string, title: string, url: string): boolean {
     const input = normalizeShortcutInput(title, url)
-    const shortcut = this.browser.state.newTabShortcuts.find((s) => s.id === id)
+    const list = this.device.shortcuts
+    const shortcut = list.find((s) => s.id === id)
     if (!input || !shortcut) return false
-    shortcut.title = input.title
-    shortcut.url = input.url
-    this.browser.state.commit()
+    if (list.some((s) => s.id !== id && s.url === input.url)) return false
+    this.updateDevice((d) => ({
+      ...d,
+      shortcuts: d.shortcuts.map((s) => (s.id === id ? { id, ...input } : s))
+    }))
     return true
   }
 
   /** Remove a tile; the page keeps what it needs for Undo (`restore-shortcut`). */
   removeShortcut(id: string): { shortcut: NewTabShortcut; index: number } | undefined {
-    const list = this.browser.state.newTabShortcuts
+    const list = this.device.shortcuts
     const index = list.findIndex((s) => s.id === id)
     if (index < 0) return undefined
-    const [shortcut] = list.splice(index, 1)
-    this.browser.state.commit()
+    const shortcut = list[index]
+    this.updateDevice((d) => unpinShortcut(d, shortcut.url))
     return { shortcut, index }
   }
 
   /** Undo of a removal: the tile comes back where it was (or at the end). */
   restoreShortcut(shortcut: NewTabShortcut, index: number): boolean {
     const input = normalizeShortcutInput(shortcut.title, shortcut.url)
-    const list = this.browser.state.newTabShortcuts
-    if (!input || !shortcut.id || list.some((s) => s.id === shortcut.id)) return false
+    const list = this.device.shortcuts
+    if (!input || !shortcut.id) return false
+    if (list.some((s) => s.id === shortcut.id || s.url === input.url)) return false
     if (list.length >= MAX_NEW_TAB_SHORTCUTS) return false
     const at = Math.max(0, Math.min(list.length, Math.round(index)))
-    list.splice(at, 0, { id: shortcut.id, ...input })
-    this.browser.state.commit()
+    this.updateDevice((d) => ({
+      ...d,
+      shortcuts: [
+        ...d.shortcuts.slice(0, at),
+        { id: shortcut.id, ...input },
+        ...d.shortcuts.slice(at)
+      ]
+    }))
     return true
   }
 
   /** New grid order; ids that are not shortcuts are ignored, missing ones keep their order. */
   reorderShortcuts(ids: string[]): void {
-    const list = this.browser.state.newTabShortcuts
+    const list = this.device.shortcuts
     const byId = new Map(list.map((s) => [s.id, s]))
     const next: NewTabShortcut[] = []
     for (const id of ids) {
@@ -506,8 +590,25 @@ export class NewTabService {
     }
     for (const shortcut of list) if (!next.includes(shortcut)) next.push(shortcut)
     if (next.every((s, i) => s === list[i])) return
-    this.browser.state.newTabShortcuts = next
-    this.browser.state.commit()
+    this.updateDevice((d) => ({ ...d, shortcuts: next }))
+  }
+
+  /**
+   * The phone's tile menu: pin a site (a shortcut at the end of the grid, its host back among
+   * the most visited if it was removed), unpin it, or take it off the page altogether.
+   */
+  pin(url: string, title: string): void {
+    const input = normalizeShortcutInput(title, url)
+    if (!input) return
+    this.updateDevice((d) => pinShortcut(d, { id: newId('shortcut'), ...input }))
+  }
+
+  unpin(url: string): void {
+    this.updateDevice((d) => unpinShortcut(d, url))
+  }
+
+  remove(url: string): void {
+    this.updateDevice((d) => removeSite(d, url))
   }
 
   // ---------------------------------------------------------------------------
@@ -516,36 +617,28 @@ export class NewTabService {
 
   /** Remove a most-visited tile: its host stays off the grid until undone. */
   hideSite(url: string): void {
-    const host = normalizeHost(getHost(url))
-    if (!host) return
-    const hidden = this.browser.state.newTabHiddenHosts
-    if (hidden.includes(host)) return
-    hidden.push(host)
-    this.browser.state.commit()
+    if (!siteHost(url)) return
+    this.updateDevice((d) => hideSite(d, url))
   }
 
   unhideSite(url: string): void {
-    const host = normalizeHost(getHost(url))
-    const hidden = this.browser.state.newTabHiddenHosts
-    const index = hidden.indexOf(host)
-    if (index < 0) return
-    hidden.splice(index, 1)
-    this.browser.state.commit()
+    if (!this.device.hiddenHosts.includes(siteHost(url))) return
+    this.updateDevice((d) => unhideSite(d, url))
   }
 
   // ---------------------------------------------------------------------------
   // Background image
   // ---------------------------------------------------------------------------
 
-  /** Let the user pick an image; on success the background switches to it. */
+  /** Let the user pick an image with the host's dialog; on success the background switches to it. */
   async pickBackgroundImage(win: ZenWindow): Promise<boolean> {
     const host = this.browser.platform.newTabBackground
-    if (!host) return false
+    if (!host?.pick) return false
     const picked = await host.pick(win)
     // The picker took the chrome's focus; give it back so the next click is not dropped.
     win.focusChrome()
     if (!picked) return false
-    this.updateSettings({ background: 'image' }, win)
+    this.showImage()
     return true
   }
 
@@ -553,10 +646,26 @@ export class NewTabService {
     const host = this.browser.platform.newTabBackground
     if (!host) return
     await host.clear()
-    if (this.settings.background === 'image') {
-      this.browser.state.settings.newTab = { ...this.settings, background: 'space' }
-    }
-    this.browser.state.commit()
+    if (this.settings.background === 'image') this.setSettings({ background: 'space' })
+    else this.browser.state.commit()
+  }
+
+  /** The image's address for a chrome that paints the page itself (the phone's: a data URL). */
+  backgroundImage(): string | null {
+    return this.browser.platform.newTabBackground?.current() ?? null
+  }
+
+  /**
+   * Keep an image the chrome read itself (the phone's file chooser), or with null let it go;
+   * the background source follows – shown, for a pick; the space colours after a removal.
+   */
+  async setBackgroundImage(dataUrl: string | null): Promise<void> {
+    const host = this.browser.platform.newTabBackground
+    if (!host?.set) throw new Error('This device cannot keep a background image')
+    await host.set(dataUrl)
+    if (dataUrl) this.showImage()
+    else if (this.settings.background === 'image') this.setSettings({ background: 'space' })
+    else this.browser.state.commit()
   }
 
   // ---------------------------------------------------------------------------

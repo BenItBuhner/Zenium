@@ -3,11 +3,11 @@ import { useEffect, useRef, useState } from 'react'
 import { SlidersHorizontal } from 'lucide-react'
 import { useEscape } from '@renderer/hooks/useEscape'
 import type {
+  NewTabBackgroundKind,
+  NewTabMode,
   NewTabModules,
   NewTabPreset,
-  NewTabPhoneSettings,
-  NewTabShortcutStyle,
-  NewTabWallpaper,
+  NewTabSettings,
   UIState
 } from '@shared/types'
 import {
@@ -18,7 +18,7 @@ import {
   presetAvailable,
   toggleNewTabModule,
   type NewTabSections
-} from '@shared/newTabPhone'
+} from '@shared/newTab'
 import { run } from '@renderer/lib/api'
 import { useBackSurface } from '@renderer/lib/back'
 import {
@@ -51,7 +51,7 @@ const MODULE_LABELS: Array<{ key: keyof NewTabModules; label: string }> = [
 /** The Settings rows' context: a switch row never asks the page for a sheet, so nothing to open. */
 const NO_SHEETS: RowContext = { open: () => {} }
 
-const SHORTCUT_STYLES: Array<{ style: NewTabShortcutStyle; label: string; description: string }> = [
+const SHORTCUT_STYLES: Array<{ style: NewTabMode; label: string; description: string }> = [
   { style: 'most-visited', label: 'Most visited', description: 'The sites you go to most' },
   { style: 'my-shortcuts', label: 'My shortcuts', description: 'Only the sites you pin' }
 ]
@@ -85,7 +85,7 @@ export function NewTabCustomizeLayer(): JSX.Element | null {
  * the gear that opened the sheet once the sheet is gone (§9.22, §9.24).
  */
 function CustomizeSheet({ state }: { state: UIState }): JSX.Element {
-  const settings = state.settings.newTabPhone
+  const settings = state.settings.newTab
   const sections = newTabSections(settings)
   const image = wallpaperImageStore.use()
   const sheet = useRef<BottomSheetHandle>(null)
@@ -107,13 +107,13 @@ function CustomizeSheet({ state }: { state: UIState }): JSX.Element {
   })
   useEscape(dismiss)
 
-  const update = (next: NewTabPhoneSettings): void => run('settings.update', { newTabPhone: next })
+  const update = (next: NewTabSettings): void => run('settings.update', { newTab: next })
   const chooseLabel = image.dataUrl ? 'Choose another image' : 'Choose an image'
 
-  const pickWallpaper = (wallpaper: NewTabWallpaper): void => {
+  const pickWallpaper = (background: NewTabBackgroundKind): void => {
     // "Image" without one picked yet asks for the picture first; the pick turns the source over.
-    if (wallpaper === 'image' && !image.dataUrl) fileInput.current?.click()
-    else update({ ...settings, wallpaper })
+    if (background === 'image' && !image.dataUrl) fileInput.current?.click()
+    else update({ ...settings, background })
   }
 
   const onFile = async (e: ChangeEvent<HTMLInputElement>): Promise<void> => {
@@ -122,9 +122,9 @@ function CustomizeSheet({ state }: { state: UIState }): JSX.Element {
     if (!file) return
     setReading(true)
     try {
+      // Picking a picture is meant to be seen: the browser turns the source over and, on a layout
+      // without a wallpaper, the wallpaper section on (`newtab.setBackgroundImage`).
       await setWallpaperImage(await readWallpaperFile(file))
-      // Picking a picture is meant to be seen: the sheet moves to a preset that shows it.
-      if (!sections.wallpaper) update(toggleNewTabModule(settings, 'wallpaper', true))
     } catch (error) {
       pushToast(error instanceof Error ? error.message : 'The image could not be used', 'error')
     } finally {
@@ -193,8 +193,8 @@ function CustomizeSheet({ state }: { state: UIState }): JSX.Element {
                 key={style}
                 label={label}
                 description={description}
-                checked={settings.shortcutStyle === style}
-                onSelect={() => update({ ...settings, shortcutStyle: style })}
+                checked={settings.mode === style}
+                onSelect={() => update({ ...settings, mode: style })}
               />
             ))}
           </div>
@@ -204,13 +204,13 @@ function CustomizeSheet({ state }: { state: UIState }): JSX.Element {
           <div role="radiogroup" aria-label="Wallpaper">
             <RadioRow
               label="Space colours"
-              checked={settings.wallpaper === 'space'}
+              checked={settings.background !== 'image'}
               onSelect={() => pickWallpaper('space')}
             />
             <RadioRow
               label="Image"
               description={image.dataUrl ? 'The picture you chose' : 'A picture from this device'}
-              checked={settings.wallpaper === 'image'}
+              checked={settings.background === 'image'}
               onSelect={() => pickWallpaper('image')}
             />
           </div>

@@ -1468,29 +1468,72 @@ export interface CompactModeSettings {
 }
 
 // ---------------------------------------------------------------------------
-// New tab page (`zen://newtab`)
+// New tab page: one model for `zen://newtab` (desktop) and the phone's page (`shared/newTab.ts`)
 // ---------------------------------------------------------------------------
 
-/** What the shortcuts grid on the new tab page shows. */
-export type NewTabShortcutsMode = 'most-visited' | 'custom' | 'hidden'
-/** What the new tab page paints behind its content. */
+/**
+ * Which sites the tiles show: the user's shortcuts ahead of history's most visited sites, or
+ * only the shortcuts.
+ */
+export type NewTabMode = 'most-visited' | 'my-shortcuts'
+/** What the grid of a page shows: its mode, or nothing when the shortcuts section is off. */
+export type NewTabShortcutsMode = NewTabMode | 'hidden'
+/**
+ * The wallpaper's source: colours derived from the space theme, a solid colour (the phone paints
+ * it as `space` until it has one), or an image picked on this device.
+ */
 export type NewTabBackgroundKind = 'space' | 'solid' | 'image'
 
-/** New tab page preferences (synced with the other settings). */
-export interface NewTabSettings {
-  /** Open `zen://newtab` for new tabs; off keeps the URL-bar-only behaviour. */
-  enabled: boolean
-  shortcuts: NewTabShortcutsMode
-  background: NewTabBackgroundKind
-  /** A "Good morning" line above the search box. */
+/**
+ * Layout presets. `focused` is the search field and the tiles on the bare space gradient;
+ * `inspirational` adds a wallpaper and a greeting; `informational` would add a feed on top of
+ * that (no feed core exists, so it is offered as "not available" and renders like
+ * `inspirational`); `custom` shows exactly the `modules` the user toggled.
+ */
+export type NewTabPreset = 'focused' | 'inspirational' | 'informational' | 'custom'
+
+/** The sections of the page; a preset is a fixed set of them, `custom` reads the user's. */
+export interface NewTabModules {
+  searchBox: boolean
+  shortcuts: boolean
+  /** Whether a wallpaper is painted at all (`NewTabSettings.background` says which). */
+  wallpaper: boolean
+  /** Reserved for a feed core; nothing renders it yet. */
+  feed: boolean
+  /** A "Good morning" line above the search box (the desktop page draws it; the phone's not yet). */
   greeting: boolean
 }
 
-/** A tile of the "My shortcuts" grid. Kept per device (never synced). */
+/** New tab page preferences, synced with the other settings; both pages read this one model. */
+export interface NewTabSettings {
+  /**
+   * Open `zen://newtab` for new tabs; off keeps the URL-bar-only behaviour. Desktop only in
+   * effect: the phone always shows its page.
+   */
+  enabled: boolean
+  mode: NewTabMode
+  preset: NewTabPreset
+  /** Sections the `custom` preset shows; the named presets ignore them (`newTabSections`). */
+  modules: NewTabModules
+  background: NewTabBackgroundKind
+}
+
+/** A shortcut tile: one of the user's own sites on the grid. Kept per device (never synced). */
 export interface NewTabShortcut {
   id: string
   title: string
   url: string
+}
+
+/** The device-local half of the new tab page: the sets that never sync. */
+export interface NewTabDeviceState {
+  /**
+   * The user's shortcuts in grid order: the whole grid under "my shortcuts", the leading tiles
+   * ahead of the most visited sites under "most visited".
+   */
+  shortcuts: NewTabShortcut[]
+  /** Hosts removed from the most-visited tiles (lower-case, no `www.`). */
+  hiddenHosts: string[]
 }
 
 /** A custom shortcut as the page shows it: with the favicon history knows for its site, if any. */
@@ -1518,10 +1561,14 @@ export interface NewTabPageState {
   colorScheme: ColorScheme
   /** Private window: the private accent and a "Private" label. */
   isPrivate: boolean
+  /** What the grid shows, the settings' mode and sections resolved (`newTabSections`). */
   shortcutsMode: NewTabShortcutsMode
+  /** What to paint: the settings' background while its wallpaper section is on, else `space`. */
   background: NewTabBackgroundKind
   greeting: boolean
+  /** The user's shortcuts: the grid under "my shortcuts", its leading tiles under "most visited". */
   shortcuts: NewTabPageShortcut[]
+  /** The most visited sites that follow the shortcuts (other hosts only; empty under "my shortcuts"). */
   topSites: TopSite[]
   /** Address of the custom background image (`zen://newtab-background?v=…`), when one is set. */
   backgroundImage: string | null
@@ -1570,47 +1617,6 @@ export type NewTabPageAction =
  * that the page carries out itself, so its Undo toast works the same as for the Delete key.
  */
 export type NewTabPageCommand = { type: 'remove-tile'; id: string }
-
-// ---------------------------------------------------------------------------
-// New tab page (phone): a quiet surface on the space gradient, customisable per Chrome / Edge
-// ---------------------------------------------------------------------------
-
-/**
- * Layout presets. `focused` is the search field and the top-site tiles on the bare space
- * gradient; `inspirational` adds a wallpaper; `informational` would add a feed on top of that
- * (no feed core exists, so it is offered as "not available" and renders like `inspirational`);
- * `custom` shows exactly the `modules` the user toggled.
- */
-export type NewTabPreset = 'focused' | 'inspirational' | 'informational' | 'custom'
-/** Which sites the tiles show: history frecency (pins first) or only the pinned ones. */
-export type NewTabShortcutStyle = 'most-visited' | 'my-shortcuts'
-/** The wallpaper the wallpaper presets draw: one derived from the space theme, or a picked image. */
-export type NewTabWallpaper = 'space' | 'image'
-
-export interface NewTabModules {
-  searchBox: boolean
-  shortcuts: boolean
-  wallpaper: boolean
-  /** Reserved for a feed core; nothing renders it yet. */
-  feed: boolean
-}
-
-export interface NewTabPinnedSite {
-  url: string
-  title: string
-}
-
-export interface NewTabPhoneSettings {
-  preset: NewTabPreset
-  /** Sections the `custom` preset shows; the named presets ignore them. */
-  modules: NewTabModules
-  shortcutStyle: NewTabShortcutStyle
-  wallpaper: NewTabWallpaper
-  /** Sites pinned to the front of the tiles, in order. */
-  pinned: NewTabPinnedSite[]
-  /** Hosts the user removed from the most-visited tiles. */
-  hiddenHosts: string[]
-}
 
 export interface Settings {
   colorScheme: ColorScheme
@@ -1707,10 +1713,12 @@ export interface Settings {
   shortcutPreset: ShortcutPreset
   /** Safe Browsing, HTTPS-only, secure DNS, cookies, GPC / DNT (Settings → Privacy and security). */
   privacy: PrivacySettings
-  /** The new tab page: whether it opens, what its grid shows, what it paints behind. */
+  /**
+   * The new tab page, both platforms' (`shared/newTab.ts`): whether it opens (desktop), its
+   * layout preset and sections, what its grid shows, what it paints behind. The user's shortcuts
+   * and removed hosts are device-local (`NewTabDeviceState`), not here.
+   */
   newTab: NewTabSettings
-  /** The phone's new tab page (preset, sections, wallpaper, pinned and removed sites). */
-  newTabPhone: NewTabPhoneSettings
   /** The one-time gesture hint (a toast after the first page) has been shown (phones). */
   gestureHintDone: boolean
 }
@@ -2394,9 +2402,14 @@ export interface UIState {
   downloadsProgress: DownloadsProgress
   /** Every bookmark node (roots included), ordered parent-first, then by index. */
   bookmarks: BookmarkNode[]
-  /** "My shortcuts" of the new tab page, in grid order (Settings edits them). */
+  /** The new tab page's shortcuts on this device, in grid order (Settings and the phone's page). */
   newTabShortcuts: NewTabShortcut[]
-  /** The new tab page's custom background: whether one is set, whether the host can pick one. */
+  /** Hosts removed from the new tab page's most-visited tiles on this device (the phone filters). */
+  newTabHiddenHosts: string[]
+  /**
+   * The new tab page's custom background: whether one is set, whether the host can open a file
+   * picker for one (the phone's page reads the file itself and stores it through `set`).
+   */
   newTabBackground: { image: boolean; canPick: boolean }
   recentlyClosedCount: number
   /** Newest first, at most 10 – enough for menus to render without a round trip. */
@@ -2788,12 +2801,8 @@ export interface Commands {
   'folder.delete': { args: { folderId: string; unpack: boolean }; result: void }
   'folder.contextMenu': { args: { folderId: string }; result: void }
   'newtab.contextMenu': { args: void; result: void }
-  /** Long-press on a new tab page tile: pin / unpin, remove, open in a new tab. */
-  'newTabPhone.tileContextMenu': { args: { url: string; title: string }; result: void }
-  /** The picked new tab wallpaper image as a data URL (null when none was picked). */
-  'newTabPhone.wallpaper': { args: void; result: string | null }
-  /** Store (or with null, forget) the picked wallpaper image; the settings pick when it shows. */
-  'newTabPhone.setWallpaper': { args: { dataUrl: string | null }; result: void }
+  /** Long-press on a phone new tab page tile: pin / unpin, remove, open in a new tab. */
+  'newtab.tileContextMenu': { args: { url: string; title: string }; result: void }
   /**
    * The "⋯" application menu. `anchor` is the menu button in chrome CSS pixels: the menu opens
    * along its bottom edge; without it the menu opens at the pointer. `keyboard` marks a menu
@@ -2968,6 +2977,16 @@ export interface Commands {
   /** Pick a background image from disk (`capabilities` gate it; resolves false when cancelled). */
   'newtab.pickBackgroundImage': { args: void; result: boolean }
   'newtab.clearBackgroundImage': { args: void; result: void }
+  /**
+   * The background image's address for a chrome that paints the page itself (the phone's; a data
+   * URL there), or null when none is set.
+   */
+  'newtab.backgroundImage': { args: void; result: string | null }
+  /**
+   * Store an image the chrome read itself (the phone's file chooser), or with null forget it;
+   * the background follows the pick.
+   */
+  'newtab.setBackgroundImage': { args: { dataUrl: string | null }; result: void }
 
   /** Bookmark the tab's page in the default folder, or remove its bookmarks (toast feedback). */
   'bookmark.toggle': { args: { tabId: string }; result: void }
