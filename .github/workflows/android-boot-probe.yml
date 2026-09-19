@@ -3,13 +3,10 @@ name: Android boot probe
 # Measures what a boot of the chrome costs on the Kotlin ⇄ chrome seam, before and after the boot
 # handoff (`BootHandoff.kt`, `src/android/handoff.ts`), on the API 34 emulator: the same
 # instrumentation driver (BootHandoffProbe) runs against the APK built from main and the one built
-# from this ref, and the driver script tabulates the two (the table in PR #… carries the numbers).
+# from this ref, and the driver script tabulates the two (the table in PR #181 carries the numbers).
 # Dispatch-only; the build, the emulator and the Gradle cache live in android-emulator-demo.yml.
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - cursor/android-host-boot-handoff-62e3
 
 permissions:
   contents: read
