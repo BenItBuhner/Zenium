@@ -23,6 +23,7 @@ import { voiceSearchAvailable } from '@shared/voice'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { cmd, run } from '@renderer/lib/api'
 import { useBackDismissal } from '@renderer/lib/back'
+import { dropStore } from '@renderer/lib/drag'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { closeUrlbar, uiStore, type UrlbarState } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
@@ -486,6 +487,9 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
     ))
 
   const activeRow = selected >= 0 ? `zen-omnibox-row-${selected}` : undefined
+  // An address or text dragged over the field goes where a submit would (lib/dnd.ts, Chrome's
+  // paste and go); the field shows it will take the drop (§9.4).
+  const dropInto = dropStore.use((s) => s.key === 'address:')
 
   if (phoneEdge) {
     return (
@@ -579,7 +583,10 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
         style={style}
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <div className="zen-omnibox-input-row flex shrink-0 items-center">
+        <div
+          className="zen-omnibox-input-row flex shrink-0 items-center"
+          data-drop-into={dropInto || undefined}
+        >
           {chipLabel ? (
             <span className="zen-omnibox-badge" data-keyword-chip title={chipLabel}>
               {chipLabel}

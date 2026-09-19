@@ -24,6 +24,8 @@ import { securityIndicator, type IndicatorState } from '@shared/siteInfo'
 import { addressParts, displayUrl, fullUrl, getDomain } from '@shared/url'
 import { useElementWidth } from '@renderer/hooks/useElementWidth'
 import { run } from '@renderer/lib/api'
+import { chromeDropStore } from '@renderer/lib/dnd'
+import { dropStore } from '@renderer/lib/drag'
 import { blockedPopupsOf, closeBlockedPopups, openBlockedPopups } from '@renderer/lib/security'
 import { isPrivateWindow } from '@renderer/lib/selectors'
 import { openSiteInfo } from '@renderer/lib/siteInfo'
@@ -121,6 +123,11 @@ export function NavRow({
   // A popup (`window.open` with features) has Chrome's read-only location bar: the address and
   // its chips show where the page is, but nothing can be typed into it.
   const readOnly = state.window.chrome === 'popup'
+  // An address or text dragged over the pill goes to the tab as typed (lib/dnd.ts, Chrome's
+  // paste and go): the pill shows it will take the drop (§9.4) – or, read-only, that it cannot,
+  // dimmed for as long as the drag is over the window.
+  const dropInto = dropStore.use((s) => s.key === 'address:')
+  const dropInvalid = chromeDropStore.use((s) => readOnly && s.kind !== null)
   const openField = (): void => {
     if (readOnly) return
     void openUrlbar(tab ? 'edit' : 'new-tab', tab?.id ?? null, {
@@ -211,6 +218,9 @@ export function NavRow({
           data-zen-menu="urlpill"
           data-zen-menu-tab={tab?.id}
           data-readonly={readOnly || undefined}
+          data-address-pill
+          data-drop-into={dropInto || undefined}
+          data-drop-invalid={dropInvalid || undefined}
           onClick={openField}
         >
           <button

@@ -1,12 +1,13 @@
 import type { JSX, RefObject } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { MonitorSmartphone, Plus, X } from 'lucide-react'
-import type { Rect, SidePanelInfo, UIState } from '@shared/types'
+import type { Rect, SidePanelInfo, SplitGroup, UIState } from '@shared/types'
 import { BLANK_URL } from '@shared/url'
 import { cmd, run } from '@renderer/lib/api'
 import { chromeUnderPages } from '@renderer/lib/cover'
 import { wantsDefaultBrowserBanner } from '@renderer/lib/defaultBrowser'
 import { useViewport } from '@renderer/lib/formFactor'
+import { SPLIT_GAP, SPLIT_GAP_TOUCH, splitPaneRects } from '@renderer/lib/layout'
 import { isPageTab } from '@renderer/lib/pages'
 import { activeTab, isForeignTab } from '@renderer/lib/selectors'
 import { useChord } from '@renderer/lib/shortcuts'
@@ -188,7 +189,14 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
             {group && local && !contentHidden && !glanceActive && (
               <SplitChrome state={state} group={group} area={local} activeTabId={tab?.id ?? null} />
             )}
-            {ui.drag && local && tab && <SplitDropZones dropKey={dropKey} />}
+            {ui.drag && local && tab && (
+              <SplitDropZones
+                dropKey={dropKey}
+                group={group}
+                area={local}
+                draggedTabId={ui.drag.tabId}
+              />
+            )}
             {glanceActive && state.glance && local && (
               <GlanceFrame
                 state={state}
@@ -347,13 +355,34 @@ function EmptyState(): JSX.Element {
   )
 }
 
-/** Zen: drop a dragged tab on the edge of the content area to split it with the active tab. */
-function SplitDropZones({ dropKey }: { dropKey: string | null }): JSX.Element {
+const ZONE_CLASS =
+  'absolute flex items-center justify-center rounded-xl border-2 border-dashed border-white/30 text-[13px] font-medium text-white/80 transition-colors'
+
+/**
+ * Zen: drop a dragged tab on an edge of the content area to split it with the active tab (Chrome
+ * and Edge's edge drop), or to join the split shown here as a pane on that side. With a split
+ * open each pane is a target too (Edge): the dragged tab takes the pane over from the tab shown
+ * in it, or – dragged from another pane of the same split – swaps panes with it. The edge zones
+ * lie over the panes and win where they overlap.
+ */
+function SplitDropZones({
+  dropKey,
+  group,
+  area,
+  draggedTabId
+}: {
+  dropKey: string | null
+  group: SplitGroup | null
+  area: Rect
+  draggedTabId: string
+}): JSX.Element {
+  const { coarse } = useViewport()
   const zone = (key: string, className: string, label: string): JSX.Element => (
     <div
       data-drop={`split:${key}`}
       className={cn(
-        'absolute flex items-center justify-center rounded-xl border-2 border-dashed border-white/30 text-[13px] font-medium text-white/80 transition-colors',
+        ZONE_CLASS,
+        'pointer-events-auto',
         className,
         dropKey === `split:${key}` && 'border-white bg-white/20'
       )}
@@ -361,14 +390,41 @@ function SplitDropZones({ dropKey }: { dropKey: string | null }): JSX.Element {
       {label}
     </div>
   )
+  const panes = group
+    ? splitPaneRects(area, group, coarse ? SPLIT_GAP_TOUCH : SPLIT_GAP).filter(
+        (p) => p.tabId !== draggedTabId
+      )
+    : []
+  const swap = group?.tabIds.includes(draggedTabId) ?? false
   return (
-    <div className="absolute inset-0 z-20 p-4">
-      <div className="relative h-full w-full">
-        {zone('left', 'left-0 top-[20%] bottom-[20%] w-[22%]', 'Split left')}
-        {zone('right', 'right-0 top-[20%] bottom-[20%] w-[22%]', 'Split right')}
-        {zone('top', 'top-0 left-[26%] right-[26%] h-[18%]', 'Split top')}
-        {zone('bottom', 'bottom-0 left-[26%] right-[26%] h-[18%]', 'Split bottom')}
+    <div className="absolute inset-0 z-20">
+      {panes.map((p) => (
+        <div
+          key={p.tabId}
+          data-drop={`pane:${p.tabId}`}
+          className={cn(ZONE_CLASS, dropKey === `pane:${p.tabId}` && 'border-white bg-white/20')}
+          style={{
+            left: p.header.x + PANE_INSET,
+            top: p.header.y + PANE_INSET,
+            width: Math.max(0, p.header.width - PANE_INSET * 2),
+            height: Math.max(0, p.header.height + p.rect.height - PANE_INSET * 2)
+          }}
+        >
+          {swap ? 'Swap panes' : 'Replace this pane'}
+        </div>
+      ))}
+      {/* The zones' frame lets the pointer through to the panes; the zones themselves take it. */}
+      <div className="pointer-events-none absolute inset-0 p-4">
+        <div className="relative h-full w-full">
+          {zone('left', 'left-0 top-[20%] bottom-[20%] w-[22%]', 'Split left')}
+          {zone('right', 'right-0 top-[20%] bottom-[20%] w-[22%]', 'Split right')}
+          {zone('top', 'top-0 left-[26%] right-[26%] h-[18%]', 'Split top')}
+          {zone('bottom', 'bottom-0 left-[26%] right-[26%] h-[18%]', 'Split bottom')}
+        </div>
       </div>
     </div>
   )
 }
+
+/** A pane's target keeps clear of its edges: the gap beside it and the page's rounded corners. */
+const PANE_INSET = 16

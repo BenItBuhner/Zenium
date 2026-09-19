@@ -21,6 +21,7 @@ import type {
   Shortcut,
   Space,
   Tab,
+  TabSection,
   WindowChrome,
   WindowKind
 } from '../shared/types'
@@ -40,8 +41,8 @@ import { ExternalLaunches } from './external'
 import { SecurityPromptService } from './security'
 import { PageDialogService } from './pageDialogs'
 import { WindowPrompts } from './windowPrompts'
-import { TabManager } from './tabs'
-import { TabDragController } from './tabDrag'
+import { TabManager, isTabSection } from './tabs'
+import { TabDragController, parseDropKey } from './tabDrag'
 import { ZenWindow } from './window'
 import { Actions, type AnyAction } from './actions'
 import { KeyboardHandler } from './keys'
@@ -80,6 +81,7 @@ import {
   orderedTabsForSpace,
   reorderContainer,
   reorderSpace,
+  sectionIndexOf,
   tabVisibleIn
 } from './model'
 import { BLANK_URL, getDomain, inputToUrl, isEmptyTabUrl } from '../shared/url'
@@ -1524,10 +1526,7 @@ export class Browser {
     const text = input.trim()
     if (!text) return
     if (!win.isPrivate && this.extensions.omniboxSubmit(input, newTab, background, win)) return
-    const engines = this.state.searchEngines
-    const keyword = matchKeyword(text, engines)
-    let url: string | null = null
-    let upgradedFrom: string | undefined
+    const keyword = matchKeyword(text, this.state.searchEngines)
     if (keyword?.kind === 'scope') {
       // `@bookmarks foo` / `@history foo` open the manager; `@tabs foo` switches to the tab.
       if (keyword.scope === 'tabs') {
@@ -1543,20 +1542,9 @@ export class Browser {
       this.emit('overlay.open', { kind: keyword.scope }, win)
       return
     }
-    if (keyword) {
-      if (!keyword.query.trim()) return
-      url = buildSearchUrl(keyword.engine, keyword.query)
-    } else {
-      url = inputToUrl(text)
-      if (url && url.startsWith('https://') && !/^[a-z][a-z0-9+.-]*:/i.test(text))
-        upgradedFrom = text
-      if (!url) {
-        const engine =
-          engines.find((e) => e.id === this.state.settings.searchEngineId) ?? engines[0]
-        url = buildSearchUrl(engine, text)
-      }
-    }
-    if (!url) return
+    const typed = this.typedToUrl(text)
+    if (!typed) return
+    const { url, upgradedFrom } = typed
     // `zenium://settings/…` typed into the bar: a chrome page opens (or reuses) its own tab with
     // the current tab as opener, whatever tab the text was typed into; a document page loads
     // like any document, in this tab or a new one, unless the window already shows the one it
@@ -1633,12 +1621,161 @@ export class Browser {
     const text = (await read.call(this.platform.clipboard)).trim().replace(/\s+/g, ' ')
     if (!text) return
     if (alwaysSearch) {
-      const engines = this.state.searchEngines
-      const engine = engines.find((e) => e.id === this.state.settings.searchEngineId) ?? engines[0]
-      this.submitUrlbar(buildSearchUrl(engine, text), false, tabId, false, win)
+      this.submitUrlbar(buildSearchUrl(this.defaultSearchEngine(), text), false, tabId, false, win)
       return
     }
     this.submitUrlbar(text, false, tabId, false, win)
+  }
+
+  /**
+   * What typed text loads: a `@keyword query` searches with that engine; an address loads as
+   * written (a bare host is upgraded to https:// and remembered for the http fallback); anything
+   * else is searched with the default engine. Null for text that loads nothing (a keyword with
+   * no query, a `@bookmarks` / `@history` / `@tabs` scope, which `submitUrlbar` acts on itself).
+   */
+  private typedToUrl(text: string): { url: string; upgradedFrom?: string } | null {
+    const keyword = matchKeyword(text, this.state.searchEngines)
+    if (keyword?.kind === 'scope') return null
+    if (keyword) {
+      if (!keyword.query.trim()) return null
+      return { url: buildSearchUrl(keyword.engine, keyword.query) }
+    }
+    const url = inputToUrl(text)
+    if (!url) return { url: buildSearchUrl(this.defaultSearchEngine(), text) }
+    const upgradedFrom =
+      url.startsWith('https://') && !/^[a-z][a-z0-9+.-]*:/i.test(text) ? text : undefined
+    return { url, upgradedFrom }
+  }
+
+  /**
+   * Addresses or text dropped on the chrome (`drop.open`): links and selections from a page,
+   * files from the OS as `file:` URLs. Each input goes where typed text would (`typedToUrl`),
+   * to the target `key` names in the `data-drop` grammar:
+   *   tab:<tabId>:into             the first input navigates that tab, the rest open after it
+   *   tab:<tabId>:before|after     new tabs in that slot of the tab's section
+   *   section:<section>:<spaceId>  new tabs at the end of the section (essential | pinned | regular)
+   *   folder:<folderId>            new tabs in the folder
+   *   space:<spaceId>              new tabs at the end of the space
+   * New tabs that land in the window's active space show the first of them and load the rest
+   * behind it (Chrome's foreground drop); tabs sent to another space load behind it.
+   */
+  openDropped(inputs: string[], key: string, win: ZenWindow): void {
+    const texts = inputs.map((s) => s.trim().replace(/\s+/g, ' ')).filter(Boolean)
+    const drop = parseDropKey(key)
+    if (!texts.length || !drop) return
+    const m = this.state.model
+    const tabs = this.tabs
+    // Where new tabs go: the section and space, the slot to start at, the folder.
+    let placement: {
+      spaceId: string | undefined
+      section: TabSection
+      index: number
+      folderId: string | null
+    } | null = null
+    let rest = texts
+    switch (drop.kind) {
+      case 'tab': {
+        const target = tabs.tab(drop.tabId)
+        if (!target) return
+        const section: TabSection = target.essential
+          ? 'essential'
+          : target.pinned
+            ? 'pinned'
+            : 'regular'
+        if (drop.position === 'into') {
+          // Dropped onto the tab: it takes the first input as its URL bar would, and shows
+          // (Chrome selects the tab a drag hovers before the drop lands in it).
+          this.submitUrlbar(texts[0], false, target.id, false, win)
+          if (tabs.tab(target.id)) tabs.activateTab(target.id, win)
+          rest = texts.slice(1)
+          placement = {
+            spaceId: target.spaceId ?? undefined,
+            section,
+            index: sectionIndexOf(m, target) + 1,
+            folderId: target.folderId
+          }
+        } else {
+          placement = {
+            spaceId: target.spaceId ?? undefined,
+            section,
+            index: sectionIndexOf(m, target) + (drop.position === 'after' ? 1 : 0),
+            folderId: target.folderId
+          }
+        }
+        break
+      }
+      case 'section': {
+        if (!isTabSection(drop.section)) return
+        if (drop.spaceId && !getSpace(m, drop.spaceId)) return
+        placement = {
+          spaceId: drop.spaceId || undefined,
+          section: drop.section,
+          index: Number.MAX_SAFE_INTEGER,
+          folderId: null
+        }
+        break
+      }
+      case 'folder': {
+        const folder = m.folders[drop.folderId]
+        if (!folder) return
+        placement = {
+          spaceId: folder.spaceId,
+          section: 'regular',
+          index: Number.MAX_SAFE_INTEGER,
+          folderId: folder.id
+        }
+        break
+      }
+      case 'space': {
+        if (!getSpace(m, drop.spaceId)) return
+        placement = {
+          spaceId: drop.spaceId,
+          section: 'regular',
+          index: Number.MAX_SAFE_INTEGER,
+          folderId: null
+        }
+        break
+      }
+      default:
+        // A split edge or the bookmarks bar: not a place for an address to open.
+        return
+    }
+    if (!placement || !rest.length) return
+    const { spaceId, section, folderId } = placement
+    // Blank / private windows create in their own space; the drop is in it whatever it names.
+    const space = win.localSpace ?? getSpace(m, spaceId) ?? win.activeSpace()
+    const inActiveSpace = section === 'essential' || space.id === win.activeSpaceId
+    let index = placement.index
+    let first = true
+    for (const text of rest) {
+      const typed = this.typedToUrl(text)
+      if (!typed) continue
+      const { url, upgradedFrom } = typed
+      if (this.pages.parse(url) || overlayForUrl(url)) {
+        // Zenium's own pages open their tab (or surface) the way the URL bar opens them.
+        this.submitUrlbar(url, true, null, !(first && inActiveSpace), win)
+        first = false
+        continue
+      }
+      const active = first && inActiveSpace
+      const tab = tabs.createTab(
+        {
+          url,
+          spaceId: space.id,
+          active,
+          pinned: section === 'pinned',
+          essential: section === 'essential',
+          index,
+          folderId: section === 'regular' ? folderId : null,
+          load: false,
+          upgradedFrom: active ? upgradedFrom : undefined
+        },
+        win
+      )
+      if (!active) tabs.navigate(tab.id, url, { upgradedFrom })
+      index = sectionIndexOf(m, tab) + 1
+      first = false
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -1856,6 +1993,7 @@ export class Browser {
         this.tabDrag.move(tabId, x, y, inSidebar, win),
       'tab.dragTarget': ({ tabId, key }, win) => this.tabDrag.setTarget(tabId, key, win),
       'tab.dragEnd': ({ tabId, x, y, outcome }, win) => this.tabDrag.end(tabId, x, y, outcome, win),
+      'drop.open': ({ inputs, key }, win) => this.openDropped(inputs, key, win),
       'tab.moveToNewWindow': ({ tabId }, win) => void tabs.moveTabToNewWindow(tabId, null, win),
       'tab.reopenClosed': (_a, win) => this.session.reopenClosed(win),
       'tab.navigationEntries': ({ tabId }) => tabs.navigationEntries(tabId),

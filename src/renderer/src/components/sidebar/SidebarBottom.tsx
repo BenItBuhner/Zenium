@@ -192,6 +192,7 @@ function SpaceIcon({
         isDrop && 'opacity-100'
       )}
       data-drop-into={isDrop || undefined}
+      data-space-target={space.id}
       title={space.name}
       onClick={() => run('space.activate', { spaceId: space.id })}
       onContextMenu={(e) => {

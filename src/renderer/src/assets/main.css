@@ -3492,6 +3492,20 @@
 .zen-pill {
   container-type: inline-size;
 }
+/*
+ * Drop targets of a drag from outside the tab strip (lib/dnd.ts, v2 draft §9.4). The pill and
+ * the URL bar's field take an address as typed (paste and go) and light up like every drop-into
+ * target – the fill and the 2 px inset accent outline at their own radius; unlayered, as the
+ * pill's fill is a utility. A target that refuses the drag (a popup's read-only pill) dims.
+ */
+.zen-pill[data-drop-into],
+.zen-omnibox-input-row[data-drop-into] {
+  background: var(--v2-control-fill-hover);
+  box-shadow: inset 0 0 0 2px var(--v2-control-accent);
+}
+[data-drop-invalid] {
+  opacity: 0.5;
+}
 @container (width < 170px) {
   .zen-pill-extra {
     display: none;
