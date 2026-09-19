@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  barFade,
   pageRecede,
   RECEDE_RADIUS_PX,
   RECEDE_SCALE,
@@ -83,31 +84,45 @@ describe('recedeFrame: progress → recede', () => {
 })
 
 /*
- * The phone bar fades with the sheet (§11.1): its opacity is `1 − p` from the root's
- * `--zen-recede`, by the stylesheet at rest and by `recedeFade` wherever a component writes the
- * bar's opacity itself (the pill carry between the edges), so nothing inline ever holds the bar
- * at 1 over a receded page – the review of #168 measured the bar at 1 at p = 1 for exactly that.
+ * The phone bar docked at the bottom edge – where the sheet arrives – fades with the sheet
+ * (§11.1): its opacity is `1 − p` from the root's `--zen-recede`, by the stylesheet at rest and
+ * by `recedeFade` wherever a component writes the bar's opacity itself (the pill carry between
+ * the edges), so nothing inline ever holds the bar at 1 over a receded page – the review of
+ * #168 measured the bar at 1 at p = 1 for exactly that. A bar docked at the top is not in the
+ * sheet's path and does not fade: it stays at 1, inert and dimmed by the scrim like the page
+ * (ruled 23:50) – the stylesheet's rule names the edge, and `barFade` composes the recede into a
+ * carry's fade at the bottom edge only.
  */
-describe('the bar fade (§11.1): one value, at whichever edge', () => {
+describe('the bar fade (§11.1): the bottom-docked bar, and only that one', () => {
+  const css = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8')
   /** The stylesheet's declarations for a selector, whitespace folded (main.css is not loaded here). */
   const cssRule = (selector: string): string => {
-    const css = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8').replace(
-      /\s+/g,
-      ' '
-    )
-    const at = css.indexOf(`${selector} {`)
+    const folded = css.replace(/\s+/g, ' ')
+    const at = folded.indexOf(`${selector} {`)
     expect(at, `a rule for ${selector}`).toBeGreaterThan(-1)
-    return css.slice(at, css.indexOf('}', at))
+    return folded.slice(at, folded.indexOf('}', at))
   }
 
-  it('the stylesheet fades the bar by the root value, with no edge in the selector: a top-docked bar fades the same', () => {
-    const rule = cssRule(":root[data-form-factor='phone'] .zen-phone-bar")
+  it('the stylesheet fades the bar by the root value at the bottom edge, and writes no opacity for the bar at the top', () => {
+    const rule = cssRule(":root[data-form-factor='phone'] .zen-phone-bar[data-edge='bottom']")
     expect(rule).toContain('opacity: calc(1 - var(--zen-recede, 0) * var(--zen-recede-gain, 1))')
-    // No other rule of the bar's writes an opacity that could stand in for it.
-    const css = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8')
+    // No other rule of the bar's writes an opacity: not one for the top edge, not one without
+    // an edge that a top-docked bar would take.
     const barRules = [...css.matchAll(/[^{}]*\.zen-phone-bar[^{}]*\{[^}]*\}/g)].map((m) => m[0])
     expect(barRules.length).toBeGreaterThan(1)
-    expect(barRules.filter((r) => /opacity\s*:/.test(r))).toHaveLength(1)
+    const fading = barRules.filter((r) => /opacity\s*:/.test(r))
+    expect(fading).toHaveLength(1)
+    expect(fading[0]).toContain("[data-edge='bottom']")
+  })
+
+  it('barFade composes the recede into a fade of the bar’s own at the bottom edge, and at the top edge writes the share alone', () => {
+    expect(barFade('bottom', 0.25)).toBe(recedeFade(0.25))
+    expect(barFade('bottom', 1)).toBe(recedeFade(1))
+    expect(barFade('top', 0.25)).toBe('0.2500')
+    expect(barFade('top', 1)).toBe('1.0000')
+    expect(barFade('top', 1.7)).toBe('1.0000')
+    expect(barFade('top', -1)).toBe('0.0000')
+    expect(barFade('top', 0.5)).not.toContain('--zen-recede')
   })
 
   it('recedeFade composes a fade of the element’s own into the same product, clamped, and is 1 − recede alone by default', () => {

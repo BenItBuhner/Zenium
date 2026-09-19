@@ -33,15 +33,17 @@ import kotlin.math.sqrt
  * site-information sheet: peeked and cancelled, then committed; then the bookmark editor (a
  * `PhoneSheet` form) with its Address field tapped, so the keyboard comes up under a focused
  * field and the sheet grows to keep it above the keys; and the menu once more with the bar
- * docked at the top edge, where nothing covers the bar as it fades with the sheet (§11.1).
+ * docked at the top edge, where nothing covers the bar and it does not fade: it stands at 1
+ * under the scrim like the page (§11.1, ruled 23:50 – the fade is the bottom-docked bar's).
  *
  * Besides the page, three things are read from the chrome as they go: where the focus is once
  * a sheet is up (§9.22: inside it – the review of #168 found the bookmark editor and the
  * clear-history prompt keeping it on their opener), the frame-dialog host's slot while the
  * picker rises and leaves (its slide's offset against the whole of its height, the 22:49
- * ruling), and the bar's computed opacity at either edge. The bar at the top edge is also
- * measured in every frame: the texture left in its band, against the bar at rest, must be
- * `(1 − p)(1 − a·p)` – the bar at `1 − p` under the scrim at `a·p` – and nothing at p = 1.
+ * ruling), and the bar's computed opacity at either edge (0 at p = 1 at the bottom, 1 at the
+ * top). The bar at the top edge is also measured in every frame: the texture left in its band,
+ * against the bar at rest, must be `1 − a·p` – the bar at 1 under the scrim at `a·p` – and
+ * `1 − a` at p = 1.
  *
  * The judgement is made frame by frame, with no clock in it, because the emulator that records
  * this paints two to five frames a second: any spring sampled that sparsely shows big steps
@@ -337,11 +339,14 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
             finding("the star's toast offered no '$EDIT_LABEL': the editor is not measured")
         }
 
-        // 8. The bar docked at the top edge: the menu up and down once more. Nothing covers the
-        //    bar there, so its fade is in every frame: the texture left in its band against the
-        //    bar at rest must be the bar at 1 − p under the scrim at a·p, and nothing at p = 1.
-        //    The move itself is a recorded event, so the page band – laid out for the bottom bar,
-        //    and under the bar from here on – is judged by no window past this point.
+        // 8. The bar docked at the top edge: the menu up and down once more. A top-docked bar is
+        //    not in the sheet's path and does NOT fade (§11.1, ruled 23:50): it stays at opacity
+        //    1, inert, and the scrim dims it like the page. Nothing else covers the bar there,
+        //    so the scrim's work is in every frame: the texture left in its band against the bar
+        //    at rest must be the bar at 1 under the scrim at a·p – `1 − a·p`, and `1 − a` at
+        //    p = 1, never 0 (the fade is the bottom-docked bar's, step 1). The move itself is a
+        //    recorded event, so the page band – laid out for the bottom bar, and under the bar
+        //    from here on – is judged by no window past this point.
         probe("bar-dock-top", Kind.RECORD, 2_500) { coreInvoke("settings.update", "{\"phoneBarPosition\":\"top\"}") }
         SystemClock.sleep(1_000)
         val bar = barRect()
@@ -357,8 +362,11 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
             settleUp()
             ui.takeScreenshot()?.let {
                 val share = measureBand(it, bar).spread / barRest
-                finding("bar (top edge) with the menu up: --zen-recede ${recedeValue()}, texture %.3f of the bar at rest, computed opacity ${barOpacity()}".format(share))
-                if (share > BAR_GONE) failures += "bar-top: the bar still shows at p = 1 (texture %.3f of the bar at rest; spec 0)".format(share)
+                val a = scrimAlpha()
+                val opacity = barOpacity()
+                finding("bar (top edge) with the menu up: --zen-recede ${recedeValue()}, texture %.3f of the bar at rest (spec 1 − a = %.2f), computed opacity $opacity (spec 1)".format(share, 1 - a))
+                if (opacity.toDoubleOrNull() != 1.0) failures += "bar-top: the bar's computed opacity is $opacity at p = 1 (spec 1: a top-docked bar does not fade)"
+                if (abs(share - (1 - a)) > BAR_TOLERANCE) failures += "bar-top: the bar shows %.3f of its texture at p = 1 (spec 1 − a = %.2f: at 1 under the scrim alone)".format(share, 1 - a)
                 save(it, "bar-top-menu-up")
                 it.recycle()
             }
@@ -545,9 +553,10 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
     }
 
     /**
-     * The top-docked bar, frame by frame: the texture left in its band (the spread of its
-     * brightness against the bar at rest) is the bar's opacity times the scrim's remainder,
-     * `(1 − p)(1 − a·p)` with `p` the sheet's progress the swatch shows in the same frame.
+     * The top-docked bar, frame by frame: it does not fade (§11.1, ruled 23:50), so the texture
+     * left in its band (the spread of its brightness against the bar at rest) is the scrim's
+     * remainder alone, `1 − a·p` with `p` the sheet's progress the swatch shows in the same
+     * frame – the bar at 1 under the same scrim as the page.
      */
     private fun judgeBar(name: String, frames: List<Frame>) {
         val a = scrimAlpha()
@@ -557,15 +566,15 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
             val bar = frame.extra ?: continue
             if (frame.progress.isNaN() || barRest.isNaN() || barRest <= 0) continue
             val share = bar.spread / barRest
-            val expected = (1 - frame.progress) * (1 - a * frame.progress)
+            val expected = 1 - a * frame.progress
             val gap = abs(share - expected)
             worst = max(worst, gap)
             judged++
             if (gap > BAR_TOLERANCE) {
-                failures += "$name at ${frame.at} ms: the bar shows %.0f%% of its texture while the sheet's progress %.2f asks for %.0f%%".format(share * 100, frame.progress, expected * 100)
+                failures += "$name at ${frame.at} ms: the bar shows %.0f%% of its texture while the scrim at the sheet's progress %.2f leaves %.0f%%".format(share * 100, frame.progress, expected * 100)
             }
         }
-        findings.append("$name: $judged frames of the bar judged against (1 − p)(1 − %.2f p), largest disagreement %.0f%%\n".format(a, worst * 100))
+        findings.append("$name: $judged frames of the bar judged against 1 − %.2f p (the bar at 1 under the scrim), largest disagreement %.0f%%\n".format(a, worst * 100))
         if (judged == 0) failures += "$name: no frame of the top-docked bar could be judged"
     }
 
@@ -997,12 +1006,11 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
         private const val MIN_TRAVEL_CSS_PX = 120.0
         /** How far past its track's ends the slot may stand for the spring's overshoot, as a share of the travel. */
         private const val SLIDE_OVERSHOOT = 0.04
-        /** The texture the top-docked bar may still show at p = 1 (the recorder's noise), as a share of the bar at rest. */
-        private const val BAR_GONE = 0.12
         /**
-         * How far the bar's texture may stand from `(1 − p)(1 − a·p)` in one frame: the spread of a
-         * composite is linear in the bar's opacity over a flat ground, the emulator's dithering
-         * and the pill's own state (a pressed Menu button) add a little.
+         * How far the top-docked bar's texture may stand from `1 − a·p` in one frame (the bar at 1
+         * under the scrim): the spread of a composite is linear in the scrim's remainder over a
+         * flat ground, the emulator's dithering and the pill's own state (a pressed Menu button)
+         * add a little.
          */
         private const val BAR_TOLERANCE = 0.18
         /** Inside the system's back-gesture inset on any density. */

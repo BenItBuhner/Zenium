@@ -87,17 +87,29 @@ export function recedeScale(p: number): number {
 }
 
 /**
- * The CSS opacity of chrome that fades with the recede – the phone bar at whichever edge it is
- * docked (§11.1: `1 − p`, gone at the first detent) – times `share`, a fade of the element's
- * own (the bar's while its pill is carried to the other edge). Reads the root's `--zen-recede`
- * live, the same value main.css scales the page by, so the fade is the sheet's progress frame
- * for frame and reverses with it; `--zen-recede-gain` is 0 under reduced motion (§11.3). A
- * component that writes the bar's opacity inline writes this, never a number of its own: a
- * plain `opacity: 1` would beat the stylesheet's rule and hold the bar at full while the page
- * stands receded.
+ * The CSS opacity of chrome that fades with the recede – the phone bar docked at the bottom
+ * edge, where the sheet arrives (§11.1: `1 − p`, gone at the first detent) – times `share`, a
+ * fade of the element's own (the bar's while its pill is carried to the other edge). Reads the
+ * root's `--zen-recede` live, the same value main.css scales the page by, so the fade is the
+ * sheet's progress frame for frame and reverses with it; `--zen-recede-gain` is 0 under reduced
+ * motion (§11.3). A component that writes the bar's opacity inline writes this, never a number
+ * of its own: a plain `opacity: 1` would beat the stylesheet's rule and hold the bar at full
+ * while the page stands receded.
  */
 export function recedeFade(share = 1): string {
   return `calc((1 - var(--zen-recede, 0) * var(--zen-recede-gain, 1)) * ${clamp01(share).toFixed(4)})`
+}
+
+/**
+ * The inline opacity of the phone bar docked at `edge` while a fade of its own runs (`share`,
+ * the pill carry): at the bottom edge composed with the recede (`recedeFade`), so a sheet
+ * coming up mid-carry fades the bar all the same; at the top edge the share alone – a
+ * top-docked bar is not in the sheet's path and does not fade with it, it stands inert under
+ * the scrim, dimmed like the page (§11.1, ruled 23:50). At rest nothing is written: main.css
+ * fades the bottom-docked bar by the root value and leaves the top-docked one at 1.
+ */
+export function barFade(edge: 'top' | 'bottom', share: number): string {
+  return edge === 'bottom' ? recedeFade(share) : clamp01(share).toFixed(4)
 }
 
 export interface RecedeHandle {

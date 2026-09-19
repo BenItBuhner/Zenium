@@ -4304,11 +4304,14 @@
   will-change: transform;
 }
 /*
- * The bar fades with the sheet's progress at whichever edge it is docked (§11.1): at p = 1 it
- * is gone, the receded page alone under the scrim. The shell writes no rest opacity of its own
- * over this; a pill carry composes its share into the same product (`recedeFade`, recede.ts).
+ * The bar docked at the bottom edge – where the sheet arrives – fades with the sheet's progress
+ * (§11.1): `1 − p`, gone at p = 1, the receded page alone under the scrim; the bar gives way to
+ * the sheet rather than being slid over. A bar docked at the top is not in the sheet's path and
+ * does not fade: it stays at its opacity, inert (`holdChromeInert`) and dimmed by the scrim
+ * like the page (ruled 23:50). The shell writes no rest opacity of its own over this; a pill
+ * carry composes its share into the same product at the bottom edge (`barFade`, recede.ts).
  */
-:root[data-form-factor='phone'] .zen-phone-bar {
+:root[data-form-factor='phone'] .zen-phone-bar[data-edge='bottom'] {
   opacity: calc(1 - var(--zen-recede, 0) * var(--zen-recede-gain, 1));
 }
 
