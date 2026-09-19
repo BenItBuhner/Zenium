@@ -1,10 +1,14 @@
+import vm from 'node:vm'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Any } from '../extensionIsolation'
 import {
   decodePayload,
   encodePayload,
+  importScriptsFor,
   installServiceWorkerClient,
   installServiceWorkerGlobals,
+  type ScriptDocument,
+  type ScriptElement,
   type ServiceWorkerEndpoint,
   type ServiceWorkerMessage
 } from '../extensionServiceWorker'
@@ -278,5 +282,94 @@ describe('the worker lifecycle events', () => {
     worker.addEventListener('install', () => fired++)
     await sw.lifecycle()
     expect(fired).toBe(0)
+  })
+
+  it('takes the page dialogs off the worker global: a worker has none, and a native one stalls the renderer', () => {
+    const { worker } = pair()
+    expect('alert' in worker && worker.alert).toBeUndefined()
+    expect(worker.confirm).toBeUndefined()
+    expect(worker.prompt).toBeUndefined()
+  })
+})
+
+describe('importScripts on the worker page', () => {
+  /**
+   * A document whose script elements run in one V8 context, as a page's classic scripts share
+   * one global lexical environment: what `const config = …` in one import means for the next.
+   */
+  function documentInContext(): {
+    document: ScriptDocument
+    context: vm.Context
+    ran: string[]
+    removed: number
+  } {
+    const context = vm.createContext({ log: [] as string[] })
+    const ran: string[] = []
+    let removed = 0
+    const document: ScriptDocument = {
+      head: {
+        appendChild: (node: ScriptElement) => {
+          ran.push(node.textContent ?? '')
+          vm.runInContext(node.textContent ?? '', context)
+        }
+      },
+      documentElement: null,
+      createElement: () => ({
+        textContent: null,
+        remove: () => {
+          removed++
+        }
+      })
+    }
+    return {
+      document,
+      context,
+      ran,
+      get removed() {
+        return removed
+      }
+    }
+  }
+
+  it('runs each file as a classic script of the page, so a top-level const reaches the next file and the worker', () => {
+    const files: Record<string, string> = {
+      [`${ORIGIN}/js/config.js`]: 'const config = { speed: 2 }; let seen = 0;',
+      [`${ORIGIN}/js/util.js`]: 'seen = config.speed; log.push("util " + seen)'
+    }
+    const fetched: string[] = []
+    const d = documentInContext()
+    const importScripts = importScriptsFor({
+      origin: ORIGIN,
+      base: `${ORIGIN}/js/service-worker.js`,
+      fetchText: (url) => {
+        fetched.push(url)
+        const text = files[url]
+        return text === undefined ? { status: 404, text: '' } : { status: 200, text }
+      },
+      document: d.document
+    })
+    importScripts('config.js', '/js/util.js')
+    expect(fetched).toEqual([`${ORIGIN}/js/config.js`, `${ORIGIN}/js/util.js`])
+    // The worker script itself, after the imports, sees the const as a worker would.
+    expect(vm.runInContext('config.speed + seen', d.context)).toBe(4)
+    expect(d.context.log).toEqual(['util 2'])
+    expect(d.ran.map((text) => text.split('\n').at(-1))).toEqual([
+      `//# sourceURL=${ORIGIN}/js/config.js`,
+      `//# sourceURL=${ORIGIN}/js/util.js`
+    ])
+    expect(d.removed).toBe(2)
+  })
+
+  it('refuses another origin and reports a file the extension does not have', () => {
+    const d = documentInContext()
+    const importScripts = importScriptsFor({
+      origin: ORIGIN,
+      base: `${ORIGIN}/sw.js`,
+      fetchText: () => ({ status: 404, text: '' }),
+      document: d.document
+    })
+    expect(() => importScripts('https://evil.example/x.js')).toThrow(/not on the extension origin/)
+    expect(() => importScripts('missing.js')).toThrow(/missing\.js failed \(404\)/)
+    expect(d.ran).toEqual([])
   })
 })

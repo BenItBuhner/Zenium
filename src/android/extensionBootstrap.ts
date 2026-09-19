@@ -30,6 +30,7 @@ import {
 } from './extensionIsolation'
 import { createScriptRecovery, type ScriptRecovery } from './extensionScriptRecovery'
 import {
+  importScriptsFor,
   installServiceWorkerClient,
   installServiceWorkerGlobals,
   type ServiceWorkerEndpoint,
@@ -339,21 +340,19 @@ declare const __zenExtBoot: Boot
 
     if (context === 'background' && workerScript) {
       // Service-worker globals the MV3 script expects; `importScripts` is synchronous by
-      // contract, so it is a synchronous XHR to the extension origin plus an indirect eval (the
-      // generated background page is served with 'unsafe-eval' in its CSP for exactly this).
-      pageWindow.importScripts = (...urls: string[]): void => {
-        for (const url of urls) {
-          const absolute = new URL(url, location.href).href
-          if (!absolute.startsWith(origin + '/'))
-            throw new Error(`importScripts: ${url} is not on the extension origin`)
+      // contract, so it is a synchronous XHR to the extension origin and a classic script
+      // element of this page (the generated background page carries no CSP that would refuse it).
+      pageWindow.importScripts = importScriptsFor({
+        origin,
+        base: location.href,
+        fetchText: (url) => {
           const xhr = new XMLHttpRequest()
-          xhr.open('GET', absolute, false)
+          xhr.open('GET', url, false)
           xhr.send()
-          if (xhr.status !== 200) throw new Error(`importScripts: ${url} failed (${xhr.status})`)
-          const indirectEval = eval
-          indirectEval(xhr.responseText + `\n//# sourceURL=${absolute}`)
-        }
-      }
+          return { status: xhr.status, text: xhr.responseText }
+        },
+        document
+      })
       const worker = installServiceWorkerGlobals(pageWindow, {
         origin,
         scriptUrl: location.href,
