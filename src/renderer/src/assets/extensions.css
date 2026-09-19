@@ -963,8 +963,10 @@
   }
   /*
    * The phone sheet variant: the sheet's own scroll, so the dialog is plain flow inside it, its
-   * title block first; its footer is the chassis' `.zen-sheet-footer` (§9.11: the two peers
-   * split the width at the 8 gap, the primary trailing, each 40 tall, at the sheet's 16 gutter).
+   * title block first; its buttons are in the sheet's `footer` slot, the chassis'
+   * `.zen-sheet-footer` under the scroller (§9.11: the two peers split the width at the 8 gap,
+   * the primary trailing, each 40 tall, at the sheet's 16 gutter), in reach at every detent
+   * however many rows the extension's warnings make.
    */
   [data-form-factor='phone'] .zen-ext-dialog {
     width: auto;
@@ -1060,7 +1062,7 @@
  * buttons split their row between them (§9.11), so the minimum must not hold one of them wider.
  */
 .zen-toast .zen-v2-button,
-[data-form-factor='phone'] .zen-ext-dialog .zen-v2-button,
+.zen-ext-prompt-sheet .zen-sheet-footer > .zen-v2-button,
 [data-form-factor='phone'] .zen-v2-form-actions > .zen-v2-button {
   min-width: 0;
 }
