@@ -33,6 +33,8 @@ import java.util.concurrent.TimeUnit
  *    tab stays active, the new one is its child) and the toolbar goes;
  *  - a real touch on `Share` brings the system share sheet with the text (Zenium's share; the
  *    WebView's own Share is hidden, so there is one to touch);
+ *  - a real touch on `Translate` (behind the overflow) brings the phone's translation sheet
+ *    (#106) with the selected word as its original; the back gesture closes it;
  *  - a long press on an address written as plain text (a `user-select: all` span, so the whole
  *    address is taken) lists `Open in Glance` instead of the search, and a real touch on it
  *    opens the address in a glance over the page;
@@ -90,6 +92,7 @@ class SelectionDemo : DemoHarness("selection-demo-state.json", "selection", "sel
         wordToolbar()
         searchEngine()
         shareFromToolbar()
+        translateFromToolbar()
         addressToGlance()
         handleDrag()
         selectAll()
@@ -271,6 +274,57 @@ class SelectionDemo : DemoHarness("selection-demo-state.json", "selection", "sel
         }
         ensureForeground()
         clearSelection()
+    }
+
+    // --- GN-13: Translate (the services core's sheet, #106) ----------------------------------------
+
+    /**
+     * A REAL touch on Translate, the last of Zenium's items (behind the overflow on a phone, the
+     * bar being capped at 328 dp; in the bar when it fits): the phone's translation sheet (#106)
+     * comes up over the page with the selected word as its original, and the toolbar goes. The
+     * translation under the original needs a model from the network, which the emulator may not
+     * have; what the sheet says there is recorded, not asserted.
+     */
+    private fun translateFromToolbar() {
+        finding("\nGN-13 Translate from the toolbar: the phone's translation sheet (#106)")
+        ensureForeground()
+        val items = longPress("#word") { it.zenium() }
+        val inBar = items?.find { it.label == "Translate" }
+        val point = inBar?.let { touchTapPoint(it.node) } ?: touchInOverflow(items.orEmpty(), "Translate")
+        finding("  real touch on Translate ${point?.let { "at ${it.x.toInt()},${it.y.toInt()}${if (inBar == null) " (behind the overflow)" else ""}" } ?: "NOT POSSIBLE (item missing or off screen)"}")
+        val up = awaitSurface(true, 10_000)
+        val original = awaitChromeText(".zen-translate-sheet .zen-translate-original")
+        SystemClock.sleep(3_000)
+        shot("04b-translate-sheet")
+        val titled = findInWindows { it == "Translation" } != null
+        val under = chromeText(".zen-translate-sheet .zen-translate-result").orEmpty()
+        finding("  the sheet ${if (titled) "reads its Translation title" else "does not read a Translation title"}; under the original: '${under.replace("\n", " ")}'")
+        check("the chrome puts its surface up (the translation sheet)", up)
+        check("the sheet shows the selected text as the original ('${original ?: "NONE"}')", original == "quantum")
+        check("the toolbar is gone after the touch", awaitToolbarGone())
+        if (up) {
+            back()
+            check("the back gesture closes the sheet", awaitSurface(false, 8_000))
+            SystemClock.sleep(1_500)
+        }
+        ensureForeground()
+        clearSelection()
+    }
+
+    /** The trimmed text of the first element `selector` names in the chrome's document, or null when there is none. */
+    private fun chromeText(selector: String): String? {
+        val raw = chromeJs("(function(){var e=document.querySelector(${JSONObject.quote(selector)});return e?e.textContent:null})()")
+        return runCatching { JSONTokener(raw).nextValue() as? String }.getOrNull()?.trim()
+    }
+
+    /** Poll the chrome's document for the element `selector` names; its text, or null when none came in time. */
+    private fun awaitChromeText(selector: String, timeoutMs: Long = 10_000): String? {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            chromeText(selector)?.let { return it }
+            SystemClock.sleep(250)
+        }
+        return null
     }
 
     // --- GN-13: an address -----------------------------------------------------------------------
