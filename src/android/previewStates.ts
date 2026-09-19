@@ -1,11 +1,13 @@
-import { run } from '@renderer/lib/api'
+import { cmd, run } from '@renderer/lib/api'
 import { dispatchBackEvent, topBackSurface } from '@renderer/lib/back'
 import { dismissOverview, openOverview } from '@renderer/lib/gestures/stage'
 import { abortPull, dispatchPullEvent, PULL_THRESHOLD, pullTravelFor } from '@renderer/lib/pull'
 import { Download, Smartphone, Star } from 'lucide-react'
 import { installBannerShown, presentInstallBanner } from '@renderer/lib/installBanner'
 import { isInternalPageUrl } from '@shared/internalPages'
-import { activeTab } from '@renderer/lib/selectors'
+import { BLANK_URL } from '@shared/url'
+import { DEFAULT_FOLDER_ICON } from '@renderer/components/phone/GroupCard'
+import { activeSpace, activeTab, regularOf } from '@renderer/lib/selectors'
 import {
   browserStore,
   closeMenu,
@@ -42,7 +44,9 @@ const SHEET_LEAVE_MS = 1500
  * over the landing, `search=<text>` types into the landing's search, `show=<text>` scrolls a row
  * into view, `then=tap:<text>;back;overview;urlbar` takes steps on the open page in order: a tap
  * on a row opens its sheet and a second tap stacks one, `back` closes the top sheet, `overview`
- * opens the tab overview, `urlbar` the pill for editing), `overlay=<kind>` (history, bookmarks,
+ * opens the tab overview, `urlbar` the pill for editing), `group=<n>` (the active tab in a
+ * group of n members made on the spot, so the group strip is up in the bar band; `then=` steps
+ * run once the group has formed), `overlay=<kind>` (history, bookmarks,
  * downloads, addons, …: the chrome overlays a phone still has – Settings is not one, it is
  * `page=settings`; `show=<text>` scrolls the row with that text into view, `expand` rests a
  * sheet on its expanded detent), `menu=app` (the app menu sheet; `show=<text>` scrolls an item
@@ -84,8 +88,70 @@ function apply(spec: string): void {
     const state = browserStore.get().state
     const tab = state ? activeTab(state) : null
     clearMessages(tab?.loading ? tab.id : null)
-    closeSheets(() => reach(spec))
+    void dissolveGroup().then(() => closeSheets(() => reach(spec)))
   })
+}
+
+/** The name and colour of the group a `group=<n>` state makes. */
+const PREVIEW_GROUP_NAME = 'Research'
+/** Pages for the members a `group=<n>` state has to make when the space has too few tabs. */
+const PREVIEW_GROUP_PAGES = [
+  'https://en.wikipedia.org/wiki/Tea',
+  'https://news.ycombinator.com/',
+  'https://www.rfc-editor.org/rfc/rfc2324.html',
+  'https://developer.mozilla.org/en-US/docs/Web/CSS/corner-shape',
+  'https://en.wikipedia.org/wiki/Damping',
+  'https://www.rfc-editor.org/rfc/rfc1149.html',
+  'https://en.wikipedia.org/wiki/Spring_(device)',
+  'https://developer.mozilla.org/en-US/docs/Web/API/Web_Animations_API',
+  'https://en.wikipedia.org/wiki/Kerning'
+]
+/** The group the last `group=<n>` state made, dissolved before the next state. */
+let previewGroup: string | null = null
+
+/**
+ * Put the active tab in a group of `members`: the space's loose pages join first, then tabs made
+ * for the purpose, each filed after the last member so it lands in the group – the way the plus
+ * chip's tab does. The strip enters on its spring as the group forms.
+ */
+async function makeGroup(activeId: string, members: number): Promise<void> {
+  const state = browserStore.get().state
+  if (!state) return
+  const space = activeSpace(state)
+  const folderId = await cmd('folder.create', {
+    spaceId: space.id,
+    name: PREVIEW_GROUP_NAME,
+    icon: DEFAULT_FOLDER_ICON,
+    color: 'blue',
+    rename: false
+  })
+  previewGroup = folderId
+  await cmd('tab.moveToFolder', { tabId: activeId, folderId })
+  const loose = regularOf(state, space).filter(
+    (t) => t.id !== activeId && !t.folderId && !isInternalPageUrl(t.url) && t.url !== BLANK_URL
+  )
+  let last = activeId
+  for (let i = 1; i < members; i++) {
+    const next = loose.shift()
+    if (next) {
+      await cmd('tab.moveToFolder', { tabId: next.id, folderId })
+      last = next.id
+    } else {
+      last = await cmd('tab.create', {
+        url: PREVIEW_GROUP_PAGES[i % PREVIEW_GROUP_PAGES.length],
+        active: false,
+        afterTabId: last
+      })
+    }
+  }
+}
+
+/** The group a previous state made goes, its tabs unpacked, so the next state starts loose. */
+async function dissolveGroup(): Promise<void> {
+  const folderId = previewGroup
+  previewGroup = null
+  if (!folderId || !browserStore.get().state?.folders[folderId]) return
+  await cmd('folder.delete', { folderId, unpack: true }).catch(() => undefined)
 }
 
 /**
@@ -137,6 +203,14 @@ function reach(spec: string): void {
       })
     })
     run('page.open', { id: target.page, section: target.section ?? null })
+  } else if (target.kind === 'group' && tab) {
+    // The state is reached as the group forms (the strip is entering: a driver that wants it
+    // mid-slide captures at once); the steps wait for the entrance to settle.
+    void makeGroup(tab.id, target.members).then(() => {
+      const then = target.then ?? []
+      if (then.length === 0) done(spec)
+      else setTimeout(() => steps(then, () => done(spec)), STEP_SETTLE_MS)
+    })
   } else if (target.kind === 'overlay') {
     void openOverlay(target.overlay, tab?.id ?? null, null, null, target.section ?? null).then(
       () => {

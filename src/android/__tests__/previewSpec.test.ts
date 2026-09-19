@@ -58,6 +58,22 @@ describe('parsePreviewSpec', () => {
     expect(parsePreviewSpec('find=x&zoom=2')).toEqual({ kind: 'find', text: 'x' })
   })
 
+  it('groups the active tab with this many members, behind a page but ahead of an overlay, its steps kept', () => {
+    expect(parsePreviewSpec('group=3')).toEqual({ kind: 'group', members: 3 })
+    expect(parsePreviewSpec('group=12&then=tap:Show group, Research;overview')).toEqual({
+      kind: 'group',
+      members: 12,
+      then: [{ kind: 'tap', text: 'Show group, Research' }, { kind: 'overview' }]
+    })
+    // A group is at least the tab itself and at most what a strip can be asked to scroll.
+    expect(parsePreviewSpec('group=0')).toEqual({ kind: 'group', members: 1 })
+    expect(parsePreviewSpec('group=99')).toEqual({ kind: 'group', members: 24 })
+    expect(parsePreviewSpec('group=')).toEqual({ kind: 'idle' })
+    expect(parsePreviewSpec('group=abc')).toEqual({ kind: 'idle' })
+    expect(parsePreviewSpec('group=3&overlay=history')).toEqual({ kind: 'group', members: 3 })
+    expect(parsePreviewSpec('page=settings&group=3')).toEqual({ kind: 'page', page: 'settings' })
+  })
+
   it('opens the app menu, behind an overlay but ahead of the bars', () => {
     expect(parsePreviewSpec('menu=app')).toEqual({ kind: 'menu' })
     expect(parsePreviewSpec('menu=app&show=Desktop Site')).toEqual({
