@@ -3,19 +3,21 @@ import { CircleAlert, type LucideIcon } from 'lucide-react'
 import { cn } from '@renderer/lib/utils'
 
 /**
- * The extension surfaces' controls, to the design-language v2 draft (§6, §9): 32 buttons and
- * fields at radius 4, 16 checkboxes at radius 2, moz-toggle's 26×14 switch, 28/16 icon buttons,
- * bordered cards with 17/600 titles and two-line rows. Styles live in `assets/extensions.css`.
- * The shipped `ui/*` primitives stay as they are until the v2 pass restyles them.
+ * The extension surfaces' controls, to the design-language v2 draft (§6, §9). The classes are
+ * the shared `zen-v2-*` primitives of main.css (§9.34: the row, the field, the icon button,
+ * the switch, the radio, the button – one unlayered rule each, tokens only); these wrappers
+ * add behaviour – roles, `aria-*`, the busy state – and the extension surfaces' own anatomy
+ * (a row's body and text, a card, a title block), styled in `assets/extensions.css`. The
+ * shipped `ui/*` primitives stay as they are until the v2 pass restyles them.
  */
 
 type Variant = 'primary' | 'secondary' | 'danger'
 
 /**
- * main.css's `.zen-v2-button` (the secondary; `data-primary` for the accent fill) plus a danger
- * variant, the hover fills and icon sizing from `extensions.css`. `busy` is §9.30's working
- * state, which is not disabled: full opacity and the same width, a 16 spinner in the label's
- * place, `aria-busy`; a press while busy does nothing.
+ * main.css's `.zen-v2-button` (the secondary; `data-primary` for the accent fill, `data-danger`
+ * for the danger ink), with the hover fills and icon sizing from `extensions.css`. `busy` is
+ * §9.30's working state, which is not disabled: full opacity and the same width, a 16 spinner
+ * in the label's place, `aria-busy`; a press while busy does nothing.
  */
 export function V2Button({
   variant = 'secondary',
@@ -37,7 +39,7 @@ export function V2Button({
       type={type}
       className={cn('zen-v2-button', className)}
       data-primary={variant === 'primary' || undefined}
-      data-variant={variant === 'danger' ? 'danger' : undefined}
+      data-danger={variant === 'danger' || undefined}
       aria-busy={busy || undefined}
       onClick={busy ? undefined : onClick}
       {...props}
@@ -55,7 +57,7 @@ export function V2Button({
   )
 }
 
-/** A 28 icon button (44 on a phone) with a 16 (20) glyph; the label is the tooltip too. */
+/** main.css's `.zen-v2-icon-button` (§9.3): 28 with a 16 glyph, 44 / 20 on a phone; the label is the tooltip too. */
 export function V2IconButton({
   icon: Icon,
   label,
@@ -158,36 +160,26 @@ export function V2FormField({
 }
 
 /**
- * A plain radio glyph (§9.14): a 16 circle (20 on a phone) with a 1px border at text 45%; when
- * checked an accent ring around a 6 dot of the page colour. Presentational: the row that holds
- * it carries the state (`aria-selected` or `aria-checked`).
+ * main.css's `.zen-v2-radio` (§9.14): a 16 circle (20 on a phone) with a hairline at text 45%;
+ * checked, an accent ring around a 6 dot of the page colour. Presentational: its direct parent
+ * is the row that is the radio and carries `aria-checked`.
  */
-export function V2Radio({
-  checked,
-  className
-}: {
-  checked: boolean
-  className?: string
-}): JSX.Element {
-  return (
-    <span
-      className={cn('zen-v2-radio', className)}
-      data-checked={checked || undefined}
-      aria-hidden
-    />
-  )
+export function V2Radio({ className }: { className?: string }): JSX.Element {
+  return <span className={cn('zen-v2-radio', className)} aria-hidden />
 }
 
-/** moz-toggle: the 26×14 track inside a 28 (44) hit area. */
+/**
+ * main.css's `.zen-v2-switch` (§10.4): the 36 × 20 track, drawn on from the `aria-checked` of
+ * the button around it. That button is the hit area where the switch stands alone – a card's
+ * controls, the details header – 28 tall on a desktop and 44 on a phone (`.zen-ext-switch`).
+ */
 export function V2Switch({
   checked,
   onChange,
-  disabled,
   label
 }: {
   checked: boolean
   onChange: (next: boolean) => void
-  disabled?: boolean
   label: string
 }): JSX.Element {
   return (
@@ -196,11 +188,10 @@ export function V2Switch({
       role="switch"
       aria-checked={checked}
       aria-label={label}
-      className="zen-v2-switch"
-      disabled={disabled}
+      className="zen-ext-switch"
       onClick={() => onChange(!checked)}
     >
-      <span className="zen-v2-toggle" />
+      <span className="zen-v2-switch" aria-hidden />
     </button>
   )
 }
@@ -264,9 +255,10 @@ export function V2TitleBlock({
 }
 
 /**
- * A two-line row (§9.2, §9.18): the leading glyph and the text travel together and sit on the
- * first text line – the glyph (line − glyph) / 2 below the line's top – while whatever trails
- * the text centres on the row's height.
+ * main.css's `.zen-v2-row` (§9.2, §9.18, §9.34) with the extension surfaces' anatomy inside it:
+ * the leading glyph and the text travel together and sit on the first text line – the glyph
+ * (line − glyph) / 2 below the line's top – while whatever trails the text centres on the row's
+ * height.
  */
 export function V2Row({
   label,
@@ -301,7 +293,10 @@ export function V2Row({
   )
 }
 
-/** A checkbox row: 16 box at radius 2 (20 on a phone), label to its right, a description under. */
+/**
+ * A checkbox row: 16 box at radius 2 (20 on a phone), label to its right, a description under.
+ * Disabled, the row says so (`aria-disabled`) as the shared row's fill gate expects (§9.30).
+ */
 export function V2CheckRow({
   label,
   description,
@@ -316,7 +311,11 @@ export function V2CheckRow({
   onChange: (next: boolean) => void
 }): JSX.Element {
   return (
-    <label className="zen-v2-row zen-v2-check-row" data-lines={description ? '2' : undefined}>
+    <label
+      className="zen-v2-row zen-v2-check-row"
+      data-lines={description ? '2' : undefined}
+      aria-disabled={disabled || undefined}
+    >
       <span className="zen-v2-row-body">
         <input
           type="checkbox"
