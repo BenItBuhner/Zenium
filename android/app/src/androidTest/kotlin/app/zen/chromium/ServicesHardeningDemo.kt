@@ -171,7 +171,7 @@ class ServicesHardeningDemo {
             shot("01-popup-blocked-chip")
             tapLabel(f, "Pop-up blocked", prefix = true)
             waitFor("Blocked pop-ups", 5_000)
-            awaitCovered()
+            awaitSettled()
             shot("02-popup-blocked-sheet")
             tapLabel(f, "Open")
             SystemClock.sleep(4_000)
@@ -188,9 +188,10 @@ class ServicesHardeningDemo {
         //    link whose app is not installed asks (the scheme is not one the manifest can see)
         //    and, opened, lands on its fallback page.
         openInApp("http://$SERVER/apps")
-        waitFor("Call +1 555 0100", 12_000)
+        // The page's tree goes with its view once the sheet covers it: either is the page loaded.
+        waitForAny(listOf("Call +1 555 0100", "Not now"), 12_000)
         if (waitFor("Not now", 6_000)) {
-            awaitCovered()
+            awaitSettled()
             shot("04-app-launch-on-load-asks")
             answerSheet(f, "Not now")
         } else {
@@ -200,7 +201,7 @@ class ServicesHardeningDemo {
         SystemClock.sleep(1_500)
         tapLabel(f, "Call +1 555 0100")
         if (waitFor("Not now", 6_000)) {
-            awaitCovered()
+            awaitSettled()
             shot("06-tel-launch-prompt")
             answerSheet(f, "Not now")
         } else {
@@ -209,7 +210,7 @@ class ServicesHardeningDemo {
         SystemClock.sleep(1_500)
         tapLabel(f, "Scan a barcode (intent:// with a fallback)")
         if (waitFor("Not now", 6_000)) {
-            awaitCovered()
+            awaitSettled()
             shot("07-intent-launch-prompt")
             answerSheet(f, "Open")
         }
@@ -225,7 +226,7 @@ class ServicesHardeningDemo {
         //    the form above it again, which the emulator takes a moment over.
         openInApp("http://$SERVER/protected")
         waitFor("Sign in", 12_000)
-        awaitCovered()
+        awaitSettled()
         shot("09-http-auth-dialog")
         fill(f, "Username", "zenium")
         fill(f, "Password", "wrong")
@@ -280,7 +281,7 @@ class ServicesHardeningDemo {
             SystemClock.sleep(800)
             tapLabel(f, "Pop-up blocked", prefix = true)
             waitFor("Blocked pop-ups", 5_000)
-            awaitCovered()
+            awaitSettled()
             tapLabel(f, "Always allow pop-ups on", prefix = true)
             SystemClock.sleep(3_000)
         }
@@ -426,11 +427,16 @@ class ServicesHardeningDemo {
      * reaches the button under the soft keyboard should it be up. (Enter from the password field
      * with a press as the fallback sent the answer twice: the dialog the refused answer brought
      * back was taken for the one still waiting, and the retry shot caught the change-over.)
-     * Enter is the fallback for a tree that does not have the button yet.
+     * The button is told by its class: the dialog's title is "Sign in" too (§9.1 sentence case),
+     * and the sheet it names is focusable, which Android reports as clickable, so the first
+     * clickable node of that name is the sheet, and a click on it only moves the focus. Enter is
+     * the fallback for a tree that does not have the button yet.
      */
     private fun submitSignIn() {
         SystemClock.sleep(600)
-        val button = findNodes("Sign in").firstOrNull { it.isClickable }
+        val button = findNodes("Sign in").firstOrNull {
+            it.isClickable && it.className == "android.widget.Button"
+        }
         if (button != null && button.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
             step("pressed Sign in")
             return
@@ -579,33 +585,82 @@ class ServicesHardeningDemo {
     }
 
     /**
-     * A sheet over a live page is in the accessibility tree as soon as it renders, but the chrome
-     * keeps the page's own view in front until a cover of the page has painted behind the sheet
-     * (up to 2.5 s on the emulator's software GPU, `COVER_WAIT_MS`), and only then hides the page
-     * views; a screenshot taken before that shows the page, not the sheet. Polls the host until
-     * no page view is shown, then lets the sheet's slide finish; false when a page view is still
-     * shown after `timeoutMs`.
+     * A sheet over a live page is in the accessibility tree as soon as it renders, but the chassis
+     * holds it at opacity 0 until the page is covered – a picture of the page painted behind it
+     * (up to 2.5 s on the emulator's software GPU, `COVER_WAIT_MS`), the page views hidden, and
+     * the host's frame without them drawn, or a second's grace from a host that never says so
+     * (`ACK_TIMEOUT_MS`, lib/pageView.ts) – and only then slides it in. A screenshot taken before
+     * that shows the page, not the sheet, and the host's own view state flips a frame or a second
+     * ahead of the slide. So the screen itself is watched: captures 250 ms apart until the scene
+     * has changed from the first (the scrim and the sheet coming) and then three in a row agree
+     * (two, and the emulator may have stalled a frame mid-slide), a blinking caret's worth of
+     * pixels apart. A scene that never changes is taken as settled after `stillMs`, past the
+     * chassis's longest hold (`COVERED_TIMEOUT_MS`): the sheet was up before the first capture.
+     * False when the scene kept changing for `timeoutMs`.
      */
-    private fun awaitCovered(timeoutMs: Long = 6_000): Boolean {
-        val deadline = SystemClock.uptimeMillis() + timeoutMs
-        while (SystemClock.uptimeMillis() < deadline) {
-            if (!pageShown()) {
-                step("page views hidden")
-                SystemClock.sleep(600)
-                return true
+    private fun awaitSettled(timeoutMs: Long = 10_000, stillMs: Long = 4_500): Boolean {
+        val start = SystemClock.uptimeMillis()
+        val reference = capture() ?: return false
+        var last = reference
+        var moved = false
+        var stillRuns = 0
+        try {
+            while (SystemClock.uptimeMillis() < start + timeoutMs) {
+                SystemClock.sleep(250)
+                val next = capture() ?: continue
+                stillRuns = if (alike(last, next)) stillRuns + 1 else 0
+                if (!moved && !alike(reference, next)) moved = true
+                if (last !== reference) last.recycle()
+                last = next
+                if (moved && stillRuns >= 2) {
+                    step("the scene moved and settled")
+                    return true
+                }
+                if (!moved && SystemClock.uptimeMillis() - start >= stillMs) {
+                    step("the scene held still for ${stillMs}ms")
+                    return true
+                }
             }
-            SystemClock.sleep(150)
+            step("the scene kept changing for ${timeoutMs}ms")
+            return false
+        } finally {
+            if (last !== reference) last.recycle()
+            reference.recycle()
         }
-        step("a page view is still shown after ${timeoutMs}ms")
-        return false
     }
 
-    private fun pageShown(): Boolean {
-        var shown = false
-        instrumentation.runOnMainSync {
-            shown = (activity as? MainActivity)?.host?.tabs?.all()?.any { it.isShown } ?: false
+    /** The screen as pixels the test can read (the automation's bitmap may be hardware-backed). */
+    private fun capture(): Bitmap? {
+        val shot = ui.takeScreenshot() ?: return null
+        val copy = shot.copy(Bitmap.Config.ARGB_8888, false)
+        shot.recycle()
+        return copy
+    }
+
+    /**
+     * Whether two captures agree but for a blinking caret and the status bar's clock: fewer than
+     * 0.2 % of the pixels sampled on a 4 px grid differ. A scrim fading or a sheet sliding moves
+     * a good tenth of the screen.
+     */
+    private fun alike(a: Bitmap, b: Bitmap): Boolean {
+        if (a.width != b.width || a.height != b.height) return false
+        val rowA = IntArray(a.width)
+        val rowB = IntArray(b.width)
+        var samples = 0
+        var differing = 0
+        var y = 0
+        while (y < a.height) {
+            a.getPixels(rowA, 0, a.width, 0, y, a.width, 1)
+            b.getPixels(rowB, 0, b.width, 0, y, b.width, 1)
+            var x = 0
+            while (x < a.width) {
+                samples++
+                if (rowA[x] != rowB[x]) differing++
+                x += 4
+            }
+            y += 4
         }
-        return shown
+        return differing * 500 < samples
     }
 
     /**
