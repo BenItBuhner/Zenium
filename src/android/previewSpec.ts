@@ -29,6 +29,15 @@ export const PREVIEW_PULL_MAX = 2.5
 export type PreviewStep =
   { kind: 'tap'; text: string } | { kind: 'back' } | { kind: 'overview' } | { kind: 'urlbar' }
 
+/**
+ * The "Add to Home screen" surfaces a preview state may raise on the active tab: the install
+ * sheet for the demo app (`install`), the name-edit sheet for a plain page (`name`), the ambient
+ * banner (`banner`; the core raises it once the demo app has the engagement the profile seeds)
+ * and the confirmation toast after a pin (`pinned`).
+ */
+export const PREVIEW_WEBAPP_SURFACES = ['install', 'name', 'banner', 'pinned'] as const
+export type PreviewWebAppSurface = (typeof PREVIEW_WEBAPP_SURFACES)[number]
+
 export type PreviewState =
   | { kind: 'idle' }
   | {
@@ -85,6 +94,7 @@ export type PreviewState =
       /** The active tab shown loading, its bar at this fraction. */
       progress: number | null
     }
+  | { kind: 'webapp'; surface: PreviewWebAppSurface }
 
 /** More sample banners than the stack holds are pointless. */
 const MAX_PREVIEW_BANNERS = 3
@@ -103,9 +113,10 @@ const MAX_PREVIEW_BANNERS = 3
  * tab's load failing with that Chromium `net::` code (with `url=<target>` for the URL that
  * failed, else the tab's own), which puts up the zen://error page, or any of `toast=<text>` (with
  * `action=<label>`, `kind=error`), `banners=<n>` and `progress=<0…1>` together for the message
- * surfaces and the load bar. When several are given, `page` wins over `overlay`, `overlay` over
- * `menu`, `menu` over `find`, `find` over `pull`, `pull` over `zoom`, `zoom` over `error`, and
- * `error` over the messages. A leading `#` (the URL hash as read) is ignored.
+ * surfaces and the load bar, or `webapp=<surface>` for one of PREVIEW_WEBAPP_SURFACES ("Add to
+ * Home screen"). When several are given, `page` wins over `overlay`, `overlay` over `menu`,
+ * `menu` over `find`, `find` over `pull`, `pull` over `zoom`, `zoom` over `error`, `error` over
+ * the messages and the messages over `webapp`. A leading `#` (the URL hash as read) is ignored.
  */
 export function parsePreviewSpec(spec: string): PreviewState {
   const params = new URLSearchParams(spec.startsWith('#') ? spec.slice(1) : spec)
@@ -177,6 +188,10 @@ export function parsePreviewSpec(spec: string): PreviewState {
       banners: Number.isFinite(count) ? Math.min(MAX_PREVIEW_BANNERS, Math.max(0, count)) : 0,
       progress: Number.isFinite(fraction) ? Math.min(1, Math.max(0, fraction)) : null
     }
+  }
+  const webapp = params.get('webapp')
+  if (webapp !== null && (PREVIEW_WEBAPP_SURFACES as readonly string[]).includes(webapp)) {
+    return { kind: 'webapp', surface: webapp as PreviewWebAppSurface }
   }
   return { kind: 'idle' }
 }

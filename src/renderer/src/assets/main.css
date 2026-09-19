@@ -3649,6 +3649,132 @@
   );
 }
 
+@layer components {
+  /*
+   * "Add to Home screen" (`InstallSheet`) on the sheet chassis, which owns the surface, grip,
+   * 48 header and footer (`.zen-sheet`, v2 §6, §9.16, §9.11): only what this sheet adds. The
+   * app's icon as a tile – a letter on the app's colour when it has none – beside its name and
+   * origin, or beside the name-edit field under its label (§9.12); the description; and the
+   * manifest's screenshots as bordered cards in a strip that snaps shot by shot.
+   */
+  /*
+   * The body sits in the sheet's one 16 gutter (§9.25). The header's title line box (22 in the
+   * 48) ends 13 above the body; 3 more put the first element 16 below it (§9.7).
+   */
+  .zen-install-body {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: 3px 16px 0;
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
+  }
+  .zen-install-app {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  .zen-install-name {
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-heading);
+    line-height: var(--v2-line-body);
+  }
+  .zen-install-detail {
+    color: var(--v2-text-deemphasized);
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+  }
+  /*
+   * A manifest description runs to 512 characters; it clamps at four lines (80 at the 20 line)
+   * with an ellipsis so the sheet stays a decision surface and the footer stays in reach at the
+   * peek detent (§9.2's clamp, applied to body copy; design lead on #74).
+   */
+  .zen-install-description {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 4;
+    overflow: hidden;
+    margin: 0;
+    color: var(--v2-text-deemphasized);
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
+  }
+  /* The name field under its label, 4 to the field, the origin as its description 4 below (§9.12). */
+  .zen-install-form {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .zen-install-label {
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-body);
+    line-height: var(--v2-line-body);
+  }
+  .zen-install-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    border-radius: var(--v2-radius-card);
+    background: var(--v2-card);
+  }
+  .zen-install-icon img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  /* The letter tile sits on the accent with its ink unless the core names the app's colour, in
+   * which case both the colour and an ink chosen by its luminance are inline (AppIcon). */
+  .zen-install-icon[data-letter] {
+    background: var(--v2-accent);
+    color: var(--v2-on-accent);
+    font-weight: var(--v2-weight-heading);
+    line-height: 1;
+  }
+  /* The strip runs edge to edge under the sheet's 16 px gutters and snaps a shot to the gutter. */
+  .zen-install-shots {
+    display: flex;
+    gap: 12px;
+    margin: 0 -16px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 0 16px;
+    scroll-snap-type: x mandatory;
+    scroll-padding: 0 16px;
+    touch-action: pan-x pan-y;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
+  .zen-install-shots::-webkit-scrollbar {
+    display: none;
+  }
+  .zen-install-shot {
+    flex: none;
+    margin: 0;
+    overflow: hidden;
+    border: 1px solid var(--v2-card-border);
+    border-radius: var(--v2-radius-card);
+    background: var(--v2-card);
+    scroll-snap-align: start;
+  }
+  .zen-install-shot img {
+    display: block;
+    width: auto;
+    height: 100%;
+  }
+  /* A shot whose card is sized from its declared `sizes` fills the card to the border. */
+  .zen-install-shot[data-sized] img {
+    width: 100%;
+    object-fit: cover;
+  }
+}
+
+/* A v2 sheet's header marks scrolled-under content with a hairline, not a fade (draft 9.7). */
+.zen-install-sheet .zen-sheet-scroll[data-fade-axis] {
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
 /*
  * A sheet being dragged takes no press fill on the shared row under the finger (`.zen-v2-row`,
  * the unlayered primitive further down): unlayered too, so it can beat the primitive's `:active`.

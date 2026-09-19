@@ -37,7 +37,8 @@ const DESKTOP: HostCapabilities = {
   windowMaterial: false,
   secureDns: true,
   newTabPage: true,
-  pageTabs: false
+  pageTabs: false,
+  pinShortcuts: false
 }
 
 const ANDROID: HostCapabilities = {

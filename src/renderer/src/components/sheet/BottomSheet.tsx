@@ -41,6 +41,11 @@ interface Props {
   header?: ReactNode
   /** The scrolling body. */
   children: ReactNode
+  /**
+   * The sheet's actions under the body (`.zen-sheet-footer`, §9.11: peers split the width, the
+   * primary trailing), outside the scroller so they stay in reach at every detent.
+   */
+  footer?: ReactNode
   /** Change it when the body is swapped, so the detents are measured again. */
   contentKey?: string
   /** Accessible name of the handle. */
@@ -137,6 +142,7 @@ export function BottomSheet({
   onDismissed,
   header,
   children,
+  footer,
   contentKey,
   handleLabel = 'Resize sheet',
   fadeEdges = true,
@@ -634,6 +640,7 @@ export function BottomSheet({
         >
           {children}
         </div>
+        {footer && <div className="zen-sheet-footer shrink-0">{footer}</div>}
       </div>
     </div>
   )

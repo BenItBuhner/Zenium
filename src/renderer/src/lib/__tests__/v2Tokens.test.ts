@@ -79,7 +79,10 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   ['.zen-ntp-field {', '/*\n * A sheet coming up pushes the page back'],
   // The Settings tab (components/pages/settings): the page host, the shared v2 rows, fields,
   // icon buttons and image radio cards it introduces, its sheets and its overview thumbnail.
-  ['.zen-page-host {', ' * History page (design language v2 draft']
+  ['.zen-page-host {', ' * History page (design language v2 draft'],
+  // "Add to Home screen": what the install and name-edit sheets add to the chassis – app tile,
+  // name and origin, the name field's label, the screenshot strip (components/phone/InstallSheet.tsx).
+  ['.zen-install-body {', '/*\n * A sheet coming up pushes the page back']
 ]
 
 /**

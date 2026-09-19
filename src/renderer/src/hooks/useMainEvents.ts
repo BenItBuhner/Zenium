@@ -6,6 +6,7 @@ import { offerChromeShortcut } from '@renderer/lib/chromeShortcuts'
 import { remoteDragOver } from '@renderer/lib/drag'
 import { startDownloadsUi } from '@renderer/lib/downloads'
 import { isPhone } from '@renderer/lib/formFactor'
+import { presentInstallBanner, retireInstallBanner } from '@renderer/lib/installBanner'
 import { APP_MENU_EVENT } from '@renderer/lib/shortcuts'
 import { openSettings } from '@renderer/lib/pages'
 import {
@@ -16,6 +17,7 @@ import {
   openFindBar,
   openNewTabPageUrlbar,
   openNewTabShortcutDialog,
+  openInstallSheet,
   openOverlay,
   openUrlbar,
   openZoom,
@@ -206,6 +208,22 @@ export function useMainEvents(): void {
         (request) => void showExternalProtocol(request, currentActiveTabId())
       ),
       onEvent('externalProtocol.cancel', ({ requestId }) => cancelExternalProtocol(requestId)),
+      onEvent('webapp.install', (prompt) => {
+        closeUrlbar()
+        retireInstallBanner(prompt.tabId)
+        void openInstallSheet(prompt)
+      }),
+      onEvent('webapp.banner', (banner) => presentInstallBanner(banner)),
+      onEvent('webapp.bannerHide', ({ tabId }) => retireInstallBanner(tabId)),
+      // NOT-20, with Chrome's "Open" (v2 §9.33: one action): the tab goes to the shortcut's URL.
+      onEvent('webapp.pinned', ({ tabId, name, url }) =>
+        pushToast(`Added ${name} to Home screen`, 'info', {
+          action:
+            tabId && url
+              ? { label: 'Open', onPick: () => run('tab.navigate', { tabId, input: url }) }
+              : undefined
+        })
+      ),
       onEvent('insets', (insets) => {
         uiStore.set({ insets })
         const root = document.documentElement.style

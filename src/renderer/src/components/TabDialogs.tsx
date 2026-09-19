@@ -21,6 +21,7 @@ import { EditBookmarkDialog } from './bookmarks/EditBookmarkDialog'
 import { StarDialog } from './bookmarks/StarDialog'
 import { NewTabShortcutDialog } from './newtab/NewTabShortcutDialog'
 import { BookmarkEditSheet } from './phone/BookmarkEditSheet'
+import { InstallLayer } from './phone/InstallSheet'
 import { SiteDataConfirmDialog } from './siteinfo/SiteInfoSheet'
 import { ZoomBubble } from './zoom/ZoomBubble'
 
@@ -97,6 +98,7 @@ export function TabDialogs({ state }: { state: UIState }): JSX.Element {
       <WindowPromptDialog state={state} />
       <ExtensionPromptDialog />
       {zoom && <ZoomBubble state={state} bubble={zoom} />}
+      <InstallLayer />
     </FrameDialogHost>
   )
 }
