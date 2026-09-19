@@ -4,6 +4,7 @@ import type { HostCapabilities, Platform } from '@shared/types'
 import { describe, expect, it } from 'vitest'
 import type { Bridge } from '../bridge'
 import { AndroidPlatform, type BootInfo } from '../platform'
+import { AndroidStoreIO } from '../storeIo'
 
 const BOOT: BootInfo = {
   version: '0.0.0-test',
@@ -79,18 +80,45 @@ describe('a deferred root document read before the boot fetch lands', () => {
       deferred: [{ name: 'state.json', bytes: profile.length, etag: '1f4-18f3-0' }]
     })
 
+    // The platform's own constructor-time read (the new tab background, unset here) asked the host.
+    expect(calls).toEqual([{ method: 'storage.read', args: { name: 'newtab-wallpaper.json' } }])
+
     const state = new BrowserState(platform.io, platform.info.os, platform.capabilities, '0.0')
     state.load()
     // The persisted profile says it did not exit cleanly; first-run defaults never do.
     expect(state.uncleanExit).toBe(true)
-    expect(calls).toEqual([{ method: 'storage.read', args: { name: 'state.json' } }])
+    expect(calls[1]).toEqual({ method: 'storage.read', args: { name: 'state.json' } })
+    expect(calls).toHaveLength(2)
 
     // The fetch lands later: the core keeps what it read, and reads it no second time from the host.
     platform.io.adopt({ 'state.json': profile })
     const again = new BrowserState(platform.io, platform.info.os, platform.capabilities, '0.0')
     again.load()
     expect(again.uncleanExit).toBe(true)
-    expect(calls).toHaveLength(1)
+    expect(calls).toHaveLength(2)
+  })
+
+  it('is complete before the platform, whose constructor reads the new tab background', () => {
+    const wallpaper = JSON.stringify({
+      version: 1,
+      dataUrl: `data:image/png;base64,${'A'.repeat(200)}`
+    })
+    const { bridge, calls } = fakeBridge({ 'newtab-wallpaper.json': wallpaper })
+    const boot: BootInfo = {
+      ...BOOT,
+      deferred: [{ name: 'newtab-wallpaper.json', bytes: wallpaper.length, etag: 'e0-1-0' }]
+    }
+    // As bootAndroid does: the store first, the fetched documents adopted, then the platform.
+    const io = new AndroidStoreIO(bridge, boot.files, boot.deferred)
+    io.adopt({ 'newtab-wallpaper.json': wallpaper })
+    const platform = new AndroidPlatform(bridge, boot, io)
+    expect(platform.newTabBackground.current()).toBe(`data:image/png;base64,${'A'.repeat(200)}`)
+    expect(calls).toEqual([])
+
+    // Without the store given, the platform reads the document through the bridge (the guard).
+    const late = new AndroidPlatform(bridge, { ...boot, files: {} })
+    expect(late.newTabBackground.current()).toBe(`data:image/png;base64,${'A'.repeat(200)}`)
+    expect(calls).toEqual([{ method: 'storage.read', args: { name: 'newtab-wallpaper.json' } }])
   })
 
   it('is first-run defaults only when the host has no such document either', () => {
@@ -99,7 +127,12 @@ describe('a deferred root document read before the boot fetch lands', () => {
     const state = new BrowserState(platform.io, platform.info.os, platform.capabilities, '0.0')
     state.load()
     expect(state.uncleanExit).toBe(false)
-    // The session store asked for the document and its backup; the host had neither.
-    expect(calls.map((c) => c.args.name)).toEqual(['state.json', 'state.json.bak'])
+    // The platform asked for the new tab background, the session store for the document and its
+    // backup; the host had none of them.
+    expect(calls.map((c) => c.args.name)).toEqual([
+      'newtab-wallpaper.json',
+      'state.json',
+      'state.json.bak'
+    ])
   })
 })

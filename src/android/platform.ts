@@ -774,9 +774,17 @@ export class AndroidPlatform implements Platform {
   private extensionRuntime: AndroidExtensionRuntime | null = null
   private readonly bootEnvironment: PageEnvironment | null
 
+  /**
+   * `io` is the profile's store, complete: `bootAndroid` builds it and adopts the documents the
+   * payload deferred before the platform, because the constructor reads from it (the new tab
+   * background's document) and so does every core constructor after it. Built here from the
+   * payload alone when not given (the tests; a document the payload deferred is then read
+   * through the bridge, `AndroidStoreIO`).
+   */
   constructor(
     private readonly bridge: Bridge,
-    boot: BootInfo
+    boot: BootInfo,
+    io: AndroidStoreIO = new AndroidStoreIO(bridge, boot.files, boot.deferred)
   ) {
     this.info = { os: boot.os ?? 'android', version: boot.version }
     this.extensionsRoot = boot.extensionsRoot || null
@@ -790,7 +798,7 @@ export class AndroidPlatform implements Platform {
       pinShortcuts: boot.pinShortcuts === true
     }
     this.bootEnvironment = boot.environment ?? null
-    this.io = new AndroidStoreIO(bridge, boot.files, boot.deferred)
+    this.io = io
     this.newTabBackground = new AndroidNewTabBackground(this.io)
     this.agentTransport = new AndroidAgentTransport(bridge)
     this.updateHost = new AndroidUpdateHost(bridge, boot.signer ?? null, boot.packageName ?? null)

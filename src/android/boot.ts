@@ -26,6 +26,7 @@ import { Bridge, getNativeBridge } from './bridge'
 import { fetchDeferredDocuments } from './handoff'
 import { AndroidPlatform, type BootInfo, type HostEventPayloads } from './platform'
 import { createPreviewBridge } from './preview'
+import { AndroidStoreIO } from './storeIo'
 import type { ViewEventPayloads } from './views'
 
 /** Same shape as the Electron preload's `window.zen`, so the renderer is unchanged. */
@@ -65,12 +66,12 @@ export interface HostGlobal {
  * Kotlin bridge (plain browser / dev server).
  *
  * Asynchronous for one reason: the boot payload names the core's big documents instead of
- * carrying them, and they are fetched as files (`handoff.ts`) while the platform is built; the
- * core is built once they are in the store, so that its constructors' synchronous reads (the
- * session, the history, the downloads, the permissions, the extension registry) find every
- * document as they always did. A document read before its file has arrived is read through the
- * bridge instead (`AndroidStoreIO`), never reported absent: a profile is not mistaken for a first
- * run and overwritten.
+ * carrying them, and they are fetched as files (`handoff.ts`); the store is complete before the
+ * platform and the core are built, so that their constructors' synchronous reads (the new tab
+ * background, the session, the history, the downloads, the permissions, the extension registry)
+ * find every document as they always did. A document read before its file has arrived would be
+ * read through the bridge instead (`AndroidStoreIO`), never reported absent: a profile is not
+ * mistaken for a first run and overwritten.
  */
 export async function bootAndroid(): Promise<{ browser: Browser; api: ZenApi; preview: boolean }> {
   const native = getNativeBridge()
@@ -81,14 +82,17 @@ export async function bootAndroid(): Promise<{ browser: Browser; api: ZenApi; pr
   const hostGlobal = installHostGlobal(bridge, platformRef)
 
   const boot = bridge.callSync<BootInfo>('boot', {})
-  const deferred = fetchDeferredDocuments(boot.deferred, {
-    fetch: (url, init) => fetch(url, init),
-    readSync: (name) => bridge.callSync<string | null | undefined>('storage.read', { name }) ?? null
-  })
-  const platform = new AndroidPlatform(bridge, boot)
-  platform.io.adopt(await deferred)
+  const io = new AndroidStoreIO(bridge, boot.files, boot.deferred)
+  io.adopt(
+    await fetchDeferredDocuments(boot.deferred, {
+      fetch: (url, init) => fetch(url, init),
+      readSync: (name) =>
+        bridge.callSync<string | null | undefined>('storage.read', { name }) ?? null
+    })
+  )
   // From here on nothing yields until the core has started: what the host sends in reaches a
   // started core, as it did when this was one synchronous run.
+  const platform = new AndroidPlatform(bridge, boot, io)
   const browser = new Browser(platform)
   platform.bind(browser)
   platformRef.current = platform
