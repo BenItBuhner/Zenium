@@ -23,9 +23,11 @@ on:
 permissions:
   contents: read
 
+# A run in progress finishes (its two hours of results are the point); a newer push waits behind it
+# and only the latest pending one is kept.
 concurrency:
   group: android-ext-compat-sweep-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   system-webview:
