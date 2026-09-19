@@ -59,6 +59,21 @@ import { domainOf, normalizeOrigin, siteLabel } from './credentials/origins'
 
 /** How long a submitted login waits for its page to move on before it is forgotten. */
 const CANDIDATE_TTL_MS = 30_000
+
+/**
+ * The next turn of the event loop, with every queued microtask run first. A message port, not a
+ * timer, so it also works under faked timers.
+ */
+function nextTurn(): Promise<void> {
+  return new Promise((resolve) => {
+    const channel = new MessageChannel()
+    channel.port1.onmessage = (): void => {
+      channel.port1.close()
+      resolve()
+    }
+    channel.port2.postMessage(null)
+  })
+}
 /**
  * A field losing focus closes its picker after this pause: a click on a picker row blurs the
  * field first and the chrome's `autofill.pick` arrives a moment later.
@@ -122,8 +137,47 @@ export class AutofillService {
   /** Engine surface: prompts open as host dialogs. The chrome sets this false once it renders the queue. */
   nativePrompts = true
   private nativeQueue: Promise<void> = Promise.resolve()
+  /** The fire-and-forget work page events started that has not finished yet (see `whenSettled`). */
+  private readonly inflight = new Set<Promise<unknown>>()
+  /** How many of `inflight` sit at a prompt waiting for the user (nothing to wait for). */
+  private parkedCount = 0
+  private settleWaiters: (() => void)[] = []
 
   constructor(private readonly browser: Browser) {}
+
+  /**
+   * Resolves once the work page events set off has either finished or reached a prompt that
+   * waits for the user, including work started in turn (an offer that unlocks the vault, then
+   * shows a prompt). The chrome's state is final at that point; tests and demo drivers wait on
+   * this instead of guessing how many ticks the store's crypto takes.
+   */
+  async whenSettled(): Promise<void> {
+    for (;;) {
+      while (this.inflight.size > this.parkedCount)
+        await new Promise<void>((resolve) => this.settleWaiters.push(resolve))
+      // Idle now; let the reactions already queued run (a host dialog that answers at once
+      // resumes its prompt's work) before saying so.
+      await nextTurn()
+      if (this.inflight.size <= this.parkedCount) return
+    }
+  }
+
+  private notifySettled(): void {
+    const waiters = this.settleWaiters
+    this.settleWaiters = []
+    for (const wake of waiters) wake()
+  }
+
+  /** Runs `work` in the background and keeps it in `inflight` until it settles. */
+  private track<T>(work: Promise<T>): Promise<T> {
+    this.inflight.add(work)
+    const done = (): void => {
+      this.inflight.delete(work)
+      this.notifySettled()
+    }
+    work.then(done, done)
+    return work
+  }
 
   /** Probe the system autofill framework (Android) and apply the provider setting. */
   start(): void {
@@ -243,7 +297,7 @@ export class AutofillService {
         return
       case 'submit':
         if (event.group === 'login') this.onLoginSubmit(tabId, event)
-        else void this.onDataSubmit(tabId, event.group, event.values)
+        else void this.track(this.onDataSubmit(tabId, event.group, event.values))
         return
       case 'settled':
         this.evaluateCandidate(tabId, event.formId)
@@ -293,13 +347,15 @@ export class AutofillService {
     ) {
       this.autoFilled.add(formKey)
       this.closePicker()
-      void this.fillEntry(context, entries[0], undefined, this.browser.tabs.windowFor(tabId)).then(
-        (result) => {
-          // Not authorized (a dismissed prompt, a passphrase to ask for): the picker takes over so
-          // the chrome can ask, as long as the field is still the focused one.
-          if (result.status !== 'ok' && this.focus.get(tabId) === context)
-            this.openPicker(context, entries)
-        }
+      void this.track(
+        this.fillEntry(context, entries[0], undefined, this.browser.tabs.windowFor(tabId)).then(
+          (result) => {
+            // Not authorized (a dismissed prompt, a passphrase to ask for): the picker takes over
+            // so the chrome can ask, as long as the field is still the focused one.
+            if (result.status !== 'ok' && this.focus.get(tabId) === context)
+              this.openPicker(context, entries)
+          }
+        )
       )
       return
     }
@@ -544,7 +600,7 @@ export class AutofillService {
     if (Date.now() - candidate.at > CANDIDATE_TTL_MS) return
     const tab = this.browser.tabs.tab(tabId)
     if (!tab || tab.errorCode !== null) return
-    void this.offerLogin(candidate)
+    void this.track(this.offerLogin(candidate))
   }
 
   private async ensureUnlocked(): Promise<boolean> {
@@ -579,7 +635,7 @@ export class AutofillService {
       existingId: decision.kind === 'update' ? decision.existing.id : null
     }
     const win = this.windowOf(candidate.tabId)
-    const response = await this.show(prompt, win)
+    const response = await this.show(prompt, win, true)
     if (!response || !store.unlocked()) return
     if (response.action === 'never') {
       store.neverSaveAdd(candidate.origin)
@@ -643,7 +699,7 @@ export class AutofillService {
         address: input,
         preview: addressPreview(input)
       }
-      const response = await this.show(prompt, win)
+      const response = await this.show(prompt, win, true)
       if (response?.action === 'save' && store.unlocked()) {
         store.addAddress(input)
         this.bump()
@@ -681,7 +737,7 @@ export class AutofillService {
       expYear: input.expYear,
       name: input.name
     }
-    const response = await this.show(prompt, win)
+    const response = await this.show(prompt, win, true)
     if (response?.action === 'save' && store.unlocked()) {
       store.addCard(input)
       this.bump()
@@ -764,11 +820,29 @@ export class AutofillService {
     entry.resolve(response)
   }
 
-  private show(prompt: AutofillPrompt, win?: ZenWindow): Promise<AutofillPromptResponse | null> {
-    return new Promise((resolve) => {
+  /**
+   * Queue `prompt` for the chrome (and the host dialog until a chrome takes over) and wait for
+   * the answer. `parked` marks the wait of a tracked piece of work (see `whenSettled`): it counts
+   * as settled until the answer arrives, and as running again the moment it does.
+   */
+  private show(
+    prompt: AutofillPrompt,
+    win?: ZenWindow,
+    parked = false
+  ): Promise<AutofillPromptResponse | null> {
+    if (parked) {
+      this.parkedCount++
+      this.notifySettled()
+    }
+    return new Promise((settle) => {
+      const resolve = (response: AutofillPromptResponse | null): void => {
+        if (parked) this.parkedCount--
+        settle(response)
+      }
       this.pending.push({ prompt, resolve })
       this.browser.state.commitVolatile()
-      // One host dialog at a time: a checkout submits its card and its address together.
+      // One host dialog at a time: a checkout submits its card and its address together. The
+      // dialog is a wait for the user, so the queue is not tracked work.
       if (this.nativePrompts)
         this.nativeQueue = this.nativeQueue.then(() => this.showNative(prompt, win))
     })
