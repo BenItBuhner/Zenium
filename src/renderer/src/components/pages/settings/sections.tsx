@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Check, Puzzle } from 'lucide-react'
+import { Check } from 'lucide-react'
 import type { InternalPageSection } from '@shared/internalPages'
 import type {
   ColorScheme,
@@ -86,6 +86,7 @@ import {
   UrlForm,
   ZoomBlock
 } from './blocks'
+import { extensionsGroups } from './extensions'
 import { choice, type RowGroup, type SectionModel, type SettingsRow } from './model'
 import { trackingGroups } from './tracking'
 
@@ -1675,87 +1676,8 @@ function modsSection({ state }: SectionContext): RowGroup[] {
 // Extensions
 // ---------------------------------------------------------------------------
 
-function extensionsSection({ state }: SectionContext): RowGroup[] {
-  return [
-    {
-      id: 'extensions',
-      heading: 'Extensions',
-      description:
-        'Chrome extensions from the Chrome Web Store or a folder with a manifest.json. Extensions run in every container.',
-      rows: state.extensions.map((ext) =>
-        item(
-          `extension:${ext.id}`,
-          ext.version ? `${ext.name} ${ext.version}` : ext.name,
-          ext.error ?? (ext.description || ext.path),
-          [
-            {
-              kind: 'switch',
-              id: `extension:${ext.id}:enabled`,
-              label: 'Enabled',
-              checked: ext.enabled,
-              onChange: (v) => run('extension.setEnabled', { id: ext.id, enabled: v })
-            },
-            {
-              kind: 'action',
-              id: `extension:${ext.id}:remove`,
-              label: 'Remove extension',
-              destructive: true,
-              confirm: { title: `Remove ${ext.name}?`, action: 'Remove' },
-              onPress: () => run('extension.remove', { id: ext.id })
-            }
-          ],
-          {
-            leading: ext.icon ? (
-              <img src={ext.icon} alt="" className="zen-settings-ext-icon" draggable={false} />
-            ) : (
-              <Puzzle className="zen-settings-glyph" aria-hidden="true" />
-            ),
-            keywords: ['add-on']
-          }
-        )
-      ),
-      empty: 'No extensions yet'
-    },
-    {
-      id: 'install-extension',
-      heading: 'Install an extension',
-      rows: [
-        {
-          kind: 'action',
-          id: 'install-from-store',
-          label: 'From the Chrome Web Store',
-          description: 'Paste an extension id, or a Chrome Web Store or Edge Add-ons link.',
-          form: {
-            title: 'Install from the Chrome Web Store',
-            render: (close) => (
-              <UrlForm
-                id="store-ref"
-                label="Extension id or store link"
-                placeholder="https://chromewebstore.google.com/detail/…"
-                action="Install"
-                onSubmit={(ref) => run('extension.installFromStore', { ref })}
-                close={close}
-              />
-            )
-          }
-        },
-        {
-          kind: 'action',
-          id: 'install-from-file',
-          label: 'From a file',
-          description: 'A packed .crx or .zip.',
-          onPress: () => run('extension.installFromFile', undefined)
-        },
-        {
-          kind: 'action',
-          id: 'load-unpacked',
-          label: 'Load unpacked',
-          description: 'A folder with a manifest.json.',
-          onPress: () => run('extension.add', undefined)
-        }
-      ]
-    }
-  ]
+function extensionsSection(ctx: SectionContext): RowGroup[] {
+  return extensionsGroups(ctx)
 }
 
 // ---------------------------------------------------------------------------
