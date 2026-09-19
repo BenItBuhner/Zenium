@@ -4,6 +4,7 @@ import {
   dialog,
   nativeImage,
   net,
+  webContents,
   type Extension,
   type Session
 } from 'electron'
@@ -34,6 +35,7 @@ import {
   type ExtensionPackage,
   type UpdateCheckResult
 } from '../../core/extensions/install'
+import { manifestIssueReport } from '../../core/extensions/errorConsole'
 import {
   ChromePrompts,
   type ConfirmInstall,
@@ -45,6 +47,7 @@ import {
   localeFallbackChain,
   localizeManifest,
   stripJsonComments,
+  validateManifest,
   type LocaleMessages
 } from '../../core/extensions/manifest'
 import {
@@ -86,6 +89,7 @@ import {
   writePackage
 } from './extensionStore'
 import type { ExtensionApiHooks } from './extensionApi'
+import { ExtensionErrorConsole } from './extensionErrors'
 import type { SessionManager } from './sessions'
 import type { ElectronWindow } from './window'
 
@@ -178,7 +182,12 @@ export class ExtensionService implements ExtensionHost {
   private registry: ExtensionRegistry
   private readonly store: JsonStore<ExtensionRegistry>
   private readonly loadedById = new Map<string, Extension>()
+  /** Why an extension is not running (`ExtensionInfo.error`): the load's failure message. */
   private readonly errors = new Map<string, string>()
+  /** Chrome's "Errors" per extension (`ExtensionInfo.errors`), for the extensions the registry knows. */
+  private readonly console = new ExtensionErrorConsole({
+    accept: (id) => this.record(id) !== undefined
+  })
   private readonly updates = new Map<string, UpdateInfo>()
   /** Ids with an install or update in flight. */
   private readonly busy = new Set<string>()
@@ -223,6 +232,14 @@ export class ExtensionService implements ExtensionHost {
       { idForPath: idForUnpackedPath, readManifest },
       Date.now()
     )
+    // Before any window exists: the popup, options and background documents and the tab pages
+    // running content scripts all print through their WebContents.
+    this.console.install({
+      allWebContents: () => webContents.getAllWebContents(),
+      onWebContentsCreated: (listener) =>
+        app.on('web-contents-created', (_event, contents) => listener(contents))
+    })
+    this.console.onChange(() => this.browser.state.commitVolatile())
   }
 
   attachApi(api: ExtensionApiHooks): void {
@@ -291,10 +308,15 @@ export class ExtensionService implements ExtensionHost {
 
   private async loadIntoSessions(record: ExtensionRecord): Promise<void> {
     this.errors.delete(record.id)
+    // A load (not a further session joining) starts the console's load lines over: Chrome keeps
+    // an extension's runtime errors across a reload and replaces its manifest ones.
+    const fresh = !this.loadedById.has(record.id)
+    if (fresh) this.console.remove(record.id, (entry) => entry.source === 'load')
     if (!existsSync(join(record.path, 'manifest.json'))) {
-      this.errors.set(record.id, 'manifest.json not found')
+      this.loadFailed(record, 'manifest.json not found')
       return
     }
+    if (fresh) this.reportManifestWarnings(record)
     for (const [, ses] of this.sessions.persistent()) {
       try {
         const ext =
@@ -308,9 +330,32 @@ export class ExtensionService implements ExtensionHost {
         if (!this.loadedById.has(ext.id)) this.loadedById.set(ext.id, ext)
         for (const listener of this.loadedListeners) listener(ext, ses)
       } catch (error) {
-        this.errors.set(record.id, (error as Error).message)
+        this.loadFailed(record, (error as Error).message)
       }
     }
+  }
+
+  private loadFailed(record: ExtensionRecord, message: string): void {
+    this.errors.set(record.id, message)
+    this.console.report(record.id, {
+      level: 'error',
+      source: 'load',
+      message,
+      url: `chrome-extension://${record.id}/manifest.json`,
+      context: record.path
+    })
+  }
+
+  /** What Chrome lists as the install's warnings: unknown keys, malformed patterns and the like. */
+  private reportManifestWarnings(record: ExtensionRecord): void {
+    let raw: unknown
+    try {
+      raw = JSON.parse(stripJsonComments(readFileSync(join(record.path, 'manifest.json'), 'utf8')))
+    } catch {
+      return
+    }
+    for (const issue of validateManifest(raw).warnings)
+      this.console.report(record.id, manifestIssueReport(record.id, issue, 'warning'))
   }
 
   private unload(record: ExtensionRecord): void {
@@ -343,12 +388,14 @@ export class ExtensionService implements ExtensionHost {
       map.delete(record.id)
       if (value !== undefined) map.set(id, value)
     }
+    this.console.rekey(record.id, id)
     record.id = id
     this.persist()
   }
 
-  /** A new container session appeared: bring the enabled extensions along. */
-  async attachSession(): Promise<void> {
+  /** A new container session appeared: hear its workers' console and bring the enabled extensions along. */
+  async attachSession(ses: Session): Promise<void> {
+    this.console.attachSession(ses)
     for (const record of this.registry.extensions) if (record.enabled) await this.load(record)
   }
 
@@ -395,9 +442,18 @@ export class ExtensionService implements ExtensionHost {
         updateError: update.error,
         updateCheckedAt: update.checkedAt,
         action: (ext && this.api ? this.api.actionState(ext.id) : null) ?? undefined,
-        ...(commands ? { commands: commands.commands, commandConflicts: commands.conflicts } : {})
+        ...(commands ? { commands: commands.commands, commandConflicts: commands.conflicts } : {}),
+        errors: this.console.list(record.id)
       }
     })
+  }
+
+  /** Chrome's "Clear all" on the extension's errors page. */
+  clearErrors(id: string): void {
+    const record = this.record(id)
+    if (!record) return
+    this.console.clear(record.id)
+    this.browser.state.commitVolatile()
   }
 
   // ---------------------------------------------------------------------------
@@ -737,6 +793,7 @@ export class ExtensionService implements ExtensionHost {
     this.unload(record)
     this.registry.extensions = this.registry.extensions.filter((r) => r !== record)
     this.errors.delete(record.id)
+    this.console.forget(record.id)
     this.updates.delete(record.id)
     if (record.source !== 'unpacked' && isManagedPath(this.root, record.path))
       await removeInstalledFiles(this.root, record.id).catch((error: Error) =>

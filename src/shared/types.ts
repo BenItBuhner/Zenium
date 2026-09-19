@@ -451,6 +451,47 @@ export interface ExtensionInfo {
   commands?: ExtensionCommandInfo[]
   /** Why some commands stayed unbound (a Zenium shortcut or another extension holds the key). */
   commandConflicts?: string[]
+  /**
+   * The extension's error console (Chrome's "Errors" on the details page): the last hundred
+   * load failures, uncaught exceptions, unhandled rejections and `console.error` / `console.warn`
+   * lines from its worker, its pages and its content scripts, oldest first, repeats collapsed
+   * (`count`). `extension.clearErrors` empties it.
+   */
+  errors: ExtensionErrorEntry[]
+}
+
+export type ExtensionErrorLevel = 'warning' | 'error'
+
+/**
+ * Where an error console line came from: `load` (the extension could not be loaded), `worker`
+ * (the MV3 service worker), `page` (an extension page: popup, options, background page, side
+ * panel, offscreen document), `content` (a content script or user script of the extension
+ * running in a tab page).
+ */
+export type ExtensionErrorSource = 'load' | 'worker' | 'page' | 'content'
+
+/** One line of an extension's error console (`ExtensionInfo.errors`). */
+export interface ExtensionErrorEntry {
+  /** Increasing within the extension's console; a cleared console starts over. */
+  id: number
+  level: ExtensionErrorLevel
+  source: ExtensionErrorSource
+  message: string
+  /** The script the line came from, or null when unknown (the extension's own files keep their `chrome-extension://` URL). */
+  url: string | null
+  /** 1-based line in `url`, or null. */
+  line: number | null
+  /**
+   * The context it happened in: the extension page's URL, the worker's script URL, or the tab
+   * page a content script ran in; null when unknown.
+   */
+  context: string | null
+  /** First occurrence, ms since epoch. */
+  at: number
+  /** Latest occurrence; equals `at` until the line repeats. */
+  lastAt: number
+  /** How many times the same line was seen (identical level, source, message, url, line, context). */
+  count: number
 }
 
 /** The extension side panel a window is showing (`chrome.sidePanel`), beside the page. */
@@ -1065,6 +1106,48 @@ export interface DownloadDanger {
   message: string
 }
 
+/**
+ * Why an interrupted download stopped: Chromium's `download_interrupt_reasons` in kebab case,
+ * grouped as Chromium groups them. `network-*` failures of a resumable transfer are retried by
+ * the hosts on their own before they reach the row; `user-shutdown` is a transfer the browser
+ * quit over (Resume continues from the kept bytes); `crash` is one the browser did not get to
+ * shut down. The hosts map their engine's errors onto this set (Electron: the item's state and
+ * the `net::` error or HTTP status its request ended with; Android: the downloader's
+ * exceptions and HTTP statuses); `interruptMessage` in `shared/downloads.ts` words each for
+ * the row and `DownloadItem.errorMessage` carries that wording.
+ */
+export type DownloadInterruptReason =
+  | 'network-failed'
+  | 'network-timeout'
+  | 'network-disconnected'
+  | 'network-server-down'
+  | 'server-failed'
+  | 'server-no-range'
+  | 'server-bad-content'
+  | 'server-unauthorized'
+  | 'server-forbidden'
+  | 'server-unreachable'
+  | 'file-failed'
+  | 'file-access-denied'
+  | 'file-no-space'
+  | 'file-name-too-long'
+  | 'file-too-large'
+  | 'file-virus-infected'
+  | 'file-blocked'
+  | 'file-security-check-failed'
+  | 'file-same-as-source'
+  | 'user-canceled'
+  | 'user-shutdown'
+  | 'crash'
+
+/**
+ * What `download.deleteFile` did: the file is gone now, was gone already (`missing`, the row is
+ * marked `fileMissing` either way), could not be removed (`failed`: locked, a folder, no
+ * permission), or the row has no completed file to delete (`not-completed`: unknown id, in
+ * flight, cancelled, interrupted or still quarantined behind a danger warning).
+ */
+export type DownloadDeleteFileResult = 'deleted' | 'missing' | 'failed' | 'not-completed'
+
 export interface DownloadItem {
   id: string
   url: string
@@ -1090,8 +1173,17 @@ export interface DownloadItem {
   mimeType: string
   /** The server honours Range requests, so paused and interrupted transfers can continue. */
   canResume: boolean
-  /** Why an interrupted download stopped (Chromium's `net::` error name or a short reason). */
-  error?: string
+  /** Why an interrupted download stopped; set exactly while `state` is `interrupted`. */
+  error?: DownloadInterruptReason
+  /** `error` in the words of Chrome's download bubble ("Check internet connection"), for the row. */
+  errorMessage?: string
+  /**
+   * The completed file is no longer where `savePath` says: deleted through `download.deleteFile`
+   * or found missing by an existence check (when the list loads, when the row is opened or
+   * revealed, on `download.exists`). Chrome greys such a row "Deleted" and offers Retry, which
+   * downloads the file again into the same row.
+   */
+  fileMissing?: boolean
   danger: DownloadDanger
   /** The user chose "Keep" for a flagged file: it left quarantine and may be opened. */
   dangerAccepted: boolean
@@ -2891,6 +2983,16 @@ export interface Commands {
   /** "Discard": delete a flagged file (or what is left of a failed one) and drop the row. */
   'download.discard': { args: { id: string }; result: void }
   'download.setOpenWhenDone': { args: { id: string; on: boolean }; result: void }
+  /**
+   * Delete a completed download's file from disk (Chrome's "Delete file"); the row stays and
+   * reads `fileMissing`. Resolves with what happened, `missing` when the file was gone already.
+   */
+  'download.deleteFile': { args: { id: string }; result: DownloadDeleteFileResult }
+  /**
+   * Whether a completed download's file is still on disk, checked now; the row's `fileMissing`
+   * follows the answer. False for rows without a completed file.
+   */
+  'download.exists': { args: { id: string }; result: boolean }
   /** Let the user pick the default downloads folder; resolves with it (or null when dismissed). */
   'download.chooseDirectory': { args: void; result: string | null }
   /** Show the downloads panel (Ctrl/Cmd+J, the app menu, a completion notification). */
@@ -3044,6 +3146,8 @@ export interface Commands {
   'extension.closePopup': { args: void; result: void }
   /** Context menu of an extension's toolbar button (its `contextMenus` items plus Zenium's). */
   'extension.actionContextMenu': { args: { id: string; x?: number; y?: number }; result: void }
+  /** Empties the extension's error console (`ExtensionInfo.errors`). */
+  'extension.clearErrors': { args: { id: string }; result: void }
   // ---- PROVISIONAL: extensions UI (PR #68) ------------------------------------------------------
   // Added by the UI wave ahead of the engine; `src/main/platform/extensions.ts` implements them
   // as they stand. The API layer (#91) landed without competing names (`ExtensionAction` above is

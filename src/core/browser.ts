@@ -2010,6 +2010,8 @@ export class Browser {
       'download.acceptDanger': ({ id }) => this.downloads.acceptDanger(id),
       'download.discard': ({ id }) => this.downloads.discard(id),
       'download.setOpenWhenDone': ({ id, on }) => this.downloads.setOpenWhenDone(id, on),
+      'download.deleteFile': ({ id }) => this.downloads.deleteFile(id),
+      'download.exists': ({ id }) => this.downloads.exists(id),
       'download.chooseDirectory': (_args, win) => this.downloads.chooseDirectory(win),
       'download.openPanel': (_args, win) => this.emit('overlay.open', { kind: 'downloads' }, win),
       'download.dragOut': ({ id }, win) => {
@@ -2165,6 +2167,7 @@ export class Browser {
       'extension.setAllowUserScripts': ({ id, allowed }) =>
         this.extensions.setAllowUserScripts(id, allowed),
       'extension.reload': ({ id }) => this.extensions.reload(id),
+      'extension.clearErrors': ({ id }) => this.extensions.clearErrors(id),
       'extension.checkForUpdates': (_a, win) => this.extensions.checkForUpdates(win),
       'extension.update': ({ id }, win) => this.extensions.update(id, win),
       'extension.openOptions': ({ id }, win) => this.extensions.openOptions(id, win),

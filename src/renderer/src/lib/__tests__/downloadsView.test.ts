@@ -89,6 +89,22 @@ describe('downloadStatus', () => {
     // The engine's own reasons read as Chrome's USER_SHUTDOWN and FILE_FAILED do.
     expect(describeDownloadError('shutdown')).toBe('Failed – Couldn’t finish download')
     expect(describeDownloadError('file-error')).toBe('Failed – Something went wrong')
+    // The engine's DownloadInterruptReason: Chromium's reasons spelled network-failed, read as
+    // the chrome.downloads names they are one for one with.
+    expect(describeDownloadError('network-failed')).toBe('Failed – Check internet connection')
+    expect(describeDownloadError('network-timeout')).toBe('Failed – Check internet connection')
+    expect(describeDownloadError('network-server-down')).toBe('Failed – Site wasn’t available')
+    expect(describeDownloadError('server-unreachable')).toBe('Failed – Site wasn’t available')
+    expect(describeDownloadError('server-forbidden')).toBe('Failed – File wasn’t available on site')
+    expect(describeDownloadError('file-no-space')).toBe('Failed – Out of storage space')
+    expect(describeDownloadError('file-access-denied')).toBe(
+      'Failed – Needs permission to download'
+    )
+    expect(describeDownloadError('file-security-check-failed')).toBe('Failed – Virus scan failed')
+    expect(describeDownloadError('user-shutdown')).toBe('Failed – Couldn’t finish download')
+    expect(describeDownloadError('crash')).toBe('Failed – Couldn’t finish download')
+    expect(describeDownloadError('server-no-range')).toBe('Failed – Something went wrong')
+    expect(describeDownloadError('file-failed')).toBe('Failed – Something went wrong')
     // Chrome's interrupt reasons, grouped as its BubbleStatusTextBuilder groups them.
     expect(describeDownloadError('NETWORK_DISCONNECTED')).toBe('Failed – Check internet connection')
     expect(describeDownloadError('NETWORK_TIMEOUT')).toBe('Failed – Check internet connection')
@@ -159,9 +175,17 @@ describe('downloadStatus', () => {
       text: 'Failed',
       tone: 'danger'
     })
-    expect(downloadStatus(item({ id: 'a', state: 'interrupted', error: 'shutdown' })).text).toBe(
-      'Failed – Couldn’t finish download'
-    )
+    expect(
+      downloadStatus(item({ id: 'a', state: 'interrupted', error: 'user-shutdown' })).text
+    ).toBe('Failed – Couldn’t finish download')
+    expect(
+      downloadStatus(item({ id: 'a', state: 'interrupted', error: 'network-failed' })).text
+    ).toBe('Failed – Check internet connection')
+    // A finished file the engine found gone from disk.
+    expect(downloadStatus(item({ id: 'a', state: 'completed', fileMissing: true }))).toEqual({
+      text: 'Deleted',
+      tone: 'muted'
+    })
     expect(downloadStatus(item({ id: 'a', state: 'completed', receivedBytes: 100 * MB }))).toEqual({
       text: 'Done · 100 MB',
       tone: 'muted'
@@ -296,9 +320,10 @@ describe('bubbleDescription', () => {
 })
 
 describe('isOnDisk', () => {
-  it('is true for finished files without an open verdict', () => {
+  it('is true for finished files without an open verdict that are still on disk', () => {
     expect(isOnDisk(item({ id: 'a', state: 'completed' }))).toBe(true)
     expect(isOnDisk(item({ id: 'a', state: 'progressing' }))).toBe(false)
+    expect(isOnDisk(item({ id: 'a', state: 'completed', fileMissing: true }))).toBe(false)
     expect(
       isOnDisk(
         item({

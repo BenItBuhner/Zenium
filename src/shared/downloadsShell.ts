@@ -30,11 +30,17 @@ export function needsDangerDecision(
   return item.state === 'completed' && item.danger.level !== 'safe' && !item.dangerAccepted
 }
 
-/** Failed or cancelled rows can start over, except `blob:` ones (the page's object is gone). */
-export function canRetryDownload(item: Pick<DownloadItem, 'state' | 'url'>): boolean {
-  return (
-    (item.state === 'cancelled' || item.state === 'interrupted') && !item.url.startsWith('blob:')
-  )
+/**
+ * Failed and cancelled rows can start over, as can a finished one whose file the engine found
+ * gone from disk (`fileMissing`, Chrome's Retry on a "Deleted" row); never `blob:` ones (the
+ * page's object is gone). The core's `canRetry`, restated for the renderer.
+ */
+export function canRetryDownload(
+  item: Pick<DownloadItem, 'state' | 'url' | 'fileMissing'>
+): boolean {
+  if (item.url.startsWith('blob:')) return false
+  if (item.state === 'cancelled' || item.state === 'interrupted') return true
+  return item.state === 'completed' && item.fileMissing === true
 }
 
 /** An interrupted row that can pick up where it stopped (paused rows always can). */
