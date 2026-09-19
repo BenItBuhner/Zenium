@@ -11,6 +11,7 @@
 // @run-at       document-end
 // ==/UserScript==
 
+/* global GM_info, GM_getValue, GM_setValue, GM_addStyle -- the manager's grants */
 ;(function () {
   'use strict'
   const info = typeof GM_info !== 'undefined' ? GM_info : null
@@ -20,12 +21,12 @@
   try {
     runs = Number(GM_getValue('runs', 0)) + 1
     GM_setValue('runs', runs)
-  } catch (e) {
+  } catch {
     runs = -1
   }
   try {
     GM_addStyle('#zen-userscript-banner b { text-decoration: underline }')
-  } catch (e) {
+  } catch {
     /* GM_addStyle missing */
   }
   const banner = document.createElement('div')

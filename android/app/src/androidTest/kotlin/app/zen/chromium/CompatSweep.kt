@@ -54,6 +54,13 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     private val host: Host get() = (activity as MainActivity).host
     private val arguments = InstrumentationRegistry.getArguments()
     private val only: Set<String>? = arguments.getString("only")?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }?.toSet()
+    /**
+     * Ids that run after every other row (`last`, comma-separated; by default uBlock Origin MV2,
+     * whose first start compiles 45 MB of filter lists into `chrome.storage.local`): a row that
+     * takes the process down loses nothing but the rows behind it, and results.json keeps the rest.
+     */
+    private val last: Set<String> = arguments.getString("last")?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }?.toSet()
+        ?: setOf(UBO_MV2)
     private val skipInstall = arguments.getString("skipInstall") == "1"
     /** Prompts no reachable button answered on screen, answered through the chrome's command instead. */
     private var promptsAnsweredByCommand = 0
@@ -120,7 +127,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
 
     override fun demo() {
         snap("browser-idle")
-        val list = table.filter { only == null || it.id in only }
+        // The table's order, the `last` ids moved to the end (a stable sort keeps the rest in place).
+        val list = table.filter { only == null || it.id in only }.sortedBy { if (it.id in last) 1 else 0 }
+        results.put("order", JSONArray(list.map { it.id }))
         for ((index, row) in list.withIndex()) {
             val entry = JSONObject().put("id", row.id).put("name", row.name).put("feasible", row.feasible)
             rows.put(entry)
@@ -1274,6 +1283,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val BASE = "http://10.0.2.2:8765"
         private const val YOUTUBE_URL = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
         private const val INSTALL_TIMEOUT_MS = 240_000L
+        /** uBlock Origin (MV2) on Edge Add-ons: the heaviest row, run last by default. */
+        private const val UBO_MV2 = "odfafepnkmbhccpbejgmiehpchacaeak"
         private const val BACKGROUND_TIMEOUT_MS = 40_000L
         private const val BACKGROUND_SETTLE_MS = 6_000L
         private const val POPUP_TIMEOUT_MS = 30_000L

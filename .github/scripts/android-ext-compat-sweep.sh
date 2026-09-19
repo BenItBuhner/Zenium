@@ -12,6 +12,8 @@
 #                   AOSP image booted with -writable-system); the image's own WebView otherwise
 #   SOFT_FAIL=1   – report what was found and never fail the job (the swapped-WebView job)
 #   SWEEP_ONLY    – comma-separated extension ids: run those rows alone (the driver's `only`)
+#   SWEEP_LAST    – comma-separated extension ids to run after every other row (the driver's `last`;
+#                   uBlock Origin MV2 when unset)
 #   SWEEP_OUT     – artifact directory (default artifacts/android-ext-compat-sweep)
 #
 # Handshake with the driver, through files in the app's private storage (via run-as):
@@ -139,6 +141,7 @@ collect() {
 # --- The sweep --------------------------------------------------------------------------------
 args=()
 if [ -n "${SWEEP_ONLY:-}" ]; then args+=(-e only "$SWEEP_ONLY"); fi
+if [ -n "${SWEEP_LAST:-}" ]; then args+=(-e last "$SWEEP_LAST"); fi
 adb shell am instrument -w -e class app.zen.chromium.CompatSweep "${args[@]}" "$runner" > "$out/instrument.txt" 2>&1 &
 driver_pid=$!
 
