@@ -110,6 +110,24 @@ class PwaDemo : DemoHarness("pwa-demo-state.json", "android-pwa", "pwa-demo") {
         shot("02-name-edit-sheet")
         val field = json("(document.getElementById('zen-install-name')||{}).value||''")
         finding("${verdict(sheet)} the sheet opened; ${verdict(field == "Notes on damping")} the name field holds the page title ('$field')")
+        // The name-edit sheet's injected touch (the rule in DemoHarness): a finger on the name
+        // field must raise the keyboard for it (a touch through to the scrim closes the sheet
+        // instead). Back takes the keyboard down again – the sheet's buttons sit under it – and
+        // Cancel then closes the sheet.
+        val nameField = if (sheet) findNodeWhere { it.isEditable } else null
+        if (nameField != null && touchTap(nameField)) {
+            val keyboard = awaitIme(shown = true)
+            finding("${verdict(keyboard)} a finger on the name field raised the keyboard")
+            if (keyboard) {
+                back()
+                awaitIme(shown = false)
+                SystemClock.sleep(600)
+            } else {
+                touchFault("the touch on the name-edit sheet's name field raised no keyboard")
+            }
+        } else if (sheet) {
+            finding("FAIL no name field on the tree to touch")
+        }
         if (!tapLabel(f, "Cancel", 3_000)) back()
         SystemClock.sleep(1_500)
     }

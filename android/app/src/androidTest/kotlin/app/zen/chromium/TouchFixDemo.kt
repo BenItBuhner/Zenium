@@ -66,11 +66,13 @@ class TouchFixDemo : DemoHarness("touchfix-demo-state.json", "touchfix-$THEME", 
     }
 
     override fun demo() {
-        // 1. History: every row shows its Remove button; tapping one removes the entry.
+        // 1. History: every row shows its Remove button; tapping one removes the entry – the
+        //    panel sheet's injected touch (the rule in DemoHarness), the panel asserted to list
+        //    one row fewer on it.
         openPanel("History", "Remove from history")
         dismissKeyboard()
         shot("01-history")
-        tapFirst("Remove from history")
+        removeFirst("Remove from history")
         SystemClock.sleep(1_500)
         shot("02-history-removed")
         back()
@@ -80,7 +82,7 @@ class TouchFixDemo : DemoHarness("touchfix-demo-state.json", "touchfix-$THEME", 
         openPanel("Bookmarks", "Remove bookmark")
         dismissKeyboard()
         shot("03-bookmarks")
-        tapFirst("Remove bookmark")
+        removeFirst("Remove bookmark")
         SystemClock.sleep(1_500)
         shot("04-bookmarks-removed")
         back()
@@ -142,8 +144,9 @@ class TouchFixDemo : DemoHarness("touchfix-demo-state.json", "touchfix-$THEME", 
     }
 
     /**
-     * Open the menu, expand it so the whole list is in reach, tap the item labelled `item`, and
-     * wait for `expect` (something only the opened surface has) to show up.
+     * Open the menu, expand it so the whole list is in reach, tap the item labelled `item` with a
+     * finger, and wait for `expect` (something only the opened surface has) to show up – the
+     * menu flow's injected touch, its result asserted (the run errors out without `expect`).
      */
     private fun openPanel(item: String, expect: String) {
         openMenu()
@@ -166,6 +169,26 @@ class TouchFixDemo : DemoHarness("touchfix-demo-state.json", "touchfix-$THEME", 
     private fun tapFirst(label: String) {
         val target = findByLabel(label) ?: error("no $label to tap")
         Finger().tap(target.exactCenterX(), target.exactCenterY())
+    }
+
+    /**
+     * [tapFirst] on a row's Remove control, the panel asserted to carry one fewer of them within
+     * five seconds: the row went with its entry. A touch that left the count is a fault of the
+     * run (the panel did not take the finger); the recording goes on.
+     */
+    private fun removeFirst(label: String) {
+        val before = findNodes(label).size
+        tapFirst(label)
+        val deadline = SystemClock.uptimeMillis() + 5_000
+        while (SystemClock.uptimeMillis() < deadline) {
+            val now = findNodes(label).size
+            if (now < before) {
+                Log.i(tag, "the touch on the first '$label' took: $before -> $now rows")
+                return
+            }
+            SystemClock.sleep(200)
+        }
+        touchFault("the touch on the panel's first '$label' left all $before rows in place")
     }
 
     companion object {

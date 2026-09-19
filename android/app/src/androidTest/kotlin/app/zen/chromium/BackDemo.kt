@@ -31,8 +31,9 @@ import kotlin.math.max
  * left to pop, which hands the gesture to the system's own back-to-home animation.
  *
  * Touches are injected through UiAutomation as real pointer events, so SystemUI's edge gesture
- * detector sees them exactly as it would a finger. It only ever asserts that it could run; what
- * the app does with the gestures is what the recording is for.
+ * detector sees them exactly as it would a finger. It asserts that it could run and that the
+ * finger it puts on the menu's History row opened the panel (the rule in DemoHarness); what the
+ * app does with the gestures is what the recording is for.
  *
  * Handshake with the workflow (files under the app's `files/back-demo/`):
  *  - the driver writes `record` once the pages are loaded and waits for `recording`;
@@ -64,6 +65,9 @@ class BackDemo {
         handshake()
         demo()
         Log.i(TAG, "done")
+        if (touchFaults.isNotEmpty()) {
+            throw AssertionError("${touchFaults.size} touch(es) did not take: ${touchFaults.joinToString("; ")}")
+        }
     }
 
     // --- setup -----------------------------------------------------------------------------------
@@ -244,9 +248,12 @@ class BackDemo {
         dismissWithBack(0.30f * w, "04-menu-dragging")
 
         // 6. A panel: History, from the menu (its search field takes the keyboard; blur it too).
+        //    The menu flow's injected touch (the rule in DemoHarness): the History row under a
+        //    finger, and the panel must come up on it with its Clear history row – a touch that
+        //    fell through to the scrim would only close the menu.
         tapLabel("Menu")
         SystemClock.sleep(1_200)
-        tapLabel("History")
+        touchLabelExpecting("History", "the History panel is up") { findByLabel("Clear history") != null }
         SystemClock.sleep(1_200)
         blurChrome()
         dismissWithBack(0.30f * w, "05-panel-dragging")
@@ -387,6 +394,34 @@ class BackDemo {
         }
         Finger().tap(bounds.exactCenterX(), bounds.exactCenterY())
     }
+
+    /**
+     * [tapLabel], then up to `timeoutMs` for `took` to hold – the step's claim, named by `effect`
+     * (DemoHarness's `touchTapLabelExpecting`, for this driver of its own). A touch that went in
+     * without `took` holding is a fault of the run, reported once the recording is done ([record]).
+     */
+    private fun touchLabelExpecting(label: String, effect: String, timeoutMs: Long = 5_000, took: () -> Boolean) {
+        val bounds = findByLabel(label)
+        if (bounds == null) {
+            Log.w(TAG, "no node labelled $label to touch")
+            return
+        }
+        Finger().tap(bounds.exactCenterX(), bounds.exactCenterY())
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (took()) {
+                Log.i(TAG, "the touch on '$label' at $bounds took: $effect")
+                return
+            }
+            SystemClock.sleep(150)
+        }
+        val fault = "a touch on '$label' at $bounds did not take: not $effect within $timeoutMs ms"
+        Log.e(TAG, "TOUCH FAULT: $fault")
+        touchFaults += fault
+    }
+
+    /** The touches that did not take; [record] fails on them once the recording is done. */
+    private val touchFaults = ArrayList<String>()
 
     private fun tapLabelPrefix(prefix: String) {
         val bounds = findByLabel(prefix, prefix = true)
