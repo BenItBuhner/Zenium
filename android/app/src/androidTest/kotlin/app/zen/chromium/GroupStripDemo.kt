@@ -41,7 +41,8 @@ import kotlin.math.roundToInt
  *     then Home, loose, is active and the strip slides back behind the row (frames), the band
  *     closes once it is out and the page's box is back;
  * 10. the bar docked at the top: previous tab brings the new tab back and the strip slides out
- *     below the row (frames; the page's box moves down), and a finger on Alpha's chip there;
+ *     below the row (frames), a finger on Alpha's chip there, and Alpha's page's box has moved
+ *     down by the strip's height;
  * 11. seven more tabs in the group: the members overflow and scroll, the active chip kept in view
  *     as the active tab moves along the group, and a finger on a chip of the scrolled strip;
  * 12. the dark scheme.
@@ -166,7 +167,7 @@ class GroupStripDemo : DemoHarness("group-strip-demo-state.json", "group-strip",
         val alpha = box(card(ALPHA))
         sample()
         Finger().tap(alpha.exactCenterX(), alpha.exactCenterY())
-        stillWhen("appear-mid") { it.strip?.let { s -> s.phase == "entering" && abs(s.y) in 10f..40f } == true }
+        stillWhen("appear-mid") { midSlide(it, "entering") }
         awaitStrip("shown")
         still("strip-bottom")
         judgeSlide(frames(), entering = true, edge = "bottom")
@@ -235,12 +236,20 @@ class GroupStripDemo : DemoHarness("group-strip-demo-state.json", "group-strip",
         if (made != null) judgeAdd(frames(), made, before = listOf(BETA), after = members.drop(1))
     }
 
-    /** A chip that is not among `before` is on its way in: its face between 0.65 and 0.95 of a full one. */
+    /**
+     * A chip that is not among `before` is on its way in: its face between 0.45 and 0.97 of a
+     * full one (it sets off at 0.6; the moment is a handful of frames long and each poll of the
+     * DOM is a round trip, so the window takes in nearly all of the growth).
+     */
     private fun midEntrance(row: Row, before: List<String>): Boolean {
         val fresh = row.members.firstOrNull { it.id !in before } ?: return false
         val full = row.members.firstOrNull { it.id in before }?.faceWidth ?: GROUP_CHIP
-        return fresh.faceWidth in (0.65f * full)..(0.95f * full)
+        return fresh.faceWidth in (0.45f * full)..(0.97f * full)
     }
+
+    /** The tray on its way in or out: in `phase`, and drawn clear of both its ends. */
+    private fun midSlide(row: Row, phase: String): Boolean =
+        row.strip?.let { s -> s.phase == phase && abs(s.y) in 3f..47f } == true
 
     /** A finger on the show-group chip: the overview opens with the group's card in view, the chip pressed. */
     private fun showGroup() {
@@ -315,7 +324,7 @@ class GroupStripDemo : DemoHarness("group-strip-demo-state.json", "group-strip",
         still("swiped-within")
         sample()
         flingLeft()
-        stillWhen("leave-mid") { it.strip?.let { s -> s.phase == "leaving" && abs(s.y) in 10f..40f } == true }
+        stillWhen("leave-mid") { midSlide(it, "leaving") }
         awaitStrip(null)
         settle()
         touchWithoutGesture(); settle()
@@ -330,8 +339,9 @@ class GroupStripDemo : DemoHarness("group-strip-demo-state.json", "group-strip",
 
     /**
      * The bar docked at the top (Settings): previous tab from Home is the new tab, grouped, and
-     * the strip slides out below the row; the page's box moves down by its height. A finger on
-     * Alpha's chip there.
+     * the strip slides out below the row. A finger on Alpha's chip there; then Alpha's page's box
+     * has moved down by the strip's height (Alpha's, not the new tab's: a new tab's page is
+     * drawn by the chrome and has no box of its own in the host).
      */
     private fun topDock() {
         finding("\n10. The bar docked at the top")
@@ -343,7 +353,7 @@ class GroupStripDemo : DemoHarness("group-strip-demo-state.json", "group-strip",
         still("top-no-strip")
         sample()
         flingRightAt(pillBox())
-        stillWhen("appear-mid-top") { it.strip?.let { s -> s.phase == "entering" && abs(s.y) in 10f..40f } == true }
+        stillWhen("appear-mid-top") { midSlide(it, "entering") }
         awaitStrip("shown")
         settle()
         touchWithoutGestureAt(pillBox()); settle()
@@ -355,17 +365,17 @@ class GroupStripDemo : DemoHarness("group-strip-demo-state.json", "group-strip",
         val tray = domRect(TRAY)
         val bar = domRect(BAR_ROW)
         record("  the tray sits below the bar's row: tray $tray, row $bar", tray != null && bar != null && tray.top >= bar.bottom - 2)
-        val page = pageBox(newTab ?: HOME)
-        val shift = (GROUP_STRIP_HEIGHT * density).roundToInt()
-        record(
-            "  the page's box followed: $page, top down by ${(page?.top ?: 0) - (pageTopWithoutStrip?.top ?: 0)} px against $shift",
-            page != null && pageTopWithoutStrip != null && abs((page.top - pageTopWithoutStrip!!.top) - shift) <= 3 && page.bottom == pageTopWithoutStrip!!.bottom
-        )
         touchChip(member(ALPHA), "Alpha's chip at the top dock", "Alpha is the active tab and wears the mark") {
             activeCoreTab()?.optString("id") == ALPHA && snapshot().currentId() == ALPHA
         }
         settle()
         still("member-tapped-top")
+        val page = pageBox(ALPHA)
+        val shift = (GROUP_STRIP_HEIGHT * density).roundToInt()
+        record(
+            "  Alpha's page's box followed: $page, top down by ${(page?.top ?: 0) - (pageTopWithoutStrip?.top ?: 0)} px against $shift",
+            page != null && pageTopWithoutStrip != null && abs((page.top - pageTopWithoutStrip!!.top) - shift) <= 3 && page.bottom == pageTopWithoutStrip!!.bottom
+        )
     }
 
     /**
@@ -843,10 +853,15 @@ class GroupStripDemo : DemoHarness("group-strip-demo-state.json", "group-strip",
             val from = frames[maxOf(0, first - 1)].member(other)?.x
             val to = frames.last().member(other)?.x
             val moves = changes(frames, 0.3f) { it.member(other)?.x }
+            // Setting off with the chip: the glide's first visible step (over 0.3 px) is within
+            // SET_OFF_MS of the chip's first frame – the spring's opening steps are under a pixel,
+            // so at the emulator's uneven frame times it can be a few frames in – and never
+            // before the chip (the frame before its first is the last one laid out without it).
+            val setOff = moves.firstOrNull()?.let { frames[it].t - frames[first].t }
             record(
-                "  $other's chip glided over by ${if (from != null && to != null) (to - from).roundToInt() else "-"} px (slot pitch ${SLOT_PITCH.roundToInt()}) on ${moves.size} frames, setting off on frame ${moves.firstOrNull() ?: "none"} (the chip on $first)",
+                "  $other's chip glided over by ${if (from != null && to != null) (to - from).roundToInt() else "-"} px (slot pitch ${SLOT_PITCH.roundToInt()}) on ${moves.size} frames, setting off ${setOff ?: "-"} ms after the chip's first frame",
                 from != null && to != null && abs((to - from) - SLOT_PITCH) <= 4f && moves.size >= 2 &&
-                    moves.firstOrNull()?.let { it in (first - 2)..(first + 3) } == true
+                    moves.firstOrNull()?.let { it >= first - 1 } == true && setOff != null && setOff <= SET_OFF_MS
             )
         }
         for (other in before) {
@@ -972,6 +987,12 @@ class GroupStripDemo : DemoHarness("group-strip-demo-state.json", "group-strip",
         private const val SAMPLE_MS = 9_000L
         /** How long [stillWhen] waits for the moment it wants to catch. */
         private const val MOMENT_WAIT = 6_000L
+        /**
+         * How long after a joining chip's first frame the glide of the chips after it may take
+         * its first visible step (see [judgeAdd]): the spring's first tick is all but still (the
+         * frame's timestamp trails the start), and the emulator's frames are uneven.
+         */
+        private const val SET_OFF_MS = 400
         /** Largest DOM-to-screen offset (px) [calibrate] takes for real rather than for a stale tree. */
         private const val MAX_OFFSET = 200f
         /** Taps on the Tabs button [openOverview] tries before giving up. */
