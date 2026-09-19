@@ -1,0 +1,43 @@
+name: Android group strip demo
+
+# Records the phone chrome's tab group strip (TAB-14, the strip half of MOT-13) on a
+# hardware-accelerated Android emulator and uploads the video, the stills and the driver's
+# findings: a group made in the overview, the strip sliding out of the bar's row when a member is
+# picked, a finger on a member chip, on the plus chip (a new tab in the group, its chip scaling
+# in while the plus chip glides over) and on the show-group chip (the overview at the group), a
+# member closed with the strip in view (its chip shrinking out while the rest glide back), the
+# pill's swipe taking the active tab out of the group (the strip slides back behind the row),
+# the bar docked at the top, a group long enough to scroll, and the dark scheme. The chip
+# choreography is measured frame by frame (see GroupStripDemo); the findings text says PASS or
+# FAIL per check. Dispatch-only, like the other demos: it takes about ten minutes and says
+# nothing about a change being correct. Same caveats as the gesture demo about frame rate and
+# the software GPU (springs advance at most 64 ms per frame, so at a handful of frames per
+# second they run slower than on a phone). The build, the emulator and the Gradle cache live in
+# android-emulator-demo.yml; this file only picks the driver.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - cursor/android-group-strip-c2b7
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-group-strip-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Group strip demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.GroupStripDemo
+        DEMO_DIR=group-strip-demo
+        DEMO_OUT=artifacts/android-group-strip-demo
+        DEMO_VIDEO=android-group-strip-demo.mp4
+      artifact-name: android-group-strip-demo
+      artifact-path: artifacts/android-group-strip-demo/
