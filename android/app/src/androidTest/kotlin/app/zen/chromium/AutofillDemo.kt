@@ -413,13 +413,16 @@ class AutofillDemo : DemoHarness("autofill-demo-state.json", "services-password-
     }
 
     /**
-     * Settings > Autofill through `autofill.manage`: the Passwords rows, the clipboard menu sheet
-     * (its pick lands in the settings), the Addresses group, the address editor sheet, the Payment
-     * methods group; then the panel closes. Photographed and noted, never fatal: the tree of the
-     * software-rendered emulator trails the screen by seconds after each transition.
+     * Settings > Autofill through `autofill.manage`, which opens the Settings tab on its Autofill
+     * section (the category's rows are the builder's, `pages/settings/sections.tsx`): the Passwords
+     * switch rows, the clipboard choice sheet (its pick lands in the settings), the Addresses group
+     * with its item rows, the saved address's sheet and its "Edit address" into the editor sheet
+     * (the item sheet leaves first: two sheets deep at most), "Add address" into the editor, the
+     * Payment methods group; then the tab closes. Photographed and noted, never fatal: the tree of
+     * the software-rendered emulator trails the screen by seconds after each transition.
      */
     private fun settingsTour() {
-        // The checkout's field still holds the keyboard: put it away first, or the overlay opens
+        // The checkout's field still holds the keyboard: put it away first, or the tab opens
         // squeezed above it and the rows below the fold are tapped through the keys (the run at
         // 69f15f10 landed in the URL bar that way).
         page("document.activeElement && document.activeElement.blur()")
@@ -452,6 +455,32 @@ class AutofillDemo : DemoHarness("autofill-demo-state.json", "services-password-
         } else {
             note("the Addresses heading was not in the tree")
         }
+        // The saved address's item row (its description is the street: the card's row repeats the
+        // name) opens the sheet about it; "Edit address" closes that sheet for the editor sheet.
+        if (tapText(STREET) && awaitText("Edit address", 6_000)) {
+            SystemClock.sleep(1_200)
+            snap("settings-address-sheet")
+            if (tapText("Edit address") && awaitText("Country", 6_000)) {
+                SystemClock.sleep(1_200)
+                snap("editor-address-saved")
+                // The editor's street line, found through its label (the fields' ids are React's).
+                note(
+                    "edit from the item sheet: the editor's street line holds " +
+                        chrome(
+                            "(() => { const l = [...document.querySelectorAll('label')].find(l => l.textContent.trim() === 'Street address'); " +
+                                "const f = l && document.getElementById(l.htmlFor); return f ? JSON.stringify(f.value) : 'no field' })()"
+                        )
+                )
+                tapText("Cancel")
+                SystemClock.sleep(800)
+            } else {
+                note("the editor was not reached from the address sheet")
+                back()
+                SystemClock.sleep(800)
+            }
+        } else {
+            note("the saved address's sheet was not reached")
+        }
         if (tapText("Add address") && awaitText("Country", 6_000)) {
             SystemClock.sleep(1_200)
             snap("editor-address")
@@ -469,16 +498,34 @@ class AutofillDemo : DemoHarness("autofill-demo-state.json", "services-password-
         closeSettings()
     }
 
-    /** Close the Settings panel: its close button, then the system back for anything left over it. */
-    private fun closeSettings() {
-        val open = { chrome("!!document.querySelector('.zen-settings')") == "true" }
-        if (open()) tapText("Close (Esc)", 3_000)
-        for (i in 0 until 3) {
-            SystemClock.sleep(1_000)
-            if (!open()) return
-            back()
+    /**
+     * The Settings tab's id while it is the active tab (`zen://settings…`, the internal page the
+     * chrome draws in the shown tab's place); null when a site's tab is active.
+     */
+    private fun settingsTabId(): String? {
+        val state = zen("app.getState")
+        val spaces = state.optJSONArray("spaces") ?: return null
+        val spaceId = state.optString("activeSpaceId")
+        for (i in 0 until spaces.length()) {
+            val space = spaces.getJSONObject(i)
+            if (space.optString("id") != spaceId || space.isNull("activeTabId")) continue
+            val tabId = space.optString("activeTabId")
+            val url = state.optJSONObject("tabs")?.optJSONObject(tabId)?.optString("url") ?: return null
+            return if (url.startsWith("zen://settings") || url.startsWith("zenium://settings")) tabId else null
         }
-        note("Settings still open after the close button and back")
+        return null
+    }
+
+    /** Close the Settings tab: the system back for a sheet left over it, then the tab itself. */
+    private fun closeSettings() {
+        for (i in 0 until 3) {
+            val tabId = settingsTabId() ?: return
+            if (i > 0) back()
+            SystemClock.sleep(1_000)
+            zen("tab.close", JSONObject().put("tabId", tabId).put("force", true))
+            SystemClock.sleep(1_000)
+        }
+        if (settingsTabId() != null) note("the Settings tab is still the active tab after tab.close and back")
     }
 
     // --- the page in the shown tab ---------------------------------------------------------------
