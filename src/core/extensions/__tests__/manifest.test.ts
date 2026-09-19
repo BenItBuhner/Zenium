@@ -9,6 +9,7 @@ import {
   localizeManifest,
   parseManifest,
   parseVersion,
+  permissionVersionWarning,
   satisfiesMinimumChromeVersion,
   stripJsonComments,
   substituteMessages,
@@ -231,6 +232,37 @@ describe('validateManifest', () => {
     ])
     const legacy = validateManifest({ ...mv2, host_permissions: ['<all_urls>'] })
     expect(paths(legacy.warnings)).toEqual(['host_permissions'])
+  })
+
+  it("warns with Chrome's text about permissions outside the manifest version", () => {
+    const mv3Blocking = validateManifest({
+      ...mv3,
+      permissions: ['declarativeNetRequest', 'webRequest', 'webRequestBlocking', 'scripting'],
+      optional_permissions: ['webRequestBlocking']
+    })
+    expect(mv3Blocking.errors).toEqual([])
+    expect(mv3Blocking.warnings).toEqual([
+      {
+        path: 'permissions[2]',
+        message: "'webRequestBlocking' requires manifest version of 2 or lower."
+      },
+      {
+        path: 'optional_permissions[0]',
+        message: "'webRequestBlocking' requires manifest version of 2 or lower."
+      }
+    ])
+    const mv2Scripting = validateManifest({
+      ...mv2,
+      permissions: ['webRequestBlocking', 'scripting', 'sidePanel', 'offscreen', 'userScripts']
+    })
+    expect(mv2Scripting.warnings.map((w) => w.message)).toEqual([
+      "'scripting' requires manifest version of at least 3.",
+      "'sidePanel' requires manifest version of at least 3.",
+      "'offscreen' requires manifest version of at least 3.",
+      "'userScripts' requires manifest version of at least 3."
+    ])
+    expect(permissionVersionWarning('storage', 2)).toBeNull()
+    expect(permissionVersionWarning('storage', 3)).toBeNull()
   })
 
   it('requires default_locale when __MSG__ references are used', () => {

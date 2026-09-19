@@ -122,6 +122,39 @@ export interface ExtensionManifest {
   storage?: { managed_schema: string }
 }
 
+/**
+ * Chrome's feature system limits some API permissions to a manifest version
+ * (`_permission_features.json`): `webRequestBlocking` ends with MV2 (policy-installed extensions
+ * excepted, which Zenium has none of), while the MV3 APIs never existed in MV2. A manifest that
+ * declares one outside its version gets an install warning and the permission is not granted, so
+ * an MV3 extension probing `permissions.contains({ permissions: ['webRequestBlocking'] })` hears
+ * `false` and registers its observational listener (Stylus does exactly that).
+ */
+const MAX_MANIFEST_VERSION: Readonly<Record<string, 2>> = { webRequestBlocking: 2 }
+const MIN_MANIFEST_VERSION: Readonly<Record<string, 3>> = {
+  scripting: 3,
+  offscreen: 3,
+  sidePanel: 3,
+  userScripts: 3
+}
+
+/**
+ * Chrome's install warning for a permission outside its manifest version, or `null` when the
+ * permission is available to it.
+ */
+export function permissionVersionWarning(
+  permission: string,
+  manifestVersion: 2 | 3
+): string | null {
+  const max = MAX_MANIFEST_VERSION[permission]
+  if (max !== undefined && manifestVersion > max)
+    return `'${permission}' requires manifest version of ${max} or lower.`
+  const min = MIN_MANIFEST_VERSION[permission]
+  if (min !== undefined && manifestVersion < min)
+    return `'${permission}' requires manifest version of at least ${min}.`
+  return null
+}
+
 export interface ManifestIssue {
   /** Dotted path into the manifest, e.g. `background.service_worker` or `content_scripts[0].matches`. */
   path: string
@@ -685,8 +718,14 @@ export function validateManifest(input: unknown): ManifestParseResult {
     }
   }
 
-  c.stringArray('permissions', raw.permissions)
-  c.stringArray('optional_permissions', raw.optional_permissions)
+  for (const key of ['permissions', 'optional_permissions'] as const) {
+    const entries = raw[key]
+    if (!c.stringArray(key, entries)) continue
+    entries.forEach((entry, index) => {
+      const warning = permissionVersionWarning(entry, mv)
+      if (warning) c.warn(`${key}[${index}]`, warning)
+    })
+  }
   if (raw.host_permissions !== undefined) {
     if (mv === 2)
       c.warn('host_permissions', 'Requires manifest_version 3; ignored in manifest_version 2')
