@@ -46,9 +46,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.security.SecureRandom
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
 
 /**
  * Implements every native method the JS core can call (`window.__zenNative.call`), and owns the
@@ -194,6 +192,13 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      */
     private val histories = ConcurrentHashMap<String, JSONObject>()
     /**
+     * Each tab's latest `hostState` (the `saveState` bundle behind that list, encoded), by tab
+     * id, for the synchronous `view.navigationHostState` the core makes as it records a list:
+     * the view refreshes it on the main thread with every push ([navigationStateChanged]), so
+     * the bridge thread never waits on the main thread for it. Absent: nothing to keep.
+     */
+    private val hostStates = ConcurrentHashMap<String, String>()
+    /**
      * Page views go behind the chrome no earlier than with the chrome's next drawn frame, and the
      * chrome hears when the frame carrying each change is on screen (`view.drawn`, [reportDrawn]).
      */
@@ -210,9 +215,15 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     override fun viewEvent(tabId: String, name: String, payload: Any?) {
         when (name) {
             "historyChanged" -> (payload as? JSONObject)?.let { histories[tabId] = it }
-            "destroyed" -> histories.remove(tabId)
+            "destroyed" -> {
+                histories.remove(tabId)
+                hostStates.remove(tabId)
+            }
         }
         chrome.viewEvent(tabId, name, payload)
+    }
+    override fun navigationStateChanged(tabId: String, hostState: String?) {
+        if (hostState == null) hostStates.remove(tabId) else hostStates[tabId] = hostState
     }
     override fun hostEvent(name: String, payload: Any?) = chrome.hostEvent(name, payload)
     override fun onKey(tabId: String?, input: JSONObject) = chrome.onKey(tabId, input)
@@ -292,35 +303,10 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         // core reads it synchronously when it remembers a tab's navigation and for the back
         // list); `{ entries: [], index: -1 }` for a tab without a view.
         "view.navigationEntries" -> histories[args.str("tabId")] ?: NavigationState.emptySnapshot()
-        // The opaque state behind the stack (the string itself; null when there is none), read
-        // on the main thread within a bounded wait.
-        "view.navigationHostState" -> hostStateSync(args.str("tabId"))
+        // The opaque state behind that stack (the string itself; null when there is none: a
+        // private tab, no list, over the cap), from the mirror the view refreshes with each push.
+        "view.navigationHostState" -> hostStates[args.str("tabId")]
         else -> throw IllegalArgumentException("Unknown sync method: $method")
-    }
-
-    /**
-     * `WebView.saveState` for `tabId`, which only the main thread may run, from the bridge
-     * thread: posted and waited for up to [HOST_STATE_WAIT_MS]. A main thread that is held that
-     * long answers nothing, and the snapshot goes without its `hostState` (a restore then loads
-     * the current entry; the next commit asks again). Inline when already on the main thread.
-     */
-    private fun hostStateSync(tabId: String): String? {
-        if (Looper.myLooper() == Looper.getMainLooper()) return tabs.get(tabId)?.hostState()
-        val latch = CountDownLatch(1)
-        // Written before the count-down, read after the await: the latch orders the two.
-        var state: String? = null
-        main.post {
-            try {
-                state = tabs.get(tabId)?.hostState()
-            } finally {
-                latch.countDown()
-            }
-        }
-        if (!latch.await(HOST_STATE_WAIT_MS, TimeUnit.MILLISECONDS)) {
-            Log.w(TAG, "navigationHostState of $tabId: the main thread did not answer within $HOST_STATE_WAIT_MS ms")
-            return null
-        }
-        return state
     }
 
     /** Asynchronous methods (main thread). Call `reply` exactly once. */
@@ -1238,6 +1224,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         cancelProbe()
         tabs.dropAll()
         histories.clear()
+        hostStates.clear()
         // The old core's unread spilled bodies went with its document.
         io.execute(handoff::sweep)
     }
@@ -1280,6 +1267,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         cancelProbe()
         tabs.dropAll()
         histories.clear()
+        hostStates.clear()
         // Spilled bodies the dead chrome never released would otherwise stay for the process lifetime.
         io.execute(handoff::sweep)
         val index = root.indexOfChild(dead)
@@ -1332,14 +1320,6 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
 
         /** The chrome's base light scrim (`--zen-scrim` before any space theme is applied). */
         private const val DEFAULT_SCRIM = "#49484a47"
-
-        /**
-         * How long the bridge thread waits on the main thread for a `saveState` (a few
-         * milliseconds when the main thread is free); the chrome's JS thread is held meanwhile,
-         * so a main thread that is busy for longer costs the snapshot its `hostState`, not the
-         * chrome another second.
-         */
-        private const val HOST_STATE_WAIT_MS = 1_000L
 
         fun parseColor(css: String): Int = runCatching {
             // #rrggbbaa (Electron style) → Android ARGB.

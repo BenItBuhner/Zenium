@@ -1023,10 +1023,13 @@ class TabWebView(
     /**
      * Tell the core the list changed (`historyChanged { entries, index }`): at every commit, when
      * a page finishes and when a title arrives, and only when it reads differently from the last
-     * time. `force` sends it anyway (the view was bound to a new tab id).
+     * time. `force` sends it anyway (the view was bound to a new tab id). The state behind the
+     * list goes to the host's mirror first, every time ([hostState]; the core asks for it as it
+     * records the list this push announces, from a thread that cannot ask the WebView).
      */
     fun pushHistory(force: Boolean = false) {
         val snapshot = navigationEntries()
+        host.navigationStateChanged(tabId, hostState())
         val text = snapshot.toString()
         if (!force && text == lastHistoryText) return
         lastHistoryText = text

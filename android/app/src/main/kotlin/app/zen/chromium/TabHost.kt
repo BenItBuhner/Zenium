@@ -88,6 +88,8 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
 
     fun bind(viewId: String, tabId: String) {
         val view = views.remove(viewId) ?: return
+        // A list state pushed under the provisional id is not kept under it.
+        host.navigationStateChanged(viewId, null)
         view.tabId = tabId
         views[tabId] = view
         reported.remove(viewId)?.let { reported[tabId] = it }

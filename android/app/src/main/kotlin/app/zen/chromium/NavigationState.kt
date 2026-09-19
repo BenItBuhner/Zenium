@@ -77,8 +77,16 @@ object NavigationState {
 
     // --- hostState ------------------------------------------------------------------------------
 
-    /** The marshalled bundle as the string the core carries, or null when that would be over [HOST_STATE_MAX]. */
+    /** The most bundle bytes whose encoding fits under [HOST_STATE_MAX] with the prefix (four chars per three bytes). */
+    val HOST_STATE_BYTES_MAX = (HOST_STATE_MAX - HOST_STATE_PREFIX.length) / 4 * 3
+
+    /**
+     * The marshalled bundle as the string the core carries, or null when that would be over
+     * [HOST_STATE_MAX]. A bundle that cannot fit is known from its size, before it is encoded:
+     * the mirror is refreshed on every commit, and a long stack's state runs to hundreds of KB.
+     */
     fun encodeHostState(bytes: ByteArray): String? {
+        if (bytes.size > HOST_STATE_BYTES_MAX) return null
         val text = HOST_STATE_PREFIX + Base64.getEncoder().encodeToString(bytes)
         return if (text.length > HOST_STATE_MAX) null else text
     }
