@@ -84,9 +84,16 @@ import {
   sectionIndexOf,
   tabVisibleIn
 } from './model'
-import { BLANK_URL, getDomain, inputToUrl, isEmptyTabUrl } from '../shared/url'
+import {
+  BLANK_URL,
+  extensionPageOf,
+  getDomain,
+  inputToUrl,
+  isEmptyTabUrl,
+  isWebPageUrl,
+  presentedUrl
+} from '../shared/url'
 import type { VoiceStartOutcome } from '../shared/voice'
-import { internalPageAliasUrl } from '../shared/internalPages'
 import { overlayForUrl } from '../shared/zenPages'
 import { openAllPrompt, sortedByNameOrder, toggledBookmarksBarMode } from '../shared/bookmarkViews'
 import { PageService } from './pages'
@@ -1397,18 +1404,22 @@ export class Browser {
   /**
    * Share a tab's page: its title and address, with its favicon as the preview. An internal
    * page shares its user-facing `zenium://` address – the deep link another app or device opens
-   * it by; `zen://` never leaves `tab.url`.
+   * it by; `zen://` never leaves `tab.url`. An extension's page shares its `chrome-extension://`
+   * address, whichever form the tab carries (`presentedUrl`).
    */
   shareTab(tabId: string, win: ZenWindow = this.tabs.windowFor(tabId)): void {
     const tab = this.tabs.tab(tabId)
-    if (!tab || !(/^https?:/i.test(tab.url) || this.pages.isPageTab(tab))) {
+    if (
+      !tab ||
+      !(isWebPageUrl(tab.url) || extensionPageOf(tab.url) || this.pages.isPageTab(tab))
+    ) {
       this.toast('This page cannot be shared', 'info', win)
       return
     }
     void this.share(
       {
         title: tab.customTitle ?? tab.title,
-        url: internalPageAliasUrl(tab.url),
+        url: presentedUrl(tab.url),
         tabId,
         favicon: tab.favicon ?? undefined
       },

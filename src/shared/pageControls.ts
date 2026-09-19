@@ -1,5 +1,5 @@
 import type { DesktopSiteDefault, PageControlsSettings, PageEnvironment, PageRules } from './types'
-import { getDomain } from './url'
+import { getDomain, isWebPageUrl } from './url'
 
 export type { PageEnvironment, PageRules } from './types'
 
@@ -112,9 +112,13 @@ export function sanitizePageControls(
   }
 }
 
-/** Page controls apply to web pages; internal and blank pages are the chrome's own. */
+/**
+ * Page controls apply to web pages; internal and blank pages are the chrome's own, and so is a
+ * page of an extension – whatever origin the Android runtime serves it from, it is no site to
+ * remember a zoom or a desktop-site choice for (`isWebPageUrl`).
+ */
 export function isWebPage(url: string): boolean {
-  return /^https?:\/\//i.test(url)
+  return isWebPageUrl(url)
 }
 
 /** The key a site is remembered under (its registrable domain), or null for non-web pages. */

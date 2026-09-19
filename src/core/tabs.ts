@@ -41,14 +41,15 @@ import {
   ERROR_URL_PREFIX,
   errorPageCertificate,
   errorPageUrl,
+  extensionPageOf,
   httpsOnlyPageUrl,
   interstitialKindOf,
   isEmptyTabUrl,
   isNavigableUrl,
+  presentedUrl,
   safeBrowsingPageUrl,
   titleForUrl
 } from '../shared/url'
-import { internalPageAliasUrl } from '../shared/internalPages'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
 import { describeNetError, HTTP_FALLBACK_CODES, overlayForUrl } from '../shared/zenPages'
@@ -447,7 +448,7 @@ export class TabManager {
       },
       onTitleUpdated: (title) =>
         update((t) => {
-          t.title = title || titleForUrl(t.url)
+          t.title = title || this.titleFor(t.url)
           if (!this.isPrivate(t)) this.browser.history.updateTitle(t.url, t.title)
         }),
       onFaviconUpdated: (favicons) =>
@@ -657,12 +658,29 @@ export class TabManager {
     this.pendingTransition.delete(tabId)
     if (!url || tab.url === url) return
     tab.url = url
-    tab.title = view.getTitle() || titleForUrl(url)
+    tab.title = view.getTitle() || this.titleFor(url)
     this.browser.state.commit()
   }
 
   isPrivate(tab: Tab): boolean {
     return tab.containerId === PRIVATE_CONTAINER_ID
+  }
+
+  /**
+   * The title a page has until – or unless – its document reports one: `titleForUrl`'s, except
+   * that a page of an installed extension is named after the extension rather than its id (v2
+   * §10.1 applied to extension pages), in either form the address takes.
+   */
+  private titleFor(url: string): string {
+    const page = extensionPageOf(url)
+    if (page) {
+      const name = this.browser.extensions
+        .list()
+        .find((e) => e.id === page.id)
+        ?.name.trim()
+      if (name) return name
+    }
+    return titleForUrl(url)
   }
 
   private onNavigated(tabId: string, view: TabView, url: string, inPage = false): void {
@@ -675,7 +693,7 @@ export class TabManager {
     tab.certificateError = this.certificateErrorOf(tab, url)
     this.followSiteMute(tab, view, tab.url, url)
     tab.url = url
-    tab.title = view.getTitle() || titleForUrl(url)
+    tab.title = view.getTitle() || this.titleFor(url)
     tab.canGoBack = view.canGoBack()
     tab.canGoForward = view.canGoForward()
     tab.bookmarked = this.browser.bookmarks.has(url)
@@ -997,7 +1015,8 @@ export class TabManager {
       folderId: opts.folderId ?? null,
       openerTabId: opts.openerTabId && m.tabs[opts.openerTabId] ? opts.openerTabId : null,
       fromIntent: Boolean(opts.fromIntent),
-      muted: this.siteMuted(opts.url ?? BLANK_URL)
+      muted: this.siteMuted(opts.url ?? BLANK_URL),
+      title: this.titleFor(opts.url ?? BLANK_URL)
     })
     tab.windowId = this.ownerWindowIdFor(tab, space, win)
     m.tabs[tab.id] = tab
@@ -1100,7 +1119,7 @@ export class TabManager {
     tab.frozen = false
     tab.cpuThrottle = 1
     tab.loading = false
-    tab.title = view.getTitle() || titleForUrl(tab.url)
+    tab.title = view.getTitle() || this.titleFor(tab.url)
     if (tab.muted) view.setMuted(true)
     if (tab.zoom !== 1) view.setZoom(tab.zoom)
     return this.eventsFor(tabId)
@@ -1538,7 +1557,7 @@ export class TabManager {
       return
     }
     tab.url = url
-    tab.title = titleForUrl(url)
+    tab.title = this.titleFor(url)
     tab.errorCode = null
     tab.certificateError = null
     if (opts.upgradedFrom) this.httpsUpgraded.set(tabId, `http://${opts.upgradedFrom}`)
@@ -1772,7 +1791,7 @@ export class TabManager {
     if (tab.url !== tab.pinnedUrl) {
       if (tab.discarded) {
         tab.url = tab.pinnedUrl
-        tab.title = tab.customTitle ?? titleForUrl(tab.url)
+        tab.title = tab.customTitle ?? this.titleFor(tab.url)
       } else {
         this.navigate(tabId, tab.pinnedUrl)
       }
@@ -2602,10 +2621,11 @@ export class TabManager {
     const tab = this.tab(tabId)
     if (!tab) return
     // An error page copies the address it stands in for; an internal page its user-facing
-    // `zenium://` alias (`zen://` never leaves `tab.url`).
+    // `zenium://` alias (`zen://` never leaves `tab.url`); an extension page its
+    // `chrome-extension://` address, never the Android runtime's emulated origin.
     const url = tab.url.startsWith(ERROR_URL_PREFIX)
       ? (safeParam(tab.url, 'url') ?? tab.url)
-      : internalPageAliasUrl(tab.url)
+      : presentedUrl(tab.url)
     // The one copy desktop has always confirmed, in its own words.
     this.browser.copyText(
       markdown ? `[${tab.customTitle ?? tab.title}](${url})` : url,

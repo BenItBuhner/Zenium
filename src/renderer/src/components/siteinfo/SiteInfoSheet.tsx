@@ -19,6 +19,7 @@ import {
   MapPin,
   Mic,
   Music2,
+  Puzzle,
   Settings,
   ShieldAlert,
   ShieldCheck,
@@ -44,6 +45,8 @@ import {
 import { describeNetError } from '@shared/zenPages'
 import { cmd } from '@renderer/lib/api'
 import { useBackSurface } from '@renderer/lib/back'
+import { manageExtension } from '@renderer/lib/extensions/manage'
+import { extensionPageChrome, type ExtensionPageChrome } from '@renderer/lib/extensions/pages'
 import { useViewport } from '@renderer/lib/formFactor'
 import { LevelMotion, type LevelState } from '@renderer/lib/motion/levels'
 import { openSettings as openSettingsPage } from '@renderer/lib/pages'
@@ -225,6 +228,16 @@ function securityOf(tab: Tab, info: SiteInfo | null, site: SiteDescription): Sec
         certificate: null,
         certificateError: false
       }
+    case 'extension':
+      return {
+        indicator,
+        tone: 'neutral',
+        short: 'Extension page',
+        headline: 'Extension page',
+        detail: 'A page of an installed extension; no site is involved.',
+        certificate: null,
+        certificateError: false
+      }
     case 'internal':
       return {
         indicator,
@@ -251,12 +264,13 @@ function securityOf(tab: Tab, info: SiteInfo | null, site: SiteDescription): Sec
   }
 }
 
-/** The connection's glyph: a shield for a dangerous site, a globe off the web, else the lock. */
+/** The connection's glyph: a shield for a dangerous site, a puzzle piece for an extension's page, a globe off the web, else the lock. */
 function securityGlyph(
   security: Security,
   props: { className?: string; strokeWidth?: number } = {}
 ): JSX.Element {
   if (security.indicator === 'dangerous') return <ShieldAlert {...props} aria-hidden />
+  if (security.indicator === 'extension') return <Puzzle {...props} aria-hidden />
   if (security.indicator === 'internal' || security.indicator === 'local')
     return <Globe {...props} aria-hidden />
   return security.tone === 'ok' ? (
@@ -461,6 +475,10 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
   const site = describeSite(tab.url)
   const security = securityOf(tab, info, site)
   const actions = useActions(tab, site)
+  // A page of an extension (v2 §10.1 applied to extension pages): the sheet says whose page it
+  // is and leads to the extension's details in Settings, in place of the site's rows.
+  const extension =
+    site.state === 'extension' ? extensionPageChrome(tab.url, state.extensions) : null
   const level = levels.level
   const push = (id: LevelId): void => levels.motion.push(id)
   const pop = (): void => {
@@ -496,16 +514,35 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
       >
         <div ref={trackRef} className="zen-sheet-track">
           <section ref={register('main')} className="zen-sheet-pane" data-level="main">
-            <SheetTitle tab={tab} state={state} site={site} security={security} />
-            <SheetMainRows
+            <SheetTitle
+              tab={tab}
+              state={state}
               site={site}
               security={security}
-              info={info}
-              loading={loading}
-              push={push}
-              onSettings={() => actions.openSettings()}
-              onClear={() => setConfirm('data')}
+              extension={extension}
             />
+            {extension ? (
+              <div className="flex flex-col pb-2">
+                <SheetRow
+                  glyph={<Puzzle />}
+                  label="Manage extension"
+                  onClick={() => {
+                    dismissSiteInfo()
+                    manageExtension(extension.id, tab.id)
+                  }}
+                />
+              </div>
+            ) : (
+              <SheetMainRows
+                site={site}
+                security={security}
+                info={info}
+                loading={loading}
+                push={push}
+                onSettings={() => actions.openSettings()}
+                onClear={() => setConfirm('data')}
+              />
+            )}
           </section>
           <section ref={register('connection')} className="zen-sheet-pane" data-level="connection">
             <ConnectionRows security={security} kit={SHEET_ROWS} />
@@ -567,26 +604,33 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
   )
 }
 
-/** The sheet opens on a title block (§9.23): the favicon on the host's start, the connection under it. */
+/**
+ * The sheet opens on a title block (§9.23): the favicon on the host's start, the connection
+ * under it. An extension's page names no host: the block says whose page it is.
+ */
 function SheetTitle({
   tab,
   state,
   site,
-  security
+  security,
+  extension
 }: {
   tab: Tab
   state: UIState
   site: SiteDescription
   security: Security
+  extension: ExtensionPageChrome | null
 }): JSX.Element {
-  const title = site.web ? site.host.replace(/^www\./, '') : 'Zenium'
+  const title = extension ? 'Extension page' : site.web ? site.host.replace(/^www\./, '') : 'Zenium'
   const container =
     tab.containerId !== DEFAULT_CONTAINER_ID && tab.containerId !== PRIVATE_CONTAINER_ID
       ? state.containers.find((c) => c.id === tab.containerId)?.name
       : undefined
-  const line = [security.short, security.certificate?.issuer || null, container].filter(
-    (p): p is string => Boolean(p)
-  )
+  const line = [
+    extension ? `This is a page of the extension ${extension.name}` : security.short,
+    security.certificate?.issuer || null,
+    container
+  ].filter((p): p is string => Boolean(p))
   return (
     <div className="zen-sheet-title-block">
       <h2>
