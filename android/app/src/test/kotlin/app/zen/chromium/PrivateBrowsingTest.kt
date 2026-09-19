@@ -31,26 +31,43 @@ class PrivateBrowsingTest {
         assertFalse(PrivateBrowsing.captureForRecording)
     }
 
+    private fun shortcuts() = read(SHORTCUTS_TEMPLATE, "app/$SHORTCUTS_TEMPLATE")
+
     @Test
     fun theShortcutOpensAPrivateTabInTheBrowserActivity() {
-        val shortcuts = read("src/main/res/xml/shortcuts.xml", "app/src/main/res/xml/shortcuts.xml")
+        val shortcuts = shortcuts()
         val shortcut = shortcuts.substringAfter("<shortcut").substringBefore("</shortcut>")
         assertTrue("""android:shortcutId="${PrivateBrowsing.SHORTCUT_ID}"""" in shortcut)
         assertTrue("""android:enabled="true"""" in shortcut)
         assertTrue("""android:action="${PrivateBrowsing.ACTION_NEW_TAB}"""" in shortcut)
         assertTrue("""android:targetClass="app.zen.chromium.MainActivity"""" in shortcut)
-        // The target package is the build's applicationId (debug carries a suffix), through the
-        // resource the build script writes for every variant.
-        assertTrue("""android:targetPackage="@string/application_id"""" in shortcut)
-        val build = read("build.gradle.kts", "app/build.gradle.kts")
-        assertTrue("""makeResValueKey("string", "application_id")""" in build)
         // One shortcut: the launcher shows the app's own before any pinned web app.
         assertEquals(1, Regex("<shortcut\\s").findAll(shortcuts).count())
     }
 
+    /**
+     * The system server reads the intent's targetPackage as a plain string with its own resources:
+     * an @string reference of the app's installs a shortcut to "@<id>/MainActivity" that nothing
+     * can start. So the file is a template the build writes per variant with the applicationId
+     * spelt out (debug carries a suffix), and no copy of it sits in res/ to shadow the written one.
+     */
+    @Test
+    fun theShortcutTargetsTheVariantsApplicationIdSpeltOut() {
+        val shortcut = shortcuts().substringAfter("<shortcut").substringBefore("</shortcut>")
+        assertTrue("""android:targetPackage="${'$'}{applicationId}"""" in shortcut)
+        assertFalse("@string" in shortcut.substringAfter("<intent"))
+        val build = read("build.gradle.kts", "app/build.gradle.kts")
+        assertTrue("class WriteShortcuts" in build)
+        assertTrue("""file("$SHORTCUTS_TEMPLATE")""" in build)
+        assertTrue("""replace("\${'$'}{applicationId}", applicationId.get())""" in build)
+        assertTrue("addGeneratedSourceDirectory(write, WriteShortcuts::outputDirectory)" in build)
+        assertTrue("""resolve("xml/shortcuts.xml")""" in build)
+        assertFalse(File("src/main/res/xml/shortcuts.xml").exists() || File("app/src/main/res/xml/shortcuts.xml").exists())
+    }
+
     @Test
     fun theShortcutsLabelsAndIconExist() {
-        val shortcuts = read("src/main/res/xml/shortcuts.xml", "app/src/main/res/xml/shortcuts.xml")
+        val shortcuts = shortcuts()
         val strings = read("src/main/res/values/strings.xml", "app/src/main/res/values/strings.xml")
         for (name in listOf("shortcut_private_short", "shortcut_private_long")) {
             assertTrue("$name unused", """@string/$name"""" in shortcuts)
@@ -81,5 +98,9 @@ class PrivateBrowsingTest {
         // The browser activity itself holds no launcher entry, so the meta-data would be dead there.
         val activity = manifest.substringAfter("android:name=\".MainActivity\"").substringBefore("</activity>")
         assertFalse("android.app.shortcuts" in activity)
+    }
+
+    private companion object {
+        const val SHORTCUTS_TEMPLATE = "src/main/shortcuts/shortcuts.xml"
     }
 }

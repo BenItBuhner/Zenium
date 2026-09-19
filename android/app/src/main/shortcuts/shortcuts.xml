@@ -3,8 +3,13 @@
   The launcher's long-press shortcuts (the `android.app.shortcuts` meta-data on the launcher
   aliases, see scripts/app-icons/lib.ts). One: a new private tab, as Chrome offers "New Incognito
   tab" (INC-01). Its intent lands on MainActivity in the browser's task, which asks the chrome for
-  a private tab in the current space (PrivateBrowsing.ACTION_NEW_TAB); the target package is the
-  build's applicationId through a resource, since res/ knows no manifest placeholders.
+  a private tab in the current space (PrivateBrowsing.ACTION_NEW_TAB).
+
+  A template, not a resource: the build writes it to each variant's generated res/xml with
+  ${applicationId} spelt out (build.gradle.kts, WriteShortcuts). The system server parses the
+  intent's targetPackage as a plain string with its own resources, so an @string reference of the
+  app's never resolves there: the shortcut would install pointing at "@<resource id>/MainActivity"
+  and nothing could start it. Debug builds carry the ".debug" suffix, so a literal cannot serve.
 -->
 <shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
     <shortcut
@@ -15,7 +20,7 @@
         android:shortcutLongLabel="@string/shortcut_private_long">
         <intent
             android:action="app.zen.chromium.NEW_PRIVATE_TAB"
-            android:targetPackage="@string/application_id"
+            android:targetPackage="${applicationId}"
             android:targetClass="app.zen.chromium.MainActivity" />
     </shortcut>
 </shortcuts>

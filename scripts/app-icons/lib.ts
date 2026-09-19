@@ -366,7 +366,7 @@ export function androidAdaptiveIconXml(variant: AppIconVariant): string {
 `
 }
 
-/** The launcher's long-press shortcuts (`res/xml/shortcuts.xml`); the system reads them off the launcher entry. */
+/** The launcher's long-press shortcuts (`src/main/shortcuts/shortcuts.xml`, written per variant); the system reads them off the launcher entry. */
 export const ANDROID_SHORTCUTS_META =
   '<meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />'
 

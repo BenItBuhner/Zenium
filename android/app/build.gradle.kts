@@ -212,15 +212,39 @@ android {
     }
 }
 
+/**
+ * The launcher's static shortcut (src/main/shortcuts/shortcuts.xml) names its target activity by
+ * the build's applicationId, suffix included. The system server parses a shortcut intent's
+ * targetPackage as a plain string with its own resources, so neither a manifest placeholder nor
+ * an @string reference of the app's can carry the id (the shortcut installs pointing at
+ * "@<resource id>/MainActivity" and nothing can start it): the template is written into each
+ * variant's generated res/xml with the id spelt out.
+ */
+abstract class WriteShortcuts : DefaultTask() {
+    @get:InputFile
+    abstract val template: RegularFileProperty
+
+    @get:Input
+    abstract val applicationId: Property<String>
+
+    @get:OutputDirectory
+    abstract val outputDirectory: DirectoryProperty
+
+    @TaskAction
+    fun write() {
+        val file = outputDirectory.get().asFile.resolve("xml/shortcuts.xml")
+        file.parentFile.mkdirs()
+        file.writeText(template.get().asFile.readText().replace("\${applicationId}", applicationId.get()))
+    }
+}
+
 androidComponents {
     onVariants { variant ->
-        // The static launcher shortcut (res/xml/shortcuts.xml) names its target activity by the
-        // build's applicationId, suffix included; res/ knows no manifest placeholders, so it is a
-        // resource of each variant's own.
-        variant.resValues.put(
-            variant.makeResValueKey("string", "application_id"),
-            variant.applicationId.map { com.android.build.api.variant.ResValue(it) }
-        )
+        val write = tasks.register<WriteShortcuts>("write${variant.name.replaceFirstChar(Char::uppercase)}Shortcuts") {
+            template.set(layout.projectDirectory.file("src/main/shortcuts/shortcuts.xml"))
+            applicationId.set(variant.applicationId)
+        }
+        variant.sources.res?.addGeneratedSourceDirectory(write, WriteShortcuts::outputDirectory)
     }
 }
 

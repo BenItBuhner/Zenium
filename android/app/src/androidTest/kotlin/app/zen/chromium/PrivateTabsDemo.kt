@@ -306,6 +306,12 @@ class PrivateTabsDemo : DemoHarness("private-demo-state.json", "private", "priva
             "the New private tab shortcut is installed from the manifest with its intent",
             shortcut?.intent?.action == PrivateBrowsing.ACTION_NEW_TAB
         )
+        // The system server reads targetPackage as a plain string: only the id spelt out by the
+        // build lands here (a resource reference would install as "@<id>", which nothing starts).
+        expect(
+            "the shortcut's intent targets this build's package (${app.packageName}), suffix included",
+            shortcut?.intent?.component == android.content.ComponentName(app.packageName, MainActivity::class.java.name)
+        )
         val intent = shortcut?.intent?.let { Intent(it) }
             ?: Intent(PrivateBrowsing.ACTION_NEW_TAB).setClassName(app.packageName, MainActivity::class.java.name)
         app.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
