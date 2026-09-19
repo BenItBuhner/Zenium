@@ -145,6 +145,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     override fun hostEvent(name: String, payload: Any?) = chrome.hostEvent(name, payload)
     override fun onKey(tabId: String?, input: JSONObject) = chrome.onKey(tabId, input)
     override fun pullEvent(tabId: String, phase: String, payload: JSONObject?) = chrome.pullEvent(tabId, phase, payload)
+    override fun selectionMenu(tabId: String, text: String, reply: (String?) -> Unit) = chrome.selectionMenu(tabId, text, reply)
     override fun progress(tabId: String, percent: Int) = chrome.viewEvent(tabId, "progress", json("progress" to percent / 100.0))
     override val underlay: View get() = chrome
     override fun backChanged() = back.refresh()

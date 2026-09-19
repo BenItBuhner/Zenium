@@ -208,6 +208,20 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
         evaluateJavascript("window.__zenHost?__zenHost.backEvent('commit',null):false") { result -> callback(result == "true") }
     }
 
+    /**
+     * Zenium's items for the floating toolbar over `text` selected in tab `tabId` (the core's
+     * `Menus.selectionToolbar`): `reply` gets the JSON text of `[{ id, title }]` in order, "[]"
+     * before the core has started, null while the chrome document is still loading.
+     */
+    fun selectionMenu(tabId: String, text: String, reply: (String?) -> Unit) {
+        if (!ready) {
+            reply(null)
+            return
+        }
+        val request = JSONObject.quote(json("text" to text).toString())
+        evaluateJavascript("window.__zenHost?__zenHost.selectionMenu(${JSONObject.quote(tabId)},$request):null") { reply(it) }
+    }
+
     fun openUrl(url: String) {
         onReady { js("window.__zenHost&&__zenHost.openUrl(${JSONObject.quote(url)})") }
     }
