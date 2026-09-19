@@ -293,7 +293,10 @@ export function V2Row({
   )
 }
 
-/** A checkbox row: 16 box at radius 2 (20 on a phone), label to its right, a description under. */
+/**
+ * A checkbox row: 16 box at radius 2 (20 on a phone), label to its right, a description under.
+ * Disabled, the row says so (`aria-disabled`) as the shared row's fill gate expects (§9.30).
+ */
 export function V2CheckRow({
   label,
   description,
@@ -308,7 +311,11 @@ export function V2CheckRow({
   onChange: (next: boolean) => void
 }): JSX.Element {
   return (
-    <label className="zen-v2-row zen-v2-check-row" data-lines={description ? '2' : undefined}>
+    <label
+      className="zen-v2-row zen-v2-check-row"
+      data-lines={description ? '2' : undefined}
+      aria-disabled={disabled || undefined}
+    >
       <span className="zen-v2-row-body">
         <input
           type="checkbox"

@@ -494,10 +494,13 @@
   }
   /*
    * A disabled check row is a dependent row (§9.30): the one number, opacity .4, on the row's
-   * text and control together, laid out at full size, with no ink swap on top – the row carries
-   * the .4, so the box inside it does not compound to .16; a description already at 69% does.
+   * text and control together, laid out at full size, with no ink swap on top. The .4 sits on
+   * the row's content and not on the row itself: the hairline above the row is its `border-top`
+   * and lines are structure (§0), so it keeps its full strength. The body carries the .4, so the
+   * box inside it does not compound to .16; a description already at 69% does. The row says
+   * `aria-disabled`, which is what keeps the primitive's hover and press fill off it (§9.30).
    */
-  .zen-v2-check-row:has(.zen-v2-checkbox:disabled) {
+  .zen-v2-check-row:has(.zen-v2-checkbox:disabled) > * {
     opacity: 0.4;
   }
   .zen-v2-check-row .zen-v2-checkbox:disabled {
