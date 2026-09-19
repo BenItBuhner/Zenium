@@ -238,10 +238,14 @@ export class TabManager {
       const index = Math.min(Math.max(snapshot.index, 0), snapshot.entries.length - 1)
       if (url === '' || url === BLANK_URL || url === snapshot.entries[index].url) {
         this.pendingTransition.set(tabId, 'restored')
-        void view.restoreNavigation({ entries: snapshot.entries, index })
+        // The host's own serialisation of the stack rides along: the list is the one it describes.
+        const whole: NavigationSnapshot = { entries: snapshot.entries, index }
+        if (snapshot.hostState !== undefined) whole.hostState = snapshot.hostState
+        void view.restoreNavigation(whole)
       } else {
         // Asked to go somewhere else meanwhile (typed into the pill while unloaded): the new
-        // page goes on top of the stack and the forward entries go, as in Chrome.
+        // page goes on top of the stack and the forward entries go, as in Chrome (the host's
+        // serialisation described the old list and stays behind).
         void view.restoreNavigation({
           entries: [...snapshot.entries.slice(0, index + 1), { url, title: tab.title }],
           index: index + 1
