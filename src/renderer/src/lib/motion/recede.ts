@@ -10,13 +10,16 @@
  * Every sheet registers a layer here for as long as it is mounted and reports its presence per
  * frame; the registry composes the stack:
  *
- *  - The page recedes by the presence of the sheet that is most present, clamped at 1: a
- *    second sheet does not push the page further (§11.2).
- *  - A lower sheet recedes exactly as the page does, by the presence of the sheets above it
- *    (`recede`, about its bottom centre – main.css), its content inert from the moment a sheet
- *    above it shows anything of itself (q > 0, §11.2; a sheet registered above but still held
- *    for the page's cover leaves it live), and its own scrim hands over to the upper one's as
- *    that comes in, so the stack has one scrim and the page never darkens past the token
+ *  - The page recedes by the stack's summed presence, capped at 1: one sheet recedes it by its
+ *    own progress, a second sheet does not push the page further (§11.2), and as one sheet
+ *    leaves while the next arrives (a menu's row opening a picker, a menu popping over an open
+ *    one) the page holds receded for as long as the two together stand at a sheet's worth –
+ *    the same rule the scrim's compound dim keeps, below, so the page and its dim never part.
+ *  - A lower sheet recedes exactly as the page does, by the summed presence of the sheets above
+ *    it (`recede`, about its bottom centre – main.css), its content inert from the moment a
+ *    sheet above it shows anything of itself (q > 0, §11.2; a sheet registered above but still
+ *    held for the page's cover leaves it live), and its own scrim hands over to the upper one's
+ *    as that comes in, so the stack has one scrim and the page never darkens past the token
  *    (§9.24). The handover is exact, not linear: two scrims one over the other multiply, so a
  *    lower share of `1 − q` under an upper of `q` would let the page breathe lighter half-way
  *    (by a quarter of the token's alpha squared) as a sheet stacks, or as one sheet leaves
@@ -26,6 +29,12 @@
  *    summed presence, capped at one: `(min(1, dim + p) − dim) / (1 − a · dim)` for a layer of
  *    presence `p` under sheets that dim to `dim` already. With no alpha to go by it is the plain
  *    difference, which is the linear rule for a lower sheet at its detent.
+ *
+ * A layer is released when its sheet has landed, never when its request goes: the sheet stays
+ * mounted for its leave (`SheetPresence`, lib/motion/presence.tsx, and the frame dialog host's
+ * slot on the phone) and runs its own p 1 → 0 here, so a lower sheet closed by the host under
+ * an upper at rest runs its way down while the upper's q, and with it the page's recede and
+ * the compound dim, hold (§11.2); the shorter stack is composed only once it has landed.
  *
  * The root carries `data-receding` while any layer is registered (the frame is promoted only
  * then). Under `prefers-reduced-motion` main.css zeroes `--zen-recede-gain`: the value is still
@@ -38,7 +47,7 @@ export const RECEDE_SCALE = 0.03
 export const RECEDE_RADIUS_PX = 6
 
 export interface RecedeLayerFrame {
-  /** How far this sheet itself recedes (0…1): the presence of the sheets above it. */
+  /** How far this sheet itself recedes (0…1): the summed presence of the sheets above it, capped. */
   recede: number
   /** The share of this sheet's own scrim to show: its presence, fading as a sheet above comes in. */
   scrim: number
@@ -66,17 +75,19 @@ function clamp01(value: number): number {
 export function recedeFrame(presences: readonly number[], scrimAlpha = 0): RecedeFrame {
   const layers: RecedeLayerFrame[] = new Array(presences.length)
   const a = clamp01(scrimAlpha)
+  /**
+   * The summed presence of the sheets above the layer at hand, capped: what they recede it by,
+   * and what their scrims compound to as a share of the token (one and the same number, so the
+   * page's recede and its dim hold together as one sheet leaves while the next arrives).
+   */
   let above = 0
-  /** What the scrims above compound to, as a share of the token: the summed presence, capped. */
-  let dim = 0
   for (let i = presences.length - 1; i >= 0; i--) {
     const p = clamp01(presences[i])
-    const total = Math.min(1, dim + p)
-    // (1 − a·s)(1 − a·dim) = 1 − a·total: this layer's share s takes the compound dim to `total`.
-    const scrim = a * dim < 1 ? (total - dim) / (1 - a * dim) : 0
+    const total = Math.min(1, above + p)
+    // (1 − a·s)(1 − a·above) = 1 − a·total: this layer's share s takes the compound dim to `total`.
+    const scrim = a * above < 1 ? (total - above) / (1 - a * above) : 0
     layers[i] = { recede: above, scrim, inert: above > 0 }
-    above = Math.max(above, p)
-    dim = total
+    above = total
   }
   return { page: above, layers }
 }
@@ -117,7 +128,10 @@ export interface RecedeHandle {
   progress(presence: number): void
   /** No sheet registered above this one: it holds the focus and answers the keyboard (§9.24). */
   onTop(): boolean
-  /** The sheet is gone (unmounting): take the layer off the stack. */
+  /**
+   * The sheet is gone (unmounting, once its leave has landed – never at the store write that
+   * cleared its request): take the layer off the stack.
+   */
   release(): void
 }
 

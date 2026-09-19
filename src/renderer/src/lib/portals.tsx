@@ -16,8 +16,8 @@ import type { Rect } from '@shared/types'
 import { useBackSurface } from './back'
 import { useViewport } from './formFactor'
 import { registerRecedeLayer, type RecedeHandle, type RecedeLayerFrame } from './motion/recede'
-import { sheetBackPosition } from './motion/sheet'
-import { SPRING_GENTLE, SpringAnimation, type SpringConfig } from './motion/spring'
+import { REDUCED_MOTION_FADE_MS, sheetBackPosition } from './motion/sheet'
+import { SPRING_GENTLE, SpringAnimation, reducedMotion, type SpringConfig } from './motion/spring'
 import { closeAllPopovers } from './popoverStore'
 import { coverPageUnderSheet, holdFrameDialogCover, type SheetCover } from './ui'
 
@@ -404,9 +404,9 @@ interface SheetChassis {
  * phone dialog is a §9.23 sheet), measured as the distance from the top edge of the highest
  * panel in the slot to the slot's bottom edge, so at 0 nothing of any panel is above the edge
  * and at 1 the panels stand where they are laid out. A sheet on its own chassis
- * (`[data-sheet-layer]`) runs its own track and does not count. With no panel in the slot (the
- * way down after the last dialog has gone) the last measure stands, so the empty slot keeps
- * its geometry; 0 with nothing ever measured.
+ * (`[data-sheet-layer]`) runs its own track and does not count. A panel kept for the way down
+ * (`data-leaving`) counts as it did; with no panel in the slot the last measure stands, so an
+ * empty slot keeps its geometry; 0 with nothing ever measured.
  */
 function slotTravel(slot: HTMLElement, last: number): number {
   let top = Infinity
@@ -441,8 +441,30 @@ function slotTravel(slot: HTMLElement, last: number): number {
  * coming back with it; letting go before the threshold springs it back to 1, and a commit – or
  * the back button – is the scrim press, so the same spring runs everything down from where the
  * finger left it. A prompt that gave no scrim handler is left to its own `useBackSurface`.
+ *
+ * The sheet's leave outlives its dialogs' requests (§11.1: the store's `null` means "leave",
+ * never "vanish"). A dialog's panel is rendered by its request and goes with it, in the commit
+ * that clears it – the picker's Cancel, an alert the page dismissed, a prompt leaving `state` –
+ * while the slot is only setting out on its way down; the chassis keeps the node: a panel its
+ * owner takes out of the slot while the sheet is on its way down is put back where it stood,
+ * `inert` and marked `data-leaving`, and rides the slide down until the spring lands at 0, when
+ * it is dropped with the layer's release and the cover's (`retain`, on the slot's own
+ * mutations; a sheet on its own chassis, `[data-sheet-layer]`, is left to `SheetPresence`). No
+ * dialog grows a leaving phase of its own. The window chrome stays inert from the rise to the
+ * landing, and focus returns then – not at the request's clearing – to the control that opened
+ * the first dialog, if the panel's going left it nowhere (§9.22). A dialog opening on the way
+ * down turns the spring round and takes the slot for itself: what was kept for the way down is
+ * dropped there. Under reduced motion the way down is the 120 ms fade in place, then the jump
+ * (§11.3): the slot's and the scrim's opacity step to 0 on main.css's transition with the
+ * panels still in the slot, and the spring jumps once the fade is over.
  */
-function useSheetChassis(active: boolean, open: boolean, top?: FrameDialogEntry): SheetChassis {
+function useSheetChassis(
+  active: boolean,
+  open: boolean,
+  top: FrameDialogEntry | undefined,
+  /** Takes (once) the control that had the focus as the first dialog registered, if any. */
+  takeOpener: () => HTMLElement | null
+): SheetChassis {
   const hostRef = useRef<HTMLDivElement>(null)
   const scrimRef = useRef<HTMLDivElement>(null)
   const slotRef = useRef<HTMLDivElement>(null)
@@ -459,6 +481,12 @@ function useSheetChassis(active: boolean, open: boolean, top?: FrameDialogEntry)
   const backOrigin = useRef<number | null>(null)
   /** The slot's travel (px) as last measured (`slotTravel`). */
   const travel = useRef(0)
+  /** Panels their owners took out of the slot on the way down, kept for it until the landing. */
+  const kept = useRef<HTMLElement[]>([])
+  /** The window chrome's inert hold, from the rise to the landing (`holdChromeInert`). */
+  const chrome = useRef<(() => void) | null>(null)
+  /** The reduced-motion fade on the way down (§11.3), until the spring's jump follows it. */
+  const fade = useRef<number | null>(null)
 
   const paint = (): void => {
     const host = hostRef.current
@@ -468,13 +496,14 @@ function useSheetChassis(active: boolean, open: boolean, top?: FrameDialogEntry)
     // The spring overshoots a hair: the slide shows it, the opacities stop at their ends.
     const share = Math.min(1, Math.max(0, p.current))
     // The stack shows one scrim: this one's share (the registry's, from the same `p`) gives way
-    // as a sheet above fades its own in.
-    if (scrim) scrim.style.opacity = q.scrim.toFixed(4)
+    // as a sheet above fades its own in. A reduced-motion fade on the way down is left alone by
+    // a frame from the stack (another sheet moving).
+    if (scrim && fade.current === null) scrim.style.opacity = q.scrim.toFixed(4)
     if (slot) {
       travel.current = slotTravel(slot, travel.current)
       // Below the edge at 0, the step to full opacity shows nothing (and under reduced motion,
       // where the spring has jumped the slot into place, main.css fades it in – §11.3).
-      slot.style.opacity = share > 0 ? '1' : '0'
+      if (fade.current === null) slot.style.opacity = share > 0 ? '1' : '0'
       slot.style.transform = `translate3d(0, ${((1 - p.current) * travel.current).toFixed(2)}px, 0) scale(var(--zen-layer-scale, 1))`
       slot.style.setProperty('--zen-layer-recede', q.recede.toFixed(4))
       slot.toggleAttribute('inert', q.inert)
@@ -500,6 +529,59 @@ function useSheetChassis(active: boolean, open: boolean, top?: FrameDialogEntry)
     hostRef.current?.removeAttribute('data-sheet-up')
   }
 
+  /** The panels kept for the way down go: the sheet has landed, or a dialog took the slot. */
+  const drop = (): void => {
+    for (const panel of kept.current) panel.remove()
+    kept.current = []
+  }
+
+  /**
+   * The slot's children changed: a panel taken out while the sheet is on its way down (nothing
+   * wanted up, something of it still showing) is kept, inert, where it stood – before any sheet
+   * on its own chassis, so it stays under one – until the landing drops it. A panel that moved
+   * (still connected) or a sheet on its own chassis is not the host's to keep.
+   */
+  const retain = (records: MutationRecord[]): void => {
+    const slot = slotRef.current
+    if (!slot || up.current || p.current <= 0) return
+    for (const record of records) {
+      for (const node of record.removedNodes) {
+        if (!(node instanceof HTMLElement) || node.isConnected) continue
+        if (node.hasAttribute('data-sheet-layer') || kept.current.includes(node)) continue
+        node.setAttribute('inert', '')
+        node.setAttribute('data-leaving', '')
+        const ownSheet = [...slot.children].find((c) => c.hasAttribute('data-sheet-layer')) ?? null
+        slot.insertBefore(node, ownSheet)
+        kept.current.push(node)
+      }
+    }
+  }
+
+  /**
+   * The sheet has landed and the panels are gone: focus, if the panels' going left it nowhere
+   * (or a kept panel still held it), returns to the control that opened the first dialog.
+   */
+  const returnFocus = (): void => {
+    const to = takeOpener()
+    if (!to?.isConnected) return
+    const active = document.activeElement
+    if (active && active !== document.body && !hostRef.current?.contains(active)) return
+    to.focus({ preventScroll: true })
+  }
+
+  /** Down and at rest: off the stack, the panels dropped, the chrome and the page back. */
+  const landed = (): void => {
+    recede.current?.release()
+    recede.current = null
+    leaving.current?.release()
+    leaving.current = null
+    drop()
+    chrome.current?.()
+    chrome.current = null
+    reset()
+    returnFocus()
+  }
+
   const motion = (): SpringAnimation =>
     (spring.current ??= new SpringAnimation(
       SHEET_PROGRESS_SPRING,
@@ -513,13 +595,16 @@ function useSheetChassis(active: boolean, open: boolean, top?: FrameDialogEntry)
         // down keeps the layer and the cover; its rise comes once the page is covered): off the
         // stack, and the page may come back.
         if (x > 0 || up.current) return
-        recede.current?.release()
-        recede.current = null
-        leaving.current?.release()
-        leaving.current = null
-        reset()
+        landed()
       }
     ))
+
+  /** The reduced-motion fade is off: a dialog opened during it, or the chassis is going. */
+  const dropFade = (): void => {
+    if (fade.current === null) return
+    window.clearTimeout(fade.current)
+    fade.current = null
+  }
 
   /**
    * Run `p` to `target` on the spring from wherever it is: a motion in flight keeps its
@@ -563,12 +648,17 @@ function useSheetChassis(active: boolean, open: boolean, top?: FrameDialogEntry)
 
   const clear = (): void => {
     spring.current?.stop()
+    dropFade()
     recede.current?.release()
     recede.current = null
     cover.current?.release()
     cover.current = null
     leaving.current?.release()
     leaving.current = null
+    drop()
+    chrome.current?.()
+    chrome.current = null
+    takeOpener()
     p.current = 0
     backOrigin.current = null
     layer.current = LAYER_AT_REST
@@ -584,12 +674,18 @@ function useSheetChassis(active: boolean, open: boolean, top?: FrameDialogEntry)
       return
     }
     if (open) {
+      // A dialog opening on the way down takes the slot: what was kept for the way down goes,
+      // and a reduced-motion fade turns back into the slot as it stands.
+      drop()
+      dropFade()
       // On the stack from the open, above whatever is up already (§11.2), and painted at 0
-      // before the first frame shows – the panel must not stand there before its rise.
+      // before the first frame shows – the panel must not stand there before its rise. The
+      // window chrome is inert from here to the landing (§9.5, §9.22).
       recede.current ??= registerRecedeLayer((frame) => {
         layer.current = frame
         paint()
       })
+      chrome.current ??= holdChromeInert()
       paint()
       if (cover.current) return
       // The cover is taken once per stay on screen: a dialog opening on the way down keeps the
@@ -605,16 +701,40 @@ function useSheetChassis(active: boolean, open: boolean, top?: FrameDialogEntry)
     }
     // The last dialog went: the same spring runs the scrim and the recede back to 0, from
     // wherever they are – mid-rise, or where a back gesture left the sheet – and lets the page
-    // back when it lands (a host still waiting for its cover lands at once).
+    // back when it lands (a host still waiting for its cover lands at once). The panels stay in
+    // the slot for the way down (`retain`).
     if (cover.current) {
       leaving.current?.release()
       leaving.current = cover.current
       cover.current = null
     }
     backOrigin.current = null
-    if (recede.current) settleTo(0)
+    if (!recede.current) return
+    if (reducedMotion() && p.current > 0) {
+      // §11.3: the panels fade in place for 120 ms – the slot's and the scrim's opacity step to
+      // 0 on main.css's transition – and the spring jumps once the fade is over.
+      if (slotRef.current) slotRef.current.style.opacity = '0'
+      if (scrimRef.current) scrimRef.current.style.opacity = '0'
+      fade.current = window.setTimeout(() => {
+        fade.current = null
+        settleTo(0)
+      }, REDUCED_MOTION_FADE_MS)
+      return
+    }
+    settleTo(0)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only refs besides `active` and `open`
   }, [active, open])
+
+  // The slot's children are watched for as long as the host is a sheet: a panel taken out on
+  // the way down is kept for it (`retain`). The records arrive after the commit that took the
+  // panel out and before the frame paints, so nothing of the going shows.
+  useEffect(() => {
+    const slot = slotRef.current
+    if (!active || !slot || typeof MutationObserver === 'undefined') return
+    const observer = new MutationObserver(retain)
+    observer.observe(slot, { childList: true })
+    return () => observer.disconnect()
+  }, [active])
 
   // Unmounted (the shell changed): no frame writes into a gone tree, the page is released.
   // eslint-disable-next-line react-hooks/exhaustive-deps -- `clear` touches refs only; once, at unmount
@@ -660,12 +780,16 @@ function useSheetChassis(active: boolean, open: boolean, top?: FrameDialogEntry)
  * once.
  *
  * On a phone the way out is the sheet chassis' (§11.1: a phone dialog is a sheet, and a sheet's
- * leave outlives its request): the host keeps, holds and marks nothing for it – `data-sheet` is
- * the gate, on the host and in main.css, where the `[data-leaving]` pose rules are the mouse's
- * alone – so the slot's children are what React renders, and the host's `data-open`, its scrim
- * and its hold on the chrome follow its registered dialogs alone. The panel's ride down the
- * slot with the spring is the chassis' to run and to drop at the landing (the Android program's
- * sheet-leave work, #187, on the same slot and `data-leaving` mark).
+ * leave outlives its request): `useLeavingPanels` keeps, holds and marks nothing for it –
+ * `data-sheet` is the gate, on the host and in main.css, where the `[data-leaving]` pose rules
+ * are the mouse's alone – and `useSheetChassis` keeps the panel instead: one its owner unmounts
+ * as it closes – `useFrameDialog({ active })` going false with the node, or the node going with
+ * its request – is put back in the slot, inert and marked `data-leaving`, for the way down, and
+ * dropped when the spring lands (the chrome comes back and focus returns to the opener then,
+ * §9.22); under reduced motion the way down is the 120 ms fade in place, then the drop (§11.3).
+ * No dialog keeps a panel for its own leave on either pose. A sheet on its own chassis
+ * (`BottomSheet`, `[data-sheet-layer]`) keeps its leave through `SheetPresence`
+ * (lib/motion/presence.tsx), the same rule at a sheet boundary.
  *
  * A dialog that is a sheet on the chassis already – `BottomSheet` placed `hosted`, which drives
  * the recede and draws the stack's one scrim itself, fading with its motion (§9.24, §9.28) –
@@ -693,10 +817,22 @@ export function FrameDialogHost({
   // The host's own chassis runs for a dialog that has none; a sheet on the chassis already
   // (`ownScrim`) recedes the page, draws the scrim and answers the back gesture itself.
   const chassisOpen = dialogs.some((d) => !d.ownScrim)
+  /** Dialogs registered right now (the state above, before it has rendered). */
+  const registered = useRef(0)
+  /**
+   * The control that had the focus as the first dialog registered – before the dialog's own
+   * effects moved it in – for the phone sheet to return it to once its leave has landed (§9.22).
+   */
+  const opener = useRef<HTMLElement | null>(null)
   const { hostRef, scrimRef, slotRef } = useSheetChassis(
     sheet,
     chassisOpen,
-    top && !top.ownScrim ? top : undefined
+    top && !top.ownScrim ? top : undefined,
+    () => {
+      const to = opener.current
+      opener.current = null
+      return to
+    }
   )
   // One callback for the host's lifetime: a ref callback made anew each render is detached
   // (set null) for the mutation phase of every commit, and a dialog unregistering in that very
@@ -714,10 +850,16 @@ export function FrameDialogHost({
   const { opened, closing, cancel } = leaving
   const register = useCallback(
     (entry: FrameDialogEntry) => {
+      if (registered.current++ === 0) {
+        const active = document.activeElement
+        opener.current =
+          active instanceof HTMLElement && !active.closest('.zen-frame-dialogs') ? active : null
+      }
       if (!entry.ownScrim) opened()
       cancel()
       setDialogs((list) => [...list, entry])
       return () => {
+        registered.current--
         if (!entry.ownScrim) closing()
         setDialogs((list) => list.filter((d) => d !== entry))
       }
@@ -735,10 +877,14 @@ export function FrameDialogHost({
   // Open for the panels on their way out too (a mouse): the chrome comes back when the last one
   // is gone.
   const open = dialogs.length > 0 || leaving.exiting
+  // The chrome is inert while a dialog is open (§9.5). On a phone the sheet chassis holds it
+  // itself, from the rise to the landing of its leave (`useSheetChassis`); a sheet with its own
+  // chassis holds it as a `BottomSheet` does.
+  const holds = open && !(sheet && chassisOpen)
   useEffect(() => {
-    if (!open) return
+    if (!holds) return
     return holdChromeInert()
-  }, [open])
+  }, [holds])
   // A dialog opening (or another stacking on it) is an open that is not a press on a popover:
   // it closes whatever popover is up (§9.20, one at a time).
   const count = dialogs.length

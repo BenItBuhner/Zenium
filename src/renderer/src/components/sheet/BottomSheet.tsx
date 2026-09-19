@@ -7,6 +7,7 @@ import {
   type RecedeHandle,
   type RecedeLayerFrame
 } from '@renderer/lib/motion/recede'
+import { useSheetLeave } from '@renderer/lib/motion/presence'
 import {
   computeDetents,
   detentForField,
@@ -17,10 +18,9 @@ import {
 } from '@renderer/lib/motion/sheet'
 import { reducedMotion } from '@renderer/lib/motion/spring'
 import { VelocityTracker } from '@renderer/lib/motion/velocity'
-import type { Hold } from '@renderer/lib/pageView'
 import { isTextField, sheetInitialFocus, wrapTab } from '@renderer/lib/popover'
 import { holdChromeInert } from '@renderer/lib/portals'
-import { activePageCovered, uiStore } from '@renderer/lib/ui'
+import { coverPageUnderSheet, uiStore, type SheetCover } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 
 /**
@@ -43,7 +43,11 @@ export interface BottomSheetHandle {
 
 interface Props {
   ref?: Ref<BottomSheetHandle>
-  /** The sheet has left the screen – by drag, fling, scrim tap, back gesture or `dismiss`. */
+  /**
+   * The sheet has left the screen – by drag, fling, scrim tap, back gesture or `dismiss` – and
+   * its request is still standing: the surface clears it. Not called for a sheet leaving because
+   * its request has gone already (`SheetPresence`): that leave answers the wrapper's `onLeft`.
+   */
   onDismissed: () => void
   /** Non-scrolling content under the handle (a title row); part of the grip. */
   header?: ReactNode
@@ -113,9 +117,21 @@ function track(tracker: VelocityTracker, e: ReactPointerEvent<HTMLElement>): voi
  *
  * The sheet is on the recede chassis (`lib/motion/recede.ts`, v2 draft §11): the page behind
  * recedes and the bottom bar fades on the sheet's own progress, reversibly, and a sheet mounted
- * over another recedes the lower one and makes it inert – nothing to opt into. Where the chrome
- * lies under the pages it comes up only once the live page has given way to its picture
- * (`activePageCovered`), so the recede never starts on a page that is about to be swapped.
+ * over another recedes the lower one and makes it inert – nothing to opt into. The sheet holds
+ * the page under its cover for as long as anything of it shows (`coverPageUnderSheet`, §11.5):
+ * where the chrome lies under the pages it comes up only once the live page has given way to its
+ * picture, so the recede never starts on a page that is about to be swapped, and the page comes
+ * back only once the sheet has landed, whoever closed it.
+ *
+ * Its leave outlives its request (§11.1, `SheetPresence` in lib/motion/presence.tsx): rendered
+ * under the wrapper, a sheet whose request the store has cleared – a host-driven close, or the
+ * surface's own write once `onDismissed` ran – is told it is `leaving` and runs its own
+ * dismissal from wherever it stands, p 1 → 0 over its travel on the sheet spring (the 120 ms fade
+ * under reduced motion), inert and taking the pointer on its scrim throughout, and answers the
+ * wrapper's `onLeft` once landed, which is when it unmounts: the layer leaves the stack, the
+ * chrome and the page come back and focus returns to the opener then, not at the store write.
+ * A finger catching a leaving sheet holds it; the leave resumes with the finger's velocity when
+ * it lets go. A back gesture over a leaving sheet is absorbed: it is on its way already.
  *
  * The body scrolls natively only while the sheet rests expanded; pulling down on a body that
  * sits at its top drags the sheet instead. Everything else (Escape, system back, a picked item)
@@ -159,7 +175,11 @@ export function BottomSheet({
   const afterDismiss = useRef<(() => void) | null>(null)
   /** The window changed size while the page stood receded behind the sheet. */
   const resizedWhileUp = useRef(false)
-  const latest = useRef({ onDismissed })
+  const leave = useSheetLeave()
+  const leaving = leave?.leaving ?? false
+  /** The request has gone (`SheetPresence`): the sheet is on its way out and answers `onLeft`. */
+  const leavingRef = useRef(false)
+  const latest = useRef({ onDismissed, onLeft: leave?.onLeft })
   const insets = uiStore.use((s) => s.insets)
   /** This sheet's layer on the recede stack, for as long as it is mounted. */
   const recede = useRef<RecedeHandle | null>(null)
@@ -167,8 +187,14 @@ export function BottomSheet({
   const layerFrame = useRef<RecedeLayerFrame>({ recede: 0, scrim: 0, inert: false })
   /** No sheet above this one on the stack: it holds the focus and answers the keyboard (§9.24). */
   const onTop = (): boolean => recede.current?.onTop() ?? false
-  /** The wait for the live page to give way to its picture before the sheet comes up. */
-  const hold = useRef<Hold | null>(null)
+  /**
+   * The page's cover, held from before the sheet comes up (the wait for the live page to give
+   * way to its picture) until the sheet unmounts, once it has landed; null before the first
+   * presentation and once let go of.
+   */
+  const cover = useRef<SheetCover | null>(null)
+  /** The wait for the cover is over (the sheet came up, or went before it could): no second one. */
+  const presented = useRef(false)
   /**
    * Under reduced motion a departure is a 120 ms fade in place (§11.3): the sheet and its scrim
    * go to 0 on main.css's transition, and the spring's jump off the screen follows the fade.
@@ -195,9 +221,12 @@ export function BottomSheet({
     sheet.style.transform = `translate3d(0, ${frame.translateY}px, 0) scale(var(--zen-layer-scale, 1))`
     sheet.style.setProperty('--zen-layer-recede', layer.recede.toFixed(4))
     // Under another sheet the content takes no input (§9.24); the sheet above owns the gesture.
+    // A leaving sheet takes none either (§9.22) – its layer still takes the pointer, on the scrim
+    // – except under the finger that caught it, until that lets go.
     // The sheet is promoted only while it stands recessed (main.css `data-recessed`).
-    sheet.toggleAttribute('inert', layer.inert)
+    sheet.toggleAttribute('inert', layer.inert || (leavingRef.current && !touch.current))
     sheet.toggleAttribute('data-recessed', layer.inert)
+    layerRef.current?.toggleAttribute('data-leaving', leavingRef.current)
     // The scrim's colour and full opacity are the token's; its share is the sheet's progress as
     // the stack hands it out – given up to a sheet above as that fades its own in, so the stack
     // shows one scrim (the registry reports it from the presence the motion gave it above).
@@ -215,13 +244,21 @@ export function BottomSheet({
         recede.current?.progress(motionRef.current!.frame().scrim)
         paint()
       },
-      onClosed: () => {
-        const then = afterDismiss.current
-        afterDismiss.current = null
-        then?.()
-        latest.current.onDismissed()
-      }
+      onClosed: () => landed()
     }))
+
+  /**
+   * The sheet is gone from the screen: a picked row's action runs, and the surface hears of it –
+   * unless the request went first (`leaving`), in which case the wrapper that kept the sheet for
+   * its leave hears `onLeft` and drops it; the surface made its write already.
+   */
+  const landed = (): void => {
+    const then = afterDismiss.current
+    afterDismiss.current = null
+    then?.()
+    if (leavingRef.current) latest.current.onLeft?.()
+    else latest.current.onDismissed()
+  }
 
   /** Native scrolling only while the sheet rests fully expanded; otherwise every pan is a sheet drag. */
   const syncLock = (): void => {
@@ -230,22 +267,23 @@ export function BottomSheet({
   }
 
   /**
-   * Bring the sheet up once the live page is off the screen (at once where nothing has to be
-   * waited for). Until then the sheet is laid out but held at `opacity: 0` – not `visibility:
-   * hidden`, which takes no focus: the focus moves into the sheet as it mounts (§9.22), by the
-   * chassis or by the surface's own effect, and has to land while the hold lasts – and takes no
-   * press (a tap on it falls to the scrim, the dismissal, as it does on the frame dialog host at
-   * progress 0), so that a sheet never recedes a page that is about to be replaced by its
-   * picture – the swap would show. Escape, back or a dismissal during the wait take the sheet
-   * down without a slide.
+   * Take the page's cover and bring the sheet up once the live page is off the screen (at once
+   * where nothing has to be waited for). Until then the sheet is laid out but held at `opacity:
+   * 0` – not `visibility: hidden`, which takes no focus: the focus moves into the sheet as it
+   * mounts (§9.22), by the chassis or by the surface's own effect, and has to land while the
+   * hold lasts – and takes no press (a tap on it falls to the scrim, the dismissal, as it does
+   * on the frame dialog host at progress 0), so that a sheet never recedes a page that is about
+   * to be replaced by its picture – the swap would show. Escape, back or a dismissal during the
+   * wait take the sheet down without a slide. The cover is held until the sheet unmounts, once
+   * it has landed: the page comes back at the transform it left at, whoever closed the sheet.
    */
   const present = (): void => {
-    if (hold.current) return
-    const h = activePageCovered()
-    hold.current = h
-    void h.promise.then(() => {
-      if (hold.current !== h) return
-      hold.current = null
+    if (cover.current || presented.current) return
+    const c = coverPageUnderSheet()
+    cover.current = c
+    void c.promise.then(() => {
+      if (cover.current !== c || presented.current) return
+      presented.current = true
       const m = motion()
       if (m.isOpen) return
       m.present()
@@ -315,8 +353,9 @@ export function BottomSheet({
     sc.addEventListener('scroll', sync, { passive: true })
     return () => sc.removeEventListener('scroll', sync)
   }, [])
-  useEffect(() => {
-    latest.current = { onDismissed }
+  useLayoutEffect(() => {
+    latest.current = { onDismissed, onLeft: leave?.onLeft }
+    leavingRef.current = leaving
   })
 
   // On the recede stack from mount to unmount: every sheet, whatever it holds (v2 draft §11.1).
@@ -450,17 +489,20 @@ export function BottomSheet({
     return () => layer.removeEventListener('touchmove', onTouchMove)
   }, [])
 
-  // Unmounted mid-motion (the host hid the menu): stop the spring without reporting a close.
+  // Unmounted – once the sheet has landed under a `SheetPresence`, or mid-motion where its
+  // request unmounts it directly: stop the spring without reporting a close, and let the page
+  // back from under the cover.
   useEffect(
     () => () => {
-      hold.current?.cancel()
-      hold.current = null
+      cover.current?.release()
+      cover.current = null
+      presented.current = true
       if (fade.current !== null) window.clearTimeout(fade.current)
       fade.current = null
       const m = motionRef.current
       if (!m) return
       afterDismiss.current = null
-      latest.current = { onDismissed: () => undefined }
+      latest.current = { onDismissed: () => undefined, onLeft: undefined }
       m.close()
     },
     []
@@ -468,15 +510,16 @@ export function BottomSheet({
 
   /**
    * Dismissed while still waiting for the page to be covered: nothing is on screen to slide
-   * away, so the sheet is simply gone. True when that was the case.
+   * away, so the sheet is simply gone (and the cover it took is let go of at once). True when
+   * that was the case.
    */
-  const dropHold = (then?: () => void): boolean => {
-    const h = hold.current
-    if (!h) return false
-    h.cancel()
-    hold.current = null
-    then?.()
-    latest.current.onDismissed()
+  const dropCover = (then?: () => void): boolean => {
+    if (presented.current) return false
+    presented.current = true
+    cover.current?.release()
+    cover.current = null
+    if (then) afterDismiss.current = then
+    landed()
     return true
   }
 
@@ -490,7 +533,7 @@ export function BottomSheet({
   }
 
   const dismiss = (then?: () => void): void => {
-    if (dropHold(then)) return
+    if (dropCover(then)) return
     const m = motion()
     if (!m.isOpen) return
     if (then) afterDismiss.current = then
@@ -507,17 +550,37 @@ export function BottomSheet({
     m.dismiss()
   }
 
+  // The request went while the sheet stands (§11.1: a leave, never a vanish): the sheet runs its
+  // own dismissal from wherever it is and answers `onLeft` when it has landed. A sheet that has
+  // landed already – or never came up – answers at once. A finger holding the sheet keeps it:
+  // the leave resumes when it lets go (`finish`).
+  useEffect(() => {
+    if (!leaving) return
+    paint()
+    if (touch.current) return
+    const m = motionRef.current
+    if (!presented.current) dropCover()
+    else if (!m?.isOpen) landed()
+    else dismiss()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reads the latest refs
+  }, [leaving])
+
+  // The back gesture over a leaving sheet is absorbed: the sheet is on its way already, and a
+  // cancel must not bring back what has no request behind it.
   useImperativeHandle(
     ref,
     () => ({
       dismiss,
       backProgress: (progress) => {
-        if (!touch.current) motion().backProgress(progress)
+        if (!touch.current && !leavingRef.current) motion().backProgress(progress)
       },
       commitBack: () => {
-        if (!dropHold()) motion().backCommit()
+        if (leavingRef.current) return
+        if (!dropCover()) motion().backCommit()
       },
-      cancelBack: () => motion().backCancel()
+      cancelBack: () => {
+        if (!leavingRef.current) motion().backCancel()
+      }
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the handle only reaches through refs
     []
@@ -608,11 +671,16 @@ export function BottomSheet({
     if (t.mode !== 'sheet') {
       if (t.caught) swallowClick.current = true
       syncLock()
+      // A tap that landed on a leaving sheet's scrim held nothing: the leave goes on.
+      if (leavingRef.current) dismiss()
       return
     }
     swallowClick.current = true
     const { vy } = cancelled ? { vy: 0 } : t.tracker.velocity(e.timeStamp)
-    motion().release(vy)
+    // A leaving sheet has no detent to return to: the finger's release sends it the rest of the
+    // way with its velocity, a fling upwards included (the spring turns it round).
+    if (leavingRef.current) motion().dismiss(vy)
+    else motion().release(vy)
     syncLock()
   }
 

@@ -8,6 +8,7 @@ import { NewTabGrowLayer } from './components/newtab/NewTabGrowLayer'
 import { ExternalProtocolLayer } from './components/protocol/ExternalProtocolSheet'
 import { BarEditorLayer } from './components/phone/BarEditorSheet'
 import { SiteInfoLayer } from './components/siteinfo/SiteInfoSheet'
+import { SheetPresence } from './lib/motion/presence'
 import { browserStore, uiStore } from './lib/ui'
 
 /** Waits for the first state snapshot from the main process before rendering the browser UI. */
@@ -29,10 +30,16 @@ export function Root(): JSX.Element {
   )
 }
 
-/** Renderer-hosted context menus (hosts without native popups) float above whichever shell is up. */
+/**
+ * Renderer-hosted context menus (hosts without native popups) float above whichever shell is up.
+ * The menu's leave outlives its request (`SheetPresence`, v2 draft §11.1): the store's `null` –
+ * `menu.hide` from the core, a back delivered as one event, the sheet's own dismissal landing –
+ * runs the sheet down and unmounts it once it has landed; a menu popping while one is up (keyed
+ * by its id) rises above the one on its way out.
+ */
 function MenuLayer(): JSX.Element | null {
   const menu = uiStore.use((s) => s.menu)
-  return menu ? <MenuSheet menu={menu} /> : null
+  return <SheetPresence>{menu ? <MenuSheet key={menu.id} menu={menu} /> : null}</SheetPresence>
 }
 
 interface ErrorBoundaryState {
