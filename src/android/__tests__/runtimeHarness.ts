@@ -44,6 +44,8 @@ export class FakeKotlin implements RuntimeBridge {
   failExec: ((args: Record<string, unknown>) => string | null) | null = null
   /** When set, what `ext.exec` answers (the script's value) for the given arguments. */
   execAnswer: ((args: Record<string, unknown>) => unknown) | null = null
+  /** What the fake platform's classifier answers `ext.i18n.detectLanguage` (Kotlin's shape). */
+  languageAnswer: (text: string) => unknown = () => ({ isReliable: false, languages: [] })
   /** The offscreen documents Kotlin holds right now (`ext.offscreen.*`): extension id → page URL. */
   readonly offscreens = new Map<string, string>()
   /** The cookie jars (`ext.cookies.*`), one per container, see `FakeJar`. */
@@ -137,6 +139,8 @@ export class FakeKotlin implements RuntimeBridge {
         return undefined
       case 'ext.readFile':
         return this.files.get(`${args.id}/${args.path}`) ?? null
+      case 'ext.i18n.detectLanguage':
+        return this.languageAnswer(String(args.text))
       case 'ext.observeRequests':
       case 'ext.popup.open':
       case 'ext.popup.close':

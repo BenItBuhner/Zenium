@@ -92,6 +92,11 @@ export interface ApiHost {
   /** The extension's toolbar icon as a `data:` URL, when the store has read it. */
   icon(id: string): string | null
   readFile(id: string, path: string): Promise<string | null>
+  /**
+   * `i18n.detectLanguage`: the platform's guess at the text's language, in Chrome's shape
+   * (`languages` by share of the text; `isReliable` when the guess is a confident one).
+   */
+  detectTextLanguage(text: string): Promise<DetectedLanguage>
   exec(request: ExecRequest): Promise<unknown>
   /** The cookies a request to `url` from the container's jar would carry (`chrome.cookies`). */
   readCookies(containerId: string, url: string): Promise<JarReading>
@@ -168,6 +173,31 @@ export function languageCodeOf(declared: unknown): string {
   if (typeof declared !== 'string') return 'und'
   const primary = declared.trim().split(/[-_]/)[0] ?? ''
   return /^[a-zA-Z]{2,3}$/.test(primary) ? primary.toLowerCase() : 'und'
+}
+
+/** `i18n.detectLanguage`'s answer, Chrome's shape. */
+export interface DetectedLanguage {
+  isReliable: boolean
+  languages: { language: string; percentage: number }[]
+}
+
+/** The leading part of a text the host's classifier reads (`i18n.detectLanguage`). */
+export const LANGUAGE_SAMPLE_CHARS = 4096
+
+/**
+ * The host's `ext.i18n.detectLanguage` answer as a `DetectedLanguage`: only well-formed entries
+ * count, and a guess with no language is not a reliable one.
+ */
+export function asDetectedLanguage(value: unknown): DetectedLanguage {
+  const record = asRecord(value)
+  const languages: DetectedLanguage['languages'] = []
+  for (const entry of Array.isArray(record.languages) ? record.languages : []) {
+    const item = asRecord(entry)
+    const percentage = asNumber(item.percentage)
+    if (typeof item.language === 'string' && item.language && percentage !== null)
+      languages.push({ language: item.language, percentage })
+  }
+  return { isReliable: record.isReliable === true && languages.length > 0, languages }
 }
 
 export function asRecord(value: unknown): Record<string, unknown> {
@@ -540,6 +570,12 @@ export class ExtensionApi {
         break
       case 'offscreen':
         return this.offscreenCall(ext, method, args)
+      case 'i18n':
+        // getMessage, getUILanguage and getAcceptLanguages are the engine's; the platform's
+        // classifier answers detectLanguage.
+        if (method === 'detectLanguage')
+          return this.host.detectTextLanguage(typeof args[0] === 'string' ? args[0] : '')
+        break
       case 'downloads':
         if (method === 'download') {
           const url = String(asRecord(args[0]).url ?? '')
@@ -729,11 +765,17 @@ export class ExtensionApi {
       case 'createDocument': {
         const params = asRecord(args[0])
         const url = typeof params.url === 'string' ? params.url.trim() : ''
-        if (!url) throw new Error("Error at parameter 'parameters': Error at property 'url': Invalid or missing url.")
+        if (!url)
+          throw new Error(
+            "Error at parameter 'parameters': Error at property 'url': Invalid or missing url."
+          )
         const reasons = Array.isArray(params.reasons) ? params.reasons : []
         if (reasons.length === 0)
-          throw new Error("Error at parameter 'parameters': Error at property 'reasons': Expected at least one reason.")
-        if (this.host.hasOffscreen(id)) throw new Error('Only a single offscreen document may be created.')
+          throw new Error(
+            "Error at parameter 'parameters': Error at property 'reasons': Expected at least one reason."
+          )
+        if (this.host.hasOffscreen(id))
+          throw new Error('Only a single offscreen document may be created.')
         await this.host.openOffscreen(id, offscreenUrl(id, url))
         return undefined
       }
@@ -1544,10 +1586,12 @@ export function offscreenUrl(id: string, url: string): string {
   if (url === origin || url.startsWith(origin + '/')) return url
   const scheme = /^chrome-extension:\/\/([a-p]{32})(\/[^#]*)?/.exec(url)
   if (scheme) {
-    if (scheme[1] !== id) throw new Error(`Invalid URL: "${url}" is not on this extension's origin.`)
+    if (scheme[1] !== id)
+      throw new Error(`Invalid URL: "${url}" is not on this extension's origin.`)
     return extensionUrl(id, scheme[2] ?? '/')
   }
-  if (/^[a-z][a-z0-9+.-]*:/i.test(url)) throw new Error(`Invalid URL: "${url}" is not on this extension's origin.`)
+  if (/^[a-z][a-z0-9+.-]*:/i.test(url))
+    throw new Error(`Invalid URL: "${url}" is not on this extension's origin.`)
   return extensionUrl(id, url)
 }
 

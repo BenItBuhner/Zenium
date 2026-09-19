@@ -323,6 +323,16 @@ class Extensions(private val host: Host) {
                     main.post { reply(text) }
                 }
             }
+            "ext.i18n.detectLanguage" -> {
+                // The classifier is a call into the system's text-classification service; a
+                // failure of that service is a text nobody could place.
+                val text = args.str("text")
+                io.execute {
+                    val detected = runCatching { LanguageDetection.detect(host.activity, text) }
+                        .getOrElse { e -> Log.w(TAG, "detectLanguage: ${e.message}"); LanguageDetection.NONE }
+                    main.post { reply(detected) }
+                }
+            }
             else -> throw IllegalArgumentException("Unknown method: $method")
         }
     }

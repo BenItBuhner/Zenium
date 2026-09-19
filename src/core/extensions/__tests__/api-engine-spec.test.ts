@@ -97,7 +97,11 @@ describe('engineApiSpec', () => {
 
   it('answers the omnibox and side-panel setters quietly', () => {
     // The phone has neither; Raindrop.io, OneTab and Bitwarden call them while starting.
-    for (const key of ['omnibox.setDefaultSuggestion', 'sidePanel.setOptions', 'sidePanel.setPanelBehavior'])
+    for (const key of [
+      'omnibox.setDefaultSuggestion',
+      'sidePanel.setOptions',
+      'sidePanel.setPanelBehavior'
+    ])
       expect(ENGINE_NOOPS.has(key), key).toBe(true)
     // The getters keep rejecting: a quiet nothing would be a lie the caller acts on.
     for (const key of ['sidePanel.getOptions', 'sidePanel.getPanelBehavior', 'sidePanel.open'])

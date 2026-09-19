@@ -52,10 +52,13 @@ import { MessageRouter, type Endpoint } from '@core/extensions/runtime/router'
 import { planUnits, sameUnits, type ExtensionUnits } from '@core/extensions/runtime/units'
 import {
   ExtensionApi,
+  LANGUAGE_SAMPLE_CHARS,
+  asDetectedLanguage,
   asRecord,
   asStringArray,
   type ApiHost,
   type AttachedExtension,
+  type DetectedLanguage,
   type ExecRequest
 } from './extensionApi'
 import type { JarReading } from './extensionCookies'
@@ -102,6 +105,7 @@ import type { ViewEventPayloads } from './views'
  *  ext.offscreen.open { id, url } / close { id }   chrome.offscreen's one hidden page per extension
  *  ext.hosts { id, hosts } (optional host permissions granted at runtime)
  *  ext.send { ep, message }, ext.exec {…}, ext.readFile { id, path }, ext.cookies.read / write
+ *  ext.i18n.detectLanguage { text }         → { isReliable, languages: [{ language, percentage }] } (the platform's classifier)
  *  ext.observeRequests { on }               every engine decision is reported, not just the rules' matches
  *  ext.auth.open { viewId, id, url, title } / show { viewId } / close { viewId }   identity.launchWebAuthFlow's sheet
  *  ext.notifications.show { id, notification } / hide { id, notificationId } / forget { id } / allowed
@@ -897,6 +901,15 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
   readFile(id: string, path: string): Promise<string | null> {
     if (!path) return Promise.resolve(null)
     return this.bridge.call<string | null>('ext.readFile', { id, path })
+  }
+
+  async detectTextLanguage(text: string): Promise<DetectedLanguage> {
+    // A blank text is nobody's language; the host's classifier reads the leading part of a long one.
+    const sample = text.trim().slice(0, LANGUAGE_SAMPLE_CHARS)
+    if (!sample) return { isReliable: false, languages: [] }
+    return asDetectedLanguage(
+      await this.bridge.call<unknown>('ext.i18n.detectLanguage', { text: sample })
+    )
   }
 
   exec(request: ExecRequest): Promise<unknown> {

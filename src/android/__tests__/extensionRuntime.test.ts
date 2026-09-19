@@ -1135,6 +1135,64 @@ describe('AndroidExtensionRuntime: tabs.detectLanguage', () => {
   })
 })
 
+describe('AndroidExtensionRuntime: i18n.detectLanguage', () => {
+  it("answers the platform classifier's guess in Chrome's shape, from a content script too", async () => {
+    const h = harness()
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1')
+    hello(h, 'c1', 'content')
+    const asked: string[] = []
+    h.kt.languageAnswer = (text) => {
+      asked.push(text)
+      return {
+        isReliable: true,
+        languages: [
+          { language: 'de', percentage: 93 },
+          { language: 'en', percentage: 4 }
+        ]
+      }
+    }
+    const guess = await call(h, 'c1', 'i18n', 'detectLanguage', ['  Guten Tag, wie geht es dir?  '])
+    expect(guess.result).toEqual({
+      isReliable: true,
+      languages: [
+        { language: 'de', percentage: 93 },
+        { language: 'en', percentage: 4 }
+      ]
+    })
+    // The text travels trimmed; a long one only by its leading part.
+    expect(asked).toEqual(['Guten Tag, wie geht es dir?'])
+    await call(h, 'bg1', 'i18n', 'detectLanguage', ['x'.repeat(10_000)])
+    expect(asked[1]).toHaveLength(4096)
+  })
+
+  it('places no language for a blank text without asking, and never calls an empty guess reliable', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1')
+    let asked = 0
+    h.kt.languageAnswer = () => {
+      asked++
+      return { isReliable: true, languages: [{ language: '', percentage: 100 }, 'junk'] }
+    }
+    expect((await call(h, 'bg1', 'i18n', 'detectLanguage', ['   \n '])).result).toEqual({
+      isReliable: false,
+      languages: []
+    })
+    expect((await call(h, 'bg1', 'i18n', 'detectLanguage', [42])).result).toEqual({
+      isReliable: false,
+      languages: []
+    })
+    expect(asked).toBe(0)
+    // A malformed answer from the host is an unplaced text, not an error.
+    expect((await call(h, 'bg1', 'i18n', 'detectLanguage', ['?!'])).result).toEqual({
+      isReliable: false,
+      languages: []
+    })
+    expect(asked).toBe(1)
+  })
+})
+
 describe('AndroidExtensionRuntime: native messaging', () => {
   it('sendNativeMessage fails as Chrome does for a host that does not exist', async () => {
     const h = harness()
