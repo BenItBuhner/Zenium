@@ -50,6 +50,7 @@
   "splitGroups": [],
   "settings": {
     "onboardingDone": true,
+    "gestureHintDone": true,
     "colorScheme": "light",
     "updates": {
       "autoCheck": false,
