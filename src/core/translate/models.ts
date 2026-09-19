@@ -72,15 +72,19 @@ export class ModelManager {
     return sum
   }
 
-  /** Every pair the registry offers, flagged with whether it is on the device. */
+  /** Every pair the registry offers, flagged with whether it is on the device or arriving. */
   info(): TranslateModelInfo[] {
-    return this.registry.all().map((record) => ({
-      from: record.from,
-      to: record.to,
-      version: record.version,
-      bytes: record.bytes,
-      installed: this.isInstalled(record)
-    }))
+    return this.registry.all().map((record) => {
+      const installed = this.isInstalled(record)
+      return {
+        from: record.from,
+        to: record.to,
+        version: record.version,
+        bytes: record.bytes,
+        installed,
+        downloading: !installed && this.downloads.has(pairKey(record))
+      }
+    })
   }
 
   /** Total bytes the models of `route` that are not installed yet would download. */
@@ -95,24 +99,34 @@ export class ModelManager {
 
   /**
    * Make sure the model for `pair` is on the device, downloading what is missing. Progress counts
-   * bytes across the record's files; a failure removes the partial results.
+   * bytes across the record's files; a failure removes the partial results. The pair counts as
+   * downloading (`info()`) from this call until its files are there or the fetch failed, so a
+   * settings list drawn from the same tick shows it arriving.
    */
   async ensure(
     pair: LanguagePair,
     onProgress?: DownloadProgress,
     signal?: AbortSignal
   ): Promise<void> {
+    const key = pairKey(pair)
+    let running = this.downloads.get(key)
+    if (!running) {
+      running = this.fetch(pair, onProgress, signal).finally(() => this.downloads.delete(key))
+      this.downloads.set(key, running)
+    }
+    await running
+  }
+
+  private async fetch(
+    pair: LanguagePair,
+    onProgress: DownloadProgress | undefined,
+    signal: AbortSignal | undefined
+  ): Promise<void> {
     await this.ensureListed()
     const record = this.registry.find(pair)
     if (!record) throw new Error(`no translation model for ${pair.from} to ${pair.to}`)
     if (this.isInstalled(record)) return
-    const key = pairKey(pair)
-    let running = this.downloads.get(key)
-    if (!running) {
-      running = this.download(record, onProgress, signal).finally(() => this.downloads.delete(key))
-      this.downloads.set(key, running)
-    }
-    await running
+    await this.download(record, onProgress, signal)
   }
 
   private async download(

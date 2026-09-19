@@ -13,6 +13,7 @@ import { ExtensionPromptDialog } from './extensions/ExtensionPromptDialog'
 import { PermissionPrompts } from './security/PermissionPromptDialog'
 import { PageDialogs } from './dialogs/PageDialog'
 import { WindowPromptDialog } from './dialogs/WindowPromptDialog'
+import { BlockedPopupsPanel } from './security/BlockedPopupsPanel'
 import { SecurityPrompts } from './security/SecurityPromptDialog'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
@@ -53,9 +54,10 @@ const TAB_ICONS = [
  * centre in the box it is placed in – the content frame on desktop, the shell on phones – over
  * a scrim that dims only that box (lib/portals.tsx). The star bubble is a popover: on desktop
  * it portals to the chrome layer, anchored under the star; on phones it is a sheet in the host.
- * The zoom bubble is a desktop popover too, under the pill's zoom chip. This is the frame's
- * host: a dialog whose state lives inside the frame (a phone panel's sheets, the new tab page's
- * customise sheet) reaches it through `FrameDialogPortal`.
+ * The zoom bubble is a desktop popover too, under the pill's zoom chip, and so is the blocked
+ * pop-ups list under its chip (a sheet on phones). This is the frame's host: a dialog whose
+ * state lives inside the frame (a phone panel's sheets, the new tab page's customise sheet)
+ * reaches it through `FrameDialogPortal`.
  */
 export function TabDialogs({ state }: { state: UIState }): JSX.Element {
   const pinnedTabId = uiStore.use((s) => s.editingPinnedUrlTabId)
@@ -68,6 +70,7 @@ export function TabDialogs({ state }: { state: UIState }): JSX.Element {
   const siteData = uiStore.use((s) => s.siteDataConfirm)
   const managerOpen = uiStore.use((s) => s.overlay === 'bookmarks')
   const phone = useViewport().formFactor === 'phone'
+  const popups = uiStore.use((s) => s.blockedPopupsPanel)
   const pinnedTab = pinnedTabId ? state.tabs[pinnedTabId] : undefined
   const iconTab = iconTabId ? state.tabs[iconTabId] : undefined
   return (
@@ -92,6 +95,7 @@ export function TabDialogs({ state }: { state: UIState }): JSX.Element {
           request={siteData}
         />
       )}
+      {popups && <BlockedPopupsPanel state={state} panel={popups} />}
       <SecurityPrompts state={state} />
       <PermissionPrompts state={state} />
       <PageDialogs state={state} />

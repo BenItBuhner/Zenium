@@ -1,5 +1,6 @@
 @import 'tailwindcss';
 @import './extensions.css';
+@import './translate.css';
 /* The chrome is built from two roots (Electron renderer, Android WebView); always scan the UI. */
 @source '../';
 
@@ -483,15 +484,21 @@
   cursor: pointer;
 }
 /*
- * The certificate interstitial (the page's ERR_CERT_* variant): the row of Back to safety and
- * Advanced, and the Advanced block – a card holding the explanation, the certificate's fields and
+ * The certificate interstitial (the page's ERR_CERT_* variant): the row of Advanced and Back to
+ * safety – a page's action row (§9.11): on desktop the buttons hug and right-align in the content
+ * column with the primary last; on the phone the two peers split the column at 8 with the primary
+ * trailing – and the Advanced block, a card holding the explanation, the certificate's fields and
  * the proceed control, which is text rather than a button so it is read before it is pressed.
  */
 .zen-error-actions {
   display: flex;
   flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 8px;
   margin: 0 0 16px;
+}
+:root[data-form-factor='phone'] .zen-error-actions > * {
+  flex: 1;
 }
 .zen-error-advanced {
   padding: var(--v2-card-padding);
@@ -5017,6 +5024,132 @@
 }
 .zen-v2-check-row .zen-v2-checkbox:disabled {
   opacity: 1;
+}
+
+/*
+ * The shared menulist (§9.34, §6, §9.13; #106 owns the rule, the look the one its review
+ * measured): the rectangular trigger, 32 tall on a mouse and 40 on a phone, the secondary
+ * button's fill (the text at 10%) and weight (500, §6) inside the hairline, the picked option as
+ * its text and a 16 chevron at its end – a button, since its popup is the renderer's (a §9.20
+ * popover under the trigger on a mouse, a §9.13 sheet on a phone), never the native `<select>`'s.
+ * A trigger with nothing picked shows its placeholder in the deemphasised ink
+ * (`data-placeholder`); while its popup is up it keeps the hover fill, as any popover's anchor
+ * does (§9.20); disabled is the one number on the whole control (§9.30).
+ */
+.zen-v2-menulist {
+  display: inline-flex;
+  width: 100%;
+  min-width: 0;
+  height: var(--v2-control);
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px 0 12px;
+  border: 1px solid var(--v2-border);
+  border-radius: var(--v2-radius-control);
+  background: var(--v2-fill);
+  color: var(--v2-text);
+  text-align: left;
+  font-size: var(--v2-font-body);
+  font-weight: var(--v2-weight-button);
+  line-height: var(--v2-line-body);
+  transition: background 120ms var(--zen-ease);
+}
+.zen-v2-menulist[data-placeholder] {
+  color: var(--v2-text-deemphasized);
+}
+.zen-v2-menulist > svg {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  flex-shrink: 0;
+  margin-left: auto;
+  stroke-width: var(--v2-icon-stroke);
+}
+.zen-v2-menulist[aria-expanded='true'] {
+  background: var(--v2-fill-hover);
+}
+@media (hover: hover) {
+  .zen-v2-menulist:hover:not(:disabled) {
+    background: var(--v2-fill-hover);
+  }
+}
+.zen-v2-menulist:active:not(:disabled) {
+  background: var(--v2-fill-hover);
+}
+.zen-v2-menulist:disabled {
+  opacity: 0.4;
+}
+/*
+ * Its popover on a mouse (§9.13, §9.20): a `--v2-panel` at radius 12 with 6 padding, the panel
+ * shadow and the hairline, 28 rows at radius 6 with a trailing 16 check on the current option.
+ * A menulist's list is one of the native-like menus §9.20 exempts from the fixed widths: it
+ * sizes to its longest row within §5's 232–332 and no less than its trigger (`--zen-anchor-width`,
+ * the trigger's width set inline by the renderer), and the chrome layer's placement caps its
+ * height. An option's description (a model's size) is a second line under the label, clamped to
+ * one line (§9.13: the anchor's space is borrowed), the row growing to 48 around the two. The
+ * keyboard walks the options as focus, so the focused option carries the hover fill.
+ */
+.zen-v2-menulist-popup {
+  display: flex;
+  min-width: max(232px, var(--zen-anchor-width, 0px));
+  max-width: 332px;
+  flex-direction: column;
+  padding: 6px;
+  overflow-y: auto;
+  border: 1px solid var(--v2-border);
+  border-radius: var(--v2-radius-sheet);
+  background: var(--v2-panel);
+  box-shadow: var(--v2-shadow-panel);
+  color: var(--v2-text);
+  font-size: var(--v2-font-body);
+  font-weight: var(--v2-weight-body);
+  line-height: var(--v2-line-body);
+  outline: none;
+  scrollbar-width: thin;
+}
+.zen-v2-menulist-option {
+  display: flex;
+  width: 100%;
+  min-height: 28px;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: var(--v2-radius-inner);
+  color: inherit;
+  text-align: left;
+  white-space: nowrap;
+  transition: background 120ms var(--zen-ease);
+}
+.zen-v2-menulist-option:focus-visible,
+.zen-v2-menulist-option:active {
+  background: var(--v2-fill);
+  outline: none;
+}
+@media (hover: hover) {
+  .zen-v2-menulist-option:hover {
+    background: var(--v2-fill);
+  }
+}
+.zen-v2-menulist-option > svg {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  flex-shrink: 0;
+  margin-left: auto;
+  stroke-width: var(--v2-icon-stroke);
+}
+.zen-v2-menulist-option-text {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+}
+.zen-v2-menulist-option-description {
+  overflow: hidden;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  font-weight: var(--v2-weight-body);
+  line-height: var(--v2-line-small);
+  text-overflow: ellipsis;
 }
 
 /* The page: the landing stays mounted beneath a drill-in, which slides over it (§10.2). */

@@ -794,6 +794,7 @@ export type MenuSource =
   | 'history'
   | 'download'
   | 'urlbar'
+  | 'translate'
 
 export interface MenuPopupOptions {
   source: MenuSource

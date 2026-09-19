@@ -86,13 +86,26 @@ function state(t: Tab | null, bookmarks: BookmarkNode[] = []): UIState {
     downloads: [],
     downloadsProgress: { received: 0, total: 0, indeterminate: false, active: 0 },
     // Tooltips quote the chord from the active key table (the default Chrome set here).
-    shortcuts: defaultShortcuts('linux', 'chrome')
+    shortcuts: defaultShortcuts('linux', 'chrome'),
+    blockedPopups: {},
+    // The host runs the translation engine (every desktop build); no tab has left idle.
+    translate: { available: true, tabs: {} }
   } as unknown as UIState
 }
 
 /** A bookmark of `url` on the bookmarks bar. */
 function bookmarkOf(url: string): BookmarkNode {
   return { id: 'b1', parentId: '1', index: 0, type: 'url', title: 'Example', url, dateAdded: 0 }
+}
+
+/** The state with `n` pop-ups refused for the tab: the blocked pop-ups chip shows. */
+function withBlocked(t: Tab, n: number): UIState {
+  const refused = Array.from({ length: n }, (_, i) => ({
+    url: `https://ads.example/${i}`,
+    at: i,
+    kind: 'popup' as const
+  }))
+  return { ...state(t), blockedPopups: { [t.id]: refused } }
 }
 
 let root: Root | null = null
@@ -146,7 +159,7 @@ function expectChip(el: HTMLElement, label: string): void {
 }
 
 beforeEach(() => {
-  uiStore.set({ siteInfoOpen: false, overlay: 'none', starDialog: null })
+  uiStore.set({ siteInfoOpen: false, overlay: 'none', starDialog: null, blockedPopupsPanel: null })
   uiStore.set((s) => ({ urlbar: { ...s.urlbar, open: false } }))
   siteInfoStore.set({ tabId: null, anchor: null })
   invoke.mockClear()
@@ -176,6 +189,7 @@ describe('desktop pill (NavRow)', () => {
     expect(labels(order.slice(1))).toEqual([
       'Site information',
       'Reader View',
+      'Translate this page',
       'Boost this site',
       'Copy URL',
       'Bookmark this tab'
@@ -200,6 +214,8 @@ describe('desktop pill (NavRow)', () => {
     // Actions and toggles open nothing.
     expect(chip('Copy URL').hasAttribute('aria-haspopup')).toBe(false)
     expect(chip('Copy URL').hasAttribute('aria-expanded')).toBe(false)
+    expect(chip('Translate this page').hasAttribute('aria-haspopup')).toBe(false)
+    expect(chip('Translate this page').hasAttribute('aria-pressed')).toBe(false)
     expect(chip('Reader View').hasAttribute('aria-haspopup')).toBe(false)
     expect(chip('Reader View').getAttribute('aria-pressed')).toBe('false')
 
@@ -260,6 +276,41 @@ describe('desktop pill (NavRow)', () => {
     expect(uiStore.get().starDialog).toBeNull()
     expect(document.activeElement).toBe(star)
     expect(commands()).not.toContain('focus.content')
+  })
+
+  it('adds the blocked pop-ups chip after Reader View, a button that opens the list', async () => {
+    const el = render(<NavRow state={withBlocked(page, 2)} tab={page} compact={false} />)
+    const pill = el.querySelector<HTMLElement>('[role="group"]')!
+    expect(labels(focusable(pill).slice(1))).toEqual([
+      'Site information',
+      'Reader View',
+      '2 pop-ups blocked',
+      'Translate this page',
+      'Boost this site',
+      'Copy URL',
+      'Bookmark this tab'
+    ])
+    const chip = el.querySelector<HTMLElement>('[aria-label="2 pop-ups blocked"]')!
+    expectChip(chip, '2 pop-ups blocked')
+    expect(chip.getAttribute('aria-haspopup')).toBe('dialog')
+    expect(chip.getAttribute('aria-expanded')).toBe('false')
+    // The count pill shows from two on; one refusal is the glyph alone.
+    expect(chip.textContent).toBe('2')
+    act(() => root!.render(<NavRow state={withBlocked(page, 1)} tab={page} compact={false} />))
+    const one = el.querySelector<HTMLElement>('[aria-label="Pop-up blocked"]')!
+    expectChip(one, 'Pop-up blocked')
+    expect(one.textContent).toBe('')
+
+    // Its click opens the list for the tab, not the URL bar; the chip reads expanded meanwhile.
+    await act(async () => {
+      one.click()
+      await vi.waitFor(() => expect(uiStore.get().blockedPopupsPanel).not.toBeNull())
+    })
+    expect(uiStore.get().blockedPopupsPanel?.tabId).toBe('t1')
+    expect(uiStore.get().urlbar.open).toBe(false)
+    expect(one.getAttribute('aria-expanded')).toBe('true')
+    act(() => uiStore.set({ blockedPopupsPanel: null }))
+    expect(one.getAttribute('aria-expanded')).toBe('false')
   })
 
   it('marks Reader View pressed while the tab is in it', () => {
@@ -344,13 +395,13 @@ describe('desktop pill (NavRow)', () => {
     const pill = el.querySelector<HTMLElement>('[role="group"]')!
     // Every chip carries the marker and sits in the chips' focus scope; the address does neither.
     const field = focusable(pill)[0]
-    expect(el.querySelectorAll('[data-pill-chip]').length).toBe(5)
+    expect(el.querySelectorAll('[data-pill-chip]').length).toBe(6)
     expect(field.hasAttribute('data-pill-chip')).toBe(false)
     const scope = pill.querySelector<HTMLElement>('.group\\/chips')!
     expect(scope.className).toContain('contents')
     expect(scope.contains(field)).toBe(false)
-    expect(scope.querySelectorAll('[data-pill-chip]').length).toBe(5)
-    for (const label of ['Boost this site', 'Copy URL']) {
+    expect(scope.querySelectorAll('[data-pill-chip]').length).toBe(6)
+    for (const label of ['Translate this page', 'Boost this site', 'Copy URL']) {
       const chip = el.querySelector<HTMLElement>(`[aria-label="${label}"]`)!
       expect(chip.className).toContain('hidden')
       expect(chip.className).toContain('group-hover/pill:flex')

@@ -1,5 +1,6 @@
 import type {
   BlockedPopup,
+  HttpAuthPrompt,
   PermissionPrompt,
   PermissionPromptAnswer,
   PermissionRule,
@@ -9,6 +10,7 @@ import type {
 } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { activeTab } from '@renderer/lib/selectors'
+import { dismissSiteInfo } from '@renderer/lib/siteInfo'
 import { captureActiveTab, invalidateSnapshot, returnFocusToPage, uiStore } from '@renderer/lib/ui'
 
 /** How long a security dialog waits for the page's picture before it shows over a blank one. */
@@ -32,10 +34,13 @@ const RULE_LABELS: Record<string, string> = {
   'storage-access': 'use its cookies while embedded'
 }
 
-/** One sentence for a stored rule: "may open links in Zoom", "may not use the camera". */
+/**
+ * One line for a stored rule, in sentence case for the description slot under the site's name:
+ * "May hand zoommtg: links to another app", "May not use the camera".
+ */
 export function describePermissionRule(rule: PermissionRule): string {
   const [permission, qualifier] = splitQualifier(rule.permission)
-  const verb = rule.decision === 'allow' ? 'may' : 'may not'
+  const verb = rule.decision === 'allow' ? 'May' : 'May not'
   if (permission === 'openExternal') {
     return qualifier
       ? `${verb} hand ${qualifier}: links to another app`
@@ -87,20 +92,59 @@ export function blockedPopupsOf(state: UIState, tabId: string | null | undefined
 }
 
 /**
+ * Show the list for a tab; `anchor` is where the address pill's indicator is (window px). Hosts
+ * hide page views under chrome overlays, so the page is captured first and its snapshot stands in
+ * behind the panel. One popover at a time (§9.20): the site information, if up, goes first.
+ */
+export async function openBlockedPopups(tabId: string, anchor: DOMRect | null): Promise<void> {
+  dismissSiteInfo()
+  await captureActiveTab(tabId)
+  run('focus.chrome', undefined)
+  uiStore.set({
+    blockedPopupsPanel: {
+      tabId,
+      anchor: anchor
+        ? { x: anchor.x, y: anchor.y, width: anchor.width, height: anchor.height }
+        : null
+    }
+  })
+}
+
+/**
+ * The panel has left the screen: show the live page again. The page gets the keyboard back
+ * unless the chrome keeps it (`focusPage` false: Escape returned focus to the indicator, §9.22).
+ */
+export function closeBlockedPopups(focusPage = true): void {
+  if (uiStore.get().blockedPopupsPanel) uiStore.set({ blockedPopupsPanel: null })
+  invalidateSnapshot()
+  if (focusPage) returnFocusToPage()
+}
+
+/**
+ * Which open of the security dialog is current: an open that finishes after a close (or after a
+ * newer open) must not bring the page back under a dialog that is up, or hide it under none.
+ */
+let securityPromptGeneration = 0
+
+/**
  * A security dialog is about to show over `tabId` (null for a proxy challenge with no page). The
  * page is waiting on the answer and may not have painted yet, so the dialog does not wait long
- * for its picture: the host hides the page either way.
+ * for its picture: the host hides the page either way. Resolves once the page is hidden, or at
+ * once when a close or a newer open overtook this one.
  */
 export async function openSecurityPrompt(tabId: string | null): Promise<void> {
+  const generation = ++securityPromptGeneration
   await Promise.race([
     captureActiveTab(tabId),
     new Promise<void>((resolve) => setTimeout(resolve, SNAPSHOT_WAIT_MS))
   ])
+  if (generation !== securityPromptGeneration) return
   run('focus.chrome', undefined)
   uiStore.set({ securityPromptOpen: true })
 }
 
 export function closeSecurityPrompt(): void {
+  securityPromptGeneration++
   if (uiStore.get().securityPromptOpen) uiStore.set({ securityPromptOpen: false })
   invalidateSnapshot()
   returnFocusToPage()
@@ -110,6 +154,26 @@ export function closeSecurityPrompt(): void {
 export function currentSecurityPrompt(state: UIState): SecurityPrompt | null {
   const tabId = activeTab(state)?.id ?? null
   return state.securityPrompts.find((p) => p.tabId === null || p.tabId === tabId) ?? null
+}
+
+/**
+ * How long an answered sign-in form stays up, busy (§9.30), for the server to refuse the
+ * credentials: a refusal challenges the same protection space again within a round trip, and
+ * comes back as a new prompt with `failedBefore`; hearing nothing for this long means they were
+ * accepted, and the form closes. A page that finishes loading behind the form ends the wait
+ * early. A refusal that arrives later still shows – as a fresh dialog with the validation line.
+ */
+export const SIGN_IN_WAIT_MS = 1500
+
+/**
+ * The protection space an HTTP challenge belongs to (RFC 7235: the origin and the realm, a proxy's
+ * apart from a server's), per tab: two prompts with the same space are one question asked twice
+ * – the second is the answer to the first coming back refused – so the dialog stays the same
+ * dialog across them.
+ */
+export function httpAuthSpace(prompt: HttpAuthPrompt): string {
+  const proxy = prompt.isProxy ? 'proxy' : 'server'
+  return `${prompt.tabId ?? ''}|${proxy}|${prompt.host}|${prompt.port}|${prompt.realm}`
 }
 
 /**

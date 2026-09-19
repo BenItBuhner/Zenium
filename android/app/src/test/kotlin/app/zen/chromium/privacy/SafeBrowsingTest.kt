@@ -243,6 +243,19 @@ class SafeBrowsingTest {
         return lines
     }
 
+    /**
+     * Wait for the loader thread's `tables:` line, the last thing a load of the documents does
+     * (after it published the tables, counted the parses and wrote the snapshot), and return it.
+     */
+    private fun awaitTablesLine(lines: List<String>): String {
+        val deadline = System.currentTimeMillis() + 20_000
+        while (System.currentTimeMillis() < deadline) {
+            synchronized(lines) { lines.firstOrNull { it.startsWith("tables: ") } }?.let { return it }
+            Thread.sleep(20)
+        }
+        throw AssertionError("no load of the documents in 20 s; said: $lines")
+    }
+
     private val snapshotFile: File get() = storage.fileFor(SafeBrowsing.SNAPSHOT)!!
 
     /** Rewrite a document so its version tag differs for sure (a size other than before; the time may be the same millisecond). */
@@ -505,16 +518,16 @@ class SafeBrowsingTest {
             assertTrue(lines.any { it.startsWith("first navigation: $expected prefixes from 2 feeds after a wait of") && it.contains(" ms after start (loaded)") })
             assertTrue(safeBrowsing.snapshotLoadMs >= 0)
             assertNull(safeBrowsing.snapshotRejected)
-            // The documents' load follows on the same thread and finds the snapshot is theirs. The
-            // loader's last act is the "tables:" line, after the outcome is set: wait for the line
-            // (a wait on the outcome alone let the assertions below run before it was logged).
-            val deadline = System.currentTimeMillis() + 20_000
-            while (lines.none { it.startsWith("tables: ") } && System.currentTimeMillis() < deadline) Thread.sleep(20)
+            // The documents' load follows on the same thread, seeded from the snapshot: it parses
+            // nothing and finds the snapshot is theirs.
+            val tablesLine = awaitTablesLine(lines)
             assertEquals(SafeBrowsing.SnapshotOutcome.UNCHANGED, safeBrowsing.lastSnapshot)
             assertEquals(expected, safeBrowsing.tables.entries)
-            assertTrue(lines.any { it.startsWith("snapshot: $expected prefixes from 2 feeds in") })
-            assertTrue(lines.any { it.startsWith("tables: $expected prefixes from 2 feeds in") && it.endsWith("snapshot unchanged") })
-            println("start: snapshot of $expected prefixes published in ${safeBrowsing.snapshotLoadMs} ms, the documents parsed in ${safeBrowsing.lastLoadMs} ms")
+            assertEquals(2, safeBrowsing.snapshotSeeded)
+            assertEquals(0, safeBrowsing.lastParsed)
+            assertTrue(lines.any { it.startsWith("snapshot: $expected prefixes from 2 feeds in") && it.endsWith("; 2 documents seeded, none to parse") })
+            assertTrue(tablesLine, tablesLine.startsWith("tables: $expected prefixes from 2 feeds in") && tablesLine.endsWith(" (0 parsed); snapshot unchanged"))
+            println("start: snapshot of $expected prefixes published in ${safeBrowsing.snapshotLoadMs} ms; the documents' load parsed ${safeBrowsing.lastParsed} of 2 in ${safeBrowsing.lastLoadMs} ms (the writer parsed 2 in ${writer.lastLoadMs} ms)")
         } finally {
             safeBrowsing.stop()
         }
@@ -530,6 +543,8 @@ class SafeBrowsingTest {
             assertEquals(SafeBrowsing.SnapshotOutcome.WRITTEN, cold.lastSnapshot)
             assertEquals(-1L, cold.snapshotLoadMs)
             assertNull(cold.snapshotRejected)
+            assertEquals(0, cold.snapshotSeeded)
+            assertEquals(2, cold.lastParsed)
             assertTrue(snapshotFile.isFile)
         } finally {
             cold.stop()
@@ -608,9 +623,169 @@ class SafeBrowsingTest {
         assertTrue(again.loadSnapshot())
         assertEquals("urlhaus", again.tables.lookup("fresh1.example")!!.feedId)
         assertNull(again.tables.lookup("listed.example"))
-        // The instance that loaded the snapshot parses the documents once (its own cache is empty) and leaves it alone.
+        // The instance that loaded the snapshot has its cache seeded from it: its load parses nothing and leaves it alone.
         again.reload()
-        assertEquals(2, again.lastParsed)
+        assertEquals(0, again.lastParsed)
         assertEquals(SafeBrowsing.SnapshotOutcome.UNCHANGED, again.lastSnapshot)
+    }
+
+    // --- the snapshot seeds the incremental load --------------------------------------------------
+
+    @Test
+    fun `a reload after a verified snapshot parses nothing and publishes the same tables`() {
+        storage.writeSync("safebrowsing/phishing-database.json", bigDocument("phishing-database", "phishing", 60_000, 5))
+        storage.writeSync("safebrowsing/urlhaus.json", document("urlhaus", "malware", listOf("listed.example", "1.2.3.4")))
+        storage.writeSync("safebrowsing/ransom.json", document("ransom", "ransom", listOf("ransom.example")))
+        // Present but not feeds: named in the header with no table, so the load skips them too.
+        storage.writeSync("safebrowsing/broken.json", "not json")
+        storage.writeSync("safebrowsing/renamed.json", document("urlhaus", "malware", listOf("stray.example")))
+        val documents = 5
+
+        // Before: a process without a snapshot parses every document (what the load after a
+        // snapshot did too, until it was seeded).
+        val cold = SafeBrowsing(storage)
+        cold.reload()
+        assertEquals(documents, cold.lastParsed)
+        assertEquals(SafeBrowsing.SnapshotOutcome.WRITTEN, cold.lastSnapshot)
+        val coldMs = cold.lastLoadMs
+
+        // After: the snapshot passes, seeds the load with every document it names, and the load
+        // that follows parses none of them; the tables are the very ones the snapshot published.
+        val seeded = SafeBrowsing(storage)
+        assertTrue(seeded.loadSnapshot())
+        assertEquals(documents, seeded.snapshotSeeded)
+        val published = seeded.tables
+        seeded.reload()
+        assertEquals(0, seeded.lastParsed)
+        assertEquals(SafeBrowsing.SnapshotOutcome.UNCHANGED, seeded.lastSnapshot)
+        println("seed: a load after a snapshot parsed $documents documents (${coldMs} ms) before; seeded, it parsed ${seeded.lastParsed} (${seeded.lastLoadMs} ms)")
+        assertEquals(published.feeds.size, seeded.tables.feeds.size)
+        for ((before, after) in published.feeds.zip(seeded.tables.feeds)) assertSame(before, after)
+        assertEquals(listOf("phishing-database", "ransom", "urlhaus"), seeded.tables.feeds.map { it.id })
+        assertEquals(cold.tables.entries, seeded.tables.entries)
+        for ((a, b) in cold.tables.feeds.zip(seeded.tables.feeds)) {
+            assertEquals(a.id, b.id)
+            assertEquals(a.threat, b.threat)
+            assertEquals(a.table.toBase64(), b.table.toBase64())
+        }
+        for (host in listOf("cdn.listed.example", "1.2.3.4", "ransom.example", "stray.example", "news.example")) {
+            assertEquals(host, cold.tables.lookup(host)?.feedId, seeded.tables.lookup(host)?.feedId)
+            assertEquals(host, cold.tables.lookup(host)?.threat, seeded.tables.lookup(host)?.threat)
+        }
+        // And so on for every load with nothing changed.
+        seeded.reload()
+        assertEquals(0, seeded.lastParsed)
+        assertSame(published.feeds[0], seeded.tables.feeds[0])
+
+        // The same on the real path: start() loads the snapshot, then the documents, and says so.
+        val started = SafeBrowsing(storage)
+        val startedLines = collecting(started)
+        started.start()
+        try {
+            val tablesLine = awaitTablesLine(startedLines)
+            assertEquals(SafeBrowsing.SnapshotOutcome.UNCHANGED, started.lastSnapshot)
+            assertEquals(0, started.lastParsed)
+            assertEquals(documents, started.snapshotSeeded)
+            assertEquals(cold.tables.entries, started.tables.entries)
+            assertTrue(startedLines.any { it.startsWith("snapshot: ${cold.tables.entries} prefixes from 3 feeds in") && it.endsWith("; $documents documents seeded, none to parse") })
+            assertTrue(tablesLine, tablesLine.startsWith("tables: ${cold.tables.entries} prefixes from 3 feeds in") && tablesLine.endsWith(" (0 parsed); snapshot unchanged"))
+        } finally {
+            started.stop()
+        }
+    }
+
+    @Test
+    fun `a document that changed after the snapshot seeded the load is parsed as any other`() {
+        storage.writeSync("safebrowsing/phishing-database.json", document("phishing-database", "phishing", listOf("evil.example.com")))
+        storage.writeSync("safebrowsing/urlhaus.json", document("urlhaus", "malware", listOf("listed.example")))
+        storage.writeSync("safebrowsing/broken.json", "not json")
+        SafeBrowsing(storage).reload()
+
+        val safeBrowsing = SafeBrowsing(storage)
+        assertTrue(safeBrowsing.loadSnapshot())
+        assertEquals(3, safeBrowsing.snapshotSeeded)
+        val phishing = safeBrowsing.tables.feeds.first { it.id == "phishing-database" }
+
+        // One feed refreshed between the snapshot's load and the documents': that one is parsed,
+        // the others are kept as seeded, and the snapshot is written again for the new tag.
+        rewrite("safebrowsing/urlhaus.json", document("urlhaus", "malware", listOf("fresh.example", "another.example")))
+        safeBrowsing.reload()
+        assertEquals(1, safeBrowsing.lastParsed)
+        assertSame(phishing, safeBrowsing.tables.feeds.first { it.id == "phishing-database" })
+        assertEquals("urlhaus", safeBrowsing.tables.lookup("another.example")!!.feedId)
+        assertNull(safeBrowsing.tables.lookup("listed.example"))
+        assertEquals(SafeBrowsing.SnapshotOutcome.WRITTEN, safeBrowsing.lastSnapshot)
+
+        // A document that was not a feed, rewritten as one: parsed, and a feed now.
+        rewrite("safebrowsing/broken.json", document("broken", "unwanted", listOf("unwanted.example")))
+        safeBrowsing.reload()
+        assertEquals(1, safeBrowsing.lastParsed)
+        assertEquals("unwanted", safeBrowsing.tables.lookup("unwanted.example")!!.threat)
+        assertSame(phishing, safeBrowsing.tables.feeds.first { it.id == "phishing-database" })
+
+        // A document added, one removed: the added one is parsed, the removed one drops out, the
+        // seeded one is still kept.
+        storage.writeSync("safebrowsing/added.json", document("added", "malware", listOf("added.example")))
+        File(dir, "safebrowsing/urlhaus.json").delete()
+        safeBrowsing.reload()
+        assertEquals(1, safeBrowsing.lastParsed)
+        assertEquals(listOf("added", "broken", "phishing-database"), safeBrowsing.tables.feeds.map { it.id })
+        assertSame(phishing, safeBrowsing.tables.feeds.first { it.id == "phishing-database" })
+        assertNull(safeBrowsing.tables.lookup("another.example"))
+        // Then nothing changes: nothing is parsed.
+        safeBrowsing.reload()
+        assertEquals(0, safeBrowsing.lastParsed)
+        assertEquals(SafeBrowsing.SnapshotOutcome.UNCHANGED, safeBrowsing.lastSnapshot)
+
+        // The next process loads the snapshot of these documents and, again, parses nothing.
+        val next = SafeBrowsing(Storage(dir))
+        assertTrue(next.loadSnapshot())
+        assertEquals(3, next.snapshotSeeded)
+        next.reload()
+        assertEquals(0, next.lastParsed)
+        assertEquals(listOf("added", "broken", "phishing-database"), next.tables.feeds.map { it.id })
+    }
+
+    @Test
+    fun `a snapshot that was rejected seeds nothing, and the load parses every document`() {
+        storage.writeSync("safebrowsing/phishing-database.json", document("phishing-database", "phishing", listOf("evil.example.com")))
+        storage.writeSync("safebrowsing/urlhaus.json", document("urlhaus", "malware", listOf("listed.example")))
+        SafeBrowsing(storage).reload()
+        val good = snapshotFile.readBytes()
+
+        fun seedsNothing(bytes: ByteArray, why: String) {
+            snapshotFile.writeBytes(bytes)
+            val safeBrowsing = SafeBrowsing(storage)
+            assertFalse(safeBrowsing.loadSnapshot())
+            assertTrue("'${safeBrowsing.snapshotRejected}' should say '$why'", safeBrowsing.snapshotRejected!!.contains(why))
+            assertEquals(0, safeBrowsing.snapshotSeeded)
+            assertSame(SafeBrowsingTables.EMPTY, safeBrowsing.tables)
+            // The load after it parses every document, as with no snapshot at all.
+            safeBrowsing.reload()
+            assertEquals(2, safeBrowsing.lastParsed)
+            assertEquals(2, safeBrowsing.tables.entries)
+            assertEquals("phishing", safeBrowsing.tables.lookup("evil.example.com")!!.threat)
+            assertEquals(SafeBrowsing.SnapshotOutcome.WRITTEN, safeBrowsing.lastSnapshot)
+        }
+
+        // Not whole: a body cut short; a bit flipped.
+        seedsNothing(good.copyOf(good.size - 3), "body of")
+        seedsNothing(good.copyOf().also { it[good.size - 1] = (it[good.size - 1] + 1).toByte() }, "checksum")
+        // Not this format.
+        seedsNothing(good.copyOf().also { it[5] = 7 }, "format 7")
+        // Not of the documents present: a feed refreshed since it was written. The header's other
+        // entry still matches its document, and is not seeded either: the whole snapshot is out.
+        val current = snapshotFile.readBytes()
+        rewrite("safebrowsing/urlhaus.json", document("urlhaus", "malware", listOf("fresh.example")))
+        seedsNothing(current, "not the ones it was built from")
+
+        // No snapshot at all: nothing seeded, nothing said, every document parsed.
+        assertTrue(storage.deleteBytes(SafeBrowsing.SNAPSHOT))
+        val none = SafeBrowsing(storage)
+        assertFalse(none.loadSnapshot())
+        assertNull(none.snapshotRejected)
+        assertEquals(0, none.snapshotSeeded)
+        none.reload()
+        assertEquals(2, none.lastParsed)
     }
 }

@@ -104,6 +104,10 @@ const V2_FILES: ReadonlyArray<string> = [
   // The password manager's own stylesheet, imported by main.css (components/overlays/passwords/*,
   // #92): the manager's page, panes, rows, dialog, prompt sheet, popover and picker sheet.
   'assets/passwords.css',
+  // The translate surfaces' stylesheet, imported by main.css (components/translate/*, #106):
+  // the translation bar, the selection popover and sheet, the language menulist's list and
+  // picker sheet, the desktop Languages pane.
+  'assets/translate.css',
   // The desktop bookmark manager's selection count pill (components/bookmarks/*, #90).
   'components/bookmarks/BookmarkManager.tsx',
   // The window prompts' checkbox accent (§9.5 modals, #129).
@@ -112,9 +116,19 @@ const V2_FILES: ReadonlyArray<string> = [
   'components/extensions/ExtensionDetails.tsx',
   // The new tab page's shortcut dialog: its validation line in the danger ink (#148).
   'components/newtab/NewTabShortcutDialog.tsx',
+  // Settings → Security on desktop (#62): the status ink of a remembered answer, the pane title.
+  'components/overlays/SecuritySection.tsx',
   // The external-protocol sheet on the v2 sheet chassis (#140): its deemphasised host line.
   'components/protocol/ExternalProtocolSheet.tsx',
-  // The sidebar's tab count badge, drawn in its surface's family through the §9.29 control roles.
+  // The blocked pop-ups popover, sheet and phone bar, and the sign-in and certificate dialogs
+  // (#62): the glyph's size and stroke, the title block's glyph offset, the notice's warn ink,
+  // the ink of an expired certificate; `glyph.ts` is the row glyph they share.
+  'components/security/BlockedPopupsPanel.tsx',
+  'components/security/SecurityPromptDialog.tsx',
+  'components/security/glyph.ts',
+  // The address pill's blocked pop-ups chip and its count (#62) and the sidebar's tab count
+  // badge, drawn in their surface's family through the §9.29 control roles.
+  'components/sidebar/SidebarTop.tsx',
   'components/sidebar/SpacePanel.tsx',
   // Site information (#39): the connection state's ok / warn / danger ink on its glyphs and values.
   'components/siteinfo/SiteInfoSheet.tsx'
@@ -387,13 +401,14 @@ describe('the v2 button', () => {
 })
 
 /**
- * Whether the rule at `index` sits inside an `@layer` block: the headers of the blocks still
- * open there, innermost last (a `@media` block is not a layer).
+ * Whether the rule at `index` of `source` (main.css without its comments unless another
+ * stylesheet is given) sits inside an `@layer` block: the headers of the blocks still open
+ * there, innermost last (a `@media` block is not a layer).
  */
-function layered(index: number): boolean {
+function layered(index: number, source = bare): boolean {
   const stack: string[] = []
   let headerStart = 0
-  const before = bare.slice(0, index)
+  const before = source.slice(0, index)
   for (const match of before.matchAll(/[{};]/g)) {
     if (match[0] === '{') stack.push(before.slice(headerStart, match.index).trim())
     else if (match[0] === '}') stack.pop()
@@ -411,7 +426,12 @@ describe('the v2 primitives (§9.34)', () => {
     '.zen-v2-switch',
     '.zen-v2-radio',
     // The checkbox (#93): the extensions UI's layered copy went with it.
-    '.zen-v2-checkbox'
+    '.zen-v2-checkbox',
+    // The menulist (#106) with its popover's popup and option: the extensions UI's layered
+    // copies and the translate stylesheet's own went with it.
+    '.zen-v2-menulist',
+    '.zen-v2-menulist-popup',
+    '.zen-v2-menulist-option'
   ]
 
   it('are one unlayered rule each, tokens only, with no layered or second copy', () => {
@@ -463,6 +483,48 @@ describe('the v2 primitives (§9.34)', () => {
       expect(readFileSync(join(root, file), 'utf8'), `${file} gates on data-static`).not.toMatch(
         /data-static/
       )
+  })
+
+  it('are what the phone history and bookmarks rows are built on: one unlayered, token-only modifier beside the row, no row or icon-button box of their own', () => {
+    // The panels' own row (`.zen-list-row`, #47) is gone from the renderer: nothing names it.
+    const root = fileURLToPath(new URL('../../', import.meta.url))
+    for (const file of readdirSync(root, { recursive: true, encoding: 'utf8' })
+      .map((f) => f.split('\\').join('/'))
+      .filter((f) => /\.(css|tsx?)$/.test(f) && !f.includes('__tests__')))
+      expect(readFileSync(join(root, file), 'utf8'), `${file} names .zen-list-row`).not.toMatch(
+        /zen-list-row/
+      )
+    const panels = readFileSync(join(root, 'components/phone/phonePanels.css'), 'utf8').replace(
+      /\/\*[\s\S]*?\*\//g,
+      ''
+    )
+    // Every mention of the row primitive there is the `.zen-phone-row` modifier on it – never a
+    // bare copy – and each of its rules is unlayered (a layered exception would lose to the
+    // unlayered primitive whatever its specificity) and draws tokens only.
+    const rules = [...panels.matchAll(/[^\n]*\.zen-v2-row(?![\w-])[^{]*\{/g)]
+    expect(rules.length).toBeGreaterThan(0)
+    for (const rule of rules) {
+      const selector = rule[0].trim()
+      expect(selector, `"${selector}" is not the modifier`).toMatch(/\.zen-v2-row\.zen-phone-row/)
+      expect(layered(rule.index, panels), `"${selector}" is layered`).toBe(false)
+      const body = panels.slice(rule.index + rule[0].length, panels.indexOf('}', rule.index))
+      expect(body, `"${selector}" states a colour`).not.toMatch(
+        /#[0-9a-f]{3,8}\b|color-mix\(|rgba?\(/i
+      )
+    }
+    // The picked row's fill is the `--v2-selected` token (§9.6): never `--v2-selection` (text
+    // selection) and never a local expression standing in for it.
+    const selected = panels.indexOf(".zen-v2-row.zen-phone-row[data-selected='true']")
+    expect(selected).toBeGreaterThanOrEqual(0)
+    expect(panels.slice(selected, panels.indexOf('}', selected))).toMatch(
+      /background: var\(--v2-selected\)/
+    )
+    expect(panels).not.toMatch(/--v2-selection\b/)
+    // The rows' base height, padding and press fill and the icon buttons' box are the
+    // primitives' (`.zen-v2-row`, `.zen-v2-icon-button`): the stylesheet restates none of them.
+    expect(panels).not.toMatch(/min-height: var\(--v2-row\)/)
+    expect(panels).not.toMatch(/padding: var\(--v2-row-pad\)|padding: 12px 16px/)
+    expect(panels).not.toMatch(/zen-toolbar-button|width: var\(--v2-icon-button\)/)
   })
 })
 

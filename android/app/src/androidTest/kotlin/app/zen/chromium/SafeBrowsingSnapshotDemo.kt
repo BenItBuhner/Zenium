@@ -120,7 +120,7 @@ class SafeBrowsingSnapshotDemo : DemoHarness("safebrowsing-snapshot-demo-state.j
         while (guard.lastSnapshot == SafeBrowsing.SnapshotOutcome.NONE && SystemClock.uptimeMillis() < deadline) SystemClock.sleep(50)
         val emptyFor = SystemClock.uptimeMillis() - started
         noteEarly(
-            "before: the documents parsed in ${guard.lastLoadMs} ms (${guard.tables.entries} prefixes from ${guard.tables.feeds.size} feeds); " +
+            "before: the documents parsed in ${guard.lastLoadMs} ms (${guard.lastParsed} parsed; ${guard.tables.entries} prefixes from ${guard.tables.feeds.size} feeds); " +
                 "the tables were empty for the first $emptyFor ms after start; snapshot ${guard.lastSnapshot.name.lowercase()}, " +
                 "${(storage.fileFor(SafeBrowsing.SNAPSHOT)?.length() ?: 0) / 1024} KB"
         )
@@ -195,7 +195,10 @@ class SafeBrowsingSnapshotDemo : DemoHarness("safebrowsing-snapshot-demo-state.j
         // The documents' load behind the snapshot, in the app's process.
         deadline = SystemClock.uptimeMillis() + 180_000
         while (guard.lastSnapshot == SafeBrowsing.SnapshotOutcome.NONE && SystemClock.uptimeMillis() < deadline) SystemClock.sleep(100)
-        note("after: the documents parsed in ${guard.lastLoadMs} ms behind the snapshot (${guard.tables.entries} prefixes); snapshot ${guard.lastSnapshot.name.lowercase()}")
+        note(
+            "after: the documents' load behind the snapshot took ${guard.lastLoadMs} ms and parsed ${guard.lastParsed} of them " +
+                "(${guard.snapshotSeeded} seeded from the snapshot; ${guard.tables.entries} prefixes); snapshot ${guard.lastSnapshot.name.lowercase()}"
+        )
         SystemClock.sleep(1_500)
         Log.i(tag, "warm-up done")
     }

@@ -36,6 +36,7 @@ import { ContainerIcon } from '../ContainerIcon'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Switch } from '../ui/switch'
+import { LanguagesSection } from '../translate/LanguagesSection'
 import { AgentsSection } from './AgentsSection'
 import { AppIconGroup } from './AppIconPicker'
 import { ExtensionsSection, ModsSection } from './AddonsPanel'
@@ -50,6 +51,7 @@ import {
 } from './PageControlsSettings'
 import { PasswordsSection } from './PasswordsSection'
 import { ResourcesSection } from './ResourcesSection'
+import { SecuritySection } from './SecuritySection'
 import { Choice, Group, MENULIST_HEIGHT, Row, SWITCH_HEIGHT, Segmented } from './SettingsPrimitives'
 import { ShortcutsSection } from './ShortcutsSection'
 import { SyncSection } from './SyncSection'
@@ -64,6 +66,7 @@ export type SettingsSection =
   | 'downloads'
   | 'resources'
   | 'search'
+  | 'languages'
   | 'spaces'
   | 'containers'
   | 'boosts'
@@ -71,6 +74,7 @@ export type SettingsSection =
   | 'extensions'
   | 'agents'
   | 'passwords'
+  | 'security'
   | 'sync'
   | 'shortcuts'
   | 'default-browser'
@@ -86,6 +90,7 @@ const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
   { id: 'downloads', label: 'Downloads' },
   { id: 'resources', label: 'Resources' },
   { id: 'search', label: 'Search' },
+  { id: 'languages', label: 'Languages' },
   { id: 'spaces', label: 'Space Routing' },
   { id: 'containers', label: 'Containers' },
   { id: 'boosts', label: 'Boosts' },
@@ -93,6 +98,7 @@ const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
   { id: 'extensions', label: 'Extensions' },
   { id: 'agents', label: 'AI Agents' },
   { id: 'passwords', label: 'Passwords' },
+  { id: 'security', label: 'Security' },
   { id: 'sync', label: 'Sync' },
   { id: 'shortcuts', label: 'Keyboard Shortcuts' },
   { id: 'default-browser', label: 'Default Browser' },
@@ -105,6 +111,7 @@ const SECTION_CAPABILITY: Partial<Record<SettingsSection, keyof HostCapabilities
   accessibility: 'pageControls',
   newtab: 'newTabPage',
   resources: 'resourceGovernor',
+  languages: 'translate',
   extensions: 'extensions',
   agents: 'agents',
   passwords: 'passwords',
@@ -215,6 +222,7 @@ export function SettingsBody({
           {section === 'downloads' && <DownloadsSection state={state} set={set} />}
           {section === 'resources' && <ResourcesSection state={state} set={set} />}
           {section === 'search' && <SearchSection state={state} set={set} />}
+          {section === 'languages' && <LanguagesSection state={state} />}
           {section === 'spaces' && <SpaceRoutingSection state={state} set={set} />}
           {section === 'containers' && <ContainersSection state={state} />}
           {section === 'boosts' && <BoostsSection state={state} />}
@@ -222,6 +230,7 @@ export function SettingsBody({
           {section === 'extensions' && <ExtensionsSection state={state} />}
           {section === 'agents' && <AgentsSection state={state} set={set} />}
           {section === 'passwords' && <PasswordsSection state={state} set={set} />}
+          {section === 'security' && <SecuritySection state={state} />}
           {section === 'sync' && <SyncSection state={state} />}
           {section === 'shortcuts' && <ShortcutsSection state={state} />}
           {section === 'default-browser' && <DefaultBrowserSection state={state} />}

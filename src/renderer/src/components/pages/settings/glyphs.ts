@@ -10,6 +10,7 @@ import {
   Info,
   KeyRound,
   Keyboard,
+  Languages,
   Layers,
   LayoutGrid,
   Paintbrush,
@@ -19,6 +20,7 @@ import {
   Search,
   Settings,
   Shield,
+  ShieldCheck,
   Waypoints,
   Zap
 } from 'lucide-react'
@@ -38,6 +40,7 @@ export const SECTION_GLYPHS: Readonly<Record<string, LucideIcon>> = {
   privacy: Shield,
   resources: Gauge,
   search: Search,
+  languages: Languages,
   spaces: Waypoints,
   containers: Container,
   boosts: Zap,
@@ -45,6 +48,7 @@ export const SECTION_GLYPHS: Readonly<Record<string, LucideIcon>> = {
   extensions: Puzzle,
   agents: Bot,
   passwords: KeyRound,
+  security: ShieldCheck,
   sync: RefreshCw,
   shortcuts: Keyboard,
   updates: CircleFadingArrowUp,

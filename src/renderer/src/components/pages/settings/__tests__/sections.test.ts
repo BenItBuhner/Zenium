@@ -13,6 +13,7 @@ import {
 import { MAX_NEW_TAB_SHORTCUTS } from '@shared/newTab'
 import { DEFAULT_PAGE_ENVIRONMENT } from '@shared/pageControls'
 import { DEFAULT_SEARCH_ENGINES } from '@shared/search'
+import type { TranslateUIState } from '@shared/translate'
 import { emptyUpdateStatus } from '@shared/updates'
 
 /*
@@ -64,7 +65,8 @@ const ANDROID: HostCapabilities = {
   newTabPage: false,
   pageTabs: true,
   // Kotlin's boot info turns this on where the launcher can pin (ShortcutManagerCompat).
-  pinShortcuts: false
+  pinShortcuts: false,
+  translate: true
 }
 
 function tab(id: string, url: string, patch: Partial<Tab> = {}): Tab {
@@ -105,6 +107,28 @@ function tab(id: string, url: string, patch: Partial<Tab> = {}): Tab {
 
 const SITE = tab('site', 'https://news.example/')
 const SETTINGS = tab('settings', 'zen://settings', { openerTabId: 'site', title: 'Settings' })
+
+/** The translation engine's slice (#106): two languages read, one always, a site, two models. */
+const TRANSLATE: TranslateUIState = {
+  available: true,
+  preferences: {
+    preferred: ['en', 'fr'],
+    alwaysTranslate: ['es'],
+    neverTranslate: [],
+    neverTranslateSites: ['news.example'],
+    autoOffer: true
+  },
+  languages: ['de', 'en', 'es', 'fr'],
+  installed: [
+    { from: 'es', to: 'en', version: '1.0', bytes: 40_000_000, installed: true, downloading: false }
+  ],
+  downloading: [
+    { from: 'de', to: 'en', version: '1.0', bytes: 40_000_000, installed: false, downloading: true }
+  ],
+  registryDate: '2026-09-01',
+  modelLicense: 'MPL-2.0',
+  tabs: {}
+}
 
 function state(patch: Partial<UIState> = {}, settings: Partial<Settings> = {}): UIState {
   return {
@@ -157,6 +181,7 @@ function state(patch: Partial<UIState> = {}, settings: Partial<Settings> = {}): 
     pageEnvironment: DEFAULT_PAGE_ENVIRONMENT,
     newTabShortcuts: [],
     newTabBackground: { image: false, canPick: false },
+    translate: TRANSLATE,
     ...patch
   } as unknown as UIState
 }
@@ -228,6 +253,7 @@ describe('the section model', () => {
       'tabs',
       'downloads',
       'search',
+      'languages',
       'privacy',
       'spaces',
       'containers',
@@ -235,6 +261,7 @@ describe('the section model', () => {
       'mods',
       'agents',
       'passwords',
+      'security',
       'accessibility',
       'updates',
       'about'
@@ -716,6 +743,117 @@ describe('the section model', () => {
     })
   })
 
+  it('carries #106’s Languages rows behind the translation engine: the offer switch, the lists as items, the models with a confirmed removal', () => {
+    const silent = state({ capabilities: { ...ANDROID, translate: false } })
+    expect(phoneSections(silent).map((m) => m.section.id)).not.toContain('languages')
+
+    const languages = section('languages')
+    expect(languages.groups.map((g) => g.id)).toEqual([
+      'translation',
+      'read',
+      'read-add',
+      'always',
+      'always-add',
+      'never',
+      'never-add',
+      'sites',
+      'models',
+      'models-add'
+    ])
+    expect(languages.groups.every(groupShows)).toBe(true)
+    expect(languages.groups.map((g) => g.heading)).toEqual([
+      'Translation',
+      'Languages you read',
+      null,
+      'Always translate',
+      null,
+      'Never translate',
+      null,
+      'Sites never translated',
+      'Translation models',
+      null
+    ])
+
+    // The offer switch and the lists write through the engine's commands, not the settings.
+    const offer = row(languages, 'languages-offer')
+    if (offer.kind !== 'switch') throw new Error('not a switch')
+    expect(offer.checked).toBe(true)
+    offer.onChange(false)
+    expect(invoke).toHaveBeenCalledWith('translate.setPreferences', { autoOffer: false })
+
+    // The first language read is the target; the others can be put first or removed.
+    expect(row(languages, 'languages-read:en')).toMatchObject({
+      kind: 'item',
+      label: 'English',
+      description: 'Pages are translated into this language'
+    })
+    expect(findRow(languages.groups, 'languages-read:en:first')).toBeNull()
+    const first = row(languages, 'languages-read:fr:first')
+    if (first.kind !== 'action') throw new Error('not an action')
+    first.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('translate.setPreferences', { preferred: ['fr', 'en'] })
+    const drop = row(languages, 'languages-read:fr:remove')
+    if (drop.kind !== 'action') throw new Error('not an action')
+    drop.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('translate.setPreferences', { preferred: ['en'] })
+
+    // What the desktop adds through a menulist is an action row opening a sheet (§9.13).
+    const add = row(languages, 'languages-read-add')
+    if (add.kind !== 'action') throw new Error('not an action')
+    expect(add.form?.title).toBe('Add a language you read')
+
+    const ask = row(languages, 'languages-always:es:ask')
+    if (ask.kind !== 'action') throw new Error('not an action')
+    ask.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('translate.setLanguageRule', {
+      language: 'es',
+      rule: 'ask'
+    })
+    expect(languages.groups.find((g) => g.id === 'never')).toMatchObject({
+      rows: [],
+      empty: 'No languages yet'
+    })
+
+    const forget = row(languages, 'languages-site:news.example:forget')
+    if (forget.kind !== 'action') throw new Error('not an action')
+    forget.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('translate.setPreferences', { neverTranslateSites: [] })
+
+    // A model on the device is an item whose removal confirms; one arriving is a static row.
+    expect(row(languages, 'languages-model:es:en')).toMatchObject({
+      kind: 'item',
+      label: 'Spanish to English',
+      description: '38.1 MB'
+    })
+    const remove = row(languages, 'languages-model:es:en:remove')
+    if (remove.kind !== 'action') throw new Error('not an action')
+    expect(remove.destructive).toBe(true)
+    expect(remove.confirm?.action).toBe('Remove')
+    remove.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('translate.removeModel', { from: 'es', to: 'en' })
+    expect(row(languages, 'languages-model:de:en')).toMatchObject({
+      kind: 'info',
+      label: 'German to English',
+      description: 'Downloading…'
+    })
+    expect(row(languages, 'languages-models-total').label).toBe('38.1 MB on this device')
+    const download = row(languages, 'languages-model-download')
+    if (download.kind !== 'action') throw new Error('not an action')
+    expect(download.form?.title).toBe('Download a model')
+
+    // Nothing left to add: no add row for that list.
+    const everything = section(
+      'languages',
+      state({
+        translate: {
+          ...TRANSLATE,
+          preferences: { ...TRANSLATE.preferences, preferred: ['de', 'en', 'es', 'fr'] }
+        }
+      })
+    )
+    expect(everything.groups.map((g) => g.id)).not.toContain('read-add')
+  })
+
   it('orders Look and Feel identity, chrome, page behaviour, Glance (design lead, #134)', () => {
     expect(section('look').groups.map((g) => g.id)).toEqual([
       'appearance',
@@ -866,6 +1004,73 @@ describe('what a row does', () => {
       kind: 'zoom',
       domain: 'a.test'
     })
+  })
+
+  it('carries #62’s Security rows: each remembered site answer an item that forgets it, Forget all once there are two, the session’s sign-ins', () => {
+    // Ungated, as the desktop pane is; empty until a site has been answered.
+    const empty = section('security')
+    expect(empty.groups.map((g) => g.id)).toEqual(['security-permissions', 'security-session'])
+    expect(empty.groups[0].rows).toEqual([])
+    expect(empty.groups[0].empty).toBe('No site permissions remembered yet')
+    expect(empty.groups.every(groupShows)).toBe(true)
+
+    const s = state({
+      permissionRules: [
+        { origin: 'https://zoom.example', permission: 'openExternal:zoommtg', decision: 'allow' },
+        { origin: 'https://news.example', permission: 'popups', decision: 'allow' },
+        { origin: 'https://news.example', permission: 'camera', decision: 'deny' }
+      ]
+    } as Partial<UIState>)
+    const security = section('security', s)
+    // Sorted by site, then by what was asked; the description is the answer in sentence case.
+    expect(security.groups[0].rows.map((r) => r.id)).toEqual([
+      'security-rule:https://news.example:camera',
+      'security-rule:https://news.example:popups',
+      'security-rule:https://zoom.example:openExternal:zoommtg',
+      'security-forget-all'
+    ])
+    expect(row(security, 'security-rule:https://news.example:popups')).toMatchObject({
+      kind: 'item',
+      label: 'news.example',
+      description: 'May open pop-up windows'
+    })
+    expect(row(security, 'security-rule:https://news.example:camera').description).toBe(
+      'May not use the camera'
+    )
+    expect(
+      row(security, 'security-rule:https://zoom.example:openExternal:zoommtg').description
+    ).toBe('May hand zoommtg: links to another app')
+    const forget = row(security, 'security-rule:https://news.example:popups:forget')
+    if (forget.kind !== 'action') throw new Error('not an action')
+    forget.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('permissions.forget', {
+      origin: 'https://news.example',
+      permission: 'popups'
+    })
+    const all = row(security, 'security-forget-all')
+    if (all.kind !== 'action') throw new Error('not an action')
+    expect(all.destructive).toBe(true)
+    expect(all.confirm?.action).toBe('Forget all')
+    all.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('permissions.reset', undefined)
+    // One rule is forgotten from its own sheet; Forget all waits for a second.
+    const one = section('security', state({ permissionRules: [s.permissionRules[0]] }))
+    expect(findRow(one.groups, 'security-forget-all')).toBeNull()
+
+    const session = row(security, 'security-forget-session')
+    if (session.kind !== 'action') throw new Error('not an action')
+    expect(session.label).toBe('Forget sign-ins and certificates')
+    session.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('security.forgetSession', undefined)
+    // The landing's search reaches them by what the rows are about.
+    expect(searchRows([security], 'pop-ups').map((h) => h.row.id)).toContain(
+      'security-rule:https://news.example:popups'
+    )
+    expect(searchRows([security], 'certificate').map((h) => h.row.id)).toContain(
+      'security-forget-session'
+    )
+    // The Privacy category no longer lists them: they moved here.
+    expect(findRow(section('privacy', s).groups, 'permissions-reset')).toBeNull()
   })
 
   it('Boosts offers the site the tab came from, and leaves for it', () => {

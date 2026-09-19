@@ -187,6 +187,8 @@ function sourceTitle(source: MenuDescriptor['source']): string {
       return 'Download'
     case 'urlbar':
       return 'Address'
+    case 'translate':
+      return 'Translation'
   }
 }
 
