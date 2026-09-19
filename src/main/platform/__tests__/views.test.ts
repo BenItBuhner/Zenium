@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { Tab } from '../../../shared/types'
 import type { TabViewEvents, WindowHost, WindowOpenTicket } from '../../../core/platform'
 import type { SessionManager } from '../sessions'
-import { ElectronTabViewHost, type ElectronTabView } from '../views'
+import { ElectronTabViewHost, fullPagePaint, type ElectronTabView } from '../views'
 
 /** The options every `WebContentsView` in the test was constructed with, in order. */
 const constructed: Array<Record<string, unknown>> = []
@@ -281,5 +281,29 @@ describe('ElectronTabViewHost.openTicket', () => {
     expect(host.tabIdForWebContents(result)).toBe('tab_popup')
     // The browser starts the navigation itself (Electron only does so for windows it creates).
     expect((result as unknown as { loaded: string[] }).loaded).toEqual(['https://example.com/new'])
+  })
+})
+
+/**
+ * Capture Full Page paints the document at the page's zoom, as Take Screenshot's `capturePage`
+ * does, and cuts it so the painted picture stays under Chromium's texture height whatever the
+ * zoom and the display's scale (the protocol multiplies the clip by the latter on its own).
+ */
+describe('fullPagePaint', () => {
+  it('paints at the page zoom and keeps the agents’ cut at 100 percent on a plain display', () => {
+    expect(fullPagePaint(1, 1)).toEqual({ scale: 1, maxHeight: 12_000 })
+    expect(fullPagePaint(1.25, 1)).toEqual({ scale: 1.25, maxHeight: 12_000 })
+  })
+
+  it('shortens the cut as the zoom and the display scale grow, in CSS pixels', () => {
+    expect(fullPagePaint(2, 1)).toEqual({ scale: 2, maxHeight: 8_000 })
+    // A Retina display: the protocol paints twice the CSS pixels.
+    expect(fullPagePaint(1, 2)).toEqual({ scale: 1, maxHeight: 8_000 })
+    expect(fullPagePaint(1.5, 2)).toEqual({ scale: 1.5, maxHeight: 5_333 })
+  })
+
+  it('treats a zoom or scale it cannot read as 100 percent', () => {
+    expect(fullPagePaint(Number.NaN, 0)).toEqual({ scale: 1, maxHeight: 12_000 })
+    expect(fullPagePaint(-1, Number.POSITIVE_INFINITY)).toEqual({ scale: 1, maxHeight: 12_000 })
   })
 })

@@ -7,6 +7,7 @@ import {
   nativeImage,
   nativeTheme,
   net,
+  screen,
   type BrowserWindow,
   type BrowserWindowConstructorOptions,
   type LoadURLOptions,
@@ -805,7 +806,11 @@ export class ElectronTabView implements TabView {
         try {
           const capture = await this.captureWithDevtools(
             { mode: 'fullPage', format: 'png' },
-            'image/png'
+            'image/png',
+            fullPagePaint(
+              this.wc.getZoomFactor(),
+              Math.max(...screen.getAllDisplays().map((d) => d.scaleFactor), 1)
+            )
           )
           png = Buffer.from(capture.data, 'base64')
         } catch {
@@ -1159,9 +1164,15 @@ export class ElectronTabView implements TabView {
     }
   }
 
+  /**
+   * `paint.scale` multiplies the CSS pixels of the clip (1 for the agents, who reason in CSS
+   * pixels; the page zoom for a person's full-page screenshot); `paint.maxHeight` cuts the
+   * document in CSS pixels.
+   */
   private captureWithDevtools(
     options: AgentCaptureOptions,
-    mimeType: string
+    mimeType: string,
+    paint: { scale: number; maxHeight: number } = { scale: 1, maxHeight: MAX_CAPTURE_HEIGHT }
   ): Promise<AgentCapture> {
     return this.withDebugger(async (dbg) => {
       const metrics = (await dbg.sendCommand('Page.getLayoutMetrics')) as {
@@ -1170,6 +1181,7 @@ export class ElectronTabView implements TabView {
         cssLayoutViewport?: { clientWidth: number; clientHeight: number }
       }
       const content = metrics.cssContentSize ?? metrics.contentSize ?? { width: 0, height: 0 }
+      const maxHeight = Math.max(1, Math.min(paint.maxHeight, MAX_CAPTURE_HEIGHT))
       const clip =
         options.mode === 'region' && options.region
           ? { ...options.region, scale: 1 }
@@ -1177,8 +1189,8 @@ export class ElectronTabView implements TabView {
               x: 0,
               y: 0,
               width: Math.max(1, Math.round(content.width)),
-              height: Math.max(1, Math.min(Math.round(content.height), MAX_CAPTURE_HEIGHT)),
-              scale: 1
+              height: Math.max(1, Math.min(Math.round(content.height), maxHeight)),
+              scale: paint.scale
             }
       const result = (await dbg.sendCommand('Page.captureScreenshot', {
         format: options.format,
@@ -1199,6 +1211,25 @@ export class ElectronTabView implements TabView {
 
 /** Chromium refuses textures much taller than this; very long pages are cut, not failed. */
 const MAX_CAPTURE_HEIGHT = 12_000
+/** The same limit in painted pixels, for a capture at the page's zoom on a scaled display. */
+const MAX_CAPTURE_PIXELS = 16_000
+
+/**
+ * How a person's full-page screenshot is painted: at the page's zoom, as the visible area's
+ * `capturePage` is (the protocol adds the display's scale on its own), and cut in CSS pixels
+ * so the whole picture stays under Chromium's texture height on the most scaled display.
+ */
+export function fullPagePaint(
+  zoom: number,
+  displayScale: number
+): { scale: number; maxHeight: number } {
+  const z = Number.isFinite(zoom) && zoom > 0 ? zoom : 1
+  const d = Number.isFinite(displayScale) && displayScale > 0 ? displayScale : 1
+  return {
+    scale: z,
+    maxHeight: Math.max(1, Math.min(MAX_CAPTURE_HEIGHT, Math.floor(MAX_CAPTURE_PIXELS / (z * d))))
+  }
+}
 
 /** The parts of `Security.visibleSecurityStateChanged` the site-information sheet uses. */
 interface SecurityStateParams {
