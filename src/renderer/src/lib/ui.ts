@@ -292,6 +292,8 @@ export interface UiState {
   tabsMenu: Rect | null
   /** The downloads bubble (anchored under the toolbar button) is up. */
   downloadsOpen: boolean
+  /** The default-browser promo (sheet or dialog) is up over a capture of the page. */
+  defaultBrowserPrompt: boolean
   /** Safe-area insets of the host window (status bar, gesture bar, IME). */
   insets: Insets
   /**
@@ -366,6 +368,7 @@ export const uiStore = createStore<UiState>(
     barEditorOpen: false,
     tabsMenu: null,
     downloadsOpen: false,
+    defaultBrowserPrompt: false,
     insets: { top: 0, right: 0, bottom: 0, left: 0 },
     stageActive: false,
     hoverCard: HOVER_CARD_HIDDEN,
@@ -600,6 +603,19 @@ export function snapshotHeld(tabId: string | null): boolean {
   return tabId !== null && ui.snapshotTabId === tabId && ui.snapshot !== null
 }
 
+/** The overlays that are sections of the Settings page: a tab on a host with page tabs. */
+const SETTINGS_OVERLAYS: ReadonlySet<OverlayKind> = new Set(['settings', 'shortcuts', 'sync'])
+
+/**
+ * Whether `kind` opens as an overlay on this host at all. Settings (with Shortcuts and Sync, its
+ * sections) is a tab wherever the host has page tabs (`page.open`, `lib/pages.ts`): the overlay
+ * is the desktop's until its program adopts the tab, and nothing may draw it over a phone.
+ */
+export function overlayAvailable(kind: OverlayKind): boolean {
+  if (!SETTINGS_OVERLAYS.has(kind)) return true
+  return !browserStore.get().state?.capabilities.pageTabs
+}
+
 export async function openOverlay(
   kind: OverlayKind,
   activeTabId: string | null,
@@ -607,6 +623,14 @@ export async function openOverlay(
   folderId: string | null = null,
   section: string | null = null
 ): Promise<void> {
+  if (!overlayAvailable(kind)) {
+    // The Settings page's tab, through the core's one route (a section for Shortcuts / Sync).
+    run('page.open', {
+      id: 'settings',
+      section: kind === 'settings' ? section : kind
+    })
+    return
+  }
   await captureActiveTab(activeTabId)
   // Overlays render over the content area; a phone drawer would sit on top of them.
   uiStore.set({ drawerOpen: false })
@@ -651,6 +675,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.pageDialogOpen &&
     !ui.windowPromptOpen &&
     !ui.downloadsOpen &&
+    !ui.defaultBrowserPrompt &&
     !ui.stageActive &&
     !ui.zoomBubble &&
     !ui.newTabShortcutDialog &&
@@ -687,6 +712,7 @@ export function invalidateSnapshot(): void {
     !ui.pageDialogOpen &&
     !ui.windowPromptOpen &&
     !ui.downloadsOpen &&
+    !ui.defaultBrowserPrompt &&
     !ui.stageActive &&
     !ui.zoomBubble &&
     ui.hoverCard.tabId === null &&
@@ -1052,6 +1078,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.pageDialogOpen ||
     ui.windowPromptOpen ||
     ui.downloadsOpen ||
+    ui.defaultBrowserPrompt ||
     ui.stageActive ||
     ui.zoomBubble !== null ||
     ui.hoverCard.tabId !== null ||

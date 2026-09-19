@@ -1,5 +1,6 @@
 import React, { type JSX } from 'react'
 import { App } from './App'
+import { DefaultBrowserLayer } from './components/defaultbrowser/DefaultBrowserPrompt'
 import { DownloadBubbleLayer } from './components/downloads/DownloadBubble'
 import { MenuSheet } from './components/menus/MenuSheet'
 import { NewTabCustomizeLayer } from './components/newtab/CustomizeSheet'
@@ -18,6 +19,7 @@ export function Root(): JSX.Element {
       <App />
       <NewTabGrowLayer />
       <NewTabCustomizeLayer />
+      <DefaultBrowserLayer />
       <SiteInfoLayer />
       <BarEditorLayer />
       <DownloadBubbleLayer />

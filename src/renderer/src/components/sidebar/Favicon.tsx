@@ -1,14 +1,17 @@
 import { useState, type JSX } from 'react'
 import { Globe, VenetianMask } from 'lucide-react'
+import { internalPageOf } from '@shared/internalPages'
 import type { Tab } from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import { getHost, isEmptyTabUrl } from '@shared/url'
+import { PAGE_GLYPHS } from '@renderer/lib/pageGlyphs'
 import { cn } from '@renderer/lib/utils'
 
 /**
  * Favicon with graceful fallbacks: a user-picked emoji ("Change Icon…"), Zen's loading spinner
  * while loading, a letter tile for pages that never provided an icon (e.g. unloaded Essentials),
- * and a globe for blank tabs.
+ * a globe for blank tabs, and an internal page's registered glyph (the gear for Settings) for a
+ * page tab, which never fetches an icon (v2 §10.1); a page with no glyph falls through.
  */
 export function Favicon({
   tab,
@@ -21,6 +24,18 @@ export function Favicon({
 }): JSX.Element {
   const [broken, setBroken] = useState<string | null>(null)
   const src = tab.favicon && broken !== tab.favicon ? tab.favicon : null
+  const glyph = internalPageOf(tab.url)?.glyph
+  if (glyph) {
+    const Glyph = PAGE_GLYPHS[glyph]
+    return (
+      <Glyph
+        className={cn('zen-tab-favicon shrink-0', className)}
+        style={{ width: size, height: size }}
+        strokeWidth={size >= 20 ? 1.75 : 2}
+        aria-hidden
+      />
+    )
+  }
   if (tab.customIcon) {
     return (
       <span

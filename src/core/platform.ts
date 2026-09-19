@@ -947,6 +947,17 @@ export interface DownloadHost {
   ): Promise<{ savePath: string; finalName: string } | null>
   /** Delete the partial or quarantined file (nothing to do when it is already gone). */
   deletePartial(item: DownloadItem): Promise<void>
+  /**
+   * Whether a completed download's file is still at `item.savePath` (a stat on desktop, a
+   * content query on Android): cheap, run over the list when it loads and on demand.
+   */
+  exists(item: DownloadItem): Promise<boolean>
+  /**
+   * Delete a completed download's file (Chrome's "Delete file"; desktop `fs.rm`, Android the
+   * MediaStore or SAF document behind the recorded URI): `missing` when it was gone already,
+   * `failed` when it is still there (locked, a folder, no permission).
+   */
+  deleteFile(item: DownloadItem): Promise<'deleted' | 'missing' | 'failed'>
   open(item: DownloadItem): Promise<void>
   showInFolder(item: DownloadItem): void
   /** Folder picker for Settings › Downloads; resolves with the chosen directory or null. */
@@ -1143,7 +1154,11 @@ export interface ExtensionHost {
   newTabUrl(): string | null
   /** Chrome's "Allow in Incognito": whether the extension's request rules reach private windows. */
   setAllowPrivate(id: string, allowed: boolean): void
+  /** Chrome's "Allow user scripts": whether `chrome.userScripts` works for the extension. */
+  setAllowUserScripts(id: string, allowed: boolean): void
   reload(id: string): Promise<void>
+  /** Empties the extension's error console (`ExtensionInfo.errors`). */
+  clearErrors(id: string): void
   checkForUpdates(win?: ZenWindow): Promise<void>
   update(id: string, win?: ZenWindow): Promise<void>
   /** The last update check across all extensions, for the management page's caption. */

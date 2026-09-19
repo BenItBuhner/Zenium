@@ -43,6 +43,8 @@ export interface WindowInit {
   localSpace: Space | null
   /** Window to offset the new one from (new windows cascade like Firefox). */
   cascadeFrom?: ZenWindow
+  /** The window this one was opened from (a popup's parent), when one was. */
+  opener?: ZenWindow
 }
 
 /**
@@ -97,6 +99,11 @@ export class ZenWindow {
   readonly initialDisplayId: number | null
   readonly initialMaximized: boolean
   readonly cascadeFrom: ZenWindow | null
+  /**
+   * The window this one was opened from, for what a toolbar-only popup cannot hold itself: an
+   * internal page asked for from a popup opens in its opener (`PageService.hostWindowFor`).
+   */
+  readonly opener: ZenWindow | null
   private savedBounds: Rect | null
   private savedDisplayId: number | null
   private lastLayout: LayoutReport | null = null
@@ -125,6 +132,7 @@ export class ZenWindow {
     this.savedDisplayId = init.displayId
     this.initialMaximized = init.maximized
     this.cascadeFrom = init.cascadeFrom ?? null
+    this.opener = init.opener ?? null
   }
 
   get isPrivate(): boolean {
@@ -389,7 +397,8 @@ export class ZenWindow {
     }
     if (this.pendingContentFocus && !report.contentHidden) this.focusContent()
     // With no page visible (empty space / chrome overlay / preview of a page shown in another
-    // window) keyboard input must go to the chrome, otherwise shortcuts stop working.
+    // window / a page tab the chrome itself draws) keyboard input must go to the chrome,
+    // otherwise shortcuts stop working.
     const showsOwnPage = [...wanted.keys()].some((id) => owned.has(id))
     if (report.contentHidden) {
       // Chrome UI covers the page: the keyboard goes with it, but only when a page that was
@@ -404,7 +413,9 @@ export class ZenWindow {
         if (coveredTyping) this.pendingContentFocus = true
         this.focusChrome()
       }
-    } else if (!showsOwnPage && !glance) {
+    } else if (!showsOwnPage && !glance && !this.keyboardHeldElsewhere(owned)) {
+      // The same guard here: a chrome page tab (Settings) reports no placement on every layout
+      // – a resize, a sheet – and an extension popup open over it must keep the keyboard.
       this.focusChrome()
     }
   }

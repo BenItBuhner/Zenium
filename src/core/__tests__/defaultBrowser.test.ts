@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { Browser } from '../browser'
 import { DefaultBrowserService, PROMPT_SURFACES } from '../defaultBrowser'
 import { DEFAULT_PROMO_STATE, PROMO_FIRST_SESSION } from '../../shared/defaultBrowser'
-import type { DefaultBrowserPromoState } from '../../shared/types'
+import type { DefaultBrowserPromoState, Platform } from '../../shared/types'
 
 interface Fake {
   browser: Browser
@@ -13,6 +13,8 @@ interface Fake {
 
 function fake(options: {
   supported?: boolean
+  /** The host's platform; the Android chrome is where the prompts live. */
+  platform?: Platform
   onboardingDone?: boolean
   isDefault?: boolean | null
   requestAnswer?: boolean | null
@@ -40,6 +42,7 @@ function fake(options: {
       }
     },
     state: {
+      platform: options.platform ?? 'android',
       capabilities: { defaultBrowser: options.supported ?? true },
       settings,
       commit
@@ -50,8 +53,10 @@ function fake(options: {
 
 const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 0))
 
-/** The chrome has the sheet and the banner: what the campaign tests below assume. */
+/** The chrome has the sheet and the banner (as it does): what the campaign tests assume. */
 const SURFACES = { promptSurfaces: true }
+/** A chrome without them, for the gate that keeps the campaign inert there. */
+const NO_SURFACES = { promptSurfaces: false }
 
 describe('DefaultBrowserService', () => {
   it('stays inert on hosts without the capability', async () => {
@@ -168,14 +173,37 @@ describe('DefaultBrowserService', () => {
     expect(service.status().prompt).toBeNull()
   })
 
-  describe('without prompt surfaces (no sheet or banner in the chrome yet)', () => {
-    it('is how the service is wired today', () => {
-      expect(PROMPT_SURFACES).toBe(false)
+  describe('without prompt surfaces (a chrome with no sheet or banner)', () => {
+    it('is not how the service is wired on Android: the surfaces exist and the campaign runs', async () => {
+      expect(PROMPT_SURFACES).toBe(true)
+      const { browser, settings } = fake({ promo: { sessions: PROMO_FIRST_SESSION - 1 } })
+      const service = new DefaultBrowserService(browser)
+      service.start()
+      await settle()
+      expect(service.status().prompt).toBe('sheet')
+      expect(settings.defaultBrowserPromo.promptedAt).toBe(PROMO_FIRST_SESSION)
+    })
+
+    it('is how it is wired off Android, where the desktop program asks with its own strip', async () => {
+      for (const platform of ['linux', 'win32', 'darwin'] as const) {
+        const { browser, settings } = fake({
+          platform,
+          promo: { sessions: PROMO_FIRST_SESSION - 1 }
+        })
+        const service = new DefaultBrowserService(browser)
+        service.start()
+        await settle()
+        expect(service.status(), platform).toEqual({ isDefault: false, prompt: null })
+        expect(settings.defaultBrowserPromo.sessions, platform).toBe(PROMO_FIRST_SESSION)
+        expect(settings.defaultBrowserPromo.promptedAt, platform).toBeNull()
+        service.dismiss('sheet')
+        expect(settings.defaultBrowserPromo.dismissals, platform).toBe(0)
+      }
     })
 
     it('counts sessions but never decides, marks or shows a prompt', async () => {
       const { browser, settings } = fake({ promo: { sessions: PROMO_FIRST_SESSION - 1 } })
-      const service = new DefaultBrowserService(browser)
+      const service = new DefaultBrowserService(browser, NO_SURFACES)
       // Well past the first sheet and into where the banner and the second sheet would be due.
       for (let starts = 0; starts < PROMO_FIRST_SESSION + 10; starts++) {
         service.start()
@@ -191,7 +219,7 @@ describe('DefaultBrowserService', () => {
 
     it('ignores a dismissal: there was nothing up to give up a turn on', async () => {
       const { browser, settings, commit } = fake({ promo: { sessions: PROMO_FIRST_SESSION } })
-      const service = new DefaultBrowserService(browser)
+      const service = new DefaultBrowserService(browser, NO_SURFACES)
       service.dismiss('sheet')
       service.dismiss('banner')
       expect(settings.defaultBrowserPromo.dismissals).toBe(0)
@@ -201,7 +229,7 @@ describe('DefaultBrowserService', () => {
 
     it('still reads the role for the settings row and ends the campaign on its "Set as default"', async () => {
       const { browser, settings, host } = fake({ isDefault: false, requestAnswer: true })
-      const service = new DefaultBrowserService(browser)
+      const service = new DefaultBrowserService(browser, NO_SURFACES)
       service.start()
       await settle()
       expect(service.status().isDefault).toBe(false)

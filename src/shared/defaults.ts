@@ -288,7 +288,8 @@ export const DEFAULT_SETTINGS: Settings = {
   shortcutPreset: 'chrome',
   privacy: structuredClone(DEFAULT_PRIVACY_SETTINGS),
   newTab: structuredClone(DEFAULT_NEW_TAB_SETTINGS),
-  newTabPhone: structuredClone(DEFAULT_NEW_TAB_PHONE_SETTINGS)
+  newTabPhone: structuredClone(DEFAULT_NEW_TAB_PHONE_SETTINGS),
+  gestureHintDone: false
 }
 
 /** Firefox's four default containers plus "No Container". */
@@ -298,6 +299,23 @@ export const DEFAULT_CONTAINERS: Container[] = [
   { id: 'work', name: 'Work', color: 'orange', icon: 'briefcase' },
   { id: 'banking', name: 'Banking', color: 'green', icon: 'dollar' },
   { id: 'shopping', name: 'Shopping', color: 'pink', icon: 'cart' }
+]
+
+/** Firefox's container glyphs, in the order the pickers offer them. */
+export const CONTAINER_ICONS: readonly Container['icon'][] = [
+  'fingerprint',
+  'briefcase',
+  'dollar',
+  'cart',
+  'circle',
+  'gift',
+  'vacation',
+  'food',
+  'fruit',
+  'pet',
+  'tree',
+  'chill',
+  'fence'
 ]
 
 export const CONTAINER_COLORS: Record<Container['color'], string> = {

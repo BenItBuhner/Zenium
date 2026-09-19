@@ -7,6 +7,7 @@ import { cmd, run } from '@renderer/lib/api'
 import { chromeUnderPages } from '@renderer/lib/cover'
 import { wantsDefaultBrowserBanner } from '@renderer/lib/defaultBrowser'
 import { useViewport } from '@renderer/lib/formFactor'
+import { isPageTab } from '@renderer/lib/pages'
 import { activeTab, isForeignTab } from '@renderer/lib/selectors'
 import { useChord } from '@renderer/lib/shortcuts'
 import { captureActiveTab, panelAloneOverContent, uiStore, type UiState } from '@renderer/lib/ui'
@@ -17,6 +18,7 @@ import { newTabGrowStore } from '@renderer/lib/newtab'
 import { Urlbar } from '../urlbar/Urlbar'
 import { NewTabPage } from '../newtab/NewTabPage'
 import { OverlayHost } from '../overlays/OverlayHost'
+import { InternalPageHost } from '../pages/InternalPageHost'
 import { CoverImage } from './CoverImage'
 import { CrashRestoreBanner } from './CrashRestoreBanner'
 import { DefaultBrowserBanner } from './DefaultBrowserBanner'
@@ -90,9 +92,13 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
   // The grow surface is a stage layer too, but the page it reveals must be painted under it: the
   // surface fades on its own progress and the page shows through (NewTabGrowLayer).
   const growing = newTabGrowStore.use((s) => s.phase !== 'idle')
+  // An internal page (Settings) is chrome like the new tab page: neither has a view to snapshot,
+  // and both stay drawn under a sheet's own scrim, so nothing dims them from here.
+  const pageTab = isPageTab(tab)
   const showSnapshot =
     (contentHidden || glanceActive) &&
     Boolean(tab) &&
+    !pageTab &&
     !staged &&
     !(phone && ui.urlbar.open) &&
     !newTabPage
@@ -128,6 +134,7 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
           <div ref={viewportRef} className="relative min-h-0 flex-1 overflow-hidden" data-tear-zone>
             {state.capabilities.pullToRefresh && <PullIndicator />}
             {!tab && !ui.urlbar.open && ui.overlay === 'none' && !staged && <EmptyState />}
+            {tab && pageTab && <InternalPageHost state={state} tab={tab} hidden={staged} />}
             {newTabPage && (
               // Kept mounted under the omnibox and the gesture stage (which draws its own cards),
               // just not painted, so the page is there the moment they leave.

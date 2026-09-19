@@ -65,20 +65,57 @@ export function sheetMaxHeight(layerHeight: number, insetTop: number): number {
 /**
  * Detents for content `intrinsic` px tall (grip, body and bottom inset together). Content that
  * fits within the peek height gets a single detent; a taller sheet peeks at about half the
- * screen and expands up to the top margin.
+ * room and expands up to the top margin.
+ *
+ * Every detent is measured above the bottom inset – the gesture bar, or the keyboard when it is
+ * up (`insetBottom` is the larger of the two, as the host reports it): the peek shows
+ * `SHEET_PEEK_FRACTION` of the room between the inset and the top of the layer, plus the inset
+ * itself, which the sheet pads for underneath. So a keyboard coming up lifts the peek with it
+ * instead of eating it, and a sheet with a form keeps the same share of the room above the keys
+ * that it had above the bar.
  */
 export function computeDetents(
   intrinsic: number,
   layerHeight: number,
-  insetTop: number
+  insetTop: number,
+  insetBottom = 0
 ): SheetDetents {
   const expanded = Math.max(
     0,
     Math.min(Math.round(intrinsic), sheetMaxHeight(layerHeight, insetTop))
   )
-  const peek = Math.round(layerHeight * SHEET_PEEK_FRACTION)
+  const bottom = Math.max(0, Math.min(Math.round(insetBottom), layerHeight))
+  const peek = bottom + Math.round((layerHeight - bottom) * SHEET_PEEK_FRACTION)
   const collapsed = expanded - peek >= SHEET_MIN_DETENT_GAP ? peek : expanded
   return { collapsed, expanded }
+}
+
+/** Room (px) kept between a focused field's bottom edge and the keyboard's top edge. */
+export const SHEET_FIELD_MARGIN = 8
+
+/**
+ * How far (px) a field reaches below the room a sheet has above its bottom inset when the
+ * sheet stands `detent` px tall: `fieldBottom` is the field's bottom edge measured from the
+ * sheet's top edge (content is anchored there, so the number does not depend on where the
+ * sheet is on its track). 0 when the field is in view above the keyboard, with the margin.
+ */
+export function fieldOverflow(fieldBottom: number, detent: number, insetBottom: number): number {
+  return Math.max(0, Math.round(fieldBottom - (detent - insetBottom - SHEET_FIELD_MARGIN)))
+}
+
+/**
+ * The detent a sheet with a focused field should stand at: it expands when the field would sit
+ * under the keyboard at the detent it rests at (`resting`) and the sheet has an expanded detent
+ * to go to; a sheet that is already as tall as it gets scrolls the field into view instead.
+ */
+export function detentForField(
+  fieldBottom: number,
+  detents: SheetDetents,
+  insetBottom: number,
+  resting: SheetDetent
+): SheetDetent {
+  if (fieldOverflow(fieldBottom, detents[resting], insetBottom) === 0) return resting
+  return detents.expanded > detents[resting] ? 'expanded' : resting
 }
 
 export interface SheetFrame {

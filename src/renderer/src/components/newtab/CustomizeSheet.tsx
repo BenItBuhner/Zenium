@@ -1,6 +1,7 @@
 import type { ChangeEvent, JSX, ReactNode } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { SlidersHorizontal } from 'lucide-react'
+import { useEscape } from '@renderer/hooks/useEscape'
 import type {
   NewTabModules,
   NewTabPreset,
@@ -30,8 +31,8 @@ import {
 } from '@renderer/lib/newtab'
 import { FrameDialogPortal, useFrameDialog } from '@renderer/lib/portals'
 import { browserStore, pushToast } from '@renderer/lib/ui'
+import { RowView, type RowContext } from '../pages/settings/rows'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
-import { SwitchRow } from '../sheet/SwitchRow'
 
 const PRESET_LABELS: Record<NewTabPreset, string> = {
   focused: 'Focused',
@@ -46,6 +47,9 @@ const MODULE_LABELS: Array<{ key: keyof NewTabModules; label: string }> = [
   { key: 'wallpaper', label: 'Wallpaper' },
   { key: 'feed', label: 'Feed' }
 ]
+
+/** The Settings rows' context: a switch row never asks the page for a sheet, so nothing to open. */
+const NO_SHEETS: RowContext = { open: () => {} }
 
 const SHORTCUT_STYLES: Array<{ style: NewTabShortcutStyle; label: string; description: string }> = [
   { style: 'most-visited', label: 'Most visited', description: 'The sites you go to most' },
@@ -76,8 +80,9 @@ export function NewTabCustomizeLayer(): JSX.Element | null {
  *
  * The chassis (`BottomSheet`) is the page surface (§9.29) with the v2 header and grabber; the
  * sheet registers with the host as a dialog that draws its own scrim, fading with its motion
- * (§9.28). The scrim's press, the system back and Escape dismiss it, and focus returns to the
- * gear that opened it once it is gone (§9.24).
+ * (§9.28). The scrim's press, the system back and Escape dismiss it. Focus is the chassis's:
+ * it moves into the sheet as it opens, the chrome beneath is inert meanwhile, and it returns to
+ * the gear that opened the sheet once the sheet is gone (§9.22, §9.24).
  */
 function CustomizeSheet({ state }: { state: UIState }): JSX.Element {
   const settings = state.settings.newTabPhone
@@ -101,7 +106,6 @@ function CustomizeSheet({ state }: { state: UIState }): JSX.Element {
     onCancel: () => sheet.current?.cancelBack()
   })
   useEscape(dismiss)
-  useReturnFocus()
 
   const update = (next: NewTabPhoneSettings): void => run('settings.update', { newTabPhone: next })
   const chooseLabel = image.dataUrl ? 'Choose another image' : 'Choose an image'
@@ -163,13 +167,20 @@ function CustomizeSheet({ state }: { state: UIState }): JSX.Element {
             // Feed has no source yet: its row stays, disabled, with the reason as its description.
             const unavailable = key === 'feed' && !FEED_AVAILABLE
             return (
-              <SwitchRow
+              // The shared switch row (§9.34, the Settings tab's `RowView`): the whole row is the
+              // switch, 44 tall with one line and 64 with a description (§10.4).
+              <RowView
                 key={key}
-                label={label}
-                description={unavailable ? 'Not available' : undefined}
-                checked={sections[key]}
-                disabled={unavailable}
-                onChange={(checked) => update(toggleNewTabModule(settings, key, checked))}
+                ctx={NO_SHEETS}
+                row={{
+                  id: key,
+                  kind: 'switch',
+                  label,
+                  description: unavailable ? 'Not available' : undefined,
+                  checked: sections[key],
+                  disabled: unavailable,
+                  onChange: (checked) => update(toggleNewTabModule(settings, key, checked))
+                }}
               />
             )
           })}
@@ -262,18 +273,19 @@ function Section({ title, children }: { title: string; children: ReactNode }): J
   )
 }
 
-/** A radio row: the 20 ring on the left; with a description the row grows to two lines. */
+/**
+ * A radio row: the shared row (§9.34) with the shared radio leading – the 20 ring on the left,
+ * reading the row's `aria-checked`; with a description the row grows to two lines.
+ */
 function RadioRow({
   label,
   description,
   checked,
-  disabled,
   onSelect
 }: {
   label: string
   description?: string
   checked: boolean
-  disabled?: boolean
   onSelect: () => void
 }): JSX.Element {
   return (
@@ -281,11 +293,10 @@ function RadioRow({
       type="button"
       role="radio"
       aria-checked={checked}
-      disabled={disabled}
       className="zen-v2-row"
       onClick={onSelect}
     >
-      <span className="zen-v2-radio" data-checked={checked || undefined} aria-hidden />
+      <span className="zen-v2-radio" aria-hidden />
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="truncate">{label}</span>
         {description && <span className="zen-v2-description line-clamp-2">{description}</span>}
@@ -295,9 +306,10 @@ function RadioRow({
 }
 
 /**
- * An image radio card for a layout preset: the space's gradient as a miniature of the page with
- * the parts the preset shows drawn on it (Custom shows the user's own choice), the name beneath,
- * and an accent outline on the picked one.
+ * An image radio card for a layout preset (§10.4): the card is the shared `zen-v2-card-radio`
+ * (§9.34: the 2 px accent outline on the picked one), its picture the space's gradient as a
+ * miniature of the page with the parts the preset shows drawn on it (Custom shows the user's own
+ * choice); the name sits 8 beneath the card and, as its label, picks it too.
  */
 function PresetCard({
   preset,
@@ -313,15 +325,16 @@ function PresetCard({
   onSelect: () => void
 }): JSX.Element {
   return (
-    <button
-      type="button"
-      role="radio"
-      aria-checked={active}
-      disabled={disabled}
-      className="zen-v2-image-radio"
-      onClick={onSelect}
-    >
-      <span className="zen-v2-image-radio-picture">
+    <label className="zen-ntp-preset" data-disabled={disabled || undefined}>
+      <button
+        type="button"
+        role="radio"
+        aria-checked={active}
+        aria-label={PRESET_LABELS[preset]}
+        disabled={disabled}
+        className="zen-v2-card-radio zen-ntp-preset-card"
+        onClick={onSelect}
+      >
         <span
           className="zen-ntp-preview"
           data-picture={sections.wallpaper || undefined}
@@ -347,45 +360,8 @@ function PresetCard({
             </span>
           )}
         </span>
-      </span>
-      <span className="truncate px-0.5 text-center">{PRESET_LABELS[preset]}</span>
-    </button>
+      </button>
+      <span className="zen-ntp-preset-caption truncate">{PRESET_LABELS[preset]}</span>
+    </label>
   )
-}
-
-/**
- * Focus returns to the gear that opened the sheet once the sheet is gone (§9.24): the gear is
- * what had focus as the sheet mounted. Restored after the commit that removes the sheet, and not
- * when focus has since gone somewhere else that is still on screen.
- */
-function useReturnFocus(): void {
-  useEffect(() => {
-    const opener = document.activeElement
-    return () => {
-      queueMicrotask(() => {
-        if (!(opener instanceof HTMLElement) || !opener.isConnected) return
-        const now = document.activeElement
-        if (now && now !== document.body && now.isConnected) return
-        opener.focus()
-      })
-    }
-  }, [])
-}
-
-/** Escape closes the sheet (hardware keyboards exist on tablets and DeX too). */
-function useEscape(close: () => void): void {
-  const latest = useRef(close)
-  useEffect(() => {
-    latest.current = close
-  })
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape') return
-      e.preventDefault()
-      e.stopImmediatePropagation()
-      latest.current()
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [])
 }

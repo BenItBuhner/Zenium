@@ -50,9 +50,6 @@ export interface DownloadBridge {
   setFilenameDeterminer(determiner: FilenameDeterminer | null): void
   /** Where an in-flight download's file is meant to end up (the model has the base name only). */
   targetPath(id: string): string | null
-  fileExists(path: string): boolean
-  /** Delete a completed download's file; false when it could not be removed. */
-  deleteFile(path: string): Promise<boolean>
   /** The OS icon for the file type at `path`, as a data URL of `size` px; null when there is none. */
   fileIcon(path: string, size: 16 | 32): Promise<string | null>
   /** Open the downloads folder in the file manager. */
@@ -87,8 +84,6 @@ export class DownloadsApi {
   private readonly byExtension = new Map<string, Starter>()
   /** `download()` calls whose record the host has not announced yet, matched by URL as the host does. */
   private readonly starting: Array<{ url: string; by: Starter }> = []
-  /** Completed files found missing or removed through `removeFile` (`exists: false`). */
-  private readonly gone = new Set<string>()
   private snapshot: Map<string, ChromeDownloadItem> | null = null
   private readonly determiners = new Map<number, PendingDeterminer>()
   private determinerSeq = 0
@@ -148,8 +143,7 @@ export class DownloadsApi {
   private view(item: DownloadItem): DownloadView {
     const view: DownloadView = {
       id: this.chromeIdFor(item.id),
-      targetPath: this.bridge.targetPath(item.id),
-      fileGone: this.gone.has(item.id)
+      targetPath: this.bridge.targetPath(item.id)
     }
     const by = this.starter(item)
     if (by) view.byExtension = by
@@ -191,17 +185,11 @@ export class DownloadsApi {
 
   /**
    * The shapes of every visible download, with `exists` re-checked on the completed ones:
-   * Chrome looks for removed files on `search`, and reports what it finds through `onChanged`.
+   * Chrome looks for removed files on `search`, and reports what it finds through `onChanged`
+   * (the model's `fileMissing` changes commit like any other and reach the diff).
    */
-  private refreshed(): ChromeDownloadItem[] {
-    let changed = false
-    for (const item of this.visible()) {
-      if (item.state !== 'completed' || quarantined(item) || !item.savePath) continue
-      if (this.gone.has(item.id) || this.bridge.fileExists(item.savePath)) continue
-      this.gone.add(item.id)
-      changed = true
-    }
-    if (changed) this.host.scheduleTick()
+  private async refreshed(): Promise<ChromeDownloadItem[]> {
+    await this.service.refreshFiles(this.visible())
     return this.visible().map((item) => this.shape(item))
   }
 
@@ -235,16 +223,16 @@ export class DownloadsApi {
     return this.chromeIdFor(record.id)
   }
 
-  private search(ctx: ApiContext, raw: unknown): ChromeDownloadItem[] {
+  private async search(ctx: ApiContext, raw: unknown): Promise<ChromeDownloadItem[]> {
     this.requirePermission(ctx.extension)
     const query = checked(() => normalizeDownloadQuery(raw))
-    return runDownloadQuery(this.refreshed(), query)
+    return runDownloadQuery(await this.refreshed(), query)
   }
 
-  private erase(ctx: ApiContext, raw: unknown): number[] {
+  private async erase(ctx: ApiContext, raw: unknown): Promise<number[]> {
     this.requirePermission(ctx.extension)
     const query = checked(() => normalizeDownloadQuery(raw))
-    const hits = runDownloadQuery(this.refreshed(), query)
+    const hits = runDownloadQuery(await this.refreshed(), query)
     for (const hit of hits) {
       const zenId = this.zenIds.get(hit.id)
       // A running transfer is cancelled with its row, a finished file stays (the model's rule).
@@ -330,15 +318,19 @@ export class DownloadsApi {
     this.bridge.showDefaultFolder()
   }
 
+  /**
+   * The model's "Delete file". A row already known to have lost its file is Chrome's refusal;
+   * one whose file turns out to be gone at this moment is marked and counts as removed, as
+   * Chrome's own deletion treats a missing file as success.
+   */
   private async removeFile(ctx: ApiContext, raw: unknown): Promise<void> {
     this.requirePermission(ctx.extension)
     const item = this.lookup(raw)
     if (chromeState(item) !== 'complete') throw new ApiError(ERROR_NOT_COMPLETE)
-    if (this.gone.has(item.id) || !item.savePath || !this.bridge.fileExists(item.savePath))
-      throw new ApiError(ERROR_FILE_ALREADY_DELETED)
-    if (!(await this.bridge.deleteFile(item.savePath))) throw new ApiError(ERROR_FILE_NOT_REMOVED)
-    this.gone.add(item.id)
-    this.host.scheduleTick()
+    if (item.fileMissing || !item.savePath) throw new ApiError(ERROR_FILE_ALREADY_DELETED)
+    const result = await this.service.deleteFile(item.id)
+    if (result === 'failed') throw new ApiError(ERROR_FILE_NOT_REMOVED)
+    if (result === 'not-completed') throw new ApiError(ERROR_NOT_COMPLETE)
   }
 
   /**

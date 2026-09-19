@@ -160,9 +160,13 @@ function popupBounds(features: WindowOpenFeatures): Rect {
 
 /**
  * URLs a page may open in a new tab or window: what a tab can show, plus `mailto:` links, whose
- * navigation the host then hands to the mail client through the external-app prompt.
+ * navigation the host then hands to the mail client through the external-app prompt – but never
+ * the browser's own documents and pages (`zen://`, the user-facing alias `zenium://`): web
+ * content cannot open `chrome://settings` in Chrome either. Those are the user's to open, by
+ * typing, from a menu or from another app's deep link.
  */
 export function isOpenableUrl(url: string): boolean {
+  if (/^(zen|zenium):/i.test(url)) return false
   return isNavigableUrl(url) || url.startsWith('mailto:')
 }
 

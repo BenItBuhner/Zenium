@@ -2,10 +2,12 @@ import { useEffect } from 'react'
 import type { Rect, UIState } from '@shared/types'
 import { onEvent, run } from '@renderer/lib/api'
 import { starredOnPhone } from '@renderer/lib/bookmarkEdit'
+import { offerChromeShortcut } from '@renderer/lib/chromeShortcuts'
 import { remoteDragOver } from '@renderer/lib/drag'
 import { startDownloadsUi } from '@renderer/lib/downloads'
 import { isPhone } from '@renderer/lib/formFactor'
 import { APP_MENU_EVENT } from '@renderer/lib/shortcuts'
+import { openSettings } from '@renderer/lib/pages'
 import {
   cancelExternalProtocol,
   closeMenu,
@@ -17,6 +19,7 @@ import {
   openOverlay,
   openUrlbar,
   openZoom,
+  overlayAvailable,
   pushToast,
   showExternalProtocol,
   showMenu,
@@ -68,6 +71,14 @@ export function useMainEvents(): void {
       }),
       onEvent('overlay.open', ({ kind, folderId, section }) => {
         const ui = uiStore.get()
+        // Settings is a tab where the host has page tabs; the Shortcuts and Sync overlays are
+        // its sections. The core routes its own callers through `page.open`; a stray request
+        // for the overlay goes the same way (`openOverlay` refuses the kind on such a host).
+        if (!overlayAvailable(kind)) {
+          closeUrlbar()
+          openSettings(kind === 'settings' ? (section ?? null) : kind)
+          return
+        }
         if (ui.overlay === kind && !folderId) {
           // Re-opening the same overlay toggles it, unless a specific section was requested.
           if (section) uiStore.set({ overlaySection: section })
@@ -89,7 +100,12 @@ export function useMainEvents(): void {
         closeUrlbar()
         void openOverlay('space-editor', currentActiveTabId(), spaceId)
       }),
-      onEvent('find.open', ({ tabId, text, again }) => openFindBar(tabId, text, again ?? null)),
+      onEvent('find.open', (find) => {
+        // A chrome page tab may take Ctrl+F for its own search (Settings' "Find in Settings")
+        // – there is no page text for the find bar to search.
+        if (offerChromeShortcut('find.open', find)) return
+        openFindBar(find.tabId, find.text, find.again ?? null)
+      }),
       onEvent('find.selection', ({ tabId, text }) => {
         // Cmd+E does not open the bar; one open for the tab searches the selection.
         const ui = uiStore.get()

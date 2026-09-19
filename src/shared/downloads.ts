@@ -3,10 +3,174 @@
  * with its defaults (profiles from before it existed carry none), file-name utilities and the
  * suffix in-flight files are written under.
  */
-import type { DownloadSettings, Settings } from './types'
+import type { DownloadInterruptReason, DownloadSettings, Settings } from './types'
 
 /** In-progress and quarantined files end in this (Chrome: `.crdownload`, Firefox: `.part`). */
 export const PARTIAL_SUFFIX = '.zeniumdownload'
+
+// ---------------------------------------------------------------------------
+// Interrupt reasons
+// ---------------------------------------------------------------------------
+
+/** Every `DownloadInterruptReason`, in Chromium's order. */
+export const INTERRUPT_REASONS: readonly DownloadInterruptReason[] = [
+  'network-failed',
+  'network-timeout',
+  'network-disconnected',
+  'network-server-down',
+  'server-failed',
+  'server-no-range',
+  'server-bad-content',
+  'server-unauthorized',
+  'server-forbidden',
+  'server-unreachable',
+  'file-failed',
+  'file-access-denied',
+  'file-no-space',
+  'file-name-too-long',
+  'file-too-large',
+  'file-virus-infected',
+  'file-blocked',
+  'file-security-check-failed',
+  'file-same-as-source',
+  'user-canceled',
+  'user-shutdown',
+  'crash'
+]
+
+const REASON_SET: ReadonlySet<string> = new Set(INTERRUPT_REASONS)
+
+export function isInterruptReason(value: unknown): value is DownloadInterruptReason {
+  return typeof value === 'string' && REASON_SET.has(value)
+}
+
+/**
+ * Chromium's `net::` error names onto the interrupt reasons, exactly the cases of its download
+ * core's `ConvertNetErrorToInterruptReason` (components/download, `download_utils.cc`) that land
+ * in this set, plus `ERR_ABORTED`, which `HandleRequestCompletionStatus` reads as the user
+ * cancelling. Everything else the network stack reports (`ERR_CONNECTION_REFUSED`,
+ * `ERR_CONNECTION_RESET`, `ERR_NAME_NOT_RESOLVED`, `ERR_EMPTY_RESPONSE`, a connection closed
+ * short of the announced length) is Chromium's `NETWORK_FAILED`, the source's default.
+ */
+const NET_ERRORS: Readonly<Record<string, DownloadInterruptReason>> = {
+  ERR_TIMED_OUT: 'network-timeout',
+  ERR_INTERNET_DISCONNECTED: 'network-disconnected',
+  ERR_CONNECTION_FAILED: 'network-server-down',
+  ERR_REQUEST_RANGE_NOT_SATISFIABLE: 'server-no-range',
+  ERR_ACCESS_DENIED: 'file-access-denied',
+  ERR_FILE_NO_SPACE: 'file-no-space',
+  ERR_FILE_PATH_TOO_LONG: 'file-name-too-long',
+  ERR_FILE_TOO_BIG: 'file-too-large',
+  ERR_FILE_VIRUS_INFECTED: 'file-virus-infected',
+  ERR_BLOCKED_BY_CLIENT: 'file-blocked',
+  ERR_ABORTED: 'user-canceled'
+}
+
+/**
+ * The reason behind a Chromium `net::` error name (`net::ERR_CONNECTION_RESET`, `ERR_TIMED_OUT`),
+ * as the Electron host sees them on `webRequest.onErrorOccurred`. Certificate and TLS errors read
+ * as the site not being available (Chromium's `SERVER_CERT_PROBLEM` is outside this set; its
+ * bubble words both the same way); anything unknown is a network failure, as in Chromium.
+ */
+export function interruptReasonFromNetError(error: string): DownloadInterruptReason {
+  const name = error.trim().replace(/^net::/, '')
+  const known = NET_ERRORS[name]
+  if (known) return known
+  if (/^ERR_(CERT_|SSL_)/.test(name)) return 'server-failed'
+  return 'network-failed'
+}
+
+/**
+ * The reason a download's HTTP status carries, as Chromium's download core reads it
+ * (`HandleSuccessfulServerResponse`): no entity to download (404, and 204 / 205 which have
+ * none by definition), the server wants credentials (401, 407) or refuses (403), a range it
+ * cannot serve (416), or plainly failed (every other 4xx and 5xx). Null for statuses a download
+ * proceeds under (2xx including 201 and 202, which Chromium downloads like any response;
+ * 1xx and 3xx are handled earlier in the stack).
+ */
+export function interruptReasonFromHttpStatus(status: number): DownloadInterruptReason | null {
+  if (status === 204 || status === 205 || status === 404) return 'server-bad-content'
+  if (status < 400) return null
+  if (status === 401 || status === 407) return 'server-unauthorized'
+  if (status === 403) return 'server-forbidden'
+  if (status === 416) return 'server-no-range'
+  return 'server-failed'
+}
+
+/**
+ * Any reason a host or an older `downloads.json` may name, onto the closed set: a member as is,
+ * Chrome's own spelling (`NETWORK_TIMEOUT`, `DOWNLOAD_INTERRUPT_REASON_FILE_NO_SPACE`), a
+ * `net::` error name, the short reasons earlier builds wrote (`shutdown`, `file-error`), and
+ * `fallback` for `interrupted`, nothing, or anything unknown.
+ */
+export function interruptReasonFrom(
+  raw: unknown,
+  fallback: DownloadInterruptReason = 'network-failed'
+): DownloadInterruptReason {
+  if (typeof raw !== 'string') return fallback
+  const value = raw.trim()
+  if (isInterruptReason(value)) return value
+  if (value === 'shutdown') return 'user-shutdown'
+  if (value === 'file-error') return 'file-failed'
+  if (value === 'cancelled' || value === 'canceled') return 'user-canceled'
+  if (/^(net::)?ERR_/.test(value)) return interruptReasonFromNetError(value)
+  const chrome = value
+    .replace(/^DOWNLOAD_INTERRUPT_REASON_/, '')
+    .toLowerCase()
+    .replace(/_/g, '-')
+  if (isInterruptReason(chrome)) return chrome
+  return fallback
+}
+
+/** A reason as `chrome.downloads` spells it: `network-failed` → `NETWORK_FAILED`. */
+export function chromeInterruptReasonName(reason: DownloadInterruptReason): string {
+  return reason.toUpperCase().replace(/-/g, '_')
+}
+
+/**
+ * Chrome's one-line wording for each reason (the download bubble's `BubbleStatusTextBuilder`,
+ * Chrome 112); the UI prefixes it as it likes ("Failed – Check internet connection").
+ */
+export function interruptMessage(reason: DownloadInterruptReason): string {
+  switch (reason) {
+    case 'network-failed':
+    case 'network-timeout':
+    case 'network-disconnected':
+      return 'Check internet connection'
+    case 'network-server-down':
+    case 'server-failed':
+    case 'server-unreachable':
+      return 'Site wasn’t available'
+    case 'server-unauthorized':
+    case 'server-forbidden':
+    case 'server-bad-content':
+      return 'File wasn’t available on site'
+    case 'server-no-range':
+    case 'file-failed':
+      return 'Something went wrong'
+    case 'file-access-denied':
+      return 'Needs permission to download'
+    case 'file-no-space':
+      return 'Out of storage space'
+    case 'file-name-too-long':
+      return 'File name or location is too long'
+    case 'file-too-large':
+      return 'File is too big for this device'
+    case 'file-virus-infected':
+      return 'Virus detected'
+    case 'file-blocked':
+      return 'Blocked by your organization'
+    case 'file-security-check-failed':
+      return 'Virus scan failed'
+    case 'file-same-as-source':
+      return 'Already downloaded'
+    case 'user-canceled':
+      return 'Cancelled'
+    case 'user-shutdown':
+    case 'crash':
+      return 'Couldn’t finish download'
+  }
+}
 
 /**
  * Chrome's defaults: a download animates the toolbar button (`openPanelOnStart` off; the
