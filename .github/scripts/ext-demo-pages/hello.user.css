@@ -1,0 +1,13 @@
+/* ==UserStyle==
+@name           Zenium fixture red
+@namespace      zenium.test
+@version        1.0.0
+@description    Turns the fixture pages' background red.
+@author         zenium
+==/UserStyle== */
+@-moz-document url-prefix("http://10.0.2.2")
+{
+  body {
+    background-color: rgb(255, 0, 0) !important;
+  }
+}

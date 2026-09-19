@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Userscript target</title>
+    <style>
+      body {
+        font:
+          18px system-ui,
+          sans-serif;
+        margin: 120px 24px 48px;
+        color: #222;
+      }
+      h1 {
+        font-weight: 600;
+      }
+      code {
+        background: #eee;
+        padding: 2px 6px;
+        border-radius: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Userscript target page</h1>
+    <p>
+      A userscript manager that runs <code>hello.user.js</code> on this page prepends a green banner
+      to the body and sets <code>document.title</code> to <code>US OK &lt;handler&gt;</code>.
+    </p>
+    <p id="status">No userscript has run.</p>
+    <script>
+      // The page's own script: shows that the page keeps working around the userscript.
+      document.getElementById('status').textContent =
+        'Page script ran at ' + new Date().toISOString() + '; waiting for a userscript.'
+    </script>
+  </body>
+</html>
