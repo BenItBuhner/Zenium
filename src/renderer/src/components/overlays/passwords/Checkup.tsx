@@ -3,12 +3,13 @@ import { CircleCheck, ExternalLink, ShieldAlert, ShieldOff, Repeat2 } from 'luci
 import type { CredentialSummary, UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { openSite, relativeTimeInSentence, usePhone } from './lib'
-import { Btn, Description, Heading, ListRow, Progress, SiteIcon, StatusGlyph } from './shared'
+import { Btn, Description, Heading, ListRow, Progress, Rows, SiteIcon, StatusGlyph } from './shared'
 
 /**
  * Password checkup: compromised (HIBP Pwned Passwords, k-anonymity range lookups), reused and
  * weak (zxcvbn) logins with a way to the site's password change. The headline counts distinct
  * logins – one login can be compromised, weak and reused at once – then a row group per finding.
+ * Nothing here selects a row (§9.6 has no case): a finding's row opens the login or its site.
  */
 export function Checkup({
   state,
@@ -114,10 +115,12 @@ export function Checkup({
           >
             {reused.map((group, i) => (
               <div key={i} className={i > 0 ? 'mt-2' : undefined}>
-                <Description className="px-3 pb-1">Shared by {group.length}</Description>
-                {group.map((c) => (
-                  <IssueRow key={c.id} state={state} credential={c} onShow={onShow} />
-                ))}
+                <Description className="pb-1">Shared by {group.length}</Description>
+                <Rows>
+                  {group.map((c) => (
+                    <IssueRow key={c.id} state={state} credential={c} onShow={onShow} />
+                  ))}
+                </Rows>
               </div>
             ))}
           </Findings>

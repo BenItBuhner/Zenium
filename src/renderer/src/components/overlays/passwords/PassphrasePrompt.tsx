@@ -1,18 +1,25 @@
 import type { JSX } from 'react'
 import { useId, useRef, useState } from 'react'
 import { KeyRound, ShieldCheck } from 'lucide-react'
+import { useEscape } from '@renderer/hooks/useEscape'
+import { usePopover } from '@renderer/hooks/usePopover'
 import { useBackSurface } from '@renderer/lib/back'
 import { FrameDialogPortal, POPOVER_WIDTH, useFrameDialog } from '@renderer/lib/portals'
 import { cn } from '@renderer/lib/utils'
 import { BottomSheet, type BottomSheetHandle } from '../../sheet/BottomSheet'
-import { MIN_PASSPHRASE, useEscape, useFocusReach, useOverPage, usePhone } from './lib'
-import { Btn, ErrorNote, Field, StatusGlyph, TextField, TitleBlock } from './shared'
+import { MIN_PASSPHRASE, usePhone } from './lib'
+import { Btn, Field, StatusGlyph, TextField, TitleBlock } from './shared'
 
 export interface PassphraseRequest {
   /** Ask for the existing passphrase, or have one created first. */
   mode: 'passphrase' | 'setup'
   reason: string
-  error: string | null
+  /**
+   * Try what was typed (§9.30: the prompt stays up, read-only, while this runs). Resolves the
+   * refusal to show under the field – the field clears and takes the focus – or null when the
+   * passphrase was accepted, on which the prompt leaves with its values in place.
+   */
+  verify: (passphrase: string) => Promise<string | null>
 }
 
 /**
@@ -20,31 +27,34 @@ export interface PassphraseRequest {
  * biometrics). A modal dialog, so it mounts in the frame's `FrameDialogHost` through
  * `FrameDialogPortal` (lib/portals.tsx) – over the content frame and the manager alike, outside
  * the overlay's stacking context and the frame's transform – and never draws a portal or a scrim
- * of its own. On a phone it is a v2 sheet on the shared `BottomSheet` (§6, §9.25: neutral panel,
- * radius 12, hairline, grabber, rows edge to edge at the 16 gutter) that draws the stack's one
- * scrim itself (`ownScrim`, §9.24, §9.28) and opens on a title block (§9.23: a prompt has no 48
- * header – grip strip, glyph and title, the reason as its description, the §9.11 footer); one
- * spring moves the sheet, the scrim and the recede of what is under it together, and it is
- * dragged, flung or pulled down by the back gesture. On the desktop it is a `--v2-dialog` panel
- * headed by the same title block (no X), centred by the host over its §9.5 scrim, which dims the
- * content frame only. Either way it is the topmost surface and takes the keyboard (§9.22): focus
- * lands in the passphrase field, Tab stays inside, Escape and back settle it and hand focus back
- * to the control that asked; the manager behind it stays open, receded and inert.
+ * of its own. On a phone it is a v2 sheet on the shared `BottomSheet` (§6, §9.25) that draws the
+ * stack's one scrim itself (`ownScrim`, §9.24, §9.28) and opens on the chassis's title block
+ * (§9.23: a prompt has no 48 header – grip strip, glyph and title, the reason as its
+ * description, the §9.11 footer); the chassis moves the focus into it, wraps Tab, holds the
+ * page under it inert and hands the focus back when it has gone, and one spring moves the
+ * sheet, the scrim and the recede together – dragged, flung or pulled down by the back gesture.
+ * On the desktop it is the shared `.zen-v2-dialog` at the form width, 400 (§9.20), headed by a
+ * title block (no X) and ending in its actions with no hairline (footer form i), centred by the
+ * host over its §9.5 scrim, which dims the content frame only; `usePopover` puts the focus in
+ * its field, wraps Tab and returns the focus to what asked when it closes. Escape and the back
+ * gesture settle it either way (§9.22), and the manager behind it stays open. Titles are
+ * sentence case (§9.1: a dialog's or a sheet's, unlike a pane's).
  */
 export function PassphrasePrompt({
   request,
-  onSettle
+  onGone
 }: {
   request: PassphraseRequest
-  onSettle: (passphrase: string | null) => void
+  /** The prompt has left; `accepted` when a passphrase opened the vault, else it was backed out of. */
+  onGone: (accepted: boolean) => void
 }): JSX.Element {
   const phone = usePhone()
   return (
     <FrameDialogPortal>
       {phone ? (
-        <PhonePrompt request={request} onSettle={onSettle} />
+        <PhonePrompt request={request} onGone={onGone} />
       ) : (
-        <DesktopPrompt request={request} onSettle={onSettle} />
+        <DesktopPrompt request={request} onGone={onGone} />
       )}
     </FrameDialogPortal>
   )
@@ -52,35 +62,33 @@ export function PassphrasePrompt({
 
 function PhonePrompt({
   request,
-  onSettle
+  onGone
 }: {
   request: PassphraseRequest
-  onSettle: (passphrase: string | null) => void
+  onGone: (accepted: boolean) => void
 }): JSX.Element {
   const sheet = useRef<BottomSheetHandle>(null)
   const titleId = useId()
   const descriptionId = useId()
   // The sheet leaves the screen first; what it answers is decided by how it left.
-  const answer = useRef<string | null>(null)
+  const accepted = useRef(false)
   const dismiss = (): void => sheet.current?.dismiss()
   // The host draws no scrim of its own while this sheet is on top: the sheet's fades with its motion.
   useFrameDialog({ onScrimPress: dismiss, ownScrim: true })
-  useOverPage()
   useBackSurface({
     name: 'passwords-prompt',
     onProgress: (progress) => sheet.current?.backProgress(progress),
     onCommit: () => sheet.current?.commitBack(),
     onCancel: () => sheet.current?.cancelBack()
   })
-  useEscape('passwords-prompt', dismiss)
+  useEscape(dismiss)
   return (
     <div className="zen-v2-pw zen-v2-pw-sheet-layer absolute inset-0" data-surface="page">
       <BottomSheet
         ref={sheet}
         hosted
         labelledBy={titleId}
-        className="zen-v2-pw-sheet"
-        onDismissed={() => onSettle(answer.current)}
+        onDismissed={() => onGone(accepted.current)}
         handleLabel="Dismiss"
       >
         <TitleBlock
@@ -94,8 +102,8 @@ function PhonePrompt({
         <PromptForm
           request={request}
           onCancel={dismiss}
-          onSubmit={(value) => {
-            answer.current = value
+          onAccepted={() => {
+            accepted.current = true
             dismiss()
           }}
         />
@@ -106,25 +114,28 @@ function PhonePrompt({
 
 function DesktopPrompt({
   request,
-  onSettle
+  onGone
 }: {
   request: PassphraseRequest
-  onSettle: (passphrase: string | null) => void
+  onGone: (accepted: boolean) => void
 }): JSX.Element {
+  const ref = useRef<HTMLDivElement>(null)
   const titleId = useId()
   const descriptionId = useId()
-  const cancel = (): void => onSettle(null)
+  const cancel = (): void => onGone(false)
   useFrameDialog({ onScrimPress: cancel })
-  useOverPage()
   useBackSurface({ name: 'passwords-prompt', onCommit: cancel })
-  useEscape('passwords-prompt', cancel)
+  // §9.22: focus lands in the passphrase field (the first control), Tab wraps, Escape cancels
+  // and the focus goes back to the control that asked.
+  usePopover(ref, { onClose: cancel })
   return (
     <div
+      ref={ref}
       role="dialog"
+      aria-modal="true"
       aria-labelledby={titleId}
       aria-describedby={descriptionId}
-      tabIndex={-1}
-      className="zen-v2-pw zen-v2-pw-dialog zen-animate-pop flex max-w-[calc(100%-32px)] flex-col"
+      className="zen-v2-pw zen-v2-dialog zen-animate-pop flex max-w-[calc(100%-32px)] flex-col"
       style={{ width: POPOVER_WIDTH.form }}
       onMouseDown={(e) => e.stopPropagation()}
     >
@@ -136,7 +147,7 @@ function DesktopPrompt({
       >
         {title(request)}
       </TitleBlock>
-      <PromptForm request={request} onCancel={cancel} onSubmit={onSettle} />
+      <PromptForm request={request} onCancel={cancel} onAccepted={() => onGone(true)} />
     </div>
   )
 }
@@ -150,9 +161,9 @@ function Glyph({ request }: { request: PassphraseRequest }): JSX.Element {
   )
 }
 
-/** Dialog titles are Title Case (§9.1). */
+/** Dialog and sheet titles are sentence case (§9.1). */
 function title(request: PassphraseRequest): string {
-  return request.mode === 'setup' ? 'Create a Vault Passphrase' : 'Enter Your Vault Passphrase'
+  return request.mode === 'setup' ? 'Create a vault passphrase' : 'Enter your vault passphrase'
 }
 
 /** Why the prompt is up: the caller's reason, or what a first passphrase is for. */
@@ -163,66 +174,95 @@ function describe(request: PassphraseRequest): string {
 }
 
 /**
- * The body under the title block: the field (two when a passphrase is being created), any error,
- * and the footer – on a phone the sheet footer of §9.11 (peers split the width at an 8 px gap,
- * the primary trailing, 16 above the bottom inset), on the desktop hugging right at 32 tall.
+ * The body under the title block: the field (two when a passphrase is being created) and the
+ * footer – on a phone the sheet footer of §9.11 (peers split the width at an 8 px gap, the
+ * primary trailing, 16 above the bottom inset), on the desktop footer form (i): the actions
+ * hugging right, 16 to the edge, no hairline. A busy form (§9.30): while the passphrase is
+ * being verified the fields stay read-only at full opacity with the typed value in place
+ * (masked), only the primary is busy and Cancel sits at .4; refused, the field clears, takes
+ * the focus and shows the §9.12 validation line; accepted, the form leaves with its values.
  */
 function PromptForm({
   request,
   onCancel,
-  onSubmit
+  onAccepted
 }: {
   request: PassphraseRequest
   onCancel: () => void
-  onSubmit: (passphrase: string) => void
+  onAccepted: () => void
 }): JSX.Element {
   const phone = usePhone()
-  const form = useRef<HTMLFormElement>(null)
+  const field = useRef<HTMLInputElement>(null)
   const [value, setValue] = useState('')
   const [confirm, setConfirm] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [refusal, setRefusal] = useState<string | null>(null)
   const setup = request.mode === 'setup'
   const mismatch = setup && confirm.length > 0 && confirm !== value
   const ready = setup ? value.length >= MIN_PASSPHRASE && confirm === value : value.length > 0
-  useFocusReach(form)
+  const submit = async (): Promise<void> => {
+    if (!ready || busy) return
+    setBusy(true)
+    setRefusal(null)
+    const refused = await request.verify(value)
+    if (refused === null) {
+      onAccepted()
+      return
+    }
+    setBusy(false)
+    setRefusal(refused)
+    setValue('')
+    setConfirm('')
+    field.current?.focus({ preventScroll: true })
+  }
   return (
     <form
-      ref={form}
       className="flex flex-col"
       onSubmit={(e) => {
         e.preventDefault()
-        if (ready) onSubmit(value)
+        void submit()
       }}
     >
       <div className="flex flex-col gap-4 px-4">
-        <Field label="Passphrase" htmlFor="vault-passphrase">
-          <TextField
-            id="vault-passphrase"
-            type="password"
-            autoFocus
-            autoComplete={setup ? 'new-password' : 'current-password'}
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            placeholder={setup ? `At least ${MIN_PASSPHRASE} characters` : undefined}
-          />
+        <Field id="vault-passphrase" label="Passphrase" error={refusal}>
+          {(aria) => (
+            <TextField
+              {...aria}
+              ref={field}
+              type="password"
+              autoFocus
+              readOnly={busy}
+              autoComplete={setup ? 'new-password' : 'current-password'}
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              placeholder={setup ? `At least ${MIN_PASSPHRASE} characters` : undefined}
+            />
+          )}
         </Field>
         {setup && (
-          <Field label="Confirm passphrase" htmlFor="vault-passphrase-confirm">
-            <TextField
-              id="vault-passphrase-confirm"
-              type="password"
-              autoComplete="new-password"
-              value={confirm}
-              onChange={(e) => setConfirm(e.target.value)}
-              aria-invalid={mismatch || undefined}
-            />
-            {mismatch && <ErrorNote>The two passphrases differ.</ErrorNote>}
+          <Field
+            id="vault-passphrase-confirm"
+            label="Confirm passphrase"
+            error={mismatch ? 'The two passphrases differ.' : null}
+          >
+            {(aria) => (
+              <TextField
+                {...aria}
+                type="password"
+                readOnly={busy}
+                autoComplete="new-password"
+                value={confirm}
+                onChange={(e) => setConfirm(e.target.value)}
+              />
+            )}
           </Field>
         )}
-        {request.error && <ErrorNote>{request.error}</ErrorNote>}
       </div>
       <div className={cn(phone ? 'zen-sheet-footer' : 'flex justify-end gap-2 p-4')}>
-        <Btn onClick={onCancel}>Cancel</Btn>
-        <Btn type="submit" variant="primary" disabled={!ready}>
+        <Btn onClick={onCancel} disabled={busy}>
+          Cancel
+        </Btn>
+        <Btn type="submit" variant="primary" busy={busy} disabled={!ready}>
           {setup ? 'Create' : 'Continue'}
         </Btn>
       </div>

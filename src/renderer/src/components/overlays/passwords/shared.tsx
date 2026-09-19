@@ -1,8 +1,8 @@
 import type {
   ButtonHTMLAttributes,
+  HTMLAttributes,
   InputHTMLAttributes,
   JSX,
-  KeyboardEvent as ReactKeyboardEvent,
   ReactNode,
   Ref,
   RefObject,
@@ -11,6 +11,8 @@ import type {
 import { useId, useLayoutEffect, useRef, useState } from 'react'
 import { Check, ChevronDown, CircleAlert, Search } from 'lucide-react'
 import type { Rect } from '@shared/types'
+import { useEscape } from '@renderer/hooks/useEscape'
+import { useArrowKeys, usePopover } from '@renderer/hooks/usePopover'
 import { useBackSurface } from '@renderer/lib/back'
 import {
   ChromePortal,
@@ -22,27 +24,33 @@ import {
   useAnchorRect,
   useFrameDialog,
   useLightDismiss,
-  viewportSize,
-  type PopoverExtent
+  viewportSize
 } from '@renderer/lib/portals'
 import { cn } from '@renderer/lib/utils'
 import { BottomSheet, type BottomSheetHandle } from '../../sheet/BottomSheet'
-import { focusBack, useEscape, useFocusReach, useOverPage, usePhone } from './lib'
+import { usePhone } from './lib'
 
 /**
- * The password manager's controls in the v2 vocabulary (`.zen-v2-pw-*` in passwords.css): Firefox
- * Proton buttons, fields, menulists, checkboxes and radios on the neutral page surface, rows that
- * grow with their text, status as ink. Sizes come from the `--v2-*` density tokens, which the
- * root sets per form factor, so no component here asks what it is running on.
+ * The password manager's controls: thin wrappers over the shared `zen-v2-*` primitives (design
+ * language v2 draft §9.34 – `.zen-v2-button`, `.zen-v2-icon-button`, `.zen-v2-field`,
+ * `.zen-v2-row`, `.zen-v2-checkbox`, `.zen-v2-radio`, `.zen-v2-switch`, `.zen-v2-menulist`,
+ * `.zen-v2-heading`, `.zen-v2-badge`; the form field, the title block, the dialog and the
+ * menulist popup of extensions.css; the sheet chassis of main.css). They add behaviour – roles,
+ * `aria-*`, the busy state, the keyboard – and carry no styling of their own; what is this
+ * surface's (the rows' bleed, the controls inside them, the site tile, the status glyph, the
+ * secret) is a `zen-v2-pw-*` modifier in passwords.css. Sizes come from the `--v2-*` density
+ * tokens, which the root sets per form factor, so nothing here asks what it is running on
+ * except where the vocabulary itself differs (a phone's switch for the desktop's checkbox, §10.4).
  */
 
 type Variant = 'primary' | 'secondary' | 'danger'
 
 /**
- * 32 × radius 4 at 15/500. Primary = accent fill (one per view); secondary = text at 10 %; danger =
- * the danger ink. Disabled is the whole control at .4 (§9.30). `busy` is not disabled: the button
- * keeps its opacity and its width, its label gives way to a 16 px spinner, it is `aria-busy`, and
- * a press does nothing until the work is done.
+ * main.css's `.zen-v2-button`: the secondary at the text's 10 %, `data-primary` for the one
+ * accent button of a view, `data-danger` for a secondary in the danger ink. Disabled is the
+ * whole control at .4 (§9.30). `busy` is not disabled: the button keeps its opacity and its
+ * width, its label gives way to the 16 px spinner, it is `aria-busy`, and a press does nothing
+ * until the work is done.
  */
 export function Btn({
   variant = 'secondary',
@@ -62,29 +70,41 @@ export function Btn({
     <button
       ref={ref}
       type={busy ? 'button' : type}
-      data-variant={variant}
+      data-primary={variant === 'primary' || undefined}
+      data-danger={variant === 'danger' || undefined}
       aria-busy={busy || undefined}
-      className={cn('zen-v2-pw-btn', className)}
+      className={cn('zen-v2-button', className)}
       onClick={busy ? undefined : onClick}
       {...rest}
     >
-      <span className="zen-v2-pw-btn-label">{children}</span>
-      {busy && <span className="zen-v2-pw-spinner" aria-hidden />}
+      {busy ? (
+        <>
+          {/* Still the button's name and width; only its paint goes. */}
+          <span className="zen-v2-button-label">{children}</span>
+          <span className="zen-v2-spinner" aria-hidden />
+        </>
+      ) : (
+        children
+      )}
     </button>
   )
 }
 
-/** Icon-only button: a 28 box with a 16 glyph on the desktop, 44 with 20 on a phone. */
+/**
+ * main.css's `.zen-v2-icon-button` (§9.3): a 28 box with a 16 glyph on the desktop, 44 with 20
+ * on a phone; the label is the tooltip too. `pressed` is a toggle that is on (Delete while its
+ * confirmation shows, the generator while it is open): `aria-pressed`, the glyph in the accent.
+ */
 export function IconBtn({
   label,
-  active = false,
+  pressed,
   className,
   type = 'button',
   ref,
   ...rest
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
   label: string
-  active?: boolean
+  pressed?: boolean
   ref?: Ref<HTMLButtonElement>
 }): JSX.Element {
   return (
@@ -93,39 +113,114 @@ export function IconBtn({
       type={type}
       title={label}
       aria-label={label}
-      data-active={active || undefined}
-      className={cn('zen-v2-pw-icon-btn', className)}
+      aria-pressed={pressed}
+      className={cn('zen-v2-icon-button', className)}
       {...rest}
     />
   )
 }
 
+/** main.css's `.zen-v2-field` (§9.12): the control height, a hairline, the page behind it. */
 export function TextField({
   className,
   ref,
   ...rest
 }: InputHTMLAttributes<HTMLInputElement> & { ref?: Ref<HTMLInputElement> }): JSX.Element {
-  return <input ref={ref} className={cn('zen-v2-pw-field', className)} {...rest} />
+  return <input ref={ref} className={cn('zen-v2-field', className)} {...rest} />
 }
 
-/** A search field: the glyph inside the field's leading padding, in the deemphasised ink. */
+/** The field with a leading search glyph (`.zen-v2-field-lead`, extensions.css: 16 at 10 in, the text at 34). */
 export function SearchField({
   className,
   ...rest
 }: InputHTMLAttributes<HTMLInputElement>): JSX.Element {
   return (
-    <div className={cn('relative', className)}>
-      <Search aria-hidden className="zen-v2-pw-deemphasized zen-v2-pw-field-glyph" />
-      <input type="search" data-leading="true" className="zen-v2-pw-field" {...rest} />
-    </div>
+    <span className={cn('relative block min-w-0', className)}>
+      <Search aria-hidden className="zen-v2-field-lead" />
+      <input type="search" data-lead="" className="zen-v2-field" {...rest} />
+    </span>
   )
 }
 
+/** The field grown to a text area (passwords.css: two control heights, resizable). */
 export function TextArea({
   className,
   ...rest
 }: TextareaHTMLAttributes<HTMLTextAreaElement>): JSX.Element {
-  return <textarea className={cn('zen-v2-pw-field', className)} {...rest} />
+  return <textarea className={cn('zen-v2-field', className)} {...rest} />
+}
+
+/** What a `Field` hands its control: the id its label points at and the message's wiring. */
+export interface FieldAria {
+  id: string
+  'aria-describedby': string | undefined
+  'aria-invalid': true | undefined
+}
+
+/**
+ * A form field (§9.12, extensions.css's `.zen-v2-form-field`): the label above the control at
+ * 15/400, tied to it with `<label for>` and 4 px away; under it a description at 13 in the
+ * deemphasised ink or, while the value is wrong, the validation text at 13 in the danger ink
+ * behind a 16 glyph, announced. Actions that belong to the field follow it on a desktop and
+ * become a full-width row under the message on a phone (§9.11).
+ */
+export function Field({
+  id,
+  label,
+  description,
+  error,
+  actions,
+  className,
+  children
+}: {
+  id: string
+  label: string
+  description?: string
+  error?: string | null
+  actions?: ReactNode
+  className?: string
+  children: (field: FieldAria) => ReactNode
+}): JSX.Element {
+  const message = error ?? description
+  const messageId = message ? `${id}-message` : undefined
+  return (
+    <div className={cn('zen-v2-form-field', className)}>
+      <label htmlFor={id} className="zen-v2-field-label">
+        {label}
+      </label>
+      <div className="zen-v2-form-control">
+        {children({ id, 'aria-describedby': messageId, 'aria-invalid': error ? true : undefined })}
+      </div>
+      {actions && <div className="zen-v2-form-actions">{actions}</div>}
+      {message && (
+        <p
+          id={messageId}
+          className="zen-v2-field-message"
+          data-tone={error ? 'danger' : undefined}
+          role={error ? 'alert' : undefined}
+        >
+          {error && <CircleAlert />}
+          {message}
+        </p>
+      )}
+    </div>
+  )
+}
+
+/** A validation line on its own (§9.12), for what is not one field's: glyph plus text in the danger ink. */
+export function ErrorNote({
+  children,
+  className
+}: {
+  children: ReactNode
+  className?: string
+}): JSX.Element {
+  return (
+    <p role="alert" className={cn('zen-v2-field-message', className)} data-tone="danger">
+      <CircleAlert />
+      <span>{children}</span>
+    </p>
+  )
 }
 
 interface MenulistOption<T extends string> {
@@ -134,20 +229,20 @@ interface MenulistOption<T extends string> {
 }
 
 /**
- * A rectangular menulist: the trigger is a field with a chevron. On the desktop the list is a
- * popover in the chrome layer (`ChromePortal`, lib/portals.tsx) placed by `placePopover` (§9.20):
- * flush under the trigger, its start edge on the trigger's – or its end edge, when the trigger
- * sits in the trailing half of its row – kept 8 px inside the window, 320 wide (a list without
- * trailing controls, never fitted to its options or the window), at most 60 % of the window tall
- * before it scrolls. The layer's light dismiss closes it (§9.20 amended: a press anywhere outside
- * is consumed, the trigger's own press closes without reopening, a scroll, a resize or another
- * popover opening closes it too). On a phone it is never a popover (§9.13): the list is a picker
- * sheet on the shared `BottomSheet` in the frame's dialog host – 44 px rows with a radio glyph on
- * the current option, picking one closes it – the top of a depth-two stack over the manager's
- * page (§9.24), which recedes and goes inert under the sheet's own scrim. Either way the open
- * list is the topmost surface and takes the keyboard (§9.22): focus lands on the current option,
- * arrows move, Enter or Space picks, Escape and the system back close it and hand focus back to
- * the trigger, and nothing under it hears the key.
+ * The menulist (§6, §9.13): main.css's `.zen-v2-menulist` trigger, a field with a chevron. On the
+ * desktop its list is a popover in the chrome layer (`ChromePortal`, lib/portals.tsx) placed by
+ * `placePopover` (§9.20): flush under the trigger, its start edge on the trigger's – or its end
+ * edge, when the trigger sits in the trailing half of its row – kept 8 px inside the window, 320
+ * wide (a list without trailing controls, never fitted to its options or the window), at most
+ * 60 % of the window tall before it scrolls. The layer's light dismiss closes it (a press
+ * anywhere outside is consumed, the trigger's own press closes without reopening, a scroll, a
+ * resize or another popover opening closes it too). On a phone it is never a popover: the list
+ * is a picker sheet on the shared `BottomSheet` in the frame's dialog host – 44 px rows with a
+ * radio glyph on the current option, picking one closes it – the top of a depth-two stack over
+ * the manager's page (§9.24). Either way the open list is the topmost surface and takes the
+ * keyboard (§9.22): focus lands on the current option, arrows move, Enter or Space picks, Escape
+ * and the system back close it and hand focus back to the trigger, and nothing under it hears
+ * the key – the popover through `usePopover`, the sheet through its chassis.
  */
 export function Menulist<T extends string>({
   value,
@@ -155,7 +250,6 @@ export function Menulist<T extends string>({
   onChange,
   label,
   disabled,
-  fill,
   title,
   className
 }: {
@@ -165,8 +259,6 @@ export function Menulist<T extends string>({
   /** Name for assistive tech (a row label is not associated with the control); a sheet's title. */
   label: string
   disabled?: boolean
-  /** Take the row's whole width (a stacked phone row). */
-  fill?: boolean
   /** The phone header's category picker: the title itself is the menulist (§6). */
   title?: boolean
   className?: string
@@ -176,18 +268,11 @@ export function Menulist<T extends string>({
   const trigger = useRef<HTMLButtonElement>(null)
   const listId = useId()
   // One surface name per instance: with a shared name, the first menulist on the view would
-  // claim Escape for a menu that is not its own and the open one would stay open.
+  // claim the back gesture for a list that is not its own.
   const surface = `passwords-menu-${listId}`
   const close = (): void => setOpen(false)
-  /** Closed by a key or a gesture: the trigger takes the focus back (§9.22). */
-  const closeToTrigger = (): void => {
-    setOpen(false)
-    focusBack(trigger.current)
-  }
   const current = options.find((o) => o.value === value)
-  // A pick applies at once; how the list then leaves is the list's own – the popover is gone on
-  // the spot, the sheet plays its leave first (§9.24) – and either hands the focus back after.
-  const list = { id: listId, label, surface, options, value, onPick: onChange }
+  const list = { id: listId, label, surface, options, value, onPick: onChange, onClose: close }
   return (
     <>
       <button
@@ -198,11 +283,12 @@ export function Menulist<T extends string>({
         aria-haspopup={phone ? 'dialog' : 'listbox'}
         aria-expanded={open}
         aria-controls={open ? listId : undefined}
-        data-state={open ? 'open' : 'closed'}
-        data-fill={fill || undefined}
-        data-title={title || undefined}
         disabled={disabled}
-        className={cn('zen-v2-pw-menulist', className)}
+        className={cn(
+          'zen-v2-menulist',
+          title ? 'zen-v2-pw-menulist-title' : 'zen-v2-pw-menulist-inline',
+          className
+        )}
         onClick={() => setOpen((o) => !o)}
         onKeyDown={(e) => {
           if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
@@ -210,15 +296,11 @@ export function Menulist<T extends string>({
           setOpen(true)
         }}
       >
-        <span>{current?.label ?? ''}</span>
+        <span className="min-w-0 flex-1 truncate">{current?.label ?? ''}</span>
         <ChevronDown aria-hidden />
       </button>
       {open &&
-        (phone ? (
-          <MenulistSheet {...list} onClose={closeToTrigger} />
-        ) : (
-          <MenulistPopover {...list} anchor={trigger} onClose={closeToTrigger} onDismiss={close} />
-        ))}
+        (phone ? <MenulistSheet {...list} /> : <MenulistPopover {...list} anchor={trigger} />)}
     </>
   )
 }
@@ -230,11 +312,18 @@ interface OpenList<T extends string> {
   surface: string
   options: Array<MenulistOption<T>>
   value: T
-  /** Apply a pick; the list closes itself after and hands the focus back through `onClose`. */
+  /** Apply a pick; the list closes itself after. */
   onPick: (value: T) => void
+  /** The list is gone (a pick, Escape, the back gesture, a dismiss); unmount it. */
+  onClose: () => void
 }
 
-/** The open desktop list: a listbox in the chrome layer, one option focused, hanging under its trigger. */
+/**
+ * The open desktop list: a listbox in the chrome layer on the shared panel and popup classes
+ * (`.zen-v2-panel`, `.zen-v2-menulist-popup`, `.zen-v2-menulist-option` in extensions.css),
+ * hanging under its trigger. The keyboard is `usePopover`'s (focus on the current option, Tab
+ * wraps, Escape closes and returns focus to the trigger) and `useArrowKeys`'.
+ */
 function MenulistPopover<T extends string>({
   id,
   label,
@@ -243,34 +332,18 @@ function MenulistPopover<T extends string>({
   options,
   value,
   onPick,
-  onClose,
-  onDismiss
-}: OpenList<T> & {
-  anchor: RefObject<HTMLButtonElement | null>
-  /** Closed by Escape or the system back: the trigger takes the focus back. */
-  onClose: () => void
-  /** Closed by the light dismiss: focus stays where the press landed. */
-  onDismiss: () => void
-}): JSX.Element {
+  onClose
+}: OpenList<T> & { anchor: RefObject<HTMLButtonElement | null> }): JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
-  const items = useRef<Array<HTMLDivElement | null>>([])
   const anchorRect = useAnchorRect(anchor)
   // A menulist's list sizes to its rows (§9.20): its height is measured once, laid out but not
   // yet shown, so `placePopover` keeps a list that fits below the trigger there.
   const [height, setHeight] = useState<number | null>(null)
-  const [active, setActive] = useState(() =>
-    Math.max(
-      0,
-      options.findIndex((o) => o.value === value)
-    )
-  )
-  useBackSurface({ name: surface, onCommit: onClose })
-  useEscape(surface, onClose)
   useLayoutEffect(() => {
     if (height === null && ref.current) setHeight(ref.current.offsetHeight)
   }, [height])
   // The fixed 320 of §9.20: a list without trailing controls, never fitted.
-  const width: PopoverExtent = POPOVER_WIDTH.list
+  const width = POPOVER_WIDTH.list
   const box =
     anchorRect && height !== null
       ? placePopover(
@@ -281,59 +354,18 @@ function MenulistPopover<T extends string>({
           height
         )
       : null
-  const placed = box !== null
-  // The keyboard lands on the current option once the list shows (§9.22), then follows `active`.
-  useLayoutEffect(() => {
-    if (placed) items.current[active]?.focus({ preventScroll: true })
-  }, [active, placed])
-  useLightDismiss(
-    ref,
-    () => {
-      // Whatever closed it, focus does not fall to the body: the trigger takes it back when the
-      // list held it (an outside press was consumed and moved nothing; a scroll moves nothing).
-      const held = ref.current?.contains(document.activeElement) ?? false
-      onDismiss()
-      if (held) anchor.current?.focus({ preventScroll: true })
-    },
-    { anchor }
-  )
-  const move = (index: number): void => {
-    const next = (index + options.length) % options.length
-    setActive(next)
-  }
-  /** A pick applies and closes the list; the trigger takes the focus back. */
+  usePopover(ref, {
+    onClose,
+    active: box !== null,
+    initial: (root) => root.querySelector<HTMLElement>('[aria-selected="true"]'),
+    returnTo: anchor
+  })
+  useArrowKeys(ref, '.zen-v2-menulist-option')
+  useLightDismiss(ref, onClose, { anchor })
+  useBackSurface({ name: surface, onCommit: onClose })
   const pick = (next: T): void => {
     onPick(next)
     onClose()
-  }
-  const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>): void => {
-    switch (e.key) {
-      case 'ArrowDown':
-        move(active + 1)
-        break
-      case 'ArrowUp':
-        move(active - 1)
-        break
-      case 'Home':
-        move(0)
-        break
-      case 'End':
-        move(options.length - 1)
-        break
-      case 'Enter':
-      case ' ': {
-        const option = options[active]
-        if (option) pick(option.value)
-        break
-      }
-      case 'Tab':
-        // The list is the topmost surface: Tab stays inside it (§9.22).
-        move(active + (e.shiftKey ? -1 : 1))
-        break
-      default:
-        return
-    }
-    e.preventDefault()
   }
   return (
     <ChromePortal>
@@ -342,52 +374,43 @@ function MenulistPopover<T extends string>({
         id={id}
         role="listbox"
         aria-label={label}
-        tabIndex={-1}
-        className="zen-v2-pw-menu zen-animate-pop fixed"
+        className="zen-v2-pw zen-v2-panel zen-v2-menulist-popup zen-animate-pop fixed select-none"
         data-side={box?.side}
         // Until its rows and the anchor have been measured it is laid out but not shown.
         style={box ? popoverStyle(box) : { visibility: 'hidden', width }}
-        onKeyDown={onKeyDown}
       >
-        {options.map((o, i) => (
-          <div
-            key={o.value}
-            ref={(el) => {
-              items.current[i] = el
-            }}
-            role="option"
-            aria-selected={o.value === value}
-            tabIndex={-1}
-            data-highlighted={i === active || undefined}
-            className="zen-v2-pw-menu-item"
-            onPointerMove={() => i !== active && setActive(i)}
-            onClick={() => pick(o.value)}
-          >
-            <span>{o.value === value && <Check className="size-4" strokeWidth={2} />}</span>
-            <span className="min-w-0 flex-1 truncate">{o.label}</span>
-          </div>
-        ))}
+        {options.map((o) => {
+          const selected = o.value === value
+          return (
+            <button
+              key={o.value}
+              type="button"
+              role="option"
+              aria-selected={selected}
+              className="zen-v2-menulist-option"
+              onClick={() => pick(o.value)}
+            >
+              <span className="min-w-0 flex-1 truncate">{o.label}</span>
+              {selected && <Check />}
+            </button>
+          )
+        })}
       </div>
     </ChromePortal>
   )
 }
 
 /**
- * The open phone list (§9.13): a picker sheet on the shared `BottomSheet` chassis (main.css
- * `.zen-sheet`, `.zen-sheet-item`), mounted in the frame's dialog host through `FrameDialogPortal`
- * (lib/portals.tsx) – over the manager's page, outside the overlay's stacking context – with the
- * §9.16 48 header naming it under the grabber and 44 px rows edge to edge at the 16 gutter
- * (§9.25), the current option marked by the radio glyph. It draws the stack's one scrim itself
- * (`ownScrim`, §9.24, §9.28) and holds the page under it inert (`useOverPage`); one spring moves
- * the sheet, the scrim and the page's recede together, and a drag, a fling, the scrim, Escape or
- * the back gesture close it and nothing else. A pick applies at once and lets the sheet leave.
+ * The open phone list (§9.13): a picker sheet on the shared `BottomSheet` chassis, mounted in
+ * the frame's dialog host through `FrameDialogPortal` (lib/portals.tsx) – over the manager's
+ * page, outside the overlay's stacking context – with the §9.16 48 header naming it under the
+ * grabber and 44 px radio rows (the shared row and radio) edge to edge at the 16 gutter (§9.25).
+ * It draws the stack's one scrim itself (`ownScrim`, §9.24, §9.28); the chassis focuses the
+ * current option as it opens, wraps Tab, holds the page under it inert and hands the focus back
+ * to the trigger when it has gone. A drag, a fling, the scrim, Escape or the back gesture close
+ * it; a pick applies at once and lets the sheet leave.
  */
-function MenulistSheet<T extends string>(
-  props: OpenList<T> & {
-    /** The sheet has left the screen, whichever way: the trigger takes the focus back. */
-    onClose: () => void
-  }
-): JSX.Element {
+function MenulistSheet<T extends string>(props: OpenList<T>): JSX.Element {
   // The sheet registers with the host it renders in (`useFrameDialog` reads the portal's
   // context), so the host takes the pointer for it and the manager's overlay under it does not.
   return (
@@ -405,34 +428,24 @@ function PickerSheet<T extends string>({
   value,
   onPick,
   onClose
-}: OpenList<T> & { onClose: () => void }): JSX.Element {
+}: OpenList<T>): JSX.Element {
   const sheet = useRef<BottomSheetHandle>(null)
-  const rows = useRef<HTMLDivElement>(null)
   const titleId = useId()
   const dismiss = (): void => sheet.current?.dismiss()
   useFrameDialog({ onScrimPress: dismiss, ownScrim: true })
-  useOverPage()
   useBackSurface({
     name: surface,
     onProgress: (progress) => sheet.current?.backProgress(progress),
     onCommit: () => sheet.current?.commitBack(),
     onCancel: () => sheet.current?.cancelBack()
   })
-  useEscape(surface, dismiss)
-  // Focus lands on the current option as the sheet opens (§9.22); Tab then stays inside it.
-  useLayoutEffect(() => {
-    rows.current
-      ?.querySelector<HTMLElement>('[aria-checked="true"]')
-      ?.focus({ preventScroll: true })
-  }, [])
-  useFocusReach(rows)
+  useEscape(dismiss)
   return (
     <div className="zen-v2-pw zen-v2-pw-sheet-layer absolute inset-0" data-surface="page">
       <BottomSheet
         ref={sheet}
         hosted
         labelledBy={titleId}
-        className="zen-v2-pw-sheet"
         handleLabel="Dismiss"
         header={
           <h2 id={titleId} className="zen-sheet-title">
@@ -441,26 +454,20 @@ function PickerSheet<T extends string>({
         }
         onDismissed={onClose}
       >
-        <div
-          ref={rows}
-          id={id}
-          role="radiogroup"
-          aria-labelledby={titleId}
-          className="zen-v2-pw-sheet-rows"
-        >
+        <div id={id} role="radiogroup" aria-labelledby={titleId} className="zen-v2-pw-sheet-rows">
           {options.map((o) => (
             <button
               key={o.value}
               type="button"
               role="radio"
               aria-checked={o.value === value}
-              className="zen-sheet-item"
+              className="zen-v2-row"
               onClick={() => {
                 onPick(o.value)
                 dismiss()
               }}
             >
-              <span className="zen-v2-pw-radio" data-checked={o.value === value} aria-hidden />
+              <span className="zen-v2-radio" aria-hidden />
               <span className="min-w-0 flex-1 truncate">{o.label}</span>
             </button>
           ))}
@@ -476,31 +483,55 @@ function PickerSheet<T extends string>({
  * the trigger itself, so the list is flush under the control at gap 0, not under the row's padding.
  */
 function menulistBar(trigger: HTMLElement | null, anchor: Rect): Rect {
-  const row = trigger?.closest('.zen-v2-pw-row, .zen-v2-pw-header-row') ?? trigger?.parentElement
+  const row = trigger?.closest('.zen-v2-row, .zen-v2-pw-header-row') ?? trigger?.parentElement
   if (!row) return anchor
   const r = toRect(row.getBoundingClientRect())
   return { x: r.x, width: r.width, y: anchor.y, height: anchor.height }
 }
 
-/** The Proton checkbox glyph: a 16 square (20 on a phone) at radius 2, accent when checked. */
-function CheckBox({ checked }: { checked: boolean }): JSX.Element {
+/** A list of rows: the shared rows bleeding 16 into the gutter, so their text sits on it (passwords.css). */
+export function Rows({ className, ...rest }: HTMLAttributes<HTMLDivElement>): JSX.Element {
+  return <div className={cn('zen-v2-pw-rows', className)} {...rest} />
+}
+
+/**
+ * A row's text: the label on the first line at the row's 15/20, the description under it the
+ * shared `.zen-v2-description` (13/20), wrapping to two lines then an ellipsis (§9.2,
+ * `.zen-v2-pw-clamp`) unless it is the explanation itself.
+ */
+export function RowText({
+  label,
+  description,
+  full = false
+}: {
+  label: ReactNode
+  description?: ReactNode
+  /** The description is the explanation itself and does not clamp at two lines. */
+  full?: boolean
+}): JSX.Element {
   return (
-    <span className="zen-v2-pw-check" data-checked={checked} aria-hidden>
-      <Check />
+    <span className="flex min-w-0 flex-1 flex-col">
+      <span className="block [overflow-wrap:anywhere]">{label}</span>
+      {description && (
+        <span className={cn('zen-v2-description', !full && 'zen-v2-pw-clamp')}>{description}</span>
+      )}
     </span>
   )
 }
 
 /**
- * A checkbox row: the whole row is the control; the box sits on the first text line with the
- * label to its right and the description under the label, as Firefox lays out its checkboxes.
+ * A boolean row: the whole row is the control. On the desktop a checkbox row (§6: the shared
+ * `.zen-v2-checkbox` on the first text line, the label to its right, the description under it,
+ * as Firefox lays out its checkboxes); on a phone a switch row (§10.4: the shared 36 × 20
+ * `.zen-v2-switch` trailing the text, the row `role="switch"`). Disabled, the row says so
+ * (`aria-disabled`), which keeps the shared row's fill off it (§9.30).
  */
 export function CheckRow({
   checked,
   onChange,
   label,
   description,
-  disabled,
+  disabled = false,
   className
 }: {
   checked: boolean
@@ -510,30 +541,40 @@ export function CheckRow({
   disabled?: boolean
   className?: string
 }): JSX.Element {
+  const phone = usePhone()
+  if (phone) {
+    return (
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        aria-disabled={disabled || undefined}
+        className={cn('zen-v2-row zen-v2-pw-row', className)}
+        onClick={() => !disabled && onChange(!checked)}
+      >
+        <RowText label={label} description={description} full />
+        <span className="zen-v2-switch" aria-hidden />
+      </button>
+    )
+  }
   return (
-    <button
-      type="button"
-      role="checkbox"
-      aria-checked={checked}
-      disabled={disabled}
-      className={cn('zen-v2-pw-row w-full text-left', className)}
-      data-lead="true"
-      onClick={() => onChange(!checked)}
+    <label
+      className={cn('zen-v2-row zen-v2-check-row zen-v2-pw-row items-start', className)}
+      aria-disabled={disabled || undefined}
     >
-      <CheckBox checked={checked} />
-      <span className="zen-v2-pw-row-text">
-        <span className="zen-v2-pw-row-label block">{label}</span>
-        {description && (
-          <span className="zen-v2-pw-row-description" data-clamp="false">
-            {description}
-          </span>
-        )}
-      </span>
-    </button>
+      <input
+        type="checkbox"
+        className="zen-v2-checkbox"
+        checked={checked}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.checked)}
+      />
+      <RowText label={label} description={description} full />
+    </label>
   )
 }
 
-/** A radio row inside a `role="radiogroup"`: the ring on the first line, the label beside it. */
+/** A radio row inside a `role="radiogroup"`: the shared `.zen-v2-radio` on the first line, the label beside it. */
 export function RadioRow({
   checked,
   onSelect,
@@ -552,26 +593,19 @@ export function RadioRow({
       type="button"
       role="radio"
       aria-checked={checked}
-      className={cn('zen-v2-pw-row w-full text-left', className)}
-      data-lead="true"
+      className={cn('zen-v2-row zen-v2-pw-row', className)}
       onClick={onSelect}
     >
-      <span className="zen-v2-pw-radio" data-checked={checked} aria-hidden />
-      <span className="zen-v2-pw-row-text">
-        <span className="zen-v2-pw-row-label block">{label}</span>
-        {description && (
-          <span className="zen-v2-pw-row-description" data-clamp="false">
-            {description}
-          </span>
-        )}
-      </span>
+      <span className="zen-v2-radio" aria-hidden />
+      <RowText label={label} description={description} full />
     </button>
   )
 }
 
 /**
- * A settings row: label and description to the left, the control to the right. `stack` drops the
- * control under the text (a phone with a wide menulist or a pair of buttons).
+ * A settings row: label and description to the left, the control to the right, centred on the
+ * row (§9.18); the row itself is not a target (`data-static`, §9.34), its control is. `stack`
+ * drops the control under the text (a phone with a wide menulist or a pair of buttons).
  */
 export function SettingRow({
   label,
@@ -590,31 +624,31 @@ export function SettingRow({
   className?: string
 }): JSX.Element {
   return (
-    <div className={cn('zen-v2-pw-row', className)} data-stack={stack || undefined}>
-      <div className="zen-v2-pw-row-text">
-        <div className="zen-v2-pw-row-label">{label}</div>
-        {description && (
-          <div className="zen-v2-pw-row-description" data-clamp={clamp ? undefined : 'false'}>
-            {description}
-          </div>
-        )}
-      </div>
+    <div
+      className={cn('zen-v2-row zen-v2-pw-row', className)}
+      data-static=""
+      data-stack={stack || undefined}
+    >
+      <RowText label={label} description={description} full={!clamp} />
       {children && <div className="zen-v2-pw-row-control">{children}</div>}
     </div>
   )
 }
 
-/** A list row on the surface: a fill on hover or press, the accent bar when it is the open one. */
+/**
+ * A list row on the surface: the shared row as a target when it opens something (the fill on
+ * hover and press), its static form when its controls are the targets (a never-saved site with
+ * its Allow button, a checkup finding with Change).
+ */
 export function ListRow({
-  selected = false,
   className,
   children,
   onClick,
   ...rest
-}: ButtonHTMLAttributes<HTMLButtonElement> & { selected?: boolean }): JSX.Element {
+}: ButtonHTMLAttributes<HTMLButtonElement>): JSX.Element {
   if (!onClick) {
     return (
-      <div className={cn('zen-v2-pw-list-row', className)} aria-current={selected || undefined}>
+      <div className={cn('zen-v2-row zen-v2-pw-list-row', className)} data-static="">
         {children}
       </div>
     )
@@ -622,8 +656,7 @@ export function ListRow({
   return (
     <button
       type="button"
-      className={cn('zen-v2-pw-list-row', className)}
-      aria-current={selected || undefined}
+      className={cn('zen-v2-row zen-v2-pw-list-row', className)}
       onClick={onClick}
       {...rest}
     >
@@ -632,7 +665,7 @@ export function ListRow({
   )
 }
 
-/** A page or pane title: 22/600. */
+/** A page or pane title: 22/600 on 28 (§9.26). */
 export function Title({
   children,
   className
@@ -644,11 +677,13 @@ export function Title({
 }
 
 /**
- * A title block (§9.23): what heads a desktop dialog or popover instead of a bar – no control and
- * no X, since Escape, a click outside and the footer close it. Padding 16, an optional 16 px
- * glyph 8 px before the 17/600 title, an optional description 4 px under it, 16 px to the body;
- * 54 tall on its own, 78 with a one-line description. `id` and `descriptionId` are for the
- * dialog's `aria-labelledby` and `aria-describedby`.
+ * A title block (§9.23): what heads a dialog or a prompt sheet instead of a bar – no control
+ * and no X, since Escape, a press outside and the footer close it. Padding 16, an optional glyph
+ * (16 on the desktop, 20 on a phone) 8 px before the 17/600 title on 22, an optional description
+ * 4 px under it, 16 px to the body; 54 tall on its own, 78 with a one-line description. On the
+ * desktop it is extensions.css's `.zen-v2-title-block`; on a phone the sheet chassis's
+ * `.zen-sheet-title-block` (main.css), the one every prompt sheet opens on. `id` and
+ * `descriptionId` are for the dialog's `aria-labelledby` and `aria-describedby`.
  */
 export function TitleBlock({
   id,
@@ -665,16 +700,26 @@ export function TitleBlock({
   children: ReactNode
   className?: string
 }): JSX.Element {
-  return (
-    <div className={cn('zen-v2-pw-title-block shrink-0', className)}>
-      <div className="flex items-center gap-2">
-        {glyph}
-        <h3 id={id} className="zen-v2-pw-block-title min-w-0 flex-1">
-          {children}
-        </h3>
+  const phone = usePhone()
+  if (phone) {
+    return (
+      <div className={cn('zen-sheet-title-block', className)}>
+        <h2 id={id}>
+          {glyph}
+          <span className="min-w-0 flex-1">{children}</span>
+        </h2>
+        {description && <p id={descriptionId}>{description}</p>}
       </div>
+    )
+  }
+  return (
+    <div className={cn('zen-v2-title-block', className)}>
+      <h2 id={id} className="zen-v2-title-block-title">
+        {glyph}
+        <span className="min-w-0 flex-1">{children}</span>
+      </h2>
       {description && (
-        <p id={descriptionId} className="zen-v2-pw-description">
+        <p id={descriptionId} className="zen-v2-title-block-description">
           {description}
         </p>
       )}
@@ -682,7 +727,7 @@ export function TitleBlock({
   )
 }
 
-/** A sub-heading over a group of rows: 15/600, sentence case, an optional count trailing. */
+/** A sub-heading over a group of rows: the shared `.zen-v2-heading` (15/600), sentence case, an optional count trailing. */
 export function Heading({
   children,
   trailing,
@@ -697,7 +742,7 @@ export function Heading({
 }): JSX.Element {
   return (
     <div className={cn('zen-v2-pw-heading-block flex flex-col', className)}>
-      <h3 className="zen-v2-pw-heading flex items-center gap-2">
+      <h3 className="zen-v2-heading flex items-center gap-2">
         <span className="min-w-0 flex-1 truncate">{children}</span>
         {trailing}
       </h3>
@@ -706,7 +751,7 @@ export function Heading({
   )
 }
 
-/** Deemphasised copy: the body size on its own, 13/18 inside a row, a meta block or a field label. */
+/** Standalone deemphasised copy at the body size (§4): a hero's text, a group's description, a footnote. */
 export function Description({
   children,
   className
@@ -765,61 +810,6 @@ export function StatusGlyph({
     >
       {children}
     </span>
-  )
-}
-
-/** An error under a control: glyph plus text in the danger ink, never bare red text. */
-export function ErrorNote({
-  children,
-  className
-}: {
-  children: ReactNode
-  className?: string
-}): JSX.Element {
-  return (
-    <p role="alert" className={cn('zen-v2-pw-error', className)}>
-      <CircleAlert />
-      <span>{children}</span>
-    </p>
-  )
-}
-
-/** A count in a pill – the pill's one use. */
-export function Badge({
-  children,
-  tone,
-  className
-}: {
-  children: ReactNode
-  tone?: 'danger'
-  className?: string
-}): JSX.Element {
-  return (
-    <span className={cn('zen-v2-pw-badge', className)} data-tone={tone}>
-      {children}
-    </span>
-  )
-}
-
-/** A form field: a sentence-case caption over the control. */
-export function Field({
-  label,
-  htmlFor,
-  children,
-  className
-}: {
-  label: string
-  htmlFor: string
-  children: ReactNode
-  className?: string
-}): JSX.Element {
-  return (
-    <div className={cn('flex flex-col gap-1.5', className)}>
-      <label htmlFor={htmlFor} className="zen-v2-pw-description">
-        {label}
-      </label>
-      {children}
-    </div>
   )
 }
 

@@ -1,5 +1,5 @@
 import type { JSX, ReactNode } from 'react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Fingerprint, KeyRound, ShieldAlert } from 'lucide-react'
 import type { PasswordsStatus } from '@shared/types'
 import { cmd } from '@renderer/lib/api'
@@ -10,13 +10,16 @@ import { Btn, Description, ErrorNote, Field, StatusGlyph, TextField } from './sh
  * What the manager shows while the vault is closed: an unreadable vault with a way to start over,
  * the first-run passphrase setup on devices without an OS keystore, a passphrase prompt, or the
  * OS unlock (attempted once automatically, so desktop keychains open silently and Android shows
- * its device credential sheet right away).
+ * its device credential sheet right away). The passphrase forms are busy forms (v2 §9.30): while
+ * the vault is being opened the fields stay read-only with what was typed, masked, and only
+ * Unlock is busy; refused, the field clears, takes the focus and says why under itself (§9.12).
  */
 export function VaultGate({ status }: { status: PasswordsStatus }): JSX.Element {
   const exists = status.protection.os || status.protection.passphrase
   const needsSetup = !exists && !status.osKeystore && !status.error
   // The device key opens the vault (or creates it) without the user typing anything.
   const deviceOpens = !status.error && (status.protection.os || (!exists && status.osKeystore))
+  const field = useRef<HTMLInputElement>(null)
   const [passphrase, setPassphrase] = useState('')
   const [confirm, setConfirm] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -40,11 +43,15 @@ export function VaultGate({ status }: { status: PasswordsStatus }): JSX.Element 
         // A refused device key is something to try again: a dismissed prompt or a keystore that
         // is unusable right now. Only the engine decides a vault is unreadable (`status.error`),
         // and only there is starting over offered.
-        setError(
-          value === undefined
-            ? (outcome.reason ?? 'Zenium could not open the vault with the device key.')
-            : 'That passphrase does not open the vault.'
-        )
+        if (value === undefined) {
+          setError(outcome.reason ?? 'Zenium could not open the vault with the device key.')
+        } else {
+          // A refused passphrase (§9.30): the field clears, takes the focus and shows why.
+          setError('That passphrase does not open the vault.')
+          setPassphrase('')
+          setConfirm('')
+          field.current?.focus({ preventScroll: true })
+        }
       }
     } finally {
       setBusy(false)
@@ -104,29 +111,37 @@ export function VaultGate({ status }: { status: PasswordsStatus }): JSX.Element 
             if (ready && !busy) void unlock(passphrase)
           }}
         >
-          <Field label="Passphrase" htmlFor="vault-new">
-            <TextField
-              id="vault-new"
-              type="password"
-              autoFocus
-              autoComplete="new-password"
-              placeholder={`At least ${MIN_PASSPHRASE} characters`}
-              value={passphrase}
-              onChange={(e) => setPassphrase(e.target.value)}
-            />
+          <Field id="vault-new" label="Passphrase" error={error}>
+            {(aria) => (
+              <TextField
+                {...aria}
+                ref={field}
+                type="password"
+                autoFocus
+                readOnly={busy}
+                autoComplete="new-password"
+                placeholder={`At least ${MIN_PASSPHRASE} characters`}
+                value={passphrase}
+                onChange={(e) => setPassphrase(e.target.value)}
+              />
+            )}
           </Field>
-          <Field label="Confirm passphrase" htmlFor="vault-new-confirm">
-            <TextField
-              id="vault-new-confirm"
-              type="password"
-              autoComplete="new-password"
-              value={confirm}
-              onChange={(e) => setConfirm(e.target.value)}
-              aria-invalid={mismatch || undefined}
-            />
-            {mismatch && <ErrorNote>The two passphrases differ.</ErrorNote>}
+          <Field
+            id="vault-new-confirm"
+            label="Confirm passphrase"
+            error={mismatch ? 'The two passphrases differ.' : null}
+          >
+            {(aria) => (
+              <TextField
+                {...aria}
+                type="password"
+                readOnly={busy}
+                autoComplete="new-password"
+                value={confirm}
+                onChange={(e) => setConfirm(e.target.value)}
+              />
+            )}
           </Field>
-          {error && <ErrorNote>{error}</ErrorNote>}
           <Btn
             type="submit"
             variant="primary"
@@ -153,22 +168,26 @@ export function VaultGate({ status }: { status: PasswordsStatus }): JSX.Element 
         }
       >
         <form
-          className="flex w-full max-w-[360px] flex-col gap-3"
+          className="flex w-full max-w-[360px] flex-col gap-3 text-left"
           onSubmit={(e) => {
             e.preventDefault()
             if (passphrase && !busy) void unlock(passphrase)
           }}
         >
-          <TextField
-            type="password"
-            autoFocus
-            autoComplete="current-password"
-            placeholder="Passphrase"
-            aria-label="Passphrase"
-            value={passphrase}
-            onChange={(e) => setPassphrase(e.target.value)}
-          />
-          {error && <ErrorNote>{error}</ErrorNote>}
+          <Field id="vault-passphrase-gate" label="Passphrase" error={error}>
+            {(aria) => (
+              <TextField
+                {...aria}
+                ref={field}
+                type="password"
+                autoFocus
+                readOnly={busy}
+                autoComplete="current-password"
+                value={passphrase}
+                onChange={(e) => setPassphrase(e.target.value)}
+              />
+            )}
+          </Field>
           <Btn
             type="submit"
             variant="primary"
@@ -203,6 +222,7 @@ export function VaultGate({ status }: { status: PasswordsStatus }): JSX.Element 
   )
 }
 
+/** The gate's hero (§9.27): a 40 px glyph in its ink, the 17/600 title on 22, the copy under it. */
 function Hero({
   icon,
   tone = 'accent',

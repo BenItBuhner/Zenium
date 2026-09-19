@@ -1,10 +1,11 @@
 import type { JSX, ReactNode, RefObject } from 'react'
 import { useRef } from 'react'
 import { ChevronLeft, X } from 'lucide-react'
+import { useEscape } from '@renderer/hooks/useEscape'
 import { useBackDismissal } from '@renderer/lib/back'
 import { closeOverlay } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
-import { useEscape, usePhone, useUnderLayer } from './lib'
+import { usePhone } from './lib'
 import { IconBtn, Title } from './shared'
 
 /**
@@ -13,12 +14,13 @@ import { IconBtn, Title } from './shared'
  * overlay's back gesture – the page recedes towards the bottom edge under the finger – and a
  * click outside closing it. Panes stack inside. `layer` is the re-authentication prompt, a modal
  * that mounts itself in the frame's dialog host (`FrameDialogPortal`, lib/portals.tsx), over the
- * page and outside it: on the desktop the host's scrim dims the content frame only (§9.5); on a
- * phone the prompt – like a menulist's picker sheet (§9.13) – is a sheet over this page, a
- * depth-two stack (§9.24): the sheet owns the one scrim, and the page recedes under it on the
- * sheet's progress (passwords.css). While any such layer is up (`useOverPage`, lib.ts) the page
- * is inert, so nothing under the scrim scrolls or takes focus (§9.22, §11.2), and the layer
- * closes first: Escape and back reach it before anything here.
+ * page and outside it: on the desktop the host's scrim dims the content frame only (§9.5) and
+ * the dialog holds the keyboard (`usePopover`: Tab wraps inside it, Escape returns to what
+ * asked); on a phone the prompt – like a menulist's picker sheet (§9.13) – is a sheet over this
+ * page, a depth-two stack (§9.24): the sheet chassis owns the one scrim, holds the shell's
+ * content, and this page in it, inert (`holdChromeInert`), and recedes the page under it on the
+ * sheet's progress (passwords.css). Nothing here restates that: the layer closes first because
+ * its Escape is the shared LIFO hook's, mounted after the page's own surfaces.
  */
 export function PageShell({
   children,
@@ -30,7 +32,6 @@ export function PageShell({
   className?: string
 }): JSX.Element {
   const phone = usePhone()
-  const under = useUnderLayer()
   const pageRef = useRef<HTMLDivElement>(null)
   useBackDismissal('overlay', {
     travel: 360,
@@ -58,8 +59,6 @@ export function PageShell({
         ref={pageRef}
         role="dialog"
         aria-label="Passwords"
-        inert={under}
-        data-under={under || undefined}
         className={cn(
           'zen-v2-pw-page zen-animate-in relative flex flex-1 flex-col overflow-hidden',
           phone ? 'm-2' : 'm-3',
@@ -166,7 +165,11 @@ export function PushedPane({
   )
 }
 
-/** Registers a pane as a back surface (gesture and Escape) above whatever is under it. */
+/**
+ * Registers a pane as a back surface (gesture and Escape) above whatever is under it: the
+ * shared `useEscape` is a LIFO stack, so a prompt or a picker opened over the pane takes the
+ * key first, the pane next, and the window's handler that closes the whole overlay last.
+ */
 export function PaneBack({
   name,
   paneRef,
@@ -186,6 +189,6 @@ export function PaneBack({
     },
     dismissed: onPop
   })
-  useEscape(name, onPop)
+  useEscape(onPop)
   return null
 }

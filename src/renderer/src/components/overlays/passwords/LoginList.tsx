@@ -10,6 +10,7 @@ import {
   Heading,
   IconBtn,
   ListRow,
+  Rows,
   SearchField,
   SiteIcon,
   StatusGlyph,
@@ -18,7 +19,9 @@ import {
 
 /**
  * Saved logins grouped by site with a search over site, address, username and notes; the empty
- * state; and the sites the manager never offers to save for (Chrome's "Declined sites").
+ * state; and the sites the manager never offers to save for (Chrome's "Declined sites"). The
+ * rows are the shared `.zen-v2-row` in `Rows`, bleeding 16 into the gutter so their text sits on
+ * the gutter line under the group's heading (§9.25, §10.3).
  */
 export function LoginList({
   state,
@@ -71,7 +74,6 @@ export function LoginList({
         groups.map((group) => (
           <section key={group.domain} className="flex flex-col">
             <Heading
-              className="px-3"
               trailing={
                 group.entries.length > 1 ? (
                   <Description className="tabular-nums">{group.entries.length}</Description>
@@ -83,18 +85,20 @@ export function LoginList({
                 <span className="truncate">{group.domain}</span>
               </span>
             </Heading>
-            {group.entries.map((c) => (
-              <ListRow key={c.id} onClick={() => onShow(c.id)}>
-                <span className="min-w-0 flex-1 truncate">
-                  {c.username || <span className="zen-v2-pw-deemphasized">No username</span>}
-                </span>
-                {hostOf(c.origin) !== group.domain && (
-                  <Description className="max-w-[45%] truncate">{hostOf(c.origin)}</Description>
-                )}
-                {c.realm && <Description className="shrink-0">HTTP auth</Description>}
-                {phone && <ChevronRight className="zen-v2-pw-deemphasized" />}
-              </ListRow>
-            ))}
+            <Rows>
+              {group.entries.map((c) => (
+                <ListRow key={c.id} onClick={() => onShow(c.id)}>
+                  <span className="min-w-0 flex-1 truncate">
+                    {c.username || <span className="zen-v2-pw-deemphasized">No username</span>}
+                  </span>
+                  {hostOf(c.origin) !== group.domain && (
+                    <Description className="max-w-[45%] truncate">{hostOf(c.origin)}</Description>
+                  )}
+                  {c.realm && <Description className="shrink-0">HTTP auth</Description>}
+                  {phone && <ChevronRight className="zen-v2-pw-deemphasized" />}
+                </ListRow>
+              ))}
+            </Rows>
           </section>
         ))
       )}
@@ -141,22 +145,24 @@ function NeverSave({ domains }: { domains: string[] }): JSX.Element {
   }
   return (
     <section className="mt-4 flex flex-col">
-      <Heading className="px-3" description="Zenium will not offer to save logins for these sites.">
+      <Heading description="Zenium will not offer to save logins for these sites.">
         Never saved
       </Heading>
-      {domains.map((domain) => (
-        <ListRow key={domain}>
-          <span className="min-w-0 flex-1 truncate">{domain}</span>
-          <IconBtn
-            label="Allow saving again"
-            className="-mr-2"
-            onClick={() => run('passwords.neverSaveRemove', { domain })}
-          >
-            <X />
-          </IconBtn>
-        </ListRow>
-      ))}
-      <div className="flex items-center gap-2 px-3 py-1">
+      <Rows>
+        {domains.map((domain) => (
+          // A static row (§9.34): its one control, the icon button, is the target.
+          <ListRow key={domain}>
+            <span className="min-w-0 flex-1 truncate">{domain}</span>
+            <IconBtn
+              label="Allow saving again"
+              onClick={() => run('passwords.neverSaveRemove', { domain })}
+            >
+              <X />
+            </IconBtn>
+          </ListRow>
+        ))}
+      </Rows>
+      <div className="flex items-center gap-2 pt-2">
         <TextField
           placeholder="Add a site, e.g. bank.example"
           aria-label="Site to never save for"
