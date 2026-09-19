@@ -24,7 +24,9 @@ import {
  *   section:<section>:<spaceId>  append to a section (pinned | regular | essential)
  *   folder:<folderId>            move into a folder
  *   space:<spaceId>              move to another space
- *   split:<left|right|top|bottom> split with the active tab (the content area's edges)
+ *   split:<left|right|top|bottom> split with the active tab, or join its split on that side
+ *                                (the content area's edges)
+ *   pane:<tabId>                 take over that pane of the split shown (the content area)
  *   bookmark:<folderId>:<index>  file the page on the bookmarks bar
  * The core resolves the key against the model (`tab.drop`). Past the sidebar – over the page
  * (`data-tear-zone`) or outside the window – the tab tears off: the core moves it into the

@@ -13,6 +13,7 @@ import {
   essentialsForSpace,
   getSpace,
   insertTabIntoSpace,
+  isSplitSide,
   loadProgressAfter,
   moveTab,
   nextTabAfterClose,
@@ -23,7 +24,9 @@ import {
   removeTabFromSplit,
   reorderContainer,
   reorderSpace,
+  replaceTabInSplit,
   sectionIndexOf,
+  splitPlacement,
   type Model
 } from '../model'
 import { DEFAULT_CONTAINERS } from '../../shared/defaults'
@@ -214,6 +217,53 @@ describe('split groups', () => {
     expect(addTabToSplit(m, group.id, tabs[4].id)).toBe(false)
     dissolveSplitGroup(m, group.id)
     expect(tabs.every((t) => m.tabs[t.id].splitGroupId === null)).toBe(true)
+  })
+
+  it('adds a tab at a given pane index', () => {
+    const m = makeModel()
+    const [a, b, c, d] = ['a', 'b', 'c', 'd'].map((n) => addTab(m, `https://${n}.test`))
+    const group = createSplitGroup(m, m.spaces[0].id, [a.id, b.id], 'vertical')!
+    expect(addTabToSplit(m, group.id, c.id, 0)).toBe(true)
+    expect(group.tabIds).toEqual([c.id, a.id, b.id])
+    expect(addTabToSplit(m, group.id, d.id, 99)).toBe(true)
+    expect(group.tabIds).toEqual([c.id, a.id, b.id, d.id])
+    expect(group.sizes).toEqual([0.25, 0.25, 0.25, 0.25])
+  })
+
+  it('replaces the tab shown in a pane, keeping the pane sizes; two panes swap', () => {
+    const m = makeModel()
+    const [a, b, c, d] = ['a', 'b', 'c', 'd'].map((n) => addTab(m, `https://${n}.test`))
+    const group = createSplitGroup(m, m.spaces[0].id, [a.id, b.id], 'vertical')!
+    group.sizes = [0.3, 0.7]
+    expect(replaceTabInSplit(m, group.id, a.id, c.id)).toBe(true)
+    expect(group.tabIds).toEqual([c.id, b.id])
+    expect(group.sizes).toEqual([0.3, 0.7])
+    expect(m.tabs[a.id].splitGroupId).toBeNull()
+    expect(m.tabs[c.id].splitGroupId).toBe(group.id)
+    expect(replaceTabInSplit(m, group.id, c.id, b.id)).toBe(true)
+    expect(group.tabIds).toEqual([b.id, c.id])
+    // Nothing to replace with itself, nor in a pane that is not there.
+    expect(replaceTabInSplit(m, group.id, b.id, b.id)).toBe(false)
+    expect(replaceTabInSplit(m, group.id, a.id, d.id)).toBe(false)
+    // A tab of another split leaves it (a pair dissolves) to take the pane.
+    const other = createSplitGroup(m, m.spaces[0].id, [a.id, d.id], 'horizontal')!
+    expect(replaceTabInSplit(m, group.id, b.id, d.id)).toBe(true)
+    expect(group.tabIds).toEqual([d.id, c.id])
+    expect(m.splitGroups[other.id]).toBeUndefined()
+    expect(m.tabs[a.id].splitGroupId).toBeNull()
+  })
+
+  it('places a pane dropped on a side: beside the others along the axis, spanning across it', () => {
+    expect(splitPlacement('vertical', 'left', 2)).toEqual({ layout: 'vertical', index: 0 })
+    expect(splitPlacement('vertical', 'right', 2)).toEqual({ layout: 'vertical', index: 2 })
+    expect(splitPlacement('vertical', 'top', 2)).toEqual({ layout: 'horizontal', index: 0 })
+    expect(splitPlacement('vertical', 'bottom', 3)).toEqual({ layout: 'horizontal', index: 3 })
+    expect(splitPlacement('horizontal', 'left', 2)).toEqual({ layout: 'vertical', index: 0 })
+    expect(splitPlacement('horizontal', 'bottom', 2)).toEqual({ layout: 'horizontal', index: 2 })
+    expect(splitPlacement('grid', 'top', 3)).toEqual({ layout: 'grid', index: 0 })
+    expect(splitPlacement('grid', 'right', 3)).toEqual({ layout: 'grid', index: 3 })
+    expect(isSplitSide('left')).toBe(true)
+    expect(isSplitSide('diagonal')).toBe(false)
   })
 })
 

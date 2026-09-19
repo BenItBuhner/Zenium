@@ -21,6 +21,7 @@ import {
   getSpace,
   insertTabIntoSpace,
   loadProgressAfter,
+  MAX_SPLIT_TABS,
   moveTab,
   nextTabAfterClose,
   orderedTabsForSpace,
@@ -28,9 +29,12 @@ import {
   regularTabs,
   removeTabFromLists,
   removeTabFromSplit,
+  replaceTabInSplit,
   sectionIndexOf,
+  splitPlacement,
   tabVisibleIn,
-  type Model
+  type Model,
+  type SplitSide
 } from './model'
 import {
   BLANK_URL,
@@ -1891,7 +1895,9 @@ export class TabManager {
    *   section:<section>:<spaceId>   append to a section (pinned | regular | essential)
    *   folder:<folderId>             move into a folder
    *   space:<spaceId>               move to another space
-   *   split:<left|right|top|bottom> split with the window's active tab (the content area)
+   *   split:<left|right|top|bottom> split with the window's active tab, or join its split on that
+   *                                 side (the content area's edges)
+   *   pane:<tabId>                  take over the split pane showing that tab (the tab stays open)
    *   bookmark:<folderId>:<index>   file the page on the bookmarks bar (the tab stays put)
    * Returns false when the key names nothing the tab can be dropped on.
    */
@@ -1964,16 +1970,28 @@ export class TabManager {
       }
       case 'split': {
         const active = this.activeTabFor(win)
-        if (!active || active.id === tabId) return false
+        if (!active) return false
         const { side } = drop
+        const group = active.splitGroupId ? m.splitGroups[active.splitGroupId] : null
+        if (group) return this.joinSplitAt(group.id, tabId, side, win)
+        if (active.id === tabId) return false
         const layout: SplitLayout = side === 'left' || side === 'right' ? 'vertical' : 'horizontal'
-        if (active.splitGroupId) this.addToSplit(active.splitGroupId, tabId)
-        else
-          this.createSplit(
-            side === 'left' || side === 'top' ? [tabId, active.id] : [active.id, tabId],
-            layout,
-            win
-          )
+        this.createSplit(
+          side === 'left' || side === 'top' ? [tabId, active.id] : [active.id, tabId],
+          layout,
+          win
+        )
+        return true
+      }
+      case 'pane': {
+        const shown = this.tab(drop.tabId)
+        const group = shown?.splitGroupId ? m.splitGroups[shown.splitGroupId] : null
+        if (!shown || !group || shown.id === tabId) return false
+        if (!this.browser.pages.splittable(tab) || !this.joinable(tab, group.spaceId, win))
+          return false
+        this.bringIntoSpace(tab, group.spaceId)
+        if (!replaceTabInSplit(m, group.id, shown.id, tabId)) return false
+        this.activateTab(tabId, win)
         return true
       }
       case 'bookmark': {
@@ -2068,14 +2086,16 @@ export class TabManager {
         : 'regular'
     const fallback = `section:${section}:${section === 'essential' ? '' : targetSpace.id}`
     // A remote drop key names slots of the target window; a tab slot of a shared list is as
-    // valid from another window as from this one.
-    const dropped = key !== null && !key.startsWith('split:') && this.dropTab(tabId, key, target)
+    // valid from another window as from this one. The content area's targets (a split edge, a
+    // pane) take the tab once it is in the window.
+    const content = key !== null && (key.startsWith('split:') || key.startsWith('pane:'))
+    const dropped = key !== null && !content && this.dropTab(tabId, key, target)
     if (!dropped && !this.dropTab(tabId, fallback, target)) return false
     // "Sync only pinned tabs": an unpinned tab of a synced space belongs to one window.
     const landed = getSpace(this.model, tab.spaceId)
     if (landed && !landed.windowId && !tab.pinned && !tab.essential)
       tab.windowId = this.settings.windowSync === 'pinned' ? target.id : null
-    if (key?.startsWith('split:')) this.dropTab(tabId, key, target)
+    if (content && key) this.dropTab(tabId, key, target)
     this.activateTab(tabId, target)
     this.showNeighbour(source, leaving, tabId)
     this.browser.state.commit()
@@ -2438,6 +2458,60 @@ export class TabManager {
       if (win) this.claim(tabId, win)
       this.browser.state.commit()
     }
+  }
+
+  /**
+   * A tab dropped on one edge of the content area joins the split shown there, as a pane on
+   * that side (`splitPlacement`: beside the others along the layout's axis, or spanning the edge
+   * with the layout turned to the drop's axis); a pane of the split dropped on an edge moves to
+   * that side. The dropped tab is shown. A full split says so and takes nothing.
+   */
+  private joinSplitAt(groupId: string, tabId: string, side: SplitSide, win: ZenWindow): boolean {
+    const m = this.model
+    const group = m.splitGroups[groupId]
+    const tab = this.tab(tabId)
+    if (!group || !tab) return false
+    if (group.tabIds.includes(tabId)) {
+      const { layout, index } = splitPlacement(group.layout, side, group.tabIds.length)
+      group.tabIds = group.tabIds.filter((id) => id !== tabId)
+      group.tabIds.splice(Math.min(index, group.tabIds.length), 0, tabId)
+      group.layout = layout
+      this.activateTab(tabId, win)
+      return true
+    }
+    if (!this.browser.pages.splittable(tab) || !this.joinable(tab, group.spaceId, win)) return false
+    if (group.tabIds.length >= MAX_SPLIT_TABS) {
+      this.browser.toast(`Split views can hold up to ${MAX_SPLIT_TABS} tabs.`, 'info', win)
+      return false
+    }
+    const { layout, index } = splitPlacement(group.layout, side, group.tabIds.length)
+    this.bringIntoSpace(tab, group.spaceId)
+    if (!addTabToSplit(m, groupId, tabId, index)) return false
+    group.layout = layout
+    this.activateTab(tabId, win)
+    return true
+  }
+
+  /**
+   * Whether a tab may join a split of `spaceId` shown in `win`: it is visible there, and it is
+   * not held by another window's own (blank or private) space.
+   */
+  private joinable(tab: Tab, spaceId: string, win: ZenWindow): boolean {
+    return (
+      tabVisibleIn(tab, win.id) &&
+      (!tab.spaceId || !this.model.localSpaces[tab.spaceId] || tab.spaceId === spaceId)
+    )
+  }
+
+  /** A split lives in one space: a space tab from elsewhere moves in first (an essential is at home everywhere). */
+  private bringIntoSpace(tab: Tab, spaceId: string): void {
+    if (tab.essential || tab.spaceId === spaceId) return
+    moveTab(
+      this.model,
+      tab,
+      { spaceId, section: tab.pinned ? 'pinned' : 'regular', index: Number.MAX_SAFE_INTEGER },
+      this.settings.essentialsMax
+    )
   }
 
   // ---------------------------------------------------------------------------

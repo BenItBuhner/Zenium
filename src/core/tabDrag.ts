@@ -1,5 +1,6 @@
 import type { Point, Rect } from '../shared/types'
 import type { Browser } from './browser'
+import { isSplitSide, type SplitSide } from './model'
 import type { ZenWindow } from './window'
 
 interface DragSession {
@@ -132,17 +133,21 @@ export class TabDragController {
 }
 
 /**
- * A sidebar drop target, as the chrome names it in a `data-drop` attribute. A tab row has three
+ * A drop target, as the chrome names it in a `data-drop` attribute. A tab row has three
  * positions: `before` and `after` are its slots (a dragged tab or a dropped address lands
  * beside it); `into` is the row itself, where a dropped address navigates the tab (`drop.open`;
- * a dragged tab is never dropped into another).
+ * a dragged tab is never dropped into another). The content area offers `split` (one of its
+ * edges: split the shown tab with the dragged one, or add a pane on that side of the split
+ * shown) and, with a split open, `pane` (the dragged tab takes the pane over from the tab shown
+ * in it).
  */
 export type DropKey =
   | { kind: 'tab'; tabId: string; position: 'before' | 'after' | 'into' }
   | { kind: 'section'; section: string; spaceId: string }
   | { kind: 'folder'; folderId: string }
   | { kind: 'space'; spaceId: string }
-  | { kind: 'split'; side: string }
+  | { kind: 'split'; side: SplitSide }
+  | { kind: 'pane'; tabId: string }
   | { kind: 'bookmark'; folderId: string; index: number | null }
 
 /**
@@ -174,7 +179,9 @@ export function parseDropKey(key: string): DropKey | null {
     case 'space':
       return rest ? { kind, spaceId: rest } : null
     case 'split':
-      return rest ? { kind, side: rest } : null
+      return isSplitSide(rest) ? { kind, side: rest } : null
+    case 'pane':
+      return rest ? { kind, tabId: rest } : null
     case 'bookmark': {
       const last = rest.lastIndexOf(':')
       if (last === -1) return null

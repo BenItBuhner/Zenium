@@ -376,16 +376,76 @@ export function removeTabFromSplit(model: Model, tabId: string): void {
   }
 }
 
-export function addTabToSplit(model: Model, groupId: string, tabId: string): boolean {
+/** A tab joins a split at `index` among its panes (the end by default). */
+export function addTabToSplit(
+  model: Model,
+  groupId: string,
+  tabId: string,
+  index = Number.MAX_SAFE_INTEGER
+): boolean {
   const group = model.splitGroups[groupId]
   const tab = model.tabs[tabId]
   if (!group || !tab || group.tabIds.includes(tabId) || group.tabIds.length >= MAX_SPLIT_TABS)
     return false
   removeTabFromSplit(model, tabId)
-  group.tabIds.push(tabId)
+  group.tabIds.splice(Math.max(0, Math.min(index, group.tabIds.length)), 0, tabId)
   group.sizes = equalSizes(group.tabIds.length)
   tab.splitGroupId = groupId
   return true
+}
+
+/**
+ * The tab shown in a pane makes way for another (a tab dropped on the pane): the newcomer takes
+ * the pane, its slot and its size, and the shown tab leaves the split but stays open. Two tabs
+ * of the same split swap panes instead.
+ */
+export function replaceTabInSplit(
+  model: Model,
+  groupId: string,
+  shownTabId: string,
+  tabId: string
+): boolean {
+  const group = model.splitGroups[groupId]
+  const shown = model.tabs[shownTabId]
+  const tab = model.tabs[tabId]
+  if (!group || !shown || !tab || shownTabId === tabId) return false
+  const at = group.tabIds.indexOf(shownTabId)
+  if (at === -1) return false
+  const from = group.tabIds.indexOf(tabId)
+  if (from !== -1) {
+    group.tabIds[at] = tabId
+    group.tabIds[from] = shownTabId
+    return true
+  }
+  removeTabFromSplit(model, tabId)
+  group.tabIds[at] = tabId
+  tab.splitGroupId = groupId
+  shown.splitGroupId = null
+  return true
+}
+
+export type SplitSide = 'left' | 'right' | 'top' | 'bottom'
+
+export function isSplitSide(value: string): value is SplitSide {
+  return value === 'left' || value === 'right' || value === 'top' || value === 'bottom'
+}
+
+/**
+ * Where a tab dropped on one side of the content area lands in the split shown there, and the
+ * layout that shows it on that side. Beside the panes when the side lies along the layout's
+ * axis (the left of two columns is a third column, first); across it the layout turns to the
+ * drop's axis so the new pane spans that whole edge (two columns take a "top" drop as a row above
+ * them; Chrome and Edge stack a bottom drop the same way). A grid keeps wrapping and takes the
+ * pane at its start or its end.
+ */
+export function splitPlacement(
+  layout: SplitLayout,
+  side: SplitSide,
+  count: number
+): { layout: SplitLayout; index: number } {
+  const axis: SplitLayout = side === 'left' || side === 'right' ? 'vertical' : 'horizontal'
+  const leading = side === 'left' || side === 'top'
+  return { layout: layout === 'grid' ? 'grid' : axis, index: leading ? 0 : count }
 }
 
 // ---------------------------------------------------------------------------
