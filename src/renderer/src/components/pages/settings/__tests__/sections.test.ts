@@ -1,6 +1,14 @@
 // @vitest-environment happy-dom
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { HostCapabilities, SafetyCheckResult, Settings, Tab, UIState } from '@shared/types'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type {
+  ExtensionErrorEntry,
+  ExtensionInfo,
+  HostCapabilities,
+  SafetyCheckResult,
+  Settings,
+  Tab,
+  UIState
+} from '@shared/types'
 import { INTERNAL_PAGES, availableSections } from '@shared/internalPages'
 import {
   DEFAULT_BLOCKING_SETTINGS,
@@ -39,6 +47,7 @@ const { uiStore } = await import('@renderer/lib/ui')
 
 type Model = ReturnType<typeof buildSection>
 type Row = ReturnType<typeof allRows>[number]
+type RowGroup = Model['groups'][number]
 
 const ANDROID: HostCapabilities = {
   windowControls: false,
@@ -1613,6 +1622,473 @@ describe('what a row does', () => {
     if (current.kind !== 'action') throw new Error('not an action')
     current.onPress?.()
     expect(c.boosted).toEqual(['site'])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Extensions (wave 4 UI)
+// ---------------------------------------------------------------------------
+
+const EXT_ID = 'a'.repeat(32)
+const NOW = 1_800_000_000_000
+
+/** An installed extension as the host reports it; `over` is what a case is about. */
+function ext(over: Partial<ExtensionInfo>): ExtensionInfo {
+  return {
+    id: EXT_ID,
+    name: 'Dark Reader',
+    version: '4.9.132',
+    description: 'Dark mode for every website',
+    path: '/data/extensions/dark-reader',
+    enabled: true,
+    icon: 'data:image/png;base64,AAAA',
+    popup: 'popup.html',
+    error: null,
+    source: 'chrome-web-store',
+    publisher: 'chrome-web-store',
+    updateUrl: 'https://clients2.google.com/service/update2/crx',
+    installedAt: NOW - 30 * 24 * 60 * 60 * 1000,
+    updatedAt: NOW - 30 * 24 * 60 * 60 * 1000,
+    pinned: false,
+    toolbarPinned: false,
+    allowFileAccess: false,
+    allowPrivate: false,
+    allowUserScripts: false,
+    manifestVersion: 3,
+    permissions: ['storage', 'tabs'],
+    hostPermissions: ['<all_urls>'],
+    optionsPage: 'options.html',
+    newTabPage: null,
+    newTabOverride: false,
+    warnings: ['Read and change all your data on all websites', 'Read your browsing history'],
+    pendingWarnings: null,
+    updateState: 'up-to-date',
+    availableVersion: null,
+    updateError: null,
+    updateCheckedAt: null,
+    errors: [],
+    ...over
+  }
+}
+
+function entry(over: Partial<ExtensionErrorEntry>): ExtensionErrorEntry {
+  return {
+    id: 1,
+    level: 'error',
+    source: 'worker',
+    message: 'Uncaught TypeError: Cannot read properties of undefined',
+    url: `chrome-extension://${EXT_ID}/background.js`,
+    line: 12,
+    context: null,
+    at: NOW - 10 * 60 * 1000,
+    lastAt: NOW - 10 * 60 * 1000,
+    count: 1,
+    ...over
+  }
+}
+
+/** The host with extensions on, as the Android runtime and the desktop report it. */
+function extState(
+  extensions: ExtensionInfo[],
+  patch: Partial<UIState> = {},
+  capabilities: Partial<HostCapabilities> = {}
+): UIState {
+  return state({
+    extensions,
+    extensionUpdates: { lastCheckedAt: null, checking: false },
+    capabilities: { ...ANDROID, extensions: true, ...capabilities },
+    ...patch
+  })
+}
+
+/** The lines of the console the details sheet surfaces: one repeated worker error, a warning, a load failure. */
+const CONSOLE: ExtensionErrorEntry[] = [
+  entry({ id: 1, at: NOW - 60 * 60 * 1000, lastAt: NOW - 60 * 60 * 1000 }),
+  entry({
+    id: 2,
+    level: 'warning',
+    source: 'content',
+    message: 'Deprecated API',
+    url: 'https://news.example/app.js',
+    line: null,
+    context: 'https://news.example/',
+    at: NOW - 30 * 60 * 1000,
+    lastAt: NOW - 5 * 60 * 1000,
+    count: 3
+  }),
+  entry({
+    id: 3,
+    source: 'load',
+    message: 'Manifest file is missing or unreadable',
+    url: null,
+    line: null,
+    at: NOW - 60 * 1000,
+    lastAt: NOW - 60 * 1000
+  })
+]
+
+function sheetOf(r: Row): RowGroup[] {
+  if (r.kind !== 'item' && r.kind !== 'detail') throw new Error(`${r.id} opens no sheet`)
+  return r.sheet.groups
+}
+
+describe('the Extensions category', () => {
+  beforeEach(() => vi.spyOn(Date, 'now').mockReturnValue(NOW))
+  afterEach(() => vi.restoreAllMocks())
+
+  it('with nothing installed: the empty line, the three ways in, the update check disabled', () => {
+    const model = section('extensions', extState([]))
+    expect(model.groups.map((g) => g.id)).toEqual([
+      'extensions',
+      'install-extension',
+      'extension-updates'
+    ])
+    const [list, install] = model.groups
+    expect(list!.rows).toEqual([])
+    expect(list!.empty).toBe('No extensions yet')
+    expect(list!.aside).toBeUndefined()
+    expect(install!.rows.map((r) => r.id)).toEqual([
+      'install-from-store',
+      'install-from-file',
+      'load-unpacked'
+    ])
+    const check = row(model, 'extensions-check-updates')
+    expect(check).toMatchObject({ kind: 'action', disabled: true, description: 'Not checked yet' })
+    // The store form is a sheet; the two file rows run the hosts' pickers.
+    expect(row(model, 'install-from-store')).toMatchObject({ kind: 'action' })
+    if (row(model, 'install-from-store').kind === 'action') {
+      expect((row(model, 'install-from-store') as { form?: unknown }).form).toBeDefined()
+    }
+    const file = row(model, 'install-from-file')
+    if (file.kind !== 'action') throw new Error('not an action')
+    file.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('extension.installFromFile', undefined)
+    const unpacked = row(model, 'load-unpacked')
+    if (unpacked.kind !== 'action') throw new Error('not an action')
+    unpacked.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('extension.add', undefined)
+  })
+
+  it('one extension: an item row with its icon, name and line, opening the details sheet', () => {
+    const model = section('extensions', extState([ext({})]))
+    const list = model.groups[0]!
+    expect(list.aside).toBe('1')
+    const item = row(model, `extension:${EXT_ID}`)
+    expect(item).toMatchObject({
+      kind: 'item',
+      label: 'Dark Reader',
+      description: 'Dark mode for every website'
+    })
+    expect(item.tone).toBeUndefined()
+    if (item.kind !== 'item') throw new Error('not an item')
+    expect(item.leading).toBeDefined()
+    expect(item.keywords).toEqual(expect.arrayContaining([EXT_ID, '4.9.132']))
+    // The details sheet: the name as its title block, the line as the description (§9.23).
+    expect(item.sheet.title).toBe('Dark Reader')
+    expect(item.sheet.description).toBe('Dark mode for every website')
+    const groups = sheetOf(item)
+    expect(groups.map((g) => g.heading)).toEqual([null, 'Permissions', 'Source', null])
+    // Controls: Enabled, Options (the manifest has a page), Errors; no toolbar on a phone.
+    expect(groups[0]!.rows.map((r) => [r.id, r.kind])).toEqual([
+      [`extension:${EXT_ID}:enabled`, 'switch'],
+      [`extension:${EXT_ID}:options`, 'action'],
+      [`extension:${EXT_ID}:errors`, 'detail']
+    ])
+    expect(row(model, `extension:${EXT_ID}:options`)).toMatchObject({ leaves: 'chevron' })
+    // Permissions: the detail row then the switches; no user scripts without the permission.
+    expect(groups[1]!.rows.map((r) => [r.id, r.kind])).toEqual([
+      [`extension:${EXT_ID}:permissions`, 'detail'],
+      [`extension:${EXT_ID}:file-access`, 'switch'],
+      [`extension:${EXT_ID}:private`, 'switch']
+    ])
+    expect(row(model, `extension:${EXT_ID}:private`).label).toBe('Allow in private tabs')
+    // Source: the store as an external link, then the facts; no Updated (never updated), no MV2 note.
+    expect(groups[2]!.rows.map((r) => [r.id, r.kind])).toEqual([
+      [`extension:${EXT_ID}:source`, 'action'],
+      [`extension:${EXT_ID}:id`, 'info'],
+      [`extension:${EXT_ID}:version`, 'info'],
+      [`extension:${EXT_ID}:installed`, 'info']
+    ])
+    expect(row(model, `extension:${EXT_ID}:source`)).toMatchObject({
+      description: 'Chrome Web Store',
+      leaves: 'external'
+    })
+    expect(row(model, `extension:${EXT_ID}:id`).description).toBe(EXT_ID)
+    expect(row(model, `extension:${EXT_ID}:version`).description).toBe('4.9.132')
+    // Remove, destructive, with its confirm sheet (depth two from the details sheet).
+    const remove = row(model, `extension:${EXT_ID}:remove`)
+    expect(remove).toMatchObject({ kind: 'action', destructive: true })
+    if (remove.kind !== 'action') throw new Error('not an action')
+    expect(remove.confirm).toMatchObject({ title: 'Remove Dark Reader?', action: 'Remove' })
+  })
+
+  it('the Permissions detail row counts the warning lines and the sites, and lists both', () => {
+    const model = section('extensions', extState([ext({})]))
+    const permissions = row(model, `extension:${EXT_ID}:permissions`)
+    expect(permissions).toMatchObject({ kind: 'detail', summary: '3 permissions' })
+    const [lines, sites] = sheetOf(permissions)
+    expect(lines!.rows.map((r) => r.label)).toEqual([
+      'Read and change all your data on all websites',
+      'Read your browsing history'
+    ])
+    expect(lines!.rows.every((r) => r.kind === 'info' && r.leading)).toBe(true)
+    expect(sites!.heading).toBe('Site access')
+    expect(sites!.rows.map((r) => r.label)).toEqual(['All sites'])
+
+    // Distinct hosts, one line each; none at all reads as none.
+    const scoped = section(
+      'extensions',
+      extState([
+        ext({
+          warnings: [],
+          hostPermissions: [
+            'https://*.example.com/*',
+            'https://news.example/*',
+            '*://*.example.com/*'
+          ]
+        })
+      ])
+    )
+    const detail = row(scoped, `extension:${EXT_ID}:permissions`)
+    expect(detail).toMatchObject({ summary: '2 permissions' })
+    const [noLines, hosts] = sheetOf(detail)
+    expect(noLines!.rows).toEqual([])
+    expect(noLines!.empty).toBe('This extension requires no special permissions')
+    expect(hosts!.rows.map((r) => r.label).sort()).toEqual(['*.example.com', 'news.example'])
+    const bare = section('extensions', extState([ext({ warnings: [], hostPermissions: [] })]))
+    expect(row(bare, `extension:${EXT_ID}:permissions`)).toMatchObject({ summary: 'None' })
+  })
+
+  it('several extensions sort by name; the line is the error, else Off, else the description', () => {
+    const broken = ext({
+      id: 'b'.repeat(32),
+      name: 'Broken',
+      error: 'Manifest file is missing or unreadable',
+      source: 'unpacked',
+      publisher: null,
+      updateUrl: null
+    })
+    const off = ext({ id: 'c'.repeat(32), name: 'Adblock', enabled: false })
+    const noisy = ext({ id: 'd'.repeat(32), name: 'Noisy', errors: CONSOLE })
+    const model = section('extensions', extState([noisy, broken, ext({}), off]))
+    const list = model.groups[0]!
+    expect(list.aside).toBe('4')
+    expect(list.rows.map((r) => r.label)).toEqual(['Adblock', 'Broken', 'Dark Reader', 'Noisy'])
+    expect(row(model, `extension:${off.id}`)).toMatchObject({ description: 'Off' })
+    expect(row(model, `extension:${off.id}`).tone).toBeUndefined()
+    expect(row(model, `extension:${broken.id}`)).toMatchObject({
+      description: 'Manifest file is missing or unreadable',
+      tone: 'danger'
+    })
+    // The details sheet repeats the error where the line would be; its controls that need a
+    // loaded extension are disabled; an unpacked extension reloads and has no store link.
+    const brokenItem = row(model, `extension:${broken.id}`)
+    if (brokenItem.kind !== 'item') throw new Error('not an item')
+    expect(brokenItem.sheet.description).toBe('Manifest file is missing or unreadable')
+    expect(row(model, `extension:${broken.id}:file-access`).disabled).toBe(true)
+    expect(row(model, `extension:${broken.id}:options`).disabled).toBe(true)
+    expect(row(model, `extension:${broken.id}:reload`)).toMatchObject({ kind: 'action' })
+    expect(row(model, `extension:${broken.id}:source`)).toMatchObject({
+      kind: 'info',
+      description: 'Unpacked'
+    })
+    // Every id is unique through the item sheets and the detail sheets inside them.
+    const ids = allRows(model.groups).map((r) => r.id)
+    expect(new Set(ids).size).toBe(ids.length)
+    expect(ids).toContain(`extension:${noisy.id}:clear-errors`)
+    expect(ids).toContain(`extension:${noisy.id}:error:2`)
+  })
+
+  it('the Errors detail row sums the console and lists it newest first, then Clear errors', () => {
+    const noisy = ext({ errors: CONSOLE })
+    const model = section('extensions', extState([noisy]))
+    const errors = row(model, `extension:${EXT_ID}:errors`)
+    expect(errors).toMatchObject({
+      kind: 'detail',
+      label: 'Errors',
+      summary: '2 errors, 1 warning'
+    })
+    if (errors.kind !== 'detail') throw new Error('not a detail row')
+    expect(errors.sheet.title).toBe('Errors')
+    expect(errors.sheet.description).toBe('Dark Reader')
+    const [lines, clear] = errors.sheet.groups
+    // Newest by its latest occurrence: the load failure (1 min), the repeated warning (5 min), the hour-old error.
+    expect(lines!.rows.map((r) => r.id)).toEqual([
+      `extension:${EXT_ID}:error:3`,
+      `extension:${EXT_ID}:error:2`,
+      `extension:${EXT_ID}:error:1`
+    ])
+    expect(lines!.rows.map((r) => r.label)).toEqual([
+      'Manifest file is missing or unreadable',
+      'Deprecated API',
+      'Uncaught TypeError: Cannot read properties of undefined'
+    ])
+    // Source · when · ×count · file:line, each only when known; the extension's own origin drops.
+    expect(lines!.rows.map((r) => r.description)).toEqual([
+      'Loading · 1 min ago',
+      'Content script · 5 min ago · ×3 · https://news.example/app.js',
+      'Service worker · 1 h ago · background.js:12'
+    ])
+    expect(lines!.rows.every((r) => r.kind === 'info' && r.clamp && r.leading)).toBe(true)
+    // Clear errors: destructive, no confirm (a third sheet would break §9.24; a cleared log is no loss).
+    expect(clear!.rows.map((r) => r.id)).toEqual([`extension:${EXT_ID}:clear-errors`])
+    const clearRow = clear!.rows[0]!
+    expect(clearRow).toMatchObject({ kind: 'action', label: 'Clear errors', destructive: true })
+    if (clearRow.kind !== 'action') throw new Error('not an action')
+    expect(clearRow.confirm).toBeUndefined()
+    clearRow.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('extension.clearErrors', { id: EXT_ID })
+
+    // Only warnings, only errors, none: the summary's other forms and the §9.17 empty state.
+    const warned = section('extensions', extState([ext({ errors: [CONSOLE[1]!] })]))
+    expect(row(warned, `extension:${EXT_ID}:errors`)).toMatchObject({ summary: '1 warning' })
+    const quiet = section('extensions', extState([ext({})]))
+    const none = row(quiet, `extension:${EXT_ID}:errors`)
+    expect(none).toMatchObject({ summary: 'None' })
+    if (none.kind !== 'detail') throw new Error('not a detail row')
+    expect(none.sheet.groups).toHaveLength(1)
+    expect(none.sheet.groups[0]!.rows).toEqual([])
+    expect(none.sheet.groups[0]!.empty).toBe('No errors')
+  })
+
+  it('the rows run the extension commands they stand for', () => {
+    const model = section(
+      'extensions',
+      extState([ext({ permissions: ['storage', 'userScripts'] })])
+    )
+    const enabled = row(model, `extension:${EXT_ID}:enabled`)
+    if (enabled.kind !== 'switch') throw new Error('not a switch')
+    expect(enabled.checked).toBe(true)
+    enabled.onChange(false)
+    expect(invoke).toHaveBeenCalledWith('extension.setEnabled', { id: EXT_ID, enabled: false })
+    const options = row(model, `extension:${EXT_ID}:options`)
+    if (options.kind !== 'action') throw new Error('not an action')
+    options.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('extension.openOptions', { id: EXT_ID })
+    for (const [suffix, command, key] of [
+      ['file-access', 'extension.setAllowFileAccess', 'allow'],
+      ['private', 'extension.setAllowPrivate', 'allowed'],
+      ['user-scripts', 'extension.setAllowUserScripts', 'allowed']
+    ] as const) {
+      const r = row(model, `extension:${EXT_ID}:${suffix}`)
+      if (r.kind !== 'switch') throw new Error(`${suffix} is not a switch`)
+      r.onChange(true)
+      expect(invoke).toHaveBeenCalledWith(command, { id: EXT_ID, [key]: true })
+    }
+    const remove = row(model, `extension:${EXT_ID}:remove`)
+    if (remove.kind !== 'action') throw new Error('not an action')
+    remove.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('extension.remove', { id: EXT_ID })
+    const source = row(model, `extension:${EXT_ID}:source`)
+    if (source.kind !== 'action') throw new Error('not an action')
+    source.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('tab.create', {
+      url: `https://chromewebstore.google.com/detail/${EXT_ID}`,
+      active: true
+    })
+    const check = row(model, 'extensions-check-updates')
+    if (check.kind !== 'action') throw new Error('not an action')
+    expect(check.disabled).toBe(false)
+    check.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('extension.checkForUpdates', undefined)
+  })
+
+  it('the update check is busy while it runs and says when it last ran (§9.30)', () => {
+    const checking = section(
+      'extensions',
+      extState([ext({})], { extensionUpdates: { lastCheckedAt: null, checking: true } })
+    )
+    expect(row(checking, 'extensions-check-updates')).toMatchObject({
+      busy: true,
+      description: 'Checking for updates…'
+    })
+    const checked = section(
+      'extensions',
+      extState([ext({ updateCheckedAt: NOW - 2 * 60 * 60 * 1000 })], {
+        extensionUpdates: { lastCheckedAt: NOW - 3 * 60 * 60 * 1000, checking: false }
+      })
+    )
+    expect(row(checked, 'extensions-check-updates')).toMatchObject({
+      busy: false,
+      description: 'Last checked 2 h ago'
+    })
+    // An update on offer is a row of the details sheet, busy while it is taken.
+    const offered = section(
+      'extensions',
+      extState([ext({ updateState: 'available', availableVersion: '4.9.133' })])
+    )
+    const update = row(offered, `extension:${EXT_ID}:update`)
+    expect(update).toMatchObject({
+      kind: 'action',
+      label: 'Update to 4.9.133',
+      description: 'Version 4.9.132 is installed.',
+      busy: false
+    })
+    if (update.kind !== 'action') throw new Error('not an action')
+    update.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('extension.update', { id: EXT_ID })
+    const updating = section('extensions', extState([ext({ updateState: 'updating' })]))
+    expect(row(updating, `extension:${EXT_ID}:update`)).toMatchObject({
+      label: 'Update',
+      busy: true
+    })
+  })
+
+  it('follows the host: a toolbar pin only with windows, private windows on a desktop, MV2 and Updated when they apply', () => {
+    const desktop = section(
+      'extensions',
+      extState(
+        [
+          ext({
+            manifestVersion: 2,
+            toolbarPinned: true,
+            updatedAt: NOW - 24 * 60 * 60 * 1000,
+            source: 'edge-add-ons',
+            publisher: 'edge-add-ons'
+          })
+        ],
+        {},
+        { windows: true, privateTabs: false }
+      )
+    )
+    const pinned = row(desktop, `extension:${EXT_ID}:pinned`)
+    expect(pinned).toMatchObject({ kind: 'switch', label: 'Pin to toolbar', checked: true })
+    if (pinned.kind !== 'switch') throw new Error('not a switch')
+    pinned.onChange(false)
+    expect(invoke).toHaveBeenCalledWith('extension.setToolbarPinned', { id: EXT_ID, pinned: false })
+    expect(row(desktop, `extension:${EXT_ID}:private`).label).toBe('Allow in private windows')
+    expect(row(desktop, `extension:${EXT_ID}:updated`)).toMatchObject({
+      kind: 'info',
+      description: '1 d ago'
+    })
+    expect(row(desktop, `extension:${EXT_ID}:mv2`)).toMatchObject({
+      kind: 'info',
+      label: 'Manifest V2',
+      tone: 'warn'
+    })
+    expect(row(desktop, `extension:${EXT_ID}:source`)).toMatchObject({
+      description: 'Edge Add-ons',
+      leaves: 'external'
+    })
+    const phone = section('extensions', extState([ext({})]))
+    expect(findRow(phone.groups, `extension:${EXT_ID}:pinned`)).toBeNull()
+    expect(findRow(phone.groups, `extension:${EXT_ID}:updated`)).toBeNull()
+    expect(findRow(phone.groups, `extension:${EXT_ID}:mv2`)).toBeNull()
+  })
+
+  it('the landing search finds an extension by name, id and version; its sheets stay inside', () => {
+    const s = extState([ext({ errors: CONSOLE })])
+    const models = buildSections(availableSections(PAGE, s.capabilities, 'phone'), context(s).ctx)
+    expect(models.map((m) => m.section.id)).toContain('extensions')
+    const hit = searchRows(models, 'dark reader')
+    expect(hit.map((h) => h.row.id)).toContain(`extension:${EXT_ID}`)
+    expect(hit.find((h) => h.row.id === `extension:${EXT_ID}`)?.caption).toBe(
+      'Extensions › Extensions'
+    )
+    expect(searchRows(models, EXT_ID).map((h) => h.row.id)).toEqual([`extension:${EXT_ID}`])
+    expect(searchRows(models, '4.9.132').map((h) => h.row.id)).toEqual([`extension:${EXT_ID}`])
+    // The rows of the details and detail sheets are reached from the item row, not as hits.
+    expect(searchRows(models, 'clear errors')).toEqual([])
   })
 })
 

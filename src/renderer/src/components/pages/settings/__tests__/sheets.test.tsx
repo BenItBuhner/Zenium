@@ -6,7 +6,7 @@ import { act, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { FrameDialogHost } from '@renderer/lib/portals'
-import type { RowGroup, ValueRow } from '../model'
+import type { DetailRow, ItemRow, RowGroup, ValueRow } from '../model'
 import { SheetStack } from '../sheets'
 
 /*
@@ -258,5 +258,92 @@ describe('a hosted Settings sheet under a finger', () => {
     expect(tap(duckduckgo!)).toBe(duckduckgo)
     expect(onChange).toHaveBeenCalledTimes(1)
     expect(onChange).toHaveBeenCalledWith('duckduckgo')
+  })
+
+  it('a detail row’s sheet stands over the item sheet that holds it (§9.24 depth two)', async () => {
+    const onClear = vi.fn()
+    const open = vi.fn()
+    const detail: DetailRow = {
+      kind: 'detail',
+      id: 'ext:errors',
+      label: 'Errors',
+      summary: '1 error',
+      sheet: {
+        title: 'Errors',
+        description: 'Dark Reader',
+        groups: [
+          {
+            id: 'ext-errors',
+            heading: null,
+            rows: [
+              {
+                kind: 'info',
+                id: 'ext:error:1',
+                label: 'Uncaught TypeError',
+                description: 'Service worker · 5 min ago',
+                clamp: true
+              }
+            ],
+            empty: 'No errors'
+          },
+          {
+            id: 'ext-errors-clear',
+            heading: null,
+            rows: [
+              {
+                kind: 'action',
+                id: 'ext:clear-errors',
+                label: 'Clear errors',
+                destructive: true,
+                onPress: onClear
+              }
+            ]
+          }
+        ]
+      }
+    }
+    const item: ItemRow = {
+      kind: 'item',
+      id: 'ext',
+      label: 'Dark Reader',
+      sheet: {
+        title: 'Dark Reader',
+        description: 'Dark mode for every website',
+        groups: [{ id: 'ext-controls', heading: null, rows: [detail] }]
+      }
+    }
+    render(
+      <FrameDialogHost>
+        <SheetStack
+          requests={[
+            { kind: 'item', rowId: 'ext' },
+            { kind: 'detail', rowId: 'ext:errors' }
+          ]}
+          groups={[{ id: 'extensions', heading: 'Extensions', rows: [item] }]}
+          ctx={{ open }}
+          closeTop={() => undefined}
+        />
+      </FrameDialogHost>
+    )
+    await settle()
+    rest()
+    // Two layers on the chassis, lowest first: the details sheet, then the console over it,
+    // each on a §9.23 title block (both carry a description).
+    const layers = [...mount!.querySelectorAll<HTMLElement>('.zen-settings-sheet-layer')]
+    expect(layers).toHaveLength(2)
+    const titles = layers.map((l) => l.querySelector('.zen-sheet-title-block h2')?.textContent)
+    expect(titles).toEqual(['Dark Reader', 'Errors'])
+    expect(layers[1]!.querySelector('.zen-sheet-title-block p')?.textContent).toBe('Dark Reader')
+    // The detail row in the lower sheet, drawn with its summary; the console's rows in the upper.
+    const detailRow = layers[0]!.querySelector<HTMLElement>('[data-row="ext:errors"]')
+    expect(detailRow?.querySelector('.zen-settings-summary')?.textContent).toBe('1 error')
+    expect(layers[1]!.querySelector('[data-row="ext:error:1"]')).not.toBeNull()
+    const clear = layers[1]!.querySelector<HTMLElement>('[data-row="ext:clear-errors"]')
+    expect(clear).not.toBeNull()
+    expect(clear!.classList.contains('zen-settings-row-danger')).toBe(true)
+    // Nothing opens over depth two: Clear errors is a plain action, no confirm request.
+    expect(tap(clear!)).toBe(clear)
+    expect(onClear).toHaveBeenCalledTimes(1)
+    expect(open).not.toHaveBeenCalled()
   })
 })
