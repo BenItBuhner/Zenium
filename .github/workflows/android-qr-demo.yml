@@ -1,6 +1,6 @@
 name: Android QR scan demo
 
-# Records QR scanning (OMN-22, NTP-03) on a hardware-accelerated Android emulator and uploads the
+# Records QR scanning (OMN-22, NTP-04) on a hardware-accelerated Android emulator and uploads the
 # video, the screenshots and the driver's findings: the camera refused at the system prompt (the
 # toast), refused for good (the toast with Open settings, and the app's details screen it opens),
 # granted at the prompt with the scan sheet up over the platform's camera – camera2 on the

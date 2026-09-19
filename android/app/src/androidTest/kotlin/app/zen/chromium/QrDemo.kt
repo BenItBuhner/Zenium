@@ -35,7 +35,7 @@ import java.io.File
 import java.nio.ByteBuffer
 
 /**
- * Drives QR scanning (OMN-22, NTP-03) on the phone chrome for the `android-qr-demo` recording
+ * Drives QR scanning (OMN-22, NTP-04) on the phone chrome for the `android-qr-demo` recording
  * and writes what it measured to `qr-findings.txt` next to the screenshots (one `PASS` or `FAIL`
  * per check; the test fails at the end when a check did not hold, after the recording is over):
  *
@@ -44,6 +44,8 @@ import java.nio.ByteBuffer
  *  - the camera granted at the prompt: the scan sheet up from the new tab page's camera button
  *    with the PLATFORM's camera behind it (camera2 on the emulator's emulated back camera, the
  *    test pattern in the window), Cancel taking it down and releasing the camera;
+ *  - Cancel with a code in view: the camera closes at the touch, before the sheet has landed,
+ *    and a code shown during the fall loads nothing;
  *  - a scan with a code in the picture: frames without a code keep the sheet scanning, the torch
  *    chip toggles the camera's torch, then a code carrying an address decodes and the address
  *    loads in the tab, the sheet gone with the camera released;
@@ -127,6 +129,7 @@ class QrDemo : DemoHarness("qr-demo-state.json", "android-qr", "qr-demo") {
         refusedOnce()
         refusedForGood()
         grantedWithThePlatformCamera()
+        cancelledWithACodeInView()
         addressFromNewTabPage()
         wordsFromOmnibox()
         sentBehindWhileScanning()
@@ -156,11 +159,12 @@ class QrDemo : DemoHarness("qr-demo-state.json", "android-qr", "qr-demo") {
             check("Don't allow is touched", touchDialog(DENY_LABELS))
         }
         // The toast is pushed with the reply and lives 2.8 s, while the sheet's leave takes the
-        // emulator seconds; it is read from the record (watchToasts), not the tree, which trails.
+        // emulator seconds; it is read from the record (watchToasts), not the tree, which trails,
+        // and the still is taken as it shows – after the leave it would be gone (run 2's was).
         val toast = awaitToast(DENIED_TOAST, 12_000)
         check("the refusal's toast: '$DENIED_TOAST'", toast)
-        check("the sheet is down after the refusal", awaitSurface(false, 6_000))
         if (toast) shot("03-denied-toast")
+        check("the sheet is down after the refusal", awaitSurface(false, 6_000))
         SystemClock.sleep(3_500)
     }
 
@@ -261,6 +265,39 @@ class QrDemo : DemoHarness("qr-demo-state.json", "android-qr", "qr-demo") {
         }
         usePlatformCamera = false
         SystemClock.sleep(2_000)
+    }
+
+    /**
+     * Cancel with a code in view: the camera closes as Cancel is touched, before the sheet has
+     * landed, and a code that comes in front of the camera during the fall loads nothing – the
+     * session is over at the touch, so no frame is read and no decode is accepted (the first-line
+     * review's blocking finding: the camera used to be released at the landing, decoding all the
+     * way down). The stand-in paints the code the moment Cancel is touched, where a real camera
+     * would see one held up as the user cancels.
+     */
+    private fun cancelledWithACodeInView() {
+        finding("\nCancel with a code in view")
+        standIn.scene = null
+        val url = activeCoreTab()?.optString("url").orEmpty()
+        check("the page's camera button is touched", touchTapLabel(CAMERA_LABEL))
+        val up = awaitPhase(setOf("scanning"), 10_000)
+        check("the sheet scans with the stand-in (phase ${phase()})", up)
+        if (!up) return
+        SystemClock.sleep(1_500)
+        val closesBefore = standIn.closes
+        val closedAtTheTouch = touchTapLabelExpecting(CANCEL_LABEL, "the camera is closed", timeoutMs = 4_000) { standIn.closes > closesBefore }
+        standIn.scene = qrBitmap(ADDRESS_PAYLOAD)
+        val framesAtClose = standIn.frames
+        check("Cancel (touched) closes the camera at once", closedAtTheTouch)
+        check("the camera closed while the sheet was still leaving (phase '${phase()}')", chromeSurfaceUp())
+        check("the sheet is down after Cancel", awaitSurface(false, 8_000))
+        SystemClock.sleep(2_000)
+        // A tick already on the camera thread as the close came may feed one more frame, to a
+        // listener whose session is over.
+        check("no frame was fed after the close (${standIn.frames - framesAtClose} since)", standIn.frames - framesAtClose <= 1)
+        check("the code shown during the fall loaded nothing: ${activeCoreTab()?.optString("url")}", activeCoreTab()?.optString("url").orEmpty() == url)
+        standIn.scene = null
+        SystemClock.sleep(1_000)
     }
 
     /**
