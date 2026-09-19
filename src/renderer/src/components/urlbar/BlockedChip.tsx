@@ -8,8 +8,10 @@ import { PillChip } from './PillChip'
 
 /**
  * The URL bar's blocked-count chip: a shield for the page's blocking state and, once the engine
- * stopped something on the page, the count as a §9.19 pill. It opens the site information, where
- * the "Ads and trackers" permission is listed and reset (Firefox's shield → protections panel).
+ * stopped something on the page, the count as the shared §9.19 badge (`.zen-v2-badge`, in the
+ * window family through the §9.29 control roles like the chip itself). It opens the site
+ * information, where the "Ads and trackers" permission is listed and reset (Firefox's shield →
+ * protections panel).
  *
  * Geometry is §9.3's icon button: a 28 px box with a 16 px glyph and a radius-6 hover fill on
  * desktop, 44 with 20 and radius 8 on phones. The chassis is the pill's shared `PillChip`
@@ -39,9 +41,7 @@ export function BlockedChip({
   const content = (
     <>
       <Icon aria-hidden />
-      {showCount && (
-        <span className="zen-v2-blocked-chip-count">{chipCount(tab.blockedCount)}</span>
-      )}
+      {showCount && <span className="zen-v2-badge">{chipCount(tab.blockedCount)}</span>}
     </>
   )
   if (variant === 'desktop') {
