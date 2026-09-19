@@ -178,6 +178,20 @@ describe('RuleEngine conditions', () => {
     expect(e.decide(req(tracker, { initiator: 'https://www.news.example/' })).action).toBe('block')
     // Nothing known about the page: an exclusion list has nothing to exclude.
     expect(e.decide(req(tracker)).action).toBe('block')
+    // A main-frame navigation's top-level host is its own (Chrome's
+    // `top_level_frame_or_initiator_host`): going to the tracker's own site is not blocked, even
+    // when the navigation came from elsewhere.
+    expect(
+      e.decide(req('https://www.tracker.example/', { type: 'main_frame' })).action
+    ).toBe('allow')
+    expect(
+      e.decide(
+        req('https://www.tracker.example/', {
+          type: 'main_frame',
+          initiator: 'https://www.news.example/'
+        })
+      ).action
+    ).toBe('allow')
 
     expect(
       e.decide(req('https://a/on-news', { documentUrl: 'https://news.example/' })).action
@@ -187,6 +201,12 @@ describe('RuleEngine conditions', () => {
     ).toBe('allow')
     // A `topDomains` list needs a known top-level document (or initiator) to match at all.
     expect(e.decide(req('https://a/on-news')).action).toBe('allow')
+    expect(e.decide(req('https://news.example/on-news', { type: 'main_frame' })).action).toBe(
+      'block'
+    )
+    expect(e.decide(req('https://shop.example/on-news', { type: 'main_frame' })).action).toBe(
+      'allow'
+    )
   })
 
   it('computes third-party from the registrable domains when the host did not', () => {
@@ -636,6 +656,45 @@ describe('RuleEngine headers-received stage', () => {
     )
     expect(capped.action).toBe('modifyHeaders')
     expect(capped.responseHeaders).toEqual([{ header: 'Set-Cookie', operation: 'remove' }])
+  })
+
+  it('lets a header-conditioned rule edit the response only', () => {
+    // Chrome refuses such a rule's `requestHeaders` at parse
+    // (ERROR_RESPONSE_HEADER_RULE_CANNOT_MODIFY_REQUEST_HEADERS); a set written by hand gets the
+    // same treatment: the request is out by the time the rule decides.
+    const e = new RuleEngine()
+    e.setRuleSet(
+      set('r', [
+        {
+          id: 1,
+          priority: 2,
+          action: {
+            type: 'modifyHeaders',
+            requestHeaders: [{ header: 'Cookie', operation: 'remove' }],
+            responseHeaders: [{ header: 'Set-Cookie', operation: 'remove' }]
+          },
+          condition: { urlFilter: '||r.example^', responseHeaders: [{ header: 'set-cookie' }] }
+        },
+        {
+          id: 2,
+          priority: 1,
+          action: {
+            type: 'modifyHeaders',
+            requestHeaders: [{ header: 'X-Early', operation: 'set', value: '1' }]
+          },
+          condition: { urlFilter: '||r.example^' }
+        }
+      ])
+    )
+    const early = e.decide(req('https://r.example/'))
+    expect(early.requestHeaders).toEqual([{ header: 'X-Early', operation: 'set', value: '1' }])
+    expect(early.needsHeaders).toBe(true)
+    const late = e.decide(
+      req('https://r.example/', { responseHeaders: { 'Set-Cookie': ['a=1'] } })
+    )
+    expect(late.action).toBe('modifyHeaders')
+    expect(late.responseHeaders).toEqual([{ header: 'Set-Cookie', operation: 'remove' }])
+    expect(late.requestHeaders).toEqual([{ header: 'X-Early', operation: 'set', value: '1' }])
   })
 
   it('keeps allowAllRequests document exceptions out of the header stage', () => {

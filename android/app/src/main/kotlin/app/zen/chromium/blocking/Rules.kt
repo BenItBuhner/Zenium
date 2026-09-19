@@ -36,6 +36,14 @@ class DnrRule(
     /** `requestDomains`, lowercased; a request host matches when it is one or a subdomain of one. Read by [RuleIndex]. */
     val requestDomains: Set<String>?,
     private val excludedRequestDomains: Set<String>?,
+    /**
+     * `topDomains` / `excludedTopDomains`, lowercased: conditions on the top-level document's host
+     * (Chrome's `top_level_frame_or_initiator_host`: a main-frame navigation's own host, else the
+     * document's, which is what [Request.documentHost] holds). A rule with `topDomains` never matches
+     * a request whose top-level host is unknown; `excludedTopDomains` then has nothing to exclude.
+     */
+    private val topDomains: Set<String>?,
+    private val excludedTopDomains: Set<String>?,
     /** Zenium's addition to the shape: never match a non-unique host (`excludedNonUniqueHosts` in `rules.ts`). */
     private val excludedNonUniqueHosts: Boolean,
     /** `resourceTypes` as [ResourceType] bits; 0 for any type. Read by [RuleIndex]. */
@@ -82,6 +90,11 @@ class DnrRule(
             val initiator = if (req.type == ResourceType.MAIN_FRAME) EMPTY_SUFFIXES else req.documentHostSuffixes
             if (initiatorDomains != null && initiator.isEmpty()) return false
             if (!matchesDomains(initiator, initiatorDomains, excludedInitiatorDomains)) return false
+        }
+        if (topDomains != null || excludedTopDomains != null) {
+            val top = req.documentHostSuffixes
+            if (topDomains != null && top.isEmpty()) return false
+            if (!matchesDomains(top, topDomains, excludedTopDomains)) return false
         }
         return pattern?.matches(req.url, req.urlLower, req.host, req.hostStart) ?: true
     }
@@ -177,6 +190,8 @@ class DnrRule(
                 excludedInitiatorDomains = strings(c, "excludedInitiatorDomains"),
                 requestDomains = strings(c, "requestDomains"),
                 excludedRequestDomains = strings(c, "excludedRequestDomains"),
+                topDomains = strings(c, "topDomains"),
+                excludedTopDomains = strings(c, "excludedTopDomains"),
                 excludedNonUniqueHosts = c.optBoolean("excludedNonUniqueHosts", false),
                 typeMask = typeMask(c, "resourceTypes"),
                 excludedTypeMask = typeMask(c, "excludedResourceTypes"),

@@ -126,6 +126,36 @@ class RulesTest {
         assertFalse(requests.matches(req("https://other.example/a")))
     }
 
+    /** The twin of `engine.test.ts` "matches topDomains against the top-level document". */
+    @Test
+    fun topDomainsConditionTheTopLevelDocumentsHost() {
+        // Privacy Badger's shape: a tracker is blocked everywhere but on its own site.
+        val tracker = rule("""{"id":1,"action":{"type":"block"},"condition":{"requestDomains":["tracker.example"],"excludedTopDomains":["tracker.example"]}}""")
+        val cdn = "https://cdn.tracker.example/p.js"
+        assertTrue(tracker.matches(req(cdn, doc = "https://www.news.example/story")))
+        assertFalse(tracker.matches(req(cdn, doc = "https://www.tracker.example/")))
+        assertFalse(tracker.matches(req(cdn, doc = "https://TRACKER.example/")))
+        // Nothing known about the page: an exclusion list has nothing to exclude.
+        assertTrue(tracker.matches(req(cdn, doc = null)))
+        // A main-frame navigation's top-level host is its own (Chrome's `top_level_frame_or_initiator_host`),
+        // so the tracker's own site is not blocked when the user goes there.
+        assertFalse(tracker.matches(req("https://www.tracker.example/", ResourceType.MAIN_FRAME, doc = null)))
+        assertTrue(rule("""{"id":2,"action":{"type":"block"},"condition":{"requestDomains":["tracker.example"],"excludedTopDomains":["news.example"]}}""")
+            .matches(req("https://www.tracker.example/", ResourceType.MAIN_FRAME, doc = null)))
+
+        val onNews = rule("""{"id":3,"action":{"type":"block"},"condition":{"urlFilter":"/on-news","topDomains":["news.example"],"excludedTopDomains":["safe.news.example"]}}""")
+        assertTrue(onNews.matches(req("https://a.example/on-news", doc = "https://news.example/")))
+        assertTrue(onNews.matches(req("https://a.example/on-news", doc = "https://m.news.example/")))
+        assertFalse(onNews.matches(req("https://a.example/on-news", doc = "https://safe.news.example/")))
+        assertFalse(onNews.matches(req("https://a.example/on-news", doc = "https://shop.example/")))
+        // A `topDomains` list needs a known top-level host to match at all.
+        assertFalse(onNews.matches(req("https://a.example/on-news", doc = null)))
+        assertTrue(onNews.matches(req("https://news.example/on-news", ResourceType.MAIN_FRAME, doc = null)))
+        assertFalse(onNews.matches(req("https://shop.example/on-news", ResourceType.MAIN_FRAME, doc = null)))
+        // Empty lists are no condition.
+        assertTrue(rule("""{"id":4,"action":{"type":"block"},"condition":{"urlFilter":"x","topDomains":[],"excludedTopDomains":[]}}""").matches(req("https://a.example/x", doc = null)))
+    }
+
     @Test
     fun excludedNonUniqueHostsLeavesLoopbackPrivateAddressesAndSuffixlessNamesAlone() {
         val r = rule("""{"id":1,"action":{"type":"upgradeScheme"},"condition":{"urlFilter":"|http://","excludedNonUniqueHosts":true}}""")

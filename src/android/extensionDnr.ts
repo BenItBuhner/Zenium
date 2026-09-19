@@ -403,9 +403,11 @@ export class AndroidDeclarativeNetRequest {
         const report = await this.translator.sync(
           entry.state.translateInput(rank < 0 ? undefined : rank)
         )
-        if (report.skipped.length > 0) {
+        // The Kotlin engine decides in `shouldInterceptRequest`, before any response exists, so
+        // `Rules.kt` leaves rules with response header conditions out of its compiled sets.
+        if (report.headerConditioned.length > 0) {
           console.info(
-            `[zen] declarativeNetRequest ${extensionId}: ${report.skipped.length} rule(s) the engine cannot evaluate were left out`
+            `[zen] declarativeNetRequest ${extensionId}: ${report.headerConditioned.length} rule(s) with response header conditions are left out on Android`
           )
         }
       })

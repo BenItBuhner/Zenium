@@ -126,8 +126,9 @@ export interface RuleCondition {
   requestDomains?: string[]
   excludedRequestDomains?: string[]
   /**
-   * Domain of the top-level document the request belongs to (`RequestContext.documentUrl`,
-   * else the initiator, as Chrome falls back). A rule with `topDomains` never matches a request
+   * Domain of the top-level document the request belongs to: a main-frame navigation's own
+   * host, else `RequestContext.documentUrl`, else the initiator (Chrome's
+   * `top_level_frame_or_initiator_host`). A rule with `topDomains` never matches a request
    * whose top-level document is unknown.
    */
   topDomains?: string[]

@@ -205,7 +205,9 @@ function ruleMatches(r: CompiledRule, ctx: RequestContext, f: Facts): boolean {
 
 function factsFor(ctx: RequestContext): Facts {
   const initiator = ctx.initiator ?? ctx.documentUrl
-  const top = ctx.documentUrl ?? ctx.initiator
+  // Chrome's `top_level_frame_or_initiator_host`: a main-frame navigation's own host, else the
+  // top-level document's, else the initiator's.
+  const top = ctx.type === 'main_frame' ? ctx.url : (ctx.documentUrl ?? ctx.initiator)
   return {
     url: ctx.url,
     host: hostnameOf(ctx.url) ?? '',
@@ -318,7 +320,12 @@ function composeHeaderEdits(
   const requestHeaders: HeaderOp[] = []
   const responseHeaders: HeaderOp[] = []
   for (const r of applicable) {
-    if (r.rule.action.requestHeaders) requestHeaders.push(...r.rule.action.requestHeaders)
+    // A header-conditioned rule decides once the request is out, so it can only edit the
+    // response (Chrome refuses its `requestHeaders` at parse:
+    // ERROR_RESPONSE_HEADER_RULE_CANNOT_MODIFY_REQUEST_HEADERS); a set written by hand gets the
+    // same treatment here.
+    if (r.rule.action.requestHeaders && !r.headerStage)
+      requestHeaders.push(...r.rule.action.requestHeaders)
     if (r.rule.action.responseHeaders) responseHeaders.push(...r.rule.action.responseHeaders)
   }
   const first = applicable[0]

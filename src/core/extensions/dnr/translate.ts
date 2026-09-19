@@ -86,6 +86,12 @@ export interface RulesetTranslation {
   set: EngineRuleSet
   /** Rules emitted with a `redirect.transform` the engine does not apply yet. */
   transforms: number[]
+  /**
+   * Rules emitted with `responseHeaders` / `excludedResponseHeaders` conditions. The desktop
+   * engine decides them at its headers-received stage; the Android engine (`Rules.kt`), which
+   * decides in `shouldInterceptRequest` before any response exists, leaves them out.
+   */
+  headerConditioned: number[]
 }
 
 export interface TranslateOptions {
@@ -223,12 +229,15 @@ export function translateRuleset(
   options: TranslateOptions = {}
 ): RulesetTranslation {
   const transforms: number[] = []
+  const headerConditioned: number[] = []
   const rules: EngineRule[] = []
   const ordered = [...ruleset.rules].sort(compareForEmission)
   for (const compiled of ordered) {
     if (ruleset.disabledRuleIds?.has(compiled.id)) continue
     const translated = translateRule(compiled)
     if (translated.action.redirect?.transform) transforms.push(compiled.id)
+    if (translated.condition.responseHeaders || translated.condition.excludedResponseHeaders)
+      headerConditioned.push(compiled.id)
     rules.push(translated)
   }
   const kind = setKindOf(ruleset)
@@ -245,7 +254,7 @@ export function translateRuleset(
   }
   if (extension.version !== undefined) set.version = extension.version
   if (options.now) set.updatedAt = options.now()
-  return { set, transforms }
+  return { set, transforms, headerConditioned }
 }
 
 /** Every set an extension should have in the engine right now (empty rulesets produce none). */
@@ -268,6 +277,8 @@ export interface ExtensionTranslationReport {
   /** Set ids removed from the sink by this sync. */
   removed: string[]
   transforms: number[]
+  /** Rule ids with response header conditions across the extension's sets (see {@link RulesetTranslation}). */
+  headerConditioned: number[]
 }
 
 interface EmittedSet {
@@ -343,7 +354,8 @@ export class DnrTranslator {
       extensionId: input.extensionId,
       updated: [],
       removed: [],
-      transforms: []
+      transforms: [],
+      headerConditioned: []
     }
     const wanted = new Set<string>()
     for (const ruleset of input.rulesets) {
@@ -352,6 +364,7 @@ export class DnrTranslator {
       if (!translation) continue
       wanted.add(setId)
       report.transforms.push(...translation.transforms)
+      report.headerConditioned.push(...translation.headerConditioned)
       const before = emitted.get(setId)
       const next: EmittedSet = {
         rules: ruleset.rules,

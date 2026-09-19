@@ -457,7 +457,7 @@ describe('DnrTranslator', () => {
     expect(report.updated).toEqual([])
   })
 
-  test('header-conditioned rules are emitted and transforms are reported per sync', async () => {
+  test('header-conditioned rules are emitted and reported with the transforms per sync', async () => {
     const sink = new RecordingSink()
     const translator = new DnrTranslator(sink)
     const rules = compileAll([
@@ -466,17 +466,28 @@ describe('DnrTranslator', () => {
         2,
         { type: 'redirect', redirect: { transform: { scheme: 'https' } } },
         { urlFilter: 'x' }
-      )
+      ),
+      rule(3, { type: 'block' }, { urlFilter: 'y', excludedResponseHeaders: [{ header: 'x-ok' }] }),
+      rule(4, { type: 'block' }, { urlFilter: 'z' })
     ])
     const report = await translator.sync(
       input({ rulesets: [{ source: 'static', rulesetId: 'r1', rules }] })
     )
     expect(report.transforms).toEqual([2])
+    // What the Android host logs: its engine has no headers-received stage and leaves these out.
+    expect(report.headerConditioned.sort()).toEqual([1, 3])
     const emitted = sink.sets.get(`ext:${EXTENSION_ID}:static:r1`)
-    expect(emitted?.rules?.map((r) => r.id).sort()).toEqual([1, 2])
+    expect(emitted?.rules?.map((r) => r.id).sort()).toEqual([1, 2, 3, 4])
     expect(emitted?.rules?.find((r) => r.id === 1)?.condition.responseHeaders).toEqual([
       { header: 'x-ads' }
     ])
+    // A disabled header rule is neither emitted nor reported.
+    const again = await translator.sync(
+      input({
+        rulesets: [{ source: 'static', rulesetId: 'r1', rules, disabledRuleIds: new Set([1]) }]
+      })
+    )
+    expect(again.headerConditioned).toEqual([3])
   })
 })
 
