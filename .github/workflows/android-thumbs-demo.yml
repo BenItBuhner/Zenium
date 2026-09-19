@@ -12,9 +12,6 @@ name: Android thumbnails demo
 # in android-emulator-demo.yml; this file only picks the driver.
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - cursor/android-tab-thumbnails-d4db
 
 permissions:
   contents: read
