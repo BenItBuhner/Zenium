@@ -611,25 +611,69 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
     /**
      * Type the vault passphrase into the sheet's field and submit with Enter, the Continue
      * button as the fallback. The sheet chassis opens a form on its first button, not its field
-     * (§9.22 on a phone: no keyboard with the sheet), so the field is tapped first; typed again
-     * when the keys did not land.
+     * (§9.22 on a phone: no keyboard with the sheet), so the field is tapped first. What the field
+     * holds is read back from the chrome's DOM after typing – Continue lights up on the first
+     * character, so it says nothing about the rest – and the missing tail is typed again until
+     * the whole passphrase is in place, the field cleared first when what landed is not a prefix.
      */
     private fun answerPassphraseSheet() {
-        for (attempt in 1..2) {
-            val field = editableInApp() ?: error("no passphrase field in the sheet")
-            Finger().tap(field.exactCenterX(), field.exactCenterY())
-            SystemClock.sleep(900)
-            typeText(PASSPHRASE)
-            SystemClock.sleep(700)
-            if (buttonEnabled("Continue")) break
-            step("the keys did not land in the passphrase field (attempt $attempt)")
+        var typed = 0
+        for (attempt in 1..4) {
+            if (!passphraseFieldFocused()) {
+                val field = editableInApp() ?: error("no passphrase field in the sheet")
+                Finger().tap(field.exactCenterX(), field.exactCenterY())
+                SystemClock.sleep(900)
+            }
+            typeText(PASSPHRASE.substring(typed))
+            SystemClock.sleep(600)
+            val value = passphraseFieldValue()
+            if (value == PASSPHRASE) break
+            if (value != null && value.isNotEmpty() && PASSPHRASE.startsWith(value)) {
+                typed = value.length
+                step("$typed of ${PASSPHRASE.length} keys landed in the passphrase field (attempt $attempt)")
+            } else {
+                step("the passphrase field holds ${value?.length ?: "no"} characters, not a start of the passphrase (attempt $attempt)")
+                clearPassphraseField(value?.length ?: 0)
+                typed = 0
+            }
         }
         snap("prompt-sheet-filled")
         pressKey(KeyEvent.KEYCODE_ENTER)
-        if (waitGone("Continue", 5_000)) return
+        if (waitGone("Continue", 8_000)) return
+        if (findByLabel(REFUSAL) != null) {
+            step("the vault refused the passphrase")
+            return
+        }
         step("Enter did not submit the sheet; clicking Continue")
         clickByLabel("Continue")
-        if (!waitGone("Continue", 5_000)) step("the passphrase sheet stayed up")
+        if (!waitGone("Continue", 8_000)) step("the passphrase sheet stayed up")
+    }
+
+    /** Whether the chrome's focus is in a password field: the sheet's, the one on screen. */
+    private fun passphraseFieldFocused(): Boolean =
+        eval("(() => { const el = document.activeElement; return el instanceof HTMLInputElement && el.type === 'password' })()") == "true"
+
+    /** What the sheet's password field holds, null without one; the focused field first. */
+    private fun passphraseFieldValue(): String? {
+        val raw = eval(
+            """
+            (() => {
+              let el = document.activeElement;
+              if (!(el instanceof HTMLInputElement && el.type === 'password')) el = document.querySelector('input[type="password"]');
+              return el instanceof HTMLInputElement ? el.value : null;
+            })()
+            """.trimIndent()
+        )
+        return JSONTokener(raw).nextValue() as? String
+    }
+
+    /** Empty the focused field from its end, one Delete per character it holds. */
+    private fun clearPassphraseField(length: Int) {
+        pressKey(KeyEvent.KEYCODE_MOVE_END)
+        repeat(length) {
+            pressKey(KeyEvent.KEYCODE_DEL)
+            SystemClock.sleep(40)
+        }
     }
 
     // --- the chrome's command API ----------------------------------------------------------------
@@ -891,11 +935,21 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
         return found
     }
 
+    /**
+     * Type [text] as key events, each stamped as it is injected. `getEvents` stamps a whole string
+     * at once, and on an emulator drawing 800 ms frames a synchronous injection can take half a
+     * second, so the events past the dispatcher's 10 s staleness window were dropped ("Dropped
+     * event because it is stale") – half a passphrase, once.
+     */
     private fun typeText(text: String) {
-        val events = KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD).getEvents(text.toCharArray()) ?: return
-        for (event in events) {
-            ui.injectInputEvent(event, true)
-            SystemClock.sleep(40)
+        val map = KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD)
+        for (ch in text) {
+            val events = map.getEvents(charArrayOf(ch)) ?: continue
+            for (event in events) {
+                val now = SystemClock.uptimeMillis()
+                if (!ui.injectInputEvent(KeyEvent.changeTimeRepeat(event, now, 0), true)) step("a key was not injected")
+                SystemClock.sleep(40)
+            }
         }
     }
 
@@ -924,6 +978,8 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
         /** Set by the workflow with `locksettings set-pin` before the driver starts. */
         private const val PIN = "1234"
         private const val PASSPHRASE = "orbit-lantern-quiet-42"
+        /** The prompt's §9.12 validation line after a refusal (useReauth.tsx). */
+        private const val REFUSAL = "That passphrase does not open the vault."
         private const val MENU_LABEL = "Menu"
         private const val HANDLE_LABEL = "Resize menu"
         private const val CLOSE_LABEL = "Close (Esc)"
