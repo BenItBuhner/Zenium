@@ -32,12 +32,15 @@ import kotlin.math.roundToInt
  *
  * Positions come from the chrome's DOM (`getBoundingClientRect`, checked once against the
  * accessibility bounds of the overview's Spaces button), because the WebView's accessibility
- * tree trails the software-rendered emulator by seconds. Findings go to
- * `tab-close-findings.txt` next to the stills (one PASS or FAIL per claim, ALL CHECKS PASSED at
- * the end); the run fails on any FAIL. Profile `overview-demo-state.json`: the Work space with the
- * group Research [World Wide Web, Damping] and the loose tabs example.com (active), Hacker News,
- * RFC 2324, Tea, Coffee, plus three Essentials. Driven by `android-tab-close-demo.yml`. See
- * [DemoHarness].
+ * tree trails the software-rendered emulator by seconds. Every touch on a control is checked
+ * for having taken ([touchUntil]): the WebView under the emulator's lag reads a short tap as a
+ * hold now and then (seven pages going away at once keep its main thread for longer than the
+ * long-press clock), and a hold is nothing to a button, so such a touch is made again while the
+ * control is still there. Findings go to `tab-close-findings.txt` next to the stills (one PASS
+ * or FAIL per claim, ALL CHECKS PASSED at the end); the run fails on any FAIL. Profile
+ * `overview-demo-state.json`: the Work space with the group Research [World Wide Web, Damping]
+ * and the loose tabs example.com (active), Hacker News, RFC 2324, Tea, Coffee, plus three
+ * Essentials. Driven by `android-tab-close-demo.yml`. See [DemoHarness].
  */
 @RunWith(AndroidJUnit4::class)
 class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabclose-demo") {
@@ -86,8 +89,7 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
     /** 1. Tea closed with its X, then Undo on the toast. */
     private fun closeByX(start: List<Pair<String, String?>>) {
         finding("\n1. Tea closed with its X, Undo on the toast")
-        val x = show("${card(TEA)} [aria-label=\"Close tab\"]")
-        touch(x, "the X of Tea")
+        closeWithX(TEA, "Tea")
         val gone = awaitTab(TEA, exists = false)
         expect("the tab is closed at once", gone)
         val toast = awaitToast("Closed ")
@@ -100,6 +102,11 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
         expect("Tea is back at its index, loose", trackOrder() == start)
         still("undo-x")
         awaitToastGone()
+    }
+
+    /** A touch on a card's X that has to take: the card leaves the DOM as the tab goes. */
+    private fun closeWithX(tabId: String, name: String) {
+        touchUntil("the X of $name", { show("${card(tabId)} [aria-label=\"Close tab\"]") }, { !inDom(card(tabId)) })
     }
 
     /** 2. Damping, in the Research group, swiped off the grid, then Undo. */
@@ -126,18 +133,19 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
     /** 3. Close all tabs from the header menu, the prompt, Close all touched, one toast, Undo. */
     private fun closeAllWithPrompt(start: List<Pair<String, String?>>) {
         finding("\n3. Close all tabs: the prompt, Close all, one toast, Undo restores the seven")
-        openMenuRow("Close all tabs")
-        expect("the prompt asks 'Close 7 tabs?'", awaitText(".zen-frame-dialogs", "Close 7 tabs?"))
-        expect("the prompt carries Don't ask again, unticked", awaitDom("document.querySelector('$CHECKBOX') && !document.querySelector('$CHECKBOX').checked"))
+        openMenuRow("Close all tabs") { promptUp() }
+        expect("the prompt asks 'Close 7 tabs?'", awaitText(".zen-frame-dialogs", PROMPT))
+        expect("the prompt carries Don't ask again, unticked", awaitDom("$CHECKBOX_IN_DOM && !$CHECKBOX_CHECKED"))
         still("closeall-prompt")
-        touch(footerButton("Close all"), "Close all on the prompt")
-        // The toast lives 5 s: the checks between the close and the Undo are the quick ones.
-        expect("every unpinned tab of the space is closed", awaitUnpinned(0, 15_000))
-        val toast = awaitToast("7 tabs closed")
+        confirmCloseAll()
+        // The toast lives 5 s from when it rises: between it and its Undo stand one still and one
+        // read of the core's state; the checks that take their time come after the Undo.
+        val toast = awaitToast("7 tabs closed", 15_000)
         expect("one toast reads '7 tabs closed': '${toast.orEmpty()}'", toast != null)
         still("closeall-toast")
+        expect("every unpinned tab of the space is closed", trackOrder().isEmpty())
         undo("Undo")
-        expect("Undo brings the seven back", awaitUnpinned(7, 20_000))
+        expect("Undo brings the seven back", awaitUnpinned(7, RESTORE_ALL_WAIT))
         SystemClock.sleep(SETTLE)
         expect("they are back in their order, Research whole", trackOrder() == start)
         expect("the Essentials were never touched", coreState().getJSONObject("tabs").let { it.has(MAIL) && it.has(CAL) && it.has(GH) })
@@ -146,33 +154,46 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
     }
 
     /** A footer button of the prompt sheet by its label, once the sheet has come to rest. */
-    private fun footerButton(label: String): Rect =
-        steadyRect({ textRect(".zen-frame-dialogs .zen-sheet-footer button", label) }) ?: error("no $label button on the prompt")
+    private fun footerButton(label: String): Rect? =
+        steadyRect({ textRect(".zen-frame-dialogs .zen-sheet-footer button", label) })
+
+    /**
+     * Touch Close all on the prompt until it takes: the prompt goes (the close runs as the sheet
+     * lands, which under load is seconds after the touch), or the toast is up already.
+     */
+    private fun confirmCloseAll() {
+        touchUntil("Close all on the prompt", { footerButton("Close all") }, { !promptUp() || toastUp("7 tabs closed") }, waitMs = SHEET_WAIT)
+    }
+
+    private fun promptUp(): Boolean = hasText(".zen-frame-dialogs", PROMPT)
 
     /** 4. Don't ask again touched: the setting turns off with the close; the next Close all has no prompt. */
     private fun dontAskAgain(start: List<Pair<String, String?>>) {
         finding("\n4. Don't ask again, then Close all twice: the second time without the prompt")
-        openMenuRow("Close all tabs")
-        expect("the prompt is up", awaitText(".zen-frame-dialogs", "Close 7 tabs?"))
-        val check = steadyRect({ domRect(CHECKBOX) }) ?: error("no Don't ask again checkbox")
-        touch(check, "the Don't ask again checkbox")
-        expect("the checkbox is ticked by the touch", awaitDom("!!document.querySelector('$CHECKBOX') && document.querySelector('$CHECKBOX').checked"))
+        openMenuRow("Close all tabs") { promptUp() }
+        expect("the prompt is up", awaitText(".zen-frame-dialogs", PROMPT))
+        val ticked = touchUntil("the Don't ask again checkbox", { steadyRect({ domRect(CHECKBOX) }) }, { isChecked() })
+        expect("the checkbox is ticked by the touch", ticked)
         still("dont-ask-checked")
-        touch(footerButton("Close all"), "Close all on the prompt")
-        expect("the tabs close", awaitUnpinned(0, 15_000))
-        expect("settings.confirmCloseAll is off in the core", awaitSetting("confirmCloseAll", false))
+        confirmCloseAll()
+        var toast = awaitToast("7 tabs closed", 15_000)
+        expect("the tabs close, one toast '${toast.orEmpty()}'", toast != null && trackOrder().isEmpty())
         undo("Undo")
-        expect("Undo brings the seven back", awaitUnpinned(7, 20_000))
+        expect("Undo brings the seven back", awaitUnpinned(7, RESTORE_ALL_WAIT))
+        expect("settings.confirmCloseAll is off in the core", awaitSetting("confirmCloseAll", false))
         SystemClock.sleep(SETTLE)
         awaitToastGone()
 
-        openMenuRow("Close all tabs")
-        expect("the tabs close at once", awaitUnpinned(0, 15_000))
-        expect("with no prompt", !awaitText(".zen-frame-dialogs", "Close 7 tabs?", timeoutMs = 300))
-        val toast = awaitToast("7 tabs closed")
+        // The prompt is watched for from the touch on the row to the toast: it must never show.
+        var promptSeen = false
+        val watch = { if (promptUp()) promptSeen = true }
+        openMenuRow("Close all tabs") { watch(); promptSeen || toastUp("7 tabs closed") }
+        toast = awaitToast("7 tabs closed", 15_000, watch)
         expect("the toast reads '7 tabs closed': '${toast.orEmpty()}'", toast != null)
+        expect("with no prompt on the way", !promptSeen)
+        expect("the tabs closed at once", trackOrder().isEmpty())
         undo("Undo")
-        expect("Undo brings the seven back", awaitUnpinned(7, 20_000))
+        expect("Undo brings the seven back", awaitUnpinned(7, RESTORE_ALL_WAIT))
         SystemClock.sleep(SETTLE)
         expect("in their order", trackOrder() == start)
         still("closeall-noprompt-undone")
@@ -182,16 +203,15 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
     /** 5. Hacker News closed with its X; Recently closed lists it; a touch on the row restores it. */
     private fun recentlyClosed() {
         finding("\n5. Recently closed: Hacker News closed, listed, restored from the sheet")
-        val x = show("${card(HN)} [aria-label=\"Close tab\"]")
-        touch(x, "the X of Hacker News")
+        closeWithX(HN, "Hacker News")
         expect("the tab is closed", awaitTab(HN, exists = false))
         awaitToastGone()
-        openMenuRow("Recently closed")
-        expect("the sheet lists the entry", awaitText(".zen-frame-dialogs .zen-list-row", "Hacker News", timeoutMs = 8_000) ||
-            awaitText(".zen-frame-dialogs .zen-list-row", "news.ycombinator.com", timeoutMs = 1_000))
+        openMenuRow("Recently closed") { inDom(ROW) }
+        expect("the sheet lists the entry", awaitText(ROW, "Hacker News", timeoutMs = 8_000) ||
+            awaitText(ROW, "news.ycombinator.com", timeoutMs = 1_000))
         still("recent-list")
-        val row = steadyRect({ textRect(".zen-frame-dialogs .zen-list-row .zen-list-main", "") }) ?: error("no row in the sheet")
-        touch(row, "the first Recently closed row")
+        // The row's touch sends the sheet off first, then restores: either is the touch taking.
+        touchUntil("the first Recently closed row", { steadyRect({ textRect("$ROW .zen-list-main", "") }) }, { !inDom(ROW) || !inDom(".zen-overview") }, waitMs = SHEET_WAIT)
         expect("the tab is restored", awaitTab(HN, exists = true))
         expect("the overview leaves on it", awaitDom("!document.querySelector('.zen-overview')", 10_000))
         SystemClock.sleep(SETTLE)
@@ -208,26 +228,60 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
         Finger().tap(point.x, point.y)
     }
 
-    /** Touch the toast's action once it is there (the toast lives 5 s: no waiting about). */
-    private fun undo(label: String) {
-        val button = awaitRect({ undoRect() }, 6_000) ?: run {
-            record("  the toast's $label button never showed", false)
-            return
+    /**
+     * A touch that has to take. The emulator's WebView reads a short tap as a hold now and then –
+     * with its main thread held (pages going away, a grid reflowing) the long-press clock runs
+     * out before the up is seen – and a hold is nothing to a button. So: touch `what` where
+     * `read` finds it, watch `took` for `waitMs`, and when nothing came of it read the box again
+     * (it may have moved) and touch again, up to `attempts` times. Whether it took in the end.
+     */
+    private fun touchUntil(
+        what: String,
+        read: () -> Rect?,
+        took: () -> Boolean,
+        attempts: Int = TOUCH_ATTEMPTS,
+        waitMs: Long = TOUCH_TOOK_WAIT
+    ): Boolean {
+        for (attempt in 1..attempts) {
+            val box = read() ?: run {
+                finding("  ($what is not there to touch)")
+                return took()
+            }
+            touch(box, what)
+            if (awaitUntil(waitMs, took)) return true
+            if (attempt < attempts) finding("  (the touch on $what did not take, attempt $attempt: touching again)")
         }
-        // The toast rises into place; a moment for it to rest before the touch.
-        SystemClock.sleep(300)
-        touch(undoRect() ?: button, "the toast's $label")
+        return took()
+    }
+
+    /**
+     * Touch the toast's action once the toast is at rest. A picked action sends the toast off at
+     * once, which is how the touch is known to have taken; a touch read as a hold leaves the
+     * toast standing (and its clock at a second at least), so the next attempt still finds it.
+     */
+    private fun undo(label: String): Boolean {
+        if (awaitRect({ undoRect() }, 6_000) == null) {
+            record("  the toast's $label button never showed", false)
+            return false
+        }
+        awaitDom("(function(){var e=document.querySelector('.zen-message-toast');return !!e&&!e.hasAttribute('data-moving')})()", 1_500)
+        val took = touchUntil("the toast's $label", { undoRect() }, { toastLeavingOrGone() }, waitMs = UNDO_TOOK_WAIT)
+        if (!took) record("  the touch on the toast's $label never took", false)
+        return took
     }
 
     /**
      * Open the overview header's menu with a touch on More, then touch the row whose label
-     * starts with `row` (`Close all tabs (7)`, `Recently closed (1)`) once the sheet has risen.
+     * starts with `row` (`Close all tabs (7)`, `Recently closed (1)`) once the sheet has risen;
+     * `took` says what the row's touch brings about (the prompt, the list).
      */
-    private fun openMenuRow(row: String) {
-        val more = box("[aria-label=\"More\"]")
-        touch(more, "More in the overview header")
-        val item = steadyRect({ textRect(".zen-sheet-item", row) }) ?: error("no '$row' row in the menu")
-        touch(item, "'$row' in the menu")
+    private fun openMenuRow(row: String, took: () -> Boolean) {
+        val menuRow = { textRect(".zen-sheet-item", row) }
+        // The menu reads the recently closed list before it comes up: a second touch too soon
+        // would land on its scrim and send it away again.
+        val opened = touchUntil("More in the overview header", { domRect("[aria-label=\"More\"]") }, { menuRow() != null }, waitMs = SHEET_WAIT)
+        if (!opened) error("the overview's menu never opened")
+        touchUntil("'$row' in the menu", { steadyRect(menuRow) }, took, waitMs = SHEET_WAIT)
     }
 
     /**
@@ -342,6 +396,27 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
     /** The toast's action button (`Undo`), when a toast is up. */
     private fun undoRect(): Rect? = domRect(".zen-message-toast .zen-message-button")
 
+    /** Whether the toast has been sent off (a picked action does that at once) or is gone. */
+    private fun toastLeavingOrGone(): Boolean =
+        jsString("(function(){var e=document.querySelector('.zen-message-toast');return !e||e.hasAttribute('data-moving')?'yes':''})()") == "yes"
+
+    /** Whether a toast whose text starts with `prefix` is up right now. */
+    private fun toastUp(prefix: String): Boolean =
+        jsString("(function(){var e=document.querySelector('.zen-message-toast .zen-message-text');return e?e.textContent:''})()").startsWith(prefix)
+
+    /** Whether anything matches `selector` right now. */
+    private fun inDom(selector: String): Boolean =
+        jsString("(function(){return document.querySelector(${JSONObject.quote(selector)})?'yes':''})()") == "yes"
+
+    /** Whether an element matching `selector` whose text contains `text` is there right now. */
+    private fun hasText(selector: String, text: String): Boolean =
+        jsString(
+            "(function(){return Array.prototype.some.call(document.querySelectorAll(${JSONObject.quote(selector)})," +
+                "function(n){return n.textContent.indexOf(${JSONObject.quote(text)})>=0})?'yes':''})()"
+        ) == "yes"
+
+    private fun isChecked(): Boolean = jsString("(function(){return ($CHECKBOX_CHECKED)?'yes':''})()") == "yes"
+
     /** The box of `selector`, waiting for it to be in the DOM; the demo cannot go on without it. */
     private fun box(selector: String): Rect =
         awaitRect({ domRect(selector) }, LOOKUP_WAIT) ?: error("nothing matches $selector")
@@ -359,32 +434,36 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
         while (true) {
             read()?.let { return it }
             if (SystemClock.uptimeMillis() >= deadline) return null
-            SystemClock.sleep(200)
+            SystemClock.sleep(POLL_MS)
+        }
+    }
+
+    /** Whether `test` comes to hold within `timeoutMs`, asked every [POLL_MS]. */
+    private fun awaitUntil(timeoutMs: Long, test: () -> Boolean): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (true) {
+            if (test()) return true
+            if (SystemClock.uptimeMillis() >= deadline) return false
+            SystemClock.sleep(POLL_MS)
         }
     }
 
     /** Poll a JS boolean expression against the chrome's document. */
-    private fun awaitDom(expression: String, timeoutMs: Long = 8_000): Boolean {
-        val deadline = SystemClock.uptimeMillis() + timeoutMs
-        while (true) {
-            if (jsString("(function(){return ($expression)?'yes':''})()") == "yes") return true
-            if (SystemClock.uptimeMillis() >= deadline) return false
-            SystemClock.sleep(200)
-        }
-    }
+    private fun awaitDom(expression: String, timeoutMs: Long = 8_000): Boolean =
+        awaitUntil(timeoutMs) { jsString("(function(){return ($expression)?'yes':''})()") == "yes" }
 
     /** Whether an element matching `selector` whose text contains `text` shows up in time. */
     private fun awaitText(selector: String, text: String, timeoutMs: Long = 8_000): Boolean =
-        awaitDom(
-            "Array.prototype.some.call(document.querySelectorAll(${JSONObject.quote(selector)})," +
-                "function(n){return n.textContent.indexOf(${JSONObject.quote(text)})>=0})",
-            timeoutMs
-        )
+        awaitUntil(timeoutMs) { hasText(selector, text) }
 
-    /** The toast's text once one starting with `prefix` is up; null when none comes in time. */
-    private fun awaitToast(prefix: String, timeoutMs: Long = 8_000): String? {
+    /**
+     * The toast's text once one starting with `prefix` is up; null when none comes in time.
+     * `watch` runs on every poll (to notice something that must not show on the way).
+     */
+    private fun awaitToast(prefix: String, timeoutMs: Long = 8_000, watch: (() -> Unit)? = null): String? {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         while (true) {
+            watch?.invoke()
             val text = jsString("(function(){var e=document.querySelector('.zen-message-toast .zen-message-text');return e?e.textContent:''})()")
             if (text.startsWith(prefix)) return text
             if (SystemClock.uptimeMillis() >= deadline) return null
@@ -421,34 +500,18 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
 
     private fun tabExists(tabId: String, state: JSONObject = coreState()): Boolean = state.getJSONObject("tabs").has(tabId)
 
-    private fun awaitTab(tabId: String, exists: Boolean, timeoutMs: Long = 8_000): Boolean {
-        val deadline = SystemClock.uptimeMillis() + timeoutMs
-        while (true) {
-            if (tabExists(tabId) == exists) return true
-            if (SystemClock.uptimeMillis() >= deadline) return false
-            SystemClock.sleep(200)
-        }
-    }
+    private fun awaitTab(tabId: String, exists: Boolean, timeoutMs: Long = 8_000): Boolean =
+        awaitUntil(timeoutMs) { tabExists(tabId) == exists }
 
     /** Wait for the active space to hold `count` unpinned, non-Essential tabs. */
-    private fun awaitUnpinned(count: Int, timeoutMs: Long): Boolean {
-        val deadline = SystemClock.uptimeMillis() + timeoutMs
-        while (true) {
-            if (trackOrder().size == count) return true
-            if (SystemClock.uptimeMillis() >= deadline) return false
-            SystemClock.sleep(250)
-        }
-    }
+    private fun awaitUnpinned(count: Int, timeoutMs: Long): Boolean =
+        awaitUntil(timeoutMs) { trackOrder().size == count }
 
-    private fun awaitSetting(name: String, value: Boolean, timeoutMs: Long = 6_000): Boolean {
-        val deadline = SystemClock.uptimeMillis() + timeoutMs
-        while (true) {
+    private fun awaitSetting(name: String, value: Boolean, timeoutMs: Long = 6_000): Boolean =
+        awaitUntil(timeoutMs) {
             val settings = coreState().optJSONObject("settings")
-            if (settings != null && settings.optBoolean(name, !value) == value) return true
-            if (SystemClock.uptimeMillis() >= deadline) return false
-            SystemClock.sleep(250)
+            settings != null && settings.optBoolean(name, !value) == value
         }
-    }
 
     /** The folder a tab is in per the core, null when loose (or gone). */
     private fun folderOf(tabId: String, state: JSONObject = coreState()): String? {
@@ -519,13 +582,36 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
         private const val SETTLE = 2_500L
         /** How long an element may take to appear in the DOM after a change. */
         private const val LOOKUP_WAIT = 8_000L
+        /** How often the DOM and the core are asked while waiting for something. */
+        private const val POLL_MS = 200L
         /** Two reads of a box this far apart agreeing count as at rest ([steadyRect]). */
         private const val STEADY_MS = 350L
         /** Largest DOM-to-screen offset (px) [calibrate] takes for real rather than for a stale tree. */
         private const val MAX_OFFSET = 200f
         /** Taps on the Tabs button [openOverview] tries before giving up (each may be read as a hold). */
         private const val OPEN_ATTEMPTS = 4
+        /** Touches on a control [touchUntil] makes before giving up (each may be read as a hold). */
+        private const val TOUCH_ATTEMPTS = 4
+        /** How long a touch has to show it took before it is made again. */
+        private const val TOUCH_TOOK_WAIT = 900L
+        /**
+         * The same for the toast's Undo, shorter: a touch read as a hold restarts the toast's
+         * clock with a second at least, and the next touch has to come within it.
+         */
+        private const val UNDO_TOOK_WAIT = 650L
+        /**
+         * And for a touch whose outcome is a sheet coming up or going (its rise or exit under
+         * load, a callback that runs as it lands): longer, since a touch made again too soon
+         * would land on the sheet's scrim.
+         */
+        private const val SHEET_WAIT = 5_000L
+        /** Seven pages coming back one after the other on a software-rendered emulator. */
+        private const val RESTORE_ALL_WAIT = 30_000L
+        private const val PROMPT = "Close 7 tabs?"
+        private const val ROW = ".zen-frame-dialogs .zen-list-row"
         private const val CHECKBOX = ".zen-frame-dialogs input.zen-v2-checkbox"
+        private const val CHECKBOX_IN_DOM = "!!document.querySelector('$CHECKBOX')"
+        private const val CHECKBOX_CHECKED = "($CHECKBOX_IN_DOM && document.querySelector('$CHECKBOX').checked)"
         private const val RECT_JS = "var r=e.getBoundingClientRect();" +
             "return JSON.stringify({l:r.left,t:r.top,r:r.right,b:r.bottom,d:window.devicePixelRatio})"
 
