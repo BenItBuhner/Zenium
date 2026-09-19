@@ -61,6 +61,10 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // and the default-browser prompts (defaultbrowser/*) are the chassis' prompt composition:
   // neither has rules of its own.
   [' * The first run on a phone', ' * Fading scroll edges'],
+  // Settings > Privacy and Security (components/overlays/PrivacySection.tsx) and the URL bar's
+  // blocked-count chip (components/urlbar/BlockedChip.tsx). Its block sits between the find
+  // bar's and the Default Browser range, so it is cut out before the find bar's, which ends there.
+  ['.zen-privacy {', '/*\n * Settings → Default Browser and the'],
   // Find in page, zoom and fullscreen: the docked find bar (components/content/FindBar.tsx).
   ['.zen-find-bar {', '/*\n * Settings → Default Browser and the'],
   // The phone page zoom sheet, docked under the live page, and its own instance of the stepper

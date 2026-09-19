@@ -50,6 +50,7 @@ import {
   SitesGroups
 } from './PageControlsSettings'
 import { PasswordsSection } from './PasswordsSection'
+import { PrivacySection } from './PrivacySection'
 import { ResourcesSection } from './ResourcesSection'
 import { SecuritySection } from './SecuritySection'
 import { Choice, Group, MENULIST_HEIGHT, Row, SWITCH_HEIGHT, Segmented } from './SettingsPrimitives'
@@ -67,6 +68,7 @@ export type SettingsSection =
   | 'resources'
   | 'search'
   | 'languages'
+  | 'privacy'
   | 'spaces'
   | 'containers'
   | 'boosts'
@@ -91,6 +93,7 @@ const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
   { id: 'resources', label: 'Resources' },
   { id: 'search', label: 'Search' },
   { id: 'languages', label: 'Languages' },
+  { id: 'privacy', label: 'Privacy and Security' },
   { id: 'spaces', label: 'Space Routing' },
   { id: 'containers', label: 'Containers' },
   { id: 'boosts', label: 'Boosts' },
@@ -112,6 +115,7 @@ const SECTION_CAPABILITY: Partial<Record<SettingsSection, keyof HostCapabilities
   newtab: 'newTabPage',
   resources: 'resourceGovernor',
   languages: 'translate',
+  privacy: 'requestBlocking',
   extensions: 'extensions',
   agents: 'agents',
   passwords: 'passwords',
@@ -223,6 +227,7 @@ export function SettingsBody({
           {section === 'resources' && <ResourcesSection state={state} set={set} />}
           {section === 'search' && <SearchSection state={state} set={set} />}
           {section === 'languages' && <LanguagesSection state={state} />}
+          {section === 'privacy' && <PrivacySection state={state} set={set} />}
           {section === 'spaces' && <SpaceRoutingSection state={state} set={set} />}
           {section === 'containers' && <ContainersSection state={state} />}
           {section === 'boosts' && <BoostsSection state={state} />}
