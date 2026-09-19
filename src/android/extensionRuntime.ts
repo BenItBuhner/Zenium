@@ -1408,10 +1408,12 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     const context: EngineContextKind = (CONTEXTS as readonly string[]).includes(ctx)
       ? (ctx as EngineContextKind)
       : 'content'
-    const inFrame = context === 'content' || context === 'userScript'
+    // A subframe hosted in a tab is numbered per document, a content frame and an extension
+    // page's own iframe alike (Chrome's `frameId`); the main frame is 0, and so is every
+    // document outside a tab (popups, the background, offscreen pages).
     let frameId = 0
-    if (inFrame && !event.top) {
-      const key = `${event.tabId ?? ''}\u0000${ep.split('.')[0]}`
+    if (event.tabId !== null && !event.top) {
+      const key = `${event.tabId}\u0000${ep.split('.')[0]}`
       let known = this.frameIds.get(key)
       if (known === undefined) {
         known = this.nextFrameId++

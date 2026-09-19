@@ -181,6 +181,53 @@ describe('tabs.sendMessage', () => {
     expect(take('popup').at(-1)).toMatchObject({ t: 'deliver', data: 'up', userScript: true })
     expect(take('top')).toEqual([])
   })
+
+  it("an extension page open as a tab is the tab's sender and hears the tab's messages; a popup is neither", () => {
+    const { router, take } = setup()
+    const pageUrl = `https://${EXT}.ext.zenium.invalid/pages/options.html`
+    router.register(endpoint('bg', { context: 'background', tabId: null }))
+    router.register(endpoint('popup', { context: 'popup', tabId: null }))
+    // Vimium's options page in a tab: its own frontend script asks the background
+    // `initializeFrame`, which answers nothing to a sender without a tab.
+    router.register(endpoint('options', { context: 'page', tabId: 'tab-1', url: pageUrl }))
+    router.register(
+      endpoint('frame', { context: 'page', tabId: 'tab-1', frameId: 3, url: `${pageUrl}?frame` })
+    )
+
+    router.handle('options', { t: 'msg', id: 1, target: {}, data: { handler: 'initializeFrame' } })
+    const [deliver] = take('bg')
+    expect(deliver.sender).toEqual({
+      id: EXT,
+      url: pageUrl,
+      origin: `https://${EXT}.ext.zenium.invalid`,
+      tab: { id: 1, url: 'https://page.example/' },
+      frameId: 0,
+      documentId: 'options',
+      documentLifecycle: 'active'
+    })
+    // The page's own iframe carries its frame id; the popup has no tab and no frame.
+    router.handle('frame', { t: 'msg', id: 2, target: {}, data: 'sub' })
+    expect((take('bg')[0].sender as Record<string, unknown>).frameId).toBe(3)
+    router.handle('popup', { t: 'msg', id: 3, target: {}, data: 'pop' })
+    const fromPopup = take('bg')[0].sender as Record<string, unknown>
+    expect(fromPopup.tab).toBeUndefined()
+    expect(fromPopup.frameId).toBeUndefined()
+
+    // tabs.sendMessage to the tab reaches the page hosted in it (and its frame on request).
+    for (const ep of ['options', 'frame', 'popup']) take(ep)
+    router.handle('bg', { t: 'msg', id: 4, target: { tabId: 1, options: null }, data: 'hi' })
+    expect(take('options')).toHaveLength(1)
+    expect(take('frame')).toHaveLength(1)
+    expect(take('popup')).toEqual([])
+    router.handle('bg', {
+      t: 'msg',
+      id: 5,
+      target: { tabId: 1, options: { frameId: 3 } },
+      data: 'hi'
+    })
+    expect(take('options')).toEqual([])
+    expect(take('frame')).toHaveLength(1)
+  })
 })
 
 describe('ports', () => {

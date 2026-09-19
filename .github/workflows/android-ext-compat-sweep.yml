@@ -11,10 +11,11 @@ name: Android extension compatibility sweep
 # android-emulator-demo.yml.
 on:
   # TEMPORARY: the sweep branch's final measurement of all thirty rows on the head that carries
-  # main (the blocking store's per-set documents of #210), both jobs, then the rows the driver's
-  # last readings concern (1Password's error and welcome pages, Tampermonkey's popup close,
-  # SponsorBlock and Video Speed Controller on the 156 job) alone (gh cannot dispatch from the
-  # agent); removed before the branch is returned.
+  # main (the blocking store's per-set documents of #210), both jobs, then the rows the last fixes
+  # concern alone – here the rows with an extension page of their own open as a tab (the tab's
+  # sender: Vimium's options page, OneTab's list, LastPass's preferences, Adblock Plus's and
+  # Ghostery's options, Tampermonkey's and Violentmonkey's, JSON Formatter's, 1Password's app
+  # page) – since gh cannot dispatch from the agent; removed before the branch is returned.
   push:
     branches: [cursor/android-ext-compat-sweep-f955]
   workflow_dispatch:
@@ -42,7 +43,7 @@ jobs:
       artifact-name: android-ext-compat-sweep
       artifact-path: artifacts/android-ext-compat-sweep/
       script-env: |
-        SWEEP_ONLY=${{ inputs.only || 'aeblfdkhhhdcdjpifhhbdiojplfjncoa,dhdgffkkebhmkfjojejmpbldmpobfkfo,mnjggcdmjocbbbhaepdhchncahnbgone,nffaoalbilbmmfgbnbgppjihopabppdk' }}
+        SWEEP_ONLY=${{ inputs.only || 'cfhdojbkjhnklbpkdaibdccddilifddb,mlomiejdfkolichcflejclcbmpeaniij,aeblfdkhhhdcdjpifhhbdiojplfjncoa,hdokiejnpimakedhajhdlcegeplioahd,dbepggeogbaibhgnhhndojpepiihcmeb,dhdgffkkebhmkfjojejmpbldmpobfkfo,jinjaccalgkegednnccohejagnlnfdag,chphlpgkkbolifaimnlloiipkdnihall,bcjindcccaagfpapjjmafapmmgkkhgoa' }}
       timeout-minutes: 210
 
   # The same sweep on a Chromium snapshot SystemWebView.apk swapped onto an AOSP image (see
@@ -60,7 +61,7 @@ jobs:
       script-env: |
         WEBVIEW_APK=artifacts/webview/SystemWebView.apk
         SOFT_FAIL=1
-        SWEEP_ONLY=${{ inputs.only || 'aeblfdkhhhdcdjpifhhbdiojplfjncoa,dhdgffkkebhmkfjojejmpbldmpobfkfo,mnjggcdmjocbbbhaepdhchncahnbgone,nffaoalbilbmmfgbnbgppjihopabppdk' }}
+        SWEEP_ONLY=${{ inputs.only || 'cfhdojbkjhnklbpkdaibdccddilifddb,mlomiejdfkolichcflejclcbmpeaniij,aeblfdkhhhdcdjpifhhbdiojplfjncoa,hdokiejnpimakedhajhdlcegeplioahd,dbepggeogbaibhgnhhndojpepiihcmeb,dhdgffkkebhmkfjojejmpbldmpobfkfo,jinjaccalgkegednnccohejagnlnfdag,chphlpgkkbolifaimnlloiipkdnihall,bcjindcccaagfpapjjmafapmmgkkhgoa' }}
       setup-script: |
         base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
         rev=$(curl -fsSL "$base/LAST_CHANGE")

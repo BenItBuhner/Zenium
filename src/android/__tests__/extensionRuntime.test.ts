@@ -1066,6 +1066,45 @@ describe('AndroidExtensionRuntime: scripting into frames', () => {
   })
 })
 
+describe('AndroidExtensionRuntime: an extension page open as a tab', () => {
+  it("is the tab's sender as a content frame is, its iframe numbered, and hears tabs.sendMessage to the tab", async () => {
+    const h = harness()
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1')
+    const origin = `https://${ID}.ext.zenium.invalid`
+    // Vimium's options page in a tab, with an iframe of its own; a popup beside them.
+    hello(h, 'docP.1', 'page', { tabId: 't1', url: `${origin}/pages/options.html` })
+    hello(h, 'docQ.1', 'page', { tabId: 't1', top: false, url: `${origin}/pages/frame.html` })
+    hello(h, 'pop1', 'popup', { url: `${origin}/popup.html` })
+    message(h, 'docP.1', { t: 'msg', id: 7, target: {}, data: { handler: 'initializeFrame' } })
+    const toBg = (): Array<Record<string, unknown>> =>
+      h.kt.to('bg1').filter((m) => m.t === 'deliver')
+    expect(toBg()).toHaveLength(1)
+    const sender = toBg()[0].sender as Record<string, unknown>
+    expect(sender).toMatchObject({
+      id: ID,
+      url: `${origin}/pages/options.html`,
+      origin,
+      frameId: 0,
+      documentId: 'docP.1',
+      documentLifecycle: 'active'
+    })
+    expect(sender.tab).toMatchObject({ url: 'https://example.com/' })
+    message(h, 'docQ.1', { t: 'msg', id: 8, target: {}, data: 'sub' })
+    expect((toBg().at(-1)?.sender as Record<string, unknown>).frameId).toBe(1)
+    message(h, 'pop1', { t: 'msg', id: 9, target: {}, data: 'pop' })
+    const fromPopup = toBg().at(-1)?.sender as Record<string, unknown>
+    expect(fromPopup.tab).toBeUndefined()
+    expect(fromPopup.frameId).toBeUndefined()
+    // The background's tabs.sendMessage to the tab reaches the page and its frame, not the popup.
+    const tabId = h.runtime.api.tabs.chromeIdFor('t1')
+    message(h, 'bg1', { t: 'msg', id: 10, target: { tabId, options: null }, data: 'hi' })
+    const heard = (ep: string): number =>
+      h.kt.to(ep).filter((m) => m.t === 'deliver' && m.data === 'hi').length
+    expect([heard('docP.1'), heard('docQ.1'), heard('pop1')]).toEqual([1, 1, 0])
+  })
+})
+
 describe('AndroidExtensionRuntime: chrome.userScripts', () => {
   it('gives the user-script world its chrome on configureWorld and carries code entries in place', async () => {
     const h = harness()
