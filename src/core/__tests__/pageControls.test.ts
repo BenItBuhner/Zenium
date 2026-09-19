@@ -157,7 +157,7 @@ describe('page controls in the browser', () => {
     expect(platform.rules).toHaveLength(2)
   })
 
-  it('remembers zoom per site, applies it to the live page and persists it', async () => {
+  it('remembers zoom per host, applies it to the live page and persists it', async () => {
     const { browser, platform, win, io } = start()
     const tab = browser.tabs.createTab(
       { url: 'https://en.wikipedia.org/wiki/Zen', active: true },
@@ -167,10 +167,10 @@ describe('page controls in the browser', () => {
     expect(last(record.zoom)).toBe(1)
 
     browser.handleCommand(win, 'tab.setZoomFactor', { tabId: tab.id, factor: 1.5 })
-    expect(browser.state.settings.pageControls.siteZooms).toEqual({ 'wikipedia.org': 1.5 })
+    expect(browser.state.settings.pageControls.siteZooms).toEqual({ 'en.wikipedia.org': 1.5 })
     expect(last(record.zoom)).toBe(1.5)
     expect(browser.tabs.tab(tab.id)!.zoom).toBe(1.5)
-    expect(last(platform.rules)!.zoom.sites).toEqual({ 'wikipedia.org': 1.5 })
+    expect(last(platform.rules)!.zoom.sites).toEqual({ 'en.wikipedia.org': 1.5 })
 
     // The keyboard steps walk the zoom table from the site's factor.
     browser.handleCommand(win, 'tab.setZoom', { tabId: tab.id, delta: 1 })
@@ -183,7 +183,7 @@ describe('page controls in the browser', () => {
     await new Promise((r) => setImmediate(r))
     await browser.state.flush()
     expect(JSON.parse(io.files['state.json']).settings.pageControls.siteZooms).toEqual({
-      'wikipedia.org': 1.25
+      'en.wikipedia.org': 1.25
     })
   })
 
@@ -266,27 +266,36 @@ describe('page controls in the browser', () => {
 })
 
 describe('zoom memory on the desktop', () => {
-  it('remembers a zoom per site and applies it to every tab of the site', () => {
+  it('remembers a zoom per host and applies it to every tab of the host', () => {
     const { browser, platform, win } = start(memoryIo(), 'desktop')
     const tab = browser.tabs.createTab({ url: 'https://en.wikipedia.org/', active: true }, win)
-    const other = browser.tabs.createTab({ url: 'https://de.wikipedia.org/', active: false }, win)
+    const other = browser.tabs.createTab(
+      { url: 'https://en.wikipedia.org/wiki/Zen', active: false },
+      win
+    )
+    // Chrome's zoom levels are per host: another subdomain of the same site keeps its own.
+    const sibling = browser.tabs.createTab({ url: 'https://de.wikipedia.org/', active: false }, win)
     const elsewhere = browser.tabs.createTab({ url: 'https://example.com/', active: false }, win)
 
     browser.handleCommand(win, 'tab.setZoom', { tabId: tab.id, delta: 1 })
-    expect(browser.state.settings.pageControls.siteZooms).toEqual({ 'wikipedia.org': 1.1 })
+    expect(browser.state.settings.pageControls.siteZooms).toEqual({ 'en.wikipedia.org': 1.1 })
     expect(last(platform.records.get(tab.id)!.zoom)).toBe(1.1)
     expect(last(platform.records.get(other.id)!.zoom)).toBe(1.1)
     expect(browser.tabs.tab(other.id)!.zoom).toBe(1.1)
+    expect(last(platform.records.get(sibling.id)!.zoom)).toBe(1)
     expect(last(platform.records.get(elsewhere.id)!.zoom)).toBe(1)
     expect(zoomChanges(platform)).toEqual([
-      { tabId: tab.id, factor: 1.1, siteKey: 'wikipedia.org' }
+      { tabId: tab.id, factor: 1.1, siteKey: 'en.wikipedia.org' }
     ])
 
-    // A tab of the site opened later starts at the remembered factor.
-    const later = browser.tabs.createTab({ url: 'https://fr.wikipedia.org/', active: false }, win)
+    // A tab of the host opened later starts at the remembered factor.
+    const later = browser.tabs.createTab(
+      { url: 'https://en.wikipedia.org/wiki/Tea', active: false },
+      win
+    )
     expect(last(platform.records.get(later.id)!.zoom)).toBe(1.1)
 
-    // Reset takes the site back to the default zoom and forgets the exception.
+    // Reset takes the host back to the default zoom and forgets the exception.
     browser.handleCommand(win, 'tab.setZoom', { tabId: other.id, delta: null })
     expect(browser.state.settings.pageControls.siteZooms).toEqual({})
     expect(last(platform.records.get(tab.id)!.zoom)).toBe(1)

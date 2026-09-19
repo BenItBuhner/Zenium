@@ -62,6 +62,8 @@ class PageRulesTest {
         assertEquals(1.3, rules.zoom("https://example.com/"), 0.0)
         assertEquals(1.95, rules.zoom("https://news.ycombinator.com/"), 0.0)
         assertEquals(1.625, rules.zoom("https://ycombinator.com/"), 0.0)
+        // Zoom is per host, as Chrome keeps it: a subdomain does not inherit the apex's factor.
+        assertEquals(1.3, rules.zoom("https://www.ycombinator.com/"), 0.0)
         assertEquals(1.0, PageRules.NONE.zoom("https://example.com/"), 0.0)
     }
 

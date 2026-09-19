@@ -1901,7 +1901,7 @@ export interface PageControlsSettings {
   zoom: number
   /** Multiply the system font size (Android `fontScale`) into the default zoom. */
   zoomIncludesOsFontSize: boolean
-  /** Per-site zoom: domain → factor. */
+  /** Per-site zoom: host → factor (Chrome's zoom levels are per host, `zoomSiteKey`). */
   siteZooms: Record<string, number>
   /** Override `user-scalable=no` and `maximum-scale` so pinch zoom works everywhere. */
   forceZoom: boolean
@@ -1910,8 +1910,9 @@ export interface PageControlsSettings {
 /**
  * The page-controls policy a host keeps a copy of, so a navigation gets its user agent and its
  * viewport before the request leaves and before the document starts: the defaults already
- * resolved for this device, plus the sites that differ. Sites are registrable domains
- * (`siteKey`); a host matches a URL's host against them by suffix (`siteValue`).
+ * resolved for this device, plus the sites that differ. Desktop-site and darkening sites are
+ * registrable domains (`siteKey`); a host matches a URL's host against them by suffix
+ * (`siteValue`). Zoom sites are hosts (`zoomSiteKey`), matched exactly (`zoomValue`).
  */
 export interface PageRules {
   desktop: { default: boolean; sites: Record<string, boolean> }
