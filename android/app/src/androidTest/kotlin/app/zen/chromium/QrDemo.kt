@@ -161,7 +161,7 @@ class QrDemo : DemoHarness("qr-demo-state.json", "android-qr", "qr-demo") {
         // The toast is pushed with the reply and lives 2.8 s, while the sheet's leave takes the
         // emulator seconds; it is read from the record (watchToasts), not the tree, which trails,
         // and the still is taken as it shows – after the leave it would be gone (run 2's was).
-        val toast = awaitToast(DENIED_TOAST, 12_000)
+        val toast = awaitToastSeen(DENIED_TOAST, 12_000)
         check("the refusal's toast: '$DENIED_TOAST'", toast)
         if (toast) shot("03-denied-toast")
         check("the sheet is down after the refusal", awaitSurface(false, 6_000))

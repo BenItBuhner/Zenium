@@ -816,8 +816,11 @@ abstract class DemoHarness(
                 "function(e){return e.textContent.trim()===t})})()"
         ) == "true"
 
-    /** Poll [toastSeen] for `text` up to `timeoutMs`; false when no such toast came. */
-    protected fun awaitToast(text: String, timeoutMs: Long = 8_000): Boolean {
+    /**
+     * Poll [toastSeen] for `text` up to `timeoutMs`; false when no such toast came. (Named for the
+     * record it reads: `TabCloseDemo` has an `awaitToast` of its own that reads the live DOM.)
+     */
+    protected fun awaitToastSeen(text: String, timeoutMs: Long = 8_000): Boolean {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         while (SystemClock.uptimeMillis() < deadline) {
             if (toastSeen(text)) return true
