@@ -26,6 +26,7 @@ import {
   secureDnsText
 } from '@renderer/lib/protectionUi'
 import { cn, relativeTime } from '@renderer/lib/utils'
+import { Menulist } from '../translate/Menulist'
 import {
   ActionRow,
   BoolRow,
@@ -41,7 +42,6 @@ import {
   RadioRow,
   Row
 } from './protection/controls'
-import { Menulist } from './protection/Menulist'
 
 const HTTPS_ONLY_MODES: HttpsOnlyMode[] = ['off', 'ask', 'always']
 
@@ -409,9 +409,11 @@ function SecureDnsGroup({ state, setP }: { state: UIState; setP: SetPrivacy }): 
             onPick={() => setP({ secureDnsMode: 'provider' })}
           >
             <Menulist
+              className="zen-protection-menulist"
               label="Secure DNS provider"
               value={p.secureDnsProvider}
-              options={providerOptions()}
+              // The list is one line per provider (§9.13); the notes are the phone picker's.
+              options={providerOptions().map(({ value, label }) => ({ value, label }))}
               disabled={!on || p.secureDnsMode !== 'provider'}
               onChange={(secureDnsProvider) => setP({ secureDnsProvider })}
             />
@@ -535,36 +537,34 @@ function AddSite({
     setValue('')
   }
   return (
-    <>
-      <div className="zen-privacy-add" data-disabled={disabled || undefined}>
-        <label htmlFor={fieldId}>{words.add}</label>
-        <div className="zen-privacy-add-row">
-          <input
-            id={fieldId}
-            type="text"
-            className="zen-v2-field"
-            placeholder="example.com"
-            aria-invalid={duplicate || undefined}
-            autoComplete="off"
-            spellCheck={false}
-            value={value}
-            disabled={disabled}
-            onChange={(e) => setValue(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && add()}
-          />
-          <button
-            type="button"
-            className="zen-v2-button inline-flex shrink-0 items-center gap-2"
-            disabled={disabled || !site || duplicate}
-            onClick={add}
-          >
-            <Plus className="h-4 w-4" aria-hidden />
-            Add site
-          </button>
-        </div>
+    <div className="zen-privacy-add" data-disabled={disabled || undefined}>
+      <label htmlFor={fieldId}>{words.add}</label>
+      <div className="zen-privacy-add-row">
+        <input
+          id={fieldId}
+          type="text"
+          className="zen-v2-field"
+          placeholder="example.com"
+          aria-invalid={duplicate || undefined}
+          autoComplete="off"
+          spellCheck={false}
+          value={value}
+          disabled={disabled}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && add()}
+        />
+        <button
+          type="button"
+          className="zen-v2-button inline-flex shrink-0 items-center gap-2"
+          disabled={disabled || !site || duplicate}
+          onClick={add}
+        >
+          <Plus className="h-4 w-4" aria-hidden />
+          Add site
+        </button>
       </div>
       {duplicate && <Invalid>{words.duplicate}</Invalid>}
-    </>
+    </div>
   )
 }
 

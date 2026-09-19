@@ -143,7 +143,7 @@ export function BoolRow({
   onChange: (checked: boolean) => void
 }): JSX.Element {
   return (
-    <label className="zen-privacy-row">
+    <label className="zen-v2-row zen-privacy-row">
       <input
         type="checkbox"
         className="zen-v2-checkbox"
@@ -189,7 +189,7 @@ export function RadioRow({
   const descId = useId()
   const [text, wrapped] = useWrapped<HTMLSpanElement>()
   return (
-    <div className="zen-privacy-row" data-wrapped={wrapped || undefined}>
+    <div className="zen-v2-row zen-privacy-row" data-static="" data-wrapped={wrapped || undefined}>
       <button
         type="button"
         role="radio"
@@ -314,7 +314,7 @@ export function ActionRow({
   return (
     <button
       type="button"
-      className="zen-privacy-row zen-protection-action-row"
+      className="zen-v2-row zen-privacy-row zen-protection-action-row"
       data-wrapped={wrapped || undefined}
       disabled={disabled}
       onClick={onClick}
@@ -348,7 +348,8 @@ export function Row({
   const [text, wrapped] = useWrapped<HTMLDivElement>()
   return (
     <div
-      className="zen-privacy-row"
+      className="zen-v2-row zen-privacy-row"
+      data-static=""
       data-wrapped={wrapped || undefined}
       data-disabled={disabled || undefined}
     >
