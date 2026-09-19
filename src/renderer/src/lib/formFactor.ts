@@ -89,11 +89,6 @@ export function useViewport(): ViewportInfo {
   return viewportStore.use()
 }
 
-/** The chrome is in the phone layout (`isPhone`, subscribed). */
-export function usePhone(): boolean {
-  return useViewport().formFactor === 'phone'
-}
-
 /**
  * Tell the core which layout the chrome shows: it builds the app menu and the command list for
  * it. Sent once the chrome is up (the API exists by then) and again whenever the class changes.

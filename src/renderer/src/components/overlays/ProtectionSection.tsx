@@ -1,5 +1,5 @@
 import type { JSX, ReactNode } from 'react'
-import { useId, useState } from 'react'
+import { useId, useRef, useState } from 'react'
 import { ExternalLink, Plus, RefreshCw, Shield, ShieldCheck, ShieldOff, Trash2 } from 'lucide-react'
 import type { Settings, UIState } from '@shared/types'
 import {
@@ -7,27 +7,23 @@ import {
   HTTPS_ONLY_PERMISSION,
   normalizePrivacySite,
   SECURE_DNS_CUSTOM,
-  THIRD_PARTY_COOKIE_LABELS,
   type HttpsOnlyMode,
   type PrivacySettings,
   type SafeBrowsingFeedStatus,
-  type SafeBrowsingStatus,
-  type ThirdPartyCookieMode
+  type SafeBrowsingStatus
 } from '@shared/privacy'
 import { run } from '@renderer/lib/api'
-import { usePhone } from '@renderer/lib/formFactor'
+import { commitApiKey, commitCustomResolver, type Commit } from '@renderer/lib/protectionCommits'
 import {
+  cookieModeOptions,
   customResolverProblem,
   feedDetail,
   isValidApiKey,
+  PROTECTION_TEXT,
   providerOptions,
   remoteLookupsText,
-  resolverOptions,
-  resolverPatch,
-  resolverValue,
   safeBrowsingCardText,
-  secureDnsText,
-  updateRowText
+  secureDnsText
 } from '@renderer/lib/protectionUi'
 import { cn, relativeTime } from '@renderer/lib/utils'
 import {
@@ -41,30 +37,30 @@ import {
   Invalid,
   List,
   Part,
+  RadioGroup,
   RadioRow,
   Row
 } from './protection/controls'
 import { Menulist } from './protection/Menulist'
 
 const HTTPS_ONLY_MODES: HttpsOnlyMode[] = ['off', 'ask', 'always']
-const COOKIE_MODES: ThirdPartyCookieMode[] = ['allow', 'block-private', 'block']
 
 type SetPrivacy = (patch: Partial<PrivacySettings>) => void
 
 /**
- * The protection groups of Settings > Privacy and Security (design-language-v2-draft §1–§3, §6,
- * §9, §10.3–10.4): Safe Browsing with its feeds and the optional Google key, HTTPS-only mode
- * with the sites allowed over plaintext, secure DNS (the host's resolver on desktop, the system's
- * Private DNS screen on Android), third-party cookies with the related-sites exceptions, and the
- * Global Privacy Control and Do Not Track signals. Everything is a `settings.privacy` patch
- * except the feed refresh and the plaintext exceptions, which are the protection service's and
- * the `https-only` permission's. Registered beside the blocking groups (#115's
- * `PrivacySection`); the two share the pane and its `.zen-privacy-*` vocabulary.
+ * The protection groups of the desktop Settings > Privacy and Security pane (design-language-
+ * v2-draft §1–§3, §6, §9, §10.5): Safe Browsing with its feeds and the optional Google key,
+ * HTTPS-only mode with the sites allowed over plaintext, secure DNS (the host's resolver, or the
+ * system's Private DNS screen where the host has none), third-party cookies with the
+ * related-sites exceptions, and the Global Privacy Control and Do Not Track signals. Everything
+ * is a `settings.privacy` patch except the feed refresh and the plaintext exceptions, which are
+ * the protection service's and the `https-only` permission's. Registered beside the blocking
+ * groups (#115's `PrivacySection`); the two share the pane and its `.zen-privacy-*` vocabulary.
  *
- * Desktop is Zen's about:preferences (§10.5): two 22/600 sections, checkboxes left of their
- * labels, plain radios, a menulist, and a card only where a group carries its own actions. A
- * phone is §10's rows under 15/600 headings and nothing else: switch rows, value rows that open
- * a picker sheet, action rows, no cards.
+ * Zen's about:preferences: two 22/600 sections, checkboxes left of their labels, plain radios, a
+ * menulist, and a card only where a group carries its own actions. The phone shows the same
+ * groups as rows of the Settings tab, built by `pages/settings/protectionRows.tsx` with the
+ * same words (`lib/protectionUi.ts`) and the same commits (`lib/protectionCommits.ts`).
  */
 export function ProtectionSection({
   state,
@@ -94,7 +90,7 @@ export function ProtectionSection({
         title="Cookies and tracking signals"
         description="What sites embedded in other sites may store, and what every site is told about your preferences."
       >
-        <CookiesGroup settings={p} setP={setP} />
+        <CookiesGroup state={state} setP={setP} />
         <RelatedSitesGroup settings={p} setP={setP} />
         <SignalsGroup settings={p} setP={setP} />
       </Part>
@@ -106,56 +102,21 @@ export function ProtectionSection({
 // Safe Browsing
 // ---------------------------------------------------------------------------
 
-const SAFE_BROWSING_HEADING = 'Safe Browsing'
-const SAFE_BROWSING_DESCRIPTION =
-  'Sites are checked against open feeds of malware and phishing hosts (URLhaus, Phishing.Database, malware-filter) before they load. The feeds are refreshed while the browser runs.'
-
 /**
- * On a desktop one card (§6: the group has its own actions) named by its status inside it
- * (§9.27, as #115's status card): the 17/600 headline with the shield, the size and freshness of
- * the feeds as its description and Update now trailing; then the switch, the feeds with their
- * refresh and the key field as its rows. On a phone the same under a 15/600 heading: a switch
- * row, the Update feeds now action row, the feed rows and the field (§10.4).
+ * One card (§6: the group has its own actions) named by its status inside it (§9.27, as #115's
+ * status card): the 17/600 headline with the shield, the size and freshness of the feeds as its
+ * description and Update now trailing; then the switch, the feeds with their refresh and the key
+ * field as its rows.
  */
 function SafeBrowsingGroup({ state, setP }: { state: UIState; setP: SetPrivacy }): JSX.Element {
   const p = state.settings.privacy
   const status = state.privacy.safeBrowsing
-  const phone = usePhone()
   const on = p.safeBrowsingEnabled
-  const rows = (
-    <>
-      <BoolRow
-        label="Warn about dangerous sites"
-        description="Deceptive and malware sites are stopped before they load. You can still go on from the warning."
-        checked={on}
-        onChange={(safeBrowsingEnabled) => setP({ safeBrowsingEnabled })}
-      />
-      {phone && (
-        <ActionRow
-          label="Update feeds now"
-          description={updateRowText(status, relativeTime)}
-          busy={status.updating}
-          disabled={!on || !status.ready}
-          onClick={() => run('protection.updateFeeds', {})}
-        />
-      )}
-      {status.feeds.map((feed) => (
-        <FeedRow key={feed.id} feed={feed} disabled={!on} />
-      ))}
-      <ApiKeyField value={p.safeBrowsingApiKey} status={status} disabled={!on} setP={setP} />
-    </>
-  )
-  if (phone) {
-    return (
-      <Group heading={SAFE_BROWSING_HEADING} description={SAFE_BROWSING_DESCRIPTION}>
-        <List>{rows}</List>
-      </Group>
-    )
-  }
+  const words = PROTECTION_TEXT.safeBrowsing
   const text = safeBrowsingCardText(status, relativeTime)
   const StatusIcon = !on ? ShieldOff : status.ready ? ShieldCheck : Shield
   return (
-    <List label={SAFE_BROWSING_HEADING}>
+    <List label={words.heading}>
       <CardTitle
         icon={<StatusIcon className={cn(!on && 'zen-privacy-muted')} aria-hidden />}
         title={text.headline}
@@ -170,7 +131,16 @@ function SafeBrowsingGroup({ state, setP }: { state: UIState; setP: SetPrivacy }
           </BusyButton>
         }
       />
-      {rows}
+      <BoolRow
+        label={words.warn.label}
+        description={words.warn.description}
+        checked={on}
+        onChange={(safeBrowsingEnabled) => setP({ safeBrowsingEnabled })}
+      />
+      {status.feeds.map((feed) => (
+        <FeedRow key={feed.id} feed={feed} disabled={!on} />
+      ))}
+      <ApiKeyField value={p.safeBrowsingApiKey} status={status} disabled={!on} setP={setP} />
     </List>
   )
 }
@@ -183,10 +153,11 @@ function FeedRow({
   feed: SafeBrowsingFeedStatus
   disabled: boolean
 }): JSX.Element {
+  const words = PROTECTION_TEXT.safeBrowsing
   return (
     <Row label={feed.name} description={feedDetail(feed, relativeTime)} disabled={disabled}>
       <IconButton
-        title={`Open the homepage of ${feed.name} (${feed.licence})`}
+        title={`${words.homepage(feed.name)} (${feed.licence})`}
         onClick={() => run('app.openExternal', { url: feed.homepage })}
       >
         <ExternalLink aria-hidden />
@@ -204,8 +175,12 @@ function FeedRow({
 }
 
 /**
- * A text field on §9.12's terms: its label above, the description and the validation under it.
- * The draft is the stored value until it is edited; blur or Enter stores a valid one.
+ * A text field on §9.12's terms – its label above, Save beside it, the description and the
+ * validation under it – that is a §9.30 busy form while its value is checked: the field
+ * read-only at full opacity with the typed value in place, Save busy with the spinner in place of
+ * its label and `aria-busy`, no press taken; a refusal clears the field, gives it the focus and
+ * says why under it (`role="alert"`); acceptance leaves the saved value in the field. Save waits
+ * at .4 while the draft is the stored value or malformed (§9.30); Enter in the field is Save.
  */
 function TextField({
   label,
@@ -216,7 +191,7 @@ function TextField({
   disabled = false,
   problem,
   description,
-  onSave
+  commit
 }: {
   label: string
   value: string
@@ -225,39 +200,76 @@ function TextField({
   /** A key or token: the platform monospace with no ligatures (§4). */
   secret?: boolean
   disabled?: boolean
-  /** The validation text for `text`, or null while it is valid. */
+  /** The validation text for `text` before it is sent anywhere, or null while it is valid. */
   problem: (text: string) => string | null
   description: ReactNode
-  onSave: (text: string) => void
+  /** Keep `text`: a message refuses it, a promise is the check it waits on (`lib/protectionCommits`). */
+  commit: (text: string) => Commit
 }): JSX.Element {
   const [draft, setDraft] = useState({ base: value, text: value })
+  const [busy, setBusy] = useState(false)
+  const [refused, setRefused] = useState<string | null>(null)
+  const input = useRef<HTMLInputElement>(null)
   const text = draft.base === value ? draft.text : value
-  const invalid = problem(text)
+  const invalid = refused ?? problem(text)
+  const unchanged = text.trim() === value
   const fieldId = useId()
   const noteId = useId()
   const save = (): void => {
-    const next = text.trim()
-    if (invalid || next === value) return
-    onSave(next)
+    if (busy || disabled || invalid || unchanged) return
+    const outcome = commit(text)
+    if (!(outcome instanceof Promise)) {
+      if (outcome) setRefused(outcome)
+      return
+    }
+    setBusy(true)
+    outcome
+      .catch((e: unknown) => (e instanceof Error && e.message) || 'The check did not finish')
+      .then((message) => {
+        setBusy(false)
+        if (!message) return
+        setRefused(message)
+        setDraft({ base: value, text: '' })
+        input.current?.focus()
+      })
   }
   return (
-    <div className="zen-privacy-field zen-protection-field" data-disabled={disabled || undefined}>
+    <div
+      className="zen-privacy-field zen-protection-field"
+      data-disabled={disabled || undefined}
+      aria-busy={busy || undefined}
+    >
       <label htmlFor={fieldId}>{label}</label>
-      <input
-        id={fieldId}
-        type={type}
-        className={cn('zen-v2-field', secret && 'zen-protection-secret')}
-        aria-describedby={noteId}
-        aria-invalid={invalid !== null || undefined}
-        autoComplete="off"
-        spellCheck={false}
-        placeholder={placeholder}
-        value={text}
-        disabled={disabled}
-        onChange={(e) => setDraft({ base: value, text: e.target.value })}
-        onBlur={save}
-        onKeyDown={(e) => e.key === 'Enter' && save()}
-      />
+      <div className="zen-privacy-add-row">
+        <input
+          ref={input}
+          id={fieldId}
+          type={type}
+          className={cn('zen-v2-field', secret && 'zen-settings-secret')}
+          aria-describedby={noteId}
+          aria-invalid={invalid !== null || undefined}
+          autoComplete="off"
+          spellCheck={false}
+          placeholder={placeholder}
+          value={text}
+          disabled={disabled}
+          readOnly={busy}
+          onChange={(e) => {
+            setRefused(null)
+            setDraft({ base: value, text: e.target.value })
+          }}
+          onKeyDown={(e) => e.key === 'Enter' && save()}
+        />
+        <BusyButton
+          primary
+          busy={busy}
+          disabled={disabled || (!busy && (invalid !== null || unchanged))}
+          className="shrink-0"
+          onClick={save}
+        >
+          Save
+        </BusyButton>
+      </div>
       {invalid && <Invalid>{invalid}</Invalid>}
       <p id={noteId} className="zen-privacy-field-desc">
         {description}
@@ -278,20 +290,17 @@ function ApiKeyField({
   disabled: boolean
   setP: SetPrivacy
 }): JSX.Element {
+  const words = PROTECTION_TEXT.safeBrowsing.apiKey
   return (
     <TextField
-      label="Google Safe Browsing API key"
+      label={words.label}
       value={value}
-      placeholder="AIza…"
+      placeholder={words.placeholder}
       secret
       disabled={disabled}
-      problem={(text) =>
-        isValidApiKey(text)
-          ? null
-          : 'A key is letters, digits, dashes and underscores, up to 128 of them'
-      }
+      problem={(text) => (isValidApiKey(text) ? null : words.invalid)}
       description={remoteLookupsText(status, value)}
-      onSave={(safeBrowsingApiKey) => setP({ safeBrowsingApiKey })}
+      commit={(text) => commitApiKey(value, text, setP)}
     />
   )
 }
@@ -302,14 +311,11 @@ function ApiKeyField({
 
 function HttpsOnlyGroup({ state, setP }: { state: UIState; setP: SetPrivacy }): JSX.Element {
   const p = state.settings.privacy
-  const description =
-    'Pages are asked for over https first, so what you send and receive stays encrypted on the way.'
+  const words = PROTECTION_TEXT.httpsOnly
   return (
-    <Group heading="HTTPS-only mode" description={description}>
+    <Group heading={words.heading} description={words.description}>
       <Choice
-        name="zen-https-only"
-        label="HTTPS-only mode"
-        description={description}
+        label={words.heading}
         value={p.httpsOnly}
         options={HTTPS_ONLY_MODES.map((mode) => ({ value: mode, ...HTTPS_ONLY_LABELS[mode] }))}
         onChange={(httpsOnly) => setP({ httpsOnly })}
@@ -321,25 +327,22 @@ function HttpsOnlyGroup({ state, setP }: { state: UIState; setP: SetPrivacy }): 
 /**
  * The sites the warning page was answered "continue" for: allowed for good (the `https-only`
  * permission) or until the browser closes (the protection service's session list). Removing one
- * asks again next time. A card on a desktop (rows with an action), rows on a phone.
+ * asks again next time. A card: its rows carry an action.
  */
 function PlaintextSitesGroup({ state }: { state: UIState }): JSX.Element {
   const stored = state.privacy.httpsOnlyExceptions
   const session = state.privacy.httpsOnlySessionExceptions.filter((s) => !stored.includes(s))
-  const heading = 'Sites allowed over http'
+  const words = PROTECTION_TEXT.plaintextSites
   return (
-    <Group
-      heading={heading}
-      description="Sites you chose to load over plaintext from the warning page. Remove one to be asked again."
-    >
-      <List label={heading}>
+    <Group heading={words.heading} description={words.description}>
+      <List label={words.heading}>
         {stored.length === 0 && session.length === 0 && (
-          <div className="zen-privacy-empty">No sites allowed over http yet</div>
+          <div className="zen-privacy-empty">{words.empty}</div>
         )}
         {stored.map((site) => (
-          <Row key={site} label={site} description="Allowed over http for good">
+          <Row key={site} label={site} description={words.stored}>
             <IconButton
-              title={`Ask again before loading ${site} over http`}
+              title={words.askAgain(site)}
               onClick={() =>
                 run('permissions.set', {
                   origin: `http://${site}`,
@@ -353,9 +356,9 @@ function PlaintextSitesGroup({ state }: { state: UIState }): JSX.Element {
           </Row>
         ))}
         {session.map((site) => (
-          <Row key={site} label={site} description="Allowed over http until the browser closes">
+          <Row key={site} label={site} description={words.session}>
             <IconButton
-              title={`Ask again before loading ${site} over http`}
+              title={words.askAgain(site)}
               onClick={() => run('protection.forgetPlaintext', { host: site })}
             >
               <Trash2 aria-hidden />
@@ -372,97 +375,77 @@ function PlaintextSitesGroup({ state }: { state: UIState }): JSX.Element {
 // ---------------------------------------------------------------------------
 
 /**
- * Desktop: the switch, then two plain radios (§9.14) – the system resolver, or a provider with
- * the menulist trailing its row (§9.18, §9.21) – and the custom resolver's field when that is
- * the provider; the dependent rows dim at .4 while the switch is off (§10.4). Phone: a switch
- * row and one resolver value row whose picker holds the system resolver, the providers and the
- * custom entry.
+ * The switch, then two plain radios (§9.14) – the system resolver, or a provider with the
+ * menulist trailing its row (§9.18, §9.21) – and the custom resolver's field when that is the
+ * provider; the dependent rows dim at .4 while the switch is off (§10.4).
  */
 function SecureDnsGroup({ state, setP }: { state: UIState; setP: SetPrivacy }): JSX.Element {
   const p = state.settings.privacy
   const on = p.secureDnsMode !== 'off'
-  const phone = usePhone()
   const custom = p.secureDnsMode === 'provider' && p.secureDnsProvider === SECURE_DNS_CUSTOM
+  const words = PROTECTION_TEXT.secureDns
   return (
-    <Group
-      heading="Secure DNS"
-      description="Encrypt the lookups that turn a site's name into an address, so the network cannot read or change them."
-    >
+    <Group heading={words.heading} description={words.description}>
       <div className="zen-privacy-rows">
         <BoolRow
-          label="Use secure DNS"
+          label={words.use}
           description={secureDnsText(p, state.privacy.secureDns)}
           checked={on}
           onChange={(v) => setP({ secureDnsMode: v ? 'automatic' : 'off' })}
         />
-        {phone ? (
-          <Choice
-            name="zen-secure-dns-resolver"
-            label="Resolver"
-            description="Where the encrypted lookups go."
-            value={resolverValue(p)}
-            options={resolverOptions()}
+        <RadioGroup label={words.resolver.label}>
+          <RadioRow
+            label={words.automatic.label}
+            description={words.automatic.description}
+            checked={p.secureDnsMode === 'automatic'}
             disabled={!on}
-            onChange={(value) => setP(resolverPatch(value))}
+            onPick={() => setP({ secureDnsMode: 'automatic' })}
           />
-        ) : (
-          <div role="radiogroup" aria-label="Secure DNS resolver" className="zen-privacy-rows">
-            <RadioRow
-              name="zen-secure-dns"
-              value="automatic"
-              label="With your current service provider"
-              description="Encrypted when the system resolver offers it, plaintext otherwise."
-              checked={p.secureDnsMode === 'automatic'}
-              disabled={!on}
-              onPick={() => setP({ secureDnsMode: 'automatic' })}
+          <RadioRow
+            label={words.provider.label}
+            description={words.provider.description}
+            checked={p.secureDnsMode === 'provider'}
+            disabled={!on}
+            onPick={() => setP({ secureDnsMode: 'provider' })}
+          >
+            <Menulist
+              label="Secure DNS provider"
+              value={p.secureDnsProvider}
+              options={providerOptions()}
+              disabled={!on || p.secureDnsMode !== 'provider'}
+              onChange={(secureDnsProvider) => setP({ secureDnsProvider })}
             />
-            <RadioRow
-              name="zen-secure-dns"
-              value="provider"
-              label="With a provider of your choice"
-              description="Every lookup is encrypted and goes to this resolver, never to the system's."
-              checked={p.secureDnsMode === 'provider'}
-              disabled={!on}
-              onPick={() => setP({ secureDnsMode: 'provider' })}
-            >
-              <Menulist
-                label="Secure DNS provider"
-                value={p.secureDnsProvider}
-                options={providerOptions()}
-                disabled={!on || p.secureDnsMode !== 'provider'}
-                onChange={(secureDnsProvider) => setP({ secureDnsProvider })}
-              />
-            </RadioRow>
-          </div>
-        )}
+          </RadioRow>
+        </RadioGroup>
       </div>
       {custom && (
         <TextField
-          label="Custom resolver"
+          label={words.custom.label}
           value={p.secureDnsCustomUrl}
           type="url"
-          placeholder="https://dns.example/dns-query"
+          placeholder={words.custom.placeholder}
           disabled={!on}
           problem={customResolverProblem}
-          description="The DNS-over-HTTPS address your resolver publishes; a personal NextDNS or AdGuard profile has one of its own."
-          onSave={(secureDnsCustomUrl) => setP({ secureDnsCustomUrl })}
+          description={words.custom.description}
+          commit={(text) => commitCustomResolver(p.secureDnsCustomUrl, text, setP)}
         />
       )}
     </Group>
   )
 }
 
-/** Android: secure DNS is the system's Private DNS setting; the row opens that screen (§10.4). */
+/**
+ * A host without a resolver of its own (Android, in the tablet's two-pane): secure DNS is the
+ * system's Private DNS setting; the row opens that screen (§10.4).
+ */
 function PrivateDnsGroup(): JSX.Element {
+  const words = PROTECTION_TEXT.privateDns
   return (
-    <Group
-      heading="Secure DNS"
-      description="On Android, encrypted DNS is a system setting that applies to every app."
-    >
+    <Group heading={PROTECTION_TEXT.secureDns.heading} description={words.description}>
       <div className="zen-privacy-rows">
         <ActionRow
-          label="Open Private DNS settings"
-          description="Choose Automatic, or a private DNS provider by hostname, in Network and internet."
+          label={words.open.label}
+          description={words.open.description}
           external
           onClick={() => run('protection.openPrivateDnsSettings', undefined)}
         />
@@ -475,23 +458,14 @@ function PrivateDnsGroup(): JSX.Element {
 // Third-party cookies
 // ---------------------------------------------------------------------------
 
-function CookiesGroup({
-  settings: p,
-  setP
-}: {
-  settings: PrivacySettings
-  setP: SetPrivacy
-}): JSX.Element {
-  const description =
-    'Cookies set by a site embedded in another site, which is how most cross-site tracking works.'
+function CookiesGroup({ state, setP }: { state: UIState; setP: SetPrivacy }): JSX.Element {
+  const words = PROTECTION_TEXT.cookies
   return (
-    <Group heading="Third-party cookies" description={description}>
+    <Group heading={words.heading} description={words.description}>
       <Choice
-        name="zen-third-party-cookies"
-        label="Third-party cookies"
-        description={description}
-        value={p.thirdPartyCookies}
-        options={COOKIE_MODES.map((mode) => ({ value: mode, ...THIRD_PARTY_COOKIE_LABELS[mode] }))}
+        label={words.heading}
+        value={state.settings.privacy.thirdPartyCookies}
+        options={cookieModeOptions(state.capabilities.windows)}
         onChange={(thirdPartyCookies) => setP({ thirdPartyCookies })}
       />
     </Group>
@@ -512,18 +486,15 @@ function RelatedSitesGroup({
 }): JSX.Element {
   const blocking = p.thirdPartyCookies !== 'allow'
   const exceptions = p.thirdPartyCookieExceptions
-  const heading = 'Related sites'
+  const words = PROTECTION_TEXT.relatedSites
   return (
-    <Group
-      heading={heading}
-      description="Sites that may keep using third-party cookies whatever the setting: a sign-in provider, or a company's other domains. A site covers its subdomains."
-    >
-      <List label={heading}>
-        {exceptions.length === 0 && <div className="zen-privacy-empty">No related sites yet</div>}
+    <Group heading={words.heading} description={words.description}>
+      <List label={words.heading}>
+        {exceptions.length === 0 && <div className="zen-privacy-empty">{words.empty}</div>}
         {exceptions.map((site) => (
           <Row key={site} label={site} disabled={!blocking}>
             <IconButton
-              title={`Remove ${site}`}
+              title={words.remove(site)}
               disabled={!blocking}
               onClick={() =>
                 setP({ thirdPartyCookieExceptions: exceptions.filter((s) => s !== site) })
@@ -557,6 +528,7 @@ function AddSite({
   const fieldId = useId()
   const site = normalizePrivacySite(value)
   const duplicate = site !== null && exists(site)
+  const words = PROTECTION_TEXT.relatedSites
   const add = (): void => {
     if (!site || duplicate) return
     onAdd(site)
@@ -565,7 +537,7 @@ function AddSite({
   return (
     <>
       <div className="zen-privacy-add" data-disabled={disabled || undefined}>
-        <label htmlFor={fieldId}>Add a site</label>
+        <label htmlFor={fieldId}>{words.add}</label>
         <div className="zen-privacy-add-row">
           <input
             id={fieldId}
@@ -582,7 +554,7 @@ function AddSite({
           />
           <button
             type="button"
-            className="zen-v2-button zen-privacy-hug inline-flex shrink-0 items-center gap-2"
+            className="zen-v2-button inline-flex shrink-0 items-center gap-2"
             disabled={disabled || !site || duplicate}
             onClick={add}
           >
@@ -591,7 +563,7 @@ function AddSite({
           </button>
         </div>
       </div>
-      {duplicate && <Invalid>That site is already here</Invalid>}
+      {duplicate && <Invalid>{words.duplicate}</Invalid>}
     </>
   )
 }
@@ -607,21 +579,19 @@ function SignalsGroup({
   settings: PrivacySettings
   setP: SetPrivacy
 }): JSX.Element {
+  const words = PROTECTION_TEXT.signals
   return (
-    <Group
-      heading="Privacy signals"
-      description="Preferences sent with every request. Sites decide whether to honour them; the Global Privacy Control signal is binding under some privacy laws."
-    >
+    <Group heading={words.heading} description={words.description}>
       <div className="zen-privacy-rows">
         <BoolRow
-          label="Send a Global Privacy Control signal"
-          description="Tells sites not to sell or share your data (Sec-GPC: 1 and navigator.globalPrivacyControl)."
+          label={words.gpc.label}
+          description={words.gpc.description}
           checked={p.gpc}
           onChange={(gpc) => setP({ gpc })}
         />
         <BoolRow
-          label="Send a Do Not Track request"
-          description="Asks sites not to track you (DNT: 1 and navigator.doNotTrack). Many sites ignore it."
+          label={words.dnt.label}
+          description={words.dnt.description}
           checked={p.dnt}
           onChange={(dnt) => setP({ dnt })}
         />

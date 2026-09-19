@@ -2331,6 +2331,8 @@ export class Browser {
         this.blocking.setSiteException(site, excepted),
       'protection.updateFeeds': ({ id }) => this.protection.safeBrowsing.refresh(id),
       'protection.forgetPlaintext': ({ host }) => this.protection.forgetPlaintext(host),
+      'protection.checkApiKey': ({ key }) => this.protection.safeBrowsing.checkKey(key),
+      'protection.checkResolver': ({ url }) => this.protection.checkResolver(url),
       'protection.openPrivateDnsSettings': (_a, win) => this.openPrivateDnsSettings(win),
       'translate.page': ({ tabId, target, source }) =>
         this.translate.translatePage(tabId, { target, source }),

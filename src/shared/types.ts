@@ -13,7 +13,7 @@ import type {
 import type { EngineRelayRequest, EngineRelayResponse } from './translateEngine'
 import type { UpdateSettings, UpdateStatus } from './updates'
 import type { BlockingSettings, BlockingStatus } from './blocking'
-import type { PrivacySettings, PrivacyStatus } from './privacy'
+import type { PrivacySettings, PrivacyStatus, ProtectionCheck } from './privacy'
 import type { InternalPageId } from './internalPages'
 import type { WebAppInfo } from './webApp'
 import type { ContentDefault } from './contentSettings'
@@ -3525,6 +3525,13 @@ export interface Commands {
   'protection.updateFeeds': { args: { id?: string }; result: void }
   /** Ask again before loading `host` over plaintext: forget its session and stored allowance. */
   'protection.forgetPlaintext': { args: { host: string }; result: void }
+  /**
+   * Try a Google Safe Browsing key against the API before it is kept (one lookup of a prefix on
+   * no list); refused when Google rejects the key (v2 §9.30's busy form behind the key field).
+   */
+  'protection.checkApiKey': { args: { key: string }; result: ProtectionCheck }
+  /** Ask a custom DNS-over-HTTPS resolver one question before it is kept; refused when it does not answer. */
+  'protection.checkResolver': { args: { url: string }; result: ProtectionCheck }
   /**
    * The system's Private DNS screen (Android, where secure DNS is the system's: no
    * `capabilities.secureDns`); a toast on hosts without one.

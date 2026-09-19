@@ -546,3 +546,42 @@ describe('ProtectionService: Safe Browsing interstitial', () => {
     expect(f.browser.protection.safeBrowsing.lookup('http://evil.example/')).toBeNull()
   })
 })
+
+describe('ProtectionService: the custom resolver check', () => {
+  it('asks the resolver one question and refuses one that does not answer', async () => {
+    const f = fixture()
+    const asked: string[] = []
+    let answer: { ok: boolean; status: number; text: string } | Error = {
+      ok: true,
+      status: 200,
+      text: ''
+    }
+    f.browser.platform.net.fetchText = async (url) => {
+      asked.push(url)
+      if (answer instanceof Error) throw answer
+      return answer
+    }
+    expect(await f.browser.protection.checkResolver('https://dns.example/dns-query{?dns}')).toEqual(
+      { ok: true }
+    )
+    const probe = new URL(asked[0])
+    expect(probe.host).toBe('dns.example')
+    expect(probe.pathname).toBe('/dns-query')
+    expect(probe.searchParams.get('dns')).toMatch(/^[A-Za-z0-9_-]+$/)
+
+    answer = { ok: false, status: 404, text: '' }
+    expect(await f.browser.protection.checkResolver('https://dns.example/nothing')).toEqual({
+      ok: false,
+      problem: 'The resolver did not answer a DNS-over-HTTPS query at this address (HTTP 404)'
+    })
+    answer = new Error('ECONNREFUSED')
+    expect(await f.browser.protection.checkResolver('https://dns.example/dns-query')).toEqual({
+      ok: false,
+      problem: 'Zenium could not reach a resolver at this address'
+    })
+    expect(await f.browser.protection.checkResolver('http://dns.example/dns-query')).toMatchObject({
+      ok: false
+    })
+    expect(asked).toHaveLength(3)
+  })
+})
