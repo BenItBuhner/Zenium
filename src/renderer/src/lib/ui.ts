@@ -288,6 +288,30 @@ export interface UiState {
   permissionPromptOpen: boolean
   /** The Clear browsing data dialog (or sheet) is up over the page or over Settings. */
   clearBrowsingDataOpen: boolean
+  /**
+   * An autofill prompt (save / update a login, save an address or card, pick a passkey account)
+   * is up over the page, and how: a popover under the URL bar (no scrim), a sheet, or a dialog.
+   */
+  autofillPrompt: 'popover' | 'sheet' | 'dialog' | null
+  /** The id of a save prompt put away behind the key chip in the pill; the chip brings it back. */
+  autofillPromptCollapsed: string | null
+  /**
+   * The id of a save prompt the chip brought back by hand: that one takes the focus as any
+   * popover the user opened, where the prompt the page raised takes none (v2 §9.22's notice rule).
+   */
+  autofillPromptByHand: string | null
+  /** Settings > Autofill is editing an address or a card (`id: null` adds one). */
+  autofillEdit: { kind: 'address' | 'card'; id: string | null } | null
+  /**
+   * A re-authenticated autofill command wants the vault passphrase (`lib/autofill.ts`
+   * `withPassphrase`): the dialog asking for it is up, with the refused attempt's error.
+   */
+  autofillPassphrase: {
+    title: string
+    description: string
+    error: string | null
+    busy: boolean
+  } | null
   /** Zen's multi-select: tabs picked with Ctrl / Shift+click (acted on together). */
   selectedTabIds: string[]
   /** Last plainly clicked / toggled tab – the anchor for Shift+click ranges. */
@@ -403,6 +427,11 @@ export const uiStore = createStore<UiState>(
     barMenuOpen: false,
     permissionPromptOpen: false,
     clearBrowsingDataOpen: false,
+    autofillPrompt: null,
+    autofillPromptCollapsed: null,
+    autofillPromptByHand: null,
+    autofillEdit: null,
+    autofillPassphrase: null,
     selectedTabIds: [],
     selectionAnchorId: null,
     glanceActive: false,
@@ -743,6 +772,9 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.defaultBrowserPrompt &&
     !ui.install &&
     !ui.clearBrowsingDataOpen &&
+    !ui.autofillPrompt &&
+    !ui.autofillEdit &&
+    !ui.autofillPassphrase &&
     !ui.stageActive &&
     !ui.zoomBubble &&
     !ui.newTabShortcutDialog &&
@@ -793,6 +825,7 @@ export function invalidateSnapshot(): void {
     !ui.defaultBrowserPrompt &&
     !ui.install &&
     !ui.clearBrowsingDataOpen &&
+    !ui.autofillPrompt &&
     !ui.stageActive &&
     !ui.zoomBubble &&
     ui.hoverCard.tabId === null &&
@@ -1337,6 +1370,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.defaultBrowserPrompt ||
     ui.install !== null ||
     ui.clearBrowsingDataOpen ||
+    ui.autofillPrompt !== null ||
     ui.stageActive ||
     ui.zoomBubble !== null ||
     ui.hoverCard.tabId !== null ||
@@ -1493,16 +1527,18 @@ export function closeClearBrowsingData(): void {
 /**
  * Only anchored panels or a security prompt are up: a bar panel, the star bubble, the zoom
  * bubble, the tab hover card, the downloads bubble, site information, a permission prompt, the
- * blocked pop-ups popover, or a sign-in or certificate dialog. The page behind them is captured
- * all the same (they overlap the live view), but panels and popovers draw no scrim (v2 §9.5,
- * §9.20), so the capture shows undimmed; dialogs dim it. A chassis sheet's scrim is its own one
- * dim (§11.5), so the same holds under the site-information sheet and the prompt sheet on a
- * phone, and the security prompt's dim is the frame dialog host's scrim alone (v2 §9.5, §11.5:
- * one dim layer). The chrome layer's popovers and menus (the translate selection popover, a
- * menulist's list) count in `floatingChrome` and are the extensions' counterpart's case
+ * blocked pop-ups popover, an autofill prompt in its popover form, or a sign-in or certificate
+ * dialog. The page behind them is captured all the same (they overlap the live view), but panels
+ * and popovers draw no scrim (v2 §9.5, §9.20), so the capture shows undimmed; dialogs dim it. A
+ * chassis sheet's scrim is its own one dim (§11.5), so the same holds under the site-information
+ * sheet and the prompt sheet on a phone, and the security prompt's dim is the frame dialog host's
+ * scrim alone (v2 §9.5, §11.5: one dim layer). The chrome layer's popovers and menus (the
+ * translate selection popover, a menulist's list) count in `floatingChrome` and are the
+ * extensions' counterpart's case
  * (`extensionChromeAloneOverContent`).
  */
 export function panelAloneOverContent(ui: UiState): boolean {
+  const popover = ui.autofillPrompt === 'popover'
   return (
     (ui.barMenuOpen ||
       ui.starDialog !== null ||
@@ -1514,7 +1550,8 @@ export function panelAloneOverContent(ui: UiState): boolean {
       ui.siteInfoOpen ||
       ui.permissionPromptOpen ||
       ui.blockedPopupsPanel !== null ||
-      ui.securityPromptOpen) &&
+      ui.securityPromptOpen ||
+      popover) &&
     !overlayCoversContent({
       ...ui,
       barMenuOpen: false,
@@ -1525,7 +1562,8 @@ export function panelAloneOverContent(ui: UiState): boolean {
       siteInfoOpen: false,
       permissionPromptOpen: false,
       blockedPopupsPanel: null,
-      securityPromptOpen: false
+      securityPromptOpen: false,
+      autofillPrompt: popover ? null : ui.autofillPrompt
     })
   )
 }

@@ -23,9 +23,17 @@ export interface ViewportInfo extends ViewportMetrics {
   formFactor: FormFactor
 }
 
-/** `classifyViewport`, except that a popup window never becomes a phone however small it is. */
-export function formFactorFor(metrics: ViewportMetrics, chrome: WindowChrome | null): FormFactor {
-  if (chrome === 'popup') return metrics.coarse ? 'tablet' : 'desktop'
+/**
+ * `classifyViewport`, except that a popup window never becomes a phone however small it is, and
+ * neither does the autofill picker's document (`index.html?surface=autofill`, a small view
+ * floated over the page by the desktop host): it draws desktop rows whatever its size.
+ */
+export function formFactorFor(
+  metrics: ViewportMetrics,
+  chrome: WindowChrome | null,
+  surface: string | null = chromeSurface()
+): FormFactor {
+  if (chrome === 'popup' || surface === 'autofill') return metrics.coarse ? 'tablet' : 'desktop'
   return classifyViewport(metrics)
 }
 
@@ -36,6 +44,15 @@ const NO_WINDOW: ViewportInfo = {
   height: 0,
   coarse: false,
   hover: true
+}
+
+/**
+ * Which chrome document this is: null for a window's chrome, `autofill` for the picker's popup
+ * surface (`?surface=autofill`, see `AutofillSurface`).
+ */
+export function chromeSurface(): string | null {
+  if (typeof location === 'undefined') return null
+  return new URLSearchParams(location.search).get('surface')
 }
 
 function compute(): ViewportInfo {

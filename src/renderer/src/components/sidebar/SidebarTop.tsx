@@ -31,6 +31,7 @@ import { APP_MENU_EVENT, hint, openAppMenu } from '@renderer/lib/shortcuts'
 import { barStateOf, isTranslating, translateStateOf } from '@renderer/lib/translate'
 import { openOverlay, openUrlbar, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { AutofillChip } from '../autofill/AutofillChip'
 import { StarChip } from '../bookmarks/StarChip'
 import { useBookmarkTree } from '../bookmarks/tree'
 import { ToolbarActions } from '../extensions/ToolbarActions'
@@ -411,6 +412,7 @@ export function NavRow({
               </PillChip>
             )}
             {tab && <ZoomChip state={state} tab={tab} />}
+            {tab && isWebPage && <AutofillChip state={state} tab={tab} />}
             {tab && starred && (
               <StarChip
                 tab={tab}

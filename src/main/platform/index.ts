@@ -128,7 +128,9 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   // No speech recogniser on the desktop hosts; the mic buttons stay away.
   voiceSearch: false,
   // Selected text gets the page context menu on the desktop; the floating toolbar is Android's.
-  selectionToolbar: false
+  selectionToolbar: false,
+  // The autofill picker floats in a `WebContentsView` above the pages (`ElectronWindow.setPopupSurface`).
+  popupSurface: true
 }
 
 /**

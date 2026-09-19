@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
+  PICKER_SURFACE_PAD,
+  PICKER_WIDTH,
   anchorInChrome,
   clearsInLabel,
   decideSave,
+  estimatePickerHeight,
   orderLoginsForPicker,
+  placePickerSurface,
   type LoginCandidate,
   type SaveContext
 } from '../fill'
@@ -195,6 +199,52 @@ describe('anchorInChrome', () => {
       width: 10,
       height: 10
     })
+  })
+})
+
+describe('placePickerSurface', () => {
+  const viewport = { width: 1280, height: 800 }
+  const field = { x: 300, y: 200, width: 240, height: 32 }
+
+  it('hangs the panel from the field, start edges aligned, with the shadow margin around it', () => {
+    expect(placePickerSurface(field, viewport, 120)).toEqual({
+      x: 300 - PICKER_SURFACE_PAD,
+      y: 232 - PICKER_SURFACE_PAD,
+      width: PICKER_WIDTH + PICKER_SURFACE_PAD * 2,
+      height: 120 + PICKER_SURFACE_PAD * 2
+    })
+  })
+
+  it('keeps the panel inside the window sideways', () => {
+    expect(placePickerSurface({ ...field, x: 1200 }, viewport, 120).x).toBe(
+      1280 - PICKER_WIDTH - 8 - PICKER_SURFACE_PAD
+    )
+    expect(placePickerSurface({ ...field, x: -40 }, viewport, 120).x).toBe(8 - PICKER_SURFACE_PAD)
+  })
+
+  it('flips above a field near the bottom when there is more room above', () => {
+    const low = { ...field, y: 740 }
+    const placed = placePickerSurface(low, viewport, 200)
+    expect(placed.y + PICKER_SURFACE_PAD).toBe(740 - 200)
+    expect(placed.height).toBe(200 + PICKER_SURFACE_PAD * 2)
+  })
+
+  it('clamps a tall panel to 60% of the window and to the room on its side', () => {
+    expect(placePickerSurface(field, viewport, 2000).height).toBe(480 + PICKER_SURFACE_PAD * 2)
+    const short = { width: 1280, height: 300 }
+    // Below: 300 - 232 - 8 = 60 of room; above: 192. A 150 panel flips and fits above.
+    expect(placePickerSurface(field, short, 150)).toMatchObject({
+      y: 200 - 150 - PICKER_SURFACE_PAD,
+      height: 150 + PICKER_SURFACE_PAD * 2
+    })
+    // Above is the larger side but still too small: the panel takes what there is.
+    expect(placePickerSurface(field, short, 190).height).toBe(180 + PICKER_SURFACE_PAD * 2)
+  })
+
+  it('estimates a panel from its rows until the document has measured itself', () => {
+    expect(estimatePickerHeight(1, false)).toBe(32 + 32 + 41)
+    expect(estimatePickerHeight(3, true)).toBe(32 + 3 * 52 + 41)
+    expect(estimatePickerHeight(0, false)).toBe(estimatePickerHeight(1, false))
   })
 })
 

@@ -11,6 +11,7 @@ import {
 } from '@shared/internalPages'
 import type { Tab, UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
+import { useAutofillSettings } from '@renderer/lib/autofillSettings'
 import { BackDismissal, useBackSurface } from '@renderer/lib/back'
 import { useChromeShortcut } from '@renderer/lib/chromeShortcuts'
 import { useViewport } from '@renderer/lib/formFactor'
@@ -97,6 +98,9 @@ function PhoneSettings({
     setFindRequest((n) => n + 1)
     return true
   })
+  // The vault's lists are fetched while Settings › Autofill is the section shown; the landing's
+  // search builds the section with none (its switches and choices match, its entries do not).
+  const autofill = useAutofillSettings(state, current?.id === 'autofill')
   const ctx: SectionContext = {
     state,
     tab,
@@ -107,7 +111,8 @@ function PhoneSettings({
     boost: (tabId) => {
       run('tab.activate', { tabId })
       void openOverlay('boosts', tabId)
-    }
+    },
+    autofill
   }
   const searching = current === null && query.trim() !== ''
   // The section shown, or – while the landing's search is on – every section for its results.
