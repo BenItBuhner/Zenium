@@ -1,5 +1,5 @@
 import type { JSX, ReactNode } from 'react'
-import { useRef, useState } from 'react'
+import { useId, useRef, useState } from 'react'
 import { Download, KeyRound, Lock, Upload } from 'lucide-react'
 import type { ImportConflict, Settings, UIState } from '@shared/types'
 import { cmd, run } from '@renderer/lib/api'
@@ -359,6 +359,7 @@ function PassphraseSheet({
   onClosed: () => void
 }): JSX.Element {
   const sheet = useRef<PromptSheetHandle>(null)
+  const formId = useId()
   const form = usePassphraseForm(hasPassphrase, gate, () => sheet.current?.dismiss())
   return (
     <PromptSheet
@@ -367,8 +368,27 @@ function PassphraseSheet({
       title={title}
       description={description}
       onClosed={onClosed}
+      // The mismatch line under the second field is the one thing that changes the body's height.
+      contentKey={form.mismatch ? 'mismatch' : 'clean'}
+      footer={
+        <>
+          <Btn onClick={() => sheet.current?.dismiss()} disabled={form.busy}>
+            Cancel
+          </Btn>
+          <Btn
+            type="submit"
+            form={formId}
+            variant="primary"
+            busy={form.busy}
+            disabled={!form.ready}
+          >
+            {title}
+          </Btn>
+        </>
+      }
     >
       <form
+        id={formId}
         className="flex flex-col"
         onSubmit={(e) => {
           e.preventDefault()
@@ -376,14 +396,6 @@ function PassphraseSheet({
         }}
       >
         <PassphraseFields form={form} className="px-4" />
-        <div className="zen-sheet-footer">
-          <Btn onClick={() => sheet.current?.dismiss()} disabled={form.busy}>
-            Cancel
-          </Btn>
-          <Btn type="submit" variant="primary" busy={form.busy} disabled={!form.ready}>
-            {title}
-          </Btn>
-        </div>
       </form>
     </PromptSheet>
   )
@@ -406,19 +418,20 @@ function ExportSheet({
       title="Export every password?"
       description={PASSWORDS_COPY.exportCsv.armed}
       onClosed={() => (confirmed.current ? onConfirm() : onCancel())}
-    >
-      <div className="zen-sheet-footer">
-        <Btn onClick={() => sheet.current?.dismiss()}>Cancel</Btn>
-        <Btn
-          variant="danger"
-          onClick={() => {
-            confirmed.current = true
-            sheet.current?.dismiss()
-          }}
-        >
-          Export anyway
-        </Btn>
-      </div>
-    </PromptSheet>
+      footer={
+        <>
+          <Btn onClick={() => sheet.current?.dismiss()}>Cancel</Btn>
+          <Btn
+            variant="danger"
+            onClick={() => {
+              confirmed.current = true
+              sheet.current?.dismiss()
+            }}
+          >
+            Export anyway
+          </Btn>
+        </>
+      }
+    />
   )
 }

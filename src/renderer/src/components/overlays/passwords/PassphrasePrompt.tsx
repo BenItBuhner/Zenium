@@ -5,7 +5,6 @@ import { useEscape } from '@renderer/hooks/useEscape'
 import { usePopover } from '@renderer/hooks/usePopover'
 import { useBackSurface } from '@renderer/lib/back'
 import { FrameDialogPortal, POPOVER_WIDTH, useFrameDialog } from '@renderer/lib/portals'
-import { cn } from '@renderer/lib/utils'
 import { BottomSheet, type BottomSheetHandle } from '../../sheet/BottomSheet'
 import { MIN_PASSPHRASE, usePhone } from './lib'
 import { Btn, Field, StatusGlyph, TextField, TitleBlock } from './shared'
@@ -88,30 +87,39 @@ function PhonePrompt({
       data-surface="page"
       data-sheet-layer=""
     >
-      <BottomSheet
-        ref={sheet}
-        hosted
-        labelledBy={titleId}
-        onDismissed={() => onGone(accepted.current)}
-        handleLabel="Dismiss"
+      <PromptForm
+        request={request}
+        onCancel={dismiss}
+        onAccepted={() => {
+          accepted.current = true
+          dismiss()
+        }}
       >
-        <TitleBlock
-          id={titleId}
-          descriptionId={descriptionId}
-          description={describe(request)}
-          glyph={<Glyph request={request} />}
-        >
-          {title(request)}
-        </TitleBlock>
-        <PromptForm
-          request={request}
-          onCancel={dismiss}
-          onAccepted={() => {
-            accepted.current = true
-            dismiss()
-          }}
-        />
-      </BottomSheet>
+        {(fields, actions, refused) => (
+          // The actions in the chassis's footer (§9.11), outside the body's scroller; the
+          // validation line under the field changes the body's height, so the sheet is
+          // measured again as it comes and goes.
+          <BottomSheet
+            ref={sheet}
+            hosted
+            labelledBy={titleId}
+            onDismissed={() => onGone(accepted.current)}
+            handleLabel="Dismiss"
+            footer={actions}
+            contentKey={refused ? 'refused' : 'clean'}
+          >
+            <TitleBlock
+              id={titleId}
+              descriptionId={descriptionId}
+              description={describe(request)}
+              glyph={<Glyph request={request} />}
+            >
+              {title(request)}
+            </TitleBlock>
+            {fields}
+          </BottomSheet>
+        )}
+      </PromptForm>
     </div>
   )
 }
@@ -151,7 +159,14 @@ function DesktopPrompt({
       >
         {title(request)}
       </TitleBlock>
-      <PromptForm request={request} onCancel={cancel} onAccepted={() => onGone(true)} />
+      <PromptForm request={request} onCancel={cancel} onAccepted={() => onGone(true)}>
+        {(fields, actions) => (
+          <>
+            {fields}
+            <div className="flex justify-end gap-2 p-4">{actions}</div>
+          </>
+        )}
+      </PromptForm>
     </div>
   )
 }
@@ -178,24 +193,29 @@ function describe(request: PassphraseRequest): string {
 }
 
 /**
- * The body under the title block: the field (two when a passphrase is being created) and the
- * footer – on a phone the sheet footer of §9.11 (peers split the width at an 8 px gap, the
- * primary trailing, 16 above the bottom inset), on the desktop footer form (i): the actions
- * hugging right, 16 to the edge, no hairline. A busy form (§9.30): while the passphrase is
- * being verified the fields stay read-only at full opacity with the typed value in place
- * (masked), only the primary is busy and Cancel sits at .4; refused, the field clears, takes
- * the focus and shows the §9.12 validation line; accepted, the form leaves with its values.
+ * The form under the title block, in two parts the caller lays out: the fields (two when a
+ * passphrase is being created) in a form, and the actions that submit it through the button's
+ * `form` attribute – on a phone in the sheet chassis's footer of §9.11 (peers split the width at
+ * an 8 px gap, the primary trailing, 16 above the bottom inset), outside the body's scroller, on
+ * the desktop as footer form (i): the actions hugging right, 16 to the edge, no hairline.
+ * `refused` says whether the validation line is showing, for a sheet to be measured again. A
+ * busy form (§9.30): while the passphrase is being verified the fields stay read-only at full
+ * opacity with the typed value in place (masked), only the primary is busy and Cancel sits at
+ * .4; refused, the field clears, takes the focus and shows the §9.12 validation line;
+ * accepted, the form leaves with its values.
  */
 function PromptForm({
   request,
   onCancel,
-  onAccepted
+  onAccepted,
+  children
 }: {
   request: PassphraseRequest
   onCancel: () => void
   onAccepted: () => void
+  children: (fields: JSX.Element, actions: JSX.Element, refused: boolean) => JSX.Element
 }): JSX.Element {
-  const phone = usePhone()
+  const formId = useId()
   const field = useRef<HTMLInputElement>(null)
   const [value, setValue] = useState('')
   const [confirm, setConfirm] = useState('')
@@ -219,56 +239,58 @@ function PromptForm({
     setConfirm('')
     field.current?.focus({ preventScroll: true })
   }
-  return (
+  const fields = (
     <form
-      className="flex flex-col"
+      id={formId}
+      className="flex flex-col gap-4 px-4"
       onSubmit={(e) => {
         e.preventDefault()
         void submit()
       }}
     >
-      <div className="flex flex-col gap-4 px-4">
-        <Field id="vault-passphrase" label="Passphrase" error={refusal}>
+      <Field id="vault-passphrase" label="Passphrase" error={refusal}>
+        {(aria) => (
+          <TextField
+            {...aria}
+            ref={field}
+            type="password"
+            readOnly={busy}
+            autoComplete={setup ? 'new-password' : 'current-password'}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder={setup ? `At least ${MIN_PASSPHRASE} characters` : undefined}
+          />
+        )}
+      </Field>
+      {setup && (
+        <Field
+          id="vault-passphrase-confirm"
+          label="Confirm passphrase"
+          error={mismatch ? 'The two passphrases differ.' : null}
+        >
           {(aria) => (
             <TextField
               {...aria}
-              ref={field}
               type="password"
               readOnly={busy}
-              autoComplete={setup ? 'new-password' : 'current-password'}
-              value={value}
-              onChange={(e) => setValue(e.target.value)}
-              placeholder={setup ? `At least ${MIN_PASSPHRASE} characters` : undefined}
+              autoComplete="new-password"
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
             />
           )}
         </Field>
-        {setup && (
-          <Field
-            id="vault-passphrase-confirm"
-            label="Confirm passphrase"
-            error={mismatch ? 'The two passphrases differ.' : null}
-          >
-            {(aria) => (
-              <TextField
-                {...aria}
-                type="password"
-                readOnly={busy}
-                autoComplete="new-password"
-                value={confirm}
-                onChange={(e) => setConfirm(e.target.value)}
-              />
-            )}
-          </Field>
-        )}
-      </div>
-      <div className={cn(phone ? 'zen-sheet-footer' : 'flex justify-end gap-2 p-4')}>
-        <Btn onClick={onCancel} disabled={busy}>
-          Cancel
-        </Btn>
-        <Btn type="submit" variant="primary" busy={busy} disabled={!ready}>
-          {setup ? 'Create' : 'Continue'}
-        </Btn>
-      </div>
+      )}
     </form>
   )
+  const actions = (
+    <>
+      <Btn onClick={onCancel} disabled={busy}>
+        Cancel
+      </Btn>
+      <Btn type="submit" form={formId} variant="primary" busy={busy} disabled={!ready}>
+        {setup ? 'Create' : 'Continue'}
+      </Btn>
+    </>
+  )
+  return children(fields, actions, refusal !== null || mismatch)
 }

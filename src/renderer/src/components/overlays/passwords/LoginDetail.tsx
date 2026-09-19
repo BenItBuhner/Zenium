@@ -282,19 +282,20 @@ function DeleteSheet({
       title="Delete this login?"
       description="You can undo for a minute."
       onClosed={() => (deleting.current ? onDelete() : onKeep())}
-    >
-      <div className="zen-sheet-footer">
-        <Btn onClick={() => sheet.current?.dismiss()}>Keep</Btn>
-        <Btn
-          variant="danger"
-          onClick={() => {
-            deleting.current = true
-            sheet.current?.dismiss()
-          }}
-        >
-          Delete
-        </Btn>
-      </div>
-    </PromptSheet>
+      footer={
+        <>
+          <Btn onClick={() => sheet.current?.dismiss()}>Keep</Btn>
+          <Btn
+            variant="danger"
+            onClick={() => {
+              deleting.current = true
+              sheet.current?.dismiss()
+            }}
+          >
+            Delete
+          </Btn>
+        </>
+      }
+    />
   )
 }

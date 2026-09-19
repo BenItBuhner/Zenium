@@ -520,10 +520,15 @@ export interface PromptSheetHandle {
  * the 17/600 title, a description), the body, a footer – on the shared `BottomSheet` chassis in
  * the frame's dialog host, the top of a depth-two stack over the manager's page. It draws the
  * stack's one scrim itself (`ownScrim`, §9.28) and mounts the chassis's title block, the one
- * every prompt sheet opens on. The chassis moves the focus in (§9.22), wraps Tab, holds the page
- * under it inert and hands the focus back once the sheet has gone; a drag, a fling, the scrim,
- * Escape (the shared LIFO hook, so a pane under it keeps its own turn) and the back gesture
- * close it, `dismiss` on the handle closes it from inside, and `onClosed` runs once it has left.
+ * every prompt sheet opens on. The actions go in `footer`: the chassis keeps them under the body,
+ * outside its scroller (§9.11), so they stay in reach whatever the body grows to; a form in the
+ * body submits from there through the button's `form` attribute. The chassis sizes the sheet to
+ * its content once and again whenever `contentKey` changes – a validation line appearing under a
+ * field is such a change, or the line would scroll instead of the sheet growing. The chassis
+ * moves the focus in (§9.22), wraps Tab, holds the page under it inert and hands the focus back
+ * once the sheet has gone; a drag, a fling, the scrim, Escape (the shared LIFO hook, so a pane
+ * under it keeps its own turn) and the back gesture close it, `dismiss` on the handle closes it
+ * from inside, and `onClosed` runs once it has left.
  */
 export function PromptSheet({
   ref,
@@ -531,6 +536,8 @@ export function PromptSheet({
   title,
   description,
   glyph,
+  footer,
+  contentKey,
   children,
   onClosed
 }: {
@@ -540,7 +547,11 @@ export function PromptSheet({
   title: string
   description?: string
   glyph?: ReactNode
-  children: ReactNode
+  /** The §9.11 footer's buttons: peers splitting the width, the primary trailing. */
+  footer?: ReactNode
+  /** Changes when the body's height does (a message shown or cleared): the sheet is measured again. */
+  contentKey?: string
+  children?: ReactNode
   onClosed: () => void
 }): JSX.Element {
   return (
@@ -551,6 +562,8 @@ export function PromptSheet({
         title={title}
         description={description}
         glyph={glyph}
+        footer={footer}
+        contentKey={contentKey}
         onClosed={onClosed}
       >
         {children}
@@ -565,6 +578,8 @@ function HostedPromptSheet({
   title,
   description,
   glyph,
+  footer,
+  contentKey,
   children,
   onClosed
 }: {
@@ -573,7 +588,9 @@ function HostedPromptSheet({
   title: string
   description?: string
   glyph?: ReactNode
-  children: ReactNode
+  footer?: ReactNode
+  contentKey?: string
+  children?: ReactNode
   onClosed: () => void
 }): JSX.Element {
   const sheet = useRef<BottomSheetHandle>(null)
@@ -600,6 +617,8 @@ function HostedPromptSheet({
         labelledBy={titleId}
         handleLabel="Dismiss"
         className="zen-settings-sheet"
+        footer={footer}
+        contentKey={contentKey}
         onDismissed={onClosed}
       >
         <TitleBlock id={titleId} glyph={glyph} description={description}>
