@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, createElement, StrictMode, type JSX } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -689,9 +691,11 @@ describe('a chip joining or leaving the strip', () => {
     expect(translate(chipOf('b'))).toBe(-PITCH)
     expect(translate(chipOf('c'))).toBe(-PITCH)
     expect(chipOf('a').style.transform).toBe('')
-    // d's face sets out small and clear, on its own spring – the cell itself is the tracker's.
+    // d's face sets out small and clear, on its own spring – the cell itself is the tracker's –
+    // with the stylesheet's transition (the pressed state's ease) paused while the spring writes.
     expect(scaleOf(faceOf('d'))).toBeCloseTo(0.6, 3)
     expect(faceOf('d').style.opacity).toBe('0.000')
+    expect(faceOf('d').style.transition).toBe('none')
     expect(chipOf('d').style.transform).toBe('')
     for (const id of ['a', 'b', 'c']) expect(faceOf(id).style.transform).toBe('')
     // Both run together…
@@ -699,13 +703,30 @@ describe('a chip joining or leaving the strip', () => {
     expect(midway).toBeGreaterThan(0)
     expect(scaleOf(faceOf('d'))).toBeGreaterThan(0.6)
     expect(scaleOf(faceOf('d'))).toBeLessThan(1)
-    // …and settle clean.
+    // …and settle clean, the transition back with the face at rest.
     act(() => settleSprings())
     for (const id of ['a', 'd', 'b', 'c']) {
       expect(chipOf(id).style.transform).toBe('')
       expect(faceOf(id).style.transform).toBe('')
       expect(faceOf(id).style.opacity).toBe('')
+      expect(faceOf(id).style.transition).toBe('')
     }
+  })
+
+  it('the cell is the tracker’s alone: the stylesheet eases the face, never the chip (§11)', () => {
+    // A transition on the cell's transform would ease each frame of a glide towards the last:
+    // a neighbour would jump to its new slot and drift back before it glided (seen frame by frame
+    // in the preview host). The pressed squeeze and its ease live on the face instead.
+    const css = readFileSync(join(process.cwd(), 'src/renderer/src/assets/main.css'), 'utf8')
+    const rule = (selector: string): string => {
+      const start = css.indexOf(`\n  ${selector} {`)
+      expect(start, `${selector} in main.css`).toBeGreaterThan(-1)
+      return css.slice(start, css.indexOf('}', start))
+    }
+    expect(rule('.zen-group-chip')).not.toMatch(/transition|transform/)
+    expect(rule('.zen-group-chip-face')).toMatch(/transition:[^;]*transform 120ms/)
+    expect(rule('.zen-group-chip:active .zen-group-chip-face')).toMatch(/transform: scale\(0\.97\)/)
+    expect(css).not.toMatch(/\n {2}\.zen-group-chip:active \{/)
   })
 
   it('a chip leaving shrinks out where it stood while the chips after it glide back', () => {
@@ -723,6 +744,7 @@ describe('a chip joining or leaving the strip', () => {
     expect(exit.getAttribute('aria-hidden')).toBe('true')
     const face = exit.querySelector<HTMLElement>('.zen-group-chip-face')!
     expect(scaleOf(face)).toBeCloseTo(1, 3)
+    expect(face.style.transition).toBe('none')
     const shrinking = framesUntil(() => scaleOf(face) < 0.9)
     expect(shrinking).toBeGreaterThan(0)
     expect(Number(face.style.opacity)).toBeLessThan(1)

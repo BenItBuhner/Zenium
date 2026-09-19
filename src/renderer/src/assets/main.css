@@ -2127,6 +2127,15 @@
   .zen-group-scroller::-webkit-scrollbar {
     display: none;
   }
+  /*
+   * A chip is two layers, as an overview card is its cell and the card inside: the chip itself is
+   * the cell the FLIP tracker glides – its transform is the tracker's, written every frame of a
+   * glide, so nothing here may transition it (a transition on the cell would ease each frame's
+   * write towards the last, and a neighbour would jump to its new slot and drift back before it
+   * glided) – and the face inside is what a chip shows: its fill, its mark, the pressed state's
+   * ease and squeeze, and the scale a joining chip comes in on and a leaving chip goes out on
+   * (`GroupStrip.tsx`, which pauses the face's transition while a spring writes it).
+   */
   .zen-group-chip {
     position: relative;
     display: flex;
@@ -2137,26 +2146,7 @@
     justify-content: center;
     border-radius: 18px;
     color: inherit;
-    transition:
-      background 120ms var(--zen-ease),
-      transform 120ms var(--zen-ease);
   }
-  .zen-group-chip:active {
-    background: var(--v2-window-fill-hover);
-    transform: scale(0.97);
-  }
-  .zen-group-chip[aria-current='true'],
-  .zen-group-chip[aria-pressed='true'] {
-    background: var(--v2-window-fill);
-  }
-  .zen-group-chip[aria-current='true'] {
-    box-shadow: inset 0 0 0 2px var(--v2-control-accent);
-  }
-  /*
-   * What a chip shows, on a layer of its own: a joining chip scales its face in and a leaving
-   * chip scales its face out (`GroupStrip.tsx`), while the chip's own transform belongs to the
-   * FLIP tracker, which writes the glide there.
-   */
   .zen-group-chip-face {
     display: flex;
     align-items: center;
@@ -2165,6 +2155,20 @@
     height: 100%;
     border-radius: inherit;
     will-change: transform, opacity;
+    transition:
+      background 120ms var(--zen-ease),
+      transform 120ms var(--zen-ease);
+  }
+  .zen-group-chip:active .zen-group-chip-face {
+    background: var(--v2-window-fill-hover);
+    transform: scale(0.97);
+  }
+  .zen-group-chip[aria-current='true'] .zen-group-chip-face,
+  .zen-group-chip[aria-pressed='true'] .zen-group-chip-face {
+    background: var(--v2-window-fill);
+  }
+  .zen-group-chip[aria-current='true'] .zen-group-chip-face {
+    box-shadow: inset 0 0 0 2px var(--v2-control-accent);
   }
   .zen-group-chip-glyph {
     width: 20px;
@@ -2178,7 +2182,7 @@
     pointer-events: none;
   }
   @media (prefers-reduced-motion: reduce) {
-    .zen-group-chip {
+    .zen-group-chip-face {
       transition-duration: 1ms;
     }
   }
