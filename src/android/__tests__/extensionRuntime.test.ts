@@ -784,9 +784,21 @@ describe('AndroidExtensionRuntime: tab and navigation events', () => {
       document: 3
     })
     expect(h.runtime.api.toolbarAction(ID)?.badgeText).toBe('')
-    // A webRequest listener turns the observation on: every decision becomes the events.
-    message(h, 'bg1', { t: 'listen', event: 'webRequest.onBeforeRequest', on: true })
-    message(h, 'bg1', { t: 'listen', event: 'webRequest.onErrorOccurred', on: true })
+    // A webRequest listener (the shim registers it with its RequestFilter) turns the
+    // observation on: every decision becomes the events.
+    const listened = await call(h, 'bg1', 'webRequest', 'addListener', [
+      'onBeforeRequest',
+      { urls: ['<all_urls>'] },
+      [],
+      1
+    ])
+    expect(listened.error).toBeUndefined()
+    await call(h, 'bg1', 'webRequest', 'addListener', [
+      'onErrorOccurred',
+      { urls: ['<all_urls>'] },
+      [],
+      2
+    ])
     expect(h.kt.calledWith('ext.observeRequests')).toEqual([{ on: true }])
     h.runtime.onRequest(
       request({
@@ -818,8 +830,142 @@ describe('AndroidExtensionRuntime: tab and navigation events', () => {
       error: 'net::ERR_BLOCKED_BY_CLIENT'
     })
     expect(h.runtime.api.toolbarAction(ID)?.badgeText).toBe('1')
-    message(h, 'bg1', { t: 'listen', event: 'webRequest.onBeforeRequest', on: false })
-    message(h, 'bg1', { t: 'listen', event: 'webRequest.onErrorOccurred', on: false })
+    // Each delivery is addressed to the one listener whose filter matched.
+    expect(before[0].delivery).toEqual({ unfiltered: false, matched: [1] })
+    expect(errors[0].delivery).toEqual({ unfiltered: false, matched: [2] })
+    await call(h, 'bg1', 'webRequest', 'removeListener', ['onBeforeRequest', 1])
+    await call(h, 'bg1', 'webRequest', 'removeListener', ['onErrorOccurred', 2])
+    expect(h.kt.calledWith('ext.observeRequests')).toEqual([{ on: true }, { on: false }])
+  })
+
+  it("a webRequest listener's RequestFilter picks its requests: Violentmonkey's installer hears the .user.js main frame, not the page's script", async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['webRequest', 'tabs'] })))
+    backgroundUp(h, 'bg1')
+    // The installer's registration as its sw.js makes it, and a second listener for scripts.
+    await call(h, 'bg1', 'webRequest', 'addListener', [
+      'onBeforeRequest',
+      { urls: ['*://*/*.user.js', '*://*/*.user.js?*'], types: ['main_frame'] },
+      [],
+      1
+    ])
+    await call(h, 'bg1', 'webRequest', 'addListener', [
+      'onBeforeRequest',
+      { urls: ['<all_urls>'], types: ['script'] },
+      [],
+      2
+    ])
+    const decided = (over: Partial<ExtRequestEvent>): void =>
+      h.runtime.onRequest({
+        tabId: 't1',
+        requestId: '1',
+        url: 'http://10.0.2.2:8765/hello.user.js',
+        type: 'main_frame',
+        method: 'GET',
+        initiator: null,
+        mainFrame: true,
+        document: 2,
+        action: 'allow',
+        matchedSet: null,
+        matchedRule: null,
+        micros: 3,
+        cpuMicros: null,
+        ...over
+      })
+    decided({})
+    decided({
+      requestId: '2',
+      url: 'http://10.0.2.2:8765/page.js',
+      type: 'script',
+      mainFrame: false
+    })
+    decided({
+      requestId: '3',
+      url: 'http://10.0.2.2:8765/hello.user.js',
+      type: 'xmlhttprequest',
+      mainFrame: false
+    })
+    const heard = events(h, 'bg1', 'webRequest.onBeforeRequest')
+    expect(heard.map((e) => (e.args as Array<{ requestId: string }>)[0].requestId)).toEqual([
+      '1',
+      '2'
+    ])
+    expect(heard[0].delivery).toEqual({ unfiltered: false, matched: [1] })
+    expect((heard[0].args as Array<Record<string, unknown>>)[0]).toMatchObject({
+      url: 'http://10.0.2.2:8765/hello.user.js',
+      type: 'main_frame',
+      method: 'GET',
+      tabId: h.runtime.api.tabs.chromeIdFor('t1')
+    })
+    expect(heard[1].delivery).toEqual({ unfiltered: false, matched: [2] })
+    // The binding's validation, as on the desktop.
+    const bad = await call(h, 'bg1', 'webRequest', 'addListener', [
+      'onBeforeRequest',
+      { urls: ['nonsense'] },
+      [],
+      3
+    ])
+    expect(bad.error).toBe("'nonsense' is not a valid URL pattern.")
+    const noUrls = await call(h, 'bg1', 'webRequest', 'addListener', ['onBeforeRequest', {}, [], 4])
+    expect(noUrls.error).toContain("Error at property 'urls'")
+  })
+
+  it('a stopped worker is woken for a request its persisted webRequest listener wants, and observation stays on for it', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['webRequest'] })))
+    backgroundUp(h, 'bg1')
+    await call(h, 'bg1', 'webRequest', 'addListener', [
+      'onBeforeRequest',
+      { urls: ['*://*/*.user.js'], types: ['main_frame'] },
+      [],
+      1
+    ])
+    expect(h.kt.calledWith('ext.observeRequests')).toEqual([{ on: true }])
+    expect((h.saved('extensions-runtime.json').listeners as Record<string, string[]>)[ID]).toEqual([
+      'webRequest.onBeforeRequest'
+    ])
+    h.tick(30_000)
+    h.runtime.onGone(['bg1'])
+    expect(h.runtime.background.state(ID)).toBe('stopped')
+    // Stopped, its listener persisted: Kotlin keeps reporting decisions.
+    expect(h.kt.calledWith('ext.observeRequests')).toEqual([{ on: true }])
+    const decided = (requestId: string, url: string): void =>
+      h.runtime.onRequest({
+        tabId: 't1',
+        requestId,
+        url,
+        type: 'main_frame',
+        method: 'GET',
+        initiator: null,
+        mainFrame: true,
+        document: 2,
+        action: 'allow',
+        matchedSet: null,
+        matchedRule: null,
+        micros: 3,
+        cpuMicros: null
+      })
+    decided('1', 'http://10.0.2.2:8765/hello.user.js')
+    expect(h.runtime.background.state(ID)).toBe('starting')
+    // The worker comes up and registers its listener again; the held request reaches it, filtered.
+    hello(h, 'bg2', 'background')
+    await call(h, 'bg2', 'webRequest', 'addListener', [
+      'onBeforeRequest',
+      { urls: ['*://*/*.user.js'], types: ['main_frame'] },
+      [],
+      1
+    ])
+    message(h, 'bg2', { t: 'ready' })
+    const heard = events(h, 'bg2', 'webRequest.onBeforeRequest')
+    expect(heard).toHaveLength(1)
+    expect((heard[0].args as Array<{ url: string }>)[0].url).toBe(
+      'http://10.0.2.2:8765/hello.user.js'
+    )
+    // Running: a request its filter does not want is not its activity either.
+    decided('2', 'http://10.0.2.2:8765/page-a.html')
+    expect(events(h, 'bg2', 'webRequest.onBeforeRequest')).toHaveLength(1)
+    // Gone for good: the observation ends with the extension.
+    await h.runtime.detach(ID)
     expect(h.kt.calledWith('ext.observeRequests')).toEqual([{ on: true }, { on: false }])
   })
 

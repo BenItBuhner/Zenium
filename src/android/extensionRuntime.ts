@@ -13,6 +13,15 @@ import {
 } from '@core/extensions/api/urlFilter'
 import { netErrorName } from '@core/extensions/api/webNavigation'
 import {
+  WEB_REQUEST_EVENT_NAMES,
+  compileRequestFilter,
+  normalizeRequestListener,
+  requestFilterMatches,
+  type CompiledRequestFilter,
+  type WebRequestEventName
+} from '@core/extensions/api/webRequest'
+import { RESOURCE_TYPES, type ResourceType } from '@core/blocking/rules'
+import {
   msUntilNext,
   rescheduleAlarm,
   scheduleAlarm,
@@ -185,6 +194,30 @@ export interface ExtRequestEvent {
   cpuMicros: number | null
 }
 
+/** One `webRequest` listener of one endpoint: the event and its compiled `RequestFilter`. */
+interface RequestListener {
+  event: WebRequestEventName
+  filter: CompiledRequestFilter
+}
+
+/** The `details` a `webRequest` event carries here (the observational subset of Chrome's). */
+interface RequestDetails {
+  requestId: string
+  url: string
+  method: string
+  frameId: number
+  parentFrameId: number
+  tabId: number
+  type: ResourceType
+  timeStamp: number
+  initiator?: string
+  error?: string
+  fromCache?: boolean
+}
+
+/** The single window of the phone, as `tabs`/`windows` number it. */
+const WINDOW_ID = 1
+
 const ENGINE_ACTIONS: readonly EngineDecisionAction[] = ['allow', 'block', 'redirect', 'upgrade']
 
 /** Runtime state that outlives the session (`extensions-runtime.json`). */
@@ -338,6 +371,12 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
   private readonly listening = new Map<string, Set<string>>()
   /** Endpoint id → `ns.event` → filter id → the `UrlFilter`s of one filtered listener (`webNavigation`). */
   private readonly filtered = new Map<string, Map<string, Map<number, UrlFilter[]>>>()
+  /**
+   * Endpoint id → listener id → one `webRequest.<event>.addListener(fn, filter, spec)`: the
+   * shim registers each listener with its `RequestFilter` (`webRequest.addListener`), and a
+   * decision is delivered to the listeners whose filter it matches, each addressed by its id.
+   */
+  private readonly requestListeners = new Map<string, Map<number, RequestListener>>()
   /** The `webNavigation` event family, derived from what the tab views report. */
   private readonly webNavigation = new AndroidWebNavigation(() => this.now())
   /** Extension id → the endpoint of its background's main frame. */
@@ -564,6 +603,8 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     // Chrome starts the background at browser start and after an install; workers and event
     // pages idle out again, persistent MV2 pages stay.
     if (manifest.background) this.background.ensureStarted(record.id)
+    // A webRequest listener persisted from the last session wants the decisions from the start.
+    this.updateObserving()
     this.browser.state.commitVolatile()
   }
 
@@ -580,6 +621,8 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     for (const endpoint of this.router.of(id)) {
       this.router.unregister(endpoint.id)
       this.listening.delete(endpoint.id)
+      this.filtered.delete(endpoint.id)
+      this.requestListeners.delete(endpoint.id)
     }
     for (const [port, owner] of [...this.swPorts])
       if (owner.extensionId === id) this.swPorts.delete(port)
@@ -849,8 +892,16 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
   private listens(endpointId: string, key: string): boolean {
     return (
       this.listening.get(endpointId)?.has(key) === true ||
-      (this.filtered.get(endpointId)?.get(key)?.size ?? 0) > 0
+      (this.filtered.get(endpointId)?.get(key)?.size ?? 0) > 0 ||
+      this.requestListenersOf(endpointId, key).length > 0
     )
+  }
+
+  /** The endpoint's `webRequest` listeners for `key` (`webRequest.<event>`), with their ids. */
+  private requestListenersOf(endpointId: string, key: string): Array<[number, RequestListener]> {
+    const own = this.requestListeners.get(endpointId)
+    if (!own) return []
+    return [...own].filter(([, listener]) => `webRequest.${listener.event}` === key)
   }
 
   /**
@@ -1386,6 +1437,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
         this.router.unregister(previous)
         this.listening.delete(previous)
         this.filtered.delete(previous)
+        this.requestListeners.delete(previous)
       }
       this.backgroundEps.set(extensionId, ep)
     }
@@ -1398,6 +1450,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
       this.router.unregister(ep)
       this.listening.delete(ep)
       this.filtered.delete(ep)
+      this.requestListeners.delete(ep)
       this.api.endpointGone(ep)
       if (endpoint) this.closeServiceWorkerPorts(endpoint)
       if (
@@ -1448,23 +1501,84 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
       })
     }
     if (!this.observing) return
-    const details = {
+    const details: RequestDetails = {
       requestId: event.requestId,
       url: event.url,
       method: event.method,
       frameId: 0,
       parentFrameId: -1,
       tabId,
-      type: event.type,
-      timeStamp: this.now(),
-      initiator: event.initiator ?? undefined
+      type: (RESOURCE_TYPES as readonly string[]).includes(event.type)
+        ? (event.type as ResourceType)
+        : 'other',
+      timeStamp: this.now()
     }
+    if (event.initiator) details.initiator = event.initiator
     const tab = event.tabId ?? null
-    this.emitForTab(tab, 'webRequest', 'onBeforeRequest', [details])
+    this.emitRequest(tab, 'onBeforeRequest', details)
     if (event.action === 'block')
-      this.emitForTab(tab, 'webRequest', 'onErrorOccurred', [
-        { ...details, error: 'net::ERR_BLOCKED_BY_CLIENT', fromCache: false }
-      ])
+      this.emitRequest(tab, 'onErrorOccurred', {
+        ...details,
+        error: 'net::ERR_BLOCKED_BY_CLIENT',
+        fromCache: false
+      })
+  }
+
+  /**
+   * One `webRequest` event to every listener whose `RequestFilter` the request matches, each
+   * delivery addressed to the one listener (`delivery.matched`), as the desktop's host does.
+   * Pages, popups and content scripts get it now; the background gets it when it runs, has it
+   * held while it starts (its listeners register as its script runs, ahead of `ready`), and is
+   * woken for it when it is stopped and persisted a listener for the event.
+   */
+  private emitRequest(
+    tabId: string | null,
+    event: WebRequestEventName,
+    details: RequestDetails
+  ): void {
+    const key = `webRequest.${event}`
+    const probe = {
+      url: details.url,
+      type: details.type,
+      tabId: details.tabId,
+      windowId: WINDOW_ID
+    }
+    const matching = (endpointId: string): number[] =>
+      this.requestListenersOf(endpointId, key)
+        .filter(([, listener]) => requestFilterMatches(listener.filter, probe))
+        .map(([id]) => id)
+    const send = (endpointId: string): void => {
+      for (const listenerId of matching(endpointId))
+        this.sendTo(endpointId, {
+          t: 'event',
+          ns: 'webRequest',
+          name: event,
+          args: [details],
+          delivery: { unfiltered: false, matched: [listenerId] }
+        })
+    }
+    for (const [id, ext] of this.extensions) {
+      if (tabId !== null && !this.sees(ext, tabId)) continue
+      for (const endpoint of this.router.of(id)) {
+        if (endpoint.context !== 'background') send(endpoint.id)
+      }
+      if (!this.background.has(id)) continue
+      const ep = this.backgroundEps.get(id) ?? null
+      const state = this.background.state(id)
+      const matched = ep !== null && matching(ep).length > 0
+      const persisted = this.background.persistedListeners(id).includes(key)
+      // A running background is written to for a match alone (a delivery counts as its
+      // activity); a stopped one is woken for a listener it persisted; a starting one, not yet
+      // through its script, waits for `ready` when it persisted the listener or registered a
+      // matching one already.
+      const wanted =
+        state === 'running' ? matched : state === 'stopped' ? persisted : persisted || matched
+      if (!wanted) continue
+      this.background.deliver(id, key, () => {
+        const current = this.backgroundEps.get(id)
+        if (current) send(current)
+      })
+    }
   }
 
   /** Tab view events, forwarded by the platform: `tabs.onUpdated` and `webNavigation`. */
@@ -1623,13 +1737,17 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     }
   }
 
+  /**
+   * Kotlin reports every decision (`ext.observeRequests`) while a `webRequest` listener exists in
+   * any endpoint – or a stopped worker persisted one: its listener is what wakes it (Chrome's
+   * observational events start an MV3 worker), and without the decisions nothing would.
+   */
   private updateObserving(): void {
     let wanted = false
-    for (const set of this.listening.values()) {
-      for (const key of set) if (key.startsWith('webRequest.')) wanted = true
-    }
-    for (const byEvent of this.filtered.values()) {
-      for (const key of byEvent.keys()) if (key.startsWith('webRequest.')) wanted = true
+    for (const own of this.requestListeners.values()) if (own.size > 0) wanted = true
+    for (const id of this.extensions.keys()) {
+      if (this.background.persistedListeners(id).some((key) => key.startsWith('webRequest.')))
+        wanted = true
     }
     if (wanted !== this.observing) {
       this.observing = wanted
@@ -1654,9 +1772,73 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
         return this.storageCall(ext, endpoint, method, args)
       case 'alarms':
         return this.alarmsCall(ext, method, args)
+      case 'webRequest':
+        return this.webRequestCall(ext, endpoint, method, args)
       default:
         return this.api.call(ext, endpoint, ns, method, args)
     }
+  }
+
+  // --- webRequest ------------------------------------------------------------
+
+  /**
+   * The shim's registration calls for `chrome.webRequest.<event>.addListener` /
+   * `removeListener`: `[event, RequestFilter, extraInfoSpec, id]` and `[event, id]`, validated as
+   * the binding validates them. A `blocking` listener is registered like any other: WebView
+   * cannot hold a request for an answer, so it hears the request and its return value is not
+   * applied (the delivery carries no token).
+   */
+  private webRequestCall(
+    ext: Attached,
+    endpoint: Endpoint,
+    method: string,
+    args: unknown[]
+  ): unknown {
+    const id = ext.record.id
+    switch (method) {
+      case 'addListener': {
+        const event = webRequestEventNamed(args[0])
+        const spec = normalizeRequestListener(event, args[1], args[2])
+        const listenerId = args[3]
+        if (typeof listenerId !== 'number' || !Number.isInteger(listenerId) || listenerId <= 0)
+          throw new Error('Invalid listener id.')
+        let own = this.requestListeners.get(endpoint.id)
+        if (!own) {
+          own = new Map()
+          this.requestListeners.set(endpoint.id, own)
+        }
+        own.set(listenerId, { event, filter: compileRequestFilter(spec.filter) })
+        this.requestListenersChanged(id, endpoint, event)
+        return undefined
+      }
+      case 'removeListener': {
+        const event = webRequestEventNamed(args[0])
+        const own = this.requestListeners.get(endpoint.id)
+        const listenerId = args[1]
+        if (!own || typeof listenerId !== 'number' || own.get(listenerId)?.event !== event)
+          return undefined
+        own.delete(listenerId)
+        if (own.size === 0) this.requestListeners.delete(endpoint.id)
+        this.requestListenersChanged(id, endpoint, event)
+        return undefined
+      }
+    }
+    throw new Error(`chrome.webRequest.${method} ${NOT_IMPLEMENTED}`)
+  }
+
+  /** A background's `webRequest` listeners are what wake it: persisted like its other listeners. */
+  private requestListenersChanged(
+    id: string,
+    endpoint: Endpoint,
+    event: WebRequestEventName
+  ): void {
+    if (endpoint.context === 'background') {
+      const key = `webRequest.${event}`
+      this.background.listen(id, key, this.listens(endpoint.id, key))
+      this.data.listeners[id] = this.background.persistedListeners(id)
+      this.save()
+    }
+    this.updateObserving()
   }
 
   // --- storage ---------------------------------------------------------------
@@ -1847,6 +2029,13 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     if (timer !== undefined) this.timers.clearTimeout(timer)
     this.alarmTimers.delete(id)
   }
+}
+
+/** The `webRequest` event a registration names; anything else is the desktop host's error. */
+function webRequestEventNamed(raw: unknown): WebRequestEventName {
+  const event = WEB_REQUEST_EVENT_NAMES.find((name) => name === raw)
+  if (!event) throw new Error('Unknown webRequest event.')
+  return event
 }
 
 /** The `UrlFilter`s of a filtered listener; a malformed list matches nothing but is not fatal. */

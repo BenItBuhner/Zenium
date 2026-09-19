@@ -521,4 +521,74 @@ describe('createEmulatedEngine', () => {
     h.engine.post({ t: 'popupSize', width: 320, height: 200 })
     expect(h.last()).toEqual({ t: 'popupSize', width: 320, height: 200, token: 'tok', ep: 'ep1' })
   })
+
+  it("webRequest events register each listener with the host by its RequestFilter, and a delivery addressed to it is heard (Violentmonkey's installer)", async () => {
+    const h = harness({ permissions: ['webRequest', 'tabs', 'storage'] })
+    const heard: unknown[] = []
+    const event = h.chrome.webRequest.onBeforeRequest as Ns & {
+      addListener: Fn
+      removeListener: Fn
+      hasListener: Fn
+    }
+    const installer = (details: unknown): void => void heard.push(details)
+    event.addListener(
+      installer,
+      { urls: ['*://*/*.user.js', '*://*/*.user.js?*'], types: ['main_frame'] },
+      []
+    )
+    // Not a generic `listen`: the registration call, filter and spec along, under the listener's id.
+    expect(h.last()).toMatchObject({
+      t: 'call',
+      ns: 'webRequest',
+      method: 'addListener',
+      args: [
+        'onBeforeRequest',
+        { urls: ['*://*/*.user.js', '*://*/*.user.js?*'], types: ['main_frame'] },
+        [],
+        1
+      ]
+    })
+    expect(event.hasListener(installer)).toBe(true)
+    const details = {
+      url: 'http://10.0.2.2:8765/hello.user.js',
+      method: 'GET',
+      tabId: 3,
+      type: 'main_frame'
+    }
+    h.engine.receive({
+      t: 'event',
+      ns: 'webRequest',
+      name: 'onBeforeRequest',
+      args: [details, null],
+      delivery: { unfiltered: false, matched: [1] }
+    })
+    expect(heard).toEqual([details])
+    // Addressed to another listener: not this one's.
+    h.engine.receive({
+      t: 'event',
+      ns: 'webRequest',
+      name: 'onBeforeRequest',
+      args: [{ ...details, url: 'http://10.0.2.2:8765/page.js' }, null],
+      delivery: { unfiltered: false, matched: [2] }
+    })
+    expect(heard).toHaveLength(1)
+    // The binding's own checks come first: no filter, no registration.
+    expect(() => event.addListener(() => undefined)).toThrow('No matching signature')
+    expect(() => event.addListener(() => undefined, { urls: ['nonsense'] })).toThrow(
+      "'nonsense' is not a valid URL pattern."
+    )
+    // MV3 without webRequestBlocking: a blocking spec is Chrome's permission error.
+    expect(() =>
+      event.addListener(() => undefined, { urls: ['<all_urls>'] }, ['blocking'])
+    ).toThrow('You do not have permission to use blocking webRequest listeners.')
+    event.removeListener(installer)
+    expect(h.last()).toMatchObject({
+      t: 'call',
+      ns: 'webRequest',
+      method: 'removeListener',
+      args: ['onBeforeRequest', 1]
+    })
+    expect(event.hasListener(installer)).toBe(false)
+    await flush()
+  })
 })

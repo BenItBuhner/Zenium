@@ -17,6 +17,7 @@
  * Chrome exposes there (`CONTENT_SCRIPT_NAMESPACES`).
  */
 import { API_SPEC, type ApiSpec, type MethodSpec, type NamespaceSpec, type ParamSpec } from './spec'
+import { EXTRA_INFO_SPECS } from './webRequest'
 
 const integer = (name: string, optional = false): ParamSpec => ({ name, type: 'integer', optional })
 const object = (name: string, optional = false): ParamSpec => ({ name, type: 'object', optional })
@@ -236,20 +237,25 @@ export const ENGINE_SPEC: ApiSpec = {
       HeaderOperation: { APPEND: 'append', SET: 'set', REMOVE: 'remove' }
     }
   },
+  // The events take `(callback, RequestFilter, extraInfoSpec)`: the shim registers each
+  // listener with the host (`webRequest.addListener`, its filter along) and the host addresses
+  // a delivery to the listeners whose filter the request matches, as on the desktop. A generic
+  // event here would drop the filter – Violentmonkey's installer listens for `*://*/*.user.js`
+  // main frames and treats whatever it hears as a userscript to fetch.
   webRequest: {
     methods: { handlerBehaviorChanged: routed() },
     events: {
-      onBeforeRequest: {},
-      onBeforeSendHeaders: {},
-      onSendHeaders: {},
-      onHeadersReceived: {},
-      onAuthRequired: {},
-      onResponseStarted: {},
-      onBeforeRedirect: {},
-      onCompleted: {},
-      onErrorOccurred: {},
-      onActionIgnored: {}
+      onBeforeRequest: { extraInfoSpec: [...EXTRA_INFO_SPECS.onBeforeRequest] },
+      onBeforeSendHeaders: { extraInfoSpec: [...EXTRA_INFO_SPECS.onBeforeSendHeaders] },
+      onSendHeaders: { extraInfoSpec: [...EXTRA_INFO_SPECS.onSendHeaders] },
+      onHeadersReceived: { extraInfoSpec: [...EXTRA_INFO_SPECS.onHeadersReceived] },
+      onAuthRequired: { extraInfoSpec: [...EXTRA_INFO_SPECS.onAuthRequired] },
+      onResponseStarted: { extraInfoSpec: [...EXTRA_INFO_SPECS.onResponseStarted] },
+      onBeforeRedirect: { extraInfoSpec: [...EXTRA_INFO_SPECS.onBeforeRedirect] },
+      onCompleted: { extraInfoSpec: [...EXTRA_INFO_SPECS.onCompleted] },
+      onErrorOccurred: { extraInfoSpec: [...EXTRA_INFO_SPECS.onErrorOccurred] }
     },
+    eventStyle: 'webRequest',
     constants: {
       MAX_HANDLER_BEHAVIOR_CHANGED_CALLS_PER_10_MINUTES: 20,
       OnBeforeRequestOptions: {
@@ -741,6 +747,7 @@ function mergeNamespace(
   base: NamespaceSpec | undefined,
   over: NamespaceSpec | undefined
 ): NamespaceSpec {
+  const eventStyle = over?.eventStyle ?? base?.eventStyle
   return {
     methods: { ...base?.methods, ...over?.methods },
     events: { ...base?.events, ...over?.events },
@@ -751,7 +758,8 @@ function mergeNamespace(
       ? { manifestVersion: base?.manifestVersion ?? over?.manifestVersion }
       : {}),
     // A namespace the engine's host implements is no longer a shape.
-    ...(base?.shape && !over ? { shape: base.shape } : {})
+    ...(base?.shape && !over ? { shape: base.shape } : {}),
+    ...(eventStyle ? { eventStyle } : {})
   }
 }
 
