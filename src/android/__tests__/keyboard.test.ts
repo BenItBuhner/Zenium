@@ -95,6 +95,58 @@ describe('a busy field turned editable again gets the keyboard back (§9.30)', (
     expect(sent).toEqual(['chrome.showKeyboard'])
   })
 
+  it('watches the field again after the swap: a second refusal swaps again', async () => {
+    const passphrase = field()
+    passphrase.focus()
+    passphrase.readOnly = true
+    await flush()
+    passphrase.readOnly = false
+    await flush()
+    frame()
+    expect(seen).toEqual(['focusin', 'focusout', 'focusin'])
+    // The swap's own focusin re-watched the field, editable and held by nothing.
+    sent = []
+    seen = []
+    passphrase.readOnly = true
+    await flush()
+    expect(frames).toHaveLength(0)
+    passphrase.readOnly = false
+    await flush()
+    expect(frames).toHaveLength(1)
+    frame()
+    expect(seen).toEqual(['focusout', 'focusin'])
+    expect(document.activeElement).toBe(passphrase)
+    expect(sent).toEqual(['chrome.showKeyboard'])
+    expect(frames).toHaveLength(0)
+  })
+
+  it('does not swap for readonly toggled and untoggled within one task, and swaps once for a storm across tasks', async () => {
+    const passphrase = field()
+    passphrase.focus()
+    sent = []
+    seen = []
+    // One task: the observer delivers once, the field editable, never seen read-only.
+    for (let i = 0; i < 5; i++) {
+      passphrase.readOnly = true
+      passphrase.readOnly = false
+    }
+    await flush()
+    expect(frames).toHaveLength(0)
+    expect(sent).toEqual([])
+    // Across tasks: read-only seen, then released, five times over – one pending frame, one swap.
+    for (let i = 0; i < 5; i++) {
+      passphrase.readOnly = true
+      await flush()
+      passphrase.readOnly = false
+      await flush()
+    }
+    expect(frames).toHaveLength(1)
+    frame()
+    expect(seen).toEqual(['focusout', 'focusin'])
+    expect(sent).toEqual(['chrome.showKeyboard'])
+    expect(frames).toHaveLength(0)
+  })
+
   it('leaves a field alone that lost the focus meanwhile, and one whose readonly only arrived', async () => {
     const passphrase = field()
     const cancel = document.createElement('button')

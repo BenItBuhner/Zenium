@@ -14,6 +14,18 @@
  * frame blurs and refocuses it in one breath – a real focus change, in the WebView's eyes and
  * ours (`focusin` asks the host). The blur of that swap is the policy's own: it asks for no
  * hiding. One place for every surface, and none for a mouse: the desktop never runs this.
+ *
+ * The swap changes nothing but the focus. `blur()` leaves the value as it is and `focus()`
+ * brings the caret and the selection back where they were (on a refusal the surface has just
+ * cleared the field, so the caret is at its start either way). No composition can be live at
+ * the swap: a busy phase begins with a submit – Enter commits the composition before it, a tap
+ * on the button takes the focus off the field and ends it – and the field is read-only until the
+ * release. A field that commits on its blur (a rename) would be committed by the swap's blur;
+ * the rule is that a busy form's field never commits on blur – a busy form commits on its
+ * submit, and a blur-committing field has no busy phase while focused – and every shipped field
+ * keeps it, so the swap runs unguarded. `aria-busy` on its own hides no keyboard (Chromium hides
+ * it for `readonly` alone), so a form that is busy without `readOnly` never loses it and is not
+ * watched.
  */
 
 export type KeyboardMessage = 'chrome.showKeyboard' | 'chrome.hideKeyboard'
