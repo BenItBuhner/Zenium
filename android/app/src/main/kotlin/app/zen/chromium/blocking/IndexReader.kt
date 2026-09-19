@@ -146,25 +146,33 @@ internal class IndexReader {
 
 /**
  * A position in JSON text that steps over values without building them (RFC 8259 grammar; a
- * malformed document is a [JSONException] at the offending offset).
+ * malformed document is a [JSONException] at the offending offset). Works on the text as a
+ * `char[]`: with uBlock Origin Lite's index at 7.7 M chars and re-read for every rule change,
+ * the scan is the cost, and the emulator's debug APK runs it without the JIT that hides
+ * `String.charAt`'s dispatch – array reads keep it about `org.json`'s own tokeniser's speed
+ * while allocating a fraction of what building its tree would.
  */
-private class Cursor(private val s: String) {
+private class Cursor(s: String) {
+    private val a: CharArray = s.toCharArray()
+    private val n = a.size
     private var i = 0
 
-    fun charAt(index: Int): Char = s[index]
+    fun charAt(index: Int): Char = a[index]
 
-    fun text(range: IntRange): String = s.substring(range.first, range.last + 1)
+    fun text(range: IntRange): String = String(a, range.first, range.last - range.first + 1)
 
     private fun whitespace() {
-        while (i < s.length) {
-            val ch = s[i]
-            if (ch == ' ' || ch == '\n' || ch == '\r' || ch == '\t') i++ else break
+        var j = i
+        while (j < n) {
+            val ch = a[j]
+            if (ch == ' ' || ch == '\n' || ch == '\r' || ch == '\t') j++ else break
         }
+        i = j
     }
 
     private fun peek(): Char {
         whitespace()
-        return if (i < s.length) s[i] else END
+        return if (i < n) a[i] else END
     }
 
     private fun take(ch: Char): Boolean {
@@ -249,20 +257,22 @@ private class Cursor(private val s: String) {
     private fun literal(): String {
         peek()
         val start = i
-        while (i < s.length) {
-            val ch = s[i]
+        var j = i
+        while (j < n) {
+            val ch = a[j]
             if (ch == ',' || ch == '}' || ch == ']' || ch == ' ' || ch == '\n' || ch == '\r' || ch == '\t') break
-            i++
+            j++
         }
+        i = j
         if (i == start) fail("a value")
-        return s.substring(start, i)
+        return String(a, start, i - start)
     }
 
     /** Steps over one value of any kind and returns the text it spanned. */
     fun skipValue(): IntRange {
         peek()
         val start = i
-        when (s.getOrNull(i)) {
+        when (if (i < n) a[i] else END) {
             '"' -> skipString()
             '{', '[' -> skipNested()
             else -> literal()
@@ -276,47 +286,64 @@ private class Cursor(private val s: String) {
      * to a document parser later.
      */
     private fun skipNested() {
-        val openers = StringBuilder()
-        while (i < s.length) {
-            val ch = s[i]
-            if (ch == '"') {
-                skipString()
-            } else if (ch == '{' || ch == '[') {
-                openers.append(ch)
-                i++
-            } else if (ch == '}' || ch == ']') {
-                val closer = if (openers[openers.length - 1] == '{') '}' else ']'
-                if (ch != closer) fail("'$closer'")
-                openers.setLength(openers.length - 1)
-                i++
-                if (openers.isEmpty()) return
-            } else {
-                i++
+        var stack = CharArray(64)
+        var top = 0
+        var j = i
+        while (j < n) {
+            when (val ch = a[j]) {
+                '"' -> {
+                    i = j
+                    skipString()
+                    j = i
+                }
+                '{', '[' -> {
+                    if (top == stack.size) stack = stack.copyOf(top * 2)
+                    stack[top++] = ch
+                    j++
+                }
+                '}', ']' -> {
+                    val closer = if (stack[top - 1] == '{') '}' else ']'
+                    if (ch != closer) { i = j; fail("'$closer'") }
+                    top--
+                    j++
+                    if (top == 0) { i = j; return }
+                }
+                else -> j++
             }
         }
+        i = j
         fail("the end of a value")
     }
 
     /** From the opening quote past the closing one. */
     private fun skipString() {
-        i++
-        while (i < s.length) {
-            val ch = s[i++]
-            if (ch == '\\') i++ else if (ch == '"') return
+        var j = i + 1
+        while (j < n) {
+            val ch = a[j++]
+            if (ch == '\\') j++ else if (ch == '"') { i = j; return }
         }
+        i = j
         fail("the end of a string")
     }
 
     /** The characters of a string between its quotes, with JSON escapes decoded. */
     private fun decode(start: Int, end: Int): String {
-        var slash = s.indexOf('\\', start)
-        if (slash < 0 || slash >= end) return s.substring(start, end)
+        var slash = start
+        while (slash < end && a[slash] != '\\') slash++
+        if (slash >= end) return String(a, start, end - start)
         val out = StringBuilder(end - start)
-        var from = start
-        while (slash in from until end) {
-            out.append(s, from, slash)
-            val escaped = s[slash + 1]
-            var next = slash + 2
+        out.append(a, start, slash - start)
+        var from = slash
+        while (from < end) {
+            val ch = a[from]
+            if (ch != '\\') {
+                out.append(ch)
+                from++
+                continue
+            }
+            if (from + 1 >= end) fail("an escape")
+            val escaped = a[from + 1]
+            var next = from + 2
             when (escaped) {
                 '"', '\\', '/' -> out.append(escaped)
                 'b' -> out.append('\b')
@@ -325,17 +352,20 @@ private class Cursor(private val s: String) {
                 'r' -> out.append('\r')
                 't' -> out.append('\t')
                 'u' -> {
-                    if (slash + 6 > end) fail("a unicode escape")
-                    val code = s.substring(slash + 2, slash + 6).toIntOrNull(16) ?: fail("a unicode escape")
+                    if (from + 6 > end) fail("a unicode escape")
+                    var code = 0
+                    for (k in from + 2 until from + 6) {
+                        val digit = Character.digit(a[k], 16)
+                        if (digit < 0) fail("a unicode escape")
+                        code = code * 16 + digit
+                    }
                     out.append(code.toChar())
-                    next = slash + 6
+                    next = from + 6
                 }
                 else -> fail("an escape")
             }
             from = next
-            slash = s.indexOf('\\', from)
         }
-        out.append(s, from, end)
         return out.toString()
     }
 
