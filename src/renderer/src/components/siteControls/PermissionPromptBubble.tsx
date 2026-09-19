@@ -69,8 +69,13 @@ const GLYPHS: Record<string, LucideIcon> = {
  * page that asked: a prompt waits until its tab is the active one. On a mouse it is a 400 px
  * popover under the site icon in the address pill (design language v2 §9.20) opening on a title
  * block (§9.23) – the permission's glyph, the question, one sentence on what is remembered – and
- * a hugging footer: Block, Allow once, Allow. On a phone the same prompt is a sheet (§9.23,
- * §9.11) with its actions full width, Allow first. Answers go back to the core
+ * a hugging footer: Block, Allow once, Allow. A prompt a page event raised beside a chip takes
+ * NO focus on open (§9.22's notice rule: the user is reading the page); its "not now" – Escape,
+ * a press outside, a scroll away – collapses it back into the chip (the pop reversed toward the
+ * anchor, 180 ms, §9.20), and the chip stays in the pill at its rest ink, nothing lit or badged.
+ * Without a chip (compact mode hides the pill) the prompt is the only affordance and takes focus
+ * into its container as a title-and-notice panel does. On a phone the same prompt is a sheet
+ * (§9.23, §9.11) with its actions full width, Allow first. Answers go back to the core
  * (`permissions.respond`), which remembers Allow and Block for the site, keeps Allow once for the
  * tab, and refuses a dismissed request this once: Escape, a press outside and the system back
  * gesture dismiss. The answered prompt leaves on the spring before the next one comes in.
@@ -112,9 +117,12 @@ interface SurfaceProps {
  */
 function usePrompt(prompt: PermissionPrompt): {
   ready: boolean
+  /** The prompt went unanswered ("not now"): the popover folds back into its chip. */
+  dismissed: boolean
   respond: (answer: PermissionPromptAnswer) => void
 } {
   const [ready, setReady] = useState(false)
+  const [dismissed, setDismissed] = useState(false)
   const answered = useRef(false)
   useEffect(() => {
     let gone = false
@@ -131,11 +139,12 @@ function usePrompt(prompt: PermissionPrompt): {
     (answer: PermissionPromptAnswer): void => {
       if (answered.current) return
       answered.current = true
+      if (answer === 'dismiss') setDismissed(true)
       answerPermissionPrompt(prompt.id, answer)
     },
     [prompt.id]
   )
-  return { ready, respond }
+  return { ready, dismissed, respond }
 }
 
 function glyphFor(prompt: PermissionPrompt): JSX.Element {
@@ -149,7 +158,7 @@ function detailLines(prompt: PermissionPrompt): string[] {
 }
 
 function PromptBubble({ prompt, closing, onClosed }: SurfaceProps): JSX.Element | null {
-  const { ready, respond } = usePrompt(prompt)
+  const { ready, dismissed, respond } = usePrompt(prompt)
   const [rects, setRects] = useState(siteChipRects)
   // The bubble follows the pill through a window resize rather than leaving (`follow`): the
   // page is still waiting for its answer.
@@ -163,6 +172,10 @@ function PromptBubble({ prompt, closing, onClosed }: SurfaceProps): JSX.Element 
   const titleId = `permission-prompt-${prompt.id}`
   if (!ready) return null
   const lines = detailLines(prompt)
+  // Beside its chip the prompt is a notice: no focus on open, and its "not now" folds it back
+  // into the chip (§9.20, §9.22). With the pill hidden it is the only affordance: it takes the
+  // container and leaves on the spring as any popover.
+  const chip = rects.anchor !== null
   return (
     <DesktopPopover
       anchor={rects.anchor}
@@ -170,13 +183,15 @@ function PromptBubble({ prompt, closing, onClosed }: SurfaceProps): JSX.Element 
       width={POPOVER_WIDTH.form}
       labelledBy={titleId}
       closing={closing}
+      collapse={chip && dismissed}
       onClosed={onClosed}
       onDismiss={dismiss}
-      focus="container"
+      focus={chip ? 'none' : 'container'}
       follow
       anchorElement={siteChip}
       data-testid="permission-prompt"
       data-permission={prompt.permission}
+      data-chip={chip ? '' : undefined}
     >
       {() => (
         <>
@@ -245,27 +260,30 @@ function PromptSheet({ prompt, closing, onClosed }: SurfaceProps): JSX.Element |
           }
         />
       }
+      footer={
+        <Footer count={three ? 3 : 2}>
+          {three ? (
+            <>
+              <V2Button variant="primary" onClick={() => respond('allow')}>
+                {prompt.allowLabel}
+              </V2Button>
+              <V2Button onClick={() => respond('allow-once')}>Allow once</V2Button>
+              <V2Button onClick={() => respond('block')}>{prompt.blockLabel}</V2Button>
+            </>
+          ) : (
+            <>
+              <V2Button onClick={() => respond('block')}>{prompt.blockLabel}</V2Button>
+              <V2Button variant="primary" onClick={() => respond('allow')}>
+                {prompt.allowLabel}
+              </V2Button>
+            </>
+          )}
+        </Footer>
+      }
       data-testid="permission-prompt"
       data-permission={prompt.permission}
     >
-      <Footer count={three ? 3 : 2} className="pt-0">
-        {three ? (
-          <>
-            <V2Button variant="primary" onClick={() => respond('allow')}>
-              {prompt.allowLabel}
-            </V2Button>
-            <V2Button onClick={() => respond('allow-once')}>Allow once</V2Button>
-            <V2Button onClick={() => respond('block')}>{prompt.blockLabel}</V2Button>
-          </>
-        ) : (
-          <>
-            <V2Button onClick={() => respond('block')}>{prompt.blockLabel}</V2Button>
-            <V2Button variant="primary" onClick={() => respond('allow')}>
-              {prompt.allowLabel}
-            </V2Button>
-          </>
-        )}
-      </Footer>
+      {null}
     </V2Sheet>
   )
 }

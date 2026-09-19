@@ -1,15 +1,12 @@
 import type { CSSProperties, JSX, ReactNode, RefObject } from 'react'
-import {
-  useCallback,
-  useEffect,
-  useImperativeHandle,
-  useLayoutEffect,
-  useRef,
-  useState
-} from 'react'
-import { ChevronDown, ChevronLeft, ChevronRight, LoaderCircle } from 'lucide-react'
+import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react'
+import { ChevronLeft, ChevronRight, LoaderCircle } from 'lucide-react'
 import type { Rect } from '@shared/types'
+import { useEscape } from '@renderer/hooks/useEscape'
+import { usePopover } from '@renderer/hooks/usePopover'
+import { useSpringPresence } from '@renderer/hooks/useSpringPresence'
 import { useBackSurface } from '@renderer/lib/back'
+import { focusableIn } from '@renderer/lib/popover'
 import {
   ChromePortal,
   POPOVER_MARGIN,
@@ -17,20 +14,16 @@ import {
   openPopover,
   placePopover,
   popoverStyle,
-  toRect,
   useFrameDialog,
-  useLightDismiss,
   viewportSize,
   type PopoverBox,
   type PopoverWidth
 } from '@renderer/lib/portals'
-import { initialFocusIn } from '@renderer/lib/focusReach'
 import { SPRING_GENTLE, SpringAnimation } from '@renderer/lib/motion/spring'
-import { usePhone, useSurfaceLayer, type DataAttributes } from '@renderer/lib/surfaces'
+import { usePhone, type DataAttributes } from '@renderer/lib/surfaces'
 import { contentAreaStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
-import { useFocusReach } from '@renderer/hooks/useFocusReach'
-import { useSpringPresence } from '@renderer/hooks/useSpringPresence'
+import { V2Menulist, type MenulistOption } from '../extensions/V2Menulist'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 import { V2_GLYPH, V2Button, type V2ButtonProps } from '../v2/controls'
 
@@ -40,11 +33,13 @@ import { V2_GLYPH, V2Button, type V2ButtonProps } from '../v2/controls'
  * (lib/portals.tsx), the phone sheet on the shared `BottomSheet` – the v2 sheet chassis with its
  * 48 header, title block, footer and separators (§6, §9.9, §9.16, §9.23, §9.25; the
  * `.zen-sheet-*` rules in main.css) – the title block for a popover (§9.23), rows (§9.2, §9.18,
- * §9.21), footers (§9.11) and the menulist (§9.13) that is a popover on a mouse and a sheet under
- * a finger. Everything reads the `--v2-*` tokens only; nothing here defines a colour. The chrome
- * layer, the frame dialog host and the bottom sheet all carry `data-surface="page"`, so every
- * surface here draws in the page family (§9.29). The hooks and measurements these share
- * (`usePhone`, `useSurfaceLayer`, the site chip) live in lib/surfaces.
+ * §9.21), footers (§9.11) and the shared menulist (§9.13, `extensions/V2Menulist`). Everything
+ * reads the `--v2-*` tokens only; nothing here defines a colour. The chrome layer, the frame
+ * dialog host and the bottom sheet all carry `data-surface="page"`, so every surface here draws
+ * in the page family (§9.29). The keyboard is the chassis's too: `usePopover` (§9.22: focus in
+ * on open, Tab wraps, Escape closes, focus back to the opener on close) and `useEscape` (§9.24:
+ * the key goes to the top popup only); nothing here keeps a focus trap or a surface stack of
+ * its own. The form factor and the site chip these share live in lib/surfaces.
  */
 
 // ---------------------------------------------------------------------------
@@ -93,24 +88,34 @@ export interface PopoverApi {
   close: () => void
 }
 
+/** Where the keyboard goes as a popover opens (§9.22). */
+export type PopoverFocus =
+  /** The first row or button: a surface the user opened. */
+  | 'first'
+  /** The container itself: a title-and-notice panel that is the only affordance, no button armed. */
+  | 'container'
+  /** Nowhere: a prompt raised by a page event beside a chip in the pill, which stays with the page. */
+  | 'none'
+
 /**
  * An anchored desktop popover (§9.20): one of the three fixed widths, placed by `placePopover`
  * – below `bar` (the pill or bar the anchor sits in) with its top border flush to the bar's
  * bottom edge, start-aligned with the anchor, flipped or slid to stay 8 px inside the window,
- * at most 60% of the window tall, above the bar when the room below runs out; `--v2-panel` at
- * radius 8 with a hairline and the panel shadow, no scrim (§9.5). It renders through the chrome
- * layer (`ChromePortal`), never inside the frame, and registers with the layer's light dismiss
- * (`lib/popoverStore.ts`, §9.20 amended): a press outside it closes it and is consumed, nothing
- * beneath receives it; a scroll outside it, a window resize, another popover opening and a frame
- * dialog opening close it too. `anchorElement` names what opened it, so a popover opening from
- * inside another (a menulist's list in a level) is its child and leaves it up, a press on the
- * anchor closes without reopening, and the focus goes back there after an outside press. Enter
- * and exit run on the v1 spring out of the anchor. Focus moves in on open and Tab wraps (§9.22):
- * to the first row or button, or – for a title-and-notice panel such as a prompt – to the
- * container. Escape closes and hands focus back to the anchor. `follow`: a scroll or a resize
- * leaves the surface up, moving with its anchor (a prompt the page is still waiting on); an
- * outside press still closes it. With `onDismiss` every dismissal calls the owner instead of
- * leaving at once: the owner answers and then sets `closing`.
+ * at most 60% of the window tall (the chassis's cap), above the bar when the room below runs
+ * out; `--v2-panel` at radius 8 with a hairline and the panel shadow, no scrim (§9.5). It
+ * renders through the chrome layer (`ChromePortal`), never inside the frame, and registers with
+ * the layer's light dismiss (`lib/popoverStore.ts`, §9.20 amended): a press outside it closes it
+ * and is consumed, nothing beneath receives it; a scroll outside it, a window resize, another
+ * popover opening and a frame dialog opening close it too. `anchorElement` names what opened
+ * it, so a popover opening from inside another (a menulist's list in a level) is its child and
+ * leaves it up, a press on the anchor closes without reopening, and the focus goes back there
+ * after an outside press. Enter and exit run on the v1 spring out of the anchor; `collapse`
+ * reverses the pop toward the anchor instead (§9.22: "Not now" folds a prompt back into its
+ * chip). The keyboard is `usePopover`'s (§9.22): focus moves in on open as `focus` says, Tab
+ * wraps, Escape closes and focus goes back to the opener when the popover leaves. `follow`: a
+ * scroll or a resize leaves the surface up, moving with its anchor (a prompt the page is still
+ * waiting on); an outside press still closes it. With `onDismiss` every dismissal calls the
+ * owner instead of leaving at once: the owner answers and then sets `closing`.
  */
 export function DesktopPopover({
   anchor,
@@ -119,6 +124,7 @@ export function DesktopPopover({
   labelledBy,
   onClosed,
   closing = false,
+  collapse = false,
   onDismiss,
   focus = 'first',
   follow = false,
@@ -136,13 +142,15 @@ export function DesktopPopover({
   onClosed: (byKey: boolean) => void
   /** The owner wants it gone (its subject vanished, the answer went out): leave now. */
   closing?: boolean
+  /** Leave by collapsing into the anchor (the reversed pop, 180 ms) rather than on the spring. */
+  collapse?: boolean
   /** Escape, an outside press, a scroll and a resize ask the owner rather than closing outright. */
   onDismiss?: () => void
-  focus?: 'first' | 'container'
+  focus?: PopoverFocus
   /** Stay up through a scroll or a resize, following the anchor. */
   follow?: boolean
-  /** The element that opened the popover, for the light-dismiss registry. */
-  anchorElement?: () => Element | null
+  /** The element that opened the popover, for the light-dismiss registry and the focus return. */
+  anchorElement?: () => HTMLElement | null
   className?: string
   children: (api: PopoverApi) => ReactNode
 } & DataAttributes): JSX.Element {
@@ -152,46 +160,48 @@ export function DesktopPopover({
     : unanchoredPlacement(width, viewport)
   const byKey = useRef(false)
   // The spring runs out of the anchor: from the popover's edge on the bar, under the anchor's
-  // middle.
+  // middle – the same point the collapse folds back into.
   const originX = anchor ? anchor.x + anchor.width / 2 - placement.left : placement.width / 2
-  const { style, close } = useSpringPresence(
-    () => onClosed(byKey.current),
-    `${originX}px ${placement.side === 'below' ? '0%' : '100%'}`
-  )
+  const origin = `${originX}px ${placement.side === 'below' ? '0%' : '100%'}`
+  const { style, close } = useSpringPresence(() => onClosed(byKey.current), origin)
   const dialog = useRef<HTMLDivElement>(null)
-  // `focus: 'container'`: the panel takes focus here, before `useFocusReach` looks and finds it
-  // already inside, so no button is armed for a stray Enter. The hook would then record the
-  // panel as the opener, so the element focus came from is kept here for the Escape return.
-  const opener = useRef<HTMLElement | null>(null)
-  useLayoutEffect(() => {
-    if (focus !== 'container') return
-    const active = document.activeElement
-    opener.current = active instanceof HTMLElement && active !== document.body ? active : null
-    dialog.current?.focus()
-  }, [focus])
-  const { returnFocus: returnToOpener } = useFocusReach(dialog)
-  const returnFocus = useCallback((): void => {
-    if (focus !== 'container') return returnToOpener()
-    const el = opener.current
-    if (el?.isConnected) el.focus()
-  }, [focus, returnToOpener])
-  const isTop = useSurfaceLayer()
   const dismiss = onDismiss ?? close
 
-  useEffect(() => {
-    if (closing) close()
-  }, [closing, close])
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape' || !isTop()) return
-      e.stopPropagation()
+  usePopover(dialog, {
+    onClose: () => {
       byKey.current = true
-      returnFocus()
       dismiss()
+    },
+    initial: focus,
+    // A popover that took no focus of its own hands nothing back; the others return to the
+    // element that opened them (the site chip for a popover under the pill).
+    returnTo: focus === 'none' ? null : (anchorElement?.() ?? undefined)
+  })
+
+  // The collapse (§9.22): the pop reversed toward the anchor – scale .94 from the popover's
+  // point on the anchored edge, fading, 180 ms – the transition CSS draws with the `closing`
+  // flag while the spring's own leave is held at its shown state.
+  const [collapsing, setCollapsing] = useState(false)
+  const collapsed = useRef(false)
+  useEffect(() => {
+    if (!closing) return
+    if (collapse && dialog.current) {
+      if (collapsed.current) return
+      collapsed.current = true
+      setCollapsing(true)
+      const el = dialog.current
+      const done = (): void => onClosed(byKey.current)
+      el.addEventListener('transitionend', done, { once: true })
+      // Reduced motion, or a compositor that never fires: the fallback lands a frame later.
+      const timer = window.setTimeout(done, 240)
+      return () => {
+        window.clearTimeout(timer)
+        el.removeEventListener('transitionend', done)
+      }
     }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [dismiss, returnFocus, isTop])
+    close()
+    return undefined
+  }, [closing, collapse, close, onClosed])
 
   // The chrome layer's light dismiss, registered once for the popover's life. The registry
   // closes on a scroll and a resize as well as an outside press; a surface that `follow`s its
@@ -217,6 +227,17 @@ export function DesktopPopover({
     return () => release?.()
   }, [])
 
+  // The same two functions as the spring's shown state, so the transition interpolates each.
+  const motion: CSSProperties = collapsing
+    ? {
+        opacity: 0,
+        transform: 'scale(0.94) translateY(0px)',
+        transformOrigin: origin,
+        transition: 'opacity 180ms var(--zen-ease), transform 180ms var(--zen-ease)',
+        pointerEvents: 'none'
+      }
+    : style
+
   return (
     <ChromePortal>
       <div
@@ -225,10 +246,11 @@ export function DesktopPopover({
           'fixed flex flex-col overflow-hidden rounded-[var(--v2-radius-card)] border border-[var(--v2-border)] bg-[var(--v2-panel)] text-[var(--v2-text)] shadow-[var(--v2-shadow-panel)] outline-none',
           className
         )}
-        style={{ ...popoverStyle(placement), ...style }}
+        style={{ ...popoverStyle(placement), ...motion }}
         role="dialog"
         aria-labelledby={labelledBy}
         tabIndex={-1}
+        data-collapsing={collapsing || undefined}
         {...data}
       >
         {children({ close })}
@@ -239,18 +261,23 @@ export function DesktopPopover({
 
 /**
  * Without an anchor (the pill is hidden in compact mode, or the request came without a tab) the
- * popover hangs centred under the top edge of the content frame, 8 px in.
+ * popover hangs centred under the top edge of the content frame, 8 px in: `placePopover` with a
+ * flat bar along that edge and the anchor the popover's own box on it, so the chassis's margins
+ * and its 60% height cap hold here as under a pill.
  */
 function unanchoredPlacement(
-  width: number,
+  width: PopoverWidth,
   viewport: { width: number; height: number }
 ): PopoverBox {
-  const frame = contentAreaStore.get().area
-  const left = frame
-    ? Math.max(POPOVER_MARGIN, Math.round(frame.x + (frame.width - width) / 2))
-    : Math.max(POPOVER_MARGIN, Math.round((viewport.width - width) / 2))
-  const top = frame ? frame.y + POPOVER_MARGIN : POPOVER_MARGIN
-  return { side: 'below', left, top, width, maxHeight: Math.round(viewport.height * 0.6) }
+  const frame = contentAreaStore.get().area ?? { x: 0, y: 0, width: viewport.width, height: 0 }
+  const bar: Rect = { x: frame.x, y: frame.y + POPOVER_MARGIN, width: frame.width, height: 0 }
+  const anchor: Rect = {
+    x: Math.round(frame.x + (frame.width - width) / 2),
+    y: bar.y,
+    width,
+    height: 0
+  }
+  return placePopover(anchor, bar, viewport, width, undefined, 'start')
 }
 
 export type LevelDirection = 'forward' | 'back' | 'none'
@@ -282,7 +309,7 @@ export function Level({
     )
     spring.start(0, 0, 100)
     const el = root.current
-    if (el) initialFocusIn(el).focus()
+    if (el) (focusableIn(el)[0] ?? el).focus({ preventScroll: true })
     return () => {
       spring.stop()
     }
@@ -291,7 +318,8 @@ export function Level({
   return (
     <div
       ref={root}
-      className={cn('flex min-h-0 flex-col', className)}
+      className={cn('flex min-h-0 flex-col outline-none', className)}
+      tabIndex={-1}
       style={{ opacity: t, transform: `translateX(${Math.round((1 - t) * offset)}px)` }}
     >
       {children}
@@ -332,8 +360,8 @@ export function RowValue({
 
 export interface DialogApi {
   /**
-   * Close from a key or a button (Cancel, the primary once it has done its work): focus goes
-   * back to the anchor first (§9.22), then the owner's `onCancel` runs.
+   * Close from a key or a button (Cancel, the primary once it has done its work): the owner's
+   * `onCancel` runs; focus goes back to the anchor as the dialog leaves (§9.22, `usePopover`).
    */
   close: () => void
 }
@@ -349,10 +377,9 @@ export type DialogWidth = typeof POPOVER_WIDTH.form | typeof POPOVER_WIDTH.table
  * A v2 dialog (§2, §3, §9.5): the neutral surface at radius 12 with a hairline at one of the
  * two dialog widths (§9.20), placed in flow through the nearest `FrameDialogHost` (TabDialogs
  * mounts one over the content frame), which centres it and dims only that frame; the sidebar
- * and toolbar stay undimmed and inert. Focus moves into the form and Tab wraps inside it
- * (§9.22). Escape and a press on the scrim are Cancel: Escape hands focus back to the anchor,
- * a press on the scrim leaves it where the press landed. Footer buttons close through
- * `api.close`, which returns focus too. Never `fixed`.
+ * and toolbar stay undimmed and inert. Focus moves into the form and Tab wraps inside it, and
+ * when the dialog leaves with focus still inside, focus goes back to the anchor (§9.22, the
+ * chassis's `usePopover`). Escape and a press on the scrim are Cancel. Never `fixed`.
  */
 export function DesktopDialog({
   labelledBy,
@@ -372,23 +399,9 @@ export function DesktopDialog({
   children: ReactNode
 } & DataAttributes): JSX.Element {
   const dialog = useRef<HTMLDivElement>(null)
-  const { returnFocus } = useFocusReach(dialog)
-  const close = useCallback((): void => {
-    returnFocus()
-    onCancel()
-  }, [returnFocus, onCancel])
-  useImperativeHandle(api, () => ({ close }), [close])
+  useImperativeHandle(api, () => ({ close: onCancel }), [onCancel])
   useFrameDialog({ onScrimPress: onCancel })
-  const isTop = useSurfaceLayer()
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape' || !isTop()) return
-      e.stopPropagation()
-      close()
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [close, isTop])
+  usePopover(dialog, { onClose: onCancel })
 
   return (
     <div
@@ -416,8 +429,6 @@ export function DesktopDialog({
 
 export interface SheetApi {
   dismiss: () => void
-  /** Settle on the expanded detent, for content a choice inside the sheet just revealed. */
-  expand: () => void
 }
 
 /**
@@ -425,17 +436,19 @@ export interface SheetApi {
  * surface at radius 12 with a hairline edge and the sheet shadow, the v2 scrim, rows edge to
  * edge, `data-surface="page"`): after the grip strip either the chassis's 48 header with the
  * title centred (§9.16, `.zen-sheet-title`) or – for a prompt – a title block (§9.23) at the top
- * of the body, the glyph on the title's start. One gutter of 16 from the sheet's edge to every
- * text and control edge. The system back gesture pulls it down with the finger; Escape, the back
- * button and a scrim tap slide it away. Opened over another sheet (a picker, a confirmation) it
- * is the chassis's upper sheet (§9.24): its scrim is the stack's one, and the sheet under it
- * recedes, dims and goes inert with its progress – nothing to say here. It renders through the
- * chrome layer, so its fixed box is the window wherever it was mounted.
+ * of the body, the glyph on the title's start; `footer` goes in the chassis's footer slot under
+ * the scrolling body (§9.11: in reach at every detent). One gutter of 16 from the sheet's edge
+ * to every text and control edge. The system back gesture pulls it down with the finger; Escape
+ * (the top popup's, `useEscape`), the back button and a scrim tap slide it away. Focus, Tab, the
+ * inert chrome behind the scrim and the stack over another sheet (§9.24: one scrim, the lower
+ * receded) are the chassis's – nothing to do here. It renders through the chrome layer, so its
+ * fixed box is the window wherever it was mounted.
  */
 export function V2Sheet({
   name,
   title,
   titleBlock,
+  footer,
   onDismissed,
   contentKey,
   handleLabel,
@@ -448,6 +461,8 @@ export function V2Sheet({
   /** A 48 header with this title centred; omitted for a prompt with a `titleBlock`. */
   title?: string
   titleBlock?: ReactNode
+  /** The footer slot's content: a `Footer`, or the buttons themselves. */
+  footer?: ReactNode
   onDismissed: () => void
   contentKey?: string
   handleLabel: string
@@ -457,24 +472,14 @@ export function V2Sheet({
 } & DataAttributes): JSX.Element {
   const sheet = useRef<BottomSheetHandle>(null)
   const dismiss = useCallback((): void => sheet.current?.dismiss(), [])
-  const expand = useCallback((): void => sheet.current?.expand(), [])
-  useImperativeHandle(api, () => ({ dismiss, expand }), [dismiss, expand])
+  useImperativeHandle(api, () => ({ dismiss }), [dismiss])
   useBackSurface({
     name,
     onProgress: (progress) => sheet.current?.backProgress(progress),
     onCommit: () => sheet.current?.commitBack(),
     onCancel: () => sheet.current?.cancelBack()
   })
-  const isTop = useSurfaceLayer()
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape' || !isTop()) return
-      e.stopPropagation()
-      dismiss()
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [dismiss, isTop])
+  useEscape(dismiss)
 
   return (
     <ChromePortal>
@@ -490,6 +495,7 @@ export function V2Sheet({
             </h2>
           ) : undefined
         }
+        footer={footer}
       >
         <div className="flex flex-col" {...data}>
           {titleBlock}
@@ -500,69 +506,16 @@ export function V2Sheet({
   )
 }
 
-/**
- * A confirmation sheet (§10.4: a destructive action row confirms in a sheet, never inline): a
- * title block asking the question with the consequence as its description, then the footer's
- * pair – Cancel, and the action in danger ink on the affirmative side. A pull-down, the scrim
- * or Escape is Cancel.
- */
-export function ConfirmSheet({
-  name,
-  title,
-  description,
-  action,
-  onConfirm,
-  onDismissed,
-  ...data
-}: {
-  name: string
-  title: string
-  description?: ReactNode
-  /** The action button's label. */
-  action: string
-  onConfirm: () => void
-  onDismissed: () => void
-} & DataAttributes): JSX.Element {
-  const api = useRef<SheetApi | null>(null)
-  const confirmed = useRef(false)
-  return (
-    <V2Sheet
-      name={name}
-      api={api}
-      handleLabel={`Resize ${title}`}
-      onDismissed={() => {
-        onDismissed()
-        if (confirmed.current) onConfirm()
-      }}
-      titleBlock={<TitleBlock id={`${name}-title`} title={title} description={description} />}
-      {...data}
-    >
-      <Footer count={2} className="pt-0">
-        <V2Button onClick={() => api.current?.dismiss()}>Cancel</V2Button>
-        <V2Button
-          variant="danger"
-          onClick={() => {
-            confirmed.current = true
-            api.current?.dismiss()
-          }}
-        >
-          {action}
-        </V2Button>
-      </Footer>
-    </V2Sheet>
-  )
-}
-
 // ---------------------------------------------------------------------------
 // Title block, bar header, footer
 // ---------------------------------------------------------------------------
 
 /**
- * A title block (§9.23): padding 16, an optional row glyph on the title's start with an 8 px gap,
- * the title 17/600 at line-height 22, an optional description 15 at 69% 4 px under it. In a
- * phone sheet it is the chassis's (`.zen-sheet-title-block`: the description runs under the
- * glyph, as the protocol prompt's does). Sticky in a scrolling popover: `scrolled` draws §9.7's
- * hairline at its bottom edge.
+ * A title block (§9.23): padding 16, an optional row glyph on the title's start with an 8 px gap
+ * and no fill tile, the title 17/600 at line-height 22, an optional description 15 at 69% 4 px
+ * under it – one composition on both platforms. In a phone sheet it is the chassis's
+ * (`.zen-sheet-title-block`: the description runs under the glyph, as the protocol prompt's
+ * does). Sticky in a scrolling popover: `scrolled` draws §9.7's hairline at its bottom edge.
  */
 export function TitleBlock({
   id,
@@ -586,7 +539,7 @@ export function TitleBlock({
         <h2 id={id}>
           {glyph && (
             <span
-              className="mt-[calc((22px-var(--v2-icon))/2)] flex shrink-0 self-start"
+              className="mt-[calc((var(--v2-line-heading)-var(--v2-icon))/2)] flex shrink-0 self-start"
               aria-hidden
             >
               {glyph}
@@ -607,21 +560,22 @@ export function TitleBlock({
       )}
     >
       {glyph && (
-        <span className="mt-[calc((22px-var(--v2-icon))/2)] flex shrink-0" aria-hidden>
+        <span
+          className="mt-[calc((var(--v2-line-heading)-var(--v2-icon))/2)] flex shrink-0"
+          aria-hidden
+        >
           {glyph}
         </span>
       )}
       <div className="min-w-0 flex-1">
-        <h2 id={id} className="text-[17px] leading-[22px] font-semibold break-words">
+        <h2
+          id={id}
+          className="text-[17px] leading-[var(--v2-line-heading)] font-semibold break-words"
+        >
           {title}
         </h2>
         {description && (
-          <p
-            className={cn(
-              'mt-1 text-[15px] text-[var(--v2-text-deemphasized)] break-words',
-              phone ? 'leading-[22px]' : 'leading-5'
-            )}
-          >
+          <p className="mt-1 text-[15px] leading-[var(--v2-line-body)] text-[var(--v2-text-deemphasized)] break-words">
             {description}
           </p>
         )}
@@ -658,7 +612,10 @@ export function BarHeader({
       <button type="button" className="zen-v2-icon-button" aria-label={backLabel} onClick={onBack}>
         <ChevronLeft aria-hidden />
       </button>
-      <h2 id={id} className="min-w-0 flex-1 truncate text-[17px] leading-[22px] font-semibold">
+      <h2
+        id={id}
+        className="min-w-0 flex-1 truncate text-[17px] leading-[var(--v2-line-heading)] font-semibold"
+      >
         {title}
       </h2>
     </div>
@@ -672,12 +629,12 @@ export function BarHeader({
  * inset – and the buttons at 12 above and below, 16 at the sides. A prompt or a dialog ends in
  * its actions with no hairline: the last body element, 16, the buttons, 16 to the edge; where a
  * title block is all there is, its own 16 below serves, and the footer passes `pt-0`. Phone:
- * the chassis footer (`.zen-sheet-footer`), full width – one action spans the row, two split
- * it with an 8 px gap, three or more stack full-width with the primary first (pass them in that
- * order), each its 40 – the chassis's `flex: 1` shares the row's width between peers and would
- * share the column's height between stacked buttons, so the stack takes it off them; its 8
- * under the last button and the sheet's own bottom padding make the 16 to the edge, the inset
- * included.
+ * the content of the chassis's footer slot (`V2Sheet`'s `footer`, the `.zen-sheet-footer` under
+ * the body), full width – one action spans the row, two split it with an 8 px gap, three or
+ * more stack full-width with the primary first (pass them in that order), each its 40: the
+ * chassis's `flex: 1` shares the row's width between peers and would share a column's height
+ * between stacked buttons, so the stack is one column wrapper with `flex: none` children; the
+ * slot's 8 under the last button and the sheet's own bottom padding make the 16 to the edge.
  */
 export function Footer({
   children,
@@ -694,14 +651,9 @@ export function Footer({
 }): JSX.Element {
   const phone = usePhone()
   if (phone) {
+    if (count < 3) return <>{children}</>
     return (
-      <div
-        className={cn(
-          'zen-sheet-footer shrink-0',
-          count >= 3 && 'flex-col [&>*]:flex-none',
-          className
-        )}
-      >
+      <div className={cn('flex w-full flex-col gap-2 [&>*]:flex-none', className)} data-stack="">
         {children}
       </div>
     )
@@ -727,60 +679,100 @@ export function Footer({
 // ---------------------------------------------------------------------------
 
 /**
- * The checkbox, radio and field are the `.zen-v2-check`, `.zen-v2-radio` and `.zen-v2-field`
- * rules the blocking UI (#115) owns in main.css – box, hairline, accent fill, glyph, hover,
- * disabled opacity and the (line − box) / 2 offset onto the label's first line (§6, §9.2, §9.14,
- * §5). These wrappers add only the label beside the box and the text metrics; no rule here
- * restates the control.
+ * The checkbox, radio and field are main's shared primitives (§9.34): `.zen-v2-checkbox` (#93's
+ * rule), `.zen-v2-radio` and `.zen-v2-field` in main.css – box, hairline, accent fill, glyph,
+ * hover, the disabled opacity and the (line − box) / 2 offset onto the label's first line (§6,
+ * §9.2, §9.14, §5). These wrappers add only the label beside the box and the text metrics; no
+ * rule here restates a control.
  */
 type ControlInputProps = Omit<
   JSX.IntrinsicElements['input'],
   'type' | 'className' | 'children' | 'ref'
 >
 
-const CONTROL_LABEL = 'flex min-w-0 cursor-pointer items-start gap-2.5 text-[15px] leading-5'
+const CONTROL_LABEL = 'flex min-w-0 items-start gap-2.5 text-[15px] leading-5'
 
-/** A checkbox with its label to the right; the label may carry a second, deemphasised line. */
+/** The `data-*` attributes among a control's props go on its row; the rest on the input. */
+function splitData<P extends object>(props: P): { data: DataAttributes; rest: P } {
+  const data: DataAttributes = {}
+  const rest = {} as P
+  for (const [key, value] of Object.entries(props)) {
+    if (key.startsWith('data-')) data[key as `data-${string}`] = value as string | undefined
+    else (rest as Record<string, unknown>)[key] = value
+  }
+  return { data, rest }
+}
+
+/**
+ * A checkbox with its label to the right; the label may carry a second, deemphasised line. The
+ * label is #93's check row (`.zen-v2-check-row`): a box disabled puts the .4 on the row's content
+ * and keeps the box itself at 1, so text and box read as one disabled control (§9.30).
+ * `data-*` attributes name the row, for tests and drivers.
+ */
 export function Checkbox({
   label,
   className,
   ...props
-}: ControlInputProps & { label: ReactNode; className?: string }): JSX.Element {
+}: ControlInputProps & { label: ReactNode; className?: string } & DataAttributes): JSX.Element {
+  const { data, rest } = splitData(props)
   return (
-    <label className={cn(CONTROL_LABEL, 'text-[var(--v2-text)]', className)}>
-      <input type="checkbox" className="zen-v2-check" {...props} />
-      <span className="min-w-0">{label}</span>
+    <label
+      className={cn(
+        'zen-v2-check-row flex min-w-0',
+        rest.disabled ? 'cursor-default' : 'cursor-pointer',
+        className
+      )}
+      aria-disabled={rest.disabled || undefined}
+      {...data}
+    >
+      <span className={cn(CONTROL_LABEL, 'flex-1 text-[var(--v2-text)]')}>
+        <input type="checkbox" className="zen-v2-checkbox" {...rest} />
+        <span className="min-w-0">{label}</span>
+      </span>
     </label>
   )
 }
 
 /**
- * A plain radio (§9.14) with its label, and a 13 px description under it when given; the row
- * is its padding around the text lines: (52 − 40) / 2 with a description, (32 − 20) / 2 without,
- * scaled by the phone tokens.
+ * A plain radio (§9.14) with its label, and a 13 px description under it when given: the row
+ * is the target and carries `aria-checked`, which draws the shared `.zen-v2-radio` beside it;
+ * the row is its padding around the text lines – (52 − 40) / 2 with a description, (32 − 20) / 2
+ * without – scaled by the phone tokens.
  */
 export function Radio({
   label,
   description,
+  checked,
+  disabled = false,
+  onSelect,
   className,
-  ...props
-}: ControlInputProps & {
+  ...data
+}: {
   label: ReactNode
   description?: ReactNode
+  checked: boolean
+  disabled?: boolean
+  onSelect: () => void
   className?: string
-}): JSX.Element {
+} & DataAttributes): JSX.Element {
   return (
-    <label
+    <button
+      type="button"
+      role="radio"
+      aria-checked={checked}
+      disabled={disabled}
       className={cn(
         CONTROL_LABEL,
-        'text-[var(--v2-text)]',
+        'w-full text-left text-[var(--v2-text)] outline-none disabled:pointer-events-none disabled:opacity-40',
         description
           ? 'py-[calc((var(--v2-row-two-line)-40px)/2)]'
           : 'py-[calc((var(--v2-row)-20px)/2)]',
         className
       )}
+      onClick={onSelect}
+      {...data}
     >
-      <input type="radio" className="zen-v2-radio" {...props} />
+      <span className="zen-v2-radio" aria-hidden />
       <span className="flex min-w-0 flex-col">
         <span className="min-w-0">{label}</span>
         {description && (
@@ -789,7 +781,7 @@ export function Radio({
           </span>
         )}
       </span>
-    </label>
+    </button>
   )
 }
 
@@ -799,7 +791,7 @@ const SECRET_TEXT: CSSProperties = {
   fontVariantLigatures: 'none'
 }
 
-/** A text field (§5); `secret` for a passphrase or key. Fills its line: `.zen-v2-field` flexes. */
+/** A text field (§5); `secret` for a passphrase or key. Fills its line: `.zen-v2-field` is block. */
 export function Field({
   secret = false,
   className,
@@ -811,7 +803,7 @@ export function Field({
 }): JSX.Element {
   return (
     <input
-      className={cn('zen-v2-field w-full', className)}
+      className={cn('zen-v2-field', className)}
       style={secret ? { ...SECRET_TEXT, ...style } : style}
       {...props}
     />
@@ -829,8 +821,9 @@ export function Field({
  * line; whatever trails is centred on the row, except on three text lines, where it centres on
  * the label's line. With `onClick` the whole row is a button with the press fill; `chevron`
  * says it opens a level; `busy` is an action row at work (§9.30): full opacity, the spinner
- * trailing, `aria-busy`, and a press does nothing. Sits edge to edge with its text inset 16
- * (§9.25).
+ * trailing, `aria-busy`, and a press does nothing. Without `onClick` the row is not a target
+ * (§9.34): it carries `data-static` – no hover or press fill, no pointer – whether it is a fact
+ * or holds a control of its own. Sits edge to edge with its text inset 16 (§9.25).
  */
 export function ListRow({
   label,
@@ -953,6 +946,7 @@ export function ListRow({
     <div
       className={cn(layout, disabled && 'opacity-40')}
       aria-disabled={disabled || undefined}
+      data-static=""
       {...data}
     >
       {content}
@@ -993,26 +987,19 @@ export function EmptyLine({ children }: { children: ReactNode }): JSX.Element {
 // Menulist
 // ---------------------------------------------------------------------------
 
-export interface MenulistOption<V extends string> {
-  value: V
-  label: string
-  /** A second line under the label in the phone picker (13 at 69%). */
-  description?: string
-}
+export type { MenulistOption }
 
 /**
- * The desktop menulist (§6, §9.13): a 32 px rectangular control at radius 4 with a hairline and
- * a chevron, opening a `--v2-panel` popover flush under itself at radius 12 with 6 px padding and
- * 28 px rows at radius 6, the current option marked with a trailing check. Arrow keys move,
- * Enter picks, Escape closes; a press outside closes and is consumed. Never a native `<select>`.
+ * The menulist (§6, §9.13) is the shared `V2Menulist` (`extensions/V2Menulist`, the
+ * `.zen-v2-menulist` rules): the 32 px control with its chevron, the `--v2-panel` popover of 28 px
+ * rows flush under it on a mouse – its own light dismiss, arrow keys, Escape back to the control
+ * – and a sheet of radio rows under a finger. This wrapper only sizes it for a row's trailing
+ * slot: its own width, no less than 140, where the shared control fills its line. `readOnly`
+ * is a busy form's (§9.30): the value in place at full opacity, opening nothing.
  */
 export function Menulist<V extends string>({
-  value,
-  options,
-  onChange,
-  label,
-  disabled = false,
-  className
+  className,
+  ...props
 }: {
   value: V
   options: ReadonlyArray<MenulistOption<V>>
@@ -1020,242 +1007,17 @@ export function Menulist<V extends string>({
   /** Accessible name of the control (the row's label). */
   label: string
   disabled?: boolean
+  readOnly?: boolean
   className?: string
 }): JSX.Element {
-  // The open list's anchor is the control itself, taken from the press that opened it; null while
-  // the list is closed.
-  const [anchor, setAnchor] = useState<HTMLButtonElement | null>(null)
-  const current = options.find((o) => o.value === value) ?? options[0]
-  const settle = (byKey: boolean): void => {
-    if (byKey) anchor?.focus()
-    setAnchor(null)
-  }
-  return (
-    <>
-      <button
-        type="button"
-        className={cn(
-          'zen-v2-menulist flex h-[var(--v2-control)] min-w-0 shrink-0 items-center gap-2 rounded-[var(--v2-radius-control)] border border-[var(--v2-border)] bg-[var(--v2-page)] px-3 text-[15px] leading-5 text-[var(--v2-text)] outline-none transition-colors duration-[120ms] hover:bg-[var(--v2-fill)] disabled:pointer-events-none disabled:opacity-40',
-          className
-        )}
-        aria-label={label}
-        aria-haspopup="listbox"
-        aria-expanded={anchor !== null}
-        disabled={disabled}
-        onClick={(e) => {
-          const el = e.currentTarget
-          setAnchor((a) => (a ? null : el))
-        }}
-      >
-        <span className="min-w-0 flex-1 truncate text-left">{current?.label}</span>
-        <ChevronDown className={cn(V2_GLYPH, 'text-[var(--v2-text-deemphasized)]')} aria-hidden />
-      </button>
-      {anchor && (
-        <MenulistPopup
-          anchor={anchor}
-          value={value}
-          options={options}
-          label={label}
-          onPick={(v) => {
-            settle(true)
-            if (v !== value) onChange(v)
-          }}
-          onClose={settle}
-        />
-      )}
-    </>
-  )
-}
-
-function MenulistPopup<V extends string>({
-  anchor,
-  value,
-  options,
-  label,
-  onPick,
-  onClose
-}: {
-  anchor: HTMLElement
-  value: V
-  options: ReadonlyArray<MenulistOption<V>>
-  label: string
-  onPick: (value: V) => void
-  onClose: (byKey: boolean) => void
-}): JSX.Element {
-  // The list hangs flush under its trigger, start-aligned, 8 px inside the window, and flips
-  // above it when its rows do not fit below (§9.13, §9.20 through `placePopover`, which knows
-  // the list's height: the rows, the padding, the hairlines); it is as wide as the trigger and
-  // at least a menu's 160.
-  const rect = toRect(anchor.getBoundingClientRect())
-  const width = Math.max(rect.width, 160)
-  const box = placePopover(
-    rect,
-    rect,
-    viewportSize(),
-    { measured: width },
-    options.length * 28 + 14
-  )
-  const list = useRef<HTMLUListElement>(null)
-  // The chrome layer's light dismiss (§9.20 amended); the trigger as the anchor makes the list
-  // the child of any popover the trigger sits in, so opening it leaves that popover up.
-  useLightDismiss(list, () => onClose(false), { anchor: () => anchor })
-  const [active, setActive] = useState(
-    Math.max(
-      0,
-      options.findIndex((o) => o.value === value)
-    )
-  )
-  const isTop = useSurfaceLayer()
-  useEffect(() => {
-    list.current?.focus()
-  }, [])
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (!isTop()) return
-      if (e.key === 'Escape') {
-        e.stopPropagation()
-        e.preventDefault()
-        onClose(true)
-      } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-        e.preventDefault()
-        setActive((i) => {
-          const n = options.length
-          return (i + (e.key === 'ArrowDown' ? 1 : n - 1)) % n
-        })
-      } else if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault()
-        const option = options[active]
-        if (option) onPick(option.value)
-      } else if (e.key === 'Tab') {
-        onClose(true)
-      }
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [active, options, onPick, onClose, isTop])
-
-  return (
-    <ChromePortal>
-      <ul
-        ref={list}
-        role="listbox"
-        aria-label={label}
-        aria-activedescendant={`menulist-option-${active}`}
-        tabIndex={-1}
-        className="zen-animate-pop fixed flex flex-col overflow-y-auto rounded-[var(--v2-radius-sheet)] border border-[var(--v2-border)] bg-[var(--v2-panel)] p-1.5 text-[var(--v2-text)] shadow-[var(--v2-shadow-panel)] outline-none"
-        style={popoverStyle(box)}
-      >
-        {options.map((option, i) => (
-          <li
-            key={option.value}
-            id={`menulist-option-${i}`}
-            role="option"
-            aria-selected={option.value === value}
-            className={cn(
-              'flex h-7 shrink-0 cursor-default items-center gap-2 rounded-[var(--v2-radius-inner)] px-2 text-[15px] leading-5',
-              i === active && 'bg-[var(--v2-fill)]'
-            )}
-            onPointerMove={() => setActive(i)}
-            onClick={() => onPick(option.value)}
-          >
-            <span className="min-w-0 flex-1 truncate">{option.label}</span>
-            {option.value === value && <CheckGlyph />}
-          </li>
-        ))}
-      </ul>
-    </ChromePortal>
-  )
-}
-
-function CheckGlyph(): JSX.Element {
-  return (
-    <svg
-      className={V2_GLYPH}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <path d="M20 6 9 17l-5-5" />
-    </svg>
-  )
+  return <V2Menulist {...props} className={cn('w-auto min-w-[140px] shrink-0', className)} />
 }
 
 /**
- * The phone picker (§9.13, §10.4): a bottom sheet naming the setting in the chassis's 48 header
- * (§9.16) – or, when the row had a description, in a title block with the description under
- * the title (§9.23) – then 44 px radio rows, the current option checked; picking one closes it.
- * Opened over a sheet it is the stack's upper sheet (§9.24; the chassis's business).
- */
-export function MenulistSheet<V extends string>({
-  name,
-  title,
-  description,
-  value,
-  options,
-  onPick,
-  onDismissed
-}: {
-  name: string
-  title: string
-  description?: string
-  value: V
-  options: ReadonlyArray<MenulistOption<V>>
-  onPick: (value: V) => void
-  onDismissed: () => void
-}): JSX.Element {
-  const api = useRef<SheetApi | null>(null)
-  const picked = useRef<V | null>(null)
-  return (
-    <V2Sheet
-      name={name}
-      api={api}
-      handleLabel={`Resize ${title} options`}
-      onDismissed={() => {
-        const v = picked.current
-        onDismissed()
-        if (v !== null && v !== value) onPick(v)
-      }}
-      title={description ? undefined : title}
-      titleBlock={
-        description ? (
-          <TitleBlock
-            id={`${name}-title`}
-            title={title}
-            description={description}
-            className="pb-2"
-          />
-        ) : undefined
-      }
-    >
-      {/* 8 under the last row and the sheet's own bottom padding: 16 to the edge. */}
-      <div role="radiogroup" aria-labelledby={`${name}-title`} className="pb-2">
-        {options.map((option) => (
-          <Radio
-            key={option.value}
-            name={name}
-            className="min-h-[var(--v2-row)] px-4 transition-colors duration-[120ms] active:bg-[var(--v2-fill)]"
-            label={option.label}
-            description={option.description}
-            checked={option.value === value}
-            onChange={() => {
-              picked.current = option.value
-              api.current?.dismiss()
-            }}
-          />
-        ))}
-      </div>
-    </V2Sheet>
-  )
-}
-
-/**
- * A setting with a choice (§10.4): on desktop a row with the menulist trailing it (40 tall, the
- * control plus 8); on a phone a value row – label over the current value as its description –
- * that opens the picker sheet. `description` is the desktop row's explanation, which the phone
- * hands to the sheet.
+ * A setting with a choice on a mouse (§10.4, §9.13): a row with the menulist trailing it (40
+ * tall, the control plus 8) and the row's explanation as its description. The phone's form of
+ * the same setting is a value row of the Settings builder (`pages/settings`), which opens the
+ * chassis's picker sheet.
  */
 export function ChoiceRow<V extends string>({
   label,
@@ -1264,8 +1026,8 @@ export function ChoiceRow<V extends string>({
   options,
   onChange,
   disabled = false,
-  leading,
-  sheetName
+  readOnly = false,
+  leading
 }: {
   label: string
   description?: string
@@ -1273,38 +1035,10 @@ export function ChoiceRow<V extends string>({
   options: ReadonlyArray<MenulistOption<V>>
   onChange: (value: V) => void
   disabled?: boolean
+  /** A busy form's row (§9.30): the menulist keeps its value at full opacity and opens nothing. */
+  readOnly?: boolean
   leading?: ReactNode
-  /** Back-surface name of the phone picker. */
-  sheetName: string
 }): JSX.Element {
-  const phone = usePhone()
-  const [picking, setPicking] = useState(false)
-  const current = options.find((o) => o.value === value)
-  if (phone) {
-    return (
-      <>
-        <ListRow
-          label={label}
-          description={current?.label ?? description}
-          leading={leading}
-          disabled={disabled}
-          onClick={() => setPicking(true)}
-          aria-label={`${label}: ${current?.label ?? ''}`}
-        />
-        {picking && (
-          <MenulistSheet
-            name={sheetName}
-            title={label}
-            description={description}
-            value={value}
-            options={options}
-            onPick={onChange}
-            onDismissed={() => setPicking(false)}
-          />
-        )}
-      </>
-    )
-  }
   return (
     <ListRow
       label={label}
@@ -1319,6 +1053,7 @@ export function ChoiceRow<V extends string>({
           onChange={onChange}
           label={label}
           disabled={disabled}
+          readOnly={readOnly}
         />
       }
     />
