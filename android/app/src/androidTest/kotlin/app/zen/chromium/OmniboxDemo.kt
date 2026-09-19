@@ -31,7 +31,9 @@ import java.util.concurrent.TimeUnit
  *     attributes, read from the DOM.
  *  2. OMN-09: a typed query lists the engine's suggestions with a Refine arrow each; a touch on
  *     one puts that row's text into the field and submits nothing – the tab stays where it was,
- *     the field keeps the focus, the suggestions refresh.
+ *     the field keeps the focus, the suggestions refresh. Then the system back with the text
+ *     still in the field, and the pill again: search-ready, the text discarded (the phone's
+ *     dismiss rule of 19 Sep 2026, Chrome's; the desktop keeps a draft).
  *  3. OMN-14: a link copied from a page's long-press menu; the pill then lists "Link you copied"
  *     (the type, read from the clip's description alone) behind Show; Show reveals the address;
  *     a touch on the row opens it; the pill once more lists no clipboard row for the clip the
@@ -215,13 +217,30 @@ class OmniboxDemo : DemoHarness("omnibox-demo-state.json", "android-omnibox", "o
                     "first row now '$first' (refreshed ${first == expected}) ${verdict(ok)}"
             )
             if (!ok) failures += "Refine did not set the field without submitting (field '${fieldValue()}', tab '$urlAfter')"
-            // The field is cleared before the bar closes: the back gesture keeps an unsubmitted
-            // draft (the bar's rule, "Zen remembers what you typed until you navigate away"), and
-            // the next focus on the same page restores it, selected, ahead of the search-ready
-            // state the clipboard scene needs (run 4 reopened on 'how to brew coffee': no header,
-            // no clipboard row). An empty field leaves no draft.
-            if (!touchTapLabel(CLEAR_LABEL, timeoutMs = 4_000)) clickByLabel(CLEAR_LABEL)
+            // The dismiss path (the program default of 19 Sep 2026, Chrome's rule): the system
+            // back closes the bar with the refined text still in it, and the pill again opens
+            // search-ready with the header, the text discarded (the desktop keeps its per-tab
+            // draft; the phone does not). Run 4 had reopened on 'how to brew coffee' under the
+            // desktop's rule, so the clipboard scene found no header and no row. Should the field
+            // reopen on the text all the same, it is cleared once (the belt: the clipboard scene
+            // starts from an empty field either way) and the findings say the rule is not in.
+            closeUrlbar()
+            SystemClock.sleep(800)
+            tapPill()
+            awaitChrome("!!document.querySelector('$FIELD')", 6_000)
+            val headerBack = awaitNode(6_000) { it == EDIT_LABEL } != null
             SystemClock.sleep(600)
+            val reopened = fieldValue()
+            shot("06b-dismissed-reopened")
+            finding(
+                "  back with '$expected' in the field, then the pill: field '$reopened' (discarded ${reopened.isEmpty()}); " +
+                    "header $headerBack ${verdict(reopened.isEmpty() && headerBack)}"
+            )
+            if (reopened.isNotEmpty()) {
+                failures += "the pill reopened on the dismissed draft '$reopened' instead of search-ready"
+                if (!touchTapLabel(CLEAR_LABEL, timeoutMs = 4_000)) clickByLabel(CLEAR_LABEL)
+                SystemClock.sleep(600)
+            }
             closeUrlbar()
         }
 
@@ -268,18 +287,21 @@ class OmniboxDemo : DemoHarness("omnibox-demo-state.json", "android-omnibox", "o
                 SystemClock.sleep(800)
                 tapPill()
             }
-            // The scene starts from the search-ready bar (empty field, the header): a draft the bar
-            // kept through an earlier back gesture comes back selected instead and lists no
-            // clipboard row. The findings say which the bar reopened in; a draft is cleared once.
+            // The scene starts from the search-ready bar: the phone discards an unsubmitted draft
+            // on every dismissal (the program default of 19 Sep 2026, Chrome's rule; `drafts` in
+            // Urlbar.tsx), so the field is empty here whatever the Refine step left. The findings
+            // say so; a field that reopened on text would mean the rule is not in the build, and
+            // the guard says that, clears it once and goes on so the row's claims are still read.
             awaitChrome("!!document.querySelector('$FIELD')", 6_000)
             SystemClock.sleep(600)
             val reopened = fieldValue()
             if (reopened.isNotEmpty()) {
-                finding("  the bar reopened on the draft '$reopened' (no header, no clipboard row); Clear touched")
+                finding("  the bar reopened on the draft '$reopened' ${verdict(false)}: the phone kept a dismissed draft (the rule of 19 Sep 2026 says it discards it); Clear touched to go on")
+                failures += "the pill reopened on the dismissed draft '$reopened' instead of search-ready"
                 if (!touchTapLabel(CLEAR_LABEL, timeoutMs = 4_000)) clickByLabel(CLEAR_LABEL)
                 SystemClock.sleep(800)
             } else {
-                finding("  the bar reopened search-ready (field empty)")
+                finding("  the bar reopened search-ready (field empty) ${verdict(true)}")
             }
             val show = awaitNode(8_000) { it == SHOW_LABEL }
             SystemClock.sleep(1_200)
