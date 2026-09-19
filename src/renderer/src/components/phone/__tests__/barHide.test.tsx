@@ -247,7 +247,7 @@ describe('the published hide progress', () => {
     expect(hostFrames[hostFrames.length - 1]).toMatchObject({ edge: 'top', offset: 24 })
   })
 
-  it('the host hears the page\'s measured edge, so a strip between the bar and the page counts, at either dock and through the hidden rest', () => {
+  it("the host hears the page's measured edge, so a strip between the bar and the page counts, at either dock and through the hidden rest", () => {
     // Bottom dock: the blocked pop-ups chip (44) sits between the page and the bar, so the page
     // ends 44 above the bar's edge (915 − 20 − 56 = 839).
     contentAreaStore.set({ area: { x: 8, y: 80, width: 396, height: 839 - 44 - 80 } })
