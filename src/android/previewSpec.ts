@@ -39,6 +39,20 @@ export type PreviewStep =
 export const PREVIEW_WEBAPP_SURFACES = ['install', 'name', 'banner', 'pinned'] as const
 export type PreviewWebAppSurface = (typeof PREVIEW_WEBAPP_SURFACES)[number]
 
+/**
+ * The private-tab surfaces a preview state may show (`private=<surface>`): a private tab on its
+ * new tab page (`newtab`) or on a page (`page`; `url=<page>` names it, example.com by default),
+ * the tab overview on its Private pane with that tab (`overview`), the overview on its Tabs pane
+ * while a private tab is open elsewhere (`tabs`: the segment, and no private card among the
+ * regular ones), and the Private pane with no private tab (`empty`: the explainer).
+ */
+export const PREVIEW_PRIVATE_SURFACES = ['newtab', 'page', 'overview', 'tabs', 'empty'] as const
+export type PreviewPrivateSurface = (typeof PREVIEW_PRIVATE_SURFACES)[number]
+
+/** The menus a preview state may open: the app menu sheet, the Tabs button's quick menu. */
+export const PREVIEW_MENUS = ['app', 'tabs'] as const
+export type PreviewMenu = (typeof PREVIEW_MENUS)[number]
+
 /** A download the preview host's stand-in downloader plays back (`download=<file>`). */
 export interface PreviewDownloadSpec {
   filename: string
@@ -84,6 +98,8 @@ export type PreviewState =
     }
   | {
       kind: 'menu'
+      /** Which menu: the app menu sheet, or the Tabs button's quick menu. */
+      menu: PreviewMenu
       /** Text of an item in the menu to scroll into view once it is open. */
       show?: string
     }
@@ -117,6 +133,12 @@ export type PreviewState =
       progress: number | null
     }
   | { kind: 'webapp'; surface: PreviewWebAppSurface }
+  | {
+      kind: 'private'
+      surface: PreviewPrivateSurface
+      /** The page the private tab is on (`page`, `overview`, `tabs`); null for the default. */
+      url: string | null
+    }
   | { kind: 'download'; download: PreviewDownloadSpec }
 
 /** More sample banners than the stack holds are pointless. */
@@ -149,8 +171,9 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * afterwards, `;`-separated: `tap:<text>`, `back`, `overview`, `urlbar`), `overlay=<kind>` for
  * one of PREVIEW_OVERLAYS (with `section=<id>` for an overlay that has sections, `show=<text>`
  * to scroll a row of the overlay into view, and `expand` to rest a sheet that opened at its peek
- * detent on its expanded one), `menu=app` for the app menu sheet (with `show=<text>` to scroll an
- * item into view), `find=<text>` for the find bar with that text typed (`find=` opens it empty),
+ * detent on its expanded one), `menu=app` for the app menu sheet or `menu=tabs` for the Tabs
+ * button's quick menu (with `show=<text>` to scroll an item into view), `find=<text>` for the
+ * find bar with that text typed (`find=` opens it empty),
  * `pull=<n>` for the active page held pulled down at n percent of the refresh threshold
  * (`pull=refresh` pulls past it and lets go), `zoom=<factor>` for the page zoom sheet with the
  * active tab's site at that factor (`zoom=` opens it as it is), `error=<code>` for the active
@@ -158,13 +181,14 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * failed, else the tab's own), which puts up the zen://error page, any of `toast=<text>` (with
  * `action=<label>`, `kind=error`), `banners=<n>` and `progress=<0…1>` together for the message
  * surfaces and the load bar, `webapp=<surface>` for one of PREVIEW_WEBAPP_SURFACES ("Add to
- * Home screen"), or `download=<file>` for a transfer the stand-in downloader plays back
- * (`size=<bytes>`, `at=<percent>` already received, `speed=<bytes per second>`, `paused`,
- * `fail=<error>`, `deleted` for a finished file since gone from disk, `private`, `url=<url>`,
- * `mime=<type>`). When several are given, `page` wins
- * over `overlay`, `overlay` over `menu`, `menu` over `find`, `find` over `pull`, `pull` over
- * `zoom`, `zoom` over `error`, `error` over the messages, the messages over `webapp` and `webapp`
- * over `download`. A leading `#` (the URL hash as read) is ignored.
+ * Home screen"), `private=<surface>` for one of PREVIEW_PRIVATE_SURFACES (a private tab and the
+ * overview's panes; `url=<page>` names the private tab's page), or `download=<file>` for a
+ * transfer the stand-in downloader plays back (`size=<bytes>`, `at=<percent>` already received,
+ * `speed=<bytes per second>`, `paused`, `fail=<error>`, `deleted` for a finished file since gone
+ * from disk, `private`, `url=<url>`, `mime=<type>`). When several are given, `page` wins over
+ * `overlay`, `overlay` over `menu`, `menu` over `find`, `find` over `pull`, `pull` over `zoom`,
+ * `zoom` over `error`, `error` over the messages, the messages over `webapp`, `webapp` over
+ * `private` and `private` over `download`. A leading `#` (the URL hash as read) is ignored.
  */
 export function parsePreviewSpec(spec: string): PreviewState {
   const params = new URLSearchParams(spec.startsWith('#') ? spec.slice(1) : spec)
@@ -197,9 +221,15 @@ export function parsePreviewSpec(spec: string): PreviewState {
     if (params.has('expand')) state.expand = true
     return state
   }
-  if (params.get('menu') === 'app') {
+  const menu = params.get('menu')
+  if (menu !== null && (PREVIEW_MENUS as readonly string[]).includes(menu)) {
     const show = params.get('show')
-    return show ? { kind: 'menu', show } : { kind: 'menu' }
+    const state: Extract<PreviewState, { kind: 'menu' }> = {
+      kind: 'menu',
+      menu: menu as PreviewMenu
+    }
+    if (show) state.show = show
+    return state
   }
   const find = params.get('find')
   if (find !== null) return { kind: 'find', text: find }
@@ -241,6 +271,14 @@ export function parsePreviewSpec(spec: string): PreviewState {
   const webapp = params.get('webapp')
   if (webapp !== null && (PREVIEW_WEBAPP_SURFACES as readonly string[]).includes(webapp)) {
     return { kind: 'webapp', surface: webapp as PreviewWebAppSurface }
+  }
+  const priv = params.get('private')
+  if (priv !== null && (PREVIEW_PRIVATE_SURFACES as readonly string[]).includes(priv)) {
+    return {
+      kind: 'private',
+      surface: priv as PreviewPrivateSurface,
+      url: params.get('url') || null
+    }
   }
   const download = params.get('download')
   if (download) return { kind: 'download', download: parseDownload(download, params) }

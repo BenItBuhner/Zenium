@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   PREVIEW_OVERLAYS,
+  PREVIEW_PRIVATE_SURFACES,
   PREVIEW_PULL_MAX,
   PREVIEW_WEBAPP_SURFACES,
   parsePreviewSpec,
@@ -59,18 +60,48 @@ describe('parsePreviewSpec', () => {
   })
 
   it('opens the app menu, behind an overlay but ahead of the bars', () => {
-    expect(parsePreviewSpec('menu=app')).toEqual({ kind: 'menu' })
+    expect(parsePreviewSpec('menu=app')).toEqual({ kind: 'menu', menu: 'app' })
     expect(parsePreviewSpec('menu=app&show=Desktop Site')).toEqual({
       kind: 'menu',
+      menu: 'app',
       show: 'Desktop Site'
     })
-    expect(parsePreviewSpec('menu=app&find=x')).toEqual({ kind: 'menu' })
-    expect(parsePreviewSpec('menu=app&zoom=2')).toEqual({ kind: 'menu' })
+    expect(parsePreviewSpec('menu=app&find=x')).toEqual({ kind: 'menu', menu: 'app' })
+    expect(parsePreviewSpec('menu=app&zoom=2')).toEqual({ kind: 'menu', menu: 'app' })
     expect(parsePreviewSpec('overlay=history&menu=app')).toEqual({
       kind: 'overlay',
       overlay: 'history'
     })
+    // The Tabs button's quick menu is the other one; a menu with no sheet of its own is idle.
+    expect(parsePreviewSpec('menu=tabs')).toEqual({ kind: 'menu', menu: 'tabs' })
     expect(parsePreviewSpec('menu=context')).toEqual({ kind: 'idle' })
+  })
+
+  it('shows a private tab and the overview panes by surface', () => {
+    for (const surface of PREVIEW_PRIVATE_SURFACES) {
+      expect(parsePreviewSpec(`private=${surface}`)).toEqual({
+        kind: 'private',
+        surface,
+        url: null
+      })
+    }
+    expect(parsePreviewSpec('private=page&url=https://example.org/')).toEqual({
+      kind: 'private',
+      surface: 'page',
+      url: 'https://example.org/'
+    })
+    // An unknown surface is idle; the bare `private` flag belongs to a download.
+    expect(parsePreviewSpec('private=window')).toEqual({ kind: 'idle' })
+    expect(parsePreviewSpec('download=a.pdf&private')).toMatchObject({
+      kind: 'download',
+      download: { private: true }
+    })
+    // Behind an "Add to Home screen" surface, ahead of a download.
+    expect(parsePreviewSpec('webapp=banner&private=newtab')).toEqual({
+      kind: 'webapp',
+      surface: 'banner'
+    })
+    expect(parsePreviewSpec('private=empty&download=a.pdf')).toMatchObject({ kind: 'private' })
   })
 
   it('puts up messages and the load bar together', () => {

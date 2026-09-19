@@ -1,21 +1,26 @@
 import { run } from '@renderer/lib/api'
 import { dispatchBackEvent, topBackSurface } from '@renderer/lib/back'
 import { dismissOverview, openOverview } from '@renderer/lib/gestures/stage'
+import { isPrivateTab, pickOverviewPane } from '@renderer/lib/privateTabs'
 import { abortPull, dispatchPullEvent, PULL_THRESHOLD, pullTravelFor } from '@renderer/lib/pull'
 import { Download, Smartphone, Star } from 'lucide-react'
 import { installBannerShown, presentInstallBanner } from '@renderer/lib/installBanner'
 import { isInternalPageUrl } from '@shared/internalPages'
+import type { Tab, UIState } from '@shared/types'
+import { isEmptyTabUrl } from '@shared/url'
 import { activeTab } from '@renderer/lib/selectors'
 import {
   browserStore,
   closeMenu,
   closeOverlay,
+  closeTabsMenu,
   closeUrlbar,
   dismissBanner,
   dismissToast,
   forgetBanner,
   forgetToast,
   openOverlay,
+  openTabsMenu,
   openUrlbar,
   openZoom,
   pushToast,
@@ -25,7 +30,12 @@ import {
 import type { HostGlobal } from './boot'
 import { PREVIEW_WEB_APP, postPreviewManifest } from './preview'
 import { PREVIEW_DOWNLOAD_EVENT } from './previewDownloads'
-import { parsePreviewSpec, type PreviewStep, type PreviewWebAppSurface } from './previewSpec'
+import {
+  parsePreviewSpec,
+  type PreviewPrivateSurface,
+  type PreviewStep,
+  type PreviewWebAppSurface
+} from './previewSpec'
 
 /** A pause between steps for a sheet to mount, slide in and settle before the next tap. */
 const STEP_SETTLE_MS = 450
@@ -51,9 +61,11 @@ const SHEET_LEAVE_MS = 1500
  * (the page zoom sheet at that factor), `error=<code>` (the active tab's load failed with that
  * Chromium `net::` code, `url=<target>` naming the URL that failed: the zen://error page is up),
  * the message surfaces and the load bar: `toast=<text>&action=<label>`, `banners=<n>`,
- * `progress=<0…1>`, `webapp=<surface>` (an "Add to Home screen" surface on the active tab) or
- * `download=<file>` (the stand-in downloader starts that transfer; see `PreviewDownloadSpec`). It
- * comes in as the URL hash, `http://localhost:41734/#overlay=history`, or as
+ * `progress=<0…1>`, `webapp=<surface>` (an "Add to Home screen" surface on the active tab),
+ * `private=<surface>` (a private tab on its new tab page or on `url=<page>`, and the overview's
+ * Tabs and Private panes; see `PREVIEW_PRIVATE_SURFACES`), `menu=tabs` (the Tabs button's quick
+ * menu) or `download=<file>` (the stand-in downloader starts that transfer; see
+ * `PreviewDownloadSpec`). It comes in as the URL hash, `http://localhost:41734/#overlay=history`, or as
  * `window.postMessage({ zenPreview: 'find=coffee' }, '*')`, which also re-applies an unchanged
  * state. Once applied it is echoed in `<html data-preview-state>` so a driver can wait for it;
  * `.github/scripts/android-preview-shots.mjs` is one.
@@ -77,6 +89,7 @@ function apply(spec: string): void {
     // pill's editor, the overview and the page's sheets a previous state's steps opened go too.
     closeOverlay()
     closeMenu()
+    closeTabsMenu()
     closeUrlbar()
     dismissOverview()
     uiStore.set({ findOpen: false, findTabId: null, zoomTabId: null, install: null })
@@ -84,8 +97,24 @@ function apply(spec: string): void {
     const state = browserStore.get().state
     const tab = state ? activeTab(state) : null
     clearMessages(tab?.loading ? tab.id : null)
-    closeSheets(() => reach(spec))
+    // A private tab a previous state opened goes too (its session ends, as when the user closes
+    // the last one): the next state starts on the regular tabs, and an "empty" pane is empty.
+    closePrivateTabs(() => closeSheets(() => reach(spec)))
   })
+}
+
+/** Close the private tabs, then `then` once none is left. */
+function closePrivateTabs(then: () => void): void {
+  if (!anyPrivateTab(browserStore.get().state)) {
+    then()
+    return
+  }
+  void run('tab.closePrivate', undefined)
+  whenState((state) => !anyPrivateTab(state), then)
+}
+
+function anyPrivateTab(state: UIState | null): boolean {
+  return state !== null && Object.values(state.tabs).some(isPrivateTab)
 }
 
 /**
@@ -120,22 +149,25 @@ function reach(spec: string): void {
     // The page tab is the state: reached once the active tab is a page tab and the page has its
     // rows (its chunk loads on the first open), then a moment for its drill-in's slide to settle
     // before the search is typed, a row shown or a step taken.
-    whenActiveTabIs(isInternalPageUrl, () => {
-      whenPageRendered(() => {
-        setTimeout(() => {
-          // The landing keeps its query between states unless it is retyped: an empty one clears it.
-          type('input[aria-label="Find in Settings"]', target.search ?? '')
-          requestAnimationFrame(() => {
-            // The page keeps where a previous state scrolled it; every state starts at the top.
-            for (const el of document.querySelectorAll<HTMLElement>('[data-page] *')) {
-              if (el.scrollTop > 0) el.scrollTop = 0
-            }
-            show(target.show)
-            steps(target.then ?? [], () => done(spec))
-          })
-        }, 300)
-      })
-    })
+    whenActiveTabIs(
+      (active) => isInternalPageUrl(active.url),
+      () => {
+        whenPageRendered(() => {
+          setTimeout(() => {
+            // The landing keeps its query between states unless it is retyped: an empty one clears it.
+            type('input[aria-label="Find in Settings"]', target.search ?? '')
+            requestAnimationFrame(() => {
+              // The page keeps where a previous state scrolled it; every state starts at the top.
+              for (const el of document.querySelectorAll<HTMLElement>('[data-page] *')) {
+                if (el.scrollTop > 0) el.scrollTop = 0
+              }
+              show(target.show)
+              steps(target.then ?? [], () => done(spec))
+            })
+          }, 300)
+        })
+      }
+    )
     run('page.open', { id: target.page, section: target.section ?? null })
   } else if (target.kind === 'overlay') {
     void openOverlay(target.overlay, tab?.id ?? null, null, null, target.section ?? null).then(
@@ -149,6 +181,18 @@ function reach(spec: string): void {
     // The stand-in host (preview.ts) plays the transfer back; it reports like Kotlin would.
     window.dispatchEvent(new CustomEvent(PREVIEW_DOWNLOAD_EVENT, { detail: target.download }))
     done(spec)
+  } else if (target.kind === 'menu' && target.menu === 'tabs') {
+    // A hold on the Tabs button: its quick menu, anchored to the button as the hold would.
+    const button = document.querySelector<HTMLElement>('[data-bar-item="tabs"]')
+    const rect = button?.getBoundingClientRect()
+    if (!rect) {
+      done(spec)
+      return
+    }
+    void openTabsMenu(
+      { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
+      tab?.id ?? null
+    ).then(() => requestAnimationFrame(() => done(spec)))
   } else if (target.kind === 'menu') {
     // The core answers with `menu.show`; the state is reached once the descriptor is in the store.
     const unsubscribe = uiStore.subscribe(() => {
@@ -163,6 +207,8 @@ function reach(spec: string): void {
       )
     })
     run('app.menu', {})
+  } else if (target.kind === 'private' && state) {
+    applyPrivate(target.surface, target.url ?? PRIVATE_PAGE, state, spec)
   } else if (target.kind === 'zoom' && tab) {
     if (target.factor !== null) run('tab.setZoomFactor', { tabId: tab.id, factor: target.factor })
     openZoom(tab.id)
@@ -285,11 +331,18 @@ function whenPageRendered(fn: () => void, deadline = performance.now() + PAGE_RE
 }
 
 /** Runs `fn` once the active tab satisfies `test` (at once when it already does). */
-function whenActiveTabIs(test: (url: string) => boolean, fn: () => void): void {
+function whenActiveTabIs(test: (tab: Tab) => boolean, fn: () => void): void {
+  whenState((state) => {
+    const tab = activeTab(state)
+    return tab !== null && test(tab)
+  }, fn)
+}
+
+/** Runs `fn` once the browser state satisfies `test` (at once when it already does). */
+function whenState(test: (state: UIState) => boolean, fn: () => void): void {
   const check = (): boolean => {
     const state = browserStore.get().state
-    const tab = state ? activeTab(state) : null
-    return tab !== null && test(tab.url)
+    return state !== null && test(state)
   }
   if (check()) {
     fn()
@@ -300,6 +353,81 @@ function whenActiveTabIs(test: (url: string) => boolean, fn: () => void): void {
     unsubscribe()
     fn()
   })
+}
+
+/** The page a private tab is put on when the state names none. */
+const PRIVATE_PAGE = 'https://example.com/'
+
+/**
+ * A private tab and the overview's panes, the way the app reaches them: the tab through
+ * `tab.newPrivate` (the app menu's item, the quick menu's, the shortcut's), the overview through
+ * the Tabs button, which lands on the active tab's pane; the Private pane over regular tabs is
+ * the segment's pick. The theme blends to the private one as the tab becomes active (`useTheme`),
+ * so a driver's settle covers the spring.
+ */
+function applyPrivate(
+  surface: PreviewPrivateSurface,
+  url: string,
+  state: UIState,
+  spec: string
+): void {
+  const from = activeTab(state)
+  const onPrivateTab = (test: (tab: Tab) => boolean, then: () => void): void =>
+    whenActiveTabIs((tab) => isPrivateTab(tab) && test(tab), then)
+  const overviewUp = (then: () => void): void => {
+    const now = browserStore.get().state
+    if (now) openOverview(now)
+    // The grid mounts on the next render, the pane's fade after it.
+    requestAnimationFrame(() => requestAnimationFrame(then))
+  }
+  switch (surface) {
+    case 'newtab':
+      void run('tab.newPrivate', {})
+      onPrivateTab(
+        (tab) => isEmptyTabUrl(tab.url),
+        () => done(spec)
+      )
+      return
+    case 'page':
+      void run('tab.newPrivate', { url })
+      onPrivateTab(
+        (tab) => tab.url === url,
+        () => done(spec)
+      )
+      return
+    case 'overview':
+      void run('tab.newPrivate', { url })
+      onPrivateTab(
+        (tab) => tab.url === url,
+        () => overviewUp(() => done(spec))
+      )
+      return
+    case 'tabs':
+      // A private tab open, the regular one active again: the overview opens on Tabs, with the
+      // segment offering Private and no private card among the regular ones.
+      void run('tab.newPrivate', { url })
+      onPrivateTab(
+        (tab) => tab.url === url,
+        () => {
+          if (!from) {
+            overviewUp(() => done(spec))
+            return
+          }
+          void run('tab.activate', { tabId: from.id })
+          whenActiveTabIs(
+            (tab) => tab.id === from.id,
+            () => overviewUp(() => done(spec))
+          )
+        }
+      )
+      return
+    case 'empty':
+      overviewUp(() => {
+        pickOverviewPane('private')
+        requestAnimationFrame(() => requestAnimationFrame(() => done(spec)))
+      })
+      return
+  }
 }
 
 /**
