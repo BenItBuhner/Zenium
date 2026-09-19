@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import chromeCss from '../../renderer/src/assets/main.css?raw'
 import { classifyViewport, type ViewportMetrics } from '../formFactor'
-import { errorPageUrl } from '../url'
+import { errorPageUrl, httpsOnlyPageUrl, safeBrowsingPageUrl } from '../url'
 import { INTERSTITIAL_MESSAGE_KEY } from '../interstitial'
 import type { CertificateDetails } from '../types'
 import {
@@ -346,6 +346,95 @@ describe('errorPageHtml', () => {
     expect(html).toContain('Zenium blocked this page')
     expect(html).toContain('<strong>ads.example</strong>')
   })
+
+  describe('the warning pages (Safe Browsing, HTTPS-only mode)', () => {
+    const safeBrowsing = errorPageHtml(
+      parseZenUrl(safeBrowsingPageUrl('https://evil.example/login', 'phishing'))!
+    )
+    const httpsOnly = errorPageHtml(parseZenUrl(httpsOnlyPageUrl('http://plain.example/', -102))!)
+
+    it('is the v2 error surface with a title block in status ink and the actions under it', () => {
+      for (const html of [safeBrowsing, httpsOnly]) {
+        expect(html).toContain('<html class="zen-error-document">')
+        expect(html).toContain('<body class="zen-error-page">')
+        expect(html).toContain('<script>' + ERROR_PAGE_ATTRIBUTES_SCRIPT + '</script>')
+        expect(html).toContain('<style>' + errorPageStyle() + '</style>')
+        expect(html).toContain('class="zen-interstitial-title"')
+        expect(html).toContain('class="zen-interstitial-actions"')
+      }
+      expect(safeBrowsing).toContain(
+        '<main data-interstitial="safebrowsing" data-threat="phishing">'
+      )
+      expect(safeBrowsing).toContain('data-tone="danger"')
+      expect(httpsOnly).toContain('<main data-interstitial="https-only">')
+      expect(httpsOnly).toContain('data-tone="warn"')
+    })
+
+    it('makes Back to safety the one primary, trailing, with Details and the way on as secondaries', () => {
+      for (const html of [safeBrowsing, httpsOnly]) {
+        expect(html.match(/<button[^>]* data-primary/g)).toHaveLength(1)
+        expect(html).toContain(
+          'class="zen-v2-button zen-interstitial-action" data-primary autofocus data-action="back"><span class="zen-interstitial-label">Back to safety</span>'
+        )
+        expect(html).toContain(
+          'id="zen-details-toggle" class="zen-v2-button zen-interstitial-action" aria-expanded="false" aria-controls="zen-details">Details</button>'
+        )
+        expect(html.indexOf('>Details</button>')).toBeLessThan(html.indexOf('data-action="back"'))
+        expect(html).toContain('<section id="zen-details" class="zen-interstitial-details" hidden>')
+      }
+      // Safe Browsing's way on is under Details, in danger ink; HTTPS-only's Continue stands
+      // beside Back to safety and Always allow is under Details.
+      expect(safeBrowsing).toContain(
+        'zen-interstitial-action zen-interstitial-danger" data-action="proceed"><span class="zen-interstitial-label">Proceed anyway (unsafe)</span>'
+      )
+      expect(safeBrowsing.indexOf('id="zen-details"')).toBeLessThan(
+        safeBrowsing.indexOf('data-action="proceed"')
+      )
+      expect(httpsOnly).toContain(
+        'data-action="continue"><span class="zen-interstitial-label">Continue to HTTP site</span>'
+      )
+      expect(httpsOnly.indexOf('data-action="continue"')).toBeLessThan(
+        httpsOnly.indexOf('data-action="back"')
+      )
+      expect(httpsOnly).toContain(
+        'data-action="continue-always"><span class="zen-interstitial-label">Always allow for this site</span>'
+      )
+      expect(httpsOnly.indexOf('id="zen-details"')).toBeLessThan(
+        httpsOnly.indexOf('data-action="continue-always"')
+      )
+    })
+
+    it('every action carries the spinner it shows while busy and posts the page message for its URL', () => {
+      expect(safeBrowsing.match(/class="zen-interstitial-spinner"/g)).toHaveLength(2)
+      expect(httpsOnly.match(/class="zen-interstitial-spinner"/g)).toHaveLength(3)
+      expect(safeBrowsing).toContain(
+        `window.postMessage({${INTERSTITIAL_MESSAGE_KEY}:{action:b.dataset.action,url:"https://evil.example/login"}},"*")`
+      )
+      expect(httpsOnly).toContain(
+        `window.postMessage({${INTERSTITIAL_MESSAGE_KEY}:{action:b.dataset.action,url:"http://plain.example/"}},"*")`
+      )
+      expect(safeBrowsing).toContain('b.setAttribute("aria-busy","true")')
+      expect(safeBrowsing).toContain('if(o!==b)o.disabled=true')
+    })
+
+    it('names the site and the reason, escaped, and says where the setting lives', () => {
+      expect(safeBrowsing).toContain(
+        '<strong>evil.example</strong> is on one of the open malware and phishing feeds'
+      )
+      expect(safeBrowsing).toContain(
+        'class="zen-interstitial-address">https://evil.example/login</p>'
+      )
+      expect(httpsOnly).toContain(
+        'Zenium tried to reach <strong>plain.example</strong> over https and could not.'
+      )
+      expect(httpsOnly).toContain('(-102)')
+      expect(httpsOnly).toContain('Settings &rsaquo; Privacy and Security')
+      const hostile = errorPageHtml(
+        parseZenUrl(httpsOnlyPageUrl('http://<img src=x onerror=alert(1)>/', -102))!
+      )
+      expect(hostile).not.toContain('<img')
+    })
+  })
 })
 
 describe('inPlaceErrorPageScript', () => {
@@ -403,6 +492,19 @@ describe('errorPageStyle', () => {
       style.indexOf(":root[data-form-factor='phone'] .zen-error-actions > * {")
     )
     expect(phone.slice(0, phone.indexOf('}'))).toContain('flex: 1;')
+  })
+
+  it('anchors the block at 30% of the page and right-aligns the warning pages’ action row', () => {
+    // §9.17: the top edge at 30% (16 minimum), never centred, so Details grows downward; §9.11:
+    // the page's action row hugs and right-aligns on desktop (the phone's buttons fill the row).
+    const page = style.slice(
+      style.indexOf('.zen-error-page {'),
+      style.indexOf('.zen-error-page main {')
+    )
+    expect(page).toContain('padding: max(16px, 30vh) 24px 24px;')
+    expect(page).not.toContain('justify-content')
+    const actions = style.slice(style.indexOf('.zen-interstitial-actions {'))
+    expect(actions.slice(0, actions.indexOf('}'))).toContain('justify-content: flex-end;')
   })
 
   it('is what the built page carries, and degrades to nothing when a marker is gone', () => {

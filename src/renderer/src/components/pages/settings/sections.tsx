@@ -87,6 +87,13 @@ import {
   ZoomBlock
 } from './blocks'
 import { choice, type RowGroup, type SectionModel, type SettingsRow } from './model'
+import {
+  cookiesGroups,
+  httpsOnlyGroups,
+  safeBrowsingGroups,
+  secureDnsGroups,
+  signalsGroups
+} from './protectionRows'
 import { trackingGroups } from './tracking'
 
 /**
@@ -1019,7 +1026,8 @@ function downloadsSection({ state, set }: SectionContext): RowGroup[] {
 
 // ---------------------------------------------------------------------------
 // Privacy and Security (ad and tracker blocking, the site-controls program's Safety check, Clear
-// browsing data and Site settings blocks; the remembered per-site answers are Security's)
+// browsing data and Site settings blocks, the protection groups of `protectionRows.tsx`; the
+// remembered per-site answers are Security's)
 // ---------------------------------------------------------------------------
 
 /**
@@ -1027,15 +1035,23 @@ function downloadsSection({ state, set }: SectionContext): RowGroup[] {
  * prevention, Clear browsing data, Cookies, Site settings, HTTPS-only, Secure DNS, Privacy
  * signals – each program's groups self-contained: the site-controls program's
  * (`siteControls/settingsRows`) at the safety-check, clear-browsing-data and site-settings
- * positions, the request engine's (`tracking.tsx`) at the tracking-prevention position; the
- * remembered per-site answers are Security's (`securitySection`).
+ * positions, the request engine's (`tracking.tsx`) at the tracking-prevention position, the
+ * protection program's (`protectionRows.tsx`) at the safe-browsing, cookies, https-only,
+ * secure-dns and privacy-signals positions; the remembered per-site answers are Security's
+ * (`securitySection`).
  */
 function privacySection(ctx: SectionContext): RowGroup[] {
+  const { state, set } = ctx
   return [
     ...safetyCheckGroups(ctx),
+    ...safeBrowsingGroups(state, set),
     ...trackingGroups(ctx),
     ...clearDataGroups(ctx),
-    ...siteSettingsGroups(ctx)
+    ...cookiesGroups(state, set),
+    ...siteSettingsGroups(ctx),
+    ...httpsOnlyGroups(state, set),
+    ...secureDnsGroups(state, set),
+    ...signalsGroups(state, set)
   ]
 }
 

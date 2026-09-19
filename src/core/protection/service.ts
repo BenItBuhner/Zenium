@@ -11,8 +11,10 @@ import {
   type PrivacyFlags,
   type PrivacySettings,
   type PrivacyStatus,
+  type ProtectionCheck,
   type SecureDnsMode
 } from '../../shared/privacy'
+import { RESOLVER_UNREACHABLE, resolverCheckOf, resolverProbeUrl } from './checks'
 import { isNonUniqueHost } from '../../shared/nonUniqueHost'
 import { interstitialKindOf, safeBrowsingPageUrl } from '../../shared/url'
 import { BLOCKED_BY_CLIENT_CODE } from '../../shared/zenPages'
@@ -34,6 +36,9 @@ import { BLOCKED_BY_CLIENT_CODE } from '../../shared/zenPages'
  * The other privacy tools of Settings, Clear browsing data and Safety check, are
  * `PrivacyService` (`src/core/privacy.ts`).
  */
+/** A resolver that takes longer than this to answer one question is not one the browser should wait on. */
+const RESOLVER_CHECK_TIMEOUT_MS = 6_000
+
 export class ProtectionService {
   readonly safeBrowsing: SafeBrowsingService
   /** Hosts allowed over plaintext until the browser closes (the warning page's "Continue"). */
@@ -205,6 +210,30 @@ export class ProtectionService {
     this.browser.permissions.set(HTTPS_ONLY_PERMISSION, `http://${host}`, null)
     this.refresh()
     this.browser.state.commitVolatile()
+  }
+
+  /**
+   * Ask the resolver at `template` one question before Settings keeps it (the §9.30 busy form
+   * behind the Custom resolver field): a GET for a name every resolver answers. Any answer is
+   * a resolver; an error status or nothing reachable at the address is the refusal.
+   */
+  async checkResolver(template: string): Promise<ProtectionCheck> {
+    const url = resolverProbeUrl(template)
+    if (!url) {
+      return {
+        ok: false,
+        problem: 'Enter a DNS-over-HTTPS address such as https://dns.example/dns-query'
+      }
+    }
+    try {
+      const response = await this.browser.platform.net.fetchText(url, {
+        headers: { Accept: 'application/dns-message' },
+        timeoutMs: RESOLVER_CHECK_TIMEOUT_MS
+      })
+      return resolverCheckOf(response.status)
+    } catch {
+      return RESOLVER_UNREACHABLE
+    }
   }
 
   private syncHttpsOnlyRules(): void {

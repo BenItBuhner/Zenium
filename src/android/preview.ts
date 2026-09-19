@@ -463,6 +463,7 @@ export function createPreviewBridge(): NativeBridge {
     'voice.start': () => voice.start(),
     'voice.cancel': () => voice.cancel(),
     'voice.openSettings': () => console.info('[zen preview] app settings (microphone)'),
+    'app.openPrivateDnsSettings': () => console.info('[zen preview] private DNS settings'),
     'externalProtocol.respond': ({ requestId, allow }) =>
       console.info('[zen preview] external protocol', requestId, allow ? 'allowed' : 'refused'),
     // The browser role, remembered per preview profile; the "role dialog" is a confirm().

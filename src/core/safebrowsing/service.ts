@@ -1,12 +1,14 @@
 import type { Browser } from '../browser'
 import type { StoreIO } from '../platform'
 import type {
+  ProtectionCheck,
   SafeBrowsingFeedStatus,
   SafeBrowsingHit,
   SafeBrowsingStatus,
   SafeBrowsingThreat
 } from '../../shared/privacy'
 import { hostnameOf } from '../blocking/domain'
+import { apiKeyCheckOf, apiKeyProbeUrl } from '../protection/checks'
 import {
   makeDanger,
   type DangerVerdictProvider,
@@ -344,6 +346,27 @@ export class SafeBrowsingService {
       this.changed()
       console.warn('[zenium] Safe Browsing lookup failed:', describeError(error))
       return null
+    }
+  }
+
+  /**
+   * Try `key` against the API before Settings keeps it (the §9.30 busy form behind the key
+   * field): one `hashes:search` for a prefix that is on no list. Google refusing the key is the
+   * refusal; an answer, a quota reply or no reachable Google at all lets the key through – the
+   * lookups' own failures show on the field's status line once the key is in use.
+   */
+  async checkKey(key: string): Promise<ProtectionCheck> {
+    const url = apiKeyProbeUrl(key)
+    if (!url) return { ok: false, problem: 'A key is letters, digits, dashes and underscores' }
+    try {
+      const response = await this.browser.platform.net.fetchText(url, {
+        headers: { Accept: 'application/json' },
+        timeoutMs: REMOTE_TIMEOUT_MS
+      })
+      return apiKeyCheckOf(response.status, response.text)
+    } catch (error) {
+      console.warn('[zenium] Safe Browsing key check did not reach Google:', describeError(error))
+      return { ok: true }
     }
   }
 

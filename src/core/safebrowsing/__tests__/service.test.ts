@@ -303,6 +303,35 @@ describe('SafeBrowsingService', () => {
     expect(service.lookup('https://bad.example/login')).toBeNull()
   })
 
+  it('tries a key against the API and refuses only what Google refuses', async () => {
+    const f = fake()
+    const service = start(f)
+    f.fetchText.mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      text: JSON.stringify({
+        error: { message: 'API key not valid. Please pass a valid API key.' }
+      })
+    })
+    expect(await service.checkKey('AIzaWrong')).toEqual({
+      ok: false,
+      problem: 'Google rejected this key: API key not valid. Please pass a valid API key'
+    })
+    const probe = new URL(f.fetchText.mock.calls[0][0])
+    expect(probe.searchParams.get('key')).toBe('AIzaWrong')
+    expect(probe.searchParams.get('hashPrefixes')).toBe('AAAAAA==')
+
+    f.fetchText.mockResolvedValueOnce({ ok: true, status: 200, text: '{}' })
+    expect(await service.checkKey('AIzaRight')).toEqual({ ok: true })
+
+    // Google out of reach: the key goes through; its lookups' failures show on the status line.
+    f.fetchText.mockRejectedValueOnce(new Error('offline'))
+    expect(await service.checkKey('AIzaRight')).toEqual({ ok: true })
+
+    expect(await service.checkKey('not a key')).toMatchObject({ ok: false })
+    expect(f.fetchText).toHaveBeenCalledTimes(3)
+  })
+
   it('gives downloads from listed hosts a dangerous verdict', async () => {
     const f = fake()
     f.io.files.set(feedFile('urlhaus'), JSON.stringify(document('urlhaus', ['evil.example'])))
