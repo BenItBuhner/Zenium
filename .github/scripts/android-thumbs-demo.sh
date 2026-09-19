@@ -13,8 +13,10 @@
 #             makes the death explicit), the recording parts cleared;
 #   act two   ThumbsRestoreDemo: the profile and the cache kept, the pages answered 40 s late, the
 #             restored overview pulled in before any page could have painted – the cards must
-#             already show their pictures from disk (BH-33) – and a stale picture planted under
-#             an id the session lacks must be gone (the sweep at boot).
+#             already show their pictures from disk (BH-33; the files stamped with their
+#             documents), a file of another page planted under a live tab's id must be refused
+#             and then replaced once the page was seen – and a stale picture planted under an id
+#             the session lacks must be gone (the sweep at boot).
 #
 # Each act's video, screenshots, findings and logs land under act-1/ and act-2/ of DEMO_OUT; the
 # lines the browser logs for each picture (size, bytes, copy and encode time) are gathered into

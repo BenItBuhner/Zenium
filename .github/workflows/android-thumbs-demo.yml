@@ -6,10 +6,11 @@ name: Android thumbnails demo
 # must show the placeholder, never the page it left: BH-14), the navigated tab shown and left
 # (its card refreshed), home and back; then `am force-stop`, and the restored session's overview
 # pulled in before any page could have painted – the cards must already show their pictures from
-# disk (BH-33), and the sweep at boot must have taken a stale one. Uploads both acts' videos,
-# screenshots, findings and the cost of every picture from the log. Dispatch-only, like the
-# gesture demo: it takes about twelve minutes. The build, the emulator and the Gradle cache live
-# in android-emulator-demo.yml; this file only picks the driver.
+# disk (BH-33: the files stamped with their documents), a file of another page planted under a
+# live tab's id must be refused, and the sweep at boot must have taken a stale one. Uploads both
+# acts' videos, screenshots, findings and the cost of every picture from the log. Dispatch-only,
+# like the gesture demo: it takes about twelve minutes. The build, the emulator and the Gradle
+# cache live in android-emulator-demo.yml; this file only picks the driver.
 on:
   workflow_dispatch:
 

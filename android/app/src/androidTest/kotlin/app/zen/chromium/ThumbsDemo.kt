@@ -28,7 +28,11 @@ import kotlin.math.max
  *    the cost of each picture in the log and the process's memory before and after.
  *  - [ThumbsRestoreDemo], the second act, after the workflow script force-stopped the process:
  *    the same pages answered 40 s late, so no page can have painted when the restored overview
- *    is pulled in – the cards must already show purple, green and blue from disk (BH-33); a stale
+ *    is pulled in – the purple and green cards must already show their pages from disk (BH-33:
+ *    the files stamped with their documents, read for them), while the blue tab's file, replaced
+ *    before the launch by a copy of the green one (a picture of a page the tab is not on, as a
+ *    kill between a navigation and the next capture leaves), must be refused for the placeholder
+ *    (BH-14 across the kill) and replaced once the blue page has been seen and left; a stale
  *    picture planted under a tab id the session does not have must be gone (the sweep at boot).
  *
  * Driven by `.github/scripts/android-thumbs-demo.sh` through the `android-thumbs-demo` workflow.
@@ -327,7 +331,9 @@ class ThumbsDemo : ThumbsDemoBase("thumbs-demo-state.json", "thumbs", "thumbs-de
 
 /**
  * The second act, after `am force-stop`: the restored session's cards show their pictures before
- * any page has painted, and the sweep at boot removed the picture of a tab the session lacks.
+ * any page has painted (the stamped files read for their documents), a file of another page
+ * under a live tab's id is refused and then replaced, and the sweep at boot removed the picture
+ * of a tab the session lacks.
  */
 @RunWith(AndroidJUnit4::class)
 class ThumbsRestoreDemo : ThumbsDemoBase(null, "thumbs-restore", "thumbs-restore-demo", keepProfile = true, pageDelayMs = 40_000) {
@@ -336,11 +342,16 @@ class ThumbsRestoreDemo : ThumbsDemoBase(null, "thumbs-restore", "thumbs-restore
     private var launchedAt = 0L
 
     override fun beforeLaunch() {
-        // A picture under an id the session does not have: the sweep at boot must take it.
         val dir = File(app.cacheDir, Thumbnails.DIR).apply { mkdirs() }
         val live = File(dir, "tab_green${Thumbnails.SUFFIX}")
+        // A picture under an id the session does not have: the sweep at boot must take it.
         val stale = File(dir, "tab_stale${Thumbnails.SUFFIX}")
         if (live.isFile) live.copyTo(stale, overwrite = true) else stale.writeBytes(ByteArray(64))
+        // The green page's picture under the blue tab's id: what a kill between a navigation and
+        // the next capture leaves under a live tab. Its stamp names the green page, the tab is on
+        // the blue one: the read must refuse it, and the card show the placeholder, never green.
+        val planted = File(dir, "tab_blue${Thumbnails.SUFFIX}")
+        if (live.isFile) live.copyTo(planted, overwrite = true) else note("no tab_green picture to plant under tab_blue")
         note("pictures on disk before the relaunch: ${pictures()}")
         launchedAt = SystemClock.uptimeMillis()
     }
@@ -354,19 +365,20 @@ class ThumbsRestoreDemo : ThumbsDemoBase(null, "thumbs-restore", "thumbs-restore
         check("no page painted yet", PAGES.none { near(it.color, page) }, "page area shows ${hex(page)} while the server holds every page 40 s")
         shot.recycle()
 
-        // The overview at once: the cards from disk, before any page could have painted (BH-33).
+        // The overview at once: the cards from disk, before any page could have painted (BH-33) –
+        // the stamped files read for their documents; the blue tab's, of the green page, refused.
         openOverview()
         shot = capture("02-restored-overview-pictures-before-pages")
-        judgeCard(shot, "Purple page", PURPLE, "restored purple card from disk (BH-33)")
-        judgeCard(shot, "Green page", GREEN, "restored green card from disk (BH-33)")
-        judgeCard(shot, "Blue page", BLUE, "restored blue card from disk (BH-33)")
+        judgeCard(shot, "Purple page", PURPLE, "restored purple card from its stamped file (BH-33)")
+        judgeCard(shot, "Green page", GREEN, "restored green card from its stamped file (BH-33)")
+        judgeCard(shot, "Blue page", null, "blue card refuses the file of another page (the stamp; BH-14 across a kill)")
         shot.recycle()
         val now = activeCoreTab()
         note("while the overview is up: active ${now?.optString("id")} loading ${now?.optBoolean("loading")}, ${SystemClock.uptimeMillis() - launchedAt} ms after the launch")
         val onDisk = pictures()
         check("sweep at boot", !onDisk.contains("tab_stale") && onDisk.contains("tab_green"), onDisk)
 
-        // A real touch on the blue card, then the page arrives: the picture stood in until it did.
+        // A real touch on the blue card, then the page arrives: the placeholder stood in until it did.
         tapCard("Blue page")
         check("card tap (touch) switched to blue", activeTabId() == "tab_blue", "active ${activeTabId()}")
         val deadline = SystemClock.uptimeMillis() + 60_000
@@ -381,6 +393,14 @@ class ThumbsRestoreDemo : ThumbsDemoBase(null, "thumbs-restore", "thumbs-restore
         note("the blue page painted ${SystemClock.uptimeMillis() - launchedAt} ms after the launch: $painted")
         shot = capture("03-blue-page-painted")
         shot.recycle()
+
+        // The blue page seen and left: its picture replaces the refused file, and the card shows it.
+        flingRight(); settle()
+        openOverview()
+        shot = capture("04-overview-blue-card-replaced")
+        judgeCard(shot, "Blue page", BLUE, "blue card replaced after the refused file")
+        shot.recycle()
+        note("pictures on disk at the end: ${pictures()}")
         note("memory after the restore: ${memory()}")
         finish()
     }
