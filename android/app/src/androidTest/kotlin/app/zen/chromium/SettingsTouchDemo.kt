@@ -4,12 +4,14 @@ import android.graphics.Rect
 import android.os.Build
 import android.os.SystemClock
 import android.util.Log
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.json.JSONObject
 import org.json.JSONTokener
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import kotlin.math.abs
 
 /**
  * A finger on a phone Settings sheet, for the `android-settings-touch-demo` workflow: the
@@ -115,20 +117,32 @@ class SettingsTouchDemo : DemoHarness("settings-tab-demo-state.json", "android-s
         }
         if (failures.isNotEmpty()) return
 
-        // 4. THE touch: on the option that is not the current one, where the tree says it is.
+        // 4. THE touch: on the option that is not the current one, where the tree says it is –
+        // once the tree has caught up with the risen sheet (it reports the rows where they were
+        // a few frames ago, as the DOM shows), and inside the window a finger reaches.
         var landedOn = ""
         var after = ""
         var scheme = ""
         var closed = false
         step("A real touch on '$OTHER_OPTION'") {
-            val option = awaitNode(4_000) { it == OTHER_OPTION } ?: error("the option went away")
-            val bounds = Rect().also { option.getBoundsInScreen(it) }
-            val dom = chromeValue(
-                "(function(){var b=[...document.querySelectorAll('.zen-sheet [role=radio]')]" +
-                    ".find(function(e){return e.textContent.trim()===${JSONObject.quote(OTHER_OPTION)}});" +
-                    "if(!b)return 'none';var r=b.getBoundingClientRect();" +
-                    "return Math.round(r.left*$density)+','+Math.round(r.top*$density)+'-'+Math.round(r.right*$density)+','+Math.round(r.bottom*$density)" +
-                    "+' checked='+b.getAttribute('aria-checked')})()"
+            val dom = domRect(OTHER_OPTION) ?: error("the option is not in the DOM")
+            val started = SystemClock.uptimeMillis()
+            var option: AccessibilityNodeInfo? = null
+            val tree = Rect()
+            var agreed = false
+            while (SystemClock.uptimeMillis() < started + 6_000) {
+                option = findNode { it == OTHER_OPTION }
+                if (option != null) {
+                    option.getBoundsInScreen(tree)
+                    agreed = abs(tree.top - dom.rect.top) <= TREE_TOLERANCE && abs(tree.bottom - dom.rect.bottom) <= TREE_TOLERANCE
+                    if (agreed) break
+                }
+                SystemClock.sleep(250)
+            }
+            val node = option ?: error("the option went away")
+            finding(
+                "  option bounds: tree $tree, DOM ${dom.rect} (checked=${dom.checked}); " +
+                    "agree within $TREE_TOLERANCE px: $agreed after ${SystemClock.uptimeMillis() - started} ms; touchable window $touchable"
             )
             // The chrome's own word on where the finger landed: the target of the next pointerdown.
             chromeJs(
@@ -138,8 +152,8 @@ class SettingsTouchDemo : DemoHarness("settings-tab-demo-state.json", "android-s
                     "window.__touch=(t.tagName||'').toLowerCase()+(c?'.'+c.trim().split(/\\s+/).join('.'):'')+(r?'[role='+r+']':'')" +
                     "+(radio?' in the option '+radio.textContent.trim():'')},{capture:true,once:true})"
             )
-            finding("  option bounds (tree) $bounds, (DOM, px) $dom; touching ${bounds.exactCenterX()},${bounds.exactCenterY()}")
-            if (!touchTap(option)) error("the option had no bounds on screen")
+            val point = touchTapPoint(node) ?: error("no part of the option is inside the touchable window")
+            finding("  finger at ${point.x},${point.y}")
             SystemClock.sleep(600)
             landedOn = chromeValue("String(window.__touch)")
             // 5. The picker closes with the new value on the row and in the core.
@@ -208,6 +222,27 @@ class SettingsTouchDemo : DemoHarness("settings-tab-demo-state.json", "android-s
 
     private fun colorScheme(): String = coreState().getJSONObject("settings").optString("colorScheme")
 
+    private class DomRect(val rect: Rect, val checked: String)
+
+    /**
+     * The picker option reading `label`, as the DOM lays it out, in screen px: the chrome fills
+     * the window from its top-left corner, so its CSS px times the density are screen px. Null
+     * when no such option is in the DOM.
+     */
+    private fun domRect(label: String): DomRect? {
+        val text = chromeValue(
+            "(function(){var b=[...document.querySelectorAll('.zen-sheet [role=radio]')]" +
+                ".find(function(e){return e.textContent.trim()===${JSONObject.quote(label)}});" +
+                "if(!b)return '';var r=b.getBoundingClientRect();" +
+                "return [r.left,r.top,r.right,r.bottom].map(function(v){return Math.round(v*$density)}).join(',')" +
+                "+','+b.getAttribute('aria-checked')})()"
+        )
+        val parts = text.split(',')
+        if (parts.size != 5) return null
+        val px = parts.take(4).map { it.toIntOrNull() ?: return null }
+        return DomRect(Rect(px[0], px[1], px[2], px[3]), parts[4])
+    }
+
     // --- the chrome ------------------------------------------------------------------------------
 
     /** Evaluate in the chrome; the value as text ("" when it never answered). */
@@ -241,5 +276,7 @@ class SettingsTouchDemo : DemoHarness("settings-tab-demo-state.json", "android-s
         /** The option that is not the seeded `light`, and the setting it writes. */
         private const val OTHER_OPTION = "Dark"
         private const val OTHER_SCHEME = "dark"
+        /** How far (px) the tree's rect may sit from the DOM's before the touch: a rounding, not a trailing frame. */
+        private const val TREE_TOLERANCE = 6
     }
 }
