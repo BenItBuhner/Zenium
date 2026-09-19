@@ -3,6 +3,7 @@ import type { NativeBridge, NativeCall } from './bridge'
 import type { BootInfo } from './platform'
 import type { Platform } from '@shared/types'
 import type { VoiceEvent, VoiceStartOutcome } from '@shared/voice'
+import type { QrEvent, QrStartOutcome } from '@shared/qrScan'
 import { createPreviewDownloads } from './previewDownloads'
 import { CHUNK_CHARS } from './storeIo'
 
@@ -213,6 +214,43 @@ export function createPreviewBridge(): NativeBridge {
       voiceRun++
     }
   }
+  // `?qr=<script>` picks what the stand-in camera does (`previewQrScript`): the camera buttons
+  // show, and a start plays the script's events back to the chrome's scan sheet – a drawn still
+  // stands in for the live preview, which only a device can lay over the sheet. A preview state
+  // (`qr=<script>`, previewStates.ts) changes the script at run time.
+  let qrScript = params.get('qr') ?? 'url'
+  window.addEventListener(PREVIEW_QR_EVENT, (e) => {
+    qrScript = (e as CustomEvent<string>).detail
+  })
+  let qrRun = 0
+  let qrTorch = false
+  const qr = {
+    start: (): QrStartOutcome => {
+      const script = previewQrScript(qrScript)
+      if (script.outcome !== 'scanning') return script.outcome
+      const run = ++qrRun
+      qrTorch = false
+      let at = 0
+      for (const [delay, event] of script.events) {
+        at += delay
+        window.setTimeout(() => {
+          if (qrRun === run) hostGlobal().hostEvent('qr.event', JSON.stringify(event))
+        }, at)
+      }
+      return 'scanning'
+    },
+    cancel: (): void => {
+      qrRun++
+    },
+    setTorch: (on: boolean): void => {
+      qrTorch = on
+      const run = qrRun
+      window.setTimeout(() => {
+        if (qrRun === run)
+          hostGlobal().hostEvent('qr.event', JSON.stringify({ kind: 'torch', on: qrTorch }))
+      }, 80)
+    }
+  }
 
   let pieceSeq = 0
   const pieceWrites = new Map<number, { name: string; parts: string[] }>()
@@ -228,6 +266,7 @@ export function createPreviewBridge(): NativeBridge {
       profiles: true,
       pinShortcuts: true,
       voiceSearch: true,
+      qrScan: true,
       files,
       downloadsDir: DOWNLOADS_DIR,
       insets: { top: 0, right: 0, bottom: 0, left: 0 },
@@ -562,6 +601,11 @@ export function createPreviewBridge(): NativeBridge {
     'voice.cancel': () => voice.cancel(),
     'voice.openSettings': () => console.info('[zen preview] app settings (microphone)'),
     'app.openPrivateDnsSettings': () => console.info('[zen preview] private DNS settings'),
+    'qr.start': () => qr.start(),
+    'qr.cancel': () => qr.cancel(),
+    'qr.layout': () => undefined,
+    'qr.setTorch': ({ on }) => qr.setTorch(on === true),
+    'qr.openSettings': () => console.info('[zen preview] app settings (camera)'),
     'externalProtocol.respond': ({ requestId, allow }) =>
       console.info('[zen preview] external protocol', requestId, allow ? 'allowed' : 'refused'),
     // The browser role, remembered per preview profile; the "role dialog" is a confirm().
@@ -867,4 +911,123 @@ export function previewVoiceScript(name: string): PreviewVoiceScript {
         ]
       }
   }
+}
+
+/** A preview state picks the stand-in camera's script: the event's detail is the script's name. */
+export const PREVIEW_QR_EVENT = 'zen-preview-qr'
+
+/** What the stand-in camera does for `?qr=<name>`: the start's answer, then its events in order with the pause before each. */
+export interface PreviewQrScript {
+  outcome: QrStartOutcome
+  events: Array<[delayMs: number, event: QrEvent]>
+}
+
+export function previewQrScript(name: string): PreviewQrScript {
+  // The camera "opens" and the still stands where the live preview would; the sheet is scanning.
+  const scanning: Array<[number, QrEvent]> = [
+    [400, { kind: 'ready', torch: true }],
+    [50, { kind: 'still', dataUrl: previewQrStill() }]
+  ]
+  switch (name) {
+    case 'denied':
+    case 'denied-permanently':
+    case 'unavailable':
+      return { outcome: name, events: [] }
+    case 'busy':
+    case 'camera':
+      return { outcome: 'scanning', events: [[600, { kind: 'error', error: name }]] }
+    // Frozen while the camera opens (the title's "Starting the camera" line), or while it scans.
+    case 'starting':
+      return { outcome: 'scanning', events: [] }
+    case 'scanning':
+      return { outcome: 'scanning', events: scanning }
+    case 'torch':
+      return { outcome: 'scanning', events: [...scanning, [100, { kind: 'torch', on: true }]] }
+    // A code with words on it: searched through the profile's engine.
+    case 'text':
+      return {
+        outcome: 'scanning',
+        events: [...scanning, [1200, { kind: 'decoded', text: 'weather in Lisbon this weekend' }]]
+      }
+    // A Wi-Fi code: its network name is searched, its password stays on the device.
+    case 'wifi':
+      return {
+        outcome: 'scanning',
+        events: [
+          ...scanning,
+          [1200, { kind: 'decoded', text: 'WIFI:T:WPA;S:Cafe Lisboa;P:hunter2;;' }]
+        ]
+      }
+    default:
+      return {
+        outcome: 'scanning',
+        events: [...scanning, [1200, { kind: 'decoded', text: 'https://example.org/' }]]
+      }
+  }
+}
+
+let qrStillCache: string | null = null
+
+/**
+ * The stand-in for a camera frame, drawn once: a desk in soft light with a card carrying a
+ * QR-like pattern (the three finder squares and a fixed scatter of modules – a picture of a
+ * code, not one that decodes), as a JPEG data URL of the size the sheet's window takes on a
+ * phone. Where there is no canvas (tests) a 1 px placeholder.
+ */
+export function previewQrStill(): string {
+  if (qrStillCache) return qrStillCache
+  const size = 640
+  const canvas = typeof document === 'undefined' ? null : document.createElement('canvas')
+  const ctx = canvas?.getContext('2d') ?? null
+  if (!canvas || !ctx) {
+    return 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
+  }
+  canvas.width = size
+  canvas.height = size
+  const desk = ctx.createLinearGradient(0, 0, size, size)
+  desk.addColorStop(0, '#4a4f5c')
+  desk.addColorStop(1, '#2a2d36')
+  ctx.fillStyle = desk
+  ctx.fillRect(0, 0, size, size)
+  // The card, a little turned, with a soft shadow.
+  ctx.save()
+  ctx.translate(size / 2, size / 2)
+  ctx.rotate(-0.06)
+  ctx.shadowColor = 'rgba(0,0,0,0.45)'
+  ctx.shadowBlur = 40
+  ctx.shadowOffsetY = 18
+  ctx.fillStyle = '#f7f6f2'
+  ctx.fillRect(-190, -190, 380, 380)
+  ctx.shadowColor = 'transparent'
+  // The code: 25 modules across at 12 px, a 2-module quiet zone inside the card.
+  const modules = 25
+  const cell = 12
+  const origin = -(modules * cell) / 2
+  ctx.fillStyle = '#17171a'
+  const finder = (mx: number, my: number): void => {
+    ctx.fillRect(origin + mx * cell, origin + my * cell, 7 * cell, 7 * cell)
+    ctx.fillStyle = '#f7f6f2'
+    ctx.fillRect(origin + (mx + 1) * cell, origin + (my + 1) * cell, 5 * cell, 5 * cell)
+    ctx.fillStyle = '#17171a'
+    ctx.fillRect(origin + (mx + 2) * cell, origin + (my + 2) * cell, 3 * cell, 3 * cell)
+  }
+  finder(0, 0)
+  finder(modules - 7, 0)
+  finder(0, modules - 7)
+  let seed = 7
+  const next = (): number => {
+    seed = (seed * 1103515245 + 12345) & 0x7fffffff
+    return seed / 0x7fffffff
+  }
+  for (let y = 0; y < modules; y++) {
+    for (let x = 0; x < modules; x++) {
+      const inFinder =
+        (x < 8 && y < 8) || (x >= modules - 8 && y < 8) || (x < 8 && y >= modules - 8)
+      if (inFinder) continue
+      if (next() < 0.47) ctx.fillRect(origin + x * cell, origin + y * cell, cell, cell)
+    }
+  }
+  ctx.restore()
+  qrStillCache = canvas.toDataURL('image/jpeg', 0.82)
+  return qrStillCache
 }

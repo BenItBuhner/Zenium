@@ -55,6 +55,7 @@ import type {
   EngineTransport
 } from '../shared/translateEngine'
 import type { UpdateAsset, UpdateProgress, UpdateRelease, UpdateTarget } from '../shared/updates'
+import type { QrStartOutcome } from '../shared/qrScan'
 import type { InterstitialAction } from '../shared/interstitial'
 import type { PrivacyFlags, SafeBrowsingHit } from '../shared/privacy'
 import type { RawWebAppManifest, ShortcutIconKind } from '../shared/webApp'
@@ -1554,6 +1555,22 @@ export interface ThumbnailHost {
   sweep(keep: readonly string[]): void
 }
 
+/**
+ * QR scanning on a host with a back camera (Android's camera2 behind `QrScan.kt`). `start` asks
+ * for the camera – the runtime permission prompt may show – and opens it into a native preview
+ * the host lays over the sheet's slot (`layout`); while it scans the host raises `qr.event`s,
+ * which the platform hands to the window (`Browser.emit`). One session at a time: a start while
+ * one runs cancels the first.
+ */
+export interface QrScanHost {
+  start(): Promise<QrStartOutcome>
+  cancel(): void
+  layout(slot: { rect: Rect; radius: number; visible: boolean }): void
+  setTorch(on: boolean): void
+  /** The app's system settings screen, for a camera refused for good. */
+  openSettings(): void
+}
+
 export interface Platform {
   readonly info: PlatformInfo
   readonly capabilities: HostCapabilities
@@ -1595,6 +1612,8 @@ export interface Platform {
   readonly voice?: VoiceHost
   /** Tab card thumbnails kept across restarts; hosts without it show placeholder cards. */
   readonly thumbnails?: ThumbnailHost
+  /** QR scanning through the device's back camera; omit when `capabilities.qrScan` is off. */
+  readonly qrScan?: QrScanHost
   /** Source of Mozilla's Readability library for Reader View, or null when unavailable. */
   readabilitySource(file: 'Readability.js' | 'Readability-readerable.js'): string | null
   /** Offline page translation; hosts without it report the feature as unavailable. */

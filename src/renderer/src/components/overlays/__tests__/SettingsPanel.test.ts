@@ -42,7 +42,8 @@ const DESKTOP: HostCapabilities = {
   translate: true,
   voiceSearch: false,
   selectionToolbar: false,
-  popupSurface: true
+  popupSurface: true,
+  qrScan: false
 }
 
 const ANDROID: HostCapabilities = {

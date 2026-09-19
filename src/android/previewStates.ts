@@ -45,11 +45,14 @@ import {
   type TrackingLevel
 } from '@shared/blocking'
 import { cancelVoiceSearch, startVoiceSearch } from '@renderer/lib/voiceSearch'
+import { cancelQrScan, startQrScan } from '@renderer/lib/qrScan'
 import type { HostGlobal } from './boot'
 import {
+  PREVIEW_QR_EVENT,
   PREVIEW_VOICE_EVENT,
   PREVIEW_WEB_APP,
   postPreviewManifest,
+  previewQrScript,
   previewVoiceScript
 } from './preview'
 import { clearAutofill, stageAutofill } from './previewAutofill'
@@ -73,6 +76,8 @@ const SHEET_LEAVE_MS = 1500
 const SETTLE_TIMEOUT_MS = 4000
 /** Past a voice script's last event: the listening sheet's halo spring settling on the level. */
 const VOICE_EVENT_MARGIN_MS = 250
+/** Past a QR script's last event: the still's image decoding into the window, the torch's fill. */
+const QR_EVENT_MARGIN_MS = 250
 
 /**
  * Chrome states selectable from outside the preview host (`npm run dev:android`), so screenshots
@@ -102,10 +107,12 @@ const VOICE_EVENT_MARGIN_MS = 250
  * `prompt=http-auth` / `prompt=certificate` (a security dialog over the page; `&failed`,
  * `&proxy`, `&secure`), `voice=<script>` (voice search started, the stand-in recogniser
  * playing that script into the listening sheet: `listening`, `listening-rest`, `partial`,
- * `no-match`, `denied`, …; see `previewVoiceScript`) or `overview` (the tab overview open over
- * the active page, its cards with whatever pictures the stand-in host has of the tabs).
- * `rules=<n>` on any spec seeds n remembered site permissions for Settings › Security;
- * `blocking=<variant>` may accompany any spec too (see `seedBlocking`).
+ * `no-match`, `denied`, …; see `previewVoiceScript`), `qr=<script>` (QR scanning started, the
+ * stand-in camera playing that script into the scan sheet: `scanning`, `torch`, `text`,
+ * `denied`, …; see `previewQrScript`) or `overview` (the tab overview open over the active
+ * page, its cards with whatever pictures the stand-in host has of the tabs). `rules=<n>` on
+ * any spec seeds n remembered site permissions for Settings › Security; `blocking=<variant>`
+ * may accompany any spec too (see `seedBlocking`).
  * It comes in as the URL hash, `http://localhost:41734/#overlay=history`, or as
  * `window.postMessage({ zenPreview: 'find=coffee' }, '*')`, which also re-applies an unchanged
  * state. Once applied it is echoed in `<html data-preview-state>` so a driver can wait for it;
@@ -143,6 +150,7 @@ function apply(browser: Browser, spec: string): void {
     uiStore.set({ findOpen: false, findTabId: null, zoomTabId: null, install: null })
     abortPull()
     cancelVoiceSearch()
+    cancelQrScan()
     const state = browserStore.get().state
     const tab = state ? activeTab(state) : null
     clearMessages(tab?.loading ? tab.id : null)
@@ -383,6 +391,20 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
   } else if (target.kind === 'webapp' && tab) {
     seed()
     applyWebApp(target.surface, tab.id, spec)
+  } else if (target.kind === 'qr') {
+    // The stand-in camera takes the script, then the camera button is "tapped" for the active
+    // tab: the scan sheet goes up and the script's events play into it. The state is reached at
+    // the script's end – a refusal's toast up (the sheet gone again), or the sheet up and the
+    // last event landed – so a still catches the still, the torch or the start the script names.
+    window.dispatchEvent(new CustomEvent(PREVIEW_QR_EVENT, { detail: target.script }))
+    const script = previewQrScript(target.script)
+    void startQrScan({ tabId: tab?.id ?? null, newTab: false })
+    if (script.outcome === 'scanning') {
+      const played = script.events.reduce((ms, [delay]) => ms + delay, 0)
+      whenStore(() => uiStore.get().qrScan !== null, spec, played + QR_EVENT_MARGIN_MS)
+    } else {
+      whenStore(() => uiStore.get().toasts.length > 0, spec)
+    }
   } else if (target.kind === 'popups' && tab) {
     seedPopups(browser, tab, target)
     // The list opens once the store carries what was seeded: over a state still without the

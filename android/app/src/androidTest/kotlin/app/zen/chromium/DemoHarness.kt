@@ -784,6 +784,51 @@ abstract class DemoHarness(
         return result
     }
 
+    /**
+     * Put the chrome's toasts on record: a MutationObserver in the chrome notes the text of every
+     * toast card (`ToastCard`'s `.zen-message-toast`) into `window.__demoToasts` as it appears,
+     * so [toastSeen] answers for a toast that lived shorter than a poll or left before the tree
+     * listed it. A plain toast lives 2.8 s (`TOAST_DURATION`), and on the emulator's software GPU
+     * the accessibility tree trails the screen by more than that, so a toast the recording shows
+     * can be gone before the tree ever lists it (the QR demo's first-refusal toast, second run).
+     * Call it before the step whose toast is checked; each call clears the record. The tree
+     * stays the way to TOUCH a toast's action.
+     */
+    protected fun watchToasts() {
+        chromeJs(
+            "(function(){window.__demoToasts=[];if(window.__demoToastWatch)return;" +
+                "var note=function(){document.querySelectorAll('.zen-message-toast .zen-message-text')" +
+                ".forEach(function(e){var t=e.textContent.trim();" +
+                "if(window.__demoToasts.indexOf(t)<0)window.__demoToasts.push(t)})};" +
+                "window.__demoToastWatch=new MutationObserver(note);" +
+                "window.__demoToastWatch.observe(document.body,{childList:true,subtree:true,characterData:true});" +
+                "note()})()"
+        )
+    }
+
+    /** Whether a toast reading `text` is up now or has been on record since [watchToasts]. */
+    protected fun toastSeen(text: String): Boolean =
+        chromeJs(
+            "(function(){var t=${JSONObject.quote(text)};" +
+                "if(window.__demoToasts&&window.__demoToasts.indexOf(t)>=0)return true;" +
+                "return Array.prototype.some.call(" +
+                "document.querySelectorAll('.zen-message-toast .zen-message-text')," +
+                "function(e){return e.textContent.trim()===t})})()"
+        ) == "true"
+
+    /**
+     * Poll [toastSeen] for `text` up to `timeoutMs`; false when no such toast came. (Named for the
+     * record it reads: `TabCloseDemo` has an `awaitToast` of its own that reads the live DOM.)
+     */
+    protected fun awaitToastSeen(text: String, timeoutMs: Long = 8_000): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (toastSeen(text)) return true
+            SystemClock.sleep(150)
+        }
+        return toastSeen(text)
+    }
+
     /** Run a core command through `window.zen.invoke` and wait for its promise; the result as JSON text. */
     protected fun coreInvoke(name: String, args: String = "null"): String {
         chromeJs(

@@ -1,6 +1,6 @@
 import type { JSX, RefObject } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowRight, Mic, X } from 'lucide-react'
+import { ArrowRight, Camera, Mic, X } from 'lucide-react'
 import type {
   PhoneBarLayout,
   PhoneBarPosition,
@@ -19,12 +19,14 @@ import {
 import { SEARCH_SCOPES, completeWwwCom, matchKeyword } from '@shared/search'
 import { internalPageAliasUrl } from '@shared/internalPages'
 import { ERROR_URL_PREFIX, isEmptyTabUrl, isNewTabUrl } from '@shared/url'
+import { qrScanAvailable } from '@shared/qrScan'
 import { voiceSearchAvailable } from '@shared/voice'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { cmd, run } from '@renderer/lib/api'
 import { useBackDismissal } from '@renderer/lib/back'
 import { dropStore } from '@renderer/lib/drag'
 import { viewportStore } from '@renderer/lib/formFactor'
+import { startQrScan } from '@renderer/lib/qrScan'
 import { closeUrlbar, uiStore, type UrlbarState } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { startVoiceSearch } from '@renderer/lib/voiceSearch'
@@ -491,6 +493,10 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
   // paste and go); the field shows it will take the drop (§9.4).
   const dropInto = dropStore.use((s) => s.key === 'address:')
 
+  // The empty field's trailing controls (OMN-19, OMN-22), each where the host can answer it.
+  const voice = voiceSearchAvailable(state.capabilities)
+  const camera = qrScanAvailable(state.capabilities)
+
   if (phoneEdge) {
     return (
       <PhoneSheet
@@ -546,19 +552,40 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
                 <X className="h-5 w-5" strokeWidth={1.75} />
               </button>
             ) : (
-              voiceSearchAvailable(state.capabilities) && (
-                // OMN-19: the empty field offers the mic where Clear will be; the listening sheet
-                // takes the frame from the bar, and its result loads where a submit here would.
-                <button
-                  type="button"
-                  className="zen-toolbar-button h-11 w-11 shrink-0 rounded-full"
-                  aria-label="Search by voice"
-                  onClick={() =>
-                    void startVoiceSearch({ tabId: tab?.id ?? null, newTab: submitsToNewTab() })
-                  }
-                >
-                  <Mic className="h-5 w-5" strokeWidth={1.75} />
-                </button>
+              (voice || camera) && (
+                // OMN-19 and OMN-22: the empty field offers the mic and the camera where Clear
+                // will be; the listening or scan sheet takes the frame from the bar, and its result
+                // loads where a submit here would. The last control is the 44 px pill's round end
+                // cap; one before it is the §9.3 box.
+                <>
+                  {voice && (
+                    <button
+                      type="button"
+                      className={cn(
+                        'zen-toolbar-button h-11 w-11 shrink-0',
+                        !camera && 'rounded-full'
+                      )}
+                      aria-label="Search by voice"
+                      onClick={() =>
+                        void startVoiceSearch({ tabId: tab?.id ?? null, newTab: submitsToNewTab() })
+                      }
+                    >
+                      <Mic className="h-5 w-5" strokeWidth={1.75} />
+                    </button>
+                  )}
+                  {camera && (
+                    <button
+                      type="button"
+                      className="zen-toolbar-button h-11 w-11 shrink-0 rounded-full"
+                      aria-label="Scan a QR code"
+                      onClick={() =>
+                        void startQrScan({ tabId: tab?.id ?? null, newTab: submitsToNewTab() })
+                      }
+                    >
+                      <Camera className="h-5 w-5" strokeWidth={1.75} />
+                    </button>
+                  )}
+                </>
               )
             )}
           </div>
