@@ -11,12 +11,15 @@ import { useRowGestures } from './useRowGestures'
  * with a 17/600 title and 44 icon buttons at 6 px margins, the selection header that stands in
  * for it, the search field, day and folder headings, and rows of 44 (64 with a description)
  * that grow with their content, running edge to edge with their text at the 16 gutter –
- * swipeable to delete where the list allows it. Styles live under `.zen-list-*`,
- * `.zen-phone-field` and `.zen-swipe` in `phonePanels.css`; the panels' shared behaviour
- * (undoable deletes, the in-panel back step, the header's scrolled line) is in `phonePanel.ts`.
+ * swipeable to delete where the list allows it. The row is the shared `.zen-v2-row` and the icon
+ * button the shared `.zen-v2-icon-button` (main.css, v2 draft 9.34); what the rows hold lives
+ * under `.zen-list-*`, with `.zen-phone-field` and `.zen-swipe`, in `phonePanels.css`, and the
+ * `.zen-phone-row` modifier there adds what these rows need beyond the primitive. The panels'
+ * shared behaviour (undoable deletes, the in-panel back step, the header's scrolled line) is in
+ * `phonePanel.ts`.
  */
 
-/** A 44 icon button (glyph 20, stroke 1.75; the box is sized in `phonePanels.css`). */
+/** A 44 icon button with a 20 glyph at stroke 1.75: the shared `.zen-v2-icon-button` (9.3, 9.34). */
 export function PhoneIconButton({
   label,
   onClick,
@@ -31,7 +34,7 @@ export function PhoneIconButton({
   return (
     <button
       type="button"
-      className="zen-toolbar-button h-11 w-11 shrink-0"
+      className="zen-v2-icon-button"
       aria-label={label}
       title={label}
       disabled={disabled}
@@ -149,9 +152,13 @@ export function PhoneSearchField({
   )
 }
 
-/** A group's heading (a day, a folder section): a 15/600 sub-heading, sentence case, 20 above and 8 to its first row (9.27). */
+/**
+ * A group's heading (a day, a folder section): the shared `.zen-v2-heading` (15/600, 9.26, 9.34),
+ * sentence case, with this list's beat – 20 above and 8 to its first row (9.27). A heading, not
+ * a row: it is not a target and has none of a row's layout, so it is not a `data-static` row.
+ */
 export function PhoneGroupHeading({ children }: { children: ReactNode }): JSX.Element {
-  return <h3 className="zen-list-heading">{children}</h3>
+  return <h3 className="zen-v2-heading zen-list-heading">{children}</h3>
 }
 
 /**
@@ -227,8 +234,10 @@ export interface PhoneListRowProps {
 /**
  * One row of a phone list: 44 tall, 64 with a subtitle, growing with its content.
  *
- * The row is a plain box that takes the touches (tap, hold, swipe) and draws the press and the
- * selection; the accessible row is its first child, a button (a checkbox while selecting) named
+ * The row is the shared `.zen-v2-row` (9.34) with the `.zen-phone-row` modifier: a plain box
+ * that takes the touches (tap, hold, swipe) and draws the press (the primitive's fill) and the
+ * selection (`--v2-selected`, 9.6). Every row here is a target, so none is `data-static`. The
+ * accessible row is its first child, a button (a checkbox while selecting) named
  * by the label and holding the leading box and the text, and the trailing control is that
  * button's sibling. A control inside a button is not valid ARIA, and Android's accessibility
  * tree makes every button a leaf – TalkBack would never reach a row's Remove or 3-dot button
@@ -262,7 +271,7 @@ export function PhoneListRow({
       data-selected={selected}
       data-two-line={Boolean(subtitle)}
       data-danger={danger || undefined}
-      className="zen-list-row select-none"
+      className="zen-v2-row zen-phone-row select-none"
       style={{ touchAction: onSwipeDelete && !selecting ? 'pan-y' : undefined }}
       {...pointer}
     >
