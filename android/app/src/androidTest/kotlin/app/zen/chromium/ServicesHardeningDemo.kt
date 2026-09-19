@@ -230,13 +230,11 @@ class ServicesHardeningDemo {
         shot("09-http-auth-dialog")
         fill(f, "Username", "zenium")
         fill(f, "Password", "wrong")
-        submitSignIn()
-        waitFor(RETRY_MESSAGE, 10_000)
+        submitSignIn(RETRY_MESSAGE, 10_000)
         awaitAboveKeyboard(RETRY_MESSAGE)
         shot("10-http-auth-retry")
         fill(f, "Password", "secret")
-        submitSignIn()
-        waitFor("Signed in as zenium", 15_000)
+        submitSignIn("Signed in as zenium", 15_000)
         SystemClock.sleep(1_500)
         shot("11-http-auth-signed-in")
 
@@ -423,6 +421,30 @@ class ServicesHardeningDemo {
     }
 
     /**
+     * Send the sign-in form and wait for what should follow – `expect`: the refusal's validation
+     * line, or the page signed in. The press has to find the sheet at rest. A press on a sheet
+     * whose spring is still running catches the sheet instead: the chassis holds a moving sheet
+     * for the finger that took it (BottomSheet.tsx) and swallows the click that follows, and the
+     * simulated click of an accessibility action comes with a pointer press and release of its
+     * own. The keyboard the fields brought up lifts the sheet on that very spring, and late on the
+     * emulator (the IME's insets arrive seconds after it shows), so a press right after the fill
+     * lands mid-lift and does nothing. So the screen is watched to a standstill first, with a
+     * margin for the spring's last, invisible fraction of a pixel; and a press that nothing
+     * followed is made once more, on a sheet surely at rest by then – a repeat of a press that did
+     * land is nothing, the form having answered already.
+     */
+    private fun submitSignIn(expect: String, timeoutMs: Long): Boolean {
+        for (attempt in 1..2) {
+            awaitSettled(timeoutMs = 8_000, stillMs = 1_500)
+            SystemClock.sleep(750)
+            pressSignIn()
+            if (waitFor(expect, timeoutMs)) return true
+            step("nothing followed the press (attempt $attempt)")
+        }
+        return false
+    }
+
+    /**
      * Press the dialog's Sign in button through its accessibility action, which lands once and
      * reaches the button under the soft keyboard should it be up. (Enter from the password field
      * with a press as the fallback sent the answer twice: the dialog the refused answer brought
@@ -432,8 +454,7 @@ class ServicesHardeningDemo {
      * clickable node of that name is the sheet, and a click on it only moves the focus. Enter is
      * the fallback for a tree that does not have the button yet.
      */
-    private fun submitSignIn() {
-        SystemClock.sleep(600)
+    private fun pressSignIn() {
         val button = findNodes("Sign in").firstOrNull {
             it.isClickable && it.className == "android.widget.Button"
         }
@@ -596,7 +617,9 @@ class ServicesHardeningDemo {
      * (two, and the emulator may have stalled a frame mid-slide), a blinking caret's worth of
      * pixels apart. A scene that never changes is taken as settled after `stillMs`, past the
      * chassis's longest hold (`COVERED_TIMEOUT_MS`): the sheet was up before the first capture.
-     * False when the scene kept changing for `timeoutMs`.
+     * False when the scene kept changing for `timeoutMs`. The same watch, with a shorter
+     * `stillMs`, lets a sheet the keyboard lifted come to rest before it is pressed
+     * (`submitSignIn`).
      */
     private fun awaitSettled(timeoutMs: Long = 10_000, stillMs: Long = 4_500): Boolean {
         val start = SystemClock.uptimeMillis()
