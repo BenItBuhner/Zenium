@@ -1374,9 +1374,11 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val chrome = host.chrome
         val centre = screenPoint(chrome, css) ?: return PromptButton(null, css)
         var scale = 1f
+        var density = 1f
         instrumentation.runOnMainSync {
+            density = chrome.resources.displayMetrics.density
             @Suppress("DEPRECATION")
-            scale = chrome.scale.takeIf { it > 0f } ?: chrome.resources.displayMetrics.density
+            scale = chrome.scale.takeIf { it > 0f } ?: density
         }
         val halfW = css.optDouble("w", 0.0).toFloat() * scale / 2
         val halfH = css.optDouble("h", 0.0).toFloat() * scale / 2
@@ -1387,33 +1389,43 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // The chrome draws edge to edge, so its viewport runs under the system bars: a button
         // there is inside the viewport and still out of a finger's reach (a tap at the bottom edge
         // pressed the navigation bar's Overview button and the launcher took the screen; the
-        // sweep then ran against a stopped activity).
-        val reach = reachOnScreen(chrome)
-        if (rect.top < reach.top || rect.bottom > reach.bottom) {
-            css.put("underSystemBar", "button ${rect.top}..${rect.bottom} px, reach ${reach.top}..${reach.bottom} px")
+        // sweep then ran against a stopped activity). As DemoHarness.touchPoint, the finger aims
+        // at the middle of the button's part inside the touchable band – a sheet's button may run
+        // under the bar's window with most of it still reachable – and a part thinner than
+        // MIN_TOUCH_OVERLAP_DP is no target (the run before this rule kept a 56 dp margin over
+        // the band and put every one of thirty "Add extension" buttons, 8 dp above the bar, out
+        // of reach).
+        val band = touchableBand(chrome)
+        val target = Rect(rect)
+        if (!target.intersect(band) || target.height() < (MIN_TOUCH_OVERLAP_DP * density).roundToInt()) {
+            css.put("underSystemBar", "button ${rect.top}..${rect.bottom} px, touchable ${band.top}..${band.bottom} px")
             return PromptButton(null, css)
         }
-        return PromptButton(rect, css)
+        return PromptButton(target, css)
     }
 
     /**
-     * The screen strip between the status bar and the navigation bar (system gestures included),
-     * in screen px, less [NAV_TOUCH_MARGIN_DP] more at the bottom: the taps the system took for
-     * its own (Overview opened, the launcher on screen) were both within 50 dp of the bottom edge,
-     * above the bar's drawn bounds, where its touch target still reaches.
+     * The screen strip a finger reaches the app in, in screen px: below the status bar and above
+     * the navigation bar's window, the bottom band the larger of the bars' inset, the tappable
+     * inset and [NAV_BAR_WINDOW_DP] – the band DemoHarness taps within (a gesture bar reports a
+     * thinner inset than the strip the system takes touches from; the taps the system took for
+     * its own, Overview opened and the launcher on screen, were within 48 dp of the bottom edge).
      */
-    private fun reachOnScreen(view: View): Rect {
+    private fun touchableBand(view: View): Rect {
         var result = Rect(0, 0, Int.MAX_VALUE, Int.MAX_VALUE)
         instrumentation.runOnMainSync {
             val root = view.rootView
             val location = IntArray(2)
             root.getLocationOnScreen(location)
-            val insets = ViewCompat.getRootWindowInsets(root)
-                ?.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.systemGestures())
-            val margin = (NAV_TOUCH_MARGIN_DP * root.resources.displayMetrics.density).roundToInt()
+            val all = ViewCompat.getRootWindowInsets(root)
+            val bars = all?.getInsets(WindowInsetsCompat.Type.systemBars())
+            val tappable = all?.getInsets(WindowInsetsCompat.Type.tappableElement())
+            val bottomBand = maxOf(
+                bars?.bottom ?: 0, tappable?.bottom ?: 0, (NAV_BAR_WINDOW_DP * root.resources.displayMetrics.density).roundToInt()
+            )
             result = Rect(
-                location[0] + (insets?.left ?: 0), location[1] + (insets?.top ?: 0),
-                location[0] + root.width - (insets?.right ?: 0), location[1] + root.height - (insets?.bottom ?: 0) - margin
+                location[0] + (bars?.left ?: 0), location[1] + (bars?.top ?: 0),
+                location[0] + root.width - (bars?.right ?: 0), location[1] + root.height - bottomBand
             )
         }
         return result
@@ -1629,8 +1641,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         /** Taps on the prompt's own button before the command answers it, and the wait between them. */
         private const val PROMPT_TAPS = 2
         private const val PROMPT_RETAP_MS = 3_000L
-        /** How far above the navigation bar's insets a finger keeps clear of its touch target (see [reachOnScreen]). */
-        private const val NAV_TOUCH_MARGIN_DP = 56
+        /** The navigation bar's window is at least this tall, whatever inset it reports (see [touchableBand]). */
+        private const val NAV_BAR_WINDOW_DP = 48
+        /** A button's part inside the touchable band has to be this tall for a finger to aim at it. */
+        private const val MIN_TOUCH_OVERLAP_DP = 12
         /** The button that takes a native dialog (a page's alert, a system dialog) down. */
         private val DIALOG_BUTTONS = setOf("OK", "CLOSE", "DISMISS", "GOT IT")
         /**
