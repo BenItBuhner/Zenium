@@ -66,6 +66,9 @@ function QrSheet(): JSX.Element {
       onDismissed={cancelQrScan}
       handleLabel="Dismiss"
       labelledBy="zen-qr-title"
+      // The torch chip comes with `ready`, after the sheet measured itself: measure again so the
+      // chip stands above the Cancel row rather than under it.
+      contentKey={session?.torch ? 'torch' : 'plain'}
       footer={
         <button type="button" className="zen-v2-button" onClick={dismiss}>
           Cancel

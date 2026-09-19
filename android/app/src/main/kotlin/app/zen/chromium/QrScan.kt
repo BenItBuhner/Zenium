@@ -590,8 +590,8 @@ class QrScan(private val host: Host, private val root: FrameLayout) {
 
     companion object {
         private const val TAG = "ZenQrScan"
-        /** The window's side in CSS px (`.zen-qr-window` in the chrome), for the preview's size. */
-        private const val PREVIEW_WINDOW_DP = 320
+        /** The framed target's side in CSS px (`.zen-qr-target` in the chrome), the least the preview's short side should cover. */
+        private const val PREVIEW_WINDOW_DP = 264
         private const val STILL_INTERVAL_MS = 500L
         private const val STILL_SIDE_PX = 288
         private const val STILL_JPEG_QUALITY = 55

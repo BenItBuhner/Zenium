@@ -2568,7 +2568,12 @@
   }
   .zen-qr-target {
     position: relative;
-    width: min(100%, 320px);
+    /*
+     * Sized so the whole sheet – title block, window, torch chip and the Cancel row – stands
+     * inside the peek detent on a 915 px tall phone (§9.23: the body of a prompt sheet is in
+     * view without a drag); the window is the decoder's whole frame, not the code's size.
+     */
+    width: min(100%, 264px);
     /* Room for the brackets on every side. */
     padding: 6px;
   }
