@@ -44,7 +44,7 @@ import {
   type ExtensionBoot,
   type IsolationMode
 } from '@core/extensions/runtime/boot'
-import { createDnrSink } from '@core/extensions/dnr/engineSink'
+import { DNR_OWNERSHIP, createDnrSink } from '@core/extensions/dnr/engineSink'
 import type { EngineDecisionAction } from '@core/extensions/dnr/sink'
 import { parseRuntimeManifest } from '@core/extensions/runtime/manifest'
 import { extensionUrl, type RegisteredContentScript } from '@core/extensions/runtime/plan'
@@ -417,7 +417,8 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
    * Reads the environment from Kotlin and drops runtime data of extensions the store no longer
    * has – including their rule sets in the engine, which persist across runs in the blocking
    * store: an extension uninstalled or disabled since (an uninstall this runtime never saw
-   * finish) must not filter anything before its state, if any, is loaded again.
+   * finish) must not filter anything before its state, if any, is loaded again. The engine does
+   * that reconciliation itself, told which extensions are enabled (`reconcileOwners`).
    */
   async start(): Promise<void> {
     await this.ensureEnv()
@@ -439,11 +440,8 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
         }
       }
       if (pruned) this.save()
-      const enabled = new Set(records.filter((r) => r.enabled).map((r) => r.id))
-      const removed = this.dnr.prune(
-        (id) => enabled.has(id),
-        this.browser.blocking.engine.listRuleSets().map((summary) => summary.id)
-      )
+      const enabled = records.filter((r) => r.enabled).map((r) => r.id)
+      const removed = this.browser.blocking.reconcileOwners(DNR_OWNERSHIP, enabled)
       if (removed.length > 0)
         console.info(`[zen] declarativeNetRequest: ${removed.length} stale rule set(s) removed`)
     }

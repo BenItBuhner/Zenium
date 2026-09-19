@@ -659,6 +659,116 @@ describe('RuleEngine partition scope', () => {
   })
 })
 
+describe('RuleEngine indexes', () => {
+  /** A set over the inline limit: `||hostN.example^` blocks plus a few token and wildcard rules. */
+  function large(id: string, count: number, extra: Partial<RuleSet> = {}): RuleSet {
+    const rules: Rule[] = []
+    for (let i = 1; i <= count; i++) rules.push(block(i, { urlFilter: `||host${i}.example^` }))
+    rules.push(block(count + 1, { urlFilter: '/banner/' }))
+    rules.push(block(count + 2, { urlFilter: '*', resourceTypes: ['ping'] }))
+    rules.push(allow(count + 3, { urlFilter: '||host7.example^' }, 2))
+    return set(id, rules, extra)
+  }
+
+  const probes = (): RequestContext[] => [
+    req('https://cdn.host7.example/x.js'),
+    req('https://host12.example/x.js'),
+    req('https://other.example/banner/x.js'),
+    req('https://other.example/p', { type: 'ping' }),
+    req('https://other.example/x.js')
+  ]
+
+  it('indexes nothing until the engine decides, then small sets on the spot', () => {
+    const e = new RuleEngine()
+    e.setRuleSet(
+      set('a', [block(1, { urlFilter: '||ads.example^' }), block(2, { urlFilter: '/banner/' })])
+    )
+    expect(e.indexOf('a')).toBeNull()
+    expect(e.indexOf('missing')).toBeUndefined()
+    // The linear scan never builds one.
+    expect(e.decideLinear(req('https://ads.example/x.js')).action).toBe('block')
+    expect(e.indexOf('a')).toBeNull()
+    expect(e.decide(req('https://ads.example/x.js'))).toEqual(
+      e.decideLinear(req('https://ads.example/x.js'))
+    )
+    const index = e.indexOf('a')
+    expect(index?.hostCount).toBe(1)
+    expect(index?.tokenIndexedCount).toBe(1)
+    // A set added afterwards is indexed as it comes; enabling and disabling keep the index.
+    e.setRuleSet(set('b', [block(1, { requestDomains: ['t.example'] })]))
+    expect(e.indexOf('b')?.hostCount).toBe(1)
+    e.setEnabled('a', false)
+    e.setEnabled('a', true)
+    expect(e.indexOf('a')).toBe(index)
+    // Replacing a set replaces its index.
+    e.setRuleSet(set('a', [block(1, { urlFilter: '||ads.example^' })]))
+    expect(e.indexOf('a')).not.toBe(index)
+    expect(e.indexOf('a')?.tokenIndexedCount).toBe(0)
+  })
+
+  it('scans a large set until its index is built in slices off the tick, then swaps it in', async () => {
+    const e = new RuleEngine()
+    e.setRuleSet(large('big', 2_500))
+    const linear = probes().map((p) => e.decideLinear(p))
+    expect(linear.map((d) => d.action)).toEqual(['allow', 'block', 'block', 'block', 'allow'])
+    // The first decision turns indexing on; the large set is queued, not built inline.
+    expect(probes().map((p) => e.decide(p))).toEqual(linear)
+    expect(e.indexOf('big')).toBeNull()
+    // The slices run on timers; each decision meanwhile is scanned and right.
+    for (let i = 0; i < 50 && e.indexOf('big') === null; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 1))
+      expect(probes().map((p) => e.decide(p))).toEqual(linear)
+    }
+    const index = e.indexOf('big')
+    expect(index).not.toBeNull()
+    expect(index?.hostCount).toBe(2_500)
+    expect(index?.tokenIndexedCount).toBe(1)
+    expect(index?.wildcardCount).toBe(1)
+    expect(probes().map((p) => e.decide(p))).toEqual(linear)
+  })
+
+  it('finishes pending builds on demand and drops the build of a set replaced meanwhile', () => {
+    const e = new RuleEngine()
+    e.setRuleSet(large('big', 2_500))
+    e.setRuleSet(large('other', 2_200, { priority: 6 }))
+    e.decide(req('https://host1.example/x.js'))
+    expect(e.indexOf('big')).toBeNull()
+    expect(e.indexOf('other')).toBeNull()
+    // `big` is replaced while its build is pending: the pending build is dropped, the new set
+    // (small) is indexed inline.
+    e.setRuleSet(set('big', [block(1, { urlFilter: '||host1.example^' })]))
+    expect(e.indexOf('big')?.hostCount).toBe(1)
+    e.buildIndexes()
+    expect(e.indexOf('big')?.hostCount).toBe(1)
+    expect(e.indexOf('other')?.hostCount).toBe(2_200)
+    // Removing a set with a pending build is fine too.
+    e.setRuleSet(large('gone', 2_100))
+    e.removeRuleSet('gone')
+    e.buildIndexes()
+    expect(e.indexOf('gone')).toBeUndefined()
+    // Nothing pending: a no-op.
+    e.buildIndexes()
+    for (const p of probes()) expect(e.decide(p)).toEqual(e.decideLinear(p))
+  })
+
+  it('agrees with the scan on a URL with user information, which the ||host^ matcher can meet there', () => {
+    const e = new RuleEngine()
+    e.setRuleSet(set('a', [block(1, { urlFilter: '||ads.example^' })]))
+    // Not the request host, but the desktop pattern matches the URL – on both paths alike.
+    const url = 'https://ads.example@evil.example/x.js'
+    expect(e.decideLinear(req(url)).action).toBe('block')
+    expect(e.decide(req(url))).toEqual(e.decideLinear(req(url)))
+    expect(e.decide(req('https://user@cdn.ads.example/x.js')).action).toBe('block')
+  })
+
+  it('builds indexes on demand even before the first decision', () => {
+    const e = new RuleEngine()
+    e.setRuleSet(set('a', [block(1, { urlFilter: '||ads.example^' })]))
+    e.buildIndexes()
+    expect(e.indexOf('a')?.hostCount).toBe(1)
+  })
+})
+
 describe('resourceTypeFromElectron', () => {
   it('maps Electron names to declarativeNetRequest types', () => {
     expect(resourceTypeFromElectron('mainFrame')).toBe('main_frame')

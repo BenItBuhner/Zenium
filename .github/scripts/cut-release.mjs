@@ -9,17 +9,27 @@
 //   npm run release -- prerelease       0.2.0-beta.0 → 0.2.0-beta.1
 //   npm run release -- 1.2.0            exact version
 //
-//   --dry-run     show the version and the commands without changing anything
-//   --preid <id>  pre-release identifier for pre* bumps (default: beta)
-//   --branch <b>  branch releases are cut from (default: main)
-//   --remote <r>  git remote to push to (default: origin)
-//   --yes         skip the confirmation prompt
+//   --dry-run       show the version and the commands without changing anything
+//   --preid <id>    pre-release identifier for pre* bumps (default: beta)
+//   --branch <b>    branch releases are cut from (default: main)
+//   --remote <r>    git remote to push to (default: origin)
+//   --expect <sha>  refuse to cut unless the branch tip is this commit – the one whose CI you
+//                   checked. A merge that lands between the check and the cut would otherwise
+//                   be tagged unverified (it happened: ten seconds, one release).
+//   --yes           skip the confirmation prompt
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { createInterface } from 'node:readline/promises'
 
 const args = process.argv.slice(2)
-const flags = { dryRun: false, preid: 'beta', branch: 'main', remote: 'origin', yes: false }
+const flags = {
+  dryRun: false,
+  preid: 'beta',
+  branch: 'main',
+  remote: 'origin',
+  expect: null,
+  yes: false
+}
 let bump = null
 for (let i = 0; i < args.length; i++) {
   const arg = args[i]
@@ -28,6 +38,7 @@ for (let i = 0; i < args.length; i++) {
   else if (arg === '--preid') flags.preid = args[++i]
   else if (arg === '--branch') flags.branch = args[++i]
   else if (arg === '--remote') flags.remote = args[++i]
+  else if (arg === '--expect') flags.expect = args[++i]
   else if (arg.startsWith('--')) fail(`Unknown option ${arg}`)
   else if (bump === null) bump = arg
   else fail(`Unexpected argument ${arg}`)
@@ -59,6 +70,26 @@ git('fetch', flags.remote, flags.branch, '--tags')
 const behind = git('rev-list', '--count', `HEAD..${flags.remote}/${flags.branch}`)
 if (behind !== '0')
   fail(`${flags.branch} is ${behind} commit(s) behind ${flags.remote}; pull first`)
+if (flags.expect !== null) {
+  const expected = String(flags.expect).trim().toLowerCase()
+  if (!/^[0-9a-f]{7,40}$/.test(expected))
+    fail(`--expect takes a commit SHA of 7 to 40 hex characters, got "${flags.expect}"`)
+  const head = git('rev-parse', 'HEAD')
+  if (!head.startsWith(expected)) {
+    let landed = ''
+    try {
+      landed = git('log', '--oneline', `${expected}..HEAD`)
+    } catch {
+      // The expected commit is not an ancestor of HEAD (or unknown here); report the tip alone.
+    }
+    fail(
+      `${flags.branch} is at ${head.slice(0, 7)}, not the expected ${expected.slice(0, 7)}` +
+        (landed
+          ? `; landed since:\n${landed}\nCheck CI on ${head.slice(0, 7)} and cut with --expect ${head.slice(0, 7)}`
+          : '; check CI on the tip and cut again with --expect <its sha>')
+    )
+  }
+}
 
 // Compute the new version with npm itself so pre-release arithmetic matches `npm version`.
 const previous = version()
