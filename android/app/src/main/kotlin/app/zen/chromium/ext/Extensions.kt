@@ -624,6 +624,11 @@ class Extensions(private val host: Host) {
      * reply proxy, the one handle a WebView gives to a frame (`evaluateJavascript` takes none), so
      * it needs a WebView with `JS_INJECTION_IN_FRAME_AND_WORLD` and a frame the extension has a
      * script in: the world endpoint for the isolated world, the main-world one for `world: "MAIN"`.
+     *
+     * The extension's own files (`files`, extension-relative paths) are read here and streamed
+     * into the script ([ExtensionScripts.execScript]) rather than sent as `code`: a missing one is
+     * Chrome's `Could not load file` rejection. The read is off the main thread; where the script
+     * runs is decided first, with the endpoints this call saw.
      */
     private fun exec(args: JSONObject, reply: (Any?) -> Unit) {
         val tab = host.tabs.get(args.str("tabId"))
@@ -638,40 +643,68 @@ class Extensions(private val host: Host) {
             return
         }
         val payload = args.obj("payload")
-        val call = ExtensionScripts.guarded(
-            ExtensionScripts.exec(token, id, args.str("kind", "js"), payload, args.strOrNull("code"), args.strOrNull("funcSource"), args.optJSONArray("args")?.toString())
-        )
+        val paths = args.optJSONArray("files")?.let { a -> List(a.length()) { i -> a.optString(i, "") } } ?: emptyList()
+        val files = ArrayList<File>(paths.size)
+        for (path in paths) {
+            val file = fileIn(ext.dir, path)?.takeIf { it.isFile }
+            if (file == null) {
+                reply(Host.Rejection("Could not load file: '$path'."))
+                return
+            }
+            files.add(file)
+        }
         val wantMain = payload.optString("world") == "MAIN"
         val doc = args.strOrNull("doc")
+        var prefix: String? = null
+        var named = false
+        val run: (String) -> Unit
         if (doc != null) {
             if (!isolatedWorlds) {
                 reply(Host.Rejection("This WebView cannot run a script in a subframe (Chromium 146 and later can)"))
                 return
             }
             val frame = endpoints.values.filter { it.view === tab && it.extensionId == id && it.context == "content" && !it.isMainFrame && it.doc == doc }
-            val endpoint = frame.firstOrNull { it.world == !wantMain }
-            when {
-                frame.isEmpty() -> reply(Host.Rejection("No such frame in the tab (it navigated away, or the extension has no script in it)"))
-                endpoint == null -> reply(Host.Rejection("The extension has no ${if (wantMain) "main-world" else "isolated-world"} script in that frame"))
-                else -> runInFrame(endpoint, call, reply)
-            }
-            return
-        }
-        val mine = endpoints.values.filter { it.view === tab && it.extensionId == id && it.context == "content" && it.isMainFrame }
-        if (isolatedWorlds && !wantMain) {
-            val world = mine.firstOrNull { it.world }
-            if (world != null) {
-                runInFrame(world, call, reply)
+            if (frame.isEmpty()) {
+                reply(Host.Rejection("No such frame in the tab (it navigated away, or the extension has no script in it)"))
                 return
             }
+            val endpoint = frame.firstOrNull { it.world == !wantMain }
+            if (endpoint == null) {
+                reply(Host.Rejection("The extension has no ${if (wantMain) "main-world" else "isolated-world"} script in that frame"))
+                return
+            }
+            run = { call -> runInFrame(endpoint, call, reply) }
+        } else {
+            val mine = endpoints.values.filter { it.view === tab && it.extensionId == id && it.context == "content" && it.isMainFrame }
+            val world = if (isolatedWorlds && !wantMain) mine.firstOrNull { it.world } else null
+            if (world != null) {
+                run = { call -> runInFrame(world, call, reply) }
+            } else {
+                if (mine.none { !it.world }) {
+                    lateBoots++
+                    prefix = ExtensionScripts.lateBoot(bootstrap, ext.lateConfig, debug)
+                }
+                // Named like the document-start script: the injected function's DOM writes are the extension's too.
+                named = true
+                run = { script -> tab.evaluateJavascript(script) { result -> reply(unwrap(result)) } }
+            }
         }
-        val booted = mine.any { !it.world }
-        val script = if (booted) call else {
-            lateBoots++
-            ExtensionScripts.lateBoot(bootstrap, ext.lateConfig, debug) + "\n" + call
+        val assemble = {
+            ExtensionScripts.execScript(
+                token, id, args.str("kind", "js"), payload, args.strOrNull("code"), files,
+                args.strOrNull("funcSource"), args.optJSONArray("args")?.toString(), prefix, named
+            )
         }
-        // Named like the document-start script: the injected function's DOM writes are the extension's too.
-        tab.evaluateJavascript(ExtensionScripts.named(script)) { result -> reply(unwrap(result)) }
+        if (files.isEmpty()) {
+            run(assemble())
+            return
+        }
+        io.execute {
+            val script = runCatching(assemble)
+            main.post {
+                script.fold(run) { e -> reply(Host.Rejection("Could not load file: ${e.message ?: e.javaClass.simpleName}.")) }
+            }
+        }
     }
 
     /** [ExtensionScripts.guarded] `call`, run in the frame and world of `endpoint` through its reply proxy. */

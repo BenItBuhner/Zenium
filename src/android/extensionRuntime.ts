@@ -908,6 +908,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
       kind: request.kind,
       payload: request.payload,
       code: request.code,
+      files: request.files,
       funcSource: request.funcSource,
       args: request.args
     })

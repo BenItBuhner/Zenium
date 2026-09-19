@@ -861,14 +861,21 @@ describe('AndroidExtensionRuntime: scripting into frames', () => {
     ])
     expect(top.result).toEqual([{ frameId: 0, documentId: '', result: { ran: true } }])
     expect(h.kt.calledWith('ext.exec').map((a) => a.doc)).toEqual([null])
-    // One subframe: its document; the result carries its frame id.
-    h.kt.files.set(`${ID}/api.js`, 'self.api = 1')
+    // One subframe: its document; the result carries its frame id. The files go by name: the
+    // host reads them into the script (Loom's is 13 MB), nothing is read here.
     const inner = await call(h, 'bg1', 'scripting', 'executeScript', [
-      { target: { tabId, frameIds: [1] }, files: ['api.js'] }
+      { target: { tabId, frameIds: [1] }, files: ['api.js', 'more.js'] }
     ])
     expect(inner.error).toBeUndefined()
     expect(inner.result).toEqual([{ frameId: 1, documentId: '', result: { ran: true } }])
-    expect(h.kt.calledWith('ext.exec').at(-1)).toMatchObject({ doc: 'docB', ext: ID, tabId: 't1' })
+    expect(h.kt.calledWith('ext.exec').at(-1)).toMatchObject({
+      doc: 'docB',
+      ext: ID,
+      tabId: 't1',
+      code: null,
+      files: ['api.js', 'more.js']
+    })
+    expect(h.kt.calledWith('ext.readFile')).toHaveLength(0)
     // Every frame the extension has a script in.
     const all = await call(h, 'bg1', 'scripting', 'insertCSS', [
       { target: { tabId, allFrames: true }, css: 'body{margin:0}' }

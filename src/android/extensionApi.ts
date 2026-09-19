@@ -54,6 +54,11 @@ export interface ExecRequest {
   kind: 'js' | 'css'
   payload: Record<string, unknown>
   code: string | null
+  /**
+   * The extension's own script files (extension-relative paths, in order): the host reads them
+   * into the script itself, so their text never crosses the bridge (Loom's `content.js` is 13 MB).
+   */
+  files: string[] | null
   funcSource: string | null
   args: unknown[] | null
 }
@@ -748,12 +753,10 @@ export class ExtensionApi {
     details: Record<string, unknown>
   ): Promise<unknown> {
     const id = ext.record.id
-    const code =
-      typeof details.code === 'string'
-        ? details.code
-        : await this.host.readFile(id, String(details.file ?? ''))
     const frames = this.targetFrames(ext, target, details)
     if (kind === 'js') {
+      // `{ file }` goes to the host by name; `{ code }` as text.
+      const file = typeof details.file === 'string' ? details.file : null
       const results = await this.injectFrames(frames, (frameId) =>
         this.host.exec({
           extensionId: id,
@@ -761,13 +764,18 @@ export class ExtensionApi {
           frameId,
           kind: 'js',
           payload: { world: 'ISOLATED' },
-          code: code ?? '',
+          code: file === null ? String(details.code ?? '') : null,
+          files: file === null ? null : [file],
           funcSource: null,
           args: null
         })
       )
       return results.map((r) => r.value)
     }
+    const code =
+      typeof details.code === 'string'
+        ? details.code
+        : await this.host.readFile(id, String(details.file ?? ''))
     const cssId = typeof details.file === 'string' ? details.file : (code ?? '')
     await this.injectFrames(frames, (frameId) =>
       this.host.exec({
@@ -777,6 +785,7 @@ export class ExtensionApi {
         kind: 'css',
         payload: { id: cssId, code: code ?? '' },
         code: null,
+        files: null,
         funcSource: null,
         args: null
       })
@@ -916,20 +925,15 @@ export class ExtensionApi {
         const tab = resolveTab()
         const frames = this.targetFrames(ext, tab, target)
         const world = injection.world === 'MAIN' ? 'MAIN' : 'ISOLATED'
-        let code: string | null = null
+        let files: string[] | null = null
         let funcSource: string | null = null
         let funcArgs: unknown[] | null = null
         if (typeof injection.funcSource === 'string') {
           funcSource = injection.funcSource
           funcArgs = Array.isArray(injection.args) ? injection.args : []
         } else {
-          const sources: string[] = []
-          for (const file of asStringArray(injection.files)) {
-            const text = await this.host.readFile(id, file)
-            if (text === null) throw new Error(`Could not load file: '${file}'.`)
-            sources.push(text)
-          }
-          code = sources.join('\n;\n')
+          // The host reads the files into the script (a missing one is its `Could not load file` rejection).
+          files = asStringArray(injection.files)
         }
         const results = await this.injectFrames(frames, (frameId) =>
           this.host.exec({
@@ -938,7 +942,8 @@ export class ExtensionApi {
             frameId,
             kind: 'js',
             payload: { world },
-            code,
+            code: null,
+            files,
             funcSource,
             args: funcArgs
           })
@@ -969,6 +974,7 @@ export class ExtensionApi {
               kind: 'css',
               payload: { id: sheet.id, code: sheet.code, remove },
               code: null,
+              files: null,
               funcSource: null,
               args: null
             })

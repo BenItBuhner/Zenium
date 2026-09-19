@@ -5,6 +5,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
 /** The injected script is assembled by string work; these tests pin its shape and syntax. */
 class ExtensionScriptsTest {
@@ -93,6 +94,35 @@ class ExtensionScriptsTest {
         assertTrue(withCode.contains("{\ndocument.title\n})"))
         val css = ExtensionScripts.exec("tok", "abcdefghijklmnopabcdefghijklmnop", "css", JSONObject("""{"code":"a{}"}"""), null, null, null)
         assertTrue(css.contains(""""css",{"code":"a{}"},function"""))
+    }
+
+    @Test
+    fun `execScript streams the extension's files into one guarded, named script equal to the old composition`() {
+        val dir = createTempDir("ext-scripts")
+        try {
+            // A multi-byte file: its size in bytes bounds its length in chars, so the builder is presized and never grows.
+            val a = File(dir, "a.js").apply { writeText("var shared = 'héllo — ✓' // trailing comment") }
+            val b = File(dir, "b.js").apply { writeText("(function(){ return shared })()") }
+            val id = "abcdefghijklmnopabcdefghijklmnop"
+            val payload = JSONObject("""{"world":"MAIN"}""")
+            val joined = a.readText() + "\n;\n" + b.readText()
+            val expected = ExtensionScripts.named(ExtensionScripts.guarded(ExtensionScripts.exec("tok", id, "js", payload, joined, null, null)))
+            val script = ExtensionScripts.execScript("tok", id, "js", payload, null, listOf(a, b), null, null, null, true)
+            assertEquals(expected, script)
+            // A late boot in front, and the isolated-world form (no name): the same pieces.
+            val withPrefix = ExtensionScripts.execScript("tok", id, "js", payload, null, listOf(a, b), null, null, "/*boot*/", false)
+            assertEquals("/*boot*/\n" + ExtensionScripts.guarded(ExtensionScripts.exec("tok", id, "js", payload, joined, null, null)), withPrefix)
+            // Code and func take the same path, with no files.
+            val code = ExtensionScripts.execScript("tok", id, "js", JSONObject(), "document.title", emptyList(), null, null, null, false)
+            assertEquals(ExtensionScripts.guarded(ExtensionScripts.exec("tok", id, "js", JSONObject(), "document.title", null, null)), code)
+            val func = ExtensionScripts.execScript("tok", id, "js", JSONObject(), null, emptyList(), "(a, b) => a + b", "[1,2]", null, true)
+            assertEquals(ExtensionScripts.named(ExtensionScripts.guarded(ExtensionScripts.exec("tok", id, "js", JSONObject(), null, "(a, b) => a + b", "[1,2]"))), func)
+            // Code before files: joined like two files.
+            val both = ExtensionScripts.execScript("tok", id, "js", JSONObject(), "first()", listOf(b), null, null, null, false)
+            assertTrue(both.contains("{\nfirst()\n;\n(function(){ return shared })()\n})"))
+        } finally {
+            dir.deleteRecursively()
+        }
     }
 
     @Test
