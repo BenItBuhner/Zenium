@@ -12,8 +12,6 @@ name: Android Settings sheet touch check
 # the driver.
 on:
   workflow_dispatch:
-  push:
-    branches: [cursor/android-sheet-chassis-focus-ime-172c]
 
 permissions:
   contents: read
