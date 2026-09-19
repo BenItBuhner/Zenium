@@ -12,6 +12,7 @@ import android.os.Build
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.print.PrintAttributes
 import android.print.PrintManager
 import android.provider.MediaStore
@@ -45,7 +46,6 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.SecureRandom
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 
 /**
@@ -186,18 +186,11 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     /** The tab cards' pictures, one JPEG per tab under the cache dir (`thumbnail.*`, [TabWebView.captureThumbnail]). */
     override val thumbnails = Thumbnails(File(activity.cacheDir, Thumbnails.DIR))
     /**
-     * Each tab's last `historyChanged` payload (`{ entries, index }`), by tab id: what the
-     * synchronous `view.navigationEntries` answers from the bridge thread, where the WebView's
-     * list cannot be read. Written on the main thread as the views push, gone with the view.
+     * Each tab's last pushed list and the `hostState` behind it, for the synchronous
+     * `view.navigationEntries` and `view.navigationHostState` the core makes from the bridge
+     * thread, where the WebView cannot be asked (see [NavigationMirror]).
      */
-    private val histories = ConcurrentHashMap<String, JSONObject>()
-    /**
-     * Each tab's latest `hostState` (the `saveState` bundle behind that list, encoded), by tab
-     * id, for the synchronous `view.navigationHostState` the core makes as it records a list:
-     * the view refreshes it on the main thread with every push ([navigationStateChanged]), so
-     * the bridge thread never waits on the main thread for it. Absent: nothing to keep.
-     */
-    private val hostStates = ConcurrentHashMap<String, String>()
+    val navigation = NavigationMirror(SystemClock::uptimeMillis)
     /**
      * Page views go behind the chrome no earlier than with the chrome's next drawn frame, and the
      * chrome hears when the frame carrying each change is on screen (`view.drawn`, [reportDrawn]).
@@ -214,17 +207,13 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
 
     override fun viewEvent(tabId: String, name: String, payload: Any?) {
         when (name) {
-            "historyChanged" -> (payload as? JSONObject)?.let { histories[tabId] = it }
-            "destroyed" -> {
-                histories.remove(tabId)
-                hostStates.remove(tabId)
-            }
+            "historyChanged" -> (payload as? JSONObject)?.let { navigation.listChanged(tabId, it) }
+            "destroyed" -> navigation.forget(tabId)
         }
         chrome.viewEvent(tabId, name, payload)
     }
-    override fun navigationStateChanged(tabId: String, hostState: String?) {
-        if (hostState == null) hostStates.remove(tabId) else hostStates[tabId] = hostState
-    }
+    override fun navigationStateChanged(tabId: String, hostState: String?) = navigation.stateChanged(tabId, hostState)
+    override fun viewBound(viewId: String, tabId: String) = navigation.forget(viewId)
     override fun hostEvent(name: String, payload: Any?) = chrome.hostEvent(name, payload)
     override fun onKey(tabId: String?, input: JSONObject) = chrome.onKey(tabId, input)
     override fun pullEvent(tabId: String, phase: String, payload: JSONObject?) = chrome.pullEvent(tabId, phase, payload)
@@ -302,10 +291,10 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         // The tab's back/forward stack, from the last `historyChanged` its view pushed (the
         // core reads it synchronously when it remembers a tab's navigation and for the back
         // list); `{ entries: [], index: -1 }` for a tab without a view.
-        "view.navigationEntries" -> histories[args.str("tabId")] ?: NavigationState.emptySnapshot()
+        "view.navigationEntries" -> navigation.entries(args.str("tabId"))
         // The opaque state behind that stack (the string itself; null when there is none: a
         // private tab, no list, over the cap), from the mirror the view refreshes with each push.
-        "view.navigationHostState" -> hostStates[args.str("tabId")]
+        "view.navigationHostState" -> navigation.hostState(args.str("tabId"))
         else -> throw IllegalArgumentException("Unknown sync method: $method")
     }
 
@@ -1223,8 +1212,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     fun onChromeDocumentReplaced() {
         cancelProbe()
         tabs.dropAll()
-        histories.clear()
-        hostStates.clear()
+        navigation.clear()
         // The old core's unread spilled bodies went with its document.
         io.execute(handoff::sweep)
     }
@@ -1266,8 +1254,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         if (dead !== chrome || activity.isFinishing || activity.isDestroyed) return
         cancelProbe()
         tabs.dropAll()
-        histories.clear()
-        hostStates.clear()
+        navigation.clear()
         // Spilled bodies the dead chrome never released would otherwise stay for the process lifetime.
         io.execute(handoff::sweep)
         val index = root.indexOfChild(dead)

@@ -81,6 +81,13 @@ interface PageHost {
      */
     fun navigationStateChanged(tabId: String, hostState: String?) {}
 
+    /**
+     * The view known as `viewId` (a popup's provisional id) is `tabId`'s from now on: whatever
+     * the window kept under the old id – the list its pushes filled, the state behind it – is not
+     * kept there any more; the view pushes both again under the new id right after.
+     */
+    fun viewBound(viewId: String, tabId: String) {}
+
     /** Something happened outside any one page: a download, a permission request, a popup. */
     fun hostEvent(name: String, payload: Any?)
 
