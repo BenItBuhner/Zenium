@@ -2,6 +2,7 @@ package app.zen.chromium
 
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -147,6 +148,64 @@ class QrScanLogicTest {
         QrScanLogic.luminanceSource(ByteBuffer.allocate(64), 16, 4, 8, 1)
     }
 
+    // --- the decoder over a stream ------------------------------------------------------------------
+
+    private fun upright() = QrScanLogic.luminanceSource(plane(fixture.width), fixture.width, fixture.height, fixture.width, 1)
+    private fun inverted() = QrScanLogic.luminanceSource(plane(fixture.width, invert = true), fixture.width, fixture.height, fixture.width, 1)
+
+    @Test
+    fun theStreamsDecoderReadsAnUprightCodeOnEveryFrameWithOneReader() {
+        val decoder = QrScanLogic.Decoder()
+        repeat(5) { assertEquals("https://example.org/", decoder.next(upright())) }
+    }
+
+    @Test
+    fun theStreamsDecoderTriesTheInvertedReadEveryThirdFrame() {
+        val decoder = QrScanLogic.Decoder()
+        val found = (1..6).map { decoder.next(inverted()) }
+        assertEquals(listOf(null, null, "https://example.org/", null, null, "https://example.org/"), found)
+    }
+
+    // --- the decode gate ------------------------------------------------------------------------------
+
+    @Test
+    fun noFrameIsReadUntilTheWindowShowsTheLivePicture() {
+        val gate = QrScanLogic.FrameGate()
+        assertFalse(gate.admits(1_000))
+        assertFalse(gate.admits(5_000))
+        gate.shown = true
+        assertTrue(gate.admits(5_000))
+    }
+
+    @Test
+    fun aHiddenWindowStopsTheReadsUntilItShowsAgain() {
+        val gate = QrScanLogic.FrameGate().apply { shown = true }
+        assertTrue(gate.admits(1_000))
+        // The chrome's `qr.layout visible: false`: the sheet moves – dragged, backed, on its way out.
+        gate.shown = false
+        assertFalse(gate.admits(2_000))
+        assertFalse(gate.admits(30_000))
+        gate.shown = true
+        assertTrue(gate.admits(30_100))
+    }
+
+    @Test
+    fun framesAreReadAtMostEveryOtherOneOfAThirtyFpsStream() {
+        val gate = QrScanLogic.FrameGate().apply { shown = true }
+        val read = (0 until 8).map { i -> gate.admits(10_000L + i * 33) }
+        assertEquals(listOf(true, false, true, false, true, false, true, false), read)
+    }
+
+    @Test
+    fun aCodeFoundHoldsTheReadsOffForTheCoolDown() {
+        val gate = QrScanLogic.FrameGate().apply { shown = true }
+        assertTrue(gate.admits(10_000))
+        gate.decoded(10_000)
+        assertFalse(gate.admits(10_100))
+        assertFalse(gate.admits(10_000 + QrScanLogic.DECODE_COOL_DOWN_MS - 1))
+        assertTrue(gate.admits(10_000 + QrScanLogic.DECODE_COOL_DOWN_MS))
+    }
+
     // --- the sizes picked from what a camera offers -----------------------------------------------
 
     @Test
@@ -212,5 +271,16 @@ class QrScanLogicTest {
         assertEquals("camera", QrScanLogic.errorName(3))
         assertEquals("camera", QrScanLogic.errorName(4))
         assertEquals("camera", QrScanLogic.errorName(5))
+    }
+
+    @Test
+    fun anOpenThatThrowsIsBusyWhenTheCameraIsHeldAndTheCameraOtherwise() {
+        assertEquals("busy", QrScanLogic.accessErrorName(QrScanLogic.ACCESS_CAMERA_IN_USE))
+        assertEquals("busy", QrScanLogic.accessErrorName(QrScanLogic.ACCESS_MAX_CAMERAS_IN_USE))
+        // CAMERA_DISABLED, CAMERA_DISCONNECTED, CAMERA_ERROR, CAMERA_DEPRECATED_HAL
+        assertEquals("camera", QrScanLogic.accessErrorName(1))
+        assertEquals("camera", QrScanLogic.accessErrorName(2))
+        assertEquals("camera", QrScanLogic.accessErrorName(3))
+        assertEquals("camera", QrScanLogic.accessErrorName(1000))
     }
 }

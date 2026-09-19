@@ -12,6 +12,7 @@ import android.graphics.Matrix
 import android.graphics.Outline
 import android.graphics.RectF
 import android.graphics.SurfaceTexture
+import android.hardware.camera2.CameraAccessException
 import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraDevice
@@ -39,18 +40,19 @@ import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 
 /**
- * The scanner's host half (OMN-22, NTP-03): the device's back camera behind the chrome's camera
+ * The scanner's host half (OMN-22, NTP-04): the device's back camera behind the chrome's camera
  * buttons. `qr.start` asks for the camera (the runtime prompt through [Permissions.requestForApp])
  * and opens it through camera2 into two streams – a [TextureView] the host lays over the scan
  * sheet's window as the chrome says (`qr.layout`), and an [ImageReader] whose YUV_420_888 frames
- * go, luminance plane only, through ZXing ([QrScanLogic.decode]) on the camera's own thread. What
- * the camera reports goes to the chrome as `qr.event`s (`QrEvent` in `src/shared/qrScan.ts`):
- * `ready` once frames flow (and whether there is a torch), the `still`s the window shows while the
- * live picture is hidden, `torch` when it switches, one `decoded` per code, `error` when the camera
- * fails, `aborted` when the app leaves the screen. The chrome owns the sheet and the submit; this
- * class owns nothing but the camera, its preview view and their life – the camera is released on
- * `qr.cancel`, on the activity's stop and on destroy, so none is left open behind a sheet that is
- * gone (#187).
+ * go, luminance plane only, through ZXing ([QrScanLogic.Decoder]) on the camera's own thread –
+ * but only while the chrome says the window shows the live picture ([QrScanLogic.FrameGate]): a
+ * sheet that moves, or is on its way out, reads no code. What the camera reports goes to the
+ * chrome as `qr.event`s (`QrEvent` in `src/shared/qrScan.ts`): `ready` once frames flow (and
+ * whether there is a torch), the `still`s the window shows while the live picture is hidden,
+ * `torch` when it switches, one `decoded` per code, `error` when the camera fails, `aborted` when
+ * the app leaves the screen. The chrome owns the sheet and the submit; this class owns nothing but
+ * the camera, its preview view and their life – the camera is released on `qr.cancel`, on the
+ * activity's stop and on destroy, so none is left open behind a sheet that is gone (#187).
  *
  * Whether the device has a back camera at all ([available]) goes to the chrome at boot as the
  * `qrScan` capability; without it no camera button shows.
@@ -93,8 +95,8 @@ class QrScan(private val host: Host, private val root: FrameLayout) {
     private var preview: PreviewView? = null
     /** Counts the sessions, so a report from a camera already let go is ignored; the camera thread reads it. */
     @Volatile private var session = 0
-    /** A decode holds further decodes off for a moment ([DECODE_COOL_DOWN_MS]); the camera thread reads it. */
-    @Volatile private var coolDownUntil = 0L
+    /** Whether the live session's frames are read: the window shown, the cadence, the pause after a decode. One per session. */
+    private var gate = QrScanLogic.FrameGate()
     private val stillTick = object : Runnable {
         override fun run() {
             sendStill()
@@ -104,15 +106,25 @@ class QrScan(private val host: Host, private val root: FrameLayout) {
 
     /** The device has a back camera the chrome's camera buttons can scan with. */
     val available: Boolean
-        get() = availabilityOverride ?: runCatching {
+        get() = availabilityOverride ?: platformHasBackCamera
+
+    /**
+     * `FEATURE_CAMERA` is the platform's word for a camera facing away from the screen; the id
+     * check behind it is belt and braces. Both are binder calls to the camera service, and a
+     * device's cameras do not come and go, so they are made once (the boot path reads this).
+     */
+    private val platformHasBackCamera: Boolean by lazy {
+        runCatching {
             activity.packageManager.hasSystemFeature(PackageManager.FEATURE_CAMERA) && backCameraId(cameraManager(activity)) != null
         }.getOrDefault(false)
+    }
 
     /**
      * `qr.start`: the camera permission first (granted before, or the system prompt now), then the
      * camera. `reply` gets a `QrStartOutcome`: `scanning` once the camera is opening (`ready`
-     * follows as frames flow; a camera that fails to open reports `error`), the grant's name for a
-     * refusal, `unavailable` where there is no back camera or it would not start. A `qr.cancel`
+     * follows as frames flow; a camera that fails to open reports `error`, whether it failed in
+     * its callbacks or in `openCamera` itself), the grant's name for a refusal, `unavailable`
+     * where there is no back camera or camera2 would not even take the request. A `qr.cancel`
      * while the prompt is up (the sheet backed away) is honoured by not opening; the reply then
      * still says what the prompt answered, which the chrome ignores for a sheet it has taken down.
      */
@@ -128,7 +140,21 @@ class QrScan(private val host: Host, private val root: FrameLayout) {
                 reply(QrScanLogic.outcome(grant))
                 return@requestForApp
             }
-            reply(if (open(id)) "scanning" else "unavailable")
+            val failure = open(id)
+            if (failure == null) {
+                reply("scanning")
+                return@requestForApp
+            }
+            // The camera is there but would not open – held by another app, disabled by policy:
+            // the session fails as it would had the open failed in its callback, and the toast
+            // says what happened (`qrErrorMessage`), not that the device has no camera.
+            val kind = (failure as? CameraAccessException)?.let { QrScanLogic.accessErrorName(it.reason) }
+            if (kind == null) {
+                reply("unavailable")
+                return@requestForApp
+            }
+            reply("scanning")
+            event(json("kind" to "error", "error" to kind))
         }
     }
 
@@ -153,12 +179,15 @@ class QrScan(private val host: Host, private val root: FrameLayout) {
      * radius, and whether the live picture shows there now. The chrome hides it while the sheet
      * moves (a still, sent as it goes, stands in the window meanwhile) and shows it once the window
      * has held still; while shown, a still goes every [STILL_INTERVAL_MS] so the window always has
-     * a recent one to fall back on.
+     * a recent one to fall back on. Frames are read for a code only while the window is shown
+     * ([gate]): a sheet that moves – dragged, pulled by the back gesture, on its way out – reads
+     * none, so a code held to the camera as the user dismisses the sheet loads nothing.
      */
     fun layout(args: JSONObject) {
         val view = preview ?: return
         val visible = args.bool("visible")
         if (!visible) {
+            gate.shown = false
             if (view.shown) sendStill()
             view.shown = false
             stopStills()
@@ -178,6 +207,7 @@ class QrScan(private val host: Host, private val root: FrameLayout) {
         view.layoutParams = lp
         view.setRadius((args.num("radius") * density).toFloat())
         view.shown = true
+        gate.shown = true
         stopStills()
         main.postDelayed(stillTick, STILL_INTERVAL_MS)
     }
@@ -203,7 +233,8 @@ class QrScan(private val host: Host, private val root: FrameLayout) {
         thread = null
     }
 
-    private fun open(id: Int): Boolean {
+    /** Open the camera for session `id`: null once it is opening, else what stopped it. */
+    private fun open(id: Int): Throwable? {
         closeCamera()
         val view = PreviewView(activity)
         // One pixel at the corner until the chrome says where the window is: a TextureView only
@@ -215,21 +246,22 @@ class QrScan(private val host: Host, private val root: FrameLayout) {
         }.getOrElse { e ->
             Log.w(TAG, "no camera: ${e.message}")
             closeCamera()
-            return false
+            return e
         }
         this.camera = camera
-        coolDownUntil = 0L
-        val started = runCatching { camera.start(view.texture, SessionListener(id)) }
-        if (started.isFailure) {
-            Log.w(TAG, "the camera would not start: ${started.exceptionOrNull()?.message}")
+        val gate = QrScanLogic.FrameGate().also { this.gate = it }
+        val started = runCatching { camera.start(view.texture, SessionListener(id, gate)) }
+        started.exceptionOrNull()?.let { e ->
+            Log.w(TAG, "the camera would not start: ${e.message}")
             closeCamera()
-            return false
+            return e
         }
-        return true
+        return null
     }
 
     private fun closeCamera() {
         stopStills()
+        gate.shown = false
         val gone = camera
         camera = null
         runCatching { gone?.close() }
@@ -271,12 +303,16 @@ class QrScan(private val host: Host, private val root: FrameLayout) {
     /**
      * The camera's reports for session `id`, each checked against the live session (a camera
      * keeps reporting for a moment after `close`). A frame is decoded where it arrives, on the
-     * camera's thread; a code found goes to the main thread as a still of the moment and the
-     * `decoded` event, and holds further decodes off for [DECODE_COOL_DOWN_MS] – the chrome cancels
-     * the session on a payload it can act on, and a session it lets run (nothing to submit) goes
-     * on scanning once the pause is over rather than firing the same code every frame.
+     * camera's thread, if the session's [gate] admits it – the window shown, the cadence kept,
+     * no code found in the last [QrScanLogic.DECODE_COOL_DOWN_MS]; a code found goes to the main
+     * thread as a still of the moment and the `decoded` event, unless the window has gone hidden
+     * meanwhile (the fall began between the read and the report). The chrome cancels the session
+     * on a payload it can act on, and a session it lets run (nothing to submit) goes on scanning
+     * once the pause is over rather than firing the same code every frame.
      */
-    private inner class SessionListener(private val id: Int) : Listener {
+    private inner class SessionListener(private val id: Int, private val gate: QrScanLogic.FrameGate) : Listener {
+        private val decoder = QrScanLogic.Decoder()
+
         private fun live(): Boolean = id == session && camera != null
 
         override fun ready(torch: Boolean) {
@@ -289,11 +325,11 @@ class QrScan(private val host: Host, private val root: FrameLayout) {
         override fun frame(source: LuminanceSource) {
             if (id != session) return
             val now = SystemClock.uptimeMillis()
-            if (now < coolDownUntil) return
-            val text = QrScanLogic.decode(source) ?: return
-            coolDownUntil = now + DECODE_COOL_DOWN_MS
+            if (!gate.admits(now)) return
+            val text = decoder.next(source) ?: return
+            gate.decoded(now)
             main.post {
-                if (!live()) return@post
+                if (!live() || !gate.shown) return@post
                 sendStill()
                 event(json("kind" to "decoded", "text" to text))
             }
@@ -595,7 +631,6 @@ class QrScan(private val host: Host, private val root: FrameLayout) {
         private const val STILL_INTERVAL_MS = 500L
         private const val STILL_SIDE_PX = 288
         private const val STILL_JPEG_QUALITY = 55
-        private const val DECODE_COOL_DOWN_MS = 1_500L
 
         /** Testing: builds the camera instead of the platform's (set before the activity starts). Written nowhere in `main`. */
         @Volatile

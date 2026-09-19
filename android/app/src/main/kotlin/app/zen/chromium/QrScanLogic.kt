@@ -10,10 +10,11 @@ import com.google.zxing.qrcode.QRCodeReader
 import java.nio.ByteBuffer
 
 /**
- * The scanner's pure half (OMN-22, NTP-03): what `QrScan.kt` decides without a camera in hand,
+ * The scanner's pure half (OMN-22, NTP-04): what `QrScan.kt` decides without a camera in hand,
  * kept apart so the JVM tests can hold it – the luminance-plane adapter between camera2's
- * YUV_420_888 frames and ZXing, the decode itself, the frame sizes picked from what a camera
- * offers, the preview's fit on its window and the grant's name for the chrome.
+ * YUV_420_888 frames and ZXing, the decode itself and its cadence ([Decoder], [FrameGate]), the
+ * frame sizes picked from what a camera offers, the preview's fit on its window and the names
+ * the chrome knows the grant and the camera's errors by.
  */
 object QrScanLogic {
     /** The chrome's `QrStartOutcome` for a grant: the camera opens on a grant, a refusal is named. */
@@ -56,19 +57,69 @@ object QrScanLogic {
     }
 
     /**
-     * The QR code in a frame as text, or null when the frame holds none. QR codes only (the
-     * parity target is a code that opens its URL or searches its text; 1D product codes would
-     * only ever be a number to search, and read wrong more often than they read right on a live
-     * frame). The frame is read as it is and then inverted – a light code on a dark screen – with
-     * the adaptive binarizer, which holds up under the uneven light a camera sees. A decode that
+     * The QR code in a frame as text, or null when the frame holds none, read both ways (as it
+     * is, then inverted). One frame on its own – the tests' form; a session's stream goes through
+     * a [Decoder], which spaces the inverted reads out.
+     */
+    fun decode(source: LuminanceSource): String? = Decoder().decode(source, inverted = true)
+
+    /**
+     * The reader over a session's frames, one per camera thread. QR codes only (the parity
+     * target is a code that opens its URL or searches its text; 1D product codes would only ever
+     * be a number to search, and read wrong more often than they read right on a live frame),
+     * through the adaptive binarizer, which holds up under the uneven light a camera sees. A
+     * frame is read as it is; every [INVERTED_EVERY]th frame is read inverted too – a light code
+     * on a dark screen is the rare case, and the second read doubles what a frame with no code in
+     * it costs, the common case while the sheet is up. One [QRCodeReader] serves every read (it
+     * keeps its detector's state; a new one per frame was allocation for nothing). A decode that
      * carries no text counts as none.
      */
-    fun decode(source: LuminanceSource): String? = decodeOnce(source) ?: decodeOnce(source.invert())
+    class Decoder {
+        private val reader = QRCodeReader()
+        private var reads = 0
 
-    private fun decodeOnce(source: LuminanceSource): String? = try {
-        QRCodeReader().decode(BinaryBitmap(HybridBinarizer(source)), HINTS).text?.takeIf { it.isNotEmpty() }
-    } catch (e: ReaderException) {
-        null
+        /** The next frame of the stream. */
+        fun next(source: LuminanceSource): String? = decode(source, inverted = ++reads % INVERTED_EVERY == 0)
+
+        /** One frame, read as it is and – when `inverted` – inverted too. */
+        fun decode(source: LuminanceSource, inverted: Boolean): String? =
+            read(source) ?: if (inverted) read(source.invert()) else null
+
+        private fun read(source: LuminanceSource): String? = try {
+            reader.decode(BinaryBitmap(HybridBinarizer(source)), HINTS).text?.takeIf { it.isNotEmpty() }
+        } catch (e: ReaderException) {
+            null
+        } finally {
+            reader.reset()
+        }
+    }
+
+    /**
+     * Whether a frame that arrived is read at all. Frames are read only while the window shows
+     * the live picture ([shown], what the chrome's `qr.layout visible` last said: a hidden window
+     * is the sheet's rise, a finger on the sheet, a sheet stacked above it or the sheet on its way
+     * out, and a code held to the camera through any of those is not the user asking for it), at
+     * most one every [DECODE_INTERVAL_MS] (the camera streams at 30 fps and more; a read every
+     * other frame finds a code as fast as a hand can hold one still, at half the CPU), and none
+     * for [DECODE_COOL_DOWN_MS] after a code was found (the chrome ends the session on a payload
+     * it can act on; one it lets run goes on scanning once the pause is over rather than firing
+     * the same code every frame). Written on the main thread and read on the camera's.
+     */
+    class FrameGate {
+        @Volatile var shown = false
+        @Volatile private var nextReadAt = 0L
+
+        /** Whether the frame at `now` (uptime ms) is read; the next read is booked when it is. */
+        fun admits(now: Long): Boolean {
+            if (!shown || now < nextReadAt) return false
+            nextReadAt = now + DECODE_INTERVAL_MS
+            return true
+        }
+
+        /** A code was found at `now`: nothing is read for the cool-down. */
+        fun decoded(now: Long) {
+            nextReadAt = now + DECODE_COOL_DOWN_MS
+        }
     }
 
     /**
@@ -129,13 +180,33 @@ object QrScanLogic {
         else -> "camera"
     }
 
+    /**
+     * The name the chrome knows a `CameraAccessException` thrown by `openCamera` itself by, from
+     * its `reason`: the camera held by another app (thrown before any callback on some devices)
+     * is `busy`; disabled by policy, in error or gone is `camera` – it did not start, whatever the
+     * cause, and that is what the toast should say rather than "not available on this device".
+     */
+    fun accessErrorName(reason: Int): String = when (reason) {
+        ACCESS_CAMERA_IN_USE, ACCESS_MAX_CAMERAS_IN_USE -> "busy"
+        else -> "camera"
+    }
+
     /** `CameraDevice.StateCallback.ERROR_CAMERA_IN_USE` and `ERROR_MAX_CAMERAS_IN_USE`, spelled out for the JVM tests. */
     const val ERROR_CAMERA_IN_USE = 1
     const val ERROR_MAX_CAMERAS_IN_USE = 2
+    /** `CameraAccessException.CAMERA_IN_USE` and `MAX_CAMERAS_IN_USE` (`CAMERA_DISABLED` 1, `CAMERA_DISCONNECTED` 2, `CAMERA_ERROR` 3), spelled out for the JVM tests. */
+    const val ACCESS_CAMERA_IN_USE = 4
+    const val ACCESS_MAX_CAMERAS_IN_USE = 5
 
     const val ANALYSIS_MIN_SHORT = 480
     const val ANALYSIS_MAX_LONG = 1280
     const val PREVIEW_MAX_LONG = 1920
+    /** The least between two reads of the stream: every other frame of a 30 fps camera. */
+    const val DECODE_INTERVAL_MS = 66L
+    /** The pause after a code was found. */
+    const val DECODE_COOL_DOWN_MS = 1_500L
+    /** Every so many reads is tried inverted too. */
+    const val INVERTED_EVERY = 3
 
     /** No hints: the reader guesses a byte segment's charset (UTF-8, Shift-JIS, Latin-1) or takes the code's ECI. */
     private val HINTS: Map<DecodeHintType, Any> = emptyMap()
