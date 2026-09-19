@@ -4,6 +4,7 @@ import { Check, ChevronLeft, ChevronRight } from 'lucide-react'
 import type { MenuDescriptor, MenuItemDescriptor } from '@shared/types'
 import { useBackSurface } from '@renderer/lib/back'
 import { useViewport } from '@renderer/lib/formFactor'
+import { useSheetLeave } from '@renderer/lib/motion/presence'
 import { closeMenu, lastPointer, pickMenuItem } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
@@ -18,18 +19,22 @@ export function MenuSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
   return viewport.coarse ? <MenuBottomSheet menu={menu} /> : <Popover menu={menu} />
 }
 
-/** Escape closes either variant (hardware keyboards exist on tablets and DeX too). */
-function useEscape(close: () => void): void {
-  const latest = useRef(close)
+/**
+ * Escape closes either variant (hardware keyboards exist on tablets and DeX too). A menu that is
+ * `leaving` – its request gone, its sheet on its way down under `SheetPresence` (§11.1) – lets
+ * the key by: it answers nothing any more, and a menu that popped above it does.
+ */
+function useEscape(close: () => void, leaving = false): void {
+  const latest = useRef({ close, leaving })
   useEffect(() => {
-    latest.current = close
+    latest.current = { close, leaving }
   })
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') {
+      if (e.key === 'Escape' && !latest.current.leaving) {
         e.preventDefault()
         e.stopImmediatePropagation()
-        latest.current()
+        latest.current.close()
       }
     }
     window.addEventListener('keydown', onKey, true)
@@ -64,14 +69,16 @@ function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
   const sheet = useRef<BottomSheetHandle>(null)
 
   // The system back gesture drives the sheet's own dismissal: the finger pulls it down, commit
-  // slides it away, cancel springs it back; the back button and Escape slide it away too.
+  // slides it away, cancel springs it back; the back button and Escape slide it away too. On
+  // its way out with its request gone (the chassis's leave) the sheet absorbs the gesture and
+  // the menu lets Escape by.
   useBackSurface({
     name: 'menu',
     onProgress: (progress) => sheet.current?.backProgress(progress),
     onCommit: () => sheet.current?.commitBack(),
     onCancel: () => sheet.current?.cancelBack()
   })
-  useEscape(() => sheet.current?.dismiss())
+  useEscape(() => sheet.current?.dismiss(), useSheetLeave()?.leaving)
 
   return (
     <BottomSheet
