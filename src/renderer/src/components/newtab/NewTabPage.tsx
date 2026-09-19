@@ -20,6 +20,7 @@ import { qrScanAvailable } from '@shared/qrScan'
 import { voiceSearchAvailable } from '@shared/voice'
 import { run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
+import { PROTECTION_TEXT } from '@renderer/lib/protectionUi'
 import { topSites, type TopSite } from '@renderer/lib/historyAdapter'
 import {
   composeTiles,
@@ -165,10 +166,10 @@ const PRIVATE_EXPLAINER: Array<{ heading: string; rows: Array<[ReactNode, string
  * search field on it and an explainer of what Zenium keeps from the session and what it does
  * not, in the window family. The explainer is the first run's page vocabulary (§9.26, §9.27,
  * §9.2): the title block 22/600 with the mask glyph on its start and a description 15 at 69%,
- * then groups of one-line rows under 15/600 headings, all at the 16 gutter. No tiles – the
- * most visited sites are the regular history's – and no customise gear: the page has one look.
- * Chrome's "block third-party cookies" switch has no setting in the core to drive, so there is
- * none here.
+ * then groups of one-line rows under 15/600 headings, all at the 16 gutter, and last Chrome's
+ * Block third-party cookies switch over the core's setting (`ThirdPartyCookiesRow`). No tiles –
+ * the most visited sites are the regular history's – and no customise gear: the page has one
+ * look.
  */
 function PrivateNewTabPage({ state, tab, hidden }: Props): JSX.Element {
   const growPhase = newTabGrowStore.use((s) => s.phase)
@@ -214,9 +215,60 @@ function PrivateNewTabPage({ state, tab, hidden }: Props): JSX.Element {
               </ul>
             </section>
           ))}
+          <ThirdPartyCookiesRow state={state} />
         </div>
       </div>
     </div>
+  )
+}
+
+const COOKIES_SWITCH_LABEL = 'Block third-party cookies'
+const COOKIES_SWITCH_DESCRIPTION = 'When on, embedded sites cannot use cookies in private tabs.'
+const COOKIES_SWITCH_LOCKED = 'Your settings block them in every tab.'
+
+/**
+ * Chrome's Incognito page's "Block third-party cookies" switch (NTP-31) over the core's
+ * `privacy.thirdPartyCookies` (#156): on is the private-tabs mode, off allows them everywhere.
+ * Blocked everywhere by Settings, the switch shows on and is locked – this page's switch is
+ * about private tabs alone, and Settings owns the wider choice. A §10.4 switch row on the shared
+ * row primitive with its window modifier (`.zen-ntp-row`): the whole row is the switch, the glyph
+ * on the first line as the explainer rows' are, the description 13 at 69 % under the label, the
+ * switch centred on the row. The heading is the Settings cookies group's, so the two surfaces
+ * name the setting alike.
+ */
+function ThirdPartyCookiesRow({ state }: { state: UIState }): JSX.Element {
+  const privacy = state.settings.privacy
+  const checked = privacy.thirdPartyCookies !== 'allow'
+  const locked = privacy.thirdPartyCookies === 'block'
+  return (
+    <section className="zen-firstrun-group -mx-4 flex flex-col">
+      <h2 className="zen-firstrun-heading px-4 pb-1">{PROTECTION_TEXT.cookies.heading}</h2>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        aria-disabled={locked || undefined}
+        className="zen-v2-row zen-ntp-row"
+        data-testid="private-ntp-cookies"
+        onClick={() => {
+          if (locked) return
+          run('settings.update', {
+            privacy: { ...privacy, thirdPartyCookies: checked ? 'allow' : 'block-private' }
+          })
+        }}
+      >
+        <span className="zen-firstrun-row-glyph self-start" aria-hidden>
+          <Cookie />
+        </span>
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className="zen-firstrun-body">{COOKIES_SWITCH_LABEL}</span>
+          <span className="zen-firstrun-small zen-firstrun-deemphasized line-clamp-2">
+            {locked ? COOKIES_SWITCH_LOCKED : COOKIES_SWITCH_DESCRIPTION}
+          </span>
+        </span>
+        <span className="zen-v2-switch" aria-hidden />
+      </button>
+    </section>
   )
 }
 

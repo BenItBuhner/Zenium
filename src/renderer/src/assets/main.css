@@ -5672,6 +5672,38 @@
   background: var(--v2-on-accent);
   transform: translateX(16px);
 }
+/*
+ * The switch row on a window surface – the private new tab page's Block third-party cookies row
+ * (NTP-31) – is the row and switch primitives with one modifier beside them, as §9.34 asks of a
+ * variant: no second row or switch. The row draws the window ink and fills through the control
+ * roles (§9.29), and its off switch is the window's: the track the theme ink at 25 %, the thumb
+ * the theme's solid colour, as the page switch's thumb is the page's. On, the switch keeps the
+ * primitive's `--v2-accent` and `--v2-on-accent`, the clamped mix, for the reason the window's
+ * primary button does: contrast on a gradient of the accent's own hue. A locked row (the setting
+ * blocks everywhere, so this switch cannot turn it off) stays laid out at .4 and takes no press,
+ * as a dependent settings row does (§9.30, §10.4). Unlayered like the primitives, since a layered
+ * override would lose to them.
+ */
+.zen-v2-row.zen-ntp-row {
+  color: var(--v2-control-text);
+}
+.zen-v2-row.zen-ntp-row:active:not([aria-disabled='true']) {
+  background: var(--v2-control-fill);
+}
+@media (hover: hover) {
+  .zen-v2-row.zen-ntp-row:hover:not([aria-disabled='true']) {
+    background: var(--v2-control-fill);
+  }
+}
+.zen-v2-row.zen-ntp-row[aria-disabled='true'] {
+  opacity: 0.4;
+}
+.zen-ntp-row:not([aria-checked='true']) .zen-v2-switch {
+  background: rgb(var(--zen-fg-rgb) / 0.25);
+}
+.zen-ntp-row:not([aria-checked='true']) .zen-v2-switch::after {
+  background: var(--zen-bg-solid);
+}
 
 /*
  * The shared plain radio (§9.34, §9.14): the checkbox-sized circle (16 on a mouse, 20 on a

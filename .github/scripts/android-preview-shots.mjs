@@ -29,7 +29,9 @@
 //                      `page`: on a page (`&url=<page>`), `overview`: the overview on its Private
 //                      pane, `tabs`: on the Tabs pane beside a private tab, `empty`: the Private
 //                      pane with no private tab; `private=new` and `private=<url>` still read as
-//                      `newtab` and `page`), `find=<text>`, `pull=<n>`,
+//                      `newtab` and `page`; `&cookies=allow|block-private|block` sets the
+//                      third-party cookie setting first, for the new tab page's switch in each
+//                      of its states), `find=<text>`, `pull=<n>`,
 //                      `zoom=<factor>` (the page zoom sheet), `error=<code>&url=<failed url>`
 //                      (the zen://error page; see `previewSpec.ts`), `overview` (the tab
 //                      overview over the active page) or the messages and the load

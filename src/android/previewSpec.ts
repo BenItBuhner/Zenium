@@ -1,5 +1,6 @@
 import type { OverlayKind } from '@shared/types'
 import { INTERNAL_PAGE_IDS, type InternalPageId } from '@shared/internalPages'
+import type { ThirdPartyCookieMode } from '@shared/privacy'
 
 /**
  * The overlays a preview state may open by name. Settings (with the Shortcuts and Sync overlays,
@@ -59,10 +60,13 @@ export type PreviewWebAppSurface = (typeof PREVIEW_WEBAPP_SURFACES)[number]
  * `url=<page>` names it, example.com by default; `private=<url>` is that page as well), the tab
  * overview on its Private pane with that tab (`overview`), the overview on its Tabs pane while a
  * private tab is open elsewhere (`tabs`: the segment, and no private card among the regular
- * ones), and the Private pane with no private tab (`empty`: the explainer).
+ * ones), and the Private pane with no private tab (`empty`: the explainer). `cookies=<mode>`
+ * sets the third-party cookie setting first (`allow`, `block-private`, `block`), for the new tab
+ * page's switch in each of its states.
  */
 export const PREVIEW_PRIVATE_SURFACES = ['newtab', 'page', 'overview', 'tabs', 'empty'] as const
 export type PreviewPrivateSurface = (typeof PREVIEW_PRIVATE_SURFACES)[number]
+const PREVIEW_COOKIE_MODES: readonly ThirdPartyCookieMode[] = ['allow', 'block-private', 'block']
 
 /** The menus a preview state may open: the app menu sheet, the Tabs button's quick menu. */
 export const PREVIEW_MENUS = ['app', 'tabs'] as const
@@ -195,6 +199,8 @@ export type PreviewState =
       surface: PreviewPrivateSurface
       /** The page the private tab is on (`page`, `overview`, `tabs`); null for the default. */
       url: string | null
+      /** The third-party cookie setting to put in place first; absent, the profile's stands. */
+      cookies?: ThirdPartyCookieMode
     }
   | { kind: 'find'; text: string }
   | {
@@ -525,18 +531,21 @@ export function parsePreviewSpec(spec: string): PreviewState {
 /**
  * `private=<value>`: one of PREVIEW_PRIVATE_SURFACES, with `url=<page>` for the page the private
  * tab is on; a URL as the value is that page (`private=<url>`), and any other value – `new`,
- * `1` – is the private tab on its new tab page.
+ * `1` – is the private tab on its new tab page. `cookies=<mode>` rides along on any of them.
  */
 function parsePrivate(value: string, params: URLSearchParams): PreviewState {
-  if ((PREVIEW_PRIVATE_SURFACES as readonly string[]).includes(value)) {
-    return {
-      kind: 'private',
-      surface: value as PreviewPrivateSurface,
-      url: params.get('url') || null
-    }
+  const state: Extract<PreviewState, { kind: 'private' }> = (
+    PREVIEW_PRIVATE_SURFACES as readonly string[]
+  ).includes(value)
+    ? { kind: 'private', surface: value as PreviewPrivateSurface, url: params.get('url') || null }
+    : /^https?:\/\//.test(value)
+      ? { kind: 'private', surface: 'page', url: value }
+      : { kind: 'private', surface: 'newtab', url: null }
+  const cookies = params.get('cookies')
+  if (cookies !== null && (PREVIEW_COOKIE_MODES as readonly string[]).includes(cookies)) {
+    state.cookies = cookies as ThirdPartyCookieMode
   }
-  if (/^https?:\/\//.test(value)) return { kind: 'private', surface: 'page', url: value }
-  return { kind: 'private', surface: 'newtab', url: null }
+  return state
 }
 
 /**

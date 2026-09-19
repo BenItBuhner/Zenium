@@ -498,7 +498,21 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
       () => afterFrames(2, () => done(spec))
     )
   } else if (target.kind === 'private' && state) {
-    applyPrivate(target.surface, target.url ?? PRIVATE_PAGE, state, finish)
+    const surface = (): void => {
+      const now = browserStore.get().state ?? state
+      applyPrivate(target.surface, target.url ?? PRIVATE_PAGE, now, finish)
+    }
+    // The cookie setting first, through the settings command as the Settings page writes it,
+    // and the surface once the core says so: the new tab page's switch reads the state.
+    const cookies = target.cookies
+    if (cookies !== undefined && state.settings.privacy.thirdPartyCookies !== cookies) {
+      run('settings.update', {
+        privacy: { ...state.settings.privacy, thirdPartyCookies: cookies }
+      })
+      whenState((s) => s.settings.privacy.thirdPartyCookies === cookies, surface)
+    } else {
+      surface()
+    }
   } else if (target.kind === 'zoom' && tab) {
     if (target.factor !== null) run('tab.setZoomFactor', { tabId: tab.id, factor: target.factor })
     openZoom(tab.id)

@@ -5,12 +5,14 @@ import { createRoot, type Root } from 'react-dom/client'
 import type { Tab, UIState } from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import { DEFAULT_NEW_TAB_SETTINGS } from '@shared/newTab'
+import { DEFAULT_PRIVACY_SETTINGS, type ThirdPartyCookieMode } from '@shared/privacy'
 import { BLANK_URL } from '@shared/url'
 
 /*
  * The one new tab route keyed on the tab's container (NTP-31): a private tab's blank page is the
- * private page – the explainer in the window family, the search field, no tiles and no gear – and
- * every other blank tab's is the space's page. A blank tab of the other mode mounts the other page.
+ * private page – the explainer in the window family, the search field, the Block third-party
+ * cookies switch over the core's setting, no tiles and no gear – and every other blank tab's is
+ * the space's page. A blank tab of the other mode mounts the other page.
  */
 
 const invoke = vi.fn<(name: string, args?: unknown) => Promise<unknown>>(async (name) =>
@@ -63,23 +65,39 @@ const state = {
   spaces: [],
   activeSpaceId: 'space',
   folders: {},
-  settings: { newTab: structuredClone(DEFAULT_NEW_TAB_SETTINGS), colorScheme: 'light' },
+  settings: {
+    newTab: structuredClone(DEFAULT_NEW_TAB_SETTINGS),
+    privacy: structuredClone(DEFAULT_PRIVACY_SETTINGS),
+    colorScheme: 'light'
+  },
   newTabShortcuts: [],
   newTabHiddenHosts: [],
   bookmarks: []
 } as unknown as UIState
 
+/** The state with the third-party cookie mode set. */
+function withCookies(thirdPartyCookies: ThirdPartyCookieMode): UIState {
+  return {
+    ...state,
+    settings: { ...state.settings, privacy: { ...state.settings.privacy, thirdPartyCookies } }
+  }
+}
+
 let root: Root | null = null
 let host: HTMLElement | null = null
 
-function render(t: Tab): HTMLElement {
+function render(t: Tab, s: UIState = state): HTMLElement {
   if (!root) {
     host = document.createElement('div')
     document.body.appendChild(host)
     root = createRoot(host)
   }
-  act(() => root!.render(createElement(NewTabPage, { state, tab: t, hidden: false })))
+  act(() => root!.render(createElement(NewTabPage, { state: s, tab: t, hidden: false })))
   return host!
+}
+
+function cookiesRow(): HTMLElement {
+  return host!.querySelector<HTMLElement>('[data-testid="private-ntp-cookies"]')!
 }
 
 beforeEach(() => {
@@ -105,7 +123,7 @@ describe('the new tab route keyed on the container', () => {
     expect(page.querySelector('h1')!.textContent).toBe("You're browsing privately")
     expect(page.querySelector('[data-testid="private-ntp-glyph"]')).not.toBeNull()
     const headings = [...page.querySelectorAll('h2')].map((h) => h.textContent)
-    expect(headings).toEqual(["Zenium won't save", 'Still visible to'])
+    expect(headings).toEqual(["Zenium won't save", 'Still visible to', 'Third-party cookies'])
     const rows = [...page.querySelectorAll('li')].map((li) => li.textContent)
     expect(rows).toEqual([
       'Browsing history',
@@ -133,11 +151,51 @@ describe('the new tab route keyed on the container', () => {
     expect(uiStore.get().urlbar).toMatchObject({ open: true, tabId: 'p', attached: true })
   })
 
+  it('its Block third-party cookies switch reads the core setting: on in the private-tabs mode, and a press allows them', () => {
+    render(tab('p', PRIVATE_CONTAINER_ID), withCookies('block-private'))
+    const row = cookiesRow()
+    // A §10.4 switch row on the row primitive with its window modifier: the whole row is the switch.
+    expect(row.tagName).toBe('BUTTON')
+    expect(row.getAttribute('role')).toBe('switch')
+    expect(row.classList.contains('zen-v2-row')).toBe(true)
+    expect(row.classList.contains('zen-ntp-row')).toBe(true)
+    expect(row.getAttribute('aria-checked')).toBe('true')
+    expect(row.getAttribute('aria-disabled')).toBeNull()
+    expect(row.textContent).toContain('Block third-party cookies')
+    expect(row.textContent).toContain('When on, embedded sites cannot use cookies in private tabs.')
+    expect(row.querySelector('.zen-v2-switch')).not.toBeNull()
+    act(() => row.click())
+    expect(invoke).toHaveBeenCalledWith('settings.update', {
+      privacy: { ...DEFAULT_PRIVACY_SETTINGS, thirdPartyCookies: 'allow' }
+    })
+  })
+
+  it('off while third-party cookies are allowed, and a press blocks them in private tabs', () => {
+    render(tab('p', PRIVATE_CONTAINER_ID), withCookies('allow'))
+    const row = cookiesRow()
+    expect(row.getAttribute('aria-checked')).toBe('false')
+    act(() => row.click())
+    expect(invoke).toHaveBeenCalledWith('settings.update', {
+      privacy: { ...DEFAULT_PRIVACY_SETTINGS, thirdPartyCookies: 'block-private' }
+    })
+  })
+
+  it('on and locked while Settings blocks them everywhere: it says so and a press changes nothing', () => {
+    render(tab('p', PRIVATE_CONTAINER_ID), withCookies('block'))
+    const row = cookiesRow()
+    expect(row.getAttribute('aria-checked')).toBe('true')
+    expect(row.getAttribute('aria-disabled')).toBe('true')
+    expect(row.textContent).toContain('Your settings block them in every tab.')
+    act(() => row.click())
+    expect(invoke).not.toHaveBeenCalledWith('settings.update', expect.anything())
+  })
+
   it("a regular blank tab's page is the space's, and the tab changing mode mounts the other page", () => {
     render(tab('r', 'default'))
     expect(host!.querySelector('[data-testid="private-ntp"]')).toBeNull()
     const regular = host!.querySelector<HTMLElement>('.zen-ntp')!
     expect(regular.querySelector('[aria-label="Customise the new tab page"]')).not.toBeNull()
+    expect(regular.querySelector('[data-testid="private-ntp-cookies"]')).toBeNull()
     render(tab('p', PRIVATE_CONTAINER_ID))
     const priv = host!.querySelector<HTMLElement>('[data-testid="private-ntp"]')!
     expect(priv).not.toBeNull()

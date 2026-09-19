@@ -178,6 +178,20 @@ describe('parsePreviewSpec', () => {
     })
     expect(parsePreviewSpec('private=empty&download=a.pdf')).toMatchObject({ kind: 'private' })
     expect(parsePreviewSpec('menu=app&private=empty')).toEqual({ kind: 'menu', menu: 'app' })
+    // The third-party cookie setting for the new tab page's switch: a known mode rides along on
+    // any private surface, an unknown one is dropped.
+    expect(parsePreviewSpec('private=newtab&cookies=allow')).toEqual({
+      kind: 'private',
+      surface: 'newtab',
+      url: null,
+      cookies: 'allow'
+    })
+    expect(parsePreviewSpec('private=new&cookies=block')).toMatchObject({ cookies: 'block' })
+    expect(parsePreviewSpec('private=newtab&cookies=maybe')).toEqual({
+      kind: 'private',
+      surface: 'newtab',
+      url: null
+    })
   })
 
   it('puts up messages and the load bar together', () => {
