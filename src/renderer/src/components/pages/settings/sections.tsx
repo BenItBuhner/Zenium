@@ -14,6 +14,7 @@ import type {
   NewTabPreset,
   NewTabSettings,
   NewTabShortcutsMode,
+  PermissionRule,
   PhoneBarPosition,
   PinnedCloseBehavior,
   Settings,
@@ -50,7 +51,7 @@ import {
   NEW_TAB_PRESET_LABELS,
   newTabBackgroundValue
 } from '@renderer/lib/newTabSettings'
-import { describePermissionRule } from '@renderer/lib/security'
+import { describePermissionRule, siteLabel } from '@renderer/lib/security'
 import { openOverlay } from '@renderer/lib/ui'
 import { formatBytes, relativeTime } from '@renderer/lib/utils'
 import { ContainerIcon } from '../../ContainerIcon'
@@ -136,6 +137,7 @@ const BUILDERS: Readonly<Record<string, Builder>> = {
   extensions: extensionsSection,
   agents: agentsSection,
   passwords: passwordsSection,
+  security: securitySection,
   updates: updatesSection,
   about: aboutSection
 }
@@ -1006,7 +1008,7 @@ function downloadsSection({ state, set }: SectionContext): RowGroup[] {
 }
 
 // ---------------------------------------------------------------------------
-// Privacy and Security (ad and tracker blocking, site permissions)
+// Privacy and Security (ad and tracker blocking; the remembered per-site answers are Security's)
 // ---------------------------------------------------------------------------
 
 function privacySection({ state, set }: SectionContext): RowGroup[] {
@@ -1078,47 +1080,6 @@ function privacySection({ state, set }: SectionContext): RowGroup[] {
         ])
       ),
       empty: 'No exceptions yet'
-    },
-    {
-      id: 'permissions',
-      heading: 'Site permissions',
-      description: 'Answers you gave sites asking for the camera, location and more.',
-      rows: [
-        ...state.permissionRules.map((rule) =>
-          item(
-            `permission:${rule.origin}:${rule.permission}`,
-            rule.origin.replace(/^https?:\/\//, ''),
-            `${rule.decision === 'allow' ? 'May' : 'May not'} ${describePermissionRule(rule).replace(/^may (not )?/, '')}`,
-            [
-              {
-                kind: 'action',
-                id: `permission:${rule.origin}:${rule.permission}:forget`,
-                label: 'Forget this answer',
-                description: 'The site asks again the next time it needs it.',
-                onPress: () =>
-                  run('permissions.forget', { origin: rule.origin, permission: rule.permission })
-              }
-            ]
-          )
-        ),
-        ...(state.permissionRules.length > 0
-          ? [
-              {
-                kind: 'action',
-                id: 'permissions-reset',
-                label: 'Forget all site permissions',
-                destructive: true,
-                confirm: {
-                  title: 'Forget all site permissions?',
-                  description: 'Every site asks again the next time it needs a permission.',
-                  action: 'Forget all'
-                },
-                onPress: () => run('permissions.reset', undefined)
-              } satisfies SettingsRow
-            ]
-          : [])
-      ],
-      empty: 'No site has asked for a permission yet'
     }
   ]
 }
@@ -1921,6 +1882,94 @@ function passwordsSection({ state, tab, set }: SectionContext): RowGroup[] {
       ]
     }
   ]
+}
+
+// Security (the answers Zenium remembered per site, and this session's sign-ins)
+// ---------------------------------------------------------------------------
+
+/**
+ * The phone form of the desktop Security pane (`overlays/SecuritySection.tsx`): every per-site
+ * answer Zenium remembered – a site allowed to open pop-up windows on its own, a scheme it may
+ * hand to another app, the camera, location, storage and file permissions – as an item row, the
+ * site over what it may or may not do, whose sheet takes the answer back; Forget all after them
+ * once there is more than one; then the sign-ins and certificate choices kept for this session.
+ * Ungated, as the desktop pane is: every host keeps these answers.
+ */
+function securitySection({ state }: SectionContext): RowGroup[] {
+  const rules = [...state.permissionRules].sort(
+    (a, b) => a.origin.localeCompare(b.origin) || a.permission.localeCompare(b.permission)
+  )
+  return [
+    {
+      id: 'security-permissions',
+      heading: 'Site permissions',
+      description:
+        'Answers you gave sites asking to open pop-ups, to hand links to another app, or to use the camera, location and more.',
+      rows: [
+        ...rules.map(permissionRuleRow),
+        ...(rules.length > 1
+          ? [
+              {
+                kind: 'action',
+                id: 'security-forget-all',
+                label: 'Forget all site permissions',
+                description: 'Every site asks again the next time it needs something.',
+                destructive: true,
+                confirm: {
+                  title: 'Forget all site permissions?',
+                  description: 'Every site asks again the next time it needs something.',
+                  action: 'Forget all'
+                },
+                onPress: () => run('permissions.reset', undefined)
+              } satisfies SettingsRow
+            ]
+          : [])
+      ],
+      empty: 'No site permissions remembered yet'
+    },
+    {
+      id: 'security-session',
+      heading: 'This session',
+      rows: [
+        {
+          kind: 'action',
+          id: 'security-forget-session',
+          label: 'Forget sign-ins and certificates',
+          description: 'Remembered until Zenium quits, in memory only',
+          keywords: ['password', 'http authentication', 'client certificate', 'log in'],
+          onPress: () => run('security.forgetSession', undefined)
+        }
+      ]
+    }
+  ]
+}
+
+/** One remembered answer: the site over what it may or may not do; its sheet forgets it. */
+function permissionRuleRow(rule: PermissionRule): SettingsRow {
+  const id = `security-rule:${rule.origin}:${rule.permission}`
+  const kind = rule.permission.split(':')[0]
+  const keywords =
+    kind === 'popups'
+      ? ['pop-ups', 'popups', 'blocked', 'exception']
+      : kind === 'openExternal'
+        ? ['external apps', 'other apps', 'protocol', 'scheme', 'link']
+        : ['permission']
+  return item(
+    id,
+    siteLabel(rule.origin),
+    describePermissionRule(rule),
+    [
+      {
+        kind: 'action',
+        id: `${id}:forget`,
+        label: 'Forget this answer',
+        description: 'The site asks again the next time it needs it.',
+        onPress: () =>
+          run('permissions.forget', { origin: rule.origin, permission: rule.permission })
+      }
+    ],
+    { keywords }
+  )
 }
 
 // ---------------------------------------------------------------------------

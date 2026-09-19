@@ -3,167 +3,113 @@ import { useLayoutEffect, useRef, useState } from 'react'
 import { KeyRound, ShieldCheck } from 'lucide-react'
 import type { PermissionRule, UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
-import { viewportStore } from '@renderer/lib/formFactor'
 import { describePermissionRule, siteLabel } from '@renderer/lib/security'
 import { cn } from '@renderer/lib/utils'
-import { V2_GLYPH, V2Button } from '../v2/controls'
+import { V2Button, V2Card } from '../extensions/v2'
 
 /**
- * Settings → Security. Every per-site answer Zenium remembered (pop-ups, hand-offs to other
- * apps, device, file and storage permissions) with a way to take it back, and the sign-ins and
- * certificate choices kept for this session. Built on the v2 draft (§6): on desktop the pane
- * opens on its 22/600 section title with 16 below it (§9.26) and flat cards with a hairline
- * border where a group has its own actions, 24 apart; on a phone there is no 22 below the bar
- * that names the page and no card (§10.3) – groups under 15/600 headings, 20 apart. Two-line
- * rows, 32 / 40 px buttons, status in ink only.
+ * Settings → Security on desktop. Every per-site answer Zenium remembered (pop-ups, hand-offs to
+ * other apps, device, file and storage permissions) with a way to take it back, and the sign-ins
+ * and certificate choices kept for this session. Built on the v2 draft (§6): the pane opens on
+ * its 22/600 section title with 16 below it (§9.26) and flat cards with a hairline border where
+ * a group has its own actions (`V2Card`, §9.27), 24 apart; inside a card the shared rows run
+ * border to border with hairlines between them (§9.34, `.zen-v2-rows`), 32 px buttons, status in
+ * ink only. The phone form is the `security` category of the Settings tab
+ * (`pages/settings/sections.tsx`), built from the same state and commands.
  */
 export function SecuritySection({ state }: { state: UIState }): JSX.Element {
-  const phone = viewportStore.use((s) => s.formFactor === 'phone')
   const rules = sortedRules(state.permissionRules)
   return (
-    <div className="flex flex-col text-[var(--v2-text)]">
-      {!phone && <h2 className="mb-4 text-[22px] leading-7 font-semibold">Security</h2>}
-      <div className={cn('flex flex-col', phone ? 'gap-5' : 'gap-6')}>
-        <Group
-          phone={phone}
-          icon={<ShieldCheck className={V2_GLYPH} aria-hidden />}
-          title="Site permissions"
-          footer={
-            rules.length > 1 && (
-              <CardRow
+    <div className="zen-v2 flex flex-col text-[var(--v2-text)]">
+      <h2 className="mb-4 text-[length:var(--v2-font-title)] leading-[var(--v2-line-title)] font-semibold">
+        Security
+      </h2>
+      <div className="flex flex-col gap-6">
+        <V2Card title="Site permissions" icon={ShieldCheck}>
+          <div className="zen-v2-rows">
+            {rules.length === 0 ? (
+              // An empty list (§9.17): one plain row, one sentence, no full stop.
+              <StaticRow
+                label={
+                  <span className="zen-v2-deemphasized">No site permissions remembered yet</span>
+                }
+              />
+            ) : (
+              rules.map((rule) => (
+                <StaticRow
+                  key={`${rule.origin}|${rule.permission}`}
+                  label={siteLabel(rule.origin)}
+                  description={describePermissionRule(rule)}
+                >
+                  <span
+                    className={cn(
+                      'text-[length:var(--v2-font-small)] leading-[var(--v2-line-small)]',
+                      rule.decision === 'allow'
+                        ? 'text-[var(--v2-ok)]'
+                        : 'text-[var(--v2-text-deemphasized)]'
+                    )}
+                  >
+                    {rule.decision === 'allow' ? 'Allowed' : 'Blocked'}
+                  </span>
+                  <V2Button
+                    onClick={() =>
+                      run('permissions.forget', {
+                        origin: rule.origin,
+                        permission: rule.permission
+                      })
+                    }
+                  >
+                    Forget
+                  </V2Button>
+                </StaticRow>
+              ))
+            )}
+            {/* The list's own action closes it, behind the hairline like any row (§9.34, §6). */}
+            {rules.length > 1 && (
+              <StaticRow
                 label="Forget all site permissions"
                 description="Every site asks again the next time it needs something."
               >
                 <V2Button onClick={() => run('permissions.reset', undefined)}>Forget all</V2Button>
-              </CardRow>
-            )
-          }
-        >
-          {rules.length === 0 ? (
-            <Empty phone={phone}>No site permissions remembered yet</Empty>
-          ) : (
-            rules.map((rule) => (
-              <CardRow
-                key={`${rule.origin}|${rule.permission}`}
-                label={siteLabel(rule.origin)}
-                description={describePermissionRule(rule)}
-              >
-                <span
-                  className={cn(
-                    'text-[13px] leading-5',
-                    rule.decision === 'allow'
-                      ? 'text-[var(--v2-ok)]'
-                      : 'text-[var(--v2-text-deemphasized)]'
-                  )}
-                >
-                  {rule.decision === 'allow' ? 'Allowed' : 'Blocked'}
-                </span>
-                <V2Button
-                  onClick={() =>
-                    run('permissions.forget', { origin: rule.origin, permission: rule.permission })
-                  }
-                >
-                  Forget
-                </V2Button>
-              </CardRow>
-            ))
-          )}
-        </Group>
-        <Group
-          phone={phone}
-          icon={<KeyRound className={V2_GLYPH} aria-hidden />}
-          title="This session"
-        >
-          <CardRow
-            label="Sign-ins and certificates"
-            description="Remembered until Zenium quits, in memory only"
-          >
-            <V2Button onClick={() => run('security.forgetSession', undefined)}>Forget now</V2Button>
-          </CardRow>
-        </Group>
+              </StaticRow>
+            )}
+          </div>
+        </V2Card>
+        <V2Card title="This session" icon={KeyRound}>
+          <div className="zen-v2-rows">
+            <StaticRow
+              label="Sign-ins and certificates"
+              description="Remembered until Zenium quits, in memory only"
+            >
+              <V2Button onClick={() => run('security.forgetSession', undefined)}>
+                Forget now
+              </V2Button>
+            </StaticRow>
+          </div>
+        </V2Card>
       </div>
     </div>
   )
 }
 
 /**
- * A group of rows with its own actions. Desktop: a flat card (§6, §9.27) – 8 px radius, 1 px
- * border, 16 px padding – named by the 17/600 title at line-height 22 (§4) inside it with its
- * 16 px glyph 8 px before, and nothing above it; the rows carry their own padding and touch
- * (§9.21) and a footer action sits 12 under them, the card's edge being the only line (§0, §3).
- * Phone: no card, border or fill (§10.3) – a 15/600 heading at line-height 20 with 4 below it
- * (the 20 above is the list's gap; the first sits under the bar at the shell's own padding),
- * then the rows edge to edge and 0 apart, the footer action simply the last of them.
+ * A row that is not a target (§9.34): the shared `.zen-v2-row` for its geometry – 32 for one
+ * line, 52 with a 13 px deemphasised description under the 15 px label, growing with its text –
+ * carrying `data-static` (no hover or press fill, no pointer cursor, no role), with the shared
+ * row anatomy inside it. Whatever trails the text – the status, the button that is the target –
+ * centres on the row, except when the description has wrapped: on three text lines it centres on
+ * the label's line instead (§9.18).
  */
-function Group({
-  phone,
-  icon,
-  title,
-  children,
-  footer
-}: {
-  phone: boolean
-  icon: JSX.Element
-  title: string
-  children: ReactNode
-  footer?: ReactNode
-}): JSX.Element {
-  if (phone) {
-    return (
-      <section className="flex flex-col">
-        <h3 className="mb-1 text-[15px] leading-5 font-semibold">{title}</h3>
-        {children}
-        {footer}
-      </section>
-    )
-  }
-  return (
-    <section className="rounded-[var(--v2-radius-card)] border border-[var(--v2-card-border)] bg-[var(--v2-card)] p-4">
-      <h3 className="flex items-center gap-2 text-[17px] leading-[22px] font-semibold">
-        {icon}
-        {title}
-      </h3>
-      <div className="mt-2 flex flex-col">{children}</div>
-      {footer && <div className="mt-3">{footer}</div>}
-    </section>
-  )
-}
-
-/**
- * An empty list (§9.17). Inside the desktop card it is one plain row at the card's own padding:
- * 32 tall, the sentence 15 at 69% left-aligned like a row's label, no top gap and no centring.
- * On a phone, where the group is a list under a heading, it is the one centred sentence in a
- * 32 px gutter with its first line 48 below the heading, top-anchored.
- */
-function Empty({ phone, children }: { phone: boolean; children: ReactNode }): JSX.Element {
-  return (
-    <p
-      className={cn(
-        'text-[15px] leading-5 text-[var(--v2-text-deemphasized)]',
-        phone ? 'px-5 pt-11 pb-2 text-center' : 'flex min-h-[var(--v2-row)] items-center'
-      )}
-    >
-      {children}
-    </p>
-  )
-}
-
-/**
- * A two-line row (§9.2): 15 px label over a 13 px deemphasised description on 20 px lines, with
- * 6 px of padding (12 on phones) for 52 / 64, growing with its text; the description wraps to
- * two lines at most. Trailing controls are centred on the row, except when the description has
- * wrapped: on three text lines they centre on the label's line instead (§9.18).
- */
-function CardRow({
+function StaticRow({
   label,
   description,
   children
 }: {
-  label: string
-  description: string
+  label: ReactNode
+  description?: string
   children?: ReactNode
 }): JSX.Element {
-  const text = useRef<HTMLDivElement>(null)
+  const text = useRef<HTMLSpanElement>(null)
   const [wrapped, setWrapped] = useState(false)
   useLayoutEffect(() => {
     const el = text.current
@@ -176,22 +122,22 @@ function CardRow({
     return () => observer.disconnect()
   }, [])
   return (
-    <div className="flex min-h-[var(--v2-row-two-line)] items-center gap-4 py-[calc((var(--v2-row-two-line)-40px)/2)]">
-      <div ref={text} className="min-w-0 flex-1">
-        <div className="truncate text-[15px] leading-5">{label}</div>
-        <div className="line-clamp-2 text-[13px] leading-5 text-[var(--v2-text-deemphasized)]">
-          {description}
-        </div>
-      </div>
+    <div className="zen-v2-row" data-static="">
+      <span className="zen-v2-row-body">
+        <span ref={text} className="zen-v2-row-text">
+          <span className="zen-v2-label truncate">{label}</span>
+          {description && <span className="zen-v2-description">{description}</span>}
+        </span>
+      </span>
       {children && (
-        <div
+        <span
           className={cn(
             'flex shrink-0 items-center gap-3',
-            wrapped && 'self-start mt-[calc((20px-var(--v2-control))/2)]'
+            wrapped && 'mt-[calc((var(--v2-line-body)-var(--v2-control))/2)] self-start'
           )}
         >
           {children}
-        </div>
+        </span>
       )}
     </div>
   )

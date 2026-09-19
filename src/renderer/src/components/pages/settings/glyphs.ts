@@ -19,6 +19,7 @@ import {
   Search,
   Settings,
   Shield,
+  ShieldCheck,
   Waypoints,
   Zap
 } from 'lucide-react'
@@ -45,6 +46,7 @@ export const SECTION_GLYPHS: Readonly<Record<string, LucideIcon>> = {
   extensions: Puzzle,
   agents: Bot,
   passwords: KeyRound,
+  security: ShieldCheck,
   sync: RefreshCw,
   shortcuts: Keyboard,
   updates: CircleFadingArrowUp,
