@@ -184,7 +184,15 @@ function HostedSheet({
     return () => window.removeEventListener('keydown', onKey, true)
   }, [under, sheet])
   return (
-    <div className="zen-settings-sheet-layer absolute inset-0" data-surface="page">
+    // The slot's child is a layer on the sheet chassis already (`data-sheet-layer`, as the
+    // `BottomSheet` inside it): the host's chassis stays down for an `ownScrim` sheet and never
+    // raises `data-sheet-up`, and main.css cuts the pointer from every other slot child
+    // meanwhile – inherited by the whole sheet, so a tap would fall through to the host's scrim.
+    <div
+      className="zen-settings-sheet-layer absolute inset-0"
+      data-surface="page"
+      data-sheet-layer="true"
+    >
       <BottomSheet
         ref={sheet}
         hosted

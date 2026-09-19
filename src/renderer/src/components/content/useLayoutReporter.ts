@@ -19,12 +19,7 @@ import {
 } from '@renderer/lib/layout'
 import { pageOffScreen, pageViewStore } from '@renderer/lib/pageView'
 import { activeTab, visibleTabIds } from '@renderer/lib/selectors'
-import {
-  contentAreaStore,
-  coverBandStore,
-  overlayCoversContent,
-  type UiState
-} from '@renderer/lib/ui'
+import { contentAreaStore, coverBandStore, pageHidden, type UiState } from '@renderer/lib/ui'
 
 export interface LayoutInfo {
   /** Viewport rect in window coordinates (null before first measure). */
@@ -118,7 +113,10 @@ export function useLayoutReporter(
     }
   }, [sidePanelRef, panelOpen, formFactor, state.settings.sidebarSide])
 
-  const contentHidden = overlayCoversContent(ui) || ui.compactHover || ui.toolbarHover
+  // Under a chrome overlay, a revealed compact sidebar or toolbar, or a frame dialog host that
+  // keeps the page behind its capture while a panel it placed is still on its way out, after
+  // the dialog's own flag has cleared (`holdFrameDialogCover`).
+  const contentHidden = pageHidden(ui)
   // The strips the chrome's message cards cover at the frame's edges (see `coverBandStore`).
   const band = coverBandStore.use()
   // Where the chrome lies under the pages – the Android chassis, whatever its form factor – the

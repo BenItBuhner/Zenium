@@ -68,12 +68,19 @@ export interface BeforeSendHeadersResult {
 export interface HeadersReceivedResult {
   cancel?: boolean
   statusLine?: string
+  /**
+   * Redirect the response (a rule decided at the headers-received stage): the multiplexer
+   * answers with a synthetic 302 to this URL, as Chromium does, and the listeners of the event
+   * are not offered the request.
+   */
+  redirectURL?: string
 }
 
 /**
  * A participant in the request pipeline. Handlers run from the lowest `order` to the highest;
  * in `onBeforeRequest` the first definitive answer (cancel or redirect) ends the chain, in the
- * header phases every handler runs and edits the headers in place.
+ * header phases every handler runs and edits the headers in place (a headers-received cancel or
+ * redirect still ends the request there).
  */
 export interface RequestHandler {
   id: string
@@ -438,12 +445,15 @@ export class WebRequestMultiplexer {
       const headers = normalizeResponseHeaders(details.responseHeaders)
       let cancel = false
       let statusLine: string | undefined
+      let redirectURL: string | undefined
       for (const handler of this.handlers) {
         if (!handler.onHeadersReceived) continue
         try {
           const result = handler.onHeadersReceived(request, headers, details)
           if (result?.cancel) cancel = true
           if (result?.statusLine) statusLine = result.statusLine
+          if (result?.redirectURL && result.redirectURL !== details.url && !redirectURL)
+            redirectURL = result.redirectURL
         } catch (error) {
           console.error(`[zenium] request handler ${handler.id} failed`, error)
         }
@@ -451,6 +461,16 @@ export class WebRequestMultiplexer {
       if (cancel) {
         this.cancelled(request, details.id)
         callback({ cancel: true })
+        return
+      }
+      if (redirectURL) {
+        // A handler's headers-received redirect ends the request here, as its onBeforeRequest
+        // redirect does: Chromium turns it into a synthetic 302 and the listeners see the
+        // redirect, not this response.
+        applyResponseHeaderOps(headers, [
+          { header: 'Location', operation: 'set', value: redirectURL }
+        ])
+        callback({ responseHeaders: headers, statusLine: 'HTTP/1.1 302 Found' })
         return
       }
       const extra: Partial<WebRequestDetails> = {

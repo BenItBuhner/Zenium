@@ -169,6 +169,9 @@ export class NoExtensions implements ExtensionHost {
     return false
   }
   respondPrompt(): void {}
+  async confirmPermissionRequest(): Promise<boolean> {
+    return false
+  }
   flushSync(): void {}
 }
 
