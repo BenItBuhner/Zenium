@@ -533,11 +533,13 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
         }
 
         // 15f. Related sites: Add a site opens its form sheet, a site typed and added; the new
-        //      item's sheet removes it again.
+        //      item's sheet removes it again. Two rows of the section read "Add a site" (#115's
+        //      allow-list has one first, without a description), so this one is addressed by its
+        //      label and description together, which no other row carries.
         note("\n15f. Related sites: add and remove")
-        showRow("Add a site")
+        showRow("Add a site", ADD_SITE_DESCRIPTION)
         var added = false
-        if (pressRow("Add a site") && waitForRow("Site", 6_000)) {
+        if (pressRow("Add a site", ADD_SITE_DESCRIPTION) && waitForRow("Site", 6_000)) {
             SystemClock.sleep(800)
             // The site goes into the field through the tree (the value is the set-up, not the
             // claim; the chassis focuses Cancel as a form opens, so no keyboard is up).
@@ -619,12 +621,18 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
      * Whether a node's words are the row labelled `label`: the label alone, or the label with the
      * row's description run on after it (a switch, radio or value row the WebView reads as one
      * node). A description starts a sentence, so a longer label that carries on in lowercase
-     * ("Block third-party cookies in private windows") is not taken for the shorter one.
+     * ("Block third-party cookies in private windows") is not taken for the shorter one. With
+     * `description`, only the row whose description opens with it – for a label two rows of the
+     * section carry.
      */
-    private fun rowWords(label: String): (String) -> Boolean = { words ->
-        words == label || (words.startsWith(label) && words.substring(label.length).trimStart().let { rest ->
-            rest.isEmpty() || !rest.first().isLetter() || rest.first().isUpperCase()
-        })
+    private fun rowWords(label: String, description: String? = null): (String) -> Boolean = { words ->
+        if (description != null) {
+            words.startsWith(label) && words.substring(label.length).trimStart().startsWith(description)
+        } else {
+            words == label || (words.startsWith(label) && words.substring(label.length).trimStart().let { rest ->
+                rest.isEmpty() || !rest.first().isLetter() || rest.first().isUpperCase()
+            })
+        }
     }
 
     /**
@@ -634,8 +642,8 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
      * a bare label, which is as often the group's heading as the row. False when no row took
      * the click.
      */
-    private fun pressRow(label: String): Boolean {
-        val candidates = findNodes(rowWords(label)).sortedBy { node ->
+    private fun pressRow(label: String, description: String? = null): Boolean {
+        val candidates = findNodes(rowWords(label, description)).sortedBy { node ->
             val words = node.text?.toString() ?: node.contentDescription?.toString()
             if (words == label) 1 else 0
         }
@@ -747,8 +755,8 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
     }
 
     /** Scroll the row that carries `label` into view (the chrome scrolls its pane the least it has to). */
-    private fun showRow(label: String) {
-        val node = findNode(rowWords(label)) ?: run {
+    private fun showRow(label: String, description: String? = null) {
+        val node = findNode(rowWords(label, description)) ?: run {
             note("  (no node '$label' to scroll to)")
             return
         }
@@ -1121,6 +1129,12 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
         private const val API_KEY_LABEL = "Google Safe Browsing API key"
         private const val HTTPS_ALWAYS_LABEL = "Always use secure connections"
         private const val COOKIES_BLOCK_LABEL = "Block third-party cookies"
+        /**
+         * The Related sites group's add row's description (`PROTECTION_TEXT.relatedSites.addDescription`),
+         * read with its label: the section holds a second "Add a site" row before it (#115's
+         * allow-list, bare), so the label alone would be its.
+         */
+        private const val ADD_SITE_DESCRIPTION = "A sign-in provider, or a company\u2019s other domains"
         /**
          * A key the chrome refuses on its own (`isValidApiKey`: letters, digits, dashes and
          * underscores only), and the §9.12 validation line it earns (`PROTECTION_TEXT.safeBrowsing.apiKey.invalid`).
