@@ -11,8 +11,9 @@ name: Android extension compatibility sweep
 # android-emulator-demo.yml.
 on:
   # TEMPORARY: the sweep branch's final measurement of all thirty rows on the head that carries
-  # main (the blocking store's per-set documents of #210), both jobs (gh cannot dispatch from the
-  # agent); removed before the branch is returned.
+  # main (the blocking store's per-set documents of #210), both jobs, then the 1Password row alone
+  # for the driver's reading of its error page (gh cannot dispatch from the agent); removed before
+  # the branch is returned.
   push:
     branches: [cursor/android-ext-compat-sweep-f955]
   workflow_dispatch:
@@ -40,7 +41,7 @@ jobs:
       artifact-name: android-ext-compat-sweep
       artifact-path: artifacts/android-ext-compat-sweep/
       script-env: |
-        SWEEP_ONLY=${{ inputs.only }}
+        SWEEP_ONLY=${{ inputs.only || 'aeblfdkhhhdcdjpifhhbdiojplfjncoa' }}
       timeout-minutes: 210
 
   # The same sweep on a Chromium snapshot SystemWebView.apk swapped onto an AOSP image (see
@@ -58,7 +59,7 @@ jobs:
       script-env: |
         WEBVIEW_APK=artifacts/webview/SystemWebView.apk
         SOFT_FAIL=1
-        SWEEP_ONLY=${{ inputs.only }}
+        SWEEP_ONLY=${{ inputs.only || 'aeblfdkhhhdcdjpifhhbdiojplfjncoa' }}
       setup-script: |
         base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
         rev=$(curl -fsSL "$base/LAST_CHANGE")

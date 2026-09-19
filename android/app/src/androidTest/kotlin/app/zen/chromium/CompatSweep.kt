@@ -448,7 +448,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val view = runCatching { waitForView(tabId) }.getOrNull() ?: return null
         val dom = runCatching { json(tabEval(view, DOM_REPORT)) }.getOrNull() ?: return null
         val page = JSONObject().put("url", url).put("dom", dom)
-        if (url.contains(".ext.zenium.invalid/") && !LOGIN_WORDS.containsMatchIn(dom.optString("text"))) {
+        if (url.contains(".ext.zenium.invalid/") && (ERROR_ROUTE.containsMatchIn(url) || !LOGIN_WORDS.containsMatchIn(dom.optString("text")))) {
             page.put("blankTab", blankPageEvidence(view, row, 0L))
         }
         return page
@@ -690,7 +690,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 val view = tabId?.let { id -> runCatching { waitForView(id) }.getOrNull() }
                 val dom = view?.let { v -> runCatching { json(tabEval(v, DOM_REPORT)) }.getOrNull() } ?: stored?.optJSONObject("dom")
                 val txt = dom?.optString("text") ?: ""
-                val pass = login.containsMatchIn(txt)
+                val pass = login.containsMatchIn(txt) && !ERROR_ROUTE.containsMatchIn(url)
                 // An extension page that opened in a tab and shows no sign-in (1Password's
                 // `app.html#/page/error`): the same evidence as a blank options tab, the whole
                 // row's trace since the page was opened in the popup stage.
@@ -1735,8 +1735,13 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val BACKGROUND_SETTLE_MS = 6_000L
         private const val POPUP_TIMEOUT_MS = 30_000L
         private const val OPTIONS_TIMEOUT_MS = 30_000L
-        /** What an account-backed extension's sign-in surface says (the account rows' core grade, [popupLogin]). */
-        private val LOGIN_WORDS = Regex("log ?in|sign ?in|create account|get started|continue|welcome|email|unlock|password", RegexOption.IGNORE_CASE)
+        /**
+         * What an account-backed extension's sign-in surface says (the account rows' core grade,
+         * [popupLogin]); whole words, so a product name is not one ("Contact 1Password Support").
+         */
+        private val LOGIN_WORDS = Regex("\\b(?:log ?in|sign ?in|create account|get started|continue|welcome|e-?mail|unlock|passwords?)\\b", RegexOption.IGNORE_CASE)
+        /** An extension page routed to an error view (1Password's `app.html#/page/error`) is no sign-in, whatever it says. */
+        private val ERROR_ROUTE = Regex("/error(?:[/?#]|$)", RegexOption.IGNORE_CASE)
         /** How long a raised prompt may go without a reachable positive button before the command answers it. */
         private const val PROMPT_TAP_TIMEOUT_MS = 8_000L
         /** Taps on the prompt's own button before the command answers it, and the wait between them. */
