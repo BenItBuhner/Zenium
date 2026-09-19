@@ -6,7 +6,7 @@ import type {
   NewTabShortcutsMode,
   TopSite
 } from './types'
-import { NEW_TAB_ICONS, newTabIconSvg, type NewTabIcon } from './newTabPage'
+import { NEW_TAB_ICONS, PRIVATE_COOKIES, newTabIconSvg, type NewTabIcon } from './newTabPage'
 import { MAX_NEW_TAB_SHORTCUTS } from './newTab'
 import { SPRING_SNAPPY, stepSpring, type SpringState } from './spring'
 import { getHost } from './url'
@@ -16,7 +16,8 @@ import { getHost } from './url'
  * from `NewTabPageState`: theme, search box hand-off, the grid – the user's shortcuts, leading
  * the most visited sites or on their own; remove with Undo, and drag-reorder on the
  * design-language spring when the grid is theirs alone – and the keyboard.
- * In a private window the grid gives way to the explainer. Nothing here touches browser state
+ * In a private window the grid gives way to the explainer and its "Block third-party cookies"
+ * switch. Nothing here touches browser state
  * directly: every wish is a `NewTabPageAction`, and the answer arrives as the next state. The page draws no popover or dialog of its own (design
  * language v2 §9.20–9.23): a tile's menu is the host's context menu, the add / edit dialog and
  * Customize (Settings → New Tab) are the chrome's, asked for through actions; the one surface it
@@ -141,6 +142,9 @@ class NewTabPage {
   private readonly bgCurrent = byId<HTMLDivElement>('zen-bg-current')
   private readonly bgNext = byId<HTMLDivElement>('zen-bg-next')
   private readonly privateExplainer = byId<HTMLElement>('zen-private')
+  private readonly cookiesRow = byId<HTMLElement>('zen-cookies')
+  private readonly cookiesSwitch = byId<HTMLButtonElement>('zen-cookies-switch')
+  private readonly cookiesDescription = byId<HTMLElement>('zen-cookies-desc')
   private readonly greeting = byId<HTMLHeadingElement>('zen-greeting')
   private readonly search = byId<HTMLFormElement>('zen-search')
   private readonly input = byId<HTMLInputElement>('zen-search-input')
@@ -165,6 +169,7 @@ class NewTabPage {
     this.wireSearch()
     this.wireGrid()
     this.wireCustomize()
+    this.wirePrivateCookies()
     this.wireGlobalKeys()
     this.systemDark.addEventListener('change', () => this.applyTheme())
     transport.onState((state) => this.apply(state))
@@ -182,6 +187,7 @@ class NewTabPage {
     this.state = state
     this.applyTheme()
     this.applyGreeting()
+    this.applyPrivateCookies()
     // The grid is the user's own under "My shortcuts" (add tile, drag to reorder); under "Most
     // visited" their shortcuts lead it and history's sites fill the rest.
     this.custom = state.shortcutsMode === 'my-shortcuts'
@@ -592,6 +598,52 @@ class NewTabPage {
 
   private wireCustomize(): void {
     this.customize.addEventListener('click', () => this.transport.send({ type: 'customize' }))
+  }
+
+  // ---------------------------------------------------------------------------
+  // The private page's "Block third-party cookies" switch
+  // ---------------------------------------------------------------------------
+
+  /**
+   * A private window's page carries the one control Chrome's Incognito page has: the switch for
+   * `privacy.thirdPartyCookiesPrivate`, its position `blocked`, `locked` while Settings blocks
+   * third-party cookies in every window – then it is on and disabled (§9.30) and the description
+   * says where the lock is. A regular page has no row, and neither has a page whose state does
+   * not carry the field.
+   */
+  private applyPrivateCookies(): void {
+    const cookies = this.privateCookies()
+    this.cookiesRow.hidden = !cookies
+    if (!cookies) return
+    this.cookiesSwitch.setAttribute('aria-checked', String(cookies.blocked))
+    this.cookiesSwitch.disabled = cookies.locked
+    if (cookies.locked) this.cookiesSwitch.setAttribute('aria-disabled', 'true')
+    else this.cookiesSwitch.removeAttribute('aria-disabled')
+    this.cookiesDescription.textContent = cookies.locked
+      ? PRIVATE_COOKIES.lockedDescription
+      : PRIVATE_COOKIES.description
+  }
+
+  private privateCookies(): NewTabPageState['privateThirdPartyCookies'] | undefined {
+    const state = this.state
+    return state?.isPrivate ? state.privateThirdPartyCookies : undefined
+  }
+
+  /**
+   * A press (pointer, or Space / Enter on the focused button) flips the switch: on asks for
+   * `block`, off for `allow`. The switch moves at once and the browser's next state confirms
+   * it. Locked, the button is disabled and nothing is sent even if a press reaches it.
+   */
+  private wirePrivateCookies(): void {
+    this.cookiesSwitch.addEventListener('click', () => {
+      const state = this.state
+      const cookies = this.privateCookies()
+      if (!state || !cookies || cookies.locked) return
+      const blocked = !cookies.blocked
+      this.state = { ...state, privateThirdPartyCookies: { ...cookies, blocked } }
+      this.applyPrivateCookies()
+      this.transport.send({ type: 'set-private-third-party-cookies', blocked })
+    })
   }
 
   // ---------------------------------------------------------------------------
