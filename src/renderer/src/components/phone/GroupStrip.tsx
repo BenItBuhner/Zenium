@@ -114,7 +114,9 @@ class StripLedger {
  * group's colour dot; it opens the overview at the group), the members' favicon chips in a
  * horizontal scroller with fading edges, and the plus chip that opens a new tab in the group.
  * Chips are §9.22 buttons: in the tab order, each with its own label, the active one marked
- * `aria-current`. The tray's radius is the pill's (22) and the chips' 18 sit 4 inside it.
+ * `aria-current`. The tray's radius is the pill's (22) and the chips' 18 sit 4 inside it; a
+ * chip's cell – its touch target – is the tray's 44 by the slot's 40 pitch, the 36 face inside
+ * it what it shows (main.css).
  *
  * Motion (v2 §11): the strip slides out of the bar's row and back behind it on `SPRING_SNAPPY`,
  * clipped to its own band; a chip that joins scales in at its slot while the chips after it
@@ -296,7 +298,7 @@ export const GroupStrip = memo(function GroupStrip({
       >
         <button
           type="button"
-          className="zen-group-chip zen-v2-group-chip zen-group-chip-show"
+          className="zen-group-chip zen-group-chip-show"
           data-strip-show
           aria-label={`Show group, ${label}`}
           aria-pressed={inert ? undefined : overviewOpen}
@@ -335,7 +337,7 @@ export const GroupStrip = memo(function GroupStrip({
         </div>
         <button
           type="button"
-          className="zen-group-chip zen-v2-group-chip"
+          className="zen-group-chip"
           data-strip-plus
           aria-label={`New tab in ${label}`}
           tabIndex={inert ? -1 : 0}
@@ -421,7 +423,7 @@ function MemberChip({
   return (
     <button
       type="button"
-      className="zen-group-chip zen-v2-group-chip"
+      className="zen-group-chip"
       data-cell={stripCellKey(tab.id)}
       data-strip-member={tab.id}
       aria-label={active ? `${title}, current tab` : title}

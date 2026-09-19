@@ -842,6 +842,23 @@ describe('a chip joining or leaving the strip', () => {
     expect(rule('.zen-group-chip-face')).not.toMatch(/will-change/)
     expect(rule('.zen-group-chip')).not.toMatch(/will-change/)
     expect(css).not.toMatch(/\n {2}\.zen-group-chip:active \{/)
+    // The cell is the touch target, the tray's 44 by the slot's 40 pitch (§9.2), laid over the
+    // padding around a 36 margin box so the pitch holds; the face is the 36 circle it shows.
+    expect(rule('.zen-group-chip')).toMatch(/width: 40px;\s*height: 44px;\s*margin: -4px -2px;/)
+    expect(rule('.zen-group-chip-face')).toMatch(
+      /width: 36px;\s*height: 36px;\s*border-radius: 18px;/
+    )
+    // An exit chip's `left` is a border edge (`offsetLeft`): the margins are not applied twice.
+    expect(rule('.zen-group-chip-exit')).toMatch(/top: 0;\s*margin: 0;/)
+    // The one v2 ring draws on the round face, not the rectangular cell: the cell has no `zen-v2-`
+    // class (that unlayered rule would outrank the cell's `outline: none`).
+    expect(rule('.zen-group-chip:focus-visible')).toMatch(/outline: none/)
+    expect(rule('.zen-group-chip:focus-visible .zen-group-chip-face')).toMatch(
+      /outline: 2px solid var\(--v2-ring\)/
+    )
+    render(three())
+    for (const el of [chipOf('a'), showChip(), plusChip()])
+      expect(el.className).not.toMatch(/zen-v2-/)
   })
 
   it('a chip leaving shrinks out where it stood while the chips after it glide back', () => {
