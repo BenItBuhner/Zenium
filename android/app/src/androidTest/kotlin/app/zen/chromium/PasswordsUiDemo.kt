@@ -22,9 +22,11 @@ import java.util.concurrent.TimeUnit
  * Records the password manager's phone surfaces on an emulator with a device PIN: the manager
  * opened from the app menu, the vault gate with the system credential prompt behind the
  * Keystore-bound vault key, the list, a login's detail with its password revealed after the PIN,
- * the generator, the checkup, the settings (the re-authentication menulist), and the passphrase
- * prompt sheet – the device prompt dismissed, the vault passphrase asked for in its place. Back
- * is shown popping a pane before it would close the overlay.
+ * the generator, the checkup, the manager's settings view (protection, lock, import, export),
+ * the Settings tab's Passwords category (#134: the manager's rows on the phone's Settings tab,
+ * its re-authentication row through the picker sheet) as a way into the manager, and the
+ * passphrase prompt sheet – the device prompt dismissed, the vault passphrase asked for in its
+ * place. Back is shown popping a pane before it would close the overlay.
  *
  * The vault is seeded off camera through the chrome's command API (the calls the manager makes)
  * and locked; the recording opens it the way a user does. The Keystore counts the PIN the
@@ -198,17 +200,38 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
         SystemClock.sleep(900)
         snap("checkup-results")
 
-        // 7. The settings; the re-authentication menulist set to Every time, so the copy below
-        //    asks again although the reveal just verified the user.
-        pickCategory(f, "Checkup", "Settings", "Lock now")
+        // 7. The manager's own settings view: the vault's protection, lock, import and export as
+        //    rows behind the re-authentication.
+        pickCategory(f, "Checkup", "Settings", "Import and export")
         SystemClock.sleep(700)
         snap("settings")
+
+        // 8. The manager closes; Settings is a tab of the phone chrome (#134) and its Passwords
+        //    category carries the rows that used to sit in the manager's overlay section: the
+        //    ways into the manager, the two preferences, protection, lock, import and export.
+        //    The re-authentication grace is set to Every time through its picker sheet, so the
+        //    copy below asks again although the reveal just verified the user.
+        tapLabel(f, CLOSE_LABEL)
+        if (!waitGone(CLOSE_LABEL, 6_000)) step("the manager did not close")
+        SystemClock.sleep(900)
+        openSettingsTabPasswords(f)
+        SystemClock.sleep(900)
+        snap("settings-tab-passwords")
         setGraceToEveryTime(f)
         SystemClock.sleep(900)
-        snap("settings-every-time")
+        snap("settings-tab-every-time")
 
-        // 8. The prompt sheet: the device prompt behind a copy dismissed, the passphrase asked for.
-        pickCategory(f, "Settings", "Passwords", "Add login")
+        // 9. "Manage passwords" on the tab opens the manager over it, on the list (the vault is
+        //    still open); then the prompt sheet: the device prompt behind a copy dismissed, the
+        //    passphrase asked for.
+        step("Manage passwords from the Settings tab")
+        tapRow(f, "Manage passwords") { awaitManager(8_000) }
+        if (waitFor("Add login", 10_000) == null) {
+            dumpNames("the manager from the Settings tab")
+            error("the manager did not open on its list from the Settings tab")
+        }
+        SystemClock.sleep(900)
+        snap("list-from-settings-tab")
         openLogin(f, DETAIL_USERNAME)
         step("copying the password")
         tapLabel(f, "Copy password")
@@ -234,15 +257,74 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
         SystemClock.sleep(700)
         snap("detail-copied")
 
-        // 9. Back to the list, then the header's close control; the browser is the last frame.
+        // 10. Back to the list, then the header's close control: the Settings tab is under the
+        //     manager; back leaves its category and then the tab, to the page that opened it.
         SystemClock.sleep(1_200)
         popPane()
         SystemClock.sleep(500)
         tapLabel(f, CLOSE_LABEL)
         if (!waitGone(CLOSE_LABEL, 6_000)) step("the manager did not close")
         SystemClock.sleep(1_200)
+        snap("settings-tab-after")
+        back()
+        SystemClock.sleep(1_500)
+        back()
+        SystemClock.sleep(1_500)
         snap("browser-after")
         step("done")
+    }
+
+    // --- the Settings tab ------------------------------------------------------------------------
+
+    /**
+     * Settings from the app menu (a tab of its own, #134), then its Passwords category: the
+     * landing lists the categories as rows, and the category shows the manager's rows under
+     * their headings.
+     */
+    private fun openSettingsTabPasswords(f: Finger) {
+        step("Settings from the app menu")
+        if (!openMenuItem("Settings")) {
+            dumpNames("the app menu")
+            error("the menu had no Settings item")
+        }
+        if (!waitGone(HANDLE_LABEL, 8_000)) step("the menu is still up after Settings was tapped")
+        if (waitForRow("Passwords", 6_000) == null) {
+            // Passwords is far down the landing's category list (after the twelve categories the
+            // phone has before it): off screen, the list is dragged up and looked at again.
+            step("Passwords is below the fold; scrolling the landing")
+            f.down(width / 2f, height * 0.75f)
+            f.moveBy(0f, -height * 0.4f, 350)
+            f.hold(100)
+            f.up()
+            SystemClock.sleep(900)
+        }
+        if (waitForRow("Passwords", 6_000) == null) {
+            dumpNames("the Settings landing")
+            error("the Settings landing has no Passwords category")
+        }
+        SystemClock.sleep(900)
+        step("the Passwords category")
+        tapRow(f, "Passwords") { waitForRow("Manage passwords", 6_000) != null }
+        if (waitForRow("Manage passwords", 8_000) == null) {
+            dumpNames("the Settings tab")
+            error("the Passwords category did not open")
+        }
+    }
+
+    /**
+     * Tap a row named after its label (then its description) and wait for `took` to say the
+     * tap did something; the accessibility click is the fallback, as for every row.
+     */
+    private fun tapRow(f: Finger, label: String, took: () -> Boolean) {
+        val row = waitForRow(label, 8_000) ?: run {
+            dumpNames("the rows")
+            error("no row '$label'")
+        }
+        f.tap(row.exactCenterX(), row.exactCenterY())
+        if (took()) return
+        step("the tap on the '$label' row did not take; clicking it through accessibility")
+        clickRow(label)
+        if (!took()) step("the '$label' row did nothing")
     }
 
     /**
@@ -371,29 +453,32 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
      */
     private fun pickCategory(f: Finger, from: String, label: String, expect: String, snapMenu: String? = null) {
         step("category: $from -> $label")
-        if (pickOption(f, from, label, snapMenu) { waitFor(expect, 6_000) != null }) return
+        val opened = pickOption(f, label, snapMenu, open = {
+            tapControl(f, from).also { if (!it) step("no menulist reading '$from'") }
+        }) { waitFor(expect, 6_000) != null }
+        if (opened) return
         dumpNames("the manager after picking $label")
         error("could not switch to $label")
     }
 
     /**
-     * Open the menulist reading `reading` and choose `label`; `applied` says whether the choice
-     * took. Two attempts, each ending with the menu closed again if it stayed open. On a phone
-     * the list is a picker sheet that springs up from the bottom edge: its rows are in the tree
-     * before they are at rest, so the option is tapped where it has stopped, not where it was
-     * first seen (a touch on a moving sheet catches the sheet instead of picking).
+     * Open a picker with `open` (a tap on the control or row that has it) and choose `label`;
+     * `applied` says whether the choice took. Two attempts, each ending with the picker closed
+     * again if it stayed open. On a phone the list is a picker sheet that springs up from the
+     * bottom edge: its rows are in the tree before they are at rest, so the option is tapped
+     * where it has stopped, not where it was first seen (a touch on a moving sheet catches the
+     * sheet instead of picking).
      */
     private fun pickOption(
         f: Finger,
-        reading: String,
         label: String,
         snapMenu: String? = null,
+        open: () -> Boolean,
         applied: () -> Boolean
     ): Boolean {
         for (attempt in 1..2) {
-            if (!tapControl(f, reading)) {
-                step("no menulist reading '$reading' (attempt $attempt)")
-                dumpNames("the view")
+            if (!open()) {
+                dumpNames("the view (attempt $attempt)")
                 continue
             }
             if (waitForOption(label, 4_000) == null) {
@@ -406,12 +491,19 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
                 continue
             }
             if (snapMenu != null && attempt == 1) snap(snapMenu)
-            f.tap(option.exactCenterX(), option.exactCenterY())
+            if (attempt == 1) {
+                f.tap(option.exactCenterX(), option.exactCenterY())
+            } else {
+                // The finger did not pick last time (the sheet left under it): the second
+                // attempt clicks the option through accessibility instead.
+                step("clicking '$label' through accessibility")
+                clickOption(label)
+            }
             if (applied()) return true
-            step("the tap on '$label' did not apply; clicking it through accessibility")
+            step("'$label' did not apply (attempt $attempt)")
             if (clickOption(label) && applied()) return true
             if (optionNode(label) != null) {
-                // The menu is still open: back closes it and nothing else.
+                // The picker is still open: back closes it and nothing else.
                 back()
                 SystemClock.sleep(800)
             }
@@ -488,19 +580,20 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
     }
 
     /**
-     * The settings' "Ask again before showing or copying" menulist to Every time, through its
-     * menu (the combobox is named after the value it reads, so that is looked up first); the
-     * settings command is the fallback so the copy below is sure to ask.
+     * The Settings tab's "Ask again before showing or copying" row (a §9.13 choice: the whole
+     * row opens its picker sheet, the value as its second line) to Every time; the settings
+     * command is the fallback so the copy below is sure to ask.
      */
     private fun setGraceToEveryTime(f: Finger) {
         step("re-authentication grace: Every time")
         val current = zen("app.getState").getJSONObject("settings").getJSONObject("passwords")
-        val reading = GRACE_LABELS[current.getInt("reauthGraceSeconds")]
-        if (reading == null) {
-            step("the grace menulist reads a value the driver does not know (${current.getInt("reauthGraceSeconds")} s)")
-        } else if (pickOption(f, reading, "Every time", "settings-grace-menu") { awaitGrace(0, 5_000) }) {
-            return
-        }
+        step("the grace row reads ${current.getInt("reauthGraceSeconds")} s")
+        val picked = pickOption(f, "Every time", "settings-tab-grace-sheet", open = {
+            val row = waitForRow(GRACE_LABEL, 5_000)
+            if (row == null) step("no row '$GRACE_LABEL'") else f.tap(row.exactCenterX(), row.exactCenterY())
+            row != null
+        }) { awaitGrace(0, 5_000) }
+        if (picked) return
         step("setting the grace period through the settings command instead")
         zen("settings.update", JSONObject().put("passwords", current.put("reauthGraceSeconds", 0)))
     }
@@ -516,19 +609,20 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
     }
 
     /**
-     * Type the vault passphrase into the sheet's field (focused as the sheet opens; tapped first
-     * when the keys did not land) and submit with Enter, the Continue button as the fallback.
+     * Type the vault passphrase into the sheet's field and submit with Enter, the Continue
+     * button as the fallback. The sheet chassis opens a form on its first button, not its field
+     * (§9.22 on a phone: no keyboard with the sheet), so the field is tapped first; typed again
+     * when the keys did not land.
      */
     private fun answerPassphraseSheet() {
-        typeText(PASSPHRASE)
-        SystemClock.sleep(700)
-        if (!buttonEnabled("Continue")) {
-            step("the passphrase field was not focused; tapping it")
+        for (attempt in 1..2) {
             val field = editableInApp() ?: error("no passphrase field in the sheet")
             Finger().tap(field.exactCenterX(), field.exactCenterY())
             SystemClock.sleep(900)
             typeText(PASSPHRASE)
             SystemClock.sleep(700)
+            if (buttonEnabled("Continue")) break
+            step("the keys did not land in the passphrase field (attempt $attempt)")
         }
         snap("prompt-sheet-filled")
         pressKey(KeyEvent.KEYCODE_ENTER)
@@ -833,15 +927,8 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
         private const val MENU_LABEL = "Menu"
         private const val HANDLE_LABEL = "Resize menu"
         private const val CLOSE_LABEL = "Close (Esc)"
-        /** What the settings' re-authentication menulist reads for each grace period it offers. */
-        private val GRACE_LABELS = mapOf(
-            0 to "Every time",
-            30 to "After 30 seconds",
-            60 to "After 1 minute",
-            300 to "After 5 minutes",
-            900 to "After 15 minutes",
-            3600 to "After 1 hour"
-        )
+        /** The Settings tab's re-authentication row (PASSWORDS_COPY.grace.label). */
+        private const val GRACE_LABEL = "Ask again before showing or copying"
         /** The login the detail steps open: the one username that appears once. */
         private const val DETAIL_USERNAME = "grace.hopper"
         /**
