@@ -2099,8 +2099,9 @@ export class Browser {
 
       'tab.new': (_a, win) => this.openNewTab(win),
       'tab.create': (opts, win) => tabs.createTab(opts, win).id,
-      'tab.activate': ({ tabId }, win) => tabs.activateTab(tabId, win),
-      'tab.close': ({ tabId, force }, win) => void tabs.requestClose(tabId, force, win),
+      'tab.activate': ({ tabId, keepFocus }, win) => tabs.activateTab(tabId, win, { keepFocus }),
+      'tab.close': ({ tabId, force, keepFocus }, win) =>
+        void tabs.requestClose(tabId, force, win, { keepFocus }),
       'tab.newPrivate': ({ url }, win) => tabs.newPrivateTab(url, win),
       'tab.closePrivate': (_a, win) => tabs.closePrivateTabs(win),
       'tab.closeOthers': ({ tabId }, win) => tabs.closeOthers(tabId, win),

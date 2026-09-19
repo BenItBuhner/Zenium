@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { EventName, Events, HostCapabilities } from '../../shared/types'
 import { Browser } from '../browser'
 import type {
@@ -177,5 +177,60 @@ describe('a page view that takes the keyboard', () => {
     expect(platform.sent.filter((s) => s.name === 'focus.page').map((s) => s.payload)).toEqual([
       { tabId }
     ])
+  })
+})
+
+describe('activating and closing tabs from the keyboard in the tab strip (a11y-07)', () => {
+  it('tab.activate gives the page the keyboard, unless keepFocus keeps it on the strip', () => {
+    const { browser, win, tabId } = start()
+    const other = browser.tabs.createTab({ url: 'https://example.org/', active: false }, win).id
+    const focusContent = vi.spyOn(win, 'focusContent')
+    browser.tabs.activateTab(other, win, { keepFocus: true })
+    expect(win.activeSpace().activeTabId).toBe(other)
+    expect(focusContent).not.toHaveBeenCalled()
+    browser.tabs.activateTab(tabId, win)
+    expect(focusContent).toHaveBeenCalledTimes(1)
+  })
+
+  it('tab.close with keepFocus activates the neighbour without giving the page the keyboard', () => {
+    const { browser, win, tabId } = start()
+    const other = browser.tabs.createTab({ url: 'https://example.org/', active: false }, win).id
+    const focusContent = vi.spyOn(win, 'focusContent')
+    browser.tabs.closeTab(tabId, false, win, { keepFocus: true })
+    expect(win.activeSpace().activeTabId).toBe(other)
+    expect(focusContent).not.toHaveBeenCalled()
+    // Closed with the pointer (the row's X, Ctrl+W): the next page takes the keyboard.
+    const third = browser.tabs.createTab({ url: 'https://example.net/', active: false }, win).id
+    browser.tabs.closeTab(other, false, win)
+    expect(win.activeSpace().activeTabId).toBe(third)
+    expect(focusContent).toHaveBeenCalledTimes(1)
+  })
+
+  it('a close whose unload check takes the page down (the host closes it) keeps the keyboard too', async () => {
+    const { browser, platform, win, tabId } = start()
+    const other = browser.tabs.createTab({ url: 'https://example.org/', active: false }, win).id
+    const view = browser.tabs.view(tabId) as TabView
+    // The Electron host runs beforeunload by closing the page: one that does not object is gone
+    // at once, so the tab closes through the page's destruction before the check resolves.
+    view.confirmUnload = () => {
+      platform.pages.get(tabId)?.onDestroyed()
+      return Promise.resolve(true)
+    }
+    const focusContent = vi.spyOn(win, 'focusContent')
+    await expect(browser.tabs.requestClose(tabId, false, win, { keepFocus: true })).resolves.toBe(
+      true
+    )
+    expect(browser.tabs.tab(tabId)).toBeUndefined()
+    expect(win.activeSpace().activeTabId).toBe(other)
+    expect(focusContent).not.toHaveBeenCalled()
+    // The same close with the pointer: the neighbour's page takes the keyboard.
+    const third = browser.tabs.createTab({ url: 'https://example.net/', active: false }, win).id
+    ;(browser.tabs.view(other) as TabView).confirmUnload = () => {
+      platform.pages.get(other)?.onDestroyed()
+      return Promise.resolve(true)
+    }
+    await browser.tabs.requestClose(other, false, win)
+    expect(win.activeSpace().activeTabId).toBe(third)
+    expect(focusContent).toHaveBeenCalledTimes(1)
   })
 })

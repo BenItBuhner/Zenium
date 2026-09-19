@@ -154,7 +154,7 @@ describe('the document side', () => {
     expect(paneFirstControl('toolbar')?.id).toBe('back')
   })
 
-  it('reads the keyboard as in the page on the core\'s word, else from the focused element', () => {
+  it("reads the keyboard as in the page on the core's word, else from the focused element", () => {
     mount(CHROME)
     byId('address').focus()
     expect(currentPane()).toBe('toolbar')

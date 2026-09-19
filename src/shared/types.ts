@@ -1405,8 +1405,7 @@ export type PaneId = 'tabs' | 'toolbar' | 'bookmarks' | 'sidepanel' | 'page'
  * cannot tell (its document reports itself focused while a sibling page view holds the keyboard).
  */
 export type FocusPaneRequest =
-  | { move: 'next' | 'prev'; from: 'chrome' | 'page' }
-  | { pane: 'toolbar' | 'bookmarks' }
+  { move: 'next' | 'prev'; from: 'chrome' | 'page' } | { pane: 'toolbar' | 'bookmarks' }
 
 export type ShortcutAction =
   | 'compact.toggle'
@@ -2883,8 +2882,13 @@ export interface Commands {
     }
     result: string
   }
-  'tab.activate': { args: { tabId: string }; result: void }
-  'tab.close': { args: { tabId: string; force?: boolean }; result: void }
+  /**
+   * `keepFocus`: the keyboard stays where it is – the tab strip, when a row was activated or
+   * closed with Enter, Space or Delete there (Chrome keeps the strip focused until Escape) –
+   * instead of moving into the page as it does for a click.
+   */
+  'tab.activate': { args: { tabId: string; keepFocus?: boolean }; result: void }
+  'tab.close': { args: { tabId: string; force?: boolean; keepFocus?: boolean }; result: void }
   /**
    * A private tab in this window (`capabilities.privateTabs`): the in-memory private container,
    * no history, no persisted downloads; its session is wiped when the last private tab closes.

@@ -65,7 +65,9 @@ function onScreen(element: Element): boolean {
 function focusablesIn(root: HTMLElement): HTMLElement[] {
   return [...root.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
     (el) =>
-      onScreen(el) && !el.closest('[aria-hidden="true"]') && el.closest('[data-pane]') === root
+      onScreen(el) &&
+      !el.closest('[aria-hidden="true"], [inert]') &&
+      el.closest('[data-pane]') === root
   )
 }
 
