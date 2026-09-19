@@ -1,10 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ThumbnailPicture, UIState } from '@shared/types'
+import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '@shared/types'
 import { cmd, run } from '../api'
 import {
   CLOSED_GRACE_MS,
   COVERS_MAX,
+  LOADS_IN_FLIGHT,
   THUMBNAIL_BUDGET,
+  THUMBNAIL_HARD_CAP,
   configureThumbnails,
   hasCard,
   releaseThumbnail,
@@ -14,6 +17,7 @@ import {
   retainThumbnail,
   thumbnailBytes,
   thumbnailOf,
+  thumbnailStats,
   thumbnailStore,
   thumbnailWidthFor,
   trackTabs
@@ -23,9 +27,10 @@ vi.mock('../api', () => ({ cmd: vi.fn(), run: vi.fn(), onEvent: vi.fn(() => () =
 
 /*
  * The tab cards' pictures (lib/thumbnails.ts): the host's card captures, bounded in memory by
- * the bytes of their pixels; read from the host's disk lazily, one per card shown; dropped the
- * moment their tab navigates (BH-14) or, after a grace for an undo, when it is closed; and the
- * host's copies swept once at boot for the tabs that did not come back (BH-33 keeps the rest).
+ * the bytes of their pixels; read from the host's disk lazily, one per card on screen and a few
+ * reads at a time; dropped the moment their tab navigates (BH-14) or, after a grace for an undo,
+ * when it is closed; and the host's copies swept once at boot for the tabs that did not come
+ * back (BH-33 keeps the rest).
  */
 
 /** A picture `side` px square: `side * side * 4` bytes on the budget, whatever its data says. */
@@ -38,9 +43,15 @@ const square = (side: number, tag = 'p'): ThumbnailPicture => ({
 /** 4 MB a piece: six fill the 24 MB budget exactly, a seventh goes over. */
 const MB4 = square(1024)
 
-function stateOf(tabs: Record<string, string>): UIState {
-  const records: Record<string, { id: string; url: string }> = {}
-  for (const id in tabs) records[id] = { id, url: tabs[id] ?? '' }
+function stateOf(tabs: Record<string, string>, privateIds: string[] = []): UIState {
+  const records: Record<string, { id: string; url: string; containerId: string }> = {}
+  for (const id in tabs) {
+    records[id] = {
+      id,
+      url: tabs[id] ?? '',
+      containerId: privateIds.includes(id) ? PRIVATE_CONTAINER_ID : DEFAULT_CONTAINER_ID
+    }
+  }
   return { platform: 'android', tabs: records } as unknown as UIState
 }
 
@@ -110,6 +121,30 @@ describe('the budget', () => {
     for (const id of ['a', 'd', 'e', 'f', 'g', 'h']) releaseThumbnail(id)
     expect(cards()).toEqual(['d', 'e', 'f', 'g', 'h', 'c'])
   })
+
+  it('past the hard cap evicts even from under a card, the least recently shown first', () => {
+    expect(THUMBNAIL_HARD_CAP).toBe(2 * THUMBNAIL_BUDGET)
+    const ids = Array.from({ length: 14 }, (_, i) => `t${i}`)
+    trackTabs(stateOf(Object.fromEntries(ids.map((id) => [id, 'u']))))
+    // Fourteen cards on screen at once, 4 MB each: 56 MB pinned, 8 MB over the cap.
+    for (const id of ids) {
+      retainThumbnail(id)
+      rememberCard(id, MB4)
+    }
+    // The two shown longest ago went; the twelve at the cap stay, the newest among them.
+    expect(cards()).toEqual(ids.slice(2))
+    expect(thumbnailStats().bytes).toBe(THUMBNAIL_HARD_CAP)
+    expect(thumbnailStats().pinned).toBe(14)
+    // A card shown again is the most recent: the next picture over the cap takes another.
+    retainThumbnail('t2')
+    rememberCard('t0', MB4)
+    expect(cards()).toEqual([...ids.slice(4), 't2', 't0'])
+    // Off screen, the pictures trim to the budget again.
+    for (const id of ids) releaseThumbnail(id)
+    releaseThumbnail('t2')
+    expect(thumbnailStats().bytes).toBe(THUMBNAIL_BUDGET)
+    expect(thumbnailStats().pinned).toBe(0)
+  })
 })
 
 describe('the covers', () => {
@@ -164,6 +199,26 @@ describe('a navigation (BH-14)', () => {
     expect(hasCard('a')).toBe(true)
     expect(sent('thumbnail.drop')).toEqual([])
   })
+
+  it('tells the host once per picture it may have, not once per step of a URL that keeps changing', async () => {
+    // A page rewriting its URL as it scrolls: the first change may find a file, the next cannot.
+    trackTabs(stateOf({ a: 'https://one.example/#1' }))
+    trackTabs(stateOf({ a: 'https://one.example/#2' }))
+    trackTabs(stateOf({ a: 'https://one.example/#3' }))
+    trackTabs(stateOf({ a: 'https://one.example/#4' }))
+    expect(sent('thumbnail.drop')).toEqual([[{ tabId: 'a' }]])
+    // The host captured the new page: there is a picture again, and the next change drops it.
+    rememberCard('a', MB4)
+    trackTabs(stateOf({ a: 'https://one.example/#5' }))
+    expect(sent('thumbnail.drop')).toEqual([[{ tabId: 'a' }], [{ tabId: 'a' }]])
+    // A read that came back empty is the same word: nothing there to drop.
+    vi.mocked(run).mockReset()
+    trackTabs(stateOf({ a: 'https://one.example/#5', b: 'u' }))
+    retainThumbnail('b')
+    await vi.advanceTimersByTimeAsync(0)
+    trackTabs(stateOf({ a: 'https://one.example/#5', b: 'v' }))
+    expect(sent('thumbnail.drop')).toEqual([])
+  })
 })
 
 describe('a closed tab', () => {
@@ -207,6 +262,30 @@ describe('a closed tab', () => {
   })
 })
 
+describe('a private tab', () => {
+  it('has its picture in memory alone, reads none, and loses it the moment it closes', async () => {
+    trackTabs(stateOf({ p: 'https://one.example/', a: 'u' }, ['p']))
+    // A card of it mounting: no read of a disk that holds nothing of it.
+    retainThumbnail('p')
+    retainThumbnail('a')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(vi.mocked(cmd).mock.calls.map(([, args]) => args)).toEqual([{ tabId: 'a', url: 'u' }])
+    // The host's capture (its event alone; nothing written) shows on the card.
+    rememberCard('p', square(300, 'private'))
+    expect(thumbnailOf('p', false)).toBe('data:image/jpeg;base64,private')
+    // Its navigation drops the picture here and asks the host for nothing.
+    trackTabs(stateOf({ p: 'https://one.example/next', a: 'u' }, ['p']))
+    expect(hasCard('p')).toBe(false)
+    expect(sent('thumbnail.drop')).toEqual([])
+    // Closed: gone at once, no grace, and still nothing asked of the host.
+    rememberCard('p', square(300, 'private'))
+    trackTabs(stateOf({ a: 'u' }))
+    expect(hasCard('p')).toBe(false)
+    vi.advanceTimersByTime(CLOSED_GRACE_MS)
+    expect(sent('thumbnail.drop')).toEqual([])
+  })
+})
+
 describe('boot', () => {
   it('sweeps the host once, keeping the pictures of the restored tabs only', () => {
     trackTabs(null)
@@ -217,19 +296,54 @@ describe('boot', () => {
   })
 
   it('reads a restored tab’s picture once its card shows, never before, and once only', async () => {
-    trackTabs(stateOf({ a: 'u', b: 'u' }))
+    trackTabs(stateOf({ a: 'https://one.example/', b: 'u' }))
     expect(loads()).toBe(0)
     vi.mocked(cmd).mockResolvedValueOnce(square(300, 'disk'))
     retainThumbnail('a')
     retainThumbnail('a')
     expect(loads()).toBe(1)
-    expect(cmd).toHaveBeenCalledWith('thumbnail.load', { tabId: 'a' })
+    // With the tab's URL: the host answers nothing for a picture of another page.
+    expect(cmd).toHaveBeenCalledWith('thumbnail.load', { tabId: 'a', url: 'https://one.example/' })
     await vi.advanceTimersByTimeAsync(0)
     expect(thumbnailOf('a', false)).toBe('data:image/jpeg;base64,disk')
     releaseThumbnail('a')
     releaseThumbnail('a')
     retainThumbnail('a')
     expect(loads()).toBe(1)
+  })
+
+  it('keeps a few reads in flight and the rest in line, in the order the cards asked', async () => {
+    const ids = Array.from({ length: 10 }, (_, i) => `t${i}`)
+    trackTabs(stateOf(Object.fromEntries(ids.map((id) => [id, 'u']))))
+    const answers = new Map<string, (picture: ThumbnailPicture | null) => void>()
+    vi.mocked(cmd).mockImplementation(
+      (_name, args) =>
+        new Promise((resolve) => {
+          answers.set((args as { tabId: string }).tabId, resolve as never)
+        }) as never
+    )
+    // Ten cards mount at once (an overview opening): four reads go, six wait.
+    for (const id of ids) retainThumbnail(id)
+    expect(loads()).toBe(LOADS_IN_FLIGHT)
+    expect(thumbnailStats()).toMatchObject({ loading: 4, queued: 6 })
+    expect([...answers.keys()]).toEqual(['t0', 't1', 't2', 't3'])
+    // One comes back: the next in line goes.
+    answers.get('t1')!(square(300, 'one'))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(loads()).toBe(LOADS_IN_FLIGHT + 1)
+    expect([...answers.keys()].pop()).toBe('t4')
+    expect(thumbnailOf('t1', false)).toBe('data:image/jpeg;base64,one')
+    // A card that scrolled away before its turn is not read for; one already in flight is kept.
+    releaseThumbnail('t7')
+    releaseThumbnail('t2')
+    for (const id of ['t0', 't2', 't3', 't4']) answers.get(id)!(null)
+    await vi.advanceTimersByTimeAsync(0)
+    expect([...answers.keys()]).toEqual(['t0', 't1', 't2', 't3', 't4', 't5', 't6', 't8', 't9'])
+    expect(thumbnailStats()).toMatchObject({ loading: 4, queued: 0 })
+    for (const id of ['t5', 't6', 't8', 't9']) answers.get(id)!(null)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(thumbnailStats()).toMatchObject({ loading: 0, queued: 0, pinned: 8 })
+    expect(loads()).toBe(9)
   })
 
   it('remembers a tab the host has no picture of, until it captures one', async () => {

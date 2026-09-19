@@ -2942,12 +2942,13 @@ export interface Commands {
    * host takes the pictures itself – of a page leaving the screen, of the app going to the
    * background, from the cover it captures for a sheet – and raises `thumbnail.captured` for
    * each; the chrome only says how wide a card is (`configure`, device pixels), reads the
-   * persisted picture of a card it shows (`load`, lazily, one at a time – never in the boot
-   * payload), and forgets the pictures of pages that navigated or tabs that are gone for good
-   * (`drop`, and `sweep` once at boot with the session's tab ids).
+   * persisted picture of a card it shows (`load`, lazily, a few at a time – never in the boot
+   * payload; with the tab's `url`, so a picture of a page the tab has left is never answered),
+   * and forgets the pictures of pages that navigated or tabs that are gone for good (`drop`,
+   * and `sweep` once at boot with the session's tab ids).
    */
   'thumbnail.configure': { args: { width: number }; result: void }
-  'thumbnail.load': { args: { tabId: string }; result: ThumbnailPicture | null }
+  'thumbnail.load': { args: { tabId: string; url: string }; result: ThumbnailPicture | null }
   'thumbnail.drop': { args: { tabId: string }; result: void }
   'thumbnail.sweep': { args: { keep: string[] }; result: void }
 

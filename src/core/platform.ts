@@ -1542,8 +1542,8 @@ export interface VoiceHost {
 export interface ThumbnailHost {
   /** How wide a card is, in device pixels: what captures are scaled to. */
   configure(width: number): void
-  /** The persisted picture of a tab, or null when there is none. */
-  load(tabId: string): Promise<ThumbnailPicture | null>
+  /** The persisted picture of a tab at `url`, or null when there is none (or none of that page). */
+  load(tabId: string, url: string): Promise<ThumbnailPicture | null>
   /** The tab navigated, or is gone for good: its picture is not to be shown again. */
   drop(tabId: string): void
   /** Once at boot: every picture but those of `keep` (the session's tabs) goes. */

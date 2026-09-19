@@ -280,6 +280,9 @@ export function createPreviewBridge(): NativeBridge {
       frame.dataset.url = String(url)
       frame.dataset.title = ''
       frame.dataset.load = ''
+      // Whatever card picture there was is of the page before: the next hide takes a new one,
+      // however fresh the last (Kotlin's `Thumbnails.stale`, BH-14).
+      cardTakenAt.delete(String(tabId))
       viewEvent(String(tabId), 'startLoading', null)
       frame.src = String(url)
       viewEvent(String(tabId), 'navigated', { ...navState(frame), inPage: false })
@@ -303,6 +306,7 @@ export function createPreviewBridge(): NativeBridge {
       const frame = views.get(String(tabId))
       if (!frame) return
       frame.dataset.url = String(url)
+      cardTakenAt.delete(String(tabId))
       void showDocument(frame, String(html))
       viewEvent(String(tabId), 'navigated', { ...navState(frame), inPage: false })
     },
@@ -379,9 +383,14 @@ export function createPreviewBridge(): NativeBridge {
     'thumbnail.configure': ({ width }) => {
       cardWidth = Number(width) || 0
     },
-    'thumbnail.load': ({ tabId }) => {
+    // A picture is kept with the document it shows and read for that document alone (Kotlin
+    // stamps the file): a tab that left the page gets nothing, whatever is under its id.
+    'thumbnail.load': ({ tabId, url }) => {
       const stored = localStorage.getItem(THUMB_PREFIX + String(tabId))
-      return stored ? (JSON.parse(stored) as ThumbnailPicture) : null
+      if (!stored) return null
+      const record = JSON.parse(stored) as ThumbnailPicture & { url?: string }
+      if (record.url !== String(url)) return null
+      return { data: record.data, width: record.width, height: record.height }
     },
     'thumbnail.drop': ({ tabId }) => localStorage.removeItem(THUMB_PREFIX + String(tabId)),
     'thumbnail.sweep': ({ keep }) => {
@@ -601,12 +610,13 @@ export function createPreviewBridge(): NativeBridge {
     cardTakenAt.set(tabId, now)
     const cover = await (capture ?? snapshotFrame(frame))
     const picture = cover ? await scaleToCard(cover, cardWidth || 480) : null
-    // The page navigated meanwhile: the picture is of the page before (BH-14).
+    // The page navigated meanwhile: the picture is of the page before (BH-14), and nothing of
+    // it is kept.
     if (!picture || frame.dataset.url !== url) {
       cardTakenAt.delete(tabId)
       return
     }
-    localStorage.setItem(THUMB_PREFIX + tabId, JSON.stringify(picture))
+    localStorage.setItem(THUMB_PREFIX + tabId, JSON.stringify({ ...picture, url }))
     host().hostEvent('thumbnail.captured', JSON.stringify({ tabId, ...picture }))
   }
 

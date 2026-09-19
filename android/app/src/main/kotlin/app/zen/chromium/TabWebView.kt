@@ -109,8 +109,6 @@ class TabWebView(
     private var lastRememberedAt = 0L
     /** The copies of the window in flight for this page, shared between their askers (see [captureBitmap]). */
     private val captureShare = CaptureShare<Bitmap>()
-    /** When the tab's card picture was last taken (uptime millis; 0: never), see [captureThumbnail]. */
-    private var thumbnailAt = 0L
     private var replyProxy: JavaScriptReplyProxy? = null
     /** Whether the bridge object the page script posts through is registered on this view. */
     private var bridgeInstalled = false
@@ -971,9 +969,10 @@ class TabWebView(
      * ([Host.onPause]) and before a shown tab's view goes ([TabHost.destroy], for an undo).
      */
     fun captureThumbnail() {
-        if (host.thumbnails == null || backTransition != null || awaitingCommit) return
+        val thumbnails = host.thumbnails ?: return
+        if (backTransition != null || awaitingCommit) return
         if (width <= 0 || height <= 0 || !isShown) return
-        if (Thumbnails.isFresh(thumbnailAt, SystemClock.uptimeMillis())) return
+        if (thumbnails.fresh(tabId, SystemClock.uptimeMillis())) return
         // A view with no document yet shows nothing worth a picture; its card has its placeholder.
         val document = currentDocument ?: return
         if (document == "about:blank") return
@@ -988,42 +987,68 @@ class TabWebView(
     }
 
     /**
-     * The card picture from a copy of the page: scaled to the card's width and encoded off the
-     * main thread, written to disk ([Thumbnails.save]) and handed to the chrome
+     * The card picture from a copy of the page: scaled to the card's width and encoded on the
+     * pictures' own thread ([Thumbnails.disk] – never the cover's `zen-encode`, whose work the
+     * chrome waits for), written to disk ([Thumbnails.save]) and handed to the chrome
      * (`thumbnail.captured`). `document` is the one the copy shows (the caller's word: it was
-     * [paintedDocument] when the copy was asked for). Not of a page that navigated since, and not
-     * twice for one frame – a cover and a hide that shared the copy publish once between them.
-     * `copyMs` is what the copy took when this call asked for it (-1: the copy was the cover's);
-     * the log line carries it with the encode-and-save time, for the cost of a picture per switch.
+     * [paintedDocument] when the copy was asked for). Not of a page that navigated since – checked
+     * on the main thread before anything is written, and again before the chrome hears of it, so
+     * a picture of the page before is never on disk under the new page's tab (BH-14, across a
+     * kill too) – and not twice for one frame: a cover and a hide that shared the copy publish
+     * once between them. A private tab's picture goes to the chrome alone: nothing of it is
+     * written (the private profile leaves no file to wipe). `copyMs` is what the copy took when
+     * this call asked for it (-1: the copy was the cover's); the debug log line carries it with
+     * the encode and save times, for the cost of a picture per switch.
      */
     private fun publishThumbnail(bitmap: Bitmap, document: String, copyMs: Long = -1L) {
         val thumbnails = host.thumbnails ?: return
         val now = SystemClock.uptimeMillis()
-        if (document != currentDocument || Thumbnails.isFresh(thumbnailAt, now)) return
-        thumbnailAt = now
+        if (document != currentDocument || thumbnails.fresh(tabId, now)) return
+        thumbnails.taken(tabId, now)
         val id = tabId
         val cardWidth = thumbnails.width
+        val persisted = containerId != Profiles.PRIVATE_CONTAINER
         val target = host
-        encoder.execute {
+        val main = Handler(Looper.getMainLooper())
+        fun captured(picture: Thumbnails.Picture) =
+            target.hostEvent("thumbnail.captured", json("tabId" to id, "data" to picture.dataUrl, "width" to picture.width, "height" to picture.height))
+        thumbnails.disk.execute {
             val started = SystemClock.uptimeMillis()
-            val picture = Thumbnails.encode(bitmap, cardWidth)?.takeIf { thumbnails.save(id, it.jpeg) }
-            if (picture != null) {
-                Log.d(
-                    "ZenTab",
-                    "thumbnail of $id: ${picture.width}x${picture.height} ${picture.jpeg.size} bytes, " +
-                        "copy ${if (copyMs < 0) "shared" else "$copyMs ms"}, encode and save ${SystemClock.uptimeMillis() - started} ms"
-                )
-            }
-            Handler(Looper.getMainLooper()).post {
+            val picture = Thumbnails.encode(bitmap, cardWidth)
+            val encodeMs = SystemClock.uptimeMillis() - started
+            main.post {
                 // The page navigated while the picture was encoded: it is of the page before, and
-                // the card must not show it (BH-14) – not now, not after a restart. Nor does a
-                // picture that never made it to disk count as taken.
+                // the card must not show it – nothing is written. Nor does a picture that could
+                // not be encoded count as taken.
                 if (picture == null || document != currentDocument) {
-                    thumbnailAt = 0L
-                    if (picture != null) encoder.execute { thumbnails.drop(id) }
+                    thumbnails.stale(id)
                     return@post
                 }
-                target.hostEvent("thumbnail.captured", json("tabId" to id, "data" to picture.dataUrl, "width" to picture.width, "height" to picture.height))
+                if (!persisted) {
+                    captured(picture)
+                    return@post
+                }
+                thumbnails.disk.execute {
+                    val writing = SystemClock.uptimeMillis()
+                    val saved = thumbnails.save(id, picture.jpeg, document)
+                    if (BuildConfig.DEBUG) {
+                        Log.d(
+                            "ZenTab",
+                            "thumbnail of $id: ${picture.width}x${picture.height} ${picture.jpeg.size} bytes, " +
+                                "copy ${if (copyMs < 0) "shared" else "$copyMs ms"}, encode $encodeMs ms, save ${SystemClock.uptimeMillis() - writing} ms"
+                        )
+                    }
+                    main.post {
+                        // Navigated during the write: the file names the page before
+                        // ([Thumbnails.stamp]), so no read shows it, and the chrome's own drop
+                        // for the navigation is behind the write on the same thread.
+                        if (!saved || document != currentDocument) {
+                            thumbnails.stale(id)
+                            return@post
+                        }
+                        captured(picture)
+                    }
+                }
             }
         }
     }
@@ -1196,7 +1221,8 @@ class TabWebView(
     /**
      * Downscaled JPEG of what is on screen right now, for the dimmed preview behind overlays.
      * The tab's card picture comes out of the same copy ([publishThumbnail]): the page under a
-     * sheet or the overview is never copied a second time for its card.
+     * sheet or the overview is never copied a second time for its card. The cover's own encode
+     * is queued first and runs on its own thread; the card's work never stands in front of it.
      */
     fun snapshot(callback: (String?) -> Unit) {
         if (backTransition != null) {
@@ -1217,13 +1243,14 @@ class TabWebView(
                 return@captureBitmap
             }
             if (index >= 0 && url.isNotEmpty() && url == (copyBackForwardList().currentItem?.url ?: "")) remember(index, url, bitmap)
-            if (painted != null && !awaitingCommit) publishThumbnail(bitmap, painted)
+            // The cover first: the chrome mounts its sheet on this data URL (#168).
             encoder.execute {
                 val out = ByteArrayOutputStream()
                 bitmap.compress(Bitmap.CompressFormat.JPEG, 62, out)
                 val data = "data:image/jpeg;base64," + Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
                 Handler(Looper.getMainLooper()).post { callback(data) }
             }
+            if (painted != null && !awaitingCommit) publishThumbnail(bitmap, painted)
         }
     }
 
@@ -1496,6 +1523,9 @@ class TabWebView(
             // when the one drawn is another: its own commit-visible is the word for that.)
             if (inPage && paintedDocument != null && paintedDocument == currentDocument) paintedDocument = url
             currentDocument = url
+            // Whatever card picture there was is of the page before – the chrome drops it on the
+            // URL change – and the next hide takes a new one, however fresh the last (BH-14).
+            host.thumbnails?.stale(tabId)
             // Another page committed: the failed load's own error page is not coming any more.
             failedUrl = null
             interstitial = false

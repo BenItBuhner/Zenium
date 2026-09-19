@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import type { ThumbnailPicture, UIState } from '@shared/types'
+import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import { cmd, run } from './api'
 import { overviewColumns } from './layout'
 import { createStore } from './store'
@@ -11,10 +12,12 @@ import { createStore } from './store'
  *
  *  - Cards: the host's thumbnails (`thumbnail.captured`, `ThumbnailHost`) – the page scaled to a
  *    card's width, one per tab, kept on disk by the host across restarts (`cacheDir/zen-thumbs`
- *    on Android) and read from there lazily, one per card shown, never through the boot
- *    payload. In memory they are bounded by the bytes of their pixels, not their number
- *    (`THUMBNAIL_BUDGET`): the least recently shown go first, and a card that is on screen is
- *    never evicted from under its `<img>`.
+ *    on Android) and read from there lazily, one per card on screen, a few reads in flight at a
+ *    time (`LOADS_IN_FLIGHT`), never through the boot payload. In memory they are bounded by the
+ *    bytes of their pixels, not their number (`THUMBNAIL_BUDGET`): the least recently shown go
+ *    first, and a card that is on screen keeps its picture from under its `<img>` – up to a hard
+ *    cap (`THUMBNAIL_HARD_CAP`) past which the least recently shown goes whatever shows it, and
+ *    is read again when it comes back into view.
  *  - Covers: the full-size captures the chrome takes of the active page before it hides it
  *    (`overlay.snapshot`, `lib/ui.ts`) – what a card that is swapped for the live page paints
  *    (`TabPreview` with `cover`, `lib/cover.ts`). A handful, for the tab a gesture just left.
@@ -22,13 +25,22 @@ import { createStore } from './store'
  * A picture is dropped the moment its tab navigates (the core's `tab.navigated` reaches the
  * chrome as the tab's `url`): a card never shows the previous page, it shows the placeholder
  * until the host captures the new one. A closed tab keeps its picture for a while, so an undo
- * brings the tab back with it; then it goes for good, here and on disk.
+ * brings the tab back with it; then it goes for good, here and on disk. A private tab's picture
+ * is in memory alone – the host writes none (`Thumbnails.kt`), nothing is read for it, and it
+ * goes the moment the tab does.
  */
 
 export type Thumbnail = ThumbnailPicture
 
 /** Bytes of decoded pixels the card pictures may take together: a dozen phone cards and more. */
 export const THUMBNAIL_BUDGET = 24 * 1024 * 1024
+/**
+ * Past this many bytes a picture goes even from under a card that shows it (the least recently
+ * shown first): the budget's backstop for a grid whose visible cards alone add up to more.
+ */
+export const THUMBNAIL_HARD_CAP = 2 * THUMBNAIL_BUDGET
+/** Reads of the host's disk in flight at a time; the rest wait their turn, in the order asked. */
+export const LOADS_IN_FLIGHT = 4
 /** Full covers kept: the tab a gesture just left and its neighbours. */
 export const COVERS_MAX = 3
 /** How long a closed tab's picture waits for an undo before it goes for good. */
@@ -49,16 +61,20 @@ export const thumbnailStore = createStore<ThumbnailState>(
   'thumbnails'
 )
 
-/** Per tab: how many mounted cards show its picture (never evicted while above zero). */
+/** Per tab: how many cards on screen show its picture (kept while above zero, up to the cap). */
 const pinned = new Map<string, number>()
 /** Tabs whose picture the host has none of, until it captures one (saves a read per card). */
 const missing = new Set<string>()
 /** Reads in flight, per tab. */
 const loading = new Set<string>()
+/** Tabs waiting for a read, in the order their cards asked. */
+const queued: string[] = []
 /** Closed tabs whose picture waits for an undo. */
 const graces = new Map<string, ReturnType<typeof setTimeout>>()
 /** The URL each tab was last seen at (a change is a navigation). */
 const urls = new Map<string, string>()
+/** The tabs of the private container: nothing of theirs on the host's disk. */
+const privateTabs = new Set<string>()
 let swept = false
 let configuredWidth = 0
 
@@ -75,12 +91,14 @@ function totalBytes(cards: ReadonlyMap<string, Thumbnail>): number {
 
 /**
  * Keep `cards` within the budget, oldest unpinned first. The pictures on screen stay whatever
- * they add up to; the picture just added stays too – a card without one is worth less than a
- * budget kept to the byte.
+ * they add up to – up to the hard cap, past which the oldest of them go too (a card that is
+ * still up reads its picture again the next time it comes into view); the picture just added
+ * stays either way – a card without one is worth less than a budget kept to the byte.
  */
 function withinBudget(
   cards: ReadonlyMap<string, Thumbnail>,
-  budget = THUMBNAIL_BUDGET
+  budget = THUMBNAIL_BUDGET,
+  cap = THUMBNAIL_HARD_CAP
 ): ReadonlyMap<string, Thumbnail> {
   let bytes = totalBytes(cards)
   if (bytes <= budget) return cards
@@ -89,6 +107,12 @@ function withinBudget(
   for (const [id, picture] of cards) {
     if (bytes <= budget) break
     if ((pinned.get(id) ?? 0) > 0 || id === newest) continue
+    next.delete(id)
+    bytes -= thumbnailBytes(picture)
+  }
+  for (const [id, picture] of cards) {
+    if (bytes <= cap) break
+    if (!next.has(id) || id === newest) continue
     next.delete(id)
     bytes -= thumbnailBytes(picture)
   }
@@ -147,27 +171,55 @@ export function hasCard(tabId: string): boolean {
 }
 
 /**
- * Read the tab's persisted picture unless one is in memory, known to be missing, or on its way.
- * A capture that lands meanwhile is newer than anything on disk and is kept over it.
+ * Read the tab's persisted picture unless one is in memory, known to be missing, on its way or
+ * waiting its turn. Of a tab the chrome knows the URL of, which the host compares with the
+ * picture's own (a picture of a page the tab has left is not answered); never of a private tab
+ * (the host keeps none). A capture that lands meanwhile is newer than anything on disk and is
+ * kept over it.
  */
 export function loadThumbnail(tabId: string): void {
-  if (hasCard(tabId) || missing.has(tabId) || loading.has(tabId)) return
-  loading.add(tabId)
-  cmd('thumbnail.load', { tabId })
-    .then((picture) => {
-      if (!picture) {
-        if (!hasCard(tabId)) missing.add(tabId)
-      } else if (!hasCard(tabId) && !missing.has(tabId)) {
-        rememberCard(tabId, picture)
-      }
-    })
-    .catch(() => {
-      if (!hasCard(tabId)) missing.add(tabId)
-    })
-    .finally(() => loading.delete(tabId))
+  if (hasCard(tabId) || missing.has(tabId) || loading.has(tabId) || queued.includes(tabId)) return
+  if (!urls.has(tabId)) return
+  if (privateTabs.has(tabId)) {
+    missing.add(tabId)
+    return
+  }
+  queued.push(tabId)
+  pumpLoads()
 }
 
-/** A card shows the tab: its picture counts as used and stays while the card is up. */
+/** Send the next reads, as many as may be in flight at once. */
+function pumpLoads(): void {
+  while (loading.size < LOADS_IN_FLIGHT && queued.length > 0) {
+    const tabId = queued.shift()
+    if (tabId === undefined) break
+    const url = urls.get(tabId)
+    if (url === undefined || hasCard(tabId) || missing.has(tabId)) continue
+    loading.add(tabId)
+    cmd('thumbnail.load', { tabId, url })
+      .then((picture) => {
+        if (!picture) {
+          if (!hasCard(tabId)) missing.add(tabId)
+        } else if (!hasCard(tabId) && !missing.has(tabId)) {
+          rememberCard(tabId, picture)
+        }
+      })
+      .catch(() => {
+        if (!hasCard(tabId)) missing.add(tabId)
+      })
+      .finally(() => {
+        loading.delete(tabId)
+        pumpLoads()
+      })
+  }
+}
+
+function unqueue(tabId: string): void {
+  const at = queued.indexOf(tabId)
+  if (at >= 0) queued.splice(at, 1)
+}
+
+/** A card on screen shows the tab: its picture counts as used and stays while the card is up. */
 export function retainThumbnail(tabId: string): void {
   pinned.set(tabId, (pinned.get(tabId) ?? 0) + 1)
   const { cards } = thumbnailStore.get()
@@ -181,11 +233,17 @@ export function retainThumbnail(tabId: string): void {
   loadThumbnail(tabId)
 }
 
-/** The card is gone: the picture may be evicted, and its decoded pixels are the browser's to free. */
+/**
+ * The card is off screen or gone: the picture may be evicted, its decoded pixels are the
+ * browser's to free, and a read it was waiting for is not sent.
+ */
 export function releaseThumbnail(tabId: string): void {
   const count = (pinned.get(tabId) ?? 0) - 1
   if (count > 0) pinned.set(tabId, count)
-  else pinned.delete(tabId)
+  else {
+    pinned.delete(tabId)
+    unqueue(tabId)
+  }
   const { cards } = thumbnailStore.get()
   const trimmed = withinBudget(cards)
   if (trimmed !== cards) thumbnailStore.set({ cards: trimmed })
@@ -196,18 +254,54 @@ export function pinnedCount(): number {
   return pinned.size
 }
 
+/** What the module holds and has in flight, for the tests and the preview host's measurements. */
+export function thumbnailStats(): {
+  pictures: number
+  bytes: number
+  pinned: number
+  loading: number
+  queued: number
+} {
+  const { cards } = thumbnailStore.get()
+  return {
+    pictures: cards.size,
+    bytes: totalBytes(cards),
+    pinned: pinned.size,
+    loading: loading.size,
+    queued: queued.length
+  }
+}
+
+export interface UseThumbnailOptions {
+  /** The card stands in for the live page: the full cover first (see `thumbnailOf`). */
+  cover?: boolean
+  /**
+   * The card is drawn at the page's size without standing in for it (the swipe track's
+   * neighbours): the full cover first when there is one, so the card picture is not scaled up.
+   */
+  sharp?: boolean
+  /**
+   * The card is on screen (or about to be). Off screen it holds no picture and reads none: the
+   * overview grid tells each card so, from an observer on its scroller.
+   */
+  visible?: boolean
+}
+
 /**
- * The picture of a tab for a card. Reads the persisted one when nothing is in memory (the
- * overview grid: a read per card shown, never before), and keeps it from eviction while the card
- * is up. With `cover` the full capture is preferred (see `thumbnailOf`).
+ * The picture of a tab for a card. While `visible`, reads the persisted one when nothing is in
+ * memory (the overview grid: a read per card on screen, never before), and keeps it from
+ * eviction while the card is up. With `cover` or `sharp` the full capture is preferred.
  */
-export function useThumbnail(tabId: string | null | undefined, cover = false): string | null {
-  const picture = thumbnailStore.use((s) => pick(s, tabId, cover))
+export function useThumbnail(
+  tabId: string | null | undefined,
+  { cover = false, sharp = false, visible = true }: UseThumbnailOptions = {}
+): string | null {
+  const picture = thumbnailStore.use((s) => pick(s, tabId, cover || sharp))
   useEffect(() => {
-    if (!tabId) return
+    if (!tabId || !visible) return
     retainThumbnail(tabId)
     return () => releaseThumbnail(tabId)
-  }, [tabId])
+  }, [tabId, visible])
   return picture
 }
 
@@ -222,8 +316,14 @@ export async function captureThumbnail(tabId: string): Promise<string | null> {
   return data ?? thumbnailOf(tabId)
 }
 
-/** Forget every picture of a tab, here and on the host's disk. */
-export function dropThumbnail(tabId: string): void {
+/**
+ * Forget every picture of a tab, here and on the host's disk. The host is told once per picture
+ * it may have: not again while the tab is known to have none there (a page that rewrites its
+ * URL as it scrolls is one drop, not one per step) – unless the tab is gone for good, when the
+ * host's file goes whatever the chrome knows of it. Never for a private tab: nothing is there.
+ */
+export function dropThumbnail(tabId: string, gone = false): void {
+  const had = missing.has(tabId)
   thumbnailStore.set((s) => {
     if (!s.cards.has(tabId) && !s.covers.has(tabId)) return {}
     const cards = new Map(s.cards)
@@ -232,7 +332,9 @@ export function dropThumbnail(tabId: string): void {
     covers.delete(tabId)
     return { cards, covers }
   })
+  unqueue(tabId)
   missing.add(tabId)
+  if (privateTabs.has(tabId) || (had && !gone)) return
   run('thumbnail.drop', { tabId })
 }
 
@@ -240,8 +342,9 @@ export function dropThumbnail(tabId: string): void {
  * Follow the tabs through every state the core sends. A tab whose URL changed navigated: its
  * pictures go now, whatever the card shows until the host captures the new page (BH-14). A tab
  * that left the state closed: its pictures stay `CLOSED_GRACE_MS` for an undo, then go for good;
- * a tab back before that keeps them. The first state is the restored session: the host sweeps
- * the pictures of every tab that is not in it (their tabs are not coming back).
+ * a tab back before that keeps them. A private tab's go the moment it does. The first state is
+ * the restored session: the host sweeps the pictures of every tab that is not in it (their tabs
+ * are not coming back).
  */
 export function trackTabs(state: UIState | null): void {
   if (!state) return
@@ -252,6 +355,8 @@ export function trackTabs(state: UIState | null): void {
   for (const id in state.tabs) {
     const tab = state.tabs[id]
     if (!tab) continue
+    if (tab.containerId === PRIVATE_CONTAINER_ID) privateTabs.add(id)
+    else privateTabs.delete(id)
     const last = urls.get(id)
     if (last !== undefined && last !== tab.url) dropThumbnail(id)
     urls.set(id, tab.url)
@@ -264,12 +369,18 @@ export function trackTabs(state: UIState | null): void {
   for (const id of [...urls.keys()]) {
     if (id in state.tabs) continue
     urls.delete(id)
+    if (privateTabs.has(id)) {
+      dropThumbnail(id)
+      privateTabs.delete(id)
+      missing.delete(id)
+      continue
+    }
     if (graces.has(id)) continue
     graces.set(
       id,
       setTimeout(() => {
         graces.delete(id)
-        dropThumbnail(id)
+        dropThumbnail(id, true)
         missing.delete(id)
       }, CLOSED_GRACE_MS)
     )
@@ -302,7 +413,9 @@ export function resetThumbnails(): void {
   pinned.clear()
   missing.clear()
   loading.clear()
+  queued.length = 0
   urls.clear()
+  privateTabs.clear()
   swept = false
   configuredWidth = 0
   thumbnailStore.set({ cards: new Map(), covers: new Map() })

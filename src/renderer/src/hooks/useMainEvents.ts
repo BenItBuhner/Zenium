@@ -56,6 +56,11 @@ function followsCover(): boolean {
   return state !== null && chromeUnderPages(state.platform)
 }
 
+/** How wide the host is to make a card picture for this screen, in device pixels. */
+function thumbnailWidth(): number {
+  return thumbnailWidthFor(viewportStore.get().width, window.devicePixelRatio)
+}
+
 /** Wire main-process events into the renderer UI store. */
 export function useMainEvents(): void {
   useEffect(() => {
@@ -261,15 +266,20 @@ export function useMainEvents(): void {
         if (followsCover()) onViewDrawn(tabId, visible)
       }),
       // Tab card pictures (lib/thumbnails.ts): the host's captures, the tabs' navigations and
-      // closes, and the card width the host scales its captures to.
+      // closes, and the card width the host scales its captures to – on the host that keeps
+      // them (the chrome under the pages); the desktop hosts have no pictures to be told about.
       onEvent('thumbnail.captured', ({ tabId, ...picture }) => rememberCard(tabId, picture)),
-      browserStore.subscribe(() => trackTabs(browserStore.get().state)),
-      viewportStore.subscribe(() =>
-        configureThumbnails(thumbnailWidthFor(viewportStore.get().width, window.devicePixelRatio))
-      )
+      browserStore.subscribe(() => {
+        if (followsCover()) trackTabs(browserStore.get().state)
+      }),
+      viewportStore.subscribe(() => {
+        if (followsCover()) configureThumbnails(thumbnailWidth())
+      })
     ]
-    trackTabs(browserStore.get().state)
-    configureThumbnails(thumbnailWidthFor(viewportStore.get().width, window.devicePixelRatio))
+    if (followsCover()) {
+      trackTabs(browserStore.get().state)
+      configureThumbnails(thumbnailWidth())
+    }
     return () => offs.forEach((off) => off())
   }, [])
 }

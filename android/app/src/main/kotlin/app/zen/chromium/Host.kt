@@ -229,16 +229,19 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
 
             // --- tab card thumbnails (the ThumbnailHost contract; `Thumbnails.kt` is the file layer) ---
             "thumbnail.configure" -> { thumbnails.width = args.num("width").toInt(); reply(null) }
-            // A read per card the chrome shows, off the main thread; the file's bytes go over as a
-            // data URL with their size, so the chrome can count them against its budget.
+            // A read per card the chrome shows (it keeps a few in flight at a time), off the main
+            // thread; the file's bytes go over as a data URL with their size, so the chrome can
+            // count them against its budget. Nothing for a picture of another page than the tab's.
             "thumbnail.load" -> io.execute {
-                val picture = thumbnails.loadPicture(args.str("tabId"))
+                val picture = thumbnails.loadPicture(args.str("tabId"), args.str("url"))
                 main.post { reply(picture?.let { json("data" to it.dataUrl, "width" to it.width, "height" to it.height) }) }
             }
-            "thumbnail.drop" -> { io.execute { thumbnails.drop(args.str("tabId")) }; reply(null) }
+            // Drops and the sweep queue behind the writes on the pictures' own thread: a drop the
+            // chrome sends on a navigation lands after the save of the page before it.
+            "thumbnail.drop" -> { thumbnails.disk.execute { thumbnails.drop(args.str("tabId")) }; reply(null) }
             "thumbnail.sweep" -> {
                 val keep = args.arr("keep").let { ids -> (0 until ids.length()).mapTo(HashSet()) { ids.optString(it) } }
-                io.execute { thumbnails.sweep(keep) }
+                thumbnails.disk.execute { thumbnails.sweep(keep) }
                 reply(null)
             }
 
