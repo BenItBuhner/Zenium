@@ -55,6 +55,13 @@ import kotlin.math.sqrt
  * it, and gone by the end; a stack's upper sheet must not move while the lower goes; the slot
  * must have a panel in it part-way down, never run back empty. The BEFORE of each is the sheet
  * gone in the commit that cleared its request (no pose of it leaving; the slot's way back empty).
+ * The chrome is read on until each leave has landed, past the screenshots: the emulator
+ * stretches a leave of two sheets to some seconds, and starves the reader meanwhile.
+ *
+ * The first judgement does not apply to the location prompt: its panel stands at the top of the
+ * page, in the band, so the band reads the panel and not the page under it, at rest and as it
+ * slides through. Those events are marked `record` – cut and written up, not judged by the band,
+ * here or by the frames script – and the prompt's leave is judged by the poses alone.
  *
  * `marks.txt`, `geometry.txt` and the screenshots are what [SheetRecedeDemo] writes, so the
  * workflow cuts and reads the recording with the same script (android-sheet-recede-frames.mjs);
@@ -161,7 +168,7 @@ class SheetLeaveDemo : DemoHarness("sheet-recede-demo-state.json", "leave", "she
         settleUp()
         val appMenu = menuId()
         finding("app menu up: id '$appMenu', --zen-recede ${recedeValue()}, pose ${poseNow()}")
-        val hide = probe("menu-hide", Kind.TRANSITION) { coreInvoke("tab.contextMenu", "{\"tabId\":\"$TAB_ID\"}") }
+        val hide = probe("menu-hide", Kind.TRANSITION, landed = noLeavingLayer) { coreInvoke("tab.contextMenu", "{\"tabId\":\"$TAB_ID\"}") }
         judgeMenuLeave("menu-hide", hide.poses, appMenu)
         settleUp()
         finding("context menu up: id '${menuId()}', --zen-recede ${recedeValue()}, pose ${poseNow()}")
@@ -182,7 +189,7 @@ class SheetLeaveDemo : DemoHarness("sheet-recede-demo-state.json", "leave", "she
         }
         if (pickerUp) {
             val travel = slotTravel(poseNow())
-            val cancel = probe("picker-cancel", Kind.TRANSITION) { f.tap(scrimPoint()) }
+            val cancel = probe("picker-cancel", Kind.TRANSITION, landed = slotDown) { f.tap(scrimPoint()) }
             judgeKeptSlide("picker-cancel", cancel.poses, travel)
         } else if (awaitSurface(up = true, timeoutMs = 500)) {
             finding("closing the context menu instead")
@@ -202,13 +209,16 @@ class SheetLeaveDemo : DemoHarness("sheet-recede-demo-state.json", "leave", "she
         val lower = menuId()
         val second = secondSheet()
         finding("stacked sheet: $second")
-        probe("stack-open", Kind.TRANSITION) { runInPage(second.script) }
+        // The location prompt stands at the top of the page, in the band: its frames are recorded,
+        // the poses judged.
+        val stackKind = if (second.inBand) Kind.RECORD else Kind.TRANSITION
+        probe("stack-open", stackKind) { runInPage(second.script) }
         settleUp()
         finding("stack: sheet on top titled '${findNode { it.startsWith("Open in") || it.startsWith("Allow") }?.let { it.text ?: it.contentDescription } ?: "?"}', lower menu '$lower', pose ${poseNow()}")
-        val lowerGone = probe("stack-close-lower", Kind.TRANSITION) { finding("the host closed the lower sheet: ${hostClosesMenu()}") }
+        val lowerGone = probe("stack-close-lower", stackKind, landed = noLeavingLayer) { finding("the host closed the lower sheet: ${hostClosesMenu()}") }
         judgeLowerLeave("stack-close-lower", lowerGone.poses, lower)
         settleUp()
-        probe("stack-close-top", Kind.TRANSITION) { back() }
+        probe("stack-close-top", stackKind) { back() }
         settleDown()
 
         // 4. A prompt the core owns, withdrawn by the page: the page asks for its location and the
@@ -217,17 +227,20 @@ class SheetLeaveDemo : DemoHarness("sheet-recede-demo-state.json", "leave", "she
         //    `state` – the same leave from the slot. (A page's alert, confirm or prompt is the
         //    system's dialog on Android, not the chrome's, so the permission prompt stands for the
         //    core-owned dialog dismissed by its page.)
-        probe("prompt-open", Kind.TRANSITION) { runInPage(LOCATION_REQUEST) }
+        //    The prompt's panel stands at the top of the page, in the band, so the band reads the
+        //    panel and not the page under it: these frames are recorded and their numbers written,
+        //    the leave judged by the poses (the slot's kept panel riding down, `p` with it).
+        probe("prompt-open", Kind.RECORD) { runInPage(LOCATION_REQUEST) }
         settleUp()
         val promptUp = waitFor(LOCATION_TITLE, 2_000) != null || slotHasPanel(poseNow())
         finding(if (promptUp) "location prompt up: pose ${poseNow()}" else "no prompt came up for the page's location request")
         if (promptUp) {
             val travel = slotTravel(poseNow())
-            val gone = probe("prompt-page-navigates", Kind.TRANSITION) { runInPage("location.reload()") }
+            val gone = probe("prompt-page-navigates", Kind.RECORD, landed = slotDown) { runInPage("location.reload()") }
             judgeKeptSlide("prompt-page-navigates", gone.poses, travel)
             settleDown()
         } else if (awaitSurface(up = true, timeoutMs = 500)) {
-            probe("prompt-close", Kind.TRANSITION) { back() }
+            probe("prompt-close", Kind.RECORD) { back() }
             settleDown()
         }
     }
@@ -344,10 +357,21 @@ class SheetLeaveDemo : DemoHarness("sheet-recede-demo-state.json", "leave", "she
             if (!previous.isNaN() && ty < previous - 1) failures += "$name at ${pose.at} ms: the leaving sheet turned back up (%.1f → %.1f px)".format(previous, ty)
             previous = ty
         }
-        if (partWay == 0) failures += "$name: the leave's way down was not seen (${leaving.size} poses of the sheet leaving, none part-way)"
+        if (partWay == 0) partWayUnseen(name, afterWrite.size, leaving.size)
         val last = poses.last()
         if (last.layers.any { it.optBoolean("leaving") }) failures += "$name: the leaving sheet is still there ${last.at} ms after the write"
-        findings.append("  ${afterWrite.size} poses after the store's write, ${leaving.size} of the sheet leaving, $partWay part-way; ${last.layers.size} layer(s) at the end\n")
+        findings.append("  ${afterWrite.size} poses after the store's write, ${leaving.size} of the sheet leaving, $partWay part-way; ${last.layers.size} layer(s) at the end, ${last.at} ms after the write\n")
+    }
+
+    /**
+     * No pose caught the way down between 5 and 95 percent: a failure when the chrome was read
+     * often enough to have caught it ([POSES_TO_CATCH] after the write), a finding otherwise – a
+     * poller the emulator starved (a script round trip of seconds while two sheets move) is not
+     * evidence of a vanish; that is a leave with no pose of the sheet leaving at all.
+     */
+    private fun partWayUnseen(name: String, afterWrite: Int, leaving: Int) {
+        val line = "$name: the way down was not caught part-way ($afterWrite poses after the store's write, $leaving of the sheet leaving or kept)"
+        if (afterWrite >= POSES_TO_CATCH) failures += line else findings.append("  $line: too few poses to tell\n")
     }
 
     /**
@@ -378,7 +402,7 @@ class SheetLeaveDemo : DemoHarness("sheet-recede-demo-state.json", "leave", "she
             if (!ty.isNaN() && !previous.isNaN() && ty < previous - 1) failures += "$name at ${pose.at} ms: the leaving sheet turned back up (%.1f → %.1f px)".format(previous, ty)
             previous = ty
         }
-        if (leaving.isNotEmpty() && partWay == 0) failures += "$name: the lower's way down was not seen (${leaving.size} poses of it leaving, none part-way)"
+        if (leaving.isNotEmpty() && partWay == 0) partWayUnseen(name, afterWrite.size, leaving.size)
         // The upper holds: the same offset in every pose after the write, the recede at 1.
         var upperTy = Double.NaN
         var upperKind = ""
@@ -398,7 +422,7 @@ class SheetLeaveDemo : DemoHarness("sheet-recede-demo-state.json", "leave", "she
         if (upperTy.isNaN()) failures += "$name: no upper sheet could be read while the lower left"
         val last = poses.last()
         if (last.layers.any { it.optBoolean("leaving") }) failures += "$name: the leaving sheet is still there ${last.at} ms after the write"
-        findings.append("  ${afterWrite.size} poses after the store's write, ${leaving.size} of the lower leaving, $partWay part-way; the upper $upperKind at ${if (upperTy.isNaN()) "-" else "%.1f".format(upperTy)} px throughout\n")
+        findings.append("  ${afterWrite.size} poses after the store's write, ${leaving.size} of the lower leaving, $partWay part-way; the upper $upperKind at ${if (upperTy.isNaN()) "-" else "%.1f".format(upperTy)} px throughout, ${last.at} ms after the write\n")
     }
 
     /**
@@ -432,12 +456,13 @@ class SheetLeaveDemo : DemoHarness("sheet-recede-demo-state.json", "leave", "she
             if (!previous.isNaN() && ty < previous - 1) failures += "$name at ${pose.at} ms: the slide turned back up (%.1f → %.1f px)".format(previous, ty)
             previous = ty
         }
-        if (partWay == 0) failures += "$name: the slot's way down was not seen (${poses.size} poses)"
+        if (partWay == 0) partWayUnseen(name, poses.size, poses.count { it.slot?.optBoolean("kept") == true })
         if (!travel.isNaN() && travel < MIN_TRAVEL_CSS_PX) failures += "$name: the slide's travel is %.0f px, not the sheet's height".format(travel)
-        val last = poses.lastOrNull()?.slot
-        if (last != null && last.optBoolean("up")) failures += "$name: the host is still up at the end"
-        if (last != null && last.optBoolean("panel")) failures += "$name: a panel is still in the slot once the host is down"
-        findings.append("  travel %s px, $partWay poses part-way down, $kept of them with the kept panel\n".format(if (travel.isNaN()) "-" else "%.0f".format(travel)))
+        val last = poses.lastOrNull()
+        val slot = last?.slot
+        if (slot != null && slot.optBoolean("up")) failures += "$name: the host is still up ${last.at} ms after the write"
+        if (slot != null && slot.optBoolean("panel")) failures += "$name: a panel is still in the slot once the host is down"
+        findings.append("  travel %s px, $partWay poses part-way down, $kept of them with the kept panel; the host ${if (slot?.optBoolean("up") == true) "up" else "down"} ${last?.at ?: 0} ms after the write\n".format(if (travel.isNaN()) "-" else "%.0f".format(travel)))
     }
 
     // --- the surfaces ----------------------------------------------------------------------------
@@ -453,14 +478,16 @@ class SheetLeaveDemo : DemoHarness("sheet-recede-demo-state.json", "leave", "she
     /** A point on the scrim above any sheet: the middle of the measured band. */
     private fun scrimPoint(): PointF = band().let { PointF(it.exactCenterX(), it.exactCenterY()) }
 
-    private class SecondSheet(val description: String, val script: String) {
+    /** `inBand`: the sheet's panel stands in the measured band, so its frames are recorded, not band-judged. */
+    private class SecondSheet(val description: String, val script: String, val inBand: Boolean) {
         override fun toString() = description
     }
 
     /**
      * What the page asks for to put a second sheet over the menu: a `tel:` link, which the host
      * holds for the external-protocol confirm when an app on the device answers to it (the
-     * dialer), else the location permission, whose prompt is a frame dialog – a sheet on a phone.
+     * dialer), else the location permission, whose prompt is a frame dialog – a sheet on a phone,
+     * standing at the top of the page.
      */
     private fun secondSheet(): SecondSheet {
         val tel = Intent(Intent.ACTION_VIEW, Uri.parse("tel:5550100")).addCategory(Intent.CATEGORY_BROWSABLE)
@@ -468,10 +495,11 @@ class SheetLeaveDemo : DemoHarness("sheet-recede-demo-state.json", "leave", "she
         return if (dialer != null) {
             SecondSheet(
                 "external-protocol confirm for tel: (${dialer.loadLabel(app.packageManager)})",
-                "location.href='tel:5550100'"
+                "location.href='tel:5550100'",
+                inBand = false
             )
         } else {
-            SecondSheet("location permission prompt (no app answers to tel:)", LOCATION_REQUEST)
+            SecondSheet("location permission prompt (no app answers to tel:)", LOCATION_REQUEST, inBand = true)
         }
     }
 
@@ -598,8 +626,13 @@ class SheetLeaveDemo : DemoHarness("sheet-recede-demo-state.json", "leave", "she
 
     // --- frames and poses ------------------------------------------------------------------------
 
-    /** How an event's frames are judged by the band: a `TRANSITION` here and in the recording. */
-    private enum class Kind { TRANSITION }
+    /**
+     * How an event's frames are judged by the band: a `TRANSITION` here and in the recording; a
+     * `RECORD` is cut and its numbers written, but not judged by the band, here or in the
+     * recording (the frames script's `record` kind) – for a sheet whose panel stands in the
+     * band, where the band reads the panel and not the page. Its poses are judged all the same.
+     */
+    private enum class Kind { TRANSITION, RECORD }
 
     /** [spread] is the standard deviation of the luminance: the texture left in a region. */
     private class Metrics(val luminance: Double, val chroma: Double, val edges: Double, val pageLike: Double, val spread: Double)
@@ -639,10 +672,20 @@ class SheetLeaveDemo : DemoHarness("sheet-recede-demo-state.json", "leave", "she
     /**
      * Screenshot the page just before `action`, run it, then screenshot for `probeMs` as fast as
      * the emulator allows, reading every frame's band and progress, while [Poller] reads the
-     * chrome; judge the frames by the band. A frame's time is the middle of the call that took
-     * it, since the event; the event is marked for the workflow.
+     * chrome; judge the frames by the band (a `TRANSITION`). A frame's time is the middle of the
+     * call that took it, since the event; the event is marked for the workflow. With `landed`
+     * given, the chrome goes on being read after the screenshots, every [POSE_MS] and with
+     * nothing else running, until a pose satisfies it or [SETTLE_MS] more have passed: a leave
+     * the emulator stretches past the probe (two sheets moving at once take it to four seconds
+     * and more, and a starved poller sees three poses in as many seconds) is still seen to land.
      */
-    private fun probe(name: String, kind: Kind, probeMs: Long = PROBE_MS, action: () -> Unit): Probed {
+    private fun probe(
+        name: String,
+        kind: Kind,
+        probeMs: Long = PROBE_MS,
+        landed: ((Pose) -> Boolean)? = null,
+        action: () -> Unit
+    ): Probed {
         val before = ui.takeScreenshot()
         val reference = before?.let { shot -> Frame(0, measureBand(shot, band()), progress(shot)) }
         before?.let { save(it, "$name-before") }
@@ -660,10 +703,30 @@ class SheetLeaveDemo : DemoHarness("sheet-recede-demo-state.json", "leave", "she
             save(shot, "$name-${at}ms")
             shot.recycle()
         }
-        val poses = poller.finish()
-        judge(name, reference, frames)
+        val poses = ArrayList(poller.finish())
+        if (landed != null && !(poses.lastOrNull()?.let(landed) ?: false)) {
+            val until = SystemClock.uptimeMillis() + SETTLE_MS
+            while (SystemClock.uptimeMillis() < until) {
+                val started = SystemClock.uptimeMillis()
+                val raw = chromeJs(POSE_JS)
+                val pose = parsePose((started + SystemClock.uptimeMillis()) / 2 - t0, raw)
+                if (pose != null) {
+                    poses += pose
+                    if (landed(pose)) break
+                }
+                val wait = POSE_MS - (SystemClock.uptimeMillis() - started)
+                if (wait > 0) SystemClock.sleep(wait)
+            }
+        }
+        judge(name, kind, reference, frames)
         return Probed(frames, poses)
     }
+
+    /** No sheet layer is left leaving: a menu's leave has landed. */
+    private val noLeavingLayer: (Pose) -> Boolean = { pose -> pose.layers.none { it.optBoolean("leaving") } }
+
+    /** The frame dialog host is down (or was never read): a slot's leave has landed. */
+    private val slotDown: (Pose) -> Boolean = { pose -> pose.slot?.optBoolean("up") != true }
 
     /** The content frame: below the status bar and above the bar. */
     private fun pageArea(): Rect {
@@ -744,14 +807,15 @@ class SheetLeaveDemo : DemoHarness("sheet-recede-demo-state.json", "leave", "she
      * they are one value in the chassis, so a frame in which they differ is the page popping,
      * stalling or lagging on its own.
      */
-    private fun judge(name: String, reference: Frame?, frames: List<Frame>) {
-        findings.append("$name: ${frames.size} frames\n")
+    private fun judge(name: String, kind: Kind, reference: Frame?, frames: List<Frame>) {
+        findings.append("$name: ${frames.size} frames${if (kind == Kind.RECORD) " (recorded, not judged by the band: the panel stands in it)" else ""}\n")
         reference?.let { findings.append(describe(it, "before")) }
         for (frame in frames) findings.append(describe(frame))
         if (frames.isEmpty()) {
             failures += "$name: no frame could be taken"
             return
         }
+        if (kind == Kind.RECORD) return
         val series = listOfNotNull(reference) + frames
         var worst = 0.0
         for (frame in series) {
@@ -813,6 +877,11 @@ class SheetLeaveDemo : DemoHarness("sheet-recede-demo-state.json", "leave", "she
         private const val LEAVE_TOLERANCE = 0.06
         /** How often the chrome is read while a probe runs (a script round trip costs some of it). */
         private const val POSE_MS = 60L
+        /**
+         * Poses after the store's write from which a way down of some hundreds of milliseconds
+         * must have been caught part-way; fewer means the emulator starved the poller.
+         */
+        private const val POSES_TO_CATCH = 8
         /**
          * Long enough for the whole of a transition on the recording emulator, whose two to five
          * frames a second stretch a half-second spring to about three, after a wait of up to
