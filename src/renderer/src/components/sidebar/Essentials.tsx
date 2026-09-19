@@ -32,8 +32,10 @@ export function Essentials({ essentials, activeTabId, compact }: Props): JSX.Ele
   if (essentials.length === 0 && !(showZone && zones)) return null
 
   return (
+    // `data-essentials`: the grid an address dropped from outside lands in (lib/dnd.ts).
     <div
       className="relative mx-2 mb-1 rounded-xl p-1"
+      data-essentials
       data-drop-into={dropKey === 'section:essential:' || undefined}
     >
       {showZone && (
@@ -89,6 +91,7 @@ function EssentialTile({
       data-tab-id={tab.id}
       data-frozen={tab.frozen}
       data-lifted={lifted || undefined}
+      data-drop-into={dropKey === `tab:${tab.id}:into` || undefined}
       title={tabTooltip(tab)}
       onPointerDown={(e) => {
         if (e.button === 0 && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey)

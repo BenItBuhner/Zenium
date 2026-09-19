@@ -957,6 +957,11 @@ export class TabManager {
       pinned?: boolean
       essential?: boolean
       afterTabId?: string
+      /**
+       * The slot within the tab's section (essential, pinned or regular of its space) to take,
+       * clamped to the section; it wins over `afterTabId` and the new-tab position setting.
+       */
+      index?: number
       folderId?: string | null
       load?: boolean
       /** The plain host typed into the URL bar when `url` is its https:// upgrade (http fallback). */
@@ -998,16 +1003,20 @@ export class TabManager {
         tab.pinned = true
         tab.spaceId = space.id
         insertTabIntoSpace(m, space, tab, 0)
+      } else if (opts.index !== undefined) {
+        const at = Math.max(0, Math.min(opts.index, m.essentialTabIds.length))
+        m.essentialTabIds.splice(at, 0, tab.id)
       } else {
         m.essentialTabIds.push(tab.id)
       }
     } else {
-      let index: number | undefined
+      let index: number | undefined = opts.index
       const after = this.tab(opts.afterTabId)
-      if (after && after.spaceId === space.id && after.pinned === tab.pinned) {
+      const placed = index !== undefined
+      if (!placed && after && after.spaceId === space.id && after.pinned === tab.pinned) {
         index = sectionIndexOf(m, after) + 1
         tab.folderId = tab.folderId ?? after.folderId
-      } else if (this.settings.newTabPosition === 'after-current' && !tab.pinned) {
+      } else if (!placed && this.settings.newTabPosition === 'after-current' && !tab.pinned) {
         const current = this.tab(win.selectedTabIn(space))
         if (current && current.spaceId === space.id && !current.pinned)
           index = sectionIndexOf(m, current) + 1
@@ -1894,13 +1903,14 @@ export class TabManager {
     switch (drop.kind) {
       case 'tab': {
         const target = this.tab(drop.tabId)
-        if (!target || target.id === tabId) return false
+        // A tab lands beside another, never in it (that position is for a dropped address).
+        if (!target || target.id === tabId || drop.position === 'into') return false
         const section: TabSection = target.essential
           ? 'essential'
           : target.pinned
             ? 'pinned'
             : 'regular'
-        const index = this.indexRelativeTo(target, drop.after, tabId)
+        const index = this.indexRelativeTo(target, drop.position === 'after', tabId)
         this.moveTab(
           tabId,
           {
@@ -2655,7 +2665,7 @@ function pickFavicon(favicons: string[]): string | null {
   return usable[0] ?? null
 }
 
-function isTabSection(value: string): value is TabSection {
+export function isTabSection(value: string): value is TabSection {
   return value === 'pinned' || value === 'regular' || value === 'essential'
 }
 

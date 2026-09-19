@@ -140,7 +140,7 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
               .map((tab) => (
                 <TabItem key={tab.id} tab={tab} active={tab.id === activeTabId} compact={compact} />
               ))}
-            <NewTabButton compact={compact} />
+            <NewTabButton compact={compact} dropInto={dropKey === `newtab:${space.id}`} />
           </div>
           <div
             className="relative min-h-6 flex-1"
@@ -212,7 +212,11 @@ function DropZone({
   )
 }
 
-function NewTabButton({ compact }: { compact: boolean }): JSX.Element {
+/**
+ * The list's new-tab button. An address dragged from outside opens in a new tab at the end of
+ * the list when dropped on it (lib/dnd.ts, `data-new-tab`), and the button shows it will (§9.4).
+ */
+function NewTabButton({ compact, dropInto }: { compact: boolean; dropInto: boolean }): JSX.Element {
   const title = useHint('New Tab', 'tab.new')
   return (
     <button
@@ -221,6 +225,8 @@ function NewTabButton({ compact }: { compact: boolean }): JSX.Element {
         'zen-tab h-8 text-[var(--zen-muted)] hover:text-[var(--zen-fg)]',
         compact && 'justify-center px-0'
       )}
+      data-new-tab
+      data-drop-into={dropInto || undefined}
       title={title}
       onClick={() => window.dispatchEvent(new CustomEvent('zen-new-tab'))}
       onContextMenu={(e) => {
@@ -266,6 +272,7 @@ function FolderRow({
         className={cn('zen-tab h-8', compact && 'justify-center px-0')}
         data-active={containsActive && folder.collapsed}
         data-drop-into={isDropTarget || undefined}
+        data-tab-folder={folder.id}
         onClick={() => {
           const now = performance.now()
           if (now - lastClick.current < 400) {

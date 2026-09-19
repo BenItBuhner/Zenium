@@ -15,7 +15,7 @@ import type { AgentInfo, Tab } from '@shared/types'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '@shared/types'
 import { CONTAINER_COLORS } from '@shared/defaults'
 import { run } from '@renderer/lib/api'
-import { startTabDrag } from '@renderer/lib/drag'
+import { dropStore, startTabDrag } from '@renderer/lib/drag'
 import { hoverCard, measureRow } from '@renderer/lib/hoverCard'
 import { activeTab, containerOf, tabTitle, tabTooltip } from '@renderer/lib/selectors'
 import {
@@ -62,6 +62,8 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
     return c ? CONTAINER_COLORS[c.color] : null
   })
   const selected = uiStore.use((s) => s.selectedTabIds.includes(tab.id))
+  // An address dragged over the row (lib/dnd.ts): the row takes it, and shows so (§9.4).
+  const dropInto = dropStore.use((s) => s.key === `tab:${tab.id}:into`)
   const isDragSource = dragging?.tabId === tab.id
   const showDropZones = Boolean(dragging) && !isDragSource
   const title = tabTitle(tab)
@@ -186,6 +188,7 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
       data-frozen={tab.frozen}
       data-agent={agent ? true : undefined}
       data-lifted={isDragSource || undefined}
+      data-drop-into={dropInto || undefined}
       data-tab-id={tab.id}
       tabIndex={active ? 0 : -1}
       aria-describedby={cardUp ? 'zen-tab-hover-card' : undefined}

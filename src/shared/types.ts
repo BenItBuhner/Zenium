@@ -2781,6 +2781,15 @@ export interface Commands {
     args: { tabId: string; x: number; y: number; outcome: 'release' | 'cancel' }
     result: void
   }
+  /**
+   * Addresses or text dropped on this window's chrome (a link or a selection from a page, files
+   * from the OS as `file:` URLs): every input goes where typed text would – an address loads,
+   * anything else is searched with the default engine. `key` names the target in the grammar of
+   * `tab.drop` plus `tab:<id>:into`: the first input navigates that tab (Chrome's drop onto a
+   * tab), the rest open after it; a slot, a section, a folder or a space takes new tabs. Tabs
+   * that land in the window's active space show the first of them (Chrome's foreground drop).
+   */
+  'drop.open': { args: { inputs: string[]; key: string }; result: void }
   /** "Move Tab to New Window" from the tab menu: the new window opens beside this one. */
   'tab.moveToNewWindow': { args: { tabId: string }; result: void }
   /** Restore the newest recently closed entry (a window entry as a whole window). */

@@ -284,8 +284,21 @@ function openPageTab(f: Fixture, win: ZenWindow): Tab {
 
 describe('parseDropKey', () => {
   it('reads every kind of target', () => {
-    expect(parseDropKey('tab:tab_1:before')).toEqual({ kind: 'tab', tabId: 'tab_1', after: false })
-    expect(parseDropKey('tab:tab_1:after')).toEqual({ kind: 'tab', tabId: 'tab_1', after: true })
+    expect(parseDropKey('tab:tab_1:before')).toEqual({
+      kind: 'tab',
+      tabId: 'tab_1',
+      position: 'before'
+    })
+    expect(parseDropKey('tab:tab_1:after')).toEqual({
+      kind: 'tab',
+      tabId: 'tab_1',
+      position: 'after'
+    })
+    expect(parseDropKey('tab:tab_1:into')).toEqual({
+      kind: 'tab',
+      tabId: 'tab_1',
+      position: 'into'
+    })
     expect(parseDropKey('section:pinned:space_1')).toEqual({
       kind: 'section',
       section: 'pinned',

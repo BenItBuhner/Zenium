@@ -29,7 +29,7 @@ import { BookmarksBar } from './components/bookmarks/BookmarksBar'
 import { captionBandInMain } from '@renderer/lib/layout'
 import { ContentArea } from './components/content/ContentArea'
 import { FindBar } from './components/content/FindBar'
-import { DragLayer } from './components/DragLayer'
+import { ChromeDropLayer, DragLayer } from './components/DragLayer'
 import { PopupFrame } from './components/extensions/PopupFrame'
 import { ModStyles } from './components/ModStyles'
 import { Onboarding } from './components/overlays/Onboarding'
@@ -262,6 +262,7 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
       )}
 
       {ui.drag && <DragLayer state={state} drag={ui.drag} />}
+      <ChromeDropLayer />
       <TabHoverCard state={state} />
       {onboarding && <Onboarding state={state} />}
     </div>

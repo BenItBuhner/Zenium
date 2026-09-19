@@ -3,9 +3,10 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { ChevronRight } from 'lucide-react'
 import type { BookmarkNode, Rect, Tab, UIState } from '@shared/types'
 import { BOOKMARKS_BAR_ID, MOBILE_BOOKMARKS_ID, OTHER_BOOKMARKS_ID } from '@shared/bookmarks'
-import { inputToUrl } from '@shared/url'
 import { cmd, run } from '@renderer/lib/api'
+import { pathForFile } from '@renderer/lib/dnd'
 import { dropStore } from '@renderer/lib/drag'
+import { droppedBookmark, payloadKind } from '@renderer/lib/dropIntent'
 import { ChromePortal, toRect } from '@renderer/lib/portals'
 import { closeBookmarkChrome, openBookmarkChrome, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
@@ -13,7 +14,7 @@ import { BarMenu, type BarMenuRoot } from './BarMenu'
 import { BookmarkIcon } from './BookmarkRow'
 import { ChipMotion } from './chipMotion'
 import { nodeLabel, useBookmarkTree } from './tree'
-import { useBarDrag } from './useBarDrag'
+import { HOLD_TO_OPEN_MS, useBarDrag } from './useBarDrag'
 
 const OVERFLOW_ANCHOR = 'overflow'
 
@@ -226,6 +227,15 @@ export function BookmarksBar({
   }, [dropKey, tabDrag, visibleCount])
   const outsideHover = tabHover ?? external
 
+  // Chrome's spring-open for a link held over a folder chip: its panel opens after the hold a
+  // chip drag needs, and takes the drop inside the folder from there (`BarMenu`).
+  const heldFolder = external?.kind === 'folder' ? external.folderId : null
+  useEffect(() => {
+    if (!heldFolder) return
+    const timer = setTimeout(() => openMenu(heldFolder), HOLD_TO_OPEN_MS)
+    return () => clearTimeout(timer)
+  }, [heldFolder, openMenu])
+
   const slotAt = (x: number): { index: number; folderId: string | null } => {
     let index = 0
     for (const node of items.slice(0, visibleCount)) {
@@ -239,8 +249,9 @@ export function BookmarksBar({
     return { index, folderId: null }
   }
 
-  const carriesUrl = (dt: DataTransfer): boolean =>
-    dt.types.includes('text/uri-list') || dt.types.includes('text/plain')
+  // A link, URL text or a file from the OS (Chrome bookmarks a dropped file as `file:`); the
+  // data is sealed until the drop, so text that turns out not to be an address is dropped then.
+  const carriesUrl = (dt: DataTransfer): boolean => payloadKind(dt.types) !== null
 
   const onDragOver = (e: React.DragEvent): void => {
     if (!carriesUrl(e.dataTransfer)) return
@@ -257,7 +268,7 @@ export function BookmarksBar({
     if (!carriesUrl(e.dataTransfer)) return
     e.preventDefault()
     setExternal(null)
-    const dropped = droppedBookmark(e.dataTransfer)
+    const dropped = droppedBookmark(e.dataTransfer, pathForFile)
     if (!dropped) return
     const { index, folderId } = slotAt(e.clientX)
     run('bookmark.create', {
@@ -370,7 +381,7 @@ export function BookmarksBar({
   // Ctrl+V with a chip focused: bookmarks cut or copied in the app land after it; failing that,
   // a URL on the clipboard becomes a new chip there (Chrome).
   const onStripPaste = (e: React.ClipboardEvent): void => {
-    const pasted = droppedBookmark(e.clipboardData)
+    const pasted = droppedBookmark(e.clipboardData, pathForFile)
     const index = Math.min(focusIndex + 1, visibleCount)
     e.preventDefault()
     void cmd('bookmark.paste', { folderId: BOOKMARKS_BAR_ID, index }).then((moved) => {
@@ -634,31 +645,4 @@ function TabDropZones({
       />
     </>
   )
-}
-
-/** The URL and a name for what an HTML5 drag carried: a link, or text that reads as a URL. */
-function droppedBookmark(dt: DataTransfer): { url: string; title: string } | null {
-  const uriList = dt.getData('text/uri-list')
-  const uri = uriList
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .find((l) => l && !l.startsWith('#'))
-  const text = dt.getData('text/plain').trim()
-  const url = uri ?? inputToUrl(text)
-  if (!url || url.startsWith('zen://')) return null
-  let title = ''
-  const html = dt.getData('text/html')
-  if (html) {
-    const doc = new DOMParser().parseFromString(html, 'text/html')
-    title = (doc.body.textContent ?? '').trim()
-  }
-  if (!title && text && text !== url) title = text
-  if (!title) {
-    try {
-      title = new URL(url).hostname.replace(/^www\./, '') || url
-    } catch {
-      title = url
-    }
-  }
-  return { url, title }
 }

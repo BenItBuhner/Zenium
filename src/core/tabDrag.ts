@@ -131,9 +131,14 @@ export class TabDragController {
   }
 }
 
-/** A sidebar drop target, as the chrome names it in a `data-drop` attribute. */
+/**
+ * A sidebar drop target, as the chrome names it in a `data-drop` attribute. A tab row has three
+ * positions: `before` and `after` are its slots (a dragged tab or a dropped address lands
+ * beside it); `into` is the row itself, where a dropped address navigates the tab (`drop.open`;
+ * a dragged tab is never dropped into another).
+ */
 export type DropKey =
-  | { kind: 'tab'; tabId: string; after: boolean }
+  | { kind: 'tab'; tabId: string; position: 'before' | 'after' | 'into' }
   | { kind: 'section'; section: string; spaceId: string }
   | { kind: 'folder'; folderId: string }
   | { kind: 'space'; spaceId: string }
@@ -154,9 +159,9 @@ export function parseDropKey(key: string): DropKey | null {
       const last = rest.lastIndexOf(':')
       if (last === -1) return null
       const position = rest.slice(last + 1)
-      if (position !== 'before' && position !== 'after') return null
+      if (position !== 'before' && position !== 'after' && position !== 'into') return null
       const tabId = rest.slice(0, last)
-      return tabId ? { kind, tabId, after: position === 'after' } : null
+      return tabId ? { kind, tabId, position } : null
     }
     case 'section': {
       const next = rest.indexOf(':')

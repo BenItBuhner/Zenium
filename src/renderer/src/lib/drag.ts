@@ -1,7 +1,8 @@
 import type { Tab, TabDragOver } from '@shared/types'
 import { run } from './api'
+import { InsertionCaret, autoscrollStep, type CaretPlacement } from './insertionCaret'
 import type { SlideMotion } from './motion/slide'
-import { SPRING_GENTLE, SPRING_SNAPPY, SpringAnimation } from './motion/spring'
+import { SPRING_GENTLE, SpringAnimation } from './motion/spring'
 import { VelocityTracker } from './motion/velocity'
 import { gapCentre, slideOffsets, slotAt, slotKey, type Span } from './reorder'
 import { activeTab, tabTitle } from './selectors'
@@ -48,17 +49,10 @@ export const dropStore = createStore<{ key: string | null; ghost: GhostKind; zon
 export const listMotions = new WeakMap<HTMLElement, SlideMotion>()
 
 const DRAG_THRESHOLD = 5
-/** Autoscroll band at the list's top and bottom edges, and the fastest scroll per frame. */
-const AUTOSCROLL_EDGE = 32
-const AUTOSCROLL_MAX_STEP = 14
 /** Where a remote ghost hangs from the pointer (the other window knows the grab offset, not us). */
 const REMOTE_GRAB = { dx: 24, dy: 18 }
 
-interface Caret {
-  x: number
-  y: number
-  width: number
-}
+type Caret = CaretPlacement
 
 type DropTarget =
   /**
@@ -110,18 +104,10 @@ interface Session {
 
 let session: Session | null = null
 let ghostEl: HTMLElement | null = null
-let caretEl: HTMLElement | null = null
-let caretShown = false
-let caretY = 0
 let settleSpring: SpringAnimation | null = null
 const live = { x: 0, y: 0 }
 const velocity = new VelocityTracker()
-
-const caretSpring = new SpringAnimation(
-  SPRING_SNAPPY,
-  (y) => drawCaret(y),
-  (y) => drawCaret(y)
-)
+const caret = new InsertionCaret()
 
 /** The drag layer mounted its ghost: it is placed under the pointer right away. */
 export function registerGhost(el: HTMLElement | null): void {
@@ -139,9 +125,7 @@ function showGhost(): void {
 }
 
 export function registerCaret(el: HTMLElement | null): void {
-  caretEl = el
-  caretShown = false
-  if (el) el.style.opacity = '0'
+  caret.register(el)
 }
 
 export function startTabDrag(tab: Tab, e: React.PointerEvent): void {
@@ -654,31 +638,11 @@ function placeGhostAt(x: number, y: number): void {
 
 /** The caret sits in the gap and glides between slots on the spring; it never jumps. */
 function showCaret(c: Caret): void {
-  const el = caretEl
-  if (!el) return
-  el.style.left = `${c.x}px`
-  el.style.width = `${c.width}px`
-  if (!caretShown) {
-    caretShown = true
-    caretSpring.stop()
-    drawCaret(c.y)
-    el.style.opacity = '1'
-    return
-  }
-  if (Math.abs(c.y - caretY) < 0.5) return
-  const state = caretSpring.running ? caretSpring.stop() : { x: caretY, v: 0 }
-  caretSpring.start(state.x, state.v, c.y)
+  caret.show(c)
 }
 
 function hideCaret(): void {
-  caretSpring.stop()
-  caretShown = false
-  if (caretEl) caretEl.style.opacity = '0'
-}
-
-function drawCaret(y: number): void {
-  caretY = y
-  if (caretEl) caretEl.style.transform = `translate3d(0, ${y - 1}px, 0)`
+  caret.hide()
 }
 
 /**
@@ -691,18 +655,11 @@ function scheduleAutoscroll(s: Session): void {
     if (session !== s || s.settling) return
     const el = s.scroller
     if (el) {
-      const box = el.getBoundingClientRect()
       const { x, y } = s.pointer
-      let step = 0
-      if (x >= box.left && x <= box.right) {
-        if (y < box.top + AUTOSCROLL_EDGE)
-          step = -((box.top + AUTOSCROLL_EDGE - y) / AUTOSCROLL_EDGE)
-        else if (y > box.bottom - AUTOSCROLL_EDGE)
-          step = (y - (box.bottom - AUTOSCROLL_EDGE)) / AUTOSCROLL_EDGE
-      }
+      const step = autoscrollStep(el.getBoundingClientRect(), x, y)
       if (step !== 0) {
         const before = el.scrollTop
-        el.scrollTop += Math.max(-1, Math.min(1, step)) * AUTOSCROLL_MAX_STEP
+        el.scrollTop += step
         if (el.scrollTop !== before) apply(resolve(x, y, s), s)
       }
     }
