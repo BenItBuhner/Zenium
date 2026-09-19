@@ -519,8 +519,9 @@ export interface PromptSheetHandle {
  * A prompt sheet (§9.23, §9.24): what a dialog is on a phone – a title block (an optional glyph,
  * the 17/600 title, a description), the body, a footer – on the shared `BottomSheet` chassis in
  * the frame's dialog host, the top of a depth-two stack over the manager's page. It draws the
- * stack's one scrim itself (`ownScrim`, §9.28) and mounts the chassis's title block, the one
- * every prompt sheet opens on. The actions go in `footer`: the chassis keeps them under the body,
+ * stack's one scrim itself (`ownScrim`, §9.28). A prompt with a description opens on the title
+ * block; one without keeps the centred 48 header (§9.13), a description under a header being the
+ * wrong form. The actions go in `footer`: the chassis keeps them under the body,
  * outside its scroller (§9.11), so they stay in reach whatever the body grows to; a form in the
  * body submits from there through the button's `form` attribute. The chassis sizes the sheet to
  * its content once and again whenever `contentKey` changes – a validation line appearing under a
@@ -617,13 +618,24 @@ function HostedPromptSheet({
         labelledBy={titleId}
         handleLabel="Dismiss"
         className="zen-settings-sheet"
+        // §9.13 / §9.23: a sheet with a description opens on the title block; one with nothing
+        // to explain keeps the chassis's centred 48 header.
+        header={
+          description ? undefined : (
+            <h2 id={titleId} className="zen-sheet-title">
+              {title}
+            </h2>
+          )
+        }
         footer={footer}
         contentKey={contentKey}
         onDismissed={onClosed}
       >
-        <TitleBlock id={titleId} glyph={glyph} description={description}>
-          {title}
-        </TitleBlock>
+        {description && (
+          <TitleBlock id={titleId} glyph={glyph} description={description}>
+            {title}
+          </TitleBlock>
+        )}
         {children}
       </BottomSheet>
     </div>
