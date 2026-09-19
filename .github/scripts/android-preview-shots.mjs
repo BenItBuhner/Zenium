@@ -25,7 +25,8 @@
 //                      a Settings section, `&show=<text>` scrolls a row into view), `menu=app`
 //                      (`&show=<text>` scrolls an item into view), `find=<text>`, `pull=<n>`,
 //                      `zoom=<factor>` (the page zoom sheet), `error=<code>&url=<failed url>`
-//                      (the zen://error page; see `previewSpec.ts`) or the messages and the load
+//                      (the zen://error page; see `previewSpec.ts`), `overview` (the tab
+//                      overview over the active page) or the messages and the load
 //                      bar: `toast=<text>&action=<label>` (`&kind=error`), `banners=<n>`,
 //                      `progress=<0…1>`, in any combination. `&pressed=<selector>;<selector>`
 //                      (the script's own key, not the page's) draws the elements those

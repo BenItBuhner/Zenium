@@ -101,6 +101,12 @@ describe('parsePreviewSpec', () => {
     expect(parsePreviewSpec('find=x&webapp=banner')).toEqual({ kind: 'find', text: 'x' })
   })
 
+  it('opens the tab overview, behind every other state', () => {
+    expect(parsePreviewSpec('overview')).toEqual({ kind: 'overview' })
+    expect(parsePreviewSpec('overview=1')).toEqual({ kind: 'overview' })
+    expect(parsePreviewSpec('find=x&overview')).toEqual({ kind: 'find', text: 'x' })
+  })
+
   it('treats idle, an unknown overlay and junk as idle', () => {
     expect(parsePreviewSpec('idle')).toEqual({ kind: 'idle' })
     expect(parsePreviewSpec('')).toEqual({ kind: 'idle' })
