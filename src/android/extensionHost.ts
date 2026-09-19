@@ -211,6 +211,14 @@ export class AndroidExtensions implements ExtensionHost {
   private readonly reading = new Set<string>()
   /** Ids with an install or update in flight. */
   private readonly busy = new Set<string>()
+  /**
+   * The lifecycle steps of one extension, one after another (`transition`). A reload the
+   * extension asked for (`chrome.runtime.reload()`: uBlock Origin restarts itself on its first
+   * start), a disable from the chrome and an install would otherwise interleave their detach
+   * and attach – a reload's re-attach landing after the disable's detach left the extension
+   * running while its record said off.
+   */
+  private readonly transitions = new Map<string, Promise<void>>()
   private checking: Promise<void> | null = null
   /**
    * The sideload installs in flight: the batch `start()` collected and every `installPending`
@@ -343,6 +351,25 @@ export class AndroidExtensions implements ExtensionHost {
     } catch (error) {
       this.attachFailed(record, (error as Error).message)
     }
+  }
+
+  /**
+   * Runs `step` once every earlier transition of `id` has settled; the entry points that
+   * detach or attach (`setEnabled`, `reload`, `remove`, an install's swap) go through here. The
+   * step reads the record's state when it starts, not when it was asked for.
+   */
+  private transition<T>(id: string, step: () => Promise<T>): Promise<T> {
+    const previous = this.transitions.get(id) ?? Promise.resolve()
+    const run = previous.then(step)
+    const settled = run.then(
+      () => undefined,
+      () => undefined
+    )
+    this.transitions.set(id, settled)
+    void settled.then(() => {
+      if (this.transitions.get(id) === settled) this.transitions.delete(id)
+    })
+    return run
   }
 
   private attachFailed(record: ExtensionRecord, message: string): void {
@@ -679,28 +706,30 @@ export class AndroidExtensions implements ExtensionHost {
             publisher: meta.publisher,
             updateUrl: meta.updateUrl
           })
-      if (existing) await this.detach(existing.id)
-      this.replace(record)
-      this.details.set(record.id, {
-        manifest: pkg.manifest as unknown as Details['manifest'],
-        icon
+      await this.transition(pkg.id, async () => {
+        if (existing) await this.detach(existing.id)
+        this.replace(record)
+        this.details.set(record.id, {
+          manifest: pkg.manifest as unknown as Details['manifest'],
+          icon
+        })
+        if (record.enabled) await this.attach(record)
+        const error = this.errors.get(record.id)
+        if (error && existing && existing.path !== dir) {
+          console.warn(
+            `[zen] extensions: ${pkg.id} ${pkg.version} failed to load, keeping ${existing.version}:`,
+            error
+          )
+          this.replace(existing)
+          this.details.delete(existing.id)
+          await this.io.prune(existing.id, existing.path).catch(() => [])
+          if (existing.enabled) await this.attach(existing)
+          void this.readDetails(existing)
+          this.persist()
+          this.browser.state.commitVolatile()
+          throw new Error(error)
+        }
       })
-      if (record.enabled) await this.attach(record)
-      const error = this.errors.get(record.id)
-      if (error && existing && existing.path !== dir) {
-        console.warn(
-          `[zen] extensions: ${pkg.id} ${pkg.version} failed to load, keeping ${existing.version}:`,
-          error
-        )
-        this.replace(existing)
-        this.details.delete(existing.id)
-        await this.io.prune(existing.id, existing.path).catch(() => [])
-        if (existing.enabled) await this.attach(existing)
-        void this.readDetails(existing)
-        this.persist()
-        this.browser.state.commitVolatile()
-        throw new Error(error)
-      }
       if (existing && isManagedPath(this.root, existing.path) && existing.path !== dir) {
         const pruned = await this.io.prune(record.id, dir).catch(() => [])
         if (pruned.length > 0) console.log(`[zen] extensions: pruned ${pruned.join(', ')}`)
@@ -724,46 +753,52 @@ export class AndroidExtensions implements ExtensionHost {
   // ---------------------------------------------------------------------------
 
   async remove(id: string): Promise<void> {
-    const record = this.record(id) ?? this.registry.extensions.find((r) => r.path === id)
-    if (!record) return
-    await this.detach(record.id)
-    this.registry.extensions = this.registry.extensions.filter((r) => r !== record)
-    this.errors.delete(record.id)
-    this.console.delete(record.id)
-    this.updates.delete(record.id)
-    this.details.delete(record.id)
-    if (isManagedPath(this.root, record.path))
-      await this.io
-        .remove(record.id)
-        .catch((error: Error) =>
-          console.warn(`[zen] extensions: could not delete ${record.path}:`, error.message)
-        )
-    this.persist()
-    this.browser.state.commitVolatile()
+    const found = this.record(id) ?? this.registry.extensions.find((r) => r.path === id)
+    if (!found) return
+    await this.transition(found.id, async () => {
+      const record = this.record(found.id)
+      if (!record) return
+      await this.detach(record.id)
+      this.registry.extensions = this.registry.extensions.filter((r) => r !== record)
+      this.errors.delete(record.id)
+      this.console.delete(record.id)
+      this.updates.delete(record.id)
+      this.details.delete(record.id)
+      if (isManagedPath(this.root, record.path))
+        await this.io
+          .remove(record.id)
+          .catch((error: Error) =>
+            console.warn(`[zen] extensions: could not delete ${record.path}:`, error.message)
+          )
+      this.persist()
+      this.browser.state.commitVolatile()
+    })
   }
 
   async setEnabled(id: string, enabled: boolean, win?: ZenWindow): Promise<void> {
-    const record = this.record(id)
-    if (!record || record.enabled === enabled) return
-    if (enabled && record.pendingWarnings && record.pendingWarnings.length > 0) {
-      const ok = await this.confirmInstall(
-        {
-          kind: 'permissions',
-          name: record.name,
-          icon: this.details.get(record.id)?.icon ?? null,
-          warnings: record.pendingWarnings,
-          source: record.source
-        },
-        win
-      )
-      if (!ok) return
-      record.pendingWarnings = null
-    }
-    record.enabled = enabled
-    if (enabled) await this.attach(record)
-    else await this.detach(record.id)
-    this.persist()
-    this.browser.state.commitVolatile()
+    await this.transition(id, async () => {
+      const record = this.record(id)
+      if (!record || record.enabled === enabled) return
+      if (enabled && record.pendingWarnings && record.pendingWarnings.length > 0) {
+        const ok = await this.confirmInstall(
+          {
+            kind: 'permissions',
+            name: record.name,
+            icon: this.details.get(record.id)?.icon ?? null,
+            warnings: record.pendingWarnings,
+            source: record.source
+          },
+          win
+        )
+        if (!ok) return
+        record.pendingWarnings = null
+      }
+      record.enabled = enabled
+      if (enabled) await this.attach(record)
+      else await this.detach(record.id)
+      this.persist()
+      this.browser.state.commitVolatile()
+    })
   }
 
   setPinned(id: string, pinned: boolean): void {
@@ -873,13 +908,15 @@ export class AndroidExtensions implements ExtensionHost {
 
   /** Stop and start again, re-reading the installed files. */
   async reload(id: string): Promise<void> {
-    const record = this.record(id)
-    if (!record) return
-    await this.detach(record.id)
-    this.details.delete(record.id)
-    if (record.enabled) await this.attach(record)
-    void this.readDetails(record)
-    this.browser.state.commitVolatile()
+    await this.transition(id, async () => {
+      const record = this.record(id)
+      if (!record) return
+      await this.detach(record.id)
+      this.details.delete(record.id)
+      if (record.enabled) await this.attach(record)
+      void this.readDetails(record)
+      this.browser.state.commitVolatile()
+    })
   }
 
   openOptions(id: string, win: ZenWindow): void {
@@ -1119,9 +1156,11 @@ export class AndroidExtensions implements ExtensionHost {
         console.log(
           `[zen] extensions: ${record.id} ${pkg.version} asks for new permissions; disabled until approved`
         )
-        outcome.record.pendingWarnings = added
-        outcome.record.enabled = false
-        await this.detach(outcome.record.id)
+        await this.transition(outcome.record.id, async () => {
+          outcome.record.pendingWarnings = added
+          outcome.record.enabled = false
+          await this.detach(outcome.record.id)
+        })
         this.persist()
       }
     } finally {
