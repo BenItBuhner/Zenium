@@ -186,10 +186,11 @@ export function GroupStrip({ presence, state, edge, overviewOpen, inert }: Props
     const el = trayRef.current
     if (!el || inert) return
     const target = phase === 'leaving' ? GROUP_STRIP_HEIGHT : 0
-    const landed = (): void => {
+    /** The slide has landed at `at`: the end it reached is the one reported. */
+    const landed = (at: number): void => {
       el.style.willChange = ''
       motion.set({ sliding: false })
-      if (target === 0) onEntered()
+      if (at === 0) onEntered()
       else onLeft()
     }
     if (phase === 'shown' && !spring.current?.running) {
@@ -207,27 +208,34 @@ export function GroupStrip({ presence, state, edge, overviewOpen, inert }: Props
         easing: EASE,
         fill: 'forwards'
       })
-      if (fade) fade.onfinish = landed
-      const timer = fade ? null : setTimeout(landed, REDUCED_FADE_MS)
+      const done = (): void => landed(target)
+      if (fade) fade.onfinish = done
+      const timer = fade ? null : setTimeout(done, REDUCED_FADE_MS)
       return () => {
         fade?.cancel()
         if (timer !== null) clearTimeout(timer)
       }
     }
-    const s = (spring.current ??= new SpringAnimation(
-      SPRING_SNAPPY,
-      (x) => {
-        el.style.transform = `translate3d(0, ${(dir.current * x).toFixed(2)}px, 0)`
-      },
-      () => {
-        if (spring.current?.destination === 0) el.style.transform = ''
-        landed()
-      }
-    ))
+    const draw = (x: number): void => {
+      el.style.transform = `translate3d(0, ${(dir.current * x).toFixed(2)}px, 0)`
+    }
+    // One spring for the strip's life, turned round by a change of mind: its rest reads where
+    // it was heading when it landed, not the phase of the run that made it.
+    const s = (spring.current ??= new SpringAnimation(SPRING_SNAPPY, draw, () => {
+      const at = spring.current?.destination ?? 0
+      if (at === 0) el.style.transform = ''
+      landed(at)
+    }))
     el.style.willChange = 'transform'
     motion.set({ sliding: true })
     if (s.running) s.retarget(target)
-    else s.start(phase === 'leaving' ? 0 : GROUP_STRIP_HEIGHT, 0, target)
+    else {
+      // Drawn at its start in this very commit: the spring's first frame is a frame away, and
+      // the tray must not show at rest for it.
+      const from = phase === 'leaving' ? 0 : GROUP_STRIP_HEIGHT
+      s.start(from, 0, target)
+      draw(from)
+    }
     return undefined
   }, [phase, inert, motion, onEntered, onLeft])
   useLayoutEffect(
@@ -353,20 +361,19 @@ function MemberChip({
         if (timer !== null) clearTimeout(timer)
       }
     }
-    const spring = new SpringAnimation(
-      SPRING_SNAPPY,
-      (x) => {
-        const t = 1 - x / CHIP_TRAVEL
-        el.style.transform = `scale(${(CHIP_SCALE_FROM + (1 - CHIP_SCALE_FROM) * t).toFixed(4)})`
-        el.style.opacity = Math.max(0, Math.min(1, t)).toFixed(3)
-      },
-      () => {
-        el.style.transform = ''
-        el.style.opacity = ''
-        settled()
-      }
-    )
+    const draw = (x: number): void => {
+      const t = 1 - x / CHIP_TRAVEL
+      el.style.transform = `scale(${(CHIP_SCALE_FROM + (1 - CHIP_SCALE_FROM) * t).toFixed(4)})`
+      el.style.opacity = Math.max(0, Math.min(1, t)).toFixed(3)
+    }
+    const spring = new SpringAnimation(SPRING_SNAPPY, draw, () => {
+      el.style.transform = ''
+      el.style.opacity = ''
+      settled()
+    })
     spring.start(CHIP_TRAVEL, 0, 0)
+    // Small and clear from this commit: the spring's first frame is a frame away.
+    draw(CHIP_TRAVEL)
     return () => {
       spring.stop()
       el.style.transform = ''
@@ -392,11 +399,14 @@ function MemberChip({
   )
 }
 
-/** The chip of a tab that left the group: shrinks out in place on the exit spring (v2 §11.4). */
+/**
+ * The chip of a tab that left the group: shrinks out in place on the exit spring (v2 §11.4).
+ * Its face is what shrinks, as a joining chip's face is what grows.
+ */
 function ExitChip({ exit, onDone }: { exit: ChipExit; onDone: (id: string) => void }): JSX.Element {
-  const ref = useRef<HTMLSpanElement>(null)
+  const face = useRef<HTMLSpanElement>(null)
   useLayoutEffect(() => {
-    const el = ref.current
+    const el = face.current
     if (!el) return
     const finish = (): void => onDone(exit.tab.id)
     if (reducedMotion()) {
@@ -412,27 +422,24 @@ function ExitChip({ exit, onDone }: { exit: ChipExit; onDone: (id: string) => vo
         if (timer !== null) clearTimeout(timer)
       }
     }
-    const spring = new SpringAnimation(
-      SPRING_SNAPPY,
-      (x) => {
-        const t = 1 - x / CHIP_TRAVEL
-        el.style.transform = `scale(${(1 - (1 - CHIP_SCALE_FROM) * t).toFixed(4)})`
-        el.style.opacity = Math.max(0, Math.min(1, 1 - t)).toFixed(3)
-      },
-      finish
-    )
+    const draw = (x: number): void => {
+      const t = 1 - x / CHIP_TRAVEL
+      el.style.transform = `scale(${(1 - (1 - CHIP_SCALE_FROM) * t).toFixed(4)})`
+      el.style.opacity = Math.max(0, Math.min(1, 1 - t)).toFixed(3)
+    }
+    const spring = new SpringAnimation(SPRING_SNAPPY, draw, finish)
     spring.start(CHIP_TRAVEL, 0, 0)
+    draw(CHIP_TRAVEL)
     return () => spring.stop()
   }, [exit.tab.id, onDone])
   return (
     <span
-      ref={ref}
       aria-hidden
       className="zen-group-chip zen-group-chip-exit"
       data-strip-exit={exit.tab.id}
       style={{ left: exit.x }}
     >
-      <span className="zen-group-chip-face">
+      <span ref={face} className="zen-group-chip-face">
         <Favicon tab={exit.tab} size={16} />
       </span>
     </span>
