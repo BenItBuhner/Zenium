@@ -545,19 +545,31 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         backgroundView(row.id)?.let { entry.put("backgroundConsoleAtEnd", JSONArray(consoleOf(it).takeLast(30))) }
     }
 
-    /** Tabs the extension opened go, the extension is disabled: the next row starts from the same place. */
+    /**
+     * Tabs the extension opened go, the extension is disabled: the next row starts from the same
+     * place. Each step stands on its own, the disable first among what the chrome has to answer:
+     * a row whose command timed out (Tampermonkey's popup close on the 156 job) left its
+     * extension enabled when the tab close before the disable threw, and its install page and
+     * tampermonkey.net tabs stood in Violentmonkey's row.
+     */
     private fun cleanup(row: Row, entry: JSONObject) {
+        if (!chromeAnswers()) Log.w(TAG, "${row.name} cleanup: the chrome is not answering")
         runCatching { coreInvoke("extension.closePopup", "null") }
-        closeExtraTabs()
-        val ext = extensions().firstOrNull { it.getString("id") == row.id }
-        if (ext != null && ext.getBoolean("enabled")) {
-            coreInvoke("extension.setEnabled", JSONObject().put("id", row.id).put("enabled", false).toString())
-            val off = poll(20_000, 400) { extensions().firstOrNull { it.getString("id") == row.id }?.takeIf { !it.getBoolean("enabled") } }
+        val installed = runCatching { extensions().firstOrNull { it.getString("id") == row.id } }
+        val enabled = installed.getOrNull()?.getBoolean("enabled") ?: installed.isFailure
+        if (enabled) {
+            runCatching {
+                coreInvoke("extension.setEnabled", JSONObject().put("id", row.id).put("enabled", false).toString())
+            }.onFailure { entry.put("disableError", it.toString()) }
+            val off = runCatching {
+                poll(20_000, 400) { extensions().firstOrNull { it.getString("id") == row.id }?.takeIf { !it.getBoolean("enabled") } }
+            }.getOrNull()
             entry.put("disabled", off != null)
             // The runtime detaches: its background view goes with it.
             val gone = poll(10_000, 300) { if (backgroundView(row.id) == null) true else null }
             entry.put("backgroundGoneAfterDisable", gone == true)
         }
+        runCatching { closeExtraTabs() }.onFailure { entry.put("closeTabsError", it.toString()) }
         runCatching { showTab(fixtureTab) }
         SystemClock.sleep(1_000)
     }
