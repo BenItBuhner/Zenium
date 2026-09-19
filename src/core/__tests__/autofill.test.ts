@@ -132,8 +132,12 @@ function setup(
     views.set(id, view)
     return view
   }
+  // Wait for the work itself (the vault's start-up unlock, then whatever the page events set
+  // off, prompts included), not a guessed number of ticks: the store's crypto takes longer than
+  // five on a loaded runner.
   const settle = async (): Promise<void> => {
-    for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0))
+    await passwords.whenSettled()
+    await autofill.whenSettled()
   }
   return {
     browser,
