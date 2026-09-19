@@ -301,7 +301,10 @@ export class ElectronDownloads implements DownloadHost {
     const record = service.begin({
       url: details.url,
       referrer,
-      filename: filenameForResponse(details.url, header(details.responseHeaders, 'content-disposition')),
+      filename: filenameForResponse(
+        details.url,
+        header(details.responseHeaders, 'content-disposition')
+      ),
       totalBytes: 0,
       mimeType: mediaType(header(details.responseHeaders, 'content-type')),
       sourceTabId: details.tabId,
@@ -616,7 +619,8 @@ export class ElectronDownloads implements DownloadHost {
     const ses = this.sessions.get(record.containerId)
     if (!ses) return
     const offset = item.getReceivedBytes()
-    const validator = item.getETag() || item.getLastModifiedTime() || record.etag || record.lastModified
+    const validator =
+      item.getETag() || item.getLastModifiedTime() || record.etag || record.lastModified
     void this.probe(record.url, ses, { offset, validator, referrer: record.referrer }).then(
       (answer) => {
         if (!answer) return
@@ -647,7 +651,13 @@ export class ElectronDownloads implements DownloadHost {
         resolve(answer)
       }
       try {
-        request = net.request({ url, method: 'GET', session: ses, credentials: 'include', cache: 'no-store' })
+        request = net.request({
+          url,
+          method: 'GET',
+          session: ses,
+          credentials: 'include',
+          cache: 'no-store'
+        })
       } catch {
         finish(null)
         return

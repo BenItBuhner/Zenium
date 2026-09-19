@@ -324,9 +324,7 @@ describe('ElectronDownloads interrupt reasons', () => {
       errorMessage: 'Site wasn’t available'
     })
     // The 404 was noted: no need to ask the server about it.
-    expect(fakeNet.requests.map((r) => r.options['url'])).toEqual([
-      'https://example.com/plain.zip'
-    ])
+    expect(fakeNet.requests.map((r) => r.options['url'])).toEqual(['https://example.com/plain.zip'])
   })
 
   it('a resumable interruption with nothing noted stays a network failure (a probe may refine it)', async () => {
@@ -501,7 +499,10 @@ describe('ElectronDownloads dead download links', () => {
 
   it('a frame navigation the server refuses with an attachment becomes the failed row Chrome shows', async () => {
     const h = harness()
-    h.observer.fire('onHeadersReceived', refusal({ url: 'https://example.com/dl/42', statusCode: 404 }))
+    h.observer.fire(
+      'onHeadersReceived',
+      refusal({ url: 'https://example.com/dl/42', statusCode: 404 })
+    )
     expect(h.service.items).toHaveLength(1)
     const record = h.service.items[0]!
     expect(record).toMatchObject({
@@ -559,7 +560,9 @@ describe('ElectronDownloads dead download links', () => {
         url: 'https://example.com/get?id=7',
         statusCode: 500,
         responseHeaders: {
-          'Content-Disposition': ["attachment; filename=\"cv.pdf\"; filename*=UTF-8''r%C3%A9sum%C3%A9.pdf"]
+          'Content-Disposition': [
+            'attachment; filename="cv.pdf"; filename*=UTF-8\'\'r%C3%A9sum%C3%A9.pdf'
+          ]
         }
       })
     )
@@ -584,7 +587,11 @@ describe('ElectronDownloads dead download links', () => {
     // A fetch or XHR never becomes a download, whatever it answers.
     h.observer.fire(
       'onHeadersReceived',
-      refusal({ url: 'https://example.com/api/file', statusCode: 404, resourceType: 'xmlhttprequest' })
+      refusal({
+        url: 'https://example.com/api/file',
+        statusCode: 404,
+        resourceType: 'xmlhttprequest'
+      })
     )
     h.observer.fire(
       'onHeadersReceived',
@@ -608,7 +615,10 @@ describe('ElectronDownloads dead download links', () => {
       })
     )
     // A response the download proceeds under is no dead link either.
-    h.observer.fire('onHeadersReceived', refusal({ url: 'https://example.com/ok.zip', statusCode: 200 }))
+    h.observer.fire(
+      'onHeadersReceived',
+      refusal({ url: 'https://example.com/ok.zip', statusCode: 200 })
+    )
     expect(h.service.items).toHaveLength(0)
     expect(h.started).toEqual([])
     h.observer.fire(
@@ -631,7 +641,6 @@ describe('ElectronDownloads dead download links', () => {
 })
 
 describe('ElectronDownloads interrupt reasons (updated)', () => {
-
   it('reports the reason through the updated event too, once per interruption', async () => {
     const h = harness()
     const item = new FakeItem('https://example.com/a.txt', 'a.txt')

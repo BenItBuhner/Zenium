@@ -95,13 +95,17 @@ describe('interrupt reasons', () => {
     expect(interruptReasonFromRangeResponse(416, null, 524_288)).toBe('server-no-range')
     expect(interruptReasonFromRangeResponse(500, null, 524_288)).toBe('server-failed')
     // The server serves the range: nothing to blame it for.
-    expect(interruptReasonFromRangeResponse(206, 'bytes 524288-4194303/4194304', 524_288)).toBeNull()
+    expect(
+      interruptReasonFromRangeResponse(206, 'bytes 524288-4194303/4194304', 524_288)
+    ).toBeNull()
     // A full answer to a range request from past byte 0 is a server that does not do ranges.
     expect(interruptReasonFromRangeResponse(200, null, 524_288)).toBe('server-no-range')
     expect(interruptReasonFromRangeResponse(200, '', 524_288)).toBe('server-no-range')
     // The same full answer from byte 0 is just the file; so is a 206 that names its range.
     expect(interruptReasonFromRangeResponse(200, null, 0)).toBeNull()
-    expect(interruptReasonFromRangeResponse(200, 'bytes 524288-4194303/4194304', 524_288)).toBeNull()
+    expect(
+      interruptReasonFromRangeResponse(200, 'bytes 524288-4194303/4194304', 524_288)
+    ).toBeNull()
     // Redirects and informational answers are handled earlier in the stack.
     expect(interruptReasonFromRangeResponse(302, null, 524_288)).toBeNull()
     expect(interruptReasonFromRangeResponse(100, null, 524_288)).toBeNull()
@@ -227,14 +231,16 @@ describe('Content-Disposition (RFC 6266)', () => {
     )
     expect(dispositionFilename('attachment; filename="q\\"uote.txt"')).toBe('q"uote.txt')
     expect(
-      dispositionFilename("attachment; filename*=UTF-8''r%C3%A9sum%C3%A9.pdf; filename=\"cv.pdf\"")
+      dispositionFilename('attachment; filename*=UTF-8\'\'r%C3%A9sum%C3%A9.pdf; filename="cv.pdf"')
     ).toBe('résumé.pdf')
     expect(
-      dispositionFilename("attachment; filename=\"cv.pdf\"; filename*=utf-8'en'r%C3%A9sum%C3%A9.pdf")
+      dispositionFilename(
+        'attachment; filename="cv.pdf"; filename*=utf-8\'en\'r%C3%A9sum%C3%A9.pdf'
+      )
     ).toBe('résumé.pdf')
     expect(dispositionFilename("attachment; filename*=iso-8859-1''caf%E9.txt")).toBe('café.txt')
     // A malformed filename* leaves the plain name standing; nothing named is null.
-    expect(dispositionFilename("attachment; filename*=UTF-8''bad%ZZ; filename=\"ok.txt\"")).toBe(
+    expect(dispositionFilename('attachment; filename*=UTF-8\'\'bad%ZZ; filename="ok.txt"')).toBe(
       'ok.txt'
     )
     expect(dispositionFilename('attachment; filename*=nonsense')).toBeNull()
@@ -277,9 +283,7 @@ describe('Content-Disposition (RFC 6266)', () => {
     )
     expect(filenameForResponse('https://example.com/files/', 'attachment')).toBe('download')
     expect(filenameForResponse('https://example.com/dl', null)).toBe('dl')
-    expect(filenameForResponse('https://example.com/x/..%2F..%2Fetc', 'attachment')).toBe(
-      '_.._etc'
-    )
+    expect(filenameForResponse('https://example.com/x/..%2F..%2Fetc', 'attachment')).toBe('_.._etc')
     expect(filenameForResponse('https://example.com/a', 'attachment; filename="   "')).toBe('a')
   })
 })

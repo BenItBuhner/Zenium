@@ -387,7 +387,11 @@ export function sanitizeDownloadName(name: string): string {
     .replace(/[\u0000-\u001f\u007f]/g, '')
     .trim()
     .replace(/[\\/:*?"<>|]/g, '_')
-  s = s.replace(/\s+/g, ' ').trim().replace(/[. ]+$/, '').replace(/^\.+/, '')
+  s = s
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[. ]+$/, '')
+    .replace(/^\.+/, '')
   if (s === '') return ''
   const dot = s.lastIndexOf('.')
   const stem = dot > 0 ? s.slice(0, dot) : s
