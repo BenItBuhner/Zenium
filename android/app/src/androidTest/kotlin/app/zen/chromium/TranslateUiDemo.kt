@@ -3,6 +3,7 @@ package app.zen.chromium
 import android.graphics.PointF
 import android.os.SystemClock
 import android.util.Log
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.json.JSONObject
 import org.junit.Test
@@ -11,12 +12,14 @@ import java.io.File
 
 /**
  * The `android-translate-demo` workflow's `ui` sequence: the translation bar in the phone chrome,
- * driven with real touches on the Spanish fixture page. The bar is raised from the app menu (the
- * host does not raise `domReady`, so nothing is offered on load yet), put away and raised again
- * from the glyph at the end of the URL pill, the page is translated from the bar (model download,
- * translating, translated), the original is shown again, the bar's options sheet is opened, and
- * Settings > Languages is visited. What the state machine reported along the way goes to
- * `translate-results.json` next to the screenshots.
+ * driven with real touches on the Spanish fixture page. The page is offered on load (the host
+ * raises `domReady`; `esOnLoad` records what the tab reached), the bar is asked for from the app
+ * menu all the same, put away and raised again from the glyph at the end of the URL pill, the
+ * page is translated from the bar (model download, translating, translated), the original is
+ * shown again, the bar's options sheet is opened, and Settings > Languages is visited: the
+ * Settings tab's `languages` category (#134) with its rows and the picker sheets its action rows
+ * open (a language to add, a model to download). What the state machine reported along the way
+ * goes to `translate-results.json` next to the screenshots.
  */
 @RunWith(AndroidJUnit4::class)
 class TranslateUiDemo : TranslateDemoBase("services-translate-android-ui") {
@@ -114,11 +117,12 @@ class TranslateUiDemo : TranslateDemoBase("services-translate-android-ui") {
         back()
         SystemClock.sleep(1_500)
 
-        // --- Settings > Languages ----------------------------------------------------------------
+        // --- Settings > Languages: the Settings tab's `languages` category (#134, §10.2) ----------
         tapLabel(f, "Menu")
         results.put("settingsRow", pickMenuRow("Settings"))
         SystemClock.sleep(2_500)
-        val chip = reveal("Languages")
+        // The landing's category rows carry their label and nothing else.
+        val chip = waitFor("Languages", 10_000)?.let { reveal("Languages") }
         val opened = if (chip != null) {
             f.tap(chip.exactCenterX(), chip.exactCenterY())
             true
@@ -134,6 +138,28 @@ class TranslateUiDemo : TranslateDemoBase("services-translate-android-ui") {
         results.put("settingsModels", models != null)
         SystemClock.sleep(1_200)
         shot("10-settings-models")
+
+        // --- the picker sheets the action rows open (§9.13): a language to add, a model to get ---
+        // Rows are clicked through the tree (see pickMenuRow); the sheet is known by its title.
+        val addOpened = reveal("Add a language") != null && clickByLabel("Add a language")
+        val addSheet = waitFor("Add a language you read", 8_000) != null
+        results.put("addLanguageSheet", JSONObject().put("opened", addOpened).put("sheet", addSheet))
+        Log.i(tag, "add a language: opened=$addOpened sheet=$addSheet")
+        SystemClock.sleep(1_200)
+        shot("11-settings-add-language")
+        back()
+        awaitSurface(up = false, timeoutMs = 5_000)
+        SystemClock.sleep(800)
+        // The row reads its label and description as one text: matched by the label's prefix.
+        val downloadOpened = clickByPrefix("Download a model")
+        val downloadSheet = waitForPrefix("Afrikaans to English", 10_000)
+        results.put("downloadModelSheet", JSONObject().put("opened", downloadOpened).put("sheet", downloadSheet))
+        Log.i(tag, "download a model: opened=$downloadOpened sheet=$downloadSheet")
+        SystemClock.sleep(1_200)
+        shot("12-settings-download-model")
+        back()
+        awaitSurface(up = false, timeoutMs = 5_000)
+        SystemClock.sleep(600)
 
         val state = invoke("app.getState")
         results.put("installed", state?.optJSONObject("translate")?.optJSONArray("installed"))
@@ -154,6 +180,33 @@ class TranslateUiDemo : TranslateDemoBase("services-translate-android-ui") {
         }
         reveal(label)
         return clickByLabel(label)
+    }
+
+    /**
+     * Click the nearest clickable ancestor of the first node whose text starts with `prefix`: a
+     * Settings row with a description reads label and description as one text (the Settings tab
+     * demo matches its rows the same way).
+     */
+    private fun clickByPrefix(prefix: String): Boolean {
+        val match = findNode { it.startsWith(prefix) } ?: run {
+            Log.w(tag, "nothing reads '$prefix…'")
+            return false
+        }
+        match.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.id)
+        SystemClock.sleep(800)
+        var node: AccessibilityNodeInfo? = findNode { it.startsWith(prefix) }
+        while (node != null && !node.isClickable) node = node.parent
+        return node?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
+    }
+
+    /** Poll for a node whose text starts with `prefix`. */
+    private fun waitForPrefix(prefix: String, timeoutMs: Long): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (findNode { it.startsWith(prefix) } != null) return true
+            SystemClock.sleep(200)
+        }
+        return false
     }
 
     /**
