@@ -462,7 +462,7 @@ function PickerSheet<T extends string>({
     <div
       className="zen-v2-pw zen-v2-pw-sheet-layer absolute inset-0"
       data-surface="page"
-      data-sheet-layer=""
+      data-sheet-layer="true"
     >
       <BottomSheet
         ref={sheet}
@@ -610,7 +610,7 @@ function HostedPromptSheet({
     <div
       className="zen-v2-pw zen-v2-pw-sheet-layer absolute inset-0"
       data-surface="page"
-      data-sheet-layer=""
+      data-sheet-layer="true"
     >
       <BottomSheet
         ref={sheet}

@@ -85,7 +85,7 @@ function PhonePrompt({
     <div
       className="zen-v2-pw zen-v2-pw-sheet-layer absolute inset-0"
       data-surface="page"
-      data-sheet-layer=""
+      data-sheet-layer="true"
     >
       <PromptForm
         request={request}
