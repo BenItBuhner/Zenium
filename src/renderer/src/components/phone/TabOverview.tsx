@@ -590,20 +590,39 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
       run('tab.activate', { tabId: tab.id })
     })
   }
-  /** "Close All Tabs": every unpinned tab of the space goes (Zen's Clear tabs); pinned ones stay. */
+  /**
+   * "Close All Tabs": every unpinned card of the pane goes (Zen's Clear tabs); pinned ones stay.
+   * On a host with private tabs the space holds both modes and the core's `space.closeUnpinned`
+   * would take them all – from the regular pane it would end the private session, from the
+   * private one take the space's tabs with it – so there the regular pane closes its own cards
+   * one by one, as "Close other tabs" does, and the private pane's row is the app menu's Close
+   * Private Tabs (`tab.closePrivate`: the session ends and its profile is wiped, INC-04; a
+   * private tab is never filed, so no toast follows).
+   */
   const closeAll = (): void => {
     departAll(regular)
-    undoable(regular, () => run('space.closeUnpinned', { spaceId: space.id }))
+    if (privatePane) {
+      run('tab.closePrivate', undefined)
+      return
+    }
+    undoable(regular, () => {
+      if (hasPrivate) for (const t of regular) run('tab.close', { tabId: t.id })
+      else run('space.closeUnpinned', { spaceId: space.id })
+    })
   }
   const closeAllAsked = (): void => {
     if (regular.length === 0) return
     if (state.settings.confirmCloseAll) setSheet({ kind: 'close-all' })
     else closeAll()
   }
-  /** The header's menu: it reads the recently closed list first, so its row can say how many. */
+  /**
+   * The header's menu: it reads the recently closed list first, so its row can say how many. The
+   * private pane's menu has no such row – a private tab is never filed (the core's
+   * `captureClosed`), and the list would be the regular tabs' – so it reads nothing.
+   */
   const openMenu = async (): Promise<void> => {
     noteSheetOpener()
-    const closed = await historyAdapter.recentlyClosed().catch(() => [])
+    const closed = privatePane ? [] : await historyAdapter.recentlyClosed().catch(() => [])
     setSheet({ kind: 'menu', closed: closed.filter((entry) => entry.kind === 'tab') })
   }
   /**
@@ -859,7 +878,8 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
       )}
       {interactive && sheet?.kind === 'menu' && (
         <OverviewMenuSheet
-          title={space.name}
+          title={privatePane ? 'Private' : space.name}
+          privateTabs={privatePane}
           open={regular.length}
           closed={sheet.closed.length}
           onClose={() => leaveSheet('menu')}
@@ -871,6 +891,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
         <CloseAllSheet
           count={regular.length}
           spaceName={space.name}
+          privateTabs={privatePane}
           onClose={() => leaveSheet('close-all')}
           onConfirm={(askAgain) => {
             if (!askAgain) run('settings.update', { confirmCloseAll: false })
@@ -894,9 +915,13 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
  * "Close other tabs" stays on a card's own menu, where it names the card it keeps. The rows are
  * menu items, so Title Case (v2 §9.1; the card menus' rows from #94/#147 take the rule in a
  * follow-up); a row with nothing to act on keeps no count and is disabled, never hidden (§9.17).
+ * The private pane's menu is the one row "Close Private Tabs", named as the app menu names it:
+ * no recently closed list applies there (Chrome's Incognito switcher has no Recent tabs either),
+ * so the row is not there, not greyed – §9.17's rule is for a count of zero.
  */
 function OverviewMenuSheet({
   title,
+  privateTabs,
   open,
   closed,
   onClose,
@@ -904,6 +929,8 @@ function OverviewMenuSheet({
   onCloseAll
 }: {
   title: string
+  /** Whether this is the private pane's menu. */
+  privateTabs: boolean
   /** How many tabs "Close All Tabs" would close (the unpinned ones). */
   open: number
   /** How many tabs the recently closed list holds. */
@@ -912,21 +939,32 @@ function OverviewMenuSheet({
   onRecentlyClosed: () => void
   onCloseAll: () => void
 }): JSX.Element {
-  const actions: SheetAction[] = [
-    {
-      id: 'recently-closed',
-      label: closed > 0 ? `Recently Closed (${closed})` : 'Recently Closed',
-      disabled: closed === 0,
-      onPick: onRecentlyClosed
-    },
-    {
-      id: 'close-all',
-      label: open > 0 ? `Close All Tabs (${open})` : 'Close All Tabs',
-      destructive: true,
-      disabled: open === 0,
-      onPick: onCloseAll
-    }
-  ]
+  const counted = (label: string): string => (open > 0 ? `${label} (${open})` : label)
+  const actions: SheetAction[] = privateTabs
+    ? [
+        {
+          id: 'close-all',
+          label: counted('Close Private Tabs'),
+          destructive: true,
+          disabled: open === 0,
+          onPick: onCloseAll
+        }
+      ]
+    : [
+        {
+          id: 'recently-closed',
+          label: closed > 0 ? `Recently Closed (${closed})` : 'Recently Closed',
+          disabled: closed === 0,
+          onPick: onRecentlyClosed
+        },
+        {
+          id: 'close-all',
+          label: counted('Close All Tabs'),
+          destructive: true,
+          disabled: open === 0,
+          onPick: onCloseAll
+        }
+      ]
   return <OverviewSheet title={title} actions={actions} onClose={onClose} />
 }
 
