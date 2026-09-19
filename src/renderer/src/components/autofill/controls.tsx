@@ -9,15 +9,16 @@ import type {
   TextareaHTMLAttributes
 } from 'react'
 import { createContext, useContext, useEffect, useId, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { Check, ChevronDown, CircleAlert, type LucideIcon } from 'lucide-react'
 import { useBackSurface } from '@renderer/lib/back'
 import { useViewport } from '@renderer/lib/formFactor'
 import {
   ChromePortal,
+  FrameDialogPortal,
   placePopover,
   popoverStyle,
   toRect,
+  useFrameDialog,
   useLightDismiss,
   viewportSize,
   type PopoverBox
@@ -352,12 +353,15 @@ export interface MenuOption<T extends string> {
 }
 
 /**
- * A rectangular menulist (§9.13). On a mouse the trigger is a field with a chevron and the menu
- * a panel hung under it through the chrome layer – radius 12, padding 6, 28 px rows, the current
- * option checked – placed by `placePopover` at the trigger's width and put away by the layer's
- * light dismiss. On a phone the trigger opens a sheet of 44 px radio rows (`MenuSheet`); picking
- * one closes it. Never a native `<select>` popup. A `value` no option carries (a required choice
- * not made yet, `''`) shows `placeholder` at 69% and checks nothing.
+ * A rectangular menulist (§9.13) on the chassis' shared control (`.zen-v2-menulist`,
+ * extensions.css: 32 / 40 tall, a hairline, the 16 chevron). On a mouse the popup is the
+ * chassis' `.zen-v2-menulist-popup` – a `--v2-panel` hung under the trigger through the chrome
+ * layer at radius 12, padding 6, 28 px `.zen-v2-menulist-option` rows, the current one checked
+ * – placed by `placePopover` at the trigger's width and put away by the layer's light dismiss.
+ * On a phone the trigger opens a sheet of 44 px radio rows (`MenuSheet`); picking one closes it.
+ * Never a native `<select>` popup. A `value` no option carries (a required choice not made yet,
+ * `''`) shows `placeholder` at 69% and checks nothing. `readOnly` is a busy form's (§9.30): the
+ * control keeps its ink and its value and opens nothing.
  */
 export function Menulist<T extends string>({
   value,
@@ -366,6 +370,7 @@ export function Menulist<T extends string>({
   label,
   id,
   disabled,
+  readOnly,
   placeholder,
   className
 }: {
@@ -376,6 +381,7 @@ export function Menulist<T extends string>({
   label: string
   id?: string
   disabled?: boolean
+  readOnly?: boolean
   placeholder?: string
   className?: string
 }): JSX.Element {
@@ -388,6 +394,7 @@ export function Menulist<T extends string>({
       onChange={onChange}
       label={label}
       disabled={disabled}
+      readOnly={readOnly}
       placeholder={placeholder}
       className={className}
     />
@@ -399,9 +406,42 @@ export function Menulist<T extends string>({
       onChange={onChange}
       label={label}
       disabled={disabled}
+      readOnly={readOnly}
       placeholder={placeholder}
       className={className}
     />
+  )
+}
+
+interface MenulistProps<T extends string> {
+  value: T
+  options: MenuOption<T>[]
+  onChange: (value: T) => void
+  label: string
+  id?: string
+  disabled?: boolean
+  readOnly?: boolean
+  placeholder?: string
+  className?: string
+}
+
+/** The trigger's text: the current option's label, or the placeholder at 69%. */
+function MenulistValue<T extends string>({
+  current,
+  placeholder
+}: {
+  current: MenuOption<T> | undefined
+  placeholder?: string
+}): JSX.Element {
+  return (
+    <span
+      className={cn(
+        'min-w-0 flex-1 truncate',
+        !current && 'text-[var(--v2-text-deemphasized)]'
+      )}
+    >
+      {current?.label ?? placeholder ?? ''}
+    </span>
   )
 }
 
@@ -416,18 +456,10 @@ function PopoverMenulist<T extends string>({
   label,
   id,
   disabled,
+  readOnly,
   placeholder,
   className
-}: {
-  value: T
-  options: MenuOption<T>[]
-  onChange: (value: T) => void
-  label: string
-  id?: string
-  disabled?: boolean
-  placeholder?: string
-  className?: string
-}): JSX.Element {
+}: MenulistProps<T>): JSX.Element {
   const [box, setBox] = useState<PopoverBox | null>(null)
   const open = box !== null
   const trigger = useRef<HTMLButtonElement>(null)
@@ -440,7 +472,7 @@ function PopoverMenulist<T extends string>({
   // scrolls – and flipped above when the window ends before they do.
   const openList = (): void => {
     const el = trigger.current
-    if (!el) return
+    if (!el || readOnly) return
     const anchor = toRect(el.getBoundingClientRect())
     const height = MENU_PADDING * 2 + options.length * MENU_ROW
     setBox(placePopover(anchor, anchor, viewportSize(), { measured: anchor.width }, height))
@@ -454,7 +486,8 @@ function PopoverMenulist<T extends string>({
     if (v !== value) onChange(v)
   }
 
-  // The current option takes the keyboard as the list opens (a long list opens scrolled to it).
+  // The current option takes the keyboard as the list opens (a long list opens scrolled to it):
+  // a desktop popover's own focus rule (§9.22).
   useEffect(() => {
     if (!open) return
     const rows = list.current?.querySelectorAll<HTMLElement>('[role="option"]')
@@ -514,9 +547,9 @@ function PopoverMenulist<T extends string>({
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={open ? listId : undefined}
+        aria-readonly={readOnly || undefined}
         disabled={disabled}
-        data-placeholder={current ? undefined : ''}
-        className={cn('zen-v2-af-menulist', className)}
+        className={cn('zen-v2-menulist', className)}
         onClick={() => (open ? close(false) : openList())}
         onKeyDown={(e) => {
           if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && !open) {
@@ -525,7 +558,7 @@ function PopoverMenulist<T extends string>({
           }
         }}
       >
-        <span>{current?.label ?? placeholder ?? ''}</span>
+        <MenulistValue current={current} placeholder={placeholder} />
         <ChevronDown aria-hidden />
       </button>
       {box && (
@@ -535,7 +568,7 @@ function PopoverMenulist<T extends string>({
             id={listId}
             role="listbox"
             aria-label={label}
-            className="zen-v2-af zen-v2-af-menu zen-animate-pop fixed z-[90]"
+            className="zen-v2 zen-v2-panel zen-v2-menulist-popup zen-animate-pop fixed z-[90] select-none"
             data-surface="page"
             style={popoverStyle(box)}
             onKeyDown={onListKeyDown}
@@ -546,12 +579,7 @@ function PopoverMenulist<T extends string>({
                 type="button"
                 role="option"
                 aria-selected={o.value === value}
-                className="zen-v2-af-menu-item"
-                // One highlight: the pointer moves the focus the way the arrow keys do.
-                onPointerMove={(e) => {
-                  if (document.activeElement !== e.currentTarget)
-                    e.currentTarget.focus({ preventScroll: true })
-                }}
+                className="zen-v2-menulist-option"
                 onClick={() => pick(o.value)}
               >
                 <span className="min-w-0 flex-1 truncate">{o.label}</span>
@@ -572,36 +600,28 @@ function SheetMenulist<T extends string>({
   label,
   id,
   disabled,
+  readOnly,
   placeholder,
   className
-}: {
-  value: T
-  options: MenuOption<T>[]
-  onChange: (value: T) => void
-  label: string
-  id?: string
-  disabled?: boolean
-  placeholder?: string
-  className?: string
-}): JSX.Element {
+}: MenulistProps<T>): JSX.Element {
   const [open, setOpen] = useState(false)
-  const trigger = useRef<HTMLButtonElement>(null)
   const current = options.find((o) => o.value === value)
   return (
     <>
       <button
-        ref={trigger}
         id={id}
         type="button"
         aria-label={label}
         aria-haspopup="dialog"
         aria-expanded={open}
+        aria-readonly={readOnly || undefined}
         disabled={disabled}
-        data-placeholder={current ? undefined : ''}
-        className={cn('zen-v2-af-menulist', className)}
-        onClick={() => setOpen(true)}
+        className={cn('zen-v2-menulist', className)}
+        onClick={() => {
+          if (!readOnly) setOpen(true)
+        }}
       >
-        <span>{current?.label ?? placeholder ?? ''}</span>
+        <MenulistValue current={current} placeholder={placeholder} />
         <ChevronDown aria-hidden />
       </button>
       {open && (
@@ -610,10 +630,7 @@ function SheetMenulist<T extends string>({
           value={value}
           options={options}
           onChange={onChange}
-          onClose={() => {
-            setOpen(false)
-            trigger.current?.focus({ preventScroll: true })
-          }}
+          onClose={() => setOpen(false)}
         />
       )}
     </>
@@ -622,13 +639,45 @@ function SheetMenulist<T extends string>({
 
 /**
  * A phone's menulist popup (§9.13): a sheet with the 48 header naming the choice and one §9.14
- * radio row of 44 per option; picking one changes the value and dismisses the sheet. Opened by
- * the menulist's own trigger or by a Settings value row (§10.4), whose explanatory text comes
- * along as a `description`: the sheet then opens on a §9.23 title block in place of the 48
- * header. Inside another sheet it stacks (§9.24, the chassis' own registry): the sheet below
- * recedes under it, inert, and keeps the one scrim.
+ * radio row of 44 per option on the chassis' `.zen-v2-radio`; picking one changes the value and
+ * dismisses the sheet. A `description` (the explanatory text of a row that opened it) makes the
+ * header a §9.23 title block. A modal dialog, so it mounts in the frame's dialog host
+ * (`FrameDialogPortal`, lib/portals.tsx) – over the editor sheet it is opened from, never inside
+ * that sheet's transformed box – and stacks on it by the chassis' own registry (§9.24: the sheet
+ * below recedes, inert, under the one scrim). The chassis moves the focus to the checked option
+ * as the sheet opens, wraps Tab and returns the focus to the trigger when it has gone; here is
+ * only what is the surface's: the arrow keys walk the radio group, Escape and back dismiss.
  */
 export function MenuSheet<T extends string>({
+  title,
+  description,
+  value,
+  options,
+  onChange,
+  onClose
+}: {
+  title: string
+  description?: string
+  value: T
+  options: MenuOption<T>[]
+  onChange: (value: T) => void
+  onClose: () => void
+}): JSX.Element {
+  return (
+    <FrameDialogPortal>
+      <HostedMenuSheet
+        title={title}
+        description={description}
+        value={value}
+        options={options}
+        onChange={onChange}
+        onClose={onClose}
+      />
+    </FrameDialogPortal>
+  )
+}
+
+function HostedMenuSheet<T extends string>({
   title,
   description,
   value,
@@ -646,20 +695,21 @@ export function MenuSheet<T extends string>({
   const sheet = useRef<BottomSheetHandle>(null)
   const name = useId()
   const titleId = useId()
+  const dismiss = (): void => sheet.current?.dismiss()
+  useFrameDialog({ onScrimPress: dismiss, ownScrim: true })
   useBackSurface({
     name: `autofill-menu-${name}`,
     onProgress: (p) => sheet.current?.backProgress(p),
     onCommit: () => sheet.current?.commitBack(),
     onCancel: () => sheet.current?.cancelBack()
   })
-  useEscape(() => sheet.current?.dismiss())
-  // The current option takes the focus (§9.22) and a long list (countries) opens on it, the way
-  // a menulist's popup does.
+  useEscape(dismiss)
+  // A long list (countries) opens scrolled to its current option, the way a menulist's popup does.
   const list = useRef<HTMLDivElement>(null)
   useEffect(() => {
-    const checked = list.current?.querySelector<HTMLButtonElement>('[aria-checked="true"]')
-    checked?.focus({ preventScroll: true })
-    checked?.scrollIntoView({ block: 'center' })
+    list.current
+      ?.querySelector<HTMLButtonElement>('[aria-checked="true"]')
+      ?.scrollIntoView({ block: 'center' })
   }, [])
   // The rows are buttons in the radio role around the chassis' radio glyph, so the arrow keys
   // walk them as a radio group would, wrapping at the ends.
@@ -676,49 +726,48 @@ export function MenuSheet<T extends string>({
   }
   const pick = (v: T): void => {
     if (v !== value) onChange(v)
-    sheet.current?.dismiss()
+    dismiss()
   }
-  // In the body like every sheet: a layer inside another sheet's transformed box would not be
-  // fixed to the viewport.
-  return createPortal(
-    <BottomSheet
-      ref={sheet}
-      onDismissed={onClose}
-      handleLabel="Dismiss"
-      className="zen-v2-af zen-v2-af-sheet"
-      header={description ? undefined : <SheetHeader id={titleId} title={title} />}
-    >
-      <div className="zen-v2-af zen-v2-af-choices" data-surface="page">
-        {description && <SheetTitleBlock id={titleId} title={title} description={description} />}
-        <div
-          ref={list}
-          role="radiogroup"
-          aria-labelledby={titleId}
-          className="zen-v2-af-list"
-          onKeyDown={onKeyDown}
-        >
-          {options.map((o) => (
-            <button
-              key={o.value}
-              type="button"
-              role="radio"
-              aria-checked={o.value === value}
-              className="zen-v2-af-row"
-              onClick={() => pick(o.value)}
-            >
-              <span
-                className="zen-v2-radio"
-                data-checked={o.value === value || undefined}
-                aria-hidden
-              />
-              <span className="zen-v2-af-row-text">
-                <span className="zen-v2-af-row-title">{o.label}</span>
-              </span>
-            </button>
-          ))}
+  return (
+    <div className="zen-v2-af absolute inset-0" data-surface="page">
+      <BottomSheet
+        ref={sheet}
+        hosted
+        onDismissed={onClose}
+        handleLabel="Dismiss"
+        labelledBy={titleId}
+        className="zen-v2-af zen-v2-af-sheet"
+        header={description ? undefined : <SheetHeader id={titleId} title={title} />}
+      >
+        <div className="zen-v2-af zen-v2-af-choices" data-surface="page">
+          {description && (
+            <SheetTitleBlock id={titleId} title={title} description={description} />
+          )}
+          <div
+            ref={list}
+            role="radiogroup"
+            aria-labelledby={titleId}
+            className="zen-v2-af-list"
+            onKeyDown={onKeyDown}
+          >
+            {options.map((o) => (
+              <button
+                key={o.value}
+                type="button"
+                role="radio"
+                aria-checked={o.value === value}
+                className="zen-v2-af-row"
+                onClick={() => pick(o.value)}
+              >
+                <span className="zen-v2-radio" aria-hidden />
+                <span className="zen-v2-af-row-text">
+                  <span className="zen-v2-af-row-title">{o.label}</span>
+                </span>
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
-    </BottomSheet>,
-    document.body
+      </BottomSheet>
+    </div>
   )
 }

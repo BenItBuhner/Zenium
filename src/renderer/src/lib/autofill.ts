@@ -4,15 +4,25 @@ import type {
   AutofillPicker,
   AutofillPrompt,
   AutofillPromptResponse,
+  AutofillUIState,
   CardNetwork,
+  PasskeyEntry,
+  PasswordsStatus,
   PaymentCardSummary,
   ReauthOutcome,
   UIState
 } from '@shared/types'
-import { run } from '@renderer/lib/api'
+import { cmd, run } from '@renderer/lib/api'
 import { currentSecurityPrompt } from '@renderer/lib/security'
 import { activeTab } from '@renderer/lib/selectors'
-import { captureActiveTab, invalidateSnapshot, returnFocusToPage, uiStore } from '@renderer/lib/ui'
+import {
+  captureActiveTab,
+  invalidateSnapshot,
+  pushToast,
+  returnFocusToPage,
+  uiStore
+} from '@renderer/lib/ui'
+import { relativeTime } from '@renderer/lib/utils'
 
 /** How long a prompt waits for the page's picture before it shows over a blank one. */
 const SNAPSHOT_WAIT_MS = 250
@@ -263,4 +273,173 @@ export function addressRowSubtitle(address: AddressEntry): string {
   return address.name && address.organization
     ? [address.organization, subtitle].filter(Boolean).join(', ')
     : subtitle
+}
+
+/** What a manager row says under a passkey: the site, the account where it differs, when it was used. */
+export function passkeySubtitle(passkey: PasskeyEntry): string {
+  return [
+    passkey.rpName || passkey.rpId,
+    passkey.userDisplayName && passkey.userName !== passkey.userDisplayName
+      ? passkey.userName
+      : '',
+    passkey.lastUsedAt
+      ? `used ${relativeTime(passkey.lastUsedAt).toLowerCase()}`
+      : `created ${relativeTime(passkey.createdAt).toLowerCase()}`
+  ]
+    .filter(Boolean)
+    .join(' · ')
+}
+
+// ---------------------------------------------------------------------------
+// Settings > Autofill: what the desktop section and the phone builder both say and do
+// ---------------------------------------------------------------------------
+
+/** The choices of "Clear copied passwords": how long a copied secret stays on the clipboard. */
+export const CLIPBOARD_CLEAR_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: '0', label: 'Never' },
+  { value: '30', label: 'After 30 seconds' },
+  { value: '60', label: 'After 1 minute' },
+  { value: '120', label: 'After 2 minutes' },
+  { value: '300', label: 'After 5 minutes' }
+]
+
+/**
+ * The system autofill services a row can name, by the package of the component Android reveals
+ * (`com.google.android.gms/.autofill.service.AutofillService`); any other is "the system
+ * autofill service" rather than its component string.
+ */
+const SERVICE_NAMES: [pkg: string, name: string][] = [
+  ['com.google.android.gms', 'Google'],
+  ['com.x8bit.bitwarden', 'Bitwarden'],
+  ['com.onepassword.android', '1Password'],
+  ['com.agilebits.onepassword', '1Password'],
+  ['com.lastpass.lpandroid', 'LastPass'],
+  ['com.dashlane', 'Dashlane'],
+  ['com.samsung.android.samsungpass', 'Samsung Pass'],
+  ['proton.android.pass', 'Proton Pass'],
+  ['com.keepersecurity.keeper', 'Keeper'],
+  ['com.enpass.app', 'Enpass'],
+  ['com.nordpass.android', 'NordPass'],
+  ['com.kunzisoft.keepass', 'KeePassDX'],
+  ['com.azure.authenticator', 'Microsoft Authenticator']
+]
+
+export function systemAutofillName(component: string | null): string | null {
+  if (!component) return null
+  const pkg = component.split('/')[0]
+  return (
+    SERVICE_NAMES.find(([prefix]) => pkg === prefix || pkg.startsWith(`${prefix}.`))?.[1] ?? null
+  )
+}
+
+/**
+ * What the Android provider row explains: who saves and fills passwords in pages – the system
+ * autofill service the device has set, or Zenium's own prompts – and what turning it on does.
+ */
+export function androidProviderHint(
+  system: AutofillUIState['systemAutofill'],
+  zenium: boolean
+): string {
+  const service = systemAutofillName(system?.service ?? null)
+  if (!system?.enabled)
+    return 'No autofill service is set on this device, so Zenium saves and fills passwords itself.'
+  return zenium
+    ? `Zenium's own prompts save and fill passwords in pages instead of ${service ?? 'the system autofill service'}.`
+    : `${service ?? 'The system autofill service'} saves and fills passwords in pages; turn this on for Zenium's own prompts.`
+}
+
+/**
+ * Copy a card's number: behind re-authentication, so the passphrase dialog (`PassphraseDialog`,
+ * over the frame) takes over when the vault asks for its passphrase. The outcome is a toast.
+ */
+export async function copyCardNumber(card: PaymentCardSummary): Promise<void> {
+  let result: ReauthOutcome<null>
+  try {
+    result = await withPassphrase(
+      {
+        title: 'Unlock to copy',
+        description: `Your vault passphrase copies the number of ${cardTitle(card)}.`
+      },
+      (passphrase) => cmd('autofill.copyCardNumber', { id: card.id, passphrase })
+    )
+  } catch (e) {
+    result = { status: 'denied', reason: e instanceof Error ? e.message : String(e) }
+  }
+  switch (result.status) {
+    case 'ok':
+      pushToast('Card number copied')
+      return
+    case 'setup-passphrase':
+      pushToast('Set a vault passphrase in the password manager first', 'error')
+      return
+    case 'denied':
+      if (result.reason) pushToast(result.reason, 'error')
+      return
+    case 'passphrase':
+      return
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The vault gate (Settings > Autofill while the vault is locked)
+// ---------------------------------------------------------------------------
+
+/**
+ * Where the gate stands: idle offers Unlock (the device's own check where it has one); after
+ * a `passphrase` outcome the passphrase form is up; after `setup-passphrase` the form creates
+ * the vault's passphrase, since the device cannot verify the user and no vault exists yet.
+ */
+export type VaultGateStep = 'idle' | 'passphrase' | 'setup'
+
+export interface VaultGateState {
+  step: VaultGateStep
+  /** An unlock attempt is with the core (§9.30: the action busy, a form's field read-only). */
+  busy: boolean
+  /** The last refusal, shown as the form's validation text or the idle gate's description. */
+  error: string | null
+}
+
+export const IDLE_VAULT_GATE: VaultGateState = { step: 'idle', busy: false, error: null }
+
+/** The gate's title and the line under it, on desktop and phone alike. */
+export function vaultGateCopy(
+  step: VaultGateStep,
+  status: Pick<PasswordsStatus, 'error'>,
+  error: string | null
+): { title: string; description: string } {
+  const title = step === 'setup' ? 'Set a vault passphrase' : 'The vault is locked'
+  const description =
+    status.error ??
+    (step === 'idle' ? error : null) ??
+    (step === 'setup'
+      ? 'This device cannot verify you, so the vault needs a passphrase before it can hold addresses and cards.'
+      : step === 'passphrase'
+        ? 'Enter the vault passphrase to see and edit saved addresses, cards and passkeys.'
+        : 'Unlock to see and edit saved addresses, cards and passkeys.')
+  return { title, description }
+}
+
+/** The passphrase form's field label, primary action and autocomplete token for the step. */
+export function vaultGateForm(step: VaultGateStep): {
+  label: string
+  action: string
+  autoComplete: 'current-password' | 'new-password'
+} {
+  return step === 'setup'
+    ? { label: 'New vault passphrase', action: 'Create', autoComplete: 'new-password' }
+    : { label: 'Vault passphrase', action: 'Unlock', autoComplete: 'current-password' }
+}
+
+/** One unlock attempt (`passwords.unlock`); a thrown error is a refusal carrying its message. */
+export async function unlockVault(passphrase?: string): Promise<ReauthOutcome<null>> {
+  try {
+    return await cmd('passwords.unlock', { passphrase })
+  } catch (e) {
+    return { status: 'denied', reason: e instanceof Error ? e.message : String(e) }
+  }
+}
+
+/** What a refused attempt says when the host gave no reason of its own. */
+export function unlockRefusal(result: { status: 'denied'; reason?: string }, answered: boolean): string {
+  return result.reason ?? (answered ? 'That passphrase is not right.' : 'The vault stayed locked.')
 }

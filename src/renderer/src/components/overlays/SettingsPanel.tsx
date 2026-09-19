@@ -108,6 +108,7 @@ const SECTION_CAPABILITY: Partial<Record<SettingsSection, keyof HostCapabilities
   accessibility: 'pageControls',
   newtab: 'newTabPage',
   resources: 'resourceGovernor',
+  autofill: 'passwords',
   extensions: 'extensions',
   agents: 'agents',
   passwords: 'passwords',

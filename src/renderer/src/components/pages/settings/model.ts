@@ -69,6 +69,13 @@ export interface ActionRow extends RowBase {
   confirm?: { title: string; description?: string; action: string }
   /** A sheet holding a small form (add a route, create a container) instead of a plain press. */
   form?: FormSheet
+  /**
+   * `onPress` opens a surface of its own over the page (an editor sheet): inside an item's sheet
+   * the row dismisses that sheet first and presses once it has gone, so the editor is the one
+   * sheet over the page and may open its own pickers (§9.24: a sheet opens one sheet, and that
+   * one opens nothing). On the page itself the press is immediate.
+   */
+  closesSheet?: boolean
 }
 
 /** A sheet with a §9.12 form in it; `render` gets the function that closes the sheet. */
