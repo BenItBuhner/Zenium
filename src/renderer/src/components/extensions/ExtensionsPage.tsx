@@ -15,6 +15,7 @@ import {
 import type { ExtensionInfo, UIState } from '@shared/types'
 import { anchorOf, type Anchor } from '@renderer/lib/anchor'
 import { run } from '@renderer/lib/api'
+import { errorCounts, errorSummary } from '@renderer/lib/extensions/errorText'
 import { relativeTime } from '@renderer/lib/extensions/format'
 import { parseStoreInput, versionAndSource } from '@renderer/lib/extensions/storeInput'
 import { closeOverlay } from '@renderer/lib/ui'
@@ -349,6 +350,7 @@ function ExtensionCard({
 }): JSX.Element {
   const mv2 = ext.manifestVersion === 2
   const disabledLook = !ext.enabled && !ext.error
+  const log = ext.errors.length > 0 ? errorCounts(ext.errors) : null
   return (
     <li className="zen-v2-card zen-ext-card" data-disabled={disabledLook || undefined}>
       <button
@@ -381,6 +383,16 @@ function ExtensionCard({
       </button>
       {/* The controls are the ⋯'s bar (§9.20): its menu end-aligns with it, flush under the row. */}
       <div className="zen-ext-card-controls" data-bar="">
+        {/*
+          The error console's summary on the row's trailing side (13 in the §1 status ink, the
+          details page's Errors card has the lines): the one thing about an installed extension
+          that its own sub-line does not say.
+        */}
+        {log && (
+          <span className="zen-ext-card-errors mr-1" data-tone={log.errors > 0 ? 'danger' : 'warn'}>
+            {errorSummary(ext.errors)}
+          </span>
+        )}
         {/* Working, the button stays at its size with a spinner for its label (§9.30 busy). */}
         {(ext.updateState === 'available' || ext.updateState === 'updating') && (
           <V2Button
