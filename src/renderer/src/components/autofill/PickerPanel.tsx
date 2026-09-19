@@ -1,10 +1,11 @@
 import type { JSX, KeyboardEvent, Ref } from 'react'
-import { useEffect, useId, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { CreditCard, KeyRound, Lock, MapPin, type LucideIcon } from 'lucide-react'
 import type { AutofillPicker, AutofillPickerItem, FormGroup, ReauthOutcome } from '@shared/types'
 import { cmd, run } from '@renderer/lib/api'
 import { cn } from '@renderer/lib/utils'
-import { Btn, Field, Footer, Labelled, TitleBlock } from './controls'
+import { Btn, Footer, TitleBlock } from './controls'
+import { PassphraseForm } from './PassphraseForm'
 
 const GROUP_GLYPH: Record<FormGroup, LucideIcon> = {
   login: KeyRound,
@@ -266,9 +267,10 @@ function Row({
 }
 
 /**
- * The unlock step (§9.12 form field): the passphrase in its field with the label above, the
- * refused attempt as the field's error, Back and Unlock in the footer. The field takes the
- * keyboard as the step comes up, so the popup surface holds it until the answer.
+ * The unlock step: the shared `PassphraseForm` (§9.12, §9.30 – the field read-only with its
+ * masked value while the vault works, Unlock alone busy, Back at .4; a refusal clears and
+ * refocuses the field under its validation text) under a title block naming what it fills. The
+ * field takes the keyboard as the step comes up, so the popup surface holds it until the answer.
  */
 function PassphraseStep({
   contentRef,
@@ -287,15 +289,6 @@ function PassphraseStep({
   onBack: () => void
   onSubmit: (passphrase: string) => void
 }): JSX.Element {
-  const [value, setValue] = useState('')
-  const id = useId()
-  const field = useRef<HTMLInputElement>(null)
-  // The field takes the focus as the step comes up and again after a refused attempt; an attempt
-  // clears it as it leaves and holds it read-only – nothing dims while the vault works (§9.30:
-  // busy is the spinner on Unlock at full opacity, and Back stays live).
-  useEffect(() => {
-    if (!busy) field.current?.focus()
-  }, [busy])
   const what =
     group === 'card'
       ? `the card ${item?.title ?? ''}`.trim()
@@ -303,34 +296,13 @@ function PassphraseStep({
   return (
     <div ref={contentRef} className="zen-v2-af-notice">
       <TitleBlock title="Unlock to fill" description={`Your vault passphrase fills ${what}.`} />
-      <form
-        className="zen-v2-af-form"
-        onSubmit={(e) => {
-          e.preventDefault()
-          if (!value || busy) return
-          onSubmit(value)
-          setValue('')
-        }}
-      >
-        <Labelled label="Vault passphrase" htmlFor={id} error={error}>
-          <Field
-            ref={field}
-            id={id}
-            type="password"
-            secret
-            value={value}
-            autoComplete="current-password"
-            onChange={(e) => setValue(e.target.value)}
-            readOnly={busy}
-          />
-        </Labelled>
-        <Footer count={2}>
-          <Btn onClick={onBack}>Back</Btn>
-          <Btn type="submit" variant="primary" busy={busy} disabled={!value && !busy}>
-            Unlock
-          </Btn>
-        </Footer>
-      </form>
+      <PassphraseForm
+        error={error}
+        busy={busy}
+        cancel="Back"
+        onCancel={onBack}
+        onSubmit={onSubmit}
+      />
     </div>
   )
 }

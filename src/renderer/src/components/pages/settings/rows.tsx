@@ -8,6 +8,7 @@ import {
   type RowGroup,
   type SettingsRow
 } from './model'
+import { useSheetDismiss } from './sheetContext'
 
 /**
  * The phone Settings rows (design language v2 §10.3–10.4) as React: one flat row per model row,
@@ -112,6 +113,8 @@ export function RowView({
   ctx: RowContext
   caption?: string
 }): JSX.Element {
+  // The sheet this row sits in, for an action that opens a surface of its own over the page.
+  const dismissSheet = useSheetDismiss()
   switch (row.kind) {
     case 'value':
       return (
@@ -149,6 +152,7 @@ export function RowView({
           onPress={() => {
             if (row.confirm) ctx.open({ kind: 'confirm', rowId: row.id })
             else if (row.form) ctx.open({ kind: 'form', rowId: row.id })
+            else if (row.closesSheet) dismissSheet(() => row.onPress?.())
             else row.onPress?.()
           }}
         />

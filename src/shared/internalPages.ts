@@ -171,6 +171,21 @@ export const SETTINGS_SECTIONS: readonly InternalPageSection[] = [
     keywords: ['engine', 'suggestions', 'keyword']
   },
   {
+    id: 'autofill',
+    label: 'Autofill',
+    keywords: [
+      'autofill',
+      'addresses',
+      'payment methods',
+      'cards',
+      'passkeys',
+      'save passwords',
+      'offer to save',
+      'clipboard'
+    ],
+    requires: 'passwords'
+  },
+  {
     id: 'languages',
     label: 'Languages',
     keywords: [
