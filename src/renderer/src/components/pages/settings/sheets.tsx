@@ -270,7 +270,13 @@ function OptionsSheet({
   )
 }
 
-/** A desktop input as a sheet: the one field (§9.12), its validation message, Cancel and Save. */
+/**
+ * A desktop input as a sheet: the one field (§9.12), its validation message, Cancel and Save.
+ * A commit that takes time (a key tried against its API, a resolver asked a question) makes it
+ * the §9.30 busy form: the field read-only with the typed value at full opacity, Save busy with
+ * the spinner in place of its label, Cancel at .4; a refusal clears the field, gives it the
+ * focus and shows the message under it; acceptance closes the sheet with the value still shown.
+ */
 function FieldSheet({
   row,
   under,
@@ -281,13 +287,33 @@ function FieldSheet({
   close(): void
 }): JSX.Element {
   const sheet = useRef<BottomSheetHandle>(null)
+  const input = useRef<HTMLInputElement>(null)
   const [value, setValue] = useState(row.value)
   const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
   const id = `settings-field-${row.id.replace(/[^a-z0-9-]/gi, '-')}`
+  const refuse = (message: string): void => {
+    setError(message)
+    setValue('')
+    input.current?.focus()
+  }
   const save = (): void => {
-    const message = row.onCommit(value)
-    if (message) {
-      setError(message)
+    if (busy) return
+    const outcome = row.onCommit(value)
+    if (outcome instanceof Promise) {
+      setBusy(true)
+      setError(null)
+      outcome
+        .catch((e: unknown) => (e instanceof Error && e.message) || 'The check did not finish')
+        .then((message) => {
+          setBusy(false)
+          if (message) refuse(message)
+          else sheet.current?.dismiss()
+        })
+      return
+    }
+    if (outcome) {
+      setError(outcome)
       return
     }
     sheet.current?.dismiss()
@@ -300,11 +326,12 @@ function FieldSheet({
       onClose={close}
       sheetRef={sheet}
     >
-      <div className="zen-settings-form">
+      <div className="zen-settings-form" aria-busy={busy || undefined}>
         <Field id={id} label={row.label} description={error ? undefined : row.description}>
           <input
+            ref={input}
             id={id}
-            className="zen-settings-input zen-v2-field"
+            className={cn('zen-settings-input zen-v2-field', row.secret && 'zen-settings-secret')}
             type={row.input === 'number' ? 'number' : 'text'}
             inputMode={row.input === 'number' ? 'numeric' : 'text'}
             min={row.min}
@@ -312,7 +339,9 @@ function FieldSheet({
             placeholder={row.placeholder}
             autoCapitalize="off"
             autoCorrect="off"
+            autoComplete="off"
             spellCheck={false}
+            readOnly={busy}
             aria-invalid={error ? true : undefined}
             value={value}
             onChange={(e) => {
@@ -325,7 +354,12 @@ function FieldSheet({
           />
           {error && <ValidationMessage message={error} />}
         </Field>
-        <SheetActions action="Save" onCancel={() => sheet.current?.dismiss()} onAction={save} />
+        <SheetActions
+          action="Save"
+          busy={busy}
+          onCancel={() => sheet.current?.dismiss()}
+          onAction={save}
+        />
       </div>
     </SettingsSheet>
   )

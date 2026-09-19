@@ -30,7 +30,9 @@ import java.util.concurrent.TimeUnit
  * plaintext site fails (continue for the session, always allow, off), Safe Browsing's warning
  * page for a listed host (details, back to safety, proceed anyway), third-party cookies blocked
  * and allowed by the exception list and blocked in a private tab, and the GPC / DNT signals on
- * the request and on `navigator`. Secure DNS has no scene: Android resolves through the system.
+ * the request and on `navigator`; then the Settings tab's Privacy and Security section, its
+ * protection rows pressed and their sheets opened. Secure DNS has no engine scene: Android
+ * resolves through the system, and its row leaves for the system's Private DNS screen.
  *
  * The pages come from a loopback HTTP server inside this process, answering as several sites.
  * HTTPS-only mode leaves loopback and every other non-unique host alone (as Chrome's HTTPS-First
@@ -240,9 +242,10 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
         shot("16-signals-on")
         beat()
 
-        // 15. Settings > Privacy and Security on a phone (design language v2 §10): every group is
-        //     rows under a 15/600 heading – switch rows, value rows that open a picker sheet,
-        //     action rows – and the two warning pages above were the v2 interstitials.
+        // 15. Settings > Privacy and Security on a phone (design language v2 §10): the Settings
+        //     tab's section, every group rows under a 15/600 heading – value rows that open a
+        //     picker sheet, a field row with its sheet, action rows, switch rows – and the two
+        //     warning pages above were the v2 interstitials.
         settingsScenes()
 
         note("\nend: ${describeSafeBrowsing(state().getJSONObject("privacy").getJSONObject("safeBrowsing"))}")
@@ -328,13 +331,14 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
     // --- Settings > Privacy and Security ----------------------------------------------------------
 
     /**
-     * The settings rows of the privacy UI, pressed through the accessibility tree the way the
-     * menu sheet demo picks its rows (the bounds a scrolled list reports lag behind on the
-     * emulator). Every step notes what the core's settings say afterwards; a row the tree does
-     * not carry is noted and skipped, never the end of the demo.
+     * The protection rows of the Settings tab's Privacy and Security section (`protectionRows.tsx`,
+     * drawn by the tab), pressed through the accessibility tree the way the menu sheet demo picks
+     * its rows (the bounds a scrolled list reports lag behind on the emulator). Every step notes
+     * what the core's settings say afterwards; a row the tree does not carry is noted and
+     * skipped, never the end of the demo.
      */
     private fun settingsScenes() {
-        note("\n15. Settings > Privacy and Security (phone: rows under headings)")
+        note("\n15. Settings > Privacy and Security (the Settings tab's section: rows under headings)")
         setPrivacy("""{"gpc":false,"dnt":false,"httpsOnly":"ask","thirdPartyCookies":"block-private"}""")
         if (!openPrivacySettings()) {
             note("  (the Privacy and Security section never came up)")
@@ -345,18 +349,46 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
         shot("17-settings-security")
         beat()
 
-        // 15a. Safe Browsing: the switch row off and on again, then Update feeds now at work.
+        // 15a. Safe Browsing: the level through its picker sheet – no protection, then standard
+        //      again – the key's field sheet, then Update feeds now at work.
         note("\n15a. Safe Browsing rows")
-        if (pressRow("Warn about dangerous sites")) {
-            SystemClock.sleep(1_200)
-            note("  safeBrowsingEnabled=${privacySetting("safeBrowsingEnabled")} (switch pressed once)")
-            shot("18-settings-safebrowsing-off")
-            pressRow("Warn about dangerous sites")
-            SystemClock.sleep(1_000)
-            note("  safeBrowsingEnabled=${privacySetting("safeBrowsingEnabled")} (pressed again)")
+        if (pressRow(LEVEL_LABEL)) {
+            if (waitForRow(LEVEL_OFF_LABEL, 8_000)) {
+                SystemClock.sleep(800)
+                shot("18-settings-safebrowsing-sheet")
+                pressRow(LEVEL_OFF_LABEL)
+                awaitSheetGone(LEVEL_LABEL)
+                note("  safeBrowsingEnabled=${awaitPrivacySetting("safeBrowsingEnabled", false)} (No protection picked)")
+                shot("18b-settings-safebrowsing-off")
+                if (pressRow(LEVEL_LABEL) && waitForRow(LEVEL_STANDARD_LABEL, 8_000)) {
+                    SystemClock.sleep(600)
+                    pressRow(LEVEL_STANDARD_LABEL)
+                    awaitSheetGone(LEVEL_LABEL)
+                }
+                note("  safeBrowsingEnabled=${awaitPrivacySetting("safeBrowsingEnabled", true)} (Standard protection picked)")
+            } else {
+                note("  (the picker sheet never showed '$LEVEL_OFF_LABEL')")
+                closeSheetIfOpen(LEVEL_LABEL)
+                note("  safeBrowsingEnabled=${privacySetting("safeBrowsingEnabled")}")
+            }
         } else {
-            note("  (no switch row 'Warn about dangerous sites')")
+            note("  (no value row '$LEVEL_LABEL')")
         }
+        if (pressRow(API_KEY_LABEL)) {
+            if (waitFor("Save", 6_000) != null) {
+                SystemClock.sleep(800)
+                shot("18c-settings-api-key-sheet")
+                if (!clickByLabel("Cancel")) back()
+                awaitSheetGone(API_KEY_LABEL)
+            } else {
+                note("  (the key's field sheet never came up)")
+                closeSheetIfOpen(API_KEY_LABEL)
+            }
+            note("  safeBrowsingApiKey='${privacySetting("safeBrowsingApiKey")}' (the sheet cancelled)")
+        } else {
+            note("  (no field row '$API_KEY_LABEL')")
+        }
+        showRow("Update feeds now")
         if (pressRow("Update feeds now")) {
             SystemClock.sleep(500)
             var status = state().getJSONObject("privacy").getJSONObject("safeBrowsing")
@@ -441,24 +473,37 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
             note("  (no value row 'Third-party cookies')")
         }
 
-        // 15f. Related sites: a site typed into the add field and added, then removed again.
+        // 15f. Related sites: Add a site opens its form sheet, a site typed and added; the new
+        //      item's sheet removes it again.
         note("\n15f. Related sites: add and remove")
         showRow("Add a site")
-        val typed = setEditable("Add a site", "accounts.example")
-        if (typed && pressRow("Add site")) {
-            SystemClock.sleep(1_200)
-        } else {
-            note("  (the add field or its button is not in the tree; the exception is set directly)")
+        var added = false
+        if (pressRow("Add a site") && waitForRow("Site", 6_000)) {
+            SystemClock.sleep(800)
+            val typed = setEditable("Site", "accounts.example")
+            if (typed) {
+                SystemClock.sleep(600)
+                shot("26-settings-add-site-sheet")
+            }
+            added = typed && clickByLabel("Add site", enabledOnly = true)
+            if (added) awaitSheetGone("Add a site") else closeSheetIfOpen("Add a site")
+        }
+        if (!added) {
+            note("  (the add sheet, its field or its button is not in the tree; the exception is set directly)")
             setPrivacy("""{"thirdPartyCookieExceptions":["accounts.example"]}""")
         }
-        note("  thirdPartyCookieExceptions=${privacySetting("thirdPartyCookieExceptions")}")
+        note("  thirdPartyCookieExceptions=${awaitPrivacySetting("thirdPartyCookieExceptions", "[\"accounts.example\"]")}")
         showRow("accounts.example")
-        shot("26-settings-related-sites")
-        if (clickByLabel("Remove accounts.example")) {
-            SystemClock.sleep(1_000)
-            note("  removed: thirdPartyCookieExceptions=${privacySetting("thirdPartyCookieExceptions")}")
+        shot("26b-settings-related-sites")
+        if (pressRow("accounts.example") && waitForRow("Remove accounts.example", 6_000)) {
+            SystemClock.sleep(800)
+            shot("26c-settings-related-site-sheet")
+            pressRow("Remove accounts.example")
+            awaitSheetGone("accounts.example")
+            note("  removed: thirdPartyCookieExceptions=${awaitPrivacySetting("thirdPartyCookieExceptions", "[]")}")
         } else {
-            note("  (no 'Remove accounts.example' control)")
+            note("  (no item 'accounts.example' with a 'Remove accounts.example' action)")
+            closeSheetIfOpen("accounts.example")
         }
         beat()
 
@@ -473,22 +518,25 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
         shot("27-settings-signals-on")
         beat()
 
-        // Out of Settings, the defaults back.
+        // Back to the demo's tab (the Settings tab stays, as a page tab does), the defaults back.
         setPrivacy("""{"gpc":false,"dnt":false,"httpsOnly":"ask","thirdPartyCookies":"block-private","thirdPartyCookieExceptions":[]}""")
-        invoke("urlbar.runCommand", """{"action":"settings.open"}""")
+        runCatching { invoke("tab.activate", """{"tabId":"tab_demo"}""") }
         SystemClock.sleep(1_500)
     }
 
-    /** Open Settings and pick its Privacy and Security section; true once the section's rows are there. */
+    /**
+     * Open the Settings tab on its Privacy and Security section, as a menu entry or a
+     * `zenium://settings/privacy` link does (`page.open`: the one Settings tab, reused); true
+     * once the section's first protection row is in the tree.
+     */
     private fun openPrivacySettings(): Boolean {
-        invoke("urlbar.runCommand", """{"action":"settings.open"}""")
+        invoke("page.open", """{"id":"settings","section":"privacy","openerTabId":"tab_demo"}""")
         if (waitFor("Privacy and Security", 8_000) == null) {
-            note("  (Settings did not open)")
+            note("  (the Settings tab did not open on Privacy and Security)")
             return false
         }
         SystemClock.sleep(800)
-        if (!clickByLabel("Privacy and Security")) note("  (the Privacy and Security chip is not clickable in the tree)")
-        return waitForRow("Warn about dangerous sites", 8_000)
+        return waitForRow(LEVEL_LABEL, 8_000)
     }
 
     /**
@@ -528,33 +576,31 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
         return false
     }
 
-    /** The picker sheet titled `title` is up exactly while its handle button is in the tree. */
-    private fun sheetHandle(title: String): String = "Resize $title options"
-
     /**
-     * Wait for the picker sheet titled `title` to have gone after a pick. The check moves at once,
-     * but the sheet slides down first and the value is applied as it lands (PickerSheet: the pane
-     * under it never changes while it is up), which takes seconds under the emulator's software
-     * rendering – a value read straight after the press is still the old one.
+     * Wait for the sheet opened from the row `title` to have gone after a pick: a Settings sheet
+     * is up exactly while its handle button ([SHEET_HANDLE], the same on every one) is in the
+     * tree. The pick is applied at once, but the sheet slides down first, which takes seconds
+     * under the emulator's software rendering, and the store hears of the value through the
+     * bridge a moment later – so the value is polled for ([awaitPrivacySetting]) after this.
      */
     private fun awaitSheetGone(title: String) {
-        val handle = sheetHandle(title)
         val deadline = SystemClock.uptimeMillis() + 15_000
         while (SystemClock.uptimeMillis() < deadline) {
-            if (findNode { it == handle } == null) return
+            if (findNode { it == SHEET_HANDLE } == null) return
             SystemClock.sleep(250)
         }
         note("  (the '$title' sheet is still up 15 s after the pick)")
     }
 
     /**
-     * Poll the privacy setting `key` until it reads `expected` – the store hears of a pick through
-     * the bridge a moment after the sheet has gone – for up to `timeoutMs`; the value read last.
+     * Poll the privacy setting `key` until it reads `expected` (compared as text: a flag, a word,
+     * a list) – the store hears of a pick through the bridge a moment after the sheet has gone –
+     * for up to `timeoutMs`; the value read last.
      */
-    private fun awaitPrivacySetting(key: String, expected: String, timeoutMs: Long = 6_000): Any? {
+    private fun awaitPrivacySetting(key: String, expected: Any, timeoutMs: Long = 6_000): Any? {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         var value = privacySetting(key)
-        while (value != expected && SystemClock.uptimeMillis() < deadline) {
+        while (value?.toString() != expected.toString() && SystemClock.uptimeMillis() < deadline) {
             SystemClock.sleep(300)
             value = privacySetting(key)
         }
@@ -562,11 +608,11 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
     }
 
     /**
-     * Back out of the picker sheet titled `title` should it still be up, and nothing when it is
-     * not; Settings is reopened should back have taken it too.
+     * Back out of the sheet opened from the row `title` should it still be up, and nothing when
+     * it is not; the section is reopened should back have taken it too.
      */
     private fun closeSheetIfOpen(title: String) {
-        if (findNode { it == sheetHandle(title) } == null) return
+        if (findNode { it == SHEET_HANDLE } == null) return
         back()
         SystemClock.sleep(1_000)
         if (findNode { it == "Privacy and Security" } == null) openPrivacySettings()
@@ -947,9 +993,18 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
          */
         private fun loopbackName(ip: String): String = "$ip.nip.io"
         private const val PRIVATE_CONTAINER = "private"
-        /** The picker sheets' options, as `HTTPS_ONLY_LABELS` / `THIRD_PARTY_COOKIE_LABELS` word them. */
+        /**
+         * The Settings tab's rows and picker options, as `PROTECTION_TEXT` (`lib/protectionUi.ts`),
+         * `HTTPS_ONLY_LABELS` and `THIRD_PARTY_COOKIE_LABELS` word them.
+         */
+        private const val LEVEL_LABEL = "Protection level"
+        private const val LEVEL_STANDARD_LABEL = "Standard protection"
+        private const val LEVEL_OFF_LABEL = "No protection"
+        private const val API_KEY_LABEL = "Google Safe Browsing API key"
         private const val HTTPS_ALWAYS_LABEL = "Always use secure connections"
         private const val COOKIES_BLOCK_LABEL = "Block third-party cookies"
+        /** Every Settings sheet's handle button (`SettingsSheet`): in the tree exactly while a sheet is up. */
+        private const val SHEET_HANDLE = "Resize sheet"
 
         /**
          * A feed document as the core persists them (`FeedDocument` in `src/core/safebrowsing/document.ts`):

@@ -1,25 +1,22 @@
-import type { JSX, ReactNode, RefObject } from 'react'
+import type { JSX, KeyboardEvent, ReactNode, RefObject } from 'react'
 import { useId, useLayoutEffect, useRef, useState } from 'react'
-import { CircleAlert, ExternalLink, LoaderCircle } from 'lucide-react'
-import { usePhone } from '@renderer/lib/formFactor'
+import { CircleAlert, ExternalLink } from 'lucide-react'
 import { cn } from '@renderer/lib/utils'
-import { PickerSheet } from './PickerSheet'
 
 /*
- * Building blocks of the protection groups in Settings > Privacy and Security (design-language-
- * v2-draft §4, §6, §9.2, §9.12–9.14, §9.17–9.18, §9.21, §9.23, §9.26–9.27, §9.30, §10.3–10.4).
- * They draw with the classes the pane already has – `.zen-privacy-*` for the section, headings,
- * rows, cards, fields and validation, `.zen-v2-check` / `.zen-v2-radio` / `.zen-v2-field` /
- * `.zen-v2-icon-button` for the controls – so the blocking groups (#115) and these read as one
- * pane; `.zen-protection-*` adds only what those lack: the 22 section's title block, a
- * sub-heading's description, a card's title block, the phone's switch, value and action rows,
- * the picker sheet, the busy button and the menulist.
+ * Building blocks of the protection groups in the desktop Settings > Privacy and Security pane
+ * (design-language-v2-draft §4, §6, §9.2, §9.12–9.14, §9.17–9.18, §9.21, §9.23, §9.26–9.27,
+ * §9.30, §10.5): Zen's about:preferences – checkboxes to the left of their labels, plain radios
+ * with their descriptions, a menulist, cards only where a group carries its own actions. They
+ * draw with the classes the pane already has – `.zen-privacy-*` for the section, headings, rows,
+ * cards, fields and validation (#115's blocking groups share them) – and the shared v2
+ * primitives for the controls: `.zen-v2-checkbox`, `.zen-v2-radio`, `.zen-v2-field`,
+ * `.zen-v2-icon-button` and `.zen-v2-button` (§9.34). `.zen-protection-*` adds only what those
+ * lack: the 22 section's title block, a sub-heading's description, a card's title block, the
+ * radio row that is a button, the action row and the menulist.
  *
- * Two layouts from one tree. On a desktop a group is Zen's: checkboxes to the left of their
- * labels, plain radios with their descriptions, cards where a group has its own actions
- * (§10.5). On a phone a group is rows under its 15/600 heading and nothing else (§9.17, §10.3):
- * booleans are switch rows, a choice is a value row that opens a picker sheet, an action is a
- * row, and no card is drawn (§10.4).
+ * The phone has none of this: its rows are the Settings tab's, built as data by
+ * `pages/settings/protectionRows.tsx` and drawn by #134's page.
  */
 
 /**
@@ -45,8 +42,7 @@ function useWrapped<T extends HTMLElement>(): [RefObject<T | null>, boolean] {
 
 /**
  * A 22/600 section of the pane (§9.26): its title on the 28 px line, an optional description 15
- * at 69% 4 px under it, 16 px to the first group, groups 32 apart (24 on phones). On a phone the
- * title block is not drawn: groups stand under their own 15/600 headings alone (§10.3).
+ * at 69% 4 px under it, 16 px to the first group, groups 32 apart.
  */
 export function Part({
   title,
@@ -92,18 +88,10 @@ export function Group({
   )
 }
 
-/**
- * Rows that carry their own actions: a flat card on a desktop (§6, §10.5), the rows themselves
- * on a phone, where a new group draws no card (§9.17, §10.3).
- */
+/** Rows that carry their own actions: a flat card (§6, §10.5). */
 export function List({ children, label }: { children: ReactNode; label?: string }): JSX.Element {
-  const phone = usePhone()
   return (
-    <div
-      className={phone ? 'zen-privacy-rows' : 'zen-privacy-card'}
-      role={label ? 'group' : undefined}
-      aria-label={label}
-    >
+    <div className="zen-privacy-card" role={label ? 'group' : undefined} aria-label={label}>
       {children}
     </div>
   )
@@ -112,7 +100,7 @@ export function List({ children, label }: { children: ReactNode; label?: string 
 /**
  * A card's title block (§9.23, §9.27): a 16 px glyph 8 px before a 17/600 title on the 22 px
  * line, the description 15 at 69% 4 px under it, an action trailing and centred on the block
- * (§9.18), 16 px to the first row. Desktop only: `List` is rows on a phone.
+ * (§9.18), 16 px to the first row.
  */
 export function CardTitle({
   icon,
@@ -138,10 +126,8 @@ export function CardTitle({
 }
 
 /**
- * A boolean row: on a desktop Zen's leading 16 px checkbox on the first text line (§6, §9.2), on
- * a phone the trailing 36 × 20 switch centred on the row – on the label's line once the
- * description wraps (§9.18) – with the whole row as its target (§10.4, `role="switch"`).
- * Disabled dims the row's text with the control (§9.30).
+ * A boolean row: Zen's leading 16 px checkbox on the first text line (§6, §9.2), the whole row
+ * its label. Disabled dims the row's text with the control (§9.30).
  */
 export function BoolRow({
   label,
@@ -156,32 +142,11 @@ export function BoolRow({
   disabled?: boolean
   onChange: (checked: boolean) => void
 }): JSX.Element {
-  const phone = usePhone()
-  const [text, wrapped] = useWrapped<HTMLSpanElement>()
-  if (phone) {
-    return (
-      <button
-        type="button"
-        role="switch"
-        aria-checked={checked}
-        className="zen-privacy-row zen-protection-switch-row"
-        data-wrapped={wrapped || undefined}
-        disabled={disabled}
-        onClick={() => onChange(!checked)}
-      >
-        <span ref={text} className="zen-privacy-row-text">
-          <span className="zen-privacy-row-label block">{label}</span>
-          {description && <span className="zen-privacy-row-desc">{description}</span>}
-        </span>
-        <span className="zen-v2-switch" aria-hidden />
-      </button>
-    )
-  }
   return (
     <label className="zen-privacy-row">
       <input
         type="checkbox"
-        className="zen-v2-check"
+        className="zen-v2-checkbox"
         checked={checked}
         disabled={disabled}
         onChange={(e) => onChange(e.target.checked)}
@@ -194,46 +159,96 @@ export function BoolRow({
   )
 }
 
-/** One option of a plain radio list (§9.14): the circle on the first text line, name, description. */
+/**
+ * One option of a plain radio list (§9.14) on the shared `.zen-v2-radio` (§9.34): the row's text
+ * side is a `role="radio"` button carrying `aria-checked`, the circle a presentational span on
+ * the first text line, the label its name and the description what describes it. Tab reaches
+ * the chosen option only; `RadioGroup` moves the choice with the arrow keys. Disabled is .4 on
+ * the whole control (§9.30).
+ */
 export function RadioRow({
-  name,
-  value,
   label,
   description,
   checked,
+  tabbable = checked,
   disabled = false,
   onPick,
   children
 }: {
-  name: string
-  value: string
   label: string
   description?: string
   checked: boolean
+  /** The group's one tab stop: its chosen option, or its first while none is. */
+  tabbable?: boolean
   disabled?: boolean
   onPick: () => void
   /** A trailing control the option carries (a menulist), centred on the row, or on the label's line when the description wraps (§9.18). */
   children?: ReactNode
 }): JSX.Element {
-  const id = useId()
-  const [text, wrapped] = useWrapped<HTMLLabelElement>()
+  const labelId = useId()
+  const descId = useId()
+  const [text, wrapped] = useWrapped<HTMLSpanElement>()
   return (
     <div className="zen-privacy-row" data-wrapped={wrapped || undefined}>
-      <input
-        id={id}
-        type="radio"
-        className="zen-v2-radio"
-        name={name}
-        value={value}
-        checked={checked}
+      <button
+        type="button"
+        role="radio"
+        className="zen-protection-radio"
+        aria-checked={checked}
+        aria-labelledby={labelId}
+        aria-describedby={description ? descId : undefined}
+        tabIndex={tabbable ? 0 : -1}
         disabled={disabled}
-        onChange={onPick}
-      />
-      <label ref={text} htmlFor={id} className="zen-privacy-row-text">
-        <span className="zen-privacy-row-label block">{label}</span>
-        {description && <span className="zen-privacy-row-desc">{description}</span>}
-      </label>
+        onClick={onPick}
+      >
+        <span className="zen-v2-radio" aria-hidden="true" />
+        <span ref={text} className="zen-privacy-row-text">
+          <span id={labelId} className="zen-privacy-row-label block">
+            {label}
+          </span>
+          {description && (
+            <span id={descId} className="zen-privacy-row-desc">
+              {description}
+            </span>
+          )}
+        </span>
+      </button>
       {children && <div className="zen-privacy-row-actions">{children}</div>}
+    </div>
+  )
+}
+
+/** Arrow keys inside a `radiogroup` of `RadioRow`s move the choice, as the native control does. */
+function moveRadio(e: KeyboardEvent<HTMLDivElement>): void {
+  const step =
+    e.key === 'ArrowDown' || e.key === 'ArrowRight'
+      ? 1
+      : e.key === 'ArrowUp' || e.key === 'ArrowLeft'
+        ? -1
+        : 0
+  if (step === 0) return
+  const radios = Array.from(
+    e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="radio"]:not(:disabled)')
+  )
+  const at = radios.indexOf(e.target as HTMLButtonElement)
+  if (at < 0) return
+  e.preventDefault()
+  const next = radios[(at + step + radios.length) % radios.length]
+  next?.focus()
+  next?.click()
+}
+
+/** The `radiogroup` around `RadioRow`s: its name, and the arrow keys that move the choice. */
+export function RadioGroup({
+  label,
+  children
+}: {
+  label: string
+  children: ReactNode
+}): JSX.Element {
+  return (
+    <div className="zen-privacy-rows" role="radiogroup" aria-label={label} onKeyDown={moveRadio}>
+      {children}
     </div>
   )
 }
@@ -244,99 +259,54 @@ export interface ChoiceOption<V extends string> {
   description?: string
 }
 
-/**
- * Mutually exclusive options. On a desktop the plain radios of §9.14 in a `radiogroup`, each
- * with its description. On a phone one value row (§10.4): the label on the first line, the
- * current option as its description, the whole row a button that opens the picker sheet, whose
- * title block is the label and `description`.
- */
+/** Mutually exclusive options as the plain radios of §9.14 in a `radiogroup`, each with its description. */
 export function Choice<V extends string>({
-  name,
   label,
-  description,
   value,
   options,
   disabled = false,
   onChange
 }: {
-  name: string
-  /** The `radiogroup`'s name, the value row's label and the sheet's title. */
+  /** The `radiogroup`'s name. */
   label: string
-  /** The sheet's description on a phone; a desktop group says it in its heading instead. */
-  description?: string
   value: V
   options: ReadonlyArray<ChoiceOption<V>>
   disabled?: boolean
   onChange: (value: V) => void
 }): JSX.Element {
-  const phone = usePhone()
-  const [open, setOpen] = useState(false)
-  if (phone) {
-    const current = options.find((o) => o.value === value)
-    return (
-      <>
-        <button
-          type="button"
-          className="zen-privacy-row zen-protection-action-row"
-          aria-haspopup="dialog"
-          aria-expanded={open}
-          disabled={disabled}
-          onClick={() => setOpen(true)}
-        >
-          <span className="zen-privacy-row-text">
-            <span className="zen-privacy-row-label block">{label}</span>
-            <span className="zen-privacy-row-desc">{current?.label}</span>
-          </span>
-        </button>
-        {open && (
-          <PickerSheet
-            title={label}
-            description={description}
-            value={value}
-            options={options}
-            onPick={onChange}
-            onClose={() => setOpen(false)}
-          />
-        )}
-      </>
-    )
-  }
+  const tabbable = options.some((o) => o.value === value) ? value : options[0]?.value
   return (
-    <div className="zen-privacy-rows" role="radiogroup" aria-label={label}>
+    <RadioGroup label={label}>
       {options.map((option) => (
         <RadioRow
           key={option.value}
-          name={name}
-          value={option.value}
           label={option.label}
           description={option.description}
           checked={option.value === value}
+          tabbable={option.value === tabbable}
           disabled={disabled}
           onPick={() => onChange(option.value)}
         />
       ))}
-    </div>
+    </RadioGroup>
   )
 }
 
 /**
- * An action row (§10.4): the whole row is a button – label, optional description, a trailing 16
- * / 20 px external-link glyph only when it leaves the app, the spinner while it works (§9.30,
- * `aria-busy`; a second press does nothing); the glyph centres on the row, or on the label's line
- * when the description wraps (§9.18). Disabled is .4 on the row.
+ * An action row: the whole row is a button – label, optional description, a trailing 16 px
+ * external-link glyph only when it leaves the app; the glyph centres on the row, or on the
+ * label's line when the description wraps (§9.18). Disabled is .4 on the row (§9.30).
  */
 export function ActionRow({
   label,
   description,
   external = false,
-  busy = false,
   disabled = false,
   onClick
 }: {
   label: string
   description?: string
   external?: boolean
-  busy?: boolean
   disabled?: boolean
   onClick: () => void
 }): JSX.Element {
@@ -346,15 +316,14 @@ export function ActionRow({
       type="button"
       className="zen-privacy-row zen-protection-action-row"
       data-wrapped={wrapped || undefined}
-      aria-busy={busy || undefined}
       disabled={disabled}
-      onClick={busy ? undefined : onClick}
+      onClick={onClick}
     >
       <span ref={text} className="zen-privacy-row-text">
         <span className="zen-privacy-row-label block">{label}</span>
         {description && <span className="zen-privacy-row-desc">{description}</span>}
       </span>
-      {busy ? <Spinner /> : external && <ExternalLink aria-hidden />}
+      {external && <ExternalLink aria-hidden />}
     </button>
   )
 }
@@ -421,14 +390,11 @@ export function IconButton({
   )
 }
 
-/** A 16 / 20 px spinner (§9.30): the row glyph size, turning. */
-export function Spinner({ className }: { className?: string }): JSX.Element {
-  return <LoaderCircle className={cn('zen-protection-spinner zen-spin', className)} aria-hidden />
-}
-
 /**
- * The v2 button at work (§9.30): busy is not disabled – it keeps its opacity and its width, swaps
- * its label for the spinner and says `aria-busy`; a second press while it works does nothing.
+ * The shared v2 button at work (§9.30, as the extensions UI and the new tab page draw it): busy
+ * is not disabled – it keeps its opacity and its width, its label stays in the flow unpainted
+ * under the 16 px `.zen-v2-spinner`, and it says `aria-busy`; a second press while it works does
+ * nothing.
  */
 export function BusyButton({
   busy = false,
@@ -448,17 +414,19 @@ export function BusyButton({
   return (
     <button
       type="button"
-      className={cn('zen-v2-button zen-protection-busy', className)}
+      className={cn('zen-v2-button', className)}
       data-primary={primary || undefined}
       aria-busy={busy || undefined}
       disabled={disabled}
       onClick={busy ? undefined : onClick}
     >
-      <span className={cn('zen-protection-busy-label', busy && 'invisible')}>{children}</span>
-      {busy && (
-        <span className="zen-protection-busy-spinner">
-          <Spinner />
-        </span>
+      {busy ? (
+        <>
+          <span className="zen-v2-button-label">{children}</span>
+          <span className="zen-v2-spinner" aria-hidden />
+        </>
+      ) : (
+        children
       )}
     </button>
   )

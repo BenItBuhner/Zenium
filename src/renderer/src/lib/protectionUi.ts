@@ -3,9 +3,11 @@ import {
   SECURE_DNS_CUSTOM,
   SECURE_DNS_PROVIDERS,
   secureDnsProvider,
+  THIRD_PARTY_COOKIE_LABELS,
   type PrivacySettings,
   type PrivacyStatus,
-  type SafeBrowsingStatus
+  type SafeBrowsingStatus,
+  type ThirdPartyCookieMode
 } from '@shared/privacy'
 
 /**
@@ -13,6 +15,125 @@ import {
  * HTTPS-only mode, secure DNS, third-party cookies, the privacy signals): pure functions over the
  * settings and the status, so the section components stay markup.
  */
+
+/**
+ * The words of the protection groups, read by the desktop pane (`overlays/ProtectionSection.tsx`)
+ * and the phone Settings builder (`pages/settings/sections.tsx`) alike, so the two say the same
+ * thing (§9.1: sentence case, no trailing full stop on a heading).
+ */
+export const PROTECTION_TEXT = {
+  safeBrowsing: {
+    heading: 'Safe Browsing',
+    description:
+      'Sites are checked against open feeds of malware and phishing hosts (URLhaus, Phishing.Database, malware-filter) before they load. The feeds are refreshed while the browser runs.',
+    warn: {
+      label: 'Warn about dangerous sites',
+      description:
+        'Deceptive and malware sites are stopped before they load. You can still go on from the warning.'
+    },
+    /** The phone's level choice (Chrome's Safe Browsing screen) over the desktop's one switch. */
+    level: 'Protection level',
+    standard: {
+      label: 'Standard protection',
+      description: 'Deceptive and malware sites are stopped before they load; you can still go on.'
+    },
+    none: {
+      label: 'No protection',
+      description: 'Sites are not checked against the feeds and no warning is shown.'
+    },
+    feeds: {
+      heading: 'Feeds',
+      description: 'The open lists of malware and phishing hosts the checks run against.'
+    },
+    update: 'Update feeds now',
+    updateFeed: 'Update this feed now',
+    homepage: (name: string) => `Open the homepage of ${name}`,
+    apiKey: {
+      label: 'Google Safe Browsing API key',
+      placeholder: 'AIza…',
+      description:
+        'Optional. With a key, every page you open is also looked up in Google Safe Browsing (v5, hash prefixes only).',
+      invalid: 'A key is letters, digits, dashes and underscores, up to 128 of them'
+    }
+  },
+  httpsOnly: {
+    heading: 'HTTPS-only mode',
+    description:
+      'Pages are asked for over https first, so what you send and receive stays encrypted on the way.'
+  },
+  plaintextSites: {
+    heading: 'Sites allowed over http',
+    description:
+      'Sites you chose to load over plaintext from the warning page. Remove one to be asked again.',
+    empty: 'No sites allowed over http yet',
+    stored: 'Allowed over http for good',
+    session: 'Allowed over http until the browser closes',
+    askAgain: (site: string) => `Ask again before loading ${site} over http`
+  },
+  secureDns: {
+    heading: 'Secure DNS',
+    description:
+      'Encrypt the lookups that turn a site’s name into an address, so the network cannot read or change them.',
+    use: 'Use secure DNS',
+    resolver: { label: 'Resolver', description: 'Where the encrypted lookups go.' },
+    automatic: {
+      label: 'With your current service provider',
+      description: 'Encrypted when the system resolver offers it, plaintext otherwise.'
+    },
+    provider: {
+      label: 'With a provider of your choice',
+      description: 'Every lookup is encrypted and goes to this resolver, never to the system’s.'
+    },
+    custom: {
+      label: 'Custom resolver',
+      placeholder: 'https://dns.example/dns-query',
+      description:
+        'The DNS-over-HTTPS address your resolver publishes; a personal NextDNS or AdGuard profile has one of its own.',
+      unset: 'Not set'
+    }
+  },
+  privateDns: {
+    description: 'On Android, encrypted DNS is a system setting that applies to every app.',
+    open: {
+      label: 'Open Private DNS settings',
+      description:
+        'Choose Automatic, or a private DNS provider by hostname, in Network and internet.'
+    }
+  },
+  cookies: {
+    heading: 'Third-party cookies',
+    description:
+      'Cookies set by a site embedded in another site, which is how most cross-site tracking works.'
+  },
+  relatedSites: {
+    heading: 'Related sites',
+    description:
+      'Sites that may keep using third-party cookies whatever the setting: a sign-in provider, or a company’s other domains. A site covers its subdomains.',
+    empty: 'No related sites yet',
+    add: 'Add a site',
+    addDescription: 'A sign-in provider, or a company’s other domains',
+    siteHint: 'A site such as example.com; its subdomains come with it',
+    remove: (site: string) => `Remove ${site}`,
+    keeps: 'Keeps third-party cookies whatever the setting',
+    duplicate: 'That site is already here',
+    invalid: 'Enter a site such as example.com'
+  },
+  signals: {
+    heading: 'Privacy signals',
+    description:
+      'Preferences sent with every request. Sites decide whether to honour them; the Global Privacy Control signal is binding under some privacy laws.',
+    gpc: {
+      label: 'Send a Global Privacy Control signal',
+      description:
+        'Tells sites not to sell or share your data (Sec-GPC: 1 and navigator.globalPrivacyControl).'
+    },
+    dnt: {
+      label: 'Send a Do Not Track request',
+      description:
+        'Asks sites not to track you (DNT: 1 and navigator.doNotTrack). Many sites ignore it.'
+    }
+  }
+} as const
 
 /** `1234567` as `1,234,567`; the figures are set tabular where they are shown. */
 export function count(n: number): string {
@@ -112,6 +233,41 @@ export function remoteLookupsText(status: SafeBrowsingStatus, key: string): stri
     return `Remote lookups are on · ${n === 1 ? '1 lookup' : `${count(n)} lookups`} failed since the browser started (quota, key or network).`
   }
   return 'Remote lookups are on. Only hash prefixes leave the device, never the address itself.'
+}
+
+/**
+ * The phone's key row in one line (§10.4; the row never shows the key itself): whether one is
+ * set and what the lookups are doing.
+ */
+export function apiKeyRowText(status: SafeBrowsingStatus, key: string): string {
+  if (!key) return 'Not set · optional, adds Google Safe Browsing lookups'
+  if (!status.enabled) return 'Set · lookups resume when Safe Browsing is on'
+  if (!status.remoteLookups) return 'Set · lookups start with the next page you open'
+  if (status.remoteErrors > 0) {
+    const n = status.remoteErrors
+    return `Set · ${n === 1 ? '1 lookup' : `${count(n)} lookups`} failed since the browser started`
+  }
+  return 'Set · remote lookups on'
+}
+
+/**
+ * The third-party cookie modes as a picker's options. The middle mode is about private
+ * windows on a windowed host and private tabs on one without windows (Android, §10.4), so the
+ * words follow `capabilities.windows` as the desktop pane follows the shared labels.
+ */
+export function cookieModeOptions(
+  windows: boolean
+): Array<{ value: ThirdPartyCookieMode; label: string; description: string }> {
+  return (Object.keys(THIRD_PARTY_COOKIE_LABELS) as ThirdPartyCookieMode[]).map((value) => {
+    const { label, description } = THIRD_PARTY_COOKIE_LABELS[value]
+    return windows
+      ? { value, label, description }
+      : {
+          value,
+          label: label.replace('private windows', 'private tabs'),
+          description: description.replace('In a private window', 'In a private tab')
+        }
+  })
 }
 
 /** A Google API key as typed: letters, digits, `_` and `-`, at most 128 of them (or empty). */

@@ -173,7 +173,20 @@ export const SETTINGS_SECTIONS: readonly InternalPageSection[] = [
   {
     id: 'privacy',
     label: 'Privacy and Security',
-    keywords: ['ads', 'trackers', 'blocking', 'filter', 'permissions', 'site', 'exceptions'],
+    keywords: [
+      'ads',
+      'trackers',
+      'blocking',
+      'filter',
+      'permissions',
+      'site',
+      'exceptions',
+      'safe browsing',
+      'https',
+      'dns',
+      'cookies',
+      'do not track'
+    ],
     requires: 'requestBlocking'
   },
   {

@@ -204,6 +204,14 @@ export function isValidDohTemplate(url: string): boolean {
   }
 }
 
+/**
+ * The answer of a check the Settings form waits for (design-language-v2-draft §9.30's busy
+ * form): a Google Safe Browsing key tried against the API (`protection.checkApiKey`), a custom
+ * resolver asked one question (`protection.checkResolver`). Refused with `problem` as the
+ * field's validation text.
+ */
+export type ProtectionCheck = { ok: true } | { ok: false; problem: string }
+
 /** The DoH templates the settings ask for, or none when secure DNS is off or automatic. */
 export function secureDnsServers(settings: PrivacySettings): string[] {
   if (settings.secureDnsMode !== 'provider') return []
