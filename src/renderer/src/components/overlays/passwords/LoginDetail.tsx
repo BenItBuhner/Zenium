@@ -15,6 +15,7 @@ import {
 import { LoginForm } from './LoginForm'
 import { PaneHeader } from './PageShell'
 import {
+  ActionRow,
   Btn,
   Description,
   ErrorNote,
@@ -219,19 +220,22 @@ export function LoginDetail({
                     : 'Not used to sign in yet'}
                 </Description>
               </div>
-              <div className={phone ? 'flex flex-col gap-2' : 'flex flex-wrap gap-2'}>
-                <Btn onClick={() => openSite(state, credential)}>
-                  <ExternalLink /> Change password on site
-                </Btn>
-                <Btn
-                  onClick={() => {
+              {/* The level's actions are rows (§10.4), not buttons: §9.11's full-width buttons
+                  belong to sheet and dialog footers. The first leaves the page (§9.10 glyph). */}
+              <Rows>
+                <ActionRow
+                  label="Change password on site"
+                  leaves="external"
+                  onPress={() => openSite(state, credential)}
+                />
+                <ActionRow
+                  label="Never save for this site"
+                  onPress={() => {
                     run('passwords.neverSaveAdd', { domain: credential.domain })
                     pushToast(`Zenium will not offer to save logins for ${credential.domain}`)
                   }}
-                >
-                  Never save for this site
-                </Btn>
-              </div>
+                />
+              </Rows>
             </>
           )}
         </div>

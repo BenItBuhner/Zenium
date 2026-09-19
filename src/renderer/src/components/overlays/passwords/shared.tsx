@@ -902,10 +902,12 @@ export function ChoiceRow<T extends string>({
 }
 
 /**
- * A phone action row (§10.4): the whole row does the thing – label and description, a trailing
- * 16 px glyph only when it leaves the page – a destructive one in the danger ink and confirmed
- * in a sheet, never by an inline button. Disabled is the row at .4, laid out and not pressable
- * (§9.30); busy keeps its ink, trails the spinner in place of its glyph and takes no press.
+ * An action row (§10.4): the whole row does the thing – label and description, a trailing 16 px
+ * glyph (§9.10) only when it leaves the page – a destructive one in the danger ink and confirmed
+ * in a sheet, never by an inline button. A page's or a level's actions are these rows on both
+ * form factors (44 on a phone, 32 on the desktop; §9.11's full-width buttons belong to sheet and
+ * dialog footers). Disabled is the row at .4, laid out and not pressable (§9.30); busy keeps its
+ * ink, trails the spinner in place of its glyph and takes no press.
  */
 export function ActionRow({
   label,
@@ -939,9 +941,9 @@ export function ActionRow({
       {busy ? (
         <span className="zen-v2-spinner" aria-hidden />
       ) : leaves === 'chevron' ? (
-        <ChevronRight className="zen-v2-pw-deemphasized" />
+        <ChevronRight className="zen-v2-pw-deemphasized size-4 shrink-0" aria-hidden />
       ) : leaves === 'external' ? (
-        <ExternalLink className="zen-v2-pw-deemphasized" />
+        <ExternalLink className="zen-v2-pw-deemphasized size-4 shrink-0" aria-hidden />
       ) : null}
     </button>
   )
