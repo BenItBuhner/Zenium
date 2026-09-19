@@ -543,10 +543,14 @@ export function createPreviewBridge(): NativeBridge {
       const ctx = canvas.getContext('2d')
       if (!ctx) return null
       ctx.fillStyle = background || '#fff'
+      // The canvas reads the colour back normalised: `rgba(…)` only when it has an alpha. A page
+      // drawn over the chrome's wallpaper (zen://newtab, background `#00000000`) keeps its
+      // transparency the way the WebView's bitmap does; JPEG would flatten it to black.
+      const translucent = String(ctx.fillStyle).startsWith('rgba(')
       ctx.fillRect(0, 0, canvas.width, canvas.height)
       ctx.scale(scale, scale)
       ctx.drawImage(image, 0, 0)
-      return canvas.toDataURL('image/jpeg', 0.7)
+      return translucent ? canvas.toDataURL('image/png') : canvas.toDataURL('image/jpeg', 0.7)
     } catch {
       return null
     }

@@ -15,8 +15,11 @@ const TOAST: DismissDirections = { x: [-1, 1], y: [1] }
 /** A banner: up, or off to either side. */
 const BANNER: DismissDirections = { x: [-1, 1], y: [-1] }
 
-const { flingVelocity: FLING, commitFraction: COMMIT, projectionSeconds: PROJECTION } =
-  SWIPE_THRESHOLDS
+const {
+  flingVelocity: FLING,
+  commitFraction: COMMIT,
+  projectionSeconds: PROJECTION
+} = SWIPE_THRESHOLDS
 
 describe('drag axis', () => {
   it('is undecided inside the slop circle and follows the dominant direction outside it', () => {
