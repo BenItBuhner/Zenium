@@ -549,6 +549,13 @@ describe('the section model', () => {
     confirm.onChange(true)
     expect(c.patches).toEqual([{ confirmCloseAll: true }])
     expect(DEFAULT_SETTINGS.confirmCloseAll).toBe(true)
+
+    // A windowed host has no tab overview and no Close all tabs: the switch stays off its Tabs.
+    const desktop = buildSection(
+      PAGE.sections.find((x) => x.id === 'tabs')!,
+      context(state({ platform: 'linux', capabilities: { ...ANDROID, windows: true } })).ctx
+    )
+    expect(findRow(desktop.groups, 'confirm-close-all')).toBeNull()
   })
 
   it('carries #129’s session rows where the desktop panel has them: Tabs, on a windowed host only', () => {

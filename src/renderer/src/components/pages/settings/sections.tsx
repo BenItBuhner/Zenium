@@ -746,6 +746,20 @@ function tabsSection({ state, set }: SectionContext): RowGroup[] {
         }
       ]
     : []
+  // The inverse: the tab overview's Close all tabs and its "Close N tabs?" prompt are the phone
+  // host's (a windowed host has no overview), so the switch that turns the prompt off is too.
+  const overviewRows: SettingsRow[] = windows
+    ? []
+    : [
+        {
+          kind: 'switch',
+          id: 'confirm-close-all',
+          label: 'Confirm before closing all tabs',
+          description: 'The tab overview asks before it closes every tab of a Space.',
+          checked: s.confirmCloseAll,
+          onChange: (v) => set({ confirmCloseAll: v })
+        }
+      ]
   const groups: RowGroup[] = [
     {
       id: 'tabs',
@@ -775,14 +789,7 @@ function tabsSection({ state, set }: SectionContext): RowGroup[] {
           checked: s.ctrlTabCyclesWithinSection,
           onChange: (v) => set({ ctrlTabCyclesWithinSection: v })
         },
-        {
-          kind: 'switch',
-          id: 'confirm-close-all',
-          label: 'Confirm before closing all tabs',
-          description: 'The tab overview asks before it closes every tab of a Space.',
-          checked: s.confirmCloseAll,
-          onChange: (v) => set({ confirmCloseAll: v })
-        },
+        ...overviewRows,
         {
           kind: 'switch',
           id: 'restore-session',

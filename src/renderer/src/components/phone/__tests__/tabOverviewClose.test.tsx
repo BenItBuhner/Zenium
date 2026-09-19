@@ -336,7 +336,11 @@ describe('the header menu', () => {
   it('carries Recently closed and Close all tabs, counted; each is off with nothing to act on', async () => {
     show(three())
     closed = [entry(tab('x', 'https://x.example/', { title: 'X' }), NOW - 60_000)]
+    // The button says it opens a menu, and whether that menu is up.
+    expect(byLabel('More').getAttribute('aria-haspopup')).toBe('menu')
+    expect(byLabel('More').getAttribute('aria-expanded')).toBe('false')
     await openMenu()
+    expect(byLabel('More').getAttribute('aria-expanded')).toBe('true')
     const rows = sheetRows()
     expect(rows.map((r) => [r.textContent?.trim(), r.hasAttribute('disabled')])).toEqual([
       ['Recently closed (1)', false],

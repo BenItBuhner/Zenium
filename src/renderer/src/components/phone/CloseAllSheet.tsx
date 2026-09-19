@@ -38,7 +38,8 @@ export function CloseAllSheet({
       }}
       focus="first"
       onClose={onClose}
-      handleLabel="Resize prompt"
+      // One detent: a drag on the grip only sends the prompt away (as the security prompt's).
+      handleLabel="Dismiss"
       sheetRef={sheet}
     >
       <label className="zen-v2-row zen-v2-check-row items-start">

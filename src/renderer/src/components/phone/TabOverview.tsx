@@ -679,6 +679,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
               className="zen-toolbar-button h-9 w-9"
               aria-label="More"
               aria-haspopup="menu"
+              aria-expanded={sheet?.kind === 'menu'}
               onClick={() => void openMenu()}
             >
               <Ellipsis className="h-[18px] w-[18px]" />
