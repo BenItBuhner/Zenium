@@ -9,6 +9,7 @@
  * import from `electron`, `node:*` or the DOM.
  */
 import type {
+  AppWindowInfo,
   CertificateDetails,
   ClipboardPeekKind,
   ColorScheme,
@@ -435,6 +436,14 @@ export interface TabViewEvents {
   onProgress(progress: number): void
   /** Main-frame navigation committed (`inPage` for pushState / hash changes). */
   onNavigated(url: string, inPage: boolean): void
+  /**
+   * The page is about to navigate its main frame to `url` on its own – a link, a script, a form
+   * submission (not a load the browser asked for, and not a server redirect, which hosts report
+   * as part of the navigation it belongs to). Returns true when the browser takes the navigation
+   * over and the host must cancel it: an app window's page leaving the app's scope opens in a
+   * browser tab instead (MW-23). Hosts that cannot intercept navigations need not call it.
+   */
+  onWillNavigate(url: string): boolean
   onTitleUpdated(title: string): void
   onFaviconUpdated(favicons: string[]): void
   /**
@@ -818,6 +827,11 @@ export interface WindowCreateInit {
   backgroundColor: string
   /** Colours for native caption buttons drawn over the chrome. */
   captionColors: CaptionColors
+  /**
+   * The web app of a standalone window (`chrome` `app`): hosts show its icon on the frame and
+   * in the taskbar where they can; null for browser windows.
+   */
+  app: AppWindowInfo | null
 }
 
 export interface WindowHostFactory {
@@ -1670,12 +1684,20 @@ export interface ShortcutRequest {
 }
 
 /**
- * Launcher shortcuts (Android's `ShortcutManagerCompat.requestPinShortcut`). `pin` resolves once
- * the request reached the launcher; the launcher's confirmation arrives later through
- * `Browser.webApps.onPinned` because the system dialog has no cancel callback.
+ * Launcher shortcuts (Android's `ShortcutManagerCompat.requestPinShortcut`; on desktop a
+ * launcher – Start menu / desktop `.lnk`, `.desktop` entry, `.app` bundle – that runs the app in
+ * a window of its own, `zenium --app=<url>`). `pin` resolves once the request reached the
+ * launcher; the launcher's confirmation arrives later through `Browser.webApps.onPinned` because
+ * Android's system dialog has no cancel callback (desktop hosts confirm as soon as the files are
+ * written, with the icon they kept).
  */
 export interface ShortcutHost {
   pin(request: ShortcutRequest): Promise<boolean>
+  /**
+   * Remove the launcher `pin` made for `id` (its files and icon). Hosts whose launcher owns its
+   * shortcuts (Android) leave it out; the core then only forgets the record.
+   */
+  unpin?(id: string): Promise<void>
 }
 
 /**

@@ -321,7 +321,12 @@ export class ElectronTabView implements TabView {
     // a document's own navigation to zen:// or zenium:// is refused; loadURL (typed, a menu, a
     // deep link) does not raise this event and goes through. One rule with Android's WebView.
     wc.on('will-navigate', (event, url) => {
-      if (refusedFromDocument(wc.getURL(), url)) event.preventDefault()
+      if (refusedFromDocument(wc.getURL(), url)) {
+        event.preventDefault()
+        return
+      }
+      // An app window's page leaving its app: the core opens the address in a browser tab.
+      if (ev.onWillNavigate(url)) event.preventDefault()
     })
     wc.on('did-start-navigation', (details) => {
       // The page is unloading (its `beforeunload` let it): nothing is left to replay.

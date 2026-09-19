@@ -414,8 +414,11 @@ export class ElectronPlatform implements Platform {
     return new ElectronUpdateHost()
   }
 
-  /** Build the browser, wire IPC and sessions, and restore the windows. */
-  start(): Browser {
+  /**
+   * Build the browser, wire IPC and sessions, and restore the windows (`windows: false` holds
+   * the browser windows back for a run that begins on an app window alone, `Browser.start`).
+   */
+  start(options: { windows?: boolean } = {}): Browser {
     const browser = new Browser(this)
     this.browser = browser
     this.windows.bind(browser)
@@ -511,7 +514,7 @@ export class ElectronPlatform implements Platform {
     this.registerIpc(browser)
     attachSecurityHandlers(browser, this.views)
     configurePlatformAuthenticators(__ZENIUM_APPLE_TEAM_ID__)
-    browser.start()
+    browser.start(options)
     // The engine has its persisted rule sets now: the ones of extensions removed or disabled
     // while Zenium was closed go before the enabled ones load (`extensions.start`, above).
     extensionApi.declarativeNetRequest.reconcile()

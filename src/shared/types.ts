@@ -20,7 +20,7 @@ import type {
   ThirdPartyCookiePrivateMode
 } from './privacy'
 import type { InternalPageId } from './internalPages'
-import type { WebAppInfo } from './webApp'
+import type { InstallSurface, WebAppInfo } from './webApp'
 import type { ContentDefault } from './contentSettings'
 import type { VoiceEvent, VoiceStartOutcome } from './voice'
 import type { QrEvent, QrStartOutcome } from './qrScan'
@@ -246,10 +246,28 @@ export type WindowKind = 'synced' | 'unsynced' | 'private'
 /** Which tabs new synced windows share: everything, pinned/essential only, or nothing. */
 export type WindowSyncMode = 'all' | 'pinned' | 'off'
 /**
- * What a window's chrome shows: the sidebar with spaces and tabs, or – for the sized windows
- * pages open with `window.open(url, name, 'width=…')` – a single toolbar row above the page.
+ * What a window's chrome shows: the sidebar with spaces and tabs; for the sized windows pages
+ * open with `window.open(url, name, 'width=…')` a single toolbar row above the page; for a web
+ * app launched standalone (`zenium --app=<url>`, an installed app's launcher) no browser chrome
+ * at all, only the app's own title bar (Chrome's app window).
  */
-export type WindowChrome = 'full' | 'popup'
+export type WindowChrome = 'full' | 'popup' | 'app'
+
+/**
+ * The web app a standalone window (`WindowChrome` `app`) is showing: its name and icon for the
+ * window's title bar, and the scope its pages stay within (a navigation out of it opens in a
+ * browser tab instead, as Chrome's app windows keep their app).
+ */
+export interface AppWindowInfo {
+  /** The installed app's name, or the launch URL's host when no record matches. */
+  name: string
+  /** The app's icon (a data or file URL), or null to show the page's favicon. */
+  icon: string | null
+  /** Absolute scope URL: the app's pages are those whose URL starts with it. */
+  scope: string
+  /** The installed app's id when the window belongs to one (`webapp.launch`), else null. */
+  appId: string | null
+}
 /** System-drawn material behind a translucent chrome (Windows 11). */
 export type WindowMaterial = 'none' | 'mica'
 
@@ -2273,6 +2291,8 @@ export interface WindowState {
   htmlFullscreenTabId: string | null
   /** A window-modal question waiting for an answer ("Close N tabs?"), if any. */
   prompt: WindowPrompt | null
+  /** The web app a standalone window shows (`chrome` `app`); null for browser windows. */
+  app: AppWindowInfo | null
 }
 
 /**
@@ -3972,6 +3992,13 @@ export interface Commands {
   'webapp.cancelInstall': { args: { tabId: string }; result: void }
   /** The ambient banner went away: swiped (starts the cooldown) or timed out. */
   'webapp.dismissBanner': { args: { tabId: string; reason: 'swipe' | 'timeout' }; result: void }
+  /**
+   * Open an installed app (`PinnedWebApp.id`) the way its launcher does: in a standalone app
+   * window on hosts with windows (MW-23), as a tab at its start URL elsewhere.
+   */
+  'webapp.launch': { args: { appId: string }; result: void }
+  /** Remove an installed app: its launcher (where the host made one) and its record. */
+  'webapp.uninstall': { args: { appId: string }; result: void }
 }
 
 export type CommandName = keyof Commands
@@ -4161,9 +4188,19 @@ export interface Events {
   'webapp.bannerHide': { tabId: string }
   /**
    * The launcher confirmed a Home screen shortcut (NOT-20): the chrome toasts "Added <name> to
-   * Home screen" with an Open action that takes `tabId` to `url`, the shortcut's own.
+   * Home screen" with an Open action that takes `tabId` to `url`, the shortcut's own. On desktop
+   * (`surface` `desktop`) the app was installed as a launcher and – with a manifest – opened in
+   * its own window already, as Chrome does; the toast's Open then launches it (`webapp.launch`
+   * with `appId`).
    */
-  'webapp.pinned': { tabId: string | null; name: string; url: string | null }
+  'webapp.pinned': {
+    tabId: string | null
+    name: string
+    url: string | null
+    surface: InstallSurface
+    /** The installed app's id when the page had a manifest, else null (a plain shortcut). */
+    appId: string | null
+  }
 }
 
 export type EventName = keyof Events
@@ -4181,6 +4218,8 @@ export interface WebAppInstallPrompt {
   info: WebAppInfo | null
   /** Colour behind the letter tile (the manifest's theme colour or the space accent). */
   tint: string | null
+  /** Where the app lands – the copy follows it (`installSheetCopy`). */
+  surface: InstallSurface
 }
 
 export interface WebAppBanner {

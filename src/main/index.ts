@@ -77,7 +77,8 @@ function main(): void {
    * `zenium [--new-window|--blank-window|--private-window] [urls|files]`, from the command line,
    * a second instance, a file association or a protocol launch. URLs open as tabs in the window
    * the flags ask for (Zen Browser ships the same `--blank-window` flag); a bare flag just opens
-   * the window.
+   * the window. `--app=<url>` (an installed app's launcher) opens the page in a standalone app
+   * window instead – an open window of that app comes forward.
    */
   const openLaunch = (launch: LaunchArgs): void => {
     const b = browser
@@ -87,6 +88,15 @@ function main(): void {
     }
     // `--make-default-browser` is the ReinstallCommand Windows runs from its Default apps page.
     if (launch.makeDefault) void b.defaultBrowser.request('settings')
+    if (launch.app) {
+      const app = b.webApps.pinnedFor(launch.app)
+      const open = app ? b.allWindows().find((w) => w.app?.appId === app.id && !w.isClosing) : null
+      const win = open ?? b.openAppWindow(launch.app)
+      if (win) {
+        win.host.show()
+        win.host.focus()
+      }
+    }
     if (launch.urls.length === 0 && launch.window === 'current') return
     const win =
       launch.window === 'private'
@@ -95,7 +105,7 @@ function main(): void {
           ? b.createWindow({ kind: 'unsynced' })
           : launch.window === 'new'
             ? b.createWindow({ kind: 'synced' })
-            : b.ensureWindow()
+            : b.ensureBrowserWindow()
     // Blank and private windows start with one empty tab: the first URL goes there.
     const starter = win.localSpace ? win.selectedTabIn(win.localSpace) : null
     launch.urls.forEach((url, index) => {
@@ -119,7 +129,7 @@ function main(): void {
   })
   app.on('open-file', (event, path) => {
     event.preventDefault()
-    openLaunch({ urls: [pathToFileUrl(path)], window: 'current', makeDefault: false })
+    openLaunch({ urls: [pathToFileUrl(path)], window: 'current', makeDefault: false, app: null })
   })
 
   app.whenReady().then(() => {
@@ -130,9 +140,15 @@ function main(): void {
     app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window))
 
     const platform = new ElectronPlatform(app.getPath('userData'))
-    browser = platform.start()
+    // Launched for an app alone (`zenium --app=<url>`, an installed app's launcher): the app's
+    // window comes up by itself, as Chrome's does; the browser windows wait for the first thing
+    // that needs one (a link out of the app, the Dock, a second `zenium <url>`).
+    const initial = parseLaunchArgs(process.argv.slice(argvOffset), process.cwd())
+    const appAlone =
+      initial.app !== null && initial.urls.length === 0 && initial.window === 'current'
+    browser = platform.start({ windows: !appAlone })
     installShellTasks((kind) => void browser?.createWindow({ kind }))
-    openArgv(process.argv, process.cwd())
+    openLaunch(initial)
     for (const launch of queued.splice(0)) openLaunch(launch)
 
     app.on('activate', () => {
