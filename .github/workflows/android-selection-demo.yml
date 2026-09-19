@@ -14,9 +14,6 @@ name: Android selection toolbar demo
 # demo it runs.
 on:
   workflow_dispatch:
-  # Temporary, for the branch's coordinator-authorised extra run; removed before the head that merges.
-  push:
-    branches: [cursor/android-selection-actions-e0c5]
 
 permissions:
   contents: read
