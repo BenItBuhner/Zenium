@@ -1183,23 +1183,26 @@ function settlePage(
   seed: () => void,
   finish: () => void
 ): void {
-  whenActiveTabIs(isInternalPageUrl, () => {
-    whenPageRendered(() => {
-      setTimeout(() => {
-        seed()
-        // The landing keeps its query between states unless it is retyped: an empty one clears it.
-        type('input[aria-label="Find in Settings"]', target.search ?? '')
-        requestAnimationFrame(() => {
-          // The page keeps where a previous state scrolled it; every state starts at the top.
-          for (const el of document.querySelectorAll<HTMLElement>('[data-page] *')) {
-            if (el.scrollTop > 0) el.scrollTop = 0
-          }
-          show(target.show)
-          steps(target.then ?? [], finish)
-        })
-      }, 300)
-    })
-  })
+  whenActiveTabIs(
+    (active) => isInternalPageUrl(active.url),
+    () => {
+      whenPageRendered(() => {
+        setTimeout(() => {
+          seed()
+          // The landing keeps its query between states unless it is retyped: an empty one clears it.
+          type('input[aria-label="Find in Settings"]', target.search ?? '')
+          requestAnimationFrame(() => {
+            // The page keeps where a previous state scrolled it; every state starts at the top.
+            for (const el of document.querySelectorAll<HTMLElement>('[data-page] *')) {
+              if (el.scrollTop > 0) el.scrollTop = 0
+            }
+            show(target.show)
+            steps(target.then ?? [], finish)
+          })
+        }, 300)
+      })
+    }
+  )
 }
 
 /**
