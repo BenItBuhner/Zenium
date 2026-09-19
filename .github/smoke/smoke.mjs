@@ -50,6 +50,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { classifyFailures, formatFailure, loadKnownFailures } from './known-failures.mjs'
 import { buttonScreenPoint, startPopupFixture } from './popup-fixture.mjs'
+import { retryDetail, waitForTabWithRetry } from './navigation.mjs'
 import { exitWithin, mainProcessState, unlessTargetClosed } from './quit.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -1348,11 +1349,28 @@ async function openUrlInNewTab(s, url) {
     await input.first().waitFor({ state: 'hidden', timeout: 5000 })
   }
   const rowsBefore = await s.sidebarTabCount()
+  // Main-process events recorded before this navigation are not its failures.
+  const eventsBefore = s.readEvents().length
   await s.press(`${ACCEL}+t`)
   await input.first().waitFor({ state: 'visible', timeout: 8000 })
   await input.first().fill(url)
   await s.press('Enter')
-  const tab = await s.waitForTab(url, 45000)
+  // One network hiccup on the runner (a TLS reset, `ERR_CONNECTION_RESET`) lands the tab on the
+  // error page; the step retries the navigation once in that tab (Accel+L, the address again)
+  // and says so in its detail. A second failure fails the step (navigation.mjs).
+  const { tab, retried } = await waitForTabWithRetry({
+    url,
+    loaded: async () => (await s.tabs()).find((t) => t.url.startsWith(url) && !t.loading),
+    events: async () => s.readEvents().slice(eventsBefore),
+    retry: async (failure) => {
+      log(`${url}: ${retryDetail(failure)}`)
+      await s.press(`${ACCEL}+l`)
+      await input.first().waitFor({ state: 'visible', timeout: 8000 })
+      await input.first().fill(url)
+      await s.press('Enter')
+    },
+    timeoutMs: 45000
+  })
   const rows = await waitFor(
     async () => {
       const n = await s.sidebarTabCount()
@@ -1361,7 +1379,7 @@ async function openUrlInNewTab(s, url) {
     10000,
     `a new sidebar row for ${url} (${rowsBefore} before)`
   )
-  return { tab, sidebarTabs: rows }
+  return { tab, sidebarTabs: rows, retried: retried ? retryDetail(retried) : null }
 }
 
 async function closeExtraWindows(s) {
@@ -1472,11 +1490,11 @@ async function scenarioBoot() {
     await s.step('window', () => assertMainWindow(s))
 
     await s.step('new-tab-example-com', async () => {
-      const { tab, sidebarTabs } = await openUrlInNewTab(s, EXAMPLE_URL)
+      const { tab, sidebarTabs, retried } = await openUrlInNewTab(s, EXAMPLE_URL)
       await s.sidebarTab(EXAMPLE_TITLE).first().waitFor({ state: 'visible', timeout: 15000 })
       out.exampleTab = tab
       await s.shot('03-example-com')
-      return { url: tab.url, title: tab.title, sidebarTabs }
+      return { url: tab.url, title: tab.title, sidebarTabs, ...(retried ? { retried } : {}) }
     })
 
     await s.step('quit', async () => {
