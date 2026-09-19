@@ -234,7 +234,7 @@ export function useMainEvents(): void {
       ),
       onEvent('translate.selection', ({ tabId, text, x, y }) => {
         closeUrlbar()
-        void openTranslateSelection({ tabId, text, x, y }, currentActiveTabId())
+        openTranslateSelection({ tabId, text, x, y })
       }),
       onEvent('insets', (insets) => {
         uiStore.set({ insets })

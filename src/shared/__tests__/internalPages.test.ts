@@ -200,9 +200,9 @@ describe('the section model', () => {
     // #106's Languages follows the translation engine, as the desktop pane does.
     expect(ids).not.toContain('languages')
     const translating = new Proxy({} as HostCapabilities, { get: (_t, key) => key === 'translate' })
-    expect(availableSections(INTERNAL_PAGES.settings, translating, 'phone').map((s) => s.id)).toContain(
-      'languages'
-    )
+    expect(
+      availableSections(INTERNAL_PAGES.settings, translating, 'phone').map((s) => s.id)
+    ).toContain('languages')
   })
 })
 

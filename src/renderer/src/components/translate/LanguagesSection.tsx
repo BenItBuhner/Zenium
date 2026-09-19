@@ -1,13 +1,14 @@
 import type { JSX, ReactNode } from 'react'
-import { useEffect, useState } from 'react'
-import { ArrowUp, Trash2 } from 'lucide-react'
+import { Children, useEffect, useState } from 'react'
+import { ArrowUp, Trash2, type LucideIcon } from 'lucide-react'
 import type { TranslateModelInfo, TranslatePreferences } from '@shared/translate'
 import type { UIState } from '@shared/types'
 import { languageName } from '@shared/languageNames'
 import { cmd, run } from '@renderer/lib/api'
 import { languageOptions, pairKey, pairLabel, type LanguageOption } from '@renderer/lib/translate'
 import { cn, formatBytes } from '@renderer/lib/utils'
-import { Checkbox, IconButton, Menulist } from './controls'
+import { V2CheckRow, V2IconButton } from '../extensions/v2'
+import { Menulist } from './Menulist'
 
 /**
  * Settings > Languages, the desktop pane: whether Zenium offers to translate, the languages the
@@ -15,10 +16,12 @@ import { Checkbox, IconButton, Menulist } from './controls'
  * sites that are never offered, and the translation models on the device. Laid out on the v2
  * draft (§6 settings page): the pane opens on its 22/600 "Translation" section title (§9.26)
  * and every list is named by a 15/600 sub-heading over a 15 deemphasised description and a
- * bordered card (§9.27: a title above a card is a sub-heading, never 17), with 16 px checkboxes,
- * bordered menulists and 32 px rows. The `SettingsPanel` shows it behind the `translate`
- * capability. On a phone Settings is a tab and these rows are the `languages` category's
- * builder (`pages/settings/sections.tsx`), never this pane.
+ * bordered card (§9.27: a title above a card is a sub-heading, never 17). The rows are the
+ * shared `.zen-v2-row` (§9.34): the check row a target, every list row static (`data-static`,
+ * its icon buttons being the targets) and grown around its control (§9.21); the checkbox, the
+ * icon buttons and the menulist are the shared primitives. The `SettingsPanel` shows it behind
+ * the `translate` capability. On a phone Settings is a tab and these rows are the `languages`
+ * category's builder (`pages/settings/sections.tsx`), never this pane.
  */
 export function LanguagesSection({ state }: { state: UIState }): JSX.Element {
   const { translate } = state
@@ -34,9 +37,11 @@ export function LanguagesSection({ state }: { state: UIState }): JSX.Element {
         description="Pages in other languages are translated on this device, with models Zenium downloads the first time a language pair is used. Nothing leaves the device."
         section
       >
-        <Checkbox checked={prefs.autoOffer} onChange={(autoOffer) => set({ autoOffer })}>
-          Offer to translate pages in other languages
-        </Checkbox>
+        <V2CheckRow
+          label="Offer to translate pages in other languages"
+          checked={prefs.autoOffer}
+          onChange={(autoOffer) => set({ autoOffer })}
+        />
       </Group>
 
       <LanguageList
@@ -88,14 +93,13 @@ export function LanguagesSection({ state }: { state: UIState }): JSX.Element {
         ) : (
           prefs.neverTranslateSites.map((site) => (
             <Row key={site} label={site}>
-              <IconButton
+              <RowAction
+                icon={Trash2}
                 label={`Offer to translate ${site} again`}
                 onClick={() =>
                   set({ neverTranslateSites: prefs.neverTranslateSites.filter((s) => s !== site) })
                 }
-              >
-                <Trash2 />
-              </IconButton>
+              />
             </Row>
           ))
         )}
@@ -113,9 +117,9 @@ export function LanguagesSection({ state }: { state: UIState }): JSX.Element {
 /**
  * A heading, its description and the content they introduce, boxed in a card when the group has
  * its own actions. The pane's opening group carries the 22/600 section title (§9.26: line-height
- * 28, 16 below it); every other group is named by a 15/600 sub-heading with its description 4
- * under it and 16 to the first row or the card's edge (§9.27). One name per card: the card
- * itself has none inside.
+ * 28, its description 4 under it, 16 from the description to the first row); every other group
+ * is named by a 15/600 sub-heading with its description 4 under it and 16 to the card's edge
+ * (§9.27). One name per card: the card itself has none inside.
  */
 function Group({
   title,
@@ -139,7 +143,7 @@ function Group({
       </Heading>
       {description && <p className="zen-translate-description">{description}</p>}
       {children !== undefined && (
-        <div className={cn('zen-translate-group-body', card && 'zen-translate-card')}>
+        <div className={cn('zen-translate-group-body', card && 'zen-v2-card zen-translate-card')}>
           {children}
         </div>
       )}
@@ -147,6 +151,11 @@ function Group({
   )
 }
 
+/**
+ * A list entry: the shared row's static form (§9.34) – the row is not a target, the icon buttons
+ * trailing it are – grown around them (§9.21: 36 around a 28 icon button) when it has any, else
+ * at the base 32.
+ */
 function Row({
   label,
   detail,
@@ -157,8 +166,9 @@ function Row({
   detail?: string
   children?: ReactNode
 }): JSX.Element {
+  const controls = Children.toArray(children).length > 0
   return (
-    <div className="zen-translate-row">
+    <div className={cn('zen-v2-row', controls && 'zen-translate-control-row')} data-static="">
       <span className="min-w-0 flex-1 truncate">{label}</span>
       {detail && <span className="zen-translate-caption shrink-0">{detail}</span>}
       {children}
@@ -166,12 +176,36 @@ function Row({
   )
 }
 
-/** An empty list (§9.17): one centred sentence, no full stop, top-anchored in the card. */
-function Empty({ children }: { children: ReactNode }): JSX.Element {
-  return <div className="zen-translate-empty">{children}</div>
+/** A row's action: the shared icon button (§9.3), its label the tooltip and the accessible name. */
+function RowAction({
+  icon,
+  label,
+  onClick
+}: {
+  icon: LucideIcon
+  label: string
+  onClick: () => void
+}): JSX.Element {
+  return <V2IconButton icon={icon} label={label} onClick={onClick} />
 }
 
-/** The control that adds to a list: a menulist in a row of its own (§9.21: 40 around its 32). */
+/**
+ * An empty list (§9.17, inside a card): one plain static row at the card's gutter, one sentence
+ * in the deemphasised ink, no full stop, no centring and no top gap – the card's 4 px rows inset
+ * is all the air around it.
+ */
+function Empty({ children }: { children: ReactNode }): JSX.Element {
+  return (
+    <div className="zen-v2-row zen-translate-empty" data-static="">
+      {children}
+    </div>
+  )
+}
+
+/**
+ * The control that adds to a list: the shared menulist in a static row of its own (§9.21: 40
+ * around its 32; the row is not the target, the menulist is).
+ */
 function AddRow({
   label,
   placeholder,
@@ -184,7 +218,7 @@ function AddRow({
   onPick: (value: string) => void
 }): JSX.Element {
   return (
-    <div className="zen-translate-row zen-translate-row-add">
+    <div className="zen-v2-row zen-translate-control-row zen-translate-add" data-static="">
       <Menulist
         value={null}
         placeholder={placeholder}
@@ -225,23 +259,28 @@ function LanguageList({
   return (
     <Group title={title} description={description} card>
       {codes.length === 0 && empty && <Empty>{empty}</Empty>}
-      {codes.map((code, index) => (
-        <Row key={code} label={languageName(code)}>
-          {onPromote && index > 0 && (
-            <IconButton
-              label={`Make ${languageName(code)} the first`}
-              onClick={() => onPromote(code)}
-            >
-              <ArrowUp />
-            </IconButton>
-          )}
-          {onRemove && (
-            <IconButton label={`Remove ${languageName(code)}`} onClick={() => onRemove(code)}>
-              <Trash2 />
-            </IconButton>
-          )}
-        </Row>
-      ))}
+      {codes.map((code, index) => {
+        const promote = onPromote && index > 0
+        const remove = onRemove !== undefined
+        return (
+          <Row key={code} label={languageName(code)}>
+            {promote && (
+              <RowAction
+                icon={ArrowUp}
+                label={`Make ${languageName(code)} the first`}
+                onClick={() => onPromote(code)}
+              />
+            )}
+            {remove && (
+              <RowAction
+                icon={Trash2}
+                label={`Remove ${languageName(code)}`}
+                onClick={() => onRemove(code)}
+              />
+            )}
+          </Row>
+        )
+      })}
       {remaining.length > 0 && (
         <AddRow
           label={addLabel}
@@ -306,12 +345,11 @@ function ModelsGroup({ state }: { state: UIState }): JSX.Element {
       )}
       {installed.map((m) => (
         <Row key={pairKey(m)} label={pairLabel(m.from, m.to)} detail={formatBytes(m.bytes)}>
-          <IconButton
+          <RowAction
+            icon={Trash2}
             label={`Remove the ${pairLabel(m.from, m.to)} model`}
             onClick={() => run('translate.removeModel', { from: m.from, to: m.to })}
-          >
-            <Trash2 />
-          </IconButton>
+          />
         </Row>
       ))}
       {downloading.map((m) => (
@@ -323,13 +361,17 @@ function ModelsGroup({ state }: { state: UIState }): JSX.Element {
           placeholder="Download a model…"
           options={available.map((m) => ({
             value: pairKey(m),
-            label: `${pairLabel(m.from, m.to)} (${formatBytes(m.bytes)})`
+            label: pairLabel(m.from, m.to),
+            description: formatBytes(m.bytes)
           }))}
           onPick={download}
         />
       )}
       {installed.length > 0 && (
-        <p className="zen-translate-caption pt-2">{formatBytes(total)} on this device.</p>
+        // The total is a live count and no target: a static row in the caption ink (§9.34).
+        <div className="zen-v2-row zen-translate-caption" data-static="">
+          {formatBytes(total)} on this device
+        </div>
       )}
     </Group>
   )

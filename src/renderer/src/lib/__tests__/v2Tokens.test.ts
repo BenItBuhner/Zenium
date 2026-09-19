@@ -416,7 +416,12 @@ describe('the v2 primitives (§9.34)', () => {
     '.zen-v2-switch',
     '.zen-v2-radio',
     // The checkbox (#93): the extensions UI's layered copy went with it.
-    '.zen-v2-checkbox'
+    '.zen-v2-checkbox',
+    // The menulist (#106) with its popover's popup and option: the extensions UI's layered
+    // copies and the translate stylesheet's own went with it.
+    '.zen-v2-menulist',
+    '.zen-v2-menulist-popup',
+    '.zen-v2-menulist-option'
   ]
 
   it('are one unlayered rule each, tokens only, with no layered or second copy', () => {

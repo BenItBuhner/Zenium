@@ -1,43 +1,50 @@
-import type { JSX, KeyboardEvent, RefObject } from 'react'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import type { CSSProperties, JSX, KeyboardEvent } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { Check, ChevronDown } from 'lucide-react'
-import {
-  menulistClosed,
-  menulistOpened,
-  placePopover,
-  prepareMenulist,
-  type LanguageOption
-} from '@renderer/lib/translate'
+import { useEscape } from '@renderer/hooks/useEscape'
+import { useFloatingChrome } from '@renderer/hooks/useFloatingChrome'
+import { useArrowKeys, usePopover } from '@renderer/hooks/usePopover'
+import { anchorOf, placeUnder, popOrigin, type Anchor } from '@renderer/lib/anchor'
 import { useBackSurface } from '@renderer/lib/back'
 import { useViewport } from '@renderer/lib/formFactor'
-import { activeTab } from '@renderer/lib/selectors'
-import { browserStore } from '@renderer/lib/ui'
+import { openedFromKeyboard } from '@renderer/lib/popover'
+import {
+  ChromePortal,
+  FrameDialogPortal,
+  popoverStyle,
+  useFrameDialog,
+  useLightDismiss,
+  type PopoverBox
+} from '@renderer/lib/portals'
+import type { LanguageOption } from '@renderer/lib/translate'
 import { cn } from '@renderer/lib/utils'
+import { V2Radio } from '../extensions/v2'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 
-/** The popover's fixed width (§9.20: 320 for a list without trailing controls). */
-const WIDTH = 320
-/** The popover shows at least this many rows before it flips above the trigger's bar. */
-const MIN_ROWS = 5
-const ROW = 28
-const PAD = 6
+interface PopupProps {
+  anchor: Anchor
+  label: string
+  value: string | null
+  options: readonly LanguageOption[]
+  onPick: (value: string) => void
+  onClose: () => void
+}
 
 /**
- * A menulist on the v2 draft (§9.13): a bordered trigger with a chevron that opens its options
- * as a `--v2-panel` popover under itself on the desktop – 28 px rows, the current one marked with
- * a trailing check – and as a bottom sheet of 44 px rows on phones, the current one carrying a
- * radio glyph; picking an option closes either. Never the platform's own `<select>` popup.
+ * The translate surfaces' menulist, on the shared `.zen-v2-menulist` (v2 draft §9.34, §9.13): a
+ * bordered trigger with a chevron whose popup is never the platform's `<select>`. On a mouse the
+ * options are a `--v2-panel` popover flush under the bar or row the trigger sits in (§9.20, through
+ * the chrome layer: 28 rows at radius 6, the current one marked with a trailing check, the
+ * chrome layer's placement and its height cap); on a phone they are a bottom sheet of 44 radio
+ * rows (§9.14) in the frame's dialog host. Picking one closes either.
  *
- * The popover is a desktop popover of §9.20: 320 wide whatever its rows hold, its top border on
- * the bottom edge of the bar or row the trigger sits in, start-aligned with the trigger (end-
- * aligned when the trigger is in the trailing half of its bar), 8 px inside the window, at most
- * 60% of the window tall. It takes the keyboard while it is up (§9.22): arrows, Home, End and
- * type-ahead move, Enter picks, Tab stays inside, Escape closes and hands focus back to the
- * trigger.
- *
- * Either list overhangs the content area, where the host draws the page above the chrome, so
- * while it is up the page gives way to its snapshot (as under the sheets), through the ui store.
+ * What the extensions' `V2Menulist` does not carry, and the language lists need: nothing picked
+ * yet (`value` null, the `placeholder` in deemphasised ink), a disabled trigger, and an option's
+ * second line – a model's size – which the popover's row clamps to one line (§9.13: the anchor's
+ * space is borrowed) and the sheet's row keeps to two (§9.2). The popover takes focus on the
+ * current option (§9.22); arrows, Home and End move it, a letter jumps to the next option that
+ * starts with it, Enter picks, Escape hands focus back to the trigger; the chrome layer's light
+ * dismiss closes it otherwise (§9.20 amended), the trigger's own press included.
  */
 export function Menulist({
   value,
@@ -50,7 +57,7 @@ export function Menulist({
 }: {
   /** The picked value; null shows `placeholder`. */
   value: string | null
-  options: LanguageOption[]
+  options: readonly LanguageOption[]
   onChange: (value: string) => void
   /** Accessible name, and the title of the phone's sheet (the visible text is the value). */
   label: string
@@ -58,332 +65,232 @@ export function Menulist({
   disabled?: boolean
   className?: string
 }): JSX.Element {
+  // A sheet on a phone, a popover everywhere else (§9.13) – a tablet's coarse pointer included,
+  // whose dialogs would close the popover a menulist may sit in (the selection popover).
   const phone = useViewport().formFactor === 'phone'
-  const [open, setOpen] = useState(false)
-  const opening = useRef(false)
-  const trigger = useRef<HTMLButtonElement>(null)
+  const [anchor, setAnchor] = useState<Anchor | null>(null)
   const current = options.find((o) => o.value === value) ?? null
-
-  // The page's snapshot stands in for it while the list is up (and comes down with it, also when
-  // the menulist unmounts with its list open).
-  useEffect(() => {
-    if (!open) return
-    menulistOpened()
-    return () => menulistClosed()
-  }, [open])
-
-  const openList = (): void => {
-    if (open || opening.current) return
-    opening.current = true
-    const state = browserStore.get().state
-    void prepareMenulist(state ? (activeTab(state)?.id ?? null) : null).then(() => {
-      opening.current = false
-      setOpen(true)
-    })
+  const popup: PopupProps | null = anchor && {
+    anchor,
+    label,
+    value,
+    options,
+    onPick: (next) => {
+      setAnchor(null)
+      if (next !== value) onChange(next)
+    },
+    onClose: () => setAnchor(null)
   }
-  const close = (): void => {
-    setOpen(false)
-    trigger.current?.focus({ preventScroll: true })
-  }
-  const pick = (next: string): void => {
-    close()
-    if (next !== value) onChange(next)
-  }
-
-  const list =
-    open &&
-    (phone ? (
-      <Sheet title={label} value={value} options={options} onPick={pick} onClose={close} />
-    ) : (
-      <Popover
-        anchor={trigger}
-        label={label}
-        value={value}
-        options={options}
-        onPick={pick}
-        onClose={close}
-      />
-    ))
 
   return (
     <span className={cn('zen-translate-menulist', className)}>
       <button
-        ref={trigger}
         type="button"
         className="zen-v2-menulist"
         aria-label={label}
-        aria-haspopup="listbox"
-        aria-expanded={open}
+        aria-haspopup={phone ? 'dialog' : 'listbox'}
+        aria-expanded={anchor !== null || undefined}
         disabled={disabled}
         data-placeholder={current ? undefined : true}
-        onClick={() => (open ? close() : openList())}
+        onClick={(e) => setAnchor(anchorOf(e.currentTarget))}
         onKeyDown={(e) => {
           if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
             e.preventDefault()
-            openList()
+            setAnchor(anchorOf(e.currentTarget))
           }
         }}
       >
-        <span className="truncate">{current?.label ?? placeholder ?? ''}</span>
+        <span className="min-w-0 flex-1 truncate">{current?.label ?? placeholder ?? ''}</span>
         <ChevronDown aria-hidden />
       </button>
-      {list}
+      {popup && (phone ? <MenulistSheet {...popup} /> : <MenulistPopover {...popup} />)}
     </span>
   )
 }
 
 // ---------------------------------------------------------------------------
-// Desktop and tablet: a popover under the trigger
+// Desktop and tablet: a popover under the trigger's bar
 // ---------------------------------------------------------------------------
 
-/**
- * The bar the trigger sits in, whose bottom edge the popover's top border sits on (§9.20: gap 0
- * to the bar, which is 4 px under a 32 px control in a 40 px bar or row): the translate bar, a
- * settings or panel row, else whatever holds the trigger.
- */
-function anchorBar(trigger: HTMLElement): Element {
-  return (
-    trigger.closest('.zen-translate-bar, .zen-translate-row') ?? trigger.parentElement ?? trigger
-  )
-}
-
-function Popover({
+function MenulistPopover({
   anchor,
   label,
   value,
   options,
   onPick,
   onClose
-}: {
-  anchor: RefObject<HTMLButtonElement | null>
-  label: string
-  value: string | null
-  options: LanguageOption[]
-  onPick: (value: string) => void
-  onClose: () => void
-}): JSX.Element {
-  const list = useRef<HTMLUListElement>(null)
-  const latest = useRef(onClose)
-  useEffect(() => {
-    latest.current = onClose
-  })
-  const [active, setActive] = useState(() => {
-    const index = options.findIndex((o) => o.value === value)
-    return index >= 0 ? index : 0
-  })
-
-  // On the bottom edge of the trigger's bar, aligned with the trigger, inside the window.
+}: PopupProps): JSX.Element | null {
+  // Opened from the keyboard the page did not have focus and does not get it back (§9.22).
+  const [fromKeyboard] = useState(openedFromKeyboard)
+  const ready = useFloatingChrome({ pageHadFocus: !fromKeyboard })
+  const ref = useRef<HTMLDivElement>(null)
+  const [box, setBox] = useState<PopoverBox | null>(null)
   useLayoutEffect(() => {
-    const el = anchor.current
-    const popup = list.current
-    if (!el || !popup) return
-    const { left, top, maxHeight } = placePopover(
-      el.getBoundingClientRect(),
-      anchorBar(el).getBoundingClientRect(),
-      { width: window.innerWidth, height: window.innerHeight },
-      {
-        width: WIDTH,
-        wanted: options.length * ROW + 2 * PAD + 2,
-        minHeight: MIN_ROWS * ROW + 2 * PAD
-      }
-    )
-    popup.style.left = `${left}px`
-    popup.style.top = `${top}px`
-    popup.style.maxHeight = `${maxHeight}px`
-    popup.style.visibility = 'visible'
-  }, [anchor, options.length])
+    const el = ref.current
+    if (!el) return
+    // The list keeps its intrinsic width (§5's 232–332, no less than the trigger's) and is as
+    // tall as its options – measured as layout size, not the client rect, which the pop
+    // animation's first frame scales to .94; the chrome layer caps the height (§9.20).
+    setBox(placeUnder(anchor, { measured: el.offsetWidth }, el.offsetHeight))
+  }, [anchor, options.length, ready])
+  usePopover(ref, {
+    onClose,
+    active: ready && box !== null,
+    initial: (root) => root.querySelector<HTMLElement>('[aria-selected="true"]')
+  })
+  useArrowKeys(ref, '.zen-v2-menulist-option')
+  useLightDismiss(ref, onClose, { anchor: () => anchor.element ?? null })
+  // The current option is in view when the list comes up.
+  useEffect(() => {
+    if (box)
+      ref.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' })
+  }, [box])
 
-  // The list takes the keyboard while it is open and shows the current option straight away.
-  useEffect(() => {
-    list.current?.focus({ preventScroll: true })
-  }, [])
-  useEffect(() => {
-    list.current?.querySelector<HTMLElement>('[data-active]')?.scrollIntoView({ block: 'nearest' })
-  }, [active])
-  // The window moved under the popover, or the user left it: the popover is stale.
-  useEffect(() => {
-    const away = (): void => latest.current()
-    window.addEventListener('resize', away)
-    window.addEventListener('blur', away)
-    return () => {
-      window.removeEventListener('resize', away)
-      window.removeEventListener('blur', away)
-    }
-  }, [])
-
-  const onKeyDown = (e: KeyboardEvent<HTMLUListElement>): void => {
-    switch (e.key) {
-      case 'ArrowDown':
-        setActive((i) => Math.min(options.length - 1, i + 1))
-        break
-      case 'ArrowUp':
-        setActive((i) => Math.max(0, i - 1))
-        break
-      case 'Home':
-        setActive(0)
-        break
-      case 'End':
-        setActive(options.length - 1)
-        break
-      case 'Enter':
-      case ' ': {
-        const option = options[active]
-        if (option) onPick(option.value)
-        break
-      }
-      case 'Escape':
-        onClose()
-        break
-      case 'Tab':
-        // The list is the popover's only stop: Tab wraps onto it (§9.22), Escape leaves.
-        break
-      default: {
-        // Type-ahead on the first letter, from the row after the active one.
-        if (e.key.length !== 1 || e.altKey || e.ctrlKey || e.metaKey) return
-        const letter = e.key.toLowerCase()
-        const from = active + 1
-        const next = options.findIndex(
-          (o, i) => i >= from && o.label.toLowerCase().startsWith(letter)
-        )
-        const wrapped =
-          next >= 0 ? next : options.findIndex((o) => o.label.toLowerCase().startsWith(letter))
-        if (wrapped >= 0) setActive(wrapped)
-        else return
-      }
-    }
+  // Type-ahead on a letter: the next option after the focused one that starts with it, wrapping.
+  const typeAhead = (e: KeyboardEvent<HTMLDivElement>): void => {
+    if (e.key.length !== 1 || e.altKey || e.ctrlKey || e.metaKey || e.key === ' ') return
+    const root = ref.current
+    if (!root) return
+    const items = [...root.querySelectorAll<HTMLElement>('.zen-v2-menulist-option')]
+    const from = items.indexOf(document.activeElement as HTMLElement) + 1
+    const letter = e.key.toLowerCase()
+    const starts = (i: number): boolean =>
+      (options[i]?.label ?? '').toLowerCase().startsWith(letter)
+    let next = -1
+    for (let i = from; i < items.length && next < 0; i++) if (starts(i)) next = i
+    for (let i = 0; i < from && next < 0; i++) if (starts(i)) next = i
+    if (next < 0) return
     e.preventDefault()
-    e.stopPropagation()
+    items[next]?.focus()
   }
 
-  return createPortal(
-    <div
-      className="zen-translate-menulist-layer"
-      onMouseDown={(e) => {
-        e.stopPropagation()
-        onClose()
-      }}
-      onContextMenu={(e) => {
-        e.preventDefault()
-        onClose()
-      }}
-    >
-      <ul
-        ref={list}
+  if (!ready) return null
+  return (
+    <ChromePortal>
+      <div
+        ref={ref}
         role="listbox"
         aria-label={label}
-        tabIndex={-1}
-        className="zen-translate-menulist-popup zen-animate-pop"
-        style={{ visibility: 'hidden' }}
-        onMouseDown={(e) => e.stopPropagation()}
-        onKeyDown={onKeyDown}
+        className="zen-v2 zen-v2-panel zen-v2-menulist-popup zen-animate-pop fixed select-none"
+        style={
+          {
+            ...(box ? popoverStyle(box) : { left: anchor.x, top: anchor.y + anchor.height }),
+            // The trigger's width, a floor under the list's own (main.css: never narrower than
+            // the trigger, nor than §5's 232).
+            '--zen-anchor-width': `${anchor.width}px`,
+            visibility: box ? 'visible' : 'hidden',
+            transformOrigin: box ? popOrigin(anchor, box) : undefined
+          } as CSSProperties
+        }
+        onKeyDown={typeAhead}
       >
-        {options.map((option, index) => {
+        {options.map((option) => {
           const selected = option.value === value
           return (
-            <li
+            <button
               key={option.value}
+              type="button"
               role="option"
               aria-selected={selected}
-              data-active={index === active || undefined}
-              onPointerMove={() => {
-                if (index !== active) setActive(index)
-              }}
+              className="zen-v2-menulist-option"
               onClick={() => onPick(option.value)}
             >
-              <span className="min-w-0 flex-1 truncate">{option.label}</span>
+              <span className="zen-v2-menulist-option-text">
+                <span className="truncate">{option.label}</span>
+                {option.description && (
+                  <span className="zen-v2-menulist-option-description">{option.description}</span>
+                )}
+              </span>
               {selected && <Check aria-hidden />}
-            </li>
+            </button>
           )
         })}
-      </ul>
-    </div>,
-    document.body
+      </div>
+    </ChromePortal>
   )
 }
 
 // ---------------------------------------------------------------------------
-// Phone: a sheet
+// Phone: a sheet of radio rows
 // ---------------------------------------------------------------------------
 
-function Sheet({
-  title,
-  value,
-  options,
-  onPick,
-  onClose
-}: {
-  title: string
-  value: string | null
-  options: LanguageOption[]
-  onPick: (value: string) => void
-  onClose: () => void
-}): JSX.Element {
-  const sheet = useRef<BottomSheetHandle>(null)
-  const picked = useRef<string | null>(null)
+/**
+ * The phone's list: a modal dialog, so it mounts in the frame's dialog host (lib/portals.tsx,
+ * `FrameDialogPortal`) on the shared `BottomSheet`, over whatever sheet holds the trigger (the
+ * selection sheet: §9.24's depth two, the chassis receding the lower sheet under this one's
+ * scrim). It waits for the page's capture before it rises (`useFloatingChrome`), as any surface
+ * over the live page does; focus, Tab, the inert chrome and the return of focus to the trigger
+ * are the chassis's (#172), Escape and the back gesture this sheet's own.
+ */
+function MenulistSheet(props: PopupProps): JSX.Element | null {
+  const ready = useFloatingChrome()
+  if (!ready) return null
+  return (
+    <FrameDialogPortal>
+      <HostedMenulistSheet {...props} />
+    </FrameDialogPortal>
+  )
+}
 
+function HostedMenulistSheet({ label, value, options, onPick, onClose }: PopupProps): JSX.Element {
+  const sheet = useRef<BottomSheetHandle>(null)
+  const rows = useRef<HTMLDivElement>(null)
+  const titleId = useId()
+  const dismiss = (): void => sheet.current?.dismiss()
+  useFrameDialog({ onScrimPress: dismiss, ownScrim: true })
   useBackSurface({
-    name: 'menulist',
+    name: 'translate-menulist',
     onProgress: (progress) => sheet.current?.backProgress(progress),
     onCommit: () => sheet.current?.commitBack(),
     onCancel: () => sheet.current?.cancelBack()
   })
-  useEffect(() => {
-    const onKey = (e: globalThis.KeyboardEvent): void => {
-      if (e.key !== 'Escape') return
-      e.preventDefault()
-      e.stopImmediatePropagation()
-      sheet.current?.dismiss()
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [])
-  // The current option is in view when the sheet comes up (once the sheet has laid itself out).
+  useEscape(dismiss)
+  // The current option – the chassis's first focus (§9.22) – is in view when the sheet comes up.
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
-      document
-        .querySelector<HTMLElement>('.zen-translate-menulist-sheet [aria-selected="true"]')
-        ?.scrollIntoView({ block: 'center' })
+      rows.current?.querySelector('[aria-checked="true"]')?.scrollIntoView({ block: 'center' })
     })
     return () => cancelAnimationFrame(frame)
   }, [])
-
-  return createPortal(
+  return (
     <BottomSheet
       ref={sheet}
-      className="zen-translate-sheet zen-translate-menulist-sheet"
+      hosted
+      className="zen-translate-sheet"
       handleLabel="Resize list"
-      onDismissed={() => {
-        const next = picked.current
-        if (next !== null) onPick(next)
-        else onClose()
-      }}
+      labelledBy={titleId}
+      onDismissed={onClose}
       header={
-        <div className="zen-translate-sheet-header">
-          <span className="truncate">{title}</span>
-        </div>
+        <h2 id={titleId} className="zen-sheet-title">
+          {label}
+        </h2>
       }
     >
-      <ul role="listbox" aria-label={title} className="zen-translate-menulist-rows">
-        {options.map((option) => {
-          const selected = option.value === value
-          return (
-            <li key={option.value} role="option" aria-selected={selected}>
-              <button
-                type="button"
-                className="zen-sheet-item"
-                onClick={() => {
-                  picked.current = option.value
-                  sheet.current?.dismiss()
-                }}
-              >
-                <span className="min-w-0 flex-1 truncate">{option.label}</span>
-                {selected && <span className="zen-translate-radio" aria-hidden />}
-              </button>
-            </li>
-          )
-        })}
-      </ul>
-    </BottomSheet>,
-    document.body
+      {/*
+        Radio rows (§9.13, §9.14) on the shared `.zen-v2-row` and `.zen-v2-radio` (§9.34): the
+        row carries `aria-checked`, which draws the glyph inside the radio; an option's second
+        line (a model's size) is a §9.2 description under its label.
+      */}
+      <div ref={rows} className="zen-v2 flex flex-col pb-1" role="radiogroup" aria-label={label}>
+        {options.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            role="radio"
+            aria-checked={option.value === value}
+            className="zen-v2-row"
+            onClick={() => sheet.current?.dismiss(() => onPick(option.value))}
+          >
+            <V2Radio />
+            <span className="zen-v2-row-text">
+              <span className="zen-v2-label">{option.label}</span>
+              {option.description && (
+                <span className="zen-v2-description">{option.description}</span>
+              )}
+            </span>
+          </button>
+        ))}
+      </div>
+    </BottomSheet>
   )
 }
