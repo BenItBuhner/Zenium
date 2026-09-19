@@ -45,9 +45,15 @@ import java.util.concurrent.TimeUnit
  *
  * Asserts what the engine answers (the login round-trips, the fills land in the fields, the card
  * and address round-trip, the password clip is the sensitive one, the vault document holds no
- * plaintext) and writes what it observes (system autofill status, WebAuthn support, clipboard
- * descriptions, which surfaces the tree exposed) next to the screenshots. The Settings tour is
- * photographed, not asserted: the tree of the software-rendered emulator trails the screen.
+ * plaintext) and what the fingers it puts inside the chrome's sheets and strips did (the rule in
+ * DemoHarness, the audit after #194: the prompt sheets' Save puts the entry in the vault, the
+ * pickers' rows fill the page's fields, the clipboard picker's option lands in the settings, the
+ * item sheets' Edit opens the editor on the entry, the editor's Country menulist stacks the
+ * country sheet whose option changes the form's lines; a touch that went in without its effect
+ * fails the run once the recording is done). Writes what it observes (system autofill status,
+ * WebAuthn support, clipboard descriptions, which path each press took) next to the screenshots.
+ * The Settings tour's stills are otherwise photographed, not asserted: the tree of the
+ * software-rendered emulator trails the screen.
  */
 @RunWith(AndroidJUnit4::class)
 class AutofillDemo : DemoHarness("autofill-demo-state.json", "services-password-fill-android", "autofill-demo") {
@@ -108,7 +114,11 @@ class AutofillDemo : DemoHarness("autofill-demo-state.json", "services-password-
         assertTrue("save prompt", awaitText("Save password for", 30_000, "pin-prompt-create-vault"))
         SystemClock.sleep(1_200)
         snap("save-password-prompt")
-        tapButton("Save")
+        // The prompt sheet's injected touch: Save under a finger, and the login must be in the
+        // vault on it (a touch the scrim took dismisses the sheet with nothing saved).
+        answerPrompt("Save", "the login is in the vault", "pin-prompt-save-password") {
+            zenArray("passwords.list", JSONObject()).length() == 1
+        }
         toast("Password saved")
         snap("password-saved")
         val logins = zenArray("passwords.list", JSONObject())
@@ -164,7 +174,11 @@ class AutofillDemo : DemoHarness("autofill-demo-state.json", "services-password-
             assertTrue("prompt '$title'", awaitText(title, 15_000))
             SystemClock.sleep(1_200)
             snap(if (card) "save-card-prompt" else "save-address-prompt")
-            tapButton("Save")
+            // Each prompt sheet's injected touch: Save, and the entry must be in the vault on it.
+            val list = if (card) "autofill.listCards" else "autofill.listAddresses"
+            answerPrompt("Save", "the ${if (card) "card" else "address"} is in the vault", "pin-prompt-save-checkout") {
+                zenArray(list, JSONObject()).length() == 1
+            }
             toast(if (card) "Card saved" else "Address saved")
         }
         snap("checkout-saved")
@@ -334,27 +348,283 @@ class AutofillDemo : DemoHarness("autofill-demo-state.json", "services-password-
     }
 
     // --- the chrome's surfaces: the picker strip, the prompt sheets, Settings ---------------------
+    //
+    // The rule for the steps below (DemoHarness, the audit after #194): every sequence that
+    // presses a control inside one of the chrome's sheets or strips – a prompt sheet's Save, a
+    // picker's row, the clipboard picker's option, an item sheet's Edit, the editor's Country
+    // menulist and the country sheet's option, an editor's Cancel – puts a REAL finger on it
+    // (the harness's [touchTap]: the injected touch waits for the node's bounds to hold still and
+    // lands inside the touchable window) and asserts what the control did: the entry in the
+    // vault, the fill in the page's field, the setting's new value, the editor holding the entry,
+    // the form's lines changed with the country. A touch that went in without its effect is a
+    // [touchFault] the run fails on once the recording is done; the step then reaches the state
+    // another way where one exists (the command API) so the recording goes on. No fallback stands
+    // in silently for a finger inside a sheet. The tree's click stays for one thing only, the
+    // Settings tab's own rows – a page's list, not a sheet's – when the WebView reports a row of
+    // the scrolled list where it was before the scroll ([pressRow] says so in the notes).
 
     /**
-     * Pick the first row of `picker` the way a user does – a tap on the strip's row in the chrome –
-     * and wait for the fill to land in the page's `selector`, answering the credential prompt the
-     * fill may raise on the way. The command API stands in when the tree does not expose the row
-     * (noted, so the recording says which path it shows).
+     * Pick the first row of `picker` the way a user does – a finger on the strip's row in the
+     * chrome (the picker's injected touch) – and wait for the fill to land in the page's
+     * `selector`, answering the credential prompt the fill may raise on the way. A touch that went
+     * in without the fill is a touch fault; the command API then stands in, as it does when the
+     * tree exposes no row to touch (noted either way, so the recording says which path it shows).
      */
     private fun pickInChrome(picker: JSONObject, rowPrefix: String, selector: String, expected: String, promptShot: String) {
         val item = picker.getJSONArray("items").getJSONObject(0)
-        val tapped = tapText(rowPrefix)
-        if (!tapped) {
+        val group = picker.getString("group")
+        val touched = touchText(rowPrefix)
+        var filled = touched && awaitValue(selector, expected, promptShot)
+        if (touched && !filled) {
+            touchFault("the touch on the $group picker's '$rowPrefix' row did not fill $selector")
+        }
+        if (!filled) {
             val pick = zen(
                 "autofill.pick",
                 JSONObject().put("id", picker.getString("id")).put("itemId", item.getString("id")),
                 promptShot = promptShot
             )
             assertEquals("pick: $pick", "ok", pick.getString("status"))
+            filled = awaitValue(selector, expected, promptShot)
         }
-        assertTrue("$selector filled after the pick of '$rowPrefix'", awaitValue(selector, expected, promptShot))
-        note("pick of '$rowPrefix': ${if (tapped) "the strip's row, tapped" else "the command API (the row was not in the tree)"}")
+        assertTrue("$selector filled after the pick of '$rowPrefix'", filled)
+        note(
+            "pick of '$rowPrefix': " + when {
+                touched && filled -> "the strip's row, touched"
+                touched -> "the command API (the touch on the strip's row did not fill: a touch fault)"
+                else -> "the command API (the row was not on screen to touch)"
+            }
+        )
     }
+
+    /**
+     * Answer a prompt sheet with a finger on its `label` button (the sheet's injected touch),
+     * which must do `effect` within 15 s – `took` holding, the credential prompt on the way
+     * answered (`promptShot`). A touch that went in without it is a touch fault; a prompt the core
+     * still lists is then answered through the command API so the recording goes on (a touch the
+     * scrim took dismissed it already: the assertions after this fail on the missing entry).
+     */
+    private fun answerPrompt(label: String, effect: String, promptShot: String, took: () -> Boolean) {
+        val prompt = zen("app.getState").getJSONObject("autofill").optJSONArray("prompts")?.optJSONObject(0)
+        val button = lowestNode(5_000) { node ->
+            node.className?.toString() == "android.widget.Button" && node.reads { it.equals(label, ignoreCase = true) }
+        } ?: error("no button '$label'")
+        if (touchExpecting(button, "the prompt sheet's '$label'", effect, timeoutMs = 15_000, promptShot = promptShot, took = took)) return
+        if (prompt == null) return
+        val listed = zen("app.getState").getJSONObject("autofill").optJSONArray("prompts")
+        val stillUp = (0 until (listed?.length() ?: 0)).any { listed!!.getJSONObject(it).getString("id") == prompt.getString("id") }
+        if (!stillUp) return
+        note("answering the prompt through the command API so the recording goes on")
+        zen(
+            "autofill.respond",
+            JSONObject().put("id", prompt.getString("id")).put("response", JSONObject().put("action", "save")),
+            promptShot = promptShot
+        )
+        awaitTook(10_000, promptShot, took)
+    }
+
+    // --- a finger on the chrome's controls (the rule in DemoHarness) -----------------------------
+
+    /** Whether the node's text or description, trimmed, satisfies `matches`. */
+    private fun AccessibilityNodeInfo.reads(matches: (String) -> Boolean): Boolean =
+        listOf(text, contentDescription).any { it != null && matches(it.toString().trim()) }
+
+    /**
+     * The lowest visible node of the app's own windows that `accept`s and has bounds on screen,
+     * polled for up to `timeoutMs`; null when none shows. The lowest, because the chrome's sheets
+     * and strips rise from the bottom over what they cover and the tree lists both (a sheet in
+     * front of the Settings repeats text the tree still holds behind it); the app's own windows,
+     * because the keyboard's suggestion strip may echo what was typed.
+     */
+    private fun lowestNode(timeoutMs: Long, accept: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (true) {
+            val lowest = nodes { node ->
+                node.isVisibleToUser && node.packageName?.toString() == app.packageName && accept(node)
+            }
+                .map { it to Rect().also(it::getBoundsInScreen) }
+                .filter { (_, rect) -> rect.width() > 0 && rect.height() > 0 }
+                .maxByOrNull { (_, rect) -> rect.centerY() }
+            if (lowest != null) return lowest.first
+            if (SystemClock.uptimeMillis() >= deadline) return null
+            SystemClock.sleep(300)
+        }
+    }
+
+    /**
+     * A real touch (the harness's [touchTap]: once the bounds hold still, inside the touchable
+     * window) on the lowest node whose text or description starts with `prefix` – a strip's row,
+     * a Settings row, an item sheet's row. False, and nothing injected, when none shows with
+     * bounds a finger reaches within the time (noted).
+     */
+    private fun touchText(prefix: String, timeoutMs: Long = 8_000): Boolean =
+        touchNode("'$prefix'", lowestNode(timeoutMs) { it.reads { s -> s.startsWith(prefix) } })
+
+    /** A real touch on `node` (named `what` in the notes); false, and nothing injected, when it is null or out of a finger's reach. */
+    private fun touchNode(what: String, node: AccessibilityNodeInfo?): Boolean {
+        if (node == null) {
+            note("nothing on screen reads $what to touch")
+            return false
+        }
+        if (!touchTap(node)) {
+            note("$what has no bounds on screen a finger reaches")
+            return false
+        }
+        SystemClock.sleep(900)
+        return true
+    }
+
+    /**
+     * The shape of a sheet flow's step (the rule in DemoHarness): a real touch on the control
+     * reading `label` (its whole label, or with `prefix` the start of its text), then up to
+     * `timeoutMs` for `took` to hold – the claim of the step, named by `effect` ("the editor opens
+     * on the saved address") – the credential prompt the control may raise on the way answered
+     * (`promptShot`). True when it held. False with no touch when nothing reads `label` (noted;
+     * the caller may reach the state another way). False with a [touchFault] the run fails on at
+     * its end when the touch went in and `took` never held: the surface did not take the finger.
+     */
+    private fun touchExpecting(
+        label: String,
+        effect: String,
+        timeoutMs: Long = 6_000,
+        prefix: Boolean = false,
+        promptShot: String = "pin-prompt",
+        took: () -> Boolean
+    ): Boolean {
+        val node = lowestNode(8_000) { node ->
+            node.reads { s -> if (prefix) s.startsWith(label) else s.equals(label, ignoreCase = true) }
+        }
+        return touchExpecting(node, "'$label'", effect, timeoutMs, promptShot, took)
+    }
+
+    /** [touchExpecting] on a node found by the caller, named `what` in the notes and the fault. */
+    private fun touchExpecting(
+        node: AccessibilityNodeInfo?,
+        what: String,
+        effect: String,
+        timeoutMs: Long,
+        promptShot: String,
+        took: () -> Boolean
+    ): Boolean {
+        if (!touchNode(what, node)) return false
+        if (awaitTook(timeoutMs, promptShot, took)) {
+            note("the touch on $what took: $effect")
+            return true
+        }
+        touchFault("the touch on $what did not take: not $effect within $timeoutMs ms")
+        return false
+    }
+
+    /** Poll `took` for up to `timeoutMs`, answering a credential prompt on the way; its last word. */
+    private fun awaitTook(timeoutMs: Long, promptShot: String, took: () -> Boolean): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (took()) return true
+            answerPin(promptShot)
+            SystemClock.sleep(300)
+        }
+        return took()
+    }
+
+    /**
+     * Press a row of the Settings tab's list – the page's own row, not a sheet's – so that
+     * `took` holds (`effect` names it: "the clipboard sheet is up"). Scrolled on screen first
+     * (the tree's show-on-screen on the first node reading `prefix`), then the tree's click on
+     * its clickable ancestor, and a real touch at its bounds when the click did not take. The
+     * click first is the stated exception of the rule in DemoHarness, for the page's list alone:
+     * on the emulator the WebView reports a row of the scrolled list where it was before the
+     * scroll, and a finger at those bounds lands on the row's neighbour (a switch, here). What
+     * the row opens is a sheet, whose controls then take the flow's real finger. The note says
+     * which path the press took. False when nothing reads `prefix` or neither press took.
+     */
+    private fun pressRow(prefix: String, effect: String, took: () -> Boolean): Boolean =
+        pressRow("'$prefix'", effect, took) { s -> s.startsWith(prefix) }
+
+    /** [pressRow] for a row whose text `matches` (named `what` in the notes). */
+    private fun pressRow(what: String, effect: String, took: () -> Boolean, matches: (String) -> Boolean): Boolean {
+        val inApp = { node: AccessibilityNodeInfo ->
+            node.packageName?.toString() == app.packageName && node.reads(matches)
+        }
+        val first = awaitInTree(8_000, inApp)
+        if (first == null) {
+            note("no Settings row reads $what")
+            return false
+        }
+        first.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.id)
+        SystemClock.sleep(1_500)
+        for (match in nodes(inApp)) {
+            var node: AccessibilityNodeInfo? = match
+            while (node != null && !node.isClickable) node = node.parent
+            if (node != null && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                if (awaitTook(6_000, "pin-prompt", took)) {
+                    note("the Settings row $what: the tree's click; $effect")
+                    return true
+                }
+                break
+            }
+        }
+        if (touchNode(what, lowestNode(4_000) { it.reads(matches) }) && awaitTook(6_000, "pin-prompt", took)) {
+            note("the Settings row $what: touched at its bounds after the tree's click took nothing; $effect")
+            return true
+        }
+        note("the Settings row $what took neither the tree's click nor a touch: not $effect")
+        return false
+    }
+
+    /**
+     * The first node of the app's windows that `accept`s, on screen or not (a heading or a row
+     * below the fold is in the tree without bounds a finger reaches), polled for up to
+     * `timeoutMs`; null when none arrives. The tree trails a sheet's leaving by a moment, so a
+     * heading is waited for this way before [reveal], which looks once.
+     */
+    private fun awaitInTree(timeoutMs: Long, accept: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (true) {
+            nodes(accept).firstOrNull()?.let { return it }
+            if (SystemClock.uptimeMillis() >= deadline) return null
+            SystemClock.sleep(300)
+        }
+    }
+
+    /** [awaitInTree] for a node of the app's reading exactly `label` (a group's heading). */
+    private fun awaitInTree(label: String, timeoutMs: Long = 8_000): Boolean =
+        awaitInTree(timeoutMs) { node ->
+            node.packageName?.toString() == app.packageName && node.reads { it == label }
+        } != null
+
+    /** The clipboard clear timeout in the core's settings (`passwords.clipboardClearSeconds`). */
+    private fun clipboardClearSeconds(): Int =
+        zen("app.getState").getJSONObject("settings").getJSONObject("passwords").optInt("clipboardClearSeconds", -1)
+
+    /**
+     * The value of the editor's line labelled `label` (its `<label>`, exactly; the fields' ids
+     * are React's, so the field is reached through the label), or null when no such line is up.
+     * The editor is the chrome document's, so this is what the tree's lag cannot hide.
+     */
+    private fun editorLine(label: String): String? {
+        val raw = chrome(
+            "(() => { const l = [...document.querySelectorAll('label')].find(l => l.textContent.trim() === ${JSONObject.quote(label)}); " +
+                "if (!l) return null; const f = document.getElementById(l.htmlFor); return f && 'value' in f ? f.value : null })()"
+        )
+        if (raw == "null") return null
+        return runCatching { JSONTokener(raw).nextValue() as? String }.getOrNull()
+    }
+
+    /** Whether the editor shows a line whose label starts with `label` ("Post town", with or without "(optional)"). */
+    private fun editorHas(label: String): Boolean =
+        chrome("[...document.querySelectorAll('label')].some(l => l.textContent.trim().startsWith(${JSONObject.quote(label)}))") == "true"
+
+    /**
+     * Whether the chrome document has a button reading exactly `label` – a sheet's row ("Edit
+     * address", "After 30 seconds") that is not in the document until its sheet is: what says a
+     * sheet is up without the tree's lag (a finger sent after a late tree would land on the sheet).
+     */
+    private fun chromeHasButton(label: String): Boolean =
+        chrome("[...document.querySelectorAll('button')].some(b => b.textContent.trim() === ${JSONObject.quote(label)})") == "true"
+
+    /** The saved address's country in the vault (the one address of the run). */
+    private fun savedAddressCountry(): String? =
+        zenArray("autofill.listAddresses", JSONObject()).optJSONObject(0)?.optString("country")
 
     /** Poll for the page's `selector` to hold `expected`, answering a credential prompt on the way. */
     private fun awaitValue(selector: String, expected: String, promptShot: String, timeoutMs: Long = 40_000): Boolean {
@@ -370,56 +640,20 @@ class AutofillDemo : DemoHarness("autofill-demo-state.json", "services-password-
     }
 
     /**
-     * A real touch on the lowest visible node whose text or description starts with `prefix` (a
-     * row of the picker's strip, a Settings row, a sheet's button – a sheet in front of the
-     * Settings repeats text the tree still lists behind it), or the accessibility click on its
-     * clickable ancestor when the tree reports no usable bounds; false when nothing shows within
-     * the time.
-     */
-    private fun tapText(prefix: String, timeoutMs: Long = 8_000): Boolean {
-        val deadline = SystemClock.uptimeMillis() + timeoutMs
-        while (true) {
-            // The app's own windows only: the keyboard's suggestion strip may echo what was typed.
-            val matches = nodes { node ->
-                node.isVisibleToUser && node.packageName?.toString() == app.packageName &&
-                    listOf(node.text, node.contentDescription).any {
-                        it?.toString()?.trim()?.startsWith(prefix) == true
-                    }
-            }
-            // The lowest match on screen: the chrome's sheets and strips rise from the bottom
-            // over what they cover, and the tree does not know one hides the other.
-            val rect = matches.map { Rect().also(it::getBoundsInScreen) }
-                .filter { it.width() > 0 && it.height() > 0 }
-                .maxByOrNull { it.centerY() }
-            if (rect != null) {
-                Finger().tap(rect.exactCenterX(), rect.exactCenterY())
-                SystemClock.sleep(900)
-                return true
-            }
-            for (match in matches) {
-                var node: AccessibilityNodeInfo? = match
-                while (node != null && !node.isClickable) node = node.parent
-                if (node != null && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-                    SystemClock.sleep(900)
-                    return true
-                }
-            }
-            if (SystemClock.uptimeMillis() >= deadline) {
-                note("nothing on screen starts with '$prefix'")
-                return false
-            }
-            SystemClock.sleep(300)
-        }
-    }
-
-    /**
      * Settings > Autofill through `autofill.manage`, which opens the Settings tab on its Autofill
      * section (the category's rows are the builder's, `pages/settings/sections.tsx`): the Passwords
-     * switch rows, the clipboard choice sheet (its pick lands in the settings), the Addresses group
-     * with its item rows, the saved address's sheet and its "Edit address" into the editor sheet
-     * (the item sheet leaves first: two sheets deep at most), "Add address" into the editor, the
-     * Payment methods group; then the tab closes. Photographed and noted, never fatal: the tree of
-     * the software-rendered emulator trails the screen by seconds after each transition.
+     * switch rows; the clipboard choice sheet, whose option under a finger must land in the
+     * settings; the Addresses group with its item row, whose sheet's "Edit address" under a
+     * finger must open the editor on the saved address (the item sheet leaves first: two sheets
+     * deep at most), the editor's Country menulist under a finger must stack the country sheet,
+     * whose "United Kingdom" under a finger must re-label the form's lines, and Cancel must leave
+     * the vault's address as it was; "Add address" into the empty editor and its Cancel; the
+     * Payment methods group with the saved card's row, whose sheet's "Edit card" under a finger
+     * must open the editor on the card. Then the tab closes. Each of those touches is the rule in
+     * DemoHarness: a touch that went in without its effect is a touch fault the run fails on
+     * once the recording is done. The tour's stills are photographed either way; a step whose
+     * surface never came up (the tree of the software-rendered emulator trails the screen) is
+     * noted and skipped, not fatal.
      */
     private fun settingsTour() {
         // The checkout's field still holds the keyboard: put it away first, or the tab opens
@@ -438,68 +672,173 @@ class AutofillDemo : DemoHarness("autofill-demo-state.json", "services-password-
         }
         SystemClock.sleep(1_500)
         snap("settings-passwords")
-        reveal("Clear copied passwords")
-        if (tapText("Clear copied passwords") && awaitText("After 30 seconds", 6_000)) {
+
+        // The clipboard choice sheet: the row opens it (the page's row), the option under a
+        // finger sets the timeout (the sheet's injected touch: 60 s seeded, 30 s picked).
+        val before = clipboardClearSeconds()
+        note("clipboard clear timeout before the sheet: $before s")
+        if (pressRow("Clear copied passwords", "the clipboard sheet is up") { chromeHasButton("After 30 seconds") }) {
             SystemClock.sleep(1_200)
             snap("settings-clipboard-menu")
-            tapText("After 30 seconds")
+            val picked = { clipboardClearSeconds() == 30 }
+            if (!touchExpecting("After 30 seconds", "the clipboard clear timeout is 30 s in the settings", timeoutMs = 6_000, took = picked) && !picked()) {
+                // The fault is on record; the value is set through the tree so the recording goes on.
+                if (clickByLabel("After 30 seconds")) note("the option set through the tree's click after the touch fault")
+                awaitTook(4_000, "pin-prompt", picked)
+            }
             SystemClock.sleep(800)
-            val seconds = zen("app.getState").getJSONObject("settings").getJSONObject("passwords").opt("clipboardClearSeconds")
-            note("clipboard clear timeout after the pick of 30 seconds: $seconds")
+            note("clipboard clear timeout after the pick: ${clipboardClearSeconds()} s; the row reads 'After 30 seconds': ${rowReads("Clear copied passwords", "After 30 seconds")}")
         } else {
-            note("the clipboard menu sheet was not reached")
+            note("the clipboard sheet was not reached")
         }
-        if (reveal("Addresses") != null) {
+
+        if (awaitInTree("Addresses") && reveal("Addresses") != null) {
             SystemClock.sleep(1_200)
             snap("settings-addresses")
         } else {
             note("the Addresses heading was not in the tree")
         }
-        // The saved address's item row opens the sheet about it; "Edit address" closes that sheet
-        // for the editor sheet. The row is one node of the tree whose text starts with its title,
-        // the name (the street is its description, further along the same text: the run at
-        // 9fc6ba55 looked for the street and found no node starting with it).
-        if (tapText(NAME) && awaitText("Edit address", 6_000)) {
+        // The saved address's item row opens the sheet about it (the page's row: one node whose
+        // text starts with its title, the name; the street is its description further along
+        // the same text – run 35428085237 looked for the street and found no such node; the
+        // card's row says the same name in its own description, "…, expires 12/29"). Its
+        // "Edit address" under a finger closes that sheet for the editor sheet, which must hold
+        // the saved address: the item sheet's injected touch.
+        var countryToured = false
+        val addressRow = { s: String -> s.startsWith(NAME) && !s.contains("expires") }
+        if (pressRow("the address '$NAME'", "the saved address's sheet is up", { chromeHasButton("Edit address") }, addressRow)) {
             SystemClock.sleep(1_200)
             snap("settings-address-sheet")
-            if (tapText("Edit address") && awaitText("Country", 6_000)) {
+            val editing = { editorLine("Street address") == STREET }
+            if (!touchExpecting("Edit address", "the editor opens on the saved address", timeoutMs = 10_000, took = editing) && !editing()) {
+                // The fault is on record; the editor is reached through the tree where the sheet
+                // is still up (a touch the scrim took dismissed it: nothing to press then).
+                if (textShowing("Edit address") && clickByLabel("Edit address")) {
+                    note("Edit address pressed through the tree's click after the touch fault")
+                    awaitTook(8_000, "pin-prompt", editing)
+                }
+            }
+            if (editing()) {
                 SystemClock.sleep(1_200)
                 snap("editor-address-saved")
-                // The editor's street line, found through its label (the fields' ids are React's).
-                note(
-                    "edit from the item sheet: the editor's street line holds " +
-                        chrome(
-                            "(() => { const l = [...document.querySelectorAll('label')].find(l => l.textContent.trim() === 'Street address'); " +
-                                "const f = l && document.getElementById(l.htmlFor); return f ? JSON.stringify(f.value) : 'no field' })()"
-                        )
-                )
-                tapText("Cancel")
-                SystemClock.sleep(800)
+                note("the editor from the item sheet holds the street line '${editorLine("Street address")}', the ${editorLine("City")?.let { "city '$it'" } ?: "no City line"}")
+                countryToured = countryTour()
+                // Cancel: the editor leaves and the vault keeps the address as it was – still the
+                // United States after the form went to the United Kingdom's lines (Save would
+                // have written GB).
+                val left = { editorLine("Street address") == null && savedAddressCountry() == "US" }
+                if (!touchExpecting("Cancel", "the editor is gone and the vault's address is still US", timeoutMs = 8_000, took = left) && !left()) {
+                    back()
+                    SystemClock.sleep(800)
+                }
+                note("after Cancel: the vault's address is in ${savedAddressCountry()}, editor up: ${editorLine("Street address") != null}")
             } else {
                 note("the editor was not reached from the address sheet")
-                back()
+                if (textShowing("Edit address")) back()
                 SystemClock.sleep(800)
             }
         } else {
             note("the saved address's sheet was not reached")
         }
-        if (tapText("Add address") && awaitText("Country", 6_000)) {
+
+        // "Add address" (the page's row) opens the editor empty; the country flow runs here when
+        // the saved address's editor was not reached; Cancel adds nothing to the vault.
+        if (pressRow("Add address", "the empty editor is up") { editorLine("Street address") == "" }) {
             SystemClock.sleep(1_200)
             snap("editor-address")
-            tapText("Cancel")
-            SystemClock.sleep(800)
+            if (!countryToured) countryToured = countryTour()
+            val left = { editorLine("Street address") == null && zenArray("autofill.listAddresses", JSONObject()).length() == 1 }
+            if (!touchExpecting("Cancel", "the editor is gone with no address added", timeoutMs = 8_000, took = left) && !left()) {
+                back()
+                SystemClock.sleep(800)
+            }
         } else {
-            note("the address editor was not reached")
+            note("the address editor was not reached from Add address")
         }
-        // The tree trails the editor sheet's leaving by a moment: the heading is waited for before
-        // it is revealed (`reveal` looks once).
-        if (awaitText("Payment methods", 6_000) && reveal("Payment methods") != null) {
+        if (!countryToured) note("the Country menulist's flow ran in neither editor")
+
+        // The Payment methods group: the tree trails the editor sheet's leaving by a moment, so
+        // the heading is waited for in the tree – below the fold, not on screen yet – before it
+        // is revealed (`reveal` looks once; run 35428085237 looked once and found it missing).
+        // The saved card's row opens its sheet (the page's row), whose "Edit card" under a
+        // finger must open the editor on the card: the card sheet's injected touch.
+        if (awaitInTree("Payment methods", 10_000) && reveal("Payment methods") != null) {
             SystemClock.sleep(1_200)
             snap("settings-payment-methods")
+            if (pressRow("Visa", "the saved card's sheet is up") { chromeHasButton("Edit card") }) {
+                SystemClock.sleep(1_200)
+                snap("settings-card-sheet")
+                val editing = { editorLine("Name on card") == NAME }
+                if (!touchExpecting("Edit card", "the editor opens on the saved card", timeoutMs = 10_000, took = editing) && !editing()) {
+                    if (textShowing("Edit card") && clickByLabel("Edit card")) {
+                        note("Edit card pressed through the tree's click after the touch fault")
+                        awaitTook(8_000, "pin-prompt", editing)
+                    }
+                }
+                if (editing()) {
+                    SystemClock.sleep(1_200)
+                    snap("editor-card-saved")
+                    note("the card editor holds the name '${editorLine("Name on card")}'; the number line is empty for the saved number: '${editorLine("Card number")}'")
+                    val left = { editorLine("Name on card") == null }
+                    if (!touchExpecting("Cancel", "the card editor is gone", timeoutMs = 8_000, took = left) && !left()) {
+                        back()
+                        SystemClock.sleep(800)
+                    }
+                } else {
+                    note("the editor was not reached from the card sheet")
+                    if (textShowing("Edit card")) back()
+                    SystemClock.sleep(800)
+                }
+            } else {
+                note("the saved card's sheet was not reached")
+            }
         } else {
             note("the Payment methods heading was not in the tree")
         }
         closeSettings()
+    }
+
+    /**
+     * The editor's Country menulist under a finger (the editor sheet's injected touch: the
+     * button labelled Country, not the line's label above it) must stack the country sheet,
+     * which opens scrolled to the current country; "United Kingdom", the row above "United
+     * States", under a finger (the country sheet's injected touch) must give the form the
+     * United Kingdom's lines – a Post town, a Postal code, no State – with the values kept.
+     * True when both took (or the tree stood in after a fault, so the recording goes on); false
+     * when the menulist was not there to touch.
+     */
+    private fun countryTour(): Boolean {
+        // The button named Country (its `aria-label`; the tree may run its value after the name),
+        // not the line's label above it, which reads the same word.
+        val menulist = lowestNode(8_000) { node ->
+            node.className?.toString() == "android.widget.Button" && node.reads { it.startsWith("Country") }
+        }
+        if (menulist == null) {
+            note("no Country menulist to touch in the editor")
+            return false
+        }
+        // The sheet is up once its rows are in the chrome document (not the tree, which trails it).
+        val sheetUp = { chromeHasButton("United Kingdom") }
+        if (!touchExpecting(menulist, "the editor's Country menulist", "the country sheet is up", timeoutMs = 8_000, promptShot = "pin-prompt", took = sheetUp) && !sheetUp()) {
+            var node: AccessibilityNodeInfo? = menulist
+            while (node != null && !node.isClickable) node = node.parent
+            if (node?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true) note("the Country menulist opened through the tree's click after the touch fault")
+            if (!awaitTook(6_000, "pin-prompt", sheetUp)) {
+                note("the country sheet never came up")
+                return false
+            }
+        }
+        SystemClock.sleep(1_200)
+        snap("editor-country-sheet")
+        val relabelled = { editorHas("Post town") && editorHas("Postal code") && !editorHas("State") }
+        if (!touchExpecting("United Kingdom", "the form has the United Kingdom's lines (Post town, Postal code, no State)", timeoutMs = 8_000, took = relabelled) && !relabelled()) {
+            if (clickByLabel("United Kingdom")) note("United Kingdom picked through the tree's click after the touch fault")
+            awaitTook(6_000, "pin-prompt", relabelled)
+        }
+        SystemClock.sleep(1_200)
+        snap("editor-address-uk")
+        note("the form's lines after the pick: Post town ${editorHas("Post town")}, Postal code ${editorHas("Postal code")}, State ${editorHas("State")}; post town holds '${editorLine("Post town")}'")
+        return true
     }
 
     /**
@@ -743,34 +1082,6 @@ class AutofillDemo : DemoHarness("autofill-demo-state.json", "services-password-
     private fun toast(text: String) {
         note(if (awaitText(text, 6_000)) "toast '$text' seen" else "toast '$text' not seen in the tree")
     }
-
-    /** Tap a dialog button by its text (a Material button may report it in capitals). */
-    private fun tapButton(label: String) {
-        val rect = waitForNode(label, 5_000, role = "android.widget.Button") ?: error("no button '$label'")
-        Finger().tap(rect.exactCenterX(), rect.exactCenterY())
-        SystemClock.sleep(900)
-    }
-
-    private fun waitForNode(label: String, timeoutMs: Long, role: String? = null): Rect? {
-        val deadline = SystemClock.uptimeMillis() + timeoutMs
-        while (true) {
-            findLabelled(label, role)?.let { return it }
-            if (SystemClock.uptimeMillis() >= deadline) return null
-            SystemClock.sleep(300)
-        }
-    }
-
-    /** Bounds of the innermost visible node whose text, description or hint is `label`, case ignored. */
-    private fun findLabelled(label: String, role: String? = null): Rect? = nodes { node ->
-        if (role != null && node.className?.toString() != role) return@nodes false
-        if (!node.isVisibleToUser) return@nodes false
-        listOf(node.text, node.contentDescription, node.hintText).any {
-            it?.toString()?.trim().equals(label, ignoreCase = true)
-        }
-    }
-        .map { Rect().also(it::getBoundsInScreen) }
-        .filter { it.width() > 0 && it.height() > 0 }
-        .minByOrNull { it.width() * it.height() }
 
     /** Breadth-first search of every window on screen (the app, its dialogs, SystemUI prompts). */
     private fun nodes(predicate: (AccessibilityNodeInfo) -> Boolean): List<AccessibilityNodeInfo> {
