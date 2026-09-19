@@ -7,7 +7,8 @@ import { run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
 import { errorCaption, languageOptions, pairLabel, retarget } from '@renderer/lib/translate'
 import { cn, formatBytes } from '@renderer/lib/utils'
-import { IconButton, Menulist, TranslateButton } from './controls'
+import { V2Button, V2IconButton } from '../extensions/v2'
+import { Menulist } from './Menulist'
 
 /**
  * The translation bar: a strip at the top of the content frame that offers to translate a
@@ -15,7 +16,9 @@ import { IconButton, Menulist, TranslateButton } from './controls'
  * puts the original back. The desktop bar carries menulists for the languages; the phone's
  * bar leaves them to the options menu (Firefox's gear, Chrome's "⋮") and shows the pair as a
  * caption instead. It lives in the frame's flow, so the page keeps its live view below it and
- * an offer never freezes the page behind a snapshot.
+ * an offer never freezes the page behind a snapshot. Its controls are the shared primitives
+ * (§9.34): `.zen-v2-button` – one primary per view – `.zen-v2-icon-button` and `.zen-v2-menulist`,
+ * on a `--v2-panel` surface (§9.29, page family).
  */
 export function TranslateBar({
   state,
@@ -81,9 +84,9 @@ export function TranslateBar({
             {sourceList}
             <span>to</span>
             {targetList}
-            <TranslateButton primary disabled={!tab.source || !tab.target} onClick={translate}>
+            <V2Button variant="primary" disabled={!tab.source || !tab.target} onClick={translate}>
               Translate
-            </TranslateButton>
+            </V2Button>
           </>
         )
         break
@@ -94,7 +97,7 @@ export function TranslateBar({
               Getting the {pairLabel(tab.source, tab.target)} model
               {tab.download ? ` (${downloadLabel(tab.download)})` : ''}…
             </span>
-            <TranslateButton onClick={close}>Cancel</TranslateButton>
+            <V2Button onClick={close}>Cancel</V2Button>
           </>
         )
         break
@@ -110,7 +113,7 @@ export function TranslateBar({
                 </span>
               )}
             </span>
-            <TranslateButton onClick={revert}>Show original</TranslateButton>
+            <V2Button onClick={revert}>Show original</V2Button>
           </>
         )
         break
@@ -121,7 +124,7 @@ export function TranslateBar({
             {sourceList}
             <span>to</span>
             {targetList}
-            <TranslateButton onClick={revert}>Show original</TranslateButton>
+            <V2Button onClick={revert}>Show original</V2Button>
           </>
         )
         break
@@ -132,9 +135,9 @@ export function TranslateBar({
               <span className="zen-translate-danger">Translation failed.</span>
               {caption ? ` ${caption}` : ''}
             </span>
-            <TranslateButton onClick={translate} disabled={!tab.source || !tab.target}>
+            <V2Button onClick={translate} disabled={!tab.source || !tab.target}>
               Try again
-            </TranslateButton>
+            </V2Button>
           </>
         )
     }
@@ -144,6 +147,7 @@ export function TranslateBar({
     <div
       className="zen-translate-bar zen-animate-in"
       role="region"
+      data-surface="page"
       aria-label="Translation"
       data-status={tab.status}
     >
@@ -151,13 +155,9 @@ export function TranslateBar({
       {body}
       {!phone && <span className="flex-1" />}
       {showOptions && (
-        <IconButton label="Translation options" onClick={options}>
-          <MoreHorizontal />
-        </IconButton>
+        <V2IconButton icon={MoreHorizontal} label="Translation options" onClick={options} />
       )}
-      <IconButton label="Close" onClick={close}>
-        <X />
-      </IconButton>
+      <V2IconButton icon={X} label="Close" onClick={close} />
       {progress !== null && (
         <span
           className="zen-translate-progress"
@@ -193,9 +193,9 @@ function PhoneBody({
       title = 'Translate page?'
       caption = tab.source ? pair : 'Choose the page language in the options'
       action = (
-        <TranslateButton primary disabled={!tab.source || !tab.target} onClick={translate}>
+        <V2Button variant="primary" disabled={!tab.source || !tab.target} onClick={translate}>
           Translate
-        </TranslateButton>
+        </V2Button>
       )
       break
     case 'downloading':
@@ -208,20 +208,20 @@ function PhoneBody({
         tab.progress && tab.progress.total > 0
           ? `${pair} · ${tab.progress.done} of ${tab.progress.total}`
           : pair
-      action = <TranslateButton onClick={revert}>Original</TranslateButton>
+      action = <V2Button onClick={revert}>Original</V2Button>
       break
     case 'translated':
       title = 'Translated'
       caption = pair
-      action = <TranslateButton onClick={revert}>Original</TranslateButton>
+      action = <V2Button onClick={revert}>Original</V2Button>
       break
     default:
       title = 'Translation failed'
       caption = errorCaption(tab.error) ?? pair
       action = (
-        <TranslateButton onClick={translate} disabled={!tab.source || !tab.target}>
+        <V2Button onClick={translate} disabled={!tab.source || !tab.target}>
           Try again
-        </TranslateButton>
+        </V2Button>
       )
   }
   // A failure's title is in the danger ink, as on the desktop bar (§1), and its reason is worth a

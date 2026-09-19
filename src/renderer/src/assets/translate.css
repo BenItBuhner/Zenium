@@ -1,9 +1,20 @@
 /*
  * The translate surfaces (bar, selection popover and sheet, Settings > Languages) on the v2 draft
  * (design-language-v2-draft.md §1–§3, §6, §9): neutral panel and card surfaces with hairline
- * borders, Proton controls at the density tokens, buttons at 500, status inks only. Every value
- * is a `--v2-*` token from main.css; motion is v1 §7 (120 ms state transitions on `--zen-ease`).
- * Imported by the translate controls, so nothing here loads before a translate surface does.
+ * borders, Proton controls at the density tokens, status inks only. Every value is a `--v2-*`
+ * token from main.css; motion is v1 §7 (120 ms state transitions on `--zen-ease`).
+ *
+ * The controls are the shared primitives (§9.34, one unlayered rule each in main.css, tokens
+ * only): `.zen-v2-button`, `.zen-v2-icon-button`, `.zen-v2-checkbox` (in `V2CheckRow`),
+ * `.zen-v2-row` and its static form, `.zen-v2-radio`, and `.zen-v2-menulist` with its popover's
+ * `-popup` and `-option`, which the translate surfaces own. The popover surface is
+ * `.zen-v2-panel`, the title block `.zen-v2-title-block` and the card `.zen-v2-card`
+ * (extensions.css), the sheet the chassis' `.zen-sheet` with its header, title and footer
+ * (main.css). Nothing here restates any of them: what follows is this program's own layout – the
+ * bar, the popover's and sheet's bodies, the pane's headings and cards – and modifiers on the
+ * primitives, unlayered beside them as §9.34 asks, never a copy. Imported by main.css with the
+ * other stylesheets at its head, so a modifier wins by specificity (`.zen-v2-row.zen-translate-…`
+ * over `.zen-v2-row`), never by coming later.
  */
 
 /* --- Text ----------------------------------------------------------------------------------- */
@@ -24,267 +35,48 @@
   color: var(--v2-text-deemphasized);
 }
 
-/* --- Controls (§6): the secondary button is main.css's .zen-v2-button ------------------------ */
-
-.zen-translate-button {
-  display: inline-flex;
-  flex-shrink: 0;
-  align-items: center;
-  gap: 6px;
-  white-space: nowrap;
-  line-height: 1;
-}
-.zen-translate-button:hover:not(:disabled) {
-  background: var(--v2-fill-hover);
-}
-.zen-translate-button[data-primary] {
-  background: var(--v2-accent);
-  color: var(--v2-on-accent);
-}
-.zen-translate-button[data-primary]:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--v2-accent), var(--v2-text) 12%);
-}
-.zen-translate-button[data-danger] {
-  color: var(--v2-danger);
-}
-.zen-translate-button:disabled {
-  opacity: 0.4;
-}
-.zen-translate-button > svg {
-  width: var(--v2-icon);
-  height: var(--v2-icon);
-  stroke-width: var(--v2-icon-stroke);
-}
+/* --- Rows (§9.21, §9.25, §9.34) --------------------------------------------------------------- */
 
 /*
- * A menulist (§9.13): a bordered, filled box with the picked option and a chevron. Its popup is
- * never the platform's: a popover under the trigger on the desktop, a sheet on phones (below).
+ * A row at a 16 gutter: inside a card, a popover body or a sheet body – each padded 16 – the
+ * shared row's own 16 puts its text on that gutter, and its box bleeds to the container's edge
+ * so a target row's fill would reach the border (§9.25, §9.17); the pane's check row bleeds the
+ * same way past the text column.
  */
+.zen-translate-card > .zen-v2-row,
+.zen-translate-group-body > .zen-v2-row,
+.zen-translate-panel-body > .zen-v2-row,
+.zen-translate-sheet-body > .zen-v2-row {
+  width: auto;
+  margin: 0 calc(-1 * var(--v2-card-padding));
+}
+/*
+ * A row holding a control (§9.21): the larger of the base row and the control plus 8, the 4
+ * above and below being the row's padding – 40 around a 32 menulist on the desktop, 48 around a
+ * 40 one on a phone, 36 / 52 around an icon button – the control centred (§9.18). Rows touch.
+ */
+.zen-v2-row.zen-translate-control-row {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+/*
+ * An empty list (§9.17): one plain deemphasised row, one sentence, no full stop, at the gutter.
+ * A count that is a row (the models' total) is the same deemphasised static row.
+ */
+.zen-v2-row.zen-translate-empty,
+.zen-v2-row.zen-translate-caption {
+  color: var(--v2-text-deemphasized);
+}
+/* The menulist's wrapper hugs the trigger, which sizes to its text; a row's label gives way first. */
 .zen-translate-menulist {
   position: relative;
   display: inline-flex;
   flex-shrink: 0;
   min-width: 0;
 }
-.zen-translate-menulist > .zen-v2-menulist {
-  display: inline-flex;
-  width: 100%;
-  height: var(--v2-control);
-  align-items: center;
-  gap: 6px;
-  padding: 0 8px 0 10px;
-  border: 1px solid var(--v2-border);
-  border-radius: var(--v2-radius-control);
-  background: var(--v2-fill);
-  color: var(--v2-text);
-  font: inherit;
-  font-size: var(--v2-font-body);
-  font-weight: var(--v2-weight-button);
-  line-height: var(--v2-line-body);
-  text-align: left;
-  transition: background 120ms var(--zen-ease);
-}
-.zen-translate-menulist > .zen-v2-menulist:hover:not(:disabled),
-.zen-translate-menulist > .zen-v2-menulist[aria-expanded='true'] {
-  background: var(--v2-fill-hover);
-}
-.zen-translate-menulist > .zen-v2-menulist:disabled {
-  opacity: 0.4;
-}
-.zen-translate-menulist > .zen-v2-menulist > span {
-  min-width: 0;
-  flex: 1;
-}
-.zen-translate-menulist > .zen-v2-menulist > svg {
-  flex-shrink: 0;
-  width: var(--v2-icon);
-  height: var(--v2-icon);
-  stroke-width: var(--v2-icon-stroke);
-}
-/*
- * The popover: a --v2-panel at radius 12 and padding 6, 28 px rows at radius 6, a trailing check
- * (§9.13); 320 wide whatever its rows hold (§9.20), placed by Menulist.tsx.
- */
-.zen-translate-menulist-layer {
-  position: fixed;
-  inset: 0;
-  z-index: 95;
-}
-.zen-translate-menulist-popup {
-  position: fixed;
-  width: 320px;
-  padding: 6px;
-  margin: 0;
-  overflow-y: auto;
-  border: 1px solid var(--v2-border);
-  border-radius: 12px;
-  background: var(--v2-panel);
-  box-shadow: var(--v2-shadow-panel);
-  color: var(--v2-text);
-  font-size: 14px;
-  line-height: var(--v2-line-body);
-  list-style: none;
-  outline: none;
-  scrollbar-width: thin;
-}
-.zen-translate-menulist-popup > li {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 28px;
-  padding: 0 8px;
-  border-radius: 6px;
-  white-space: nowrap;
-  cursor: default;
-}
-.zen-translate-menulist-popup > li[data-active] {
-  background: var(--v2-fill);
-}
-.zen-translate-menulist-popup > li:active {
-  background: var(--v2-fill-hover);
-}
-.zen-translate-menulist-popup > li > svg {
-  flex-shrink: 0;
-  width: 16px;
-  height: 16px;
-  stroke-width: 1.5;
-}
-/*
- * The sheet: 44 px rows in the sheet's list style, the current option carrying a radio glyph.
- * The rows run edge to edge with their press fill bleeding to the sheet's border and their text
- * and radio inset 16 (§9.25).
- */
-.zen-translate-menulist-rows {
-  display: flex;
-  flex-direction: column;
-  margin: 0;
-  padding: 0 0 4px;
-  list-style: none;
-}
-.zen-translate-menulist-sheet .zen-sheet-item {
-  height: var(--v2-row);
-  padding: 0 16px;
-  border-radius: 0;
-  font-size: var(--v2-font-body);
-}
-.zen-translate-menulist-sheet .zen-sheet-item:active:not(:disabled) {
-  background: var(--v2-fill);
-}
-/* The checked radio of §9.14 as a marker: a 20 px accent circle around a 6 px dot of the surface. */
-.zen-translate-radio {
-  flex-shrink: 0;
-  width: var(--v2-checkbox);
-  height: var(--v2-checkbox);
-  border: calc((var(--v2-checkbox) - 6px) / 2) solid var(--v2-accent);
-  border-radius: 50%;
-  background: var(--v2-panel);
-}
-
-/*
- * A checkbox row (§6, §9.2): a 16 px box (20 on phones) at radius 2, accent-filled when checked,
- * aligned with the first text line – its top (line-height − box) / 2 below the line's top, 2 on
- * the desktop and 0 on phones – the whole label is the hit area and the row grows with it.
- */
-.zen-translate-check {
-  position: relative;
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-  min-height: var(--v2-row);
-  padding: 6px 0;
-  font-size: var(--v2-font-body);
-  line-height: var(--v2-line-body);
-  color: var(--v2-text);
-}
-.zen-translate-check > input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: 0;
-  opacity: 0;
-  pointer-events: none;
-}
-.zen-translate-checkbox {
-  display: inline-flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  width: var(--v2-checkbox);
-  height: var(--v2-checkbox);
-  margin-top: calc((var(--v2-line-body) - var(--v2-checkbox)) / 2);
-  border: 1px solid rgb(var(--v2-text-rgb) / 0.41);
-  border-radius: var(--v2-radius-checkbox);
-  background: var(--v2-fill);
-  color: var(--v2-on-accent);
-  transition:
-    background 120ms var(--zen-ease),
-    border-color 120ms var(--zen-ease);
-}
-.zen-translate-checkbox > svg {
-  width: calc(var(--v2-checkbox) - 4px);
-  height: calc(var(--v2-checkbox) - 4px);
-  stroke-width: 3;
-  opacity: 0;
-  transition: opacity 120ms var(--zen-ease);
-}
-.zen-translate-check:hover > input:not(:disabled) + .zen-translate-checkbox {
-  background: var(--v2-fill-hover);
-}
-.zen-translate-check > input:checked + .zen-translate-checkbox {
-  border-color: var(--v2-accent);
-  background: var(--v2-accent);
-}
-.zen-translate-check > input:checked + .zen-translate-checkbox > svg {
-  opacity: 1;
-}
-.zen-translate-check > input:disabled ~ * {
-  opacity: 0.4;
-}
-.zen-translate-check > input:focus-visible + .zen-translate-checkbox {
-  outline: 2px solid var(--v2-ring);
-  outline-offset: 0;
-}
-:root[data-theme='dark'] .zen-translate-check > input:focus-visible + .zen-translate-checkbox {
-  outline-offset: -2px;
-}
-.zen-translate-row-description {
-  display: block;
-  color: var(--v2-text-deemphasized);
-  font-size: var(--v2-font-small);
-  line-height: var(--v2-line-small);
-}
-
-/* An icon button in the toolbar box (§9.3): 28 × 28 and a 16 glyph, 44 × 44 and 20 on phones. */
-.zen-translate-icon-button {
-  display: inline-flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  width: var(--v2-icon-button);
-  height: var(--v2-icon-button);
-  border-radius: var(--v2-radius-inner);
-  color: var(--v2-text);
-  transition:
-    background 120ms var(--zen-ease),
-    transform 120ms var(--zen-ease);
-}
-.zen-translate-icon-button:hover:not(:disabled) {
-  background: var(--v2-fill);
-}
-.zen-translate-icon-button:active:not(:disabled) {
-  background: var(--v2-fill-hover);
-  transform: scale(0.98);
-}
-.zen-translate-icon-button:disabled {
-  opacity: 0.4;
-}
-.zen-translate-icon-button > svg {
-  width: var(--v2-icon);
-  height: var(--v2-icon);
-  stroke-width: var(--v2-icon-stroke);
-}
-:root[data-form-factor='phone'] .zen-translate-icon-button {
-  border-radius: 8px;
+/* The add row's menulist has a width to be found at (its text is a placeholder). */
+.zen-translate-add > .zen-translate-menulist {
+  min-width: 220px;
 }
 
 /* --- The bar (a strip at the top of the content frame) --------------------------------------- */
@@ -323,7 +115,7 @@
   font-size: var(--v2-font-body);
 }
 /* The action inside the phone bar's row hugs its label with an 88 px minimum (§9.11). */
-:root[data-form-factor='phone'] .zen-translate-bar > .zen-translate-button {
+:root[data-form-factor='phone'] .zen-translate-bar > .zen-v2-button {
   min-width: 88px;
 }
 /* The phone bar's two lines: what is happening, then the pair at the description size. */
@@ -350,57 +142,18 @@
 /* --- Selection translation: a popover where the user asked, a sheet on phones -------------- */
 
 /*
- * A desktop popover (§9.20): 400 wide – it holds a row with a menulist and text that wraps –
- * whatever the window, radius 8 on --v2-panel with a hairline and the panel shadow, at most 60%
- * of the window tall (never taller than the window less 16); the title block and the footer stay
- * put and the body between them scrolls.
+ * The desktop popover (§9.20) on `.zen-v2-panel`: its width (400 – it holds a row with a
+ * menulist and text that wraps), its place and its height cap (60% of the window) are the
+ * chrome layer's, set inline; the title block (§9.23) and the footer stay put and the body
+ * between them scrolls.
  */
 .zen-translate-panel {
   display: flex;
   flex-direction: column;
-  width: 400px;
-  max-height: min(60vh, calc(100vh - 16px));
-  padding: 0;
   overflow: hidden;
-  border: 1px solid var(--v2-border);
-  border-radius: var(--v2-radius-card);
-  background: var(--v2-panel);
-  box-shadow: var(--v2-shadow-panel);
-  color: var(--v2-text);
   font-size: var(--v2-font-body);
   line-height: var(--v2-line-body);
   outline: none;
-}
-/*
- * A title block (§9.23): padding 16, a 16 px glyph on the title's start with an 8 px gap – its
- * top (line-height − glyph) / 2 below the title line's top – the title 17/600 at line-height 22,
- * then 16 px to the body. No X: Escape, an outside click and the footer close the popover. When
- * the body has scrolled under it, §9.7's hairline shows along its bottom edge.
- */
-.zen-translate-title-block {
-  display: flex;
-  flex-shrink: 0;
-  align-items: flex-start;
-  gap: 8px;
-  padding: var(--v2-card-padding);
-}
-.zen-translate-title-block[data-scrolled] {
-  box-shadow: 0 1px 0 var(--v2-border);
-}
-.zen-translate-title-block > svg {
-  flex-shrink: 0;
-  width: var(--v2-icon);
-  height: var(--v2-icon);
-  margin-top: calc((22px - var(--v2-icon)) / 2);
-  stroke-width: var(--v2-icon-stroke);
-}
-.zen-translate-title {
-  min-width: 0;
-  flex: 1;
-  margin: 0;
-  font-size: var(--v2-font-heading);
-  font-weight: var(--v2-weight-heading);
-  line-height: 22px;
 }
 .zen-translate-panel-body {
   display: flex;
@@ -412,9 +165,13 @@
   overflow-y: auto;
   scrollbar-width: thin;
 }
-.zen-translate-panel > .zen-translate-footer {
+/* The footer (§9.20 form i): the body's last element, 16, the button hugging at the end, 16 to the edge. */
+.zen-translate-footer {
+  display: flex;
   flex-shrink: 0;
-  padding: 12px var(--v2-card-padding) var(--v2-card-padding);
+  justify-content: flex-end;
+  gap: 8px;
+  padding: var(--v2-card-padding);
 }
 /* The words that were selected: secondary to their translation, at most three lines. */
 .zen-translate-original {
@@ -441,66 +198,32 @@
   overflow-wrap: anywhere;
 }
 /*
- * The phone sheet on the v2 dialog surface (§6 sheets): radius 12, a hairline, the black scrim.
- * One gutter of 16 runs from the sheet's outer edge to every text and control edge inside it
- * (§9.25): the sheet carries no side padding of its own, and its hairline is painted over the
- * edge (an `::after` box) rather than laid out inside it, so rows run edge to edge under it with
- * their text inset 16 and nothing nests a second padding.
+ * The phone sheets (the selection sheet, the menulist's list) are the chassis' `.zen-sheet`.
+ * One gutter of 16 runs from the sheet's outer edge to every text and control edge (§9.25), the
+ * border included: the chassis border goes and a pseudo-element draws the same hairline on the
+ * top and sides, following the radius (as the Settings tab's sheets do), so a row's 16 is 16
+ * from the outer edge. Unlayered so it beats the layered chassis rule.
  */
 .zen-sheet.zen-translate-sheet {
-  --zen-sheet-radius: var(--v2-radius-sheet);
-  padding-right: 0;
-  padding-left: 0;
-  background: var(--v2-panel);
-  color: var(--v2-text);
-  font-size: var(--v2-font-body);
-  line-height: var(--v2-line-body);
-  box-shadow: var(--v2-shadow-sheet);
-  backdrop-filter: none;
+  border: 0;
 }
-.zen-sheet.zen-translate-sheet::after {
+.zen-sheet.zen-translate-sheet::before {
   content: '';
   position: absolute;
   inset: 0;
-  pointer-events: none;
+  z-index: 1;
   border: 1px solid var(--v2-border);
   border-bottom: 0;
   border-radius: inherit;
+  corner-shape: inherit;
+  pointer-events: none;
 }
-div:has(> .zen-sheet.zen-translate-sheet) > .zen-sheet-scrim {
-  background: var(--v2-scrim);
-}
-/* The body: text, the languages row and the footer at the 16 gutter, 12 apart. */
+/* The selection sheet's body: the languages row, the original, the translation at the 16 gutter, 12 apart. */
 .zen-translate-sheet-body {
   display: flex;
   flex-direction: column;
   gap: 12px;
   padding: 0 16px;
-}
-/*
- * A phone sheet's header (§9.16): after the 20 px grip strip, 48 tall with the title 17/600 at
- * line-height 22, centred; the first row starts at 68.
- */
-.zen-translate-sheet-header {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 48px;
-  padding: 0 44px;
-  font-size: var(--v2-font-heading);
-  font-weight: var(--v2-weight-heading);
-  line-height: 22px;
-  text-align: center;
-}
-/* A sheet's footer actions fill the width on phones (§9.11); the desktop panel's hug and right-align. */
-.zen-translate-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  padding-top: 4px;
-}
-:root[data-form-factor='phone'] .zen-translate-footer > .zen-translate-button {
-  flex: 1;
 }
 
 /* --- Settings > Languages (§6 settings page, §5 density) ------------------------------------ */
@@ -518,19 +241,20 @@ div:has(> .zen-sheet.zen-translate-sheet) > .zen-sheet-scrim {
   flex-direction: column;
 }
 /*
- * The pane's section title (§9.26): 22/600 at line-height 28 with 16 below it; the 32 above any
- * section but the first is the settings' own gap between groups.
+ * The pane's section title (§9.26): 22/600 on the title line, its description 4 under the title's
+ * box and 16 from the description's box (or the title's, without one) to the first row; the 32
+ * above any section but the first is the settings' own gap between groups. Every distance is box
+ * to box (§5).
  */
 .zen-translate-section-title {
-  margin: 0 0 16px;
+  margin: 0;
   font-size: var(--v2-font-title);
   font-weight: var(--v2-weight-heading);
-  line-height: 28px;
+  line-height: var(--v2-line-title);
 }
 /*
  * A sub-heading (§9.27): 15/600 on the body line, above rows or a card – never 17 above a card –
- * with its description 4 under it and 16 to the body it introduces (the first row, or the card's
- * edge). On phones this is the group heading (§10.3).
+ * with its description 4 under its box and 16 from the description's box to the card's edge.
  */
 .zen-translate-group-title {
   margin: 0;
@@ -542,44 +266,20 @@ div:has(> .zen-sheet.zen-translate-sheet) > .zen-sheet-scrim {
   margin: 0;
   color: var(--v2-text-deemphasized);
 }
+.zen-translate-section-title + .zen-translate-description,
 .zen-translate-group-title + .zen-translate-description {
   margin-top: 4px;
 }
 .zen-translate-group-body {
   margin-top: 16px;
 }
-/* A card only where a group has its own actions: flat, hairline border, 16 px side padding. */
-.zen-translate-card {
+/*
+ * A card only where a group has its own actions, on `.zen-v2-card` (the card surface, hairline,
+ * radius 8, its 16 padding): the rows run edge to edge inside it and touch, 4 from its top and
+ * bottom edges (§9.17: the rows' inset, which an empty card keeps).
+ */
+.zen-v2-card.zen-translate-card {
   display: flex;
   flex-direction: column;
   padding: 4px var(--v2-card-padding);
-  border: 1px solid var(--v2-card-border);
-  border-radius: var(--v2-radius-card);
-  background: var(--v2-card);
-}
-/*
- * A row holding a control (§9.21): the larger of the base row (32 / 44) and the control plus 8,
- * the 4 above and below being the row's own padding – 40 around a 32 px menulist on the desktop,
- * 48 around a 40 px one on a phone, 36 / 52 around an icon button – the control centred (§9.18).
- * Rows touch: no gap, no hairline between them.
- */
-.zen-translate-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: var(--v2-row);
-  padding: 4px 0;
-}
-/* An empty list (§9.17): one sentence at 15/400 and 69%, centred inside a 32 px gutter, top-anchored. */
-.zen-translate-empty {
-  min-height: var(--v2-row);
-  padding: 6px 32px;
-  color: var(--v2-text-deemphasized);
-  font-size: var(--v2-font-body);
-  font-weight: var(--v2-weight-body);
-  line-height: var(--v2-line-body);
-  text-align: center;
-}
-.zen-translate-row-add > .zen-translate-menulist {
-  min-width: 220px;
 }

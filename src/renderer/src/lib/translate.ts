@@ -4,13 +4,7 @@ import type { UIState } from '@shared/types'
 import { languageName, sortedByName } from '@shared/languageNames'
 import { cmd, run } from './api'
 import { formatBytes } from './utils'
-import {
-  captureActiveTab,
-  invalidateSnapshot,
-  returnFocusToPage,
-  uiStore,
-  type TranslateSelectionRequest
-} from './ui'
+import { uiStore, type TranslateSelectionRequest } from './ui'
 
 /** The tab's translation state once it has left `idle`; null for tabs the core knows nothing about. */
 export function translateStateOf(
@@ -152,90 +146,16 @@ export function modelOptions(models: readonly TranslateModelInfo[]): LanguageOpt
 }
 
 // ---------------------------------------------------------------------------
-// Desktop popovers (v2 draft §9.20)
-// ---------------------------------------------------------------------------
-
-/** A popover keeps this much from the window's edges. */
-export const POPOVER_MARGIN = 8
-/** A popover is at most this share of the window tall. */
-const POPOVER_HEIGHT_SHARE = 0.6
-
-export interface Box {
-  left: number
-  right: number
-  top: number
-  bottom: number
-}
-
-export interface Placement {
-  left: number
-  top: number
-  maxHeight: number
-}
-
-/**
- * Where a popover `width` wide goes for a trigger at `anchor` inside `bar`, in a window of
- * `window` size, wanting to be `wanted` tall: its top border on the bar's bottom edge (gap 0 to
- * the bar), start-aligned with the trigger – end-aligned when the trigger is in the trailing
- * half of its bar – clamped 8 px inside the window; as tall as it wants up to 60% of the window
- * (never the window less 16); above the bar only when the space under it has no room for
- * `minHeight` and the space above has more.
- */
-export function placePopover(
-  anchor: Box,
-  bar: Box,
-  window: { width: number; height: number },
-  size: { width: number; wanted: number; minHeight: number }
-): Placement {
-  const cap = Math.min(
-    Math.floor(window.height * POPOVER_HEIGHT_SHARE),
-    window.height - 2 * POPOVER_MARGIN
-  )
-  const below = window.height - bar.bottom - POPOVER_MARGIN
-  const above = bar.top - POPOVER_MARGIN
-  const flip = below < Math.min(size.wanted, size.minHeight) && above > below
-  const maxHeight = Math.max(size.minHeight, Math.min(size.wanted, cap, flip ? above : below))
-  const trailing = (anchor.left + anchor.right) / 2 > (bar.left + bar.right) / 2
-  const left = trailing ? anchor.right - size.width : anchor.left
-  return {
-    left: Math.max(POPOVER_MARGIN, Math.min(left, window.width - size.width - POPOVER_MARGIN)),
-    top: flip ? bar.top - maxHeight : bar.bottom,
-    maxHeight
-  }
-}
-
-/**
- * Where a popover `width` wide and `height` tall goes for a request at the point (`x`, `y`) in
- * window pixels (the selection popover, which opens from the page rather than a bar): its start
- * edge on the point and its top edge under it – above it when there is no room below – clamped
- * 8 px inside the window.
- */
-export function placeAtPoint(
-  x: number,
-  y: number,
-  window: { width: number; height: number },
-  size: { width: number; height: number }
-): { left: number; top: number } {
-  const top = y + size.height > window.height - POPOVER_MARGIN ? y - size.height : y
-  return {
-    left: Math.max(POPOVER_MARGIN, Math.min(x, window.width - size.width - POPOVER_MARGIN)),
-    top: Math.max(POPOVER_MARGIN, Math.min(top, window.height - size.height - POPOVER_MARGIN))
-  }
-}
-
-// ---------------------------------------------------------------------------
 // The selection popover
 // ---------------------------------------------------------------------------
 
 /**
- * The core asked (`translate.selection` event): put the popover up for the selection. The page
- * is captured first so its snapshot can stand in behind the popover, as under every overlay.
+ * The core asked (`translate.selection` event): the selection popover goes up for the request
+ * (`TranslateSelectionLayer`). A user-opened surface, it takes the keyboard (v2 draft §9.22), so
+ * the chrome gets the focus the page had; the popover itself holds the page's capture behind it
+ * while it is up (`useFloatingChrome`) and gives the focus back when it goes.
  */
-export async function openTranslateSelection(
-  request: TranslateSelectionRequest,
-  activeTabId: string | null
-): Promise<void> {
-  if (uiStore.get().overlay === 'none') await captureActiveTab(activeTabId)
+export function openTranslateSelection(request: TranslateSelectionRequest): void {
   run('focus.chrome', undefined)
   uiStore.set({ translateSelection: request, drawerOpen: false })
 }
@@ -243,34 +163,6 @@ export async function openTranslateSelection(
 export function closeTranslateSelection(): void {
   if (!uiStore.get().translateSelection) return
   uiStore.set({ translateSelection: null })
-  invalidateSnapshot()
-  returnFocusToPage()
-}
-
-// ---------------------------------------------------------------------------
-// The menulists' lists
-// ---------------------------------------------------------------------------
-
-/**
- * A menulist is about to open its list. The list overhangs the content area, where the page
- * view is drawn above the chrome, so the page gives way to its snapshot while the list is up (as
- * under the sheets and the selection popover); a surface that already stands over the page has
- * the snapshot in place. Resolves once the list may show.
- */
-export async function prepareMenulist(activeTabId: string | null): Promise<void> {
-  if (uiStore.get().overlay === 'none') await captureActiveTab(activeTabId)
-}
-
-/** The list is up. */
-export function menulistOpened(): void {
-  uiStore.set({ menulistOpen: true })
-}
-
-/** The list is gone; the page comes back unless another surface still stands over it. */
-export function menulistClosed(): void {
-  if (!uiStore.get().menulistOpen) return
-  uiStore.set({ menulistOpen: false })
-  invalidateSnapshot()
 }
 
 const flags = globalThis as unknown as { __zenTranslateWired?: boolean }

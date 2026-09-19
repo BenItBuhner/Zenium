@@ -319,10 +319,12 @@ export interface UiState {
   defaultBrowserPrompt: boolean
   /** "Add to Home screen": the install sheet (manifest) or the name-edit sheet, when open. */
   install: WebAppInstallPrompt | null
-  /** The selection-translation popover (desktop) or sheet (phone) is up for this selection. */
+  /**
+   * The selection the core asked the chrome to translate: the selection popover (desktop) or
+   * sheet (phone) is up for it. A request only – the surface holds the page's capture and the
+   * keyboard itself while it is up (`useFloatingChrome`, counted in `floatingChrome`).
+   */
   translateSelection: TranslateSelectionRequest | null
-  /** A menulist's list (a popover, or a sheet on phones) is up; it overhangs the content area. */
-  menulistOpen: boolean
   /** Safe-area insets of the host window (status bar, gesture bar, IME). */
   insets: Insets
   /**
@@ -412,7 +414,6 @@ export const uiStore = createStore<UiState>(
     defaultBrowserPrompt: false,
     install: null,
     translateSelection: null,
-    menulistOpen: false,
     insets: { top: 0, right: 0, bottom: 0, left: 0 },
     stageActive: false,
     hoverCard: HOVER_CARD_HIDDEN,
@@ -734,8 +735,6 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.downloadsOpen &&
     !ui.defaultBrowserPrompt &&
     !ui.install &&
-    !ui.translateSelection &&
-    !ui.menulistOpen &&
     !ui.stageActive &&
     !ui.zoomBubble &&
     !ui.newTabShortcutDialog &&
@@ -784,8 +783,6 @@ export function invalidateSnapshot(): void {
     !ui.downloadsOpen &&
     !ui.defaultBrowserPrompt &&
     !ui.install &&
-    !ui.translateSelection &&
-    !ui.menulistOpen &&
     !ui.stageActive &&
     !ui.zoomBubble &&
     ui.hoverCard.tabId === null &&
@@ -1294,8 +1291,6 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.downloadsOpen ||
     ui.defaultBrowserPrompt ||
     ui.install !== null ||
-    ui.translateSelection !== null ||
-    ui.menulistOpen ||
     ui.stageActive ||
     ui.zoomBubble !== null ||
     ui.hoverCard.tabId !== null ||
@@ -1433,12 +1428,13 @@ export function closeTabsMenu(): void {
 /**
  * Only anchored panels or a security prompt are up: a bar panel, the star bubble, the zoom
  * bubble, the tab hover card, the downloads bubble, site information, the blocked pop-ups
- * popover, the translate selection popover, a menulist's list, or a sign-in or certificate
- * dialog. The page behind them is captured all the same (they overlap the live view), but
- * panels and popovers draw no scrim (v2 §9.5, §9.20), so the capture shows undimmed; dialogs
- * dim it. A chassis sheet's scrim is its own one dim (§11.5), so the same holds under the
- * site-information sheet, and the security prompt's dim is the frame dialog host's scrim alone
- * (v2 §9.5, §11.5: one dim layer).
+ * popover, or a sign-in or certificate dialog. The page behind them is captured all the same
+ * (they overlap the live view), but panels and popovers draw no scrim (v2 §9.5, §9.20), so the
+ * capture shows undimmed; dialogs dim it. A chassis sheet's scrim is its own one dim (§11.5), so
+ * the same holds under the site-information sheet, and the security prompt's dim is the frame
+ * dialog host's scrim alone (v2 §9.5, §11.5: one dim layer). The chrome layer's popovers and
+ * menus (the translate selection popover, a menulist's list) count in `floatingChrome` and are
+ * the extensions' counterpart's case (`extensionChromeAloneOverContent`).
  */
 export function panelAloneOverContent(ui: UiState): boolean {
   return (
@@ -1451,9 +1447,7 @@ export function panelAloneOverContent(ui: UiState): boolean {
       // phone, whose own scrim is the one dim over the page (§11.5).
       ui.siteInfoOpen ||
       ui.blockedPopupsPanel !== null ||
-      ui.securityPromptOpen ||
-      ui.translateSelection !== null ||
-      ui.menulistOpen) &&
+      ui.securityPromptOpen) &&
     !overlayCoversContent({
       ...ui,
       barMenuOpen: false,
@@ -1463,9 +1457,7 @@ export function panelAloneOverContent(ui: UiState): boolean {
       downloadsOpen: false,
       siteInfoOpen: false,
       blockedPopupsPanel: null,
-      securityPromptOpen: false,
-      translateSelection: null,
-      menulistOpen: false
+      securityPromptOpen: false
     })
   )
 }
