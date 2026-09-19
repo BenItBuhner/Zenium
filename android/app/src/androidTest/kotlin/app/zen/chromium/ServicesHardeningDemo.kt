@@ -28,10 +28,11 @@ import kotlin.math.max
 
 /**
  * Records the pop-up blocker (the chip and its sheet), the external-app prompt (tel: and an
- * intent:// with a fallback), the HTTP sign-in dialog with its retry and the client-certificate
- * chooser on an emulator, for a caller of the reusable `android-emulator-demo` workflow. Only
- * asserts that it could run through the sequence; the recording and the screenshots show what
- * the chrome did.
+ * intent:// with a fallback), the HTTP sign-in dialog with its retry, the client-certificate
+ * chooser and Settings › Security in the Settings tab (a remembered answer, its sheet, Forget
+ * this answer) on an emulator, for a caller of the reusable `android-emulator-demo` workflow.
+ * Only asserts that it could run through the sequence; the recording and the screenshots show
+ * what the chrome did.
  *
  * The caller hosts the server in `assets/services-hardening-demo-server.mjs` on the runner (the
  * emulator reaches it as 10.0.2.2:8787): `/popups` opens a window by itself 1.5 s after loading
@@ -167,7 +168,7 @@ class ServicesHardeningDemo {
             SystemClock.sleep(800)
             shot("01-popup-blocked-chip")
             tapLabel(f, "Pop-up blocked", prefix = true)
-            waitFor("Blocked Pop-ups", 5_000)
+            waitFor("Blocked pop-ups", 5_000)
             SystemClock.sleep(1_200)
             shot("02-popup-blocked-sheet")
             tapLabel(f, "Open")
@@ -261,6 +262,40 @@ class ServicesHardeningDemo {
             shot("15-certificate-site-answer")
         } else {
             shot("13-certificate-chooser-missing")
+        }
+
+        // 5. Settings › Security on the phone: the `security` category of the Settings tab (the
+        //    rows this program adds to its builder). A remembered answer first – the site allowed
+        //    to open pop-ups through the switch row of the blocked pop-ups sheet on a fresh load
+        //    of /popups, which opens the blocked page in a tab of its own – then the section by
+        //    its deep link, the answer's row, its sheet, and Forget this answer taking it back.
+        ensureForeground()
+        openInApp("http://$SERVER/popups")
+        waitFor("The automatic pop-up was blocked.", 12_000)
+        if (waitFor("Pop-up blocked", 3_000, prefix = true)) {
+            SystemClock.sleep(800)
+            tapLabel(f, "Pop-up blocked", prefix = true)
+            waitFor("Blocked pop-ups", 5_000)
+            SystemClock.sleep(1_200)
+            tapLabel(f, "Always allow pop-ups on", prefix = true)
+            SystemClock.sleep(3_000)
+        }
+        ensureForeground()
+        openInApp("zenium://settings/security")
+        waitFor("Site permissions", 12_000)
+        SystemClock.sleep(1_500)
+        shot("16-settings-security")
+        // A row's accessible text runs its label and description together.
+        if (tapLabel(f, "May open pop-up windows", contains = true)) {
+            waitFor("Forget this answer", 5_000)
+            SystemClock.sleep(1_200)
+            shot("17-settings-security-answer-sheet")
+            tapLabel(f, "Forget this answer")
+            waitFor("No site permissions remembered yet", 8_000)
+            SystemClock.sleep(1_200)
+            shot("18-settings-security-forgotten")
+        } else {
+            shot("16-settings-security-no-answer")
         }
     }
 
@@ -547,16 +582,17 @@ class ServicesHardeningDemo {
         f: Finger,
         label: String,
         prefix: Boolean = false,
-        ignoreCase: Boolean = false
+        ignoreCase: Boolean = false,
+        contains: Boolean = false
     ): Boolean {
-        var target = findByLabel(label, prefix, ignoreCase) ?: run {
+        var target = findByLabel(label, prefix, ignoreCase, contains) ?: run {
             step("no node labelled '$label'")
             return false
         }
         val settleBy = SystemClock.uptimeMillis() + 2_000
         while (SystemClock.uptimeMillis() < settleBy) {
             SystemClock.sleep(150)
-            val again = findByLabel(label, prefix, ignoreCase) ?: break
+            val again = findByLabel(label, prefix, ignoreCase, contains) ?: break
             if (again == target) break
             target = again
         }
@@ -586,22 +622,34 @@ class ServicesHardeningDemo {
         log.append(SystemClock.uptimeMillis()).append(' ').append(message).append('\n')
     }
 
-    private fun findByLabel(label: String, prefix: Boolean = false, ignoreCase: Boolean = false): Rect? =
-        findAllByLabel(label, prefix, ignoreCase).firstOrNull()
+    private fun findByLabel(
+        label: String,
+        prefix: Boolean = false,
+        ignoreCase: Boolean = false,
+        contains: Boolean = false
+    ): Rect? = findAllByLabel(label, prefix, ignoreCase, contains).firstOrNull()
 
     /**
      * Breadth-first search of the active window for nodes labelled `label` (aria-label or text).
      * With `prefix`, a node whose text starts with the label and a space matches as well: a button
      * made of several spans ("Pop-up blocked" and "Show") is one node with their texts joined.
-     * With `ignoreCase`, a system button whose text is shown, and read, in capitals matches too.
+     * With `contains`, a node whose text has the label anywhere in it: a Settings row is one
+     * button whose text runs its label and description together. With `ignoreCase`, a system
+     * button whose text is shown, and read, in capitals matches too.
      */
-    private fun findAllByLabel(label: String, prefix: Boolean = false, ignoreCase: Boolean = false): List<Rect> =
-        findNodes(label, prefix, ignoreCase).map { node -> Rect().also(node::getBoundsInScreen) }
+    private fun findAllByLabel(
+        label: String,
+        prefix: Boolean = false,
+        ignoreCase: Boolean = false,
+        contains: Boolean = false
+    ): List<Rect> =
+        findNodes(label, prefix, ignoreCase, contains).map { node -> Rect().also(node::getBoundsInScreen) }
 
     private fun findNodes(
         label: String,
         prefix: Boolean = false,
-        ignoreCase: Boolean = false
+        ignoreCase: Boolean = false,
+        contains: Boolean = false
     ): List<AccessibilityNodeInfo> {
         // The root is briefly unavailable while the active window changes; that is not "gone".
         var root = ui.rootInActiveWindow
@@ -618,7 +666,8 @@ class ServicesHardeningDemo {
         val matches = { text: CharSequence? ->
             text != null && (
                 text.toString().equals(label, ignoreCase) ||
-                    (prefix && text.toString().startsWith("$label ", ignoreCase))
+                    (prefix && text.toString().startsWith("$label ", ignoreCase)) ||
+                    (contains && text.toString().contains(label, ignoreCase))
                 )
         }
         while (queue.isNotEmpty() && visited < 8_000) {
