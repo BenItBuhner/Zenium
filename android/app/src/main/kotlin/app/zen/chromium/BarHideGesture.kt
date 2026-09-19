@@ -91,13 +91,25 @@ class BarHideGesture(
 
     private var touching = false
     private var multiTouch = false
+    /**
+     * The finger on the screen (raw coordinates), from the latest real touch. The WebView's own
+     * coordinates will not do here: `TabHost.place` slides the view with a top-docked bar, so
+     * in them a finger that holds still reads as moving by the bar's travel, and the pull's
+     * synthetic touches carry the view's coordinates as their raw ones.
+     */
+    private var fingerX = 0f
+    private var fingerY = 0f
     private var downX = 0f
     private var downY = 0f
     private var lastY = 0f
+    /** Where the finger landed, in the WebView's coordinates: the still finger it sees is built from here. */
+    private var downLocalY = 0f
     /** The WebView has seen the finger cross the slop: it has a scroll going, and no long press. */
     private var passedSlop = false
     /** The gesture began sideways: the bar leaves it to the page. */
     private var horizontal = false
+    /** The bar may take travel from this gesture: it was docked at the top and free to hide when the finger landed. */
+    private var taking = false
     /** How much of the finger's travel the bar has taken this gesture (added to the y the WebView sees). */
     private var consumedY = 0f
     /** The bar's offset as this side counts it (device px). */
@@ -118,6 +130,8 @@ class BarHideGesture(
 
     /** Every touch on the page as it arrives, before anything else has had it. */
     fun onTouch(event: MotionEvent) {
+        fingerX = event.rawX
+        fingerY = event.rawY
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 touching = true
@@ -140,36 +154,46 @@ class BarHideGesture(
      * The WebView's own touch handling, through the bar: with the bar docked at the top, a drag's
      * vertical travel goes to the bar first and the WebView sees the rest. `event` is what the
      * pull decided the WebView gets (a real touch, or a synthetic down or cancel of its making).
+     *
+     * Everything is measured on the screen ([fingerY]): the finger's travel, the slop, and the
+     * finger the WebView is shown – the one that landed, moved by the finger's travel on the
+     * screen plus what the bar took of it. The view's own coordinates would carry its slide
+     * ([TabHost.place] moves it with the bar, a frame or two after the finger) back into the
+     * finger, and Chromium would scroll on it.
      */
     fun forward(event: MotionEvent, webView: (MotionEvent) -> Boolean): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 consumedY = 0f
-                downX = event.x
-                downY = event.y
-                lastY = event.y
+                downX = fingerX
+                downY = fingerY
+                lastY = fingerY
+                downLocalY = event.y
                 passedSlop = false
                 horizontal = false
+                taking = frame?.edge == BarHideFrame.Edge.TOP
             }
             MotionEvent.ACTION_MOVE -> {
-                val dy = event.y - lastY
-                lastY = event.y
+                val dy = fingerY - lastY
+                lastY = fingerY
                 val frame = frame
-                if (frame != null && frame.edge == BarHideFrame.Edge.TOP && !multiTouch && !horizontal) {
+                if (taking && frame != null && frame.edge == BarHideFrame.Edge.TOP && !multiTouch && !horizontal) {
                     if (passedSlop) {
                         consume(dy, frame)
-                    } else if (hypot(event.x - downX, event.y - downY) > slop) {
+                    } else if (hypot(fingerX - downX, fingerY - downY) > slop) {
                         // The crossing itself goes through: the WebView begins its scroll on it
                         // (and drops its long press), and the bar takes over from the next move.
                         passedSlop = true
-                        horizontal = abs(event.x - downX) > abs(event.y - downY)
+                        horizontal = abs(fingerX - downX) > abs(fingerY - downY)
                     }
                 }
             }
         }
-        if (consumedY == 0f) return webView(event)
+        if (!taking) return webView(event)
+        val shift = downLocalY + (fingerY - downY) + consumedY - event.y
+        if (abs(shift) < 0.5f) return webView(event)
         val shifted = MotionEvent.obtain(event)
-        shifted.offsetLocation(0f, consumedY)
+        shifted.offsetLocation(0f, shift)
         return try {
             webView(shifted)
         } finally {
