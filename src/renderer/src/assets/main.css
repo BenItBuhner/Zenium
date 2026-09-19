@@ -3024,65 +3024,6 @@
   letter-spacing: -0.014em;
 }
 
-/*
- * Fading scroll edges (`useFadeEdges`). The scroll container is masked, so content dissolves
- * into whatever is behind it – no gradient overlay, no assumption about the background. The
- * depth of each edge is a registered length: 0 at an edge with nothing past it, the fade size
- * once there is, eased between the two.
- */
-@property --zen-fade-start {
-  syntax: '<length>';
-  inherits: false;
-  initial-value: 0px;
-}
-@property --zen-fade-end {
-  syntax: '<length>';
-  inherits: false;
-  initial-value: 0px;
-}
-[data-fade-axis] {
-  transition:
-    --zen-fade-start 180ms var(--zen-ease),
-    --zen-fade-end 180ms var(--zen-ease);
-}
-[data-fade-axis='y'] {
-  -webkit-mask-image: linear-gradient(
-    to bottom,
-    transparent,
-    #000 var(--zen-fade-start),
-    #000 calc(100% - var(--zen-fade-end)),
-    transparent
-  );
-  mask-image: linear-gradient(
-    to bottom,
-    transparent,
-    #000 var(--zen-fade-start),
-    #000 calc(100% - var(--zen-fade-end)),
-    transparent
-  );
-}
-[data-fade-axis='x'] {
-  -webkit-mask-image: linear-gradient(
-    to right,
-    transparent,
-    #000 var(--zen-fade-start),
-    #000 calc(100% - var(--zen-fade-end)),
-    transparent
-  );
-  mask-image: linear-gradient(
-    to right,
-    transparent,
-    #000 var(--zen-fade-start),
-    #000 calc(100% - var(--zen-fade-end)),
-    transparent
-  );
-}
-/* A v2 sheet's header marks scrolled-under content with a hairline, not a fade (draft 9.7). */
-.zen-install-sheet .zen-sheet-scroll[data-fade-axis] {
-  -webkit-mask-image: none;
-  mask-image: none;
-}
-
 @layer components {
   /*
    * Downloads (design language v2 draft): page surfaces on the v2 token block above. The
@@ -3678,6 +3619,60 @@
   }
 }
 
+/*
+ * Fading scroll edges (`useFadeEdges`). The scroll container is masked, so content dissolves
+ * into whatever is behind it – no gradient overlay, no assumption about the background. The
+ * depth of each edge is a registered length: 0 at an edge with nothing past it, the fade size
+ * once there is, eased between the two.
+ */
+@property --zen-fade-start {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+@property --zen-fade-end {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+[data-fade-axis] {
+  transition:
+    --zen-fade-start 180ms var(--zen-ease),
+    --zen-fade-end 180ms var(--zen-ease);
+}
+[data-fade-axis='y'] {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    #000 var(--zen-fade-start),
+    #000 calc(100% - var(--zen-fade-end)),
+    transparent
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    #000 var(--zen-fade-start),
+    #000 calc(100% - var(--zen-fade-end)),
+    transparent
+  );
+}
+[data-fade-axis='x'] {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 var(--zen-fade-start),
+    #000 calc(100% - var(--zen-fade-end)),
+    transparent
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 var(--zen-fade-start),
+    #000 calc(100% - var(--zen-fade-end)),
+    transparent
+  );
+}
+
 @layer components {
   /*
    * "Add to Home screen" (`InstallSheet`) on the sheet chassis, which owns the surface, grip,
@@ -3796,6 +3791,12 @@
     width: 100%;
     object-fit: cover;
   }
+}
+
+/* A v2 sheet's header marks scrolled-under content with a hairline, not a fade (draft 9.7). */
+.zen-install-sheet .zen-sheet-scroll[data-fade-axis] {
+  -webkit-mask-image: none;
+  mask-image: none;
 }
 
 /*
