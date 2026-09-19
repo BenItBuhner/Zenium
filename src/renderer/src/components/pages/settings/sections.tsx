@@ -26,7 +26,6 @@ import type {
   WindowSyncMode
 } from '@shared/types'
 import { DEFAULT_CONTAINER_ID } from '@shared/types'
-import { TRACKING_LEVEL_LABELS, type TrackingLevel } from '@shared/blocking'
 import { CONTAINER_COLORS, CONTAINER_ICONS, spaceLabel } from '@shared/defaults'
 import { resolveDownloadSettings } from '@shared/downloads'
 import {
@@ -83,6 +82,7 @@ import {
   ZoomBlock
 } from './blocks'
 import { choice, type RowGroup, type SectionModel, type SettingsRow } from './model'
+import { trackingGroups } from './tracking'
 
 /**
  * The phone Settings sections as data: one builder per category turns the browser state into
@@ -1016,77 +1016,14 @@ function downloadsSection({ state, set }: SectionContext): RowGroup[] {
 // Privacy and Security (ad and tracker blocking; the remembered per-site answers are Security's)
 // ---------------------------------------------------------------------------
 
-function privacySection({ state, set }: SectionContext): RowGroup[] {
-  const b = state.settings.blocking
-  const status = state.blocking
-  const enabledLists = status.lists.filter((l) => l.enabled)
-  const listsDescription = status.updating
-    ? 'Updating…'
-    : status.lastUpdatedAt
-      ? `${enabledLists.length} lists · updated ${relativeTime(status.lastUpdatedAt)}`
-      : `${enabledLists.length} lists`
-  return [
-    {
-      id: 'tracking',
-      heading: 'Tracking protection',
-      rows: [
-        {
-          kind: 'switch',
-          id: 'blocking-enabled',
-          label: 'Block ads and trackers',
-          description: status.ready
-            ? `${status.sessionBlocked.toLocaleString()} blocked since Zenium started.`
-            : 'Filter lists are loading.',
-          keywords: ['adblock', 'tracking'],
-          checked: status.enabled,
-          onChange: (v) => run('blocking.setEnabled', { enabled: v })
-        },
-        choice<TrackingLevel>({
-          id: 'blocking-level',
-          label: 'Protection level',
-          value: b.level,
-          disabled: !status.enabled,
-          options: (Object.keys(TRACKING_LEVEL_LABELS) as TrackingLevel[]).map((level) => ({
-            value: level,
-            label: TRACKING_LEVEL_LABELS[level].label,
-            description: TRACKING_LEVEL_LABELS[level].description
-          })),
-          onChange: (level) => set({ blocking: { ...b, level } })
-        }),
-        {
-          kind: 'switch',
-          id: 'blocking-auto-update',
-          label: 'Update filter lists automatically',
-          checked: b.autoUpdate,
-          onChange: (v) => set({ blocking: { ...b, autoUpdate: v } })
-        },
-        {
-          kind: 'action',
-          id: 'blocking-update-now',
-          label: 'Update filter lists now',
-          description: listsDescription,
-          disabled: status.updating,
-          onPress: () => run('blocking.updateLists', {})
-        }
-      ]
-    },
-    {
-      id: 'blocking-exceptions',
-      heading: 'Sites without blocking',
-      description: 'Turning protection off for a site in the site information remembers it here.',
-      rows: status.siteExceptions.map((site) =>
-        item(`blocking:${site}`, site, 'Nothing is blocked on this site', [
-          {
-            kind: 'action',
-            id: `blocking:${site}:block`,
-            label: 'Block on this site again',
-            onPress: () => run('blocking.setSiteException', { site, excepted: false })
-          }
-        ])
-      ),
-      empty: 'No exceptions yet'
-    }
-  ]
+/**
+ * Groups in Chrome's Privacy and security order – Safety check, Safe Browsing, Tracking
+ * prevention, Clear browsing data, Cookies, Site settings, HTTPS-only, Secure DNS, Privacy
+ * signals – each program's groups self-contained: the request engine's (`tracking.tsx`) at the
+ * tracking-prevention position; the remembered per-site answers are Security's (`securitySection`).
+ */
+function privacySection(ctx: SectionContext): RowGroup[] {
+  return trackingGroups(ctx)
 }
 
 // ---------------------------------------------------------------------------

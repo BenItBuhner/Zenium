@@ -35,7 +35,6 @@ import {
   type FilterListStatus,
   type TrackingLevel
 } from '@shared/blocking'
-import type { UIState } from '@shared/types'
 import type { HostGlobal } from './boot'
 import { PREVIEW_WEB_APP, postPreviewManifest } from './preview'
 import { PREVIEW_DOWNLOAD_EVENT } from './previewDownloads'
@@ -150,9 +149,7 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
   // The request engine's state the spec asks for is patched in once the target is up (the core's
   // push on the way there would replace an earlier patch) and again before a page's rows are
   // shown or tapped, so a row the seeded state adds is there for `show` and the steps.
-  const blocking = new URLSearchParams(spec.startsWith('#') ? spec.slice(1) : spec).get(
-    'blocking'
-  )
+  const blocking = new URLSearchParams(spec.startsWith('#') ? spec.slice(1) : spec).get('blocking')
   const seed = (): void => {
     if (blocking) seedBlocking(blocking)
   }
@@ -293,7 +290,11 @@ function seedBlocking(variant: string): void {
 }
 
 export function blockingFixture(state: UIState, variant: string, now: number): UIState {
-  const tab = activeTab(state)
+  const active = activeTab(state)
+  // The page the state is about: the active tab, or – with the Settings tab up – the web page it
+  // was opened from, whose site the "Sites without blocking" rows name (§10.5).
+  const opener = active?.openerTabId ? state.tabs[active.openerTabId] : undefined
+  const tab = active && siteOriginOf(active.url) ? active : (opener ?? active)
   const origin = tab ? siteOriginOf(tab.url) : null
   const level: TrackingLevel =
     variant === 'strict' ? 'strict' : variant === 'level-off' ? 'off' : 'balanced'
@@ -365,9 +366,9 @@ export function blockingFixture(state: UIState, variant: string, now: number): U
     lastUpdatedAt: bundled || variant === 'loading' ? null : now - 2 * HOUR_MS,
     userFilterErrors: full ? [{ line: 3, message: 'Unknown option "foo"' }] : []
   }
-  const active = enabled && level !== 'off' && !(origin !== null && siteExceptions.includes(origin))
+  const blocks = enabled && level !== 'off' && !(origin !== null && siteExceptions.includes(origin))
   const tabs = { ...state.tabs }
-  if (tab) tabs[tab.id] = { ...tab, blockedCount: active ? 12 : 0 }
+  if (tab) tabs[tab.id] = { ...tab, blockedCount: blocks ? 12 : 0 }
   return { ...state, settings, blocking, tabs }
 }
 

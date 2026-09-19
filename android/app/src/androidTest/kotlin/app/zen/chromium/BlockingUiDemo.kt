@@ -1,12 +1,13 @@
 package app.zen.chromium
 
+import android.graphics.PointF
 import android.graphics.Rect
 import android.os.SystemClock
 import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import org.json.JSONArray
 import org.json.JSONObject
-import org.json.JSONTokener
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
@@ -18,16 +19,17 @@ import java.util.concurrent.TimeUnit
 
 /**
  * Records the request blocking UI on the phone: the address pill's blocked-count chip climbing
- * as the demo page asks nine real ad and tracking hosts again, Settings > Privacy and Security
- * (the status card, the master switch, the level as radios, the filter lists, the sites without
- * blocking), a level change the Kotlin engine follows, the current site excepted from the row
- * in Settings and blocked again from its trash button, and the master switch off and on.
+ * as the demo page asks nine real ad and tracking hosts again, then the Settings tab's Privacy
+ * and Security section (`pages/settings/tracking.tsx`: the master switch, the level as a picker
+ * sheet, the counter, the filter lists as item rows with a sheet each, the sites without
+ * blocking), a level change the Kotlin engine follows, the current site excepted from its switch
+ * row and blocked again from its item's sheet, and the master switch off and on.
  *
- * Every control is driven through the chrome's accessibility tree the way a screen reader
- * would (the checkbox or radio inside a row is the checkable node named after the row); the
- * outcome is checked against the core's state through `window.zen` and the engine's snapshot,
- * and written to `<shotPrefix>-notes.txt` next to the screenshots. The page comes from a
- * loopback server in this process, as in [BlockingDemo].
+ * Every row is found through the chrome's accessibility tree the way a screen reader would (a
+ * row is one button whose text runs its label and description together) and tapped at its
+ * bounds; the outcome is checked against the core's state through `window.zen` and the engine's
+ * snapshot, and written to `<shotPrefix>-notes.txt` next to the screenshots. The page comes from
+ * a loopback server in this process, as in [BlockingDemo].
  */
 @RunWith(AndroidJUnit4::class)
 class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blocking-android-ui", "blocking-ui-demo") {
@@ -75,12 +77,21 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
         note("lists: ${describeLists(status)}")
         note("kotlin engine: ${describeEngine()}")
         for (attempt in 1..3) {
-            invoke("tab.reload", """{"tabId":"tab_demo","skipCache":true}""")
-            val tab = waitForTitle("9/9", 15_000).getJSONObject("tabs").optJSONObject("tab_demo")
+            coreInvoke("tab.reload", """{"tabId":"$DEMO_TAB","skipCache":true}""")
+            val tab = waitForTitle("9/9", 15_000).getJSONObject("tabs").optJSONObject(DEMO_TAB)
             if (tab?.optString("title")?.startsWith("9/9") == true) break
             Log.w(tag, "attempt $attempt: page settled at '${tab?.optString("title")}'")
             SystemClock.sleep(3_000)
         }
+        // The Settings page is a chunk of its own that loads on its first open: pay for it off
+        // camera, then put the profile back as seeded (the warm tab closed, the demo page active).
+        val warm = coreInvoke("page.open", """{"id":"settings","section":"privacy"}""")
+        val painted = awaitChrome("document.querySelector('[data-row=\"tracking-enabled\"]')", 15_000)
+        SystemClock.sleep(800)
+        coreInvoke("tab.close", """{"tabId":$warm}""")
+        SystemClock.sleep(800)
+        ensureDemoTab()
+        note("warm-up: the Settings chunk ${if (painted) "painted" else "did NOT paint"} off camera")
         closeUrlbar()
         Log.i(tag, "warm-up done")
     }
@@ -107,102 +118,134 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
         shot("03-page-chip-27")
         beat()
 
-        // 3. Settings > Privacy and Security: the status card and the master switch.
+        // 3. Settings > Privacy and Security from the app menu: the tab, then the section.
         note("\n3. Settings > Privacy and Security")
-        if (!openPrivacySettings()) {
+        if (!openPrivacySettings(throughMenu = true)) {
             note("  Settings did not open; the rest of the sequence needs it")
             return
         }
-        note("  status card: ${statusCard()}")
+        note("  counter row: ${rowText("Blocked since Zenium started") ?: "(not in the accessibility tree)"}")
         shot("04-settings-privacy")
         beat()
 
-        // 4. The level: Balanced -> Strict adds uBlock Origin's privacy list; the engine follows.
-        note("\n4. level Balanced -> Strict")
+        // 4. The level: the picker sheet, Balanced -> Strict adds uBlock Origin's privacy list; the engine follows.
+        note("\n4. level Balanced -> Strict through the picker sheet")
         val before = engine.snapshot.setCount
-        if (pickLevel("Strict", "strict")) {
-            note("  level=${level()} engine followed in ${waitForEngine { it.setCount > before }} ms (${describeEngine()})")
-            reveal("Strict")
+        if (openPicker("Level", "tracking-level", "Strict")) {
             SystemClock.sleep(600)
-            shot("05-level-strict")
+            shot("05-level-picker")
             beat()
+            if (pickOption("Strict") { level() == "strict" }) {
+                note("  level=${level()} engine followed in ${waitForEngine { it.setCount > before }} ms (${describeEngine()})")
+                awaitNoSheet()
+                revealRow("Level")
+                SystemClock.sleep(600)
+                shot("06-level-strict")
+                beat()
+            } else {
+                note("  the Strict option did not take (level=${level()})")
+                closeSheets()
+            }
         } else {
-            note("  the Strict radio did not take (level=${level()})")
+            note("  the Level row did not open its picker")
         }
         note("\n   level Strict -> Balanced")
         val strictSets = engine.snapshot.setCount
-        if (pickLevel("Balanced", "balanced")) {
+        if (openPicker("Level", "tracking-level", "Balanced") && pickOption("Balanced") { level() == "balanced" }) {
             note("  level=${level()} engine followed in ${waitForEngine { it.setCount < strictSets }} ms (${describeEngine()})")
+            awaitNoSheet()
+        } else {
+            note("  the Balanced option did not take (level=${level()}); setting it through the command")
+            closeSheets()
+            setLevel("balanced")
         }
 
-        // 5. The filter lists with their counts and freshness.
+        // 5. The filter lists as item rows, and one list's sheet.
         note("\n5. filter lists")
-        if (reveal("Filter lists") != null) {
+        if (revealRow("Filter lists") != null) {
             SystemClock.sleep(600)
             note("  lists: ${describeLists(blockingStatus())}")
-            shot("06-filter-lists")
+            shot("07-filter-lists")
             beat()
         }
+        if (tapRow("EasyList", "tracking-list:easylist") { rowBounds("Use this list", 0) != null }) {
+            SystemClock.sleep(800)
+            shot("08-list-sheet")
+            beat()
+            closeSheets()
+        } else {
+            note("  the EasyList row did not open its sheet")
+        }
 
-        // 6. Sites without blocking: the current site's row, unchecked to except it.
+        // 6. Sites without blocking: the current site's switch row, off to except it.
         note("\n6. per-site exception from the current site's row")
-        if (reveal("Sites without blocking") != null) {
+        if (revealRow("Sites without blocking") != null) {
             SystemClock.sleep(600)
-            shot("07-sites")
+            shot("09-sites")
             beat()
         }
         if (setSiteRow(excepted = true)) {
             note("  siteExceptions=${blockingStatus().getJSONArray("siteExceptions")}")
-            reveal("Block on $DEMO_SITE")
+            revealRow("Block on $DEMO_SITE")
             SystemClock.sleep(1_200)
-            shot("08-site-excepted")
+            shot("10-site-excepted")
             beat()
         } else {
             note("  the row did not toggle; excepting through the command")
-            invoke("blocking.setSiteException", """{"site":"$DEMO_ORIGIN","excepted":true}""")
+            coreInvoke("blocking.setSiteException", """{"site":"$DEMO_ORIGIN","excepted":true}""")
         }
 
-        // 7. The page again: nothing blocked, the chip is a ghost.
+        // 7. The page again: nothing blocked, the chip says so.
         note("\n7. the excepted page")
-        closeSettings()
-        invoke("tab.reload", """{"tabId":"tab_demo","skipCache":true}""")
+        ensureDemoTab()
+        coreInvoke("tab.reload", """{"tabId":"$DEMO_TAB","skipCache":true}""")
         s = waitForTitle("0/9", 25_000)
         note("  ${describeTab(s)}")
         note("  chip: ${chipLabel() ?: "(not in the accessibility tree)"}")
-        shot("09-page-excepted")
+        shot("11-page-excepted")
         beat()
 
-        // 8. Back in Settings the site is listed; its trash button blocks on it again.
-        note("\n8. the exception's row and its trash button")
-        if (openPrivacySettings() && reveal("Sites without blocking") != null) {
+        // 8. Back in Settings the site is an item row; its sheet's action blocks on it again.
+        note("\n8. the exception's row and its sheet")
+        if (openPrivacySettings(throughMenu = false) && revealRow("Sites without blocking") != null) {
             SystemClock.sleep(600)
-            shot("10-sites-excepted-row")
+            shot("12-sites-excepted-row")
             beat()
-            if (clickByLabel("Block on $DEMO_SITE again") && awaitSettled({ !siteExcepted() }, 4_000)) {
-                note("  after the trash button: siteExceptions=${blockingStatus().getJSONArray("siteExceptions")}")
-                SystemClock.sleep(1_200)
-                shot("11-sites-blocked-again")
+            if (tapRow(DEMO_SITE, "tracking-site:$DEMO_ORIGIN") { rowBounds("Block on this site again", 0) != null }) {
+                SystemClock.sleep(800)
+                shot("13-site-sheet")
                 beat()
+                if (tapRow("Block on this site again", "tracking-site:$DEMO_ORIGIN:block") { !siteExcepted() }) {
+                    note("  after the sheet's action: siteExceptions=${blockingStatus().getJSONArray("siteExceptions")}")
+                    awaitNoSheet()
+                    SystemClock.sleep(1_200)
+                    shot("14-sites-blocked-again")
+                    beat()
+                } else {
+                    note("  the sheet's action did not take; resetting through the command")
+                    closeSheets()
+                    coreInvoke("blocking.setSiteException", """{"site":"$DEMO_ORIGIN","excepted":false}""")
+                }
             } else {
-                note("  the trash button did not take; resetting through the command")
-                invoke("blocking.setSiteException", """{"site":"$DEMO_ORIGIN","excepted":false}""")
+                note("  the site's row did not open its sheet; resetting through the command")
+                coreInvoke("blocking.setSiteException", """{"site":"$DEMO_ORIGIN","excepted":false}""")
             }
         }
 
-        // 9. The master switch: off (the card says so, the level and the lists grey out), on again.
+        // 9. The master switch: off (the dependent rows dim to 40 %), on again.
         note("\n9. master switch")
         if (setMasterSwitch(enabled = false)) {
             note("  enabled=${blockingStatus().getBoolean("enabled")} engine followed in ${waitForEngine { it.filterCount == 0 }} ms")
-            reveal("Block ads and trackers")
+            revealRow("Block ads and trackers")
             SystemClock.sleep(1_200)
-            note("  status card: ${statusCard()}")
-            shot("12-master-off")
+            note("  counter row: ${rowText("Blocked since Zenium started")}")
+            shot("15-master-off")
             beat()
             if (setMasterSwitch(enabled = true)) {
                 note("  enabled=${blockingStatus().getBoolean("enabled")} engine followed in ${waitForEngine { it.filterCount > 0 }} ms")
                 SystemClock.sleep(1_200)
-                note("  status card: ${statusCard()}")
-                shot("13-master-on")
+                note("  counter row: ${rowText("Blocked since Zenium started")}")
+                shot("16-master-on")
                 beat()
             }
         } else {
@@ -211,123 +254,150 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
 
         // 10. The page once more: blocked again, the session total higher than before.
         note("\n10. the page, blocked again")
-        closeSettings()
-        invoke("tab.reload", """{"tabId":"tab_demo","skipCache":true}""")
+        ensureDemoTab()
+        coreInvoke("tab.reload", """{"tabId":"$DEMO_TAB","skipCache":true}""")
         s = waitForTitle("9/9", 25_000)
         note("  ${describeTab(s)}")
-        shot("14-page-blocked-again")
+        shot("17-page-blocked-again")
         note("\ndone")
     }
 
-    // --- Settings through the accessibility tree ----------------------------------------------
+    // --- the Settings tab through the accessibility tree ------------------------------------------
 
     private val host: Host get() = (activity as MainActivity).host
 
-    private fun chromeSurfaceUp(): Boolean {
-        var up = false
-        instrumentation.runOnMainSync { up = host.back.chromeSurfaceUp }
-        return up
-    }
-
     /**
-     * The app menu from a clear chrome, then Settings, then the Privacy and Security section.
-     * The sheet slides away before the panel comes up and the tree trails the screen by seconds
-     * on the software-rendered emulator, so each step is polled for rather than slept through.
+     * The Privacy and Security section of the Settings tab: from the app menu (Settings, then the
+     * category row on the landing) the first time, through `page.open` – which reuses the tab and
+     * takes it to the section – after. True once the section's first row is in the tree.
      */
-    private fun openPrivacySettings(): Boolean {
+    private fun openPrivacySettings(throughMenu: Boolean): Boolean {
         ensureForeground()
-        closeSettings()
-        val button = findByLabel(MENU_LABEL) ?: Rect(
-            (width - 52 * density).toInt(), (pill.centerY() - 22 * density).toInt(),
-            (width - 8 * density).toInt(), (pill.centerY() + 22 * density).toInt()
-        )
-        Finger().tap(button.exactCenterX(), button.exactCenterY())
-        if (waitFor(HANDLE_LABEL, 6_000) == null) {
-            Log.w(tag, "the app menu did not open")
+        if (throughMenu) {
+            if (!openMenuItem("Settings")) {
+                Log.w(tag, "no Settings in the app menu")
+                closeSheets()
+                return false
+            }
+            if (awaitPage(SETTINGS_URL, 12_000) == null) {
+                Log.w(tag, "Settings did not come up")
+                return false
+            }
+            SystemClock.sleep(1_200)
+            val category = rowBounds(SECTION, 8_000) ?: run {
+                Log.w(tag, "no $SECTION category on the landing")
+                return false
+            }
+            Finger().tap(category.exactCenterX(), category.exactCenterY())
+        } else {
+            coreInvoke("page.open", """{"id":"settings","section":"privacy"}""")
+        }
+        if (awaitPage("$SETTINGS_URL/privacy", 12_000) == null) {
+            Log.w(tag, "the tab did not come to the section")
             return false
         }
-        SystemClock.sleep(1_200)
-        if (reveal("Settings") == null || !clickByLabel("Settings")) {
-            Log.w(tag, "no Settings in the app menu")
-            closeSettings()
-            return false
-        }
-        if (waitFor(FIRST_SECTION, 12_000) == null) {
-            Log.w(tag, "Settings did not come up")
-            return false
-        }
+        awaitSurface(up = true, timeoutMs = 6_000)
+        val there = rowBounds("Block ads and trackers", 10_000) != null
         SystemClock.sleep(800)
-        // The section chips run in a strip; the one wanted sits past its right edge. Ask the tree
-        // to bring it on screen, and drag the strip when the tree does not know it yet.
-        for (attempt in 1..3) {
-            if (findByLabel(SECTION) == null) findByLabel(FIRST_SECTION)?.let { strip ->
-                val f = Finger()
-                f.down(width * 0.9f, strip.exactCenterY())
-                f.moveBy(-width * 0.7f, 0f, 350)
-                f.up()
-                SystemClock.sleep(900)
-            }
-            if (reveal(SECTION) != null && clickByLabel(SECTION)) break
-            if (attempt == 3) {
-                Log.w(tag, "no $SECTION section in Settings")
-                return false
-            }
-        }
-        return waitFor("Tracking prevention", 8_000) != null
+        return there
     }
 
-    /** Back while the host reports a chrome surface (the menu, Settings); nothing when none is up. */
-    private fun closeSettings() {
-        for (attempt in 1..4) {
-            if (!chromeSurfaceUp()) return
-            back()
-            val deadline = SystemClock.uptimeMillis() + 6_000
-            while (SystemClock.uptimeMillis() < deadline && chromeSurfaceUp()) SystemClock.sleep(150)
-            SystemClock.sleep(600)
+    /** Back to the demo page's tab through the core (the Settings tab stays open behind it). */
+    private fun ensureDemoTab() {
+        if (activeCoreTab()?.optString("id") == DEMO_TAB) return
+        coreInvoke("tab.activate", """{"tabId":"$DEMO_TAB"}""")
+        val deadline = SystemClock.uptimeMillis() + 8_000
+        while (SystemClock.uptimeMillis() < deadline && activeCoreTab()?.optString("id") != DEMO_TAB) SystemClock.sleep(250)
+        SystemClock.sleep(1_000)
+    }
+
+    /** Poll until the active tab shows `url`; that tab, or null when it does not come in time. */
+    private fun awaitPage(url: String, timeoutMs: Long): JSONObject? {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            val tab = activeCoreTab()
+            if (tab != null && tab.optString("url") == url) return tab
+            SystemClock.sleep(250)
         }
-        if (chromeSurfaceUp()) Log.w(tag, "a chrome surface stayed up")
+        Log.w(tag, "the active tab did not come to $url")
+        return null
     }
 
     /**
-     * The checkable node of a row: the checkbox or radio inside the row's label, which the tree
-     * names after the label's whole text (the row's name, then its description).
+     * The bounds of the first node whose accessible text reads `text` – exactly or as a prefix: a
+     * Settings row is one button whose text runs its label and description together, and a
+     * label's own span answers too. Polls, since the tree trails the screen on the emulator; a
+     * node the list holds below the fold is scrolled into view first.
      */
-    private fun findCheckable(rowLabel: String): AccessibilityNodeInfo? = findNodeWhere { node ->
-        node.isCheckable && (node.contentDescription?.toString()?.startsWith(rowLabel) == true ||
-            node.text?.toString()?.startsWith(rowLabel) == true)
+    private fun rowBounds(text: String, timeoutMs: Long): Rect? {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        var revealed = false
+        do {
+            val node = findNode { it == text || it.startsWith(text) }
+            if (node != null) {
+                val bounds = Rect().also { node.getBoundsInScreen(it) }
+                val onScreen = bounds.width() > 0 && bounds.height() > 0 &&
+                    bounds.centerY() in 0 until height && bounds.centerX() in 0 until width
+                if (onScreen) return bounds
+                if (!revealed) {
+                    revealed = true
+                    node.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.id)
+                    SystemClock.sleep(1_000)
+                    continue
+                }
+            }
+            SystemClock.sleep(200)
+        } while (SystemClock.uptimeMillis() < deadline)
+        return null
     }
 
+    /** Scroll the row reading `text` into view; where it is then, or null when it is not there. */
+    private fun revealRow(text: String): Rect? = rowBounds(text, 6_000)
+
+    /** The whole text of the row reading `text` (its label and description as the tree runs them). */
+    private fun rowText(text: String): String? =
+        findNode { it.startsWith(text) }?.let { it.text ?: it.contentDescription }?.toString()
+
     /**
-     * Scroll the row into view and click its checkbox or radio: through the tree first, then
-     * with a finger at its bounds should the core not report the change (`settled`) in time.
-     * The core is asked rather than the tree, which trails the screen and would otherwise earn
-     * a checkbox a second tap that flips it back. False when the row is not there or the
-     * change never came.
+     * Tap the row reading `label` and wait for `settled`: at the bounds the tree reports first,
+     * then – the tree trailing the screen by seconds on the software-rendered emulator – at the
+     * row's own rectangle in the chrome (`data-row` is the row's id). False when the row is not
+     * there or the change never came.
      */
-    private fun toggleRow(rowLabel: String, settled: () -> Boolean): Boolean {
+    private fun tapRow(label: String, rowId: String, settled: () -> Boolean): Boolean {
         if (settled()) return true
-        if (reveal(rowLabel) == null) {
-            Log.w(tag, "no $rowLabel row in Settings")
+        val bounds = rowBounds(label, 8_000)
+        if (bounds == null) Log.w(tag, "no row reading '$label' in the tree") else {
+            SystemClock.sleep(400)
+            Finger().tap(bounds.exactCenterX(), bounds.exactCenterY())
+            if (awaitSettled(settled, 5_000)) return true
+            Log.w(tag, "'$label' did not take at the tree's bounds; tapping the chrome's own rectangle")
+        }
+        val point = chromePoint("[data-row=${JSONObject.quote(rowId)}]") ?: run {
+            Log.w(tag, "no row $rowId in the chrome")
             return false
         }
-        SystemClock.sleep(500)
-        val box = findCheckable(rowLabel)
-        if (box == null) {
-            Log.w(tag, "no checkbox for $rowLabel")
-            return false
-        }
-        box.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-        if (!awaitSettled(settled, 4_000)) {
-            Log.w(tag, "$rowLabel did not flip through the tree; tapping it")
-            val rect = Rect().also { box.getBoundsInScreen(it) }
-            Finger().tap(rect.exactCenterX(), rect.exactCenterY())
-            if (!awaitSettled(settled, 4_000)) {
-                Log.w(tag, "$rowLabel did not flip")
+        Finger().tap(point.x, point.y)
+        return awaitSettled(settled, 5_000)
+    }
+
+    /** Open a value row's picker sheet; true once the option reading `option` is in the tree. */
+    private fun openPicker(label: String, rowId: String, option: String): Boolean =
+        tapRow(label, rowId) { findNodeWhere { n -> n.isCheckable && (n.text?.toString() ?: n.contentDescription?.toString())?.startsWith(option) == true } != null }
+
+    /** Tap the picker's option reading `option`; true once the core reports the change (`settled`). */
+    private fun pickOption(option: String, settled: () -> Boolean): Boolean {
+        val node = findNodeWhere { n -> n.isCheckable && (n.text?.toString() ?: n.contentDescription?.toString())?.startsWith(option) == true }
+            ?: run {
+                Log.w(tag, "no option reading '$option' in the picker")
                 return false
             }
-        }
-        Log.i(tag, "$rowLabel flipped")
-        return true
+        val bounds = Rect().also { node.getBoundsInScreen(it) }
+        Finger().tap(bounds.exactCenterX(), bounds.exactCenterY())
+        if (awaitSettled(settled, 5_000)) return true
+        Log.w(tag, "'$option' did not take at the tree's bounds; clicking it through the tree")
+        node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        return awaitSettled(settled, 5_000)
     }
 
     private fun awaitSettled(settled: () -> Boolean, timeoutMs: Long): Boolean {
@@ -339,25 +409,42 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
         return false
     }
 
-    /** Pick a level radio by its name; true once the core's level is `level`. */
-    private fun pickLevel(levelLabel: String, level: String): Boolean = toggleRow(levelLabel) { level() == level }
+    /** How many sheets the chrome has mounted (a closing one counts until its spring has carried it out). */
+    private fun sheetCount(): Int = chromeValue("String(document.querySelectorAll('.zen-sheet').length)").toIntOrNull() ?: -1
+
+    /** Wait for the last sheet to leave (a picker closes on its pick, an item's sheet with its row). */
+    private fun awaitNoSheet() {
+        val deadline = SystemClock.uptimeMillis() + 6_000
+        while (SystemClock.uptimeMillis() < deadline && sheetCount() != 0) SystemClock.sleep(200)
+    }
+
+    /** Back out of the sheets that are up, a few at most; the section itself stays. */
+    private fun closeSheets() {
+        repeat(3) {
+            if (sheetCount() <= 0) return
+            back()
+            SystemClock.sleep(900)
+        }
+        awaitNoSheet()
+    }
 
     /** The master switch through its row; true once the core reports `enabled`. */
     private fun setMasterSwitch(enabled: Boolean): Boolean =
-        toggleRow("Block ads and trackers") { blockingStatus().getBoolean("enabled") == enabled }
+        tapRow("Block ads and trackers", "tracking-enabled") { blockingStatus().getBoolean("enabled") == enabled }
 
-    /** The current site's row; true once the core lists (or no longer lists) the site's exception. */
-    private fun setSiteRow(excepted: Boolean): Boolean = toggleRow("Block on $DEMO_SITE") { siteExcepted() == excepted }
+    /** The current site's switch row; true once the core lists (or no longer lists) the site's exception. */
+    private fun setSiteRow(excepted: Boolean): Boolean =
+        tapRow("Block on $DEMO_SITE", "tracking-site-current") { siteExcepted() == excepted }
+
+    private fun setLevel(level: String) {
+        val b = coreState().getJSONObject("settings").getJSONObject("blocking")
+        b.put("level", level)
+        coreInvoke("settings.update", JSONObject().put("blocking", b).toString())
+    }
 
     private fun siteExcepted(): Boolean {
         val sites = blockingStatus().getJSONArray("siteExceptions")
         return (0 until sites.length()).any { sites.getString(it) == DEMO_ORIGIN }
-    }
-
-    /** The status card's headline and detail (the first two texts after the section title). */
-    private fun statusCard(): String {
-        val headline = findNode { it.contains("blocked since Zenium started") || it.startsWith("Ad and tracker blocking is off") || it.startsWith("Loading the filter lists") }
-        return headline?.let { it.text ?: it.contentDescription }?.toString() ?: "(not in the accessibility tree)"
     }
 
     /** The chip's accessible label in the pill (`<n> requests blocked on this page · Site information`). */
@@ -367,42 +454,36 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
 
     // --- the chrome's bridge --------------------------------------------------------------------
 
-    /** Evaluate in the chrome WebView; the raw JSON-encoded result. */
-    private fun js(code: String): String {
-        var result = ""
-        val latch = CountDownLatch(1)
-        instrumentation.runOnMainSync {
-            host.chrome.evaluateJavascript(code) { value ->
-                result = value ?: ""
-                latch.countDown()
-            }
-        }
-        latch.await(10, TimeUnit.SECONDS)
-        return result
-    }
+    /** Evaluate in the chrome; the value as text ("" when it never answered). */
+    private fun chromeValue(code: String): String =
+        runCatching { org.json.JSONTokener(chromeJs(code)).nextValue() }.getOrNull()?.takeIf { it != JSONObject.NULL }?.toString() ?: ""
 
-    /** Run a core command through `window.zen.invoke` and wait for its promise; the result as JSON. */
-    private fun invoke(name: String, args: String = "null"): String {
-        js(
-            "window.__demo=undefined;window.zen.invoke(${JSONObject.quote(name)},$args)" +
-                ".then(r=>{window.__demo=JSON.stringify(r===undefined?null:r)},e=>{window.__demo='ERR:'+(e&&e.message||e)})"
-        )
-        val deadline = SystemClock.uptimeMillis() + 15_000
+    /** Poll the chrome until the expression `code` is true; false when it is not in time. */
+    private fun awaitChrome(code: String, timeoutMs: Long): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
         while (SystemClock.uptimeMillis() < deadline) {
-            val raw = js("window.__demo===undefined?'':window.__demo")
-            val value = (JSONTokener(raw).nextValue() as? String).orEmpty()
-            if (value.startsWith("ERR:")) error("$name failed: ${value.removePrefix("ERR:")}")
-            if (value.isNotEmpty()) return value
-            SystemClock.sleep(100)
+            if (chromeValue("String(!!($code))") == "true") return true
+            SystemClock.sleep(200)
         }
-        error("$name timed out")
+        return chromeValue("String(!!($code))") == "true"
     }
 
-    private fun state(): JSONObject = JSONObject(invoke("app.getState"))
+    /** Where the middle of the first chrome element matching `selector` is on screen, or null. */
+    private fun chromePoint(selector: String): PointF? {
+        val raw = chromeJs(
+            "(function(){var e=document.querySelector(${JSONObject.quote(selector)});if(!e)return null;" +
+                "e.scrollIntoView({block:'center'});var r=e.getBoundingClientRect();return [r.left+r.width/2,r.top+r.height/2]})()"
+        )
+        val point = runCatching { JSONArray(raw) }.getOrNull()?.takeIf { it.length() == 2 } ?: return null
+        var origin = IntArray(2)
+        instrumentation.runOnMainSync { origin = IntArray(2).also(host.chrome::getLocationOnScreen) }
+        SystemClock.sleep(400)
+        return PointF(origin[0] + point.getDouble(0).toFloat() * density, origin[1] + point.getDouble(1).toFloat() * density)
+    }
 
-    private fun blockingStatus(): JSONObject = state().getJSONObject("blocking")
+    private fun blockingStatus(): JSONObject = coreState().getJSONObject("blocking")
 
-    private fun level(): String = state().getJSONObject("settings").getJSONObject("blocking").optString("level")
+    private fun level(): String = coreState().getJSONObject("settings").getJSONObject("blocking").optString("level")
 
     private val engine: app.zen.chromium.blocking.Blocking get() = host.blocking
 
@@ -419,8 +500,8 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
 
     /** The demo page asks its nine third-party hosts again (cache-busted), the way it did on load. */
     private fun askAgain() {
-        val tab = host.tabs.get("tab_demo") ?: run {
-            note("  no WebView for tab_demo")
+        val tab = host.tabs.get(DEMO_TAB) ?: run {
+            note("  no WebView for $DEMO_TAB")
             return
         }
         val latch = CountDownLatch(1)
@@ -433,15 +514,15 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
     /** Poll the tab's blocked count up to `n` and hand back the state then. */
     private fun waitForBlocked(n: Int, timeoutMs: Long = 20_000): JSONObject {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
-        var s = state()
+        var s = coreState()
         while (SystemClock.uptimeMillis() < deadline) {
-            val tab = s.getJSONObject("tabs").optJSONObject("tab_demo")
+            val tab = s.getJSONObject("tabs").optJSONObject(DEMO_TAB)
             if (tab != null && tab.optInt("blockedCount") >= n) {
                 SystemClock.sleep(1_000)
-                return state()
+                return coreState()
             }
             SystemClock.sleep(400)
-            s = state()
+            s = coreState()
         }
         Log.w(tag, "blockedCount never reached $n")
         return s
@@ -450,15 +531,15 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
     /** Poll the tab's title (the page writes its tally into it) and hand back the state then. */
     private fun waitForTitle(prefix: String, timeoutMs: Long = 20_000): JSONObject {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
-        var s = state()
+        var s = coreState()
         while (SystemClock.uptimeMillis() < deadline) {
-            val tab = s.getJSONObject("tabs").optJSONObject("tab_demo")
+            val tab = s.getJSONObject("tabs").optJSONObject(DEMO_TAB)
             if (tab != null && tab.optString("title").startsWith(prefix) && !tab.optBoolean("loading")) {
                 SystemClock.sleep(1_200)
-                return state()
+                return coreState()
             }
             SystemClock.sleep(500)
-            s = state()
+            s = coreState()
         }
         Log.w(tag, "title '$prefix' never showed up")
         return s
@@ -495,7 +576,7 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
 
     /** The tab's url, title and counter plus the session total. */
     private fun describeTab(s: JSONObject): String {
-        val tab = s.getJSONObject("tabs").optJSONObject("tab_demo") ?: return "tab_demo gone"
+        val tab = s.getJSONObject("tabs").optJSONObject(DEMO_TAB) ?: return "$DEMO_TAB gone"
         return "url=${tab.optString("url")} title=\"${tab.optString("title")}\" " +
             "blockedCount=${tab.optInt("blockedCount")} sessionBlocked=${s.getJSONObject("blocking").optInt("sessionBlocked")}"
     }
@@ -574,13 +655,11 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
         /** The port the seeded tab's URL names (`blocking-demo-state.json`). */
         private const val PORT = 18123
         private const val DEMO_ORIGIN = "http://127.0.0.1:$PORT"
+        private const val DEMO_TAB = "tab_demo"
         /** How Settings names the site (`exceptionHost`: scheme and host for anything but https). */
         private const val DEMO_SITE = DEMO_ORIGIN
         private const val SECTION = "Privacy and Security"
-        /** The first chip of the section strip: on screen as soon as Settings is. */
-        private const val FIRST_SECTION = "Look and Feel"
-        private const val MENU_LABEL = "Menu"
-        private const val HANDLE_LABEL = "Resize menu"
+        private const val SETTINGS_URL = "zen://settings"
 
         /** The page's nine third-party resources once more, as the page itself asks for them. */
         private val ASK_AGAIN_JS = """

@@ -1,4 +1,4 @@
-import type { JSX, ReactNode } from 'react'
+import type { JSX, KeyboardEvent, ReactNode } from 'react'
 import { useId, useLayoutEffect, useRef, useState } from 'react'
 import {
   CircleAlert,
@@ -30,17 +30,18 @@ import {
 } from '@renderer/lib/blockingUi'
 import { activeTab } from '@renderer/lib/selectors'
 import { cn, relativeTime } from '@renderer/lib/utils'
-import { useViewport } from '@renderer/lib/formFactor'
 
 const LEVELS: TrackingLevel[] = ['off', 'basic', 'balanced', 'strict']
 
 /**
- * Settings > Privacy and Security (design-language-v2-draft §1–§3, §6, §9). The request
- * engine's master switch and tracking-prevention level, the filter lists it runs with their
- * freshness and a manual refresh, the user's own lists and filters, and the sites where nothing
- * is blocked. The master switch and the exceptions are decisions of the `ads` permission, so they
- * go through `blocking.setEnabled` / `blocking.setSiteException` rather than the settings patch;
- * counters come from core state (`blocking.sessionBlocked`, `tab.blockedCount`).
+ * Settings > Privacy and Security on desktop (design-language-v2-draft §1–§3, §6, §9): the
+ * request engine's master switch and tracking-prevention level, the filter lists it runs with
+ * their freshness and a manual refresh, the user's own lists and filters, and the sites where
+ * nothing is blocked. The master switch and the exceptions are decisions of the `ads`
+ * permission, so they go through `blocking.setEnabled` / `blocking.setSiteException` rather
+ * than the settings patch; counters come from core state (`blocking.sessionBlocked`,
+ * `tab.blockedCount`). A phone reads the same rows from the Settings tab
+ * (`pages/settings/tracking.tsx`); this pane is drawn there only where two panes fit (§10.5).
  */
 export function PrivacySection({
   state,
@@ -53,7 +54,11 @@ export function PrivacySection({
   const status = state.blocking
   const setB = (patch: Partial<BlockingSettings>): void => set({ blocking: { ...b, ...patch } })
   const active = status.enabled && b.level !== 'off'
-  const tab = activeTab(state)
+  // The page the pane is about: the active tab, or – the pane being the Settings tab's own
+  // content – the web page it was opened from (§10.5), whose site the exception row names.
+  const current = activeTab(state)
+  const opener = current?.openerTabId ? state.tabs[current.openerTabId] : undefined
+  const tab = current && siteOriginOf(current.url) ? current : (opener ?? null)
   const origin = tab ? siteOriginOf(tab.url) : null
   const page = tab && origin ? { blocked: tab.blockedCount, site: exceptionHost(origin) } : null
   const text = statusCardText(status, active, page, relativeTime)
@@ -63,7 +68,7 @@ export function PrivacySection({
 
   return (
     <div className="zen-privacy">
-      <div className="flex flex-col gap-2">
+      <div className="zen-privacy-intro">
         <h2 className="zen-privacy-title">Privacy and Security</h2>
         <p className="zen-privacy-muted">
           Zenium blocks ads, trackers and malware hosts before a page can load them, with the same
@@ -74,19 +79,17 @@ export function PrivacySection({
 
       <section className="zen-privacy-card zen-privacy-status" aria-live="polite">
         <StatusIcon className={cn(!active && 'zen-privacy-muted')} aria-hidden />
-        <div className="zen-privacy-status-text min-w-0 flex-1">
+        <div className="min-w-0 flex-1">
           <div className="zen-privacy-card-title">{text.headline}</div>
           <div className="zen-privacy-muted">{text.detail}</div>
         </div>
-        <button
-          type="button"
-          className="zen-v2-button zen-privacy-status-action inline-flex shrink-0 items-center gap-2"
-          disabled={!active || status.updating}
+        <BusyButton
+          label="Update lists"
+          icon={<RefreshCw aria-hidden />}
+          busy={status.updating}
+          disabled={!active}
           onClick={() => run('blocking.updateLists', {})}
-        >
-          <RefreshCw className={cn('h-4 w-4', status.updating && 'zen-spin')} aria-hidden />
-          Update lists
-        </button>
+        />
       </section>
 
       <Section heading="Tracking prevention">
@@ -108,17 +111,11 @@ export function PrivacySection({
       </Section>
 
       <Section heading="Level">
-        <div className="zen-privacy-rows" role="radiogroup" aria-label="Tracking prevention level">
-          {LEVELS.map((id) => (
-            <LevelRow
-              key={id}
-              level={id}
-              checked={b.level === id}
-              disabled={!status.enabled}
-              onPick={() => setB({ level: id })}
-            />
-          ))}
-        </div>
+        <LevelGroup
+          level={b.level}
+          disabled={!status.enabled}
+          onPick={(level) => setB({ level })}
+        />
         {b.level === 'strict' && status.enabled && (
           <p className="zen-privacy-warn">
             Strict blocks the most, and some sites, videos or logins may stop working. When one
@@ -151,8 +148,8 @@ export function PrivacySection({
               label={`Block on ${exceptionHost(origin)}`}
               description={
                 status.siteExceptions.includes(origin)
-                  ? 'The site in the current tab. Nothing is blocked here until you turn this back on.'
-                  : `The site in the current tab. ${requests(tab.blockedCount)} blocked on this page.`
+                  ? 'The site you came from. Nothing is blocked there until this is on again.'
+                  : `The site you came from · ${requests(tab.blockedCount)} blocked on its page`
               }
               checked={!status.siteExceptions.includes(origin)}
               disabled={!active}
@@ -180,7 +177,7 @@ export function PrivacySection({
 }
 
 // ---------------------------------------------------------------------------
-// Building blocks (v2 §6, §9.2–9.3)
+// Building blocks (v2 §6, §9.2–9.3), on the shared `zen-v2-*` primitives (§9.34)
 // ---------------------------------------------------------------------------
 
 function Section({
@@ -203,6 +200,53 @@ function Section({
   )
 }
 
+/**
+ * The shared v2 button with a leading glyph, busy as §9.30 has it (the extensions UI's rule):
+ * the label stays in the flow unpainted, so the button keeps its width and its name, a 16 px
+ * spinner sits where the label was, the button is `aria-busy` and takes no press – busy is not
+ * disabled.
+ */
+function BusyButton({
+  label,
+  icon,
+  busy,
+  disabled,
+  onClick
+}: {
+  label: string
+  icon: ReactNode
+  busy: boolean
+  disabled?: boolean
+  onClick: () => void
+}): JSX.Element {
+  return (
+    <button
+      type="button"
+      className="zen-v2-button shrink-0"
+      disabled={disabled}
+      aria-busy={busy || undefined}
+      onClick={() => {
+        if (!busy) onClick()
+      }}
+    >
+      {busy ? (
+        <>
+          <span className="zen-v2-button-label">
+            {icon}
+            {label}
+          </span>
+          <span className="zen-v2-spinner" aria-hidden />
+        </>
+      ) : (
+        <>
+          {icon}
+          {label}
+        </>
+      )}
+    </button>
+  )
+}
+
 /** A row that is one checkbox: the whole row toggles it. */
 function CheckRow({
   label,
@@ -218,10 +262,10 @@ function CheckRow({
   onChange: (checked: boolean) => void
 }): JSX.Element {
   return (
-    <label className="zen-privacy-row">
+    <label className="zen-v2-row zen-privacy-row">
       <input
         type="checkbox"
-        className="zen-v2-check"
+        className="zen-v2-checkbox"
         checked={checked}
         disabled={disabled}
         onChange={(e) => onChange(e.target.checked)}
@@ -263,7 +307,7 @@ function Row({
     return () => observer.disconnect()
   }, [])
   return (
-    <div className="zen-privacy-row" data-wrapped={wrapped || undefined}>
+    <div className="zen-v2-row zen-privacy-row" data-wrapped={wrapped || undefined}>
       {leading}
       <div ref={text} className="zen-privacy-row-text">
         <div className="zen-privacy-row-label">{label}</div>
@@ -284,14 +328,20 @@ function Invalid({ children }: { children: ReactNode }): JSX.Element {
   )
 }
 
+/**
+ * The shared v2 icon button; busy (§9.30) swaps its glyph for the 16 px spinner at full
+ * opacity, `aria-busy`, and takes no press.
+ */
 function IconButton({
   title,
   disabled,
+  busy,
   onClick,
   children
 }: {
   title: string
   disabled?: boolean
+  busy?: boolean
   onClick: () => void
   children: ReactNode
 }): JSX.Element {
@@ -301,43 +351,79 @@ function IconButton({
       className="zen-v2-icon-button"
       title={title}
       aria-label={title}
+      aria-busy={busy || undefined}
       disabled={disabled}
-      onClick={onClick}
+      onClick={() => {
+        if (!busy) onClick()
+      }}
     >
-      {children}
+      {busy ? <span className="zen-v2-spinner" aria-hidden /> : children}
     </button>
   )
 }
 
-/** One of the four levels as a plain radio row (§9.14): the circle, the name, what it blocks. */
-function LevelRow({
+/**
+ * The four levels as plain radio rows (§9.14) on the shared `.zen-v2-radio` glyph, the whole
+ * row the radio: one tab stop (the chosen level), the arrow keys moving the choice as a native
+ * radio group does.
+ */
+function LevelGroup({
   level,
-  checked,
   disabled,
   onPick
 }: {
   level: TrackingLevel
-  checked: boolean
   disabled: boolean
-  onPick: () => void
+  onPick: (level: TrackingLevel) => void
 }): JSX.Element {
-  const meta = TRACKING_LEVEL_LABELS[level]
+  const group = useRef<HTMLDivElement>(null)
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>): void => {
+    const step =
+      e.key === 'ArrowDown' || e.key === 'ArrowRight'
+        ? 1
+        : e.key === 'ArrowUp' || e.key === 'ArrowLeft'
+          ? -1
+          : 0
+    if (step === 0 || disabled) return
+    e.preventDefault()
+    const next = LEVELS[(LEVELS.indexOf(level) + step + LEVELS.length) % LEVELS.length]
+    if (next === undefined) return
+    onPick(next)
+    group.current?.querySelector<HTMLElement>(`[data-level="${next}"]`)?.focus()
+  }
   return (
-    <label className="zen-privacy-row">
-      <input
-        type="radio"
-        className="zen-v2-radio"
-        name="zen-tracking-level"
-        value={level}
-        checked={checked}
-        disabled={disabled}
-        onChange={onPick}
-      />
-      <span className="zen-privacy-row-text">
-        <span className="zen-privacy-row-label block">{meta.label}</span>
-        <span className="zen-privacy-row-desc">{meta.description}</span>
-      </span>
-    </label>
+    <div
+      ref={group}
+      className="zen-privacy-rows"
+      role="radiogroup"
+      aria-label="Tracking prevention level"
+      onKeyDown={onKeyDown}
+    >
+      {LEVELS.map((id) => {
+        const meta = TRACKING_LEVEL_LABELS[id]
+        const checked = id === level
+        return (
+          <button
+            key={id}
+            type="button"
+            role="radio"
+            aria-checked={checked}
+            aria-disabled={disabled || undefined}
+            data-level={id}
+            tabIndex={checked ? 0 : -1}
+            className="zen-v2-row zen-privacy-row zen-privacy-radio-row"
+            disabled={disabled}
+            onClick={() => onPick(id)}
+          >
+            <span className="zen-v2-radio" aria-hidden />
+            <span className="zen-privacy-row-text">
+              <span className="zen-privacy-row-label block">{meta.label}</span>
+              <span className="zen-privacy-row-desc">{meta.description}</span>
+            </span>
+          </button>
+        )
+      })}
+    </div>
   )
 }
 
@@ -353,38 +439,34 @@ function ListRow({
   onRemove?: () => void
 }): JSX.Element {
   const id = useId()
-  // A phone's row has room for its name, the count and the freshness beside one 44 px button:
-  // the blurb and the homepage link are desktop's.
-  const phone = useViewport().formFactor === 'phone'
   return (
     <Row
       label={<label htmlFor={id}>{l.name}</label>}
-      description={listDetail(l, relativeTime, { blurb: !phone })}
+      description={listDetail(l, relativeTime)}
       leading={
         <input
           id={id}
           type="checkbox"
-          className="zen-v2-check"
+          className="zen-v2-checkbox"
           checked={l.enabled}
           disabled={disabled}
           onChange={(e) => onToggle(e.target.checked)}
         />
       }
     >
-      {!phone && (
-        <IconButton
-          title={`Open the homepage of ${l.name} (${l.licence})`}
-          onClick={() => run('app.openExternal', { url: l.homepage })}
-        >
-          <ExternalLink aria-hidden />
-        </IconButton>
-      )}
+      <IconButton
+        title={`Open the homepage of ${l.name} (${l.licence})`}
+        onClick={() => run('app.openExternal', { url: l.homepage })}
+      >
+        <ExternalLink aria-hidden />
+      </IconButton>
       <IconButton
         title="Update this list now"
-        disabled={disabled || !l.enabled || l.updating}
+        disabled={disabled || !l.enabled}
+        busy={l.updating}
         onClick={() => run('blocking.updateLists', { id: l.id })}
       >
-        <RefreshCw className={cn(l.updating && 'zen-spin')} aria-hidden />
+        <RefreshCw aria-hidden />
       </IconButton>
       {onRemove && (
         <IconButton title={`Remove ${l.name}`} onClick={onRemove}>
@@ -453,16 +535,16 @@ function CustomLists({
             />
             <button
               type="button"
-              className="zen-v2-button inline-flex shrink-0 items-center gap-2"
+              className="zen-v2-button shrink-0"
               disabled={!valid || duplicate}
               onClick={add}
             >
-              <Plus className="h-4 w-4" aria-hidden />
+              <Plus aria-hidden />
               Add list
             </button>
           </div>
+          {duplicate && <Invalid>That list is already here</Invalid>}
         </div>
-        {duplicate && <Invalid>That list is already here</Invalid>}
       </div>
     </Section>
   )
@@ -490,9 +572,10 @@ function UserFilters({
     <Section heading="Your filters" headingId={headingId}>
       <div className="zen-privacy-field">
         <textarea
-          className="zen-v2-textarea"
+          className="zen-v2-field zen-privacy-editor"
           aria-labelledby={headingId}
           aria-describedby={noteId}
+          aria-invalid={errors.length > 0 || undefined}
           spellCheck={false}
           placeholder={'||ads.example.com^\n@@||news.example.com^$document'}
           value={text}
@@ -518,7 +601,7 @@ function UserFilters({
       <div className="flex justify-end">
         <button
           type="button"
-          className="zen-v2-button zen-privacy-hug"
+          className="zen-v2-button"
           disabled={!dirty}
           onClick={() => setB({ userFilters: text })}
         >
@@ -554,11 +637,11 @@ function AddSite({ disabled }: { disabled: boolean }): JSX.Element {
         />
         <button
           type="button"
-          className="zen-v2-button inline-flex shrink-0 items-center gap-2"
+          className="zen-v2-button shrink-0"
           disabled={disabled || !site}
           onClick={add}
         >
-          <Plus className="h-4 w-4" aria-hidden />
+          <Plus aria-hidden />
           Add site
         </button>
       </div>
