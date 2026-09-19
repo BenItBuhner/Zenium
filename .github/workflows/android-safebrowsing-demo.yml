@@ -12,9 +12,6 @@ name: Android privacy demo
 # (SafeBrowsingDemo.kt).
 on:
   workflow_dispatch:
-  # TEMPORARY: one run of the #198 re-round's driver on the PR branch; removed once it is green.
-  push:
-    branches: [cursor/services-safebrowsing-https-ui-24d1]
 
 permissions:
   contents: read
