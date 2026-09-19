@@ -305,8 +305,8 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
     // mid-slide captures at once); the steps wait for the entrance to settle.
     void makeGroup(tab.id, target.members).then(() => {
       const then = target.then ?? []
-      if (then.length === 0) done(spec)
-      else setTimeout(() => steps(then, () => done(spec)), STEP_SETTLE_MS)
+      if (then.length === 0) finish()
+      else setTimeout(() => steps(then, finish), STEP_SETTLE_MS)
     })
   } else if (target.kind === 'overlay') {
     void openOverlay(target.overlay, tab?.id ?? null, null, null, target.section ?? null).then(
