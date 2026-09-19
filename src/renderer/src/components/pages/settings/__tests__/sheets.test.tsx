@@ -308,7 +308,8 @@ describe('a hosted Settings sheet under a finger', () => {
       label: 'Dark Reader',
       sheet: {
         title: 'Dark Reader',
-        description: 'Dark mode for every website',
+        description: 'manifest_version: Required key is missing',
+        descriptionTone: 'danger',
         groups: [{ id: 'ext-controls', heading: null, rows: [detail] }]
       }
     }
@@ -333,7 +334,13 @@ describe('a hosted Settings sheet under a finger', () => {
     expect(layers).toHaveLength(2)
     const titles = layers.map((l) => l.querySelector('.zen-sheet-title-block h2')?.textContent)
     expect(titles).toEqual(['Dark Reader', 'Errors'])
-    expect(layers[1]!.querySelector('.zen-sheet-title-block p')?.textContent).toBe('Dark Reader')
+    // The details sheet's description is the load error, in the danger ink; the console's is
+    // the extension's name, plain.
+    const descriptions = layers.map((l) => l.querySelector('.zen-sheet-title-block p'))
+    expect(descriptions[0]?.textContent).toBe('manifest_version: Required key is missing')
+    expect(descriptions[0]?.getAttribute('data-tone')).toBe('danger')
+    expect(descriptions[1]?.textContent).toBe('Dark Reader')
+    expect(descriptions[1]?.hasAttribute('data-tone')).toBe(false)
     // The detail row in the lower sheet, drawn with its summary; the console's rows in the upper.
     const detailRow = layers[0]!.querySelector<HTMLElement>('[data-row="ext:errors"]')
     expect(detailRow?.querySelector('.zen-settings-summary')?.textContent).toBe('1 error')

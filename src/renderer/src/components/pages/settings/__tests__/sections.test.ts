@@ -1844,6 +1844,7 @@ describe('the Extensions category', () => {
     // The details sheet: the name as its title block, the line as the description (§9.23).
     expect(item.sheet.title).toBe('Dark Reader')
     expect(item.sheet.description).toBe('Dark mode for every website')
+    expect(item.sheet.descriptionTone).toBeUndefined()
     const groups = sheetOf(item)
     expect(groups.map((g) => g.heading)).toEqual([null, 'Access', 'Source', null])
     // Controls: Enabled, Options (the manifest has a page), Errors; no toolbar on a phone.
@@ -1943,6 +1944,7 @@ describe('the Extensions category', () => {
     const brokenItem = row(model, `extension:${broken.id}`)
     if (brokenItem.kind !== 'item') throw new Error('not an item')
     expect(brokenItem.sheet.description).toBe('Manifest file is missing or unreadable')
+    expect(brokenItem.sheet.descriptionTone).toBe('danger')
     expect(row(model, `extension:${broken.id}:file-access`).disabled).toBe(true)
     expect(row(model, `extension:${broken.id}:options`).disabled).toBe(true)
     expect(row(model, `extension:${broken.id}:reload`)).toMatchObject({ kind: 'action' })

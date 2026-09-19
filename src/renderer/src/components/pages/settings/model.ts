@@ -137,6 +137,8 @@ export interface DetailRow extends RowBase {
 export interface ItemSheet {
   title: string
   description?: string
+  /** The description reports a status (an extension's load error): the §1 status ink. */
+  descriptionTone?: 'warn' | 'danger'
   groups: RowGroup[]
 }
 

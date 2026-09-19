@@ -136,6 +136,8 @@ interface SheetProps {
   title: string
   /** With a description the sheet opens on a §9.23 title block instead of the 48 px header. */
   description?: string
+  /** A description that reports a status (an extension's load error): the §1 status ink. */
+  descriptionTone?: 'warn' | 'danger'
   /** A prompt (title, at most one paragraph, actions) opens on a title block either way (§9.23). */
   prompt?: boolean
   /** Another sheet is open over this one: Escape is that sheet's until it leaves. */
@@ -167,6 +169,7 @@ function HostedSheet({
   name,
   title,
   description,
+  descriptionTone,
   prompt = false,
   under,
   onClose,
@@ -227,7 +230,7 @@ function HostedSheet({
             // 15 at 69 % on the body line 4 under, 16 to what follows.
             <div className="zen-sheet-title-block">
               <h2 id={titleId}>{title}</h2>
-              {description && <p>{description}</p>}
+              {description && <p data-tone={descriptionTone}>{description}</p>}
             </div>
           )}
           <SheetDismissContext.Provider value={dismiss}>
@@ -468,6 +471,7 @@ function ItemSheet({
       name={`settings-${row.kind}:${row.id}`}
       title={row.sheet.title}
       description={row.sheet.description}
+      descriptionTone={row.sheet.descriptionTone}
       under={under}
       onClose={close}
       contentKey={String(row.sheet.groups.reduce((n, g) => n + g.rows.length, 0))}

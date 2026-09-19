@@ -67,6 +67,7 @@ function extensionRow(ext: ExtensionInfo, state: UIState): ItemRow {
     sheet: {
       title: name,
       description: ext.error ?? (ext.description || undefined),
+      descriptionTone: ext.error ? 'danger' : undefined,
       groups: detailsGroups(ext, state)
     }
   }

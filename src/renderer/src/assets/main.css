@@ -5600,6 +5600,10 @@
 .zen-settings-description[data-tone='danger'] {
   color: var(--v2-danger);
 }
+/* A sheet whose description is a load error (an extension's details, §9.23): the same ink. */
+.zen-settings-sheet .zen-sheet-title-block p[data-tone='danger'] {
+  color: var(--v2-danger);
+}
 /* A label that is prose (an error console line): two lines, then an ellipsis (§9.2). */
 .zen-settings-row-clamp .zen-settings-label {
   display: -webkit-box;
