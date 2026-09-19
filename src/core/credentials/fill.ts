@@ -115,6 +115,68 @@ export function anchorInChrome(field: Rect, view: Rect, zoom: number): Rect {
   }
 }
 
+/** The picker popover's width (design-language-v2-draft §9.20: 320 for a list without trailing controls). */
+export const PICKER_WIDTH = 320
+/** Transparent margin around the panel inside the popup surface, where its shadow draws. */
+export const PICKER_SURFACE_PAD = 8
+/** How close the panel may come to the window's edges. */
+const PICKER_MARGIN = 8
+/** The panel never grows past this share of the window; its list scrolls instead. */
+const PICKER_MAX_SHARE = 0.6
+/** Minimum height of the panel, whatever the page reports. */
+const PICKER_MIN_HEIGHT = 40
+
+/** The panel's 16 padding above and below its rows (§9.20). */
+const PICKER_PADDING = 16
+/** One-line rows (a login with no site line) and two-line rows (§9.2). */
+const PICKER_ROW = 32
+const PICKER_ROW_TWO_LINE = 52
+/** The hairline and its 4px margins before the manage row, then the manage row itself. */
+const PICKER_MANAGE_BLOCK = 9 + PICKER_ROW
+
+/**
+ * How tall the picker's panel comes out for `count` rows – all one-line, or all two-line when any
+ * item has a subtitle – before its document has measured itself. The surface opens at this
+ * height and follows the document's `autofill.surfaceSize` report afterwards.
+ */
+export function estimatePickerHeight(count: number, twoLine: boolean): number {
+  const row = twoLine ? PICKER_ROW_TWO_LINE : PICKER_ROW
+  return PICKER_PADDING * 2 + Math.max(1, count) * row + PICKER_MANAGE_BLOCK
+}
+
+/**
+ * Where the popup surface that carries the picker goes, in window CSS pixels: its panel hangs
+ * from the field – the panel's top border on the field's bottom edge, start edges aligned (gap 0,
+ * no arrow, §9.20) – and flips above the field when the room below is short and there is more
+ * above. `panelHeight` is what the picker's document asked for; the panel is clamped to 60% of
+ * the window and to the room on its side, and the surface adds `PICKER_SURFACE_PAD` all around
+ * for the panel's shadow. Pure; the anchor is `anchorInChrome`'s rect.
+ */
+export function placePickerSurface(
+  anchor: Rect,
+  viewport: { width: number; height: number },
+  panelHeight: number
+): Rect {
+  const pad = PICKER_SURFACE_PAD
+  const width = PICKER_WIDTH
+  let left = anchor.x
+  left = Math.min(Math.max(PICKER_MARGIN, left), viewport.width - width - PICKER_MARGIN)
+  const below = viewport.height - (anchor.y + anchor.height) - PICKER_MARGIN
+  const above = anchor.y - PICKER_MARGIN
+  const cap = Math.max(PICKER_MIN_HEIGHT, Math.floor(viewport.height * PICKER_MAX_SHARE))
+  const wanted = Math.max(PICKER_MIN_HEIGHT, Math.min(Math.ceil(panelHeight), cap))
+  const flip = wanted > below && above > below
+  const room = Math.max(PICKER_MIN_HEIGHT, flip ? above : below)
+  const height = Math.min(wanted, room)
+  const top = flip ? anchor.y - height : anchor.y + anchor.height
+  return {
+    x: Math.round(left - pad),
+    y: Math.round(top - pad),
+    width: width + pad * 2,
+    height: Math.round(height + pad * 2)
+  }
+}
+
 /** `60 s`, `2 min`, `1 h` for the copy toast. */
 export function clearsInLabel(seconds: number): string {
   if (seconds < 60) return `${seconds} s`

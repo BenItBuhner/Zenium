@@ -1750,6 +1750,9 @@ export class Browser {
       'autofill.respond': ({ id, response }) => this.autofill.respond(id, response),
       'autofill.pick': ({ id, itemId, passphrase }, win) =>
         this.autofill.pick(id, itemId, passphrase, win),
+      'autofill.surfaceSize': ({ id, height }) => this.autofill.surfaceSize(id, height),
+      'autofill.surfaceFocus': ({ id, focused }) => this.autofill.surfaceFocus(id, focused),
+      'autofill.manage': (_args, win) => this.autofill.manage(win),
       'autofill.listAddresses': () => this.autofill.listAddresses(),
       'autofill.addAddress': ({ address }) => this.autofill.addAddress(address),
       'autofill.updateAddress': ({ id, patch }) => this.autofill.updateAddress(id, patch),

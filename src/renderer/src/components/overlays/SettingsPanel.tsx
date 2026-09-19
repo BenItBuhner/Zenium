@@ -38,6 +38,7 @@ import { Input } from '../ui/input'
 import { Switch } from '../ui/switch'
 import { AgentsSection } from './AgentsSection'
 import { AppIconGroup } from './AppIconPicker'
+import { AutofillSection } from './AutofillSection'
 import { ExtensionsSection, ModsSection } from './AddonsPanel'
 import { DefaultBrowserSection } from './DefaultBrowserSection'
 import { NewTabSection } from './NewTabSection'
@@ -64,6 +65,7 @@ export type SettingsSection =
   | 'downloads'
   | 'resources'
   | 'search'
+  | 'autofill'
   | 'spaces'
   | 'containers'
   | 'boosts'
@@ -86,6 +88,7 @@ const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
   { id: 'downloads', label: 'Downloads' },
   { id: 'resources', label: 'Resources' },
   { id: 'search', label: 'Search' },
+  { id: 'autofill', label: 'Autofill' },
   { id: 'spaces', label: 'Space Routing' },
   { id: 'containers', label: 'Containers' },
   { id: 'boosts', label: 'Boosts' },
@@ -105,6 +108,7 @@ const SECTION_CAPABILITY: Partial<Record<SettingsSection, keyof HostCapabilities
   accessibility: 'pageControls',
   newtab: 'newTabPage',
   resources: 'resourceGovernor',
+  autofill: 'passwords',
   extensions: 'extensions',
   agents: 'agents',
   passwords: 'passwords',
@@ -215,6 +219,7 @@ export function SettingsBody({
           {section === 'downloads' && <DownloadsSection state={state} set={set} />}
           {section === 'resources' && <ResourcesSection state={state} set={set} />}
           {section === 'search' && <SearchSection state={state} set={set} />}
+          {section === 'autofill' && <AutofillSection state={state} set={set} />}
           {section === 'spaces' && <SpaceRoutingSection state={state} set={set} />}
           {section === 'containers' && <ContainersSection state={state} />}
           {section === 'boosts' && <BoostsSection state={state} />}

@@ -701,6 +701,13 @@ export interface WindowHost {
    * chrome's own context menus; hosts whose chrome draws its menus itself leave it out.
    */
   menuTargetAt?(x: number, y: number): Promise<{ target: string; tabId: string | null } | null>
+  /**
+   * Show the popup surface – a second chrome document (`index.html?surface=autofill`) floated
+   * above the page views – at `bounds` (window CSS pixels), or take it down with null. It never
+   * takes the keyboard when shown; the page the picker hangs from keeps it. Hosts without a
+   * layered view (`HostCapabilities.popupSurface` false) leave this out.
+   */
+  setPopupSurface?(bounds: Rect | null): void
 }
 
 export interface WindowCreateInit {

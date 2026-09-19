@@ -32,8 +32,26 @@ export type KeyboardMessage = 'chrome.showKeyboard' | 'chrome.hideKeyboard'
 
 type Field = HTMLInputElement | HTMLTextAreaElement
 
+/**
+ * Input types that take no typing: a checkbox or radio row focuses its input on a tap too, and
+ * must not summon a keyboard for it.
+ */
+const NO_KEYBOARD = new Set([
+  'checkbox',
+  'radio',
+  'button',
+  'submit',
+  'reset',
+  'range',
+  'color',
+  'file',
+  'image',
+  'hidden'
+])
+
 const isEditable = (el: EventTarget | null): el is Field =>
-  el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement
+  el instanceof HTMLTextAreaElement ||
+  (el instanceof HTMLInputElement && !NO_KEYBOARD.has(el.type))
 
 /**
  * Install the policy on `doc`; `send` carries a message to the host. Returns the uninstall.

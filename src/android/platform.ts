@@ -143,7 +143,9 @@ export function androidCapabilities({
     // The WebView has no preload bridge for `zen://newtab` yet; new tabs stay URL-bar-only.
     newTabPage: false,
     pageTabs: true,
-    pinShortcuts: false
+    pinShortcuts: false,
+    // One document: the picker is drawn in the chrome, above the keyboard.
+    popupSurface: false
   }
 }
 

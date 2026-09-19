@@ -123,7 +123,9 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   newTabPage: true,
   // Settings stays an overlay on the desktop until its program adopts the page-tab model.
   pageTabs: false,
-  pinShortcuts: false
+  pinShortcuts: false,
+  // The autofill picker floats in a `WebContentsView` above the pages (`ElectronWindow.setPopupSurface`).
+  popupSurface: true
 }
 
 /**

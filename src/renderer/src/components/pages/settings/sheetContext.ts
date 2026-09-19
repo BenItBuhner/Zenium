@@ -1,12 +1,21 @@
 import { createContext, useContext } from 'react'
 
 /**
- * The function that dismisses the Settings sheet a component sits in (with the sheet's motion;
- * the stack drops the request once the motion has ended). Provided by `SettingsSheet`, read by
- * the forms a sheet renders, so that a form's Cancel closes its sheet without holding its handle.
+ * Dismiss the Settings sheet the caller sits in, with the sheet's motion; `after` runs once the
+ * sheet has gone, right before the stack drops the request (`BottomSheetHandle.dismiss`).
  */
-export const SheetDismissContext = createContext<() => void>(() => undefined)
+export type SheetDismiss = (after?: () => void) => void
 
-export function useSheetDismiss(): () => void {
-  return useContext(SheetDismissContext)
+/**
+ * The function that dismisses the Settings sheet a component sits in. Provided by
+ * `SettingsSheet`, read by the forms a sheet renders – so that a form's Cancel closes its sheet
+ * without holding its handle – and by an action row that opens something of its own over the
+ * page (`ActionRow.closesSheet`). `null` outside a sheet.
+ */
+export const SheetDismissContext = createContext<SheetDismiss | null>(null)
+
+/** The sheet's dismissal; outside a sheet there is nothing to dismiss, and `after` runs at once. */
+export function useSheetDismiss(): SheetDismiss {
+  const dismiss = useContext(SheetDismissContext)
+  return dismiss ?? ((after) => after?.())
 }

@@ -112,6 +112,8 @@ export class ZenWindow {
   private pendingContentFocus = false
   private closing = false
   private chromeReadyOnce = false
+  /** Where the popup surface (the autofill picker) stands, while it is up. */
+  private popupBounds: Rect | null = null
 
   constructor(
     private readonly browser: Browser,
@@ -411,6 +413,8 @@ export class ZenWindow {
     // The chrome sequences its page cover against the host's frames from this (lib/pageView.ts).
     this.send('layout.applied', { contentHidden: report.contentHidden, hid, shown })
     if (this.pendingContentFocus && !report.contentHidden) this.focusContent()
+    // A view placed again may have come up above the popup surface: put it back on top.
+    if (this.popupBounds) this.host.setPopupSurface?.(this.popupBounds)
     // With no page visible (empty space / chrome overlay / preview of a page shown in another
     // window / a page tab the chrome itself draws) keyboard input must go to the chrome,
     // otherwise shortcuts stop working.
@@ -476,6 +480,22 @@ export class ZenWindow {
 
   focusChrome(): void {
     if (this.alive) this.host.focusChrome()
+  }
+
+  /** Whether the host can float the popup surface (the desktop picker) above the page views. */
+  get hasPopupSurface(): boolean {
+    return typeof this.host.setPopupSurface === 'function'
+  }
+
+  /** The window's content size in CSS pixels: what anchored surfaces are clamped inside. */
+  viewportSize(): { width: number; height: number } {
+    return this.host.contentSize()
+  }
+
+  /** Place the popup surface at `bounds` (window CSS pixels) or take it down (null). */
+  setPopupSurface(bounds: Rect | null): void {
+    this.popupBounds = bounds
+    if (this.alive) this.host.setPopupSurface?.(bounds)
   }
 
   haptic(kind: HapticKind): void {

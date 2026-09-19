@@ -1,3 +1,4 @@
+import type { Browser } from '@core/browser'
 import { run } from '@renderer/lib/api'
 import { dispatchBackEvent, topBackSurface } from '@renderer/lib/back'
 import { dismissOverview, openOverview } from '@renderer/lib/gestures/stage'
@@ -24,6 +25,7 @@ import {
 } from '@renderer/lib/ui'
 import type { HostGlobal } from './boot'
 import { PREVIEW_WEB_APP, postPreviewManifest } from './preview'
+import { clearAutofill, stageAutofill } from './previewAutofill'
 import { PREVIEW_DOWNLOAD_EVENT } from './previewDownloads'
 import { parsePreviewSpec, type PreviewStep, type PreviewWebAppSurface } from './previewSpec'
 
@@ -46,19 +48,23 @@ const SHEET_LEAVE_MS = 1500
  * downloads, addons, …: the chrome overlays a phone still has – Settings is not one, it is
  * `page=settings`; `show=<text>` scrolls the row with that text into view, `expand` rests a
  * sheet on its expanded detent), `menu=app` (the app menu sheet; `show=<text>` scrolls an item
- * into view), `find=<text>` (the find bar with that text typed), `pull=<n>` (the page held pulled
- * down at n percent of the refresh threshold; `pull=refresh` lets go past it), `zoom=<factor>`
- * (the page zoom sheet at that factor), `error=<code>` (the active tab's load failed with that
- * Chromium `net::` code, `url=<target>` naming the URL that failed: the zen://error page is up),
- * the message surfaces and the load bar: `toast=<text>&action=<label>`, `banners=<n>`,
- * `progress=<0…1>`, `webapp=<surface>` (an "Add to Home screen" surface on the active tab) or
- * `download=<file>` (the stand-in downloader starts that transfer; see `PreviewDownloadSpec`). It
- * comes in as the URL hash, `http://localhost:41734/#overlay=history`, or as
+ * into view), `autofill=<surface>` (a save prompt, the passkey chooser, a picker strip or the
+ * vault passphrase dialog staged with sample data; see `PREVIEW_AUTOFILL`), `find=<text>` (the
+ * find bar with that text typed), `pull=<n>` (the page held pulled down at n percent of the
+ * refresh threshold; `pull=refresh` lets go past it), `zoom=<factor>` (the page zoom sheet at
+ * that factor), `error=<code>` (the active tab's load failed with that Chromium `net::` code,
+ * `url=<target>` naming the URL that failed: the zen://error page is up), the message surfaces
+ * and the load bar: `toast=<text>&action=<label>`, `banners=<n>`, `progress=<0…1>`,
+ * `webapp=<surface>` (an "Add to Home screen" surface on the active tab) or `download=<file>`
+ * (the stand-in downloader starts that transfer; see `PreviewDownloadSpec`). It comes in as the
+ * URL hash, `http://localhost:41734/#overlay=history`, or as
  * `window.postMessage({ zenPreview: 'find=coffee' }, '*')`, which also re-applies an unchanged
  * state. Once applied it is echoed in `<html data-preview-state>` so a driver can wait for it;
- * `.github/scripts/android-preview-shots.mjs` is one.
+ * `.github/scripts/android-preview-shots.mjs` is one. The core (`browser`) stages what the
+ * chrome cannot reach through its own state: the autofill surfaces.
  */
-export function installPreviewStates(): void {
+export function installPreviewStates(browser: Browser): void {
+  const apply = (spec: string): void => applySpec(browser, spec)
   window.addEventListener('hashchange', () => apply(location.hash.slice(1)))
   window.addEventListener('message', (e: MessageEvent<unknown>) => {
     const data = e.data
@@ -70,7 +76,7 @@ export function installPreviewStates(): void {
   if (location.hash.length > 1) apply(location.hash.slice(1))
 }
 
-function apply(spec: string): void {
+function applySpec(browser: Browser, spec: string): void {
   whenReady(() => {
     // Every spec starts from idle so states do not stack: a pull in flight is put back at once
     // (a `cancel` would spring home, and the next pull would catch that spring part-way); the
@@ -84,7 +90,8 @@ function apply(spec: string): void {
     const state = browserStore.get().state
     const tab = state ? activeTab(state) : null
     clearMessages(tab?.loading ? tab.id : null)
-    closeSheets(() => reach(spec))
+    const cleared = clearAutofill(browser)
+    void cleared.then(() => closeSheets(() => reach(browser, spec)))
   })
 }
 
@@ -111,31 +118,21 @@ function closeSheets(then: () => void, deadline = performance.now() + SHEET_LEAV
 }
 
 /** Take the chrome, now idle, to the state `spec` names. */
-function reach(spec: string): void {
+function reach(browser: Browser, spec: string): void {
   const state = browserStore.get().state
   const tab = state ? activeTab(state) : null
   const target = parsePreviewSpec(spec)
 
-  if (target.kind === 'page') {
-    // The page tab is the state: reached once the active tab is a page tab and the page has its
-    // rows (its chunk loads on the first open), then a moment for its drill-in's slide to settle
-    // before the search is typed, a row shown or a step taken.
-    whenActiveTabIs(isInternalPageUrl, () => {
-      whenPageRendered(() => {
-        setTimeout(() => {
-          // The landing keeps its query between states unless it is retyped: an empty one clears it.
-          type('input[aria-label="Find in Settings"]', target.search ?? '')
-          requestAnimationFrame(() => {
-            // The page keeps where a previous state scrolled it; every state starts at the top.
-            for (const el of document.querySelectorAll<HTMLElement>('[data-page] *')) {
-              if (el.scrollTop > 0) el.scrollTop = 0
-            }
-            show(target.show)
-            steps(target.then ?? [], () => done(spec))
-          })
-        }, 300)
-      })
+  if (target.kind === 'autofill') {
+    void stageAutofill(browser, target.surface, tab).then((page) => {
+      // A manager state is the Settings tab on its Autofill section (staged vault behind it):
+      // reached the way a page state is. Any other surface mounts on the next render; the
+      // sheets take a moment to rise.
+      if (page) settlePage(target, spec)
+      else requestAnimationFrame(() => requestAnimationFrame(() => done(spec)))
     })
+  } else if (target.kind === 'page') {
+    settlePage(target, spec)
     run('page.open', { id: target.page, section: target.section ?? null })
   } else if (target.kind === 'overlay') {
     void openOverlay(target.overlay, tab?.id ?? null, null, null, target.section ?? null).then(
@@ -188,6 +185,33 @@ function reach(spec: string): void {
   } else {
     done(spec)
   }
+}
+
+/**
+ * A page tab is the state: reached once the active tab is a page tab and the page has its rows
+ * (its chunk loads on the first open), then a moment for its drill-in's slide to settle before
+ * the search is typed, a row shown or a step taken; `spec` is echoed at the end.
+ */
+function settlePage(
+  target: { search?: string; show?: string; then?: readonly PreviewStep[] },
+  spec: string
+): void {
+  whenActiveTabIs(isInternalPageUrl, () => {
+    whenPageRendered(() => {
+      setTimeout(() => {
+        // The landing keeps its query between states unless it is retyped: an empty one clears it.
+        type('input[aria-label="Find in Settings"]', target.search ?? '')
+        requestAnimationFrame(() => {
+          // The page keeps where a previous state scrolled it; every state starts at the top.
+          for (const el of document.querySelectorAll<HTMLElement>('[data-page] *')) {
+            if (el.scrollTop > 0) el.scrollTop = 0
+          }
+          show(target.show)
+          steps(target.then ?? [], () => done(spec))
+        })
+      }, 300)
+    })
+  })
 }
 
 /**

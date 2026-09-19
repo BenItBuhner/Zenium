@@ -33,6 +33,12 @@ const ROOT = fileURLToPath(new URL('../../', import.meta.url))
  * on purpose (and the check below applies to it); one that goes is removed.
  */
 const OWN_SCRIM_CONSUMERS = [
+  // The autofill surfaces' phone sheets (#145): the editors, the save / update and passkey
+  // prompts, the menulist's picker sheet, the passphrase sheet.
+  'components/autofill/AutofillEditor.tsx',
+  'components/autofill/AutofillPrompts.tsx',
+  'components/autofill/PassphraseDialog.tsx',
+  'components/autofill/controls.tsx',
   'components/downloads/DownloadsSheet.tsx',
   'components/newtab/CustomizeSheet.tsx',
   // The password manager's phone passphrase prompt, and its prompt and picker sheets (#92).
