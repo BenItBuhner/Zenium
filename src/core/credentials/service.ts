@@ -105,8 +105,20 @@ export class PasswordService {
   }
 
   /** Probe the host and open an OS-protected vault silently (no prompt at startup). */
+  /** `start()`'s probes and unlock, still running or finished (see `whenSettled`). */
+  private starting: Promise<void> = Promise.resolve()
+
+  /**
+   * Resolves once `start()` has probed the OS keystore and re-authentication and, where the
+   * store is OS-protected, tried the unlock. Tests and demo drivers wait on this rather than
+   * guessing how many ticks the keystore's crypto takes.
+   */
+  whenSettled(): Promise<void> {
+    return this.starting
+  }
+
   start(): void {
-    void (async () => {
+    this.starting = (async () => {
       this.osKeystore = await this.host.keys.osAvailable().catch(() => false)
       this.osReauth = await this.host.reauth.available().catch(() => false)
       if (this.store.exists() && this.store.protection().os && !this.store.unlocked()) {
