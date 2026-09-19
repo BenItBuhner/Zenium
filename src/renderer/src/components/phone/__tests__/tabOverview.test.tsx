@@ -1297,7 +1297,9 @@ const ms = (token: string): number => {
 describe('the chrome switch in the stylesheet', () => {
   const rules = rulesOf(
     readFileSync(resolve(__dirname, '../../../assets/main.css'), 'utf8')
-  ).filter((r) => r.selectors.some((s) => s === '*' || s.startsWith('.zen-group')))
+  ).filter((r) =>
+    r.selectors.some((s) => s === '*' || s === '.zen-overview' || s.startsWith('.zen-group'))
+  )
   const forSelector = (selector: string, reduced: boolean): CssRule[] =>
     rules.filter((r) => r.reduced === reduced && r.selectors.includes(selector))
   /** The last value a selector's own rules give a property, in full motion. */
@@ -1379,5 +1381,15 @@ describe('the chrome switch in the stylesheet', () => {
     expect(transitions('.zen-group::before', true).get('opacity')).toBe(120)
     for (const [property, duration] of transitions('.zen-group', true))
       expect(duration, property).toBeLessThanOrEqual(1)
+    // The sheet's closing rule cuts every animation to 0.01 ms too: the grid's own appearance,
+    // a 120 ms fade at scale 1, is held past it the same way.
+    const overview = forSelector('.zen-overview', true)
+    expect(overview.map((r) => r.declarations.get('animation')?.value).find(Boolean)).toMatch(
+      /^zen-fade 120ms/
+    )
+    expect(overview.map((r) => r.declarations.get('animation-duration')).find(Boolean)).toEqual({
+      value: '120ms',
+      important: true
+    })
   })
 })

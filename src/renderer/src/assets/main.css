@@ -1831,10 +1831,10 @@
   }
   /*
    * Reduced motion in the overview (v2 §11.3): the grid appears with a 120 ms fade at scale 1
-   * (`TabOverview` leaves the transform and opacity alone then); state changes other than
-   * opacity's take at most 1 ms – the ghost's landing fade stays. The group's header and tint
-   * keep their 120 ms opacity fade at the end of the glide, an appearance in place: their
-   * durations are held at the end of the sheet, past the global rule.
+   * (`TabOverview` leaves the transform alone then); state changes take at most 1 ms – the
+   * ghost's landing among them, the release jumps. The two appearances in place keep their
+   * 120 ms fade: the grid's, and the group's header and tint at the end of the glide; their
+   * durations are held at the end of the sheet, past the global rule that cuts the rest.
    */
   @media (prefers-reduced-motion: reduce) {
     .zen-overview {
@@ -1844,14 +1844,10 @@
     .zen-overview-new,
     .zen-overview .zen-essential,
     .zen-overview-strip > button,
+    .zen-overview-ghost,
     .zen-group,
     .zen-group-swatch {
       transition-duration: 1ms;
-    }
-    .zen-overview-ghost {
-      transition:
-        opacity 120ms var(--zen-ease),
-        box-shadow 1ms;
     }
   }
   /* Along the top of a grouped tab's card on the swipe track. */
@@ -5920,9 +5916,13 @@
     transition-duration: 120ms !important;
   }
   /*
-   * A group's header and tint come on at the end of the glide as an opacity fade, at v2 §11.3's
-   * 120 ms, not a cut (§11.4): the header's press fill, first in its transition list, cuts.
+   * The phone overview's appearances in place stay the 120 ms fade too (v2 §11.3, §11.4): the
+   * grid's own, and a group's header and tint coming on at the end of the glide – the header's
+   * press fill, first in its transition list, cuts.
    */
+  .zen-overview {
+    animation-duration: 120ms !important;
+  }
   .zen-group-header {
     transition-duration: 1ms, 120ms !important;
   }
