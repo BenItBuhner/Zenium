@@ -5,9 +5,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.awt.image.BufferedImage
 import java.nio.ByteBuffer
-import javax.imageio.ImageIO
 
 class QrScanLogicTest {
     // --- the permission-state machine -----------------------------------------------------------
@@ -37,9 +35,41 @@ class QrScanLogicTest {
 
     // --- the luminance-plane adapter, on the fixture code ---------------------------------------
 
+    /**
+     * A gray image as the test reads it: one byte a pixel, rows `width` apart – the shape of a
+     * camera's Y plane before any stride, which is why the fixture is kept as a binary PGM (P5):
+     * the unit tests compile against android.jar, which has no `javax.imageio`, and a PGM is a
+     * header and then exactly that plane.
+     */
+    private class Gray(val width: Int, val height: Int, private val pixels: ByteArray) {
+        fun sample(x: Int, y: Int): Int = pixels[y * width + x].toInt() and 0xFF
+    }
+
     /** The fixture: `https://example.org/` as a QR code, 4 px a module with the quiet zone, 148 x 148 gray. */
-    private val fixture: BufferedImage by lazy {
-        ImageIO.read(javaClass.getResourceAsStream("/qr/example-org.png") ?: error("fixture missing"))
+    private val fixture: Gray by lazy {
+        readPgm(javaClass.getResourceAsStream("/qr/example-org.pgm")?.readBytes() ?: error("fixture missing"))
+    }
+
+    /** A binary PGM: `P5`, width, height and the maximum value as whitespace-separated tokens, then the bytes. */
+    private fun readPgm(bytes: ByteArray): Gray {
+        val tokens = ArrayList<String>()
+        var i = 0
+        val token = StringBuilder()
+        while (tokens.size < 4) {
+            val c = bytes[i++].toInt().toChar()
+            if (c.isWhitespace()) {
+                if (token.isNotEmpty()) {
+                    tokens.add(token.toString())
+                    token.setLength(0)
+                }
+            } else {
+                token.append(c)
+            }
+        }
+        require(tokens[0] == "P5" && tokens[3] == "255") { "not an 8-bit binary PGM: $tokens" }
+        val width = tokens[1].toInt()
+        val height = tokens[2].toInt()
+        return Gray(width, height, bytes.copyOfRange(i, i + width * height))
     }
 
     /** The fixture as a camera would hand it over: a Y plane with rows `rowStride` apart, the last row unpadded. */
@@ -48,7 +78,7 @@ class QrScanLogicTest {
         val h = fixture.height
         val bytes = ByteArray((h - 1) * rowStride + (w - 1) * pixelStride + 1)
         for (y in 0 until h) for (x in 0 until w) {
-            val gray = fixture.raster.getSample(x, y, 0)
+            val gray = fixture.sample(x, y)
             bytes[y * rowStride + x * pixelStride] = (if (invert) 255 - gray else gray).toByte()
         }
         return ByteBuffer.wrap(bytes)
@@ -73,7 +103,7 @@ class QrScanLogicTest {
     fun theAdapterReadsThePlaneRowByRowPastTheStride() {
         val stride = fixture.width + 5
         val source = QrScanLogic.luminanceSource(plane(stride), fixture.width, fixture.height, stride, 1)
-        val expected = ByteArray(fixture.width) { x -> fixture.raster.getSample(x, 70, 0).toByte() }
+        val expected = ByteArray(fixture.width) { x -> fixture.sample(x, 70).toByte() }
         assertArrayEquals(expected, source.getRow(70, null))
     }
 
@@ -81,7 +111,7 @@ class QrScanLogicTest {
     fun anInterleavedPlaneIsRepackedTight() {
         val stride = fixture.width * 2 + 8
         val source = QrScanLogic.luminanceSource(plane(stride, pixelStride = 2), fixture.width, fixture.height, stride, 2)
-        val expected = ByteArray(fixture.width) { x -> fixture.raster.getSample(x, 12, 0).toByte() }
+        val expected = ByteArray(fixture.width) { x -> fixture.sample(x, 12).toByte() }
         assertArrayEquals(expected, source.getRow(12, null))
         assertEquals("https://example.org/", QrScanLogic.decode(source))
     }
