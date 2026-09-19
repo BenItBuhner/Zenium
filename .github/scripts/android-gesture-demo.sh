@@ -13,6 +13,9 @@
 #                 the instrumentation as the `theme` argument; drivers without a theme ignore it
 #   DEMO_KEEP   – bundled packages (space separated) to leave enabled; the rest of the Google
 #                 apps are disabled so they do not compete with the browser for the emulator
+#   DEMO_PREPARED – `1` when the device was prepared by an earlier run of this script on the same
+#                 boot (android-sheet-touch-audit.sh chains several drivers): the display, the
+#                 navigation mode, the bundled apps and the settling pause are then skipped
 #
 # Handshake with the driver, through files in the app's private storage (readable via run-as):
 #   files/<DEMO_DIR>/record     – written by the driver once its warm-up is done
@@ -124,6 +127,7 @@ df -h / /tmp
 ) &
 monitor_pid=$!
 
+if [ "${DEMO_PREPARED:-0}" != 1 ]; then
 # The same 411 CSS px wide layout a Pixel 6 gets, at 2.3x fewer pixels: the emulator renders,
 # snapshots and records through a software GPU, and every pixel costs.
 adb shell wm size 720x1600
@@ -157,6 +161,7 @@ adb shell am kill-all || true
 echo "letting the system settle"
 sleep 45
 free -m
+fi
 
 apk=$(find android/app/build/outputs/apk/debug -name '*.apk' -print -quit)
 test_apk=$(find android/app/build/outputs/apk/androidTest/debug -name '*.apk' -print -quit)
