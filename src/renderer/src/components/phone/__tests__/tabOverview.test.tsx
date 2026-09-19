@@ -28,6 +28,7 @@ Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 const { NEW_TAB_CELL, TabOverview } = await import('../TabOverview')
 const { activeLiftPointer, cancelLift, liftStore } = await import('../useCardLift')
 const { privateTabsStore, resetOverviewPane } = await import('@renderer/lib/privateTabs')
+const { tabCount } = await import('../barItems')
 const { PRIVATE_CONTAINER_ID } = await import('@shared/types')
 const { clearDepartures, departStore } = await import('../departureStore')
 const { GROUP_HEADER, GROUP_PAD } = await import('../GroupCard')
@@ -1306,6 +1307,28 @@ describe('the private pane', () => {
     expect(cellKeys()).toEqual(['a', 'b', NEW_TAB_CELL])
     expect(host!.querySelector('.zen-title')!.textContent).toBe('Work')
     expect(cellOf(NEW_TAB_CELL).dataset.testid).toBe('overview-new-tab')
+  })
+
+  it('the Tabs button counts the pane the overview opens on: the regular tabs from a regular tab, the private ones from a private tab', () => {
+    const state = mixed()
+    expect(tabCount(state)).toBe(2)
+    state.spaces[0].activeTabId = 'p1'
+    expect(tabCount(state)).toBe(2)
+    // One private tab open: 1 from it, and the regular count is untouched by it.
+    const one = withPrivate(
+      stateOf(
+        [
+          tab('a', 'https://a.example/'),
+          tab('b', 'https://b.example/'),
+          tab('c', 'https://c.example/'),
+          privateTab('p1', 'https://one.example/')
+        ],
+        []
+      )
+    )
+    expect(tabCount(one)).toBe(3)
+    one.spaces[0].activeTabId = 'p1'
+    expect(tabCount(one)).toBe(1)
   })
 
   it('opens on the pane of the tab in view: a private tab up, the private pane – without a pick', () => {

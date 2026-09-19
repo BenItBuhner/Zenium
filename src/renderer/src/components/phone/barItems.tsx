@@ -21,6 +21,7 @@ import { run } from '@renderer/lib/api'
 import { openSpacesDrawer } from '@renderer/lib/gestures/drawer'
 import { toggleOverview } from '@renderer/lib/gestures/stage'
 import { prepareNewTabGrow } from '@renderer/lib/newtab'
+import { activeTabIsPrivate, privateTabsOf, tabsOnPane } from '@renderer/lib/privateTabs'
 import { activeSpace, activeTab, essentialsFor, tabsOf } from '@renderer/lib/selectors'
 import { openFindBar, openOverlay, openUrlbar } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
@@ -213,8 +214,13 @@ export function barContext(state: UIState, overviewOpen: boolean): BarItemContex
   return { state, tab: activeTab(state), overviewOpen }
 }
 
-/** Tabs in the current space plus the Essentials – what the overview shows. */
+/**
+ * What the overview shows for the active tab: the private tabs while a private one is active
+ * (its Private pane), else the tabs in the current space plus the Essentials, the private ones
+ * aside (its Tabs pane) – as Chrome's switcher counts the mode it is in.
+ */
 export function tabCount(state: UIState): number {
+  if (activeTabIsPrivate(state)) return privateTabsOf(state).length
   const space = activeSpace(state)
-  return tabsOf(state, space).length + essentialsFor(state, space).length
+  return tabsOnPane(tabsOf(state, space), 'tabs').length + essentialsFor(state, space).length
 }
