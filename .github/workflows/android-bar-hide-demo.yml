@@ -19,6 +19,9 @@ on:
         options:
           - light
           - dark
+  push:
+    branches:
+      - cursor/android-bar-hide-on-scroll-a77b
 
 permissions:
   contents: read
