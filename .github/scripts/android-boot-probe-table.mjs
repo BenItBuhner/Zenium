@@ -131,9 +131,18 @@ const rows = [
   ['Chrome ready: wall time since `startActivity`', (d) => ms(d.boot?.launchToReadyMs)]
 ]
 
+/** The head an APK was built from, as the driver script left it beside the results (`<label>-sha.txt`). */
+function sha(label) {
+  const file = join(dir, `${label}-sha.txt`)
+  if (!existsSync(file)) return 'unknown'
+  const value = readFileSync(file, 'utf8').trim()
+  return /^[0-9a-f]{40}$/.test(value) ? value : 'unknown'
+}
+
 const header = `| Transfer (call sites) | Before: main | After: branch |\n| --- | --- | --- |`
 const lines = rows.map(([label, fn]) => `| ${label} | ${cell(before, fn)} | ${cell(after, fn)} |`)
 console.log('### Boot handoff: before / after on the API 34 emulator\n')
+console.log(`Before = main at \`${sha('before')}\`; after = this ref at \`${sha('after')}\`.\n`)
 console.log(header)
 console.log(lines.join('\n'))
 console.log('')

@@ -108,6 +108,9 @@ probe after "$after_apk"
 kill "$monitor_pid" 2> /dev/null || true
 
 echo "--- results"
+# The two heads the table compares, beside the results they came from.
+cat artifacts/before/sha.txt > "$out/before-sha.txt" 2> /dev/null || echo "unknown" > "$out/before-sha.txt"
+git rev-parse HEAD > "$out/after-sha.txt"
 ls -la "$out"
 node .github/scripts/android-boot-probe-table.mjs "$out" | tee "$out/summary.md"
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
