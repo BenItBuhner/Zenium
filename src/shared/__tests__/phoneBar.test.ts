@@ -82,8 +82,12 @@ describe('what a host offers', () => {
 
   it('hands back the very layout when nothing is left out', () => {
     const layout = defaultPhoneBar()
-    expect(phoneBarForHost(layout, phoneBarOffered({ share: true, voiceSearch: true }))).toBe(layout)
-    expect(phoneBarForHost(layout, phoneBarOffered({ share: false, voiceSearch: false }))).toBe(layout)
+    expect(phoneBarForHost(layout, phoneBarOffered({ share: true, voiceSearch: true }))).toBe(
+      layout
+    )
+    expect(phoneBarForHost(layout, phoneBarOffered({ share: false, voiceSearch: false }))).toBe(
+      layout
+    )
   })
 
   it('offers Voice search only where the host has a recogniser (OMN-19), and drops it from a synced layout otherwise', () => {

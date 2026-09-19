@@ -22,16 +22,25 @@ function play(events: VoiceEvent[], from: VoiceSession = newVoiceSession()): Voi
 
 describe('voiceDestination: the transcript -> submit decision', () => {
   it('navigates to a transcript that reads as an address', () => {
-    expect(voiceDestination('example.com')).toEqual({ kind: 'navigate', url: 'https://example.com' })
+    expect(voiceDestination('example.com')).toEqual({
+      kind: 'navigate',
+      url: 'https://example.com'
+    })
     expect(voiceDestination('https://zenium.app/docs')).toEqual({
       kind: 'navigate',
       url: 'https://zenium.app/docs'
     })
-    expect(voiceDestination('localhost:3000')).toEqual({ kind: 'navigate', url: 'http://localhost:3000' })
+    expect(voiceDestination('localhost:3000')).toEqual({
+      kind: 'navigate',
+      url: 'http://localhost:3000'
+    })
   })
 
   it('searches everything else through the default engine', () => {
-    expect(voiceDestination('weather in london')).toEqual({ kind: 'search', query: 'weather in london' })
+    expect(voiceDestination('weather in london')).toEqual({
+      kind: 'search',
+      query: 'weather in london'
+    })
     expect(voiceDestination('how tall is the eiffel tower')).toEqual({
       kind: 'search',
       query: 'how tall is the eiffel tower'
@@ -45,7 +54,10 @@ describe('voiceDestination: the transcript -> submit decision', () => {
 
   it('normalises the words as the address bar would take them', () => {
     expect(voiceInput('  weather   in\nlondon ')).toBe('weather in london')
-    expect(voiceDestination('  weather   in london ')).toEqual({ kind: 'search', query: 'weather in london' })
+    expect(voiceDestination('  weather   in london ')).toEqual({
+      kind: 'search',
+      query: 'weather in london'
+    })
   })
 
   it('has nowhere to go for a transcript with no words', () => {
@@ -106,7 +118,9 @@ describe('reduceVoice: the overlay state machine', () => {
   it('reads a result with no words, a no-match and a speech timeout as Didn\u2019t catch that', () => {
     expect(play([{ kind: 'ready' }, { kind: 'result', text: '' }]).phase).toBe('no-match')
     expect(play([{ kind: 'ready' }, { kind: 'error', error: 'no-match' }]).phase).toBe('no-match')
-    expect(play([{ kind: 'ready' }, { kind: 'error', error: 'speech-timeout' }]).phase).toBe('no-match')
+    expect(play([{ kind: 'ready' }, { kind: 'error', error: 'speech-timeout' }]).phase).toBe(
+      'no-match'
+    )
     expect(isNoMatch('no-match')).toBe(true)
     expect(isNoMatch('network')).toBe(false)
   })
@@ -118,7 +132,11 @@ describe('reduceVoice: the overlay state machine', () => {
   })
 
   it('is cancelled when the host aborts the session', () => {
-    const cancelled = play([{ kind: 'ready' }, { kind: 'partial', text: 'weath' }, { kind: 'aborted' }])
+    const cancelled = play([
+      { kind: 'ready' },
+      { kind: 'partial', text: 'weath' },
+      { kind: 'aborted' }
+    ])
     expect(cancelled).toMatchObject({ phase: 'cancelled', level: 0 })
     expect(voiceSessionOver(cancelled)).toBe(true)
   })

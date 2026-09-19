@@ -7,12 +7,7 @@
  * effects (the sheet, the toasts, the submit).
  */
 import type { VoiceEvent, VoiceSession, VoiceStartOutcome } from '@shared/voice'
-import {
-  newVoiceSession,
-  reduceVoice,
-  voiceErrorMessage,
-  voiceStartMessage
-} from '@shared/voice'
+import { newVoiceSession, reduceVoice, voiceErrorMessage, voiceStartMessage } from '@shared/voice'
 import { cmd, run } from './api'
 import { createStore } from './store'
 import { closeVoiceSheet, openVoiceSheet, pushToast, type VoicePrompt } from './ui'
@@ -30,7 +25,11 @@ export interface VoiceSearchIo {
   cancel(): void
   openSettings(): void
   submit(input: string, prompt: VoicePrompt): void
-  toast(message: string, kind: 'info' | 'error', action?: { label: string; onPick: () => void }): void
+  toast(
+    message: string,
+    kind: 'info' | 'error',
+    action?: { label: string; onPick: () => void }
+  ): void
   openSheet(prompt: VoicePrompt): Promise<void>
   closeSheet(id: number): void
 }

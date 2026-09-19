@@ -184,7 +184,11 @@ export function createPreviewBridge(): NativeBridge {
   const PREVIEW_BLOB = 'preview-keystore:'
   // `?voice=<script>` picks what the stand-in recogniser does (`previewVoiceScript`): the mic
   // buttons show, and a start plays the script's events back to the chrome's listening sheet.
-  const voiceScript = params.get('voice') ?? 'heard'
+  // A preview state (`voice=<script>`, previewStates.ts) changes the script at run time.
+  let voiceScript = params.get('voice') ?? 'heard'
+  window.addEventListener(PREVIEW_VOICE_EVENT, (e) => {
+    voiceScript = (e as CustomEvent<string>).detail
+  })
   let voiceRun = 0
   const voice = {
     start: (): VoiceStartOutcome => {
@@ -626,8 +630,11 @@ export function createPreviewBridge(): NativeBridge {
   }
 }
 
+/** A preview state picks the stand-in recogniser's script: the event's detail is the script's name. */
+export const PREVIEW_VOICE_EVENT = 'zen-preview-voice'
+
 /** What the stand-in recogniser does for `?voice=<name>`: the start's answer, then its events in order with the pause before each. */
-interface PreviewVoiceScript {
+export interface PreviewVoiceScript {
   outcome: VoiceStartOutcome
   events: Array<[delayMs: number, event: VoiceEvent]>
 }
@@ -660,14 +667,20 @@ export function previewVoiceScript(name: string): PreviewVoiceScript {
     case 'no-match':
       return {
         outcome: 'listening',
-        events: [...listening, ...PREVIEW_LEVELS, [400, { kind: 'end' }], [600, { kind: 'error', error: 'no-match' }]]
+        events: [
+          ...listening,
+          ...PREVIEW_LEVELS,
+          [400, { kind: 'end' }],
+          [600, { kind: 'error', error: 'no-match' }]
+        ]
       }
     case 'network':
     case 'busy':
       return { outcome: 'listening', events: [...listening, [400, { kind: 'error', error: name }]] }
-    // Frozen mid-way, for a still of the sheet as it listens or as it shows a partial transcript.
+    // Frozen mid-way, for a still of the sheet as it listens (the halo all the way out, at full
+    // level) or as it shows a partial transcript.
     case 'listening':
-      return { outcome: 'listening', events: listening }
+      return { outcome: 'listening', events: [...listening, [90, { kind: 'rms', level: 1 }]] }
     case 'partial':
       return { outcome: 'listening', events: heard }
     default:

@@ -2200,16 +2200,19 @@
    * Voice search's listening sheet (OMN-19; `components/voice/VoiceSearchSheet.tsx`). The title
    * block's glyph is the mic (20 at stroke 1.75, §9.3) with a halo behind it in the accent at low
    * alpha: the halo's scale follows the sound level on the shared spring (`shared/voice.ts`,
-   * `voiceHaloScale`), from the glyph's own size in silence to a little over twice it at full
-   * level – the 16 px padding around the block is its room. The body is the transcript as it
-   * comes, body type in the text ink, in the 16 px gutter (§9.25); before any words a hint in the
-   * deemphasized ink stands where the words will.
+   * `voiceHaloScale`), from the glyph's own size in silence to a 36 px disc at full level. Its
+   * room is the block's 16 px padding above and to the left, the 4 px to the description below,
+   * and 12 px to the title: the h2's 8 px gap plus 4 px the glyph keeps for itself, so the halo
+   * at full never reaches the first letter. The body is the transcript as it comes, body type in
+   * the text ink, in the 16 px gutter (§9.25); before any words a hint in the deemphasized ink
+   * stands where the words will.
    */
   .zen-voice-glyph {
     position: relative;
     display: flex;
     width: 20px;
     height: 20px;
+    margin-right: 4px;
     flex-shrink: 0;
     align-items: center;
     justify-content: center;
