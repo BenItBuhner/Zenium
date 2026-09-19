@@ -571,6 +571,69 @@ describe('RuleSetStore', () => {
     await settled
     expect(order).toEqual(['blocking/sets/u.json', INDEX_FILE])
   })
+
+  it('a shutdown while the index waits for its documents writes both now and drops the waiting write', async () => {
+    // The desktop quit on a slow disk: `flushSync`, then `JsonStore.idle()` is waited for. The
+    // host's asynchronous writes land when the disk says so; its synchronous ones at once.
+    const files = new Map<string, string>()
+    const order: string[] = []
+    const gates: Array<() => void> = []
+    const io: StoreIO = {
+      readSync: (name) => files.get(name) ?? null,
+      write: (name, text) =>
+        new Promise<void>((resolve) => {
+          gates.push(() => {
+            files.set(name, text)
+            order.push(`async:${name}`)
+            resolve()
+          })
+        }),
+      writeSync: (name, text) => {
+        files.set(name, text)
+        order.push(name)
+      },
+      exists: (name) => files.has(name)
+    }
+    vi.useFakeTimers()
+    try {
+      const engine = new RuleEngine()
+      const store = new RuleSetStore(io)
+      store.load()
+      store.attach(engine)
+      const u = (rules: Rule[]): void =>
+        engine.setRuleSet({ id: 'u', source: 'user', priority: 10, enabled: true, rules })
+      u([block(1, 'a.example')])
+      // The document's write is with the disk; the index's debounce fired and waits for it.
+      await vi.advanceTimersByTimeAsync(250)
+      expect(gates).toHaveLength(1)
+      expect(files.has(INDEX_FILE)).toBe(false)
+      // A last change, then the quit: the newest document and an index naming it land now.
+      u([block(1, 'a.example'), block(2, 'b.example')])
+      store.flushSync()
+      expect(order).toEqual(['blocking/sets/u.json', INDEX_FILE])
+      const written = files.get('blocking/sets/u.json') ?? ''
+      expect((JSON.parse(written) as SetDocument).rules).toHaveLength(2)
+      expect(index({ files }).sets.map((s) => [s.ruleCount, s.tag])).toEqual([[2, tagOf(written)]])
+      // The disk catches up: the document's writes land in order, the index write that waited
+      // for them is dropped (it holds the older index), and the store settles with the disk in
+      // the quit's final state.
+      const settled = store.whenSettled()
+      for (let i = 0; i < 4 && gates.length > 0; i++) {
+        for (const open of gates.splice(0)) open()
+        await vi.advanceTimersByTimeAsync(0)
+      }
+      await settled
+      expect(gates).toHaveLength(0)
+      expect(order.filter((name) => name.startsWith('async:'))).toEqual([
+        'async:blocking/sets/u.json',
+        'async:blocking/sets/u.json'
+      ])
+      expect(files.get('blocking/sets/u.json')).toBe(written)
+      expect(index({ files }).sets.map((s) => [s.ruleCount, s.tag])).toEqual([[2, tagOf(written)]])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
 
 describe('RuleSetStore: only what changed is written', () => {

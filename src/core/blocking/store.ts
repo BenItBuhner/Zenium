@@ -186,6 +186,10 @@ export class RuleSetStore {
   private seq = 0
   /** An index write was asked for since `whenSettled` last flushed. */
   private indexDirty = false
+  /** Asynchronous index writes waiting for the documents they name to land. */
+  private indexWaiting = 0
+  /** Synchronous index writes so far; one supersedes every asynchronous write still waiting. */
+  private indexSyncWrites = 0
 
   constructor(private readonly io: StoreIO) {
     this.index = new JsonStore<IndexFile>(this.indexIo(), INDEX_FILE, 200)
@@ -194,17 +198,27 @@ export class RuleSetStore {
   /**
    * The index's writes go through here: an asynchronous one starts once every document write or
    * removal in flight has landed, a synchronous one (shutdown) writes them synchronously first.
-   * So the index never names a document or a tag that is not on disk yet.
+   * So the index never names a document or a tag that is not on disk yet. An asynchronous write
+   * that a synchronous one overtook while it waited is dropped: the index on disk is newer than
+   * the one it holds, and the shutdown that wrote it waits for nothing else.
    */
   private indexIo(): StoreIO {
     return {
       readSync: (name) => this.io.readSync(name),
       write: async (name, text, options?: StoreWriteOptions) => {
-        await Promise.all([...this.inflight])
+        const before = this.indexSyncWrites
+        this.indexWaiting++
+        try {
+          await Promise.all([...this.inflight])
+        } finally {
+          this.indexWaiting--
+        }
+        if (this.indexSyncWrites !== before) return
         await this.io.write(name, text, options)
       },
       writeSync: (name, text, options?: StoreWriteOptions) => {
         this.landPendingSync()
+        this.indexSyncWrites++
         this.io.writeSync(name, text, options)
       }
     }
@@ -467,8 +481,14 @@ export class RuleSetStore {
     return this.index.flush()
   }
 
+  /**
+   * Shutdown: the documents in flight land synchronously, then the index. An index write still
+   * waiting for its documents holds an older index than the entries are now, and would land
+   * behind this one: the entries are written as they are, and that write is dropped.
+   */
   flushSync(): void {
     this.landPendingSync()
+    if (this.indexWaiting > 0) this.writeIndex()
     this.index.flushSync()
   }
 
