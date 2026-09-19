@@ -2,6 +2,7 @@ import type { JSX } from 'react'
 import { useCallback, useEffect, useRef } from 'react'
 import { Minimize } from 'lucide-react'
 import type { Events, Rect, UIState } from '@shared/types'
+import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import type { ResolvedTheme } from '@shared/theme'
 import { bookmarksBarVisible } from '@shared/bookmarkViews'
 import { formatBinding } from '@shared/shortcuts'
@@ -461,18 +462,21 @@ function useGlobalKeys(state: UIState): void {
  * Closing the bar first keeps the toggle from swallowing the request while it is open.
  * The phone opens its own new tab page instead (the WebView has no `zen://newtab` yet) – grown
  * out of the control that asked for it when the event says where that was (`detail.origin`,
- * window coordinates).
+ * window coordinates), and a private one when the event names the private container
+ * (`detail.containerId`; the tabs quick menu and the overview's private pane).
  */
 function useNewTabEvent(): void {
   useEffect(() => {
     const onNewTab = (e: Event): void => {
+      const detail = (e as CustomEvent<{ origin?: Rect; containerId?: string } | undefined>)
+        .detail
       if (isPhone()) {
-        const origin = (e as CustomEvent<{ origin?: Rect } | undefined>).detail?.origin ?? null
-        void openNewTabPage(origin)
+        void openNewTabPage(detail?.origin ?? null, { containerId: detail?.containerId })
         return
       }
       closeUrlbar()
-      run('tab.new', undefined)
+      if (detail?.containerId === PRIVATE_CONTAINER_ID) run('tab.newPrivate', {})
+      else run('tab.new', undefined)
     }
     window.addEventListener('zen-new-tab', onNewTab)
     return () => window.removeEventListener('zen-new-tab', onNewTab)
