@@ -34,6 +34,15 @@ import java.util.concurrent.TimeUnit
  * protection rows pressed and their sheets opened. Secure DNS has no engine scene: Android
  * resolves through the system, and its row leaves for the system's Private DNS screen.
  *
+ * Every sheet flow of the Settings scenes puts a real finger on a control inside the sheet and
+ * asserts what the control did (the rule in [DemoHarness], the audit after #194): the picker
+ * sheets' options against the core's setting they flip, the key sheet's Save against the
+ * validation line a malformed key earns, the form sheet's Add site and the item sheet's Remove
+ * against the exception list. A touch that went in and did not take is a touch fault the run
+ * fails on once the recording is done ([touchRowExpecting]). The rows of the pane itself, and
+ * a control the soft keyboard may cover, keep the accessibility tree's click, said so at the
+ * step.
+ *
  * The pages come from a loopback HTTP server inside this process, answering as several sites.
  * HTTPS-only mode leaves loopback and every other non-unique host alone (as Chrome's HTTPS-First
  * does), so the sites it has to upgrade are `127.0.0.x.nip.io` names: the nip.io wildcard DNS
@@ -332,10 +341,14 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
 
     /**
      * The protection rows of the Settings tab's Privacy and Security section (`protectionRows.tsx`,
-     * drawn by the tab), pressed through the accessibility tree the way the menu sheet demo picks
-     * its rows (the bounds a scrolled list reports lag behind on the emulator). Every step notes
-     * what the core's settings say afterwards; a row the tree does not carry is noted and
-     * skipped, never the end of the demo.
+     * drawn by the tab). The rows of the pane are pressed through the accessibility tree the way
+     * the menu sheet demo picks its rows (the bounds a scrolled list reports lag behind on the
+     * emulator; a press there opens a sheet or flips a switch, and is not the claim of a sheet's
+     * touch). Inside every sheet a control is pressed by a real finger and what it did is asserted
+     * ([touchRowExpecting], the rule in [DemoHarness]); the tree's click stands in after a touch
+     * that did not take so the recording goes on, the fault failing the run at its end. Every
+     * step notes what the core's settings say afterwards; a row the tree does not carry is noted
+     * and skipped, never the end of the demo.
      */
     private fun settingsScenes() {
         note("\n15. Settings > Privacy and Security (the Settings tab's section: rows under headings)")
@@ -356,13 +369,27 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
             if (waitForRow(LEVEL_OFF_LABEL, 8_000)) {
                 SystemClock.sleep(800)
                 shot("18-settings-safebrowsing-sheet")
-                pressRow(LEVEL_OFF_LABEL)
+                // The picker sheet's injected touch (the rule in DemoHarness): No protection
+                // under a finger, and the core's setting must flip on it – a touch the scrim took
+                // closes the sheet with the level as it was.
+                if (!touchRowExpecting(LEVEL_OFF_LABEL, "safeBrowsingEnabled reads false") {
+                        privacySetting("safeBrowsingEnabled") == false
+                    }
+                ) {
+                    pressRow(LEVEL_OFF_LABEL)
+                }
                 awaitSheetGone(LEVEL_LABEL)
                 note("  safeBrowsingEnabled=${awaitPrivacySetting("safeBrowsingEnabled", false)} (No protection picked)")
                 shot("18b-settings-safebrowsing-off")
                 if (pressRow(LEVEL_LABEL) && waitForRow(LEVEL_STANDARD_LABEL, 8_000)) {
                     SystemClock.sleep(600)
-                    pressRow(LEVEL_STANDARD_LABEL)
+                    // The way back is a finger too: Standard protection, and the setting flips again.
+                    if (!touchRowExpecting(LEVEL_STANDARD_LABEL, "safeBrowsingEnabled reads true") {
+                            privacySetting("safeBrowsingEnabled") == true
+                        }
+                    ) {
+                        pressRow(LEVEL_STANDARD_LABEL)
+                    }
                     awaitSheetGone(LEVEL_LABEL)
                 }
                 note("  safeBrowsingEnabled=${awaitPrivacySetting("safeBrowsingEnabled", true)} (Standard protection picked)")
@@ -378,13 +405,34 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
             if (waitFor("Save", 6_000) != null) {
                 SystemClock.sleep(800)
                 shot("18c-settings-api-key-sheet")
-                if (!clickByLabel("Cancel")) back()
-                awaitSheetGone(API_KEY_LABEL)
+                // The field sheet's injected touch (the rule in DemoHarness): a malformed key put
+                // in the field through the tree (the value is the set-up, not the claim), then
+                // Save under a finger, and the §9.12 validation line must come up for it – the
+                // §9.30 refusal, decided in the chrome without the network. A touch the scrim took
+                // closes the sheet with nothing said.
+                if (setEditable(API_KEY_LABEL, MALFORMED_KEY)) {
+                    val refused = touchRowExpecting("Save", "the validation line reads the malformed-key text") {
+                        findNode { it == API_KEY_INVALID_TEXT } != null
+                    }
+                    SystemClock.sleep(600)
+                    note("  Save with '$MALFORMED_KEY': refused=$refused, keyboard up=${imeShown()} (the refusal gives the field the focus)")
+                    shot("18d-settings-api-key-refused")
+                } else {
+                    note("  (the key's field is not in the tree; nothing typed)")
+                }
+                // Cancel: a finger first; the keyboard the refusal raised may cover the sheet's
+                // buttons on a lifted sheet the tree has not caught up with, so the tree's click
+                // stands in when the touch left the sheet up.
+                if (!touchTapLabel("Cancel") || !awaitSheetGone(API_KEY_LABEL, 4_000)) {
+                    note("  (Cancel through the tree: the touch did not close the key sheet)")
+                    if (!clickByLabel("Cancel")) back()
+                    awaitSheetGone(API_KEY_LABEL)
+                }
             } else {
                 note("  (the key's field sheet never came up)")
                 closeSheetIfOpen(API_KEY_LABEL)
             }
-            note("  safeBrowsingApiKey='${privacySetting("safeBrowsingApiKey")}' (the sheet cancelled)")
+            note("  safeBrowsingApiKey='${privacySetting("safeBrowsingApiKey")}' (the sheet cancelled, the malformed key never kept)")
         } else {
             note("  (no field row '$API_KEY_LABEL')")
         }
@@ -414,7 +462,11 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
             if (waitForRow(always, 8_000)) {
                 SystemClock.sleep(800)
                 shot("20-settings-https-only-sheet")
-                pressRow(always)
+                // The picker sheet's injected touch: Always under a finger, and the mode must
+                // read `always` in the core on it.
+                if (!touchRowExpecting(always, "httpsOnly reads always") { privacySetting("httpsOnly") == "always" }) {
+                    pressRow(always)
+                }
                 awaitSheetGone("HTTPS-only mode")
                 note("  httpsOnly=${awaitPrivacySetting("httpsOnly", "always")} (read once the sheet had gone)")
             } else {
@@ -461,7 +513,14 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
             if (waitForRow(COOKIES_BLOCK_LABEL, 8_000)) {
                 SystemClock.sleep(800)
                 shot("25-settings-cookies-sheet")
-                pressRow(COOKIES_BLOCK_LABEL)
+                // The picker sheet's injected touch: Block under a finger, and the core's mode
+                // must read `block` on it.
+                if (!touchRowExpecting(COOKIES_BLOCK_LABEL, "thirdPartyCookies reads block") {
+                        privacySetting("thirdPartyCookies") == "block"
+                    }
+                ) {
+                    pressRow(COOKIES_BLOCK_LABEL)
+                }
                 awaitSheetGone("Third-party cookies")
                 note("  thirdPartyCookies=${awaitPrivacySetting("thirdPartyCookies", "block")} (read once the sheet had gone)")
             } else {
@@ -480,30 +539,47 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
         var added = false
         if (pressRow("Add a site") && waitForRow("Site", 6_000)) {
             SystemClock.sleep(800)
-            val typed = setEditable("Site", "accounts.example")
+            // The site goes into the field through the tree (the value is the set-up, not the
+            // claim; the chassis focuses Cancel as a form opens, so no keyboard is up).
+            val typed = setEditable("Site", RELATED_SITE)
             if (typed) {
                 SystemClock.sleep(600)
                 shot("26-settings-add-site-sheet")
+                // The form sheet's injected touch (the rule in DemoHarness): Add site under a
+                // finger, and the site must land on the core's exception list on it.
+                added = touchRowExpecting("Add site", "thirdPartyCookieExceptions lists $RELATED_SITE") {
+                    privacySetting("thirdPartyCookieExceptions")?.toString() == RELATED_SITE_LIST
+                }
+                // After a touch that did not take, the tree's click so the recording goes on.
+                if (!added && clickByLabel("Add site", enabledOnly = true)) {
+                    added = awaitPrivacySetting("thirdPartyCookieExceptions", RELATED_SITE_LIST)?.toString() == RELATED_SITE_LIST
+                }
             }
-            added = typed && clickByLabel("Add site", enabledOnly = true)
             if (added) awaitSheetGone("Add a site") else closeSheetIfOpen("Add a site")
         }
         if (!added) {
             note("  (the add sheet, its field or its button is not in the tree; the exception is set directly)")
-            setPrivacy("""{"thirdPartyCookieExceptions":["accounts.example"]}""")
+            setPrivacy("""{"thirdPartyCookieExceptions":["$RELATED_SITE"]}""")
         }
-        note("  thirdPartyCookieExceptions=${awaitPrivacySetting("thirdPartyCookieExceptions", "[\"accounts.example\"]")}")
-        showRow("accounts.example")
+        note("  thirdPartyCookieExceptions=${awaitPrivacySetting("thirdPartyCookieExceptions", RELATED_SITE_LIST)}")
+        showRow(RELATED_SITE)
         shot("26b-settings-related-sites")
-        if (pressRow("accounts.example") && waitForRow("Remove accounts.example", 6_000)) {
+        if (pressRow(RELATED_SITE) && waitForRow("Remove $RELATED_SITE", 6_000)) {
             SystemClock.sleep(800)
             shot("26c-settings-related-site-sheet")
-            pressRow("Remove accounts.example")
-            awaitSheetGone("accounts.example")
+            // The item sheet's injected touch: Remove under a finger, and the core's exception
+            // list must empty on it (the sheet leaves by itself once its item is gone).
+            if (!touchRowExpecting("Remove $RELATED_SITE", "thirdPartyCookieExceptions is empty") {
+                    privacySetting("thirdPartyCookieExceptions")?.toString() == "[]"
+                }
+            ) {
+                pressRow("Remove $RELATED_SITE")
+            }
+            awaitSheetGone(RELATED_SITE)
             note("  removed: thirdPartyCookieExceptions=${awaitPrivacySetting("thirdPartyCookieExceptions", "[]")}")
         } else {
-            note("  (no item 'accounts.example' with a 'Remove accounts.example' action)")
-            closeSheetIfOpen("accounts.example")
+            note("  (no item '$RELATED_SITE' with a 'Remove $RELATED_SITE' action)")
+            closeSheetIfOpen(RELATED_SITE)
         }
         beat()
 
@@ -577,19 +653,61 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
     }
 
     /**
+     * The sheet flow's injected touch (the rule in [DemoHarness]): a real finger on the control
+     * inside the sheet that carries `label` ([rowWords]: an option or an action the WebView reads
+     * as label and description together), once its bounds hold still and inside the touchable
+     * window, then up to `timeoutMs` for `took` – what the control does, named by `effect`, read
+     * from the core's state or the tree, never "the sheet went away" – to hold. True when it held.
+     * No touch goes in when nothing on screen reads `label` within `findTimeoutMs`, or nothing of
+     * it is inside the touchable window: false, noted, and the caller reaches the state another
+     * way and says so. A touch that went in and did not take is a [touchFault] the run fails on
+     * once the recording is done, and false – the caller may still press the control through the
+     * tree so the recording goes on.
+     */
+    private fun touchRowExpecting(
+        label: String,
+        effect: String,
+        timeoutMs: Long = 6_000,
+        findTimeoutMs: Long = 8_000,
+        took: () -> Boolean
+    ): Boolean {
+        val node = awaitNode(findTimeoutMs, rowWords(label)) ?: run {
+            note("  (nothing on screen reads '$label' to touch)")
+            return false
+        }
+        val point = touchTapPoint(node) ?: run {
+            note("  (no part of '$label' is inside the touchable window; no touch went in)")
+            return false
+        }
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (took()) {
+                note("  the touch on '$label' at ${point.x.toInt()},${point.y.toInt()} took: $effect")
+                return true
+            }
+            SystemClock.sleep(150)
+        }
+        note("  TOUCH FAULT: the touch on '$label' at ${point.x.toInt()},${point.y.toInt()} did not take: not $effect within $timeoutMs ms")
+        touchFault("a touch on the sheet's '$label' did not take: not $effect within $timeoutMs ms")
+        return false
+    }
+
+    /**
      * Wait for the sheet opened from the row `title` to have gone after a pick: a Settings sheet
      * is up exactly while its handle button ([SHEET_HANDLE], the same on every one) is in the
      * tree. The pick is applied at once, but the sheet slides down first, which takes seconds
      * under the emulator's software rendering, and the store hears of the value through the
      * bridge a moment later – so the value is polled for ([awaitPrivacySetting]) after this.
+     * True once the sheet has gone; false, noted, when it is still up after `timeoutMs`.
      */
-    private fun awaitSheetGone(title: String) {
-        val deadline = SystemClock.uptimeMillis() + 15_000
+    private fun awaitSheetGone(title: String, timeoutMs: Long = 15_000): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
         while (SystemClock.uptimeMillis() < deadline) {
-            if (findNode { it == SHEET_HANDLE } == null) return
+            if (findNode { it == SHEET_HANDLE } == null) return true
             SystemClock.sleep(250)
         }
-        note("  (the '$title' sheet is still up 15 s after the pick)")
+        note("  (the '$title' sheet is still up ${timeoutMs / 1_000} s after the press)")
+        return false
     }
 
     /**
@@ -1003,6 +1121,15 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
         private const val API_KEY_LABEL = "Google Safe Browsing API key"
         private const val HTTPS_ALWAYS_LABEL = "Always use secure connections"
         private const val COOKIES_BLOCK_LABEL = "Block third-party cookies"
+        /**
+         * A key the chrome refuses on its own (`isValidApiKey`: letters, digits, dashes and
+         * underscores only), and the §9.12 validation line it earns (`PROTECTION_TEXT.safeBrowsing.apiKey.invalid`).
+         */
+        private const val MALFORMED_KEY = "not a key!"
+        private const val API_KEY_INVALID_TEXT = "A key is letters, digits, dashes and underscores, up to 128 of them"
+        /** The related site the form sheet adds and the item sheet removes, and the list the core then holds. */
+        private const val RELATED_SITE = "accounts.example"
+        private const val RELATED_SITE_LIST = "[\"$RELATED_SITE\"]"
         /** Every Settings sheet's handle button (`SettingsSheet`): in the tree exactly while a sheet is up. */
         private const val SHEET_HANDLE = "Resize sheet"
 
