@@ -1207,7 +1207,7 @@ function PrivateEmpty(): JSX.Element {
           data-testid="overview-private-empty-new"
           onClick={() => newTabOn('private')}
         >
-          New Private Tab
+          New private tab
         </button>
       </div>
     </div>

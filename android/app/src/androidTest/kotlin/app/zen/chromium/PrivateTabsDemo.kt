@@ -297,10 +297,13 @@ class PrivateTabsDemo : DemoHarness("private-demo-state.json", "private", "priva
         shot("14-relaunched")
         finding("after the relaunch (a new activity and host, the core booted anew): private profile ${privateProfileState()}, private tabs restored ${anyPrivateTab()}")
 
-        // 10. The launcher's static shortcut: its own intent (as the launcher would fire it) lands on
-        //     MainActivity and the chrome opens a private tab; on the site the jar is empty.
+        // 10. The launcher's static shortcut: its own intent, as the launcher fires it (the system
+        //     stamps it with CLEAR_TASK and TASK_ON_HOME on the way in, ShortcutParser), lands on
+        //     the trampoline in its own task, which relays the action to MainActivity in the
+        //     browser's; the running activity and host stay and the chrome opens a private tab.
+        //     On the site the jar is empty.
         val shortcuts = manifestShortcuts()
-        finding("\nmanifest shortcuts of ${app.packageName}: ${shortcuts.map { "${it.id} -> ${it.intent?.action} @ ${it.intent?.component?.className}" }}")
+        finding("\nmanifest shortcuts of ${app.packageName}: ${shortcuts.map { "${it.id} -> ${it.intent?.action} @ ${it.intent?.component?.className} flags 0x${Integer.toHexString(it.intent?.flags ?: 0)}" }}")
         val shortcut = shortcuts.firstOrNull { it.id == PrivateBrowsing.SHORTCUT_ID }
         expect(
             "the New private tab shortcut is installed from the manifest with its intent",
@@ -309,13 +312,21 @@ class PrivateTabsDemo : DemoHarness("private-demo-state.json", "private", "priva
         // The system server reads targetPackage as a plain string: only the id spelt out by the
         // build lands here (a resource reference would install as "@<id>", which nothing starts).
         expect(
-            "the shortcut's intent targets this build's package (${app.packageName}), suffix included",
-            shortcut?.intent?.component == android.content.ComponentName(app.packageName, MainActivity::class.java.name)
+            "the shortcut's intent targets this build's package (${app.packageName}), suffix included, at the trampoline",
+            shortcut?.intent?.component == android.content.ComponentName(app.packageName, LauncherIconActivity::class.java.name)
         )
         val intent = shortcut?.intent?.let { Intent(it) }
-            ?: Intent(PrivateBrowsing.ACTION_NEW_TAB).setClassName(app.packageName, MainActivity::class.java.name)
-        app.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        expect("the launcher shortcut opens a private tab", awaitPrivateActive(15_000))
+            ?: Intent(PrivateBrowsing.ACTION_NEW_TAB).setClassName(app.packageName, LauncherIconActivity::class.java.name)
+        val activityBefore = activity
+        val hostBefore = host
+        app.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_TASK_ON_HOME))
+        val opened = awaitPrivateActive(15_000)
+        expect(
+            "the shortcut leaves the browser's activity and host running (its CLEAR_TASK clears the trampoline's task alone)",
+            activity === activityBefore && host === hostBefore && !onMain { activity.isDestroyed }
+        )
+        finding("after the shortcut: same activity ${activity === activityBefore}, same host ${host === hostBefore}, destroyed ${onMain { activity.isDestroyed }}")
+        expect("the launcher shortcut opens a private tab", opened)
         val private3 = activeCoreTab()?.optString("id").orEmpty()
         settle()
         shot("15-shortcut-private-tab")

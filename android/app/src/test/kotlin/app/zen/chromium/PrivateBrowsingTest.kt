@@ -10,9 +10,10 @@ import java.io.File
  * The host's side of private browsing beyond the profile: the window's screenshot guard goes up
  * exactly while the chrome says the surface is private (a recording is let in only when asked,
  * which [PrivateBrowsing.guard] allows in debug builds alone), and the launcher's static shortcut
- * reaches `MainActivity` with the action the activity turns into a private tab. The resource
- * wiring is checked from the files: a shortcut whose meta-data, id, action or target drifted
- * would install and never open anything.
+ * reaches `MainActivity` – through `LauncherIconActivity`, the trampoline outside the browser's
+ * task – with the action the activity turns into a private tab. The resource wiring is checked
+ * from the files: a shortcut whose meta-data, id, action or target drifted would install and
+ * never open anything.
  */
 class PrivateBrowsingTest {
     private fun read(vararg candidates: String): String {
@@ -34,15 +35,32 @@ class PrivateBrowsingTest {
     private fun shortcuts() = read(SHORTCUTS_TEMPLATE, "app/$SHORTCUTS_TEMPLATE")
 
     @Test
-    fun theShortcutOpensAPrivateTabInTheBrowserActivity() {
+    fun theShortcutOpensAPrivateTabInTheBrowserActivityThroughTheTrampoline() {
         val shortcuts = shortcuts()
         val shortcut = shortcuts.substringAfter("<shortcut").substringBefore("</shortcut>")
         assertTrue("""android:shortcutId="${PrivateBrowsing.SHORTCUT_ID}"""" in shortcut)
         assertTrue("""android:enabled="true"""" in shortcut)
         assertTrue("""android:action="${PrivateBrowsing.ACTION_NEW_TAB}"""" in shortcut)
-        assertTrue("""android:targetClass="app.zen.chromium.MainActivity"""" in shortcut)
+        // The system stamps a manifest shortcut's intent with FLAG_ACTIVITY_CLEAR_TASK: aimed at
+        // MainActivity it would clear the browser's task; the trampoline in its own task relays
+        // the action into the running window instead.
+        assertTrue("""android:targetClass="app.zen.chromium.LauncherIconActivity"""" in shortcut)
+        assertFalse("""android:targetClass="app.zen.chromium.MainActivity"""" in shortcut)
+        val manifest = read("src/main/AndroidManifest.xml", "app/src/main/AndroidManifest.xml")
+        val trampoline = manifest.substringAfter("android:name=\".LauncherIconActivity\"").substringBefore("/>")
+        assertTrue("""android:taskAffinity=""""" in trampoline)
+        assertTrue("""android:noHistory="true"""" in trampoline)
         // One shortcut: the launcher shows the app's own before any pinned web app.
         assertEquals(1, Regex("<shortcut\\s").findAll(shortcuts).count())
+    }
+
+    @Test
+    fun theTrampolineForwardsTheShortcutsActionAndNothingElse() {
+        assertEquals(PrivateBrowsing.ACTION_NEW_TAB, PrivateBrowsing.forwardedAction(PrivateBrowsing.ACTION_NEW_TAB))
+        // A launcher tap on an icon alias, or any other start, is the launcher's plain start.
+        assertEquals(null, PrivateBrowsing.forwardedAction("android.intent.action.MAIN"))
+        assertEquals(null, PrivateBrowsing.forwardedAction("android.intent.action.VIEW"))
+        assertEquals(null, PrivateBrowsing.forwardedAction(null))
     }
 
     /**

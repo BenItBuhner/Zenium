@@ -13,16 +13,25 @@ import android.view.WindowManager
  * Chrome keeps Incognito out of the app switcher. It is released the moment the chrome leaves
  * the private surface, so a regular tab captures as before.
  *
- * The launcher shortcut is the static one in `res/xml/shortcuts.xml`, declared through the
- * `android.app.shortcuts` meta-data on the launcher aliases (`scripts/app-icons/lib.ts`): its
- * intent carries [ACTION_NEW_TAB] to `MainActivity`, which asks the chrome for a private tab.
+ * The launcher shortcut is the static one in `src/main/shortcuts/shortcuts.xml` (written into
+ * each variant's res/xml by the build), declared through the `android.app.shortcuts` meta-data on
+ * the launcher aliases (`scripts/app-icons/lib.ts`): its intent carries [ACTION_NEW_TAB] to
+ * `LauncherIconActivity`, the trampoline outside the browser's task, which relays it to
+ * `MainActivity`; the activity asks the chrome for a private tab in the running window.
  */
 object PrivateBrowsing {
     /** The launcher shortcut's intent action: a new private tab in the browser window. */
     const val ACTION_NEW_TAB = "app.zen.chromium.NEW_PRIVATE_TAB"
 
-    /** The static shortcut's id (`res/xml/shortcuts.xml`). */
+    /** The static shortcut's id (`src/main/shortcuts/shortcuts.xml`). */
     const val SHORTCUT_ID = "new-private-tab"
+
+    /**
+     * The action `LauncherIconActivity` carries over to `MainActivity` for an intent it was started
+     * with: the shortcut's own; null for everything else (a launcher tap on an icon alias), which
+     * the trampoline forwards as the launcher's plain start.
+     */
+    fun forwardedAction(action: String?): String? = if (action == ACTION_NEW_TAB) ACTION_NEW_TAB else null
 
     /**
      * Debug builds only: a recorded demo (`PrivateTabsDemo`) lets the screen recorder see the

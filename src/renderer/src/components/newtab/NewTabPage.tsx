@@ -53,7 +53,7 @@ interface Props {
  * rather than re-using one's hooks.
  */
 export function NewTabPage({ state, tab, hidden }: Props): JSX.Element {
-  if (isPrivateTab(tab)) return <PrivateNewTabPage tab={tab} hidden={hidden} />
+  if (isPrivateTab(tab)) return <PrivateNewTabPage state={state} tab={tab} hidden={hidden} />
   return <SpaceNewTabPage state={state} tab={tab} hidden={hidden} />
 }
 
@@ -170,7 +170,7 @@ const PRIVATE_EXPLAINER: Array<{ heading: string; rows: Array<[ReactNode, string
  * Chrome's "block third-party cookies" switch has no setting in the core to drive, so there is
  * none here.
  */
-function PrivateNewTabPage({ tab, hidden }: Omit<Props, 'state'>): JSX.Element {
+function PrivateNewTabPage({ state, tab, hidden }: Props): JSX.Element {
   const growPhase = newTabGrowStore.use((s) => s.phase)
   const backdrop = useWindowBackdrop()
   return (
@@ -186,7 +186,7 @@ function PrivateNewTabPage({ tab, hidden }: Omit<Props, 'state'>): JSX.Element {
     >
       <div className="relative flex min-h-0 flex-1 flex-col overflow-y-auto">
         <div className="mx-auto flex w-full max-w-[520px] flex-col px-4 pb-6 pt-8">
-          <SearchField tab={tab} />
+          <SearchField state={state} tab={tab} />
           <div className="zen-firstrun-intro mt-8 flex flex-col gap-1">
             <h1 className="zen-firstrun-title flex items-center gap-2">
               <VenetianMask

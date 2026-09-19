@@ -1364,7 +1364,8 @@ describe('the private pane', () => {
     expect(empty.querySelector('h2')!.textContent).toBe('No private tabs')
     expect(countShown()).toBe('0 tabs')
     const button = empty.querySelector<HTMLElement>('[data-testid="overview-private-empty-new"]')!
-    expect(button.textContent).toBe('New Private Tab')
+    // A button, so sentence case (v2 §9.1); the menus' rows stay Title Case.
+    expect(button.textContent).toBe('New private tab')
     expect(newTabRequests(() => act(() => button.click()))).toEqual([
       { containerId: PRIVATE_CONTAINER_ID }
     ])

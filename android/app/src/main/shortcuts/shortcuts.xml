@@ -2,8 +2,11 @@
 <!--
   The launcher's long-press shortcuts (the `android.app.shortcuts` meta-data on the launcher
   aliases, see scripts/app-icons/lib.ts). One: a new private tab, as Chrome offers "New Incognito
-  tab" (INC-01). Its intent lands on MainActivity in the browser's task, which asks the chrome for
-  a private tab in the current space (PrivateBrowsing.ACTION_NEW_TAB).
+  tab" (INC-01). Its intent lands on LauncherIconActivity, the trampoline in a task of its own,
+  which relays the action to MainActivity in the browser's task; the activity asks the chrome for
+  a private tab in the current space (PrivateBrowsing.ACTION_NEW_TAB). Not MainActivity itself:
+  the system stamps a manifest shortcut's intent with FLAG_ACTIVITY_CLEAR_TASK, which would clear
+  the browser's task and start the activity over.
 
   A template, not a resource: the build writes it to each variant's generated res/xml with
   ${applicationId} spelt out (build.gradle.kts, WriteShortcuts). The system server parses the
@@ -21,6 +24,6 @@
         <intent
             android:action="app.zen.chromium.NEW_PRIVATE_TAB"
             android:targetPackage="${applicationId}"
-            android:targetClass="app.zen.chromium.MainActivity" />
+            android:targetClass="app.zen.chromium.LauncherIconActivity" />
     </shortcut>
 </shortcuts>

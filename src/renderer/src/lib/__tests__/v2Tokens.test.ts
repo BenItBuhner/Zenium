@@ -156,8 +156,8 @@ const V2_FILES: ReadonlyArray<string> = [
   'components/siteinfo/SiteInfoSheet.tsx',
   // Site controls (#135), a v2 surface: the shared glyph size and stroke (`V2_GLYPH`); the
   // desktop popover, dialog and pane primitives' metrics and inks; the Settings panes' card
-  // padding and deemphasised ink; the builder rows' glyph ink; the pill's private badge in the
-  // window family's control roles (§9.19, §9.29).
+  // padding and deemphasised ink; the builder rows' glyph ink. (The pill's private badge is on
+  // the shared `.zen-v2-badge` since #203, so PhoneShell reads no token of its own.)
   'components/v2/controls.tsx',
   'components/siteControls/primitives.tsx',
   'components/siteControls/pane.tsx',
@@ -165,8 +165,7 @@ const V2_FILES: ReadonlyArray<string> = [
   'components/siteControls/ClearBrowsingDataDialog.tsx',
   'components/siteControls/settingsRows.tsx',
   'components/overlays/SiteSettingsSection.tsx',
-  'components/overlays/SafetyCheckSection.tsx',
-  'components/phone/PhoneShell.tsx'
+  'components/overlays/SafetyCheckSection.tsx'
 ]
 
 /** The text of the first `selector {` block found after `from`. */
