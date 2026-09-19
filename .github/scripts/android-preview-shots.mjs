@@ -23,9 +23,13 @@
 //                      for editing), `overlay=<kind>`
 //                      (history, bookmarks, downloads, settings, addons, …; `&section=<id>` picks
 //                      a Settings section, `&show=<text>` scrolls a row into view), `menu=app`
-//                      (`&show=<text>` scrolls an item into view), `prompt=<permission>` (the
-//                      permission prompt sheet), `private=new` or `private=<url>` (a private
-//                      tab), `find=<text>`, `pull=<n>`,
+//                      (`&show=<text>` scrolls an item into view) or `menu=tabs` (the Tabs
+//                      button's quick menu), `prompt=<permission>` (the permission prompt
+//                      sheet), `private=<surface>` (`newtab`: a private tab on its new tab page,
+//                      `page`: on a page (`&url=<page>`), `overview`: the overview on its Private
+//                      pane, `tabs`: on the Tabs pane beside a private tab, `empty`: the Private
+//                      pane with no private tab; `private=new` and `private=<url>` still read as
+//                      `newtab` and `page`), `find=<text>`, `pull=<n>`,
 //                      `zoom=<factor>` (the page zoom sheet), `error=<code>&url=<failed url>`
 //                      (the zen://error page; see `previewSpec.ts`), `overview` (the tab
 //                      overview over the active page) or the messages and the load
