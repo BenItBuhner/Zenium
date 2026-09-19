@@ -654,11 +654,12 @@ function warningButton(button: WarningButton, autofocus: boolean): string {
 /**
  * A warning page – Safe Browsing's and HTTPS-only mode's interstitials – on the error page's
  * surface (design-language-v2-draft §9.11, §9.23, §9.30;
- * the rules are the page's own in `main.css`): the neutral page, a title block – the glyph in
- * status ink before the 22/600 title, the description under it – and the actions 16 below:
- * Details first, the way on beside it, Back to safety as the primary trailing (a phone splits
- * two peers and stacks three, primary first). Under Details, 16 below the actions, the reason,
- * the address at 13 and the secondary that goes on regardless.
+ * the rules are the page's own in `main.css`): the neutral page, its block anchored at 30% of
+ * the page's height (§9.17), a title block – the glyph in status ink before the 22/600 title, the
+ * description under it – and the actions 16 below: Details first, the way on beside it, Back to
+ * safety as the primary trailing, the row right-aligned on desktop (a phone splits two peers and
+ * stacks three, primary first). Under Details, 16 below the actions, the reason, the address at
+ * 13 and the secondary that goes on regardless.
  */
 function warningPageHtml(page: WarningPage): string {
   const data = Object.entries({ interstitial: page.kind, ...page.data })

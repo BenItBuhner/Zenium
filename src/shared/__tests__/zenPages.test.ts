@@ -494,6 +494,19 @@ describe('errorPageStyle', () => {
     expect(phone.slice(0, phone.indexOf('}'))).toContain('flex: 1;')
   })
 
+  it('anchors the block at 30% of the page and right-aligns the warning pages’ action row', () => {
+    // §9.17: the top edge at 30% (16 minimum), never centred, so Details grows downward; §9.11:
+    // the page's action row hugs and right-aligns on desktop (the phone's buttons fill the row).
+    const page = style.slice(
+      style.indexOf('.zen-error-page {'),
+      style.indexOf('.zen-error-page main {')
+    )
+    expect(page).toContain('padding: max(16px, 30vh) 24px 24px;')
+    expect(page).not.toContain('justify-content')
+    const actions = style.slice(style.indexOf('.zen-interstitial-actions {'))
+    expect(actions.slice(0, actions.indexOf('}'))).toContain('justify-content: flex-end;')
+  })
+
   it('is what the built page carries, and degrades to nothing when a marker is gone', () => {
     expect(errorPageStyle()).toBe(style)
     expect(errorPageStyle('')).toBe('')

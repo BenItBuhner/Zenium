@@ -416,7 +416,9 @@
  * stylesheet's text at build time and writes them into the page, whose root carries the chrome's
  * data-theme / data-pointer / data-form-factor from the media the tab sees, so the same selectors
  * apply. Nothing in the chrome carries these classes. The page has no `@layer base` reset, hence
- * the button's own.
+ * the button's own. The block is anchored by its top edge at 30% of the page's height (16 on a
+ * page too short for that), not centred (§9.17): a block that grows – the warning pages' Details,
+ * the certificate page's Advanced – grows downward and the title never moves. Both form factors.
  */
 .zen-error-document {
   /* The space's accent is unknown inside the tab: the v2 accent (the ring) derives from the text. */
@@ -432,11 +434,10 @@
 .zen-error-page {
   display: flex;
   flex-direction: column;
-  justify-content: center;
   box-sizing: border-box;
   min-height: 100%;
   margin: 0;
-  padding: 24px;
+  padding: max(16px, 30vh) 24px 24px;
   background: var(--v2-page);
   color: var(--v2-text);
   font-family:
@@ -548,11 +549,13 @@
  * the description 15 at 69% 4 under it – and the actions 16 below it (§9.23's 16 from a title
  * block to what follows; §9.20's last body element, 16, the buttons, no hairline): Back to
  * safety as the page's one primary, trailing, Details and the way on beside it as secondaries.
- * On a phone two peers split the width and three or more stack, primary first (§9.11). Under
- * Details, 16 below the actions, the reason, the address at 13 and the secondary that goes on
- * regardless, in danger ink where it goes to a dangerous site. A pressed action turns busy –
- * full opacity, its label swapped for the 16 px spinner at the same width, `aria-busy` – while
- * the others wait at .4 (disabled) for the browser's answer.
+ * The row is §9.11's page action row, a footer without a container: on desktop the buttons hug
+ * and right-align in the content column, primary last; on a phone two peers split the width and
+ * three or more stack, primary first (the phone's buttons fill the row, so the alignment is
+ * moot there). Under Details, 16 below the actions, the reason, the address at 13 and the
+ * secondary that goes on regardless, in danger ink where it goes to a dangerous site. A pressed
+ * action turns busy – full opacity, its label swapped for the 16 px spinner at the same width,
+ * `aria-busy` – while the others wait at .4 (disabled) for the browser's answer.
  */
 .zen-interstitial-title {
   display: flex;
@@ -586,6 +589,7 @@
 .zen-interstitial-actions {
   display: flex;
   flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 8px;
   margin-top: 16px;
 }
