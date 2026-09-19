@@ -11,9 +11,6 @@ name: Android selection toolbar demo
 # this file only picks the driver and the demo it runs.
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - cursor/android-selection-actions-e0c5
 
 permissions:
   contents: read
