@@ -455,9 +455,11 @@ class AutofillDemo : DemoHarness("autofill-demo-state.json", "services-password-
         } else {
             note("the Addresses heading was not in the tree")
         }
-        // The saved address's item row (its description is the street: the card's row repeats the
-        // name) opens the sheet about it; "Edit address" closes that sheet for the editor sheet.
-        if (tapText(STREET) && awaitText("Edit address", 6_000)) {
+        // The saved address's item row opens the sheet about it; "Edit address" closes that sheet
+        // for the editor sheet. The row is one node of the tree whose text starts with its title,
+        // the name (the street is its description, further along the same text: the run at
+        // 9fc6ba55 looked for the street and found no node starting with it).
+        if (tapText(NAME) && awaitText("Edit address", 6_000)) {
             SystemClock.sleep(1_200)
             snap("settings-address-sheet")
             if (tapText("Edit address") && awaitText("Country", 6_000)) {
@@ -489,7 +491,9 @@ class AutofillDemo : DemoHarness("autofill-demo-state.json", "services-password-
         } else {
             note("the address editor was not reached")
         }
-        if (reveal("Payment methods") != null) {
+        // The tree trails the editor sheet's leaving by a moment: the heading is waited for before
+        // it is revealed (`reveal` looks once).
+        if (awaitText("Payment methods", 6_000) && reveal("Payment methods") != null) {
             SystemClock.sleep(1_200)
             snap("settings-payment-methods")
         } else {
