@@ -1,0 +1,67 @@
+name: Android QR scan demo
+
+# Records QR scanning (OMN-22, NTP-04) on a hardware-accelerated Android emulator and uploads the
+# video, the screenshots and the driver's findings: the camera refused at the system prompt (the
+# toast), refused for good (the toast with Open settings, and the app's details screen it opens),
+# granted at the prompt with the scan sheet up over the platform's camera – camera2 on the
+# emulator's emulated back camera, the live picture in the framed window – and Cancel, a code that
+# carries an address decoded from the new tab page's camera button and loaded (frames without a
+# code keep the sheet scanning first; the torch chip switches the torch), words decoded from the
+# omnibox's camera button and searched through the profile's engine, and the app sent behind while
+# scanning with the camera released and the sheet gone on its return (#187).
+# The emulator's camera shows a test pattern and never a code, and the recipe holds no poster in
+# front of it: the decodes run through a stand-in the driver installs through
+# `QrScan.cameraFactory`, which paints its scene into the same preview view and hands each frame's
+# luminance to the same listener the platform's camera reports to (see QrDemo). The permission
+# flow is real, which is why CAMERA is revoked after the install (DEMO_REVOKE).
+# The recipe's default `-camera-back none` gives way to `emulated` here so the platform's camera2
+# path runs once for real; -gpu is the recipe's (emulator-gpu), untouched.
+# Dispatch-only, like the gesture demo: it takes about ten minutes and says nothing about a change
+# being correct beyond the driver's own checks (QrDemo fails the run when one does not hold).
+# The build, the emulator and the Gradle cache live in android-emulator-demo.yml; this file only
+# picks the driver.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-qr-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: QR scan demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.QrDemo
+        DEMO_DIR=qr-demo
+        DEMO_OUT=artifacts/android-qr-demo
+        DEMO_VIDEO=android-qr-demo.mp4
+        DEMO_REVOKE=android.permission.CAMERA
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back emulated -camera-front none
+      artifact-name: android-qr-demo
+      artifact-path: artifacts/android-qr-demo/
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed: a run is then spent on the demo rather than on the runner.
+  record-again:
+    name: QR scan demo, second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.QrDemo
+        DEMO_DIR=qr-demo
+        DEMO_OUT=artifacts/android-qr-demo
+        DEMO_VIDEO=android-qr-demo.mp4
+        DEMO_REVOKE=android.permission.CAMERA
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back emulated -camera-front none
+      artifact-name: android-qr-demo-second-boot
+      artifact-path: artifacts/android-qr-demo/

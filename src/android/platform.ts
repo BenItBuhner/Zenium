@@ -14,6 +14,7 @@ import { interruptReasonFrom, resolveDownloadSettings } from '@shared/downloads'
 import { newId } from '@shared/ids'
 import type { SharedIntent } from '@shared/shareTarget'
 import type { VoiceEvent, VoiceStartOutcome } from '@shared/voice'
+import type { QrEvent, QrStartOutcome } from '@shared/qrScan'
 import {
   isDebugApplicationId,
   type UpdateAsset,
@@ -48,6 +49,7 @@ import type {
   Platform,
   PlatformInfo,
   PrivacyHost,
+  QrScanHost,
   ReauthHost,
   SessionHost,
   ShellHost,
@@ -154,7 +156,8 @@ export function androidCapabilities({
     // The WebView's floating action mode, with Zenium's items added after Copy (`TabWebView.kt`).
     selectionToolbar: true,
     // One document: the picker is drawn in the chrome, above the keyboard.
-    popupSurface: false
+    popupSurface: false,
+    qrScan: false
   }
 }
 
@@ -286,6 +289,8 @@ export interface BootInfo {
   pinShortcuts?: boolean
   /** The device has a speech recogniser (`SpeechRecognizer.isRecognitionAvailable`, `Voice.kt`). */
   voiceSearch?: boolean
+  /** The device has a back camera to scan QR codes with (`QrScan.kt`). */
+  qrScan?: boolean
   /** Persisted JSON documents by name (state.json, history.json, …), the ones small enough to inline. */
   files: Record<string, string>
   /**
@@ -438,6 +443,8 @@ export interface HostEventPayloads {
   'shortcut.pinned': { id: string }
   /** The speech recogniser reports while a voice search runs (`Voice.kt`; `shared/voice.ts`). */
   'voice.event': VoiceEvent
+  /** The camera reports while a QR scan runs (`QrScan.kt`; `shared/qrScan.ts`). */
+  'qr.event': QrEvent
 }
 
 /**
@@ -799,6 +806,7 @@ export class AndroidPlatform implements Platform {
    * them and raises `thumbnail.captured`; the chrome reads one when it shows the card.
    */
   readonly thumbnails: ThumbnailHost
+  readonly qrScan: QrScanHost
   /** The new tab page's picked wallpaper, in its own document (`newtab-wallpaper.json`). */
   readonly newTabBackground: AndroidNewTabBackground
   browser!: Browser
@@ -836,7 +844,8 @@ export class AndroidPlatform implements Platform {
         profiles: boot.profiles
       }),
       pinShortcuts: boot.pinShortcuts === true,
-      voiceSearch: boot.voiceSearch === true
+      voiceSearch: boot.voiceSearch === true,
+      qrScan: boot.qrScan === true
     }
     this.bootEnvironment = boot.environment ?? null
     this.io = io
@@ -996,6 +1005,15 @@ export class AndroidPlatform implements Platform {
       load: (tabId, url) => bridge.call<ThumbnailPicture | null>('thumbnail.load', { tabId, url }),
       drop: (tabId, url) => bridge.send('thumbnail.drop', url === undefined ? { tabId } : { tabId, url }),
       sweep: (keep) => bridge.send('thumbnail.sweep', { keep })
+    }
+    // Kotlin asks for the camera, opens it and decodes (`QrScan.kt`); its reports come back as
+    // `qr.event`s and go to the window for the scan sheet.
+    this.qrScan = {
+      start: () => bridge.call<QrStartOutcome>('qr.start'),
+      cancel: () => bridge.send('qr.cancel'),
+      layout: (slot) => bridge.send('qr.layout', slot),
+      setTorch: (on) => bridge.send('qr.setTorch', { on }),
+      openSettings: () => bridge.send('qr.openSettings')
     }
     this.events.send('insets', boot.insets)
   }
@@ -1309,6 +1327,9 @@ export class AndroidPlatform implements Platform {
         return
       case 'voice.event':
         browser.emit('voice.event', payload as HostEventPayloads['voice.event'], this.window)
+        return
+      case 'qr.event':
+        browser.emit('qr.event', payload as HostEventPayloads['qr.event'], this.window)
         return
       case 'view.adopt': {
         const p = payload as HostEventPayloads['view.adopt']

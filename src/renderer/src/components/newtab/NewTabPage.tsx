@@ -3,7 +3,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { Camera, Globe, Mic, Search, Settings } from 'lucide-react'
 import type { Tab, UIState } from '@shared/types'
 import { getHost } from '@shared/url'
-import { MAX_NEW_TAB_SHORTCUTS, VISUAL_SEARCH_AVAILABLE, newTabSections } from '@shared/newTab'
+import { MAX_NEW_TAB_SHORTCUTS, newTabSections } from '@shared/newTab'
+import { qrScanAvailable } from '@shared/qrScan'
 import { voiceSearchAvailable } from '@shared/voice'
 import { run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
@@ -17,6 +18,7 @@ import {
   wallpaperImageStore,
   type TopSiteTile
 } from '@renderer/lib/newtab'
+import { startQrScan } from '@renderer/lib/qrScan'
 import { contentAreaStore, openUrlbar } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { startVoiceSearch } from '@renderer/lib/voiceSearch'
@@ -101,17 +103,16 @@ export function NewTabPage({ state, tab, hidden }: Props): JSX.Element {
 /**
  * The search field: the floating URL bar's field with a placeholder, the search glyph and the
  * trailing icon buttons – the mic where the host has a speech recogniser (OMN-19: the listening
- * sheet, its result loading in this tab), the camera once visual search has a handler. A tap on
- * the field opens the omnibox for this tab – the field itself never takes input, so what is
- * typed goes where every other address does.
+ * sheet, its result loading in this tab), the camera where it has a back camera (OMN-22, NTP-04:
+ * the scan sheet, its payload loading in this tab). A tap on the field opens the omnibox for
+ * this tab – the field itself never takes input, so what is typed goes where every other
+ * address does.
  */
 function SearchField({ state, tab }: { state: UIState; tab: Tab }): JSX.Element {
   const open = (): void => void openUrlbar('edit', tab.id, { attached: true })
   const voice = voiceSearchAvailable(state.capabilities)
-  const trailing = voice || VISUAL_SEARCH_AVAILABLE
-  const dispatch = (name: 'zen-visual-search'): void => {
-    window.dispatchEvent(new CustomEvent(name, { detail: { tabId: tab.id } }))
-  }
+  const camera = qrScanAvailable(state.capabilities)
+  const trailing = voice || camera
   return (
     // The floating URL bar's field is an opaque panel on the window: a page surface of its own.
     <div
@@ -144,12 +145,12 @@ function SearchField({ state, tab }: { state: UIState; tab: Tab }): JSX.Element 
               <Mic className="h-5 w-5" strokeWidth={1.75} />
             </button>
           )}
-          {VISUAL_SEARCH_AVAILABLE && (
+          {camera && (
             <button
               type="button"
               className="zen-toolbar-button h-11 w-11"
-              aria-label="Search with your camera"
-              onClick={() => dispatch('zen-visual-search')}
+              aria-label="Scan a QR code"
+              onClick={() => void startQrScan({ tabId: tab.id, newTab: false })}
             >
               <Camera className="h-5 w-5" strokeWidth={1.75} />
             </button>

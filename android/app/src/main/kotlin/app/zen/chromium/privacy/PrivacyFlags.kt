@@ -21,23 +21,39 @@ class PrivacyFlags(
     val httpsOnlyAllowed: List<String>,
     /** `allow`, `block-private` or `block`. */
     val thirdPartyCookies: String,
+    /**
+     * The private tabs' own choice, `default` (follow the mode), `allow` or `block`; never
+     * changes what the other containers do (`thirdPartyCookiesPrivate` in `src/shared/privacy.ts`).
+     */
+    val thirdPartyCookiesPrivate: String,
     val thirdPartyCookieExceptions: List<String>,
     val gpc: Boolean,
     val dnt: Boolean
 ) {
     /**
      * Whether the WebView of `containerId` showing `documentUrl` accepts third-party cookies:
-     * the mode allows them, or blocks them in private windows only and this is not one, or the
-     * document's site is on the exception list (the related-sites exception, evaluated for the
-     * site the user is on since WebView has no per-request cookie switch).
+     * the policy allows them in this container ([blocksThirdPartyCookiesIn]), or the document's
+     * site is on the exception list (the related-sites exception, evaluated for the site the
+     * user is on since WebView has no per-request cookie switch).
      */
     fun acceptsThirdPartyCookies(containerId: String, documentUrl: String?): Boolean {
-        when (thirdPartyCookies) {
-            "allow" -> return true
-            "block-private" -> if (containerId != PRIVATE_CONTAINER) return true
-        }
+        if (!blocksThirdPartyCookiesIn(containerId == PRIVATE_CONTAINER)) return true
         val host = documentUrl?.let(Domains::hostnameOf) ?: return false
         return hostInSites(host, thirdPartyCookieExceptions)
+    }
+
+    /**
+     * Whether third-party cookies are blocked in a regular or a private container, before the
+     * exceptions: the global `block` blocks everywhere; in a private container the private
+     * choice decides when set (`allow` / `block`), else the mode's own answer (`block-private`
+     * blocks there, `allow` does not); in a regular container `allow` and `block-private` both
+     * allow. The twin of `thirdPartyCookiesBlockedIn` in `src/shared/privacy.ts`.
+     */
+    fun blocksThirdPartyCookiesIn(isPrivate: Boolean): Boolean {
+        if (thirdPartyCookies == "block") return true
+        if (!isPrivate) return false
+        if (thirdPartyCookiesPrivate != "default") return thirdPartyCookiesPrivate == "block"
+        return thirdPartyCookies == "block-private"
     }
 
     /**
@@ -88,7 +104,8 @@ class PrivacyFlags(
 
     /** The policy without its session-only part (the Safe Browsing bypasses), for the copy kept on disk. */
     fun withoutSession(): PrivacyFlags = if (safeBrowsingBypassed.isEmpty()) this else PrivacyFlags(
-        safeBrowsing, emptySet(), httpsOnly, httpsOnlyAllowed, thirdPartyCookies, thirdPartyCookieExceptions, gpc, dnt
+        safeBrowsing, emptySet(), httpsOnly, httpsOnlyAllowed, thirdPartyCookies, thirdPartyCookiesPrivate,
+        thirdPartyCookieExceptions, gpc, dnt
     )
 
     fun toJson(): JSONObject = JSONObject()
@@ -97,6 +114,7 @@ class PrivacyFlags(
         .put("httpsOnly", httpsOnly)
         .put("httpsOnlyAllowed", JSONArray(httpsOnlyAllowed))
         .put("thirdPartyCookies", thirdPartyCookies)
+        .put("thirdPartyCookiesPrivate", thirdPartyCookiesPrivate)
         .put("thirdPartyCookieExceptions", JSONArray(thirdPartyCookieExceptions))
         .put("gpc", gpc)
         .put("dnt", dnt)
@@ -107,6 +125,7 @@ class PrivacyFlags(
 
         private val HTTPS_ONLY_MODES = setOf("off", "ask", "always")
         private val COOKIE_MODES = setOf("allow", "block-private", "block")
+        private val COOKIE_PRIVATE_MODES = setOf("default", "allow", "block")
 
         /** What applies before the core has pushed anything: the settings' defaults. */
         val DEFAULT = PrivacyFlags(
@@ -115,6 +134,7 @@ class PrivacyFlags(
             httpsOnly = "ask",
             httpsOnlyAllowed = emptyList(),
             thirdPartyCookies = "block-private",
+            thirdPartyCookiesPrivate = "default",
             thirdPartyCookieExceptions = emptyList(),
             gpc = false,
             dnt = false
@@ -131,6 +151,8 @@ class PrivacyFlags(
                 httpsOnlyAllowed = strings(o.optJSONArray("httpsOnlyAllowed")),
                 thirdPartyCookies = o.optString("thirdPartyCookies", d.thirdPartyCookies).takeIf { it in COOKIE_MODES }
                     ?: d.thirdPartyCookies,
+                thirdPartyCookiesPrivate = o.optString("thirdPartyCookiesPrivate", d.thirdPartyCookiesPrivate)
+                    .takeIf { it in COOKIE_PRIVATE_MODES } ?: d.thirdPartyCookiesPrivate,
                 thirdPartyCookieExceptions = strings(o.optJSONArray("thirdPartyCookieExceptions")),
                 gpc = o.optBoolean("gpc", d.gpc),
                 dnt = o.optBoolean("dnt", d.dnt)

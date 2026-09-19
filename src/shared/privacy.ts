@@ -30,6 +30,13 @@ export type SecureDnsMode = 'off' | 'automatic' | 'provider'
 /** Third-party cookies: allow everywhere, block in private windows only (default), block everywhere. */
 export type ThirdPartyCookieMode = 'allow' | 'block-private' | 'block'
 
+/**
+ * The private contexts' own third-party cookie choice (Chrome's incognito-only toggle):
+ * `default` follows the global mode, `allow` and `block` override it in private windows and
+ * private tabs alone. The global `block` wins over it everywhere.
+ */
+export type ThirdPartyCookiePrivateMode = 'default' | 'allow' | 'block'
+
 export interface PrivacySettings {
   /** Safe Browsing: the open malware and phishing feeds, on by default. */
   safeBrowsingEnabled: boolean
@@ -45,6 +52,11 @@ export interface PrivacySettings {
   /** DoH template of the user's own resolver (`https://…/dns-query`). */
   secureDnsCustomUrl: string
   thirdPartyCookies: ThirdPartyCookieMode
+  /**
+   * What private windows and private tabs do instead, when the user chose there; never changes
+   * what regular browsing does. Persisted like the rest (Chrome keeps its incognito choice too).
+   */
+  thirdPartyCookiesPrivate: ThirdPartyCookiePrivateMode
   /**
    * Sites (hosts, subdomains included) on which third-party cookies stay allowed whatever the
    * mode: the related-sites exceptions.
@@ -64,6 +76,7 @@ export const DEFAULT_PRIVACY_SETTINGS: PrivacySettings = {
   secureDnsProvider: 'cloudflare',
   secureDnsCustomUrl: '',
   thirdPartyCookies: 'block-private',
+  thirdPartyCookiesPrivate: 'default',
   thirdPartyCookieExceptions: [],
   gpc: false,
   dnt: false
@@ -72,6 +85,14 @@ export const DEFAULT_PRIVACY_SETTINGS: PrivacySettings = {
 const HTTPS_ONLY_MODES: HttpsOnlyMode[] = ['off', 'ask', 'always']
 const SECURE_DNS_MODES: SecureDnsMode[] = ['off', 'automatic', 'provider']
 const COOKIE_MODES: ThirdPartyCookieMode[] = ['allow', 'block-private', 'block']
+const COOKIE_PRIVATE_MODES: ThirdPartyCookiePrivateMode[] = ['default', 'allow', 'block']
+
+/** `value` is one of the private contexts' cookie modes (the sanitiser's and the command's check). */
+export function isThirdPartyCookiePrivateMode(
+  value: unknown
+): value is ThirdPartyCookiePrivateMode {
+  return COOKIE_PRIVATE_MODES.includes(value as ThirdPartyCookiePrivateMode)
+}
 
 export const HTTPS_ONLY_LABELS: Record<HttpsOnlyMode, { label: string; description: string }> = {
   off: {
@@ -313,6 +334,9 @@ export function sanitizePrivacySettings(
     thirdPartyCookies: COOKIE_MODES.includes(s.thirdPartyCookies as ThirdPartyCookieMode)
       ? (s.thirdPartyCookies as ThirdPartyCookieMode)
       : d.thirdPartyCookies,
+    thirdPartyCookiesPrivate: isThirdPartyCookiePrivateMode(s.thirdPartyCookiesPrivate)
+      ? s.thirdPartyCookiesPrivate
+      : d.thirdPartyCookiesPrivate,
     thirdPartyCookieExceptions: exceptions,
     gpc: typeof s.gpc === 'boolean' ? s.gpc : d.gpc,
     dnt: typeof s.dnt === 'boolean' ? s.dnt : d.dnt
@@ -343,11 +367,51 @@ export interface PrivacyFlags {
    */
   httpsOnlyAllowed: string[]
   thirdPartyCookies: ThirdPartyCookieMode
+  thirdPartyCookiesPrivate: ThirdPartyCookiePrivateMode
   thirdPartyCookieExceptions: string[]
   gpc: boolean
   dnt: boolean
   secureDnsMode: SecureDnsMode
   secureDnsServers: string[]
+}
+
+/** The two cookie modes together: what the settings hold and what the flags carry. */
+export type ThirdPartyCookiePolicy = Pick<
+  PrivacyFlags,
+  'thirdPartyCookies' | 'thirdPartyCookiesPrivate'
+>
+
+/**
+ * Whether third-party cookies are blocked in a regular or a private context, before the
+ * related-sites exceptions: the global `block` blocks everywhere; in a private context the
+ * private override decides when set (`allow` / `block`), else the global mode's own answer
+ * (`block-private` blocks there, `allow` does not); in a regular context `allow` and
+ * `block-private` both allow. The Kotlin twin is `PrivacyFlags.blocksThirdPartyCookiesIn`.
+ */
+export function thirdPartyCookiesBlockedIn(
+  policy: ThirdPartyCookiePolicy,
+  isPrivate: boolean
+): boolean {
+  if (policy.thirdPartyCookies === 'block') return true
+  if (!isPrivate) return false
+  if (policy.thirdPartyCookiesPrivate !== 'default')
+    return policy.thirdPartyCookiesPrivate === 'block'
+  return policy.thirdPartyCookies === 'block-private'
+}
+
+/**
+ * The private contexts' switch as the UI shows it: on when third-party cookies are blocked
+ * there, and locked (on, disabled) while the global mode blocks them everywhere, as Chrome
+ * locks its incognito toggle.
+ */
+export function privateThirdPartyCookieStatus(policy: ThirdPartyCookiePolicy): {
+  blocked: boolean
+  locked: boolean
+} {
+  return {
+    blocked: thirdPartyCookiesBlockedIn(policy, true),
+    locked: policy.thirdPartyCookies === 'block'
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -392,6 +456,12 @@ export interface PrivacyStatus {
   httpsOnlySessionExceptions: string[]
   /** What the host resolver was last configured with; `supported` is false where the host has none (Android). */
   secureDns: { supported: boolean; mode: SecureDnsMode; servers: string[] }
+  /**
+   * Third-party cookies in private windows and private tabs ({@link privateThirdPartyCookieStatus}):
+   * `blocked` is the switch's position, `locked` that the global mode is `block` and the switch
+   * is on and disabled.
+   */
+  privateThirdPartyCookies: { blocked: boolean; locked: boolean }
 }
 
 export function emptySafeBrowsingStatus(): SafeBrowsingStatus {
@@ -412,7 +482,8 @@ export function emptyPrivacyStatus(): PrivacyStatus {
     safeBrowsing: emptySafeBrowsingStatus(),
     httpsOnlyExceptions: [],
     httpsOnlySessionExceptions: [],
-    secureDns: { supported: false, mode: 'off', servers: [] }
+    secureDns: { supported: false, mode: 'off', servers: [] },
+    privateThirdPartyCookies: privateThirdPartyCookieStatus(DEFAULT_PRIVACY_SETTINGS)
   }
 }
 
