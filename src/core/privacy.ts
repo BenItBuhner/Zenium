@@ -185,6 +185,24 @@ export class PrivacyService {
     return { status: 'ok', value: { cleared } }
   }
 
+  /** The last run's result, which `UIState.lastSafetyCheck` carries; null before the first run. */
+  private lastCheck: SafetyCheckResult | null = null
+
+  lastSafetyCheck(): SafetyCheckResult | null {
+    return this.lastCheck
+  }
+
+  /**
+   * `privacy.safetyCheck`: run the check, keep the result for the state (the phone Settings rows
+   * read it there, the desktop pane reads the return) and push it to every window.
+   */
+  runSafetyCheck(): SafetyCheckResult {
+    const result = this.safetyCheck()
+    this.lastCheck = result
+    this.browser.state.commitVolatile()
+    return result
+  }
+
   /** Safety check over the live services; the composition itself is pure (`composeSafetyCheck`). */
   safetyCheck(): SafetyCheckResult {
     const b = this.browser
