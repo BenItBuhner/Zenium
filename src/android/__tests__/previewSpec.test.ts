@@ -274,7 +274,10 @@ describe('parsePreviewSpec', () => {
     expect(parsePreviewSpec('menu=app&prompt=camera')).toEqual({ kind: 'menu' })
     expect(parsePreviewSpec('prompt=')).toEqual({ kind: 'idle' })
     // The security dialogs' two `prompt=` values are theirs (#62), and come up after the bars.
-    expect(parsePreviewSpec('prompt=http-auth')).toMatchObject({ kind: 'prompt', prompt: 'http-auth' })
+    expect(parsePreviewSpec('prompt=http-auth')).toMatchObject({
+      kind: 'prompt',
+      prompt: 'http-auth'
+    })
     expect(parsePreviewSpec('prompt=certificate&find=x')).toEqual({ kind: 'find', text: 'x' })
   })
 
