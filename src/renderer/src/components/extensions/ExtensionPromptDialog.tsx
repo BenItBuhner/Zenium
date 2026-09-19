@@ -75,51 +75,72 @@ function copyFor(prompt: ExtensionPromptRequest): Copy {
   }
 }
 
-/**
- * What the extension will be able to do, then the two buttons (§9.11): hugging and right-aligned
- * in the desktop dialog, splitting the width in the phone sheet's footer (the sheet chassis'
- * `.zen-sheet-footer`, main.css).
- */
+/** What the extension will be able to do: a row with a glyph per warning kind, or the one line saying there is nothing to warn of. */
+function PromptRows({
+  prompt,
+  onScroll
+}: {
+  prompt: ExtensionPromptRequest
+  onScroll?: (scrolled: boolean) => void
+}): JSX.Element {
+  return (
+    <div
+      className="zen-ext-dialog-body"
+      onScroll={onScroll && ((e) => onScroll(e.currentTarget.scrollTop > 0))}
+    >
+      {prompt.warnings.length > 0 && <p className="zen-v2-caption">It can:</p>}
+      <div className="zen-v2-rows">
+        {prompt.warnings.length === 0 ? (
+          <V2Row
+            label={
+              <span className="zen-v2-deemphasized">
+                {prompt.kind === 'permissions' || prompt.kind === 'request'
+                  ? 'No new permissions are needed'
+                  : 'This extension requires no special permissions'}
+              </span>
+            }
+          />
+        ) : (
+          prompt.warnings.map((warning) => <WarningRow key={warning} warning={warning} />)
+        )}
+      </div>
+    </div>
+  )
+}
+
+/** The two buttons (§9.11), Cancel then the accepting one; their row is the caller's. */
+function PromptButtons({
+  prompt,
+  onAnswer
+}: {
+  prompt: ExtensionPromptRequest
+  onAnswer: (accept: boolean) => void
+}): JSX.Element {
+  return (
+    <>
+      <V2Button onClick={() => onAnswer(false)}>Cancel</V2Button>
+      <V2Button variant="primary" data-accept onClick={() => onAnswer(true)}>
+        {copyFor(prompt).accept}
+      </V2Button>
+    </>
+  )
+}
+
+/** The desktop dialog's body: the rows, then the buttons hugging and right-aligned under them. */
 function PromptBody({
   prompt,
   onAnswer,
-  onScroll,
-  phone = false
+  onScroll
 }: {
   prompt: ExtensionPromptRequest
   onAnswer: (accept: boolean) => void
   onScroll?: (scrolled: boolean) => void
-  phone?: boolean
 }): JSX.Element {
-  const copy = copyFor(prompt)
   return (
     <>
-      <div
-        className="zen-ext-dialog-body"
-        onScroll={onScroll && ((e) => onScroll(e.currentTarget.scrollTop > 0))}
-      >
-        {prompt.warnings.length > 0 && <p className="zen-v2-caption">It can:</p>}
-        <div className="zen-v2-rows">
-          {prompt.warnings.length === 0 ? (
-            <V2Row
-              label={
-                <span className="zen-v2-deemphasized">
-                  {prompt.kind === 'permissions' || prompt.kind === 'request'
-                    ? 'No new permissions are needed'
-                    : 'This extension requires no special permissions'}
-                </span>
-              }
-            />
-          ) : (
-            prompt.warnings.map((warning) => <WarningRow key={warning} warning={warning} />)
-          )}
-        </div>
-      </div>
-      <div className={phone ? 'zen-sheet-footer' : 'zen-ext-dialog-buttons'}>
-        <V2Button onClick={() => onAnswer(false)}>Cancel</V2Button>
-        <V2Button variant="primary" data-accept onClick={() => onAnswer(true)}>
-          {copy.accept}
-        </V2Button>
+      <PromptRows prompt={prompt} onScroll={onScroll} />
+      <div className="zen-ext-dialog-buttons">
+        <PromptButtons prompt={prompt} onAnswer={onAnswer} />
       </div>
     </>
   )
@@ -169,7 +190,10 @@ function PanelPrompt({ prompt }: { prompt: ExtensionPromptRequest }): JSX.Elemen
  * On a phone the prompt is a sheet that opens on a title block (§9.23), as the chassis' other
  * prompt sheets do – the block is the body's first content, since the sheet's `header` slot is
  * its 48 bar header (§9.16) – with the footer splitting the width between the two buttons
- * (§9.11, `.zen-sheet-footer`).
+ * (§9.11, `.zen-sheet-footer`). The buttons go in the sheet's `footer` slot, outside its
+ * scroller: an extension asking for a dozen permissions (a password manager, a userscript
+ * manager) fills the sheet's first detent with rows, and buttons under the rows would sit below
+ * the fold until the user found them by scrolling – the footer stays in reach at every detent.
  */
 function SheetPrompt({ prompt }: { prompt: ExtensionPromptRequest }): JSX.Element {
   const sheet = useRef<BottomSheetHandle>(null)
@@ -187,6 +211,7 @@ function SheetPrompt({ prompt }: { prompt: ExtensionPromptRequest }): JSX.Elemen
   return (
     <BottomSheet
       ref={sheet}
+      className="zen-ext-prompt-sheet"
       handleLabel="Resize"
       onDismissed={() => {
         // Dragged or flung away without a choice: that is a no.
@@ -195,10 +220,11 @@ function SheetPrompt({ prompt }: { prompt: ExtensionPromptRequest }): JSX.Elemen
           answerExtensionPrompt(prompt, false)
         }
       }}
+      footer={<PromptButtons prompt={prompt} onAnswer={answer} />}
     >
       <div className="zen-v2 zen-ext-dialog">
         <V2TitleBlock title={copy.title} description={copy.subtitle} glyph={glyph} />
-        <PromptBody prompt={prompt} onAnswer={answer} phone />
+        <PromptRows prompt={prompt} />
       </div>
     </BottomSheet>
   )

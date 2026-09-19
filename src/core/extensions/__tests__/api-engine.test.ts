@@ -341,6 +341,33 @@ describe('createEmulatedEngine', () => {
     expect((incoming as unknown as Record<string, unknown>).name).toBe('x')
   })
 
+  it('connectNative hands back a port at once that disconnects as "host not found" (1Password)', async () => {
+    const h = harness({ permissions: ['nativeMessaging'] })
+    const before = h.sent.length
+    const port = (h.chrome.runtime.connectNative as Fn)('com.1password.1password') as Record<
+      string,
+      unknown
+    >
+    // Synchronous, as in Chrome: the extension attaches its listeners to the returned port.
+    expect(typeof (port.onMessage as Listenable).addListener).toBe('function')
+    ;(port.postMessage as Fn)({ hello: 1 })
+    let lastError: unknown = 'unset'
+    let disconnected = 0
+    ;(port.onDisconnect as Listenable).addListener(() => {
+      disconnected += 1
+      lastError = h.chrome.runtime.lastError
+    })
+    expect(disconnected).toBe(0)
+    await flush()
+    expect(disconnected).toBe(1)
+    expect(lastError).toEqual({ message: 'Specified native messaging host not found.' })
+    expect(h.chrome.runtime.lastError).toBeUndefined()
+    expect(() => (port.postMessage as Fn)('x')).toThrow(/disconnected port/)
+    // A native port has no host side: nothing was posted for it.
+    expect(h.sent.length).toBe(before)
+    expect(() => (h.chrome.runtime.connectNative as Fn)()).toThrow(/No matching signature/)
+  })
+
   it('dispatches host events, including storage.<area>.onChanged mirrors and action aliases', () => {
     const h = harness()
     const seen: unknown[] = []
@@ -422,15 +449,33 @@ describe('createEmulatedEngine', () => {
     expect(h.last()).toMatchObject({ ns: 'contextMenus', method: 'removeAll' })
   })
 
-  it('user-script contexts get messaging only, flagged for onUserScriptMessage', () => {
+  it('user-script contexts get messaging and identity only, flagged for onUserScriptMessage', () => {
     const h = harness({ context: 'userScript' })
-    expect(Object.keys(h.chrome)).toEqual(['runtime'])
-    expect(Object.keys(h.chrome.runtime).sort()).toEqual(['connect', 'id', 'sendMessage'])
+    // The desktop world's surface (shared/userScriptWorld.ts): no storage, tabs or i18n there.
+    expect(Object.keys(h.chrome).sort()).toEqual(['extension', 'runtime'])
+    expect(Object.keys(h.chrome.runtime).sort()).toEqual([
+      'connect',
+      'getPlatformInfo',
+      'getURL',
+      'id',
+      'onConnect',
+      'onMessage',
+      'sendMessage'
+    ])
+    expect((h.chrome.extension as Ns).inIncognitoContext).toBe(false)
+    expect((h.chrome.runtime.getURL as Fn)('content.js')).toBe(`${ORIGIN}/content.js`)
     void (h.chrome.runtime.sendMessage as Fn)('hi')
     expect(h.last()).toMatchObject({ t: 'msg', data: 'hi', userScript: true })
     void (h.chrome.runtime.connect as Fn)({ name: 'p' })
     expect(h.last()).toMatchObject({ t: 'connect', name: 'p', userScript: true })
     expect(h.engine.diagnostics).toBeNull()
+    // Tampermonkey's content.js listens for what the extension sends the tab; a `deliver` (a
+    // `tabs.sendMessage`) reaches that listener as a content script's would.
+    const heard: unknown[] = []
+    ;(h.chrome.runtime.onMessage as Listenable).addListener((m) => heard.push(m))
+    expect(h.last()).toMatchObject({ t: 'listen', event: 'runtime.onMessage', on: true })
+    h.engine.receive({ t: 'deliver', id: 7, data: 'to-the-world', sender: { id: EXT } })
+    expect(heard).toEqual(['to-the-world'])
 
     const bg = harness()
     const plain: unknown[] = []
@@ -475,5 +520,75 @@ describe('createEmulatedEngine', () => {
     expect(h.last()).toEqual({ t: 'ready', token: 'tok', ep: 'ep1' })
     h.engine.post({ t: 'popupSize', width: 320, height: 200 })
     expect(h.last()).toEqual({ t: 'popupSize', width: 320, height: 200, token: 'tok', ep: 'ep1' })
+  })
+
+  it("webRequest events register each listener with the host by its RequestFilter, and a delivery addressed to it is heard (Violentmonkey's installer)", async () => {
+    const h = harness({ permissions: ['webRequest', 'tabs', 'storage'] })
+    const heard: unknown[] = []
+    const event = h.chrome.webRequest.onBeforeRequest as Ns & {
+      addListener: Fn
+      removeListener: Fn
+      hasListener: Fn
+    }
+    const installer = (details: unknown): void => void heard.push(details)
+    event.addListener(
+      installer,
+      { urls: ['*://*/*.user.js', '*://*/*.user.js?*'], types: ['main_frame'] },
+      []
+    )
+    // Not a generic `listen`: the registration call, filter and spec along, under the listener's id.
+    expect(h.last()).toMatchObject({
+      t: 'call',
+      ns: 'webRequest',
+      method: 'addListener',
+      args: [
+        'onBeforeRequest',
+        { urls: ['*://*/*.user.js', '*://*/*.user.js?*'], types: ['main_frame'] },
+        [],
+        1
+      ]
+    })
+    expect(event.hasListener(installer)).toBe(true)
+    const details = {
+      url: 'http://10.0.2.2:8765/hello.user.js',
+      method: 'GET',
+      tabId: 3,
+      type: 'main_frame'
+    }
+    h.engine.receive({
+      t: 'event',
+      ns: 'webRequest',
+      name: 'onBeforeRequest',
+      args: [details, null],
+      delivery: { unfiltered: false, matched: [1] }
+    })
+    expect(heard).toEqual([details])
+    // Addressed to another listener: not this one's.
+    h.engine.receive({
+      t: 'event',
+      ns: 'webRequest',
+      name: 'onBeforeRequest',
+      args: [{ ...details, url: 'http://10.0.2.2:8765/page.js' }, null],
+      delivery: { unfiltered: false, matched: [2] }
+    })
+    expect(heard).toHaveLength(1)
+    // The binding's own checks come first: no filter, no registration.
+    expect(() => event.addListener(() => undefined)).toThrow('No matching signature')
+    expect(() => event.addListener(() => undefined, { urls: ['nonsense'] })).toThrow(
+      "'nonsense' is not a valid URL pattern."
+    )
+    // MV3 without webRequestBlocking: a blocking spec is Chrome's permission error.
+    expect(() =>
+      event.addListener(() => undefined, { urls: ['<all_urls>'] }, ['blocking'])
+    ).toThrow('You do not have permission to use blocking webRequest listeners.')
+    event.removeListener(installer)
+    expect(h.last()).toMatchObject({
+      t: 'call',
+      ns: 'webRequest',
+      method: 'removeListener',
+      args: ['onBeforeRequest', 1]
+    })
+    expect(event.hasListener(installer)).toBe(false)
+    await flush()
   })
 })

@@ -2300,7 +2300,10 @@ export function installExtensionApi(
       else if (event === 'sync-mirror' && mirror) void mirror.apply(args[0])
       return
     }
-    if (namespace === 'webRequest') {
+    // A `webRequest` event installed in its own style (registered with the host by listener):
+    // the delivery names the one listener it is for. A spec without the style has generic
+    // events, delivered below like any other.
+    if (namespace === 'webRequest' && webRequestListeners.has(`webRequest.${event}`)) {
       webRequestDeliver(event, args, delivery)
       return
     }

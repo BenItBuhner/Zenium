@@ -13,6 +13,15 @@ import {
 } from '@core/extensions/api/urlFilter'
 import { netErrorName } from '@core/extensions/api/webNavigation'
 import {
+  WEB_REQUEST_EVENT_NAMES,
+  compileRequestFilter,
+  normalizeRequestListener,
+  requestFilterMatches,
+  type CompiledRequestFilter,
+  type WebRequestEventName
+} from '@core/extensions/api/webRequest'
+import { RESOURCE_TYPES, type ResourceType } from '@core/blocking/rules'
+import {
   msUntilNext,
   rescheduleAlarm,
   scheduleAlarm,
@@ -52,10 +61,13 @@ import { MessageRouter, type Endpoint } from '@core/extensions/runtime/router'
 import { planUnits, sameUnits, type ExtensionUnits } from '@core/extensions/runtime/units'
 import {
   ExtensionApi,
+  LANGUAGE_SAMPLE_CHARS,
+  asDetectedLanguage,
   asRecord,
   asStringArray,
   type ApiHost,
   type AttachedExtension,
+  type DetectedLanguage,
   type ExecRequest
 } from './extensionApi'
 import type { JarReading } from './extensionCookies'
@@ -99,8 +111,10 @@ import type { ViewEventPayloads } from './views'
  *                                           → { units: [{ key, chars, cached }], ms }
  *  ext.detach { id }
  *  ext.background.start / stop { id }, ext.popup.open { id, url, context, title }, ext.popup.close,
+ *  ext.offscreen.open { id, url } / close { id }   chrome.offscreen's one hidden page per extension
  *  ext.hosts { id, hosts } (optional host permissions granted at runtime)
  *  ext.send { ep, message }, ext.exec {…}, ext.readFile { id, path }, ext.cookies.read / write
+ *  ext.i18n.detectLanguage { text }         → { isReliable, languages: [{ language, percentage }] } (the platform's classifier)
  *  ext.observeRequests { on }               every engine decision is reported, not just the rules' matches
  *  ext.auth.open { viewId, id, url, title } / show { viewId } / close { viewId }   identity.launchWebAuthFlow's sheet
  *  ext.notifications.show { id, notification } / hide { id, notificationId } / forget { id } / allowed
@@ -180,6 +194,30 @@ export interface ExtRequestEvent {
   cpuMicros: number | null
 }
 
+/** One `webRequest` listener of one endpoint: the event and its compiled `RequestFilter`. */
+interface RequestListener {
+  event: WebRequestEventName
+  filter: CompiledRequestFilter
+}
+
+/** The `details` a `webRequest` event carries here (the observational subset of Chrome's). */
+interface RequestDetails {
+  requestId: string
+  url: string
+  method: string
+  frameId: number
+  parentFrameId: number
+  tabId: number
+  type: ResourceType
+  timeStamp: number
+  initiator?: string
+  error?: string
+  fromCache?: boolean
+}
+
+/** The single window of the phone, as `tabs`/`windows` number it. */
+const WINDOW_ID = 1
+
 const ENGINE_ACTIONS: readonly EngineDecisionAction[] = ['allow', 'block', 'redirect', 'upgrade']
 
 /** Runtime state that outlives the session (`extensions-runtime.json`). */
@@ -201,8 +239,12 @@ interface StorageEntry {
   store: JsonStore<StorageDoc>
   doc: StorageDoc
   session: StorageItems
-  /** `storage.session.setAccessLevel`: whether content scripts may use the session area. */
-  sessionUntrusted: boolean
+  /**
+   * The areas content scripts and user scripts may use, as `storage.<area>.setAccessLevel`
+   * leaves them: `local`, `sync` and `managed` open by default, `session` closed (Chrome's
+   * defaults; 1Password closes `local` to content scripts at start, the sweep found).
+   */
+  openToUntrusted: Set<StorageArea>
 }
 
 interface Attached extends AttachedExtension {
@@ -238,6 +280,8 @@ export interface AndroidExtensionRuntimeOptions {
 const RUNTIME_STORE = 'extensions-runtime.json'
 const STORAGE_AREAS: readonly StorageArea[] = ['local', 'sync', 'session', 'managed']
 const NOT_IMPLEMENTED = 'is not implemented on Zenium for Android'
+/** How long `offscreen.createDocument` waits for its page's hello (a first load on a cold WebView takes a few seconds). */
+const OFFSCREEN_LOAD_MS = 20_000
 const CONTEXTS: readonly EngineContextKind[] = [
   'content',
   'userScript',
@@ -280,8 +324,13 @@ function readData(saved: Partial<RuntimeData> | null): RuntimeData {
   return data
 }
 
-function storageDocName(id: string): string {
-  return `ext-storage-${id}.json`
+/**
+ * An extension's `chrome.storage` document (`local` and `sync`), in a folder of its own: folder
+ * documents stay out of the boot payload and are read on first use, in pieces – a filter-list
+ * extension's storage runs to tens of megabytes (Kotlin's `Storage.EXT_STORAGE_DIR`).
+ */
+export function storageDocName(id: string): string {
+  return `ext-storage/${id}.json`
 }
 
 /** The locale messages an extension gets: the UI locale, its language, then the manifest default. */
@@ -322,6 +371,12 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
   private readonly listening = new Map<string, Set<string>>()
   /** Endpoint id → `ns.event` → filter id → the `UrlFilter`s of one filtered listener (`webNavigation`). */
   private readonly filtered = new Map<string, Map<string, Map<number, UrlFilter[]>>>()
+  /**
+   * Endpoint id → listener id → one `webRequest.<event>.addListener(fn, filter, spec)`: the
+   * shim registers each listener with its `RequestFilter` (`webRequest.addListener`), and a
+   * decision is delivered to the listeners whose filter it matches, each addressed by its id.
+   */
+  private readonly requestListeners = new Map<string, Map<number, RequestListener>>()
   /** The `webNavigation` event family, derived from what the tab views report. */
   private readonly webNavigation = new AndroidWebNavigation(() => this.now())
   /** Extension id → the endpoint of its background's main frame. */
@@ -339,6 +394,15 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
    */
   private readonly swPorts = new Map<string, { client: string; extensionId: string }>()
   private popupOpen: string | null = null
+  /**
+   * `offscreen.createDocument` calls waiting for their page to say hello, by extension: the
+   * document counts as present from the call on (a second call while it loads is refused, as in
+   * Chrome), and the wait ends with the hello, a close, a detach or the load timeout.
+   */
+  private readonly offscreenOpening = new Map<
+    string,
+    { resolve: () => void; reject: (error: Error) => void; timer: unknown }
+  >()
   private observing = false
   private subscribed = false
   private activeTabId: string | null = null
@@ -539,6 +603,8 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     // Chrome starts the background at browser start and after an install; workers and event
     // pages idle out again, persistent MV2 pages stay.
     if (manifest.background) this.background.ensureStarted(record.id)
+    // A webRequest listener persisted from the last session wants the decisions from the start.
+    this.updateObserving()
     this.browser.state.commitVolatile()
   }
 
@@ -555,10 +621,14 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     for (const endpoint of this.router.of(id)) {
       this.router.unregister(endpoint.id)
       this.listening.delete(endpoint.id)
+      this.filtered.delete(endpoint.id)
+      this.requestListeners.delete(endpoint.id)
     }
     for (const [port, owner] of [...this.swPorts])
       if (owner.extensionId === id) this.swPorts.delete(port)
     if (this.popupOpen === id) this.closePopup()
+    // Kotlin's detach takes the offscreen page down with the background's.
+    this.settleOffscreen(id, new Error('The extension was unloaded.'))
     this.updateObserving()
     // Its rule sets leave the engine with it (the store persists the removal).
     this.dnr.unload(id)
@@ -822,8 +892,16 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
   private listens(endpointId: string, key: string): boolean {
     return (
       this.listening.get(endpointId)?.has(key) === true ||
-      (this.filtered.get(endpointId)?.get(key)?.size ?? 0) > 0
+      (this.filtered.get(endpointId)?.get(key)?.size ?? 0) > 0 ||
+      this.requestListenersOf(endpointId, key).length > 0
     )
+  }
+
+  /** The endpoint's `webRequest` listeners for `key` (`webRequest.<event>`), with their ids. */
+  private requestListenersOf(endpointId: string, key: string): Array<[number, RequestListener]> {
+    const own = this.requestListeners.get(endpointId)
+    if (!own) return []
+    return [...own].filter(([, listener]) => `webRequest.${listener.event}` === key)
   }
 
   /**
@@ -876,6 +954,15 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     return this.bridge.call<string | null>('ext.readFile', { id, path })
   }
 
+  async detectTextLanguage(text: string): Promise<DetectedLanguage> {
+    // A blank text is nobody's language; the host's classifier reads the leading part of a long one.
+    const sample = text.trim().slice(0, LANGUAGE_SAMPLE_CHARS)
+    if (!sample) return { isReliable: false, languages: [] }
+    return asDetectedLanguage(
+      await this.bridge.call<unknown>('ext.i18n.detectLanguage', { text: sample })
+    )
+  }
+
   exec(request: ExecRequest): Promise<unknown> {
     // A subframe is named to the host by its document id (the first segment of every endpoint
     // id of that document), which the frame's own bridge endpoint carries; the main frame needs none.
@@ -899,6 +986,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
       kind: request.kind,
       payload: request.payload,
       code: request.code,
+      files: request.files,
       funcSource: request.funcSource,
       args: request.args
     })
@@ -1032,6 +1120,44 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     if (!this.popupOpen) return
     this.popupOpen = null
     this.bridge.send('ext.popup.close')
+  }
+
+  /**
+   * `offscreen.createDocument`: Kotlin puts up a hidden `ExtensionWebView` on the URL (the same
+   * kind of view as the background page's); the promise settles when its bootstrap says hello
+   * as an `offscreen` endpoint, or when [OFFSCREEN_LOAD_MS] pass without one.
+   */
+  openOffscreen(id: string, url: string): Promise<void> {
+    this.settleOffscreen(id, new Error('The offscreen document was replaced.'))
+    return new Promise<void>((resolve, reject) => {
+      const timer = this.timers.setTimeout(() => {
+        if (this.offscreenOpening.get(id)?.timer !== timer) return
+        this.offscreenOpening.delete(id)
+        this.bridge.send('ext.offscreen.close', { id })
+        reject(new Error(`The offscreen document ${url} did not load.`))
+      }, OFFSCREEN_LOAD_MS)
+      this.offscreenOpening.set(id, { resolve, reject, timer })
+      this.bridge.send('ext.offscreen.open', { id, url })
+    })
+  }
+
+  closeOffscreen(id: string): void {
+    this.settleOffscreen(id, new Error('The offscreen document was closed.'))
+    this.bridge.send('ext.offscreen.close', { id })
+  }
+
+  hasOffscreen(id: string): boolean {
+    return this.offscreenOpening.has(id) || this.router.of(id, 'offscreen').length > 0
+  }
+
+  /** The pending `createDocument` of an extension, if any, resolved (its page is up) or rejected. */
+  private settleOffscreen(id: string, error: Error | null): void {
+    const waiting = this.offscreenOpening.get(id)
+    if (!waiting) return
+    this.offscreenOpening.delete(id)
+    this.timers.clearTimeout(waiting.timer)
+    if (error) waiting.reject(error)
+    else waiting.resolve()
   }
 
   /** The popup path `action.setPopup` left (null when clicks fire `onClicked`); undefined when not attached. */
@@ -1311,9 +1437,11 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
         this.router.unregister(previous)
         this.listening.delete(previous)
         this.filtered.delete(previous)
+        this.requestListeners.delete(previous)
       }
       this.backgroundEps.set(extensionId, ep)
     }
+    if (context === 'offscreen' && event.top) this.settleOffscreen(extensionId, null)
   }
 
   onGone(eps: string[]): void {
@@ -1322,6 +1450,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
       this.router.unregister(ep)
       this.listening.delete(ep)
       this.filtered.delete(ep)
+      this.requestListeners.delete(ep)
       this.api.endpointGone(ep)
       if (endpoint) this.closeServiceWorkerPorts(endpoint)
       if (
@@ -1372,23 +1501,84 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
       })
     }
     if (!this.observing) return
-    const details = {
+    const details: RequestDetails = {
       requestId: event.requestId,
       url: event.url,
       method: event.method,
       frameId: 0,
       parentFrameId: -1,
       tabId,
-      type: event.type,
-      timeStamp: this.now(),
-      initiator: event.initiator ?? undefined
+      type: (RESOURCE_TYPES as readonly string[]).includes(event.type)
+        ? (event.type as ResourceType)
+        : 'other',
+      timeStamp: this.now()
     }
+    if (event.initiator) details.initiator = event.initiator
     const tab = event.tabId ?? null
-    this.emitForTab(tab, 'webRequest', 'onBeforeRequest', [details])
+    this.emitRequest(tab, 'onBeforeRequest', details)
     if (event.action === 'block')
-      this.emitForTab(tab, 'webRequest', 'onErrorOccurred', [
-        { ...details, error: 'net::ERR_BLOCKED_BY_CLIENT', fromCache: false }
-      ])
+      this.emitRequest(tab, 'onErrorOccurred', {
+        ...details,
+        error: 'net::ERR_BLOCKED_BY_CLIENT',
+        fromCache: false
+      })
+  }
+
+  /**
+   * One `webRequest` event to every listener whose `RequestFilter` the request matches, each
+   * delivery addressed to the one listener (`delivery.matched`), as the desktop's host does.
+   * Pages, popups and content scripts get it now; the background gets it when it runs, has it
+   * held while it starts (its listeners register as its script runs, ahead of `ready`), and is
+   * woken for it when it is stopped and persisted a listener for the event.
+   */
+  private emitRequest(
+    tabId: string | null,
+    event: WebRequestEventName,
+    details: RequestDetails
+  ): void {
+    const key = `webRequest.${event}`
+    const probe = {
+      url: details.url,
+      type: details.type,
+      tabId: details.tabId,
+      windowId: WINDOW_ID
+    }
+    const matching = (endpointId: string): number[] =>
+      this.requestListenersOf(endpointId, key)
+        .filter(([, listener]) => requestFilterMatches(listener.filter, probe))
+        .map(([id]) => id)
+    const send = (endpointId: string): void => {
+      for (const listenerId of matching(endpointId))
+        this.sendTo(endpointId, {
+          t: 'event',
+          ns: 'webRequest',
+          name: event,
+          args: [details],
+          delivery: { unfiltered: false, matched: [listenerId] }
+        })
+    }
+    for (const [id, ext] of this.extensions) {
+      if (tabId !== null && !this.sees(ext, tabId)) continue
+      for (const endpoint of this.router.of(id)) {
+        if (endpoint.context !== 'background') send(endpoint.id)
+      }
+      if (!this.background.has(id)) continue
+      const ep = this.backgroundEps.get(id) ?? null
+      const state = this.background.state(id)
+      const matched = ep !== null && matching(ep).length > 0
+      const persisted = this.background.persistedListeners(id).includes(key)
+      // A running background is written to for a match alone (a delivery counts as its
+      // activity); a stopped one is woken for a listener it persisted; a starting one, not yet
+      // through its script, waits for `ready` when it persisted the listener or registered a
+      // matching one already.
+      const wanted =
+        state === 'running' ? matched : state === 'stopped' ? persisted : persisted || matched
+      if (!wanted) continue
+      this.background.deliver(id, key, () => {
+        const current = this.backgroundEps.get(id)
+        if (current) send(current)
+      })
+    }
   }
 
   /** Tab view events, forwarded by the platform: `tabs.onUpdated` and `webNavigation`. */
@@ -1547,13 +1737,17 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     }
   }
 
+  /**
+   * Kotlin reports every decision (`ext.observeRequests`) while a `webRequest` listener exists in
+   * any endpoint – or a stopped worker persisted one: its listener is what wakes it (Chrome's
+   * observational events start an MV3 worker), and without the decisions nothing would.
+   */
   private updateObserving(): void {
     let wanted = false
-    for (const set of this.listening.values()) {
-      for (const key of set) if (key.startsWith('webRequest.')) wanted = true
-    }
-    for (const byEvent of this.filtered.values()) {
-      for (const key of byEvent.keys()) if (key.startsWith('webRequest.')) wanted = true
+    for (const own of this.requestListeners.values()) if (own.size > 0) wanted = true
+    for (const id of this.extensions.keys()) {
+      if (this.background.persistedListeners(id).some((key) => key.startsWith('webRequest.')))
+        wanted = true
     }
     if (wanted !== this.observing) {
       this.observing = wanted
@@ -1578,9 +1772,73 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
         return this.storageCall(ext, endpoint, method, args)
       case 'alarms':
         return this.alarmsCall(ext, method, args)
+      case 'webRequest':
+        return this.webRequestCall(ext, endpoint, method, args)
       default:
         return this.api.call(ext, endpoint, ns, method, args)
     }
+  }
+
+  // --- webRequest ------------------------------------------------------------
+
+  /**
+   * The shim's registration calls for `chrome.webRequest.<event>.addListener` /
+   * `removeListener`: `[event, RequestFilter, extraInfoSpec, id]` and `[event, id]`, validated as
+   * the binding validates them. A `blocking` listener is registered like any other: WebView
+   * cannot hold a request for an answer, so it hears the request and its return value is not
+   * applied (the delivery carries no token).
+   */
+  private webRequestCall(
+    ext: Attached,
+    endpoint: Endpoint,
+    method: string,
+    args: unknown[]
+  ): unknown {
+    const id = ext.record.id
+    switch (method) {
+      case 'addListener': {
+        const event = webRequestEventNamed(args[0])
+        const spec = normalizeRequestListener(event, args[1], args[2])
+        const listenerId = args[3]
+        if (typeof listenerId !== 'number' || !Number.isInteger(listenerId) || listenerId <= 0)
+          throw new Error('Invalid listener id.')
+        let own = this.requestListeners.get(endpoint.id)
+        if (!own) {
+          own = new Map()
+          this.requestListeners.set(endpoint.id, own)
+        }
+        own.set(listenerId, { event, filter: compileRequestFilter(spec.filter) })
+        this.requestListenersChanged(id, endpoint, event)
+        return undefined
+      }
+      case 'removeListener': {
+        const event = webRequestEventNamed(args[0])
+        const own = this.requestListeners.get(endpoint.id)
+        const listenerId = args[1]
+        if (!own || typeof listenerId !== 'number' || own.get(listenerId)?.event !== event)
+          return undefined
+        own.delete(listenerId)
+        if (own.size === 0) this.requestListeners.delete(endpoint.id)
+        this.requestListenersChanged(id, endpoint, event)
+        return undefined
+      }
+    }
+    throw new Error(`chrome.webRequest.${method} ${NOT_IMPLEMENTED}`)
+  }
+
+  /** A background's `webRequest` listeners are what wake it: persisted like its other listeners. */
+  private requestListenersChanged(
+    id: string,
+    endpoint: Endpoint,
+    event: WebRequestEventName
+  ): void {
+    if (endpoint.context === 'background') {
+      const key = `webRequest.${event}`
+      this.background.listen(id, key, this.listens(endpoint.id, key))
+      this.data.listeners[id] = this.background.persistedListeners(id)
+      this.save()
+    }
+    this.updateObserving()
   }
 
   // --- storage ---------------------------------------------------------------
@@ -1594,7 +1852,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
         store,
         doc: { local: asRecord(saved?.local), sync: asRecord(saved?.sync) },
         session: {},
-        sessionUntrusted: false
+        openToUntrusted: new Set(['local', 'sync', 'managed'])
       }
       this.storage.set(id, entry)
     }
@@ -1608,8 +1866,8 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     const id = ext.record.id
     const entry = this.storageFor(id)
     const untrusted = endpoint.context === 'content' || endpoint.context === 'userScript'
-    if (area === 'session' && untrusted && !entry.sessionUntrusted)
-      throw new Error('Access to storage is not allowed from this context.')
+    const open = entry.openToUntrusted.has(area)
+    if (untrusted && !open) throw new Error('Access to storage is not allowed from this context.')
     const items: StorageItems =
       area === 'local'
         ? entry.doc.local
@@ -1623,11 +1881,9 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
       else if (area === 'sync') entry.doc.sync = next
       else entry.session = next
       if (area === 'local' || area === 'sync') entry.store.write(entry.doc)
-      // Session changes stay with the trusted contexts until the extension opens the area up.
+      // A closed area's changes stay with the trusted contexts.
       const hears = (e: Endpoint): boolean =>
-        area !== 'session' ||
-        entry.sessionUntrusted ||
-        (e.context !== 'content' && e.context !== 'userScript')
+        open || (e.context !== 'content' && e.context !== 'userScript')
       if (Object.keys(changes).length > 0)
         this.emit(id, 'storage', 'onChanged', [changes, area], hears)
     }
@@ -1673,11 +1929,15 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
         return undefined
       }
       case 'setAccessLevel': {
-        if (area !== 'session')
-          throw new Error('setAccessLevel is only available on storage.session.')
         if (untrusted) throw new Error('Context cannot set the storage access level')
         const level = asRecord(args[1]).accessLevel
-        entry.sessionUntrusted = level === 'TRUSTED_AND_UNTRUSTED_CONTEXTS'
+        if (level !== 'TRUSTED_CONTEXTS' && level !== 'TRUSTED_AND_UNTRUSTED_CONTEXTS')
+          throw new Error(
+            "Error at parameter 'accessOptions': Error at property 'accessLevel': " +
+              'Value must be one of TRUSTED_CONTEXTS, TRUSTED_AND_UNTRUSTED_CONTEXTS.'
+          )
+        if (level === 'TRUSTED_AND_UNTRUSTED_CONTEXTS') entry.openToUntrusted.add(area)
+        else entry.openToUntrusted.delete(area)
         return undefined
       }
     }
@@ -1769,6 +2029,13 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     if (timer !== undefined) this.timers.clearTimeout(timer)
     this.alarmTimers.delete(id)
   }
+}
+
+/** The `webRequest` event a registration names; anything else is the desktop host's error. */
+function webRequestEventNamed(raw: unknown): WebRequestEventName {
+  const event = WEB_REQUEST_EVENT_NAMES.find((name) => name === raw)
+  if (!event) throw new Error('Unknown webRequest event.')
+  return event
 }
 
 /** The `UrlFilter`s of a filtered listener; a malformed list matches nothing but is not fatal. */

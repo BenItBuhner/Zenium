@@ -505,9 +505,11 @@ class SafeBrowsingTest {
             assertTrue(lines.any { it.startsWith("first navigation: $expected prefixes from 2 feeds after a wait of") && it.contains(" ms after start (loaded)") })
             assertTrue(safeBrowsing.snapshotLoadMs >= 0)
             assertNull(safeBrowsing.snapshotRejected)
-            // The documents' load follows on the same thread and finds the snapshot is theirs.
+            // The documents' load follows on the same thread and finds the snapshot is theirs. The
+            // loader's last act is the "tables:" line, after the outcome is set: wait for the line
+            // (a wait on the outcome alone let the assertions below run before it was logged).
             val deadline = System.currentTimeMillis() + 20_000
-            while (safeBrowsing.lastSnapshot == SafeBrowsing.SnapshotOutcome.NONE && System.currentTimeMillis() < deadline) Thread.sleep(20)
+            while (lines.none { it.startsWith("tables: ") } && System.currentTimeMillis() < deadline) Thread.sleep(20)
             assertEquals(SafeBrowsing.SnapshotOutcome.UNCHANGED, safeBrowsing.lastSnapshot)
             assertEquals(expected, safeBrowsing.tables.entries)
             assertTrue(lines.any { it.startsWith("snapshot: $expected prefixes from 2 feeds in") })

@@ -88,6 +88,11 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
     var builds: Int = 0
         private set
 
+    /** Characters of the index text the last build read (what a rebuild costs the heap while it parses), for the log and `stats()`. */
+    @Volatile
+    var lastIndexChars: Int = 0
+        private set
+
     /** A rewrite of the index by any host's storage (the core writes through the browser window's). */
     private val onStorageChanged: (String) -> Unit = { name ->
         if (name == Storage.BLOCKING_INDEX) scheduleRebuild(REBUILD_DELAY_MS)
@@ -114,7 +119,11 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
     private fun rebuildLogged() {
         try {
             rebuild()
-            Log.i(TAG, "snapshot: ${snapshot.filterCount} network filters from ${snapshot.setCount} sets in $lastBuildMs ms")
+            Log.i(
+                TAG,
+                "snapshot: ${snapshot.filterCount} network filters and ${snapshot.ruleCount} rules from ${snapshot.setCount} sets " +
+                    "(index ${lastIndexChars / 1024} K chars) in $lastBuildMs ms"
+            )
         } catch (e: Throwable) {
             Log.e(TAG, "rule-set snapshot not rebuilt", e)
         }
@@ -145,6 +154,7 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
      */
     private fun readIndex(): List<RuleSetInfo> {
         val raw = storage.read(Storage.BLOCKING_INDEX) ?: return emptyList()
+        lastIndexChars = raw.length
         return runCatching { indexReader.read(raw) }.getOrElse { e ->
             Log.w(TAG, "blocking index unreadable", e)
             emptyList()
@@ -290,6 +300,7 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
         .put("rules", snapshot.ruleCount)
         .put("builds", builds)
         .put("lastBuildMs", lastBuildMs)
+        .put("indexChars", lastIndexChars)
 
     companion object {
         private const val TAG = "zen-blocking"

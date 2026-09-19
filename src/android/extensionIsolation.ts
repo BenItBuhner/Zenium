@@ -5,10 +5,14 @@
  *  - the scope proxy of the `with` fallback (WebViews without isolated worlds, Chromium < 146):
  *    a per-extension stand-in for `window` / `self` / `globalThis` whose expandos never reach
  *    the page and which never shows the page's globals;
- *  - the Trusted Types shield for real isolated worlds: a pass-through policy created in the
- *    world and applied to the world's own DOM sinks, so a content script's `innerHTML = …` is
- *    not refused by a page whose CSP demands Trusted Types (m.youtube.com), while the page's
- *    own prototypes stay untouched.
+ *  - the Trusted Types shield: a pass-through policy applied to the DOM sinks, so a content
+ *    script's `innerHTML = …` is not refused by a page whose CSP demands Trusted Types
+ *    (m.youtube.com). In a real isolated world the world's own prototypes are patched and every
+ *    write is the extension's, the page's prototypes stay untouched. In the `with` fallback the
+ *    prototypes are the page's, so a sink keeps the page's policy for the page: a string the
+ *    policy refused is retried through the pass-through policy only when the frame that wrote
+ *    it is the extension's own script (the host names the document-start script with a
+ *    `//# sourceURL` no page script can have, and the bootstrap reads its own frames' location).
  */
 export type Any = Record<PropertyKey, unknown>
 
@@ -154,6 +158,82 @@ export interface ShieldResult {
   patched: number
 }
 
+export interface ShieldOptions {
+  /**
+   * Set in the page realm (the `with` fallback, where the content scripts share the page's
+   * prototypes): the page's own writes keep the page's policy, so a string a sink refused is
+   * retried through the pass-through policy only when the frame that wrote it – the direct
+   * caller of the sink, judged by this predicate from its stack frame line – is the extension's
+   * script. Absent, every write is the extension's (a real isolated world).
+   */
+  ownCaller?: (frame: string) => boolean
+  /** The realm's `Error`, captured before the page ran (the stack frames come from it). */
+  Error?: ErrorConstructor
+}
+
+/** The location part of a V8 stack frame line: `at f (loc:1:2)` or `at loc:1:2` → `loc`. */
+export function frameLocation(frame: string): string {
+  const parenthesised = /\(([^()]*):\d+:\d+\)\s*$/.exec(frame)
+  if (parenthesised) return parenthesised[1]
+  const bare = /\bat\s+(\S+):\d+:\d+\s*$/.exec(frame)
+  return bare ? bare[1] : ''
+}
+
+/**
+ * The stack frame line `depth` frames above this function's own (0: this function, 1: its
+ * caller, …), or '' when the realm gives no usable stack. `Error.stackTraceLimit` and
+ * `Error.prepareStackTrace` are the realm's and a page may have changed them (a limit of 0, a
+ * custom format): both are set for the capture and put back.
+ */
+export function stackFrame(ErrorCtor: ErrorConstructor, depth: number): string {
+  const E = ErrorCtor as unknown as { stackTraceLimit?: number; prepareStackTrace?: unknown }
+  let stack: unknown
+  try {
+    const limit = E.stackTraceLimit
+    const hadPrepare = Object.prototype.hasOwnProperty.call(E, 'prepareStackTrace')
+    const prepare = E.prepareStackTrace
+    try {
+      E.stackTraceLimit = depth + 1
+      E.prepareStackTrace = undefined
+      stack = new ErrorCtor().stack
+    } finally {
+      E.stackTraceLimit = limit
+      if (hadPrepare) E.prepareStackTrace = prepare
+      else delete E.prepareStackTrace
+    }
+  } catch {
+    return ''
+  }
+  if (typeof stack !== 'string') return ''
+  const frames = stack.split('\n').filter((line) => /^\s*at\s/.test(line))
+  return frames[depth] ?? ''
+}
+
+/** Schemes a page's own script can carry as its location; a frame there is never the extension's. */
+const PAGE_SCHEMES = /^(https?|blob|data|file|about|javascript|wss?|ftp):/i
+
+/**
+ * A predicate for `ShieldOptions.ownCaller` in the page realm: whether a frame's location is
+ * the one of the script this is called from – the host's `//# sourceURL` of the document-start
+ * script. `undefined` when the own location is one a page script could share (`<anonymous>`,
+ * a web URL, an eval origin): then the shield cannot tell the writers apart and must stay off.
+ */
+export function ownScriptMatcher(
+  ErrorCtor: ErrorConstructor
+): ((frame: string) => boolean) | undefined {
+  // 0: stackFrame, 1: this function, 2: the caller, in the script whose frames are to be known.
+  const own = frameLocation(stackFrame(ErrorCtor, 2))
+  if (!own || own === '<anonymous>' || !/^[a-z][a-z0-9+.-]*:/i.test(own) || PAGE_SCHEMES.test(own))
+    return undefined
+  return (frame) => frameLocation(frame) === own
+}
+
+/** Whether `error` is a Trusted Types refusal (`This document requires 'TrustedHTML' assignment`). */
+function isTrustedTypesRefusal(error: unknown): boolean {
+  const message = (error as { message?: unknown } | null)?.message
+  return typeof message === 'string' && /'Trusted(HTML|Script|ScriptURL)'/.test(message)
+}
+
 /**
  * Create the pass-through policy in `world` and route the world's string sinks through it:
  * `innerHTML`, `outerHTML`, `insertAdjacentHTML`, shadow roots, `document.write`,
@@ -161,8 +241,18 @@ export interface ShieldResult {
  * attributes through `setAttribute`. Every wrapper is a thin pass-through when the value is
  * already trusted or the sink is not a string, so behaviour elsewhere is unchanged. Returns what
  * happened; a page whose `trusted-types` directive refuses the name leaves the sinks alone.
+ *
+ * With `options.ownCaller` (the page realm) a wrapper first lets the sink run as it is; only a
+ * string the page's policy refused, written by the extension's own frame, goes through the
+ * policy on a second attempt. The page's writes, and the extension's non-string writes, see the
+ * page's outcome. The first, refused attempt still reports to the page's `report-uri` and its
+ * `securitypolicyviolation` listeners, as the write did before the shield.
  */
-export function installTrustedTypesShield(world: ShieldedWorld, policyName: string): ShieldResult {
+export function installTrustedTypesShield(
+  world: ShieldedWorld,
+  policyName: string,
+  options: ShieldOptions = {}
+): ShieldResult {
   const factory = world.trustedTypes
   if (!factory || typeof factory.createPolicy !== 'function') return { policy: false, patched: 0 }
   let policy: TrustedTypePolicy
@@ -190,6 +280,15 @@ export function installTrustedTypesShield(world: ShieldedWorld, policyName: stri
       return value
     }
   }
+  const ownCaller = options.ownCaller
+  const ErrorCtor = options.Error ?? Error
+  /** Page realm: the refused write is the extension's own, so the retry may trust it. */
+  const retryable = (error: unknown, before: unknown[], after: unknown[]): boolean =>
+    ownCaller !== undefined &&
+    isTrustedTypesRefusal(error) &&
+    after.some((value, i) => value !== before[i]) &&
+    // 0: stackFrame, 1: this arrow, 2: the sink wrapper, 3: whoever wrote the sink.
+    ownCaller(stackFrame(ErrorCtor, 3))
   let patched = 0
 
   const patchSetter = (proto: object | undefined, name: string, sink: Sink): void => {
@@ -201,7 +300,17 @@ export function installTrustedTypesShield(world: ShieldedWorld, policyName: stri
       Object.defineProperty(proto, name, {
         ...desc,
         set(this: unknown, value: unknown) {
-          set.call(this, trust(sink, value))
+          if (!ownCaller) {
+            set.call(this, trust(sink, value))
+            return
+          }
+          try {
+            set.call(this, value)
+          } catch (error) {
+            const trusted = trust(sink, value)
+            if (!retryable(error, [value], [trusted])) throw error
+            set.call(this, trusted)
+          }
         }
       })
       patched += 1
@@ -223,7 +332,14 @@ export function installTrustedTypesShield(world: ShieldedWorld, policyName: stri
       Object.defineProperty(proto, name, {
         ...desc,
         value: function (this: unknown, ...args: unknown[]) {
-          return original.apply(this, wrap(args, this))
+          if (!ownCaller) return original.apply(this, wrap(args, this))
+          try {
+            return original.apply(this, args)
+          } catch (error) {
+            const trusted = wrap(args, this)
+            if (!retryable(error, args, trusted)) throw error
+            return original.apply(this, trusted)
+          }
         }
       })
       patched += 1
@@ -288,7 +404,17 @@ export function installTrustedTypesShield(world: ShieldedWorld, policyName: stri
       Object.defineProperty(proto, name, {
         ...desc,
         set(this: unknown, value: unknown) {
-          set.call(this, tagOf(this) === 'script' ? trust('script', value) : value)
+          if (!ownCaller) {
+            set.call(this, tagOf(this) === 'script' ? trust('script', value) : value)
+            return
+          }
+          try {
+            set.call(this, value)
+          } catch (error) {
+            const trusted = tagOf(this) === 'script' ? trust('script', value) : value
+            if (!retryable(error, [value], [trusted])) throw error
+            set.call(this, trusted)
+          }
         }
       })
       patched += 1

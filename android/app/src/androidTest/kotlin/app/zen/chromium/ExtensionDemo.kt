@@ -569,27 +569,31 @@ class ExtensionDemo {
         val offSite = "network: the tab landed on $ytHost, not a watch page (Google served the runner a CAPTCHA)"
         stage(RYD, "contentScript", if (!onYouTube) "N/A" else if (groups > 0) "PASS" else "FAIL", if (!onYouTube) offSite else "groups=$groups readyState=${ryd.optString("readyState")} url=$ytUrl")
         // A phone WebView lands on m.youtube.com, whose CSP requires Trusted Types for script
-        // sinks: the page's own realm refuses a plain `script.textContent`, the extension's
-        // isolated world accepts it through the bootstrap's pass-through policy (the shield).
+        // sinks: the page's own realm refuses a plain `script.textContent`, the extension's own
+        // code takes it through the bootstrap's pass-through policy (the shield): in its isolated
+        // world outright, in the with-fallback as the retry the page's sinks grant its frames.
         val pageSink = tabEval(ytView, TT_SINK_PROBE)
         val worldSink = if (worlds) worldEval(ytView, RYD, TT_SINK_PROBE) else null
-        val shield = rydWorld?.optJSONObject("stats")?.optJSONObject("trustedTypes")
+        val extensionSink = if (onYouTube) extEval(ytTab, RYD, TT_SINK_PROBE) else "n/a"
+        val shield = if (worlds) rydWorld?.optJSONObject("stats")?.optJSONObject("trustedTypes")
+        else tabEval(ytView, "JSON.stringify((window.__zenExtStats || {}).trustedTypes || null)").let { if (it == "null") null else json(it) }
         results.put(
             "trustedTypes",
-            JSONObject().put("url", ytUrl).put("pageSink", pageSink).put("worldSink", worldSink ?: JSONObject.NULL).put("shield", shield ?: JSONObject.NULL)
+            JSONObject().put("url", ytUrl).put("pageSink", pageSink).put("worldSink", worldSink ?: JSONObject.NULL)
+                .put("extensionSink", extensionSink).put("shield", shield ?: JSONObject.NULL)
         )
         stage(
             RYD, "trustedTypes",
             when {
-                !worlds || !onYouTube -> "N/A"
-                shield?.optBoolean("policy") == true && worldSink == "ok" -> "PASS"
-                shield != null -> "PARTIAL"
+                !onYouTube -> "N/A"
+                shield?.optBoolean("policy") == true && extensionSink == "ok" -> "PASS"
+                shield != null || extensionSink == "ok" -> "PARTIAL"
                 else -> "FAIL"
             },
             when {
                 !onYouTube -> offSite
-                !worlds -> "page sink=$pageSink (one realm: the page's Trusted Types policy applies to content scripts too)"
-                else -> "page sink=$pageSink world sink=$worldSink shield=$shield"
+                !worlds -> "page sink=$pageSink extension sink=$extensionSink shield=$shield (one realm: the page's sinks retry a refused string for the extension's frames)"
+                else -> "page sink=$pageSink world sink=$worldSink extension sink=$extensionSink shield=$shield"
             }
         )
         // The API answered the emulator's own request without a CORS header (a Cloudflare
@@ -800,10 +804,12 @@ class ExtensionDemo {
 
     /**
      * Trusted Types on a page the run controls (`require-trusted-types-for 'script'`, the
-     * directive m.youtube.com sends): the page's realm refuses a string into a script sink; in
-     * a WebView isolated world the probe's content scripts take it through the bootstrap's
-     * pass-through policy (the shield), as Chrome's own worlds do under the extension's CSP.
-     * Without worlds the page's policy applies to the scripts too (one realm): N/A.
+     * directive m.youtube.com sends): the page's realm refuses a string into a script sink; the
+     * probe's own code takes it through the bootstrap's pass-through policy (the shield), as
+     * Chrome's own worlds do under the extension's CSP. In a WebView isolated world the world's
+     * sinks are shielded outright; in the with-fallback the page's sinks retry a refused string
+     * for the extension's frames only, so the page's own write must stay refused after the
+     * extension's went through (`pageSinkAfter`).
      */
     private fun trustedTypesPage() {
         val tab = createTab("$BASE/trusted-types.html")
@@ -812,22 +818,26 @@ class ExtensionDemo {
         waitFor(10_000) { if (tabEval(view, PROBE_DONE) == "true") true else null }
         val pageSink = tabEval(view, "String((window.__page || {}).sink)")
         val worldSink = if (worlds) worldEval(view, PROBE_ID, TT_SINK_PROBE) else null
+        val extensionSink = extEval(tab, PROBE_ID, TT_SINK_PROBE)
+        val pageSinkAfter = tabEval(view, TT_SINK_PROBE)
         val world = if (worlds) worldEval(view, PROBE_ID, WORLD_REPORT)?.let(::json) else null
-        val shield = world?.optJSONObject("stats")?.optJSONObject("trustedTypes")
+        val shield = if (worlds) world?.optJSONObject("stats")?.optJSONObject("trustedTypes")
+        else tabEval(view, "JSON.stringify((window.__zenExtStats || {}).trustedTypes || null)").let { if (it == "null") null else json(it) }
         results.put(
             "trustedTypesPage",
-            JSONObject().put("pageSink", pageSink).put("worldSink", worldSink ?: JSONObject.NULL).put("shield", shield ?: JSONObject.NULL)
+            JSONObject().put("pageSink", pageSink).put("worldSink", worldSink ?: JSONObject.NULL).put("extensionSink", extensionSink)
+                .put("pageSinkAfter", pageSinkAfter).put("shield", shield ?: JSONObject.NULL)
                 .put("probeIdleRan", world?.opt("idle") != null || tabEval(view, PROBE_DONE) == "true")
         )
         stage(
             PROBE_ID, "trustedTypes",
             when {
-                !worlds -> "N/A"
-                pageSink.startsWith("refused") && worldSink == "ok" && shield?.optBoolean("policy") == true -> "PASS"
-                worldSink == "ok" -> "PARTIAL"
+                pageSink.startsWith("refused") && extensionSink == "ok" && pageSinkAfter.startsWith("refused") && shield?.optBoolean("policy") == true -> "PASS"
+                extensionSink == "ok" -> "PARTIAL"
                 else -> "FAIL"
             },
-            "page sink=$pageSink world sink=$worldSink shield=$shield" + if (!worlds) " (one realm: the page's policy applies to content scripts too)" else ""
+            "page sink=$pageSink extension sink=$extensionSink page sink after=$pageSinkAfter shield=$shield" +
+                (if (worlds) " world sink=$worldSink" else " (one realm: the page's sinks retry a refused string for the extension's frames only)")
         )
         chromeInvoke("tab.close", """{"tabId":${JSONObject.quote(tab)},"force":true}""")
     }
@@ -2053,6 +2063,32 @@ class ExtensionDemo {
         instrumentation.runOnMainSync {
             host.extensions.evalInWorld(view, ext, script) { raw ->
                 value = raw?.let { if (it.startsWith("\"")) runCatching { JSONObject("{\"v\":$it}").getString("v") }.getOrDefault(it) else it }
+                latch.countDown()
+            }
+        }
+        latch.await(timeoutSeconds, TimeUnit.SECONDS)
+        return value
+    }
+
+    /**
+     * `expression`, evaluated as `ext` itself would through `scripting.executeScript` (the host's
+     * `ext.exec`): in the extension's isolated world on a WebView with worlds, else in the main
+     * world as the named script the with-fallback shield knows as the extension's. The value, or
+     * `rejected: <reason>`.
+     */
+    private fun extEval(tabId: String, ext: String, expression: String, timeoutSeconds: Long = 10): String {
+        val latch = CountDownLatch(1)
+        var value = "null"
+        val args = JSONObject()
+            .put("tabId", tabId).put("ext", ext).put("kind", "js").put("payload", JSONObject())
+            .put("funcSource", "function(){return $expression}").put("args", JSONArray())
+        instrumentation.runOnMainSync {
+            host.extensions.handle("ext.exec", args) { result ->
+                value = when (result) {
+                    is Host.RawJson -> result.json.let { if (it.startsWith("\"")) runCatching { JSONObject("{\"v\":$it}").getString("v") }.getOrDefault(it) else it }
+                    is Host.Rejection -> "rejected: ${result.message}"
+                    else -> result.toString()
+                }
                 latch.countDown()
             }
         }

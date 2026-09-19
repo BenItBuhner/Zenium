@@ -3,9 +3,50 @@ import type { StoreIO, StoreWriteOptions } from '@core/platform'
 import type { Bridge } from './bridge'
 
 /**
+ * Documents cross the bridge in pieces of this many characters. One bridge call carrying a
+ * document whole has Kotlin hold several copies of the text at once (the call's JSON, the
+ * tokenizer's buffer, the parsed value; for a read, the text and its JSON-quoted answer); a
+ * filter-list extension's `chrome.storage` runs to tens of megabytes, past the debug heap. A
+ * piece is sent once the one before it has landed, so one piece (and its copies) is on the Java
+ * heap at a time. The host's `storage.read` answers a document up to this size whole (one call,
+ * as ever) and a bigger one as `{ token }`, read in pieces from there (`Storage.INLINE_READ_BYTES`).
+ */
+export const CHUNK_CHARS = 1 << 20
+
+/** The host's answer to `storage.read`: the text, nothing, or a document to be read in pieces. */
+type ReadAnswer = string | { token: number } | null | undefined
+
+/**
+ * One document read through the bridge, whatever its size: the text, or `null` when the host has
+ * none (or the read failed midway – a document torn in half is not a document). The pre-handoff
+ * path, for the store and for the boot's fallback (`handoff.ts`) alike.
+ */
+export function readDocument(bridge: Bridge, name: string): string | null {
+  const answer = bridge.callSync<ReadAnswer>('storage.read', { name })
+  if (typeof answer === 'string') return answer
+  if (!answer || typeof answer !== 'object' || typeof answer.token !== 'number') return null
+  const { token } = answer
+  const parts: string[] = []
+  for (;;) {
+    const chunk = bridge.callSync<string | null | undefined>('storage.readChunk', {
+      token,
+      maxChars: CHUNK_CHARS
+    })
+    // null: the end, the reader closed. Anything else: the read failed midway.
+    if (chunk === null) return parts.join('')
+    if (typeof chunk !== 'string') {
+      bridge.callSync('storage.readEnd', { token })
+      return null
+    }
+    parts.push(chunk)
+  }
+}
+
+/**
  * The root documents (and the rule-set index) arrive with the boot payload and are mirrored in
- * memory; documents in a folder – the filter lists' text under `blocking/`, megabytes each –
- * stay on disk and are read through the bridge when asked for.
+ * memory; documents in a folder – the filter lists' text under `blocking/`, the extensions'
+ * storage under `ext-storage/`, megabytes each – stay on disk and are read through the bridge
+ * when asked for, in pieces past {@link CHUNK_CHARS}.
  *
  * Two things keep the boot path to one transfer per document (`BootHandoff.kt`, `handoff.ts`):
  *
@@ -89,7 +130,7 @@ export class AndroidStoreIO implements StoreIO {
       this.pending.delete(name)
       this.served.add(name)
     }
-    const text = this.bridge.callSync<string | null | undefined>('storage.read', { name }) ?? null
+    const text = readDocument(this.bridge, name)
     if (text !== null && this.mirrored(name)) this.files[name] = text
     return text
   }
@@ -101,24 +142,62 @@ export class AndroidStoreIO implements StoreIO {
 
   async write(name: string, text: string, options?: StoreWriteOptions): Promise<void> {
     if (this.unchanged(name, text)) return
-    await this.bridge.call('storage.write', { name, text, backup: options?.backup === true })
+    const backup = options?.backup === true
+    if (text.length <= CHUNK_CHARS) {
+      await this.bridge.call('storage.write', { name, text, backup })
+    } else {
+      // In pieces, each landing on the host's storage thread before the next is sent; a piece
+      // that does not land aborts the write, and the document is as it was.
+      const token = await this.bridge.call<number>('storage.writeBegin', { name, backup })
+      try {
+        for (let at = 0; at < text.length; at += CHUNK_CHARS) {
+          await this.bridge.call('storage.writeChunk', {
+            token,
+            text: text.slice(at, at + CHUNK_CHARS)
+          })
+        }
+        await this.bridge.call('storage.writeEnd', { token })
+      } catch (error) {
+        this.bridge.send('storage.writeAbort', { token })
+        throw error
+      }
+    }
     this.remember(name, text)
   }
 
   writeSync(name: string, text: string, options?: StoreWriteOptions): void {
     if (this.unchanged(name, text)) return
-    const ok = this.bridge.callSync<boolean | undefined>('storage.writeSync', {
-      name,
-      text,
-      backup: options?.backup === true
-    })
+    const backup = options?.backup === true
     // The host answers `true` once the file is replaced; anything else (it threw, and the bridge
     // reports a failed synchronous call as no answer) leaves the file – and the mirror – as they were.
-    if (ok !== true) {
+    const landed =
+      text.length <= CHUNK_CHARS
+        ? this.bridge.callSync<boolean | undefined>('storage.writeSync', { name, text, backup }) ===
+          true
+        : this.writeSyncInPieces(name, text, backup)
+    if (!landed) {
       console.warn(`[zen] the host could not write ${name}`)
       return
     }
     this.remember(name, text)
+  }
+
+  /** The last-chance write of a big document, in pieces on the bridge thread; whether it landed. */
+  private writeSyncInPieces(name: string, text: string, backup: boolean): boolean {
+    const token = this.bridge.callSync<number | undefined>('storage.writeBegin', { name, backup })
+    if (typeof token !== 'number') return false
+    let landed = true
+    for (let at = 0; landed && at < text.length; at += CHUNK_CHARS) {
+      landed =
+        this.bridge.callSync<boolean | undefined>('storage.writeChunk', {
+          token,
+          text: text.slice(at, at + CHUNK_CHARS)
+        }) === true
+    }
+    landed =
+      landed && this.bridge.callSync<boolean | undefined>('storage.writeEnd', { token }) === true
+    if (!landed) this.bridge.callSync('storage.writeAbort', { token })
+    return landed
   }
 
   /** The mirror holds these very bytes: the file does too (it was read from, or written with, them). */

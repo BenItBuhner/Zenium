@@ -224,6 +224,60 @@ function windowClient(info: ClientInfo, send: Send, relay: PortRelay): Any {
   return client
 }
 
+/** The element and document `importScriptsFor` needs: what a `Document` gives, and a test can fake. */
+export interface ScriptElement {
+  textContent: string | null
+  remove(): void
+}
+
+/** `appendChild` asks no more of its node than the text it runs (a `Node` is one such). */
+export interface ScriptParent {
+  appendChild(node: { textContent: string | null }): unknown
+}
+
+export interface ScriptDocument {
+  createElement(tag: 'script'): ScriptElement
+  head: ScriptParent | null
+  documentElement: ScriptParent | null
+}
+
+export interface ImportScriptsOptions {
+  origin: string
+  /** The worker script's URL; relative imports resolve against it, as in a worker. */
+  base: string
+  /** A synchronous GET of an extension-origin URL (`importScripts` is synchronous by contract). */
+  fetchText: (url: string) => { status: number; text: string }
+  /** The page standing in for the worker. */
+  document: ScriptDocument
+}
+
+/**
+ * `importScripts` for the worker page: each file, fetched synchronously from the extension
+ * origin, runs as a classic `<script>` element of the page. A script element shares the global
+ * lexical environment with the worker script and the other imports, as the files of a worker
+ * do, so a top-level `const`, `let` or `class` of an imported file is there for the next one
+ * (Enhancer for YouTube's `config.js` is `const config = {...}`, read by its worker; an indirect
+ * eval kept those declarations to itself and the worker threw `config is not defined`). What an
+ * imported file throws is reported as the page's uncaught error rather than thrown here.
+ */
+export function importScriptsFor(options: ImportScriptsOptions): (...urls: string[]) => void {
+  return (...urls: string[]): void => {
+    for (const url of urls) {
+      const absolute = new URL(url, options.base).href
+      if (!absolute.startsWith(options.origin + '/'))
+        throw new Error(`importScripts: ${url} is not on the extension origin`)
+      const { status, text } = options.fetchText(absolute)
+      if (status !== 200) throw new Error(`importScripts: ${url} failed (${status})`)
+      const parent = options.document.head ?? options.document.documentElement
+      if (!parent) throw new Error(`importScripts: ${url} has no document to run in`)
+      const script = options.document.createElement('script')
+      script.textContent = `${text}\n//# sourceURL=${absolute}`
+      parent.appendChild(script)
+      script.remove()
+    }
+  }
+}
+
 interface WorkerOptions {
   origin: string
   /** The worker script's URL: `self.location`, `serviceWorker.scriptURL`, the lifecycle marker. */
@@ -310,7 +364,13 @@ export function installServiceWorkerGlobals(
     clients,
     registration,
     serviceWorker: worker,
-    skipWaiting: () => Promise.resolve()
+    skipWaiting: () => Promise.resolve(),
+    // A worker has no dialogs. On the page that stands in for one, a native `confirm()` would
+    // stall the WebView's shared renderer – and with it every tab and the chrome – until a
+    // finger pressed it away (Tampermonkey's internal-error confirm did, in the sweep).
+    alert: undefined,
+    confirm: undefined,
+    prompt: undefined
   })
 
   const receive = (message: Record<string, unknown>): void => {

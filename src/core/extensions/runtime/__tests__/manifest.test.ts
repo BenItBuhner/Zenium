@@ -93,6 +93,38 @@ describe('parseRuntimeManifest', () => {
     expect(largestIcon(m.icons)).toBe('i128.png')
   })
 
+  it('the document getManifest() serves has its localisable strings resolved, the rest as written', () => {
+    const source = {
+      manifest_version: 3,
+      name: '__MSG_name_release__',
+      short_name: '__MSG_ext_name__',
+      description: '__MSG_ext_name__ blocks ads',
+      version: '4.44.0',
+      default_locale: 'en',
+      action: { default_title: '__MSG_ext_name__' },
+      commands: { toggle: { description: '__MSG_ext_name__ on/off' } },
+      // Not a localised key: stays as written, whatever it looks like.
+      homepage_url: 'https://__MSG_ext_name__.example/'
+    }
+    const m = parseRuntimeManifest(source, {
+      ...messages,
+      name_release: { message: 'Adblock Plus - free ad blocker' }
+    })
+    // Adblock Plus reads `short_name` from getManifest() and wants "Adblock Plus" back.
+    expect(m.raw.short_name).toBe('Dark Reader')
+    expect(m.raw.name).toBe('Adblock Plus - free ad blocker')
+    expect(m.raw.description).toBe('Dark Reader blocks ads')
+    expect(m.raw.action).toEqual({ default_title: 'Dark Reader' })
+    expect(m.raw.commands).toEqual({ toggle: { description: 'Dark Reader on/off' } })
+    expect(m.raw.homepage_url).toBe('https://__MSG_ext_name__.example/')
+    // The source document is not written to.
+    expect(source.short_name).toBe('__MSG_ext_name__')
+    // No `_locales`: the document as written.
+    expect(parseRuntimeManifest({ ...source, name: 'Plain' }, null).raw.short_name).toBe(
+      '__MSG_ext_name__'
+    )
+  })
+
   it('normalises an MV2 manifest (host patterns inside permissions, browser_action, scripts background)', () => {
     const m = parseRuntimeManifest(
       {
