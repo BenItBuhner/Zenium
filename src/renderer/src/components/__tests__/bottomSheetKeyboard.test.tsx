@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   act,
   createRef,
-  useRef,
   useState,
   type JSX,
   type ReactElement,
@@ -303,8 +302,8 @@ function HostedBody({
   onDismissed: () => void
   children: ReactNode
 }): JSX.Element {
-  const dismiss = useRef(() => handle.current?.dismiss())
-  useFrameDialog({ onScrimPress: dismiss.current, ownScrim: true })
+  const dismiss = (): void => handle.current?.dismiss()
+  useFrameDialog({ onScrimPress: dismiss, ownScrim: true })
   return (
     <div className="absolute inset-0" data-sheet-layer="true">
       <BottomSheet
