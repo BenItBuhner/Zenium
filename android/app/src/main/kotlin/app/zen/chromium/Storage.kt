@@ -1,8 +1,12 @@
 package app.zen.chromium
 
 import android.content.Context
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.FileInputStream
+import java.io.IOException
+import java.io.InputStream
 import java.io.Reader
 import java.io.Writer
 import java.util.concurrent.ConcurrentHashMap
@@ -16,13 +20,15 @@ import java.util.concurrent.atomic.AtomicLong
  * host.
  *
  * Names may carry one directory level (`blocking/index.json`): the core's rule sets live in
- * `blocking/` and are read by the Kotlin request engine from the same files; the extensions'
- * `chrome.storage` documents live in `ext-storage/`. Only the root documents and the blocking
- * index travel in the boot payload; the (megabytes of) filter text and extension storage stay on
- * disk and are read on demand.
+ * `blocking/` and are read by the Kotlin request engine from the same files, the Safe Browsing
+ * feed documents live in `safebrowsing/`, and the extensions' `chrome.storage` documents in
+ * `ext-storage/`. What the core reads at boot ([bootDocuments]) travels inline in the boot
+ * payload while small, and is fetched through the chrome WebView's document handler
+ * (`BootHandoff.kt`) once it is not; the (megabytes of) filter text and extension storage stay
+ * on disk and are read on demand.
  *
- * Large documents cross the bridge in pieces ([beginWrite] / [writeChunk] / [endWrite] and
- * [beginRead] / [readChunk]): a filter-list extension's storage runs to tens of megabytes, and
+ * Large documents cross the bridge in pieces ([beginWrite] / [writeChunk] / [endWrite], and
+ * [readOrBegin] / [readChunk]): a filter-list extension's storage runs to tens of megabytes, and
  * one bridge call carrying it whole keeps several copies of the text on the Java heap at once
  * (the call's JSON, the tokenizer's buffer, the parsed value) – past the debug heap's limit.
  *
@@ -34,7 +40,7 @@ class Storage(private val dir: File) {
 
     private val executor = Executors.newSingleThreadExecutor { r -> Thread(r, "zen-storage") }
 
-    private class PendingWrite(val name: String, val tmp: File, val writer: Writer)
+    private class PendingWrite(val name: String, val tmp: File, val writer: Writer, val backup: Boolean)
 
     /** Writes and reads in pieces that have begun and not ended, by token; each is used from one thread. */
     private val pendingWrites = ConcurrentHashMap<Long, PendingWrite>()
@@ -63,14 +69,88 @@ class Storage(private val dir: File) {
         }
     }
 
-    /** Every root document plus the blocking index, read synchronously for the boot payload. */
-    fun readAll(): JSONObject {
-        val out = JSONObject()
-        dir.listFiles { f -> f.isFile && f.name.endsWith(".json") }?.forEach { f ->
-            runCatching { out.put(f.name, f.readText()) }
+    /**
+     * The documents the core reads at boot, split by size (`BootDocuments`): `files` holds the
+     * text of every one of `inlineLimit` bytes or less, by name, as the boot payload always
+     * carried them; `deferred` lists the larger ones – a Safe Browsing feed's prefix table, a
+     * rule index grown big – with their size and version tag ([etag]), for the chrome to fetch
+     * through the document handler instead of receiving them JSON-quoted inside the payload.
+     */
+    fun bootDocuments(inlineLimit: Long): BootDocuments {
+        val files = JSONObject()
+        val deferred = JSONArray()
+        for ((name, file) in bootFiles()) {
+            val length = file.length()
+            if (length <= inlineLimit) {
+                runCatching { files.put(name, file.readText()) }
+            } else {
+                deferred.put(JSONObject().put("name", name).put("bytes", length).put("etag", etagOf(file, length)))
+            }
         }
-        read(BLOCKING_INDEX)?.let { out.put(BLOCKING_INDEX, it) }
+        return BootDocuments(files, deferred)
+    }
+
+    /** Every boot document read synchronously, whatever its size (the pre-handoff payload). */
+    fun readAll(): JSONObject = bootDocuments(Long.MAX_VALUE).files
+
+    /**
+     * The root documents, the blocking index and the Safe Browsing feed documents, in the order
+     * the payload lists them: the root first, by name, then the folders.
+     */
+    private fun bootFiles(): List<Pair<String, File>> {
+        val out = ArrayList<Pair<String, File>>()
+        dir.listFiles { f -> f.isFile && f.name.endsWith(".json") }?.sortedBy { it.name }?.forEach { out.add(it.name to it) }
+        fileFor(BLOCKING_INDEX)?.takeIf { it.isFile }?.let { out.add(BLOCKING_INDEX to it) }
+        for (name in list(SAFE_BROWSING_DIR).sorted()) {
+            if (!name.endsWith(".json")) continue
+            fileFor(name)?.takeIf { it.isFile }?.let { out.add(name to it) }
+        }
         return out
+    }
+
+    /**
+     * Whether a name is one [bootFiles] can list – a root `*.json` document, the blocking index,
+     * a Safe Browsing feed document – and so one the document handler serves. Not the filter
+     * text under `blocking/`, not a backup, not a temp file: those the chrome reads through the
+     * bridge when it needs them, as before.
+     */
+    fun isBootDocument(name: String): Boolean {
+        val parts = name.split('/').filter { it.isNotEmpty() }
+        return when (parts.size) {
+            1 -> parts[0].endsWith(".json") && parts[0] != ".json"
+            2 -> parts[0] == SAFE_BROWSING_DIR && parts[1].endsWith(".json") || parts == BLOCKING_INDEX.split('/')
+            else -> false
+        }
+    }
+
+    /**
+     * The version tag of a document: its size and its modification time. Every write changes it
+     * (writes replace the file whole, see [writeAtomic], which moves a rewrite of the same size
+     * within the same millisecond one millisecond on), and it is a property of the file, not of
+     * the process: what the chrome compares with the boot manifest, what the Safe Browsing host
+     * keeps its parsed tables by and names the documents its snapshot was built from with, so a
+     * snapshot written by one process is recognised by the next. Null when the document does
+     * not exist.
+     */
+    fun etag(name: String): String? {
+        val file = fileFor(name)?.takeIf { it.isFile } ?: return null
+        return etagOf(file, file.length())
+    }
+
+    private fun etagOf(file: File, length: Long): String =
+        "${java.lang.Long.toHexString(length)}-${java.lang.Long.toHexString(file.lastModified())}"
+
+    /**
+     * A boot document opened for streaming (the document handler), or null when it does not
+     * exist. The stream is opened first and the length taken from it, so the `Content-Length`
+     * describes the bytes that are streamed even if a write renames a new file over the name in
+     * between; the tag is one stat after that.
+     */
+    fun open(name: String): OpenDocument? {
+        val file = fileFor(name)?.takeIf { it.isFile } ?: return null
+        val stream = runCatching { FileInputStream(file) }.getOrNull() ?: return null
+        val length = runCatching { stream.channel.size() }.getOrElse { stream.close(); return null }
+        return OpenDocument(etagOf(file, length), length, stream)
     }
 
     /** The text of one document, or null when it does not exist. */
@@ -100,18 +180,60 @@ class Storage(private val dir: File) {
         return file
     }
 
-    fun write(name: String, text: String, done: () -> Unit) {
+    /**
+     * Replace a document on the storage thread; `done` hears the failure, if any, so the chrome
+     * can reject the write instead of remembering it as made. With `backup`, the document that
+     * was there is kept as `<name>.bak` (see [writeAtomic]).
+     */
+    fun write(name: String, text: String, backup: Boolean = false, done: (Throwable?) -> Unit) {
         executor.execute {
-            runCatching { writeAtomic(name, text) }
-            notifyChanged(name)
-            done()
+            val failure = runCatching { writeAtomic(name, text, backup) }.exceptionOrNull()
+            if (failure == null) notifyChanged(name)
+            done(failure)
         }
     }
 
-    /** Called on the bridge thread when the app is being backgrounded; must finish before returning. */
-    fun writeSync(name: String, text: String) {
-        runCatching { writeAtomic(name, text) }
+    /**
+     * Called on the bridge thread when the app is being backgrounded; must finish before
+     * returning. Throws when the document could not be replaced (the file is as it was).
+     */
+    fun writeSync(name: String, text: String, backup: Boolean = false) {
+        writeAtomic(name, text, backup)
         notifyChanged(name)
+    }
+
+    /**
+     * The bytes of a file the host keeps beside the documents (the Safe Browsing snapshot,
+     * `safebrowsing/tables.bin`), or null when there is none.
+     */
+    fun readBytes(name: String): ByteArray? {
+        val file = fileFor(name) ?: return null
+        return runCatching { if (file.isFile) file.readBytes() else null }.getOrNull()
+    }
+
+    /**
+     * Write such a file whole, on the caller's thread: a temp file renamed over the target like
+     * the documents, but with no change notification – a cache the Kotlin side owns is nobody's
+     * document. True when the bytes landed.
+     */
+    fun writeBytes(name: String, bytes: ByteArray): Boolean {
+        val target = fileFor(name) ?: return false
+        return runCatching {
+            target.parentFile?.mkdirs()
+            val tmp = File(target.parentFile, "${target.name}.tmp")
+            tmp.writeBytes(bytes)
+            if (!tmp.renameTo(target)) {
+                target.delete()
+                tmp.renameTo(target)
+            }
+            target.isFile
+        }.getOrDefault(false)
+    }
+
+    /** Delete such a file at once, silently; true when nothing is left under the name. */
+    fun deleteBytes(name: String): Boolean {
+        val file = fileFor(name) ?: return false
+        return runCatching { !file.exists() || file.delete() }.getOrDefault(false)
     }
 
     fun remove(name: String, done: () -> Unit) {
@@ -134,15 +256,16 @@ class Storage(private val dir: File) {
      * document may overlap – an asynchronous one still landing when the app is backgrounded and
      * the synchronous last-chance write starts). The token names the write to [writeChunk],
      * [endWrite] and [abortWrite]; null for a name that escapes the directory or a file that
-     * cannot be opened. Runs on the caller's thread.
+     * cannot be opened. With `backup` the document that was there is kept as `<name>.bak` when
+     * the write ends, as [write] keeps it. Runs on the caller's thread.
      */
-    fun beginWrite(name: String): Long? {
+    fun beginWrite(name: String, backup: Boolean = false): Long? {
         val target = fileFor(name) ?: return null
         target.parentFile?.mkdirs()
         val token = tokens.incrementAndGet()
         val tmp = File(target.parentFile, "${target.name}.$token.tmp")
         val writer = runCatching { tmp.bufferedWriter() }.getOrNull() ?: return null
-        pendingWrites[token] = PendingWrite(name, tmp, writer)
+        pendingWrites[token] = PendingWrite(name, tmp, writer, backup)
         return token
     }
 
@@ -154,16 +277,19 @@ class Storage(private val dir: File) {
         return false
     }
 
-    /** Finish the write `token`: the temp file becomes the document. False when it was not pending or did not land. */
+    /**
+     * Finish the write `token`: the temp file becomes the document, as a whole write's does
+     * ([publish]: the version tag moves on, the backup is kept when asked). False when it was not
+     * pending or did not land; the document is then as it was.
+     */
     fun endWrite(token: Long): Boolean {
         val pending = pendingWrites.remove(token) ?: return false
-        val target = fileFor(pending.name)
         val landed = runCatching {
             pending.writer.close()
-            target != null && replace(pending.tmp, target)
-        }.getOrDefault(false)
-        if (!landed) pending.tmp.delete()
-        notifyChanged(pending.name)
+            val target = fileFor(pending.name) ?: throw IOException("not a document name: ${pending.name}")
+            publish(pending.tmp, target, pending.name, pending.backup)
+        }.isSuccess
+        if (landed) notifyChanged(pending.name) else pending.tmp.delete()
         return landed
     }
 
@@ -172,6 +298,20 @@ class Storage(private val dir: File) {
         val pending = pendingWrites.remove(token) ?: return
         runCatching { pending.writer.close() }
         pending.tmp.delete()
+    }
+
+    /**
+     * A document as the bridge's `storage.read` answers it: the text, whole, when the file is at
+     * most `inlineLimit` bytes; `{ token }` for a bigger one, to be read in pieces ([readChunk]
+     * until null) so that one piece is on the Java heap at a time – the text whole, JSON-quoted
+     * into the bridge's answer, is two copies of it. Null when the document does not exist.
+     * Runs on the caller's thread.
+     */
+    fun readOrBegin(name: String, inlineLimit: Long): Any? {
+        val file = fileFor(name)?.takeIf { it.isFile } ?: return null
+        if (file.length() <= inlineLimit) return runCatching { file.readText() }.getOrNull()
+        val token = beginRead(name) ?: return null
+        return JSONObject().put("token", token)
     }
 
     /** Begin reading `name` in pieces ([readChunk]); null when it does not exist. Runs on the caller's thread. */
@@ -213,27 +353,65 @@ class Storage(private val dir: File) {
     /** For the tests: whether a write or read in pieces is still open. */
     fun hasPending(token: Long): Boolean = pendingWrites.containsKey(token) || pendingReads.containsKey(token)
 
-    private fun writeAtomic(name: String, text: String) {
-        val target = fileFor(name) ?: return
+    /**
+     * The text goes to a temp file that is renamed over the target ([publish]), so a crash
+     * mid-write never leaves a torn document. Throws when the document could not be replaced.
+     */
+    private fun writeAtomic(name: String, text: String, backup: Boolean) {
+        val target = fileFor(name) ?: throw IOException("not a document name: $name")
         target.parentFile?.mkdirs()
         val tmp = File(target.parentFile, "${target.name}.tmp")
         tmp.writeText(text)
-        replace(tmp, target)
+        publish(tmp, target, name, backup)
     }
 
-    private fun replace(tmp: File, target: File): Boolean {
-        if (tmp.renameTo(target)) return true
-        target.delete()
-        return tmp.renameTo(target)
+    /**
+     * The temp file becomes the document `name`. With `backup` the document that was there is
+     * renamed to `<name>.bak` first (two renames, no copying, as the Electron host does): the
+     * previous version survives a write that the document itself does not, and the core reads the
+     * backup when the document is gone or unreadable (`JsonStore`, `backup: true`). Throws when
+     * the document could not be replaced (the temp file is deleted; the document is as it was).
+     *
+     * The new file's version tag ([etag]) differs from the old one's: bytes of the same size
+     * landing within the modification time's millisecond (a filesystem's clock is coarser than
+     * that) get a modification time one millisecond past the old file's, on the temp file, so
+     * the rename publishes bytes and tag together.
+     */
+    private fun publish(tmp: File, target: File, name: String, backup: Boolean) {
+        val before = target.takeIf { it.isFile }?.let { it.length() to it.lastModified() }
+        if (before != null && tmp.length() == before.first && tmp.lastModified() <= before.second) {
+            tmp.setLastModified(before.second + 1)
+        }
+        if (backup && target.isFile) target.renameTo(File(target.parentFile, "${target.name}.bak"))
+        if (!tmp.renameTo(target)) {
+            target.delete()
+            if (!tmp.renameTo(target)) {
+                tmp.delete()
+                throw IOException("could not replace $name")
+            }
+        }
     }
+
+    /** What [bootDocuments] hands the boot payload: the inlined texts and the deferred documents' manifest. */
+    class BootDocuments(val files: JSONObject, val deferred: JSONArray)
+
+    /** One document as [open] hands it to the document handler; the caller closes `stream`. */
+    class OpenDocument(val etag: String, val length: Long, val stream: InputStream)
 
     companion object {
         /** The rule-set index the core keeps (`src/core/blocking/store.ts`). */
         const val BLOCKING_DIR = "blocking"
         const val BLOCKING_INDEX = "$BLOCKING_DIR/index.json"
+        /** The Safe Browsing feed documents (`SAFE_BROWSING_DIR` in `src/core/safebrowsing/service.ts`). */
+        const val SAFE_BROWSING_DIR = "safebrowsing"
         /** The extensions' `chrome.storage` documents, `<id>.json` each (`src/android/extensionRuntime.ts`). */
         const val EXT_STORAGE_DIR = "ext-storage"
         private const val LEGACY_EXT_STORAGE_PREFIX = "ext-storage-"
+        /**
+         * A document up to this many bytes is answered whole by the bridge's `storage.read`; a
+         * bigger one is read in pieces (`CHUNK_CHARS` in `src/android/storeIo.ts`, the same 1 Mi).
+         */
+        const val INLINE_READ_BYTES = 1L shl 20
         /** The most characters one [readChunk] hands out (the bridge's chunk is 1 Mi; this bounds a caller's request). */
         const val MAX_CHUNK_CHARS = 4 shl 20
         private val UNSAFE = Regex("[^A-Za-z0-9._-]")

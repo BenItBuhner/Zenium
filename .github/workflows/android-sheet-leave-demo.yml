@@ -1,0 +1,70 @@
+name: Android sheet leave demo
+
+# Records the phone sheets whose request goes before they do – the leave that outlives the
+# request (design language v2 draft §11.1: the store's `null` means "leave", never "vanish") –
+# on an Android 15 emulator: the app menu, then the tab's context menu popped over it by the
+# core, which sends the app menu `menu.hide`; the icon picker cancelled by a press on its scrim
+# (its dialog unmounts the panel in the very commit; the frame dialog host's slot keeps it for
+# the way down); a stack – the external-protocol confirm over the open menu – whose LOWER sheet
+# the host closes while the upper holds (§11.2); and a prompt the core owns (the location
+# permission, in `state`) withdrawn by the page navigating. Uploads the video, the driver's
+# timed screenshots, frames cut from the video around every event and two sets of measurements:
+# the recede demo's (the page band as dark as the progress swatch says its sheets are up, never
+# the window gradient) and this driver's own – a pose of the chrome read every 60 ms while each
+# leave runs (the sheet still mounted, marked leaving and inert, its offset running one way, the
+# frame dialog slot never running back empty, the upper sheet of a stack not moving). Dispatch-
+# only, like the recede demo: it takes about ten minutes. The build, the emulator and the Gradle
+# cache live in android-emulator-demo.yml; this file only picks the driver and the colour scheme.
+on:
+  workflow_dispatch:
+    inputs:
+      theme:
+        description: Colour scheme of the chrome
+        type: choice
+        default: light
+        options:
+          - light
+          - dark
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-sheet-leave-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Sheet leave demo (${{ inputs.theme || 'light' }})
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-sheet-leave-demo.sh
+      script-env: |
+        DEMO_THEME=${{ inputs.theme || 'light' }}
+        DEMO_OUT=artifacts/android-sheet-leave-demo
+        DEMO_VIDEO=android-motion-sheets-leave-${{ inputs.theme || 'light' }}.mp4
+      setup-script: |
+        sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg
+      # Android 15, as the recede demo: the same emulator the chassis was measured on.
+      api-level: '35'
+      artifact-name: android-sheet-leave-demo-${{ inputs.theme || 'light' }}
+      artifact-path: artifacts/android-sheet-leave-demo/
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed: a run is then spent on the demo rather than on the runner.
+  record-again:
+    name: Sheet leave demo (${{ inputs.theme || 'light' }}), second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-sheet-leave-demo.sh
+      script-env: |
+        DEMO_THEME=${{ inputs.theme || 'light' }}
+        DEMO_OUT=artifacts/android-sheet-leave-demo
+        DEMO_VIDEO=android-motion-sheets-leave-${{ inputs.theme || 'light' }}.mp4
+      setup-script: |
+        sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg
+      api-level: '35'
+      artifact-name: android-sheet-leave-demo-${{ inputs.theme || 'light' }}-second-boot
+      artifact-path: artifacts/android-sheet-leave-demo/

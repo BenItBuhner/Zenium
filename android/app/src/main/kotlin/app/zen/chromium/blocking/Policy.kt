@@ -18,8 +18,13 @@ class SafeBrowsingHit(val feedId: String, val threat: String, val expression: St
  * and the `httpsOnlyAllowed` flags the `PrivacyService` pushes.
  */
 interface RequestPolicy {
-    /** Why `url` must not load as a document (main or sub frame), or null to let the engine decide. */
-    fun unsafe(url: String): SafeBrowsingHit?
+    /**
+     * Why `url` must not load as a document (main or sub frame), or null to let the engine decide.
+     * `navigation` marks a main-frame document's request on a network thread: the process's first
+     * may wait for the Safe Browsing tables to load (`SafeBrowsing.tablesForNavigation`); frames,
+     * subresources and the main thread's early look at a navigation never do.
+     */
+    fun unsafe(url: String, navigation: Boolean = false): SafeBrowsingHit?
 
     /**
      * Whether HTTPS-only mode's upgrade of `url` is to be skipped: the user allowed the site over

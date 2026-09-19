@@ -28,6 +28,7 @@ Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 const { buildSection, buildSections } = await import('../sections')
 const { allRows, currentOptionLabel, findRow, groupShows, rowText, searchRows } =
   await import('../model')
+const { uiStore } = await import('@renderer/lib/ui')
 
 type Model = ReturnType<typeof buildSection>
 type Row = ReturnType<typeof allRows>[number]
@@ -233,6 +234,7 @@ describe('the section model', () => {
       'boosts',
       'mods',
       'agents',
+      'passwords',
       'accessibility',
       'updates',
       'about'
@@ -559,6 +561,159 @@ describe('the section model', () => {
       full.ctx
     )
     expect(row(packed, 'newtab-add-shortcut').disabled).toBe(true)
+  })
+
+  it('carries #92’s Passwords rows: the ways into the manager, the preferences, protection and lock, import and export; behind `passwords`', async () => {
+    const without = { ...ANDROID, passwords: false }
+    expect(availableSections(PAGE, without, 'phone').some((s) => s.id === 'passwords')).toBe(false)
+
+    const c = context()
+    const passwords = buildSection(
+      PAGE.sections.find((x) => x.id === 'passwords')!,
+      c.ctx
+    )
+    expect(passwords.groups.map((g) => g.heading)).toEqual([
+      'Password manager',
+      'Saving',
+      'Security',
+      'Import and export'
+    ])
+    expect(allRows(passwords.groups).map((r) => r.id)).toEqual([
+      'passwords-manage',
+      'passwords-checkup',
+      'passwords-offer-to-save',
+      'passwords-reauth-grace',
+      'passwords-protection',
+      'passwords-lock',
+      'passwords-import',
+      'passwords-export'
+    ])
+
+    // The way into the manager: what it holds on the second line, a chevron for leaving the page.
+    const manage = row(passwords, 'passwords-manage')
+    expect(manage).toMatchObject({
+      kind: 'action',
+      label: 'Manage passwords',
+      description: 'No vault yet',
+      leaves: 'chevron'
+    })
+    const held = state({
+      passwords: { ...emptyPasswordsStatus(), locked: false, count: 3 }
+    } as Partial<UIState>)
+    expect(row(section('passwords', held), 'passwords-manage').description).toBe('3 logins saved')
+    const locked = state({
+      passwords: { ...emptyPasswordsStatus(), protection: { os: true, passphrase: false } }
+    } as Partial<UIState>)
+    expect(row(section('passwords', locked), 'passwords-manage').description).toBe(
+      'The vault is locked'
+    )
+    if (manage.kind !== 'action') throw new Error('not an action')
+    manage.onPress?.()
+    await vi.waitFor(() => expect(uiStore.get().overlay).toBe('passwords'))
+    expect(uiStore.get().overlaySection).toBe('logins')
+    uiStore.set({ overlay: 'none', overlaySection: null })
+
+    // The checkup row says what the checkup would find, then what it found and when; it opens
+    // the manager on the checkup view. Rows about a vault operation open the settings view.
+    const checkup = row(passwords, 'passwords-checkup')
+    expect(checkup).toMatchObject({ kind: 'action', label: 'Check passwords', leaves: 'chevron' })
+    expect(checkup.description).toBe(
+      'Finds passwords that appeared in data breaches, are reused across sites or are easy to guess.'
+    )
+    const checked = state({
+      passwords: {
+        ...emptyPasswordsStatus(),
+        locked: false,
+        count: 3,
+        checkup: {
+          ...emptyPasswordsStatus().checkup,
+          finishedAt: Date.now(),
+          compromised: ['a'],
+          weak: ['a', 'b'],
+          reused: [['b', 'c']]
+        }
+      }
+    } as Partial<UIState>)
+    expect(row(section('passwords', checked), 'passwords-checkup').description).toBe(
+      '3 passwords need attention · Last checked just now'
+    )
+    const running = state({
+      passwords: {
+        ...emptyPasswordsStatus(),
+        locked: false,
+        checkup: { ...emptyPasswordsStatus().checkup, running: true, checked: 2, total: 5 }
+      }
+    } as Partial<UIState>)
+    expect(row(section('passwords', running), 'passwords-checkup').description).toBe(
+      'Checking 2 of 5'
+    )
+    for (const [id, view] of [
+      ['passwords-checkup', 'checkup'],
+      ['passwords-protection', 'settings'],
+      ['passwords-import', 'settings'],
+      ['passwords-export', 'settings']
+    ] as const) {
+      const r = row(passwords, id)
+      if (r.kind !== 'action') throw new Error(`${id} is not an action`)
+      expect(r.leaves).toBe('chevron')
+      r.onPress?.()
+      await vi.waitFor(() => expect(uiStore.get().overlay).toBe('passwords'))
+      expect(uiStore.get().overlaySection).toBe(view)
+      uiStore.set({ overlay: 'none', overlaySection: null })
+    }
+
+    // Protection names how the key is kept – or will be, before there is a vault.
+    expect(row(passwords, 'passwords-protection').description).toBe(
+      'A passphrase, created with the first login'
+    )
+    expect(row(section('passwords', locked), 'passwords-protection').description).toBe(
+      'Device keychain'
+    )
+
+    // Lock is a plain press while the vault is open, laid out at 40% once it is locked.
+    const lock = row(section('passwords', held), 'passwords-lock')
+    expect(lock).toMatchObject({
+      kind: 'action',
+      label: 'Lock the vault',
+      description: 'Forget the key until the manager is opened again.',
+      disabled: false
+    })
+    if (lock.kind !== 'action') throw new Error('not an action')
+    invoke.mockClear()
+    lock.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('passwords.lock', undefined)
+    expect(row(section('passwords', locked), 'passwords-lock')).toMatchObject({
+      description: 'The vault is locked.',
+      disabled: true
+    })
+
+    // The two preferences patch inside `passwords`, keeping the rest of it.
+    const offer = row(passwords, 'passwords-offer-to-save')
+    if (offer.kind !== 'switch') throw new Error('not a switch')
+    expect(offer.checked).toBe(true)
+    offer.onChange(false)
+    expect(c.patches.at(-1)).toEqual({
+      passwords: { ...DEFAULT_SETTINGS.passwords, offerToSave: false }
+    })
+
+    const grace = row(passwords, 'passwords-reauth-grace')
+    if (grace.kind !== 'value') throw new Error('not a value row')
+    expect(currentOptionLabel(grace)).toBe('After 1 minute')
+    expect(grace.options.map((o) => o.label)).toEqual([
+      'Every time',
+      'After 30 seconds',
+      'After 1 minute',
+      'After 5 minutes',
+      'After 15 minutes',
+      'After 1 hour'
+    ])
+    expect(grace.sheetDescription).toBe(
+      'How long one verification covers reveals, copies and exports.'
+    )
+    grace.onChange('300')
+    expect(c.patches.at(-1)).toEqual({
+      passwords: { ...DEFAULT_SETTINGS.passwords, reauthGraceSeconds: 300 }
+    })
   })
 
   it('orders Look and Feel identity, chrome, page behaviour, Glance (design lead, #134)', () => {

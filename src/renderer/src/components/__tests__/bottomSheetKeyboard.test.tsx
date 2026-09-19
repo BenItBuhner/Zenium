@@ -30,7 +30,7 @@ import { uiStore } from '@renderer/lib/ui'
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 /**
- * The wait for the page's cover before a sheet comes up (`activePageCovered`, §11.5): resolved
+ * The wait for the page's cover before a sheet comes up (`coverPageUnderSheet`, §11.5): resolved
  * at once with no page to cover – the module's own – unless a test holds it, as the phone does
  * while the live page gives way to its picture.
  */
@@ -41,10 +41,10 @@ vi.mock('@renderer/lib/ui', async (importOriginal) => {
   const mod = await importOriginal<typeof import('@renderer/lib/ui')>()
   return {
     ...mod,
-    activePageCovered: () =>
+    coverPageUnderSheet: () =>
       cover.pending
-        ? { promise: cover.pending.promise, cancel: () => undefined }
-        : mod.activePageCovered()
+        ? { promise: cover.pending.promise, release: () => undefined }
+        : mod.coverPageUnderSheet()
   }
 })
 
@@ -488,7 +488,7 @@ describe('a stack holds the focus on top only (§9.24)', () => {
 
 /*
  * On the phone a sheet waits for the live page to give way to its picture before it comes up
- * (§11.5, `activePageCovered`), and the chassis moves the focus in as the sheet mounts – during
+ * (§11.5, `coverPageUnderSheet`), and the chassis moves the focus in as the sheet mounts – during
  * that wait. The hold is opacity 0 and no pointer, never `visibility: hidden`: the focus lands
  * in the sheet at once and is still there once the sheet shows (the regression the review of
  * #168 measured: focus stayed on the opener, and Enter no longer closed the prompt).

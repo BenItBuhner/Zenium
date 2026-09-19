@@ -43,6 +43,7 @@ describe('the page registry', () => {
       'mods',
       'extensions',
       'agents',
+      'passwords',
       'sync',
       'accessibility',
       'shortcuts',
@@ -194,6 +195,7 @@ describe('the section model', () => {
     expect(ids).not.toContain('resources')
     expect(ids).not.toContain('accessibility')
     expect(ids).not.toContain('privacy')
+    expect(ids).not.toContain('passwords')
   })
 })
 

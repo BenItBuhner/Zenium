@@ -7,6 +7,7 @@ import android.app.UiAutomation
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.PointF
 import android.graphics.Rect
 import android.net.Uri
 import android.os.SystemClock
@@ -60,6 +61,14 @@ abstract class DemoHarness(
     protected lateinit var pill: Rect
     protected var pillY = 0f
     protected var pillCenterX = 0f
+    /**
+     * The part of the window a finger's touch reaches the app in: below the status bar and above
+     * the navigation bar's window. The system bars are windows of their own and take every touch
+     * inside them, and the 3-button navigation bar's window is 48 dp tall whatever inset it
+     * reports (the API 34 emulator reports 24 dp and the chrome lays its bar out to that, so a
+     * sheet's bottom row may run under the buttons: a touch there goes to SystemUI, not the app).
+     */
+    protected lateinit var touchable: Rect
     /** Finger travel (px) that opens the overview completely, mirroring `overviewTravel()`. */
     protected var overviewTravel = 0f
 
@@ -157,30 +166,44 @@ abstract class DemoHarness(
         pill = found ?: computedPill(insets.bottom)
         pillY = pill.exactCenterY()
         pillCenterX = pill.exactCenterX()
+        touchable = touchableBand(insets)
         overviewTravel = max(220 * density, 0.42f * (height - insets.top - insets.bottom - 64 * density))
         Log.i(
             tag,
-            "window ${width}x${height} density $density insets ${insets.top}/${insets.bottom} pill $pill " +
+            "window ${width}x${height} density $density insets ${insets.top}/${insets.bottom} " +
+                "(tappable ${insets.tappableBottom} below) touchable $touchable pill $pill " +
                 "(${if (found != null) "from accessibility" else "computed"}) overview travel $overviewTravel"
         )
     }
 
-    protected class Insets(val windowWidth: Int, val windowHeight: Int, val top: Int, val bottom: Int)
+    /**
+     * `tappableBottom` is the `tappableElement` inset: how far up from the bottom the system says
+     * a touch cannot reach the app (0 under a gesture bar, the bar's height under buttons).
+     */
+    protected class Insets(val windowWidth: Int, val windowHeight: Int, val top: Int, val bottom: Int, val tappableBottom: Int = bottom)
 
     /** The window and its system bar insets – the same numbers the chrome lays itself out with. */
     protected fun windowInsets(): Insets {
         var result = Insets(0, 0, 0, 0)
         instrumentation.runOnMainSync {
             val root = activity.window.decorView
-            val bars = ViewCompat.getRootWindowInsets(root)?.getInsets(WindowInsetsCompat.Type.systemBars())
-            result = Insets(root.width, root.height, bars?.top ?: 0, bars?.bottom ?: 0)
+            val all = ViewCompat.getRootWindowInsets(root)
+            val bars = all?.getInsets(WindowInsetsCompat.Type.systemBars())
+            val tappable = all?.getInsets(WindowInsetsCompat.Type.tappableElement())
+            result = Insets(root.width, root.height, bars?.top ?: 0, bars?.bottom ?: 0, tappable?.bottom ?: (bars?.bottom ?: 0))
         }
         if (result.windowWidth == 0 || result.windowHeight == 0) {
             val probe = ui.takeScreenshot() ?: error("could not measure the window")
-            result = Insets(probe.width, probe.height, result.top, result.bottom)
+            result = Insets(probe.width, probe.height, result.top, result.bottom, result.tappableBottom)
             probe.recycle()
         }
         return result
+    }
+
+    /** [touchable] from the window's insets: see the field for why the bottom band is at least [NAV_BAR_WINDOW_DP]. */
+    protected fun touchableBand(insets: Insets): Rect {
+        val bottomBand = max(max(insets.bottom, insets.tappableBottom), (NAV_BAR_WINDOW_DP * density).roundToInt())
+        return Rect(0, insets.top, insets.windowWidth, insets.windowHeight - bottomBand)
     }
 
     /** Where the pill is when the accessibility tree does not say: below the page, between the buttons. */
@@ -372,6 +395,105 @@ abstract class DemoHarness(
         }
         return null
     }
+
+    // --- pressing a control: a finger, or the accessibility tree ---------------------------------
+    //
+    // Two ways to press, for two different claims. [touchTap] and [touchTapLabel] inject a REAL
+    // touch – ACTION_DOWN and ACTION_UP through UiAutomation inside the node's bounds, the path
+    // `adb shell input tap` takes – so the WebView hit-tests it as it would a finger: the
+    // chrome's layers, scrims and `pointer-events` cuts all have their say. A step whose claim is
+    // "the user can tap this" uses one of them ([tapLabel] and [Finger.tap] are the same touch
+    // with a caller-owned finger) and reads the outcome afterwards, through the tree or the
+    // core's state (the row's new value, an option's checked state), never off the return value.
+    // [clickByLabel] performs ACTION_CLICK on the accessibility node: no hit test, so it lands on
+    // a control a finger cannot reach, and on bounds that trail a scrolled list. It is for getting
+    // to a state (set-up off camera, a row deep in a list the tree has not caught up with), never
+    // for the claim that a tap works: from v0.3.42 to v0.3.45 no phone Settings sheet took a real
+    // touch (#192: the tap fell through the sheet to the host's scrim), and every driver that
+    // pressed the sheets' rows through the tree passed.
+    //
+    // Where the finger lands: the WebView's tree reports a row that has just moved (a sheet's
+    // rows while it rises) where it was a few frames ago, so a touch waits for the node's bounds
+    // to settle ([steadyBounds]); and it aims at the middle of the bounds' part inside
+    // [touchable], not of the bounds themselves, since a sheet's bottom row runs under the
+    // navigation bar's window and a touch there never reaches the app ([touchPoint]).
+
+    /**
+     * A real touch inside `node`'s bounds, where a finger's would land (see [touchPoint]). False,
+     * and nothing injected, when the node has gone or no part of it is inside [touchable] (a row
+     * below the fold, one under the navigation bar): the caller says so rather than touching a
+     * corner.
+     */
+    protected fun touchTap(node: AccessibilityNodeInfo): Boolean = touchTapPoint(node) != null
+
+    /** [touchTap], answering where the finger landed (screen px) – for a driver's findings – or null when it did not touch. */
+    protected fun touchTapPoint(node: AccessibilityNodeInfo): PointF? {
+        val bounds = steadyBounds(node) ?: run {
+            Log.w(tag, "the node to touch went away")
+            return null
+        }
+        val point = touchPoint(bounds) ?: run {
+            Log.w(tag, "no part of $bounds is inside the touchable window $touchable")
+            return null
+        }
+        Log.i(tag, "touch at ${point.x},${point.y} on '${node.text ?: node.contentDescription}' (bounds $bounds, touchable $touchable)")
+        Finger().tap(point.x, point.y)
+        return point
+    }
+
+    /** Where a finger touches `bounds`: the middle of their part inside [touchable]; null when no part is. */
+    protected fun touchPoint(bounds: Rect): PointF? {
+        val reach = Rect(bounds)
+        if (bounds.isEmpty || !reach.intersect(touchable)) return null
+        return PointF(reach.exactCenterX(), reach.exactCenterY())
+    }
+
+    /**
+     * `node`'s bounds on screen once two reads [BOUNDS_SETTLE_MS] apart agree, or the last read
+     * when they never do within `timeoutMs` (logged); null when the node has gone from the tree.
+     */
+    protected fun steadyBounds(node: AccessibilityNodeInfo, timeoutMs: Long = 3_000): Rect? {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        var bounds = Rect().also { node.getBoundsInScreen(it) }
+        while (SystemClock.uptimeMillis() < deadline) {
+            SystemClock.sleep(BOUNDS_SETTLE_MS)
+            if (!node.refresh()) return null
+            val again = Rect().also { node.getBoundsInScreen(it) }
+            if (again == bounds) return bounds
+            bounds = again
+        }
+        Log.w(tag, "bounds still moving after $timeoutMs ms: $bounds")
+        return bounds
+    }
+
+    /**
+     * A real touch on the first node whose label or text is `label` – exactly, or with `prefix`
+     * one whose text starts with it (a Settings row reads its label and value as one text) –
+     * waiting up to `timeoutMs` for it to show with bounds on screen; false when none does.
+     */
+    protected fun touchTapLabel(label: String, prefix: Boolean = false, timeoutMs: Long = 8_000): Boolean {
+        val node = awaitNode(timeoutMs) { it == label || (prefix && it.startsWith(label)) } ?: run {
+            Log.w(tag, "nothing on screen reads '$label'")
+            return false
+        }
+        return touchTap(node)
+    }
+
+    /** Poll up to `timeoutMs` for the first node whose label or text `matches`, with bounds on screen. */
+    protected fun awaitNode(timeoutMs: Long = 8_000, matches: (String) -> Boolean): AccessibilityNodeInfo? {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            findNode(matches)?.let { node ->
+                if (boundsOnScreen(Rect().also { node.getBoundsInScreen(it) })) return node
+            }
+            SystemClock.sleep(200)
+        }
+        return null
+    }
+
+    /** Non-empty bounds whose middle is inside the window. */
+    protected fun boundsOnScreen(bounds: Rect): Boolean =
+        !bounds.isEmpty && bounds.centerX() in 0 until width && bounds.centerY() in 0 until height
 
     // Shared by the drivers (moved here from the first-run driver): the API 34 emulator renders
     // in software and the WebView's accessibility tree trails a transition by seconds, so touches
@@ -668,6 +790,10 @@ abstract class DemoHarness(
         const val MENU_LABEL = "Menu"
         const val MENU_HANDLE_LABEL = "Resize menu"
         private const val STEP_MS = 8L
+        /** Two reads of a node's bounds this far apart agreeing count as settled ([steadyBounds]). */
+        private const val BOUNDS_SETTLE_MS = 350L
+        /** The 3-button navigation bar's window, in dp, whatever inset it reports (see [touchable]). */
+        private const val NAV_BAR_WINDOW_DP = 48
         /** Past the 8 CSS px slop at any plausible density, hardly visible on the track. */
         const val NUDGE = 30f
         const val STAGE_WAIT = 2_400L

@@ -2093,6 +2093,7 @@ export type OverlayKind =
   | 'addons'
   | 'live-folder'
   | 'sync'
+  | 'passwords'
 
 export interface WindowState {
   id: string
@@ -2541,6 +2542,7 @@ export interface CommandDescriptor {
     | 'page.toggleMuteSite'
     | 'resources.trim'
     | 'resources.open'
+    | 'passwords.open'
   /** The host capability the command needs; not offered where it is false. */
   requires?: keyof HostCapabilities
   /** The layouts the command does something in; absent means all of them. */

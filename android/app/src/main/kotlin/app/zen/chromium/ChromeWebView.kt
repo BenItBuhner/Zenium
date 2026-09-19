@@ -64,7 +64,7 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
         addJavascriptInterface(JsBridge(host), "__zenNative")
         webViewClient = object : WebViewClient() {
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
-                loader.shouldInterceptRequest(request.url)
+                handoffResponse(request.url) ?: loader.shouldInterceptRequest(request.url)
 
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 // The chrome never navigates; anything that tries is an external link.
@@ -133,6 +133,29 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
         loadUrl(if (dev.isNotEmpty()) dev else "$APP_ORIGIN/assets/www/index.html")
     }
 
+    /**
+     * The file-backed handoffs (`BootHandoff.kt`) on the app origin: the core's big boot documents
+     * under `/zen-docs/<name>` and the spilled `net.fetch` bodies under `/zen-net/<token>`, streamed
+     * from their files on WebView's IO thread. Null for every other URL (the asset loader's turn).
+     * `Cache-Control: no-store` keeps the renderer from answering a later boot with a stale copy;
+     * the `ETag` is the version tag the boot manifest named, for the chrome to compare.
+     */
+    private fun handoffResponse(url: Uri): WebResourceResponse? {
+        if (url.scheme != "https" || url.host != APP_HOST) return null
+        val path = url.path ?: return null
+        val answer = when {
+            path.startsWith(BootHandoff.DOCS_PATH) -> host.handoff.document(path.removePrefix(BootHandoff.DOCS_PATH))
+            path.startsWith(BootHandoff.NET_PATH) -> host.handoff.spilled(path.removePrefix(BootHandoff.NET_PATH))
+            else -> return null
+        }
+        if (!answer.ok) return WebResourceResponse("text/plain", "utf-8", 404, "Not Found", emptyMap(), null)
+        val headers = HashMap<String, String>()
+        headers["Cache-Control"] = "no-store"
+        headers["Content-Length"] = answer.length.toString()
+        answer.etag?.let { headers["ETag"] = "\"$it\"" }
+        return WebResourceResponse(answer.mimeType, "utf-8", 200, "OK", headers, answer.stream)
+    }
+
     /** Run once the chrome document has loaded (queued before that). */
     fun onReady(block: () -> Unit) {
         if (ready) block() else whenReady.add(block)
@@ -194,7 +217,8 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
     }
 
     companion object {
-        const val APP_ORIGIN = "https://appassets.androidplatform.net"
+        const val APP_HOST = "appassets.androidplatform.net"
+        const val APP_ORIGIN = "https://$APP_HOST"
         /** Package files by token (`extensionStoreIo.ts` PACKAGES_PATH). */
         const val PACKAGES_PATH = "/ext-packages/"
         /** Installed extension files, `<id>/<version>/<path>` (`extensionStoreIo.ts` FILES_PATH). */

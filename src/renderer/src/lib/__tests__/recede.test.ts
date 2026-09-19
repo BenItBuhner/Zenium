@@ -144,9 +144,33 @@ describe('recedeFrame: the stack rule (§11.2, §9.24)', () => {
   it('a second sheet does not push the page further', () => {
     expect(recedeFrame([1, 1]).page).toBe(1)
     expect(recedeFrame([1, 0.5]).page).toBe(1)
-    // The page recedes by the most present sheet, whichever it is.
     expect(recedeFrame([0.3, 1]).page).toBe(1)
-    expect(recedeFrame([0.3, 0.6]).page).toBe(0.6)
+    // The page recedes by the stack's summed presence, capped at one sheet's worth – the
+    // number the compound dim keeps (below), so the page and its dim never part: two sheets
+    // showing part of themselves recede it by both, never past 1.
+    expect(recedeFrame([0.3, 0.6]).page).toBeCloseTo(0.9)
+    expect(recedeFrame([0.6, 0.6]).page).toBe(1)
+  })
+
+  it('a lower sheet leaving as the next arrives (a menu popping over an open one) holds the page and the dim together (§11.1, §11.2)', () => {
+    // The leaving sheet runs p 1 → 0 while the new one runs q 0 → 1: with the two together at a
+    // sheet's worth the page holds receded, and where they fall short the page comes back by
+    // exactly what the dim lightens – the same capped sum – never by the larger of the two alone
+    // (which would let the page breathe half-way while the dim stayed).
+    for (let q = 0; q <= 1; q += 0.1) {
+      const p = 1 - q
+      const { page, layers } = recedeFrame([p, q], 0.4)
+      expect(page).toBeCloseTo(1)
+      expect(compound(layers, 0.4)).toBeCloseTo(0.4, 9)
+      // The leaving sheet is receded by the one above it and inert from its first frame.
+      expect(layers[0].recede).toBeCloseTo(q)
+      expect(layers[0].inert).toBe(q > 0)
+    }
+    // The leave outrunning the arrival (the dismissal spring is the snappier one): page and dim
+    // fall back by the same share.
+    const { page, layers } = recedeFrame([0.2, 0.5], 0.4)
+    expect(page).toBeCloseTo(0.7)
+    expect(compound(layers, 0.4)).toBeCloseTo(0.4 * 0.7, 9)
   })
 
   it('the lower sheet recedes by the presence of the sheet above it, inert from q > 0 (§11.2)', () => {
@@ -222,12 +246,15 @@ describe('recedeFrame: the stack rule (§11.2, §9.24)', () => {
     }
   })
 
-  it('three deep, the middle sheet recedes by the top one and the bottom by the most present above it', () => {
+  it('three deep, the middle sheet recedes by the top one and the bottom by the summed presence above it, capped', () => {
     const { page, layers } = recedeFrame([1, 0.4, 0.9])
     expect(page).toBe(1)
-    expect(layers[0].recede).toBe(0.9)
+    // The two above the bottom sheet stand at more than a sheet's worth together: it is receded
+    // in full (the number their scrims compound to over it); the middle by the top one alone.
+    expect(layers[0].recede).toBe(1)
     expect(layers[1].recede).toBe(0.9)
     expect(layers[2].recede).toBe(0)
+    expect(recedeFrame([1, 0.4, 0.3]).layers[0].recede).toBeCloseTo(0.7)
     expect(layers.map((l) => l.inert)).toEqual([true, true, false])
     // The top one still held at 0: the middle sheet is live, the bottom inert under the middle.
     expect(recedeFrame([1, 0.4, 0]).layers.map((l) => l.inert)).toEqual([true, false, false])

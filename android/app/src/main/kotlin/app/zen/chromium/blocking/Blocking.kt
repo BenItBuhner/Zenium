@@ -219,7 +219,12 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
     /** A main-frame navigation the tab is about to follow (`shouldOverrideUrlLoading`): block it? */
     fun decideNavigation(tab: BlockingTab, url: String): Decision = decideNavigation(snapshot, tab, url)
 
-    /** Safe Browsing's word on a main-frame navigation, ahead of [decideNavigation]: the hit, or null. */
+    /**
+     * Safe Browsing's word on a main-frame navigation, ahead of [decideNavigation]: the hit, or
+     * null. Main thread (`shouldOverrideUrlLoading`), so it never waits for the tables: the
+     * document's request comes through [intercept] on a network thread right after, and that
+     * check is the one that may.
+     */
     fun guardNavigation(url: String): SafeBrowsingHit? {
         val policy = policy ?: return null
         return if (isHttp(url)) policy.unsafe(url) else null
@@ -405,7 +410,9 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
          * `shouldInterceptRequest` does except building the `WebResourceResponse`, so it runs on
          * the JVM in tests. The `policy` (Safe Browsing) speaks first, on documents and frames
          * only, whatever the rule sets say: a listed document is dropped and the tab shows the
-         * warning page; a listed frame gets an empty 403.
+         * warning page; a listed frame gets an empty 403. A document's check is marked as the
+         * navigation it is (the process's first may wait for the tables, here on a network
+         * thread); a frame's is not.
          */
         fun evaluate(
             snap: EngineSnapshot,
@@ -421,7 +428,7 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
             val known = ResourceType.guessKnown(url, isMainFrame, accept)
             val type = known ?: ResourceType.XMLHTTPREQUEST
             if (policy != null && (isMainFrame || type == ResourceType.SUB_FRAME)) {
-                val hit = policy.unsafe(url)
+                val hit = policy.unsafe(url, navigation = isMainFrame)
                 if (hit != null) {
                     if (isMainFrame) {
                         tab.onDocumentUnsafe(url, hit)

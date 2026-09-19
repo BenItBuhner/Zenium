@@ -3,6 +3,7 @@ import type { NativeBridge, NativeCall } from './bridge'
 import type { BootInfo } from './platform'
 import type { Platform } from '@shared/types'
 import { createPreviewDownloads } from './previewDownloads'
+import { CHUNK_CHARS } from './storeIo'
 
 interface HostGlobal {
   resolve(id: number, json: string | null): void
@@ -174,6 +175,13 @@ export function createPreviewBridge(): NativeBridge {
     platformParam === 'linux' || platformParam === 'win32' || platformParam === 'darwin'
       ? platformParam
       : 'android'
+  // `?vault=none` stands in for a device without a screen lock: no Keystore key and no
+  // BiometricPrompt, so the password manager takes its passphrase route (setup gate, prompt
+  // sheet). `?vault=locked` is a device whose credential sheet the user keeps dismissing (the
+  // key never unwraps). Otherwise a stand-in keystore wraps the vault key and every
+  // verification passes.
+  const vaultMode = params.get('vault') ?? 'os'
+  const PREVIEW_BLOB = 'preview-keystore:'
 
   let pieceSeq = 0
   const pieceWrites = new Map<number, { name: string; parts: string[] }>()
@@ -196,8 +204,19 @@ export function createPreviewBridge(): NativeBridge {
     }),
     'storage.write': ({ name, text }) =>
       localStorage.setItem(STORAGE_PREFIX + String(name), String(text)),
-    'storage.writeSync': ({ name, text }) =>
-      localStorage.setItem(STORAGE_PREFIX + String(name), String(text)),
+    'storage.writeSync': ({ name, text }) => {
+      localStorage.setItem(STORAGE_PREFIX + String(name), String(text))
+      // Landed (the Kotlin host answers the same; the store's mirror follows only then).
+      return true
+    },
+    // The text whole up to the piece size, a bigger document as { token } for storage.readChunk.
+    'storage.read': ({ name }) => {
+      const text = localStorage.getItem(STORAGE_PREFIX + String(name))
+      if (text === null || text.length <= CHUNK_CHARS) return text
+      const token = ++pieceSeq
+      pieceReads.set(token, { text, at: 0 })
+      return { token }
+    },
     'storage.exists': ({ name }) => localStorage.getItem(STORAGE_PREFIX + String(name)) !== null,
     'storage.remove': ({ name }) => localStorage.removeItem(STORAGE_PREFIX + String(name)),
     // Documents in pieces (`AndroidStoreIO`): the same protocol as Kotlin's Storage, over localStorage.
@@ -222,13 +241,6 @@ export function createPreviewBridge(): NativeBridge {
     'storage.writeAbort': ({ token }) => {
       pieceWrites.delete(Number(token))
       return null
-    },
-    'storage.readBegin': ({ name }) => {
-      const text = localStorage.getItem(STORAGE_PREFIX + String(name))
-      if (text === null) return null
-      const token = ++pieceSeq
-      pieceReads.set(token, { text, at: 0 })
-      return token
     },
     'storage.readChunk': ({ token, maxChars }) => {
       const read = pieceReads.get(Number(token))
@@ -426,6 +438,21 @@ export function createPreviewBridge(): NativeBridge {
       setTimeout(() => URL.revokeObjectURL(a.href), 1000)
       return true
     },
+    // Passwords: the Android Keystore and BiometricPrompt stand-ins (see `vaultMode`). Refusals
+    // answer `{ failure, message }` the way VaultKeystore.kt does.
+    'vault.available': () => vaultMode !== 'none',
+    'vault.wrap': ({ key }) => PREVIEW_BLOB + String(key),
+    'vault.unwrap': ({ blob }) => {
+      if (vaultMode === 'locked')
+        return { failure: 'cancelled', message: 'Authentication was cancelled' }
+      const text = String(blob)
+      if (!text.startsWith(PREVIEW_BLOB))
+        return { failure: 'invalidated', message: 'The vault key was not protected on this device' }
+      return text.slice(PREVIEW_BLOB.length)
+    },
+    'reauth.available': () => vaultMode !== 'none',
+    // The system sheet would rise here; the preview approves after the time it takes to notice.
+    'reauth.verify': () => new Promise((resolve) => setTimeout(() => resolve(true), 400)),
     'clipboard.writeText': ({ text }) => void navigator.clipboard?.writeText(String(text)),
     // Like Kotlin: only a clipboard still holding the copied secret is emptied.
     'clipboard.clearText': async ({ expected }) => {

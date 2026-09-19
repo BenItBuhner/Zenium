@@ -13,6 +13,7 @@ import {
 import type { ExternalProtocolRequest } from '@shared/types'
 import { useBackSurface } from '@renderer/lib/back'
 import { useViewport } from '@renderer/lib/formFactor'
+import { SheetPresence, useSheetLeave } from '@renderer/lib/motion/presence'
 import { answerExternalProtocol, uiStore } from '@renderer/lib/ui'
 import { Button } from '../ui/button'
 import { Switch } from '../ui/switch'
@@ -23,16 +24,25 @@ import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
  * core asks before it lets go: a sheet on the menu's chassis with the app that would open, the
  * address, and for the schemes that have one answer ("always allow phone numbers") a toggle to
  * remember it. Dismissing the sheet is "not now". Mounted once, above whichever shell is up.
+ *
+ * The sheet's leave outlives its request (`SheetPresence`, v2 draft §11.1): the core withdraws
+ * a question with `externalProtocol.cancel` – the tab closed, its view gone, a newer request
+ * from the same page taking the sheet over – and the store's `null` is a leave, the sheet
+ * running its own way down before it unmounts; a new request meanwhile is a new sheet above it.
+ * The mouse panel reads no leave and goes with its request, as before.
  */
 export function ExternalProtocolLayer(): JSX.Element | null {
   const request = uiStore.use((s) => s.externalProtocol)
   const viewport = useViewport()
-  if (!request) return null
   // A new request is a new sheet: its own toggle state, its own presentation.
-  return viewport.coarse ? (
-    <ProtocolSheet key={request.requestId} request={request} />
-  ) : (
-    <ProtocolPanel key={request.requestId} request={request} />
+  return (
+    <SheetPresence>
+      {!request ? null : viewport.coarse ? (
+        <ProtocolSheet key={request.requestId} request={request} />
+      ) : (
+        <ProtocolPanel key={request.requestId} request={request} />
+      )}
+    </SheetPresence>
   )
 }
 
@@ -202,18 +212,22 @@ function Body({
   )
 }
 
-/** Escape answers "not now" (hardware keyboards exist on tablets and DeX too). */
-function useEscape(close: () => void): void {
-  const latest = useRef(close)
+/**
+ * Escape answers "not now" (hardware keyboards exist on tablets and DeX too). A sheet that is
+ * `leaving` – its request gone, on its way down under `SheetPresence` (§11.1) – lets the key by:
+ * it answers nothing any more, and a sheet that came up above it does.
+ */
+function useEscape(close: () => void, leaving = false): void {
+  const latest = useRef({ close, leaving })
   useEffect(() => {
-    latest.current = close
+    latest.current = { close, leaving }
   })
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape') return
+      if (e.key !== 'Escape' || latest.current.leaving) return
       e.preventDefault()
       e.stopImmediatePropagation()
-      latest.current()
+      latest.current.close()
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
@@ -238,7 +252,7 @@ function ProtocolSheet({ request }: { request: ExternalProtocolRequest }): JSX.E
     onCommit: () => sheet.current?.commitBack(),
     onCancel: () => sheet.current?.cancelBack()
   })
-  useEscape(() => sheet.current?.dismiss())
+  useEscape(() => sheet.current?.dismiss(), useSheetLeave()?.leaving)
 
   return (
     <BottomSheet
