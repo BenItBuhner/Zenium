@@ -669,6 +669,32 @@ describe('back/forward stacks across unloads and launches', () => {
     expect(view.view.getURL()).toBe('https://example.org/typed')
   })
 
+  it("the host's own serialisation of the stack rides along on a replay of the same list only", () => {
+    const withHost: NavigationSnapshot = { ...stack, hostState: 'cGFyY2Vs' }
+    const f = fixture()
+    const win = firstWindow(f)
+    const tab = f.browser.tabs.createTab({ url: 'https://example.com/', active: true }, win)
+    f.viewOf(tab.id).snapshot = withHost
+    f.viewOf(tab.id).events.onNavigated('https://example.com/article', false)
+    expect(f.browser.state.tabNavigation.get(tab.id)).toEqual(withHost)
+    f.browser.tabs.discard(tab.id)
+    // The list the blob describes, replayed whole: the blob goes with it.
+    f.browser.tabs.ensureLoaded(tab.id)
+    expect(f.viewOf(tab.id).restored).toEqual([withHost])
+
+    // A URL typed meanwhile changes the list, and the blob – another list's – stays behind.
+    f.viewOf(tab.id).snapshot = withHost
+    f.browser.tabs.discard(tab.id)
+    f.browser.tabs.navigate(tab.id, 'https://example.org/typed')
+    const replayed = f.viewOf(tab.id).restored[0]
+    expect(replayed.entries.map((e) => e.url)).toEqual([
+      'https://example.com/',
+      'https://example.com/article',
+      'https://example.org/typed'
+    ])
+    expect(replayed).not.toHaveProperty('hostState')
+  })
+
   it('a private tab leaves no stack behind and a closed tab takes its stack with it', () => {
     const f = fixture()
     const win = firstWindow(f)
