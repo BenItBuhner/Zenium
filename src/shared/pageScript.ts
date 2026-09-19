@@ -40,7 +40,10 @@ export interface PageScriptMessage {
     | 'interstitial'
     | 'focus'
     | 'webapp'
+    | 'opensearch'
   url?: string
+  /** `opensearch`: the link's `title`, the engine's name when its description has none. */
+  title?: string
   x?: number
   y?: number
   background?: boolean
@@ -84,6 +87,13 @@ export interface PageScriptTransport {
    * host's `installable` / `result` / `installed` messages into the standard install events.
    */
   onWebApp?(listener: (message: PageScriptHostMessage) => void): void
+  /**
+   * Hosts that offer a page's own search engine (Chrome for Android's "Recently visited" engines):
+   * the script posts the address of the first `<link rel="search"
+   * type="application/opensearchdescription+xml">` once per document; the browser fetches and
+   * parses the description itself (`shared/search`).
+   */
+  discoverSearchEngines?: boolean
 }
 
 /** Keys that never count as a gesture in Chromium's user-activation model. */
@@ -147,6 +157,7 @@ export function installPageScript(transport: PageScriptTransport): void {
   installInterstitialRelay(transport)
   if (transport.onHint) installHint(transport.onHint.bind(transport))
   if (transport.onWebApp) installWebApp(transport)
+  if (transport.discoverSearchEngines) installOpenSearch(transport)
 
   window.addEventListener(
     'click',
@@ -679,4 +690,70 @@ function installWebApp(transport: PageScriptTransport): void {
       /* never let the polyfill throw into the page */
     }
   })
+}
+
+// ---------------------------------------------------------------------------
+// OpenSearch: the page's own search engine
+// ---------------------------------------------------------------------------
+
+/** The longest link title carried across the bridge; the description's ShortName wins anyway. */
+const MAX_OPENSEARCH_TITLE = 64
+
+/**
+ * Whether a `<link>` names an OpenSearch description: `rel` carries the `search` token (case-
+ * insensitive, in a token list) and `type` is `application/opensearchdescription+xml` (any
+ * parameters and case aside). A `rel="search"` without the type is a site's own search page.
+ */
+export function isOpenSearchLink(rel: string, type: string): boolean {
+  const mime = type.split(';')[0].trim().toLowerCase()
+  if (mime !== 'application/opensearchdescription+xml') return false
+  return rel
+    .toLowerCase()
+    .split(/\s+/)
+    .some((token) => token === 'search')
+}
+
+/**
+ * The first OpenSearch link of the top frame of an http(s) document, posted once per document
+ * (at DOMContentLoaded and once more at load for frameworks that inject the link late). The
+ * description itself is fetched by the browser, off the page: what leaves the page is a URL and
+ * the link's title. Best effort; never throws into the page.
+ */
+function installOpenSearch(transport: PageScriptTransport): void {
+  try {
+    if (window !== window.top) return
+    if (location.protocol !== 'https:' && location.protocol !== 'http:') return
+  } catch {
+    return
+  }
+  let posted = false
+  const probe = (): void => {
+    if (posted) return
+    let link: HTMLLinkElement | null = null
+    try {
+      for (const candidate of document.querySelectorAll('link[rel]')) {
+        const l = candidate as HTMLLinkElement
+        if (
+          isOpenSearchLink(l.getAttribute('rel') ?? '', l.getAttribute('type') ?? '') &&
+          /^https?:\/\//i.test(l.href)
+        ) {
+          link = l
+          break
+        }
+      }
+    } catch {
+      return
+    }
+    if (!link) return
+    posted = true
+    transport.send({
+      type: 'opensearch',
+      url: link.href,
+      title: (link.getAttribute('title') ?? '').trim().slice(0, MAX_OPENSEARCH_TITLE)
+    })
+  }
+  if (document.readyState === 'loading')
+    document.addEventListener('DOMContentLoaded', probe, { once: true })
+  else probe()
+  window.addEventListener('load', probe, { once: true })
 }

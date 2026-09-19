@@ -343,6 +343,10 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             }
             "clipboard.clearText" -> reply(SecretClipboard.clear(activity, args.str("expected")))
             "clipboard.writeImage" -> copyImage(args.str("url"), reply)
+            // The URL bar's clipboard row: the peek reads the clip's description only (no Android 12+
+            // toast); the read takes the content once, on the user's reveal or pick.
+            "clipboard.peek" -> reply(ClipboardPeek.peek(activity))
+            "clipboard.read" -> reply(ClipboardPeek.read(activity))
 
             // --- autofill: the system framework's status, and which provider owns the pages -----------
             "autofill.status" -> reply(SystemAutofill.status(activity))

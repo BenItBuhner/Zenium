@@ -26,7 +26,7 @@ const invoke = vi.fn<(name: string, args?: unknown) => Promise<null>>(async () =
 Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 
 const { buildSection, buildSections } = await import('../sections')
-const { allRows, currentOptionLabel, findRow, groupShows, rowText, searchRows } =
+const { allRows, currentOptionLabel, findRow, groupShows, optionGroups, rowText, searchRows } =
   await import('../model')
 const { uiStore } = await import('@renderer/lib/ui')
 
@@ -844,6 +844,87 @@ describe('what a row does', () => {
     const def = row(containers, 'container:default')
     if (def.kind !== 'item') throw new Error('not an item')
     expect(def.sheet.groups.flatMap((g) => g.rows)).toEqual([])
+  })
+
+  it('Search lists the engines with their marks, the visited ones under Recently visited, and manages the added ones (OMN-27)', () => {
+    const mine = {
+      id: 'custom:mine',
+      name: 'Mine',
+      searchUrl: 'https://mine.example/?q=%s',
+      suggestUrl: null,
+      keyword: '@mine',
+      glyph: 'M',
+      source: 'custom' as const,
+      favicon: null
+    }
+    const forum = {
+      id: 'discovered:forum.example',
+      name: 'Forum',
+      searchUrl: 'https://forum.example/search?q=%s',
+      suggestUrl: null,
+      keyword: '@forum',
+      glyph: 'F',
+      source: 'discovered' as const,
+      favicon: 'https://forum.example/favicon.ico',
+      visitedAt: 5
+    }
+    const s = state(
+      { searchEngines: [...DEFAULT_SEARCH_ENGINES, mine, forum] } as Partial<UIState>,
+      { searchEngines: [mine, forum], searchEngineId: 'custom:mine' }
+    )
+    const c = context(s)
+    const search = buildSection(
+      PAGE.sections.find((x) => x.id === 'search')!,
+      c.ctx
+    )
+
+    const picker = row(search, 'search-engine')
+    if (picker.kind !== 'value') throw new Error('not a value row')
+    expect(currentOptionLabel(picker)).toBe('Mine')
+    expect(
+      optionGroups(picker.options).map((g) => [g.heading, g.options.map((o) => o.label)])
+    ).toEqual([
+      [null, [...DEFAULT_SEARCH_ENGINES.map((e) => e.name), 'Mine']],
+      ['Recently visited', ['Forum']]
+    ])
+    // Every option carries its mark; a visited engine names its site under the label.
+    expect(picker.options.every((o) => o.leading)).toBe(true)
+    expect(picker.options.find((o) => o.value === forum.id)?.description).toBe('forum.example')
+    picker.onChange(forum.id)
+    expect(c.patches).toEqual([{ searchEngineId: forum.id }])
+
+    // The added engines: the default says so, a visited one names its site; Make default and Remove.
+    const mineRow = row(search, 'search-engine:custom:mine')
+    if (mineRow.kind !== 'item') throw new Error('not an item')
+    expect(mineRow.description).toBe('Default search engine')
+    const forumRow = row(search, 'search-engine:discovered:forum.example')
+    if (forumRow.kind !== 'item') throw new Error('not an item')
+    expect(forumRow.description).toBe('Recently visited · forum.example')
+    const makeDefault = row(search, 'search-engine:custom:mine:default')
+    if (makeDefault.kind !== 'action') throw new Error('not an action')
+    expect(makeDefault.disabled).toBe(true)
+    const forumDefault = row(search, 'search-engine:discovered:forum.example:default')
+    if (forumDefault.kind !== 'action') throw new Error('not an action')
+    forumDefault.onPress?.()
+    expect(c.patches[1]).toEqual({ searchEngineId: forum.id })
+    const remove = row(search, 'search-engine:custom:mine:remove')
+    if (remove.kind !== 'action') throw new Error('not an action')
+    expect(remove.destructive).toBe(true)
+    expect(remove.confirm).toMatchObject({ title: 'Remove Mine?', action: 'Remove' })
+    remove.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('search.removeEngine', { id: 'custom:mine' })
+
+    // The form to add one; shipped engines are never listed as added.
+    const add = row(search, 'add-search-engine')
+    if (add.kind !== 'action') throw new Error('not an action')
+    expect(add.form?.title).toBe('Add search engine')
+    expect(allRows(search.groups).some((r) => r.id === 'search-engine:google')).toBe(false)
+    // A fresh profile: the group shows its empty state.
+    const fresh = section('search')
+    const added = fresh.groups.find((g) => g.id === 'search-engines')!
+    expect(added.rows).toEqual([])
+    expect(groupShows(added)).toBe(true)
+    expect(added.empty).toBe('No search engines added yet')
   })
 
   it('a per-site zoom is one item with a Remove zoom action that forgets the site', () => {

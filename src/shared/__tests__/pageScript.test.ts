@@ -101,3 +101,56 @@ describe('page script: activation and blocked pop-ups', () => {
     }
   })
 })
+
+describe('page script: OpenSearch discovery', () => {
+  function link(rel: string, type: string, href: string, title?: string): HTMLLinkElement {
+    const el = document.createElement('link')
+    el.setAttribute('rel', rel)
+    if (type) el.setAttribute('type', type)
+    el.setAttribute('href', href)
+    if (title) el.setAttribute('title', title)
+    document.head.appendChild(el)
+    return el
+  }
+
+  function installDiscovery(discoverSearchEngines: boolean): PageScriptMessage[] {
+    const sent: PageScriptMessage[] = []
+    installPageScript({
+      send: (m) => void sent.push(m),
+      onFlags: () => undefined,
+      discoverSearchEngines
+    })
+    return sent.filter((m) => m.type === 'opensearch')
+  }
+
+  beforeEach(() => {
+    document.head.innerHTML = ''
+  })
+
+  it('posts the first description link once, resolved, with its title; the XML stays with the browser', () => {
+    link('search', 'text/html', '/search', 'Site search')
+    link(
+      'SEARCH',
+      'application/opensearchdescription+xml; charset=utf-8',
+      '/opensearch.xml',
+      ' Forum '
+    )
+    link('search', 'application/opensearchdescription+xml', '/second.xml', 'Second')
+    const sent = installDiscovery(true)
+    expect(sent).toEqual([
+      { type: 'opensearch', url: new URL('/opensearch.xml', location.href).href, title: 'Forum' }
+    ])
+    // The load event takes one more look for late links, but a posted document posts no more.
+    window.dispatchEvent(new Event('load'))
+    expect(sent.length).toBe(1)
+  })
+
+  it('posts nothing without a description link, a non-http link, or when the host did not ask', () => {
+    link('search', 'text/html', '/search')
+    link('search', 'application/opensearchdescription+xml', 'javascript:void(0)')
+    expect(installDiscovery(true)).toEqual([])
+    link('search', 'application/opensearchdescription+xml', '/opensearch.xml')
+    expect(installDiscovery(false)).toEqual([])
+    expect(installDiscovery(true).length).toBe(1)
+  })
+})
