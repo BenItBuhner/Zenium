@@ -141,6 +141,7 @@ export function RowView({
           row={row}
           caption={caption}
           description={row.description}
+          leading={row.leading}
           destructive={row.destructive}
           busy={row.busy}
           haspopup={row.confirm || row.form ? 'dialog' : undefined}
@@ -183,6 +184,11 @@ export function RowView({
           data-static=""
           className={cn('zen-settings-row zen-v2-row', row.disabled && 'zen-settings-row-disabled')}
         >
+          {row.leading && (
+            <span className="zen-settings-leading" aria-hidden="true">
+              {row.leading}
+            </span>
+          )}
           <RowText label={row.label} description={row.description} caption={caption} />
           {row.trailing && <span className="zen-settings-trailing">{row.trailing}</span>}
         </div>
