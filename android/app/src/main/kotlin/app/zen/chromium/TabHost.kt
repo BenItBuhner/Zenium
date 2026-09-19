@@ -94,6 +94,7 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         // Whatever the popup loaded before the core knew its tab id is reported now.
         host.viewEvent(tabId, "navigated", view.navState().put("inPage", false))
         if (!view.title.isNullOrEmpty()) host.viewEvent(tabId, "title", json("title" to view.title))
+        view.pushHistory(force = true)
     }
 
     fun destroy(tabId: String) {

@@ -119,6 +119,16 @@ class TabWebView(
     private var lastRememberedAt = 0L
     /** The copies of the window in flight for this page, shared between their askers (see [captureBitmap]). */
     private val captureShare = CaptureShare<Bitmap>()
+    /**
+     * The internal pages this view showed, by the key of the `data:` URL their list entry
+     * carries ([NavigationState.dataUrlKey]) to the `zen://` URL they were shown as; the newest
+     * [NavigationState.INTERNAL_URLS_MAX] (see [NavigationState.publicUrl]).
+     */
+    private val internalUrls = object : LinkedHashMap<Long, String>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, String>?): Boolean = size > NavigationState.INTERNAL_URLS_MAX
+    }
+    /** The last `historyChanged` payload sent, as text: the same list again is not sent twice. */
+    private var lastHistoryText: String? = null
     private var replyProxy: JavaScriptReplyProxy? = null
     /** Whether the bridge object the page script posts through is registered on this view. */
     private var bridgeInstalled = false
@@ -983,7 +993,95 @@ class TabWebView(
         val history = copyBackForwardList()
         committedIndex = history.currentIndex
         committedUrl = history.currentItem?.url ?: url ?: ""
+        // An internal page: the list holds its document as a `data:` URL, the view shows its name.
+        val shown = url
+        if (committedUrl.isNotEmpty() && NavigationState.standsInFor(committedUrl, shown)) {
+            internalUrls[NavigationState.dataUrlKey(committedUrl)] = shown!!
+        }
         host.snapshots.validate(tabId, history)
+    }
+
+    // --- the back/forward stack for the core (NavigationSnapshot; see NavigationState.kt) ---------
+
+    /**
+     * The list as the core's snapshot: `{ entries: [{ url, title, originalUrl? }], index }`, the
+     * internal pages under the URLs they were shown as. Main thread; the `historyChanged` push
+     * ([pushHistory]) hands the same object to the chrome, and `Host` keeps the last one for the
+     * synchronous `view.navigationEntries`.
+     */
+    fun navigationEntries(): JSONObject {
+        val history = copyBackForwardList()
+        val items = (0 until history.size).map { i ->
+            val item = history.getItemAtIndex(i)
+            NavigationState.Item(item?.url ?: "", item?.title, item?.originalUrl)
+        }
+        return NavigationState.snapshotJson(items, history.currentIndex) { entryUrl ->
+            NavigationState.publicUrl(entryUrl) { key -> internalUrls[key] }
+        }
+    }
+
+    /**
+     * Tell the core the list changed (`historyChanged { entries, index }`): at every commit, when
+     * a page finishes and when a title arrives, and only when it reads differently from the last
+     * time. `force` sends it anyway (the view was bound to a new tab id).
+     */
+    fun pushHistory(force: Boolean = false) {
+        val snapshot = navigationEntries()
+        val text = snapshot.toString()
+        if (!force && text == lastHistoryText) return
+        lastHistoryText = text
+        host.viewEvent(tabId, "historyChanged", snapshot)
+    }
+
+    /**
+     * The opaque state a fresh view rebuilds this list from (`view.navigationHostState`), or null:
+     * for a private tab, an empty list, or a state over the core's bound. Main thread.
+     */
+    fun hostState(): String? = NavigationState.hostStateOf(this, Profiles.isPrivate(containerId))
+
+    /** Jump to entry `index` of the list (the back list's row): nothing for an index outside it. */
+    fun goToIndex(index: Int) {
+        val history = copyBackForwardList()
+        val steps = NavigationState.stepsTo(index, history.currentIndex, history.size) ?: return
+        if (steps == 0) return
+        rememberCurrentPage()
+        goBackOrForward(steps)
+    }
+
+    /**
+     * `view.restoreNavigation`: the whole list from `hostState`, when there is one and it is
+     * ours ([NavigationState.decodeHostState]), this view is still empty, `restoreState` accepts
+     * it and the list it gives back ends on `entries[index]` (true). Anything else is false and
+     * loads nothing: the core loads the current entry itself then (`loadURL`, which is also what
+     * gives an internal page its document), so a load here would be a second one. Main thread.
+     */
+    fun restoreNavigation(entries: JSONArray, index: Int, hostState: String?): Boolean {
+        val wanted = NavigationState.currentUrl(entries, index) ?: return false
+        val bytes = NavigationState.decodeHostState(hostState) ?: return false
+        // Only into a view with nothing in it: over a list already built, restoreState has
+        // "undesirable side-effects" (the platform's words), and the core never asks for that.
+        if (copyBackForwardList().size > 0) return false
+        val bundle = NavigationState.bundleOf(bytes) ?: return false
+        // What a load of the current entry sets up before its first request goes out (see loadUrl).
+        if (PageRules.isWebPage(wanted)) {
+            currentDocument = wanted
+            switchDesktopModeFor(wanted)
+            applyCookiePolicy(host.privacy.flags, wanted)
+        }
+        val restored = try {
+            restoreState(bundle)
+        } catch (e: Exception) {
+            Log.i("ZenTab", "restoreState refused the state of $tabId: ${e.javaClass.simpleName}")
+            null
+        } ?: return false
+        if (!NavigationState.restoredMatches(restored.currentItem?.url, url, wanted)) {
+            Log.i("ZenTab", "the restored list of $tabId does not end on the expected entry (${restored.size} entries); the core loads it")
+            return false
+        }
+        onHistoryCommitted()
+        pushHistory(force = true)
+        Log.i("ZenTab", "restored the list of $tabId: ${restored.size} entries, current ${restored.currentIndex}")
+        return true
     }
 
     /**
@@ -1638,6 +1736,7 @@ class TabWebView(
                 interstitial = true
                 interstitialUrl = url
                 host.backChanged()
+                pushHistory()
                 return
             }
             // pushState / hash navigations have no onPageStarted of their own.
@@ -1660,6 +1759,9 @@ class TabWebView(
                 if (documentGeneration.get() == committedGeneration) documentGeneration.incrementAndGet()
                 committedGeneration = documentGeneration.get()
             }
+            // Before `navigated`: the core records the tab's stack as it handles that event, and
+            // reads it from the list pushed here (the view's copy, or `Host`'s for the sync call).
+            pushHistory()
             host.viewEvent(tabId, "navigated", navState().put("url", url).put("inPage", inPage).put("document", committedGeneration))
             host.backChanged()
         }
@@ -1685,6 +1787,7 @@ class TabWebView(
             host.viewEvent(tabId, "stopLoading", navState())
             if (muted) setMuted(true)
             host.backChanged()
+            pushHistory()
         }
 
         override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
@@ -1774,6 +1877,8 @@ class TabWebView(
             // "Webpage not available" is the built-in error page's, not the tab's (see failedUrl).
             if (failedUrl != null || interstitial) return
             host.viewEvent(tabId, "title", json("title" to (title ?: "")))
+            // The entry's title in the list follows the page's.
+            pushHistory()
         }
 
         /**
