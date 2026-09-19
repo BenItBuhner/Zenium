@@ -93,6 +93,7 @@ import {
 } from '../shared/blocking'
 import { DEFAULT_PAGE_ENVIRONMENT, sanitizePageControls } from '../shared/pageControls'
 import { emptyPrivacyStatus, sanitizePrivacySettings, type PrivacyStatus } from '../shared/privacy'
+import { sanitizeNewTabPhoneSettings } from '../shared/newTabPhone'
 import { defer, type StoreIO } from './platform'
 import { sanitizeClosedEntries, sanitizeSnapshot, summarizeClosed } from './session'
 import type { ZenWindow } from './window'
@@ -436,6 +437,7 @@ export class BrowserState {
       : []
     this.settings.privacy = sanitizePrivacySettings(data.settings?.privacy)
     this.settings.newTab = sanitizeNewTabSettings(data.settings?.newTab)
+    this.settings.newTabPhone = sanitizeNewTabPhoneSettings(data.settings?.newTabPhone)
     this.shortcutOverrides = data.shortcutOverrides ?? {}
     const preset = migrateShortcutPreset(data.settings?.shortcutPreset, this.shortcutOverrides)
     this.settings.shortcutPreset = preset.preset

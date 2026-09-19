@@ -81,7 +81,8 @@ const FrameDialogHostContext = createContext<FrameDialogHostApi | null>(null)
 /*
  * The frame's own host – the one TabDialogs mounts over the content frame (the shell on
  * phones) – published for `FrameDialogPortal`, which a dialog whose state lives inside the
- * frame (a page's or panel's sheets) reaches from outside every host's subtree.
+ * frame (a page's or panel's sheets, the new tab page's customise sheet) reaches from outside
+ * every host's subtree.
  */
 let frameHost: FrameDialogHostApi | null = null
 const frameHostListeners = new Set<() => void>()

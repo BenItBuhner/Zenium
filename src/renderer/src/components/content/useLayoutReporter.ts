@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import type { LayoutReport, Rect, UIState } from '@shared/types'
+import { BLANK_URL } from '@shared/url'
 import { run } from '@renderer/lib/api'
 import {
   chromeUnderPages,
@@ -182,6 +183,10 @@ export function useLayoutReporter(
           const c = viewCover(area, p.rect, band)
           return c ? { ...p, cover: c } : p
         })
+        // The phone draws its new tab page in the chrome (`NewTabPage`); the blank page's view
+        // would only cover it.
+        if (formFactor === 'phone')
+          placements = placements.filter((p) => state.tabs[p.tabId]?.url !== BLANK_URL)
         let glance: LayoutReport['glance'] = null
         if (state.glance) {
           // The parent is frozen behind the glance card; the card itself appears once its open
@@ -226,7 +231,8 @@ export function useLayoutReporter(
     contentHidden,
     gap,
     band,
-    followsCover
+    followsCover,
+    formFactor
   ])
 
   return { area, contentHidden }

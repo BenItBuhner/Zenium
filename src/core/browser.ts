@@ -59,6 +59,7 @@ import { TranslateService } from './translate/service'
 import { PageControls } from './pageControls'
 import { FindMemory } from './find'
 import { FullscreenService } from './fullscreen'
+import { NewTabPhoneService } from './newTabPhone'
 import { WebAppService } from './webapp'
 import { UpdateService } from './updates'
 import { ExternalProtocolService } from './externalProtocols'
@@ -108,6 +109,7 @@ import { sanitizePromoState } from '../shared/defaultBrowser'
 import { sanitizeBlockingSettings } from '../shared/blocking'
 import { isShortcutPreset } from '../shared/shortcuts'
 import { sanitizePrivacySettings } from '../shared/privacy'
+import { sanitizeNewTabPhoneSettings } from '../shared/newTabPhone'
 import type { ExtensionHost, Governor, PageMessage, Platform, SyncHost } from './platform'
 import { JsonStore } from './store/JsonStore'
 
@@ -222,6 +224,8 @@ export class Browser {
   readonly find = new FindMemory()
   /** Fullscreen hints (F11, a page's element) and the Esc hold that leaves the window's fullscreen. */
   readonly fullscreen: FullscreenService
+  /** The new tab page's pins, removals and wallpaper. */
+  readonly newTabPhone: NewTabPhoneService
   /** Web app manifests, "Add to Home screen" and the ambient install prompt. */
   readonly webApps: WebAppService
   readonly windows = new Map<string, ZenWindow>()
@@ -325,6 +329,7 @@ export class Browser {
     this.protection = new ProtectionService(this)
     this.translate = new TranslateService(this)
     this.privacy = new PrivacyService(this)
+    this.newTabPhone = new NewTabPhoneService(this)
     this.webApps = new WebAppService(this, platform.io)
     this.state.extras = (win) => ({
       boosts: this.boosts.all(),
@@ -1470,6 +1475,7 @@ export class Browser {
     this.passwords.flushSync()
     this.blocking.flushSync()
     this.translate.flushSync()
+    this.newTabPhone.flushSync()
     this.webApps.flushSync()
   }
 
@@ -1891,6 +1897,10 @@ export class Browser {
       'folder.delete': ({ folderId, unpack }) => this.deleteFolder(folderId, unpack),
       'folder.contextMenu': ({ folderId }, win) => this.menus.showFolderContextMenu(folderId, win),
       'newtab.contextMenu': (_a, win) => this.menus.showNewTabContextMenu(win),
+      'newTabPhone.tileContextMenu': ({ url, title }, win) =>
+        this.menus.showTopSiteContextMenu(url, title, win),
+      'newTabPhone.wallpaper': () => this.newTabPhone.wallpaperImage(),
+      'newTabPhone.setWallpaper': ({ dataUrl }) => this.newTabPhone.setWallpaperImage(dataUrl),
       'app.menu': ({ anchor, keyboard }, win) =>
         this.menus.showAppMenu(win, { anchor, keyboard: Boolean(keyboard) }),
       'focus.content': (_a, win) => win.focusContent(),
@@ -2422,6 +2432,11 @@ export class Browser {
         s.newTab = sanitizeNewTabSettings({
           ...s.newTab,
           ...(value as Partial<Settings['newTab']>)
+        })
+      } else if (key === 'newTabPhone' && value && typeof value === 'object') {
+        s.newTabPhone = sanitizeNewTabPhoneSettings({
+          ...s.newTabPhone,
+          ...(value as Partial<Settings['newTabPhone']>)
         })
       } else if (key === 'downloads' && value && typeof value === 'object') {
         // The block is partial: a one-key patch from a Settings row must not drop the others.

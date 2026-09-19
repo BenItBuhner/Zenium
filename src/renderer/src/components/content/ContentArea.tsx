@@ -2,6 +2,7 @@ import type { JSX, RefObject } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { MonitorSmartphone, Plus, X } from 'lucide-react'
 import type { Rect, SidePanelInfo, UIState } from '@shared/types'
+import { BLANK_URL } from '@shared/url'
 import { cmd, run } from '@renderer/lib/api'
 import { chromeUnderPages } from '@renderer/lib/cover'
 import { wantsDefaultBrowserBanner } from '@renderer/lib/defaultBrowser'
@@ -13,7 +14,9 @@ import { captureActiveTab, panelAloneOverContent, uiStore, type UiState } from '
 import { extensionChromeAloneOverContent } from '@renderer/lib/extensions/scrim'
 import { cn } from '@renderer/lib/utils'
 import { dropStore } from '@renderer/lib/drag'
+import { newTabGrowStore } from '@renderer/lib/newtab'
 import { Urlbar } from '../urlbar/Urlbar'
+import { NewTabPage } from '../newtab/NewTabPage'
 import { OverlayHost } from '../overlays/OverlayHost'
 import { InternalPageHost } from '../pages/InternalPageHost'
 import { CoverImage } from './CoverImage'
@@ -77,22 +80,29 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
   // The phone's gesture stage draws its own cards where the page was; nothing to dim behind it.
   // Its URL bar covers the frame completely, so there is nothing to dim behind that either.
   const staged = ui.stageActive && !overlayCoversContentBesidesStage(ui)
-  // An internal page (Settings) is chrome: it has no view to snapshot and stays drawn under a
-  // sheet's own scrim, so nothing dims it from here.
-  const pageTab = isPageTab(tab)
-  const showSnapshot =
-    (contentHidden || glanceActive) &&
-    Boolean(tab) &&
-    !pageTab &&
-    !staged &&
-    !(phone && ui.urlbar.open)
-  const dropKey = dropStore.use((s) => s.key)
   const foreign = isForeignTab(state, tab?.id)
   // The "Make Zenium your default browser" and "Restore pages?" strips sit above the page,
   // inside the frame, so the layout reporter's viewport (and the tab view under it) shrink by
   // their height. A fullscreen window shows the page alone (Chrome hides its infobars there too).
   const banner = !phone && !state.window.fullscreen && wantsDefaultBrowserBanner(state)
   const crashRestore = !phone ? state.crashRestore : null
+  // The phone draws a new tab page in the frame where the blank page would be (the desktop
+  // keeps Zen's bare frame). Its view is never placed there – see `useLayoutReporter`.
+  const newTabPage = phone && tab !== null && tab.url === BLANK_URL && !foreign
+  // The grow surface is a stage layer too, but the page it reveals must be painted under it: the
+  // surface fades on its own progress and the page shows through (NewTabGrowLayer).
+  const growing = newTabGrowStore.use((s) => s.phase !== 'idle')
+  // An internal page (Settings) is chrome like the new tab page: neither has a view to snapshot,
+  // and both stay drawn under a sheet's own scrim, so nothing dims them from here.
+  const pageTab = isPageTab(tab)
+  const showSnapshot =
+    (contentHidden || glanceActive) &&
+    Boolean(tab) &&
+    !pageTab &&
+    !staged &&
+    !(phone && ui.urlbar.open) &&
+    !newTabPage
+  const dropKey = dropStore.use((s) => s.key)
 
   // The load bar is the phone's (and Android's at any width); the desktop program has not adopted
   // it yet, so Electron's wide layout renders the frame alone as it did.
@@ -125,6 +135,11 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
             {state.capabilities.pullToRefresh && <PullIndicator />}
             {!tab && !ui.urlbar.open && ui.overlay === 'none' && !staged && <EmptyState />}
             {tab && pageTab && <InternalPageHost state={state} tab={tab} hidden={staged} />}
+            {newTabPage && (
+              // Kept mounted under the omnibox and the gesture stage (which draws its own cards),
+              // just not painted, so the page is there the moment they leave.
+              <NewTabPage state={state} tab={tab} hidden={ui.urlbar.open || (staged && !growing)} />
+            )}
             {tab && foreign && !contentHidden && !glanceActive && (
               <ForeignTabPreview tabId={tab.id} />
             )}

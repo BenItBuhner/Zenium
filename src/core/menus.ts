@@ -1288,6 +1288,33 @@ export class Menus {
     )
   }
 
+  /** Long-press on a new tab page tile: open it elsewhere, pin it, or take it off the page. */
+  showTopSiteContextMenu(url: string, title: string, win: ZenWindow): void {
+    if (!isNavigableUrl(url)) return
+    const { tabs, state, newTabPhone } = this.browser
+    const pinned = state.settings.newTabPhone.pinned.some((p) => p.url === url)
+    this.popup(
+      [
+        {
+          label: 'Open in New Tab',
+          click: () => tabs.createTab({ url, active: false }, win)
+        },
+        {
+          label: 'Copy Link',
+          click: () => this.browser.platform.clipboard.writeText(url)
+        },
+        { type: 'separator' },
+        {
+          label: pinned ? 'Unpin Shortcut' : 'Pin Shortcut',
+          click: () => (pinned ? newTabPhone.unpin(url) : newTabPhone.pin(url, title))
+        },
+        { label: 'Remove', click: () => newTabPhone.remove(url) }
+      ],
+      win,
+      'topsite'
+    )
+  }
+
   // ---------------------------------------------------------------------------
   // Spaces & folders
   // ---------------------------------------------------------------------------
