@@ -13,8 +13,6 @@ name: Android omnibox demo
 # android-emulator-demo.yml; this file only picks the driver and the demo it runs.
 on:
   workflow_dispatch:
-  push:
-    branches: [cursor/android-omnibox-parity-cfe1]
 
 permissions:
   contents: read
@@ -26,8 +24,6 @@ concurrency:
 jobs:
   record:
     name: Omnibox demo
-    # Dispatch only: a push run here exists to enter the concurrency group and cancel the run before it.
-    if: ${{ github.event_name == 'workflow_dispatch' }}
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
       script: .github/scripts/android-gesture-demo.sh
