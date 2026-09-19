@@ -7,7 +7,6 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.IOException
 import java.io.InputStream
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.Executors
 
@@ -90,12 +89,13 @@ class Storage(private val dir: File) {
     }
 
     /**
-     * The version tag of a document: its size, its modification time and the number of writes
-     * this process made to it. Every write changes it (writes replace the file whole, see
-     * [writeAtomic]; the count tells two rewrites within the modification time's millisecond
-     * apart, whatever their size). Null when the document does not exist. Stable while nothing
-     * is written: what the chrome compares with the boot manifest, and what the Safe Browsing
-     * host keeps its parsed tables by.
+     * The version tag of a document: its size and its modification time. Every write changes it
+     * (writes replace the file whole, see [writeAtomic], which moves a rewrite of the same size
+     * within the same millisecond one millisecond on), and it is a property of the file, not of
+     * the process: what the chrome compares with the boot manifest, what the Safe Browsing host
+     * keeps its parsed tables by and names the documents its snapshot was built from with, so a
+     * snapshot written by one process is recognised by the next. Null when the document does
+     * not exist.
      */
     fun etag(name: String): String? {
         val file = fileFor(name)?.takeIf { it.isFile } ?: return null
@@ -103,7 +103,7 @@ class Storage(private val dir: File) {
     }
 
     private fun etagOf(file: File, length: Long): String =
-        "${java.lang.Long.toHexString(length)}-${java.lang.Long.toHexString(file.lastModified())}-${writeCounts[file.absolutePath] ?: 0}"
+        "${java.lang.Long.toHexString(length)}-${java.lang.Long.toHexString(file.lastModified())}"
 
     /**
      * A boot document opened for streaming (the document handler), or null when it does not
@@ -221,12 +221,21 @@ class Storage(private val dir: File) {
      * version survives a write that the document itself does not, and the core reads the backup
      * when the document is gone or unreadable (`JsonStore`, `backup: true`). Throws when the
      * document could not be replaced.
+     *
+     * The new file's version tag ([etag]) differs from the old one's: bytes of the same size
+     * landing within the modification time's millisecond (a filesystem's clock is coarser than
+     * that) get a modification time one millisecond past the old file's, on the temp file, so
+     * the rename publishes bytes and tag together.
      */
     private fun writeAtomic(name: String, text: String, backup: Boolean) {
         val target = fileFor(name) ?: throw IOException("not a document name: $name")
         target.parentFile?.mkdirs()
+        val before = target.takeIf { it.isFile }?.let { it.length() to it.lastModified() }
         val tmp = File(target.parentFile, "${target.name}.tmp")
         tmp.writeText(text)
+        if (before != null && tmp.length() == before.first && tmp.lastModified() <= before.second) {
+            tmp.setLastModified(before.second + 1)
+        }
         if (backup && target.isFile) target.renameTo(File(target.parentFile, "${target.name}.bak"))
         if (!tmp.renameTo(target)) {
             target.delete()
@@ -235,7 +244,6 @@ class Storage(private val dir: File) {
                 throw IOException("could not replace $name")
             }
         }
-        writeCounts.merge(target.absolutePath, 1, Int::plus)
     }
 
     /** What [bootDocuments] hands the boot payload: the inlined texts and the deferred documents' manifest. */
@@ -252,8 +260,6 @@ class Storage(private val dir: File) {
         const val SAFE_BROWSING_DIR = "safebrowsing"
         private val UNSAFE = Regex("[^A-Za-z0-9._-]")
         private val changeListeners = CopyOnWriteArraySet<(String) -> Unit>()
-        /** Writes per file (by path) since the process started, by any instance: part of [etag]. */
-        private val writeCounts = ConcurrentHashMap<String, Int>()
 
         /**
          * Hear every write or removal under `files/zen/`, by any instance in the process (the

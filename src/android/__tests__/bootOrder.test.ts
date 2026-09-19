@@ -77,7 +77,7 @@ describe('a deferred root document read before the boot fetch lands', () => {
     const platform = new AndroidPlatform(bridge, {
       ...BOOT,
       files: { 'history.json': '{}' },
-      deferred: [{ name: 'state.json', bytes: profile.length, etag: '1f4-18f3-0' }]
+      deferred: [{ name: 'state.json', bytes: profile.length, etag: '1f4-18f3' }]
     })
 
     // The platform's own constructor-time read (the new tab background, unset here) asked the host.
@@ -106,7 +106,7 @@ describe('a deferred root document read before the boot fetch lands', () => {
     const { bridge, calls } = fakeBridge({ 'newtab-wallpaper.json': wallpaper })
     const boot: BootInfo = {
       ...BOOT,
-      deferred: [{ name: 'newtab-wallpaper.json', bytes: wallpaper.length, etag: 'e0-1-0' }]
+      deferred: [{ name: 'newtab-wallpaper.json', bytes: wallpaper.length, etag: 'e0-1' }]
     }
     // As bootAndroid does: the store first, the fetched documents adopted, then the platform.
     const io = new AndroidStoreIO(bridge, boot.files, boot.deferred)

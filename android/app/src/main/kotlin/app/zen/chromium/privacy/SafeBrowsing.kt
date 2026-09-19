@@ -363,16 +363,16 @@ class SafeBrowsing(private val storage: Storage) {
     // --- the snapshot -----------------------------------------------------------------------------
 
     /**
-     * The feed documents present, with their version tags, in the order [reload] reads them. The
-     * tag is the document's size and modification time (the core replaces a file whole, see
-     * `Storage.writeAtomic`); it becomes `Storage.etag` when #181 lands it.
+     * The feed documents present, with their version tags ([Storage.etag]: the same tag [reload]
+     * keeps its parsed tables by, a property of the file that the next process reads back), in
+     * the order [reload] reads them.
      */
     private fun documentTags(): List<Pair<String, String>> {
         val out = ArrayList<Pair<String, String>>()
         for (name in storage.list(DIR).sorted()) {
             if (!name.endsWith(".json")) continue
-            val file = storage.fileFor(name)?.takeIf { it.isFile } ?: continue
-            out.add(name to "${java.lang.Long.toHexString(file.length())}-${java.lang.Long.toHexString(file.lastModified())}")
+            val tag = storage.etag(name) ?: continue
+            out.add(name to tag)
         }
         return out
     }

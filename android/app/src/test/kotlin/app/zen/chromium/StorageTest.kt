@@ -4,6 +4,7 @@ import app.zen.chromium.ext.ZipFixtures
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -87,6 +88,27 @@ class StorageTest {
         assertEquals(setOf("state.json"), storage.readAll().keys().asSequence().toSet())
         assertFalse(storage.isBootDocument("state.json.bak"))
         assertEquals(setOf("state.json", "state.json.bak"), dir.list()!!.toSet())
+    }
+
+    @Test
+    fun aRewriteOfTheSameSizeWithinTheMillisecondIsAnotherVersion() {
+        storage.writeSync("state.json", """{"version":1,"tabs":["a"]}""")
+        val file = File(dir, "state.json")
+        // The document's clock is put well ahead: the rewrite lands "within the same millisecond".
+        val ahead = file.lastModified() + 5_000
+        assertTrue(file.setLastModified(ahead))
+        val before = storage.etag("state.json")
+        storage.writeSync("state.json", """{"version":1,"tabs":["b"]}""")
+        assertEquals("""{"version":1,"tabs":["b"]}""", storage.read("state.json"))
+        assertEquals(ahead + 1, file.lastModified())
+        assertNotEquals(before, storage.etag("state.json"))
+        // Once more, with a backup: the backup keeps the previous clock, the document moves on again.
+        storage.writeSync("state.json", """{"version":1,"tabs":["c"]}""", backup = true)
+        assertEquals(ahead + 1, File(dir, "state.json.bak").lastModified())
+        assertEquals(ahead + 2, file.lastModified())
+        // Another size is another version by itself: the clock is the write's own.
+        storage.writeSync("state.json", """{"version":1,"tabs":["c","d"]}""")
+        assertTrue(file.lastModified() < ahead)
     }
 
     @Test

@@ -577,4 +577,38 @@ class SafeBrowsingTest {
         assertEquals(1, safeBrowsing.lastParsed)
         assertEquals("phishing", safeBrowsing.tables.lookup("evil.example.com")!!.threat)
     }
+
+    @Test
+    fun `the snapshot names the documents by the version tag the incremental load keys on`() {
+        storage.writeSync("safebrowsing/urlhaus.json", document("urlhaus", "malware", listOf("listed.example")))
+        storage.writeSync("safebrowsing/phishing-database.json", document("phishing-database", "phishing", listOf("evil.example.com")))
+        val writer = SafeBrowsing(storage)
+        writer.reload()
+        assertEquals(2, writer.lastParsed)
+        assertEquals(SafeBrowsing.SnapshotOutcome.WRITTEN, writer.lastSnapshot)
+
+        // The header's tags are `Storage.etag`, the files' size and time and nothing of this
+        // process: a Storage of its own over the directory (the next process) recognises the snapshot.
+        val next = SafeBrowsing(Storage(dir))
+        assertTrue(next.loadSnapshot())
+        assertEquals(2, next.tables.entries)
+        assertEquals("urlhaus", next.tables.lookup("listed.example")!!.feedId)
+
+        // A feed refreshed with other bytes of the same size, within the millisecond: another
+        // version to the incremental load (parsed again) and to the header (written again).
+        storage.writeSync("safebrowsing/urlhaus.json", document("urlhaus", "malware", listOf("fresh1.example")))
+        writer.reload()
+        assertEquals(1, writer.lastParsed)
+        assertEquals(SafeBrowsing.SnapshotOutcome.WRITTEN, writer.lastSnapshot)
+        assertEquals("urlhaus", writer.tables.lookup("fresh1.example")!!.feedId)
+        assertNull(writer.tables.lookup("listed.example"))
+        val again = SafeBrowsing(Storage(dir))
+        assertTrue(again.loadSnapshot())
+        assertEquals("urlhaus", again.tables.lookup("fresh1.example")!!.feedId)
+        assertNull(again.tables.lookup("listed.example"))
+        // The instance that loaded the snapshot parses the documents once (its own cache is empty) and leaves it alone.
+        again.reload()
+        assertEquals(2, again.lastParsed)
+        assertEquals(SafeBrowsing.SnapshotOutcome.UNCHANGED, again.lastSnapshot)
+    }
 }

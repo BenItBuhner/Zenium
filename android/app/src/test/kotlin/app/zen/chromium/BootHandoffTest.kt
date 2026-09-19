@@ -73,6 +73,11 @@ class BootHandoffTest {
         assertNotNull(first)
         assertEquals(first, storage.etag("safebrowsing/phishing-database.json"))
         assertEquals(first, storage.bootDocuments(0).deferred.getJSONObject(0).getString("etag"))
+        // The tag is the file's size and modification time and nothing of this process: the next
+        // process (the Safe Browsing snapshot's header is compared across them) reads the same one.
+        val file = File(dir, "safebrowsing/phishing-database.json")
+        assertEquals("${java.lang.Long.toHexString(file.length())}-${java.lang.Long.toHexString(file.lastModified())}", first)
+        assertEquals(first, Storage(dir).etag("safebrowsing/phishing-database.json"))
         // A rewrite (the refreshed feed) changes the tag: different bytes here, a later moment always.
         File(dir, "safebrowsing/phishing-database.json").setLastModified(System.currentTimeMillis() - 60_000)
         val aged = storage.etag("safebrowsing/phishing-database.json")
