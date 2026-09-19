@@ -30,6 +30,17 @@ const EASE = 'cubic-bezier(0.2, 0.8, 0.2, 1)'
 /** Room kept between the active chip and the scroller's fading edge. */
 const KEEP_IN_VIEW_PAD = 8
 
+/**
+ * A chip's face back at rest after a spring wrote it: the scale and fade gone, and the
+ * stylesheet's transition (paused while the spring ran, or the pressed state's ease would have
+ * dragged on every frame) back for the pressed state.
+ */
+function restFace(el: HTMLElement): void {
+  el.style.transform = ''
+  el.style.opacity = ''
+  el.style.transition = ''
+}
+
 interface Props {
   presence: GroupStripPresence
   state: UIState
@@ -367,17 +378,16 @@ function MemberChip({
       el.style.opacity = Math.max(0, Math.min(1, t)).toFixed(3)
     }
     const spring = new SpringAnimation(SPRING_SNAPPY, draw, () => {
-      el.style.transform = ''
-      el.style.opacity = ''
+      restFace(el)
       settled()
     })
     spring.start(CHIP_TRAVEL, 0, 0)
     // Small and clear from this commit: the spring's first frame is a frame away.
+    el.style.transition = 'none'
     draw(CHIP_TRAVEL)
     return () => {
       spring.stop()
-      el.style.transform = ''
-      el.style.opacity = ''
+      restFace(el)
     }
   }, [ledger, groupId, tab.id])
   const title = tabTitle(tab) || tab.url
@@ -429,6 +439,7 @@ function ExitChip({ exit, onDone }: { exit: ChipExit; onDone: (id: string) => vo
     }
     const spring = new SpringAnimation(SPRING_SNAPPY, draw, finish)
     spring.start(CHIP_TRAVEL, 0, 0)
+    el.style.transition = 'none'
     draw(CHIP_TRAVEL)
     return () => spring.stop()
   }, [exit.tab.id, onDone])
