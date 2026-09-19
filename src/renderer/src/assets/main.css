@@ -4476,11 +4476,22 @@
   line-height: var(--v2-line-body);
   transition: background 120ms var(--zen-ease);
 }
-.zen-v2-row:active:not([aria-disabled='true']) {
+/*
+ * The static row (§9.34): a row that is not a target – a permission warning, a Source value, an
+ * "It can:" list, a version line – keeps the primitive for its geometry (height, padding,
+ * `--v2-row-pad`, where its text and glyphs sit) and carries `data-static`, which turns off the
+ * hover fill, the press fill and the pointer cursor. A static row carries `data-static` and NO
+ * `role`: static text does not restate the row's layout under another class, it is this row.
+ * An interactive row is never made static to hide its fill – the fill is what says it is a target.
+ */
+.zen-v2-row[data-static] {
+  cursor: default;
+}
+.zen-v2-row:active:not([aria-disabled='true'], [data-static]) {
   background: var(--v2-fill);
 }
 @media (hover: hover) {
-  .zen-v2-row:hover:not([aria-disabled='true']) {
+  .zen-v2-row:hover:not([aria-disabled='true'], [data-static]) {
     background: var(--v2-fill);
   }
 }
@@ -4828,16 +4839,12 @@
   text-align: center;
 }
 
-/* Rows (§10.4): label 15 on the first line, description 13/69 % under it, at most two lines. */
-.zen-settings-row {
-  display: flex;
-  width: 100%;
-  min-height: var(--v2-row);
-  align-items: center;
-  gap: 12px;
-  padding: var(--v2-row-pad) 16px;
-  text-align: left;
-}
+/*
+ * Rows (§10.4): every row of the page is the shared `.zen-v2-row` – a pressable one as the
+ * button that is the target, an info row as the static form (`data-static`, §9.34) – so no rule
+ * here states the row's geometry; `zen-settings-row` is the page's hook for what is its own:
+ * label 15 on the first line, description 13/69 % under it, at most two lines.
+ */
 .zen-settings-row-text {
   display: flex;
   min-width: 0;
