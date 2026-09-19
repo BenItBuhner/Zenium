@@ -59,9 +59,20 @@ const IDLE: DockState = {
 
 export const dockStore = createStore<DockState>(IDLE, 'dock')
 
-/** Height of the bar band (CSS px), read from the stylesheet. */
+/** Height of the bar's row of controls (CSS px), read from the stylesheet. */
 export function phoneBarHeight(): number {
   return cssPx('--zen-phone-bar', 56)
+}
+
+/**
+ * Height of the whole bar band (CSS px): the row and, while the active tab is in a group, the
+ * group strip's share (`--zen-group-strip`, written by the shell; `--zen-phone-band` in main.css
+ * is the same sum for the stylesheet). What the content column leaves free at the bar's edge,
+ * so what a carry slides the page by. Summed here rather than read as the band: an unregistered
+ * property's computed value keeps its `calc()`, which would not parse.
+ */
+export function phoneBandHeight(): number {
+  return phoneBarHeight() + cssPx('--zen-group-strip', 0)
 }
 
 /** A length custom property of the document root in px (`fallback` outside a document). */

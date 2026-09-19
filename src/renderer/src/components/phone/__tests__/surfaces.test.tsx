@@ -113,8 +113,8 @@ describe('phone shell surfaces (§9.29)', () => {
     expect(pill.getAttribute('data-surface')).toBe('window')
     const chip = pill.querySelector<HTMLElement>('[data-site-info]')!
     expect(chip.closest('[data-surface]')).toBe(pill)
-    // The bar's own buttons sit on the bar.
-    const button = bar.querySelector<HTMLElement>(':scope > button')!
+    // The bar's own buttons sit on the bar (in its row of controls).
+    const button = bar.querySelector<HTMLElement>('.zen-phone-bar-row > button')!
     expect(button.closest('[data-surface]')).toBe(bar)
   })
 })
