@@ -7,6 +7,7 @@ import { displayUrl } from '@shared/url'
 import { downloadsEngine } from '@renderer/lib/downloadsEngine'
 import { filterDownloads, groupDownloadsByDay, hasClearable } from '@renderer/lib/downloadsView'
 import { FrameDialogHost, POPOVER_WIDTH, useFrameDialog } from '@renderer/lib/portals'
+import { browserStore } from '@renderer/lib/ui'
 import { useEscapeTrap } from '../bookmarks/escape'
 import { wrapTab } from '../bookmarks/popover'
 import { DlButton, DownloadRow } from '../downloads/DownloadParts'
@@ -16,7 +17,9 @@ import { OverlayShell } from './OverlayShell'
  * `zen://downloads` (Ctrl+J; shown to users as `zenium://downloads`): every download the
  * browser remembers, grouped by day, with search and the same rows as the bubble. Finished
  * files can be dragged out to the OS; the folder they land in opens from here; Clear all asks
- * first. Desktop hosts manage the files; single-window hosts show the list only.
+ * first. Desktop hosts manage the files; single-window hosts show the list only. As the page
+ * opens, the finished files are checked for being on disk (Chrome does the same), so a row
+ * whose file went since reads Deleted.
  */
 export function DownloadsPanel({ state }: { state: UIState }): JSX.Element {
   const [query, setQuery] = useState('')
@@ -26,6 +29,10 @@ export function DownloadsPanel({ state }: { state: UIState }): JSX.Element {
   const groups = groupDownloadsByDay(filterDownloads(items, query))
   const files = state.platform !== 'android'
   const clearable = items.filter((i) => !isActiveDownload(i)).length
+  useEffect(() => {
+    const current = browserStore.get().state
+    if (current) downloadsEngine.refreshFiles(downloadsEngine.list(current))
+  }, [])
   return (
     <>
       <OverlayShell title="Downloads" variant="full" className="zen-dl-surface zen-dl-page">

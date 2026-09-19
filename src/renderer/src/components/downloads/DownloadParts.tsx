@@ -8,6 +8,7 @@ import {
   FileCode,
   FileText,
   FileVideo,
+  FileX,
   FolderOpen,
   Image,
   Package,
@@ -18,10 +19,11 @@ import {
   X,
   type LucideIcon
 } from 'lucide-react'
-import type { DownloadItem } from '@shared/types'
+import type { DownloadDeleteFileResult, DownloadItem } from '@shared/types'
 import {
   canResumeDownload,
   canRetryDownload,
+  deleteFileToast,
   displayName,
   isActiveDownload
 } from '@shared/downloadsShell'
@@ -30,17 +32,20 @@ import {
   dangerActionLabels,
   downloadStatus,
   fileGlyphFor,
+  isDeletedRow,
   isOnDisk,
   splitFileName,
   type FileGlyph
 } from '@renderer/lib/downloadsView'
+import { pushToast } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 
 /*
  * Pieces a download row is made of, shared by the bubble and the `zen://downloads` page: the
  * row itself (design language v2 §9.2 two-line row with §9.18 centred trailing controls), the
  * file-type glyph, the middle-truncated name, the status line, the thin progress bar, the hover
- * actions and the Keep / Delete pair for flagged files, all on the engine's commands (PR #69).
+ * actions and the Keep / Delete pair for flagged files, all on the engine's commands (PR #69,
+ * #166 for Delete file and the file-missing signal behind the Deleted row).
  */
 
 const GLYPHS: Record<FileGlyph, LucideIcon> = {
@@ -57,10 +62,10 @@ const GLYPHS: Record<FileGlyph, LucideIcon> = {
 /** How long a Keep / Delete button spins before it gives up on a reply that never came. */
 const BUSY_TIMEOUT_MS = 8000
 
-/** The 16px file-type glyph, dimmed for records whose file is gone. */
+/** The 16px file-type glyph, dimmed for records whose file is gone (cancelled, failed, deleted). */
 export function FileTypeGlyph({ item }: { item: DownloadItem }): JSX.Element {
   const Icon = GLYPHS[fileGlyphFor(item.finalName || item.filename, item.mimeType)]
-  const gone = item.state === 'cancelled' || item.state === 'interrupted'
+  const gone = item.state === 'cancelled' || item.state === 'interrupted' || isDeletedRow(item)
   return (
     <span className={cn('zen-dl-glyph', gone && 'opacity-40')} aria-hidden>
       <Icon className="h-4 w-4" strokeWidth={1.5} />
@@ -80,7 +85,7 @@ export function FileName({
 }: {
   name: string
   title?: string
-  /** A record whose file is not coming (cancelled): the name in the deemphasised ink. */
+  /** A record without a file (cancelled, or deleted since): the name in the deemphasised ink. */
   dim?: boolean
   /** The file can be opened: the name is a button that does. */
   onOpen?: () => void
@@ -114,7 +119,10 @@ export function FileName({
   )
 }
 
-/** The one-line status under the name, set in the tone the status asks for. */
+/**
+ * The one-line status under the name, set in the tone the status asks for; a failure's line
+ * carries the engine's sentence as its tooltip.
+ */
 export function StatusLine({
   item,
   suffix
@@ -132,6 +140,7 @@ export function StatusLine({
             status.tone === 'warn' && 'zen-dl-status-warn',
             status.tone === 'danger' && 'zen-dl-status-danger'
           )}
+          title={status.hint}
         >
           {status.text}
         </span>
@@ -206,12 +215,18 @@ export function DlButton({
   )
 }
 
+/**
+ * A row's 28 icon button. Disabled is the whole control at .4; busy keeps full opacity, swaps
+ * the glyph for the 16px spinner and says `aria-busy` (§9.30), and ignores presses meanwhile.
+ */
 function IconAction({
   title,
   icon: Icon,
   onClick,
   pressed,
-  disabled
+  disabled,
+  busy,
+  action
 }: {
   title: string
   icon: LucideIcon
@@ -219,36 +234,60 @@ function IconAction({
   /** A toggle: rendered pressed while on. */
   pressed?: boolean
   disabled?: boolean
+  busy?: boolean
+  /** Names the control for tests and the harness (`data-zen-dl-action`). */
+  action?: string
 }): JSX.Element {
   return (
     <button
       type="button"
-      className={cn('zen-toolbar-button', pressed && 'zen-dl-action-on')}
+      className={cn('zen-toolbar-button', pressed && 'zen-dl-action-on', busy && 'zen-dl-busy')}
       title={title}
       aria-label={title}
       aria-pressed={pressed}
+      aria-busy={busy || undefined}
       disabled={disabled}
+      data-zen-dl-action={action}
       onClick={(e) => {
         e.stopPropagation()
-        onClick()
+        if (!busy) onClick()
       }}
     >
-      <Icon className="h-4 w-4" strokeWidth={1.5} />
+      <span className="zen-dl-button-label flex">
+        <Icon className="h-4 w-4" strokeWidth={1.5} />
+      </span>
+      {busy && <span className="zen-dl-spinner" aria-hidden />}
     </button>
   )
 }
 
 /**
  * The row's controls for its state: Pause / Resume, Cancel and "Open when done" while in
- * flight, Resume for an interrupted transfer the server lets continue and Retry for the rest
- * of the failed and cancelled ones, Show in folder when the file exists, and Remove from list
- * for anything settled.
+ * flight, Resume for an interrupted transfer the server lets continue and Retry for the
+ * cancelled ones and the failed ones whose reason a retry can get past (and for a Deleted row),
+ * Show in folder and Delete file when the file exists, and Remove from list for anything
+ * settled. Delete file spins until the engine answers; the row then reads Deleted (`deleted`,
+ * or `missing` when the file was gone already), or a toast says the file would not go.
  */
 export function DownloadActions({ item }: { item: DownloadItem }): JSX.Element {
   const id = item.id
   const e = downloadsEngine
   const inFlight = item.state === 'progressing' || item.state === 'paused'
   const resumable = canResumeDownload(item)
+  const [deleting, setDeleting] = useState(false)
+  const deleteFile = async (): Promise<void> => {
+    setDeleting(true)
+    let result: DownloadDeleteFileResult = 'failed'
+    try {
+      result = await e.deleteFile(id)
+    } catch {
+      // The command never came back: the file is where it was, as far as the row can tell.
+    } finally {
+      setDeleting(false)
+    }
+    const toast = deleteFileToast(result, displayName(item))
+    if (toast) pushToast(toast, 'error')
+  }
   return (
     <>
       {item.state === 'progressing' && (
@@ -256,7 +295,7 @@ export function DownloadActions({ item }: { item: DownloadItem }): JSX.Element {
       )}
       {resumable && <IconAction title="Resume" icon={Play} onClick={() => e.resume(id)} />}
       {!resumable && canRetryDownload(item) && (
-        <IconAction title="Retry" icon={RotateCw} onClick={() => e.retry(id)} />
+        <IconAction title="Retry" icon={RotateCw} action="retry" onClick={() => e.retry(id)} />
       )}
       {inFlight && (
         <IconAction
@@ -268,10 +307,29 @@ export function DownloadActions({ item }: { item: DownloadItem }): JSX.Element {
       )}
       {inFlight && <IconAction title="Cancel" icon={X} onClick={() => e.cancel(id)} />}
       {isOnDisk(item) && (
-        <IconAction title="Show in folder" icon={FolderOpen} onClick={() => e.showInFolder(id)} />
+        <IconAction
+          title="Show in folder"
+          icon={FolderOpen}
+          action="show-in-folder"
+          onClick={() => e.showInFolder(id)}
+        />
+      )}
+      {isOnDisk(item) && (
+        <IconAction
+          title="Delete file"
+          icon={FileX}
+          action="delete-file"
+          busy={deleting}
+          onClick={() => void deleteFile()}
+        />
       )}
       {!inFlight && (
-        <IconAction title="Remove from list" icon={Trash2} onClick={() => e.remove(id)} />
+        <IconAction
+          title="Remove from list"
+          icon={Trash2}
+          action="remove"
+          onClick={() => e.remove(id)}
+        />
       )}
     </>
   )
@@ -325,6 +383,8 @@ export function DangerActions({ item }: { item: DownloadItem }): JSX.Element {
  * centred on the row's height (§9.18); rows touch (§9.21). Enter or a double click opens a
  * finished file, the name is a button that opens it, a right click or the menu key asks the
  * core for the row's menu, and on desktop hosts a finished file can be dragged out to the OS.
+ * A finished file the engine found gone from disk is Chrome's Deleted row: name and glyph in
+ * the deemphasised ink, status "Deleted", nothing to open, show or drag, Retry and Remove kept.
  */
 export function DownloadRow({
   item,
@@ -347,6 +407,7 @@ export function DownloadRow({
   const active = isActiveDownload(item)
   const openable = isOnDisk(item)
   const flagged = showsDangerDecision(item)
+  const deleted = isDeletedRow(item)
   const name = displayName(item)
   const status = downloadStatus(item)
   const open = (): void => {
@@ -375,6 +436,7 @@ export function DownloadRow({
       data-state={item.state}
       data-download-id={item.id}
       data-flagged={flagged || undefined}
+      data-deleted={deleted || undefined}
       draggable={draggable && openable}
       onDragStart={(e) => {
         // The OS drag is the host's: hand the file over and drop the HTML5 one.
@@ -397,7 +459,7 @@ export function DownloadRow({
         <FileName
           name={name}
           title={item.savePath || item.url}
-          dim={item.state === 'cancelled'}
+          dim={item.state === 'cancelled' || deleted}
           onOpen={openable ? open : undefined}
         />
         <StatusLine item={item} suffix={source} />
