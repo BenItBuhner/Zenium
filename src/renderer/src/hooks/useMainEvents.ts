@@ -9,6 +9,7 @@ import { startDownloadsUi } from '@renderer/lib/downloads'
 import { isPhone, viewportStore } from '@renderer/lib/formFactor'
 import { presentInstallBanner, retireInstallBanner } from '@renderer/lib/installBanner'
 import { onLayoutApplied, onViewDrawn } from '@renderer/lib/pageView'
+import { focusPane, releaseChromeFocus } from '@renderer/lib/panes'
 import { APP_MENU_EVENT } from '@renderer/lib/shortcuts'
 import { openSettings } from '@renderer/lib/pages'
 import {
@@ -150,6 +151,10 @@ export function useMainEvents(): void {
         const claimed = !window.dispatchEvent(new CustomEvent(APP_MENU_EVENT, { cancelable: true }))
         if (!claimed) run('app.menu', { keyboard: true })
       }),
+      // F6 / Shift+F6 / Shift+Alt+T / Shift+Alt+B: the keyboard moves between the chrome's panes
+      // and the page (lib/panes.ts).
+      onEvent('focus.pane', (request) => void focusPane(request)),
+      onEvent('focus.page', () => void releaseChromeFocus()),
       onEvent('zoom.changed', ({ tabId, factor }) => {
         // Chrome's bubble, for the page on screen. The host with the page-controls sheet
         // (Android) shows the zoom there instead.

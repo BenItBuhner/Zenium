@@ -1392,6 +1392,22 @@ export interface KeyBinding {
  */
 export type ShortcutPreset = 'chrome' | 'zen'
 
+/**
+ * The chrome's keyboard panes, in F6 order (Chrome's tab strip → toolbar → bookmarks bar → side
+ * panel → web contents). `page` is the active tab's view; the others are regions of the chrome
+ * document, marked `data-pane` on their root.
+ */
+export type PaneId = 'tabs' | 'toolbar' | 'bookmarks' | 'sidepanel' | 'page'
+
+/**
+ * What a pane shortcut asked for: the next / previous pane, or a named one. `from` is where the
+ * key was pressed – a page's view or the chrome document – which the core knows and the chrome
+ * cannot tell (its document reports itself focused while a sibling page view holds the keyboard).
+ */
+export type FocusPaneRequest =
+  | { move: 'next' | 'prev'; from: 'chrome' | 'page' }
+  | { pane: 'toolbar' | 'bookmarks' }
+
 export type ShortcutAction =
   | 'compact.toggle'
   | 'compact.toggleSidebar'
@@ -1455,6 +1471,17 @@ export type ShortcutAction =
   | 'nav.reloadSkipCache'
   | 'nav.home'
   | 'nav.stop'
+  /**
+   * Keyboard panes (Chrome's F6 rotation, `BrowserView::GetAccessiblePanes`): the keyboard moves
+   * to the next or previous pane of the chrome that is on screen – tab strip, toolbar, bookmarks
+   * bar, side panel, page – or straight to the toolbar's first control (Shift+Alt+T) or the
+   * bookmarks bar (Shift+Alt+B). The renderer decides where the keyboard is and where it goes
+   * (`focus.pane`); see `renderer/lib/panes.ts`.
+   */
+  | 'focus.nextPane'
+  | 'focus.prevPane'
+  | 'focus.toolbar'
+  | 'focus.bookmarksBar'
   | 'urlbar.focus'
   | 'urlbar.search'
   | 'urlbar.pasteAndGo'
@@ -3962,6 +3989,19 @@ export interface Events {
    * sidebar's top row with the keyboard in its field (`tab.searchCandidates` lists the tabs).
    */
   'tabsearch.open': void
+  /**
+   * A shortcut asked the keyboard to move panes (F6, Shift+F6, Shift+Alt+T, Shift+Alt+B). The
+   * renderer works out the pane the keyboard is in and the one it goes to among those on screen,
+   * and asks the core for the chrome's or the page's focus accordingly (`focus.chrome`,
+   * `focus.content`).
+   */
+  'focus.pane': FocusPaneRequest
+  /**
+   * A page's view took the keyboard (the user clicked or tabbed into it, or the core gave it the
+   * focus): whatever control the chrome document had focused is stale – it would keep its focus
+   * ring, and count as the keyboard's place for F6 – and is let go.
+   */
+  'focus.page': { tabId: string }
   /**
    * The user zoomed a page (keyboard, Ctrl+wheel, the menu, the bubble's own controls): the
    * chrome shows the zoom bubble for the tab. `factor` is the page's effective zoom; `siteKey`

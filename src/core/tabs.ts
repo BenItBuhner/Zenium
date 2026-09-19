@@ -598,6 +598,7 @@ export class TabManager {
       onContextMenu: (params) =>
         this.browser.menus.showPageContextMenu(tabId, params, ownerWindow()),
       onKey: (input) => this.browser.keys.handle(input, tabId, ownerWindow()),
+      onFocused: () => this.browser.emit('focus.page', { tabId }, ownerWindow()),
       onTargetUrl: (url) => this.browser.emit('status', { text: url }, ownerWindow()),
       onDomReady: () => {
         this.sendPageFlags(tabId)

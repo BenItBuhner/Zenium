@@ -3702,6 +3702,21 @@
     display: none;
   }
 }
+/*
+ * The keyboard on the address (F6, Tab) rings the whole pill, as Chrome's location bar does (§1
+ * ring): the address button fills the pill and, in a narrow sidebar, may have no width of its
+ * own left next to the chips, so a ring on the button alone can be a sliver or nothing.
+ */
+.zen-pill:has(> button:focus-visible) {
+  outline: 2px solid var(--v2-ring);
+  outline-offset: 0;
+}
+:root[data-theme='dark'] .zen-pill:has(> button:focus-visible) {
+  outline-offset: -2px;
+}
+.zen-pill > button:focus-visible {
+  outline: none;
+}
 
 /*
  * The manager page's header (v2 §9.7): a 22/600 title and no hairline at rest. Unlayered on

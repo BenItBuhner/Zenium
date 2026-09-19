@@ -326,6 +326,7 @@ const ACCEL_ALT_SHIFT: Mods = { accel: true, alt: true, shift: true }
 const CTRL: Mods = { ctrl: true }
 const CTRL_SHIFT: Mods = { ctrl: true, shift: true }
 const ALT: Mods = { alt: true }
+const ALT_SHIFT: Mods = { alt: true, shift: true }
 const SHIFT: Mods = { shift: true }
 const META: Mods = { meta: true }
 const META_SHIFT: Mods = { meta: true, shift: true }
@@ -755,6 +756,37 @@ const DEFS: Def[] = [
     label: 'Stop',
     ...both(UNBOUND)
   },
+  {
+    // Chrome's and Firefox's F6: the keyboard rotates through the chrome's panes (tab strip,
+    // toolbar, bookmarks bar, side panel) and the page. The address bar is the toolbar's stop.
+    id: 'key_focusNextPane',
+    action: 'focus.nextPane',
+    group: 'navigation',
+    label: 'Focus Next Pane',
+    ...both({ key: 'F6' })
+  },
+  {
+    id: 'key_focusPreviousPane',
+    action: 'focus.prevPane',
+    group: 'navigation',
+    label: 'Focus Previous Pane',
+    ...both({ key: 'F6', mods: SHIFT })
+  },
+  {
+    // Chrome's Windows and Linux chords; its macOS build has none.
+    id: 'key_focusToolbar',
+    action: 'focus.toolbar',
+    group: 'navigation',
+    label: 'Focus Toolbar',
+    ...both({ key: 't', mods: ALT_SHIFT, platforms: WINLIN })
+  },
+  {
+    id: 'key_focusBookmarksBar',
+    action: 'focus.bookmarksBar',
+    group: 'navigation',
+    label: 'Focus Bookmarks Bar',
+    ...both({ key: 'b', mods: ALT_SHIFT, platforms: WINLIN })
+  },
 
   // --- Search & find -----------------------------------------------------------
   {
@@ -762,7 +794,7 @@ const DEFS: Def[] = [
     action: 'urlbar.focus',
     group: 'searchAndFind',
     label: 'Focus Address Bar',
-    ...both({ key: 'l', mods: ACCEL, extra: [{ key: 'd', mods: ALT }, { key: 'F6' }] })
+    ...both({ key: 'l', mods: ACCEL, extra: [{ key: 'd', mods: ALT }] })
   },
   {
     id: 'key_search',

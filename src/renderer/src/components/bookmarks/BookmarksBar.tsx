@@ -444,6 +444,9 @@ export function BookmarksBar({
       aria-label="Bookmarks bar"
       className={cn('zen-bm-bar zen-no-drag', className)}
       data-surface="window"
+      // The bookmarks bar pane of the F6 rotation (lib/panes.ts): F6 and Shift+Alt+B land on the
+      // roving chip.
+      data-pane="bookmarks"
       onContextMenu={(e) => contextMenu(e, null)}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}

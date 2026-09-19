@@ -438,6 +438,11 @@ export interface TabViewEvents {
   onDevtoolsClosed(): void
   onFoundInPage(result: FindResultInfo): void
   onZoomChanged(direction: 'in' | 'out'): void
+  /**
+   * The view took the keyboard – the user clicked or tabbed into the page, or the core gave it
+   * the focus. Hosts that can tell fire it; the chrome lets go of its focused control.
+   */
+  onFocused?(): void
   onContextMenu(params: PageContextParams): void
   /** Returns true when the key was consumed by a browser shortcut. */
   onKey(input: KeyEventInput): boolean

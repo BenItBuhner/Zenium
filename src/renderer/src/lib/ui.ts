@@ -1115,12 +1115,17 @@ export function openNewTabPageUrlbar(
   })
 }
 
-export function closeUrlbar(): void {
+/**
+ * Close the URL bar. The keyboard goes back to the page unless `keepKeyboard`: a pane shortcut
+ * (F6 from the bar, lib/panes.ts) has already put it on another chrome control, and asking for
+ * the page's focus as well would take it back off that control.
+ */
+export function closeUrlbar(opts: { keepKeyboard?: boolean } = {}): void {
   typeahead = null
   if (!uiStore.get().urlbar.open) return
   uiStore.set((s) => ({ urlbar: { ...s.urlbar, open: false } }))
   invalidateSnapshot()
-  returnFocusToPage()
+  if (!opts.keepKeyboard) returnFocusToPage()
 }
 
 // ---------------------------------------------------------------------------
