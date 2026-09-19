@@ -70,15 +70,20 @@ class DownloadsDemo : DemoHarness("downloads-demo-state.json", "downloads", "dow
     }
 
     override fun demo() {
-        // 1. A throttled download: the panel opens on the transfer, Pause holds the bytes, Resume
+        // 1. A throttled download: the sheet opens on the transfer, Pause holds the bytes, Resume
         //    completes the file. While the row moves the emulator's chrome WebView is busy
-        //    repainting it, so every engine call waits seconds and the accessibility tree cannot
-        //    be traversed in time: the running row is the engine's word plus the screenshot and
-        //    the recording, Pause goes through the engine the moment the row exists, and the tree
-        //    is read once the row holds still ("slow.bin. Paused · <received> of 3.0 MB").
+        //    repainting it, so every engine call may wait seconds and the accessibility tree
+        //    cannot be traversed in time: the running row is the engine's word plus the screenshot
+        //    and the recording, Pause goes through the engine once the row holds a second's worth
+        //    of bytes (a sheet that is cheap to drive would otherwise pause before the first chunk
+        //    landed, leaving nothing on disk to measure), and the tree is read once the row holds
+        //    still ("slow.bin. Paused · <received> of 3.0 MB").
         val tapped = SystemClock.uptimeMillis()
         click(LINK_SLOW)
-        val slowId = awaitRow("slow.bin", 20_000) { it.optString("state") == "progressing" }?.optString("id").orEmpty()
+        val running = awaitRow("slow.bin", 20_000) {
+            it.optString("state") == "progressing" && it.optLong("receivedBytes") >= SLOW_RATE
+        }
+        val slowId = (running ?: rowFor("slow.bin"))?.optString("id").orEmpty()
         check(slowId.isNotEmpty(), "slow.bin never started downloading")
         shot("01-in-progress")
         press("Pause", "download.pause", "slow.bin", slowId, viaTree = false) { it.optString("state") == "paused" }
@@ -462,6 +467,8 @@ class DownloadsDemo : DemoHarness("downloads-demo-state.json", "downloads", "dow
         /** The phone sheet's header button (its label): how the driver knows the sheet is up. */
         const val SHEET_SETTINGS = "Downloads settings"
         const val SLOW_SIZE = 3L * 1024 * 1024
+        /** The server's throttle on slow.bin (`SLOW_RATE` in downloads-demo-server.mjs): a second of it. */
+        const val SLOW_RATE = 64L * 1024
         const val FLAKY_SIZE = 2L * 1024 * 1024
         const val DEAD_SIZE = 1L * 1024 * 1024
         const val DATA_TEXT = "Hello from a Zenium data: link\n"
