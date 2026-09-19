@@ -62,7 +62,8 @@ export type PreviewWebAppSurface = (typeof PREVIEW_WEBAPP_SURFACES)[number]
  * private tab is open elsewhere (`tabs`: the segment, and no private card among the regular
  * ones), and the Private pane with no private tab (`empty`: the explainer). `cookies=<mode>`
  * sets the third-party cookie setting first (`allow`, `block-private`, `block`), for the new tab
- * page's switch in each of its states.
+ * page's switch in each of its states; `then=<steps>` takes steps once the surface is up
+ * (`tap:More` opens the overview's header menu, a second tap on its row the question).
  */
 export const PREVIEW_PRIVATE_SURFACES = ['newtab', 'page', 'overview', 'tabs', 'empty'] as const
 export type PreviewPrivateSurface = (typeof PREVIEW_PRIVATE_SURFACES)[number]
@@ -201,6 +202,8 @@ export type PreviewState =
       url: string | null
       /** The third-party cookie setting to put in place first; absent, the profile's stands. */
       cookies?: ThirdPartyCookieMode
+      /** Steps taken once the surface is up (the overview's header menu, its question). */
+      then?: PreviewStep[]
     }
   | { kind: 'find'; text: string }
   | {
@@ -545,6 +548,8 @@ function parsePrivate(value: string, params: URLSearchParams): PreviewState {
   if (cookies !== null && (PREVIEW_COOKIE_MODES as readonly string[]).includes(cookies)) {
     state.cookies = cookies as ThirdPartyCookieMode
   }
+  const then = parsePreviewSteps(params.get('then'))
+  if (then.length) state.then = then
   return state
 }
 

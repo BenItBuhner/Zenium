@@ -192,6 +192,23 @@ describe('parsePreviewSpec', () => {
       surface: 'newtab',
       url: null
     })
+    // Steps once the surface is up: the overview's header menu and its question; none, no key.
+    expect(
+      parsePreviewSpec('private=overview&then=tap:More;tap:Close%20Private%20Tabs%20(1)')
+    ).toEqual({
+      kind: 'private',
+      surface: 'overview',
+      url: null,
+      then: [
+        { kind: 'tap', text: 'More' },
+        { kind: 'tap', text: 'Close Private Tabs (1)' }
+      ]
+    })
+    expect(parsePreviewSpec('private=overview&then=')).toEqual({
+      kind: 'private',
+      surface: 'overview',
+      url: null
+    })
   })
 
   it('puts up messages and the load bar together', () => {

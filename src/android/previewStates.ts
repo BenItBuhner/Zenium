@@ -498,9 +498,13 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
       () => afterFrames(2, () => done(spec))
     )
   } else if (target.kind === 'private' && state) {
+    // The steps, if any, once the surface is up: the overview's header menu, then its question.
+    const then = target.then ?? []
     const surface = (): void => {
       const now = browserStore.get().state ?? state
-      applyPrivate(target.surface, target.url ?? PRIVATE_PAGE, now, finish)
+      applyPrivate(target.surface, target.url ?? PRIVATE_PAGE, now, () =>
+        then.length ? steps(then, finish) : finish()
+      )
     }
     // The cookie setting first, through the settings command as the Settings page writes it,
     // and the surface once the core says so: the new tab page's switch reads the state.

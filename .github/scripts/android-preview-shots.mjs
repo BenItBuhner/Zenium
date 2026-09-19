@@ -31,7 +31,9 @@
 //                      pane with no private tab; `private=new` and `private=<url>` still read as
 //                      `newtab` and `page`; `&cookies=allow|block-private|block` sets the
 //                      third-party cookie setting first, for the new tab page's switch in each
-//                      of its states), `find=<text>`, `pull=<n>`,
+//                      of its states; `&then=tap:More` opens the overview's header menu on the
+//                      pane, `;tap:Close Private Tabs (1)` after it the question), `find=<text>`,
+//                      `pull=<n>`,
 //                      `zoom=<factor>` (the page zoom sheet), `error=<code>&url=<failed url>`
 //                      (the zen://error page; see `previewSpec.ts`), `overview` (the tab
 //                      overview over the active page) or the messages and the load
