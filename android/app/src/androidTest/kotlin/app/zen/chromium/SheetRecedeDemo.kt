@@ -258,6 +258,7 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
         probe("stack-open", Kind.TRANSITION) { runInPage(second.script) }
         settleUp()
         finding("stack: sheet on top titled '${findNode { it.startsWith("Open in") || it.startsWith("Allow") }?.let { it.text ?: it.contentDescription } ?: "?"}', --zen-recede ${recedeValue()}")
+        focusReport("stacked sheet")
         probe("stack-close-top", Kind.TRANSITION) { back() }
         settleUp()
         probe("stack-close", Kind.TRANSITION) { back() }

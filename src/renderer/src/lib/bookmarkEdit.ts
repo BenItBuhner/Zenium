@@ -1,5 +1,6 @@
 import { defaultBookmarkFolderId } from '@shared/bookmarks'
-import { browserStore, pushToast, uiStore } from './ui'
+import { activeTab } from './selectors'
+import { browserStore, closeBookmarkChrome, openBookmarkChrome, pushToast, uiStore } from './ui'
 import type { BookmarkEditRequest } from './ui'
 
 export type { BookmarkEditRequest }
@@ -8,22 +9,34 @@ export type { BookmarkEditRequest }
  * Open the editor for a bookmark or folder. The node may not have reached the renderer yet (a
  * `bookmark.star` that overtook the state push); the editor then waits for it rather than
  * treating the gap as a deletion (design review of #38, item 1).
+ *
+ * The editor is a sheet over the page, so it opens in the order every surface over the page
+ * keeps (`openBookmarkChrome`): the live page is captured first, and only then does the flag ask
+ * the host to hide it, so the sheet's chassis comes up over the page's picture and never over
+ * the window behind a page that was hidden with nothing in its place. Inside the bookmarks
+ * overlay the picture is the overlay's already and the request is handled in place.
  */
 export function editBookmark(id: string): void {
   const state = browserStore.get().state
   if (!state) return
   const node = state.bookmarks.find((n) => n.id === id)
-  uiStore.set({
-    bookmarkEdit: {
-      id,
-      parentId: node?.parentId ?? defaultBookmarkFolderId(state.platform),
-      type: node?.type ?? 'url'
-    }
-  })
+  const edit: BookmarkEditRequest = {
+    id,
+    parentId: node?.parentId ?? defaultBookmarkFolderId(state.platform),
+    type: node?.type ?? 'url'
+  }
+  if (uiStore.get().overlay === 'bookmarks') uiStore.set({ bookmarkEdit: edit })
+  else void openBookmarkChrome({ bookmarkEdit: edit }, activeTab(state)?.id ?? null)
 }
 
+/**
+ * The editor has left (or is leaving): the picture is let go once the page is drawn back and,
+ * with no other chrome needing the keyboard, the page gets it (`closeBookmarkChrome`).
+ */
 export function closeBookmarkEditor(): void {
-  if (uiStore.get().bookmarkEdit) uiStore.set({ bookmarkEdit: null })
+  if (!uiStore.get().bookmarkEdit) return
+  if (uiStore.get().overlay === 'bookmarks') uiStore.set({ bookmarkEdit: null })
+  else closeBookmarkChrome({ bookmarkEdit: null })
 }
 
 /**
