@@ -6,11 +6,17 @@ import { offerChromeShortcut } from '@renderer/lib/chromeShortcuts'
 import { chromeUnderPages } from '@renderer/lib/cover'
 import { remoteDragOver } from '@renderer/lib/drag'
 import { startDownloadsUi } from '@renderer/lib/downloads'
-import { isPhone } from '@renderer/lib/formFactor'
+import { isPhone, viewportStore } from '@renderer/lib/formFactor'
 import { presentInstallBanner, retireInstallBanner } from '@renderer/lib/installBanner'
 import { onLayoutApplied, onViewDrawn } from '@renderer/lib/pageView'
 import { APP_MENU_EVENT } from '@renderer/lib/shortcuts'
 import { openSettings } from '@renderer/lib/pages'
+import {
+  configureThumbnails,
+  rememberCard,
+  thumbnailWidthFor,
+  trackTabs
+} from '@renderer/lib/thumbnails'
 import {
   cancelExternalProtocol,
   closeMenu,
@@ -48,6 +54,11 @@ function currentActiveTabId(): string | null {
 function followsCover(): boolean {
   const state: UIState | null = browserStore.get().state
   return state !== null && chromeUnderPages(state.platform)
+}
+
+/** How wide the host is to make a card picture for this screen, in device pixels. */
+function thumbnailWidth(): number {
+  return thumbnailWidthFor(viewportStore.get().width, window.devicePixelRatio)
 }
 
 /** Wire main-process events into the renderer UI store. */
@@ -253,8 +264,22 @@ export function useMainEvents(): void {
       }),
       onEvent('view.drawn', ({ tabId, visible }) => {
         if (followsCover()) onViewDrawn(tabId, visible)
+      }),
+      // Tab card pictures (lib/thumbnails.ts): the host's captures, the tabs' navigations and
+      // closes, and the card width the host scales its captures to – on the host that keeps
+      // them (the chrome under the pages); the desktop hosts have no pictures to be told about.
+      onEvent('thumbnail.captured', ({ tabId, ...picture }) => rememberCard(tabId, picture)),
+      browserStore.subscribe(() => {
+        if (followsCover()) trackTabs(browserStore.get().state)
+      }),
+      viewportStore.subscribe(() => {
+        if (followsCover()) configureThumbnails(thumbnailWidth())
       })
     ]
+    if (followsCover()) {
+      trackTabs(browserStore.get().state)
+      configureThumbnails(thumbnailWidth())
+    }
     return () => offs.forEach((off) => off())
   }, [])
 }
