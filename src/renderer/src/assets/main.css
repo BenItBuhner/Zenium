@@ -2554,8 +2554,9 @@
    * 16 px gutter (§9.25) – a square window at the card radius, black like a viewfinder, that the
    * host's live preview covers exactly, with four corner brackets 4 px outside its edge in the
    * deemphasized ink (a marker, not an action, so not the accent) – and the torch toggle 12 px
-   * under it, a §6 button with a 16 px glyph whose pressed fill stays while the torch is on
-   * (`aria-pressed`). The window is the target: the decoder reads the whole picture, so nothing
+   * under it, a §6 button with a 16 px glyph, filled while the torch is on (`aria-pressed`; the
+   * rule is the unlayered `.zen-v2-button.zen-qr-torch` beside the primitive, below). The
+   * window is the target: the decoder reads the whole picture, so nothing
    * is drawn over it. While the preview is away (the sheet moving) the last still fills the
    * window, cropped as the preview was.
    */
@@ -2627,15 +2628,6 @@
     border-left: 0;
     border-top: 0;
     border-bottom-right-radius: calc(var(--v2-radius-card) + 4px);
-  }
-  .zen-qr-torch {
-    gap: 8px;
-  }
-  .zen-qr-torch[aria-pressed='true'] {
-    background: var(--v2-fill-hover);
-  }
-  .zen-qr-torch[aria-pressed='true'] > svg {
-    color: var(--v2-accent);
   }
   /* A row under a finger that is dragging the sheet is not being pressed. */
   .zen-sheet[data-dragging='true'] .zen-sheet-item:active {
@@ -2731,6 +2723,22 @@
     width: 100%;
     pointer-events: none;
   }
+}
+
+/*
+ * What the scan sheet's torch chip adds to the shared v2 button (§9.34: a variant is a modifier
+ * on the primitive, unlayered beside it, never a copy – inside a layer its fill would lose to
+ * the primitive's): the 8 px between glyph and label, and the toggle filled while the torch is
+ * on (`aria-pressed`) with its glyph in the accent, as the downloads row's "Open when done" is.
+ */
+.zen-v2-button.zen-qr-torch {
+  gap: 8px;
+}
+.zen-v2-button.zen-qr-torch[aria-pressed='true'] {
+  background: var(--v2-selection);
+}
+.zen-v2-button.zen-qr-torch[aria-pressed='true'] > svg {
+  color: var(--v2-accent);
 }
 
 @layer components {
