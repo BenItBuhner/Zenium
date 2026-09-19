@@ -90,6 +90,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val slug: String,
         val store: String? = null,
         val feasible: Boolean = true,
+        /** Account-backed (core graded by [popupLogin]): the page the action click opens is read in the popup stage. */
+        val account: Boolean = false,
         val core: (Row, JSONObject) -> Grade
     )
 
@@ -417,6 +419,11 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 detail.put("openedTabs", JSONArray(opened))
                 if (runtimePopup == null && opened.isNotEmpty()) {
                     entry.put("popupOpened", JSONArray(opened))
+                    // The page the click opened, read while its tab is still there (the stage's
+                    // closeExtraTabs takes it): an account row's core grade (popupLogin) is its
+                    // text, and an extension page that shows no sign-in (1Password's
+                    // app.html#/page/error) carries the blank-page evidence of the row so far.
+                    if (row.account) openedPage(row, opened[0])?.let { entry.put("popupOpenedPage", it) }
                     stage(entry, "popup", "P", "no popup (the extension emptied it with action.setPopup); the click fired action.onClicked, which opened ${opened.joinToString().take(160)}", detail)
                 } else if (live != null) {
                     val dom = detail.optJSONObject("dom") ?: JSONObject()
@@ -429,6 +436,22 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         coreInvoke("extension.closePopup", "null")
         SystemClock.sleep(900)
         closeExtraTabs()
+    }
+
+    /**
+     * The document of the tab the action click opened (`url`), as [DOM_REPORT] reads it, and for
+     * an extension page whose text shows no sign-in word the blank-page evidence of the row so far
+     * ([blankPageEvidence]); null when the tab has no WebView.
+     */
+    private fun openedPage(row: Row, url: String): JSONObject? {
+        val tabId = tabUrls().entries.firstOrNull { it.value == url }?.key ?: return null
+        val view = runCatching { waitForView(tabId) }.getOrNull() ?: return null
+        val dom = runCatching { json(tabEval(view, DOM_REPORT)) }.getOrNull() ?: return null
+        val page = JSONObject().put("url", url).put("dom", dom)
+        if (url.contains(".ext.zenium.invalid/") && !LOGIN_WORDS.containsMatchIn(dom.optString("text"))) {
+            page.put("blankTab", blankPageEvidence(view, row, 0L))
+        }
+        return page
     }
 
     /**
@@ -656,19 +679,27 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val popup = entry.optJSONObject("popup")
         val opened = entry.optJSONArray("popupOpened")
         val text = entry.optString("popupText")
-        val login = Regex("log ?in|sign ?in|create account|get started|continue|welcome|email|unlock|password", RegexOption.IGNORE_CASE)
+        val login = LOGIN_WORDS
         when {
             opened != null && opened.length() > 0 -> {
                 val url = opened.optString(0)
+                // The page as the popup stage read it before closing its tab (popupOpenedPage);
+                // read again here when the tab is still open.
+                val stored = entry.optJSONObject("popupOpenedPage")?.takeIf { it.optString("url") == url }
                 val tabId = tabUrls().entries.firstOrNull { it.value == url }?.key
                 val view = tabId?.let { id -> runCatching { waitForView(id) }.getOrNull() }
-                val dom = view?.let { v -> runCatching { json(tabEval(v, DOM_REPORT)) }.getOrNull() }
+                val dom = view?.let { v -> runCatching { json(tabEval(v, DOM_REPORT)) }.getOrNull() } ?: stored?.optJSONObject("dom")
                 val txt = dom?.optString("text") ?: ""
                 val pass = login.containsMatchIn(txt)
                 // An extension page that opened in a tab and shows no sign-in (1Password's
                 // `app.html#/page/error`): the same evidence as a blank options tab, the whole
                 // row's trace since the page was opened in the popup stage.
-                val extra = if (!pass && view != null && url.contains(".ext.zenium.invalid/")) JSONObject().put("blankTab", blankPageEvidence(view, row, 0L)) else null
+                val evidence = when {
+                    pass || !url.contains(".ext.zenium.invalid/") -> null
+                    view != null -> blankPageEvidence(view, row, 0L)
+                    else -> stored?.optJSONObject("blankTab")
+                }
+                val extra = evidence?.let { JSONObject().put("blankTab", it) }
                 Grade(if (pass) "n/m" else "F", "$label: the action click opened ${url.take(90)} (\"${txt.take(80)}\"); the vault itself needs an account (not measurable here)", extra)
             }
             popup?.optString("verdict") in setOf("P", "PARTIAL") ->
@@ -1034,9 +1065,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("pkehgijcmpdhfbdbbnkijodmdjhbjlgp", "Privacy Badger", "privacy-badger", core = ::adBlocker),
         Row("mlomiejdfkolichcflejclcbmpeaniij", "Ghostery", "ghostery", core = ::adBlocker),
         Row("eimadpbcbfnmbkopoojfekhnkhdbieeh", "Dark Reader", "dark-reader", core = ::darkReader),
-        Row("nngceckbapebfimnlniiiahkandclblb", "Bitwarden Password Manager", "bitwarden", core = popupLogin("Bitwarden")),
-        Row("aeblfdkhhhdcdjpifhhbdiojplfjncoa", "1Password", "1password", core = popupLogin("1Password")),
-        Row("hdokiejnpimakedhajhdlcegeplioahd", "LastPass", "lastpass", core = popupLogin("LastPass")),
+        Row("nngceckbapebfimnlniiiahkandclblb", "Bitwarden Password Manager", "bitwarden", account = true, core = popupLogin("Bitwarden")),
+        Row("aeblfdkhhhdcdjpifhhbdiojplfjncoa", "1Password", "1password", account = true, core = popupLogin("1Password")),
+        Row("hdokiejnpimakedhajhdlcegeplioahd", "LastPass", "lastpass", account = true, core = popupLogin("LastPass")),
         Row("kbfnbcaeplbcioakkpcpgfkobkghlhen", "Grammarly", "grammarly", core = editorAttach("grammarly", "Grammarly attaches to the textarea")),
         Row("dbepggeogbaibhgnhhndojpepiihcmeb", "Vimium", "vimium", core = ::vimium),
         Row("dhdgffkkebhmkfjojejmpbldmpobfkfo", "Tampermonkey", "tampermonkey", core = { row, entry -> userscripts(row, entry, Regex("/ask\\.html")) }),
@@ -1064,9 +1095,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("laookkfknpbbblfpciffpaejjkokdgca", "Momentum", "momentum", core = ::momentum),
         Row("clngdbkpkpeebahjckkjfobafhncgmne", "Stylus", "stylus", core = ::stylus),
         Row("oldceeleldhonbafppcapldpdifcinji", "LanguageTool", "languagetool", core = editorAttach("lt", "LanguageTool attaches to the textarea")),
-        Row("ldgfbffkinooeloadekpmfoklnobpien", "Raindrop.io", "raindrop", core = popupLogin("Raindrop.io")),
-        Row("knheggckgoiihginacbkhaalnibhilkk", "Notion Web Clipper", "notion-web-clipper", core = popupLogin("Notion Web Clipper")),
-        Row("jldhpllghnbhlbpcmnajkpdmadaolakh", "Todoist", "todoist", core = popupLogin("Todoist")),
+        Row("ldgfbffkinooeloadekpmfoklnobpien", "Raindrop.io", "raindrop", account = true, core = popupLogin("Raindrop.io")),
+        Row("knheggckgoiihginacbkhaalnibhilkk", "Notion Web Clipper", "notion-web-clipper", account = true, core = popupLogin("Notion Web Clipper")),
+        Row("jldhpllghnbhlbpcmnajkpdmadaolakh", "Todoist", "todoist", account = true, core = popupLogin("Todoist")),
         Row("chphlpgkkbolifaimnlloiipkdnihall", "OneTab", "onetab", core = ::oneTab),
         Row("bcjindcccaagfpapjjmafapmmgkkhgoa", "JSON Formatter", "json-formatter", core = ::jsonFormatter),
         Row("nffaoalbilbmmfgbnbgppjihopabppdk", "Video Speed Controller", "video-speed-controller", core = ::videoSpeed),
@@ -1704,6 +1735,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val BACKGROUND_SETTLE_MS = 6_000L
         private const val POPUP_TIMEOUT_MS = 30_000L
         private const val OPTIONS_TIMEOUT_MS = 30_000L
+        /** What an account-backed extension's sign-in surface says (the account rows' core grade, [popupLogin]). */
+        private val LOGIN_WORDS = Regex("log ?in|sign ?in|create account|get started|continue|welcome|email|unlock|password", RegexOption.IGNORE_CASE)
         /** How long a raised prompt may go without a reachable positive button before the command answers it. */
         private const val PROMPT_TAP_TIMEOUT_MS = 8_000L
         /** Taps on the prompt's own button before the command answers it, and the wait between them. */
