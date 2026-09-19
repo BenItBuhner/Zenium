@@ -29,8 +29,11 @@ export function BarButton({
       aria-pressed={pressed}
       aria-disabled={inert ? undefined : !enabled || undefined}
       tabIndex={inert ? -1 : undefined}
-      onClick={() => {
-        if (!inert && enabled) item.run(ctx)
+      onPointerDown={() => {
+        if (!inert && enabled) item.press?.(ctx)
+      }}
+      onClick={(e) => {
+        if (!inert && enabled) item.run(ctx, e.currentTarget)
       }}
     >
       {item.glyph(ctx)}

@@ -59,6 +59,8 @@ import { TranslateService } from './translate/service'
 import { PageControls } from './pageControls'
 import { FindMemory } from './find'
 import { FullscreenService } from './fullscreen'
+import { NewTabPhoneService } from './newTabPhone'
+import { WebAppService } from './webapp'
 import { UpdateService } from './updates'
 import { ExternalProtocolService } from './externalProtocols'
 import { PasswordService } from './credentials/service'
@@ -107,6 +109,7 @@ import { sanitizePromoState } from '../shared/defaultBrowser'
 import { sanitizeBlockingSettings } from '../shared/blocking'
 import { isShortcutPreset } from '../shared/shortcuts'
 import { sanitizePrivacySettings } from '../shared/privacy'
+import { sanitizeNewTabPhoneSettings } from '../shared/newTabPhone'
 import type { ExtensionHost, Governor, PageMessage, Platform, SyncHost } from './platform'
 import { JsonStore } from './store/JsonStore'
 
@@ -143,7 +146,8 @@ const FOCUS_CHROME_EVENTS = new Set<EventName>([
   'menu.show',
   'menu.app',
   'bookmark.star',
-  'bookmark.edit'
+  'bookmark.edit',
+  'webapp.install'
 ])
 
 /**
@@ -220,6 +224,10 @@ export class Browser {
   readonly find = new FindMemory()
   /** Fullscreen hints (F11, a page's element) and the Esc hold that leaves the window's fullscreen. */
   readonly fullscreen: FullscreenService
+  /** The new tab page's pins, removals and wallpaper. */
+  readonly newTabPhone: NewTabPhoneService
+  /** Web app manifests, "Add to Home screen" and the ambient install prompt. */
+  readonly webApps: WebAppService
   readonly windows = new Map<string, ZenWindow>()
   /** Set by `shutdown()`: the app is going away, windows close without further questions. */
   quitting = false
@@ -321,6 +329,8 @@ export class Browser {
     this.protection = new ProtectionService(this)
     this.translate = new TranslateService(this)
     this.privacy = new PrivacyService(this)
+    this.newTabPhone = new NewTabPhoneService(this)
+    this.webApps = new WebAppService(this, platform.io)
     this.state.extras = (win) => ({
       boosts: this.boosts.all(),
       zappingTabId: this.boosts.zappingTabId(),
@@ -843,9 +853,12 @@ export class Browser {
     this.autofill.onPageReady(tabId)
   }
 
-  onNavigated(tabId: string): void {
+  onNavigated(tabId: string, inPage = false): void {
     const tab = this.tabs.tab(tabId)
-    if (tab) tab.readerable = false
+    if (tab) {
+      tab.readerable = false
+      this.webApps.onNavigated(tabId, tab.url, inPage)
+    }
     this.extensions.closePopup()
     this.translate.onNavigated(tabId)
     this.autofill.onNavigated(tabId)
@@ -1462,6 +1475,8 @@ export class Browser {
     this.passwords.flushSync()
     this.blocking.flushSync()
     this.translate.flushSync()
+    this.newTabPhone.flushSync()
+    this.webApps.flushSync()
   }
 
   private syncShortcuts(): void {
@@ -1623,6 +1638,10 @@ export class Browser {
   handlePageMessage(tabId: string, message: PageMessage): void {
     const tab = this.tabs.tab(tabId)
     if (!tab || !message || typeof message.type !== 'string') return
+    if (message.type === 'webapp') {
+      this.webApps.handleMessage(tabId, message)
+      return
+    }
     if (message.type === 'zap') {
       if (typeof message.selector === 'string') this.boosts.onZapped(tabId, message.selector)
       return
@@ -1878,6 +1897,10 @@ export class Browser {
       'folder.delete': ({ folderId, unpack }) => this.deleteFolder(folderId, unpack),
       'folder.contextMenu': ({ folderId }, win) => this.menus.showFolderContextMenu(folderId, win),
       'newtab.contextMenu': (_a, win) => this.menus.showNewTabContextMenu(win),
+      'newTabPhone.tileContextMenu': ({ url, title }, win) =>
+        this.menus.showTopSiteContextMenu(url, title, win),
+      'newTabPhone.wallpaper': () => this.newTabPhone.wallpaperImage(),
+      'newTabPhone.setWallpaper': ({ dataUrl }) => this.newTabPhone.setWallpaperImage(dataUrl),
       'app.menu': ({ anchor, keyboard }, win) =>
         this.menus.showAppMenu(win, { anchor, keyboard: Boolean(keyboard) }),
       'focus.content': (_a, win) => win.focusContent(),
@@ -2297,6 +2320,10 @@ export class Browser {
       'translate.downloadModel': ({ from, to }) => this.translate.downloadModel({ from, to }),
       'translate.removeModel': ({ from, to }) => this.translate.removeModel({ from, to }),
       'translate.engineResponse': (response) => this.translate.onRelayResponse(response),
+      'webapp.openInstall': ({ tabId }, win) => this.webApps.openInstall(tabId, win),
+      'webapp.pin': ({ tabId, title }, win) => this.webApps.pin(tabId, title, win),
+      'webapp.cancelInstall': ({ tabId }) => this.webApps.cancelInstall(tabId),
+      'webapp.dismissBanner': ({ tabId, reason }) => this.webApps.dismissBanner(tabId, reason),
 
       'onboarding.complete': ({ searchEngineId, colorScheme, essentials }, win) => {
         if (state.searchEngines.some((e) => e.id === searchEngineId))
@@ -2405,6 +2432,11 @@ export class Browser {
         s.newTab = sanitizeNewTabSettings({
           ...s.newTab,
           ...(value as Partial<Settings['newTab']>)
+        })
+      } else if (key === 'newTabPhone' && value && typeof value === 'object') {
+        s.newTabPhone = sanitizeNewTabPhoneSettings({
+          ...s.newTabPhone,
+          ...(value as Partial<Settings['newTabPhone']>)
         })
       } else if (key === 'downloads' && value && typeof value === 'object') {
         // The block is partial: a one-key patch from a Settings row must not drop the others.

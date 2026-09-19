@@ -1290,6 +1290,33 @@ export class Menus {
     )
   }
 
+  /** Long-press on a new tab page tile: open it elsewhere, pin it, or take it off the page. */
+  showTopSiteContextMenu(url: string, title: string, win: ZenWindow): void {
+    if (!isNavigableUrl(url)) return
+    const { tabs, state, newTabPhone } = this.browser
+    const pinned = state.settings.newTabPhone.pinned.some((p) => p.url === url)
+    this.popup(
+      [
+        {
+          label: 'Open in New Tab',
+          click: () => tabs.createTab({ url, active: false }, win)
+        },
+        {
+          label: 'Copy Link',
+          click: () => this.browser.platform.clipboard.writeText(url)
+        },
+        { type: 'separator' },
+        {
+          label: pinned ? 'Unpin Shortcut' : 'Pin Shortcut',
+          click: () => (pinned ? newTabPhone.unpin(url) : newTabPhone.pin(url, title))
+        },
+        { label: 'Remove', click: () => newTabPhone.remove(url) }
+      ],
+      win,
+      'topsite'
+    )
+  }
+
   // ---------------------------------------------------------------------------
   // Spaces & folders
   // ---------------------------------------------------------------------------
@@ -1840,6 +1867,31 @@ export class Menus {
   }
 
   /**
+   * "Add to Home screen" on hosts that pin shortcuts, for web pages outside private windows.
+   * Inside the scope of an app that is already on the Home screen the item reads
+   * "Open <app>" and goes to the app's start URL instead (PWA-11).
+   */
+  private homeScreenItems(active: Tab | undefined, win: ZenWindow): Template {
+    const { webApps } = this.browser
+    if (!active || !webApps.canPin(active, win)) return []
+    const pinned = webApps.pinnedFor(active.url)
+    if (pinned) {
+      return [
+        {
+          label: `Open ${pinned.name}`,
+          click: () => this.browser.tabs.navigate(active.id, pinned.startUrl)
+        }
+      ]
+    }
+    return [
+      {
+        label: 'Add to Home Screen',
+        click: () => webApps.openInstall(active.id, win)
+      }
+    ]
+  }
+
+  /**
    * The "⋯" application menu in the toolbar (Firefox's hamburger menu). One list for every
    * layout: an item the host cannot do is left out (`caps`), and the phone layout – which has no
    * sidebar, window frame or keyboard to speak of – also drops the items that only act on those
@@ -2025,6 +2077,7 @@ export class Menus {
           enabled: Boolean(active) && /^https?:/i.test(active!.url),
           click: () => active && this.browser.shareTab(active.id, win)
         }),
+        ...this.homeScreenItems(active, win),
         ...when(caps.print, {
           label: 'Print…',
           action: 'page.print',

@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 540 1080" width="540" height="1080" font-family="system-ui, sans-serif">
+  <rect width="540" height="1080" fill="#e8f1f5"/>
+  <rect width="540" height="128" fill="#2f6f8f"/>
+  <text x="32" y="82" fill="#fff" font-size="36" font-weight="600">Gallery</text>
+  <g>
+    <rect x="24" y="160" width="236" height="300" rx="20" fill="#fff"/>
+    <path d="M60 380 C 100 260, 160 250, 220 340" fill="none" stroke="#1e2a33" stroke-width="8" stroke-linecap="round"/>
+    <circle cx="180" cy="250" r="26" fill="none" stroke="#e0705a" stroke-width="8"/>
+    <rect x="280" y="160" width="236" height="300" rx="20" fill="#fff"/>
+    <path d="M320 240 L 480 400 M 480 240 L 320 400" fill="none" stroke="#2f6f8f" stroke-width="10" stroke-linecap="round"/>
+    <rect x="24" y="492" width="236" height="300" rx="20" fill="#fff"/>
+    <rect x="70" y="560" width="140" height="140" rx="20" fill="none" stroke="#f2c14e" stroke-width="10"/>
+    <circle cx="140" cy="630" r="34" fill="#f2c14e"/>
+    <rect x="280" y="492" width="236" height="300" rx="20" fill="#fff"/>
+    <path d="M310 700 Q 400 520 490 700" fill="none" stroke="#5fb37a" stroke-width="10" stroke-linecap="round"/>
+    <path d="M330 640 Q 400 580 470 640" fill="none" stroke="#1e2a33" stroke-width="8" stroke-linecap="round"/>
+    <rect x="24" y="824" width="236" height="200" rx="20" fill="#fff"/>
+    <rect x="280" y="824" width="236" height="200" rx="20" fill="#fff"/>
+  </g>
+  <circle cx="452" cy="972" r="52" fill="#2f6f8f"/>
+  <path d="M452 946 L452 998 M426 972 L478 972" stroke="#fff" stroke-width="8" stroke-linecap="round"/>
+</svg>

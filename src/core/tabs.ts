@@ -435,7 +435,7 @@ export class TabManager {
           this.browser.permissionPrompts.cancelForTab(tabId)
           this.browser.permissions.onTabNavigated(tabId, url)
         }
-        if (v) this.onNavigated(tabId, v, url)
+        if (v) this.onNavigated(tabId, v, url, inPage)
       },
       onTitleUpdated: (title) =>
         update((t) => {
@@ -653,7 +653,7 @@ export class TabManager {
     return tab.containerId === PRIVATE_CONTAINER_ID
   }
 
-  private onNavigated(tabId: string, view: TabView, url: string): void {
+  private onNavigated(tabId: string, view: TabView, url: string, inPage = false): void {
     const tab = this.tab(tabId)
     if (!tab) return
     if (!url.startsWith(ERROR_URL_PREFIX)) {
@@ -678,7 +678,7 @@ export class TabManager {
       if (w.findResult?.tabId === tabId) w.findResult = null
     this.rememberNavigation(tabId, view)
     this.sendPageFlags(tabId)
-    this.browser.onNavigated(tabId)
+    this.browser.onNavigated(tabId, inPage)
     this.browser.protection.onNavigated(tabId, url)
     this.browser.state.commit()
   }
@@ -1381,6 +1381,7 @@ export class TabManager {
     this.browser.pages.onTabRemoved(tabId)
     this.browser.agents.onTabRemoved(tabId)
     this.browser.find.forget(tabId)
+    this.browser.webApps.onTabRemoved(tabId)
     this.browser.liveFolders.onTabLeftFolder(tabId, tab.folderId)
     if (closed) this.browser.session.pushTab(closed)
     for (const { w, s, next } of reselect) {

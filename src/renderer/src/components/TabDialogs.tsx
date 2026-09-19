@@ -21,6 +21,7 @@ import { EditBookmarkDialog } from './bookmarks/EditBookmarkDialog'
 import { StarDialog } from './bookmarks/StarDialog'
 import { NewTabShortcutDialog } from './newtab/NewTabShortcutDialog'
 import { BookmarkEditSheet } from './phone/BookmarkEditSheet'
+import { InstallLayer } from './phone/InstallSheet'
 import { SiteDataConfirmDialog } from './siteinfo/SiteInfoSheet'
 import { ZoomBubble } from './zoom/ZoomBubble'
 
@@ -53,8 +54,8 @@ const TAB_ICONS = [
  * a scrim that dims only that box (lib/portals.tsx). The star bubble is a popover: on desktop
  * it portals to the chrome layer, anchored under the star; on phones it is a sheet in the host.
  * The zoom bubble is a desktop popover too, under the pill's zoom chip. This is the frame's
- * host: a dialog whose state lives inside the frame (a phone panel's sheets) reaches it through
- * `FrameDialogPortal`.
+ * host: a dialog whose state lives inside the frame (a phone panel's sheets, the new tab page's
+ * customise sheet) reaches it through `FrameDialogPortal`.
  */
 export function TabDialogs({ state }: { state: UIState }): JSX.Element {
   const pinnedTabId = uiStore.use((s) => s.editingPinnedUrlTabId)
@@ -97,6 +98,7 @@ export function TabDialogs({ state }: { state: UIState }): JSX.Element {
       <WindowPromptDialog state={state} />
       <ExtensionPromptDialog />
       {zoom && <ZoomBubble state={state} bubble={zoom} />}
+      <InstallLayer />
     </FrameDialogHost>
   )
 }

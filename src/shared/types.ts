@@ -10,6 +10,7 @@ import type { UpdateSettings, UpdateStatus } from './updates'
 import type { BlockingSettings, BlockingStatus } from './blocking'
 import type { PrivacySettings, PrivacyStatus } from './privacy'
 import type { InternalPageId } from './internalPages'
+import type { WebAppInfo } from './webApp'
 
 export type Platform = 'linux' | 'win32' | 'darwin' | 'android'
 
@@ -114,6 +115,8 @@ export interface HostCapabilities {
    * overlay until its program adopts the page model. Document pages are tabs on every host.
    */
   pageTabs: boolean
+  /** Pages can be pinned to the launcher / Home screen ("Add to Home screen"). */
+  pinShortcuts: boolean
 }
 
 export interface Rect {
@@ -284,6 +287,8 @@ export interface Tab {
   openerTabId: string | null
   /** Opened by another app's intent or share; system back at its first page returns to that app. */
   fromIntent: boolean
+  /** The web app manifest of the current page, once its page script has posted it; not persisted. */
+  webApp: WebAppInfo | null
 }
 
 /** Colours a tab group (folder) can wear; the phone chrome paints group cards with them. */
@@ -1566,6 +1571,47 @@ export type NewTabPageAction =
  */
 export type NewTabPageCommand = { type: 'remove-tile'; id: string }
 
+// ---------------------------------------------------------------------------
+// New tab page (phone): a quiet surface on the space gradient, customisable per Chrome / Edge
+// ---------------------------------------------------------------------------
+
+/**
+ * Layout presets. `focused` is the search field and the top-site tiles on the bare space
+ * gradient; `inspirational` adds a wallpaper; `informational` would add a feed on top of that
+ * (no feed core exists, so it is offered as "not available" and renders like `inspirational`);
+ * `custom` shows exactly the `modules` the user toggled.
+ */
+export type NewTabPreset = 'focused' | 'inspirational' | 'informational' | 'custom'
+/** Which sites the tiles show: history frecency (pins first) or only the pinned ones. */
+export type NewTabShortcutStyle = 'most-visited' | 'my-shortcuts'
+/** The wallpaper the wallpaper presets draw: one derived from the space theme, or a picked image. */
+export type NewTabWallpaper = 'space' | 'image'
+
+export interface NewTabModules {
+  searchBox: boolean
+  shortcuts: boolean
+  wallpaper: boolean
+  /** Reserved for a feed core; nothing renders it yet. */
+  feed: boolean
+}
+
+export interface NewTabPinnedSite {
+  url: string
+  title: string
+}
+
+export interface NewTabPhoneSettings {
+  preset: NewTabPreset
+  /** Sections the `custom` preset shows; the named presets ignore them. */
+  modules: NewTabModules
+  shortcutStyle: NewTabShortcutStyle
+  wallpaper: NewTabWallpaper
+  /** Sites pinned to the front of the tiles, in order. */
+  pinned: NewTabPinnedSite[]
+  /** Hosts the user removed from the most-visited tiles. */
+  hiddenHosts: string[]
+}
+
 export interface Settings {
   colorScheme: ColorScheme
   /** Colour of the app icon (launcher alias on Android, window / Dock icon on desktop). */
@@ -1663,6 +1709,8 @@ export interface Settings {
   privacy: PrivacySettings
   /** The new tab page: whether it opens, what its grid shows, what it paints behind. */
   newTab: NewTabSettings
+  /** The phone's new tab page (preset, sections, wallpaper, pinned and removed sites). */
+  newTabPhone: NewTabPhoneSettings
   /** The one-time gesture hint (a toast after the first page) has been shown (phones). */
   gestureHintDone: boolean
 }
@@ -2513,6 +2561,7 @@ export interface MenuDescriptor {
     | 'space'
     | 'folder'
     | 'newtab'
+    | 'topsite'
     | 'app'
     | 'bookmark'
     | 'history'
@@ -2739,6 +2788,12 @@ export interface Commands {
   'folder.delete': { args: { folderId: string; unpack: boolean }; result: void }
   'folder.contextMenu': { args: { folderId: string }; result: void }
   'newtab.contextMenu': { args: void; result: void }
+  /** Long-press on a new tab page tile: pin / unpin, remove, open in a new tab. */
+  'newTabPhone.tileContextMenu': { args: { url: string; title: string }; result: void }
+  /** The picked new tab wallpaper image as a data URL (null when none was picked). */
+  'newTabPhone.wallpaper': { args: void; result: string | null }
+  /** Store (or with null, forget) the picked wallpaper image; the settings pick when it shows. */
+  'newTabPhone.setWallpaper': { args: { dataUrl: string | null }; result: void }
   /**
    * The "⋯" application menu. `anchor` is the menu button in chrome CSS pixels: the menu opens
    * along its bottom edge; without it the menu opens at the pointer. `keyboard` marks a menu
@@ -3425,6 +3480,14 @@ export interface Commands {
   'translate.removeModel': { args: { from: string; to: string }; result: void }
   /** The chrome renderer hands back an answer of the engine worker it runs for the core. */
   'translate.engineResponse': { args: EngineRelayResponse; result: void }
+  /** Open the install / name-edit sheet for a tab (the ambient banner's "Add"). */
+  'webapp.openInstall': { args: { tabId: string }; result: void }
+  /** Pin the tab's page to the Home screen under `title` (the sheet's primary button). */
+  'webapp.pin': { args: { tabId: string; title: string }; result: void }
+  /** The install sheet closed without pinning (a site's deferred `prompt()` learns "dismissed"). */
+  'webapp.cancelInstall': { args: { tabId: string }; result: void }
+  /** The ambient banner went away: swiped (starts the cooldown) or timed out. */
+  'webapp.dismissBanner': { args: { tabId: string; reason: 'swipe' | 'timeout' }; result: void }
 }
 
 export type CommandName = keyof Commands
@@ -3541,9 +3604,43 @@ export interface Events {
   /** An install finished; the renderer toasts it with a Pin action while it is not in the toolbar. */
   'extension.installed': { id: string; name: string; toolbarPinned: boolean }
   // ---- end PROVISIONAL ----------------------------------------------------------------------------
+  /** Show the install sheet (with a manifest) or the lighter name-edit sheet (without one). */
+  'webapp.install': WebAppInstallPrompt
+  /** Show the ambient "Add <app> to Home screen" banner over the page. */
+  'webapp.banner': WebAppBanner
+  /** Take the banner down (navigation left the app, or it was pinned another way). */
+  'webapp.bannerHide': { tabId: string }
+  /**
+   * The launcher confirmed a Home screen shortcut (NOT-20): the chrome toasts "Added <name> to
+   * Home screen" with an Open action that takes `tabId` to `url`, the shortcut's own.
+   */
+  'webapp.pinned': { tabId: string | null; name: string; url: string | null }
 }
 
 export type EventName = keyof Events
+
+/** Everything the install sheet shows; a snapshot so it survives the tab navigating on. */
+export interface WebAppInstallPrompt {
+  tabId: string
+  /** Suggested launcher title (the manifest's short name, else the page title or host). */
+  title: string
+  url: string
+  origin: string
+  /** Icon to preview: a manifest icon, else the page's favicon, else null for a letter tile. */
+  icon: string | null
+  /** The manifest, when the page has one; null selects the name-edit sheet. */
+  info: WebAppInfo | null
+  /** Colour behind the letter tile (the manifest's theme colour or the space accent). */
+  tint: string | null
+}
+
+export interface WebAppBanner {
+  tabId: string
+  name: string
+  origin: string
+  icon: string | null
+  tint: string | null
+}
 
 // ---------------------------------------------------------------------------
 // Recently closed tabs and windows (persisted in state.json, summaries in the snapshot)

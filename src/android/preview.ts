@@ -18,6 +18,82 @@ const PAGE_ROUTE = '/__zen/page/'
 /** Whether the preview "holds the browser role" (outside the file store: it is not profile data). */
 const DEFAULT_BROWSER_KEY = 'zen-preview-default-browser'
 
+const hostGlobal = (): HostGlobal => (window as unknown as { __zenHost: HostGlobal }).__zenHost
+
+/** Demo images the dev server serves straight from the source tree (never part of a build). */
+const previewAsset = (name: string): string => `${location.origin}/preview-assets/webapp/${name}`
+
+/**
+ * The web app the preview's pages can "declare": a cross-origin iframe cannot post its own
+ * manifest, so the preview states post this one for the active tab the way a page script would
+ * (`postPreviewManifest`). Written against `https://example.com/`, the tab the default profile
+ * opens on, with a vector icon for the chrome and a raster maskable one for the launcher.
+ */
+export const PREVIEW_WEB_APP = {
+  manifestUrl: 'https://example.com/app/manifest.webmanifest',
+  manifest: {
+    id: '/app/',
+    name: 'Sketch Studio',
+    short_name: 'Sketch',
+    description:
+      'Draw, ink and colour on an endless canvas. Sketches sync between your devices and open offline.',
+    start_url: '/app/',
+    scope: '/',
+    display: 'standalone',
+    theme_color: '#2f6f8f',
+    background_color: '#e8f1f5',
+    icons: [
+      { src: previewAsset('icon.svg'), sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
+      {
+        src: previewAsset('icon-192.png'),
+        sizes: '192x192',
+        type: 'image/png',
+        purpose: 'maskable'
+      }
+    ],
+    screenshots: [
+      {
+        src: previewAsset('shot-canvas.svg'),
+        sizes: '540x1080',
+        type: 'image/svg+xml',
+        form_factor: 'narrow',
+        label: 'An ink sketch on the canvas'
+      },
+      {
+        src: previewAsset('shot-colours.svg'),
+        sizes: '540x1080',
+        type: 'image/svg+xml',
+        form_factor: 'narrow',
+        label: 'The colour palette'
+      },
+      {
+        src: previewAsset('shot-gallery.svg'),
+        sizes: '540x1080',
+        type: 'image/svg+xml',
+        form_factor: 'narrow',
+        label: 'The sketch gallery'
+      }
+    ]
+  }
+}
+
+/**
+ * Post a manifest for `tabId` as its page script would: the demo app's, or none (an empty
+ * manifest describes no app) so the tab is a plain page again.
+ */
+export function postPreviewManifest(tabId: string, app: boolean): void {
+  hostGlobal().viewEvent(
+    tabId,
+    'pageMessage',
+    JSON.stringify({
+      type: 'webapp',
+      webapp: 'manifest',
+      manifestUrl: PREVIEW_WEB_APP.manifestUrl,
+      manifest: app ? PREVIEW_WEB_APP.manifest : {}
+    })
+  )
+}
+
 /**
  * A stand-in for the Kotlin host so the Android chrome can run in an ordinary desktop browser
  * (`npm run dev:android`): tab views are `<iframe>`s stacked above the chrome, persistence goes
@@ -25,7 +101,7 @@ const DEFAULT_BROWSER_KEY = 'zen-preview-default-browser'
  * DevTools' device emulation; not a browser you would want to use.
  */
 export function createPreviewBridge(): NativeBridge {
-  const host = (): HostGlobal => (window as unknown as { __zenHost: HostGlobal }).__zenHost
+  const host = hostGlobal
   const views = new Map<string, HTMLIFrameElement>()
   const density = 1
   /** What clips each page's frame: how far a pull has moved it down, and the covered strips. */
@@ -103,6 +179,7 @@ export function createPreviewBridge(): NativeBridge {
       signer: null,
       packageName: null,
       profiles: true,
+      pinShortcuts: true,
       files,
       downloadsDir: '/Downloads',
       insets: { top: 0, right: 0, bottom: 0, left: 0 },
@@ -158,6 +235,12 @@ export function createPreviewBridge(): NativeBridge {
       viewEvent(String(tabId), 'startLoading', null)
       frame.src = String(url)
       viewEvent(String(tabId), 'navigated', { ...navState(frame), inPage: false })
+    },
+    'view.postMessage': () => undefined,
+    // The launcher's dialog stands in for itself: a pin is accepted a moment later.
+    'shortcut.pin': ({ id }) => {
+      setTimeout(() => host().hostEvent('shortcut.pinned', JSON.stringify({ id })), 700)
+      return true
     },
     'view.reload': ({ tabId }) => {
       const frame = views.get(String(tabId))

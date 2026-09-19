@@ -1,0 +1,34 @@
+name: Android new tab demo
+
+# Records the phone's new tab page on a hardware-accelerated Android emulator: a new tab from the
+# bar's plus growing out of the button, the most visited tiles of the sites the driver visited
+# (eight loopback hosts served from the instrumentation), a tap on a tile, a hold on one for its
+# menu, the search field opening the omnibox above the keyboard, the customise sheet with a
+# preset change and a wallpaper source change, and the predictive back gesture on the sheet.
+# Dispatch-only, like the gesture demo: it says nothing about a change being correct beyond what
+# `newtab-findings.txt` in the artifact records. The build, the emulator and the Gradle cache
+# live in android-emulator-demo.yml; this file only picks the driver and the demo it runs.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-newtab-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: New tab demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.NewTabDemo
+        DEMO_DIR=newtab-demo
+        DEMO_OUT=artifacts/android-newtab-demo
+        DEMO_VIDEO=android-ntp-demo.mp4
+      artifact-name: android-newtab-demo
+      artifact-path: artifacts/android-newtab-demo/

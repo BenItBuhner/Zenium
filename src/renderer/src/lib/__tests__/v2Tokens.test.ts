@@ -67,9 +67,22 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   ['.zen-default-browser-card {', '\n@media (prefers-reduced-motion: reduce) {'],
   // The message cards: toast and banner, their action button, glyph and close (components/messages/*).
   ['.zen-message {', '.zen-suggestion {'],
+  // The zen-v2-* controls inside the chassis (components/newtab/CustomizeSheet.tsx): headings and
+  // sections, descriptions, the control row; the rows, switch and card radio are the shared
+  // primitives below (§9.34, the Settings tab's block).
+  ['.zen-v2-heading {', '.zen-ntp-field {'],
+  // The new tab page, one .zen-ntp-* block for both platforms (§9.29): the shared vocabulary –
+  // search field, .zen-v2-shortcut tiles, captions, fallbacks, scrim – that shared/newTabPage.ts
+  // cuts out for the desktop's zen://newtab document, then the phone page's gated additions:
+  // wallpaper, stagger, the customise sheet's presets grid and previews, the grow surface
+  // (components/newtab/NewTabPage.tsx, CustomizeSheet.tsx, NewTabGrowLayer.tsx).
+  ['.zen-ntp-field {', '/*\n * A sheet coming up pushes the page back'],
   // The Settings tab (components/pages/settings): the page host, the shared v2 rows, fields,
   // icon buttons and image radio cards it introduces, its sheets and its overview thumbnail.
-  ['.zen-page-host {', ' * History page (design language v2 draft']
+  ['.zen-page-host {', ' * History page (design language v2 draft'],
+  // "Add to Home screen": what the install and name-edit sheets add to the chassis – app tile,
+  // name and origin, the name field's label, the screenshot strip (components/phone/InstallSheet.tsx).
+  ['.zen-install-body {', '/*\n * A sheet coming up pushes the page back']
 ]
 
 /**

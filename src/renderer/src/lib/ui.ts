@@ -8,7 +8,8 @@ import type {
   OverlayKind,
   Rect,
   UIState,
-  UrlbarOpenMode
+  UrlbarOpenMode,
+  WebAppInstallPrompt
 } from '@shared/types'
 import type { Anchor } from './anchor'
 import type { PopoverAlignment } from './portals'
@@ -294,6 +295,8 @@ export interface UiState {
   downloadsOpen: boolean
   /** The default-browser promo (sheet or dialog) is up over a capture of the page. */
   defaultBrowserPrompt: boolean
+  /** "Add to Home screen": the install sheet (manifest) or the name-edit sheet, when open. */
+  install: WebAppInstallPrompt | null
   /** Safe-area insets of the host window (status bar, gesture bar, IME). */
   insets: Insets
   /**
@@ -369,6 +372,7 @@ export const uiStore = createStore<UiState>(
     tabsMenu: null,
     downloadsOpen: false,
     defaultBrowserPrompt: false,
+    install: null,
     insets: { top: 0, right: 0, bottom: 0, left: 0 },
     stageActive: false,
     hoverCard: HOVER_CARD_HIDDEN,
@@ -676,6 +680,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.windowPromptOpen &&
     !ui.downloadsOpen &&
     !ui.defaultBrowserPrompt &&
+    !ui.install &&
     !ui.stageActive &&
     !ui.zoomBubble &&
     !ui.newTabShortcutDialog &&
@@ -713,6 +718,7 @@ export function invalidateSnapshot(): void {
     !ui.windowPromptOpen &&
     !ui.downloadsOpen &&
     !ui.defaultBrowserPrompt &&
+    !ui.install &&
     !ui.stageActive &&
     !ui.zoomBubble &&
     ui.hoverCard.tabId === null &&
@@ -771,6 +777,20 @@ export function closeBookmarkChrome(
   uiStore.set(patch)
   invalidateSnapshot()
   if (!opts.keepFocus) returnFocusToPage()
+}
+
+/** The "Add to Home screen" sheet dims the page behind it like a menu: the snapshot comes first. */
+export async function openInstallSheet(prompt: WebAppInstallPrompt): Promise<void> {
+  await captureActiveTab(prompt.tabId)
+  run('focus.chrome', undefined)
+  uiStore.set({ install: prompt, drawerOpen: false })
+}
+
+export function closeInstallSheet(tabId: string): void {
+  if (uiStore.get().install?.tabId !== tabId) return
+  uiStore.set({ install: null })
+  invalidateSnapshot()
+  returnFocusToPage()
 }
 
 export async function openUrlbar(
@@ -1079,6 +1099,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.windowPromptOpen ||
     ui.downloadsOpen ||
     ui.defaultBrowserPrompt ||
+    ui.install !== null ||
     ui.stageActive ||
     ui.zoomBubble !== null ||
     ui.hoverCard.tabId !== null ||

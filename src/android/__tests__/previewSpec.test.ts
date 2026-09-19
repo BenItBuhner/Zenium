@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   PREVIEW_OVERLAYS,
   PREVIEW_PULL_MAX,
+  PREVIEW_WEBAPP_SURFACES,
   parsePreviewSpec,
   parsePreviewSteps
 } from '../previewSpec'
@@ -90,6 +91,14 @@ describe('parsePreviewSpec', () => {
     expect(parsePreviewSpec('banners=x&progress=y')).toMatchObject({ banners: 0, progress: null })
     // Find wins over the messages.
     expect(parsePreviewSpec('find=x&toast=y')).toEqual({ kind: 'find', text: 'x' })
+  })
+
+  it('raises an "Add to Home screen" surface by name', () => {
+    for (const surface of PREVIEW_WEBAPP_SURFACES) {
+      expect(parsePreviewSpec(`webapp=${surface}`)).toEqual({ kind: 'webapp', surface })
+    }
+    expect(parsePreviewSpec('webapp=splash')).toEqual({ kind: 'idle' })
+    expect(parsePreviewSpec('find=x&webapp=banner')).toEqual({ kind: 'find', text: 'x' })
   })
 
   it('treats idle, an unknown overlay and junk as idle', () => {
