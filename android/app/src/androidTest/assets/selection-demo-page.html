@@ -9,7 +9,9 @@
   section { height: 118px; display: flex; align-items: center; justify-content: center; font-size: 22px; text-align: center; padding: 0 16px; }
   #intro { height: 72px; background: #edf2fb; font-size: 18px; }
   #text { background: #fff3b0; }
-  #address { background: #d8f3dc; font-size: 20px; }
+  /* The label above the address, the address centred on a line of its own: its end handle
+     (the drag in the demo) sits well inside the view, not at its right edge. */
+  #address { background: #d8f3dc; font-size: 20px; flex-direction: column; gap: 4px; }
   #address span { user-select: all; -webkit-user-select: all; font-family: monospace; font-size: 16px; display: inline-block; white-space: nowrap; padding: 6px 0; }
   #tail { background: #f4f4f7; font-size: 18px; }
 </style>

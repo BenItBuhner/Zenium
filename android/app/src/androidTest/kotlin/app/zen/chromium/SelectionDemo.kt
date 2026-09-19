@@ -330,9 +330,17 @@ class SelectionDemo : DemoHarness("selection-demo-state.json", "selection", "sel
         finding("  selection now: '${selectedOnText.replace("\n", "\\n")}'")
         finding("  toolbar: ${onText.describe()}")
         val textLabels = onText.orEmpty().map { it.label }
-        check("the selection grew past the address", selectedOnText.startsWith(GLANCE_URL) && selectedOnText.length > GLANCE_URL.length)
+        val grew = selectedOnText.startsWith(GLANCE_URL) && selectedOnText.length > GLANCE_URL.length
+        check("the selection grew past the address", grew)
         check("the bar flips to $SEARCH", SEARCH in textLabels)
         check("Open in Glance is gone from the bar", "Open in Glance" !in textLabels)
+        if (!grew) {
+            // A drag back from an unmoved selection would pass for nothing.
+            check("the drag back (not attempted: the first drag did not move the selection)", false)
+            finding("  the WebView's mode: ${selectionLog().drop(marks).joinToString("; ").ifEmpty { "untouched" }}")
+            clearSelection()
+            return
+        }
         // And back onto the address: dropped a few characters in from its end (the span is
         // `user-select: all`, so the whole address is taken again; a drop past the end could
         // land after the span).
@@ -401,6 +409,14 @@ class SelectionDemo : DemoHarness("selection-demo-state.json", "selection", "sel
      */
     private fun dragHandle(from: PointF, to: PointF): PointF {
         val grab = PointF(from.x + HANDLE_GRAB_DP.x * density, from.y + HANDLE_GRAB_DP.y * density)
+        // A handle at the view's edge is half outside it: press on the part inside (the bitmap
+        // is wider than the touch needs), never on the chrome around the view.
+        webViewRect()?.let { view ->
+            val inset = 3 * density
+            val clamped = PointF(grab.x.coerceIn(view.left + inset, view.right - inset), grab.y.coerceIn(view.top + inset, view.bottom - inset))
+            if (clamped != grab) finding("  the handle at ${grab.x.toInt()},${grab.y.toInt()} sits at the view's edge; pressed at ${clamped.x.toInt()},${clamped.y.toInt()}")
+            grab.set(clamped)
+        }
         Log.i(tag, "drag handle from ${grab.x},${grab.y} to ${to.x},${to.y}")
         Finger().apply {
             down(grab.x, grab.y)
@@ -440,6 +456,14 @@ class SelectionDemo : DemoHarness("selection-demo-state.json", "selection", "sel
             origin[0] + box.getDouble(2).toFloat() * density,
             origin[1] + box.getDouble(3).toFloat() * density
         )
+    }
+
+    /** The page's view on screen, or null while none is shown. */
+    private fun webViewRect(): RectF? = onMain {
+        shownTabView()?.let { v ->
+            val origin = IntArray(2).also(v::getLocationOnScreen)
+            RectF(origin[0].toFloat(), origin[1].toFloat(), (origin[0] + v.width).toFloat(), (origin[1] + v.height).toFloat())
+        }
     }
 
     /** A page point `[x, y]` (CSS px, the JSON text of it) as a screen point, or null. */
