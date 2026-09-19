@@ -490,16 +490,10 @@ export function PillContent({
       {/*
         The private marker (v2 §9.19): while the private tab has no page the mask glyph stands in
         its favicon slot (`Favicon`) and that is all; once it has one the favicon shows like any
-        other and the pill says "Private" in the neutral badge – the shared `.zen-v2-badge`, which
-        takes the window family on the bar, 20 tall, 13/600 – at the end of the leading chip
-        group, before the host. Never glyph and badge together. It comes up with the tab's
-        content, on the same fade (MOT-14).
+        other. The pill carries no "Private" badge – the private theme on the whole window, the
+        mask in the overview header and on the tab card say it, and a badge would cost the host
+        its room on a phone; badges are for lists that mix private and normal items.
       */}
-      {shown && isPrivateTab(shown) && !isEmptyTabUrl(shown.url) && (
-        <span className="zen-v2-badge zen-animate-fade order-first" data-testid="private-badge">
-          Private
-        </span>
-      )}
       {shown && !page && !extension && state.capabilities.requestBlocking && (
         <BlockedChip tab={shown} state={state} variant="phone" interactive={interactive} />
       )}

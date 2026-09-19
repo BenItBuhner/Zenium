@@ -738,6 +738,15 @@
     background: var(--zen-bg);
     transition: background 600ms var(--zen-ease);
   }
+  /*
+   * On a phone the window family changes colour by the one blend of the resolved tokens over
+   * 240 ms (design language v2 §11.5, `useTheme`): the window reads the tokens as the blend
+   * writes them, and nothing tweens per element – no transition of its own, which would trail
+   * the blend by 600 ms (and, over a gradient, jump at its midpoint instead).
+   */
+  :root[data-form-factor='phone'] .zen-window {
+    transition: none;
+  }
   .zen-window ::selection {
     background: color-mix(in srgb, var(--zen-accent) 30%, transparent);
     color: inherit;

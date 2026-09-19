@@ -2,22 +2,32 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, createElement, StrictMode, useEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import type { Space, Tab, UIState } from '@shared/types'
+import type { Space, SpaceTheme, Tab, UIState } from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
-import { resolveTheme, rgbToHex, themeCssVariables, type ResolvedTheme } from '@shared/theme'
+import {
+  THEME_PRESETS,
+  blendResolvedThemes,
+  resolveTheme,
+  rgbToHex,
+  themeCssVariables,
+  type ResolvedTheme
+} from '@shared/theme'
 
 /*
- * The theme hook rendered for real on the phone (MOT-14): a private tab coming into view runs
- * the root's colour variables from the space theme to the private theme on the blend spring,
- * through intermediate colours, and flips the polarity (`data-theme`, the returned `isDark`) at
- * the midpoint; leaving it runs them back. A chrome that mounts on a private tab is painted
- * private at once, with no run. The host hears the painted theme through `zen-theme-painted`.
+ * The theme hook rendered for real on the phone (MOT-14, design language v2 §11.5): a private
+ * tab coming into view runs the root's colour variables from the space theme to the private
+ * theme in one blend over 240 ms on one value, through intermediate colours, and flips the
+ * polarity (`data-theme`, the returned `isDark`) at the midpoint, 120 ms in; leaving it runs
+ * them back; a Space switch blends the same way. A chrome that mounts on a private tab is
+ * painted private at once, with no run; under reduced motion the blend is a cut; the desktop
+ * paints at once. The host hears the painted theme through `zen-theme-painted`.
  */
 
 Object.assign(window, { zen: { invoke: async () => null, on: () => () => undefined } })
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
-const { PRIVATE_RESOLVED, THEME_PAINTED_EVENT, useTheme } = await import('../useTheme')
+const { PRIVATE_RESOLVED, THEME_BLEND_MS, THEME_PAINTED_EVENT, useTheme } =
+  await import('../useTheme')
 
 // --- a state -----------------------------------------------------------------------------------
 
@@ -60,13 +70,13 @@ function tab(id: string, patch: Partial<Tab> = {}): Tab {
   }
 }
 
-function stateOn(activeTabId: 'r1' | 'x1'): UIState {
+function stateOn(activeTabId: 'r1' | 'x1', theme: SpaceTheme | null = null): UIState {
   const space: Space = {
     id: 's1',
     name: 'Work',
     icon: '',
     containerId: 'default',
-    theme: null,
+    theme,
     tabIds: ['r1', 'x1'],
     activeTabId,
     pinnedCollapsed: false
@@ -101,7 +111,7 @@ const bgOf = (theme: ResolvedTheme): string => themeCssVariables(theme)[BG]!
 
 // --- the frame loop, hand-cranked --------------------------------------------------------------
 
-/** `run(n)` advances the clock 16 ms a frame and runs the pending animation frames. */
+/** `run(n)` advances the clock `step` ms a frame (16 by default) and runs the pending frames. */
 class Frames {
   now = 0
   readonly queue = new Map<number, (now: number) => void>()
@@ -119,9 +129,9 @@ class Frames {
     vi.stubGlobal('performance', { now: () => this.now })
   }
 
-  run(n: number): void {
+  run(n: number, step = 16): void {
     for (let i = 0; i < n; i++) {
-      this.now += 16
+      this.now += step
       const pending = [...this.queue.values()]
       this.queue.clear()
       act(() => {
@@ -142,36 +152,66 @@ const report = (theme: ResolvedTheme): void => {
 
 function Probe({
   state,
+  formFactor,
   onTheme
 }: {
   state: UIState
+  formFactor: 'phone' | 'desktop'
   onTheme: (theme: ResolvedTheme) => void
 }): null {
-  const theme = useTheme(state, 'phone')
+  const theme = useTheme(state, formFactor)
   useEffect(() => onTheme(theme), [theme, onTheme])
   return null
 }
+
+let formFactor: 'phone' | 'desktop' = 'phone'
 
 function render(state: UIState, strict = false): void {
   mount = document.createElement('div')
   document.body.appendChild(mount)
   root = createRoot(mount)
-  const el = createElement(Probe, { state, onTheme: report })
+  const el = createElement(Probe, { state, formFactor, onTheme: report })
   act(() => root!.render(strict ? createElement(StrictMode, null, el) : el))
 }
 
 function rerender(state: UIState): void {
-  act(() => root!.render(createElement(Probe, { state, onTheme: report })))
+  act(() => root!.render(createElement(Probe, { state, formFactor, onTheme: report })))
 }
 
 const rootStyle = (): CSSStyleDeclaration => document.documentElement.style
 const painted = (): string => rootStyle().getPropertyValue(BG)
+const paintedDark = (): boolean => document.documentElement.dataset.theme === 'dark'
+/** The root's solid colour `k` of the way from `a` to `b`, as the blend paints it. */
+const between = (a: ResolvedTheme, b: ResolvedTheme, k: number): string =>
+  bgOf(blendResolvedThemes(a, b, k))
+
+const heard: Array<{ dark: boolean; background: string }> = []
+const listen = (e: Event): void => {
+  heard.push((e as CustomEvent<{ dark: boolean; background: string }>).detail)
+}
+
+/** The media queries the hook asks: reduced motion on or off, the colour scheme always light. */
+function media(reduce: boolean): void {
+  vi.spyOn(window, 'matchMedia').mockImplementation(
+    (query: string) =>
+      ({
+        matches: reduce && query.includes('prefers-reduced-motion'),
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined
+      }) as unknown as MediaQueryList
+  )
+}
 
 beforeEach(() => {
   frames.install()
+  frames.now = 0
+  formFactor = 'phone'
+  heard.length = 0
+  window.addEventListener(THEME_PAINTED_EVENT, listen)
 })
 
 afterEach(() => {
+  window.removeEventListener(THEME_PAINTED_EVENT, listen)
   act(() => root?.unmount())
   root = null
   mount?.remove()
@@ -179,67 +219,100 @@ afterEach(() => {
   answer.returned = null
   frames.queue.clear()
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
   const style = rootStyle()
   for (const key of Object.keys(themeCssVariables(SPACE_LIGHT))) style.removeProperty(key)
   delete document.documentElement.dataset.theme
 })
 
-describe('the private theme blend (MOT-14)', () => {
-  it('paints the space theme on a regular tab, and the private theme reaches the root through intermediate colours', () => {
-    const events: Array<{ dark: boolean; background: string }> = []
-    window.addEventListener(THEME_PAINTED_EVENT, (e) =>
-      events.push((e as CustomEvent<{ dark: boolean; background: string }>).detail)
-    )
+describe('the theme blend (MOT-14, v2 §11.5)', () => {
+  it('paints the space theme on a regular tab, and blends the root to the private theme over 240 ms on one value', () => {
     render(stateOn('r1'))
     expect(painted()).toBe(bgOf(SPACE_LIGHT))
-    expect(document.documentElement.dataset.theme).toBe('light')
+    expect(paintedDark()).toBe(false)
     expect(answer.returned?.isDark).toBe(false)
+    expect(THEME_BLEND_MS).toBe(240)
 
     rerender(stateOn('x1'))
-    // The run is under way: the first frames paint colours that are neither theme.
+    // The blend is under way: at 48 ms the root shows the colours a fifth of the way, exactly –
+    // the value is the time, linear, so the midpoint of the colours is the midpoint of the time.
     frames.run(3)
-    const midway = painted()
-    expect(midway).not.toBe(bgOf(SPACE_LIGHT))
-    expect(midway).not.toBe(bgOf(PRIVATE_RESOLVED))
+    expect(painted()).toBe(between(SPACE_LIGHT, PRIVATE_RESOLVED, 48 / 240))
+    expect(painted()).not.toBe(bgOf(SPACE_LIGHT))
+    expect(painted()).not.toBe(bgOf(PRIVATE_RESOLVED))
     expect(frames.queue.size).toBe(1)
 
-    // Some 500 ms later the spring has rested exactly on the private theme.
-    frames.run(30)
+    // At 240 ms it rests exactly on the private theme, and no frame is left pending.
+    frames.run(12)
+    expect(frames.now).toBe(240)
     expect(painted()).toBe(bgOf(PRIVATE_RESOLVED))
-    expect(document.documentElement.dataset.theme).toBe('dark')
+    expect(paintedDark()).toBe(true)
     expect(document.documentElement.style.colorScheme).toBe('dark')
     expect(frames.queue.size).toBe(0)
     // The hook's answer is the private theme itself once the polarity has flipped.
     expect(answer.returned).toBe(PRIVATE_RESOLVED)
-    // The host heard the flip and the rest, with the private theme's solid colour.
-    const dark = events.filter((e) => e.dark)
-    expect(dark.length).toBeGreaterThanOrEqual(2)
-    expect(dark[dark.length - 1]!.background).toBe(rgbToHex(PRIVATE_RESOLVED.averageColor))
+    // The host heard the flip and the rest, the rest with the private theme's solid colour.
+    const dark = heard.filter((e) => e.dark)
+    expect(dark.length).toBe(2)
+    expect(dark[1]!.background).toBe(rgbToHex(PRIVATE_RESOLVED.averageColor))
   })
 
-  it('runs back to the space theme when the private tab goes', () => {
+  it('flips the colour scheme at the midpoint, 120 ms in, and not a frame before', () => {
     render(stateOn('r1'))
     rerender(stateOn('x1'))
-    frames.run(40)
+    // 112 ms: the colours are nearly halfway, the scheme still the space theme's.
+    frames.run(7)
+    expect(painted()).toBe(between(SPACE_LIGHT, PRIVATE_RESOLVED, 112 / 240))
+    expect(paintedDark()).toBe(false)
+    expect(answer.returned?.isDark).toBe(false)
+    expect(heard.filter((e) => e.dark)).toEqual([])
+    // 120 ms: the flip, and the host hears it with the colour under it.
+    frames.run(1, 8)
+    expect(frames.now).toBe(120)
+    expect(painted()).toBe(between(SPACE_LIGHT, PRIVATE_RESOLVED, 0.5))
+    expect(paintedDark()).toBe(true)
+    expect(document.documentElement.style.colorScheme).toBe('dark')
+    expect(answer.returned?.isDark).toBe(true)
+    expect(heard.filter((e) => e.dark)).toEqual([
+      { dark: true, background: between(SPACE_LIGHT, PRIVATE_RESOLVED, 0.5) }
+    ])
+    // The blend runs on to its end, the same one blend.
+    frames.run(8, 15)
+    expect(frames.now).toBe(240)
+    expect(painted()).toBe(bgOf(PRIVATE_RESOLVED))
+    expect(frames.queue.size).toBe(0)
+  })
+
+  it('runs back to the space theme when the private tab goes, flipping back at its midpoint', () => {
+    render(stateOn('r1'))
+    rerender(stateOn('x1'))
+    frames.run(15)
     expect(painted()).toBe(bgOf(PRIVATE_RESOLVED))
 
+    rerender(stateOn('x1'))
+    // The same theme again: no run.
+    expect(frames.queue.size).toBe(0)
+
     rerender(stateOn('r1'))
-    frames.run(3)
-    expect(painted()).not.toBe(bgOf(PRIVATE_RESOLVED))
-    expect(painted()).not.toBe(bgOf(SPACE_LIGHT))
-    frames.run(40)
-    expect(painted()).toBe(bgOf(SPACE_LIGHT))
-    expect(document.documentElement.dataset.theme).toBe('light')
+    frames.run(7)
+    expect(painted()).toBe(between(PRIVATE_RESOLVED, SPACE_LIGHT, 112 / 240))
+    expect(paintedDark()).toBe(true)
+    frames.run(1)
+    expect(paintedDark()).toBe(false)
     expect(answer.returned?.isDark).toBe(false)
+    frames.run(7)
+    expect(painted()).toBe(bgOf(SPACE_LIGHT))
+    expect(frames.queue.size).toBe(0)
   })
 
   it('a chrome mounting on a private tab is painted private at once, without a run', () => {
     render(stateOn('x1'), true)
     expect(painted()).toBe(bgOf(PRIVATE_RESOLVED))
-    expect(document.documentElement.dataset.theme).toBe('dark')
+    expect(paintedDark()).toBe(true)
     expect(answer.returned).toBe(PRIVATE_RESOLVED)
-    // No frame pending: StrictMode's remount placed its fresh spring at rest as well.
+    // No frame pending: StrictMode's remount found the root already painted and started nothing.
     expect(frames.queue.size).toBe(0)
+    expect(heard).toEqual([{ dark: true, background: rgbToHex(PRIVATE_RESOLVED.averageColor) }])
   })
 
   it('a private tab coming into view mid-run turns the blend around from where it stands', () => {
@@ -248,11 +321,56 @@ describe('the private theme blend (MOT-14)', () => {
     frames.run(2)
     const turned = painted()
     rerender(stateOn('r1'))
-    frames.run(1)
-    // The way back starts near where the run had got to, not from the private theme.
+    frames.run(2)
+    // The way back starts where the run had got to, not from the private theme, and takes its
+    // own 240 ms from there.
+    expect(painted()).toBe(
+      between(blendResolvedThemes(SPACE_LIGHT, PRIVATE_RESOLVED, 32 / 240), SPACE_LIGHT, 32 / 240)
+    )
     expect(painted()).not.toBe(bgOf(PRIVATE_RESOLVED))
     expect(painted()).not.toBe(turned)
-    frames.run(40)
+    frames.run(13)
     expect(painted()).toBe(bgOf(SPACE_LIGHT))
+    expect(frames.queue.size).toBe(0)
+  })
+
+  it('a Space switch blends the same way: one blend of the resolved tokens, the scheme with them', () => {
+    const ocean = THEME_PRESETS.find((p) => p.name === 'Ocean')!.theme
+    const OCEAN_LIGHT = resolveTheme(ocean, false)
+    render(stateOn('r1'))
+    rerender(stateOn('r1', ocean))
+    frames.run(3)
+    expect(painted()).toBe(between(SPACE_LIGHT, OCEAN_LIGHT, 48 / 240))
+    frames.run(12)
+    expect(painted()).toBe(bgOf(OCEAN_LIGHT))
+    expect(rootStyle().getPropertyValue('--zen-bg')).toBe(OCEAN_LIGHT.background)
+    expect(frames.queue.size).toBe(0)
+    // A state update that leaves the theme as it is starts nothing.
+    rerender(stateOn('r1', { ...ocean }))
+    expect(frames.queue.size).toBe(0)
+  })
+
+  it('under reduced motion the blend is a cut: the private theme at once, no frame, one word to the host', () => {
+    media(true)
+    render(stateOn('r1'))
+    heard.length = 0
+    rerender(stateOn('x1'))
+    expect(frames.queue.size).toBe(0)
+    expect(painted()).toBe(bgOf(PRIVATE_RESOLVED))
+    expect(paintedDark()).toBe(true)
+    expect(answer.returned).toBe(PRIVATE_RESOLVED)
+    expect(heard).toEqual([{ dark: true, background: rgbToHex(PRIVATE_RESOLVED.averageColor) }])
+    rerender(stateOn('r1'))
+    expect(frames.queue.size).toBe(0)
+    expect(painted()).toBe(bgOf(SPACE_LIGHT))
+  })
+
+  it("the desktop paints its theme at once, with no run (the blend is the phone's)", () => {
+    formFactor = 'desktop'
+    const ocean = THEME_PRESETS.find((p) => p.name === 'Ocean')!.theme
+    render(stateOn('r1'))
+    rerender(stateOn('r1', ocean))
+    expect(frames.queue.size).toBe(0)
+    expect(painted()).toBe(bgOf(resolveTheme(ocean, false)))
   })
 })

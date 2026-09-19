@@ -156,8 +156,8 @@ const V2_FILES: ReadonlyArray<string> = [
   'components/siteinfo/SiteInfoSheet.tsx',
   // Site controls (#135), a v2 surface: the shared glyph size and stroke (`V2_GLYPH`); the
   // desktop popover, dialog and pane primitives' metrics and inks; the Settings panes' card
-  // padding and deemphasised ink; the builder rows' glyph ink. (The pill's private badge is on
-  // the shared `.zen-v2-badge` since #203, so PhoneShell reads no token of its own.)
+  // padding and deemphasised ink; the builder rows' glyph ink. (The pill carries no private
+  // badge – §9.19 keeps badges for mixed lists – so PhoneShell reads no token of its own.)
   'components/v2/controls.tsx',
   'components/siteControls/primitives.tsx',
   'components/siteControls/pane.tsx',

@@ -211,8 +211,9 @@ function resampleStops(stops: RGB[], count: number): RGB[] {
  * through its stops (re-sampled to the longer of the two so a solid colour blends into a
  * gradient and back), the angle and the texture linearly. Which side counts as dark switches at
  * the midpoint: the flag drives the ink and the page family's tokens, which do not interpolate.
- * This is the private blend of the phone chrome (MOT-14): the window surfaces lerp to the
- * private theme over the spring while the page family switches at once.
+ * This is the phone chrome's theme blend (design language v2 §11.5; MOT-14 for the private
+ * theme): `useTheme` runs `t` linearly over 240 ms, so the window surfaces lerp while the page
+ * family switches at once, at 120 ms.
  */
 export function blendResolvedThemes(a: ResolvedTheme, b: ResolvedTheme, t: number): ResolvedTheme {
   const k = clamp(t, 0, 1)

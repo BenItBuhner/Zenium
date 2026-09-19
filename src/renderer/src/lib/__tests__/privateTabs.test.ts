@@ -2,8 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Space, Tab, UIState } from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import { PRIVATE_THEME, blendResolvedThemes, resolveTheme } from '@shared/theme'
-import { isAtRest, stepSpring } from '@shared/spring'
-import { SPRING_THEME_BLEND } from '@renderer/hooks/useTheme'
+import { THEME_BLEND_MS } from '@renderer/hooks/useTheme'
 import {
   activeTabIsPrivate,
   isPrivateTab,
@@ -134,46 +133,43 @@ describe('private tabs on the phone', () => {
   })
 })
 
-describe('the private theme blend (MOT-14)', () => {
+describe('the theme blend (MOT-14, design language v2 §11.5)', () => {
   const space = resolveTheme(null, false)
   const privateTheme = resolveTheme(PRIVATE_THEME, true)
+  const frameMs = 1000 / 60
+  /** The blend's value frame by frame at 60 Hz: the time elapsed over its 240 ms, then 1. */
+  const trace = Array.from({ length: 16 }, (_, i) => Math.min(1, (i * frameMs) / THEME_BLEND_MS))
 
-  /** The blend's spring frame by frame at 60 Hz: the value trace until it rests. */
-  function run(from: number, to: number): number[] {
-    let state = { x: from, v: 0 }
-    const trace = [from]
-    for (let i = 0; i < 600 && !isAtRest(state, to); i++) {
-      state = stepSpring(state, to, 1 / 60, SPRING_THEME_BLEND)
-      trace.push(state.x)
-    }
-    return trace
-  }
-
-  it('has the colours all but there about 240 ms after a private tab comes into view, without overshoot', () => {
-    const trace = run(0, 1)
-    const frameMs = 1000 / 60
-    const arrived = trace.findIndex((t) => t >= 0.99) * frameMs
-    expect(arrived).toBeGreaterThanOrEqual(150)
-    expect(arrived).toBeLessThanOrEqual(250)
-    // The spring formally rests a few invisible frames later, exactly on the private theme.
-    const rest = (trace.length - 1) * frameMs
-    expect(rest).toBeLessThanOrEqual(330)
-    expect(Math.max(...trace)).toBeLessThanOrEqual(1.002)
-    expect(trace[trace.length - 1]).toBe(1)
-  })
-
-  it('lands on the private theme and flips the polarity at the midpoint of the run', () => {
-    const trace = run(0, 1)
+  it('is one value over 240 ms, the colours landing exactly on the private theme at its end', () => {
+    expect(THEME_BLEND_MS).toBe(240)
     const painted = trace.map((t) => blendResolvedThemes(space, privateTheme, t))
     expect(painted[0]).toBe(space)
     expect(painted[painted.length - 1]).toBe(privateTheme)
+    // Every frame between is a colour of its own on the way: the solid colour's channels move one
+    // way from the space theme's to the private theme's, none overshooting either end.
+    const solids = painted.map((theme) => theme.averageColor)
+    for (let channel = 0; channel < 3; channel++) {
+      const values = solids.map((c) => c[channel]!)
+      const lo = Math.min(space.averageColor[channel]!, privateTheme.averageColor[channel]!)
+      const hi = Math.max(space.averageColor[channel]!, privateTheme.averageColor[channel]!)
+      for (let i = 1; i < values.length; i++) {
+        expect(values[i]).toBeGreaterThanOrEqual(lo)
+        expect(values[i]).toBeLessThanOrEqual(hi)
+        if (space.averageColor[channel]! > privateTheme.averageColor[channel]!)
+          expect(values[i]).toBeLessThanOrEqual(values[i - 1]!)
+        else expect(values[i]).toBeGreaterThanOrEqual(values[i - 1]!)
+      }
+    }
+  })
+
+  it('flips the polarity at the midpoint, 120 ms in, on the way there and on the way back', () => {
+    const painted = trace.map((t) => blendResolvedThemes(space, privateTheme, t))
     const flip = painted.findIndex((theme) => theme.isDark)
-    expect(flip).toBeGreaterThan(0)
-    expect(trace[flip]).toBeGreaterThanOrEqual(0.5)
-    expect(trace[flip - 1]).toBeLessThan(0.5)
-    // The way back runs on the same spring and ends on the space theme again.
-    const back = run(1, 0)
-    expect(blendResolvedThemes(space, privateTheme, back[back.length - 1])).toBe(space)
+    expect((flip - 1) * frameMs).toBeLessThan(120)
+    expect(flip * frameMs).toBeGreaterThanOrEqual(120)
+    const back = trace.map((t) => blendResolvedThemes(privateTheme, space, t))
+    expect(back.findIndex((theme) => !theme.isDark)).toBe(flip)
+    expect(back[back.length - 1]).toBe(space)
   })
 })
 
