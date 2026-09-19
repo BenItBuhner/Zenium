@@ -7,9 +7,6 @@ name: Android boot probe
 # Dispatch-only; the build, the emulator and the Gradle cache live in android-emulator-demo.yml.
 on:
   workflow_dispatch:
-  # Temporary: one measurement run for PR #181's review round; removed before the final head.
-  push:
-    branches: [cursor/android-host-boot-handoff-62e3]
 
 permissions:
   contents: read
