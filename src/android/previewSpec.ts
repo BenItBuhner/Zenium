@@ -76,6 +76,15 @@ export type PreviewState =
       then?: PreviewStep[]
     }
   | {
+      /**
+       * The active tab in a group of this many members, made on the spot (the group strip is up
+       * in the bar band); `then` steps are taken once the group has formed.
+       */
+      kind: 'group'
+      members: number
+      then?: PreviewStep[]
+    }
+  | {
       kind: 'overlay'
       overlay: OverlayKind
       /** The overlay's section to land on (History's `host:<host>`). */
@@ -163,6 +172,8 @@ export type PreviewState =
 
 /** More sample banners than the stack holds are pointless. */
 const MAX_PREVIEW_BANNERS = 3
+/** A group of more members than this would only scroll the strip further. */
+const MAX_PREVIEW_GROUP = 24
 
 /** What a spec seeds before its state is applied; `null` leaves the store as it is. */
 export interface PreviewSeed {
@@ -194,7 +205,10 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * A preview state spec is a query string: `idle` (or anything unrecognised), `page=<id>` for an
  * internal page opened in its tab (`section=<id>` for one of its sections, `search=<text>` types
  * into its search field, `show=<text>` scrolls a row into view, `then=<steps>` takes steps on it
- * afterwards, `;`-separated: `tap:<text>`, `back`, `overview`, `urlbar`), `overlay=<kind>` for
+ * afterwards, `;`-separated: `tap:<text>`, `back`, `overview`, `urlbar`), `group=<n>` for the
+ * active tab in a group of n members made on the spot, the group strip up in the bar band (with
+ * `then=<steps>` taken once the group has formed: `tap:Show group, Research` presses the strip's
+ * show chip, `tap:New tab in Research` its plus chip), `overlay=<kind>` for
  * one of PREVIEW_OVERLAYS (with `section=<id>` for an overlay that has sections, `show=<text>`
  * to scroll a row of the overlay into view, and `expand` to rest a sheet that opened at its peek
  * detent on its expanded one), `menu=app` for the app menu sheet (with `show=<text>` to scroll an
@@ -216,11 +230,11 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * `prompt=certificate` for a security dialog over the page (`&failed`, `&proxy`, `&secure` vary
  * the sign-in); `prompt=<any other value>` is the permission that page asks for (the permission
  * prompt sheet), and `private=new|<url>` opens a private tab. When several are given, `page`
- * wins over `overlay`, `overlay` over `menu`, `menu` over the permission `prompt`, that over
- * `private`, `private` over `find`, `find` over `pull`, `pull` over `zoom`, `zoom` over `error`,
- * `error` over the messages, the messages over `webapp`, `webapp` over `download`, `download`
- * over `popups`, and `popups` over the security `prompt`. A leading `#` (the URL hash as read)
- * is ignored.
+ * wins over `group`, `group` over `overlay`, `overlay` over `menu`, `menu` over the permission
+ * `prompt`, that over `private`, `private` over `find`, `find` over `pull`, `pull` over `zoom`,
+ * `zoom` over `error`, `error` over the messages, the messages over `webapp`, `webapp` over
+ * `download`, `download` over `popups`, and `popups` over the security `prompt`. A leading `#`
+ * (the URL hash as read) is ignored.
  */
 export function parsePreviewSpec(spec: string): PreviewState {
   const params = new URLSearchParams(spec.startsWith('#') ? spec.slice(1) : spec)
@@ -239,6 +253,12 @@ export function parsePreviewSpec(spec: string): PreviewState {
     const then = parsePreviewSteps(params.get('then'))
     if (then.length > 0) state.then = then
     return state
+  }
+  const group = params.get('group')
+  if (group !== null && group !== '' && Number.isFinite(Number(group))) {
+    const members = Math.min(MAX_PREVIEW_GROUP, Math.max(1, Math.floor(Number(group))))
+    const then = parsePreviewSteps(params.get('then'))
+    return then.length > 0 ? { kind: 'group', members, then } : { kind: 'group', members }
   }
   const overlay = params.get('overlay')
   if (overlay !== null && (PREVIEW_OVERLAYS as readonly string[]).includes(overlay)) {

@@ -2,7 +2,7 @@ import type { CertificateDetails, ClientCertificateInfo, Tab, UIState } from '@s
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import type { Browser } from '@core/browser'
 import { isCertificateError } from '@shared/siteInfo'
-import { run } from '@renderer/lib/api'
+import { cmd, run } from '@renderer/lib/api'
 import { dispatchBackEvent, topBackSurface } from '@renderer/lib/back'
 import { dismissOverview, openOverview } from '@renderer/lib/gestures/stage'
 import { abortPull, dispatchPullEvent, PULL_THRESHOLD, pullTravelFor } from '@renderer/lib/pull'
@@ -10,7 +10,9 @@ import { Download, Smartphone, Star } from 'lucide-react'
 import { installBannerShown, presentInstallBanner } from '@renderer/lib/installBanner'
 import { isInternalPageUrl } from '@shared/internalPages'
 import { blockedPopupsOf, closeBlockedPopups, openBlockedPopups } from '@renderer/lib/security'
-import { activeTab } from '@renderer/lib/selectors'
+import { BLANK_URL } from '@shared/url'
+import { DEFAULT_FOLDER_ICON } from '@renderer/components/phone/GroupCard'
+import { activeSpace, activeTab, regularOf } from '@renderer/lib/selectors'
 import {
   browserStore,
   closeMenu,
@@ -72,7 +74,9 @@ const VOICE_EVENT_MARGIN_MS = 250
  * over the landing, `search=<text>` types into the landing's search, `show=<text>` scrolls a row
  * into view, `then=tap:<text>;back;overview;urlbar` takes steps on the open page in order: a tap
  * on a row opens its sheet and a second tap stacks one, `back` closes the top sheet, `overview`
- * opens the tab overview, `urlbar` the pill for editing), `overlay=<kind>` (history, bookmarks,
+ * opens the tab overview, `urlbar` the pill for editing), `group=<n>` (the active tab in a
+ * group of n members made on the spot, so the group strip is up in the bar band; `then=` steps
+ * run once the group has formed), `overlay=<kind>` (history, bookmarks,
  * downloads, addons, …: the chrome overlays a phone still has – Settings is not one, it is
  * `page=settings`; `show=<text>` scrolls the row with that text into view, `expand` rests a
  * sheet on its expanded detent), `menu=app` (the app menu sheet; `show=<text>` scrolls an item
@@ -136,8 +140,99 @@ function apply(browser: Browser, spec: string): void {
     const securityAtRest = tab ? resetSecurity(browser, tab) : Promise.resolve()
     const seed = parsePreviewSeed(spec)
     if (seed.rules !== null) seedRules(browser, seed.rules)
-    closeSheets(() => reach(browser, spec, securityAtRest))
+    void dissolveGroup().then(() => closeSheets(() => reach(browser, spec, securityAtRest)))
   })
+}
+
+/** The name and colour of the group a `group=<n>` state makes. */
+const PREVIEW_GROUP_NAME = 'Research'
+/** Pages for the members a `group=<n>` state has to make when the space has too few tabs. */
+const PREVIEW_GROUP_PAGES = [
+  'https://en.wikipedia.org/wiki/Tea',
+  'https://news.ycombinator.com/',
+  'https://www.rfc-editor.org/rfc/rfc2324.html',
+  'https://developer.mozilla.org/en-US/docs/Web/CSS/corner-shape',
+  'https://en.wikipedia.org/wiki/Damping',
+  'https://www.rfc-editor.org/rfc/rfc1149.html',
+  'https://en.wikipedia.org/wiki/Spring_(device)',
+  'https://developer.mozilla.org/en-US/docs/Web/API/Web_Animations_API',
+  'https://en.wikipedia.org/wiki/Kerning'
+]
+/**
+ * The group the last `group=<n>` state made and the world before it (the tab that was active,
+ * the tabs there were), put back before the next state: a run of stills takes each state from
+ * the same loose profile.
+ */
+let previewGroup: { folderId: string; activeId: string; tabIds: ReadonlySet<string> } | null = null
+
+/**
+ * Put the active tab in a group of `members`: the space's loose pages join first, then tabs made
+ * for the purpose, each filed after the last member so it lands in the group – the way the plus
+ * chip's tab does. The strip enters on its spring as the group forms.
+ */
+async function makeGroup(activeId: string, members: number): Promise<void> {
+  const state = browserStore.get().state
+  if (!state) return
+  const space = activeSpace(state)
+  const folderId = await cmd('folder.create', {
+    spaceId: space.id,
+    name: PREVIEW_GROUP_NAME,
+    icon: DEFAULT_FOLDER_ICON,
+    color: 'blue',
+    rename: false
+  })
+  previewGroup = { folderId, activeId, tabIds: new Set(Object.keys(state.tabs)) }
+  await cmd('tab.moveToFolder', { tabId: activeId, folderId })
+  const loose = regularOf(state, space).filter(
+    (t) => t.id !== activeId && !t.folderId && !isInternalPageUrl(t.url) && t.url !== BLANK_URL
+  )
+  let last = activeId
+  for (let i = 1; i < members; i++) {
+    const next = loose.shift()
+    if (next) {
+      await cmd('tab.moveToFolder', { tabId: next.id, folderId })
+      last = next.id
+    } else {
+      last = await cmd('tab.create', {
+        url: PREVIEW_GROUP_PAGES[i % PREVIEW_GROUP_PAGES.length],
+        active: false,
+        afterTabId: last
+      })
+    }
+  }
+}
+
+/**
+ * The group a previous state made goes and the world before it comes back: the tab that was
+ * active then is active again (first, so closing the others never has the core pick a
+ * neighbour), the tabs made since – for the group, or in it by its plus chip – close, and the
+ * folder is deleted with its tabs unpacked, so the next state starts loose.
+ */
+async function dissolveGroup(): Promise<void> {
+  const made = previewGroup
+  previewGroup = null
+  const state = made ? browserStore.get().state : null
+  if (!made || !state) return
+  const quiet = (): undefined => undefined
+  const restored = state.tabs[made.activeId] ? made.activeId : null
+  if (restored && activeTab(state)?.id !== restored)
+    await cmd('tab.activate', { tabId: restored }).catch(quiet)
+  for (const id of Object.keys(state.tabs)) {
+    if (!made.tabIds.has(id)) await cmd('tab.close', { tabId: id, force: true }).catch(quiet)
+  }
+  if (state.folders[made.folderId])
+    await cmd('folder.delete', { folderId: made.folderId, unpack: true }).catch(quiet)
+  // A command's answer comes before the state it changed does: the next state reads the store,
+  // so the store is waited for (bounded) to show the folder gone and the tab back.
+  await new Promise<void>((resolve) =>
+    untilState(
+      (s) =>
+        !s.folders[made.folderId] &&
+        (restored === null || activeTab(s)?.id === restored) &&
+        Object.keys(s.tabs).every((id) => made.tabIds.has(id)),
+      resolve
+    )
+  )
 }
 
 /**
@@ -205,6 +300,14 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
       })
     })
     run('page.open', { id: target.page, section: target.section ?? null })
+  } else if (target.kind === 'group' && tab) {
+    // The state is reached as the group forms (the strip is entering: a driver that wants it
+    // mid-slide captures at once); the steps wait for the entrance to settle.
+    void makeGroup(tab.id, target.members).then(() => {
+      const then = target.then ?? []
+      if (then.length === 0) finish()
+      else setTimeout(() => steps(then, finish), STEP_SETTLE_MS)
+    })
   } else if (target.kind === 'overlay') {
     void openOverlay(target.overlay, tab?.id ?? null, null, null, target.section ?? null).then(
       () => {
