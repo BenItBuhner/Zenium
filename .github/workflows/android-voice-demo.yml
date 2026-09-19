@@ -1,0 +1,63 @@
+name: Android voice search demo
+
+# Records voice search (OMN-19) on a hardware-accelerated Android emulator and uploads the video,
+# the screenshots and the driver's findings: the microphone refused at the system prompt (the
+# toast), refused for good (the toast with Open settings, and the app's details screen it opens),
+# granted at the prompt with the listening sheet up – the mic's halo pulsing with the level, the
+# partial transcript, Cancel – a search from the new tab page's mic through the profile's engine,
+# an address from the omnibox's mic, "Didn't catch that" with Try again, a network error's toast.
+# The emulator has no microphone and its image no recogniser service: the driver installs a
+# stand-in recogniser through `Voice.recognizerFactory` and plays the levels, transcripts and
+# errors into the same listener the platform's recogniser reports to (see VoiceDemo); the
+# permission flow is real, which is why RECORD_AUDIO is revoked after the install (DEMO_REVOKE).
+# Dispatch-only, like the gesture demo: it takes about ten minutes and says nothing about a change
+# being correct beyond the driver's own checks (VoiceDemo fails the run when one does not hold).
+# The build, the emulator and the Gradle cache live in android-emulator-demo.yml; this file only
+# picks the driver.
+on:
+  workflow_dispatch:
+  # TEMPORARY, removed before the branch is marked ready: the one budgeted run for PR #204.
+  push:
+    branches:
+      - cursor/android-voice-search-791c
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-voice-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Voice search demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.VoiceDemo
+        DEMO_DIR=voice-demo
+        DEMO_OUT=artifacts/android-voice-demo
+        DEMO_VIDEO=android-voice-demo.mp4
+        DEMO_REVOKE=android.permission.RECORD_AUDIO
+      artifact-name: android-voice-demo
+      artifact-path: artifacts/android-voice-demo/
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed: a run is then spent on the demo rather than on the runner.
+  record-again:
+    name: Voice search demo, second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.VoiceDemo
+        DEMO_DIR=voice-demo
+        DEMO_OUT=artifacts/android-voice-demo
+        DEMO_VIDEO=android-voice-demo.mp4
+        DEMO_REVOKE=android.permission.RECORD_AUDIO
+      artifact-name: android-voice-demo-second-boot
+      artifact-path: artifacts/android-voice-demo/

@@ -16,6 +16,10 @@
 #   DEMO_PREPARED – `1` when the device was prepared by an earlier run of this script on the same
 #                 boot (android-sheet-touch-audit.sh chains several drivers): the display, the
 #                 navigation mode, the bundled apps and the settling pause are then skipped
+#   DEMO_REVOKE – runtime permissions (space separated) to take back from the app after the
+#                 install, which grants them all (-g), so a demo meets the system's prompt for
+#                 them (the voice demo and RECORD_AUDIO); revoked before the driver starts, since
+#                 a revocation kills the app's process and the driver runs inside it
 #
 # Handshake with the driver, through files in the app's private storage (readable via run-as):
 #   files/<DEMO_DIR>/record     – written by the driver once its warm-up is done
@@ -169,6 +173,10 @@ echo "app: $apk"
 echo "driver: $test_apk"
 adb install -r -g "$apk"
 adb install -r -g "$test_apk"
+for permission in ${DEMO_REVOKE:-}; do
+  echo "revoking $permission"
+  adb shell pm revoke "$app_id" "$permission"
+done
 
 adb logcat -c || true
 adb logcat -v time > "$out/logcat.txt" &
