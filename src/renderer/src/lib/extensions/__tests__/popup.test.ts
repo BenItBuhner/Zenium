@@ -37,7 +37,9 @@ function stateWith(tabId: string): UIState {
     pinnedCollapsed: false
   }
   return {
-    tabs: { [tabId]: { id: tabId } },
+    // A `Tab` has a URL; the back state that watches the store (lib/back.ts, wired by the frame
+    // dialog host the popup opens through) reads it for the tab's root action.
+    tabs: { [tabId]: { id: tabId, url: 'https://example.com/' } },
     essentialTabIds: [],
     spaces: [space],
     activeSpaceId: 's1',

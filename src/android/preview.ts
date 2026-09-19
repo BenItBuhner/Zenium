@@ -296,9 +296,17 @@ export function createPreviewBridge(): NativeBridge {
       frame.style.transition = clip.pull > 0 ? '' : 'clip-path 320ms cubic-bezier(0.2, 0, 0, 1)'
       applyClip(frame, clip)
     },
+    // The Kotlin host reports the frame that carries the change as drawn (`view.drawn`, which
+    // `lib/pageView.ts` times the swap between the live page and its picture by); here the flip
+    // is on screen at the next frame, and the chrome hears so then rather than waiting out its
+    // ack timeout with every sheet held a second.
     'view.setVisible': ({ tabId, visible }) => {
       const frame = views.get(String(tabId))
-      if (frame) frame.style.display = visible ? 'block' : 'none'
+      if (!frame) return
+      frame.style.display = visible ? 'block' : 'none'
+      requestAnimationFrame(() =>
+        host().hostEvent('view.drawn', JSON.stringify({ tabId: String(tabId), visible }))
+      )
     },
     'view.bringToFront': ({ tabId }) => {
       const frame = views.get(String(tabId))

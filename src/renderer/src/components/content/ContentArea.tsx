@@ -158,11 +158,15 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
                   />
                 ) : null}
                 {/*
+                 * Desktop and tablet: the capture is dimmed under the URL bar and the overlays.
                  * Panels draw no scrim: a bar panel, the star bubble, the puzzle panel, a local
                  * menu or the popup frame leaves the capture undimmed; an extension prompt's
-                 * scrim is the frame dialog host's (the sheet's on a phone).
+                 * scrim is the frame dialog host's (the sheet's on a phone). On a phone the
+                 * capture is drawn plain: the sheet's scrim, fading with the sheet's own progress
+                 * over the receded frame, is the one dim layer (design language v2 draft §11.5)
+                 * – a second, timed fade here was seen stacking with it.
                  */}
-                {!panelAloneOverContent(ui) && !extensionChromeAloneOverContent(ui) && (
+                {!phone && !panelAloneOverContent(ui) && !extensionChromeAloneOverContent(ui) && (
                   <div
                     className={cn(
                       'absolute inset-0 bg-black/35 transition-opacity',

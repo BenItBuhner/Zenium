@@ -258,6 +258,165 @@ describe('SheetMotion', () => {
     })
   })
 
+  /*
+   * The sheet's presence `p` (`frame().scrim`, the page's recede) under a detent that moves
+   * while the sheet rests – the keyboard coming up measures the peek above the keys, going
+   * lowers it again (design language v2 draft §11.1, ruled 23:50): `p` is clamped at 1 once at
+   * rest, the sheet follows on its own value and the recede never breathes with the keyboard;
+   * a dismissal from the raised pose runs `p` 1 → 0 over the travel the sheet actually has
+   * there, not over the detent it rested at before.
+   */
+  describe('p under a detent that moves at rest (the keyboard)', () => {
+    const live = { collapsed: 300, expanded: 300 }
+    let sheet: SheetMotion
+    /** Every frame of the spring's remaining run, the scrim share after it. */
+    const eachFrame = (fn: (scrim: number) => void): number => {
+      let n = 0
+      for (; n < 200 && frames.scheduled; n++) {
+        frames.run(1)
+        fn(sheet.frame().scrim)
+      }
+      return n
+    }
+
+    beforeEach(() => {
+      live.collapsed = 300
+      live.expanded = 300
+      states = []
+      sheet = new SheetMotion({
+        detents: () => live,
+        onChange: (s) => states.push(s),
+        onClosed: () => closed++
+      })
+      sheet.present()
+      frames.run(120)
+      expect(sheet.frame()).toEqual({ height: 300, translateY: 0, scrim: 1 })
+    })
+    // A spring left running would be cranked by the next test's frames.
+    afterEach(() => frames.run(300))
+
+    it('the detent raised under a resting sheet moves the sheet on its own value while p holds at 1', () => {
+      live.collapsed = 650
+      live.expanded = 650
+      sheet.refresh()
+      expect(sheet.current.phase).toBe('settling')
+      // The sheet grows up from the edge, laid out at the new height and pushed down the
+      // difference; the page under it does not move by a hair.
+      expect(sheet.frame()).toEqual({ height: 650, translateY: 350, scrim: 1 })
+      const judged = eachFrame((scrim) => expect(scrim).toBe(1))
+      expect(judged).toBeGreaterThan(5)
+      expect(sheet.frame()).toEqual({ height: 650, translateY: 0, scrim: 1 })
+      expect(sheet.current).toEqual({ phase: 'open', progress: 0 })
+    })
+
+    it('the detent lowered again (the keyboard going) is followed with p at 1 as well', () => {
+      live.collapsed = 650
+      live.expanded = 650
+      sheet.refresh()
+      frames.run(120)
+      live.collapsed = 300
+      live.expanded = 300
+      sheet.refresh()
+      expect(sheet.current.phase).toBe('settling')
+      eachFrame((scrim) => expect(scrim).toBe(1))
+      expect(sheet.frame()).toEqual({ height: 300, translateY: 0, scrim: 1 })
+    })
+
+    it('a dismissal from the raised pose runs p 1 → 0 over the travel the sheet actually has, not the detent it rested at before', () => {
+      live.collapsed = 650
+      live.expanded = 650
+      sheet.refresh()
+      frames.run(120)
+      sheet.dismiss()
+      let last = 1
+      let below = 0
+      eachFrame((scrim) => {
+        const { translateY } = sheet.frame()
+        // Measured over the 650 px the sheet stands at: with 300 it would sit at 1 until the
+        // sheet had slid 350 px and then fall over the rest.
+        if (translateY < 650) expect(scrim).toBeCloseTo(1 - translateY / 650, 6)
+        expect(scrim).toBeLessThanOrEqual(last + 1e-9)
+        expect(last - scrim).toBeLessThan(0.25)
+        if (translateY > 300 && scrim > 0) below++
+        last = scrim
+      })
+      expect(below).toBeGreaterThan(0)
+      expect(closed).toBe(1)
+      expect(sheet.current).toEqual(SHEET_CLOSED)
+    })
+
+    it('a dismissal that catches the follow in flight runs p from 1 over the travel from where the sheet is', () => {
+      live.collapsed = 650
+      live.expanded = 650
+      sheet.refresh()
+      frames.run(6)
+      const caught = sheet.frame()
+      expect(caught.scrim).toBe(1)
+      const where = 650 - caught.translateY
+      expect(where).toBeGreaterThan(300)
+      expect(where).toBeLessThan(650)
+      sheet.dismiss()
+      // Nothing jumps: the first frames are a hair under 1, and every frame is the sheet's
+      // height over the height it was caught at.
+      let last = 1
+      eachFrame((scrim) => {
+        const visible = 650 - sheet.frame().translateY
+        expect(scrim).toBeCloseTo(Math.min(1, Math.max(0, visible / where)), 6)
+        expect(scrim).toBeLessThanOrEqual(last + 1e-9)
+        expect(last - scrim).toBeLessThan(0.25)
+        last = scrim
+      })
+      expect(closed).toBe(1)
+    })
+
+    it('a finger that catches the follow holds p where it is and drags it down over the travel from there', () => {
+      live.collapsed = 650
+      live.expanded = 650
+      sheet.refresh()
+      frames.run(6)
+      const where = 650 - sheet.frame().translateY
+      sheet.beginDrag()
+      expect(sheet.frame().scrim).toBe(1)
+      sheet.drag(where / 2)
+      expect(sheet.frame().scrim).toBeCloseTo(0.5, 6)
+      // Dragged back up past where it was caught: present in full, and no further.
+      sheet.drag(-100)
+      expect(sheet.frame().scrim).toBe(1)
+    })
+
+    it('a sheet still on its way in when the detent rises keeps running p over the travel it set out on, and clamps at 1', () => {
+      const fresh = new SheetMotion({
+        detents: () => live,
+        onChange: (s) => states.push(s),
+        onClosed: () => closed++
+      })
+      fresh.present()
+      frames.run(4)
+      const midway = fresh.frame().scrim
+      expect(midway).toBeGreaterThan(0)
+      expect(midway).toBeLessThan(1)
+      live.collapsed = 650
+      live.expanded = 650
+      fresh.refresh()
+      // No jump on the retarget…
+      expect(fresh.frame().scrim).toBeCloseTo(midway, 6)
+      let last = midway
+      for (let i = 0; i < 200 && frames.scheduled; i++) {
+        frames.run(1)
+        const { scrim } = fresh.frame()
+        // …p keeps rising to 1 and holds there while the sheet grows on to 650.
+        expect(scrim).toBeGreaterThanOrEqual(last - 1e-9)
+        last = scrim
+      }
+      expect(fresh.frame()).toEqual({ height: 650, translateY: 0, scrim: 1 })
+      // At rest the travel is the height it stands at: a dismissal runs over all of it.
+      fresh.dismiss()
+      frames.run(3)
+      const f = fresh.frame()
+      expect(f.scrim).toBeCloseTo(1 - f.translateY / 650, 6)
+    })
+  })
+
   it('ignores gestures while closed and closes at once on demand', () => {
     expect(motion.beginDrag()).toBe(false)
     motion.drag(50)

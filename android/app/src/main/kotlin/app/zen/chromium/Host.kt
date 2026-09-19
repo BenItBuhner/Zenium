@@ -17,6 +17,7 @@ import android.print.PrintManager
 import android.provider.MediaStore
 import android.provider.Settings
 import android.util.Log
+import android.view.Choreographer
 import android.view.HapticFeedbackConstants
 import android.view.View
 import android.view.ViewGroup
@@ -119,8 +120,14 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         private set
     /** Previews of the pages a back gesture would return to. */
     override val snapshots = HistorySnapshots(activity)
-    /** Page views go behind the chrome no earlier than with the chrome's next drawn frame. */
-    private val pageVisibility = PageVisibility { tabId, visible -> tabs.setVisible(tabId, visible) }
+    /**
+     * Page views go behind the chrome no earlier than with the chrome's next drawn frame, and the
+     * chrome hears when the frame carrying each change is on screen (`view.drawn`, [reportDrawn]).
+     */
+    private val pageVisibility = PageVisibility { tabId, visible, change ->
+        tabs.setVisible(tabId, visible)
+        reportDrawn(tabId, visible, change)
+    }
     /** Last: it reads the tabs and fullscreen state above when it decides what back would do. */
     val back = PredictiveBack(activity, this, chrome = { chrome }, onLeave = { activity.moveTaskToBack(true) })
     val lifecycle = HostLifecycle()
@@ -746,6 +753,50 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         chrome.postVisualStateCallback(ticket.id, object : WebView.VisualStateCallback() {
             override fun onComplete(requestId: Long) {
                 if (pageVisibility.complete(ticket)) main.removeCallbacks(deadline)
+            }
+        })
+    }
+
+    /**
+     * Tell the chrome once the frame carrying `change` – `tabId`'s view now `visible` or gone – is
+     * on screen (`view.drawn`; the renderer's `lib/pageView.ts` times the swap between the live page
+     * and its picture from it). A visibility change takes effect with the next traversal, which
+     * runs after the frame callbacks of that frame, so the second frame callback from here is the
+     * first to run with the frame submitted. A view coming back must have content to draw in that
+     * frame: its own visual-state callback says when it has (the next draw after it reflects the
+     * page), and the frames are counted from there. A renderer that never answers (gone, or the
+     * window on its way out) is not waited on past [PageVisibility.DRAWN_DEADLINE_MS]; the change
+     * is reported once whichever comes first, and not at all when a newer change to the same tab
+     * has overtaken it – that one's frame is the one that matters.
+     */
+    private fun reportDrawn(tabId: String, visible: Boolean, change: Long) {
+        val report = Runnable {
+            if (pageVisibility.drawn(tabId, change)) chrome.hostEvent("view.drawn", json("tabId" to tabId, "visible" to visible))
+        }
+        main.postDelayed(report, PageVisibility.DRAWN_DEADLINE_MS)
+        val onFrame = {
+            afterFrames(2) {
+                main.removeCallbacks(report)
+                report.run()
+            }
+        }
+        val view = if (visible) tabs.get(tabId) else null
+        if (view == null) {
+            onFrame()
+            return
+        }
+        view.postVisualStateCallback(change, object : WebView.VisualStateCallback() {
+            override fun onComplete(requestId: Long) = onFrame()
+        })
+    }
+
+    /** Run `then` at the start of the `count`-th frame from now. */
+    private fun afterFrames(count: Int, then: () -> Unit) {
+        val choreographer = Choreographer.getInstance()
+        var left = count
+        choreographer.postFrameCallback(object : Choreographer.FrameCallback {
+            override fun doFrame(frameTimeNanos: Long) {
+                if (--left <= 0) then() else choreographer.postFrameCallback(this)
             }
         })
     }

@@ -3585,6 +3585,19 @@ export interface Events {
   'session.recentlyClosedChanged': void
   /** Safe-area insets of the host window in CSS pixels (mobile status bar, IME, cutouts). */
   insets: { top: number; right: number; bottom: number; left: number }
+  /**
+   * The core placed the page views as a `layout.report` asked: `hid` and `shown` name the tabs
+   * whose views it took down or brought back under that report (a tab without a view, or one
+   * already where the report wanted it, is in neither). The host's own word that a change is on
+   * screen follows as `view.drawn` where the chrome lies under the pages (`lib/pageView.ts`).
+   */
+  'layout.applied': { contentHidden: boolean; hid: string[]; shown: string[] }
+  /**
+   * The host has drawn the frame in which `tabId`'s page view is `visible` (or gone) at its
+   * place – raised by the Android host after every `view.setVisible`, for the chrome to time
+   * the swap between the live page and its cover.
+   */
+  'view.drawn': { tabId: string; visible: boolean }
   /** A login was deleted; `passwords.restore` brings it back for a while. */
   'passwords.removed': { id: string; site: string }
   /**
