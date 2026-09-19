@@ -19,6 +19,8 @@ import type {
   StoreIO,
   TabView,
   TabViewHost,
+  TranslateHost,
+  TranslateModelStore,
   WindowHost
 } from '../platform'
 import type { ZenWindow } from '../window'
@@ -159,6 +161,8 @@ interface HarnessOptions {
   emojiPanel?: boolean
   /** The host's window is fullscreen. */
   fullScreen?: boolean
+  /** The host runs the translation engine (`translate.available`), with no model on the device. */
+  translate?: boolean
 }
 
 /** A browser on a host with the given capabilities whose menu popup only records the template. */
@@ -228,7 +232,15 @@ function harness(
     sessions: stub(),
     // Optional members must read as absent, which the catch-all stub would not give.
     app: stub<AppHost>({ showEmojiPanel: opts.emojiPanel ? () => undefined : undefined }),
-    readabilitySource: () => null
+    readabilitySource: () => null,
+    ...(opts.translate
+      ? {
+          translate: stub<TranslateHost>({
+            models: stub<TranslateModelStore>({ list: () => Promise.resolve([]) }),
+            locales: ['en']
+          })
+        }
+      : {})
   }
   const browser = new Browser(platform)
   browser.start()
@@ -1155,6 +1167,52 @@ describe('the selection toolbar', () => {
     const h = pageHarness({ ...ANDROID, selectionToolbar: false }, PHONE)
     expect(h.browser.menus.selectionToolbar(h.tabId, 'quantum foam')).toEqual([])
     expect(h.browser.menus.runSelectionAction(h.tabId, 'search', 'quantum foam')).toBe(false)
+  })
+
+  it('with the translation engine lists Translate last in the bar and Translate Selection before Share in the menu', async () => {
+    const h = pageHarness(ANDROID, { ...PHONE, translate: true })
+    expect(h.browser.menus.selectionToolbar(h.tabId, 'quantum foam')).toEqual([
+      { id: 'search', title: 'Search Google' },
+      { id: 'share', title: 'Share' },
+      { id: 'translate', title: 'Translate' }
+    ])
+    expect(
+      h.browser.menus.selectionToolbar(h.tabId, 'example.org/docs').map((item) => item.id)
+    ).toEqual(['glance', 'share', 'translate'])
+    // The menu keeps the desktop's order and offers it for the page's own selection only.
+    expect(h.menu(pageParams({ selectionText: 'quantum foam' })).slice(0, 4)).toEqual([
+      'Copy',
+      'Search Google for “quantum foam”',
+      'Translate Selection',
+      'Share…'
+    ])
+    expect(h.menu(pageParams({ selectionText: 'quantum foam', isEditable: true }))).not.toContain(
+      'Translate Selection'
+    )
+    // The touch shows the sheet for the text on screen, anchored nowhere.
+    const asked: unknown[] = []
+    h.win.host.send = (name, payload) => {
+      if (name === 'translate.selection') asked.push(payload)
+    }
+    expect(h.browser.menus.runSelectionAction(h.tabId, 'translate', 'quantum  foam ')).toBe(true)
+    await settle()
+    expect(asked).toEqual([{ tabId: h.tabId, text: 'quantum foam', x: null, y: null }])
+    // The menu's item anchors the popover where the click landed.
+    h.menu(pageParams({ selectionText: 'quantum foam', x: 40, y: 60 }))
+    h.click('Translate Selection')
+    await settle()
+    expect(asked[1]).toEqual({ tabId: h.tabId, text: 'quantum foam', x: 40, y: 60 })
+  })
+
+  it('leaves Translate out on a host without the engine', () => {
+    const h = pageHarness(ANDROID, PHONE)
+    expect(
+      h.browser.menus.selectionToolbar(h.tabId, 'quantum foam').map((item) => item.id)
+    ).toEqual(['search', 'share'])
+    expect(h.browser.menus.runSelectionAction(h.tabId, 'translate', 'quantum foam')).toBe(false)
+    expect(h.menu(pageParams({ selectionText: 'quantum foam' }))).not.toContain(
+      'Translate Selection'
+    )
   })
 })
 

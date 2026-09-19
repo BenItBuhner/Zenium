@@ -85,6 +85,27 @@ class SelectionToolbarTest {
     }
 
     @Test
+    fun aThirdItemFromTheCoreNeedsNothingHereAndFollowsTheOthersAheadOfTheSystemsRest() {
+        // The core lists Translate after Share (#106's services core on the phone): the plan
+        // carries it in the same anchored run, before Select all, so the bar fills in the core's order.
+        val three = SelectionToolbar.parseItems(
+            """[{"id":"search","title":"Search DuckDuckGo"},{"id":"share","title":"Share"},{"id":"translate","title":"Translate"}]"""
+        )
+        assertEquals(ours + Item("translate", "Translate"), three)
+        val system = listOf(
+            SystemItem(defaults, 12, "Copy"),
+            SystemItem(defaults, 14, "Share"),
+            SystemItem(defaults, 15, "Select all"),
+            SystemItem(defaults, 17, "Web search")
+        )
+        val plan = SelectionToolbar.plan(system, three, strings)
+        assertTrue(plan.anchored)
+        assertEquals(12, plan.order)
+        assertEquals(listOf("search", "share", "translate"), plan.items.map { it.id })
+        assertEquals(listOf(1), plan.hidden)
+    }
+
+    @Test
     fun itemsFollowCopyOnAWebViewThatSpacesItsItemsAndPutsShareLast() {
         // Spaced orders with Share after Web search: Copy 20, Select all 50, Web search 60, Share 70.
         val system = listOf(

@@ -26,7 +26,9 @@ import java.util.concurrent.TimeUnit
  *
  *  - a REAL long press (injected touch) on a word selects it and the system's floating toolbar
  *    shows Copy, then Zenium's `Search DuckDuckGo` (the profile's engine) and `Share` right after
- *    it, one Share in all, each read from the items' content descriptions;
+ *    it, one Share in all, each read from the items' content descriptions; `Translate` (the
+ *    services core's sheet, #106) is listed too, behind the overflow on a phone, the one Zenium
+ *    item there;
  *  - a real touch on `Search DuckDuckGo` opens a NEW tab with the query in the BACKGROUND (this
  *    tab stays active, the new one is its child) and the toolbar goes;
  *  - a real touch on `Share` brings the system share sheet with the text (Zenium's share; the
@@ -113,8 +115,10 @@ class SelectionDemo : DemoHarness("selection-demo-state.json", "selection", "sel
 
     /**
      * The checks both selections share: Copy is the system's; Zenium's `first` item follows it at
-     * once; Share follows that, in the bar or (when a system assist item took the room) as the one
-     * Zenium item behind the overflow, which the overflow is opened once to list; one Share in all.
+     * once; Share follows that, in the bar or (when a system assist item took the room) behind the
+     * overflow, which the overflow is opened once to list; Translate, the widest and last of
+     * Zenium's items, is listed (behind the overflow on a phone: the bar is capped at 328 dp);
+     * at most one Zenium item behind the overflow; one Share in all.
      */
     private fun checkZeniumItems(items: List<ToolbarItem>?, first: String) {
         val labels = items.orEmpty().map { it.label }
@@ -134,10 +138,17 @@ class SelectionDemo : DemoHarness("selection-demo-state.json", "selection", "sel
         val shareInBar = labels.getOrNull(copy + 2) == "Share"
         val shareInOverflow = "Share" !in labels && overflow?.contains("Share") == true
         check(
-            "Share follows $first (${if (shareInBar) "in the bar" else if (shareInOverflow) "the one Zenium item behind the overflow" else "MISSING"})",
+            "Share follows $first (${if (shareInBar) "in the bar" else if (shareInOverflow) "behind the overflow" else "MISSING"})",
             shareInBar || shareInOverflow
         )
-        check("at most one Zenium item behind the overflow", first in labels)
+        val translateInBar = "Translate" in labels
+        val translateInOverflow = overflow?.contains("Translate") == true
+        check(
+            "Translate is listed (${if (translateInBar) "in the bar, after Share" else if (translateInOverflow) "behind the overflow" else "MISSING"})",
+            (translateInBar && labels.indexOf("Translate") > labels.indexOf("Share")) || translateInOverflow
+        )
+        val behind = overflow.orEmpty().count { it in ZENIUM_ITEMS }
+        check("at most one Zenium item behind the overflow ($behind)", first in labels && behind <= 1)
         check(
             "one Share in all (the WebView's own is hidden)",
             labels.count { it == "Share" } + (overflow?.count { it == "Share" } ?: 0) == 1
@@ -701,6 +712,8 @@ class SelectionDemo : DemoHarness("selection-demo-state.json", "selection", "sel
         private const val GLANCE_URL = "$ORIGIN/glance.html"
         /** Zenium's search item names the profile's engine (`selection-demo-state.json`: DuckDuckGo). */
         private const val SEARCH = "Search DuckDuckGo"
+        /** Every title the core can list (`menus.ts`, `selectionActions`), to tell Zenium's items from the system's. */
+        private val ZENIUM_ITEMS = setOf(SEARCH, "Open in Glance", "Share", "Translate")
         /**
          * Where to press the end handle, from the selection's end (dp): Chromium hangs the right
          * handle's bitmap (the material theme's is 44 x 22 dp, a quarter of it transparent padding)
