@@ -46,8 +46,11 @@ export class SearchEngineService {
 
   /**
    * The page in `tabId` links an OpenSearch description at `url`: fetch and parse it, and
-   * remember the engine as visited now. Private tabs leave no trace; a site whose engine was
-   * refreshed within `REFRESH_MS` is left alone.
+   * remember the engine as visited now. Private tabs leave no trace; a description tried within
+   * `REFRESH_MS` – fetched, or answered and found wanting (oversized, malformed, an error status)
+   * – is left alone, so a hostile page cannot have its description fetched again on every load.
+   * The 64 KB cap (`MAX_OPENSEARCH_BYTES`) goes to the host, which stops the download there;
+   * the parser applies it again to what came back.
    */
   async discover(tabId: string, url: string, title: string): Promise<void> {
     const tab = this.browser.tabs.tab(tabId)
@@ -64,26 +67,33 @@ export class SearchEngineService {
     if ((this.recent.get(href) ?? 0) > now - REFRESH_MS || this.inFlight.has(href)) return
     this.inFlight.add(href)
     const documentUrl = tab.url
+    /** A response (any status, or the host's refusal past the cap) came back: tried. */
+    let answered = false
     try {
       const res = await this.browser.platform.net.fetchText(href, {
         headers: {
           Accept: 'application/opensearchdescription+xml, application/xml;q=0.9, */*;q=0.5'
         },
-        timeoutMs: DESCRIPTION_FETCH_TIMEOUT_MS
+        timeoutMs: DESCRIPTION_FETCH_TIMEOUT_MS,
+        maxBytes: MAX_OPENSEARCH_BYTES
       })
+      answered = true
       if (!res.ok || !res.text || res.text.length > MAX_OPENSEARCH_BYTES) return
       const current = this.browser.tabs.tab(tabId)
       // The user moved on: the description belongs to a page they are no longer visiting.
       if (!current || current.url !== documentUrl) return
       const description = parseOpenSearchDescription(res.text, href, title)
       if (!description) return
-      this.recent.set(href, this.now())
-      if (this.recent.size > MAX_RECENT) this.recent.delete(this.recent.keys().next().value!)
       this.remember(description)
     } catch {
-      // Unreachable descriptions are the site's problem; nothing to tell the user.
+      // Unreachable descriptions are the site's problem; nothing to tell the user. A fetch that
+      // never answered (the network, the timeout) is not marked: the next visit tries again.
     } finally {
       this.inFlight.delete(href)
+      if (answered) {
+        this.recent.set(href, this.now())
+        if (this.recent.size > MAX_RECENT) this.recent.delete(this.recent.keys().next().value!)
+      }
     }
   }
 
@@ -147,6 +157,20 @@ export class SearchEngineService {
       return await peek.call(this.browser.platform.clipboard)
     } catch {
       return 'none'
+    }
+  }
+
+  /**
+   * The user opened the clip through the row (the pick, not a reveal): the host remembers it
+   * and `peekClipboard` offers nothing for it until the clipboard changes (Chrome's
+   * `SuppressClipboardContent`). Hosts without the marker offer it again.
+   */
+  markClipboardUsed(): void {
+    const clipboard = this.browser.platform.clipboard
+    try {
+      clipboard.markUsed?.()
+    } catch {
+      // A host that cannot mark the clip offers it again; nothing to tell the user.
     }
   }
 

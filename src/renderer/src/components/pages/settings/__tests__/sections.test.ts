@@ -1858,15 +1858,19 @@ describe('what a row does', () => {
     const picker = row(search, 'search-engine')
     if (picker.kind !== 'value') throw new Error('not a value row')
     expect(currentOptionLabel(picker)).toBe('Mine')
+    // The shipped engines above any heading; the user's own under "Added" (hand-added) and
+    // "Recently visited" (offered by a page), each with the host it searches under its name.
     expect(
       optionGroups(picker.options).map((g) => [g.heading, g.options.map((o) => o.label)])
     ).toEqual([
-      [null, [...DEFAULT_SEARCH_ENGINES.map((e) => e.name), 'Mine']],
+      [null, DEFAULT_SEARCH_ENGINES.map((e) => e.name)],
+      ['Added', ['Mine']],
       ['Recently visited', ['Forum']]
     ])
-    // Every option carries its mark; a visited engine names its site under the label.
     expect(picker.options.every((o) => o.leading)).toBe(true)
     expect(picker.options.find((o) => o.value === forum.id)?.description).toBe('forum.example')
+    expect(picker.options.find((o) => o.value === mine.id)?.description).toBe('mine.example')
+    expect(picker.options.find((o) => o.value === 'google')?.description).toBeUndefined()
     picker.onChange(forum.id)
     expect(c.patches).toEqual([{ searchEngineId: forum.id }])
 

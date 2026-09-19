@@ -13,7 +13,9 @@ import android.view.textclassifier.TextClassifier
  * the time it was set, the sensitive flag, and on Android 12+ the system's own classification of
  * the text – and never at its content, so the row can be offered every time the bar opens without
  * Android 12+'s "pasted from your clipboard" toast. `read` takes the content, once, when the user
- * reveals or picks the row; the toast then is the system's honest word about that read.
+ * reveals or picks the row; the toast then is the system's honest word about that read. `markUsed`
+ * remembers the clip the user OPENED through the row (the pick, not a reveal), and `peek` answers
+ * `none` for it until the clipboard changes – Chrome's `SuppressClipboardContent`.
  */
 object ClipboardPeek {
     /** A copy older than this is not offered (Chrome's clipboard suggestions age out the same way). */
@@ -21,6 +23,14 @@ object ClipboardPeek {
 
     /** Below this the system's URL classification is not trusted over "text". */
     private const val URL_CONFIDENCE = 0.9f
+
+    /**
+     * When the clip the user last opened through the row was set (`ClipDescription.timestamp`);
+     * 0 for none. The clipboard's own clock tells one clip from the next without a read: a new
+     * copy, even of the same text, carries a new time. Process-lifetime, like Chrome's.
+     */
+    @Volatile
+    private var usedTimestamp = 0L
 
     /** `url`, `text`, `image` or `none`: what the clipboard holds, from its description alone. */
     fun peek(context: Context, now: Long = System.currentTimeMillis()): String {
@@ -38,23 +48,38 @@ object ClipboardPeek {
         } else {
             null
         }
-        return classify(mimeTypes, description.timestamp, sensitive, urlConfidence, now)
+        return classify(mimeTypes, description.timestamp, sensitive, urlConfidence, now, usedTimestamp)
+    }
+
+    /**
+     * The clip on the clipboard now is the one the user opened through the row: not offered
+     * again until the clipboard changes. A clip the system gave no time for (`timestamp` 0)
+     * cannot be told from the next one without a read, so it is not remembered and is offered
+     * again; a real copy on API 26+ always carries its time.
+     */
+    fun markUsed(context: Context) {
+        val manager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val timestamp = runCatching { manager.primaryClipDescription?.timestamp }.getOrNull() ?: 0L
+        if (timestamp > 0) usedTimestamp = timestamp
     }
 
     /**
      * The decision, pure for the unit tests. `timestamp` 0 means the system did not say when the
      * clip was set (kept); `urlConfidence` null means it did not classify the text (read as text:
-     * the core tells a link from text when the content is read).
+     * the core tells a link from text when the content is read); `used` is the time of the clip
+     * the user last opened through the row (0 for none), which is not offered again.
      */
     fun classify(
         mimeTypes: List<String>,
         timestamp: Long,
         sensitive: Boolean,
         urlConfidence: Float?,
-        now: Long
+        now: Long,
+        used: Long = 0L
     ): String {
         if (mimeTypes.isEmpty() || sensitive) return NONE
         if (timestamp > 0 && now - timestamp > MAX_AGE_MS) return NONE
+        if (timestamp > 0 && timestamp == used) return NONE
         if (mimeTypes.any { it.startsWith("image/") }) return IMAGE
         val text = mimeTypes.any {
             it == ClipDescription.MIMETYPE_TEXT_PLAIN || it == ClipDescription.MIMETYPE_TEXT_HTML

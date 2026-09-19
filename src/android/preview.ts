@@ -279,6 +279,8 @@ export function createPreviewBridge(): NativeBridge {
   // `?clip=<text>` seeded for the stills (a `urlbar=` preview state's `clip=` re-seeds it through
   // PREVIEW_CLIP_EVENT). The peek tells a link from text as the core would.
   let previewClip = params.get('clip') ?? ''
+  /** The clip the user opened through the row (`clipboard.markUsed`): not offered again. */
+  let previewClipUsed = ''
   window.addEventListener(PREVIEW_CLIP_EVENT, (e) => {
     previewClip = String((e as CustomEvent<unknown>).detail ?? '')
   })
@@ -621,12 +623,16 @@ export function createPreviewBridge(): NativeBridge {
       void navigator.clipboard?.writeText(previewClip)
     },
     'clipboard.peek': () =>
-      !previewClip
+      !previewClip || previewClip === previewClipUsed
         ? 'none'
         : isProbablyUrl(previewClip) && !/\s/.test(previewClip)
           ? 'url'
           : 'text',
     'clipboard.read': () => previewClip,
+    // The clip the user opened through the row is not offered again until the clipboard changes.
+    'clipboard.markUsed': () => {
+      previewClipUsed = previewClip
+    },
     // Like Kotlin: only a clipboard still holding the copied secret is emptied.
     'clipboard.clearText': async ({ expected }) => {
       const current = await navigator.clipboard?.readText().catch(() => null)

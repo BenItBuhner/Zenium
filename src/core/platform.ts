@@ -978,6 +978,13 @@ export interface ClipboardHost {
    * system may toast the read); '' when it holds none.
    */
   read?(): Promise<string>
+  /**
+   * The clip on the clipboard now was OPENED through the row (the pick, not a reveal): `peek`
+   * answers `none` for it until the clipboard changes (Chrome's `SuppressClipboardContent`),
+   * so the row does not offer the same link again on the next focus. Hosts without it offer it
+   * again.
+   */
+  markUsed?(): void
 }
 
 export interface ShellHost {
@@ -1064,6 +1071,12 @@ export interface NetHost {
       headers?: Record<string, string>
       /** Overall time limit; hosts default to a few seconds (suggestions, Live Folders). */
       timeoutMs?: number
+      /**
+       * The most body bytes the host reads: a body past it fails the fetch (`ok: false`) with
+       * the download stopped there, so a caller's cap (an OpenSearch description's 64 KB)
+       * bounds the transfer and not only what is kept of it. Unset: the host's own limit.
+       */
+      maxBytes?: number
     }
   ): Promise<{
     ok: boolean

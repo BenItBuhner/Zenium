@@ -27,7 +27,7 @@ Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const { Urlbar } = await import('../Urlbar')
-const { showsPageHeader } = await import('../omniboxHeader')
+const { isShareableUrl, showsPageHeader } = await import('../omniboxHeader')
 const { uiStore } = await import('@renderer/lib/ui')
 
 function tab(url: string, patch: Partial<Tab> = {}): Tab {
@@ -254,6 +254,35 @@ describe('the search-ready header (OMN-05)', () => {
   })
 })
 
+describe('the header on an internal page (D5)', () => {
+  it('offers Copy link and Edit on zenium://settings, and no Share', async () => {
+    const settings = tab('zen://settings', { title: 'Settings' })
+    const el = await render(phone(settings))
+    const head = header(el)!
+    expect(head).not.toBeNull()
+    expect(head.textContent).toContain('Settings')
+    expect(head.textContent).toContain('zenium://settings')
+    const chips = Array.from(head.querySelectorAll('button')).map((b) => b.textContent?.trim())
+    expect(chips).toEqual(['Copy link', 'Edit'])
+    invoke.mockClear()
+    await tap(button(head, 'Copy link'))
+    expect(callsTo('tab.copyUrl')).toEqual([{ tabId: 't1' }])
+    await tap(button(head, 'Edit'))
+    expect(input(el).value).toBe('zenium://settings')
+    expect(commands()).not.toContain('app.share')
+  })
+
+  it('isShareableUrl: http(s) pages only', () => {
+    expect(isShareableUrl('https://example.com/')).toBe(true)
+    expect(isShareableUrl('HTTP://example.com/a?b=c')).toBe(true)
+    expect(isShareableUrl('zen://settings')).toBe(false)
+    expect(isShareableUrl('zenium://settings')).toBe(false)
+    expect(isShareableUrl('file:///sdcard/page.html')).toBe(false)
+    expect(isShareableUrl('about:blank')).toBe(false)
+    expect(isShareableUrl('')).toBe(false)
+  })
+})
+
 describe('the Refine arrow (OMN-09)', () => {
   it('sits on query rows only and puts the text in the field without submitting', async () => {
     suggestions = (q) =>
@@ -335,6 +364,11 @@ describe('the clipboard row (OMN-14)', () => {
     // Revealed once, opened from what was revealed: no second read.
     expect(callsTo('clipboard.read')).toHaveLength(1)
     expect(callsTo('urlbar.submit')[0]).toMatchObject({ input: 'https://copied.example/page' })
+    // The pick used the clip up (the reveal alone had not): the host will not offer it again.
+    expect(callsTo('clipboard.markUsed')).toHaveLength(1)
+    expect(commands().indexOf('clipboard.markUsed')).toBeGreaterThan(
+      commands().lastIndexOf('clipboard.read')
+    )
   })
 
   it('picked unrevealed, reads once and searches text with the default engine', async () => {
@@ -353,6 +387,7 @@ describe('the clipboard row (OMN-14)', () => {
     expect(callsTo('urlbar.submit')[0]).toMatchObject({
       input: 'https://www.google.com/search?q=grey%20cats'
     })
+    expect(callsTo('clipboard.markUsed')).toHaveLength(1)
   })
 
   it('takes the row away when the clip is gone by the time it is revealed', async () => {
@@ -366,6 +401,25 @@ describe('the clipboard row (OMN-14)', () => {
     await act(async () => {
       await vi.waitFor(() => expect(rows(el)).toHaveLength(0))
     })
+    expect(commands()).not.toContain('urlbar.submit')
+    // Nothing was opened: nothing is marked used.
+    expect(commands()).not.toContain('clipboard.markUsed')
+  })
+
+  it('a reveal alone does not mark the clip used', async () => {
+    suggestions = (q) => (q === '' ? [clipRow()] : [])
+    const el = await render(phone(tab(PAGE)))
+    await act(async () => {
+      await vi.waitFor(() => expect(rows(el)).toHaveLength(1))
+    })
+    await tap(button(rows(el)[0], 'Show'))
+    await act(async () => {
+      await vi.waitFor(() =>
+        expect(rows(el)[0].textContent).toContain('https://copied.example/page')
+      )
+    })
+    expect(callsTo('clipboard.read')).toHaveLength(1)
+    expect(commands()).not.toContain('clipboard.markUsed')
     expect(commands()).not.toContain('urlbar.submit')
   })
 })

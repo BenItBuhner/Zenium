@@ -17,3 +17,12 @@ export function showsPageHeader(
   if (!phone || mode !== 'edit' || !tab) return false
   return !isEmptyTabUrl(tab.url) && text === ''
 }
+
+/**
+ * Whether the header offers Share for a page at `url`: http(s) pages only. Chrome disables Share
+ * on schemes another app cannot open; a `zen://` (`zenium://`) page or a `file:` one is copied or
+ * edited from the header but not handed to the system sheet.
+ */
+export function isShareableUrl(url: string): boolean {
+  return /^https?:\/\//i.test(url)
+}

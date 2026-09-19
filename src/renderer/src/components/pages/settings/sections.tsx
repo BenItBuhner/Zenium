@@ -1102,16 +1102,23 @@ function privacySection(ctx: SectionContext): RowGroup[] {
 // ---------------------------------------------------------------------------
 
 /**
- * Chrome for Android's Search settings: the engine picker lists the shipped engines and the ones
- * added by hand, then a "Recently visited" heading with the engines pages offered through
- * OpenSearch (OMN-27), each with its favicon; the user's engines are listed under the picker
- * with Make default and Remove, and a form adds one by name and `%s` template.
+ * Chrome for Android's Search settings: the engine picker lists the shipped engines, then an
+ * "Added" heading with the ones added by hand and a "Recently visited" heading with the engines
+ * pages offered through OpenSearch (OMN-27), each with its favicon and, for the user's own, the
+ * host it searches; the user's engines are listed under the picker with Make default and
+ * Remove, and a form adds one by name and `%s` template.
  */
 function searchSection({ state, set }: SectionContext): RowGroup[] {
   const s = state.settings
   const engines = state.searchEngines
   const own = engines.filter((e) => e.source === 'custom' || e.source === 'discovered')
   const glyph = (e: SearchEngine): ReactNode => <EngineGlyph engine={e} />
+  /**
+   * The picker's heading for the user's engines; the shipped ones (no `source`) sit above any
+   * heading, and only the user's own name the host they search under the label.
+   */
+  const pickerGroup = (e: SearchEngine): string | undefined =>
+    e.source === 'custom' ? 'Added' : e.source === 'discovered' ? 'Recently visited' : undefined
   return [
     {
       id: 'search',
@@ -1124,9 +1131,9 @@ function searchSection({ state, set }: SectionContext): RowGroup[] {
           options: engines.map((e) => ({
             value: e.id,
             label: e.name,
-            description: e.source === 'discovered' ? (engineHost(e) ?? undefined) : undefined,
+            description: pickerGroup(e) ? (engineHost(e) ?? undefined) : undefined,
             leading: glyph(e),
-            group: e.source === 'discovered' ? 'Recently visited' : undefined
+            group: pickerGroup(e)
           })),
           onChange: (v) => set({ searchEngineId: v })
         }),

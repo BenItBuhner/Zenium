@@ -44,4 +44,19 @@ class ClipboardPeekTest {
         assertEquals("text", ClipboardPeek.classify(plain, 0L, false, null, now))
         assertEquals("text", ClipboardPeek.classify(plain, now - ClipboardPeek.MAX_AGE_MS, false, null, now))
     }
+
+    @Test
+    fun theClipTheUserOpenedIsNotOfferedAgainUntilTheClipboardChanges() {
+        val copied = now - 5_000
+        // Opened through the row (`markUsed` remembered its time): none, whatever its kind.
+        assertEquals("none", ClipboardPeek.classify(plain, copied, false, 0.99f, now, used = copied))
+        assertEquals("none", ClipboardPeek.classify(plain, copied, false, null, now, used = copied))
+        assertEquals("none", ClipboardPeek.classify(listOf("image/png"), copied, false, null, now, used = copied))
+        // A new copy carries a new time and is offered, even of the same text; an older mark is no bar.
+        assertEquals("url", ClipboardPeek.classify(plain, copied + 1, false, 0.99f, now, used = copied))
+        assertEquals("text", ClipboardPeek.classify(plain, copied, false, null, now, used = copied - 60_000))
+        // A clip the system gave no time for cannot be told from the next one: offered, not marked.
+        assertEquals("text", ClipboardPeek.classify(plain, 0L, false, null, now, used = 0L))
+        assertEquals("text", ClipboardPeek.classify(plain, 0L, false, null, now, used = copied))
+    }
 }

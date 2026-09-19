@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { HostCapabilities, Platform as PlatformOs } from '../../shared/types'
 import { PRIVATE_CONTAINER_ID } from '../../shared/types'
 import { DEFAULT_SETTINGS } from '../../shared/defaults'
-import { DEFAULT_SEARCH_ENGINES } from '../../shared/search'
+import { DEFAULT_SEARCH_ENGINES, MAX_OPENSEARCH_BYTES } from '../../shared/search'
 import { Browser } from '../browser'
 import type {
   AppHost,
@@ -46,13 +46,19 @@ function stub<T extends object>(overrides: Partial<T> = {}): T {
 }
 
 interface Fakes {
-  /** Every description fetch: the URL and the headers it went with. */
-  fetches: Array<{ url: string; headers: Record<string, string> | undefined }>
+  /** Every description fetch: the URL, the headers and the byte cap it went with. */
+  fetches: Array<{
+    url: string
+    headers: Record<string, string> | undefined
+    maxBytes?: number | undefined
+  }>
   /** Body served per URL substring; unknown URLs get a 404. */
   routes: Array<{ match: string; body: string; status?: number }>
   /** How often the host was asked for the clip's description and for its content. */
   peeks: number
   reads: number
+  /** How often the host was told the clip was used (opened through the row). */
+  marks: number
   clip: { kind: 'url' | 'text' | 'image' | 'none'; text: string }
 }
 
@@ -62,14 +68,19 @@ function fakePlatform(io: StoreIO): Platform & { fakes: Fakes } {
     routes: [],
     peeks: 0,
     reads: 0,
+    marks: 0,
     clip: { kind: 'none', text: '' }
   }
   const net = stub<NetHost>({
     fetchText: async (url, options) => {
-      fakes.fetches.push({ url, headers: options?.headers })
+      fakes.fetches.push({ url, headers: options?.headers, maxBytes: options?.maxBytes })
       const route = fakes.routes.find((r) => url.includes(r.match))
       if (!route) return { ok: false, status: 404, text: '' }
       const status = route.status ?? 200
+      // As the hosts do: a body past the caller's cap stops the download and fails the fetch.
+      if (options?.maxBytes !== undefined && route.body.length > options.maxBytes) {
+        return { ok: false, status: 0, text: '' }
+      }
       return { ok: status < 400, status, text: route.body }
     }
   })
@@ -85,6 +96,9 @@ function fakePlatform(io: StoreIO): Platform & { fakes: Fakes } {
     readText: async () => {
       fakes.reads++
       return fakes.clip.text
+    },
+    markUsed: () => {
+      fakes.marks++
     }
   })
   return {
@@ -224,6 +238,57 @@ describe('OpenSearch discovery', () => {
       'https://forum.example/broken.xml'
     ])
     expect(browser.state.settings.searchEngines).toEqual([])
+  })
+
+  it('caps the download at 64 KB and remembers a tried description, good or bad, for the refresh window', async () => {
+    const { browser, win, platform } = setup()
+    const tabId = pageTab(browser, win, 'https://forum.example/t/1')
+    // An oversized description: the host stops at the cap and fails the fetch, no engine.
+    const padding = `<!-- ${'x'.repeat(MAX_OPENSEARCH_BYTES)} -->`
+    platform.fakes.routes.push({
+      match: 'huge.xml',
+      body: FORUM_XML.replace('</Open', `${padding}</Open`)
+    })
+    browser.handlePageMessage(tabId, { type: 'opensearch', url: '/huge.xml' })
+    await settle()
+    expect(platform.fakes.fetches).toHaveLength(1)
+    // The cap travels with the request: the host bounds the transfer, not just the parse.
+    expect(platform.fakes.fetches[0].maxBytes).toBe(MAX_OPENSEARCH_BYTES)
+    expect(MAX_OPENSEARCH_BYTES).toBe(64 * 1024)
+    expect(browser.state.settings.searchEngines).toEqual([])
+
+    // Tried: the same page linking it again (a reload, the next page) does not fetch it again,
+    // nor a malformed one or a 404 (each answered, each remembered) within the refresh window.
+    platform.fakes.routes.push({ match: 'broken.xml', body: '<html>nope</html>' })
+    browser.handlePageMessage(tabId, { type: 'opensearch', url: '/huge.xml' })
+    browser.handlePageMessage(tabId, { type: 'opensearch', url: '/broken.xml' })
+    browser.handlePageMessage(tabId, { type: 'opensearch', url: '/missing.xml' })
+    await settle()
+    browser.handlePageMessage(tabId, { type: 'opensearch', url: '/huge.xml' })
+    browser.handlePageMessage(tabId, { type: 'opensearch', url: '/broken.xml' })
+    browser.handlePageMessage(tabId, { type: 'opensearch', url: '/missing.xml' })
+    await settle()
+    expect(platform.fakes.fetches.map((f) => f.url.split('/').pop())).toEqual([
+      'huge.xml',
+      'broken.xml',
+      'missing.xml'
+    ])
+
+    // A fetch that never answered (the network went away) is not remembered: tried again.
+    let failures = 0
+    const served = platform.net.fetchText
+    platform.net.fetchText = async (url, options) => {
+      if (url.endsWith('down.xml')) {
+        failures++
+        throw new Error('network')
+      }
+      return served(url, options)
+    }
+    browser.handlePageMessage(tabId, { type: 'opensearch', url: '/down.xml' })
+    await settle()
+    browser.handlePageMessage(tabId, { type: 'opensearch', url: '/down.xml' })
+    await settle()
+    expect(failures).toBe(2)
   })
 
   it('drops a description whose page the user has already left', async () => {
@@ -368,6 +433,20 @@ describe('the clipboard row', () => {
       kind: 'none',
       text: ''
     })
+  })
+
+  it('marks the clip used on the pick, through the host, and not on a host without the marker', async () => {
+    const { browser, win, platform } = setup()
+    platform.fakes.clip = { kind: 'url', text: 'https://copied.example/' }
+    // The reveal is a read alone; the pick tells the host the clip is used up.
+    await browser.handleCommand(win, 'clipboard.read', undefined)
+    expect(platform.fakes.marks).toBe(0)
+    await browser.handleCommand(win, 'clipboard.markUsed', undefined)
+    expect(platform.fakes.marks).toBe(1)
+    // A host without the marker offers the clip again; the command is a no-op there.
+    delete (platform.clipboard as Partial<ClipboardHost>).markUsed
+    await browser.handleCommand(win, 'clipboard.markUsed', undefined)
+    expect(platform.fakes.marks).toBe(1)
   })
 
   it('offers no row on a host without the description peek', async () => {

@@ -34,7 +34,8 @@ import java.util.concurrent.TimeUnit
  *     the field keeps the focus, the suggestions refresh.
  *  3. OMN-14: a link copied from a page's long-press menu; the pill then lists "Link you copied"
  *     (the type, read from the clip's description alone) behind Show; Show reveals the address;
- *     a touch on the row opens it.
+ *     a touch on the row opens it; the pill once more lists no clipboard row for the clip the
+ *     row opened (used up until the clipboard changes, as Chrome's is).
  *  4. OMN-27: a page that links an OpenSearch description; its engine appears under Recently
  *     visited in Settings > Search > Default search engine, is picked there, and the next search
  *     from the pill goes to it.
@@ -278,6 +279,20 @@ class OmniboxDemo : DemoHarness("omnibox-demo-state.json", "android-omnibox", "o
             shot("10-clipboard-opened")
             finding("  the revealed row touched; tab URL '${activeCoreTab()?.optString("url")}' ${verdict(opened)}")
             if (!opened) failures += "the revealed clipboard row did not open the address"
+            // The clip the row opened is used up: the pill again lists the header over the opened
+            // page and no clipboard row for it (Chrome's SuppressClipboardContent), until the
+            // clipboard changes. The bar is closed again for the next step.
+            SystemClock.sleep(1_000)
+            tapPill()
+            val headerAgain = awaitNode(8_000) { it == EDIT_LABEL }
+            SystemClock.sleep(1_500)
+            shot("10b-clipboard-used")
+            val rowAgain = chromeValue("String(!!document.querySelector('$ROWS[data-kind=clipboard]'))") == "true"
+            val showAgain = findNode { it == SHOW_LABEL } != null
+            finding("  the pill again after the open: header ${headerAgain != null}; clipboard row offered again $rowAgain (Show $showAgain) ${verdict(headerAgain != null && !rowAgain && !showAgain)}")
+            if (rowAgain || showAgain) failures += "the clip the row opened was offered again on the next focus"
+            back()
+            SystemClock.sleep(1_000)
         }
 
         // 7. OMN-27: a page that offers an engine; discovered on load.

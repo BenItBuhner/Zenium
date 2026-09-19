@@ -31,7 +31,7 @@ import { startQrScan } from '@renderer/lib/qrScan'
 import { closeUrlbar, uiStore, type UrlbarState } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { startVoiceSearch } from '@renderer/lib/voiceSearch'
-import { showsPageHeader } from './omniboxHeader'
+import { isShareableUrl, showsPageHeader } from './omniboxHeader'
 import { suggestionIcon } from './suggestionIcon'
 
 interface Props {
@@ -387,17 +387,24 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
     void readClip()
     inputRef.current?.focus()
   }
-  /** Tapping the row: a link opens, text is searched for with the default engine. */
+  /**
+   * Tapping the row: a link opens, text is searched for with the default engine. The pick is
+   * what uses the clip up: the host remembers it and does not offer it again until the
+   * clipboard changes (a reveal alone does not, as in Chrome).
+   */
   const pickClip = async (): Promise<void> => {
     const content = await readClip()
     if (!content) return
+    run('clipboard.markUsed', undefined)
     submit(null, {
       input: content.kind === 'url' ? content.text : buildSearchUrl(defaultEngine, content.text)
     })
   }
 
   // The search-ready header's chips (OMN-05). Share hands the page to the system sheet and lets
-  // the bar go; Copy link and Edit keep the field focused, the keyboard where it is.
+  // the bar go; Copy link and Edit keep the field focused, the keyboard where it is. Share is
+  // for http(s) pages only (Chrome disables it on schemes another app cannot open; a
+  // `zenium://settings` address means nothing to the sheet's targets), Copy link and Edit stay.
   const pageHeader = showsPageHeader(phone, urlbar.mode, tab, text) ? tab : null
   const sharePage = (): void => {
     if (!tab) return
@@ -597,7 +604,7 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
             <PageHeader
               tab={pageHeader}
               edge={phoneEdge}
-              onShare={sharePage}
+              onShare={isShareableUrl(pageHeader.url) ? sharePage : null}
               onCopy={copyPageLink}
               onEdit={editPageUrl}
             />
@@ -910,7 +917,11 @@ const keepFocus = (e: React.PointerEvent): void => {
 /**
  * The search-ready header (OMN-05, Chrome for Android): the page the bar was opened over – its
  * icon, title and address as a static two-line row – and Share, Copy link and Edit as v2 buttons
- * in the window family. At a bottom-docked bar the chips sit nearest the field, under the thumb.
+ * in the window family. The page row is the half nearest the field at either dock: at the top
+ * the row comes first and the chips under it; at a bottom-docked bar the header is reversed
+ * (`.zen-omnibox-header[data-edge='bottom']`), so the row sits just over the field with the
+ * chips above it, the hairline on the list's side. `onShare` null leaves the Share chip out
+ * (a page whose address is not http(s)).
  */
 function PageHeader({
   tab,
@@ -921,7 +932,7 @@ function PageHeader({
 }: {
   tab: Tab
   edge: PhoneBarPosition
-  onShare: () => void
+  onShare: (() => void) | null
   onCopy: () => void
   onEdit: () => void
 }): JSX.Element {
@@ -963,7 +974,7 @@ function PageHeader({
         </span>
       </div>
       <div className="zen-omnibox-chips">
-        {chip('Share', Share2, onShare)}
+        {onShare ? chip('Share', Share2, onShare) : null}
         {chip('Copy link', Link, onCopy)}
         {chip('Edit', Pencil, onEdit)}
       </div>

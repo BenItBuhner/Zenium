@@ -2369,6 +2369,7 @@ export class Browser {
       },
       'clipboard.peek': () => this.searchEngines.peekClipboard(),
       'clipboard.read': () => this.searchEngines.readClipboard(),
+      'clipboard.markUsed': () => this.searchEngines.markClipboardUsed(),
       'search.addEngine': ({ name, url }, win) => this.searchEngines.add(name, url, win),
       'search.removeEngine': ({ id }, win) => this.searchEngines.remove(id, win),
 

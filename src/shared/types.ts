@@ -3227,10 +3227,13 @@ export interface Commands {
   /**
    * The URL bar's clipboard row (Chrome's "Link you copied"): `peek` names what the clipboard
    * holds from its description alone and never reads the content; `read` reads it once, on the
-   * user's reveal or pick. Hosts without the bridge answer `none` / no text.
+   * user's reveal or pick; `markUsed` says the user opened the clip through the row (the pick),
+   * so `peek` does not offer it again until the clipboard changes. Hosts without the bridge
+   * answer `none` / no text / offer it again.
    */
   'clipboard.peek': { args: void; result: ClipboardPeekKind }
   'clipboard.read': { args: void; result: ClipboardContent }
+  'clipboard.markUsed': { args: void; result: void }
   /**
    * Settings > Search: add an engine by hand (`%s` in `url` stands for the query), forget one
    * the user added or a page offered, or make one the default. The shipped engines cannot be
