@@ -2440,7 +2440,8 @@ export class Browser {
         if (isShortcutPreset(value)) s.shortcutPreset = value
       } else if (key === 'searchEngines') {
         // The user's engines whole (a Settings row sends the edited list); the default is kept.
-        const keep = typeof patch.searchEngineId === 'string' ? patch.searchEngineId : s.searchEngineId
+        const keep =
+          typeof patch.searchEngineId === 'string' ? patch.searchEngineId : s.searchEngineId
         s.searchEngines = sanitizeSearchEngines(value, keep)
       } else if (key === 'privacy' && value && typeof value === 'object') {
         s.privacy = sanitizePrivacySettings({

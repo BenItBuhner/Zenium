@@ -1,6 +1,7 @@
 import {
   Bookmark,
   Calculator,
+  Clipboard,
   Clock,
   Globe,
   Info,
@@ -26,7 +27,8 @@ const ROW_ICONS: Record<SuggestionKind, LucideIcon> = {
   engine: Search,
   answer: Calculator,
   entity: Info,
-  omnibox: Puzzle
+  omnibox: Puzzle,
+  clipboard: Clipboard
 }
 
 /**

@@ -66,7 +66,9 @@ export class SearchEngineService {
     const documentUrl = tab.url
     try {
       const res = await this.browser.platform.net.fetchText(href, {
-        headers: { Accept: 'application/opensearchdescription+xml, application/xml;q=0.9, */*;q=0.5' },
+        headers: {
+          Accept: 'application/opensearchdescription+xml, application/xml;q=0.9, */*;q=0.5'
+        },
         timeoutMs: DESCRIPTION_FETCH_TIMEOUT_MS
       })
       if (!res.ok || !res.text || res.text.length > MAX_OPENSEARCH_BYTES) return

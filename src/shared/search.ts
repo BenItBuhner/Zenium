@@ -206,7 +206,10 @@ export function sanitizeSearchEngines(raw: unknown, keep?: string): SearchEngine
   const discovered = out
     .filter((e) => e.source === 'discovered')
     .sort((a, b) => (b.visitedAt ?? 0) - (a.visitedAt ?? 0))
-  return [...cap(custom, MAX_CUSTOM_ENGINES, keep), ...cap(discovered, MAX_DISCOVERED_ENGINES, keep)]
+  return [
+    ...cap(custom, MAX_CUSTOM_ENGINES, keep),
+    ...cap(discovered, MAX_DISCOVERED_ENGINES, keep)
+  ]
 }
 
 function cap(list: SearchEngine[], max: number, keep: string | undefined): SearchEngine[] {
@@ -233,7 +236,8 @@ function sanitizeSearchEngine(raw: unknown): SearchEngine | null {
     typeof r.keyword === 'string' && /^@\S{1,64}$/.test(r.keyword)
       ? r.keyword.toLowerCase()
       : `@${name.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '') || 'engine'}`
-  const glyph = typeof r.glyph === 'string' && r.glyph.trim() ? r.glyph.trim().slice(0, 2) : engineGlyph(name)
+  const glyph =
+    typeof r.glyph === 'string' && r.glyph.trim() ? r.glyph.trim().slice(0, 2) : engineGlyph(name)
   const favicon = sanitizeFavicon(r.favicon)
   const engine: SearchEngine = {
     id: r.id,
@@ -246,7 +250,8 @@ function sanitizeSearchEngine(raw: unknown): SearchEngine | null {
     favicon
   }
   if (source === 'discovered') {
-    engine.visitedAt = typeof r.visitedAt === 'number' && Number.isFinite(r.visitedAt) ? r.visitedAt : 0
+    engine.visitedAt =
+      typeof r.visitedAt === 'number' && Number.isFinite(r.visitedAt) ? r.visitedAt : 0
   }
   return engine
 }
@@ -320,8 +325,7 @@ export function parseOpenSearchDescription(
   )
   if (!name) return null
   const images = elements(doc, 'Image')
-  const image =
-    images.find((i) => i.attrs.width === '16' && i.attrs.height === '16') ?? images[0]
+  const image = images.find((i) => i.attrs.width === '16' && i.attrs.height === '16') ?? images[0]
   const favicon = image ? resolveHttp(textOf(image), baseUrl, true) : null
   return { name, searchUrl, suggestUrl, favicon }
 }
@@ -443,7 +447,10 @@ function openSearchTemplate(url: XmlElement, baseUrl: string): string | null {
   if (!template) return null
   // The core's placeholder is `%s`; a literal `%s` in a template is not one Chrome honours either.
   template = template.replace(/\{searchTerms\??\}/gi, '%s')
-  template = template.replace(/\{(?:startIndex|startPage|count|language|inputEncoding|outputEncoding)\}/gi, '')
+  template = template.replace(
+    /\{(?:startIndex|startPage|count|language|inputEncoding|outputEncoding)\}/gi,
+    ''
+  )
   template = template.replace(/\{[^{}]*\?\}/g, '')
   if (/\{[^{}]*\}/.test(template)) return null
   if (!template.includes('%s')) return null

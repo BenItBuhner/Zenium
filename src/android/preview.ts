@@ -3,6 +3,7 @@ import type { NativeBridge, NativeCall } from './bridge'
 import type { BootInfo } from './platform'
 import type { Platform } from '@shared/types'
 import { createPreviewDownloads } from './previewDownloads'
+import { isProbablyUrl } from '@shared/url'
 
 interface HostGlobal {
   resolve(id: number, json: string | null): void
@@ -181,6 +182,9 @@ export function createPreviewBridge(): NativeBridge {
   // verification passes.
   const vaultMode = params.get('vault') ?? 'os'
   const PREVIEW_BLOB = 'preview-keystore:'
+  // The stand-in clipboard behind the URL bar's clipboard row: what the chrome copied, or
+  // `?clip=<text>` seeded for the stills. The peek tells a link from text as the core would.
+  let previewClip = params.get('clip') ?? ''
 
   const handlers: Record<string, (args: Record<string, unknown>) => unknown | Promise<unknown>> = {
     boot: (): BootInfo => ({
@@ -404,7 +408,17 @@ export function createPreviewBridge(): NativeBridge {
     'reauth.available': () => vaultMode !== 'none',
     // The system sheet would rise here; the preview approves after the time it takes to notice.
     'reauth.verify': () => new Promise((resolve) => setTimeout(() => resolve(true), 400)),
-    'clipboard.writeText': ({ text }) => void navigator.clipboard?.writeText(String(text)),
+    'clipboard.writeText': ({ text }) => {
+      previewClip = String(text)
+      void navigator.clipboard?.writeText(previewClip)
+    },
+    'clipboard.peek': () =>
+      !previewClip
+        ? 'none'
+        : isProbablyUrl(previewClip) && !/\s/.test(previewClip)
+          ? 'url'
+          : 'text',
+    'clipboard.read': () => previewClip,
     // Like Kotlin: only a clipboard still holding the copied secret is emptied.
     'clipboard.clearText': async ({ expected }) => {
       const current = await navigator.clipboard?.readText().catch(() => null)

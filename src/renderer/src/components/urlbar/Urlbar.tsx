@@ -1,7 +1,8 @@
 import type { JSX, RefObject } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowRight, X } from 'lucide-react'
+import { ArrowRight, ArrowUpLeft, Globe, Link, Pencil, Share2, X } from 'lucide-react'
 import type {
+  ClipboardContent,
   PhoneBarLayout,
   PhoneBarPosition,
   Rect,
@@ -16,15 +17,16 @@ import {
   phoneBarForHost,
   phoneBarOffered
 } from '@shared/phoneBar'
-import { SEARCH_SCOPES, completeWwwCom, matchKeyword } from '@shared/search'
+import { SEARCH_SCOPES, buildSearchUrl, completeWwwCom, matchKeyword } from '@shared/search'
 import { internalPageAliasUrl } from '@shared/internalPages'
-import { ERROR_URL_PREFIX, isEmptyTabUrl, isNewTabUrl } from '@shared/url'
+import { ERROR_URL_PREFIX, displayUrl, isEmptyTabUrl, isNewTabUrl } from '@shared/url'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { cmd, run } from '@renderer/lib/api'
 import { useBackDismissal } from '@renderer/lib/back'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { closeUrlbar, uiStore, type UrlbarState } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { showsPageHeader } from './omniboxHeader'
 import { suggestionIcon } from './suggestionIcon'
 
 interface Props {
@@ -60,14 +62,23 @@ function pageTextFor(tab: Tab): string {
   return internalPageAliasUrl(tab.url)
 }
 
-function initialTextFor(state: UIState, urlbar: UrlbarState): string {
+/**
+ * The text the field holds at rest over a page: its address on desktop (selected, so typing
+ * replaces it); nothing on the phone, where the bar opens search-ready (Chrome for Android) and
+ * the page's address sits in the header row above the suggestions, put into the field by Edit.
+ */
+function restTextFor(tab: Tab, phone: boolean): string {
+  return phone ? '' : pageTextFor(tab)
+}
+
+function initialTextFor(state: UIState, urlbar: UrlbarState, phone: boolean): string {
   if (urlbar.initialText !== undefined) return urlbar.initialText
   if (urlbar.mode !== 'edit' || !urlbar.tabId) return drafts.get('new') ?? ''
   const tab = state.tabs[urlbar.tabId]
   if (!tab) return ''
   const draft = drafts.get(`${tab.id}|${tab.url}`)
   if (draft !== undefined) return draft
-  return pageTextFor(tab)
+  return restTextFor(tab, phone)
 }
 
 /** The completion tail is selected: the caret's selection runs from inside the text to its end. */
@@ -81,8 +92,14 @@ function hasCompletionTail(el: HTMLInputElement): boolean {
 }
 
 export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
-  const [text, setText] = useState(() => initialTextFor(state, urlbar))
+  const phone = Boolean(phoneEdge)
+  const [text, setText] = useState(() => initialTextFor(state, urlbar, phone))
   const [results, setResults] = useState<Suggestion[]>([])
+  /**
+   * The clipboard row's content once the user revealed it (Chrome's "Link you copied" shows the
+   * kind alone until the Show tap); read once, and reused when the row is then picked.
+   */
+  const [clip, setClip] = useState<ClipboardContent | null>(null)
   const [selected, setSelected] = useState(-1)
   const inputRef = useRef<HTMLInputElement>(null)
   const fadeResults = useFadeEdges<HTMLUListElement>({ axis: 'y' })
@@ -134,6 +151,8 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
       )
       if (seq !== requestSeq.current) return
       setResults(list)
+      // A fresh list may carry a fresh clipboard row: what was revealed is not vouched for.
+      setClip(null)
       const first = list[0]
       const el = inputRef.current
       // Inline completion of the default match (Chrome's rule, decided in the core: the top row
@@ -337,6 +356,63 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
     closeUrlbar()
   }
 
+  /**
+   * The clipboard row's content, read ONCE: on the Show tap (the row then shows it) or on the
+   * pick when it was not shown. Android 12+ may toast the read; the peek that put the row up read
+   * the clip's description only. A clip gone or changed meanwhile takes the row away.
+   */
+  const readClip = async (): Promise<ClipboardContent | null> => {
+    if (clip) return clip
+    const content = await cmd('clipboard.read', undefined).catch(() => null)
+    if (!content || content.kind === 'none') {
+      setResults((r) => r.filter((row) => row.kind !== 'clipboard'))
+      return null
+    }
+    setClip(content)
+    return content
+  }
+  const revealClip = (): void => {
+    void readClip()
+    inputRef.current?.focus()
+  }
+  /** Tapping the row: a link opens, text is searched for with the default engine. */
+  const pickClip = async (): Promise<void> => {
+    const content = await readClip()
+    if (!content) return
+    submit(null, {
+      input: content.kind === 'url' ? content.text : buildSearchUrl(defaultEngine, content.text)
+    })
+  }
+
+  // The search-ready header's chips (OMN-05). Share hands the page to the system sheet and lets
+  // the bar go; Copy link and Edit keep the field focused, the keyboard where it is.
+  const pageHeader = showsPageHeader(phone, urlbar.mode, tab, text) ? tab : null
+  const sharePage = (): void => {
+    if (!tab) return
+    close(false)
+    run('app.share', {
+      title: tab.customTitle ?? tab.title,
+      url: internalPageAliasUrl(tab.url),
+      tabId: tab.id,
+      favicon: tab.favicon ?? undefined
+    })
+  }
+  const copyPageLink = (): void => {
+    if (!tab) return
+    run('tab.copyUrl', { tabId: tab.id })
+    // The clipboard is the page's address now; a revealed clip no longer says what it holds.
+    setClip(null)
+  }
+  const editPageUrl = (): void => {
+    if (tab) setTyped(pageTextFor(tab), true)
+  }
+
+  /** A query row whose Refine arrow would change the field (never the verbatim "what you typed"). */
+  const refinable = (item: Suggestion): boolean =>
+    item.kind === 'search' && item.fill.trim() !== text.trim()
+  /** Refine (OMN-09): the row's text into the field as typed, suggestions refreshed, no submit. */
+  const refine = (item: Suggestion): void => setTyped(item.fill, true)
+
   const removeHistoryRow = (index: number): boolean => {
     const row = results[index]
     if (!row || row.kind !== 'history' || !row.url) return false
@@ -363,10 +439,11 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
     switch (e.key) {
       case 'Escape': {
         e.preventDefault()
-        const pageText = tab && urlbar.mode === 'edit' ? pageTextFor(tab) : null
+        const pageText = tab && urlbar.mode === 'edit' ? restTextFor(tab, phone) : null
         if (pageText !== null && text !== pageText) {
           // Esc restores the page's address (selected, read from the start) and closes the popup;
-          // a second Esc closes the bar. The draft is gone with the edit.
+          // a second Esc closes the bar. The draft is gone with the edit. On the phone the rest
+          // state is the empty, search-ready field.
           requestSeq.current++
           drafts.delete(draftKey)
           lastTyped.current = pageText
@@ -472,7 +549,14 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
         item={item}
         selected={i === selected}
         sheet={sheet}
-        onPick={(e) => submit(item, { newTab: e.altKey || e.button === 1 })}
+        onPick={(e) => {
+          if (item.kind === 'clipboard') void pickClip()
+          else submit(item, { newTab: e.altKey || e.button === 1 })
+        }}
+        // The phone's trailing controls (OMN-09, OMN-14); the desktop list is as it was.
+        onRefine={sheet && refinable(item) ? refine : undefined}
+        clip={item.kind === 'clipboard' ? clip : undefined}
+        onReveal={sheet && item.kind === 'clipboard' && !clip ? revealClip : undefined}
       />
     ))
 
@@ -485,6 +569,17 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
         sheetRef={sheetRef}
         fieldRef={fieldRef}
         onDismiss={() => close(true)}
+        header={
+          pageHeader ? (
+            <PageHeader
+              tab={pageHeader}
+              edge={phoneEdge}
+              onShare={sharePage}
+              onCopy={copyPageLink}
+              onEdit={editPageUrl}
+            />
+          ) : null
+        }
         rows={rows(true)}
         hint={results.length === 0 && !text ? placeholder : null}
         field={
@@ -514,6 +609,9 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
               autoComplete="off"
               autoCapitalize="off"
               autoCorrect="off"
+              // Chrome's URL keyboard (OMN-25): the `/` and `.` keys up front, Go on the action key,
+              // no capitalisation or correction of what is typed.
+              inputMode="url"
               enterKeyHint="go"
               data-zen-menu="urlbar"
               data-zen-menu-tab={menuTabId}
@@ -630,6 +728,7 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
 function PhoneSheet({
   edge,
   field,
+  header,
   rows,
   hint,
   onDismiss,
@@ -638,6 +737,8 @@ function PhoneSheet({
 }: {
   edge: PhoneBarPosition
   field: JSX.Element
+  /** The search-ready header (OMN-05), pinned at the field's end of the sheet; the list scrolls past it. */
+  header: JSX.Element | null
   rows: JSX.Element[]
   /** Shown in the empty sheet before anything is typed. */
   hint: string | null
@@ -667,32 +768,41 @@ function PhoneSheet({
       : 'calc(var(--zen-inset-bottom) + var(--zen-padding))',
     transformOrigin: bottom ? '50% 100%' : '50% 0%'
   }
+  // The omnibox is the pill grown over the frame: a window surface (v2 §9.29), so the chips, the
+  // Refine arrows and the clipboard row's Show draw in the window family through the control roles.
   return (
     <div className="absolute inset-0 z-30" onMouseDown={onDismiss}>
       <div
         ref={sheetRef}
-        className="zen-omnibox-sheet zen-animate-fade absolute overflow-hidden"
+        data-surface="window"
+        className={cn(
+          'zen-omnibox-sheet zen-animate-fade absolute flex overflow-hidden',
+          bottom ? 'flex-col-reverse' : 'flex-col'
+        )}
         style={sheetStyle}
         onMouseDown={(e) => e.stopPropagation()}
       >
-        {rows.length > 0 ? (
-          <ul
-            ref={fadeRows}
-            className={cn(
-              'absolute inset-0 flex overflow-y-auto p-1',
-              bottom ? 'flex-col-reverse' : 'flex-col'
-            )}
-            style={{ touchAction: 'pan-y', overscrollBehavior: 'contain' }}
-          >
-            {rows}
-          </ul>
-        ) : (
-          hint && (
-            <div className="absolute inset-0 flex items-center justify-center px-10 text-center text-[13px] text-[var(--zen-muted)]">
-              {hint}
-            </div>
-          )
-        )}
+        {header}
+        <div className="relative min-h-0 flex-1">
+          {rows.length > 0 ? (
+            <ul
+              ref={fadeRows}
+              className={cn(
+                'absolute inset-0 flex overflow-y-auto p-1',
+                bottom ? 'flex-col-reverse' : 'flex-col'
+              )}
+              style={{ touchAction: 'pan-y', overscrollBehavior: 'contain' }}
+            >
+              {rows}
+            </ul>
+          ) : (
+            hint && (
+              <div className="absolute inset-0 flex items-center justify-center px-10 text-center text-[13px] text-[var(--zen-muted)]">
+                {hint}
+              </div>
+            )
+          )}
+        </div>
       </div>
       <div
         ref={fieldRef}
@@ -724,12 +834,85 @@ function fieldGrowFrom(layout: PhoneBarLayout): React.CSSProperties {
   } as React.CSSProperties
 }
 
+/** A control inside a row or the header keeps the field focused: no blur, no keyboard flicker. */
+const keepFocus = (e: React.PointerEvent): void => {
+  e.preventDefault()
+  e.stopPropagation()
+}
+
+/**
+ * The search-ready header (OMN-05, Chrome for Android): the page the bar was opened over – its
+ * icon, title and address as a static two-line row – and Share, Copy link and Edit as v2 buttons
+ * in the window family. At a bottom-docked bar the chips sit nearest the field, under the thumb.
+ */
+function PageHeader({
+  tab,
+  edge,
+  onShare,
+  onCopy,
+  onEdit
+}: {
+  tab: Tab
+  edge: PhoneBarPosition
+  onShare: () => void
+  onCopy: () => void
+  onEdit: () => void
+}): JSX.Element {
+  const [faviconBroken, setFaviconBroken] = useState(false)
+  const url = pageTextFor(tab)
+  const shown = displayUrl(url) || url
+  const title = tab.customTitle ?? (tab.title || shown)
+  const chip = (label: string, Glyph: typeof Share2, onClick: () => void): JSX.Element => (
+    <button
+      type="button"
+      className="zen-v2-button zen-omnibox-chip"
+      onPointerDown={keepFocus}
+      onClick={(e) => {
+        e.stopPropagation()
+        onClick()
+      }}
+    >
+      <Glyph aria-hidden="true" />
+      {label}
+    </button>
+  )
+  return (
+    <div className="zen-omnibox-header shrink-0" data-edge={edge} data-testid="urlbar-page-header">
+      <div className="zen-v2-row zen-omnibox-page" data-static>
+        {tab.favicon && !faviconBroken ? (
+          <img
+            src={tab.favicon}
+            alt=""
+            className="zen-omnibox-page-glyph rounded-[3px]"
+            referrerPolicy="no-referrer"
+            onError={() => setFaviconBroken(true)}
+          />
+        ) : (
+          <Globe className="zen-omnibox-page-glyph" aria-hidden="true" />
+        )}
+        <span className="min-w-0 flex-1">
+          <span className="zen-omnibox-page-title block truncate">{title}</span>
+          <span className="zen-omnibox-page-url block truncate">{shown}</span>
+        </span>
+      </div>
+      <div className="zen-omnibox-chips">
+        {chip('Share', Share2, onShare)}
+        {chip('Copy link', Link, onCopy)}
+        {chip('Edit', Pencil, onEdit)}
+      </div>
+    </div>
+  )
+}
+
 function SuggestionRow({
   id,
   item,
   selected,
   sheet,
-  onPick
+  onPick,
+  onRefine,
+  clip,
+  onReveal
 }: {
   id: string
   item: Suggestion
@@ -738,6 +921,12 @@ function SuggestionRow({
   /** A row of the phone sheet: touch height (44), the desktop list keeps v2's 50. */
   sheet: boolean
   onPick: (e: React.MouseEvent) => void
+  /** A query row's Refine arrow (OMN-09): the row's text into the field, nothing submitted. */
+  onRefine?: (item: Suggestion) => void
+  /** The clipboard row's content once revealed (OMN-14); the row then shows it. */
+  clip?: ClipboardContent | null
+  /** The clipboard row's Show, while its content is still behind it. */
+  onReveal?: () => void
 }): JSX.Element {
   const touch = useRef(false)
   // A favicon that fails to load leaves the kind's glyph, as Chrome's globe (never a blank cell).
@@ -777,14 +966,42 @@ function SuggestionRow({
         aria-selected={selected}
         className="zen-suggestion zen-suggestion-sheet flex h-11 shrink-0 cursor-default items-center gap-3 px-2.5"
         data-selected={selected}
+        data-kind={item.kind}
         {...pointerProps}
       >
         {icon}
-        <span className="min-w-0 flex-1 truncate text-[14px]">{item.title}</span>
+        <span className="min-w-0 flex-1 truncate text-[14px]">{clip ? clip.text : item.title}</span>
         <span className="max-w-[45%] truncate text-[13px] text-[var(--zen-muted)]">
-          {item.subtitle}
+          {clip ? item.title : item.subtitle}
         </span>
         {item.kind === 'tab' && <ArrowRight className="h-3.5 w-3.5 opacity-50" />}
+        {onReveal && (
+          <button
+            type="button"
+            className="zen-v2-button zen-omnibox-reveal"
+            onPointerDown={keepFocus}
+            onClick={(e) => {
+              e.stopPropagation()
+              onReveal()
+            }}
+          >
+            Show
+          </button>
+        )}
+        {onRefine && (
+          <button
+            type="button"
+            className="zen-v2-icon-button zen-omnibox-refine"
+            aria-label="Refine"
+            onPointerDown={keepFocus}
+            onClick={(e) => {
+              e.stopPropagation()
+              onRefine(item)
+            }}
+          >
+            <ArrowUpLeft aria-hidden="true" />
+          </button>
+        )}
       </li>
     )
   }
