@@ -164,6 +164,8 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
     trackMedia: true,
     // The WebView blocks pop-ups itself; this script runs in the page's world and can see which.
     reportBlockedPopups: true,
+    // A page's OpenSearch description makes it a "Recently visited" engine in Settings > Search.
+    discoverSearchEngines: true,
     send: (message) => bridge.postMessage(JSON.stringify({ token: TOKEN, ...message })),
     onFlags: (listener) => {
       onFlags = listener

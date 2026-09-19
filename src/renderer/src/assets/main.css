@@ -5376,6 +5376,28 @@
   height: var(--v2-icon);
   border-radius: var(--v2-radius-checkbox);
 }
+/*
+ * A search engine's mark in the glyph slot (Search › Default search engine, Added search
+ * engines): a page's favicon at the icon size, else the URL bar's letter in a disc of the
+ * hover fill – 16 like every leading glyph, so the picker's rows line up whichever it is.
+ */
+.zen-settings-engine-favicon {
+  border-radius: var(--v2-radius-checkbox);
+  object-fit: contain;
+}
+.zen-settings-engine-glyph {
+  display: inline-flex;
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--v2-fill-hover);
+  color: var(--v2-text);
+  font-size: 10px;
+  font-weight: var(--v2-weight-heading);
+  line-height: 1;
+}
 .zen-settings-tint,
 .zen-settings-agent-dot {
   display: block;
