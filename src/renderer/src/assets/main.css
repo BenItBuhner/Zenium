@@ -183,6 +183,9 @@
   /* Density (§5, §9.2–9.3): rows and controls; phones override below. */
   --v2-row: 32px;
   --v2-row-two-line: 52px;
+  /* A row's vertical padding (§9.34): what is left of the row around its body line, halved – 6
+     on a mouse, 12 on a phone through the phone block's `--v2-row`, which this calc reads. */
+  --v2-row-pad: calc((var(--v2-row) - var(--v2-line-body)) / 2);
   --v2-control: 32px;
   --v2-checkbox: 16px;
   --v2-nav-item: 34px;
@@ -3916,16 +3919,17 @@
  * An internal page tab has no page view: the chrome draws the page where the view would be, an
  * opaque `--v2-page` surface filling the content frame edge to edge – the frame clips it at its
  * own radius, so the page adds none. Everything below reads the `--v2-*` tokens through the
- * shared `zen-v2-*` classes (rows, fields, icon buttons, image radio cards) and the page's own
- * `zen-settings-*` ones. Phone geometry (§10.3): rows 44 / 64 with one 16 gutter, groups told
- * apart by a 15/600 heading and air, one tone, no card, no divider, no fill at rest. The row's
- * vertical padding is derived, not stated: (row − body line) / 2 is 12 on a phone and 6 on desktop.
+ * shared `zen-v2-*` primitives (§9.34: the row, the field, the icon button, the image radio
+ * card, the switch and the plain radio – one unlayered rule each, tokens only, every program's
+ * to consume) and the page's own `zen-settings-*` classes. Phone geometry (§10.3): rows 44 / 64
+ * with one 16 gutter, groups told apart by a 15/600 heading and air, one tone, no card, no
+ * divider, no fill at rest. The row's vertical padding is the `--v2-row-pad` token (§9.34):
+ * (row − body line) / 2, 12 on a phone and 6 on desktop, so no local knob states it.
  *
  * Unlayered on purpose, like `.zen-v2-button` above: a danger button is the v2 button in danger
  * ink, and only an unlayered rule that comes later can recolour the unlayered button.
  * ------------------------------------------------------------------------- */
 .zen-page-host {
-  --zen-settings-pad: calc((var(--v2-row) - var(--v2-line-body)) / 2);
   background: var(--v2-page);
   color: var(--v2-text);
   font-size: var(--v2-font-body);
@@ -3941,7 +3945,7 @@
   min-height: var(--v2-row);
   align-items: center;
   gap: 12px;
-  padding: var(--zen-settings-pad, 6px) 16px;
+  padding: var(--v2-row-pad) 16px;
   color: var(--v2-text);
   text-align: left;
   font-size: var(--v2-font-body);
@@ -4029,6 +4033,71 @@
 }
 .zen-v2-card-radio[aria-checked='true'] {
   box-shadow: 0 0 0 2px var(--v2-accent);
+}
+
+/*
+ * The shared switch (§9.34, §10.4): a 36 × 20 track, a 16 thumb inset 2, travel 16, 150 ms.
+ * Its state is `aria-checked` – on the switch itself, or on the row that is the switch (§10.4:
+ * the whole row toggles it), the thumb aria-hidden inside it.
+ */
+.zen-v2-switch {
+  position: relative;
+  display: block;
+  width: 36px;
+  height: 20px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  background: rgb(var(--v2-text-rgb) / 0.25);
+  transition: background 150ms var(--zen-ease);
+}
+.zen-v2-switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--v2-page);
+  transition:
+    transform 150ms var(--zen-ease),
+    background 150ms var(--zen-ease);
+}
+.zen-v2-switch[aria-checked='true'],
+[aria-checked='true'] .zen-v2-switch {
+  background: var(--v2-accent);
+}
+.zen-v2-switch[aria-checked='true']::after,
+[aria-checked='true'] .zen-v2-switch::after {
+  background: var(--v2-on-accent);
+  transform: translateX(16px);
+}
+
+/*
+ * The shared plain radio (§9.34, §9.14): the checkbox-sized circle (16 on a mouse, 20 on a
+ * phone), a hairline at 45 %, checked = an accent ring round a 6 px page-colour dot. In a row it
+ * aligns with the first text line, not the row's centre (§9.2); its state is `aria-checked` on
+ * itself or on the row that is the radio.
+ */
+.zen-v2-radio {
+  display: inline-flex;
+  width: var(--v2-checkbox);
+  height: var(--v2-checkbox);
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin-top: calc((var(--v2-line-body) - var(--v2-checkbox)) / 2);
+  border: 1px solid rgb(var(--v2-text-rgb) / 0.45);
+  border-radius: 50%;
+  background: var(--v2-page);
+  transition:
+    background 120ms var(--zen-ease),
+    box-shadow 120ms var(--zen-ease),
+    border-color 120ms var(--zen-ease);
+}
+.zen-v2-radio[aria-checked='true'],
+[aria-checked='true'] > .zen-v2-radio {
+  border-color: var(--v2-accent);
+  box-shadow: inset 0 0 0 calc((var(--v2-checkbox) - 6px) / 2) var(--v2-accent);
 }
 
 /* The page: the landing stays mounted beneath a drill-in, which slides over it (§10.2). */
@@ -4225,7 +4294,7 @@
 /* A group with nothing in it: one plain line where its rows would be, like a row's label at 69 %. */
 .zen-settings-empty {
   margin: 0;
-  padding: var(--zen-settings-pad, 6px) 16px;
+  padding: var(--v2-row-pad) 16px;
   color: var(--v2-text-deemphasized);
   font-size: var(--v2-font-body);
   line-height: var(--v2-line-body);
@@ -4243,7 +4312,7 @@
   min-height: var(--v2-row);
   align-items: center;
   gap: 12px;
-  padding: var(--zen-settings-pad, 6px) 16px;
+  padding: var(--v2-row-pad) 16px;
   text-align: left;
 }
 .zen-settings-row-text {
@@ -4284,18 +4353,15 @@
   background: transparent;
 }
 /* Leading glyphs and boxes align with the first text line, not the row's centre (§9.2). */
-.zen-settings-leading,
-.zen-settings-radio {
+.zen-settings-leading {
   display: inline-flex;
+  width: var(--v2-checkbox);
+  height: var(--v2-checkbox);
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
   align-self: flex-start;
   margin-top: calc((var(--v2-line-body) - var(--v2-checkbox)) / 2);
-}
-.zen-settings-leading {
-  width: var(--v2-checkbox);
-  height: var(--v2-checkbox);
 }
 .zen-settings-leading > svg,
 .zen-settings-glyph {
@@ -4349,55 +4415,7 @@
   color: var(--v2-ok);
 }
 
-/* The switch (§10.4): a 36 × 20 track, a 16 thumb inset 2, travel 16, 150 ms; state on the row. */
-.zen-settings-switch {
-  position: relative;
-  display: block;
-  width: 36px;
-  height: 20px;
-  flex-shrink: 0;
-  border-radius: 10px;
-  background: rgb(var(--v2-text-rgb) / 0.25);
-  transition: background 150ms var(--zen-ease);
-}
-.zen-settings-switch::after {
-  content: '';
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: var(--v2-page);
-  transition:
-    transform 150ms var(--zen-ease),
-    background 150ms var(--zen-ease);
-}
-.zen-settings-row[aria-checked='true'] .zen-settings-switch {
-  background: var(--v2-accent);
-}
-.zen-settings-row[aria-checked='true'] .zen-settings-switch::after {
-  background: var(--v2-on-accent);
-  transform: translateX(16px);
-}
-
-/* Plain radio (§9.14): the checkbox-sized circle, a hairline at 45 %, checked = accent ring round a page dot. */
-.zen-settings-radio {
-  width: var(--v2-checkbox);
-  height: var(--v2-checkbox);
-  border: 1px solid rgb(var(--v2-text-rgb) / 0.45);
-  border-radius: 50%;
-  background: var(--v2-page);
-  transition:
-    background 120ms var(--zen-ease),
-    box-shadow 120ms var(--zen-ease),
-    border-color 120ms var(--zen-ease);
-}
-[aria-checked='true'] > .zen-settings-radio {
-  border-color: var(--v2-accent);
-  /* The ring leaves §9.14's 6 px page-colour dot, whatever the circle's size (16 desktop, 20 phone). */
-  box-shadow: inset 0 0 0 calc((var(--v2-checkbox) - 6px) / 2) var(--v2-accent);
-}
+/* The switch and the plain radio are the shared `.zen-v2-switch` / `.zen-v2-radio` above (§9.34). */
 .zen-settings-radio-list {
   display: flex;
   flex-direction: column;
@@ -4644,7 +4662,6 @@
  * and row padding itself.
  */
 .zen-settings-sheet-layer {
-  --zen-settings-pad: calc((var(--v2-row) - var(--v2-line-body)) / 2);
   font-size: var(--v2-font-body);
   line-height: var(--v2-line-body);
   user-select: none;

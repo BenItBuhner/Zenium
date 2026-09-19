@@ -131,7 +131,7 @@ export function RowView({
           description={row.description}
           role="switch"
           checked={row.checked}
-          trailing={<span className="zen-settings-switch" aria-hidden="true" />}
+          trailing={<span className="zen-v2-switch" aria-hidden="true" />}
           onPress={() => row.onChange(!row.checked)}
         />
       )

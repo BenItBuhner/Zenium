@@ -469,7 +469,7 @@ export function RadioOption({
       className="zen-settings-row zen-settings-radio-row zen-v2-row"
       onClick={onSelect}
     >
-      <span className="zen-settings-radio" aria-hidden="true" />
+      <span className="zen-v2-radio" aria-hidden="true" />
       <span className="zen-settings-row-text">
         <span className="zen-settings-label">{label}</span>
         {description && <span className="zen-settings-description">{description}</span>}
