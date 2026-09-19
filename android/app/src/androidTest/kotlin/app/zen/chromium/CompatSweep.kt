@@ -124,10 +124,18 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         chromeJs("window.__toasts=[];window.zen.on('toast',function(p){window.__toasts.push(String(p&&p.message||p))});'ok'")
         // The prompts the chrome raises (install, permissions), by request id, so one its sheet
         // did not put a reachable button on screen can still be answered through the command.
+        // The renderer answers a prompt through the same `window.zen.invoke` (a tap on its
+        // button, a dismissed sheet): that answer takes the prompt off the list, so a tap that
+        // did answer is never taken for one that did not and answered again through the command.
         chromeJs(
-            "window.__prompts=[];" +
+            "window.__prompts=[];window.__promptAnswers=[];" +
                 "window.zen.on('extensionInstallRequest',function(p){window.__prompts.push({kind:'install',id:p.requestId,ok:p.okLabel||''})});" +
-                "window.zen.on('extensionPermissionRequest',function(p){window.__prompts.push({kind:'permission',id:p.requestId,ok:p.okLabel||''})});'ok'"
+                "window.zen.on('extensionPermissionRequest',function(p){window.__prompts.push({kind:'permission',id:p.requestId,ok:p.okLabel||''})});" +
+                "(function(){var z=window.zen,invoke=z.invoke;z.invoke=function(name,args){" +
+                "if((name==='extension.confirmInstall'||name==='extension.respondPermissionRequest')&&args&&args.requestId){" +
+                "window.__prompts=window.__prompts.filter(function(p){return p.id!==args.requestId});" +
+                "window.__promptAnswers.push({id:args.requestId,accept:!!args.accept})}" +
+                "return invoke.apply(z,arguments)}})();'ok'"
         )
         fixtureTab = tabIdByUrl("$BASE/page-a.html") ?: createTab("$BASE/page-a.html")
         showTab(fixtureTab)
@@ -256,11 +264,16 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // `evaluateJavascript` hands the stringified array back as a JSON string: unquote, then parse.
         val toasts = runCatching { JSONArray(JSONTokener(chromeJs("JSON.stringify(window.__toasts||[])")).nextValue() as String) }.getOrDefault(JSONArray())
         val byCommand = promptsAnsweredByCommand > fallbacksBefore
+        // The answers the renderer itself gave (a tap on the sheet's button, a dismissed sheet).
+        val rendererAnswers = runCatching {
+            JSONArray(JSONTokener(chromeJs("JSON.stringify((window.__promptAnswers||[]).splice(0))")).nextValue() as String)
+        }.getOrDefault(JSONArray())
         val detail = JSONObject()
             .put("ms", total - promptMs)
             .put("promptMs", promptMs)
             .put("prompted", prompted || byCommand)
             .put("promptAnsweredBy", if (byCommand) "command" else if (prompted) "tap" else JSONObject.NULL)
+            .put("rendererAnswers", rendererAnswers)
             .put("promptTaps", taps)
             .put("promptFallback", lastPromptFallback ?: JSONObject.NULL)
             .put("toasts", toasts)
@@ -1207,9 +1220,15 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                     else -> JSONObject().put("value", value)
                 }
             }
-            if (!answered) {
+            val pending = if (answered) JSONArray() else pendingPrompts()
+            if (pending.length() == 0) {
+                // Nothing is asked: a sheet still on its way out (its button drawn below the
+                // viewport while it slides down) is not a prompt to answer, and the next prompt
+                // this command raises starts with its own taps.
+                promptSeenAt = 0L
+                if (taps > 0 && SystemClock.uptimeMillis() - tappedAt > PROMPT_RETAP_MS) taps = 0
+            } else {
                 val button = promptButton()
-                val pending = pendingPrompts()
                 when {
                     // The chrome's own sheet or dialog, its button on screen: a finger on it.
                     button != null && button.rect != null && taps < PROMPT_TAPS -> {
@@ -1244,7 +1263,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                     }
                     // No chrome sheet: a native dialog (the store's fallback prompt), by the
                     // accessibility tree, and only while the chrome says a prompt is pending.
-                    pending.length() > 0 -> {
+                    else -> {
                         val native = findPositiveButton()
                         if (native != null && taps == 0) {
                             taps++
