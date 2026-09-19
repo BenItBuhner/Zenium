@@ -186,7 +186,10 @@ class SiteControlsDemo : DemoHarness("site-controls-demo-state.json", "services-
                     (state().optJSONObject("lastSafetyCheck")?.optLong("checkedAt") ?: 0L) > checkedBefore
                 }
             ) {
-                awaitRow("Passwords", 10_000)
+                // The results group is rebuilt by the run; its rows come back into the tree one by
+                // one (the run at 8adeb628 read Updates and Site permissions while Passwords, on
+                // screen, was not in the tree yet): the last row of the group is the one waited for.
+                awaitRow("Extensions", 10_000)
                 SystemClock.sleep(1_500)
                 note("  safety check rows: ${rowText("Updates")} | ${rowText("Passwords")} | ${rowText("Site permissions")}")
                 shot("13-safety-check-results")
@@ -208,11 +211,15 @@ class SiteControlsDemo : DemoHarness("site-controls-demo-state.json", "services-
                     SystemClock.sleep(SHEET_SETTLE)
                     shot("12b-clear-data-range")
                     beat()
-                    back()
-                    SystemClock.sleep(1_500)
+                    backUntil("the range picker is gone and the form's Time range row is back") {
+                        findByLabel("All time") == null && rowNode("Time range")?.isClickable == true
+                    }
                 }
-                if (!touchRowExpecting("Cancel", "the form sheet closes", 8_000) { findByLabel("Clear data") == null }) back()
-                SystemClock.sleep(1_500)
+                if (!touchRowExpecting("Cancel", "the form sheet closes", 8_000) { findByLabel("Clear data") == null }) {
+                    backUntil("the form sheet is gone") { findByLabel("Clear data") == null }
+                }
+                awaitRow("Clear browsing data", 8_000)
+                SystemClock.sleep(600)
             }
 
             // Site settings: the catalogue (Camera among it), Camera's sheet with the default as a
@@ -232,11 +239,18 @@ class SiteControlsDemo : DemoHarness("site-controls-demo-state.json", "services-
                         SystemClock.sleep(SHEET_SETTLE)
                         shot("10c-site-settings-picker")
                         beat()
-                        back()
-                        SystemClock.sleep(1_500)
+                        // The Camera sheet's value row (clickable) is back in the tree once the
+                        // picker over it has gone; the picker's own header reads the same words
+                        // but is no control.
+                        backUntil("the picker is gone and the Camera sheet's Default behaviour row is back") {
+                            findByLabel("Block") == null && rowNode("Default behaviour")?.isClickable == true
+                        }
                     }
-                    back()
-                    SystemClock.sleep(1_500)
+                    // The catalogue's Camera row (clickable) is back once the sheet has gone; the
+                    // sheet's title reads Camera too, as a plain node.
+                    backUntil("the Camera sheet is gone and the catalogue is back") {
+                        rowNode("Default behaviour") == null && rowNode("Camera")?.isClickable == true
+                    }
                 }
             }
             if (reveal("Sites with their own settings") != null && awaitRow(HOST, 8_000, show = true) != null) {
@@ -282,9 +296,14 @@ class SiteControlsDemo : DemoHarness("site-controls-demo-state.json", "services-
     /**
      * Back closes the section over the landing (the chrome holds the back for it, on camera);
      * the tab itself goes through the core, the way the Settings tab demo leaves it, and the
-     * demo page's tab is active again for the menu sheet.
+     * demo page's tab is active again for the menu sheet. The section's first heading is in the
+     * tree only while no sheet stands over it (a surface under a sheet is inert and out of the
+     * tree): it is waited for, and a sheet still up after that is backed out of first.
      */
     private fun closeSettingsTab(id: String) {
+        if (waitFor("Safety check", 6_000) == null) {
+            backUntil("the sheet left over is gone and the section is back in the tree") { findByLabel("Safety check") != null }
+        }
         if (findByLabel("Safety check") != null) {
             back()
             SystemClock.sleep(1_500)
@@ -337,6 +356,28 @@ class SiteControlsDemo : DemoHarness("site-controls-demo-state.json", "services-
         }
         note("  no row reads '$label'")
         return null
+    }
+
+    /**
+     * One system back on a sheet, then up to `timeoutMs` for `took` – what the tree shows once
+     * the sheet has gone and the surface under it is back in it, named by `effect` – to hold.
+     * Never a fixed sleep: the emulator's software renderer paints a dismissal seconds late, and
+     * a second back sent on a sleep lands on the sheet still standing there and is absorbed (the
+     * run at 8adeb628: the Camera sheet stayed and the sites with their own settings went
+     * unrecorded). False and a note when the tree never showed it; the recording goes on.
+     */
+    private fun backUntil(effect: String, timeoutMs: Long = 12_000, took: () -> Boolean): Boolean {
+        back()
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (took()) {
+                SystemClock.sleep(600)
+                return true
+            }
+            SystemClock.sleep(200)
+        }
+        note("  after back: not $effect within $timeoutMs ms")
+        return false
     }
 
     /**
