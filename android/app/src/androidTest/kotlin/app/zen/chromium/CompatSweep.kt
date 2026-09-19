@@ -652,7 +652,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     }
 
     /** Password managers and clippers: the popup (a sign-in screen, or an account-backed frame) is the whole reachable surface. */
-    private fun popupLogin(label: String): (Row, JSONObject) -> Grade = { _, entry ->
+    private fun popupLogin(label: String): (Row, JSONObject) -> Grade = { row, entry ->
         val popup = entry.optJSONObject("popup")
         val opened = entry.optJSONArray("popupOpened")
         val text = entry.optString("popupText")
@@ -661,9 +661,15 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             opened != null && opened.length() > 0 -> {
                 val url = opened.optString(0)
                 val tabId = tabUrls().entries.firstOrNull { it.value == url }?.key
-                val dom = tabId?.let { id -> runCatching { json(tabEval(waitForView(id), DOM_REPORT)) }.getOrNull() }
+                val view = tabId?.let { id -> runCatching { waitForView(id) }.getOrNull() }
+                val dom = view?.let { v -> runCatching { json(tabEval(v, DOM_REPORT)) }.getOrNull() }
                 val txt = dom?.optString("text") ?: ""
-                Grade(if (login.containsMatchIn(txt)) "n/m" else "F", "$label: the action click opened ${url.take(90)} (\"${txt.take(80)}\"); the vault itself needs an account (not measurable here)")
+                val pass = login.containsMatchIn(txt)
+                // An extension page that opened in a tab and shows no sign-in (1Password's
+                // `app.html#/page/error`): the same evidence as a blank options tab, the whole
+                // row's trace since the page was opened in the popup stage.
+                val extra = if (!pass && view != null && url.contains(".ext.zenium.invalid/")) JSONObject().put("blankTab", blankPageEvidence(view, row, 0L)) else null
+                Grade(if (pass) "n/m" else "F", "$label: the action click opened ${url.take(90)} (\"${txt.take(80)}\"); the vault itself needs an account (not measurable here)", extra)
             }
             popup?.optString("verdict") in setOf("P", "PARTIAL") ->
                 Grade(

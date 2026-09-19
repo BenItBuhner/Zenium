@@ -10,8 +10,9 @@ name: Android extension compatibility sweep
 # only: the two run for about two hours each. The build, the emulator and the Gradle cache live in
 # android-emulator-demo.yml.
 on:
-  # TEMPORARY: the sweep branch's re-measure of the three blank extension pages (Adblock Plus's and
-  # Ghostery's options tabs, OneTab's list page) with the driver's blank-page evidence (gh cannot
+  # TEMPORARY: the sweep branch's re-measure of the tab-hosted extension pages after the page
+  # bootstrap's runtime install (Adblock Plus's and Ghostery's options tabs, Tampermonkey's options
+  # tab, 1Password's app page, OneTab's list page) with the driver's blank-page evidence (gh cannot
   # dispatch from the agent); removed before the branch is returned.
   push:
     branches: [cursor/android-ext-compat-sweep-f955]
@@ -40,7 +41,7 @@ jobs:
       artifact-name: android-ext-compat-sweep
       artifact-path: artifacts/android-ext-compat-sweep/
       script-env: |
-        SWEEP_ONLY=${{ inputs.only || 'chphlpgkkbolifaimnlloiipkdnihall,cfhdojbkjhnklbpkdaibdccddilifddb,mlomiejdfkolichcflejclcbmpeaniij' }}
+        SWEEP_ONLY=${{ inputs.only || 'cfhdojbkjhnklbpkdaibdccddilifddb,mlomiejdfkolichcflejclcbmpeaniij,dhdgffkkebhmkfjojejmpbldmpobfkfo,aeblfdkhhhdcdjpifhhbdiojplfjncoa,chphlpgkkbolifaimnlloiipkdnihall' }}
       timeout-minutes: 210
 
   # The same sweep on a Chromium snapshot SystemWebView.apk swapped onto an AOSP image (see
@@ -58,7 +59,7 @@ jobs:
       script-env: |
         WEBVIEW_APK=artifacts/webview/SystemWebView.apk
         SOFT_FAIL=1
-        SWEEP_ONLY=${{ inputs.only || 'chphlpgkkbolifaimnlloiipkdnihall,cfhdojbkjhnklbpkdaibdccddilifddb,mlomiejdfkolichcflejclcbmpeaniij' }}
+        SWEEP_ONLY=${{ inputs.only || 'cfhdojbkjhnklbpkdaibdccddilifddb,mlomiejdfkolichcflejclcbmpeaniij,dhdgffkkebhmkfjojejmpbldmpobfkfo,aeblfdkhhhdcdjpifhhbdiojplfjncoa,chphlpgkkbolifaimnlloiipkdnihall' }}
       setup-script: |
         base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
         rev=$(curl -fsSL "$base/LAST_CHANGE")
