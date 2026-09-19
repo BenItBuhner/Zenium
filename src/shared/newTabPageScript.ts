@@ -7,14 +7,15 @@ import type {
   TopSite
 } from './types'
 import { NEW_TAB_ICONS, newTabIconSvg, type NewTabIcon } from './newTabPage'
-import { MAX_NEW_TAB_SHORTCUTS } from './defaults'
+import { MAX_NEW_TAB_SHORTCUTS } from './newTab'
 import { SPRING_SNAPPY, stepSpring, type SpringState } from './spring'
 import { getHost } from './url'
 
 /**
  * Runs inside `zen://newtab` (the host's preload supplies the transport). The page is filled
- * from `NewTabPageState`: theme, search box hand-off, the shortcuts grid (most visited or
- * custom, remove with Undo and drag-reorder on the design-language spring) and the keyboard.
+ * from `NewTabPageState`: theme, search box hand-off, the grid – the user's shortcuts, leading
+ * the most visited sites or on their own; remove with Undo, and drag-reorder on the
+ * design-language spring when the grid is theirs alone – and the keyboard.
  * In a private window the grid gives way to the explainer. Nothing here touches browser state
  * directly: every wish is a `NewTabPageAction`, and the answer arrives as the next state. The page draws no popover or dialog of its own (design
  * language v2 §9.20–9.23): a tile's menu is the host's context menu, the add / edit dialog and
@@ -94,6 +95,8 @@ interface Tile {
   url: string
   title: string
   favicon: string | null
+  /** One of the user's shortcuts (removed as such, with Undo) rather than a most visited site. */
+  custom: boolean
 }
 
 interface Removed {
@@ -179,13 +182,13 @@ class NewTabPage {
     this.state = state
     this.applyTheme()
     this.applyGreeting()
-    this.custom = state.shortcutsMode === 'custom'
+    // The grid is the user's own under "My shortcuts" (add tile, drag to reorder); under "Most
+    // visited" their shortcuts lead it and history's sites fill the rest.
+    this.custom = state.shortcutsMode === 'my-shortcuts'
     this.tiles =
-      state.shortcutsMode === 'custom'
-        ? state.shortcuts.map(fromShortcut)
-        : state.shortcutsMode === 'most-visited'
-          ? state.topSites.map(fromTopSite)
-          : []
+      state.shortcutsMode === 'hidden'
+        ? []
+        : [...state.shortcuts.map(fromShortcut), ...state.topSites.map(fromTopSite)]
     if (!this.drag) this.renderGrid()
   }
 
@@ -384,7 +387,7 @@ class NewTabPage {
     const state = this.state
     const isPrivate = Boolean(state?.isPrivate)
     const mode: NewTabShortcutsMode = isPrivate ? 'hidden' : (state?.shortcutsMode ?? 'hidden')
-    const showGrid = mode === 'custom' || (mode === 'most-visited' && this.tiles.length > 0)
+    const showGrid = mode === 'my-shortcuts' || (mode === 'most-visited' && this.tiles.length > 0)
     this.privateExplainer.hidden = !isPrivate
     this.empty.hidden = !(mode === 'most-visited' && this.tiles.length === 0)
     this.grid.hidden = !showGrid
@@ -541,9 +544,9 @@ class NewTabPage {
     this.tiles.splice(index, 1)
     this.renderGrid()
     this.setFocusIndex(Math.min(index, this.tileElements().length - 1), true)
-    if (this.custom) this.transport.send({ type: 'remove-shortcut', id: tile.id })
+    if (tile.custom) this.transport.send({ type: 'remove-shortcut', id: tile.id })
     else this.transport.send({ type: 'hide-site', url: tile.url })
-    this.showUndo({ tile, index, custom: this.custom })
+    this.showUndo({ tile, index, custom: tile.custom })
   }
 
   private showUndo(removed: Removed): void {
@@ -802,11 +805,11 @@ class NewTabPage {
 }
 
 function fromShortcut(s: NewTabPageShortcut): Tile {
-  return { id: s.id, url: s.url, title: s.title, favicon: s.favicon }
+  return { id: s.id, url: s.url, title: s.title, favicon: s.favicon, custom: true }
 }
 
 function fromTopSite(s: TopSite): Tile {
-  return { id: `site:${s.url}`, url: s.url, title: s.title, favicon: s.favicon }
+  return { id: `site:${s.url}`, url: s.url, title: s.title, favicon: s.favicon, custom: false }
 }
 
 /** No icon: the site's first letter in the deemphasised ink, or the globe when there is none. */

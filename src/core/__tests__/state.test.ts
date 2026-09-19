@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import type { HostCapabilities, Platform } from '../../shared/types'
 import { DEFAULT_SETTINGS } from '../../shared/defaults'
+import { DEFAULT_NEW_TAB_SETTINGS } from '../../shared/newTab'
 import type { StoreIO } from '../platform'
-import { BrowserState, PERSISTED_VERSION, sanitizeNewTabShortcuts, type Persisted } from '../state'
+import { BrowserState, PERSISTED_VERSION, type Persisted } from '../state'
 import { createSpace, createTabRecord } from '../model'
 import { closedTabEntry } from '../session'
 
@@ -247,11 +248,11 @@ describe('forgetSession', () => {
 })
 
 // ---------------------------------------------------------------------------
-// New tab page persistence (state.json v4)
+// New tab page persistence (state.json v4 → v5)
 // ---------------------------------------------------------------------------
 
 /** A minimal profile as an older build wrote it (`version` picks the schema). */
-function legacyProfile(version: 1 | 2 | 3 | 4, extra: Partial<Persisted> = {}): string {
+function legacyProfile(version: 1 | 2 | 3 | 4 | 5, extra: Partial<Persisted> = {}): string {
   const base: Persisted = {
     version,
     spaces: [],
@@ -269,61 +270,87 @@ function legacyProfile(version: 1 | 2 | 3 | 4, extra: Partial<Persisted> = {}): 
   return JSON.stringify(base)
 }
 
-describe('state.json v4 (new tab page)', () => {
-  it('writes the current schema version with the shortcuts list and the block list', async () => {
+/** `settings` of a 0.3.x profile: the desktop's first `newTab` next to the phone's `newTabPhone`. */
+function settingsOfBothKeys(): Persisted['settings'] {
+  const settings = structuredClone(DEFAULT_SETTINGS) as unknown as Record<string, unknown>
+  settings.newTab = { enabled: true, shortcuts: 'custom', background: 'space', greeting: true }
+  settings.newTabPhone = {
+    preset: 'inspirational',
+    modules: { searchBox: true, shortcuts: true, wallpaper: false, feed: false },
+    shortcutStyle: 'most-visited',
+    wallpaper: 'image',
+    pinned: [
+      { url: 'https://pinned.example/', title: 'Pinned' },
+      { url: 'https://a.example/', title: 'Also a desktop shortcut' }
+    ],
+    hiddenHosts: ['www.news.example', 'Gone.example']
+  }
+  return settings as unknown as Persisted['settings']
+}
+
+const newTabKeys = (
+  text: string
+): Pick<Persisted, 'version' | 'newTabDevice' | 'newTabShortcuts' | 'newTabHiddenHosts'> & {
+  newTab: unknown
+  newTabPhone: unknown
+} => {
+  const written = JSON.parse(text) as Persisted & { settings: Record<string, unknown> }
+  return {
+    version: written.version,
+    newTabDevice: written.newTabDevice,
+    newTabShortcuts: written.newTabShortcuts,
+    newTabHiddenHosts: written.newTabHiddenHosts,
+    newTab: written.settings.newTab,
+    newTabPhone: written.settings.newTabPhone
+  }
+}
+
+describe('state.json v5 (new tab page)', () => {
+  it('writes the current schema version with the device-local document', async () => {
     const io = fakeIo()
     const s = state(io)
-    s.newTabShortcuts = [{ id: 'sc_1', title: 'Zen', url: 'https://zen-browser.app/' }]
-    s.newTabHiddenHosts = ['news.example']
+    s.newTabDevice = {
+      shortcuts: [{ id: 'sc_1', title: 'Zen', url: 'https://zen-browser.app/' }],
+      hiddenHosts: ['news.example']
+    }
     await s.flush()
     const written = JSON.parse(io.writes.at(-1) ?? '{}') as Persisted
     expect(written.version).toBe(PERSISTED_VERSION)
-    expect(written.version).toBe(4)
-    expect(written.newTabShortcuts).toEqual([
-      { id: 'sc_1', title: 'Zen', url: 'https://zen-browser.app/' }
-    ])
-    expect(written.newTabHiddenHosts).toEqual(['news.example'])
-    expect(written.settings.newTab).toEqual(DEFAULT_SETTINGS.newTab)
+    expect(written.version).toBe(5)
+    expect(written.newTabDevice).toEqual({
+      shortcuts: [{ id: 'sc_1', title: 'Zen', url: 'https://zen-browser.app/' }],
+      hiddenHosts: ['news.example']
+    })
+    expect(written.newTabShortcuts).toBeUndefined()
+    expect(written.newTabHiddenHosts).toBeUndefined()
+    expect(written.settings.newTab).toEqual(DEFAULT_NEW_TAB_SETTINGS)
+    expect('newTabPhone' in written.settings).toBe(false)
   })
 
   it('migrates a v2 profile: no shortcuts, default new tab settings', () => {
     const settings = structuredClone(DEFAULT_SETTINGS) as Partial<typeof DEFAULT_SETTINGS>
     delete settings.newTab
     const s = state(fakeIo(legacyProfile(2, { settings: settings as typeof DEFAULT_SETTINGS })))
-    expect(s.newTabShortcuts).toEqual([])
-    expect(s.settings.newTab).toEqual(DEFAULT_SETTINGS.newTab)
+    expect(s.newTabDevice).toEqual({ shortcuts: [], hiddenHosts: [] })
+    expect(s.settings.newTab).toEqual(DEFAULT_NEW_TAB_SETTINGS)
   })
 
   it('migrates a v1 profile the same way', () => {
     const s = state(fakeIo(legacyProfile(1, { windowBounds: null, maximized: false })))
-    expect(s.newTabShortcuts).toEqual([])
+    expect(s.newTabDevice).toEqual({ shortcuts: [], hiddenHosts: [] })
     expect(s.settings.newTab.enabled).toBe(true)
   })
 
   it('migrates a v3 profile (bookmark tree, recently closed) keeping its closed list', () => {
     const s = state(fakeIo(legacyProfile(3, { bookmarks: undefined, recentlyClosed: [] })))
-    expect(s.newTabShortcuts).toEqual([])
-    expect(s.newTabHiddenHosts).toEqual([])
+    expect(s.newTabDevice).toEqual({ shortcuts: [], hiddenHosts: [] })
     expect(s.recentlyClosed).toEqual([])
-    expect(s.settings.newTab).toEqual(DEFAULT_SETTINGS.newTab)
-  })
-
-  it('ignores stray new tab data in profiles older than v4', () => {
-    const s = state(
-      fakeIo(
-        legacyProfile(3, {
-          newTabShortcuts: [{ id: 'x', title: 'x', url: 'https://x.example/' }],
-          newTabHiddenHosts: ['x.example']
-        })
-      )
-    )
-    expect(s.newTabShortcuts).toEqual([])
-    expect(s.newTabHiddenHosts).toEqual([])
+    expect(s.settings.newTab).toEqual(DEFAULT_NEW_TAB_SETTINGS)
   })
 
   it('reads v4 shortcuts and the block list and sanitises the new tab settings', () => {
     const settings = structuredClone(DEFAULT_SETTINGS)
-    ;(settings.newTab as unknown as Record<string, unknown>).shortcuts = 'bogus'
+    ;(settings.newTab as unknown as Record<string, unknown>).mode = 'bogus'
     ;(settings.newTab as unknown as Record<string, unknown>).background = 'solid'
     const s = state(
       fakeIo(
@@ -339,17 +366,83 @@ describe('state.json v4 (new tab page)', () => {
         })
       )
     )
-    expect(s.newTabShortcuts).toEqual([
-      { id: 'a', title: 'A', url: 'https://a.example/' },
-      { id: 'b', title: 'https://b.example/', url: 'https://b.example/' }
-    ])
-    expect(s.newTabHiddenHosts).toEqual(['news.example'])
-    expect(s.settings.newTab).toEqual({ ...DEFAULT_SETTINGS.newTab, background: 'solid' })
+    expect(s.newTabDevice).toEqual({
+      shortcuts: [
+        { id: 'a', title: 'A', url: 'https://a.example/' },
+        { id: 'b', title: 'https://b.example/', url: 'https://b.example/' }
+      ],
+      hiddenHosts: ['news.example']
+    })
+    expect(s.settings.newTab).toEqual({ ...DEFAULT_NEW_TAB_SETTINGS, background: 'solid' })
   })
 
-  it('sanitizeNewTabShortcuts rejects anything that is not a list of records', () => {
-    expect(sanitizeNewTabShortcuts(undefined)).toEqual([])
-    expect(sanitizeNewTabShortcuts('nope')).toEqual([])
-    expect(sanitizeNewTabShortcuts([null, 4, { id: 'a' }])).toEqual([])
+  it('folds a v4 profile carrying both keys into the one model, once', async () => {
+    const io = fakeIo(
+      legacyProfile(4, {
+        settings: settingsOfBothKeys(),
+        newTabShortcuts: [{ id: 'a', title: 'A', url: 'https://a.example/' }],
+        newTabHiddenHosts: ['news.example', 'old.example']
+      })
+    )
+    const s = state(io)
+    // The desktop's `custom` grid reads as `my-shortcuts`; the phone's non-default preset and
+    // image source win; the desktop's greeting lives on in the modules of the phone's preset.
+    expect(s.settings.newTab).toEqual({
+      enabled: true,
+      mode: 'my-shortcuts',
+      preset: 'inspirational',
+      modules: { searchBox: true, shortcuts: true, wallpaper: false, feed: false, greeting: true },
+      background: 'image'
+    })
+    expect('newTabPhone' in s.settings).toBe(false)
+    // Pins follow the desktop's shortcuts, once per address; the block lists are one normalised
+    // list; pinning a hidden host (as the desktop copy of a.example was not) is not in play here.
+    expect(s.newTabDevice.shortcuts.map((x) => [x.url, x.title])).toEqual([
+      ['https://a.example/', 'A'],
+      ['https://pinned.example/', 'Pinned']
+    ])
+    expect(s.newTabDevice.hiddenHosts).toEqual(['news.example', 'old.example', 'gone.example'])
+
+    await s.flush()
+    const first = io.writes.at(-1) ?? '{}'
+    const keys = newTabKeys(first)
+    expect(keys.version).toBe(5)
+    expect(keys.newTabPhone).toBeUndefined()
+    expect(keys.newTabShortcuts).toBeUndefined()
+    expect(keys.newTabHiddenHosts).toBeUndefined()
+    expect(keys.newTabDevice).toEqual(s.newTabDevice)
+
+    // A second launch reads the v5 file as it was written: nothing to migrate, nothing changes.
+    const again = fakeIo(first)
+    const s2 = state(again)
+    expect(s2.settings.newTab).toEqual(s.settings.newTab)
+    expect(s2.newTabDevice).toEqual(s.newTabDevice)
+    await s2.flush()
+    expect(newTabKeys(again.writes.at(-1) ?? '{}')).toEqual(keys)
+  })
+
+  it('folds the phone key wherever it turns up, a v5 file included', () => {
+    const settings = structuredClone(DEFAULT_SETTINGS) as unknown as Record<string, unknown>
+    settings.newTabPhone = {
+      preset: 'custom',
+      modules: { searchBox: true, shortcuts: false, wallpaper: false, feed: false },
+      shortcutStyle: 'my-shortcuts',
+      wallpaper: 'space',
+      pinned: [],
+      hiddenHosts: []
+    }
+    const s = state(
+      fakeIo(
+        legacyProfile(5, {
+          settings: settings as unknown as Persisted['settings'],
+          newTabDevice: { shortcuts: [], hiddenHosts: ['kept.example'] }
+        })
+      )
+    )
+    expect(s.settings.newTab.preset).toBe('custom')
+    expect(s.settings.newTab.modules.shortcuts).toBe(false)
+    expect(s.settings.newTab.mode).toBe('my-shortcuts')
+    expect('newTabPhone' in s.settings).toBe(false)
+    expect(s.newTabDevice.hiddenHosts).toEqual(['kept.example'])
   })
 })

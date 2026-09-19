@@ -164,6 +164,12 @@ export function readBookmarkData(data: unknown): BookmarkData | null {
   return null
 }
 
+/**
+ * The whole `Settings` object but the one-time flag. The new tab page's device-local sets
+ * (`BrowserState.newTabDevice`: this device's shortcuts and removed hosts) are not settings and
+ * never travel; a peer on an older build may add the phone's frozen `newTabPhone` key, which the
+ * apply path folds into `newTab`.
+ */
 export type SettingsData = Omit<Settings, 'onboardingDone'>
 export interface ShortcutsData {
   overrides: Record<string, KeyBinding | null>

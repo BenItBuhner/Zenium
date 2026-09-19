@@ -272,7 +272,10 @@ export function siteHost(url: string): string {
  * Pin a site: it becomes a shortcut at the end of the grid unless one already has its address or
  * the grid is full, and its host comes back to the most-visited tiles if the user had removed it.
  */
-export function pinShortcut(device: NewTabDeviceState, shortcut: NewTabShortcut): NewTabDeviceState {
+export function pinShortcut(
+  device: NewTabDeviceState,
+  shortcut: NewTabShortcut
+): NewTabDeviceState {
   const host = siteHost(shortcut.url)
   const hiddenHosts = device.hiddenHosts.filter((h) => h !== host)
   if (

@@ -71,6 +71,7 @@ import {
   type ExtRequestEvent
 } from './extensionRuntime'
 import { AndroidExtensionStoreIo } from './extensionStoreIo'
+import { AndroidNewTabBackground } from './newTabBackground'
 import { AndroidSiteData } from './siteData'
 import { AndroidStoreIO } from './storeIo'
 import { AndroidTranslateHost, type TranslateProgressEvent } from './translate'
@@ -740,6 +741,8 @@ export class AndroidPlatform implements Platform {
   readonly privacy: PrivacyHost
   readonly translate: AndroidTranslateHost
   readonly shortcuts: ShortcutHost
+  /** The new tab page's picked wallpaper, in its own document (`newtab-wallpaper.json`). */
+  readonly newTabBackground: AndroidNewTabBackground
   browser!: Browser
   private windowHost: AndroidWindowHost | null = null
   private zenWindow: ZenWindow | null = null
@@ -770,6 +773,7 @@ export class AndroidPlatform implements Platform {
     }
     this.bootEnvironment = boot.environment ?? null
     this.io = new AndroidStoreIO(bridge, boot.files)
+    this.newTabBackground = new AndroidNewTabBackground(this.io)
     this.agentTransport = new AndroidAgentTransport(bridge)
     this.updateHost = new AndroidUpdateHost(bridge, boot.signer ?? null, boot.packageName ?? null)
     this.views = new AndroidTabViewHost(bridge)
