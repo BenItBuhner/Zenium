@@ -180,9 +180,16 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   }
   useLayoutEffect(() => {
     const cell = heroCellKey ? flip.element(heroCellKey) : null
-    // The page morphs out of / into its card: make sure that card is fully on screen first.
+    // The page morphs out of / into its card: make sure that card is fully on screen first. A
+    // hero inside an open group brings its group along – the group's card first, so the header
+    // is in view when the group fits (the strip's show-group chip opens the overview at the
+    // group, TAB-14), then its own card, which wins when the group is taller than the grid.
     const morphing = (phase === 'dragging' && progress < 0.05) || phase === 'settling'
-    if (cell && morphing) cell.scrollIntoView({ block: 'nearest' })
+    if (cell && morphing) {
+      if (heroGroup && !heroGroup.collapsed)
+        flip.element(`group:${heroGroup.id}`)?.scrollIntoView({ block: 'nearest' })
+      cell.scrollIntoView({ block: 'nearest' })
+    }
     measure()
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-measure when the layout inputs change
   }, [heroCellKey, cardsKey, area.width, area.height, phase])
@@ -570,13 +577,14 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
         style={{
           left: 'var(--zen-inset-left)',
           right: 'var(--zen-inset-right)',
+          // The bar's edge keeps the whole band free: the row and the group strip (TAB-14).
           top:
             edge === 'top'
-              ? 'calc(var(--zen-phone-bar) + var(--zen-inset-top))'
+              ? 'calc(var(--zen-phone-band) + var(--zen-inset-top))'
               : 'var(--zen-inset-top)',
           bottom:
             edge === 'bottom'
-              ? 'calc(var(--zen-phone-bar) + var(--zen-inset-bottom))'
+              ? 'calc(var(--zen-phone-band) + var(--zen-inset-bottom))'
               : 'var(--zen-inset-bottom)',
           pointerEvents: interactive ? 'auto' : 'none'
         }}

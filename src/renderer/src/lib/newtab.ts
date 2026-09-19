@@ -165,9 +165,13 @@ export function prepareNewTabGrow(): void {
  * a control on screen, a surface grows out of that control over the page before the new tab
  * page fades in. Without an origin (a shortcut, the empty state), or when the overview is up,
  * motion is reduced or the current tab is itself a new tab page, the page simply appears – out
- * of its card when the overview was open.
+ * of its card when the overview was open. `afterTabId` files the tab after that one – in its
+ * group, when it has one (the group strip's plus chip).
  */
-export async function openNewTabPage(origin: Rect | null): Promise<void> {
+export async function openNewTabPage(
+  origin: Rect | null,
+  { afterTabId }: { afterTabId?: string } = {}
+): Promise<void> {
   closeUrlbar()
   const state = browserStore.get().state
   const from = state ? activeTab(state) : null
@@ -193,7 +197,9 @@ export async function openNewTabPage(origin: Rect | null): Promise<void> {
     newTabGrowStore.set({ ...GROW_IDLE, phase: 'growing', origin, fromTabId: from.id })
     setStageLayerShown(GROW_LAYER, true)
   }
-  const tabId = await cmd('tab.create', { url: BLANK_URL, active: true }).catch(() => null)
+  const tabId = await cmd('tab.create', { url: BLANK_URL, active: true, afterTabId }).catch(
+    () => null
+  )
   // From the overview the page morphs out of the new tab's card, as any picked tab does.
   if (overview) closeOverview(tabId ?? undefined)
   if (!animate) return

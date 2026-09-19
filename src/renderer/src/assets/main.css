@@ -72,6 +72,13 @@
   --zen-card-radius: 14px;
   /* Height of the phone's bottom bar without the gesture-bar inset. */
   --zen-phone-bar: 56px;
+  /*
+   * The phone bar's band: the row of controls plus, while the active tab is in a group, the tab
+   * group strip. The shell writes the strip's share (`useGroupStrip`: 50 while the strip is
+   * present, 0 otherwise); the content column, the overview and a pill carry read the band.
+   */
+  --zen-group-strip: 0px;
+  --zen-phone-band: calc(var(--zen-phone-bar) + var(--zen-group-strip));
   --zen-sidebar-width: 240px;
   --zen-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
   /* Zen 1.22: the chrome uses squircles (superellipse corners) instead of plain rounding. */
@@ -1565,7 +1572,8 @@
   .zen-phone-bar {
     background: transparent;
   }
-  .zen-phone-bar-lifted > button:not(.zen-phone-pill) {
+  .zen-phone-bar-lifted .zen-phone-bar-row > button,
+  .zen-phone-bar-lifted .zen-group-strip {
     pointer-events: none;
   }
   /* The slot an address pill left behind while it is being carried: a shallow well. */
@@ -1946,6 +1954,116 @@
     background: rgb(var(--zen-group-rgb) / 0.22);
     backdrop-filter: blur(12px) saturate(1.2);
     will-change: opacity;
+  }
+  /*
+   * The tab group strip (TAB-14, `GroupStrip.tsx`): the second row the bar band gains while the
+   * active tab is in a group, on the inner side of the bar's row of controls. Window chrome
+   * (v2 §9.29): the tray is a pill in the window fill, the same height and radius as the address
+   * pill beside it (44, radius 22), and its chips – the group's dot, a favicon per member, a plus
+   * – are 36 circles set 4 inside it, so the radii are concentric (22 − 4 = 18); they draw in the
+   * theme's ink, the active member ringed in the theme's accent with the fill of a marked chip
+   * (§9.4's ring and fill). The strip's own box is the share of the band the shell publishes as
+   * `--zen-group-strip` (the tray plus its 6 gap to the row) and clips the tray's slide out of
+   * and back behind the row.
+   */
+  .zen-group-strip {
+    position: relative;
+    box-sizing: border-box;
+    height: var(--zen-group-strip);
+    overflow: hidden;
+  }
+  .zen-group-strip[data-edge='bottom'] {
+    padding-bottom: 6px;
+  }
+  .zen-group-strip[data-edge='top'] {
+    padding-top: 6px;
+  }
+  .zen-group-tray {
+    display: flex;
+    align-items: center;
+    height: 100%;
+    padding: 0 4px;
+    border-radius: 22px;
+    background: var(--v2-window-fill);
+    color: var(--zen-fg);
+  }
+  /*
+   * The members' chips scroll sideways when the group overflows; the edges fade (`useFadeEdges`).
+   * The scroller's 4 padding is the chips' inset in the tray and the room their focus ring needs
+   * inside the clip.
+   */
+  .zen-group-scroller {
+    position: relative;
+    display: flex;
+    flex: 1 1 0;
+    min-width: 0;
+    align-items: center;
+    gap: 4px;
+    height: 100%;
+    padding: 4px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    touch-action: pan-x;
+    overscroll-behavior-x: contain;
+  }
+  .zen-group-scroller::-webkit-scrollbar {
+    display: none;
+  }
+  .zen-group-chip {
+    position: relative;
+    display: flex;
+    flex: 0 0 auto;
+    width: 36px;
+    height: 36px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 18px;
+    color: inherit;
+    transition:
+      background 120ms var(--zen-ease),
+      transform 120ms var(--zen-ease);
+  }
+  .zen-group-chip:active {
+    background: var(--v2-window-fill-hover);
+    transform: scale(0.97);
+  }
+  .zen-group-chip[aria-current='true'],
+  .zen-group-chip[aria-pressed='true'] {
+    background: var(--v2-window-fill);
+  }
+  .zen-group-chip[aria-current='true'] {
+    box-shadow: inset 0 0 0 2px var(--v2-control-accent);
+  }
+  /*
+   * What a chip shows, on a layer of its own: a joining chip scales its face in and a leaving
+   * chip scales its face out (`GroupStrip.tsx`), while the chip's own transform belongs to the
+   * FLIP tracker, which writes the glide there.
+   */
+  .zen-group-chip-face {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    border-radius: inherit;
+    will-change: transform, opacity;
+  }
+  .zen-group-chip-glyph {
+    width: 20px;
+    height: 20px;
+    stroke-width: 1.75;
+  }
+  /* A member that left: its chip stays where it stood, off the flow, while it shrinks away. */
+  .zen-group-chip-exit {
+    position: absolute;
+    top: 4px;
+    pointer-events: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .zen-group-chip {
+      transition-duration: 1ms;
+    }
   }
   /* Titles of the phone's overview, drawer and sheets. */
   .zen-title {
