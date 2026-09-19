@@ -7,6 +7,14 @@
  * carry the phone's 44/64 rows, 40 controls, 20 glyphs at stroke 1.75 and 44 icon buttons, so
  * a form-factor override below exists only where the draft's phone value has no token yet.
  *
+ * The primitives are main.css's (§9.34): `.zen-v2-row`, `.zen-v2-field`, `.zen-v2-icon-button`,
+ * `.zen-v2-switch`, `.zen-v2-radio` and `.zen-v2-button` are one unlayered rule each there, and
+ * nothing in this file restates them – a layered copy would lose every declaration to the
+ * unlayered rule anyway. What is here is the extension surfaces' own: the row's inner anatomy
+ * (body, lead, text, label, description, value), the rows-in-a-card hairlines and bleed, the
+ * field's leading glyph, the icon button's expanded fill, and the controls the shared set does
+ * not have yet (the checkbox, the menulist).
+ *
  * Every hover fill sits inside `@media (hover: hover)` (as main.css's app-icon grid): Chromium
  * keeps a tap's `:hover` on the element until the next touch, so on a phone an ungated rule
  * leaves a tapped button lit. Press (`:active`), expanded and pressed states stay ungated.
@@ -193,45 +201,21 @@
   }
 
   /*
-   * Two-line rows (§9.2): 32 for one line, 52 with a description, growing with content; the
-   * phone's are 44 and 64 through the density tokens. Whatever trails the text centres on the
-   * row (§9.18); the leading glyph or checkbox travels with the text and sits on its first line,
-   * (line − box) / 2 below the line's top – 2 for a 16 box on a 20 line, 0 for the phone's 20
-   * (§9.2). Rows inside a card are separated by hairlines (Zen's add-on detail rows).
+   * Rows are main.css's `.zen-v2-row` (§9.34): 32 / 44 with `--v2-row-pad` above and below and
+   * 16 at the sides, the press and hover fill, growing with content – 52 / 64 with a description
+   * (§9.2). What follows is the row's inner anatomy for these surfaces: whatever trails the text
+   * centres on the row (§9.18); the leading glyph or checkbox travels with the text and sits on
+   * its first line, (line − box) / 2 below the line's top – 2 for a 16 box on a 20 line, 0 for
+   * the phone's 20 (§9.2).
+   *
+   * Rows in a card or a dialog body run edge to edge inside it, as a sheet's do (§9.25, §9.17):
+   * the list bleeds through the card's 16 padding, the row's own 16 puts its text back on the
+   * card's gutter – one left edge with the card title – and the fill and the hairlines between
+   * the rows (Zen's add-on detail rows) reach the card's border.
    */
-  .zen-v2-row {
-    --row-pad: 6px;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    min-height: var(--v2-row);
-    padding: var(--row-pad) 0;
-  }
-  .zen-v2-row[data-lines='2'] {
-    min-height: var(--v2-row-two-line);
-  }
-  [data-form-factor='phone'] .zen-v2-row {
-    --row-pad: 12px;
-  }
-  /*
-   * A row holding a control grows around it (§9.21): the larger of its base and the control's
-   * height plus 8 – 40 for a 32 button, menulist or field, 36 for a 28 icon button or switch,
-   * 48 / 52 on a phone. The 4 above and below is the row's own padding, not a list gap: rows
-   * touch. A two-line row keeps its 52 / 64 when that is the larger.
-   */
-  .zen-v2-row:has(.zen-v2-button, .zen-v2-menulist, .zen-v2-field),
-  [data-form-factor='phone'] .zen-v2-row:has(.zen-v2-button, .zen-v2-menulist, .zen-v2-field) {
-    --row-pad: 4px;
-    min-height: calc(var(--v2-control) + 8px);
-  }
-  .zen-v2-row:has(.zen-v2-icon-button, .zen-v2-switch),
-  [data-form-factor='phone'] .zen-v2-row:has(.zen-v2-icon-button, .zen-v2-switch) {
-    --row-pad: 4px;
-    min-height: calc(var(--v2-icon-button) + 8px);
-  }
-  .zen-v2-row[data-lines='2']:has(.zen-v2-button, .zen-v2-menulist, .zen-v2-field),
-  .zen-v2-row[data-lines='2']:has(.zen-v2-icon-button, .zen-v2-switch) {
-    min-height: max(var(--v2-row-two-line), calc(var(--v2-control) + 8px));
+  .zen-v2-card > .zen-v2-rows,
+  .zen-ext-dialog-body > .zen-v2-rows {
+    margin: 0 calc(-1 * var(--v2-card-padding));
   }
   .zen-v2-rows > .zen-v2-row + .zen-v2-row {
     border-top: 1px solid var(--v2-card-border);
@@ -283,13 +267,6 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  /* Trailing controls: centred on the row's height (§9.18). */
-  .zen-v2-row-controls {
-    display: flex;
-    flex-shrink: 0;
-    align-items: center;
-    gap: 4px;
-  }
   /* In-content links are the accent (Firefox's link colour), underlined on hover only. */
   .zen-v2-link {
     display: inline-flex;
@@ -313,33 +290,11 @@
 
   /* Buttons: main.css owns `.zen-v2-button`'s base; the states and variants are at the end of this file. */
 
-  /* Fields: 32 at radius 4 with a 1px border (the text at 30%) on the page colour. */
-  .zen-v2-field {
-    display: block;
-    width: 100%;
-    height: var(--v2-control);
-    padding: 0 12px;
-    border: 1px solid rgb(var(--v2-text-rgb) / 0.3);
-    border-radius: var(--v2-radius-control);
-    background: var(--v2-page);
-    color: var(--v2-text);
-    font-size: var(--v2-font-body);
-    line-height: var(--v2-line-body);
-  }
-  .zen-v2-field::placeholder {
-    color: var(--v2-text-deemphasized);
-  }
-  .zen-v2-field:focus-visible {
-    border-color: var(--v2-accent);
-  }
-  .zen-v2-field[aria-invalid='true'] {
-    border-color: var(--v2-danger);
-  }
-  /* Disabled (§9.30): opacity .4 on the whole control, border and fill included, at full size. */
-  .zen-v2-field:disabled,
-  .zen-v2-menulist:disabled {
-    opacity: 0.4;
-  }
+  /*
+   * Fields are main.css's `.zen-v2-field` (§9.12, §9.34). A field may carry a leading 16 glyph
+   * (the store field's shop): 10 in, the text starting 34 in – that padding is at the end of
+   * this file, unlayered, where it can beat the primitive's 12.
+   */
   .zen-v2-field-lead {
     position: absolute;
     left: 10px;
@@ -350,8 +305,9 @@
     pointer-events: none;
     color: var(--v2-text-deemphasized);
   }
-  .zen-v2-field[data-lead] {
-    padding-left: 34px;
+  /* Disabled (§9.30): opacity .4 on the whole control, border and fill included, at full size. */
+  .zen-v2-menulist:disabled {
+    opacity: 0.4;
   }
 
   /*
@@ -495,23 +451,6 @@
   }
 
   /*
-   * A plain radio glyph (§9.14): 16 (20 on a phone, the checkbox's size) with a 1px border at
-   * text 45%; checked, an accent ring around a 6 dot of the page colour.
-   */
-  .zen-v2-radio {
-    flex-shrink: 0;
-    width: var(--v2-checkbox);
-    height: var(--v2-checkbox);
-    border: 1px solid rgb(var(--v2-text-rgb) / 0.45);
-    border-radius: 50%;
-    background: var(--v2-page);
-  }
-  .zen-v2-radio[data-checked] {
-    border-color: var(--v2-accent);
-    box-shadow: inset 0 0 0 calc((var(--v2-checkbox) - 8px) / 2) var(--v2-accent);
-  }
-
-  /*
    * Checkbox: 16 at radius 2 (20 on a phone), the accent with an on-accent check when on. As a
    * row's leading box it sits (line − box) / 2 below the first text line's top (§9.2).
    */
@@ -566,106 +505,31 @@
   }
 
   /*
-   * The toggle where Zen uses one (its add-ons manager): moz-toggle's 26×14 track with a 10
-   * dot, the accent when on. The button around it is the hit area (28 desktop, 44 phone).
+   * The switch is main.css's `.zen-v2-switch` (§10.4, §9.34): the 36 × 20 track, its state
+   * `aria-checked` on it or on the control that is the switch. On a settings page the row is
+   * the switch's target; on an extension card and in the details header the switch stands
+   * alone beside the `⋯`, so the button around it is its hit area – the icon button's height
+   * (28 desktop, 44 phone) and no narrower, the track centred in it, no fill of its own.
    */
-  .zen-v2-switch {
+  .zen-ext-switch {
     display: inline-flex;
     flex-shrink: 0;
     align-items: center;
     justify-content: center;
-    width: 32px;
+    min-width: var(--v2-icon-button);
     height: var(--v2-icon-button);
-    border-radius: 6px;
-  }
-  .zen-v2-switch:disabled {
-    opacity: 0.4;
-  }
-  .zen-v2-toggle {
-    position: relative;
-    display: block;
-    width: 26px;
-    height: 14px;
-    border-radius: 7px;
-    border: 1px solid rgb(var(--v2-text-rgb) / 0.3);
-    background: var(--v2-fill);
-    transition:
-      background 120ms var(--zen-ease),
-      border-color 120ms var(--zen-ease);
-  }
-  .zen-v2-toggle::after {
-    content: '';
-    position: absolute;
-    top: 1px;
-    left: 1px;
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    background: var(--v2-text-deemphasized);
-    transition:
-      transform 160ms var(--zen-ease),
-      background 120ms var(--zen-ease);
-  }
-  .zen-v2-switch[aria-checked='true'] .zen-v2-toggle {
-    background: var(--v2-accent);
-    border-color: var(--v2-accent);
-  }
-  @media (hover: hover) {
-    .zen-v2-switch:hover:not(:disabled) .zen-v2-toggle {
-      background: var(--v2-fill-hover);
-    }
-    .zen-v2-switch[aria-checked='true']:hover:not(:disabled) .zen-v2-toggle {
-      background: color-mix(in srgb, var(--v2-accent) 88%, var(--v2-text));
-    }
-  }
-  .zen-v2-switch[aria-checked='true'] .zen-v2-toggle::after {
-    transform: translateX(12px);
-    background: var(--v2-on-accent);
-  }
-  [data-form-factor='phone'] .zen-v2-switch {
-    width: var(--v2-icon-button);
-    border-radius: 8px;
   }
 
-  /* Icon buttons (§9.3): 28 box, 16 glyph, radius 6; the phone's 44/20 box and glyph are tokens, its radius 8 is not. */
-  .zen-v2-icon-button {
-    display: inline-flex;
-    flex-shrink: 0;
-    align-items: center;
-    justify-content: center;
-    width: var(--v2-icon-button);
-    height: var(--v2-icon-button);
-    border-radius: 6px;
-    color: var(--v2-text);
-    transition: background 120ms var(--zen-ease);
-  }
-  .zen-v2-icon-button .lucide {
-    width: var(--v2-icon);
-    height: var(--v2-icon);
-  }
+  /*
+   * Icon buttons are main.css's `.zen-v2-icon-button` (§9.3, §9.34). The anchor keeps its
+   * pressed fill while its popover is open (§9.20) – on a desktop; on a phone the anchor opens
+   * a sheet, not a popover, so it keeps `aria-expanded` and not the lit fill.
+   */
   .zen-v2-icon-button[aria-expanded='true'] {
     background: var(--v2-fill);
   }
-  /* On a phone the anchor opens a sheet, not a popover: it keeps aria-expanded, not the lit fill (§9.20 is the desktop's). */
   [data-form-factor='phone'] .zen-v2-icon-button[aria-expanded='true'] {
     background: transparent;
-  }
-  @media (hover: hover) {
-    .zen-v2-icon-button:hover:not(:disabled) {
-      background: var(--v2-fill);
-    }
-  }
-  .zen-v2-icon-button:active:not(:disabled) {
-    background: var(--v2-fill-hover);
-  }
-  .zen-v2-icon-button:disabled {
-    opacity: 0.4;
-  }
-  .zen-v2-icon-button[aria-pressed='true'] {
-    color: var(--v2-accent);
-  }
-  [data-form-factor='phone'] .zen-v2-icon-button {
-    border-radius: 8px;
   }
 
   /* --- Panels, menus, dialogs (§1, §3, §6) ------------------------------------------------ */
@@ -1170,10 +1034,11 @@
 
 /*
  * Buttons (§6). main.css owns `.zen-v2-button` (the secondary, `[data-primary]` for the accent
- * fill, the pressed fill, the disabled opacity; unlayered, after this import). These add what
- * the extension surfaces need on top: a gap and glyph size for buttons with an icon, a hover
- * fill on a mouse, the danger ink. They stay outside `@layer components`, where the unlayered
- * base would beat them whatever their specificity.
+ * fill, `[data-danger]` for the danger ink, the pressed fill, the disabled opacity; unlayered,
+ * after this import). These add what the extension surfaces need on top: a gap and glyph size
+ * for buttons with an icon and a hover fill on a mouse. They stay outside `@layer components`,
+ * where the unlayered base would beat them whatever their specificity – as does the field's
+ * padding for its leading glyph below.
  */
 .zen-v2-button {
   gap: 8px;
@@ -1191,8 +1056,9 @@
     background: color-mix(in srgb, var(--v2-accent) 88%, var(--v2-text));
   }
 }
-.zen-v2-button[data-variant='danger'] {
-  color: var(--v2-danger);
+/* A field with a leading glyph (`.zen-v2-field-lead`, 16 at 10 in): the text starts 34 in. */
+.zen-v2-field[data-lead] {
+  padding-left: 34px;
 }
 /*
  * Busy is not disabled (§9.30): a working button keeps its opacity, its fill and its width – the

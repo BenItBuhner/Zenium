@@ -72,7 +72,7 @@ export function V2Menulist<T extends string>({
         type="button"
         className={cn('zen-v2-menulist', className)}
         aria-label={label}
-        aria-haspopup="listbox"
+        aria-haspopup={viewport.coarse ? 'dialog' : 'listbox'}
         aria-expanded={anchor !== null || undefined}
         onClick={(e) => setAnchor(anchorOf(e.currentTarget))}
       >
@@ -166,23 +166,21 @@ function MenulistSheet<T extends string>({
       handleLabel="Resize"
       header={<span className="zen-sheet-title">{label}</span>}
     >
-      <div className="zen-v2 flex flex-col pb-1" role="listbox" aria-label={label}>
-        {options.map((option) => {
-          const selected = option.value === value
-          return (
-            <button
-              key={option.value}
-              type="button"
-              role="option"
-              aria-selected={selected}
-              className="zen-sheet-item"
-              onClick={() => sheet.current?.dismiss(() => onPick(option.value))}
-            >
-              <V2Radio checked={selected} />
-              <span className="min-w-0 flex-1 truncate">{option.label}</span>
-            </button>
-          )
-        })}
+      {/* Radio rows (§9.13, §9.14): each row is the radio and carries `aria-checked`, which is what draws the shared glyph inside it. */}
+      <div className="zen-v2 flex flex-col pb-1" role="radiogroup" aria-label={label}>
+        {options.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            role="radio"
+            aria-checked={option.value === value}
+            className="zen-sheet-item"
+            onClick={() => sheet.current?.dismiss(() => onPick(option.value))}
+          >
+            <V2Radio />
+            <span className="min-w-0 flex-1 truncate">{option.label}</span>
+          </button>
+        ))}
       </div>
     </BottomSheet>,
     document.body
