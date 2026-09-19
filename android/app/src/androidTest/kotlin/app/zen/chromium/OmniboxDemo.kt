@@ -215,6 +215,13 @@ class OmniboxDemo : DemoHarness("omnibox-demo-state.json", "android-omnibox", "o
                     "first row now '$first' (refreshed ${first == expected}) ${verdict(ok)}"
             )
             if (!ok) failures += "Refine did not set the field without submitting (field '${fieldValue()}', tab '$urlAfter')"
+            // The field is cleared before the bar closes: the back gesture keeps an unsubmitted
+            // draft (the bar's rule, "Zen remembers what you typed until you navigate away"), and
+            // the next focus on the same page restores it, selected, ahead of the search-ready
+            // state the clipboard scene needs (run 4 reopened on 'how to brew coffee': no header,
+            // no clipboard row). An empty field leaves no draft.
+            if (!touchTapLabel(CLEAR_LABEL, timeoutMs = 4_000)) clickByLabel(CLEAR_LABEL)
+            SystemClock.sleep(600)
             closeUrlbar()
         }
 
@@ -260,6 +267,19 @@ class OmniboxDemo : DemoHarness("omnibox-demo-state.json", "android-omnibox", "o
                 ensureForeground()
                 SystemClock.sleep(800)
                 tapPill()
+            }
+            // The scene starts from the search-ready bar (empty field, the header): a draft the bar
+            // kept through an earlier back gesture comes back selected instead and lists no
+            // clipboard row. The findings say which the bar reopened in; a draft is cleared once.
+            awaitChrome("!!document.querySelector('$FIELD')", 6_000)
+            SystemClock.sleep(600)
+            val reopened = fieldValue()
+            if (reopened.isNotEmpty()) {
+                finding("  the bar reopened on the draft '$reopened' (no header, no clipboard row); Clear touched")
+                if (!touchTapLabel(CLEAR_LABEL, timeoutMs = 4_000)) clickByLabel(CLEAR_LABEL)
+                SystemClock.sleep(800)
+            } else {
+                finding("  the bar reopened search-ready (field empty)")
             }
             val show = awaitNode(8_000) { it == SHOW_LABEL }
             SystemClock.sleep(1_200)

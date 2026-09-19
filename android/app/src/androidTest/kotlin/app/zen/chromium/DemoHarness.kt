@@ -638,12 +638,15 @@ abstract class DemoHarness(
      * neither a title (only panels and accessibility overlays carry their WindowManager title over)
      * nor a type it names, so a wait on the title saw nothing and returned at once. It is told by
      * its place instead: a window of another package than the app's and the keyboard's (or one the
-     * tree has no root for) whose bounds reach over `target`; the system bars and the corner
-     * decorations never do. As the belt, the wait also runs the overlay's own clock out – it never
-     * returns before [CLIPBOARD_OVERLAY_MS] have passed since the copy – so a window the tree never
-     * reports is waited out all the same. True once nothing foreign is over the target with the
-     * clock run out, within `timeoutMs`; false with it still there (logged), for the caller to say
-     * so and go on.
+     * tree has no root for) whose bounds reach over the part of `target` inside [touchable]. The
+     * clipping matters: the system bars' windows lie outside the touchable band by construction,
+     * but the pill's rect from the tree reaches into the navigation bar's window (run 4: the bar's
+     * `Rect(0, 1516 - 720, 1600)` over a pill ending at 1550 held the wait to its timeout, though
+     * the touch itself lands inside the band). As the belt, the wait also runs the overlay's own
+     * clock out – it never returns before [CLIPBOARD_OVERLAY_MS] have passed since the copy – so a
+     * window the tree never reports is waited out all the same. True once nothing foreign is over
+     * the target with the clock run out, within `timeoutMs`; false with it still there (logged),
+     * for the caller to say so and go on.
      *
      * Opt-in: no touch helper waits for the overlay on its own, so a driver that copies nothing,
      * or touches nowhere near the bottom after a copy, is unaffected; a driver that copies and then
@@ -676,17 +679,21 @@ abstract class DemoHarness(
 
     /**
      * The windows a touch on `target` could land in instead of the app's: every window the tree
-     * lists whose bounds reach over it, except the app's own and the keyboard's. Each as
-     * "package bounds" ("?" for a window the tree has no root, so no package, for).
+     * lists whose bounds reach over the part of `target` inside [touchable] (a finger only lands
+     * there; the system bars' windows sit outside the band), except the app's own and the
+     * keyboard's. Each as "package bounds" ("?" for a window the tree has no root, so no package,
+     * for). Empty for a target wholly outside the band.
      */
     private fun foreignWindowsOver(target: Rect): List<String> {
+        val band = Rect(target)
+        if (!band.intersect(touchable)) return emptyList()
         val found = ArrayList<String>()
         for (window in ui.windows) {
             if (window.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD) continue
             val pkg = window.root?.packageName?.toString()
             if (pkg == app.packageName) continue
             val bounds = Rect().also { window.getBoundsInScreen(it) }
-            if (Rect.intersects(bounds, target)) found += "${pkg ?: "?"} $bounds"
+            if (Rect.intersects(bounds, band)) found += "${pkg ?: "?"} $bounds"
         }
         return found
     }
