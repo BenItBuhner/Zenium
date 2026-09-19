@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, useState, type JSX, type ReactElement, type ReactNode } from 'react'
+import { StrictMode, act, useState, type JSX, type ReactElement, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { ExternalProtocolRequest, MenuDescriptor } from '@shared/types'
 import { BottomSheet } from '../sheet/BottomSheet'
@@ -665,5 +665,44 @@ describe('the external-protocol confirm (ExternalProtocolLayer: the core’s que
     expect(presence(next)).toBeLessThan(rising)
     runLeave()
     expect(sheets()).toHaveLength(0)
+  })
+})
+
+describe('under <StrictMode> (effects mounted, torn down and mounted again before the first paint)', () => {
+  it('the sheet still comes up after the rehearsed unmount – its cover taken again, not left for gone – and its leave still lands', async () => {
+    render(
+      <StrictMode>
+        <Layer request="menu" />
+      </StrictMode>
+    )
+    await settle()
+    frames.run(60)
+    // Caught by the preview host, not the suite: the rehearsed cleanup marked the sheet presented
+    // and the real mount then never brought it up (opacity 0, p 0, the page held under a cover).
+    const sheet = sheets()[0]
+    expect(sheet.style.opacity).toBe('1')
+    expect(presence(sheet)).toBe(1)
+    expect(recedeVar()).toBe('1.0000')
+    expect(recedeDepth()).toBe(1)
+    expect(uiStore.get().frameSheetOpen).toBe(true)
+
+    rerender(
+      <StrictMode>
+        <Layer request={null} />
+      </StrictMode>
+    )
+    expect(sheets()[0]).toBe(sheet)
+    expect(sheet.hasAttribute('inert')).toBe(true)
+    let judged = 0
+    runLeave((p) => {
+      if (sheets().length === 0) return
+      expect(p).toBeCloseTo(presence(sheet), 3)
+      judged++
+    })
+    expect(judged).toBeGreaterThan(5)
+    expect(sheets()).toHaveLength(0)
+    expect(recedeDepth()).toBe(0)
+    expect(recedeVar()).toBe('')
+    expect(uiStore.get().frameSheetOpen).toBe(false)
   })
 })

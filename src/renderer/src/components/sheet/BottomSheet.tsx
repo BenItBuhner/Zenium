@@ -491,12 +491,13 @@ export function BottomSheet({
 
   // Unmounted – once the sheet has landed under a `SheetPresence`, or mid-motion where its
   // request unmounts it directly: stop the spring without reporting a close, and let the page
-  // back from under the cover.
+  // back from under the cover. A cover still pending is dropped by clearing the ref (its `then`
+  // checks it); `presented` is left alone so that StrictMode's rehearsal of this cleanup does
+  // not stop the real mount from presenting.
   useEffect(
     () => () => {
       cover.current?.release()
       cover.current = null
-      presented.current = true
       if (fade.current !== null) window.clearTimeout(fade.current)
       fade.current = null
       const m = motionRef.current
