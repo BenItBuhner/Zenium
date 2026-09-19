@@ -792,7 +792,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * Google Translate: selecting text shows its translate button; its content script listens for
      * `mouseup`. A real long press selects the phrase on the phone (a touch flow, no mouseup);
      * when that shows no button, the selection is made from the page and a `mouseup` dispatched,
-     * which tells the runtime path from the pointer model.
+     * which tells the runtime path from the pointer model. The touch selection is cleared from the
+     * page (Chromium takes its handles and toolbar down with it): a Back on a tab without history
+     * leaves the browser (`PredictiveBack.nothingLeft`, `moveTaskToBack`), and every evaluation
+     * of the synthetic path answered null against the paused page (both jobs, every run).
      */
     private fun googleTranslate(row: Row, entry: JSONObject): Grade {
         val tab = createTab("$BASE/editor.html?translate")
@@ -812,10 +815,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             found = pollExpr(view, button, 6_000)
             extra.put("afterLongPress", found)
             if (found.optBoolean("pass")) how = "touch"
-            back()
+            tabEval(view, "(function(){getSelection().removeAllRanges();return 'ok'})()")
             SystemClock.sleep(600)
         }
-        if (how == "none") {
+        if (how == "none" && onScreen("Google Translate: the synthetic selection")) {
             tabEval(view, "(function(){var el=document.getElementById('phrase');var r=document.createRange();r.selectNodeContents(el);var s=getSelection();s.removeAllRanges();s.addRange(r);var rect=el.getBoundingClientRect();el.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,clientX:rect.right-1,clientY:rect.top+rect.height/2,button:0}));return 'ok'})()")
             found = pollExpr(view, button, 8_000)
             extra.put("afterSyntheticMouseup", found)
@@ -915,7 +918,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val found = pollExpr(view, expr, 25_000)
         val extra = JSONObject().put("page", found).put("console", JSONArray(consoleOf(view).takeLast(10)))
         if (worlds) worldEval(view, row.id, WORLD_REPORT)?.let { extra.put("world", json(it)) }
-        back()
+        // The keyboard goes with a Back only while it is up: without one the Back leaves the browser.
+        if (imeShown()) back() else tabEval(view, "(function(){document.activeElement&&document.activeElement.blur();return 'ok'})()")
         SystemClock.sleep(600)
         Grade(if (found.optBoolean("pass")) "P" else "F", "$label: ${found.toString().take(220)}", extra)
     }
