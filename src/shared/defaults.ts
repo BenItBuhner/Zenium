@@ -208,6 +208,7 @@ export const DEFAULT_SETTINGS: Settings = {
   phoneBarPosition: 'bottom',
   phoneBar: defaultPhoneBar(),
   pullToRefresh: true,
+  hideToolbarOnScroll: true,
   glanceEnabled: true,
   glanceTrigger: 'alt',
   pinnedCloseBehavior: 'reset-unload-switch',

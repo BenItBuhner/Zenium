@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>The bar that hides on scroll</title>
+<style>
+  /*
+   * A long page for the bar-hide demo's camera: numbered sections down a few screens, so a drag
+   * has somewhere to scroll to at every step, and a badge fixed to the viewport's bottom edge
+   * that reads the viewport's height – it rides the page's edge as the bar leaves and returns,
+   * so the recording shows the page gaining the bar's band and the driver reads the same number
+   * through `innerHeight`. Nothing here is fetched from the network.
+   */
+  html { background: #fff; color: #15141a; }
+  @media (prefers-color-scheme: dark) { html { background: #16161b; color: #ececf1; } }
+  body { margin: 0; padding: 12px 20px 96px; font: 17px/1.45 -apple-system, Roboto, sans-serif; }
+  h1 { margin: 0 0 6px; font-size: 24px; line-height: 1.2; }
+  h2 { margin: 22px 0 4px; font-size: 18px; }
+  p { margin: 0 0 10px; }
+  .meta { font-size: 13px; opacity: 0.7; margin-bottom: 10px; }
+  section { border-top: 1px solid rgba(127, 127, 140, 0.35); padding-top: 4px; }
+  .n { display: inline-block; min-width: 2.2em; opacity: 0.55; font-variant-numeric: tabular-nums; }
+  #edge {
+    position: fixed; left: 0; right: 0; bottom: 0; height: 40px;
+    display: flex; align-items: center; justify-content: center; gap: 12px;
+    background: rgba(70, 120, 220, 0.92); color: #fff; font: 600 15px/1 -apple-system, Roboto, sans-serif;
+    letter-spacing: 0.01em;
+  }
+  #edge b { font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<h1>The bar that hides on scroll</h1>
+<p class="meta">A demo page served from inside the browser's own process. Scroll down and the address bar slides off its edge one to one with the page; scroll up a little and it comes back; let go part way and it snaps whichever way is nearer.</p>
+<p>The blue band at the bottom is fixed to the viewport's bottom edge and reads the viewport's height. When the bar has gone the page has its band, so the number grows by the band's height and the blue edge sits where the bar was; when the bar is back the number is what it was.</p>
+<div id="body"></div>
+<div id="edge">viewport <b id="h">0</b> px tall</div>
+<script>
+  var words = ['The page scrolls under a finger and the bar follows the scroll.', 'Any scroll up brings the bar back before the page moves on.', 'A release part way snaps the bar in or out on a spring.', 'The new tab page and the browser\u2019s own pages keep their bar in place.', 'A sheet, the omnibox, a docked panel or the keyboard hold the bar shown.', 'A fling that runs out at the top of the page brings the bar back.']
+  var body = document.getElementById('body')
+  for (var i = 1; i <= 60; i++) {
+    var s = document.createElement('section')
+    var h = document.createElement('h2')
+    h.innerHTML = '<span class="n">' + i + '</span>Section ' + i
+    var p = document.createElement('p')
+    p.textContent = words[(i - 1) % words.length] + ' ' + words[i % words.length]
+    s.appendChild(h)
+    s.appendChild(p)
+    body.appendChild(s)
+  }
+  var out = document.getElementById('h')
+  function measure() { out.textContent = String(window.innerHeight) }
+  window.addEventListener('resize', measure)
+  measure()
+</script>
+</body>
+</html>

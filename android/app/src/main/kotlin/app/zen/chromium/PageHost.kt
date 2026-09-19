@@ -79,6 +79,9 @@ interface PageHost {
     /** A pull-to-refresh on a page moved on: `start`, `move`, `release` or `cancel` (see `lib/pull.ts`). */
     fun pullEvent(tabId: String, phase: String, payload: JSONObject?) {}
 
+    /** A page scrolled under the bar that hides on scroll: `start`, `move`, `end` or `show` (see `lib/barHide.ts`). */
+    fun barScroll(tabId: String, phase: String, payload: JSONObject?) {}
+
     /** A physical key the shortcut table matched (`tabId` null: typed into the chrome). */
     fun onKey(tabId: String?, input: JSONObject)
 

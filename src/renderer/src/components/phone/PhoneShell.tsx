@@ -5,6 +5,7 @@ import { internalPageOf } from '@shared/internalPages'
 import type { PhoneBarPosition, Space, Tab, UIState } from '@shared/types'
 import { displayHost } from '@shared/url'
 import { run } from '@renderer/lib/api'
+import { setBarHideContext, showBar } from '@renderer/lib/barHide'
 import {
   contentShift,
   cssPx,
@@ -91,6 +92,18 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
     []
   )
 
+  // The bar hides on scroll (lib/barHide.ts) only while this shell shows it: the machine hears
+  // where it is docked and how far it has to go (the band minus the gutter the page keeps).
+  useEffect(() => {
+    setBarHideContext({
+      edge,
+      present: !htmlFullscreen && !onboarding,
+      band: phoneBarHeight(),
+      gutter: cssPx('--zen-padding', 8)
+    })
+  }, [edge, htmlFullscreen, onboarding])
+  useEffect(() => () => setBarHideContext({ present: false }), [])
+
   // The lighter default-browser reminder (DEF-02) is one of the top banners (v2 §9.33), up for
   // as long as the core says a banner is due. Swiping or closing it is the campaign's one
   // dismissal; the action hands over to the system, which ends the campaign either way; and
@@ -162,9 +175,18 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
   // simply renders there, under the ghost that is setting down on it.
   const fromHere = dock.phase !== 'idle' && dock.from === edge
   const p = Math.min(1, Math.max(0, dock.progress))
+  // The bar has hidden on scroll and rests off its edge: the content column takes the band. In
+  // between the host moves the page's edge frame by frame (`--zen-bar-hide`); the column changes
+  // only at the two rests, so the page is laid out twice per hide, never per frame.
+  const barAway = ui.barHidden && !barHidden
+  // `overflow: clip`, not `hidden`: a hidden bar is translated past the window's edge and would
+  // make a hidden-overflow window scrollable by script, so accessibility focus landing on the
+  // pill (TalkBack, or the demo's focus action) would scroll the whole chrome to reach it and
+  // drag the page's reported frame along. A clipped window cannot scroll; the bar comes back
+  // through `showBar` instead.
   return (
     <div
-      className="zen-window relative flex h-full w-full flex-col overflow-hidden"
+      className="zen-window relative flex h-full w-full flex-col overflow-clip"
       data-dark={isDark}
       style={{
         paddingTop: 0,
@@ -183,8 +205,8 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
         style={{
           // The bar's edge reserves the bar band (the URL bar's field takes it over while the bar
           // is hidden); the other edge keeps the content gutter above the inset.
-          paddingTop: edgePadding('top', edge),
-          paddingBottom: edgePadding('bottom', edge),
+          paddingTop: edgePadding('top', edge, barAway),
+          paddingBottom: edgePadding('bottom', edge, barAway),
           paddingLeft: 'var(--zen-padding)',
           paddingRight: 'var(--zen-padding)'
         }}
@@ -198,8 +220,8 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
         data-shell-chrome
         className="zen-message-frame pointer-events-none absolute z-[36]"
         style={{
-          top: edgePadding('top', edge),
-          bottom: edgePadding('bottom', edge),
+          top: edgePadding('top', edge, barAway),
+          bottom: edgePadding('bottom', edge, barAway),
           left: 'var(--zen-padding)',
           right: 'var(--zen-padding)'
         }}
@@ -249,10 +271,13 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
   )
 }
 
-/** What the content column leaves free at `side`: the bar band on the bar's edge, a gutter elsewhere. */
-function edgePadding(side: PhoneBarPosition, barEdge: PhoneBarPosition): string {
+/**
+ * What the content column leaves free at `side`: the bar band on the bar's edge, a gutter
+ * elsewhere – and a gutter on the bar's edge too while the bar rests hidden off it (`barAway`).
+ */
+function edgePadding(side: PhoneBarPosition, barEdge: PhoneBarPosition, barAway = false): string {
   const inset = `var(--zen-inset-${side})`
-  return side === barEdge
+  return side === barEdge && !barAway
     ? `calc(${inset} + var(--zen-phone-bar))`
     : `calc(${inset} + var(--zen-padding))`
 }
@@ -306,10 +331,14 @@ export function PhoneBar({
       )}
       // Window chrome: the bar, the pill and their chips draw in the window family (v2 §9.29).
       data-surface="window"
-      // The edge it is docked at: main.css fades the bottom-docked bar with a sheet (§11.1).
+      // The edge it is docked at: main.css fades the bottom-docked bar with a sheet (§11.1) and
+      // slides it off by `--zen-bar-hide` as the page scrolls (lib/barHide.ts).
       data-edge={edge}
       aria-hidden={inert || undefined}
       data-shell-chrome
+      // A hidden bar stays in the accessibility tree: TalkBack focus landing on it (the pill,
+      // a button) brings it back, as does keyboard focus.
+      onFocus={inert ? undefined : showBar}
       style={{
         ...style,
         left: 'var(--zen-inset-left)',

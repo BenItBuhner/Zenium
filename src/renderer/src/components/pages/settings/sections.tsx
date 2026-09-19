@@ -281,6 +281,16 @@ function lookSection({ state, set, pointer, openBarEditor }: SectionContext): Ro
         onChange: (v) => set({ phoneBarPosition: v })
       }),
       {
+        kind: 'switch',
+        id: 'hide-toolbar-on-scroll',
+        label: 'Hide toolbar when scrolling',
+        description:
+          'On phones, the bar slides away as a page scrolls down and back as it scrolls up.',
+        keywords: ['address bar', 'scroll', 'hide', 'toolbar'],
+        checked: s.hideToolbarOnScroll,
+        onChange: (v) => set({ hideToolbarOnScroll: v })
+      },
+      {
         kind: 'action',
         id: 'navigation-bar',
         label: 'Navigation bar',

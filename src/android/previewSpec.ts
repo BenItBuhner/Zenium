@@ -96,6 +96,14 @@ export type PreviewState =
       released: boolean
     }
   | {
+      /** The phone bar hiding on scroll (`lib/barHide.ts`). */
+      kind: 'barhide'
+      /** How far the bar is off its edge: 0 shown … 1 hidden. */
+      progress: number
+      /** The finger has lifted: the bar snaps to the nearer end and rests there. */
+      released: boolean
+    }
+  | {
       /** The page zoom sheet, the active tab's site at `factor` (null: as it is). */
       kind: 'zoom'
       factor: number | null
@@ -152,7 +160,9 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * detent on its expanded one), `menu=app` for the app menu sheet (with `show=<text>` to scroll an
  * item into view), `find=<text>` for the find bar with that text typed (`find=` opens it empty),
  * `pull=<n>` for the active page held pulled down at n percent of the refresh threshold
- * (`pull=refresh` pulls past it and lets go), `zoom=<factor>` for the page zoom sheet with the
+ * (`pull=refresh` pulls past it and lets go), `barhide=<n>` for the phone bar held n percent
+ * of the way off its edge by a scroll (`barhide=hidden` scrolls it off and lets go, so it rests
+ * hidden), `zoom=<factor>` for the page zoom sheet with the
  * active tab's site at that factor (`zoom=` opens it as it is), `error=<code>` for the active
  * tab's load failing with that Chromium `net::` code (with `url=<target>` for the URL that
  * failed, else the tab's own), which puts up the zen://error page, any of `toast=<text>` (with
@@ -163,7 +173,7 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * `fail=<error>`, `deleted` for a finished file since gone from disk, `private`, `url=<url>`,
  * `mime=<type>`). When several are given, `page` wins
  * over `overlay`, `overlay` over `menu`, `menu` over `find`, `find` over `pull`, `pull` over
- * `zoom`, `zoom` over `error`, `error` over the messages, the messages over `webapp` and `webapp`
+ * `barhide`, `barhide` over `zoom`, `zoom` over `error`, `error` over the messages, the messages over `webapp` and `webapp`
  * over `download`. A leading `#` (the URL hash as read) is ignored.
  */
 export function parsePreviewSpec(spec: string): PreviewState {
@@ -208,6 +218,12 @@ export function parsePreviewSpec(spec: string): PreviewState {
   if (pull !== null && pull !== '' && Number.isFinite(Number(pull))) {
     const progress = Math.min(PREVIEW_PULL_MAX, Math.max(0, Number(pull) / 100))
     return { kind: 'pull', progress, released: false }
+  }
+  const barhide = params.get('barhide')
+  if (barhide === 'hidden') return { kind: 'barhide', progress: 1, released: true }
+  if (barhide !== null && barhide !== '' && Number.isFinite(Number(barhide))) {
+    const progress = Math.min(1, Math.max(0, Number(barhide) / 100))
+    return { kind: 'barhide', progress, released: false }
   }
   const zoom = params.get('zoom')
   if (zoom !== null) {
