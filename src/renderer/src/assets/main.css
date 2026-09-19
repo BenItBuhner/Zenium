@@ -339,6 +339,31 @@
 .zen-v2-button[data-danger] {
   color: var(--v2-danger);
 }
+/*
+ * On the window (the first run, `data-surface="window"`) the secondary reads the window family
+ * through the control roles (§9.29): a fill of the window's ink, not the page's – beside the rule
+ * and unlayered like it, since a layered override would lose to it. The primary keeps the rule's
+ * `--v2-accent`, the clamped mix, for its contrast on a gradient of the accent's own hue.
+ */
+.zen-firstrun .zen-v2-button:not([data-primary]) {
+  background: var(--v2-control-fill);
+  color: var(--v2-control-text);
+}
+.zen-firstrun .zen-v2-button:not([data-primary]):active:not(:disabled) {
+  background: var(--v2-control-fill-hover);
+}
+/*
+ * The first run's own controls keep the ring under the coarse-pointer suppressor further down,
+ * as every v2 control does (§9.6), in the window's accent; inside the row, since rows run edge to
+ * edge.
+ */
+.zen-firstrun-radio:focus-visible,
+.zen-firstrun-tile:focus-visible,
+:root[data-pointer='coarse'] .zen-firstrun-radio:focus-visible,
+:root[data-pointer='coarse'] .zen-firstrun-tile:focus-visible {
+  outline: 2px solid var(--v2-control-accent);
+  outline-offset: -2px;
+}
 
 /*
  * The v2 badge (§9.19): a text pill 20 tall, 13/600, padding 0 8, in the family of the surface
@@ -3371,6 +3396,190 @@
   }
   45% {
     opacity: 1;
+  }
+}
+
+@layer components {
+  /*
+   * The first run on a phone (design-language-v2-draft.md §9.29, §9.17, §9.2, §9.14, §9.21). The
+   * flow is one page that is the window, like the new tab page: the overlay wears the space
+   * gradient itself (the page card underneath must not show through) and follows a change of
+   * look the way the window does, and its root carries `data-surface="window"`, so its text is
+   * the theme's ink and every control here reads the window family through the `--v2-control-*`
+   * roles – nothing below names a page token or a hue of its own. Its choices are rows under
+   * 15/600 headings (§9.17: no new phone cards) plus the image radio tiles of the colour presets;
+   * every size and line-height is §4's fixed scale through the tokens.
+   */
+  .zen-firstrun {
+    background: var(--zen-bg);
+    color: var(--v2-control-text);
+    transition: background 600ms var(--zen-ease);
+  }
+  /* The progress: one 8 px dot per step, the current one in the full ink, the rest at 30%. */
+  .zen-firstrun-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 9999px;
+    background: rgb(var(--zen-fg-rgb) / 0.3);
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-firstrun-dot[data-active='true'] {
+    background: var(--v2-control-text);
+  }
+  /*
+   * Type, §4's fixed scale through #169's tokens. The wordmark is the one display size outside
+   * the scale – 34/600 on a 40 line, the first run's welcome and About only, tracked in a little –
+   * and the scale has no token for it, so it is the one literal here. The step title is the page
+   * title 22/600 on `--v2-line-title` (§9.26); a group heading is the sub-heading 15/600 on the
+   * body line (§9.27; nothing in the flow is a 17 heading on `--v2-line-heading`); body 15 at 20,
+   * small 13 at 20 (§9.2: `--v2-line-small`, no stand-in); deemphasised is 69% of the ink.
+   */
+  .zen-firstrun-wordmark {
+    font-size: 34px;
+    font-weight: var(--v2-weight-heading);
+    line-height: 40px;
+    letter-spacing: -0.02em;
+  }
+  .zen-firstrun-title {
+    font-size: var(--v2-font-title);
+    font-weight: var(--v2-weight-heading);
+    line-height: var(--v2-line-title);
+  }
+  .zen-firstrun-heading {
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-heading);
+    line-height: var(--v2-line-body);
+  }
+  .zen-firstrun-body {
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-body);
+    line-height: var(--v2-line-body);
+  }
+  .zen-firstrun-small {
+    font-size: var(--v2-font-small);
+    font-weight: var(--v2-weight-body);
+    line-height: var(--v2-line-small);
+  }
+  .zen-firstrun-deemphasized {
+    color: var(--v2-control-text-deemphasized);
+  }
+  /*
+   * A group of choices (§9.27, §10.3): 20 above its heading – 16 when it follows the step's title
+   * block (§9.26) – and the heading's line box 4 above the first row's box (a bare heading).
+   */
+  .zen-firstrun-group {
+    padding-top: 20px;
+  }
+  .zen-firstrun-intro + .zen-firstrun-group {
+    padding-top: 16px;
+  }
+  /*
+   * A two-line row (§9.2, §9.21): the text at the 16 gutter, 12 above and below (20 + 20 + 24 =
+   * 64), the row edge to edge; its 20 px glyph on the first text line, (line − glyph) / 2 below
+   * the line's top – 0 here – never a constant, and the glyph does not grow the line.
+   */
+  .zen-firstrun-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 12px 16px;
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
+  }
+  .zen-firstrun-row-glyph {
+    display: inline-flex;
+    width: var(--v2-icon);
+    height: var(--v2-icon);
+    flex-shrink: 0;
+    margin-top: calc((var(--v2-line-body) - var(--v2-icon)) / 2);
+  }
+  .zen-firstrun-row-glyph > svg {
+    width: 100%;
+    height: 100%;
+    stroke-width: var(--v2-icon-stroke);
+  }
+  /*
+   * A radio row (§9.2, §9.14, §9.21): the 20 px circle then the label 15/400 on the row's 44,
+   * growing with the label, never clamping; the vertical padding is (row − line) / 2, so one line
+   * sits on the base height and the circle can take the first text line rather than the row's
+   * centre – `align-self: flex-start` and (line − box) / 2 below the line's top, 0 for the phone's
+   * 20 on a 20 line. The whole row is the target; its press fill bleeds to the edge (§9.25); rows
+   * touch (no list gap).
+   */
+  .zen-firstrun-radio {
+    display: flex;
+    width: 100%;
+    min-height: var(--v2-row);
+    align-items: center;
+    gap: 12px;
+    padding: calc((var(--v2-row) - var(--v2-line-body)) / 2) 16px;
+    color: inherit;
+    text-align: left;
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-body);
+    line-height: var(--v2-line-body);
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-firstrun-radio:active {
+    background: var(--v2-control-fill);
+  }
+  .zen-firstrun-radio-mark {
+    width: var(--v2-checkbox);
+    height: var(--v2-checkbox);
+    flex-shrink: 0;
+    align-self: flex-start;
+    margin-top: calc((var(--v2-line-body) - var(--v2-checkbox)) / 2);
+    border: 1px solid rgb(var(--zen-fg-rgb) / 0.45);
+    border-radius: 9999px;
+    transition:
+      border-color 120ms var(--zen-ease),
+      background 120ms var(--zen-ease),
+      box-shadow 120ms var(--zen-ease);
+  }
+  /*
+   * Checked (§9.14): the accent fills the circle around a 6 px dot – the fill is an inset ring of
+   * (box − 6) / 2 over the dot's colour, 7 on the phone's 20 – in the ink that reads on the
+   * accent, since the window has no page colour to lend the dot.
+   */
+  .zen-firstrun-radio[aria-checked='true'] .zen-firstrun-radio-mark {
+    border-color: var(--v2-control-accent);
+    background: var(--zen-on-accent);
+    box-shadow: inset 0 0 0 calc((var(--v2-checkbox) - 6px) / 2 - 1px) var(--v2-control-accent);
+  }
+  /*
+   * A swatch tile, §9.14's small form of the image radio (§10.4): three per row at an 8 gap in
+   * the 16 gutter (the grid's), each the preset's colour at `--v2-radius-card` spanning its
+   * column, the 13 caption centred 8 below on the token's line, and the picked one with the 2 px
+   * accent outline 2 px outside its edge, concentric with it (`outline-offset`); the tile scales
+   * `.96` while pressed (v1 §7's press).
+   */
+  .zen-firstrun-tile {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    color: inherit;
+    text-align: center;
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+  }
+  .zen-firstrun-tile-image {
+    display: block;
+    width: 100%;
+    height: 64px;
+    border: 1px solid var(--v2-control-fill);
+    border-radius: var(--v2-radius-card);
+    transition:
+      transform 120ms var(--zen-ease),
+      outline-color 120ms var(--zen-ease);
+  }
+  .zen-firstrun-tile:active .zen-firstrun-tile-image {
+    transform: scale(0.96);
+  }
+  .zen-firstrun-tile[aria-checked='true'] .zen-firstrun-tile-image {
+    outline: 2px solid var(--v2-control-accent);
+    outline-offset: 2px;
   }
 }
 

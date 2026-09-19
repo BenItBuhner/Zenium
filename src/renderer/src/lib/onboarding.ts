@@ -4,11 +4,14 @@ import type { ViewportInfo } from './formFactor'
 /**
  * Which steps the first run shows. Pure over the host's capabilities and the viewport, so the
  * tour can be reasoned about (and tested) without rendering it: a step about sync is only shown
- * where sync exists, and keyboard shortcuts are only taught where a keyboard is likely.
+ * where sync exists, keyboard shortcuts are only taught where a keyboard is likely, and the
+ * phone's short flow only asks about the browser role where the host has one to give.
  */
 
 export type TourStep =
   'welcome' | 'look' | 'search' | 'essentials' | 'features' | 'sync' | 'shortcuts'
+
+export type PhoneStep = 'welcome' | 'look' | 'search' | 'default'
 
 export type TourFeature = 'spaces' | 'compact' | 'glance' | 'boosts' | 'livefolders' | 'sync'
 
@@ -43,4 +46,18 @@ export function tourFeatures(caps: TourCapabilities, touchOnly: boolean): TourFe
   features.push('boosts', 'livefolders')
   if (caps.sync) features.push('sync')
   return features
+}
+
+/**
+ * The phone's first run: welcome, look, search engine, and – where the host has a browser role
+ * that Zenium does not hold yet – set as default.
+ */
+export function phoneSteps(options: {
+  defaultBrowser: boolean
+  /** The host's live answer; `true` skips the step (nothing to ask), `null` still asks. */
+  isDefault: boolean | null
+}): PhoneStep[] {
+  const steps: PhoneStep[] = ['welcome', 'look', 'search']
+  if (options.defaultBrowser && options.isDefault !== true) steps.push('default')
+  return steps
 }

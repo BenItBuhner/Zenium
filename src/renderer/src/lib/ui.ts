@@ -292,6 +292,8 @@ export interface UiState {
   tabsMenu: Rect | null
   /** The downloads bubble (anchored under the toolbar button) is up. */
   downloadsOpen: boolean
+  /** The default-browser promo (sheet or dialog) is up over a capture of the page. */
+  defaultBrowserPrompt: boolean
   /** Safe-area insets of the host window (status bar, gesture bar, IME). */
   insets: Insets
   /**
@@ -366,6 +368,7 @@ export const uiStore = createStore<UiState>(
     barEditorOpen: false,
     tabsMenu: null,
     downloadsOpen: false,
+    defaultBrowserPrompt: false,
     insets: { top: 0, right: 0, bottom: 0, left: 0 },
     stageActive: false,
     hoverCard: HOVER_CARD_HIDDEN,
@@ -651,6 +654,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.pageDialogOpen &&
     !ui.windowPromptOpen &&
     !ui.downloadsOpen &&
+    !ui.defaultBrowserPrompt &&
     !ui.stageActive &&
     !ui.zoomBubble &&
     !ui.newTabShortcutDialog &&
@@ -687,6 +691,7 @@ export function invalidateSnapshot(): void {
     !ui.pageDialogOpen &&
     !ui.windowPromptOpen &&
     !ui.downloadsOpen &&
+    !ui.defaultBrowserPrompt &&
     !ui.stageActive &&
     !ui.zoomBubble &&
     ui.hoverCard.tabId === null &&
@@ -1052,6 +1057,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.pageDialogOpen ||
     ui.windowPromptOpen ||
     ui.downloadsOpen ||
+    ui.defaultBrowserPrompt ||
     ui.stageActive ||
     ui.zoomBubble !== null ||
     ui.hoverCard.tabId !== null ||

@@ -1,8 +1,9 @@
 import type { CSSProperties, JSX } from 'react'
 import { useEffect, useRef } from 'react'
-import { Lock, Search } from 'lucide-react'
+import { Globe, Lock, Search } from 'lucide-react'
 import type { PhoneBarPosition, Space, Tab, UIState } from '@shared/types'
 import { displayHost } from '@shared/url'
+import { run } from '@renderer/lib/api'
 import {
   contentShift,
   cssPx,
@@ -18,9 +19,12 @@ import {
   closeBarEditor,
   closeTabsMenu,
   contentAreaStore,
+  dismissBanner,
   openBarEditor,
   openTabsMenu,
   openUrlbar,
+  overlayCoversContent,
+  showBanner,
   uiStore,
   type UiState
 } from '@renderer/lib/ui'
@@ -39,6 +43,7 @@ import { SpacesDrawer } from './SpacesDrawer'
 import { TabPreview } from './TabPreview'
 import { TabsQuickMenu } from './TabsQuickMenu'
 import { useBarHold, type BarHoldHandlers } from './useBarHold'
+import { useGestureHint } from './useGestureHint'
 import { usePillGestures, type PillGestureHandlers } from './usePillGestures'
 import './phonePanels.css'
 
@@ -84,6 +89,33 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
     []
   )
 
+  // The lighter default-browser reminder (DEF-02) is one of the top banners (v2 §9.33), up for
+  // as long as the core says a banner is due. Swiping or closing it is the campaign's one
+  // dismissal; the action hands over to the system, which ends the campaign either way; and
+  // when the core takes the prompt down itself – after the request, or once Zenium holds the
+  // role – the card leaves as `'program'`, which counts for nothing. A third banner pushing it
+  // off (`'replaced'`) is not the user's answer either.
+  const bannerDue = state.defaultBrowser.prompt === 'banner' && !onboarding
+  useEffect(() => {
+    if (!bannerDue) return
+    const id = showBanner({
+      title: 'Open links in Zenium',
+      detail: 'Make it your default browser',
+      icon: Globe,
+      action: {
+        label: 'Set as default',
+        onPick: () => run('defaultBrowser.request', { source: 'banner' })
+      },
+      key: 'default-browser',
+      duration: null,
+      onDismiss: (reason) => {
+        if (reason === 'swipe' || reason === 'close')
+          run('defaultBrowser.dismiss', { prompt: 'banner' })
+      }
+    })
+    return () => dismissBanner(id)
+  }, [bannerDue])
+
   // A hold on the Tabs button: its quick menu, anchored to the button; any other hold, the editor.
   const hold = useBarHold({
     onHold: (item, rect) => {
@@ -105,9 +137,24 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
     }
   })
 
+  const barHidden = ui.urlbar.open
+  // The one-time gesture hint (FRE-07) is a toast on the message cards, owed once the chrome is
+  // calm: a page in view under nothing, the bar and its pill in place, no drag, overview or prompt.
+  useGestureHint(
+    state,
+    edge,
+    !onboarding &&
+      !htmlFullscreen &&
+      !barHidden &&
+      tab !== null &&
+      !overlayCoversContent(ui) &&
+      !overviewOpen &&
+      dock.phase === 'idle' &&
+      state.defaultBrowser.prompt !== 'sheet'
+  )
+
   if (htmlFullscreen) return <div className="h-full w-full bg-black" />
 
-  const barHidden = ui.urlbar.open
   // The pill is off its slot and Settings still name the edge it left: the bar there fades out
   // as a preview of the bar at the other edge fades in. Once the new edge is committed the bar
   // simply renders there, under the ghost that is setting down on it.

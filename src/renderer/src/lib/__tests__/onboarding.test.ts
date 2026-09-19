@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isTouchOnly, tourFeatures, tourSteps } from '../onboarding'
+import { isTouchOnly, phoneSteps, tourFeatures, tourSteps } from '../onboarding'
 
 describe('isTouchOnly', () => {
   it('is a coarse pointer without hover', () => {
@@ -68,5 +68,33 @@ describe('tourFeatures', () => {
     expect(features).not.toContain('compact')
     expect(features).not.toContain('glance')
     expect(features).toEqual(['spaces', 'boosts', 'livefolders', 'sync'])
+  })
+})
+
+describe('phoneSteps', () => {
+  it('asks about the browser role where the host has one Zenium does not hold', () => {
+    expect(phoneSteps({ defaultBrowser: true, isDefault: false })).toEqual([
+      'welcome',
+      'look',
+      'search',
+      'default'
+    ])
+    expect(phoneSteps({ defaultBrowser: true, isDefault: null })).toContain('default')
+  })
+
+  it('skips the step when Zenium already is the default', () => {
+    expect(phoneSteps({ defaultBrowser: true, isDefault: true })).toEqual([
+      'welcome',
+      'look',
+      'search'
+    ])
+  })
+
+  it('skips the step on hosts without a browser role', () => {
+    expect(phoneSteps({ defaultBrowser: false, isDefault: false })).toEqual([
+      'welcome',
+      'look',
+      'search'
+    ])
   })
 })

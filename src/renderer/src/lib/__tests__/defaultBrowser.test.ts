@@ -53,9 +53,11 @@ describe('wantsDefaultBrowserBanner', () => {
     kind?: 'synced' | 'unsynced' | 'private'
     onboardingDone?: boolean
     capability?: boolean
+    platform?: UIState['platform']
   }): UIState {
     return {
       version: '0.3.21',
+      platform: over.platform ?? 'linux',
       capabilities: { defaultBrowser: over.capability ?? true },
       // `null` is a real value here (the host has not answered), so no `??`.
       defaultBrowser: { isDefault: 'isDefault' in over ? over.isDefault : false, prompt: null },
@@ -86,5 +88,11 @@ describe('wantsDefaultBrowserBanner', () => {
   it('remembers the answer for the feature release it was given in', () => {
     expect(wantsDefaultBrowserBanner(state({ dismissed: '0.3.20' }))).toBe(false)
     expect(wantsDefaultBrowserBanner(state({ dismissed: '0.2.9' }))).toBe(true)
+  })
+
+  it('leaves Android to the campaign of the promo sheet and the top banner', () => {
+    expect(wantsDefaultBrowserBanner(state({ platform: 'android' }))).toBe(false)
+    for (const platform of ['linux', 'win32', 'darwin'] as const)
+      expect(wantsDefaultBrowserBanner(state({ platform }))).toBe(true)
   })
 })
