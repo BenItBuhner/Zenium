@@ -17,18 +17,14 @@ on:
         required: false
         type: string
         default: ''
-  push:
-    branches: [cursor/android-ext-compat-sweep-f955]
 
 permissions:
   contents: read
 
-# TEMPORARY, with the push trigger: a newer push supersedes the run in progress (the sweep is
-# re-measured on every driver fix, and its two hours are only worth having for the latest head).
-# Restored to false with the trigger's removal: a dispatched run finishes.
+# One sweep per ref at a time; a dispatched run finishes (its two hours are the measurement).
 concurrency:
   group: android-ext-compat-sweep-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   system-webview:
