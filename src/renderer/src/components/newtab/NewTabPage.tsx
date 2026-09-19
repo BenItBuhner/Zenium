@@ -1,6 +1,18 @@
-import type { CSSProperties, JSX } from 'react'
+import type { CSSProperties, JSX, ReactNode } from 'react'
 import { useEffect, useMemo, useState } from 'react'
-import { Camera, Globe, Mic, Search, Settings } from 'lucide-react'
+import {
+  Building2,
+  Camera,
+  ClipboardPen,
+  Cookie,
+  Globe,
+  History,
+  Mic,
+  Radio,
+  Search,
+  Settings,
+  VenetianMask
+} from 'lucide-react'
 import type { Tab, UIState } from '@shared/types'
 import { getHost } from '@shared/url'
 import {
@@ -21,6 +33,7 @@ import {
   wallpaperImageStore,
   type TopSiteTile
 } from '@renderer/lib/newtab'
+import { isPrivateTab } from '@renderer/lib/privateTabs'
 import { contentAreaStore, openUrlbar } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { useLongPress } from '../phone/useLongPress'
@@ -34,19 +47,45 @@ interface Props {
 }
 
 /**
- * The phone's new tab page, drawn in the content frame where the blank page would be: the
- * space gradient as the page (a new tab in Zen is the window itself), a search field on the
- * floating URL bar's surface, and the most visited sites as Essentials-style tiles. What the
- * page shows is the preset's (or the customise sheet's) choice, and the wallpaper presets put
- * the space's colours – or a picked image under a legibility scrim – behind it all.
+ * The phone's new tab page, drawn in the content frame where the blank page would be. The one
+ * route is keyed on the tab's container: a private tab's blank page is the private new tab page
+ * (NTP-31), every other blank tab's the space's page with its field and tiles. The two are
+ * components of their own, so a blank tab changing hands between the modes mounts the other page
+ * rather than re-using one's hooks.
  */
 export function NewTabPage({ state, tab, hidden }: Props): JSX.Element {
+  if (isPrivateTab(tab)) return <PrivateNewTabPage tab={tab} hidden={hidden} />
+  return <SpaceNewTabPage state={state} tab={tab} hidden={hidden} />
+}
+
+/**
+ * The bare page is the window's own gradient: drawn at the window's size and offset by the
+ * frame's position, so the frame reads as a window onto the space rather than a second copy.
+ */
+function useWindowBackdrop(): CSSProperties | undefined {
+  const area = contentAreaStore.use((s) => s.area)
+  const viewport = useViewport()
+  return area
+    ? {
+        backgroundSize: `${viewport.width}px ${viewport.height}px`,
+        backgroundPosition: `${-area.x}px ${-area.y}px`
+      }
+    : undefined
+}
+
+/**
+ * The space's new tab page: the space gradient as the page (a new tab in Zen is the window
+ * itself), a search field on the floating URL bar's surface, and the most visited sites as
+ * Essentials-style tiles. What the page shows is the preset's (or the customise sheet's) choice,
+ * and the wallpaper presets put the space's colours – or a picked image under a legibility scrim
+ * – behind it all.
+ */
+function SpaceNewTabPage({ state, tab, hidden }: Props): JSX.Element {
   const settings = state.settings.newTab
   const sections = newTabSections(settings)
   const growPhase = newTabGrowStore.use((s) => s.phase)
   const image = wallpaperImageStore.use()
-  const area = contentAreaStore.use((s) => s.area)
-  const viewport = useViewport()
+  const backdrop = useWindowBackdrop()
 
   useEffect(() => {
     if (sections.wallpaper) void loadWallpaperImage()
@@ -58,14 +97,9 @@ export function NewTabPage({ state, tab, hidden }: Props): JSX.Element {
       ? 'image'
       : 'space'
 
-  // The bare page is the window's own gradient: drawn at the window's size and offset by the
-  // frame's position, so the frame reads as a window onto the space rather than a second copy.
   const style: CSSProperties | undefined =
-    wallpaper === 'none' && area
-      ? {
-          backgroundSize: `${viewport.width}px ${viewport.height}px`,
-          backgroundPosition: `${-area.x}px ${-area.y}px`
-        }
+    wallpaper === 'none'
+      ? backdrop
       : wallpaper === 'image' && image.dataUrl
         ? { backgroundImage: `url("${image.dataUrl}")` }
         : undefined
@@ -97,6 +131,92 @@ export function NewTabPage({ state, tab, hidden }: Props): JSX.Element {
       >
         <Settings className="h-5 w-5" strokeWidth={1.75} />
       </button>
+    </div>
+  )
+}
+
+const PRIVATE_TITLE = "You're browsing privately"
+const PRIVATE_DESCRIPTION =
+  'Pages you open in private tabs leave nothing behind once the last one closes, and other ' +
+  "people using this device won't see them. Downloads you save and bookmarks you add are kept."
+
+/** What the private page tells (NTP-31): a heading and its rows, each a glyph and one line. */
+const PRIVATE_EXPLAINER: Array<{ heading: string; rows: Array<[ReactNode, string]> }> = [
+  {
+    heading: "Zenium won't save",
+    rows: [
+      [<History key="history" />, 'Browsing history'],
+      [<Cookie key="cookies" />, 'Cookies and site data'],
+      [<ClipboardPen key="forms" />, 'Information entered in forms']
+    ]
+  },
+  {
+    heading: 'Still visible to',
+    rows: [
+      [<Globe key="sites" />, 'Websites you visit'],
+      [<Building2 key="work" />, 'Your employer or school'],
+      [<Radio key="isp" />, 'Your internet service provider']
+    ]
+  }
+]
+
+/**
+ * The private new tab page (NTP-31; Chrome's Incognito and Edge's InPrivate page): the window's
+ * gradient – the private theme's, which the window surfaces have blended to (§9.29) – with the
+ * search field on it and an explainer of what Zenium keeps from the session and what it does
+ * not, in the window family. The explainer is the first run's page vocabulary (§9.26, §9.27,
+ * §9.2): the title block 22/600 with the mask glyph on its start and a description 15 at 69%,
+ * then groups of one-line rows under 15/600 headings, all at the 16 gutter. No tiles – the
+ * most visited sites are the regular history's – and no customise gear: the page has one look.
+ * Chrome's "block third-party cookies" switch has no setting in the core to drive, so there is
+ * none here.
+ */
+function PrivateNewTabPage({ tab, hidden }: Omit<Props, 'state'>): JSX.Element {
+  const growPhase = newTabGrowStore.use((s) => s.phase)
+  const backdrop = useWindowBackdrop()
+  return (
+    <div
+      className="zen-ntp zen-ntp-private absolute inset-0 flex flex-col"
+      data-surface="window"
+      data-wallpaper="none"
+      data-private
+      data-hidden={hidden || undefined}
+      data-grow={growPhase !== 'idle' ? growPhase : undefined}
+      data-testid="private-ntp"
+      style={backdrop}
+    >
+      <div className="relative flex min-h-0 flex-1 flex-col overflow-y-auto">
+        <div className="mx-auto flex w-full max-w-[520px] flex-col px-4 pb-6 pt-8">
+          <SearchField tab={tab} />
+          <div className="zen-firstrun-intro mt-8 flex flex-col gap-1">
+            <h1 className="zen-firstrun-title flex items-center gap-2">
+              <VenetianMask
+                className="h-5 w-5 shrink-0"
+                strokeWidth={1.75}
+                aria-hidden
+                data-testid="private-ntp-glyph"
+              />
+              <span>{PRIVATE_TITLE}</span>
+            </h1>
+            <p className="zen-firstrun-body zen-firstrun-deemphasized">{PRIVATE_DESCRIPTION}</p>
+          </div>
+          {PRIVATE_EXPLAINER.map(({ heading, rows }) => (
+            <section key={heading} className="zen-firstrun-group -mx-4 flex flex-col">
+              <h2 className="zen-firstrun-heading px-4 pb-1">{heading}</h2>
+              <ul className="flex flex-col">
+                {rows.map(([glyph, label]) => (
+                  <li key={label} className="zen-firstrun-row">
+                    <span className="zen-firstrun-row-glyph" aria-hidden>
+                      {glyph}
+                    </span>
+                    <span className="min-w-0 flex-1">{label}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
+        </div>
+      </div>
     </div>
   )
 }
