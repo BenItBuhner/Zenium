@@ -118,6 +118,8 @@ export type PreviewState =
     }
   | { kind: 'webapp'; surface: PreviewWebAppSurface }
   | { kind: 'download'; download: PreviewDownloadSpec }
+  /** The tab overview over the active page, as a pull on the pill opens it. */
+  | { kind: 'overview' }
 
 /** More sample banners than the stack holds are pointless. */
 const MAX_PREVIEW_BANNERS = 3
@@ -161,10 +163,12 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * Home screen"), or `download=<file>` for a transfer the stand-in downloader plays back
  * (`size=<bytes>`, `at=<percent>` already received, `speed=<bytes per second>`, `paused`,
  * `fail=<error>`, `deleted` for a finished file since gone from disk, `private`, `url=<url>`,
- * `mime=<type>`). When several are given, `page` wins
- * over `overlay`, `overlay` over `menu`, `menu` over `find`, `find` over `pull`, `pull` over
- * `zoom`, `zoom` over `error`, `error` over the messages, the messages over `webapp` and `webapp`
- * over `download`. A leading `#` (the URL hash as read) is ignored.
+ * `mime=<type>`), or `overview` for the tab overview open over the active page (the grid of
+ * cards, with whatever pictures the stand-in host has of the tabs). When several are given,
+ * `page` wins over `overlay`, `overlay` over `menu`, `menu` over `find`, `find` over `pull`,
+ * `pull` over `zoom`, `zoom` over `error`, `error` over the messages, the messages over `webapp`,
+ * `webapp` over `download` and `download` over `overview`. A leading `#` (the URL hash as read)
+ * is ignored.
  */
 export function parsePreviewSpec(spec: string): PreviewState {
   const params = new URLSearchParams(spec.startsWith('#') ? spec.slice(1) : spec)
@@ -244,6 +248,7 @@ export function parsePreviewSpec(spec: string): PreviewState {
   }
   const download = params.get('download')
   if (download) return { kind: 'download', download: parseDownload(download, params) }
+  if (params.has('overview')) return { kind: 'overview' }
   return { kind: 'idle' }
 }
 

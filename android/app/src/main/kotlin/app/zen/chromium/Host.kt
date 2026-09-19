@@ -127,6 +127,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         private set
     /** Previews of the pages a back gesture would return to. */
     override val snapshots = HistorySnapshots(activity)
+    /** The tab cards' pictures, one JPEG per tab under the cache dir (`thumbnail.*`, [TabWebView.captureThumbnail]). */
+    override val thumbnails = Thumbnails(File(activity.cacheDir, Thumbnails.DIR))
     /**
      * Page views go behind the chrome no earlier than with the chrome's next drawn frame, and the
      * chrome hears when the frame carrying each change is on screen (`view.drawn`, [reportDrawn]).
@@ -219,6 +221,21 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 reply(null)
             }
             "privacy.bundledFeed" -> reply(privacy.bundledFeed(args.str("id")))
+
+            // --- tab card thumbnails (the ThumbnailHost contract; `Thumbnails.kt` is the file layer) ---
+            "thumbnail.configure" -> { thumbnails.width = args.num("width").toInt(); reply(null) }
+            // A read per card the chrome shows, off the main thread; the file's bytes go over as a
+            // data URL with their size, so the chrome can count them against its budget.
+            "thumbnail.load" -> io.execute {
+                val picture = thumbnails.loadPicture(args.str("tabId"))
+                main.post { reply(picture?.let { json("data" to it.dataUrl, "width" to it.width, "height" to it.height) }) }
+            }
+            "thumbnail.drop" -> { io.execute { thumbnails.drop(args.str("tabId")) }; reply(null) }
+            "thumbnail.sweep" -> {
+                val keep = args.arr("keep").let { ids -> (0 until ids.length()).mapTo(HashSet()) { ids.optString(it) } }
+                io.execute { thumbnails.sweep(keep) }
+                reply(null)
+            }
 
             // --- views -----------------------------------------------------------------------
             "view.create" -> { tabs.create(args.str("tabId"), args.str("containerId", Profiles.DEFAULT_CONTAINER)); reply(null) }
@@ -757,9 +774,14 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         scheduleProbe(attempt = 0, delayMs = HostLifecycle.PROBE_DELAY_MS)
     }
 
-    /** Leaving the foreground: a probe answered while hidden would only mislead. */
+    /**
+     * Leaving the foreground: a probe answered while hidden would only mislead. The pages on
+     * screen have their card pictures taken while the window still shows them – the tab the app
+     * comes back to in the overview, or is restored with, is the one it was left on.
+     */
     fun onPause() {
         cancelProbe()
+        for (tab in tabs.all()) tab.captureThumbnail()
     }
 
     /** Ask every WebView on screen for a fresh frame at its current size. */
@@ -776,6 +798,10 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      */
     private fun setTabVisible(tabId: String, visible: Boolean) {
         val ticket = pageVisibility.request(tabId, visible) ?: return
+        // A page on its way off the screen has its card picture taken while it is still there. The
+        // chrome may have just captured its cover for the same frame: the copy is shared, and a
+        // fresh cover stands as the picture ([TabWebView.captureThumbnail]).
+        tabs.get(tabId)?.captureThumbnail()
         val deadline = Runnable {
             if (pageVisibility.complete(ticket)) Log.d(TAG, "hide of $tabId: chrome drew no frame within the deadline")
         }

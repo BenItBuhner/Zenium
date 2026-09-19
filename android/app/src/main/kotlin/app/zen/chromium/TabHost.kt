@@ -93,6 +93,9 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
 
     fun destroy(tabId: String) {
         val view = views.remove(tabId) ?: return
+        // A page still on screen as its tab closes (the active tab, closed from the menu) is
+        // pictured first: the card an undo brings back shows the page as it was left.
+        view.captureThumbnail()
         drop(view)
         host.viewEvent(tabId, "destroyed", null)
     }

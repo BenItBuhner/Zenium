@@ -51,9 +51,10 @@ const SHEET_LEAVE_MS = 1500
  * (the page zoom sheet at that factor), `error=<code>` (the active tab's load failed with that
  * Chromium `net::` code, `url=<target>` naming the URL that failed: the zen://error page is up),
  * the message surfaces and the load bar: `toast=<text>&action=<label>`, `banners=<n>`,
- * `progress=<0…1>`, `webapp=<surface>` (an "Add to Home screen" surface on the active tab) or
- * `download=<file>` (the stand-in downloader starts that transfer; see `PreviewDownloadSpec`). It
- * comes in as the URL hash, `http://localhost:41734/#overlay=history`, or as
+ * `progress=<0…1>`, `webapp=<surface>` (an "Add to Home screen" surface on the active tab),
+ * `download=<file>` (the stand-in downloader starts that transfer; see `PreviewDownloadSpec`) or
+ * `overview` (the tab overview open over the active page, its cards with whatever pictures the
+ * stand-in host has of the tabs). It comes in as the URL hash, `http://localhost:41734/#overlay=history`, or as
  * `window.postMessage({ zenPreview: 'find=coffee' }, '*')`, which also re-applies an unchanged
  * state. Once applied it is echoed in `<html data-preview-state>` so a driver can wait for it;
  * `.github/scripts/android-preview-shots.mjs` is one.
@@ -185,6 +186,10 @@ function reach(spec: string): void {
     done(spec)
   } else if (target.kind === 'webapp' && tab) {
     applyWebApp(target.surface, tab.id, spec)
+  } else if (target.kind === 'overview' && state) {
+    // The grid mounts on the next render and its cards read their pictures then.
+    openOverview(state)
+    requestAnimationFrame(() => done(spec))
   } else {
     done(spec)
   }

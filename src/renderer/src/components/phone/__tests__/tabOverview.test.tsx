@@ -267,9 +267,11 @@ const cellOf = (key: string): HTMLElement => grid().querySelector(`[data-cell="$
 const groupAround = (key: string): string | null =>
   cellOf(key).parentElement?.closest('[data-cell^="group:"]')?.getAttribute('data-cell') ?? null
 
-/** The commands the grid sent the browser, in order. */
+/** The commands the grid sent the browser, in order (not the cards' reads of their pictures). */
 const commands = (): Array<[string, unknown]> =>
-  invoke.mock.calls.map(([name, args]) => [name, args] as [string, unknown])
+  invoke.mock.calls
+    .filter(([name]) => name !== 'thumbnail.load')
+    .map(([name, args]) => [name, args] as [string, unknown])
 
 // --- a finger ----------------------------------------------------------------------------------
 
