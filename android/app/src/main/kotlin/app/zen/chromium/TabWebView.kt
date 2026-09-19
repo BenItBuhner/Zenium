@@ -145,6 +145,16 @@ class TabWebView(
     /** `onPageStarted` fired for a document whose commit `doUpdateVisitedHistory` has not reported yet. */
     private var awaitingCommit = false
     /**
+     * The document whose pixels the view shows: the one `onPageCommitVisible` (WebView's word that
+     * nothing of the page before is drawn any more) or `onPageFinished` last reported, carried
+     * across the in-page commits of that same document. Null until the view has drawn any
+     * document at all – a tab restored at boot whose page has not answered yet shows a blank
+     * window, and WebView says nothing of a load before the response comes (`onPageStarted`
+     * waits for it), so this is the only word that there is a page to picture: the card picture
+     * is taken of this document alone ([captureThumbnail], [snapshot]).
+     */
+    private var paintedDocument: String? = null
+    /**
      * The main-frame URL whose load failed last. WebView has already committed its own error page
      * under that URL (or is about to, and reports the commit through `doUpdateVisitedHistory` and
      * the page's title, "Webpage not available", through `onReceivedTitle`) by the time the core
@@ -846,6 +856,10 @@ class TabWebView(
         // A view with no document yet shows nothing worth a picture; its card has its placeholder.
         val document = currentDocument ?: return
         if (document == "about:blank") return
+        // Nor is a document the view has not drawn yet: a tab restored at boot whose page is still
+        // on its way shows a blank window, and a copy of it would take the place of the picture
+        // on disk – the very one the card is to show until the page paints (BH-33).
+        if (document != paintedDocument) return
         val asked = SystemClock.uptimeMillis()
         captureBitmap(coverScale()) { bitmap ->
             if (bitmap != null) publishThumbnail(bitmap, document, SystemClock.uptimeMillis() - asked)
@@ -855,15 +869,16 @@ class TabWebView(
     /**
      * The card picture from a copy of the page: scaled to the card's width and encoded off the
      * main thread, written to disk ([Thumbnails.save]) and handed to the chrome
-     * (`thumbnail.captured`). Not of a page that navigated since the copy was asked for, and not
+     * (`thumbnail.captured`). `document` is the one the copy shows (the caller's word: it was
+     * [paintedDocument] when the copy was asked for). Not of a page that navigated since, and not
      * twice for one frame – a cover and a hide that shared the copy publish once between them.
      * `copyMs` is what the copy took when this call asked for it (-1: the copy was the cover's);
      * the log line carries it with the encode-and-save time, for the cost of a picture per switch.
      */
-    private fun publishThumbnail(bitmap: Bitmap, document: String?, copyMs: Long = -1L) {
+    private fun publishThumbnail(bitmap: Bitmap, document: String, copyMs: Long = -1L) {
         val thumbnails = host.thumbnails ?: return
         val now = SystemClock.uptimeMillis()
-        if (document == null || document != currentDocument || Thumbnails.isFresh(thumbnailAt, now)) return
+        if (document != currentDocument || Thumbnails.isFresh(thumbnailAt, now)) return
         thumbnailAt = now
         val id = tabId
         val cardWidth = thumbnails.width
@@ -1071,14 +1086,17 @@ class TabWebView(
         // last chance to remember this history entry before a load from within that UI replaces it.
         val index = committedIndex
         val url = committedUrl
-        val document = currentDocument
+        // The card picture comes out of this copy only when the pixels are the document's own
+        // ([paintedDocument]): the cover of a window whose page has not painted is a cover of
+        // white, which is what the sheet is to stand over – not what the card is to keep.
+        val painted = currentDocument?.takeIf { it == paintedDocument }
         captureBitmap(coverScale()) { bitmap ->
             if (bitmap == null) {
                 callback(null)
                 return@captureBitmap
             }
             if (index >= 0 && url.isNotEmpty() && url == (copyBackForwardList().currentItem?.url ?: "")) remember(index, url, bitmap)
-            if (!awaitingCommit) publishThumbnail(bitmap, document)
+            if (painted != null && !awaitingCommit) publishThumbnail(bitmap, painted)
             encoder.execute {
                 val out = ByteArrayOutputStream()
                 bitmap.compress(Bitmap.CompressFormat.JPEG, 62, out)
@@ -1350,10 +1368,13 @@ class TabWebView(
                 host.backChanged()
                 return
             }
-            currentDocument = url
             // pushState / hash navigations have no onPageStarted of their own.
             val inPage = !awaitingCommit
             awaitingCommit = false
+            // The document on screen took a new URL in place: the pixels are still its own. (Not
+            // when the one drawn is another: its own commit-visible is the word for that.)
+            if (inPage && paintedDocument != null && paintedDocument == currentDocument) paintedDocument = url
+            currentDocument = url
             // Another page committed: the failed load's own error page is not coming any more.
             failedUrl = null
             interstitial = false
@@ -1369,11 +1390,16 @@ class TabWebView(
         }
 
         override fun onPageCommitVisible(view: WebView, url: String) {
+            // WebView's word that nothing of the page before is drawn any more: from here the
+            // pixels are this document's, and so may its card picture be.
+            paintedDocument = url
             backTransition?.onNavigation(PageBackTransition.NavigationEvent.COMMIT_VISIBLE)
         }
 
         override fun onPageFinished(view: WebView, url: String) {
             loading = false
+            // A document that finished has drawn (the word for one whose commit-visible never came).
+            paintedDocument = url
             if (pendingFlags && host.pageScript.isNotEmpty()) {
                 evaluateJavascript(startScriptSource(), null)
             }

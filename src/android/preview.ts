@@ -231,6 +231,8 @@ export function createPreviewBridge(): NativeBridge {
           /* cross-origin */
         }
         frame.dataset.title = title
+        // The document on screen is this URL's now (what a card picture may be taken of).
+        frame.dataset.painted = frame.dataset.url ?? ''
         // The frame's document is complete: its DOM is ready, then it has finished loading.
         viewEvent(String(tabId), 'domReady', null)
         viewEvent(String(tabId), 'stopLoading', { ...navState(frame), title })
@@ -558,10 +560,13 @@ export function createPreviewBridge(): NativeBridge {
     frame: HTMLIFrameElement,
     capture?: Promise<string | null>
   ): Promise<void> {
+    const url = frame.dataset.url ?? ''
+    // A frame whose document has not loaded shows white, and a picture of that would take the
+    // place of the one kept from before (Kotlin's `paintedDocument`, BH-33).
+    if (!url || frame.dataset.painted !== url) return
     const now = performance.now()
     if (now - (cardTakenAt.get(tabId) ?? -Infinity) < CARD_FRESH_MS) return
     cardTakenAt.set(tabId, now)
-    const url = frame.dataset.url ?? ''
     const cover = await (capture ?? snapshotFrame(frame))
     const picture = cover ? await scaleToCard(cover, cardWidth || 480) : null
     // The page navigated meanwhile: the picture is of the page before (BH-14).
@@ -597,8 +602,15 @@ export function createPreviewBridge(): NativeBridge {
   }
 
   // The app going to the background (Kotlin's `Host.onPause`): the pages on screen are pictured.
+  // Not on the way out of the document (a reload: `pagehide` comes first, then the hidden
+  // state): nothing could finish, and an image a document loads while unloading is a beacon to
+  // Chromium, which the chrome's connect-src then refuses in the console.
+  let unloading = false
+  window.addEventListener('pagehide', () => {
+    unloading = true
+  })
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState !== 'hidden') return
+    if (unloading || document.visibilityState !== 'hidden') return
     for (const [tabId, frame] of views) {
       if (frame.style.display !== 'none') void captureCard(tabId, frame)
     }
