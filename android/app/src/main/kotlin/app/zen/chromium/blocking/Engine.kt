@@ -4,7 +4,9 @@ package app.zen.chromium.blocking
  * An immutable, fully compiled view of the rule sets: the enabled sets' structured rules in
  * priority order plus one text engine over the enabled filter lists. `decide` follows the
  * declarativeNetRequest resolution of the TypeScript engine (`src/core/blocking/engine.ts`):
- * highest effective priority wins, allow beats block within a priority, `allowAllRequests`
+ * highest effective priority wins, allow beats block within a priority, a full tie goes to the
+ * rule met first in the sets' and their rules' order (so two equal redirects name the target the
+ * desktop names), `allowAllRequests`
  * matched by a request's document allows the request, a set scoped to partitions takes part
  * only in requests of one of them, and filter-list matches take part at the filter-list
  * priority with uBlock Origin's `@@` / `$important` semantics resolved inside the text engine.
@@ -31,20 +33,29 @@ class EngineSnapshot(sets: Collection<RuleSetInfo>, private val text: TextEngine
     /** The enabled sets with structured rules, highest priority first (diagnostics). */
     val ruleSets: List<RuleSetInfo> get() = ordered
 
-    private class Candidate(val effective: Long, val rank: Int, val decision: Decision)
+    /**
+     * A matching rule's claim. `order` is where the linear scan would have met it – the set's
+     * place in [ordered] above the rule's [DnrRule.position] – and breaks a full tie the way
+     * the scan (and the TypeScript engine) does: the first met wins.
+     */
+    private class Candidate(val effective: Long, val rank: Int, val order: Long, val decision: Decision)
+
+    private fun orderOf(setIndex: Int, rule: DnrRule): Long = (setIndex.toLong() shl 32) or rule.position.toLong()
 
     fun decide(req: Request): Decision {
         var best: Candidate? = null
         var frameComputed = false
         var frame: Request? = null
-        for (set in ordered) {
+        for ((setIndex, set) in ordered.withIndex()) {
             if (!set.appliesTo(req.partition)) continue
             val current = best
             // Lower bands cannot beat a definitive winner from a higher band.
             if (current != null && set.priority < current.effective / (DnrRule.RULE_PRIORITY_MAX + 1)) break
             set.index.forEachCandidate(req) { rule ->
                 if (rule.matches(req)) {
-                    decisionFor(set.id, rule, req)?.let { best = better(best, Candidate(rule.effective, rule.action.rank, it)) }
+                    decisionFor(set.id, rule, req)?.let {
+                        best = better(best, Candidate(rule.effective, rule.action.rank, orderOf(setIndex, rule), it))
+                    }
                 }
             }
             for (rule in set.index.allowAll) {
@@ -59,7 +70,7 @@ class EngineSnapshot(sets: Collection<RuleSetInfo>, private val text: TextEngine
                 }
                 if (!hit) continue
                 val decision = decisionFor(set.id, rule, req) ?: continue
-                best = better(best, Candidate(rule.effective, rule.action.rank, decision))
+                best = better(best, Candidate(rule.effective, rule.action.rank, orderOf(setIndex, rule), decision))
             }
         }
         return resolveText(best, req)
@@ -86,7 +97,8 @@ class EngineSnapshot(sets: Collection<RuleSetInfo>, private val text: TextEngine
                         TextMatch.Action.BLOCK -> RuleAction.BLOCK.rank
                         TextMatch.Action.REDIRECT -> RuleAction.REDIRECT.rank
                     }
-                    best = better(best, Candidate(TEXT_EFFECTIVE, rank, decision))
+                    // Met after every structured rule: a structured rule of the same priority and rank keeps the tie.
+                    best = better(best, Candidate(TEXT_EFFECTIVE, rank, Long.MAX_VALUE, decision))
                 }
             }
         }
@@ -95,7 +107,8 @@ class EngineSnapshot(sets: Collection<RuleSetInfo>, private val text: TextEngine
 
     private fun better(current: Candidate?, candidate: Candidate): Candidate =
         if (current == null || candidate.effective > current.effective ||
-            (candidate.effective == current.effective && candidate.rank > current.rank)
+            (candidate.effective == current.effective &&
+                (candidate.rank > current.rank || (candidate.rank == current.rank && candidate.order < current.order)))
         ) candidate else current
 
     private fun decisionFor(setId: String, rule: DnrRule, req: Request): Decision? = when (rule.action) {
@@ -123,7 +136,7 @@ class EngineSnapshot(sets: Collection<RuleSetInfo>, private val text: TextEngine
         var best: Candidate? = null
         var frameComputed = false
         var frame: Request? = null
-        for (set in ordered) {
+        for ((setIndex, set) in ordered.withIndex()) {
             if (!set.appliesTo(req.partition)) continue
             val current = best
             if (current != null && set.priority < current.effective / (DnrRule.RULE_PRIORITY_MAX + 1)) break
@@ -139,7 +152,7 @@ class EngineSnapshot(sets: Collection<RuleSetInfo>, private val text: TextEngine
                 }
                 if (!hit) continue
                 val decision = decisionFor(set.id, rule, req) ?: continue
-                best = better(best, Candidate(rule.effective, rule.action.rank, decision))
+                best = better(best, Candidate(rule.effective, rule.action.rank, orderOf(setIndex, rule), decision))
             }
         }
         return resolveText(best, req)

@@ -232,12 +232,12 @@ class RuleIndexTest {
             if (navigation && snap.decide(request).matchedSet != null) navigations++
             val indexed = snap.decide(request)
             val linear = snap.decideLinear(request)
-            // Two rules of equal effective priority and action may both win; the linear scan and
-            // the index then agree on the effect and the set, not always on which rule (or
-            // redirect target) gets the credit.
+            // Two rules of equal effective priority and action may both match; the first in the
+            // set's order wins in both, so the credited rule and a redirect's target agree too.
             assertEquals("$url as $type from $doc", linear.action, indexed.action)
             assertEquals("$url as $type from $doc", linear.matchedSet, indexed.matchedSet)
-            assertEquals("$url as $type from $doc", linear.redirectUrl == null, indexed.redirectUrl == null)
+            assertEquals("$url as $type from $doc", linear.matchedRule, indexed.matchedRule)
+            assertEquals("$url as $type from $doc", linear.redirectUrl, indexed.redirectUrl)
             if (indexed.matchedSet != null) decided++
         }
         assertTrue("the corpus decided something", decided > 100)

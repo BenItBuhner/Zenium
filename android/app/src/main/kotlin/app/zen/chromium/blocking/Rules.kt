@@ -51,6 +51,14 @@ class DnrRule(
     /** No `urlFilter`, `requestDomains` or `initiatorDomains`: the type conditions alone select requests. */
     private val unscoped: Boolean = pattern == null && requestDomains == null && initiatorDomains == null
 
+    /**
+     * The rule's index in its set's [CompiledRules.rules] (resolution order, a stable sort of the
+     * set's own order), set once by [CompiledRules.of]. On a full tie – equal effective priority
+     * and action – the lower position wins, which is the first rule the TypeScript engine's scan
+     * meets; the index visits rules in bucket order and needs this to agree with it.
+     */
+    internal var position: Int = -1
+
     fun matches(req: Request): Boolean {
         val candidates = ResourceType.candidateMask(req.typeMask, unscoped)
         if (typeMask != 0 && (typeMask and candidates) == 0) return false
@@ -184,7 +192,8 @@ class DnrRule(
 
 /**
  * A set's structured rules compiled for matching, in resolution order (highest effective
- * priority first, then the action's rank), with their [RuleIndex]. Built on the engine's
+ * priority first, then the action's rank, ties in the set's own order – the order the
+ * TypeScript engine scans them in, which [DnrRule.position] records), with their [RuleIndex]. Built on the engine's
  * builder thread and immutable after; a set that [IndexReader] recognises as unchanged keeps
  * the same instance across snapshot rebuilds, `fingerprint` naming what it was compiled from
  * (null when the set must be compiled at every read).
@@ -198,10 +207,11 @@ class CompiledRules private constructor(val rules: List<DnrRule>, val fingerprin
 
         private val RESOLUTION_ORDER = compareByDescending<DnrRule> { it.effective }.thenByDescending { it.action.rank }
 
-        /** Takes ownership of `rules` and sorts them into resolution order. */
+        /** Takes ownership of `rules`, sorts them into resolution order and numbers them ([DnrRule.position]). */
         fun of(rules: MutableList<DnrRule>, fingerprint: String? = null): CompiledRules {
             if (rules.isEmpty() && fingerprint == null) return NONE
             rules.sortWith(RESOLUTION_ORDER)
+            for (i in rules.indices) rules[i].position = i
             return CompiledRules(rules, fingerprint)
         }
 
