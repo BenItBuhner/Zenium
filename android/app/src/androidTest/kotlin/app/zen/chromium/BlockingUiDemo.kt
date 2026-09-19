@@ -26,10 +26,21 @@ import java.util.concurrent.TimeUnit
  * row and blocked again from its item's sheet, and the master switch off and on.
  *
  * Every row is found through the chrome's accessibility tree the way a screen reader would (a
- * row is one button whose text runs its label and description together) and tapped at its
- * bounds; the outcome is checked against the core's state through `window.zen` and the engine's
- * snapshot, and written to `<shotPrefix>-notes.txt` next to the screenshots. The page comes from
- * a loopback server in this process, as in [BlockingDemo].
+ * row is one button whose text runs its label and description together) and pressed with a real
+ * injected touch; the outcome is checked against the core's state through `window.zen` and the
+ * engine's snapshot, and written to `<shotPrefix>-notes.txt` next to the screenshots. The page
+ * comes from a loopback server in this process, as in [BlockingDemo].
+ *
+ * The rule in [DemoHarness] (the audit after #194): every sheet flow here – the app menu's
+ * Settings row, the level picker's option (both ways), the list sheet's "Use this list" switch
+ * (off, then on again), the excepted site's "Block on this site again" – puts a finger on a
+ * control inside the sheet and asserts what the control did against the core's state (the
+ * level, the list's state, the exception's absence, the Settings tab coming up), with the Kotlin
+ * engine's filter count following as the second reading; a touch that did not take is a
+ * [touchFault] the run fails on at its end, and the command or the accessibility click is only
+ * the way on so the recording covers the rest. The rows on the page (the level row, a list's
+ * row, the site's switch row, the master switch) are touched too ([tapRow]), with a second
+ * finger at the row's own rectangle in the chrome when the tree's bounds trailed a scroll.
  */
 @RunWith(AndroidJUnit4::class)
 class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blocking-android-ui", "blocking-ui-demo") {
@@ -118,10 +129,12 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
         shot("03-page-chip-27")
         beat()
 
-        // 3. Settings > Privacy and Security from the app menu: the tab, then the section.
+        // 3. Settings > Privacy and Security from the app menu (a finger on the menu's Settings
+        // row, the tab coming up on it asserted), then the section from the landing.
         note("\n3. Settings > Privacy and Security")
         if (!openPrivacySettings(throughMenu = true)) {
             note("  Settings did not open; the rest of the sequence needs it")
+            touchFault("the Settings tab never came to the Privacy and Security section")
             return
         }
         note("  counter row: ${rowText("Blocked since Zenium started") ?: "(not in the accessibility tree)"}")
@@ -130,13 +143,14 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
 
         // 4. The level: the picker sheet, Balanced -> Strict adds uBlock Origin's privacy list; the engine
         // follows, its filter count growing (the sets are the same files, one of them turned on).
+        // The option is the picker's injected touch: the core's level must flip on it.
         note("\n4. level Balanced -> Strict through the picker sheet")
         val before = engine.snapshot.filterCount
         if (openPicker("Level", "tracking-level", "Strict")) {
             SystemClock.sleep(600)
             shot("05-level-picker")
             beat()
-            if (pickOption("Strict") { level() == "strict" }) {
+            if (pickOption("Strict", "the core's level is strict") { level() == "strict" }) {
                 note("  level=${level()} engine followed in ${waitForEngine { it.filterCount > before }} ms (${describeEngine()})")
                 awaitNoSheet()
                 revealRow("Level")
@@ -152,7 +166,9 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
         }
         note("\n   level Strict -> Balanced")
         val strictFilters = engine.snapshot.filterCount
-        if (openPicker("Level", "tracking-level", "Balanced") && pickOption("Balanced") { level() == "balanced" }) {
+        if (openPicker("Level", "tracking-level", "Balanced") &&
+            pickOption("Balanced", "the core's level is balanced") { level() == "balanced" }
+        ) {
             note("  level=${level()} engine followed in ${waitForEngine { it.filterCount < strictFilters }} ms (${describeEngine()})")
             awaitNoSheet()
         } else {
@@ -173,6 +189,27 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
             SystemClock.sleep(800)
             shot("08-list-sheet")
             beat()
+            // The list sheet's injected touch: a finger on its "Use this list" switch row turns
+            // EasyList off – the core's lists must say so, and the Kotlin engine follows with
+            // fewer filters – and a second finger turns it on again, the engine back where it was.
+            val withList = engine.snapshot.filterCount
+            if (touchTapLabelExpecting("Use this list", "EasyList is off in the core's lists") { !listEnabled("easylist") }) {
+                note("  Use this list off: ${describeLists(blockingStatus())}")
+                note("  engine followed in ${waitForEngine { it.filterCount < withList }} ms (${describeEngine()})")
+                SystemClock.sleep(600)
+                shot("08b-list-sheet-off")
+                beat()
+                if (touchTapLabelExpecting("Use this list", "EasyList is on again in the core's lists") { listEnabled("easylist") }) {
+                    note("  Use this list on again: engine followed in ${waitForEngine { it.filterCount >= withList }} ms (${describeEngine()})")
+                } else {
+                    note("  the second touch did not turn the list on again; restoring it through the command")
+                    restoreListDefault("easylist")
+                }
+            } else {
+                note("  the switch row did not take under a finger (${describeLists(blockingStatus())})")
+                restoreListDefault("easylist")
+            }
+            SystemClock.sleep(600)
             closeSheets()
         } else {
             note("  the EasyList row did not open its sheet")
@@ -220,14 +257,16 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
                 SystemClock.sleep(800)
                 shot("13-site-sheet")
                 beat()
-                if (tapRow("Block on this site again", "tracking-site:$DEMO_ORIGIN:block") { !siteExcepted() }) {
+                // The site sheet's injected touch: a finger on its action, and the exception must
+                // leave the core's list on it (the sheet closes with its row, which is not the claim).
+                if (touchTapLabelExpecting("Block on this site again", "the site's exception is gone from the core") { !siteExcepted() }) {
                     note("  after the sheet's action: siteExceptions=${blockingStatus().getJSONArray("siteExceptions")}")
                     awaitNoSheet()
                     SystemClock.sleep(1_200)
                     shot("14-sites-blocked-again")
                     beat()
                 } else {
-                    note("  the sheet's action did not take; resetting through the command")
+                    note("  the sheet's action did not take under a finger; resetting through the command")
                     closeSheets()
                     coreInvoke("blocking.setSiteException", """{"site":"$DEMO_ORIGIN","excepted":false}""")
                 }
@@ -275,25 +314,43 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
      * The Privacy and Security section of the Settings tab: from the app menu (Settings, then the
      * category row on the landing) the first time, through `page.open` – which reuses the tab and
      * takes it to the section – after. True once the section's first row is in the tree.
+     *
+     * The menu is a sheet flow: the harness puts the finger on its Settings row once the row's
+     * bounds hold still ([openMenuItem]), and the Settings tab must come up on it – else a
+     * [touchFault] the run fails on at its end, and `page.open` is the way on so the recording
+     * goes on. The category row on the landing is a page row: a finger, and the tab must come
+     * to the section on it, the core's command standing in when it did not.
      */
     private fun openPrivacySettings(throughMenu: Boolean): Boolean {
         ensureForeground()
         if (throughMenu) {
             if (!openMenuItem("Settings")) {
-                Log.w(tag, "no Settings in the app menu")
+                touchFault("no Settings row in the app menu to touch")
                 closeSheets()
-                return false
+                coreInvoke("page.open", """{"id":"settings"}""")
+            } else if (awaitPage(SETTINGS_URL, 12_000) == null) {
+                touchFault("the touch on the app menu's Settings row did not open the Settings tab")
+                closeSheets()
+                coreInvoke("page.open", """{"id":"settings"}""")
+            } else {
+                Log.i(tag, "the touch on the menu's Settings row took: the Settings tab is up")
             }
             if (awaitPage(SETTINGS_URL, 12_000) == null) {
                 Log.w(tag, "Settings did not come up")
                 return false
             }
             SystemClock.sleep(1_200)
-            val category = rowBounds(SECTION, 8_000) ?: run {
+            if (rowBounds(SECTION, 8_000) == null) {
                 Log.w(tag, "no $SECTION category on the landing")
-                return false
+            } else if (!touchTapLabelExpecting(SECTION, "the tab is at the section", prefix = true) {
+                    activeCoreTab()?.optString("url") == "$SETTINGS_URL/privacy"
+                }
+            ) {
+                Log.w(tag, "the landing's $SECTION row did not take the tab to the section")
             }
-            Finger().tap(category.exactCenterX(), category.exactCenterY())
+            if (activeCoreTab()?.optString("url") != "$SETTINGS_URL/privacy") {
+                coreInvoke("page.open", """{"id":"settings","section":"privacy"}""")
+            }
         } else {
             coreInvoke("page.open", """{"id":"settings","section":"privacy"}""")
         }
@@ -364,19 +421,23 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
         findNode { it.startsWith(text) }?.let { it.text ?: it.contentDescription }?.toString()
 
     /**
-     * Tap the row reading `label` and wait for `settled`: at the bounds the tree reports first,
-     * then – the tree trailing the screen by seconds on the software-rendered emulator – at the
-     * row's own rectangle in the chrome (`data-row` is the row's id). False when the row is not
-     * there or the change never came.
+     * Press the row reading `label` on the PAGE (the section's own rows, never a sheet's) and
+     * wait for `settled`. The finger goes in once the row is scrolled into view and its bounds
+     * hold still, inside the touchable window ([touchTapLabel]); when the change never comes,
+     * a second finger at the row's own rectangle in the chrome (`data-row` is the row's id): the
+     * tree trails the screen by seconds on the software-rendered emulator and reports a scrolled
+     * row where it was, the stated reason a page row keeps a second touch – a real one, never a
+     * click through the tree, and noted when it was needed. The controls inside a sheet go
+     * through [touchTapLabelExpecting] and [pickOption], whose miss is a fault of the run. False
+     * when the row is not there or the change never came.
      */
     private fun tapRow(label: String, rowId: String, settled: () -> Boolean): Boolean {
         if (settled()) return true
-        val bounds = rowBounds(label, 8_000)
-        if (bounds == null) Log.w(tag, "no row reading '$label' in the tree") else {
+        if (rowBounds(label, 8_000) == null) Log.w(tag, "no row reading '$label' in the tree") else {
             SystemClock.sleep(400)
-            Finger().tap(bounds.exactCenterX(), bounds.exactCenterY())
-            if (awaitSettled(settled, 5_000)) return true
+            if (touchTapLabel(label, prefix = true) && awaitSettled(settled, 5_000)) return true
             Log.w(tag, "'$label' did not take at the tree's bounds; tapping the chrome's own rectangle")
+            note("  ('$label' did not take at the tree's bounds; a second finger at the chrome's rectangle)")
         }
         val point = chromePoint("[data-row=${JSONObject.quote(rowId)}]") ?: run {
             Log.w(tag, "no row $rowId in the chrome")
@@ -388,20 +449,47 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
 
     /** Open a value row's picker sheet; true once the option reading `option` is in the tree. */
     private fun openPicker(label: String, rowId: String, option: String): Boolean =
-        tapRow(label, rowId) { findNodeWhere { n -> n.isCheckable && (n.text?.toString() ?: n.contentDescription?.toString())?.startsWith(option) == true } != null }
+        tapRow(label, rowId) { optionNode(option) != null }
 
-    /** Tap the picker's option reading `option`; true once the core reports the change (`settled`). */
-    private fun pickOption(option: String, settled: () -> Boolean): Boolean {
-        val node = findNodeWhere { n -> n.isCheckable && (n.text?.toString() ?: n.contentDescription?.toString())?.startsWith(option) == true }
-            ?: run {
-                Log.w(tag, "no option reading '$option' in the picker")
-                return false
+    /**
+     * The picker's checkable row whose text starts with `option`: the radio, not the sheet's
+     * description, which starts with "Strict" too and is not checkable.
+     */
+    private fun optionNode(option: String): AccessibilityNodeInfo? =
+        findNodeWhere { n -> n.isCheckable && (n.text?.toString() ?: n.contentDescription?.toString())?.startsWith(option) == true }
+
+    /**
+     * A finger on the picker's option reading `option` – the picker sheet's injected touch (the
+     * rule in [DemoHarness]) – and the core must report the change (`settled`, named by
+     * `effect`): true once it does. The finger goes in where the option's bounds have held still
+     * and inside the touchable window ([touchTap]), once more when the node was replaced under
+     * the first read. An option that did not apply under the finger is the sheet not taking the
+     * touch – a [touchFault] the run fails on at its end – and the accessibility click is then
+     * the way on so the recording goes on. False when nothing in the picker reads `option`, or
+     * the change never comes either way.
+     */
+    private fun pickOption(option: String, effect: String, settled: () -> Boolean): Boolean {
+        var node = optionNode(option) ?: run {
+            Log.w(tag, "no option reading '$option' in the picker")
+            return false
+        }
+        var touched = touchTap(node)
+        if (!touched) {
+            SystemClock.sleep(500)
+            node = optionNode(option) ?: node
+            touched = touchTap(node)
+        }
+        if (touched) {
+            if (awaitSettled(settled, 5_000)) {
+                Log.i(tag, "the touch on the '$option' option took: $effect")
+                return true
             }
-        val bounds = Rect().also { node.getBoundsInScreen(it) }
-        Finger().tap(bounds.exactCenterX(), bounds.exactCenterY())
-        if (awaitSettled(settled, 5_000)) return true
-        Log.w(tag, "'$option' did not take at the tree's bounds; clicking it through the tree")
-        node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            touchFault("the touch on the picker's '$option' option did not take: not $effect within 5000 ms")
+        } else {
+            touchFault("the picker's '$option' option has no bounds on screen to touch")
+        }
+        Log.w(tag, "'$option' did not take under a finger; clicking it through the tree so the demo goes on")
+        (optionNode(option) ?: node).performAction(AccessibilityNodeInfo.ACTION_CLICK)
         return awaitSettled(settled, 5_000)
     }
 
@@ -451,6 +539,28 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
     private fun setLevel(level: String) {
         val b = coreState().getJSONObject("settings").getJSONObject("blocking")
         b.put("level", level)
+        coreInvoke("settings.update", JSONObject().put("blocking", b).toString())
+    }
+
+    /** Whether the core lists the filter list `id` as enabled right now (`state.blocking.lists`). */
+    private fun listEnabled(id: String): Boolean {
+        val lists = blockingStatus().getJSONArray("lists")
+        for (i in 0 until lists.length()) {
+            val l = lists.getJSONObject(i)
+            if (l.getString("id") == id) return l.getBoolean("enabled")
+        }
+        return false
+    }
+
+    /**
+     * Drop the per-list override for `id` through the settings command, so the level's own
+     * choice for the list stands again (what the sheet's switch does when a touch on it did not).
+     */
+    private fun restoreListDefault(id: String) {
+        val b = coreState().getJSONObject("settings").getJSONObject("blocking")
+        val lists = b.optJSONObject("lists") ?: JSONObject()
+        lists.remove(id)
+        b.put("lists", lists)
         coreInvoke("settings.update", JSONObject().put("blocking", b).toString())
     }
 
