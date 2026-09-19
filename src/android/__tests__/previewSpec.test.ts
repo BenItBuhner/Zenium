@@ -264,4 +264,30 @@ describe('parsePreviewSpec', () => {
     expect(parsePreviewSpec('error=-105&download=a.bin').kind).toBe('error')
     expect(parsePreviewSpec('download=')).toEqual({ kind: 'idle' })
   })
+
+  it('raises a permission prompt from the active page, behind the menu but ahead of the bars', () => {
+    expect(parsePreviewSpec('prompt=camera')).toEqual({ kind: 'prompt', permission: 'camera' })
+    expect(parsePreviewSpec('prompt=notifications&find=x')).toEqual({
+      kind: 'prompt',
+      permission: 'notifications'
+    })
+    expect(parsePreviewSpec('menu=app&prompt=camera')).toEqual({ kind: 'menu' })
+    expect(parsePreviewSpec('prompt=')).toEqual({ kind: 'idle' })
+  })
+
+  it('opens a private tab, blank or on a page', () => {
+    expect(parsePreviewSpec('private=new')).toEqual({ kind: 'private', url: null })
+    expect(parsePreviewSpec('private=1')).toEqual({ kind: 'private', url: null })
+    expect(parsePreviewSpec('private=https%3A%2F%2Fexample.com%2F')).toEqual({
+      kind: 'private',
+      url: 'https://example.com/'
+    })
+    expect(parsePreviewSpec('private=')).toEqual({ kind: 'idle' })
+    // A sheet comes first, the bars after.
+    expect(parsePreviewSpec('private=new&prompt=camera')).toEqual({
+      kind: 'prompt',
+      permission: 'camera'
+    })
+    expect(parsePreviewSpec('private=new&find=x')).toEqual({ kind: 'private', url: null })
+  })
 })

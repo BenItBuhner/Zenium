@@ -37,6 +37,7 @@ import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Switch } from '../ui/switch'
 import { AgentsSection } from './AgentsSection'
+import { ClearBrowsingDataSection } from './ClearBrowsingDataSection'
 import { AppIconGroup } from './AppIconPicker'
 import { ExtensionsSection, ModsSection } from './AddonsPanel'
 import { DefaultBrowserSection } from './DefaultBrowserSection'
@@ -50,8 +51,10 @@ import {
 } from './PageControlsSettings'
 import { PasswordsSection } from './PasswordsSection'
 import { ResourcesSection } from './ResourcesSection'
+import { SafetyCheckSection } from './SafetyCheckSection'
 import { Choice, Group, MENULIST_HEIGHT, Row, SWITCH_HEIGHT, Segmented } from './SettingsPrimitives'
 import { ShortcutsSection } from './ShortcutsSection'
+import { SiteSettingsSection } from './SiteSettingsSection'
 import { SyncSection } from './SyncSection'
 import { UpdatesSection } from './UpdatesSection'
 
@@ -64,6 +67,9 @@ export type SettingsSection =
   | 'downloads'
   | 'resources'
   | 'search'
+  | 'site-settings'
+  | 'clear-data'
+  | 'safety-check'
   | 'spaces'
   | 'containers'
   | 'boosts'
@@ -86,6 +92,9 @@ const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
   { id: 'downloads', label: 'Downloads' },
   { id: 'resources', label: 'Resources' },
   { id: 'search', label: 'Search' },
+  { id: 'site-settings', label: 'Site Settings' },
+  { id: 'clear-data', label: 'Clear Browsing Data' },
+  { id: 'safety-check', label: 'Safety Check' },
   { id: 'spaces', label: 'Space Routing' },
   { id: 'containers', label: 'Containers' },
   { id: 'boosts', label: 'Boosts' },
@@ -215,6 +224,11 @@ export function SettingsBody({
           {section === 'downloads' && <DownloadsSection state={state} set={set} />}
           {section === 'resources' && <ResourcesSection state={state} set={set} />}
           {section === 'search' && <SearchSection state={state} set={set} />}
+          {section === 'site-settings' && <SiteSettingsSection state={state} />}
+          {section === 'clear-data' && <ClearBrowsingDataSection state={state} />}
+          {section === 'safety-check' && (
+            <SafetyCheckSection state={state} setSection={setSection} />
+          )}
           {section === 'spaces' && <SpaceRoutingSection state={state} set={set} />}
           {section === 'containers' && <ContainersSection state={state} />}
           {section === 'boosts' && <BoostsSection state={state} />}

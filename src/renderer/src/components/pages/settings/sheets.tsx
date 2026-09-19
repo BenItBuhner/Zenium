@@ -1,5 +1,6 @@
 import type { JSX, ReactNode, RefObject } from 'react'
-import { useEffect, useId, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { useEscape } from '@renderer/hooks/useEscape'
 import { useBackSurface } from '@renderer/lib/back'
 import { FrameDialogPortal, useFrameDialog } from '@renderer/lib/portals'
 import { cn } from '@renderer/lib/utils'
@@ -8,7 +9,7 @@ import { Field, RadioOption, SheetActions, ValidationMessage } from './blocks'
 import type { ActionRow, FieldRow, ItemRow, RowGroup, SettingsRow, ValueRow } from './model'
 import { findRow } from './model'
 import { GroupList, type RowContext, type SheetRequest } from './rows'
-import { SheetDismissContext, useSheetDismiss } from './sheetContext'
+import { SheetDismissContext, SheetRelayoutContext, useSheetDismiss } from './sheetContext'
 
 /**
  * The sheets a phone Settings row opens (v2 §9.13, §9.23–9.25, §10.4): a value row's picker, a
@@ -172,17 +173,15 @@ function HostedSheet({
     onCommit: () => sheet.current?.commitBack(),
     onCancel: () => sheet.current?.cancelBack()
   })
-  useEffect(() => {
-    if (under) return
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape') return
-      e.preventDefault()
-      e.stopImmediatePropagation()
-      sheet.current?.dismiss()
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [under, sheet])
+  // Escape is the top popup's (`useEscape`, §9.24): a sheet under another – of this stack, or a
+  // menulist's picker a form inside it opened – leaves the key to the one on top.
+  useEscape(() => {
+    if (!under) sheet.current?.dismiss()
+  })
+  // A body that changes height once the sheet is up (a form shows more rows, a field appears)
+  // asks for its detents again through `useSheetRelayout`: the chassis measures on a new key.
+  const [relayouts, setRelayouts] = useState(0)
+  const relayout = useCallback((): void => setRelayouts((n) => n + 1), [])
   return (
     // The slot's child is a layer on the sheet chassis already (`data-sheet-layer`, as the
     // `BottomSheet` inside it): the host's chassis stays down for an `ownScrim` sheet and never
@@ -197,7 +196,7 @@ function HostedSheet({
         ref={sheet}
         hosted
         onDismissed={onClose}
-        contentKey={contentKey}
+        contentKey={`${contentKey ?? ''}|${relayouts}`}
         handleLabel="Resize sheet"
         labelledBy={titleId}
         className={cn('zen-settings-sheet', titled && 'zen-settings-sheet-titled')}
@@ -218,7 +217,11 @@ function HostedSheet({
               {description && <p>{description}</p>}
             </div>
           )}
-          <SheetDismissContext.Provider value={dismiss}>{children}</SheetDismissContext.Provider>
+          <SheetDismissContext.Provider value={dismiss}>
+            <SheetRelayoutContext.Provider value={relayout}>
+              {children}
+            </SheetRelayoutContext.Provider>
+          </SheetDismissContext.Provider>
         </div>
       </BottomSheet>
     </div>
@@ -231,9 +234,10 @@ function HostedSheet({
 
 /**
  * §9.13 on a phone: the options as 44 px radio rows, the current one marked (and, by the
- * chassis, focused as the sheet opens); a pick closes it.
+ * chassis, focused as the sheet opens); a pick closes it. Exported for a form that keeps a
+ * value row of its own (Clear browsing data's time range) and opens its picker over itself.
  */
-function OptionsSheet({
+export function OptionsSheet({
   row,
   under,
   close

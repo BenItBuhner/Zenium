@@ -3,7 +3,8 @@ import { useEffect, useRef } from 'react'
 import { Globe, Lock, Search } from 'lucide-react'
 import { internalPageOf } from '@shared/internalPages'
 import type { PhoneBarPosition, Space, Tab, UIState } from '@shared/types'
-import { displayHost } from '@shared/url'
+import { PRIVATE_CONTAINER_ID } from '@shared/types'
+import { BLANK_URL, displayHost } from '@shared/url'
 import { run } from '@renderer/lib/api'
 import {
   contentShift,
@@ -440,6 +441,20 @@ export function PillContent({
         >
           <Lock className="h-3.5 w-3.5 opacity-50" />
         </PillChip>
+      )}
+      {/*
+        The private profile indicator (design language v2 §9.19): a private tab with a page shows
+        its favicon like any other, so the pill says "Private" in a neutral badge – the window
+        family, 20 tall, 13/600 – after the address; while the tab has no page the mask glyph in
+        the favicon slot is the marker, never glyph and badge together.
+      */}
+      {shown && shown.containerId === PRIVATE_CONTAINER_ID && shown.url !== BLANK_URL && (
+        <span
+          className="zen-private-badge inline-flex h-5 shrink-0 items-center rounded-full bg-[var(--v2-control-fill)] px-2 text-[13px] leading-5 font-semibold text-[var(--v2-control-text-deemphasized)]"
+          data-testid="private-badge"
+        >
+          Private
+        </span>
       )}
       {state.spaces.length > 1 && (
         <span className="max-w-[64px] shrink-0 truncate text-[11px] text-[var(--zen-muted)]">

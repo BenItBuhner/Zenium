@@ -57,6 +57,8 @@ export interface ActionRow extends RowBase {
   kind: 'action'
   /** What the row does; with `form`, what its sheet's primary button does is the form's own. */
   onPress?(): void
+  /** A 20 px glyph on the label's line (§9.2): a status the row acts on (Safety check's rows). */
+  leading?: ReactNode
   /** A trailing 16 px glyph, only when the action leaves the page (§10.4). */
   leaves?: 'external' | 'chevron'
   /**
@@ -92,9 +94,11 @@ export interface FieldRow extends RowBase {
   onCommit(value: string): string | undefined
 }
 
-/** A fact: label and description, optionally a trailing glyph or value; nothing to press. */
+/** A fact: label and description, optionally a leading or trailing glyph or value; nothing to press. */
 export interface InfoRow extends RowBase {
   kind: 'info'
+  /** A 20 px glyph on the label's line (§9.2): a status glyph in the §1 status ink. */
+  leading?: ReactNode
   trailing?: ReactNode
 }
 

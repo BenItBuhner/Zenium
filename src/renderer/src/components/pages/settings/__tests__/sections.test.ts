@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { HostCapabilities, Settings, Tab, UIState } from '@shared/types'
+import type { HostCapabilities, SafetyCheckResult, Settings, Tab, UIState } from '@shared/types'
 import { INTERNAL_PAGES, availableSections } from '@shared/internalPages'
 import { emptyBlockingStatus } from '@shared/blocking'
 import {
@@ -153,6 +153,8 @@ function state(patch: Partial<UIState> = {}, settings: Partial<Settings> = {}): 
     passwords: emptyPasswordsStatus(),
     defaultBrowser: { isDefault: false, prompt: null },
     permissionRules: [],
+    permissionDefaults: {},
+    lastSafetyCheck: null,
     blocking: emptyBlockingStatus(),
     pageEnvironment: DEFAULT_PAGE_ENVIRONMENT,
     newTabShortcuts: [],
@@ -713,6 +715,301 @@ describe('the section model', () => {
     grace.onChange('300')
     expect(c.patches.at(-1)).toEqual({
       passwords: { ...DEFAULT_SETTINGS.passwords, reauthGraceSeconds: 300 }
+    })
+  })
+
+  it('carries #135’s site-controls rows in Chrome’s Privacy and security order: Safety check, Clear browsing data, Site settings', () => {
+    const c = context()
+    const privacy = buildSection(
+      PAGE.sections.find((x) => x.id === 'privacy')!,
+      c.ctx
+    )
+    expect(privacy.groups.map((g) => g.id)).toEqual([
+      'safety-check',
+      'safety-check-results',
+      'safety-check-actions',
+      'tracking',
+      'blocking-exceptions',
+      'clear-data',
+      'sites-permissions',
+      'sites-content',
+      'sites-additional',
+      'sites-own',
+      'permissions'
+    ])
+    expect(privacy.groups.every(groupShows)).toBe(true)
+
+    // Before the first run: the standing says so, the results are their empty line, Check now runs it.
+    expect(row(privacy, 'safety-check-standing')).toMatchObject({
+      kind: 'info',
+      label: 'Safety check',
+      description: 'Not checked yet'
+    })
+    expect(privacy.groups.find((g) => g.id === 'safety-check-results')).toMatchObject({
+      rows: [],
+      empty: 'Run the check to see results'
+    })
+    const now = row(privacy, 'safety-check-now')
+    if (now.kind !== 'action') throw new Error('not an action')
+    now.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('privacy.safetyCheck', undefined)
+
+    // Clear browsing data is one action row whose sheet is the form.
+    const clear = row(privacy, 'clear-data-open')
+    if (clear.kind !== 'action') throw new Error('not an action')
+    expect(clear.label).toBe('Clear browsing data')
+    expect(clear.form?.title).toBe('Clear browsing data')
+    expect(clear.form?.description).toContain('time range')
+
+    // Site settings: the catalogue this host honours (no notifications row in the WebView), each
+    // an item whose sheet holds the default as a value row; a type with one possible default is
+    // a fact.
+    expect(findRow(privacy.groups, 'sites:notifications')).toBeNull()
+    const location = row(privacy, 'sites:geolocation')
+    expect(location).toMatchObject({
+      kind: 'item',
+      label: 'Location',
+      description: 'Sites can ask for your location'
+    })
+    const locationDefault = row(privacy, 'sites:geolocation:default')
+    if (locationDefault.kind !== 'value') throw new Error('not a value row')
+    expect(locationDefault.value).toBe('ask')
+    expect(locationDefault.options.map((o) => [o.label, o.description])).toEqual([
+      ['Ask', 'Default'],
+      ['Block', undefined]
+    ])
+    locationDefault.onChange('deny')
+    expect(invoke).toHaveBeenCalledWith('permissions.setDefault', {
+      permission: 'geolocation',
+      decision: 'deny'
+    })
+    expect(privacy.groups.find((g) => g.id === 'sites-own')).toMatchObject({
+      rows: [],
+      empty: 'No site has settings of its own yet'
+    })
+    expect(findRow(privacy.groups, 'sites-reset-all')).toBeNull()
+
+    // A stored default reads on the row; a site's answers list under their type and under the
+    // site, each forgotten or reset through the permission commands after a confirmation.
+    const rules = [
+      { origin: 'https://meet.example', permission: 'camera', decision: 'allow' as const },
+      { origin: 'https://meet.example', permission: 'microphone', decision: 'deny' as const },
+      { origin: 'https://news.example', permission: 'popups', decision: 'allow' as const }
+    ]
+    const stored = section(
+      'privacy',
+      state({ permissionRules: rules, permissionDefaults: { camera: 'deny' } } as Partial<UIState>)
+    )
+    expect(row(stored, 'sites:camera').description).toBe('Sites cannot use camera')
+    const cameraSite = row(stored, 'sites:camera:https://meet.example:camera')
+    expect(cameraSite).toMatchObject({
+      kind: 'action',
+      label: 'meet.example',
+      description: 'Allowed'
+    })
+    if (cameraSite.kind !== 'action') throw new Error('not an action')
+    expect(cameraSite.confirm?.action).toBe('Forget')
+    cameraSite.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('permissions.forget', {
+      origin: 'https://meet.example',
+      permission: 'camera'
+    })
+    expect(findRow(stored.groups, 'sites:camera:https://news.example:popups')).toBeNull()
+    const own = stored.groups.find((g) => g.id === 'sites-own')
+    expect(own?.rows.map((r) => r.id)).toEqual([
+      'sites:site:https://meet.example',
+      'sites:site:https://news.example',
+      'sites-reset-all'
+    ])
+    expect(row(stored, 'sites:site:https://meet.example')).toMatchObject({
+      kind: 'item',
+      label: 'meet.example',
+      description: 'Camera: allowed · Microphone: blocked'
+    })
+    expect(row(stored, 'sites:site:https://meet.example:microphone')).toMatchObject({
+      kind: 'info',
+      label: 'Microphone',
+      description: 'Blocked'
+    })
+    const reset = row(stored, 'sites:site:https://meet.example:reset')
+    if (reset.kind !== 'action') throw new Error('not an action')
+    expect(reset.confirm?.action).toBe('Reset')
+    reset.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('permissions.resetOrigin', {
+      origin: 'https://meet.example'
+    })
+    const resetAll = row(stored, 'sites-reset-all')
+    expect(resetAll).toMatchObject({ kind: 'action', destructive: true })
+    if (resetAll.kind !== 'action') throw new Error('not an action')
+    resetAll.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('permissions.reset', undefined)
+
+    // The search reaches the catalogue rows under their group's caption.
+    const hits = searchRows(phoneSections(), 'location')
+    expect(hits.find((h) => h.row.id === 'sites:geolocation')?.caption).toBe(
+      'Privacy and Security › Site settings'
+    )
+  })
+
+  it('reads the last Safety check from the state: a row per area with its glyph, the reviews as sheets of sites, Extensions leaving for its category', () => {
+    const result: SafetyCheckResult = {
+      checkedAt: Date.now() - 60_000,
+      updates: {
+        state: 'info',
+        summary: 'Version 0.3.1 is available',
+        currentVersion: '0.3.0-test',
+        latestVersion: '0.3.1'
+      },
+      safeBrowsing: {
+        state: 'safe',
+        summary: 'Safe Browsing is on',
+        configured: true,
+        enabled: true
+      },
+      passwords: {
+        state: 'info',
+        summary: '3 passwords not checked yet',
+        compromised: 0,
+        weak: 0,
+        reused: 0,
+        known: false
+      },
+      permissions: {
+        state: 'warning',
+        summary: '1 site worth a look: unused permissions or several at once',
+        grantedSites: 2,
+        review: [{ origin: 'https://meet.example', permissions: ['camera'], reason: 'unused' }]
+      },
+      notifications: {
+        state: 'info',
+        summary: '1 site may send notifications',
+        sites: [{ origin: 'https://news.example', shown: 4 }]
+      },
+      extensions: {
+        state: 'warning',
+        summary: '1 extension to review',
+        flagged: [{ id: 'x', name: 'Ext', reasons: ['broad host access'] }]
+      }
+    }
+    const rules = [
+      { origin: 'https://meet.example', permission: 'camera', decision: 'allow' as const },
+      { origin: 'https://docs.example', permission: 'geolocation', decision: 'allow' as const }
+    ]
+    const c = context(
+      state({
+        lastSafetyCheck: result,
+        permissionRules: rules,
+        capabilities: { ...ANDROID, extensions: true },
+        updates: {
+          ...emptyUpdateStatus('0.3.0-test', { os: 'android', arch: 'arm64', kind: 'apk' }),
+          phase: 'available',
+          mode: 'in-place',
+          release: {
+            version: '0.3.1',
+            tag: 'v0.3.1',
+            prerelease: false,
+            publishedAt: '2026-09-01T00:00:00Z',
+            releaseUrl: 'https://zen.test/r',
+            notesUrl: 'https://zen.test/n',
+            asset: {
+              os: 'android',
+              arch: 'arm64',
+              kind: 'apk',
+              name: 'zenium.apk',
+              url: 'https://zen.test/a',
+              size: 1,
+              sha256: '00'
+            }
+          }
+        },
+        passwords: { ...emptyPasswordsStatus(), locked: false, count: 3 }
+      } as Partial<UIState>)
+    )
+    const privacy = buildSection(
+      PAGE.sections.find((x) => x.id === 'privacy')!,
+      c.ctx
+    )
+    expect(row(privacy, 'safety-check-standing')).toMatchObject({
+      kind: 'info',
+      label: 'Some things need your attention',
+      description: 'Checked 1 min ago'
+    })
+    const results = privacy.groups.find((g) => g.id === 'safety-check-results')
+    expect(results?.rows.map((r) => [r.id, r.kind])).toEqual([
+      ['safety-check:updates', 'action'],
+      ['safety-check:safeBrowsing', 'info'],
+      ['safety-check:passwords', 'action'],
+      ['safety-check:permissions', 'item'],
+      ['safety-check:notifications', 'item'],
+      ['safety-check:extensions', 'action']
+    ])
+    for (const r of results?.rows ?? []) {
+      if (r.kind === 'info' || r.kind === 'action' || r.kind === 'item')
+        expect(r.leading, r.id).toBeDefined()
+    }
+
+    // An update to download is the row's press; the password checkup runs and the check reads again.
+    const updates = row(privacy, 'safety-check:updates')
+    if (updates.kind !== 'action') throw new Error('not an action')
+    expect(updates.description).toBe('Version 0.3.1 is available')
+    updates.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('updates.download', undefined)
+    const passwords = row(privacy, 'safety-check:passwords')
+    if (passwords.kind !== 'action') throw new Error('not an action')
+    passwords.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('passwords.checkupRun', undefined)
+
+    // The permissions review lists every site holding a permission, the flagged one first with
+    // why; a site's row resets it after a confirmation and the check runs again.
+    const permissions = row(privacy, 'safety-check:permissions')
+    if (permissions.kind !== 'item') throw new Error('not an item')
+    expect(permissions.sheet.title).toBe('Site permissions')
+    expect(permissions.sheet.groups[0].rows.map((r) => [r.label, r.description])).toEqual([
+      ['meet.example', 'Camera · Not used for weeks'],
+      ['docs.example', 'Location']
+    ])
+    const meet = row(privacy, 'safety-check:permissions:https://meet.example')
+    if (meet.kind !== 'action') throw new Error('not an action')
+    expect(meet.confirm?.action).toBe('Reset')
+    invoke.mockClear()
+    meet.onPress?.()
+    expect(invoke.mock.calls).toEqual([
+      ['permissions.resetOrigin', { origin: 'https://meet.example' }],
+      ['privacy.safetyCheck', undefined]
+    ])
+
+    // The notifications review blocks a site after a confirmation.
+    const notifications = row(privacy, 'safety-check:notifications')
+    if (notifications.kind !== 'item') throw new Error('not an item')
+    const news = row(privacy, 'safety-check:notifications:https://news.example')
+    expect(news).toMatchObject({
+      kind: 'action',
+      label: 'news.example',
+      description: '4 notifications since Zenium started'
+    })
+    if (news.kind !== 'action') throw new Error('not an action')
+    expect(news.confirm?.action).toBe('Stop')
+    news.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('permissions.set', {
+      origin: 'https://news.example',
+      permission: 'notifications',
+      decision: 'deny'
+    })
+
+    // Extensions leaves for its category; without extensions on the host the row is a fact.
+    const extensions = row(privacy, 'safety-check:extensions')
+    expect(extensions).toMatchObject({ kind: 'action', leaves: 'chevron' })
+    if (extensions.kind !== 'action') throw new Error('not an action')
+    extensions.onPress?.()
+    expect(c.navigated).toEqual(['extensions'])
+    const noExtensions = section(
+      'privacy',
+      state({ lastSafetyCheck: result, permissionRules: rules } as Partial<UIState>)
+    )
+    expect(row(noExtensions, 'safety-check:extensions').kind).toBe('info')
+    expect(row(noExtensions, 'safety-check:safeBrowsing')).toMatchObject({
+      kind: 'info',
+      description: 'Safe Browsing is on'
     })
   })
 

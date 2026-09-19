@@ -117,7 +117,20 @@ const V2_FILES: ReadonlyArray<string> = [
   // The sidebar's tab count badge, drawn in its surface's family through the §9.29 control roles.
   'components/sidebar/SpacePanel.tsx',
   // Site information (#39): the connection state's ok / warn / danger ink on its glyphs and values.
-  'components/siteinfo/SiteInfoSheet.tsx'
+  'components/siteinfo/SiteInfoSheet.tsx',
+  // Site controls (#135), a v2 surface: the shared glyph size and stroke (`V2_GLYPH`); the
+  // desktop popover, dialog and pane primitives' metrics and inks; the Settings panes' card
+  // padding and deemphasised ink; the builder rows' glyph ink; the pill's private badge in the
+  // window family's control roles (§9.19, §9.29).
+  'components/v2/controls.tsx',
+  'components/siteControls/primitives.tsx',
+  'components/siteControls/pane.tsx',
+  'components/siteControls/SiteInfoPopover.tsx',
+  'components/siteControls/ClearBrowsingDataDialog.tsx',
+  'components/siteControls/settingsRows.tsx',
+  'components/overlays/SiteSettingsSection.tsx',
+  'components/overlays/SafetyCheckSection.tsx',
+  'components/phone/PhoneShell.tsx'
 ]
 
 /** The text of the first `selector {` block found after `from`. */

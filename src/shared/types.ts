@@ -11,6 +11,7 @@ import type { BlockingSettings, BlockingStatus } from './blocking'
 import type { PrivacySettings, PrivacyStatus } from './privacy'
 import type { InternalPageId } from './internalPages'
 import type { WebAppInfo } from './webApp'
+import type { ContentDefault } from './contentSettings'
 
 export type Platform = 'linux' | 'win32' | 'darwin' | 'android'
 
@@ -2451,6 +2452,13 @@ export interface UIState {
   blockedPopups: Record<string, BlockedPopup[]>
   /** Every remembered per-site permission answer (Settings lists and revokes them). */
   permissionRules: PermissionRule[]
+  /**
+   * The effective default of every content-settings catalogue row (Settings › Site settings):
+   * the user's choice where there is one, else the catalogue's. Keyed by the row's id.
+   */
+  permissionDefaults: Record<string, ContentDefault>
+  /** The last Safety check's result, kept until the next run; null before the first. */
+  lastSafetyCheck: SafetyCheckResult | null
   /** Pending permission prompts, oldest first; the chrome shows its active tab's first one. */
   permissionPrompts: PermissionPrompt[]
   /** Pending HTTP authentication and client-certificate prompts, oldest first. */

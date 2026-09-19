@@ -345,6 +345,8 @@ export class Browser {
       defaultBrowser: this.defaultBrowser.status(),
       blockedPopups: this.popups.all(),
       permissionRules: this.permissions.rules(),
+      permissionDefaults: this.permissions.defaults(CONTENT_SETTINGS.map((s) => s.id)),
+      lastSafetyCheck: this.privacy.lastSafetyCheck(),
       permissionPrompts: this.permissionPrompts.list(),
       securityPrompts: this.security.list(),
       pageDialogs: this.pageDialogs.list(),
@@ -1738,7 +1740,7 @@ export class Browser {
       'privacy.clearBrowsingData': ({ range, types, passphrase }, win) =>
         this.privacy.clearBrowsingData(range, types, passphrase, win),
       'privacy.clearBrowsingDataCounts': ({ range }) => this.privacy.counts(range),
-      'privacy.safetyCheck': () => this.privacy.safetyCheck(),
+      'privacy.safetyCheck': () => this.privacy.runSafetyCheck(),
       'security.respond': ({ id, response }) => this.security.respond(id, response),
       'pageDialog.respond': ({ id, response }) => this.pageDialogs.respond(id, response),
       'window.respondPrompt': ({ id, accepted }) => this.windowPrompts.respond(id, accepted),

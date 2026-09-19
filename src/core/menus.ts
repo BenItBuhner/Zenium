@@ -1928,8 +1928,16 @@ export class Menus {
     this.popup(
       [
         { label: 'New Tab', action: 'tab.new', click: () => this.browser.openNewTab(win) },
-        // Phone slot: "New Private Tab" goes here once Android has private tabs (Chrome: New
-        // Incognito tab, second item).
+        // Hosts without private windows (Android) keep the private session in tabs: New Private
+        // Tab is Chrome's second item, and Close Private Tabs ends the session while one is open.
+        ...when(caps.privateTabs, {
+          label: 'New Private Tab',
+          click: () => tabs.newPrivateTab(undefined, win)
+        }),
+        ...when(caps.privateTabs && tabs.privateTabs().length > 0, {
+          label: 'Close Private Tabs',
+          click: () => tabs.closePrivateTabs(win)
+        }),
         ...when(!local, {
           label: 'New Space…',
           action: 'space.new',

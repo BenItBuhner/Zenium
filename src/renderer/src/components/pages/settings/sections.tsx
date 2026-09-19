@@ -55,6 +55,11 @@ import { openOverlay } from '@renderer/lib/ui'
 import { formatBytes, relativeTime } from '@renderer/lib/utils'
 import { ContainerIcon } from '../../ContainerIcon'
 import {
+  clearDataGroups,
+  safetyCheckGroups,
+  siteSettingsGroups
+} from '../../siteControls/settingsRows'
+import {
   APP_ICON_HINT,
   PASSWORD_GRACE_OPTIONS,
   PASSWORDS_COPY,
@@ -1006,10 +1011,16 @@ function downloadsSection({ state, set }: SectionContext): RowGroup[] {
 }
 
 // ---------------------------------------------------------------------------
-// Privacy and Security (ad and tracker blocking, site permissions)
+// Privacy and Security (ad and tracker blocking, site permissions; the site-controls program's
+// Safety check, Clear browsing data and Site settings blocks from `siteControls/settingsRows`)
 // ---------------------------------------------------------------------------
 
-function privacySection({ state, set }: SectionContext): RowGroup[] {
+/**
+ * Chrome's Privacy and security order: Safety check first, then the tracking groups, Clear
+ * browsing data, Site settings, and the remembered per-site answers last.
+ */
+function privacySection(ctx: SectionContext): RowGroup[] {
+  const { state, set } = ctx
   const b = state.settings.blocking
   const status = state.blocking
   const enabledLists = status.lists.filter((l) => l.enabled)
@@ -1019,6 +1030,7 @@ function privacySection({ state, set }: SectionContext): RowGroup[] {
       ? `${enabledLists.length} lists · updated ${relativeTime(status.lastUpdatedAt)}`
       : `${enabledLists.length} lists`
   return [
+    ...safetyCheckGroups(ctx),
     {
       id: 'tracking',
       heading: 'Tracking protection',
@@ -1079,6 +1091,8 @@ function privacySection({ state, set }: SectionContext): RowGroup[] {
       ),
       empty: 'No exceptions yet'
     },
+    ...clearDataGroups(ctx),
+    ...siteSettingsGroups(ctx),
     {
       id: 'permissions',
       heading: 'Site permissions',

@@ -2,14 +2,16 @@ import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 're
 import { focusableIn, wrapTab } from '@renderer/lib/popover'
 import { useEscape } from './useEscape'
 
-type Initial = 'first' | 'container' | ((root: HTMLElement) => HTMLElement | null)
+type Initial = 'first' | 'container' | 'none' | ((root: HTMLElement) => HTMLElement | null)
 
 /**
  * The keyboard inside a renderer-owned popover, menu or dialog (v2 draft §9.22): Escape closes
  * it; once it is painted (`active`) focus moves into it – its first focusable, the container
  * itself (`tabIndex -1`, for a menu opened by pointer or a title-and-notice panel), or an
- * element of the caller's choosing; Tab wraps inside it; and when it goes while focus is still
- * inside, focus returns to the control that opened it (what had focus when it mounted).
+ * element of the caller's choosing – or, for `'none'`, stays where it was (a prompt a page event
+ * raised beside a chip in the pill takes no focus on open); Tab wraps inside it; and when it
+ * goes while focus is still inside, focus returns to the control that opened it (what had focus
+ * when it mounted).
  *
  * The chrome layer and the frame dialog host (lib/portals.tsx) place the surface and own the
  * rest: light dismiss, one popover at a time, the scroll and resize that close an anchored
@@ -52,6 +54,7 @@ export function usePopover(
     const root = ref.current
     if (!active || !root) return
     entered.current = root
+    if (initial === 'none') return
     const el =
       initial === 'container'
         ? root
