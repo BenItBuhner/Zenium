@@ -1056,6 +1056,16 @@ class TabWebView(
      * gives an internal page its document), so a load here would be a second one. Main thread.
      */
     fun restoreNavigation(entries: JSONArray, index: Int, hostState: String?): Boolean {
+        val restored = restoreFromHostState(entries, index, hostState)
+        lastRestore = restored
+        return restored
+    }
+
+    /** What the last [restoreNavigation] answered, null before one: the demo driver reads it in-process. */
+    var lastRestore: Boolean? = null
+        private set
+
+    private fun restoreFromHostState(entries: JSONArray, index: Int, hostState: String?): Boolean {
         val wanted = NavigationState.currentUrl(entries, index) ?: return false
         val bytes = NavigationState.decodeHostState(hostState) ?: return false
         // Only into a view with nothing in it: over a list already built, restoreState has

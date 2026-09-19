@@ -1,0 +1,58 @@
+name: Android navigation snapshot demo
+
+# Records the navigation snapshot on the phone (the ask of #207: a tab brought back by Undo lost
+# its back/forward stack): a three-page stack built with real touches on the pages' links, the
+# tab closed from the Tabs button's quick menu, Undo on the toast bringing it back with its list
+# rebuilt from the host's WebView state (restored: true, no load), Back touched twice on the bar
+# with pages two and one coming back from the WebView's cache without a request, and the design
+# gate on the Back button's hold (the bar editor; the phone has no long-press history list). The
+# driver reads each outcome off the host's WebView, the core's state and its own page server
+# (findings text in the artifact; the run fails on a FAIL). Dispatch-only, like the tab close
+# demo: it takes a few minutes and says nothing about a change being correct. The build, the
+# emulator and the Gradle cache live in android-emulator-demo.yml; this file only picks the driver.
+on:
+  workflow_dispatch:
+  push:
+    branches: [cursor/android-navigation-snapshot-933f]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-nav-snapshot-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Navigation snapshot demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.NavSnapshotDemo
+        DEMO_DIR=nav-snapshot-demo
+        DEMO_OUT=artifacts/android-nav-snapshot-demo
+        DEMO_VIDEO=android-nav-snapshot-demo.mp4
+      # The guest kernel's console in the log, should the emulator go away mid-demo.
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel
+      artifact-name: android-nav-snapshot-demo
+      artifact-path: artifacts/android-nav-snapshot-demo/
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed: a run is then spent on the demo rather than on the runner.
+  record-again:
+    name: Navigation snapshot demo, second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.NavSnapshotDemo
+        DEMO_DIR=nav-snapshot-demo
+        DEMO_OUT=artifacts/android-nav-snapshot-demo
+        DEMO_VIDEO=android-nav-snapshot-demo.mp4
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel
+      artifact-name: android-nav-snapshot-demo-second-boot
+      artifact-path: artifacts/android-nav-snapshot-demo/
