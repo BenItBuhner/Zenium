@@ -30,3 +30,27 @@ export function useEscape(close: () => void): void {
     }
   }, [])
 }
+
+/**
+ * Escape closes a prompt that stands outside the popup stack – a chassis sheet (the external
+ * protocol ask, voice search's listening sheet) or its panel on a mouse – and answers "not now"
+ * (hardware keyboards exist on tablets and DeX too). A sheet that is `leaving` – its request
+ * gone, on its way down under `SheetPresence` (§11.1) – lets the key by: it answers nothing any
+ * more, and a sheet that came up above it does. `close` may change between renders.
+ */
+export function useEscapeUnlessLeaving(close: () => void, leaving = false): void {
+  const latest = useRef({ close, leaving })
+  useEffect(() => {
+    latest.current = { close, leaving }
+  })
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape' || latest.current.leaving) return
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      latest.current.close()
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [])
+}

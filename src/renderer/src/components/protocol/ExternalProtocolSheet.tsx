@@ -1,5 +1,5 @@
 import type { JSX } from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import {
   AppWindow,
   ExternalLink,
@@ -11,6 +11,7 @@ import {
   type LucideIcon
 } from 'lucide-react'
 import type { ExternalProtocolRequest } from '@shared/types'
+import { useEscapeUnlessLeaving } from '@renderer/hooks/useEscape'
 import { useBackSurface } from '@renderer/lib/back'
 import { useViewport } from '@renderer/lib/formFactor'
 import { SheetPresence, useSheetLeave } from '@renderer/lib/motion/presence'
@@ -212,28 +213,6 @@ function Body({
   )
 }
 
-/**
- * Escape answers "not now" (hardware keyboards exist on tablets and DeX too). A sheet that is
- * `leaving` – its request gone, on its way down under `SheetPresence` (§11.1) – lets the key by:
- * it answers nothing any more, and a sheet that came up above it does.
- */
-function useEscape(close: () => void, leaving = false): void {
-  const latest = useRef({ close, leaving })
-  useEffect(() => {
-    latest.current = { close, leaving }
-  })
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape' || latest.current.leaving) return
-      e.preventDefault()
-      e.stopImmediatePropagation()
-      latest.current.close()
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [])
-}
-
 // ---------------------------------------------------------------------------
 // Phone: bottom sheet on the menu's chassis
 // ---------------------------------------------------------------------------
@@ -252,7 +231,7 @@ function ProtocolSheet({ request }: { request: ExternalProtocolRequest }): JSX.E
     onCommit: () => sheet.current?.commitBack(),
     onCancel: () => sheet.current?.cancelBack()
   })
-  useEscape(() => sheet.current?.dismiss(), useSheetLeave()?.leaving)
+  useEscapeUnlessLeaving(() => sheet.current?.dismiss(), useSheetLeave()?.leaving)
 
   return (
     <BottomSheet
@@ -283,7 +262,7 @@ function ProtocolPanel({ request }: { request: ExternalProtocolRequest }): JSX.E
   const answer = (allow: boolean): void =>
     answerExternalProtocol(request.requestId, allow, allow && always)
   useBackSurface({ name: 'external-protocol', onCommit: () => answer(false) })
-  useEscape(() => answer(false))
+  useEscapeUnlessLeaving(() => answer(false))
   return (
     <div className="fixed inset-0 z-[90] flex items-center justify-center p-6">
       <div className="zen-sheet-scrim absolute inset-0" onClick={() => answer(false)} />

@@ -83,6 +83,7 @@ import {
   tabVisibleIn
 } from './model'
 import { BLANK_URL, getDomain, inputToUrl, isEmptyTabUrl } from '../shared/url'
+import type { VoiceStartOutcome } from '../shared/voice'
 import { internalPageAliasUrl } from '../shared/internalPages'
 import { overlayForUrl } from '../shared/zenPages'
 import { openAllPrompt, sortedByNameOrder, toggledBookmarksBarMode } from '../shared/bookmarkViews'
@@ -1433,6 +1434,16 @@ export class Browser {
     })
   }
 
+  /**
+   * Voice search (OMN-19): the host's recogniser starts once the microphone is granted. A host
+   * without one – or one whose capability is off – answers `unavailable`, which the sheet toasts.
+   */
+  async startVoiceSearch(): Promise<VoiceStartOutcome> {
+    const { voice } = this.platform
+    if (!voice || !this.state.capabilities.voiceSearch) return 'unavailable'
+    return voice.start()
+  }
+
   /** The system's screen for which links open in this app (Android's "Open by default"). */
   openAppLinkSettings(win: ZenWindow): void {
     const { shell } = this.platform
@@ -1775,6 +1786,10 @@ export class Browser {
       'app.quit': () => void this.requestQuit(),
       'app.share': (payload, win) => this.share(payload, win),
       'app.openAppLinkSettings': (_a, win) => this.openAppLinkSettings(win),
+      // Voice search: the host listens (`VoiceHost`); the chrome's sheet acts on the `voice.event`s.
+      'voice.start': () => this.startVoiceSearch(),
+      'voice.cancel': () => this.platform.voice?.cancel(),
+      'voice.openSettings': () => this.platform.voice?.openSettings(),
       'externalProtocol.respond': ({ requestId, allow, always }) =>
         this.externalProtocols.respond(requestId, allow, always),
       'layout.report': (report, win) => win.applyLayout(report),

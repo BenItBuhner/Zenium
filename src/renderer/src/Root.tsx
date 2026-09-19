@@ -8,6 +8,7 @@ import { NewTabGrowLayer } from './components/newtab/NewTabGrowLayer'
 import { ExternalProtocolLayer } from './components/protocol/ExternalProtocolSheet'
 import { BarEditorLayer } from './components/phone/BarEditorSheet'
 import { SiteInfoLayer } from './components/siteinfo/SiteInfoSheet'
+import { VoiceSearchLayer } from './components/voice/VoiceSearchSheet'
 import { SheetPresence } from './lib/motion/presence'
 import { TranslateSelectionLayer } from './components/translate/SelectionPopover'
 import { browserStore, uiStore } from './lib/ui'
@@ -28,6 +29,7 @@ export function Root(): JSX.Element {
       <DownloadBubbleLayer />
       <MenuLayer />
       <ExternalProtocolLayer />
+      <VoiceSearchLayer />
     </>
   )
 }

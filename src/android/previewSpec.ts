@@ -151,6 +151,15 @@ export type PreviewState =
       /** `http-auth`: the credentials travel over TLS (no unencrypted-password notice). */
       secure: boolean
     }
+  | {
+      /**
+       * Voice search started from the active tab, the stand-in recogniser playing `script` back
+       * (`previewVoiceScript` in preview.ts: `listening`, `partial`, `no-match`, `network`,
+       * `busy`, `denied`, `denied-permanently`, `unavailable`, or the default run to a result).
+       */
+      kind: 'voice'
+      script: string
+    }
 
 /** More sample banners than the stack holds are pointless. */
 const MAX_PREVIEW_BANNERS = 3
@@ -314,6 +323,8 @@ export function parsePreviewSpec(spec: string): PreviewState {
       secure: params.has('secure')
     }
   }
+  const voice = params.get('voice')
+  if (voice !== null) return { kind: 'voice', script: voice || 'heard' }
   return { kind: 'idle' }
 }
 

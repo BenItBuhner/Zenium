@@ -1,6 +1,6 @@
 import type { JSX, RefObject } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowRight, X } from 'lucide-react'
+import { ArrowRight, Mic, X } from 'lucide-react'
 import type {
   PhoneBarLayout,
   PhoneBarPosition,
@@ -19,12 +19,14 @@ import {
 import { SEARCH_SCOPES, completeWwwCom, matchKeyword } from '@shared/search'
 import { internalPageAliasUrl } from '@shared/internalPages'
 import { ERROR_URL_PREFIX, isEmptyTabUrl, isNewTabUrl } from '@shared/url'
+import { voiceSearchAvailable } from '@shared/voice'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { cmd, run } from '@renderer/lib/api'
 import { useBackDismissal } from '@renderer/lib/back'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { closeUrlbar, uiStore, type UrlbarState } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { startVoiceSearch } from '@renderer/lib/voiceSearch'
 import { suggestionIcon } from './suggestionIcon'
 
 interface Props {
@@ -277,14 +279,21 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
     dismissed: () => close(true)
   })
 
+  /**
+   * Whether a plain submit opens a new tab: without a tab, or in new-tab mode – except over a new
+   * tab page, which the bar edits (what is typed loads there, no second tab).
+   */
+  const submitsToNewTab = (): boolean => {
+    const overNewTabPage = urlbar.mode === 'new-tab' && Boolean(tab && isNewTabUrl(tab.url))
+    return !tab || (urlbar.mode === 'new-tab' && !overNewTabPage)
+  }
+
   const submit = (
     item: Suggestion | null,
     opts: { newTab?: boolean; background?: boolean; input?: string } = {}
   ): void => {
     const value = (opts.input ?? text).trim()
-    // Over a new tab page the bar edits that tab: what is typed loads there, no second tab.
-    const overNewTabPage = urlbar.mode === 'new-tab' && Boolean(tab && isNewTabUrl(tab.url))
-    const newTab = opts.newTab || !tab || (urlbar.mode === 'new-tab' && !overNewTabPage)
+    const newTab = opts.newTab || submitsToNewTab()
     const navigate = (input: string): void =>
       run('urlbar.submit', {
         input,
@@ -489,7 +498,9 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
         hint={results.length === 0 && !text ? placeholder : null}
         field={
           <div
-            className="zen-omnibox-field flex h-11 min-w-0 flex-1 items-center gap-2.5 rounded-full pl-2 pr-1.5"
+            // The trailing slot's control is a §9.3 icon button, 44 × 44 with the 20 glyph: as
+            // tall as the pill, round, flush with its end, so it is the pill's end cap.
+            className="zen-omnibox-field flex h-11 min-w-0 flex-1 items-center gap-2.5 rounded-full pl-2"
             style={fieldGrowFrom(
               phoneBarForHost(state.settings.phoneBar, phoneBarOffered(state.capabilities))
             )}
@@ -519,17 +530,32 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
               data-zen-menu-tab={menuTabId}
               className="h-full min-w-0 flex-1 bg-transparent text-[15px] outline-none placeholder:text-[var(--zen-muted)]"
             />
-            {text && (
+            {text ? (
               <button
                 type="button"
-                className="zen-toolbar-button h-8 w-8 shrink-0 rounded-full"
+                className="zen-toolbar-button h-11 w-11 shrink-0 rounded-full"
                 aria-label="Clear"
                 // Keep the input focused so the keyboard stays where it is.
                 onPointerDown={(e) => e.preventDefault()}
                 onClick={clear}
               >
-                <X className="h-4 w-4" />
+                <X className="h-5 w-5" strokeWidth={1.75} />
               </button>
+            ) : (
+              voiceSearchAvailable(state.capabilities) && (
+                // OMN-19: the empty field offers the mic where Clear will be; the listening sheet
+                // takes the frame from the bar, and its result loads where a submit here would.
+                <button
+                  type="button"
+                  className="zen-toolbar-button h-11 w-11 shrink-0 rounded-full"
+                  aria-label="Search by voice"
+                  onClick={() =>
+                    void startVoiceSearch({ tabId: tab?.id ?? null, newTab: submitsToNewTab() })
+                  }
+                >
+                  <Mic className="h-5 w-5" strokeWidth={1.75} />
+                </button>
+              )
             )}
           </div>
         }

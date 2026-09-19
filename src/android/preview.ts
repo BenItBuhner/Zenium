@@ -2,6 +2,7 @@ import type { ContentCover, Rect } from '@shared/types'
 import type { NativeBridge, NativeCall } from './bridge'
 import type { BootInfo } from './platform'
 import type { Platform } from '@shared/types'
+import type { VoiceEvent, VoiceStartOutcome } from '@shared/voice'
 import { createPreviewDownloads } from './previewDownloads'
 
 interface HostGlobal {
@@ -181,6 +182,32 @@ export function createPreviewBridge(): NativeBridge {
   // verification passes.
   const vaultMode = params.get('vault') ?? 'os'
   const PREVIEW_BLOB = 'preview-keystore:'
+  // `?voice=<script>` picks what the stand-in recogniser does (`previewVoiceScript`): the mic
+  // buttons show, and a start plays the script's events back to the chrome's listening sheet.
+  // A preview state (`voice=<script>`, previewStates.ts) changes the script at run time.
+  let voiceScript = params.get('voice') ?? 'heard'
+  window.addEventListener(PREVIEW_VOICE_EVENT, (e) => {
+    voiceScript = (e as CustomEvent<string>).detail
+  })
+  let voiceRun = 0
+  const voice = {
+    start: (): VoiceStartOutcome => {
+      const script = previewVoiceScript(voiceScript)
+      if (script.outcome !== 'listening') return script.outcome
+      const run = ++voiceRun
+      let at = 0
+      for (const [delay, event] of script.events) {
+        at += delay
+        window.setTimeout(() => {
+          if (voiceRun === run) hostGlobal().hostEvent('voice.event', JSON.stringify(event))
+        }, at)
+      }
+      return 'listening'
+    },
+    cancel: (): void => {
+      voiceRun++
+    }
+  }
 
   const handlers: Record<string, (args: Record<string, unknown>) => unknown | Promise<unknown>> = {
     boot: (): BootInfo => ({
@@ -191,6 +218,7 @@ export function createPreviewBridge(): NativeBridge {
       packageName: null,
       profiles: true,
       pinShortcuts: true,
+      voiceSearch: true,
       files,
       downloadsDir: DOWNLOADS_DIR,
       insets: { top: 0, right: 0, bottom: 0, left: 0 },
@@ -432,6 +460,9 @@ export function createPreviewBridge(): NativeBridge {
       else console.info('[zen preview] share', data)
     },
     'app.openAppLinkSettings': () => console.info('[zen preview] open-by-default settings'),
+    'voice.start': () => voice.start(),
+    'voice.cancel': () => voice.cancel(),
+    'voice.openSettings': () => console.info('[zen preview] app settings (microphone)'),
     'externalProtocol.respond': ({ requestId, allow }) =>
       console.info('[zen preview] external protocol', requestId, allow ? 'allowed' : 'refused'),
     // The browser role, remembered per preview profile; the "role dialog" is a confirm().
@@ -596,5 +627,72 @@ export function createPreviewBridge(): NativeBridge {
       const result = run(JSON.parse(json) as NativeCall)
       return result === undefined ? '' : JSON.stringify(result)
     }
+  }
+}
+
+/** A preview state picks the stand-in recogniser's script: the event's detail is the script's name. */
+export const PREVIEW_VOICE_EVENT = 'zen-preview-voice'
+
+/** What the stand-in recogniser does for `?voice=<name>`: the start's answer, then its events in order with the pause before each. */
+export interface PreviewVoiceScript {
+  outcome: VoiceStartOutcome
+  events: Array<[delayMs: number, event: VoiceEvent]>
+}
+
+/** A run of levels, as `onRmsChanged` would report them: a swell, a dip, a swell. */
+const PREVIEW_LEVELS: Array<[number, VoiceEvent]> = [
+  0.25, 0.6, 0.9, 0.7, 0.4, 0.15, 0.3, 0.75, 1, 0.55, 0.2
+].map((level) => [90, { kind: 'rms', level }])
+
+export function previewVoiceScript(name: string): PreviewVoiceScript {
+  const listening: Array<[number, VoiceEvent]> = [
+    [200, { kind: 'ready' }],
+    [300, { kind: 'begin' }],
+    ...PREVIEW_LEVELS
+  ]
+  const heard: Array<[number, VoiceEvent]> = [
+    ...listening,
+    [200, { kind: 'partial', text: 'weather in' }],
+    ...PREVIEW_LEVELS,
+    [200, { kind: 'partial', text: 'weather in Lisbon this' }],
+    ...PREVIEW_LEVELS,
+    [200, { kind: 'partial', text: 'weather in Lisbon this weekend' }]
+  ]
+  switch (name) {
+    case 'denied':
+    case 'denied-permanently':
+    case 'unavailable':
+      return { outcome: name, events: [] }
+    // The recogniser hears nothing it can make words of: the sheet's Try again state.
+    case 'no-match':
+      return {
+        outcome: 'listening',
+        events: [
+          ...listening,
+          ...PREVIEW_LEVELS,
+          [400, { kind: 'end' }],
+          [600, { kind: 'error', error: 'no-match' }]
+        ]
+      }
+    case 'network':
+    case 'busy':
+      return { outcome: 'listening', events: [...listening, [400, { kind: 'error', error: name }]] }
+    // Frozen mid-way, for a still of the sheet as it listens (the halo all the way out, at full
+    // level), as it waits in silence (the glyph plain, no halo) or as it shows a partial transcript.
+    case 'listening':
+      return { outcome: 'listening', events: [...listening, [90, { kind: 'rms', level: 1 }]] }
+    case 'listening-rest':
+      return { outcome: 'listening', events: [...listening, [90, { kind: 'rms', level: 0 }]] }
+    case 'partial':
+      return { outcome: 'listening', events: heard }
+    default:
+      return {
+        outcome: 'listening',
+        events: [
+          ...heard,
+          [500, { kind: 'end' }],
+          [700, { kind: 'result', text: 'weather in Lisbon this weekend' }]
+        ]
+      }
   }
 }
