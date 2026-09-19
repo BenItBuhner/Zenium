@@ -65,6 +65,9 @@ import { parseDropKey } from './tabDrag'
 
 export type { PageFlags } from './platform'
 
+/** Hidden pages kept awake when memory runs low (`unloadForMemoryPressure`): the recent few. */
+export const KEEP_UNDER_PRESSURE = 3
+
 /**
  * Owns the live page for every loaded tab and implements Zen's tab behaviours on top of the pure
  * model. Pages are created through the host's `TabViewHost`; everything else is platform neutral.
@@ -2711,22 +2714,60 @@ export class TabManager {
     this.browser.updateMedia()
   }
 
-  /** Discard every loaded, invisible tab whose last activity is older than the unload timeout. */
+  /**
+   * Sleeping tabs (Edge's; Chrome's Memory Saver): discard every loaded, invisible tab whose last
+   * activity is older than the timeout. Pages that are heard, still loading, open in DevTools,
+   * driven by an agent or on the "never put to sleep" list stay. The host's governor calls this
+   * on its cadence (`NoopGovernor` every half minute, so the shortest timeout is honoured).
+   */
   unloadInactive(): void {
     if (!this.settings.unloadEnabled) return
     const timeout = this.settings.unloadTimeoutMinutes * 60_000
     const now = Date.now()
+    for (const tab of this.sleepCandidates(true)) {
+      if (now - tab.lastActiveAt < timeout) continue
+      this.discard(tab.id)
+    }
+  }
+
+  /**
+   * The system is short of memory (Android's `onTrimMemory`): put hidden pages to sleep ahead of
+   * their timeout rather than have the whole process killed, and the sooner the more pressing.
+   * `low` (the device is running low; the process is not yet killable) sleeps the hidden pages
+   * idle longest and keeps the `KEEP_UNDER_PRESSURE` most recent ones, so the next switch is
+   * still quick, and honours the never-sleep list; `critical` (the process is about to be
+   * killed) sleeps every hidden page but the ones being heard – a killed process loses the
+   * never-sleep sites too, and their pages come back on focus like any other. Independent of
+   * the timer's switch: pressure is not a preference.
+   */
+  unloadForMemoryPressure(level: 'low' | 'critical'): void {
+    const candidates = this.sleepCandidates(level === 'low').sort(
+      (a, b) => a.lastActiveAt - b.lastActiveAt
+    )
+    const keep = level === 'low' ? KEEP_UNDER_PRESSURE : 0
+    const sleeping =
+      keep > 0 ? candidates.slice(0, Math.max(0, candidates.length - keep)) : candidates
+    for (const tab of sleeping) this.discard(tab.id)
+  }
+
+  /**
+   * The loaded pages that may be put to sleep right now: not shown in any window, not playing
+   * audio, not loading, not open in DevTools, not driven by an agent and – when `honourList` –
+   * not on the never-sleep list (matched by host, `www.` aside).
+   */
+  private sleepCandidates(honourList: boolean): Tab[] {
     const visible = this.allVisibleTabIds()
+    const excluded = this.settings.unloadExcludedDomains.map((d) => d.toLowerCase())
+    const out: Tab[] = []
     for (const [id] of this.views) {
       const tab = this.tab(id)
       if (!tab || visible.has(id) || tab.audible || tab.loading) continue
-      if (now - tab.lastActiveAt < timeout) continue
-      if (this.settings.unloadExcludedDomains.some((d) => domainOf(tab.url) === d.toLowerCase()))
-        continue
+      if (honourList && excluded.some((d) => domainOf(tab.url) === d)) continue
       if (this.browser.state.devtoolsOpenFor.has(id)) continue
       if (this.browser.agents.isDriving(id)) continue
-      this.discard(id)
+      out.push(tab)
     }
+    return out
   }
 
   destroyAll(): void {

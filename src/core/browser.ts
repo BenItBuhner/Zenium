@@ -98,6 +98,7 @@ import { copyConfirmation } from '../shared/clipboard'
 import { IMAGE_URL_PREFIX } from '../shared/zenPages'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
 import {
+  DEFAULT_SETTINGS,
   ONBOARDING_ESSENTIALS,
   sanitizeAutofillSettings,
   sanitizePasswordSettings,
@@ -2696,7 +2697,7 @@ export class Browser {
       }
     }
     s.sidebarWidth = Math.max(160, Math.min(520, s.sidebarWidth))
-    s.unloadTimeoutMinutes = Math.max(1, Math.min(24 * 60, Math.round(s.unloadTimeoutMinutes)))
+    s.unloadTimeoutMinutes = sanitizeUnloadTimeout(s.unloadTimeoutMinutes)
     s.essentialsMax = Math.max(1, Math.min(24, Math.round(s.essentialsMax)))
     if (
       before.glance !== s.glanceEnabled ||
@@ -2740,4 +2741,13 @@ export class Browser {
 
 function clamp01(v: number): number {
   return Math.max(0, Math.min(1, Number.isFinite(v) ? v : 0.5))
+}
+
+/**
+ * The sleeping-tabs timeout in minutes, half a minute to a day in half-minute steps: Edge's
+ * ladder starts at 30 seconds, so a half is the smallest value that is stored.
+ */
+function sanitizeUnloadTimeout(minutes: number): number {
+  if (!Number.isFinite(minutes)) return DEFAULT_SETTINGS.unloadTimeoutMinutes
+  return Math.max(0.5, Math.min(24 * 60, Math.round(minutes * 2) / 2))
 }
