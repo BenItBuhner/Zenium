@@ -66,14 +66,14 @@ describe('defaults', () => {
 
 describe('what a host offers', () => {
   it('lists the whole catalogue for a host with a share sheet, and Share is enabled for a web page', () => {
-    expect(phoneBarOffered({ share: true })).toEqual(PHONE_BAR_ITEM_IDS)
+    expect(phoneBarOffered({ share: true, voiceSearch: true })).toEqual(PHONE_BAR_ITEM_IDS)
     expect(phoneBarItemEnabled('share', tab())).toBe(true)
     expect(phoneBarItemEnabled('share', tab({ url: BLANK_URL }))).toBe(false)
     expect(phoneBarItemEnabled('share', { tab: null })).toBe(false)
   })
 
   it('leaves Share out for a host without one, in the catalogue and in a synced layout', () => {
-    const offered = phoneBarOffered({ share: false })
+    const offered = phoneBarOffered({ share: false, voiceSearch: true })
     expect(offered).toEqual(PHONE_BAR_ITEM_IDS.filter((id) => id !== 'share'))
     const layout: PhoneBarLayout = { left: ['back', 'share'], right: ['share', 'menu'] }
     expect(phoneBarForHost(layout, offered)).toEqual({ left: ['back'], right: ['menu'] })
@@ -82,8 +82,16 @@ describe('what a host offers', () => {
 
   it('hands back the very layout when nothing is left out', () => {
     const layout = defaultPhoneBar()
-    expect(phoneBarForHost(layout, phoneBarOffered({ share: true }))).toBe(layout)
-    expect(phoneBarForHost(layout, phoneBarOffered({ share: false }))).toBe(layout)
+    expect(phoneBarForHost(layout, phoneBarOffered({ share: true, voiceSearch: true }))).toBe(layout)
+    expect(phoneBarForHost(layout, phoneBarOffered({ share: false, voiceSearch: false }))).toBe(layout)
+  })
+
+  it('offers Voice search only where the host has a recogniser (OMN-19), and drops it from a synced layout otherwise', () => {
+    expect(phoneBarOffered({ share: true, voiceSearch: true })).toContain('voice')
+    const offered = phoneBarOffered({ share: true, voiceSearch: false })
+    expect(offered).toEqual(PHONE_BAR_ITEM_IDS.filter((id) => id !== 'voice'))
+    const layout: PhoneBarLayout = { left: ['back', 'voice'], right: ['menu'] }
+    expect(phoneBarForHost(layout, offered)).toEqual({ left: ['back'], right: ['menu'] })
   })
 })
 
@@ -96,7 +104,7 @@ describe('sanitizePhoneBar (migration)', () => {
 
   it('drops ids this build does not know, silently', () => {
     expect(
-      sanitizePhoneBar({ left: ['back', 'desktop-site', 7], right: ['qr', 'menu', null, 'voice'] })
+      sanitizePhoneBar({ left: ['back', 'desktop-site', 7], right: ['qr', 'menu', null, 'widget'] })
     ).toEqual({ left: ['back'], right: ['menu'] })
   })
 

@@ -305,6 +305,8 @@ export interface UiState {
   siteInfoOpen: boolean
   /** A page wants to open another app: the external-protocol confirm sheet is up for it. */
   externalProtocol: ExternalProtocolRequest | null
+  /** Voice search: the listening sheet is up, for the search it will load (`lib/voiceSearch.ts`). */
+  voice: VoicePrompt | null
   /** Phone layout: the sheet that rearranges the bar's controls is up. */
   barEditorOpen: boolean
   /**
@@ -410,6 +412,7 @@ export const uiStore = createStore<UiState>(
     menu: null,
     siteInfoOpen: false,
     externalProtocol: null,
+    voice: null,
     barEditorOpen: false,
     frameSheetOpen: false,
     tabsMenu: null,
@@ -725,6 +728,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.menu &&
     !ui.siteInfoOpen &&
     !ui.externalProtocol &&
+    !ui.voice &&
     ui.extensionPrompts.length === 0 &&
     !ui.extensionPopup &&
     ui.floatingChrome === 0 &&
@@ -773,6 +777,7 @@ export function invalidateSnapshot(): void {
     !ui.menu &&
     !ui.siteInfoOpen &&
     !ui.externalProtocol &&
+    !ui.voice &&
     ui.extensionPrompts.length === 0 &&
     !ui.extensionPopup &&
     ui.floatingChrome === 0 &&
@@ -1163,6 +1168,40 @@ export function pickMenuItem(itemId: string): void {
 }
 
 // ---------------------------------------------------------------------------
+// Voice search (the listening sheet; `lib/voiceSearch.ts` runs the session)
+// ---------------------------------------------------------------------------
+
+/** The listening sheet's request: one per start, and where the transcript goes. */
+export interface VoicePrompt {
+  /** Each start is a new sheet (Try again restarts the recogniser inside the same one). */
+  id: number
+  /** The tab the search or address loads in (null: there is none, a new tab opens). */
+  tabId: string | null
+  /** Load the result in a new tab rather than `tabId` (the bar was in new-tab mode). */
+  newTab: boolean
+}
+
+/**
+ * Put the listening sheet up over a capture of the page (the sheet dims it like a menu). The
+ * omnibox closes if it was the opener: the sheet takes the frame from it, the capture it held
+ * carrying over.
+ */
+export async function openVoiceSheet(prompt: VoicePrompt): Promise<void> {
+  await captureActiveTab(prompt.tabId)
+  run('focus.chrome', undefined)
+  uiStore.set({ voice: prompt, drawerOpen: false })
+  if (uiStore.get().urlbar.open) closeUrlbar()
+}
+
+/** The sheet's request is over (a result submitted, Cancel, an error toasted): take it down. */
+export function closeVoiceSheet(id: number): void {
+  if (uiStore.get().voice?.id !== id) return
+  uiStore.set({ voice: null })
+  invalidateSnapshot()
+  returnFocusToPage()
+}
+
+// ---------------------------------------------------------------------------
 // External protocols (a page wants to open another app)
 // ---------------------------------------------------------------------------
 
@@ -1282,6 +1321,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.menu !== null ||
     ui.siteInfoOpen ||
     ui.externalProtocol !== null ||
+    ui.voice !== null ||
     ui.extensionPrompts.length > 0 ||
     ui.extensionPopup !== null ||
     ui.floatingChrome > 0 ||
