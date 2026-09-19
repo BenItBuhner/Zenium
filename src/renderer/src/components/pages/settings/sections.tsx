@@ -736,6 +736,14 @@ function tabsSection({ state, set }: SectionContext): RowGroup[] {
         },
         {
           kind: 'switch',
+          id: 'confirm-close-all',
+          label: 'Confirm before closing all tabs',
+          description: 'The tab overview asks before it closes every tab of a Space.',
+          checked: s.confirmCloseAll,
+          onChange: (v) => set({ confirmCloseAll: v })
+        },
+        {
+          kind: 'switch',
           id: 'restore-session',
           label: 'Restore previous session on startup',
           checked: s.restoreSession,
