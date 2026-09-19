@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it } from 'vitest'
-import type { NewTabPageAction, NewTabPageCommand, NewTabPageState } from '../types'
+import type { NewTabPageAction, NewTabPageState } from '../types'
 import { PRIVATE_COOKIES, newTabPageHtml } from '../newTabPage'
 import { installNewTabPage, type NewTabTransport } from '../newTabPageScript'
 
@@ -62,7 +62,7 @@ function mount(initial: NewTabPageState | null): Harness {
     onState: (listener) => {
       stateListeners.push(listener)
     },
-    onCommand: (_listener: (command: NewTabPageCommand) => void) => {},
+    onCommand: () => {},
     send: (action) => {
       sent.push(action)
     }
