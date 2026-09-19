@@ -37,6 +37,9 @@
 //                      (the script's own key, not the page's) draws the elements those
 //                      selectors match in their pressed state for the still – `:active` forced
 //                      through DevTools – for a record of a press fill or its absence.
+//                      `&motion=reduced` (the script's key too) takes the still under
+//                      `prefers-reduced-motion: reduce`, emulated through DevTools for that
+//                      state alone, for a record of what holds still (§11.3).
 //                      The label defaults to the state with punctuation turned into dashes.
 //                      Default: history:overlay=history,bookmarks:overlay=bookmarks,
 //                               downloads:overlay=downloads,find:find=coffee
@@ -555,6 +558,22 @@ async function inner(opts) {
     }
   }
 
+  // `motion=reduced` in a state (the script's key, as `pressed` is): the state is reached and the
+  // still taken with `prefers-reduced-motion: reduce` emulated, so `reducedMotion()` and the
+  // stylesheet's media query both see it; the emulation is lifted again before the next state.
+  const motion = async (state) => {
+    if (new URLSearchParams(state).get('motion') !== 'reduced') return
+    await cdp('Emulation.setEmulatedMedia', {
+      features: [{ name: 'prefers-reduced-motion', value: 'reduce' }]
+    })
+    await waitFor(
+      () => js(`window.matchMedia('(prefers-reduced-motion: reduce)').matches`),
+      3000,
+      'reduced motion'
+    )
+  }
+  const motionOff = () => cdp('Emulation.setEmulatedMedia', { features: [] })
+
   let failures = 0
   for (const scheme of schemes) {
     nativeTheme.themeSource = scheme
@@ -568,6 +587,7 @@ async function inner(opts) {
       let release = null
       try {
         await pointerModality()
+        await motion(state)
         await js(`document.documentElement.dataset.previewState = ''`)
         await js(`window.postMessage({ zenPreview: ${JSON.stringify(state)} }, '*')`)
         await waitFor(
@@ -585,6 +605,7 @@ async function inner(opts) {
         console.error(`failed ${label} ${scheme}: ${e.message}`)
       } finally {
         await release?.().catch((e) => console.warn(`release: ${e.message}`))
+        await motionOff().catch((e) => console.warn(`motion: ${e.message}`))
       }
     }
   }

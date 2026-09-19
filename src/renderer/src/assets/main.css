@@ -2205,14 +2205,19 @@
   }
   /*
    * Voice search's listening sheet (OMN-19; `components/voice/VoiceSearchSheet.tsx`). The title
-   * block's glyph is the mic (20 at stroke 1.75, §9.3) with a halo behind it in the accent at low
-   * alpha: the halo's scale follows the sound level on the shared spring (`shared/voice.ts`,
-   * `voiceHaloScale`), from the glyph's own size in silence to a 36 px disc at full level. Its
-   * room is the block's 16 px padding above and to the left, the 4 px to the description below,
-   * and 12 px to the title: the h2's 8 px gap plus 4 px the glyph keeps for itself, so the halo
-   * at full never reaches the first letter. The body is the transcript as it comes, body type in
-   * the text ink, in the 16 px gutter (§9.25); before any words a hint in the deemphasized ink
-   * stands where the words will.
+   * block's glyph is the mic (20 at stroke 1.75, §9.3), plain at rest with no fill box behind it
+   * (§9.23); while sound comes a halo shows behind it, the page surface's accent at 30 %
+   * (`--v2-accent`, built as `--v2-selected` is, §9.29). The halo's diameter follows the sound
+   * level on the shared spring, in px (`shared/voice.ts`: 20 in silence to a 36 px disc at full
+   * level), and the sheet writes its transform and its opacity from that diameter per frame: none
+   * of the disc at 20, all of it at 36, so silence shows the bare glyph. Its room is the block's
+   * 16 px padding above and to the left, the 4 px to the description below, and 12 px to the
+   * title where §9.23's glyph-to-title gap is 8: the h2's 8 plus 4 px the glyph keeps for itself,
+   * so the disc at full never reaches the first letter. The body is the transcript as it comes,
+   * body type in the text ink, in the 16 px gutter (§9.25) with the block's 16 above it and the
+   * footer's 16 below; before any words a hint in the deemphasized ink stands where the words
+   * will. After a no-match the description is the block's last line and the footer follows it
+   * at §9.23's 16 – the footer's own – so the block gives up its bottom padding there.
    */
   .zen-voice-glyph {
     position: relative;
@@ -2231,25 +2236,26 @@
     position: absolute;
     inset: 0;
     border-radius: 50%;
-    background: rgb(var(--zen-accent-rgb) / 0.22);
+    background: color-mix(in srgb, var(--v2-accent) 30%, transparent);
     transform: scale(1);
+    opacity: 0;
     pointer-events: none;
-  }
-  .zen-voice-glyph[data-live='true'] .zen-voice-halo {
-    background: rgb(var(--zen-accent-rgb) / 0.3);
   }
   .zen-voice-glyph[data-live='true'] > svg {
     color: var(--v2-accent);
   }
   .zen-voice-transcript {
     min-height: 60px;
-    padding: 0 16px 8px;
+    padding: 0 16px;
     font-size: var(--v2-font-body);
     line-height: var(--v2-line-body);
     overflow-wrap: anywhere;
   }
   .zen-voice-transcript[data-hint='true'] {
     color: var(--v2-text-deemphasized);
+  }
+  .zen-voice-sheet[data-voice-state='no-match'] .zen-sheet-title-block {
+    padding-bottom: 0;
   }
   .zen-sheet-item:disabled {
     opacity: 0.4;

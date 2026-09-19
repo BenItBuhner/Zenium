@@ -6,7 +6,6 @@
  * the final transcript – so the chrome can be tested without a recogniser.
  */
 import type { HostCapabilities } from './types'
-import { inputToUrl } from './url'
 
 /** What `voice.start` answers once the microphone has been asked for. */
 export type VoiceStartOutcome =
@@ -122,36 +121,40 @@ function clampLevel(level: number): number {
 }
 
 /**
- * How far the mic glyph's halo grows for a level: at rest it sits on the glyph (1), at full
- * level it is a 36 px disc (1.8), 8 px past the 20 px glyph on every side – as much as the title
- * block has room for (§9.23): the 16 px padding above and to the left, the 12 px the sheet keeps
- * between the glyph and the title, the 4 px to the description below. The spring smooths the
- * steps between.
+ * The mic glyph's halo, by its diameter in px: at rest it is the glyph's own 20 px – and unseen
+ * (`voiceHaloOpacity`), so silence shows a plain glyph with no fill box behind it (§9.23) – and at
+ * full level a 36 px disc, 8 px past the glyph on every side, as much as the title block has room
+ * for: the 16 px padding above and to the left, the 12 px the sheet keeps between the glyph and
+ * the title, the 4 px to the description below. The spring runs on the diameter, in px, because
+ * that is the unit the shared spring's rest window is tuned for (Δ .4 px, 8 px/s, §11): in scale
+ * units the same window is half the halo's whole range and the spring would snap within a few
+ * frames rather than swell. The transform and the opacity are derived from the diameter per frame.
  */
-export const VOICE_HALO_REST = 1
-export const VOICE_HALO_FULL = 1.8
+export const VOICE_HALO_REST = 20
+export const VOICE_HALO_FULL = 36
 
-export function voiceHaloScale(level: number): number {
+/** The diameter the halo heads for at a level, 0 (silence) to 1. */
+export function voiceHaloDiameter(level: number): number {
   return VOICE_HALO_REST + (VOICE_HALO_FULL - VOICE_HALO_REST) * clampLevel(level)
 }
 
-/** A transcript as the address bar would take it: trimmed, one space between words. */
-export function voiceInput(transcript: string): string {
-  return transcript.replace(/\s+/g, ' ').trim()
+/** The `scale()` that draws a diameter: the halo's box is the glyph's 20 px. */
+export function voiceHaloScale(diameter: number): number {
+  return diameter / VOICE_HALO_REST
 }
 
-export type VoiceDestination = { kind: 'navigate'; url: string } | { kind: 'search'; query: string }
+/** How much of the halo shows at a diameter: none at rest, the whole disc at full level. */
+export function voiceHaloOpacity(diameter: number): number {
+  return clampLevel((diameter - VOICE_HALO_REST) / (VOICE_HALO_FULL - VOICE_HALO_REST))
+}
 
 /**
- * Where a final transcript goes – the same decision `urlbar.submit` makes for typed text
- * (`inputToUrl`): something that reads as an address is navigated to, everything else is a
- * search through the default engine. Null for a transcript with no words.
+ * A transcript as the address bar would take it: trimmed, one space between words. Where it then
+ * goes is `urlbar.submit`'s decision, the same one typed text gets (`inputToUrl`, else the
+ * default engine); voice search has no parser of its own.
  */
-export function voiceDestination(transcript: string): VoiceDestination | null {
-  const input = voiceInput(transcript)
-  if (!input) return null
-  const url = inputToUrl(input)
-  return url ? { kind: 'navigate', url } : { kind: 'search', query: input }
+export function voiceInput(transcript: string): string {
+  return transcript.replace(/\s+/g, ' ').trim()
 }
 
 /** The mic buttons show only where the host has a recogniser (`SpeechRecognizer.isRecognitionAvailable`). */

@@ -678,9 +678,11 @@ export function previewVoiceScript(name: string): PreviewVoiceScript {
     case 'busy':
       return { outcome: 'listening', events: [...listening, [400, { kind: 'error', error: name }]] }
     // Frozen mid-way, for a still of the sheet as it listens (the halo all the way out, at full
-    // level) or as it shows a partial transcript.
+    // level), as it waits in silence (the glyph plain, no halo) or as it shows a partial transcript.
     case 'listening':
       return { outcome: 'listening', events: [...listening, [90, { kind: 'rms', level: 1 }]] }
+    case 'listening-rest':
+      return { outcome: 'listening', events: [...listening, [90, { kind: 'rms', level: 0 }]] }
     case 'partial':
       return { outcome: 'listening', events: heard }
     default:

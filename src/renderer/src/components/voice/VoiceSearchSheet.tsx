@@ -2,9 +2,10 @@ import type { JSX } from 'react'
 import { useEffect, useRef } from 'react'
 import { Mic, MicOff } from 'lucide-react'
 import type { VoiceSession } from '@shared/voice'
-import { voiceHaloScale } from '@shared/voice'
+import { VOICE_HALO_REST, voiceHaloDiameter, voiceHaloOpacity, voiceHaloScale } from '@shared/voice'
+import { useEscapeUnlessLeaving } from '@renderer/hooks/useEscape'
 import { useBackSurface } from '@renderer/lib/back'
-import { SPRING_SNAPPY, SpringAnimation } from '@renderer/lib/motion/spring'
+import { SPRING_SNAPPY, SpringAnimation, reducedMotion } from '@renderer/lib/motion/spring'
 import { SheetPresence, useSheetLeave } from '@renderer/lib/motion/presence'
 import { uiStore } from '@renderer/lib/ui'
 import { cancelVoiceSearch, retryVoiceSearch, voiceStore } from '@renderer/lib/voiceSearch'
@@ -41,7 +42,7 @@ function VoiceSheet(): JSX.Element {
     onCommit: () => sheet.current?.commitBack(),
     onCancel: () => sheet.current?.cancelBack()
   })
-  useEscape(() => sheet.current?.dismiss(), leaving)
+  useEscapeUnlessLeaving(() => sheet.current?.dismiss(), leaving)
 
   const noMatch = session?.phase === 'no-match'
   const state: VoiceSheetState = noMatch ? 'no-match' : 'listening'
@@ -67,7 +68,12 @@ function VoiceSheet(): JSX.Element {
         </>
       }
     >
-      <div data-testid="voice-sheet" data-voice-state={state} data-voice-phase={session?.phase}>
+      <div
+        className="zen-voice-sheet"
+        data-testid="voice-sheet"
+        data-voice-state={state}
+        data-voice-phase={session?.phase}
+      >
         <TitleBlock session={session} noMatch={noMatch} />
         {!noMatch && <Transcript session={session} />}
       </div>
@@ -105,9 +111,14 @@ function TitleBlock({
 }
 
 /**
- * The mic at 20 px (§9.3) over a halo whose scale follows the level on the shared snappy spring:
- * each `rms` retargets the spring, so the halo swells and settles rather than stepping, and a
- * level that stops coming (the end of speech) lets it come to rest on the glyph.
+ * The mic at 20 px (§9.3) over a halo whose diameter follows the level on the shared snappy
+ * spring, run in px (20 → 36, `shared/voice.ts`): each `rms` retargets the spring, so the halo
+ * swells and settles over a run of frames rather than stepping on the bridge's clock, and a
+ * level that stops coming (the end of speech) lets it come to rest on the glyph. Per frame only
+ * the transform and the opacity move (§11), both derived from the diameter: at rest the halo is
+ * unseen and the glyph stands plain (§9.23). Under reduced motion (§11.3) the halo holds at
+ * rest – a disc changing size at the bridge's rate is the movement the setting removes – and the
+ * glyph's accent ink while live is the sign of listening.
  */
 function MicGlyph({
   level,
@@ -123,11 +134,12 @@ function MicGlyph({
   useEffect(() => {
     const el = halo.current
     if (!el) return
-    const apply = (x: number): void => {
-      el.style.transform = `scale(${x.toFixed(3)})`
+    const apply = (diameter: number): void => {
+      el.style.transform = `scale(${voiceHaloScale(diameter).toFixed(3)})`
+      el.style.opacity = voiceHaloOpacity(diameter).toFixed(3)
     }
     const s = new SpringAnimation(SPRING_SNAPPY, apply, apply)
-    s.start(voiceHaloScale(0), 0, voiceHaloScale(0))
+    s.start(VOICE_HALO_REST, 0, VOICE_HALO_REST)
     spring.current = s
     return () => {
       s.stop()
@@ -135,7 +147,8 @@ function MicGlyph({
     }
   }, [])
   useEffect(() => {
-    spring.current?.retarget(voiceHaloScale(live ? level : 0))
+    if (reducedMotion()) return
+    spring.current?.retarget(voiceHaloDiameter(live ? level : 0))
   }, [level, live])
   const Icon = off ? MicOff : Mic
   return (
@@ -159,22 +172,4 @@ function Transcript({ session }: { session: VoiceSession | null }): JSX.Element 
       {text || 'Say a search or an address'}
     </p>
   )
-}
-
-/** Escape cancels (hardware keyboards exist on tablets and DeX); a sheet on its way out lets the key by. */
-function useEscape(close: () => void, leaving: boolean): void {
-  const latest = useRef({ close, leaving })
-  useEffect(() => {
-    latest.current = { close, leaving }
-  })
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape' || latest.current.leaving) return
-      e.preventDefault()
-      e.stopImmediatePropagation()
-      latest.current.close()
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [])
 }

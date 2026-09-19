@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest'
+import { SPRING_SNAPPY, isAtRest, stepSpring, type SpringState } from '../spring'
 import {
   VOICE_HALO_FULL,
   VOICE_HALO_REST,
   isNoMatch,
   newVoiceSession,
   reduceVoice,
-  voiceDestination,
   voiceErrorMessage,
+  voiceHaloDiameter,
+  voiceHaloOpacity,
   voiceHaloScale,
   voiceInput,
   voiceSearchAvailable,
@@ -20,49 +22,11 @@ function play(events: VoiceEvent[], from: VoiceSession = newVoiceSession()): Voi
   return events.reduce(reduceVoice, from)
 }
 
-describe('voiceDestination: the transcript -> submit decision', () => {
-  it('navigates to a transcript that reads as an address', () => {
-    expect(voiceDestination('example.com')).toEqual({
-      kind: 'navigate',
-      url: 'https://example.com'
-    })
-    expect(voiceDestination('https://zenium.app/docs')).toEqual({
-      kind: 'navigate',
-      url: 'https://zenium.app/docs'
-    })
-    expect(voiceDestination('localhost:3000')).toEqual({
-      kind: 'navigate',
-      url: 'http://localhost:3000'
-    })
-  })
-
-  it('searches everything else through the default engine', () => {
-    expect(voiceDestination('weather in london')).toEqual({
-      kind: 'search',
-      query: 'weather in london'
-    })
-    expect(voiceDestination('how tall is the eiffel tower')).toEqual({
-      kind: 'search',
-      query: 'how tall is the eiffel tower'
-    })
-    // Words with a dot in the middle of a sentence are a sentence, not a host.
-    expect(voiceDestination('what is example.com about')).toEqual({
-      kind: 'search',
-      query: 'what is example.com about'
-    })
-  })
-
-  it('normalises the words as the address bar would take them', () => {
-    expect(voiceInput('  weather   in\nlondon ')).toBe('weather in london')
-    expect(voiceDestination('  weather   in london ')).toEqual({
-      kind: 'search',
-      query: 'weather in london'
-    })
-  })
-
-  it('has nowhere to go for a transcript with no words', () => {
-    expect(voiceDestination('')).toBeNull()
-    expect(voiceDestination('   ')).toBeNull()
+describe('voiceInput: the transcript as the address bar takes it', () => {
+  it("trims and leaves one space between words; where it goes is urlbar.submit's decision", () => {
+    expect(voiceInput('  weather   in london ')).toBe('weather in london')
+    expect(voiceInput('example.com\n')).toBe('example.com')
+    expect(voiceInput('   ')).toBe('')
   })
 })
 
@@ -151,12 +115,60 @@ describe('reduceVoice: the overlay state machine', () => {
   })
 })
 
+/** The spring at 60 fps from one diameter to another: every frame's position until it rests. */
+function swell(from: number, to: number): number[] {
+  const frames: number[] = []
+  let state: SpringState = { x: from, v: 0 }
+  while (frames.length < 240) {
+    state = stepSpring(state, to, 1 / 60, SPRING_SNAPPY)
+    frames.push(state.x)
+    if (isAtRest(state, to)) break
+  }
+  return frames
+}
+
+function steps(frames: number[], from: number): number[] {
+  return frames.map((x, i) => Math.abs(x - (i === 0 ? from : frames[i - 1]!)))
+}
+
 describe('the halo and the messages', () => {
-  it('scales the halo from resting on the glyph to a little over twice it', () => {
-    expect(voiceHaloScale(0)).toBe(VOICE_HALO_REST)
-    expect(voiceHaloScale(1)).toBe(VOICE_HALO_FULL)
-    expect(voiceHaloScale(0.5)).toBeCloseTo((VOICE_HALO_REST + VOICE_HALO_FULL) / 2)
-    expect(voiceHaloScale(4)).toBe(VOICE_HALO_FULL)
+  it('grows the halo from the glyph (20 px) to a 36 px disc with the level', () => {
+    expect(voiceHaloDiameter(0)).toBe(VOICE_HALO_REST)
+    expect(voiceHaloDiameter(1)).toBe(VOICE_HALO_FULL)
+    expect(voiceHaloDiameter(0.5)).toBeCloseTo((VOICE_HALO_REST + VOICE_HALO_FULL) / 2)
+    expect(voiceHaloDiameter(4)).toBe(VOICE_HALO_FULL)
+    expect(voiceHaloDiameter(-1)).toBe(VOICE_HALO_REST)
+  })
+
+  it('draws a diameter as a scale of the 20 px box, and shows nothing of the halo at rest', () => {
+    expect(voiceHaloScale(VOICE_HALO_REST)).toBe(1)
+    expect(voiceHaloScale(VOICE_HALO_FULL)).toBeCloseTo(1.8)
+    expect(voiceHaloOpacity(VOICE_HALO_REST)).toBe(0)
+    expect(voiceHaloOpacity(28)).toBeCloseTo(0.5)
+    expect(voiceHaloOpacity(VOICE_HALO_FULL)).toBe(1)
+    expect(voiceHaloOpacity(40)).toBe(1)
+  })
+
+  // The unit matters: `SPRING_SNAPPY` rests at Δ .4 px / 8 px/s (§11), so run in scale units
+  // (1 → 1.8) it snaps to the target inside five frames and most level steps land on their first;
+  // run in px (20 → 36) the same spring swells and settles over a run of frames.
+  it('swells over a run of frames on the shared spring, and never jumps', () => {
+    const full = swell(voiceHaloDiameter(0), voiceHaloDiameter(1))
+    expect(full.length).toBeGreaterThanOrEqual(12)
+    expect(Math.max(...steps(full, voiceHaloDiameter(0)))).toBeLessThanOrEqual(2.1)
+    // A level step the throttle lets through (`VoiceLogic.RmsThrottle`, min Δ .04): still a swell.
+    const small = swell(voiceHaloDiameter(0.25), voiceHaloDiameter(0.6))
+    expect(small.length).toBeGreaterThanOrEqual(6)
+    expect(Math.max(...steps(small, voiceHaloDiameter(0.25)))).toBeLessThan(1)
+    // The settle back to the glyph mirrors the swell.
+    const settle = swell(voiceHaloDiameter(1), voiceHaloDiameter(0))
+    expect(settle.length).toBeGreaterThanOrEqual(12)
+    expect(settle.at(-1)).toBe(voiceHaloDiameter(0))
+  })
+
+  it('would snap in scale units, which is why the spring does not run in them', () => {
+    expect(swell(1, 1.8).length).toBeLessThanOrEqual(5)
+    expect(swell(1.2, 1.48).length).toBe(1)
   })
 
   it('leaves no message when the recogniser is listening, and one for each refusal', () => {
