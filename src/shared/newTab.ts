@@ -14,7 +14,8 @@ import type {
   NewTabModules,
   NewTabPreset,
   NewTabSettings,
-  NewTabShortcut
+  NewTabShortcut,
+  NewTabShortcutsMode
 } from './types'
 import { newId } from './ids'
 
@@ -240,11 +241,63 @@ export function presetAvailable(preset: NewTabPreset): boolean {
 }
 
 /**
+ * The presets a picker lists: the available ones, and the current one whatever it is (a synced
+ * choice is never hidden from the user who wants to leave it).
+ */
+export function newTabPresetChoices(settings: NewTabSettings): NewTabPreset[] {
+  return NEW_TAB_PRESETS.filter((p) => presetAvailable(p) || p === settings.preset)
+}
+
+/**
+ * A section as a row wants it: nothing changes when the layout already shows it so, else the
+ * toggle (a named layout becomes `custom`, seeded with its sections).
+ */
+export function setNewTabSection(
+  settings: NewTabSettings,
+  module: keyof NewTabModules,
+  enabled: boolean
+): NewTabSettings {
+  return newTabSections(settings)[module] === enabled
+    ? settings
+    : toggleNewTabModule(settings, module, enabled)
+}
+
+/** What the grid shows: the mode, or nothing while the shortcuts section is off. */
+export function newTabShortcutsMode(settings: NewTabSettings): NewTabShortcutsMode {
+  return newTabSections(settings).shortcuts ? settings.mode : 'hidden'
+}
+
+/**
+ * The desktop's Shortcuts row written back: Hide is the shortcuts section off (the phone's
+ * switch – one boolean for the grid's visibility on both platforms); a mode turns it on and
+ * sets it.
+ */
+export function setNewTabShortcutsMode(
+  settings: NewTabSettings,
+  mode: NewTabShortcutsMode
+): NewTabSettings {
+  if (mode === 'hidden') return setNewTabSection(settings, 'shortcuts', false)
+  return { ...setNewTabSection(settings, 'shortcuts', true), mode }
+}
+
+/**
  * What a page paints behind its content: the chosen background while the wallpaper section is
  * on, the bare space gradient otherwise (the page is the space, as on a `focused` layout).
  */
 export function newTabBackground(settings: NewTabSettings): NewTabBackgroundKind {
   return newTabSections(settings).wallpaper ? settings.background : 'space'
+}
+
+/**
+ * The desktop's Background row written back, with the words the desktop's first model gave it:
+ * the space gradient is the page without a wallpaper (the section off), any other source is a
+ * wallpaper (the section on).
+ */
+export function setNewTabBackground(
+  settings: NewTabSettings,
+  background: NewTabBackgroundKind
+): NewTabSettings {
+  return { ...setNewTabSection(settings, 'wallpaper', background !== 'space'), background }
 }
 
 // ---------------------------------------------------------------------------

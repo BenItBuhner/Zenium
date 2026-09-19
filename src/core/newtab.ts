@@ -18,7 +18,6 @@ import type {
   NewTabPageState,
   NewTabSettings,
   NewTabShortcut,
-  NewTabShortcutsMode,
   NewTabThemeVariant,
   PageDialogResponse,
   SpaceTheme,
@@ -35,11 +34,13 @@ import {
   hideSite,
   newTabBackground,
   newTabSections,
+  newTabShortcutsMode,
   pinShortcut,
   removeSite,
   sanitizeNewTabDevice,
   sanitizeNewTabSettings,
   siteHost,
+  toggleNewTabModule,
   unhideSite,
   unpinShortcut
 } from '../shared/newTab'
@@ -256,6 +257,20 @@ export class NewTabService {
     state.commit()
   }
 
+  /**
+   * An image the user just picked is meant to be seen: the source becomes the image and, on a
+   * layout without a wallpaper, the wallpaper section comes on (the `custom` preset seeded from
+   * the layout the user is leaving, as the phone's sheet did).
+   */
+  private showImage(): void {
+    const settings = this.settings
+    const shown = newTabSections(settings).wallpaper
+    this.setSettings({
+      ...(shown ? settings : toggleNewTabModule(settings, 'wallpaper', true)),
+      background: 'image'
+    })
+  }
+
   // ---------------------------------------------------------------------------
   // Opening
   // ---------------------------------------------------------------------------
@@ -325,7 +340,7 @@ export class NewTabService {
   private build(theme: SpaceTheme | null, isPrivate: boolean): NewTabPageState {
     const settings = this.settings
     const sections = newTabSections(settings)
-    const shortcutsMode: NewTabShortcutsMode = sections.shortcuts ? settings.mode : 'hidden'
+    const shortcutsMode = newTabShortcutsMode(settings)
     const host = this.browser.platform.newTabBackground
     const backgroundImage = host?.current() ?? null
     const background = newTabBackground(settings)
@@ -623,7 +638,7 @@ export class NewTabService {
     // The picker took the chrome's focus; give it back so the next click is not dropped.
     win.focusChrome()
     if (!picked) return false
-    this.setSettings({ background: 'image' })
+    this.showImage()
     return true
   }
 
@@ -642,13 +657,15 @@ export class NewTabService {
 
   /**
    * Keep an image the chrome read itself (the phone's file chooser), or with null let it go;
-   * the background source follows, as a pick is meant to be seen.
+   * the background source follows – shown, for a pick; the space colours after a removal.
    */
   async setBackgroundImage(dataUrl: string | null): Promise<void> {
     const host = this.browser.platform.newTabBackground
     if (!host?.set) throw new Error('This device cannot keep a background image')
     await host.set(dataUrl)
-    this.setSettings({ background: dataUrl ? 'image' : 'space' })
+    if (dataUrl) this.showImage()
+    else if (this.settings.background === 'image') this.setSettings({ background: 'space' })
+    else this.browser.state.commit()
   }
 
   // ---------------------------------------------------------------------------

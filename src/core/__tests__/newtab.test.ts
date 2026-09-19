@@ -743,6 +743,60 @@ describe('NewTabService: my shortcuts and most visited', () => {
     expect(svc.stateFor(tab.id)?.backgroundImage).toBeNull()
   })
 
+  it('a picked image is shown: on a layout without a wallpaper the section comes on', async () => {
+    const f = fixture({ withBackground: true })
+    const win = f.browser.focusedWindow()
+    f.browser.handleCommand(win, 'newtab.open', undefined)
+    const tab = activeTab(f)!
+    const svc = f.browser.newTab
+    expect(f.browser.state.settings.newTab.preset).toBe('focused')
+    await svc.pickBackgroundImage(win)
+    expect(f.browser.state.settings.newTab).toMatchObject({
+      preset: 'custom',
+      background: 'image',
+      modules: { wallpaper: true, greeting: false }
+    })
+    expect(svc.stateFor(tab.id)?.background).toBe('image')
+    // A layout that shows a wallpaper already keeps its name.
+    f.browser.handleCommand(win, 'settings.update', {
+      newTab: { preset: 'inspirational', background: 'space' }
+    })
+    await svc.pickBackgroundImage(win)
+    expect(f.browser.state.settings.newTab).toMatchObject({
+      preset: 'inspirational',
+      background: 'image'
+    })
+  })
+
+  it("the phone's chooser hands the image over through setBackgroundImage", async () => {
+    const stored: Array<string | null> = []
+    const f = fixture({ withBackground: true })
+    f.browser.platform.newTabBackground!.set = async (dataUrl) => {
+      stored.push(dataUrl)
+      f.background.current = dataUrl
+    }
+    const win = f.browser.focusedWindow()
+    await f.browser.handleCommand(win, 'newtab.setBackgroundImage', {
+      dataUrl: 'data:image/png;base64,AA'
+    })
+    expect(stored).toEqual(['data:image/png;base64,AA'])
+    expect(f.browser.handleCommand(win, 'newtab.backgroundImage', undefined)).toBe(
+      'data:image/png;base64,AA'
+    )
+    expect(f.browser.state.settings.newTab).toMatchObject({ preset: 'custom', background: 'image' })
+    await f.browser.handleCommand(win, 'newtab.setBackgroundImage', { dataUrl: null })
+    expect(stored).toEqual(['data:image/png;base64,AA', null])
+    expect(f.browser.state.settings.newTab.background).toBe('space')
+    expect(f.browser.state.settings.newTab.modules.wallpaper).toBe(true)
+    // A host with no way to keep an image refuses.
+    const bare = fixture()
+    await expect(
+      bare.browser.handleCommand(bare.browser.focusedWindow(), 'newtab.setBackgroundImage', {
+        dataUrl: 'data:image/png;base64,AA'
+      })
+    ).rejects.toThrow()
+  })
+
   it('the chrome state says whether an image is set and whether the host can pick one', async () => {
     const f = fixture({ withBackground: true })
     const win = f.browser.focusedWindow()

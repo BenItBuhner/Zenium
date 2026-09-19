@@ -11,7 +11,9 @@ import {
   migrateNewTabDevice,
   migrateNewTabSettings,
   newTabBackground,
+  newTabPresetChoices,
   newTabSections,
+  newTabShortcutsMode,
   pickNewTabPreset,
   pinShortcut,
   presetAvailable,
@@ -20,6 +22,9 @@ import {
   sanitizeNewTabDevice,
   sanitizeNewTabSettings,
   sanitizeNewTabShortcuts,
+  setNewTabBackground,
+  setNewTabSection,
+  setNewTabShortcutsMode,
   siteHost,
   toggleNewTabModule,
   unhideSite,
@@ -204,6 +209,68 @@ describe('presets', () => {
         })
       )
     ).toBe('solid')
+  })
+
+  it('lists the available presets for a picker, and the current one whatever it is', () => {
+    expect(newTabPresetChoices(settings())).toEqual(['focused', 'inspirational', 'custom'])
+    expect(newTabPresetChoices(settings({ preset: 'informational' }))).toEqual([
+      'focused',
+      'inspirational',
+      'informational',
+      'custom'
+    ])
+  })
+
+  it('a row setting a section leaves a layout that already shows it so, else toggles', () => {
+    const focused = settings()
+    expect(setNewTabSection(focused, 'shortcuts', true)).toBe(focused)
+    expect(setNewTabSection(focused, 'greeting', true)).toEqual(
+      settings({ preset: 'custom', modules: { ...DEFAULT_NEW_TAB_MODULES, greeting: true } })
+    )
+    const inspirational = settings({ preset: 'inspirational' })
+    expect(setNewTabSection(inspirational, 'greeting', true)).toBe(inspirational)
+  })
+
+  it('the Shortcuts row: Hide is the section off, a mode is the section on and the mode', () => {
+    const focused = settings()
+    expect(newTabShortcutsMode(focused)).toBe('most-visited')
+    const hidden = setNewTabShortcutsMode(focused, 'hidden')
+    expect(hidden).toEqual(
+      settings({ preset: 'custom', modules: { ...DEFAULT_NEW_TAB_MODULES, shortcuts: false } })
+    )
+    expect(newTabShortcutsMode(hidden)).toBe('hidden')
+    expect(newTabShortcutsMode(settings({ mode: 'my-shortcuts' }))).toBe('my-shortcuts')
+    // Back from Hide: the section returns with the mode asked for; the layout stays custom.
+    expect(setNewTabShortcutsMode(hidden, 'my-shortcuts')).toEqual(
+      settings({ preset: 'custom', modules: { ...DEFAULT_NEW_TAB_MODULES }, mode: 'my-shortcuts' })
+    )
+    // A mode change alone keeps a named layout.
+    expect(setNewTabShortcutsMode(focused, 'my-shortcuts')).toEqual(
+      settings({ mode: 'my-shortcuts' })
+    )
+  })
+
+  it('the Background row: the space gradient is no wallpaper, any other source is one', () => {
+    const focused = settings()
+    expect(setNewTabBackground(focused, 'solid')).toEqual(
+      settings({
+        preset: 'custom',
+        modules: { ...DEFAULT_NEW_TAB_MODULES, wallpaper: true },
+        background: 'solid'
+      })
+    )
+    const inspirational = settings({ preset: 'inspirational', background: 'image' })
+    // A source change alone keeps a layout that shows a wallpaper.
+    expect(setNewTabBackground(inspirational, 'solid')).toEqual(
+      settings({ preset: 'inspirational', background: 'solid' })
+    )
+    expect(setNewTabBackground(inspirational, 'space')).toEqual(
+      settings({
+        preset: 'custom',
+        modules: { ...DEFAULT_NEW_TAB_MODULES, wallpaper: false, greeting: true },
+        background: 'space'
+      })
+    )
   })
 })
 
