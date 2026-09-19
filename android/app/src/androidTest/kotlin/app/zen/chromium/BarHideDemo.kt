@@ -37,19 +37,30 @@ import kotlin.math.roundToInt
  *  5. Settings › Look and Feel › URL bar › Hide toolbar when scrolling (a finger on the row's
  *     switch) turns it off – the same drag moves no bar – and back on, and the bar's position
  *     row carries the bar to the top, where 1 to 4 run again against the top edge;
- *  6. a drag inside the page's own inner scroller scrolls the box and moves no bar (Chrome's
- *     controls take a scroll only once it has reached the viewport; a top-docked bar here takes
- *     a drag's travel only once the page's own scroller has moved under the finger);
+ *  6. a drag inside the page's own inner scroller – a dozen sections down, brought on screen by
+ *     script for its step – scrolls the box and moves no bar (Chrome's controls take a scroll
+ *     only once it has reached the viewport; a top-docked bar here takes a drag's travel only
+ *     once the page's own scroller has moved under the finger);
  *  7. the page's end: a finger landing within the bar's travel of it starts no hide and nothing
  *     twitches (the value is sampled through the gesture, a frame log), the last line is reached
  *     with the bar shown; a drag from higher up to the very end takes the bar off on the way,
- *     the value climbs without a reversal, and the last line is reached with the bar hidden.
+ *     the value climbs without a reversal, and the last line is reached with the bar hidden;
+ *     a short drag back up from the end brings the bar part of the way back under the finger
+ *     and a release from under half way snaps it home (a fourth run read a bar snapped all the
+ *     way back here at the top dock, with no finger's travel to account for it).
  *
- * A fling's outcome and the bar's return under accessibility focus are read and written down,
- * not judged: on the software-GPU emulator the fling's scroll arrives in lumps, and what the
- * WebView does with `ACTION_ACCESSIBILITY_FOCUS` is Chromium's call. A bar found off its edge
- * where it should be home is written down with both sides' state (the chrome's store, the
- * host's gesture), so a bar stuck hidden can be told from the emulator's jank.
+ * Each dock's sequence starts with the page at its top, put there by script (a script's scroll
+ * moves no bar): the drags land on the page's own text, not on the box, and a drag from the top
+ * has the whole page below it. A fling's outcome and the bar's return under accessibility focus
+ * are read and written down, not judged: on the software-GPU emulator the fling's scroll arrives
+ * in lumps, and what the WebView does with `ACTION_ACCESSIBILITY_FOCUS` is Chromium's call. A
+ * bar found off its edge where it should be home, and every claim that did not hold, is written
+ * down with both sides' state (the chrome's store, the host's gesture), so a bar stuck hidden can
+ * be told from the emulator's jank; the host and the chrome each log every move of the bar that
+ * was not the finger's, and the chrome its phases (`BarHide`, `ZenHost`, `ZenChrome` in the
+ * logcat). The focus read leaves no focus behind: a node left focused is Chromium's to
+ * re-announce as the bar moves under the drags that follow, and a fourth run's top-dock return
+ * drag found the bar snapped home with no finger's travel to account for it.
  *
  * `findings.txt` carries every number read; a claim that did not hold fails the run once the
  * recording is done (like [touchFault]). The `theme` instrumentation argument (`light`, the
@@ -123,10 +134,15 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
 
     /**
      * Steps 1 to 3 against the bar at `edge`, plus the fling and the accessibility-focus reads.
-     * Starts with the bar shown and the page near its top; ends with the bar shown.
+     * Starts with the bar shown and the page at its top (a fourth run began the top dock's half
+     * in the page's last third, where the re-hide after the focus read ran into the page's end);
+     * ends with the bar shown.
      */
     private fun dockSequence(edge: String) {
+        settleBar(0.0, "$edge start")
+        pageJs("window.scrollTo(0, 0)")
         SystemClock.sleep(800)
+        finding("[$edge] start: page scrollTop ${pageScrollTop()}, hide ${hideValue()}")
         shot("$edge-01-shown")
         val shownPage = pageInnerHeight()
         val shownFrame = frameHeight()
@@ -230,6 +246,10 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
      * goes with the row and the bar stays.
      */
     private fun sheetSequence(edge: String) {
+        // Room below for the hide (the page's end, where the sequence before this one leaves the page, has none).
+        settleBar(0.0, "$edge before the sheet")
+        pageJs("window.scrollTo(0, 0)")
+        SystemClock.sleep(800)
         drag(-LONG * density, 600)
         if (!awaitHide(SETTLE_MS) { it >= 0.995 }) finding("[$edge] sheet step: the bar did not hide first (hide ${hideValue()})")
         SystemClock.sleep(600)
@@ -268,24 +288,24 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
     }
 
     /**
-     * Step 6 at `edge`: a finger inside the page's inner scroller (its `overflow: auto` box near
-     * the top) scrolls the box and moves no bar. The page's own `onScrollChanged` never fires for
-     * an inner scroller, so a bottom-docked bar has nothing to follow, and a top-docked bar takes
-     * nothing from a drag the page has not scrolled under ([BarHideShare]). Starts with the bar
-     * shown, puts the page at its top by script (no finger: the bar stays), and leaves the page
-     * scrolled past the box with the bar shown, so the drags after it are the page's own.
+     * Step 6 at `edge`: a finger inside the page's inner scroller (its `overflow: auto` box, a
+     * dozen sections down) scrolls the box and moves no bar. The page's own `onScrollChanged`
+     * never fires for an inner scroller, so a bottom-docked bar has nothing to follow, and a
+     * top-docked bar takes nothing from a drag the page has not scrolled under ([BarHideShare]).
+     * Starts with the bar shown, brings the box to the middle of the viewport by script (no
+     * finger: the bar stays), and leaves the page scrolled past the box with the bar shown, so
+     * the drags after it are the page's own.
      */
     private fun innerScrollerSequence(edge: String) {
         settleBar(0.0, "$edge before the inner scroller")
-        pageJs("window.scrollTo(0, 0)")
+        pageJs("(function(){var b=document.getElementById('inner');window.scrollTo(0,b.getBoundingClientRect().top+document.scrollingElement.scrollTop-(window.innerHeight-b.offsetHeight)/2)})()")
         SystemClock.sleep(900)
         val box = pageRect("inner")
-        if (box == null) {
-            check("$edge: the page's inner scroller is on screen", false, "no #inner box read from the page")
-            return
-        }
+        val onScreen = box != null && box.top > height * 0.2 && box.bottom < height * 0.8
+        check("$edge: the page's inner scroller is in the middle of the screen for its finger", onScreen, "box $box in a ${width}x$height window")
+        if (box == null || !onScreen) return
         val before = pageNumber("document.getElementById('inner').scrollTop")
-        finding("[$edge] inner scroller at $box on screen, scrollTop $before, page at ${pageNumber("document.scrollingElement.scrollTop")}, hide ${hideValue()}")
+        finding("[$edge] inner scroller at $box on screen, scrollTop $before, page at ${pageScrollTop()}, hide ${hideValue()}")
         val log = frameLog {
             Finger().apply {
                 down(box.exactCenterX(), box.exactCenterY())
@@ -316,8 +336,10 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
      * ([BarHideScrollFilter]) – and nothing twitches: the value is sampled through the gesture,
      * and the page's last line is reached with the bar shown. Then, from higher up, a drag to
      * the very end takes the bar off on the way, the value climbs without a reversal, and the
-     * last line is reached with the bar hidden. Starts with the bar shown; leaves the page at its
-     * end with the bar hidden.
+     * last line is reached with the bar hidden. Then a short drag back up from the end brings
+     * the bar part of the way back under the finger (the page keeps its tall layout until the
+     * bar rests, so nothing is clamped on the way) and a release from under half way snaps it
+     * home. Starts with the bar shown; leaves the page at its end with the bar shown.
      */
     private fun pageEndSequence(edge: String) {
         settleBar(0.0, "$edge before the page's end")
@@ -376,6 +398,30 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
             "remaining ${pageRemaining()} CSS px, last line's bottom ${lastLineBottom()} in a page ${pageInnerHeight()} tall"
         )
         shot("$edge-15-end-hidden")
+
+        // Back up from the end: the bar comes back one to one under the finger and snaps home from under half way.
+        val returnLog = frameLog {
+            Finger().apply {
+                down(pageX, pageY)
+                moveBy(0f, SHORT_BACK * density, 500)
+                hold(700)
+                val held = hideNumber()
+                check(
+                    "$edge: a ${SHORT_BACK.roundToInt()} dp drag up the page from its end brings the bar part of the way back under the finger",
+                    held in 0.02..0.6,
+                    "hide $held"
+                )
+                shot("$edge-16-end-coming-back")
+                up()
+            }
+        }
+        check("$edge: the bar rests shown after the release from under half way at the page's end", awaitHide(SETTLE_MS) { it <= 0.005 }, "hide ${hideValue()}")
+        check(
+            "$edge: the return from the end held one direction (the frame log)",
+            reversals(returnLog) == 0,
+            "reversals ${reversals(returnLog)} in ${returnLog.size} frames: ${returnLog.joinToString(" ") { "%.2f".format(it) }}"
+        )
+        SystemClock.sleep(800)
     }
 
     /**
@@ -518,6 +564,10 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
         val focused = pill.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)
         val back = awaitHide(3_000) { it <= 0.005 }
         finding("[$edge] a11y focus on the pill: action ${if (focused) "taken" else "refused"}, bar back ${if (back) "yes" else "no"} (hide ${hideValue()})")
+        // The focus is taken off again: TalkBack's would move on with the next swipe, and a node
+        // left focused is Chromium's to re-announce as its bounds change under the drags that
+        // follow (the host brings the bar back for that event while no finger is on the page).
+        pill.performAction(AccessibilityNodeInfo.ACTION_CLEAR_ACCESSIBILITY_FOCUS)
         SystemClock.sleep(600)
     }
 
@@ -661,6 +711,9 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
     /** The page's own viewport height, CSS px, as its script sees it (`innerHeight`); -1 when it did not answer. */
     private fun pageInnerHeight(): Int = pageNumber("window.innerHeight").toInt()
 
+    /** The page's own scroll position, CSS px (0 at its top). */
+    private fun pageScrollTop(): Int = pageNumber("Math.round(document.scrollingElement.scrollTop)").toInt()
+
     /** How much further the page can scroll, CSS px (0 at its end). */
     private fun pageRemaining(): Int =
         pageNumber("Math.round(document.scrollingElement.scrollHeight - window.innerHeight - document.scrollingElement.scrollTop)").toInt()
@@ -747,13 +800,19 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
         findings.append(line).append('\n')
     }
 
-    /** A claim of the sequence: written down either way, and a claim that did not hold fails the run at the end. */
+    /**
+     * A claim of the sequence: written down either way, and a claim that did not hold fails the
+     * run at the end – with both sides' state as it stood when the claim was read, so the record
+     * says where the bar was and why (a finger still down, a gate, the host's mirror).
+     */
     private fun check(claim: String, held: Boolean, detail: String) {
-        finding("${if (held) "OK  " else "FAIL"} $claim ($detail)")
-        if (!held) {
-            Log.e(tag, "CLAIM FAILED: $claim ($detail)")
-            failures += "$claim ($detail)"
+        if (held) {
+            finding("OK   $claim ($detail)")
+            return
         }
+        finding("FAIL $claim ($detail); chrome ${chromeBarHide()}; host ${hostBarHide()}")
+        Log.e(tag, "CLAIM FAILED: $claim ($detail)")
+        failures += "$claim ($detail)"
     }
 
     /** Run a shell command with the instrumentation's shell permissions; returns its output. */
