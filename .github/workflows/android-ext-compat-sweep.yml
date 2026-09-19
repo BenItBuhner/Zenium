@@ -23,11 +23,12 @@ on:
 permissions:
   contents: read
 
-# A run in progress finishes (its two hours of results are the point); a newer push waits behind it
-# and only the latest pending one is kept.
+# TEMPORARY, with the push trigger: a newer push supersedes the run in progress (the sweep is
+# re-measured on every driver fix, and its two hours are only worth having for the latest head).
+# Restored to false with the trigger's removal: a dispatched run finishes.
 concurrency:
   group: android-ext-compat-sweep-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   system-webview:
