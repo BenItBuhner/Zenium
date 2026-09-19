@@ -201,6 +201,12 @@ export class ElectronTabView implements TabView {
   /** What the page itself was about to do, as its preload reported it (`navigate-intent`). */
   private pageIntent: { at: number; intent: NavigationIntent } | null = null
   private unloadCheck: UnloadCheck | null = null
+  /**
+   * The core asked for the keyboard (`focus()`) and the page has not answered yet. A tab being
+   * activated is focused first and shown when the chrome reports the layout, a frame or two
+   * later: its `focus` event arrives while it is still hidden, and is its own.
+   */
+  private keyboardAsked = false
 
   constructor(
     readonly view: WebContentsView,
@@ -210,18 +216,23 @@ export class ElectronTabView implements TabView {
     this.webContentsId = this.wc.id
     this.view.setVisible(false)
     this.wc.on('blur', () => {
+      this.keyboardAsked = false
       const win = this.win
       if (win) this.owner.keyboardLeft(win, this.wc)
     })
     this.wc.on('focus', () => {
-      if (this.visible) return
-      // A page that is not on screen took the keyboard. Electron 44 gives a new WebContentsView
-      // the keyboard once its renderer is up, hidden or not, so a tab opened in the background
-      // (a middle-clicked link, `target=_blank`) would leave the next Ctrl+1..9 or Ctrl+W with a
-      // page nobody sees. Deferred: a tab being activated is focused and shown in one task.
+      const asked = this.keyboardAsked
+      this.keyboardAsked = false
+      if (asked || this.visible) return
+      // A page that is not on screen took the keyboard without the core asking for it. Electron
+      // 44 gives a new WebContentsView the keyboard once its renderer is up, hidden or not, so a
+      // tab opened in the background (a middle-clicked link, `target=_blank`) would leave the
+      // next Ctrl+1..9 or Ctrl+W with a page nobody sees: a hidden widget drops its key events.
+      // Deferred, and asked again then: the core may activate this very tab meanwhile.
       defer(() => {
         const win = this.win
-        if (!win || this.visible || this.wc.isDestroyed() || !this.wc.isFocused()) return
+        if (!win || this.visible || this.keyboardAsked) return
+        if (this.wc.isDestroyed() || !this.wc.isFocused()) return
         this.owner.keyboardTaken(win, this.wc)
       })
     })
@@ -674,6 +685,7 @@ export class ElectronTabView implements TabView {
   }
 
   focus(): void {
+    this.keyboardAsked = true
     this.wc.focus()
   }
 

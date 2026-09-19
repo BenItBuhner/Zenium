@@ -265,6 +265,36 @@ describe('a hidden tab page and the keyboard', () => {
     expect(window.chrome.focusCalls).toBe(1)
   })
 
+  it('leaves a hidden page alone whose keyboard the core asked for (shown a frame later)', async () => {
+    const { window, background } = setup()
+    window.chrome.focus()
+    const next = background()
+    // `focusContent` on activation: the chrome reports the layout that shows the page later.
+    next.focus()
+    expect(keyboard.current).toBe(pageOf(next))
+    await settle()
+    expect(keyboard.current).toBe(pageOf(next))
+    expect(window.chrome.focusCalls).toBe(1)
+    // The answer was consumed: the next unasked focus while hidden is given back again.
+    window.chrome.focus()
+    takeKeyboard(pageOf(next))
+    await settle()
+    expect(keyboard.current).toBe(window.chrome)
+    expect(window.chrome.focusCalls).toBe(3)
+  })
+
+  it('leaves it alone when the core asks for it between the event and the check', async () => {
+    const { window, background } = setup()
+    window.chrome.focus()
+    const next = background()
+    takeKeyboard(pageOf(next))
+    // Ctrl+2 lands on the tab that just came up: `focus()` on a page that already has it.
+    next.focus()
+    await settle()
+    expect(keyboard.current).toBe(pageOf(next))
+    expect(window.chrome.focusCalls).toBe(1)
+  })
+
   it('waits for the user to come back to a window that is not focused', async () => {
     const { window, background } = setup()
     window.chrome.focus()
