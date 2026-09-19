@@ -2,6 +2,7 @@ import type { Boost, Container, Space } from '../../shared/types'
 import { DEFAULT_CONTAINER_ID } from '../../shared/types'
 import { sanitizePhoneBar } from '../../shared/phoneBar'
 import { migrateNewTabSettings, sanitizeNewTabSettings } from '../../shared/newTab'
+import { sanitizeSearchEngines } from '../../shared/search'
 import {
   createTabRecord,
   getSpace,
@@ -222,6 +223,13 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
           Object.assign(state.settings.compactMode, compactMode, { sidebarPersistent: false })
         // Another device's build may know bar items this one does not (or the other way round).
         if ('phoneBar' in rest) state.settings.phoneBar = sanitizePhoneBar(rest.phoneBar)
+        // A peer's engines (added by hand, discovered on its pages) are read like a profile's
+        // own: complete entries only, capped, the default among them kept.
+        if ('searchEngines' in rest)
+          state.settings.searchEngines = sanitizeSearchEngines(
+            rest.searchEngines,
+            state.settings.searchEngineId
+          )
         // Another device may run an older or newer build: its new tab values arrive in whichever
         // shape it writes (the desktop's first `newTab`, the phone's `newTabPhone`, the one
         // model) and only known values apply.
