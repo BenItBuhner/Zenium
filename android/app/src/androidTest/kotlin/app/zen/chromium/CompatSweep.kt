@@ -371,7 +371,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * The popup in the phone's bottom sheet: `P` when its document rendered (text or more than a
      * handful of elements) without an uncaught exception, `PARTIAL` when it rendered but threw,
      * `F` when the sheet never had a document. An action without a popup fires `onClicked`; a tab
-     * it opens counts as the extension's answer (the desktop grades it the same way).
+     * it opens, or an open page of its own it brings to the front, counts as the extension's
+     * answer (the desktop grades it the same way).
      */
     private fun popup(row: Row, entry: JSONObject, manifest: JSONObject, slug: String) {
         val action = manifest.optJSONObject("action") ?: manifest.optJSONObject("browser_action")
@@ -384,6 +385,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             return
         }
         val tabsBefore = tabUrls().keys
+        val activeBefore = activeCoreTab()?.optString("id")
         coreInvoke("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
         val view = poll(POPUP_TIMEOUT_MS, 400) {
             val v = popupView()
@@ -417,14 +419,24 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             else -> {
                 val opened = tabUrls().filterKeys { it !in tabsBefore }.values.toList()
                 detail.put("openedTabs", JSONArray(opened))
-                if (runtimePopup == null && opened.isNotEmpty()) {
-                    entry.put("popupOpened", JSONArray(opened))
-                    // The page the click opened, read while its tab is still there (the stage's
+                // A page of the extension's own that was open already and that the click brought
+                // to the front (1Password activates its welcome tab while it onboards, as Chrome
+                // shows it) is the extension's answer as much as a new tab is.
+                val activeNow = activeCoreTab()
+                val raised = activeNow?.optString("url")?.takeIf {
+                    activeNow.optString("id") != activeBefore && it.contains("${row.id}.ext.zenium.invalid/")
+                }
+                raised?.let { detail.put("raisedTab", it) }
+                val answered = if (opened.isNotEmpty()) opened else listOfNotNull(raised)
+                if (runtimePopup == null && answered.isNotEmpty()) {
+                    entry.put("popupOpened", JSONArray(answered))
+                    // The page the click showed, read while its tab is still there (the stage's
                     // closeExtraTabs takes it): an account row's core grade (popupLogin) is its
                     // text, and an extension page that shows no sign-in (1Password's
                     // app.html#/page/error) carries the blank-page evidence of the row so far.
-                    if (row.account) openedPage(row, opened[0])?.let { entry.put("popupOpenedPage", it) }
-                    stage(entry, "popup", "P", "no popup (the extension emptied it with action.setPopup); the click fired action.onClicked, which opened ${opened.joinToString().take(160)}", detail)
+                    if (row.account) openedPage(row, answered[0])?.let { entry.put("popupOpenedPage", it) }
+                    val what = if (opened.isNotEmpty()) "opened ${opened.joinToString().take(160)}" else "brought its open page ${answered[0].take(160)} to the front"
+                    stage(entry, "popup", "P", "no popup (the extension emptied it with action.setPopup); the click fired action.onClicked, which $what", detail)
                 } else if (live != null) {
                     val dom = detail.optJSONObject("dom") ?: JSONObject()
                     stage(entry, "popup", "PARTIAL", "the sheet came up but its document stayed empty after ${POPUP_TIMEOUT_MS / 1000} s: ${dom.toString().take(200)}; console: ${detail.optJSONArray("console")?.toString()?.take(200)}", detail)
@@ -700,7 +712,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                     else -> stored?.optJSONObject("blankTab")
                 }
                 val extra = evidence?.let { JSONObject().put("blankTab", it) }
-                Grade(if (pass) "n/m" else "F", "$label: the action click opened ${url.take(90)} (\"${txt.take(80)}\"); the vault itself needs an account (not measurable here)", extra)
+                Grade(if (pass) "n/m" else "F", "$label: the action click showed ${url.take(90)} (\"${txt.take(80)}\"); the vault itself needs an account (not measurable here)", extra)
             }
             popup?.optString("verdict") in setOf("P", "PARTIAL") ->
                 Grade(
