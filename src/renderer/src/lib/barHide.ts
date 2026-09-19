@@ -1,4 +1,4 @@
-import type { PhoneBarPosition } from '@shared/types'
+import type { PhoneBarPosition, Rect } from '@shared/types'
 import { isEmptyTabUrl, isInternalUrl } from '@shared/url'
 import { dockStore } from './gestures/dock'
 import { SPRING_SNAPPY, SpringAnimation } from './motion/spring'
@@ -6,7 +6,7 @@ import { VelocityTracker } from './motion/velocity'
 import { pullStore } from './pull'
 import { activeTab } from './selectors'
 import { createStore } from './store'
-import { browserStore, pageHidden, uiStore, type UiState } from './ui'
+import { browserStore, contentAreaStore, pageHidden, uiStore, type UiState } from './ui'
 
 /**
  * The phone bar hiding on scroll (Chrome / Edge parity; design language v2 draft §11).
@@ -326,7 +326,11 @@ export interface BarHideHostFrame {
   /** How far the bar is off (CSS px, 0 … `travel`). */
   offset: number
   travel: number
-  /** Window y (CSS px) of the page's edge on the bar's side with the bar fully shown. */
+  /**
+   * Window y (CSS px) of the page's edge on the bar's side with the bar fully shown – the
+   * page's, not the bar's: chrome between the two (a translate bar, a banner, the blocked
+   * pop-ups chip) is counted in.
+   */
   shownEdge: number
 }
 
@@ -361,8 +365,37 @@ function root(): HTMLElement | null {
   return typeof document === 'undefined' ? null : document.documentElement
 }
 
-/** Window y of the page's edge on the bar's side with the bar shown, from the shell's insets. */
+/**
+ * The page's frame as the layout reporter last measured it, read together with the column
+ * layout it was measured in: `away` when the content column had taken the bar's band
+ * (`PhoneShell`'s `barAway`). The reporter measures after the commit that laid the column out,
+ * so the pair is consistent where it is taken and is never mixed across a frame here.
+ */
+let measured: { area: Rect; away: boolean } | null = null
+
+function noteMeasured(): void {
+  const area = contentAreaStore.get().area
+  const ui = uiStore.get()
+  measured = area ? { area, away: ui.barHidden && !ui.urlbar.open } : null
+}
+
+/**
+ * Window y of the page's edge on the bar's side with the bar shown. Off the measured frame when
+ * there is one – the edge it was measured at, plus the travel when the column had the band –
+ * so chrome between the bar and the page (a translate bar, a banner, the blocked pop-ups chip)
+ * is counted in: the host tells the two column layouts apart by which lies nearer this edge,
+ * and read from the insets and the band alone a strip taller than half the travel would have
+ * made the tall layout read as the short one and put the page a band into the strip. Without a
+ * measurement (before the first report) the insets and the band stand in.
+ */
 function shownEdge(): number {
+  const travel = barHideStore.get().travel
+  if (measured) {
+    const { area, away } = measured
+    return context.edge === 'top'
+      ? area.y + (away ? travel : 0)
+      : area.y + area.height - (away ? travel : 0)
+  }
   const insets = uiStore.get().insets
   return context.edge === 'top'
     ? insets.top + context.band
@@ -498,5 +531,11 @@ if (!flags.__zenBarHideWired) {
   browserStore.subscribe(evaluateGate)
   pullStore.subscribe(evaluateGate)
   dockStore.subscribe(evaluateGate)
+  // The page's frame moved or was measured anew (the reporter's `ResizeObserver`): the edge the
+  // host lays out against follows, with the layout it was measured in.
+  contentAreaStore.subscribe(() => {
+    noteMeasured()
+    publishHost()
+  })
   if (typeof window !== 'undefined') window.addEventListener('resize', publishHost)
 }

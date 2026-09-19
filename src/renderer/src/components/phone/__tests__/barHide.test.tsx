@@ -11,7 +11,7 @@ import {
   showBar,
   type BarHideHostFrame
 } from '@renderer/lib/barHide'
-import { browserStore, uiStore } from '@renderer/lib/ui'
+import { browserStore, contentAreaStore, uiStore } from '@renderer/lib/ui'
 
 /*
  * What the bar that hides on scroll publishes for every other surface (v2 draft §11; the tab
@@ -111,6 +111,7 @@ describe('the published hide progress', () => {
     resetBarHide()
     setBarHideContext({ present: false })
     setBarHideHost(null)
+    contentAreaStore.set({ area: null })
     browserStore.set({ state: null })
     uiStore.set({
       urlbar: {
@@ -244,6 +245,42 @@ describe('the published hide progress', () => {
     expect(rootVar()).toBeCloseTo(0.5, 3)
     expectAgreement()
     expect(hostFrames[hostFrames.length - 1]).toMatchObject({ edge: 'top', offset: 24 })
+  })
+
+  it('the host hears the page\'s measured edge, so a strip between the bar and the page counts, at either dock and through the hidden rest', () => {
+    // Bottom dock: the blocked pop-ups chip (44) sits between the page and the bar, so the page
+    // ends 44 above the bar's edge (915 − 20 − 56 = 839).
+    contentAreaStore.set({ area: { x: 8, y: 80, width: 396, height: 839 - 44 - 80 } })
+    expect(hostFrames[hostFrames.length - 1]).toMatchObject({ edge: 'bottom', shownEdge: 839 - 44 })
+
+    scroll([60])
+    now += 16
+    dispatchBarScroll('t1', 'end', { time: now })
+    settle()
+    expect(uiStore.get().barHidden).toBe(true)
+    // The column has taken the band: the reporter measures the page 48 taller, in the layout
+    // the boolean names, and the edge the host is told stays the shown one.
+    contentAreaStore.set({ area: { x: 8, y: 80, width: 396, height: 839 - 44 - 80 + 48 } })
+    expect(hostFrames[hostFrames.length - 1]).toMatchObject({ offset: 48, shownEdge: 839 - 44 })
+
+    // Top dock: a translate bar (48) between the bar and the page; the page starts at
+    // 24 + 56 + 48 with the bar shown.
+    resetBarHide()
+    browserStore.set({ state: state('top') })
+    setBarHideContext({ edge: 'top' })
+    contentAreaStore.set({ area: { x: 8, y: 24 + 56 + 48, width: 396, height: 700 } })
+    expect(hostFrames[hostFrames.length - 1]).toMatchObject({ edge: 'top', shownEdge: 128 })
+    scroll([60])
+    now += 16
+    dispatchBarScroll('t1', 'end', { time: now })
+    settle()
+    expect(uiStore.get().barHidden).toBe(true)
+    contentAreaStore.set({ area: { x: 8, y: 24 + 56 + 48 - 48, width: 396, height: 748 } })
+    expect(hostFrames[hostFrames.length - 1]).toMatchObject({ offset: 48, shownEdge: 128 })
+
+    // No measurement yet: the insets and the band stand in.
+    contentAreaStore.set({ area: null })
+    expect(hostFrames[hostFrames.length - 1]).toMatchObject({ shownEdge: 24 + 56 })
   })
 
   it('only the page on screen moves the bar', () => {
