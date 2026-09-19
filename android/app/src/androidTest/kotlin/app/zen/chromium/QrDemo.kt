@@ -163,15 +163,18 @@ class QrDemo : DemoHarness("qr-demo-state.json", "android-qr", "qr-demo") {
         // and the still is taken as it shows – after the leave it would be gone (run 2's was).
         val toast = awaitToastSeen(DENIED_TOAST, 12_000)
         check("the refusal's toast: '$DENIED_TOAST'", toast)
+        val down = awaitSurface(false, 6_000)
         if (toast) {
-            // The record is the DOM; the screen trails it by the frames the software GPU skips
-            // (run 3: 2.5 s, the still taken at the record's moment showed no toast yet). The
-            // still waits for the toast's node – the tree follows the paint – and is taken then,
-            // or at 2.5 s regardless, inside the toast's life either way.
-            awaitNode(2_500) { it == DENIED_TOAST }
+            // The record is the DOM, which the screen trails by the frames the software GPU skips,
+            // and the toast shows only once the sheet's fall has cleared it (run 3: a still taken
+            // as the record had the toast showed the sheet still up and no toast; the recording
+            // had the sheet down and the toast 2.5 s on). So the still is taken as the chrome
+            // says the sheet is down, and again if the tree lists the toast inside 2 s – the tree
+            // follows the paint – the later shot standing.
             shot("03-denied-toast")
+            if (awaitNode(2_000) { it == DENIED_TOAST } != null) shot("03-denied-toast")
         }
-        check("the sheet is down after the refusal", awaitSurface(false, 6_000))
+        check("the sheet is down after the refusal", down)
         SystemClock.sleep(3_500)
     }
 
