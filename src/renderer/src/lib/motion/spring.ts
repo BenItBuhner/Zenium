@@ -31,6 +31,11 @@ export class SpringAnimation {
     return this.state
   }
 
+  /** Where the motion is heading (or last came to rest). */
+  get destination(): number {
+    return this.target
+  }
+
   /** Start (or restart) from `from` moving at `velocity` px/s towards `to`. */
   start(from: number, velocity: number, to: number, config?: SpringConfig): void {
     if (config) this.config = config
