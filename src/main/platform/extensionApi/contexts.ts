@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { ServiceWorkerMain, Session, WebContents, WebFrameMain } from 'electron'
 import type { EventDelivery, ExtensionView } from '../../../core/extensions/api/shim'
 import { matchesAnyUrlFilter, type UrlFilter } from '../../../core/extensions/api/urlFilter'
+import { workerKey } from './workers'
 
 export type FrameKind = ExtensionView['type']
 
@@ -39,6 +40,10 @@ export interface WorkerContext {
   extensionId: string
   contextId: string
   versionId: number
+  /**
+   * The engine's wrapper of the worker. Electron may destroy it while the worker keeps running
+   * and hand out a fresh one for the same version on request; `liveWorker` swaps it in.
+   */
   worker: ServiceWorkerMain
   session: Session
   listeners: Set<string>
@@ -138,6 +143,12 @@ export class ContextRegistry {
       persistWorkerEvents(extensionId: string, events: string[]): void
       /** Locate the tab / window a document belongs to, for `extension.getViews`. */
       placeFrame(frame: FrameContext): { tabId?: number; windowId?: number }
+      /**
+       * The engine's current wrapper of a worker version, with the router's IPC handlers on
+       * it; undefined once the version is gone. Asked when the wrapper a context holds turns
+       * out destroyed, and for the wrapper `startWorkerForScope` resolves with.
+       */
+      acquireWorker(versionId: number, session: Session): ServiceWorkerMain | undefined
     }
   ) {}
 
@@ -182,7 +193,7 @@ export class ContextRegistry {
   }
 
   helloWorker(extensionId: string, worker: ServiceWorkerMain, session: Session): WorkerContext {
-    const key = workerKey(worker, session)
+    const key = workerKey(worker.versionId, session)
     const context: WorkerContext = {
       key,
       extensionId,
@@ -206,7 +217,7 @@ export class ContextRegistry {
 
   /** The engine's `running-status-changed` for a worker (any worker; non-extension ones are inert). */
   workerStatus(versionId: number, session: Session, status: WorkerRunningStatus): void {
-    const key = `${sessionKey(session)}#${versionId}`
+    const key = workerKey(versionId, session)
     if (status === 'running') {
       this.runningWorkers.add(key)
       const context = this.workers.get(key)
@@ -217,6 +228,34 @@ export class ContextRegistry {
       this.runningWorkers.delete(key)
       this.workers.delete(key)
     }
+  }
+
+  /**
+   * The host obtained (and wired) the engine's current wrapper for a worker version. A registered
+   * context whose wrapper the engine destroyed meanwhile switches to the new one, and whatever
+   * was queued for the extension's background while it looked dead is replayed to it.
+   */
+  workerAcquired(worker: ServiceWorkerMain, session: Session): void {
+    const context = this.workers.get(workerKey(worker.versionId, session))
+    if (!context) return
+    if (context.worker !== worker && !worker.isDestroyed()) context.worker = worker
+    if (context.running) this.flushPendingBackground(context.extensionId)
+  }
+
+  /**
+   * The context's wrapper if it is alive, else the engine's current one for the version (a
+   * destroyed wrapper while the worker runs is Electron's doing, not a restart: the worker's
+   * registrations stand). Null, and the context dropped, once the version is gone.
+   */
+  private liveWorker(context: WorkerContext): ServiceWorkerMain | null {
+    if (!context.worker.isDestroyed()) return context.worker
+    const fresh = this.hooks.acquireWorker(context.versionId, context.session)
+    if (fresh && !fresh.isDestroyed()) {
+      context.worker = fresh
+      return fresh
+    }
+    if (this.workers.get(context.key) === context) this.workers.delete(context.key)
+    return null
   }
 
   private workerRunning(context: WorkerContext): void {
@@ -238,10 +277,12 @@ export class ContextRegistry {
       if (context.outbox.length < 100) context.outbox.push({ namespace, event, args, delivery })
       return
     }
+    const worker = this.liveWorker(context)
+    if (!worker) return
     try {
-      context.worker.send('zen-ext:event', namespace, event, args, delivery)
+      worker.send('zen-ext:event', namespace, event, args, delivery)
       // Chrome extends the worker's lifetime while the listeners the event triggered run.
-      keepAlive(context.worker, EVENT_KEEPALIVE_MS)
+      keepAlive(worker, EVENT_KEEPALIVE_MS)
     } catch {
       /* worker went away */
     }
@@ -264,7 +305,7 @@ export class ContextRegistry {
    */
   isLive(context: FrameContext | WorkerContext): boolean {
     if ('worker' in context) {
-      return !context.worker.isDestroyed() && this.workers.get(context.key) === context
+      return this.workers.get(context.key) === context && this.liveWorker(context) !== null
     }
     if (this.frames.get(context.key) !== context) return false
     if (this.stale(context)) {
@@ -307,7 +348,7 @@ export class ContextRegistry {
   }
 
   workerFor(worker: ServiceWorkerMain, session: Session): WorkerContext | undefined {
-    return this.workers.get(workerKey(worker, session))
+    return this.workers.get(workerKey(worker.versionId, session))
   }
 
   listen(context: FrameContext | WorkerContext, payload: ListenPayload, on: boolean): void {
@@ -362,12 +403,9 @@ export class ContextRegistry {
 
   workersOf(extensionId: string): WorkerContext[] {
     const out: WorkerContext[] = []
-    for (const [key, context] of this.workers) {
+    for (const context of [...this.workers.values()]) {
       if (context.extensionId !== extensionId) continue
-      if (context.worker.isDestroyed()) {
-        this.workers.delete(key)
-        continue
-      }
+      if (this.liveWorker(context) === null) continue
       out.push(context)
     }
     return out
@@ -481,14 +519,24 @@ export class ContextRegistry {
 
   private waking = new Set<string>()
 
-  /** Start the extension's MV3 worker in its primary session (a no-op when it is running). */
+  /**
+   * Start the extension's MV3 worker in its primary session (a no-op when it is running). The
+   * wrapper it resolves with is the engine's current one for the version, wired on the spot: for
+   * a worker that was running all along it may be a fresh wrapper the queued events go to.
+   */
   async wake(extensionId: string): Promise<void> {
     if (this.waking.has(extensionId)) return
     const primary = this.hooks.sessionsFor(extensionId)[0]
     if (!primary) return
     this.waking.add(extensionId)
     try {
-      await primary.serviceWorkers.startWorkerForScope(`chrome-extension://${extensionId}/`)
+      const worker = await primary.serviceWorkers.startWorkerForScope(
+        `chrome-extension://${extensionId}/`
+      )
+      if (worker && !worker.isDestroyed()) {
+        const wired = this.hooks.acquireWorker(worker.versionId, primary) ?? worker
+        this.workerAcquired(wired, primary)
+      }
     } catch {
       /* MV2 extension, or the registration is not ready yet – the hello flushes the queue */
     } finally {
@@ -545,13 +593,4 @@ export function normalizeEventName(name: string): string {
 
 function frameKey(frame: WebFrameMain): string {
   return `${frame.processId}:${frame.routingId}`
-}
-
-/** Version ids are allocated per storage partition, so a worker is keyed by session as well. */
-function workerKey(worker: ServiceWorkerMain, session: Session): string {
-  return `${sessionKey(session)}#${worker.versionId}`
-}
-
-function sessionKey(session: Session): string {
-  return session.storagePath || 'memory'
 }

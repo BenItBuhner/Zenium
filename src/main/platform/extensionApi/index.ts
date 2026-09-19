@@ -106,6 +106,7 @@ import {
 import { WebNavigationApi } from './webNavigation'
 import { WebRequestApi } from './webRequest'
 import { WindowsApi } from './windows'
+import { acquireOnIncomingIpc, WiredWorkers } from './workers'
 
 /** IPC channels between the context-side shim (through its preload) and this router. */
 export const CHANNELS = {
@@ -152,6 +153,7 @@ export interface ExtensionApiHooks {
 }
 
 type FrameSender = Extract<Sender, { kind: 'frame' }>
+type WorkerSender = Extract<Sender, { kind: 'worker' }>
 
 /**
  * The Zenium browser layer for extensions: everything Electron's engine leaves inert or absent
@@ -211,7 +213,10 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
    * (`CONTENT_SCRIPT_PRELUDE_FILE`): their contexts install the shim with `storagePrelude`.
    */
   private readonly preluded = new Set<string>()
-  private readonly wiredWorkers = new WeakSet<ServiceWorkerMain>()
+  /** The MV3 worker wrappers carrying this router's IPC handlers (see `WiredWorkers`). */
+  private readonly wiredWorkers = new WiredWorkers((worker, ses) =>
+    this.installWorkerIpc(worker, ses)
+  )
   private readonly watchedWindows = new WeakSet<BrowserWindow>()
   private snapshot: ModelSnapshot | null = null
   private tickTimer: ReturnType<typeof setTimeout> | null = null
@@ -234,7 +239,8 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.registry = new ContextRegistry({
       sessionsFor: (extensionId) => this.extensions.get(extensionId)?.sessions ?? [],
       persistWorkerEvents: (extensionId, events) => this.store.setWorkerEvents(extensionId, events),
-      placeFrame: (frame) => this.placeFrame(frame)
+      placeFrame: (frame) => this.placeFrame(frame),
+      acquireWorker: (versionId, ses) => this.wiredWorkers.acquire(versionId, ses)
     })
     this.tabs = new TabsApi(this)
     this.windows = new WindowsApi(this)
@@ -433,30 +439,67 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
         filePath: extensionPreload
       })
     }
+    // Every status, not only the starting ones: Electron destroys a version's wrapper inside this
+    // very event (a redundant version stopping, the version object gone) and a fresh wrapper for
+    // a version that is still live must carry the handlers before the worker's next call.
     ses.serviceWorkers.on('running-status-changed', ({ versionId, runningStatus }) => {
-      if (runningStatus === 'starting' || runningStatus === 'running') {
-        const worker = ses.serviceWorkers.getWorkerFromVersionID(versionId)
-        if (worker) this.wireWorker(worker, ses)
-      }
+      if (runningStatus === 'stopped') this.wiredWorkers.release(versionId, ses)
+      else this.acquireWorker(versionId, ses)
       this.registry.workerStatus(versionId, ses, runningStatus)
     })
+    // A line from a worker whose wrapper was replaced meanwhile (the error console asks the
+    // engine for one, which creates it bare) is the moment to wire the replacement.
+    ses.serviceWorkers.on('console-message', (_event, { versionId }) => {
+      if (this.wiredWorkers.current(versionId, ses)) return
+      if (isExtensionWorkerRunning(ses, versionId)) this.acquireWorker(versionId, ses)
+    })
+    // A message from a worker whose wrapper is gone would otherwise fail before any handler of
+    // this router could see it: the wrapper is recreated, wired, ahead of Electron's dispatch.
+    acquireOnIncomingIpc(ses, (versionId) => {
+      if (!this.wiredWorkers.current(versionId, ses)) this.acquireWorker(versionId, ses)
+    })
+    // Workers already running when the session is attached never announce themselves again.
+    for (const versionId of runningExtensionWorkers(ses)) {
+      if (this.acquireWorker(versionId, ses)) this.registry.workerStatus(versionId, ses, 'running')
+    }
     ses.extensions.on('extension-loaded', (_event, ext) => this.onLoaded(ext, ses))
     ses.extensions.on('extension-unloaded', (_event, ext) => this.onUnloaded(ext, ses))
     for (const ext of ses.extensions.getAllExtensions()) this.onLoaded(ext, ses)
   }
 
-  /** The IPC of an MV3 worker is per worker; attach once it starts (before its script runs). */
-  private wireWorker(worker: ServiceWorkerMain, ses: Session): void {
-    if (this.wiredWorkers.has(worker) || !worker.scope.startsWith('chrome-extension://')) return
-    this.wiredWorkers.add(worker)
+  /**
+   * The engine's current wrapper for a worker version, wired, and the registry told about it so
+   * a context holding a destroyed wrapper switches over and its queued deliveries go out.
+   */
+  private acquireWorker(versionId: number, ses: Session): ServiceWorkerMain | undefined {
+    const worker = this.wiredWorkers.acquire(versionId, ses)
+    if (worker) this.registry.workerAcquired(worker, ses)
+    return worker
+  }
+
+  /**
+   * The IPC of an MV3 worker lives on its `ServiceWorkerMain` wrapper; `WiredWorkers` calls this
+   * once per wrapper, from whichever path obtained it (the status event before the worker's
+   * script runs, a wake, a console line, a message the worker sent).
+   */
+  private installWorkerIpc(worker: ServiceWorkerMain, ses: Session): void {
+    const sender = (
+      event: IpcMainServiceWorkerInvokeEvent | IpcMainServiceWorkerEvent
+    ): WorkerSender => {
+      const from = workerSender(event, ses)
+      // `event.serviceWorker` is the engine's wrapper of the moment (the one this handler is on,
+      // normally); wiring it is a no-op then and keeps the version's key current after a release.
+      this.wiredWorkers.wire(from.worker, from.session)
+      return from
+    }
     worker.ipc.handle(CHANNELS.call, (event, namespace, method, args) =>
-      this.call(workerSender(event, ses), namespace, method, args)
+      this.call(sender(event), namespace, method, args)
     )
     worker.ipc.on(CHANNELS.notify, (event, kind, payload) =>
-      this.notify(workerSender(event, ses), kind, payload)
+      this.notify(sender(event), kind, payload)
     )
     worker.ipc.on(USER_SCRIPTS_CHANNELS.toggles, (event) => {
-      event.returnValue = this.shimOptionsFor(workerSender(event, ses))
+      event.returnValue = this.shimOptionsFor(sender(event))
     })
   }
 
@@ -676,16 +719,25 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
         : this.registry.workerFor(ctx.sender.worker, ctx.sender.session)
     switch (kind) {
       case 'listen':
-      case 'unlisten':
-        if (context && isRecord(payload) && typeof payload.event === 'string') {
+      case 'unlisten': {
+        // A registration from a worker the registry does not know: its hello went to a wrapper
+        // without handlers (the worker started before this router could wire it), so the first
+        // message that does arrive stands in for the hello.
+        const target =
+          context ??
+          (ctx.sender.kind === 'worker'
+            ? this.registry.helloWorker(ctx.extensionId, ctx.sender.worker, ctx.sender.session)
+            : undefined)
+        if (target && isRecord(payload) && typeof payload.event === 'string') {
           const listen: ListenPayload = { event: payload.event }
           if (isInteger(payload.filterId)) {
             listen.filterId = payload.filterId
             listen.filters = eventFilters(payload.filters)
           }
-          this.registry.listen(context, listen, kind === 'listen')
+          this.registry.listen(target, listen, kind === 'listen')
         }
         return
+      }
       case 'storage-changed':
         this.storage.changed(ctx, payload)
         return
@@ -981,8 +1033,36 @@ function frameSender(event: IpcMainInvokeEvent | IpcMainEvent): Sender | null {
 function workerSender(
   event: IpcMainServiceWorkerInvokeEvent | IpcMainServiceWorkerEvent,
   ses: Session
-): Sender {
+): WorkerSender {
   return { kind: 'worker', worker: event.serviceWorker, session: event.session ?? ses }
+}
+
+/** Version ids of the session's running workers that belong to extensions. */
+function runningExtensionWorkers(ses: Session): number[] {
+  const out: number[] = []
+  let running: Record<number, { scope: string }>
+  try {
+    running = ses.serviceWorkers.getAllRunning()
+  } catch {
+    return out
+  }
+  for (const [id, info] of Object.entries(running)) {
+    const versionId = Number(id)
+    if (Number.isInteger(versionId) && info.scope.startsWith('chrome-extension://'))
+      out.push(versionId)
+  }
+  return out
+}
+
+/** Whether `versionId` is a running worker of an extension (the engine only knows running ones). */
+function isExtensionWorkerRunning(ses: Session, versionId: number): boolean {
+  try {
+    return ses.serviceWorkers
+      .getInfoFromVersionID(versionId)
+      .scope.startsWith('chrome-extension://')
+  } catch {
+    return false
+  }
 }
 
 function startTask(worker: ServiceWorkerMain): { end(): void } | null {
