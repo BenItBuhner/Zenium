@@ -1,5 +1,6 @@
-import type { ClientCertificateInfo, Tab, UIState } from '@shared/types'
+import type { CertificateDetails, ClientCertificateInfo, Tab, UIState } from '@shared/types'
 import type { Browser } from '@core/browser'
+import { isCertificateError } from '@shared/siteInfo'
 import { run } from '@renderer/lib/api'
 import { dispatchBackEvent, topBackSurface } from '@renderer/lib/back'
 import { dismissOverview, openOverview } from '@renderer/lib/gestures/stage'
@@ -229,12 +230,27 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
 }
 
 /**
+ * The certificate the host reports with a certificate error (`failLoad` in `views.ts`), so that
+ * `error=<ERR_CERT_*>` shows the interstitial whole: the Advanced block lists these fields and
+ * offers to proceed. An expired one, as expired.badssl.com serves.
+ */
+const PREVIEW_CERTIFICATE: CertificateDetails = {
+  subjectName: '*.badssl.com',
+  issuerName: 'COMODO RSA Domain Validation Secure Server CA',
+  validStart: Date.UTC(2015, 3, 9),
+  validExpiry: Date.UTC(2015, 3, 12),
+  fingerprint: 'sha256/1DqoEDv6Bl2oL9bHAXqmcK+mfhLl7Ts2kyR6DDzgROo='
+}
+
+/**
  * The load of `url` in the tab failed with `code`, as the host would report it (`failLoad` in
- * `views.ts`): the core answers with the zen://error page for that code, in the tab's frame.
+ * `views.ts`): the core answers with the zen://error page for that code, in the tab's frame – for
+ * a certificate error the interstitial, with the refused certificate's details.
  */
 function failLoad(tabId: string, code: number, url: string): void {
   const host = (window as unknown as { __zenHost: HostGlobal }).__zenHost
-  host.viewEvent(tabId, 'failLoad', JSON.stringify({ code, description: '', url }))
+  const certificate = isCertificateError(code) ? PREVIEW_CERTIFICATE : undefined
+  host.viewEvent(tabId, 'failLoad', JSON.stringify({ code, description: '', url, certificate }))
 }
 
 /** Type `text` into the first element matching `selector` the way a keyboard would. */
