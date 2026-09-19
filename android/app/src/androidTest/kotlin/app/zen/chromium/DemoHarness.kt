@@ -22,6 +22,7 @@ import org.json.JSONObject
 import org.json.JSONTokener
 import java.io.File
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -39,7 +40,11 @@ import kotlin.math.roundToInt
  *  - it writes `done` when the sequence is over, so the recording stops before the process does;
  *  - screenshots land next to them as `<shotPrefix>-<name>.png`.
  *
- * `stateAsset` is the profile to seed; `null` leaves the profile empty (the first run).
+ * `stateAsset` is the profile to seed; `null` leaves the profile empty (the first run). A demo
+ * that is the second act of another – the process was stopped between them (`am force-stop`
+ * from the workflow script: the instrumentation shares the process, so no driver survives that)
+ * and this one proves what came back – passes `keepProfile`: the profile and the app's caches
+ * are left as the first act's process left them, and only the handshake directory is reset.
  * `uiAutomationFlags` go to [android.app.Instrumentation.getUiAutomation]: by default connecting
  * suspends every other accessibility service for the run, and a demo that wants TalkBack to stay
  * up passes [UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES].
@@ -48,7 +53,8 @@ abstract class DemoHarness(
     private val stateAsset: String?,
     private val shotPrefix: String,
     handshakeDir: String,
-    uiAutomationFlags: Int = 0
+    uiAutomationFlags: Int = 0,
+    private val keepProfile: Boolean = false
 ) {
     protected val instrumentation = InstrumentationRegistry.getInstrumentation()
     protected val ui: UiAutomation = instrumentation.getUiAutomation(uiAutomationFlags)
@@ -88,7 +94,9 @@ abstract class DemoHarness(
 
     /**
      * Seed, launch, warm up, hand over to the recorder, run the sequence. Fails once the
-     * recording is done when a touch a step injected did not take ([touchFault]).
+     * recording is done when a touch a step injected did not take ([touchFault]). The stills
+     * are flushed whether the sequence ran through or threw, so a failed run keeps the
+     * evidence it took on the way ([awaitShots]).
      */
     protected fun runDemo() {
         val info = ui.serviceInfo
@@ -105,7 +113,13 @@ abstract class DemoHarness(
         measure()
         warmUp()
         handshake()
-        demo()
+        try {
+            demo()
+        } finally {
+            // A sequence that threw (a driver's `error(...)`) still lands its stills before the
+            // instrumentation's exit takes the process, and with them the frames of the failure.
+            awaitShots()
+        }
         // Tell the recorder to stop while the app is still on screen: the instrumentation's exit
         // kills the process, and the launcher must not be the last frame.
         File(out, "done").writeText("done\n")
@@ -119,11 +133,13 @@ abstract class DemoHarness(
     // --- setup -----------------------------------------------------------------------------------
 
     private fun seedProfile() {
-        val zen = File(app.filesDir, "zen").apply { mkdirs() }
-        zen.listFiles()?.forEach { it.delete() }
-        if (stateAsset != null) {
-            File(zen, "state.json").writeText(patchState(readAsset(stateAsset)))
-            seedMore(zen)
+        if (!keepProfile) {
+            val zen = File(app.filesDir, "zen").apply { mkdirs() }
+            zen.listFiles()?.forEach { it.delete() }
+            if (stateAsset != null) {
+                File(zen, "state.json").writeText(patchState(readAsset(stateAsset)))
+                seedMore(zen)
+            }
         }
         out.deleteRecursively()
         out.mkdirs()
@@ -281,12 +297,29 @@ abstract class DemoHarness(
      */
     protected fun settle() = SystemClock.sleep(4_500)
 
+    /**
+     * A still of the screen as it is now. The frame is taken here (the compositor's, some
+     * 100 ms); its PNG encode, a second or two of the emulator's CPU for a 720x1600 frame, runs
+     * on one background thread in the order the stills were taken, so a driver racing a clock
+     * (a toast's five seconds) does not spend it here. [runDemo] waits for the encodes. Until
+     * #207 the encode ran here, an implicit one-to-two-second pause after every still: a step
+     * that reads the chrome right after a still and needs the screen to have moved on since
+     * must wait for that itself (poll for the change, or [settle]), not lean on the still.
+     */
     protected fun shot(name: String) {
         val bitmap = ui.takeScreenshot() ?: return
-        File(out, "$shotPrefix-$name.png").outputStream().use {
-            bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)
+        val file = File(out, "$shotPrefix-$name.png")
+        shotEncoder.execute {
+            file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            bitmap.recycle()
         }
-        bitmap.recycle()
+    }
+
+    private val shotEncoder = Executors.newSingleThreadExecutor()
+
+    /** Every still taken so far is on disk. */
+    protected fun awaitShots() {
+        shotEncoder.submit {}.get(2, TimeUnit.MINUTES)
     }
 
     /** Breadth-first search of the active window for a node labelled `label` (aria-label or text). */

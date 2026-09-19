@@ -1698,6 +1698,11 @@ export interface Settings {
   restoreSession: boolean
   /** Ask before a window with more than one tab closes (Firefox's warning; Edge has the setting). */
   warnOnCloseWindow: boolean
+  /**
+   * Phone: the tab overview's "Close all tabs" asks first ("Close N tabs?"); its "Don't ask
+   * again" turns this off. Absent in profiles from before it existed (read as true).
+   */
+  confirmCloseAll: boolean
   /** After an unclean exit: offer the last session's pages, bring them back, or start fresh. */
   crashRestore: CrashRestoreMode
   /** Firefox's "Always ask you where to save files"; off saves straight into the Downloads folder. */
@@ -2932,6 +2937,23 @@ export interface Commands {
    */
   'overlay.snapshot': { args: { tabId: string; fresh?: boolean }; result: string | null }
 
+  /**
+   * Tab card thumbnails, on hosts that keep them (`Platform.thumbnails`; the Android host). The
+   * host takes the pictures itself – of a page leaving the screen, of the app going to the
+   * background, from the cover it captures for a sheet – and raises `thumbnail.captured` for
+   * each; the chrome only says how wide a card is (`configure`, device pixels), reads the
+   * persisted picture of a card it shows (`load`, lazily, a few at a time – never in the boot
+   * payload; with the tab's `url`, so a picture of a page the tab has left is never answered),
+   * and forgets the pictures of pages that navigated or tabs that are gone for good (`drop`,
+   * with the `url` the tab left so a drop that arrives after the capture of the next page does
+   * not take that one; without a `url` for a tab gone for good – and `sweep` once at boot with
+   * the session's tab ids).
+   */
+  'thumbnail.configure': { args: { width: number }; result: void }
+  'thumbnail.load': { args: { tabId: string; url: string }; result: ThumbnailPicture | null }
+  'thumbnail.drop': { args: { tabId: string; url?: string }; result: void }
+  'thumbnail.sweep': { args: { keep: string[] }; result: void }
+
   /** Connection, cookies, storage and permissions of the tab's site (null for an unknown tab). */
   'site.info': { args: { tabId: string }; result: SiteInfo | null }
   /** Remove the cookies of the tab's site; resolves with how many were removed. */
@@ -3731,6 +3753,12 @@ export interface Events {
    * the swap between the live page and its cover.
    */
   'view.drawn': { tabId: string; visible: boolean }
+  /**
+   * The host took a card thumbnail of `tabId`'s page (it left the screen, the app went to the
+   * background, a sheet's cover was captured) and has it on disk: the chrome's copy for its
+   * cards (`lib/thumbnails.ts`).
+   */
+  'thumbnail.captured': ThumbnailPicture & { tabId: string }
   /** A login was deleted; `passwords.restore` brings it back for a while. */
   'passwords.removed': { id: string; site: string }
   /**
@@ -3838,6 +3866,17 @@ export interface ClosedWindowEntry {
 }
 
 export type ClosedEntry = ClosedTabEntry | ClosedWindowEntry
+
+/**
+ * A tab card's picture as the host hands it over: a JPEG data URL of the page as it was last
+ * seen, scaled to the card's width in device pixels, with the size of its pixels so the chrome
+ * can keep its cache by bytes rather than by count.
+ */
+export interface ThumbnailPicture {
+  data: string
+  width: number
+  height: number
+}
 
 /** What menus and the history page show for a closed entry (no full tab records). */
 export interface ClosedEntrySummary {

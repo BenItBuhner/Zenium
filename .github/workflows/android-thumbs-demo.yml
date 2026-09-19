@@ -1,0 +1,49 @@
+name: Android thumbnails demo
+
+# Records the tab cards' pictures on a hardware-accelerated Android emulator, in two acts around
+# a process death (see .github/scripts/android-thumbs-demo.sh): three one-colour pages visited by
+# pill flings and the overview's cards read against them, a background tab navigated (its card
+# must show the placeholder, never the page it left: BH-14), the navigated tab shown and left
+# (its card refreshed), home and back; then `am force-stop`, and the restored session's overview
+# pulled in before any page could have painted – the cards must already show their pictures from
+# disk (BH-33: the files stamped with their documents), a file of another page planted under a
+# live tab's id must be refused, and the sweep at boot must have taken a stale one. Uploads both
+# acts' videos, screenshots, findings and the cost of every picture from the log. Dispatch-only,
+# like the gesture demo: it takes about twelve minutes. The build, the emulator and the Gradle
+# cache live in android-emulator-demo.yml; this file only picks the driver.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-thumbs-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Thumbnails demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-thumbs-demo.sh
+      script-env: |
+        DEMO_OUT=artifacts/android-thumbs-demo
+      artifact-name: android-thumbs-demo
+      artifact-path: artifacts/android-thumbs-demo/
+      timeout-minutes: 55
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed: a run is then spent on the demo rather than on the runner.
+  record-again:
+    name: Thumbnails demo, second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-thumbs-demo.sh
+      script-env: |
+        DEMO_OUT=artifacts/android-thumbs-demo
+      artifact-name: android-thumbs-demo-second-boot
+      artifact-path: artifacts/android-thumbs-demo/
+      timeout-minutes: 55

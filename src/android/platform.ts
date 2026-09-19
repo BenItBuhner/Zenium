@@ -6,7 +6,8 @@ import type {
   HostCapabilities,
   PageEnvironment,
   Platform as PlatformOs,
-  ShareAction
+  ShareAction,
+  ThumbnailPicture
 } from '@shared/types'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '@shared/types'
 import { interruptReasonFrom, resolveDownloadSettings } from '@shared/downloads'
@@ -53,6 +54,7 @@ import type {
   ShortcutHost,
   VoiceHost,
   SystemAutofillStatus,
+  ThumbnailHost,
   UpdateHost,
   WindowHost,
   WindowHostFactory
@@ -340,6 +342,8 @@ export interface HostEventPayloads {
   resume: void
   /** A page view's visibility change (`view.setVisible`) is on screen (`Host.setTabVisible`). */
   'view.drawn': { tabId: string; visible: boolean }
+  /** Kotlin took a tab card picture and has it on disk (`Thumbnails.kt`). */
+  'thumbnail.captured': ThumbnailPicture & { tabId: string }
   'download.started': {
     token: string
     url: string
@@ -785,6 +789,11 @@ export class AndroidPlatform implements Platform {
   readonly translate: AndroidTranslateHost
   readonly shortcuts: ShortcutHost
   readonly voice: VoiceHost
+  /**
+   * Tab card pictures, Kotlin's (`Thumbnails.kt`, `cacheDir/zen-thumbs/<tabId>.jpg`): it takes
+   * them and raises `thumbnail.captured`; the chrome reads one when it shows the card.
+   */
+  readonly thumbnails: ThumbnailHost
   /** The new tab page's picked wallpaper, in its own document (`newtab-wallpaper.json`). */
   readonly newTabBackground: AndroidNewTabBackground
   browser!: Browser
@@ -977,6 +986,12 @@ export class AndroidPlatform implements Platform {
       cancel: () => bridge.send('voice.cancel'),
       openSettings: () => bridge.send('voice.openSettings')
     }
+    this.thumbnails = {
+      configure: (width) => bridge.send('thumbnail.configure', { width }),
+      load: (tabId, url) => bridge.call<ThumbnailPicture | null>('thumbnail.load', { tabId, url }),
+      drop: (tabId, url) => bridge.send('thumbnail.drop', url === undefined ? { tabId } : { tabId, url }),
+      sweep: (keep) => bridge.send('thumbnail.sweep', { keep })
+    }
     this.events.send('insets', boot.insets)
   }
 
@@ -1063,6 +1078,9 @@ export class AndroidPlatform implements Platform {
         return
       case 'view.drawn':
         this.events.send('view.drawn', payload as HostEventPayloads['view.drawn'])
+        return
+      case 'thumbnail.captured':
+        this.events.send('thumbnail.captured', payload as HostEventPayloads['thumbnail.captured'])
         return
       case 'environment':
         browser.pageControls.setEnvironment(payload as HostEventPayloads['environment'])

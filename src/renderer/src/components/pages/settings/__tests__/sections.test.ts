@@ -542,6 +542,31 @@ describe('the section model', () => {
     ])
   })
 
+  it('carries the overview’s "Confirm before closing all tabs" switch in Tabs, bound to confirmCloseAll (TAB-06)', () => {
+    const c = context(state({}, { confirmCloseAll: false }))
+    const tabs = buildSection(
+      PAGE.sections.find((x) => x.id === 'tabs')!,
+      c.ctx
+    )
+    const ids = tabs.groups.find((g) => g.id === 'tabs')?.rows.map((r) => r.id) ?? []
+    // A row among the tab rows, right before the session ones; no card of its own (§9.17).
+    expect(ids.indexOf('confirm-close-all')).toBe(ids.indexOf('restore-session') - 1)
+    const confirm = row(tabs, 'confirm-close-all')
+    if (confirm.kind !== 'switch') throw new Error('not a switch')
+    expect(confirm.label).toBe('Confirm before closing all tabs')
+    expect(confirm.checked).toBe(false)
+    confirm.onChange(true)
+    expect(c.patches).toEqual([{ confirmCloseAll: true }])
+    expect(DEFAULT_SETTINGS.confirmCloseAll).toBe(true)
+
+    // A windowed host has no tab overview and no Close all tabs: the switch stays off its Tabs.
+    const desktop = buildSection(
+      PAGE.sections.find((x) => x.id === 'tabs')!,
+      context(state({ platform: 'linux', capabilities: { ...ANDROID, windows: true } })).ctx
+    )
+    expect(findRow(desktop.groups, 'confirm-close-all')).toBeNull()
+  })
+
   it('carries #129’s session rows where the desktop panel has them: Tabs, on a windowed host only', () => {
     const phone = section('tabs')
     expect(findRow(phone.groups, 'crash-restore')).toBeNull()

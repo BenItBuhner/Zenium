@@ -27,7 +27,8 @@
 //                      permission prompt sheet), `private=new` or `private=<url>` (a private
 //                      tab), `find=<text>`, `pull=<n>`,
 //                      `zoom=<factor>` (the page zoom sheet), `error=<code>&url=<failed url>`
-//                      (the zen://error page; see `previewSpec.ts`) or the messages and the load
+//                      (the zen://error page; see `previewSpec.ts`), `overview` (the tab
+//                      overview over the active page) or the messages and the load
 //                      bar: `toast=<text>&action=<label>` (`&kind=error`), `banners=<n>`,
 //                      `progress=<0…1>`, in any combination, or `voice=<script>` (voice search
 //                      started on the active tab, the stand-in recogniser playing `listening`,

@@ -17,6 +17,8 @@ interface Props {
  * side by side and moved as one with the finger. Cards leaving the centre shrink a little and
  * dim, so depth tells you which one you are about to land on. Tabs of a group sit next to each
  * other on the track and wear the group's name along their top edge while the track is moving.
+ * Every card is page-sized, so each paints the full cover of its tab when the chrome has one
+ * (`sharp`: the last few tabs a gesture left) and the card picture scaled up otherwise.
  */
 export function TabSwitchStage({ state, tabs, area }: Props): JSX.Element {
   const { order, position, advance, origin } = tabs
@@ -45,7 +47,7 @@ export function TabSwitchStage({ state, tabs, area }: Props): JSX.Element {
           transform: `translate3d(${offset * advance}px, 0, 0) scale(${1 - 0.06 * distance})`
         }}
       >
-        <TabPreview tab={tab} cover={tab.id === current} />
+        <TabPreview tab={tab} cover={tab.id === current} sharp />
         {group && (
           <div
             className="zen-group-ribbon absolute inset-x-0 top-0 flex h-7 items-center gap-2 px-3 text-[12px] font-semibold"
