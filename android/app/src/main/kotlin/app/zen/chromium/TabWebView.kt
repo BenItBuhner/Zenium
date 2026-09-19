@@ -2,6 +2,7 @@ package app.zen.chromium
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.res.Resources
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
@@ -15,9 +16,12 @@ import android.os.Message
 import android.os.SystemClock
 import android.util.Base64
 import android.util.Log
+import android.view.ActionMode
 import android.view.InputDevice
 import android.view.KeyCharacterMap
 import android.view.KeyEvent
+import android.view.Menu
+import android.view.MenuItem
 import android.view.MotionEvent
 import android.view.PixelCopy
 import android.view.View
@@ -643,6 +647,122 @@ class TabWebView(
             }
         }
         return false
+    }
+
+    // --- the text-selection toolbar (see SelectionToolbar.kt) ------------------------------------
+
+    /**
+     * The WebView starts the system's floating action mode over selected text with its own
+     * callback (Copy, Share, Select all, Web search); wrapped, so Zenium's items from the core
+     * join them after Copy. The mode itself – floating type, handles, position – is the system's.
+     * Anything else (a primary action mode, another caller's callback) passes through untouched.
+     */
+    override fun startActionMode(callback: ActionMode.Callback, type: Int): ActionMode? {
+        if (type != ActionMode.TYPE_FLOATING || callback !is ActionMode.Callback2) return super.startActionMode(callback, type)
+        return super.startActionMode(SelectionActionMode(callback), type)
+    }
+
+    /**
+     * The WebView's selection callback with Zenium's items added (`SelectionToolbar.plan`). The
+     * items come from the core once per action mode, for the text selected: the page is asked
+     * for its selection, the core for the items, and the mode invalidated once they are known
+     * (the system's items show at once; Zenium's join within the toolbar's own entrance). A
+     * touch on one reads the selection again, sends `selection.action` to the core and finishes
+     * the mode, which clears the selection as the system's items do.
+     */
+    private inner class SelectionActionMode(private val system: ActionMode.Callback2) : ActionMode.Callback2() {
+        private var mode: ActionMode? = null
+        /** The core's items as last applied to the menu. */
+        private var items: List<SelectionToolbar.Item> = emptyList()
+        /** The selection the items were listed for; the fallback should a touch find none. */
+        private var text = ""
+        private var asked = false
+        private var finished = false
+        /** Where the selection sits on this view (`onGetContentRect`), for a glance's origin. */
+        private val selectionRect = Rect()
+        private val strings by lazy { frameworkStrings() }
+
+        override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean {
+            this.mode = mode
+            return system.onCreateActionMode(mode, menu)
+        }
+
+        override fun onPrepareActionMode(mode: ActionMode, menu: Menu): Boolean {
+            val prepared = system.onPrepareActionMode(mode, menu)
+            menu.removeGroup(SelectionToolbar.GROUP)
+            val systemItems = (0 until menu.size()).map(menu::getItem)
+            val plan = SelectionToolbar.plan(
+                systemItems.map { SelectionToolbar.SystemItem(it.groupId, it.order, it.title?.toString() ?: "") },
+                items,
+                strings
+            )
+            // A menu with Copy is a text selection: ask for the items once (the WebView starts
+            // a mode afresh for another selection); a Paste toolbar or a password field gets nothing.
+            if (plan.anchored) ask()
+            for (index in plan.hidden) systemItems[index].isVisible = false
+            plan.items.forEachIndexed { index, item ->
+                menu.add(SelectionToolbar.GROUP, SelectionToolbar.FIRST_ITEM_ID + index, plan.order, item.title).apply {
+                    setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS or MenuItem.SHOW_AS_ACTION_WITH_TEXT)
+                    contentDescription = item.title
+                }
+            }
+            return prepared || !plan.isEmpty
+        }
+
+        override fun onActionItemClicked(mode: ActionMode, item: MenuItem): Boolean {
+            if (item.groupId != SelectionToolbar.GROUP) return system.onActionItemClicked(mode, item)
+            val action = SelectionToolbar.itemAt(items, item.itemId) ?: return true
+            val originX = SelectionToolbar.fraction(selectionRect.exactCenterX(), width)
+            val originY = SelectionToolbar.fraction(selectionRect.exactCenterY(), height)
+            evaluateJavascript(SelectionToolbar.SELECTION_SCRIPT) { raw ->
+                val selected = SelectionToolbar.selectionText(raw).ifEmpty { text }
+                if (selected.isNotBlank()) host.hostEvent("selection.action", SelectionToolbar.action(tabId, action.id, selected, originX, originY))
+                if (!finished) mode.finish()
+            }
+            return true
+        }
+
+        override fun onDestroyActionMode(mode: ActionMode) {
+            finished = true
+            this.mode = null
+            system.onDestroyActionMode(mode)
+        }
+
+        override fun onGetContentRect(mode: ActionMode, view: View, outRect: Rect) {
+            system.onGetContentRect(mode, view, outRect)
+            selectionRect.set(outRect)
+        }
+
+        /** Read the selection, ask the core for its items, and invalidate the mode once when they differ from what shows. */
+        private fun ask() {
+            if (asked) return
+            asked = true
+            evaluateJavascript(SelectionToolbar.SELECTION_SCRIPT) { raw ->
+                if (finished) return@evaluateJavascript
+                text = SelectionToolbar.selectionText(raw)
+                if (text.isBlank()) return@evaluateJavascript
+                host.selectionMenu(tabId, text) { json ->
+                    if (finished) return@selectionMenu
+                    val fresh = SelectionToolbar.parseItems(json)
+                    if (fresh != items) {
+                        items = fresh
+                        mode?.invalidate()
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * The framework strings the system's selection items are told by (see `SelectionToolbar.plan`):
+     * Copy is the public `android.R.string.copy`; the framework's own Share (its text fields'
+     * item) is not public, so it is looked up by name and may be missing.
+     */
+    private fun frameworkStrings(): SelectionToolbar.Strings {
+        val share = Resources.getSystem().let { system ->
+            system.getIdentifier("share", "string", "android").takeIf { it != 0 }?.let { id -> runCatching { system.getString(id) }.getOrNull() }
+        }
+        return SelectionToolbar.Strings(copy = context.getString(android.R.string.copy), share = share)
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
