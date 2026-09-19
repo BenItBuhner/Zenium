@@ -24,6 +24,8 @@ class UrlPattern private constructor(
     private val regex: Pattern?,
     /** Literal every matching URL must contain (a cheap pre-check for regular expressions). */
     private val requiredLiteral: String?,
+    /** For regular expressions: the complete URL tokens every match contains (see [requiredTokensOf]). */
+    private val requiredTokens: List<String>?,
     val caseSensitive: Boolean
 ) {
     private enum class Kind { ANY, HOSTNAME, PLAIN, REGEX }
@@ -133,10 +135,14 @@ class UrlPattern private constructor(
     /**
      * Complete tokens of the pattern for indexing: runs of `[a-z0-9]` bounded on both sides by
      * something in the pattern (a separator character or an anchor), never a run next to `*`.
-     * Regular expressions yield no tokens.
+     * A regular expression yields the runs [requiredTokensOf] can vouch for, none otherwise.
      */
     fun tokens(): IntArray {
-        if (kind == Kind.REGEX || kind == Kind.ANY) return IntArray(0)
+        if (kind == Kind.ANY) return IntArray(0)
+        if (kind == Kind.REGEX) {
+            val required = requiredTokens ?: return IntArray(0)
+            return IntArray(required.size) { Tokens.hash(required[it], 0, required[it].length) }
+        }
         if (kind == Kind.HOSTNAME) return Tokens.tokenize(hostPart)
         val full = (hostPart + body).lowercase()
         val out = ArrayList<Int>(8)
@@ -220,16 +226,16 @@ class UrlPattern private constructor(
             while (text.startsWith("*") && !host) text = text.substring(1)
             while (text.endsWith("*") && !right) text = text.dropLast(1)
             if (!caseSensitive) text = text.lowercase()
-            if (text.isEmpty() && !host) return UrlPattern(Kind.ANY, "", "", false, left, right, null, null, caseSensitive)
-            if (!host) return UrlPattern(Kind.PLAIN, text, "", false, left, right, null, null, caseSensitive)
+            if (text.isEmpty() && !host) return UrlPattern(Kind.ANY, "", "", false, left, right, null, null, null, caseSensitive)
+            if (!host) return UrlPattern(Kind.PLAIN, text, "", false, left, right, null, null, null, caseSensitive)
             var i = 0
             while (i < text.length && isHostChar(text[i])) i++
             val hostPart = text.substring(0, i)
             val rest = text.substring(i)
             val pureHost = hostPart.isNotEmpty() && !hostPart.endsWith(".") && !hostPart.startsWith(".") &&
                 !hostPart.contains("..") && (rest.isEmpty() || (rest == "^" && !right))
-            if (pureHost) return UrlPattern(Kind.HOSTNAME, "", hostPart, true, true, false, null, null, caseSensitive)
-            return UrlPattern(Kind.PLAIN, rest, hostPart, true, true, right, null, null, caseSensitive)
+            if (pureHost) return UrlPattern(Kind.HOSTNAME, "", hostPart, true, true, false, null, null, null, caseSensitive)
+            return UrlPattern(Kind.PLAIN, rest, hostPart, true, true, right, null, null, null, caseSensitive)
         }
 
         /** A regular expression pattern (`regexFilter`, or an ABP `/…/` filter); null when invalid. */
@@ -242,60 +248,123 @@ class UrlPattern private constructor(
                 return null
             }
             val literal = requiredLiteralOf(source)?.let { if (caseSensitive) it else it.lowercase() }
-            return UrlPattern(Kind.REGEX, source, "", false, false, false, compiled, literal, caseSensitive)
+            val tokens = requiredTokensOf(source)
+            return UrlPattern(Kind.REGEX, source, "", false, false, false, compiled, literal, tokens, caseSensitive)
         }
+
+        /** An alphanumeric run of a regular expression that every match contains; see [requiredRuns]. */
+        private class RequiredRun(val text: String, val boundedLeft: Boolean, val boundedRight: Boolean)
 
         /**
          * The longest alphanumeric run (3+ chars) of a regular expression that every match must
          * contain: at group depth 0, outside character classes, not shortened by a quantifier,
          * and not part of a top-level alternation.
          */
-        internal fun requiredLiteralOf(source: String): String? {
-            var best: String? = null
+        internal fun requiredLiteralOf(source: String): String? =
+            requiredRuns(source)?.maxByOrNull { it.text.length }?.text
+
+        /**
+         * The runs of [requiredLiteralOf]'s kind that are also complete tokens of every matching
+         * URL – bounded on both sides by an anchor (`^`, `$`) or a character the expression
+         * matches literally and the tokenizer does not count (`/`, `.` escaped, `=`, `-`, …) –
+         * lowercased for the index. Null when the expression vouches for none.
+         */
+        internal fun requiredTokensOf(source: String): List<String>? {
+            val runs = requiredRuns(source) ?: return null
+            val out = runs.filter { it.boundedLeft && it.boundedRight }.map { it.text.lowercase() }
+            return out.ifEmpty { null }
+        }
+
+        private fun isAlnum(c: Char): Boolean = c in 'a'..'z' || c in 'A'..'Z' || c in '0'..'9'
+
+        /** An unescaped character outside classes that the expression matches literally and the tokenizer does not count. */
+        private fun isLiteralSeparator(c: Char): Boolean = !isAlnum(c) && c !in "\\.^$|?*+()[]{}"
+
+        /**
+         * Scan `source` for the alphanumeric runs every match must contain: at group depth 0,
+         * outside character classes, not shortened by a quantifier, not in a top-level
+         * alternation (null then). Each run records whether what the expression puts right
+         * before and after it is certainly a token boundary in the URL: an anchor, or a
+         * character matched literally that is not alphanumeric (`\.`, `/`, `=`, `-`, …).
+         */
+        private fun requiredRuns(source: String): List<RequiredRun>? {
+            val out = ArrayList<RequiredRun>(4)
             var depth = 0
             var inClass = false
             var i = 0
             var runStart = -1
-            fun endRun(end: Int, quantified: Boolean) {
+            var runBoundedLeft = false
+            // Whether the last thing scanned certainly ends at a token boundary.
+            var boundary = false
+            fun endRun(end: Int, boundedRight: Boolean) {
                 if (runStart == -1) return
-                val stop = if (quantified) end - 1 else end
-                val current = best
-                if (stop - runStart >= 3 && (current == null || stop - runStart > current.length)) {
-                    best = source.substring(runStart, stop)
-                }
+                if (end - runStart >= 3) out.add(RequiredRun(source.substring(runStart, end), runBoundedLeft, boundedRight))
                 runStart = -1
+            }
+            // Whether the element starting at `at` is certainly a token boundary: `$`, an escaped
+            // non-alphanumeric character, or an unescaped literal separator.
+            fun boundaryAt(at: Int): Boolean {
+                if (at >= source.length) return false
+                val c = source[at]
+                if (c == '$') return true
+                if (c == '\\') return at + 1 < source.length && !isAlnum(source[at + 1])
+                return isLiteralSeparator(c)
             }
             while (i < source.length) {
                 val c = source[i]
-                if (c == '\\') {
-                    endRun(i, false)
-                    i += 2
-                    continue
-                }
                 if (inClass) {
-                    if (c == ']') inClass = false
+                    if (c == '\\') {
+                        i += 2
+                        continue
+                    }
+                    if (c == ']') {
+                        inClass = false
+                        boundary = false
+                    }
                     i++
                     continue
                 }
+                if (c == '\\') {
+                    val separator = boundaryAt(i)
+                    endRun(i, separator)
+                    boundary = separator
+                    i += 2
+                    continue
+                }
                 when (c) {
-                    '[' -> { endRun(i, false); inClass = true }
-                    '(' -> { endRun(i, false); depth++ }
-                    ')' -> { endRun(i, false); depth-- }
-                    '?', '*', '+', '{' -> endRun(i, true)
-                    '|' -> { endRun(i, false); if (depth == 0) return null }
+                    '[' -> { endRun(i, false); inClass = true; boundary = false }
+                    '(' -> { endRun(i, false); depth++; boundary = false }
+                    ')' -> { endRun(i, false); depth--; boundary = false }
+                    // A quantifier shortens the run it follows by the character it quantifies, which the URL may repeat.
+                    '?', '*', '+' -> { endRun(i - 1, false); boundary = false }
+                    '{' -> {
+                        // `{n,m}`: its digits are a count, not text of the URL.
+                        endRun(i - 1, false)
+                        boundary = false
+                        val close = source.indexOf('}', i)
+                        i = if (close == -1) source.length else close + 1
+                        continue
+                    }
+                    '|' -> { endRun(i, false); if (depth == 0) return null; boundary = false }
+                    '^' -> { endRun(i, false); boundary = true }
+                    '$' -> { endRun(i, true); boundary = false }
                     else -> {
-                        val alnum = c in 'a'..'z' || c in 'A'..'Z' || c in '0'..'9'
+                        val alnum = isAlnum(c)
                         if (alnum && depth == 0) {
-                            if (runStart == -1) runStart = i
+                            if (runStart == -1) {
+                                runStart = i
+                                runBoundedLeft = boundary
+                            }
                         } else {
-                            endRun(i, false)
+                            endRun(i, boundaryAt(i))
+                            boundary = !alnum && isLiteralSeparator(c)
                         }
                     }
                 }
                 i++
             }
             endRun(source.length, false)
-            return best
+            return out
         }
     }
 }

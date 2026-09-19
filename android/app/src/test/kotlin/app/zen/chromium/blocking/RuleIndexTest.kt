@@ -119,11 +119,13 @@ class RuleIndexTest {
                 "${rule(3, "block", """{"regexFilter":"^https://[a-z]+\\.tracker\\.example/"}""")}," +
                 "${rule(4, "block", """{"resourceTypes":["ping"]}""")}," +
                 "${rule(5, "allowAllRequests", """{"urlFilter":"||trusted.example^","resourceTypes":["main_frame"]}""")}," +
-                "${rule(6, "block", """{"urlFilter":"*","initiatorDomains":["news.example"],"resourceTypes":["media"]}""")}]"
+                "${rule(6, "block", """{"urlFilter":"*","initiatorDomains":["news.example"],"resourceTypes":["media"]}""")}," +
+                "${rule(7, "redirect", """{"regexFilter":"^[^:]+://([^:/]+\\.)?scam\\..*","resourceTypes":["main_frame"]}""", extra = ""","redirect":{"url":"https://safe.example/warn"}""")}]"
         )
         assertEquals(1, set.index.hostCount)
-        assertEquals(1, set.index.tokenIndexedCount)
-        assertEquals(3, set.index.wildcardCount) // the regex, the type-only rule and `*` with initiator domains
+        assertEquals(1, set.index.initiatorCount) // `*` with initiator domains sits under news.example
+        assertEquals(2, set.index.tokenIndexedCount) // `/pixel/track?` and the regex whose `tracker` is a whole token
+        assertEquals(2, set.index.wildcardCount) // the type-only rule and the regex with `scam` after an optional group
         assertEquals(1, set.index.allowAll.size)
         val snap = EngineSnapshot(listOf(set), null)
         assertEquals(1, snap.decide(req("https://x.ads.example/a.js")).matchedRule)
@@ -136,6 +138,41 @@ class RuleIndexTest {
         val underTrusted = snap.decide(req("https://x.ads.example/a.js", doc = "https://trusted.example/page"))
         assertEquals(Decision.Action.ALLOW, underTrusted.action)
         assertEquals(5, underTrusted.matchedRule)
+        // The main-frame-only regex meets navigations and nothing else.
+        val nav = snap.decide(req("https://www.scam.example/login", ResourceType.MAIN_FRAME, doc = null))
+        assertEquals(Decision.Action.REDIRECT, nav.action)
+        assertEquals(7, nav.matchedRule)
+        assertEquals(Decision.Action.ALLOW, snap.decide(req("https://www.scam.example/a.js", ResourceType.SCRIPT)).action)
+    }
+
+    @Test
+    fun wildcardRulesAreVisitedOnlyForRequestsOfTheirTypes() {
+        val rules = JSONArray()
+        for (i in 1..300) {
+            rules.put(JSONObject(rule(i, "redirect", """{"regexFilter":"^[^:]+://([^:/]+\\.)?bad$i\\..*","resourceTypes":["main_frame"]}""", extra = ""","redirect":{"url":"https://safe.example/"}""")))
+        }
+        rules.put(JSONObject(rule(1000, "block", """{"regexFilter":"/[0-9a-f]{12}\\.js$","resourceTypes":["script"]}""")))
+        rules.put(JSONObject(rule(1001, "block", """{"regexFilter":"/beac.n\\?","excludedResourceTypes":["main_frame"]}""")))
+        val set = set("ext:abc:_session", 2999, rules.toString())
+        assertEquals(302, set.index.wildcardCount) // none of these regexes vouches for a whole token
+        assertEquals(0, set.index.tokenIndexedCount)
+        fun visited(r: Request): List<Int> {
+            val out = ArrayList<Int>()
+            set.index.forEachCandidate(r) { out.add(it.id) }
+            return out
+        }
+        // An image meets the untyped rule alone; a script the untyped one and the script one; a navigation the 300 and the untyped one.
+        assertEquals(listOf(1001), visited(req("https://x.example/a.png", ResourceType.IMAGE)))
+        assertEquals(listOf(1000, 1001), visited(req("https://x.example/a.js", ResourceType.SCRIPT)))
+        assertEquals(301, visited(req("https://x.example/", ResourceType.MAIN_FRAME, doc = null)).size)
+        // A request of unknown type may be a script: the script rule is visited, the main-frame ones are not.
+        val unknown = Request("https://x.example/thing", ResourceType.XMLHTTPREQUEST, "https://news.example/", typeMask = ResourceType.AMBIGUOUS_MASK, partition = "default")
+        assertEquals(listOf(1000, 1001), visited(unknown))
+        val snap = EngineSnapshot(listOf(set), null)
+        assertEquals(7, snap.decide(req("https://www.bad7.example/", ResourceType.MAIN_FRAME, doc = null)).matchedRule)
+        assertEquals(1000, snap.decide(req("https://cdn.example/0123456789ab.js", ResourceType.SCRIPT)).matchedRule)
+        assertEquals(1001, snap.decide(req("https://cdn.example/beacon?x", ResourceType.IMAGE)).matchedRule)
+        assertEquals(Decision.Action.ALLOW, snap.decide(req("https://cdn.example/beacon?x", ResourceType.MAIN_FRAME, doc = null)).action)
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -154,15 +191,21 @@ class RuleIndexTest {
         repeat(1_500) {
             val action = pick(actions)
             val condition = JSONObject()
-            when (random.nextInt(6)) {
+            when (random.nextInt(9)) {
                 0 -> condition.put("urlFilter", "||${pick(hosts)}^")
                 1 -> condition.put("urlFilter", "/${pick(words)}/${pick(words)}")
                 2 -> condition.put("urlFilter", "*${pick(words)}*")
                 3 -> condition.put("requestDomains", JSONArray(listOf(pick(hosts), pick(hosts))))
                 4 -> condition.put("urlFilter", "||${pick(hosts)}/${pick(words)}")
+                5 -> { // a strict-block rule: a main-frame-only regular expression
+                    condition.put("regexFilter", "^[^:]+://([^:/]+\\.)?${pick(hosts).replace(".", "\\.")}/.*")
+                    condition.put("resourceTypes", JSONArray(listOf("main_frame")))
+                }
+                6 -> condition.put("initiatorDomains", JSONArray(listOf(pick(hosts), pick(hosts)))) // sites alone
+                7 -> condition.put("regexFilter", "/${pick(words)}/[a-z]+\\.${pick(words)}\\?x=[0-8]$") // a regex the token index takes
                 else -> Unit // type conditions alone
             }
-            if (random.nextInt(3) == 0) condition.put("resourceTypes", JSONArray(listOf(pick(types), pick(types))))
+            if (!condition.has("resourceTypes") && random.nextInt(3) == 0) condition.put("resourceTypes", JSONArray(listOf(pick(types), pick(types))))
             if (random.nextInt(5) == 0) condition.put("excludedRequestDomains", JSONArray(listOf(pick(hosts))))
             if (random.nextInt(5) == 0) condition.put("initiatorDomains", JSONArray(listOf(pick(hosts))))
             if (random.nextInt(6) == 0) condition.put("domainType", if (random.nextBoolean()) "thirdParty" else "firstParty")
@@ -179,11 +222,14 @@ class RuleIndexTest {
             TextEngine.parse(listOf("||tracker.net^\$third-party\n@@||news.example/allowed.js"))
         )
         var decided = 0
+        var navigations = 0
         repeat(4_000) {
-            val type = ResourceType.fromDnrName(pick(types)) ?: ResourceType.SCRIPT
+            val navigation = random.nextInt(6) == 0
+            val type = if (navigation) ResourceType.MAIN_FRAME else ResourceType.fromDnrName(pick(types)) ?: ResourceType.SCRIPT
             val url = "http${if (random.nextBoolean()) "s" else ""}://${pick(hosts)}/${pick(words)}/${pick(words)}.${pick(words)}?x=${random.nextInt(9)}"
-            val doc = if (random.nextInt(4) == 0) null else "https://${pick(hosts)}/${pick(words)}"
+            val doc = if (navigation || random.nextInt(4) == 0) null else "https://${pick(hosts)}/${pick(words)}"
             val request = req(url, type, doc, partition = if (random.nextInt(5) == 0) "private" else "default")
+            if (navigation && snap.decide(request).matchedSet != null) navigations++
             val indexed = snap.decide(request)
             val linear = snap.decideLinear(request)
             // Two rules of equal effective priority and action may both win; the linear scan and
@@ -195,6 +241,7 @@ class RuleIndexTest {
             if (indexed.matchedSet != null) decided++
         }
         assertTrue("the corpus decided something", decided > 100)
+        assertTrue("navigations were decided too", navigations > 10)
     }
 
     @Test
