@@ -33,7 +33,8 @@ import kotlin.math.roundToInt
  *  4. a card carried over the group (ring), off the grid (ring gone) and the touch cancelled;
  *  5. a card flung out of the group, released while still moving;
  *  6. the last card dragged out of a group: the group shrinks to nothing on its spring with its
- *     header and colour kept until the end, the card gliding out, the cards below waiting;
+ *     header and colour kept until the end, the card gliding out, the cards below waiting, a
+ *     card beside the group gliding at once;
  *  7. a card dropped on a loose card: the group made grows out of their row with its header and
  *     tint off until the glide's end;
  *  8. the same close as 1 in the dark scheme, for the design gate's still of a glide in flight.
@@ -41,8 +42,11 @@ import kotlin.math.roundToInt
  * The sequences of 2, 3, 6 and 7 are measured frame by frame: a `requestAnimationFrame` loop in
  * the chrome logs where every card of interest is drawn (`getBoundingClientRect`, transforms
  * included) and the group card's height and chrome, and the driver reads the log back and checks
- * the order of events (see [sequence]). The stills of a sequence in flight are taken when the DOM
- * shows the moment asked for (the height mid-way, the row below setting off), not on a timer.
+ * the order of events (see [sequence]). Which cards are below the group and which beside it is
+ * read from the grid when the sampling begins, not assumed per scenario (see [rowsBelow]). The
+ * stills of a sequence in flight are taken when the DOM shows the moment asked for (the height
+ * mid-way, the row below setting off), not on a timer. Every card is carried in one move from a
+ * spot where nothing is pending (see [carry]).
  *
  * After every release the chrome's DOM is read for what a lift leaves behind (`.zen-overview-ghost`,
  * `.zen-overview-card-target` / `[data-targeted]`, a card at the stand-in's opacity) – the same
@@ -159,11 +163,12 @@ class OverviewMotionDemo : DemoHarness("overview-motion-demo-state.json", "overv
         lift("Gamma over Beta", ring = true)
         sample(mapOf(GROUP_KEY to GROUP, "Gamma" to card(GAMMA), "Home" to card(HOME), NEW_TAB_KEY to NEW_TAB))
         val base = snapshot()
+        val below = rowsBelow(base, GROUP_KEY, mover = "Gamma")
         f.up()
-        stillWhen("into-group-glide") { it.heightChanged(base, 12f) && !it.moved("Home", base, 2f) }
-        stillWhen("into-group-below-glide") { it.moved("Home", base, 6f) }
+        stillWhen("into-group-glide") { it.heightChanged(base, 12f) && below.none { name -> it.moved(name, base, 2f) } }
+        stillWhen("into-group-below-glide") { below.any { name -> it.moved(name, base, 6f) } }
         settleLift("after the drop on Beta")
-        sequence(frames(), mover = "Gamma", below = listOf("Home", NEW_TAB_KEY), after = listOf("Home", NEW_TAB_KEY), chrome = Chrome.KEPT)
+        sequence(frames(), mover = "Gamma", reference = GROUP_KEY, chrome = Chrome.KEPT)
         expect("Gamma is in the group", folderOf(GAMMA) == RESEARCH)
         expect("the group is Alpha, Beta, Gamma", groupOrder(RESEARCH) == listOf(ALPHA, BETA, GAMMA))
     }
@@ -177,14 +182,12 @@ class OverviewMotionDemo : DemoHarness("overview-motion-demo-state.json", "overv
      * (v2 §11.4), so the stand-in stays before Home and the release lands Gamma there: the loose
      * cards are Gamma, Home. The hover must not outlive the release.
      *
-     * The finger comes to Home's edge in one step from the group's own edge, where nothing is
-     * pending. The emulator's UI thread stalls for 400–700 ms at a time under the software GPU
-     * (its `Davey!` frames) and hands the touch's moves over late in a batch; a slow approach
-     * across Home's edge had the slot's dwell run out during such a stall, with the finger's
-     * last moves still undelivered – the slot took hold, the grid reflowed, and the moves then
-     * delivered re-targeted a finger that was, to the chrome, still on its way (run 35407008758:
-     * Gamma landed after Home). One move cannot be interrupted, so the dwell it starts is the
-     * resting finger's, as it would be under a phone's input pipeline.
+     * The finger comes to Home's edge in one step from the gutter under its own group, where
+     * nothing is pending (see [carry]): a slow approach across Home's edge had the slot's dwell
+     * run out during one of the emulator's input stalls, with the finger's last moves still
+     * undelivered – the slot took hold, the grid reflowed, and the moves then delivered
+     * re-targeted a finger that was, to the chrome, still on its way (run 35407008758: Gamma
+     * landed after Home).
      */
     private fun outOfGroup() {
         finding("\n3. Gamma out of the group, the finger resting at Home's left edge (the slot before Home)")
@@ -193,21 +196,20 @@ class OverviewMotionDemo : DemoHarness("overview-motion-demo-state.json", "overv
         val gamma = box(card(GAMMA))
         sample(mapOf(GROUP_KEY to GROUP, "Gamma" to card(GAMMA), "Home" to card(HOME), NEW_TAB_KEY to NEW_TAB))
         val base = snapshot()
+        val below = rowsBelow(base, GROUP_KEY, mover = "Gamma")
         // Over its own group's edge (or the gutter under it) the card is at home: no slot, no ring.
         val edgeX = home.left + 0.12f * home.width()
         val restY = (gamma.bottom + home.top) / 2f
-        val f = carry(gamma, PointF(edgeX, restY))
-        f.hold(EDGE_PAUSE)
-        f.moveBy(0f, home.exactCenterY() - restY, 0)
+        val f = carry(gamma, PointF(edgeX, home.exactCenterY()), via = PointF(edgeX, restY))
         // The slot takes hold once the finger has rested for the dwell; the sequence runs under
         // the still finger.
-        stillWhen("out-of-group-glide") { it.heightChanged(base, 12f) && !it.moved(NEW_TAB_KEY, base, 2f) }
-        stillWhen("out-of-group-below-glide") { it.moved(NEW_TAB_KEY, base, 6f) }
+        stillWhen("out-of-group-glide") { it.heightChanged(base, 12f) && below.none { name -> it.moved(name, base, 2f) } }
+        stillWhen("out-of-group-below-glide") { below.any { name -> it.moved(name, base, 6f) } }
         f.hold(REST)
         still("out-of-group-gap")
         lift("Gamma resting at Home's left edge", held = true, ring = false)
         val log = frames()
-        sequence(log, mover = "Gamma", below = listOf("Home", NEW_TAB_KEY), after = listOf("Home", NEW_TAB_KEY), chrome = Chrome.KEPT)
+        sequence(log, mover = "Gamma", reference = GROUP_KEY, chrome = Chrome.KEPT)
         val end = log.lastOrNull()
         val standIn = end?.boxes?.get("Gamma")
         val homeNow = end?.boxes?.get("Home")
@@ -297,23 +299,31 @@ class OverviewMotionDemo : DemoHarness("overview-motion-demo-state.json", "overv
      * Beta, the group's last card, carried out to the right edge of Alpha – the end of the loose
      * cards – and the finger rests there. The group has nothing left: it shrinks to nothing on
      * its spring where it stood, header and colour kept until the end (v2 §11.4: they go at the
-     * end of the glide, not per frame), while Beta glides out to its loose slot; Gamma and Alpha,
-     * below the group, wait for the height and glide up then. Home, beside the group, glides at
-     * once. On release Beta is loose at the end and the group card is gone.
+     * end of the glide, not per frame), while Beta glides out to its loose slot; the cards below
+     * the group wait for the height and glide up then; a card beside the group (a group of one
+     * takes a single column, and a loose card shares its row) glides at once – its row is as tall
+     * as the taller of the two. Which card is which is read from the grid when the sampling
+     * begins (see [rowsBelow]). On release Beta is loose at the end and the group card is gone.
      */
     private fun dissolveGroup() {
         finding("\n6. Beta, the group's last card, out of the group to the end: the group dissolves")
         show(GROUP)
         val alpha = box(card(ALPHA))
         val beta = box(card(BETA))
-        sample(mapOf(GROUP_KEY to GROUP, "Beta" to card(BETA), "Gamma" to card(GAMMA), "Alpha" to card(ALPHA), NEW_TAB_KEY to NEW_TAB))
+        sample(
+            mapOf(
+                GROUP_KEY to GROUP, "Beta" to card(BETA), "Gamma" to card(GAMMA), "Home" to card(HOME),
+                "Alpha" to card(ALPHA), NEW_TAB_KEY to NEW_TAB
+            )
+        )
         val base = snapshot()
+        val below = rowsBelow(base, GROUP_KEY, mover = "Beta")
         val f = carry(beta, PointF(alpha.right - 0.12f * alpha.width(), alpha.exactCenterY()))
-        stillWhen("dissolve-shrinking") { it.heightChanged(base, 12f) && !it.moved("Gamma", base, 2f) }
-        stillWhen("dissolve-below-glide") { it.moved("Gamma", base, 6f) }
+        stillWhen("dissolve-shrinking") { it.heightChanged(base, 12f) && below.none { name -> it.moved(name, base, 2f) } }
+        stillWhen("dissolve-below-glide") { below.any { name -> it.moved(name, base, 6f) } }
         f.hold(REST)
         lift("Beta resting at Alpha's right edge", held = true, ring = false)
-        sequence(frames(), mover = "Beta", below = listOf("Gamma", "Alpha", NEW_TAB_KEY), after = listOf("Gamma", "Alpha"), chrome = Chrome.GONE_AT_END)
+        sequence(frames(), mover = "Beta", reference = GROUP_KEY, chrome = Chrome.GONE_AT_END)
         f.up()
         settleLift("after the drop out of the group")
         expect("Beta is loose, at the end", folderOf(BETA) == null && looseOrder().lastOrNull() == BETA)
@@ -324,9 +334,12 @@ class OverviewMotionDemo : DemoHarness("overview-motion-demo-state.json", "overv
     /**
      * Gamma dropped on the middle of Home, both loose: the merge ring on Home, and on release the
      * two are a new group across their row. The group card grows out of the bare row on its
-     * spring with its header and tint off; Home and Gamma glide into their inner slots; Alpha,
-     * Beta and the New Tab card below wait for the height and glide down then; the header and
-     * tint come on at the glide's end (v2 §11.4).
+     * spring with its header and tint off; Home and Gamma glide into their inner slots; the cards
+     * below the row wait for the height and glide down then; the header and tint come on at the
+     * glide's end (v2 §11.4). The group is made in the tabs' own order – Gamma before Home, as
+     * they lay loose – where a card joining a group is placed right behind the card it was
+     * dropped on (#94's two paths; v2 §11.4 says nothing of the order, and the driver expects
+     * what the code does).
      */
     private fun makeGroup() {
         finding("\n7. Gamma dropped on Home: a new group is made")
@@ -336,17 +349,24 @@ class OverviewMotionDemo : DemoHarness("overview-motion-demo-state.json", "overv
         val f = carry(gamma, PointF(home.exactCenterX(), home.exactCenterY()))
         f.hold(REST)
         lift("Gamma over Home", ring = true)
-        sample(mapOf(GROUP_KEY to GROUP, "Gamma" to card(GAMMA), "Alpha" to card(ALPHA), "Beta" to card(BETA), NEW_TAB_KEY to NEW_TAB))
+        // No group yet: the rows below are told from Home's, the row the group grows out of.
+        sample(
+            mapOf(
+                GROUP_KEY to GROUP, "Gamma" to card(GAMMA), "Home" to card(HOME), "Alpha" to card(ALPHA),
+                "Beta" to card(BETA), NEW_TAB_KEY to NEW_TAB
+            )
+        )
         val base = snapshot()
+        val below = rowsBelow(base, "Home", mover = "Gamma")
         f.up()
-        stillWhen("new-group-forming") { it.boxes[GROUP_KEY]?.chromeOff == true && !it.moved("Alpha", base, 2f) }
-        stillWhen("new-group-below-glide") { it.moved("Alpha", base, 6f) }
+        stillWhen("new-group-forming") { it.boxes[GROUP_KEY]?.chromeOff == true && below.none { name -> it.moved(name, base, 2f) } }
+        stillWhen("new-group-below-glide") { below.any { name -> it.moved(name, base, 6f) } }
         settleLift("after the drop on Home")
-        sequence(frames(), mover = "Gamma", below = listOf("Alpha", "Beta", NEW_TAB_KEY), after = listOf("Alpha", "Beta", NEW_TAB_KEY), chrome = Chrome.OFF_UNTIL_END)
+        sequence(frames(), mover = "Gamma", reference = "Home", chrome = Chrome.OFF_UNTIL_END)
         still("new-group-formed")
         val made = folderOf(HOME)
         expect("Home and Gamma are a group", made != null && folderOf(GAMMA) == made)
-        expect("the group is Home, Gamma", made != null && groupOrder(made) == listOf(HOME, GAMMA))
+        expect("the group is Gamma, Home: the tabs' order, as they lay loose", made != null && groupOrder(made) == listOf(GAMMA, HOME))
         expect("the loose cards are Alpha, Beta", looseOrder() == listOf(ALPHA, BETA))
     }
 
@@ -419,15 +439,36 @@ class OverviewMotionDemo : DemoHarness("overview-motion-demo-state.json", "overv
         jsString("(function(){var e=document.querySelector('.zen-overview');return e?e.style.transform:''})()") == "scale(1)"
 
     /**
-     * Hold the card at `from` until it lifts, cross the slop and carry it so the finger ends at
-     * `to`; the finger is still down, and has just arrived (a slot takes hold once it has rested
-     * there for the dwell).
+     * Hold the card at `from` until it lifts, cross the slop, and bring the finger to `to` in ONE
+     * move from a spot where nothing is pending – over the card's own stand-in, where it lifted,
+     * or `via` when given (a place the finger can travel to with nothing on the way: scenario 3's
+     * gutter under the card's own group), reached at a walking pace and paused at. The finger is
+     * still down when this returns, and has just arrived: a merge target takes hold at once, a
+     * slot once the finger has rested with it for the dwell.
+     *
+     * One move, because the emulator's UI thread stalls for 400–700 ms at a time under the
+     * software GPU (its `Davey!` frames) and hands the touch's moves over late, in a batch. On a
+     * slow approach the finger crosses the edge bands of the cards on its way, each a slot: a
+     * stall there let a slot's dwell run out with the finger's next moves still undelivered, so
+     * the slot took hold, the grid reflowed, and the moves then delivered re-targeted a finger
+     * that was, to the chrome, still on its way (run 35407008758: scenario 3 landed Gamma after
+     * Home; run 35408615090: scenario 2's card was in the group before the drop). One move cannot
+     * be interrupted, so whatever it starts is the resting finger's – as it would be under a
+     * phone's pipeline, which delivers continuously.
      */
-    private fun carry(from: Rect, to: PointF, travelMs: Long = 900): Finger {
+    private fun carry(from: Rect, to: PointF, via: PointF? = null): Finger {
         val f = Finger()
         f.press(from.exactCenterX(), from.exactCenterY())
         f.moveBy(0f, -NUDGE, 120)
-        f.moveBy(to.x - from.exactCenterX(), to.y - (from.exactCenterY() - NUDGE), travelMs)
+        var x = from.exactCenterX()
+        var y = from.exactCenterY() - NUDGE
+        if (via != null) {
+            f.moveBy(via.x - x, via.y - y, 900)
+            x = via.x
+            y = via.y
+        }
+        f.hold(EDGE_PAUSE)
+        f.moveBy(to.x - x, to.y - y, 0)
         return f
     }
 
@@ -637,18 +678,52 @@ class OverviewMotionDemo : DemoHarness("overview-motion-demo-state.json", "overv
     }
 
     /**
+     * The sampled cards laid out below `reference` in `base` – their top under its bottom – less
+     * `mover`: the cards a change of the reference's height moves by layout, which the tracker
+     * holds until the height has settled (v2 §11.4). Told from the grid's boxes at the time, so
+     * where an earlier scenario left the cards cannot turn a later check red: a card beside a
+     * single-column group (same top, other column) is not below it and glides at once.
+     */
+    private fun rowsBelow(base: Frame, reference: String, mover: String): List<String> {
+        val ref = base.boxes[reference] ?: return emptyList()
+        return sampled.keys.filter { name ->
+            name != mover && name != reference && name != GROUP_KEY &&
+                base.boxes[name]?.let { it.y >= ref.y + ref.h - 2f } == true
+        }
+    }
+
+    /** The sampled cards sharing `reference`'s row in `base` (same top, laid out beside it), less `mover`. */
+    private fun rowMates(base: Frame, reference: String, mover: String): List<String> {
+        val ref = base.boxes[reference] ?: return emptyList()
+        return sampled.keys.filter { name ->
+            name != mover && name != reference && name != GROUP_KEY &&
+                base.boxes[name]?.let { abs(it.y - ref.y) < 2f && (it.x >= ref.x + ref.w - 2f || it.x + it.w <= ref.x + 2f) } == true
+        }
+    }
+
+    /**
      * Check the sequence v2 §11.4 asks of a group changing height, from the frames [sample]
      * logged: the height ran on its spring; `mover` (the card leaving or entering) set off with
-     * it; each of `below` stood still until the height had settled and, those in `after`, glided
-     * then; and the group's chrome did what `chrome` says.
+     * it; every card below `reference` (the group, or the card whose row a group is being made
+     * from) stood still until the height had settled, and those whose slots changed glided then –
+     * at least one must have; a card beside the reference glided at once; and the group's chrome
+     * did what `chrome` says. Which cards are below and which beside is read from the first frame
+     * (see [rowsBelow]).
      */
-    private fun sequence(frames: List<Frame>, mover: String, below: List<String>, after: List<String>, chrome: Chrome) {
+    private fun sequence(frames: List<Frame>, mover: String, reference: String, chrome: Chrome) {
         if (frames.size < 3) {
             record("  sampled ${frames.size} frame(s): the sequence could not be checked", false)
             return
         }
         val span = frames.last().t - frames.first().t
         finding("  sampled ${frames.size} frames over $span ms (${if (span > 0) (frames.size - 1) * 1000 / span else 0} fps)")
+        val below = rowsBelow(frames.first(), reference, mover)
+        val beside = rowMates(frames.first(), reference, mover)
+        if (frames.first().boxes[reference] == null) {
+            record("  $reference was not on screen when the sampling began: the rows below could not be told", false)
+            return
+        }
+        finding("  (below ${if (reference == GROUP_KEY) "the group" else "$reference's row"}: ${below.joinToString(", ").ifEmpty { "nothing" }}; beside: ${beside.joinToString(", ").ifEmpty { "nothing" }})")
         val heights = frames.indices.filter { i ->
             i > 0 && frames[i].boxes[GROUP_KEY]?.let { a -> frames[i - 1].boxes[GROUP_KEY]?.let { b -> a.alive && b.alive && abs(a.h - b.h) > 0.5f } } == true
         }
@@ -670,23 +745,33 @@ class OverviewMotionDemo : DemoHarness("overview-motion-demo-state.json", "overv
             "  $mover glided while the height ran: set off on frame ${setOff ?: "none"}, the height on $first",
             setOff != null && setOff in (first - 2)..(first + 2)
         )
+        val after = ArrayList<String>()
         for (name in below) {
-            val start = frames.indexOfFirst { it.boxes[name] != null }
-            if (start < 0) {
-                record("  $name was never on screen", false)
-                continue
-            }
-            val base = frames[start].boxes[name]!!
-            val stillThrough = (start..last).all { i -> frames[i].boxes[name]?.near(base, 2f) ?: true }
+            val base = frames.first().boxes[name]!!
+            val stillThrough = (0..last).all { i -> frames[i].boxes[name]?.near(base, 2f) ?: true }
             val movedAt = (last + 1 until frames.size).firstOrNull { i -> frames[i].boxes[name]?.let { !it.near(base, 2f) } ?: false }
-            if (name in after) {
+            if (movedAt != null) {
+                after += name
                 record(
-                    "  $name stood still until the height had settled (frame $last), then glided (from frame ${movedAt ?: "never"})",
-                    stillThrough && movedAt != null
+                    "  $name stood still until the height had settled (frame $last), then glided (from frame $movedAt)",
+                    stillThrough
                 )
             } else {
-                record("  $name stood still while the height ran", stillThrough)
+                record("  $name stood still while the height ran, and its slot did not change", stillThrough)
             }
+        }
+        if (below.isNotEmpty()) {
+            record(
+                "  the cards below whose slots changed glided after the height had settled: ${after.joinToString(", ").ifEmpty { "none did" }}",
+                after.isNotEmpty()
+            )
+        }
+        for (name in beside) {
+            val moved = movesOf(frames, name).firstOrNull() ?: continue
+            record(
+                "  $name, beside the group, glided at once (set off on frame $moved; the height ran $first-$last)",
+                moved <= last
+            )
         }
         val alive = frames.indices.filter { frames[it].boxes[GROUP_KEY]?.alive == true }
         val end = frames.last().boxes[GROUP_KEY]
@@ -858,7 +943,7 @@ class OverviewMotionDemo : DemoHarness("overview-motion-demo-state.json", "overv
         private const val MAX_OFFSET = 200f
         /** Taps on the Tabs button [openOverview] tries before giving up (each may be read as a hold). */
         private const val OPEN_ATTEMPTS = 4
-        /** The finger's pause at its own group's edge before its one step to the slot (see [outOfGroup]). */
+        /** The finger's pause where nothing is pending before its one step to the target or slot (see [carry]). */
         private const val EDGE_PAUSE = 400L
 
         // The seeded profile's ids, and the DOM of the grid.
