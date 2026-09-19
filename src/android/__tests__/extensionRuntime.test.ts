@@ -1135,6 +1135,31 @@ describe('AndroidExtensionRuntime: tabs.detectLanguage', () => {
   })
 })
 
+describe('AndroidExtensionRuntime: tabs.getCurrent', () => {
+  it('answers the tab an extension page is open in, as it does a content script, and nothing for a popup or worker', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1')
+    h.tabs.t2 = makeTab('t2', `https://${ID}.ext.zenium.invalid/onetab.html`)
+    h.notifyState()
+    hello(h, 'p1', 'page', { tabId: 't2', url: `https://${ID}.ext.zenium.invalid/onetab.html` })
+    const page = await call(h, 'p1', 'tabs', 'getCurrent', [])
+    expect((page.result as { id: number; url: string }).id).toBe(
+      h.runtime.api.tabs.chromeIdFor('t2')
+    )
+    expect((page.result as { url: string }).url).toBe(
+      `https://${ID}.ext.zenium.invalid/onetab.html`
+    )
+    hello(h, 'c1', 'content')
+    expect(((await call(h, 'c1', 'tabs', 'getCurrent', [])).result as { id: number }).id).toBe(
+      h.runtime.api.tabs.chromeIdFor('t1')
+    )
+    hello(h, 'pop1', 'popup')
+    expect((await call(h, 'pop1', 'tabs', 'getCurrent', [])).result ?? null).toBeNull()
+    expect((await call(h, 'bg1', 'tabs', 'getCurrent', [])).result ?? null).toBeNull()
+  })
+})
+
 describe('AndroidExtensionRuntime: i18n.detectLanguage', () => {
   it("answers the platform classifier's guess in Chrome's shape, from a content script too", async () => {
     const h = harness()

@@ -633,8 +633,9 @@ export class ExtensionApi {
       case 'get':
         return ids.chromeTab(ids.tabFor(ext, args[0]))
       case 'getCurrent': {
-        // Extension pages have no tab of their own; content scripts get theirs.
-        if (endpoint.context === 'content' && endpoint.tabId) {
+        // A content script's tab, or the tab an extension page is open in (OneTab's list page
+        // reads its own id from it); popups, workers and offscreen pages have none.
+        if ((endpoint.context === 'content' || endpoint.context === 'page') && endpoint.tabId) {
           const tab = tabs.tab(endpoint.tabId)
           return tab ? ids.chromeTab(tab) : undefined
         }
