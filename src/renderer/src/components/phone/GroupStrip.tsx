@@ -1,11 +1,16 @@
 import type { CSSProperties, JSX } from 'react'
 import { memo, useCallback, useLayoutEffect, useRef, useState } from 'react'
 import { Plus } from 'lucide-react'
-import type { PhoneBarPosition, Tab } from '@shared/types'
+import type { Folder, PhoneBarPosition, Tab } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { closeOverview, overviewIsOpen, toggleOverview } from '@renderer/lib/gestures/stage'
 import { groupColorChannels } from '@renderer/lib/groups'
-import { GROUP_STRIP_HEIGHT, newTabAnchor, stripCellKey } from '@renderer/lib/groupStrip'
+import {
+  GROUP_STRIP_HEIGHT,
+  GROUP_SWITCH_FADE_MS,
+  newTabAnchor,
+  stripCellKey
+} from '@renderer/lib/groupStrip'
 import { REDUCED_FADE_MS } from '@renderer/lib/motion/flip'
 import { reducedMotion, SPRING_SNAPPY, SpringAnimation } from '@renderer/lib/motion/spring'
 import { openNewTabPage, prepareNewTabGrow } from '@renderer/lib/newtab'
@@ -68,42 +73,102 @@ interface ChipExit {
   x: number
 }
 
+/**
+ * The chips of the group the strip showed until this commit, kept for the cross-fade of a
+ * switch of group (v2 §11.4): drawn once more where they stood, out of the flow, fading out
+ * over the chips that took their slots.
+ */
+interface StripGhosts {
+  /** One switch's ghosts; a second switch inside the fade replaces them. */
+  key: number
+  /** The group they belonged to, for its dot on the show-group chip. */
+  group: Folder
+  /** The show-group chip's left edge in the tray. */
+  show: number
+  /** The scroller's box in the tray, the members' clip. */
+  box: { left: number; width: number }
+  /** The members' chips, `x` in the scroller's viewport (their slot less the scroll). */
+  cells: ChipExit[]
+  /** The member that was active, its ring fading out with it. */
+  active: string | null
+  /** The scroller's edge fades as they stood (`useFadeEdges`' two lengths). */
+  fade: [string, string]
+}
+
 /** What the strip is doing, for the render: read through the store, written from effects. */
 interface StripMotion {
   /** The tray is sliding in or out: nothing is measured meanwhile. */
   sliding: boolean
   exits: ChipExit[]
+  ghosts: StripGhosts | null
 }
+
+/** How a chip comes onto the strip: on the spring, as a member joining a strip already showing; by fade, as the strip switches to its group from another (§11.4). */
+type ChipArrival = 'spring' | 'fade'
 
 /**
  * What the last commit showed, kept in the effect phase: which group, each member's slot, and
- * which chips are still running their entrance. The chips read it in their own layout effects –
- * which run before the strip's, so they see the commit before theirs – and the strip's effect
- * moves it on. A chip decides once that it enters and is remembered until its entrance has
- * landed, so StrictMode's second run of its effect (after the strip's has moved the ledger on)
- * comes to the same answer.
+ * which chips are still arriving. The chips read it in their own layout effects – which run
+ * before the strip's, so they see the commit before theirs – and the strip's effect moves it
+ * on. A chip decides once how it arrives and is remembered until its arrival has landed, so
+ * StrictMode's second run of its effect (after the strip's has moved the ledger on) comes to the
+ * same answer.
  */
 class StripLedger {
-  group: string | null = null
+  group: Folder | null = null
   cells = new Map<string, ChipExit>()
-  private readonly entering = new Set<string>()
+  active: string | null = null
+  private readonly arriving = new Map<string, ChipArrival>()
 
-  /** This commit's group and members' slots are the baseline from here. */
-  advance(group: string, cells: Map<string, ChipExit>): void {
+  /** This commit's group, members' slots and active member are the baseline from here. */
+  advance(group: Folder, cells: Map<string, ChipExit>, active: string | null): void {
     this.group = group
     this.cells = cells
+    this.active = active
   }
 
-  /** Whether the chip of `id` joins a strip of `group` that was already showing. */
-  enters(group: string, id: string): boolean {
-    if (this.entering.has(id)) return true
-    if (this.group !== group || this.cells.has(id)) return false
-    this.entering.add(id)
-    return true
+  /**
+   * How the chip of `id` arrives on a strip of `group`: on the spring if it joins the group the
+   * strip was already showing, by fade if the strip switched to its group from another, not at
+   * all on a strip that has just arrived (its chips come with it) or for a chip that was there.
+   */
+  arrival(group: string, id: string): ChipArrival | null {
+    const remembered = this.arriving.get(id)
+    if (remembered) return remembered
+    if (this.group === null) return null
+    if (this.group.id === group && this.cells.has(id)) return null
+    const how: ChipArrival = this.group.id === group ? 'spring' : 'fade'
+    this.arriving.set(id, how)
+    return how
   }
 
-  entered(id: string): void {
-    this.entering.delete(id)
+  arrived(id: string): void {
+    this.arriving.delete(id)
+  }
+}
+
+/**
+ * `el` fades on opacity over `ms` from `from` to `to` (the Web Animations API; a timer stands
+ * in where there is none), `done` at the end; returns the cancel. A fade to nothing is held
+ * there (`fill`), so the element does not show again before it is removed.
+ */
+function fadeOver(
+  el: HTMLElement,
+  from: number,
+  to: number,
+  ms: number,
+  done: () => void
+): () => void {
+  const anim = el.animate?.([{ opacity: from }, { opacity: to }], {
+    duration: ms,
+    easing: EASE,
+    fill: to === 0 ? 'forwards' : 'none'
+  })
+  if (anim) anim.onfinish = done
+  const timer = anim ? null : setTimeout(done, ms)
+  return () => {
+    anim?.cancel()
+    if (timer !== null) clearTimeout(timer)
   }
 }
 
@@ -123,7 +188,12 @@ class StripLedger {
  * glide over (the grid's `FlipTracker` through `useFlip`, one FLIP set), a chip that leaves
  * shrinks out where it stood while they glide back – neighbours and the chip on one spring
  * over the same travel. Under reduced motion every appearance and departure is the 120 ms fade
- * in place of §11.3, and the tracker turns the glides into fades.
+ * in place of §11.3, and the tracker turns the glides into fades. A switch of group – the
+ * active tab moves from one group to another – changes the strip's content in place: the old
+ * group's chips and dot fade out where they stood over the new group's fading in at their
+ * slots, 120 ms on opacity, no slide and no cut (§11.4); the same fade under reduced motion.
+ * The tray stands and the band holds; the scroller takes the new group's width from the first
+ * frame, and scrolls at once (no smooth scroll) to keep the new active chip in view.
  *
  * The strip takes only its own band: nothing on it reaches the pill's gesture recogniser or the
  * bar's hold (both live on siblings), and the bar's hold-to-edit does not reach the chips.
@@ -153,10 +223,15 @@ export const GroupStrip = memo(function GroupStrip({
   )
 
   const [motion] = useState<Store<StripMotion>>(() =>
-    createStore<StripMotion>({ sliding: phase !== 'shown', exits: [] })
+    createStore<StripMotion>({ sliding: phase !== 'shown', exits: [], ghosts: null })
   )
-  const { sliding, exits } = motion.use()
+  const { sliding, exits, ghosts } = motion.use()
   const [ledger] = useState(() => new StripLedger())
+  const showRef = useRef<HTMLButtonElement>(null)
+  const showFaceRef = useRef<HTMLSpanElement>(null)
+  // Where the scroller stood before this commit: the browser clamps `scrollLeft` to the new
+  // content the moment it is laid out, so the ghosts of a switch read the position from here.
+  const lastScroll = useRef(0)
 
   // The members' chips are the FLIP set. While the tray slides nothing is measured: a chip's
   // window position moves with the tray, and the tracker would read that as a glide of every
@@ -164,32 +239,64 @@ export const GroupStrip = memo(function GroupStrip({
   const flip = useFlip(scrollerRef, !inert && !sliding)
 
   // After the tracker's commit: which chips are gone since the last one (their exits, placed
-  // where they stood), then the ledger moves on to this commit. A different group is a
-  // different strip: its chips simply appear, and nothing of the old one leaves.
+  // where they stood), then the ledger moves on to this commit. A different group is a switch
+  // of the strip's content in place (§11.4): the old group's chips stay a fade longer as ghosts
+  // where they stood, over the new group's chips fading in at their slots, the group's dot
+  // fading with them; nothing of the old one leaves on the spring.
   useLayoutEffect(() => {
-    const prev = { group: ledger.group, cells: ledger.cells }
+    const prev = { group: ledger.group, cells: ledger.cells, active: ledger.active }
+    const scroller = scrollerRef.current
     const cells = new Map<string, ChipExit>()
     for (const tab of members) {
       const el = flip.element(stripCellKey(tab.id))
       cells.set(tab.id, { tab, x: el?.offsetLeft ?? prev.cells.get(tab.id)?.x ?? 0 })
     }
-    ledger.advance(group.id, cells)
-    if (inert || phase === 'leaving' || prev.group !== group.id) return
-    const gone = [...prev.cells.values()].filter((c) => !cells.has(c.tab.id))
-    if (gone.length === 0) return
-    motion.set((s) => ({
-      exits: [...s.exits.filter((e) => !gone.some((g) => g.tab.id === e.tab.id)), ...gone]
-    }))
+    ledger.advance(group, cells, activeTabId)
+    if (inert || phase === 'leaving') return
+    if (prev.group && prev.group.id !== group.id) {
+      const scroll = lastScroll.current
+      motion.set((s) => ({
+        ghosts: {
+          key: (s.ghosts?.key ?? 0) + 1,
+          group: prev.group!,
+          show: showRef.current?.offsetLeft ?? 0,
+          box: { left: scroller?.offsetLeft ?? 0, width: scroller?.offsetWidth ?? 0 },
+          cells: [...prev.cells.values()].map((c) => ({ tab: c.tab, x: c.x - scroll })),
+          active: prev.active,
+          fade: [
+            scroller?.style.getPropertyValue('--zen-fade-start') || '0px',
+            scroller?.style.getPropertyValue('--zen-fade-end') || '0px'
+          ]
+        }
+      }))
+      if (showFaceRef.current) fadeOver(showFaceRef.current, 0, 1, GROUP_SWITCH_FADE_MS, () => {})
+    } else {
+      if (scroller) lastScroll.current = scroller.scrollLeft
+      if (!prev.group) return
+      const gone = [...prev.cells.values()].filter((c) => !cells.has(c.tab.id))
+      if (gone.length === 0) return
+      motion.set((s) => ({
+        exits: [...s.exits.filter((e) => !gone.some((g) => g.tab.id === e.tab.id)), ...gone]
+      }))
+    }
   })
   const exitDone = useCallback(
     (id: string) => motion.set((s) => ({ exits: s.exits.filter((e) => e.tab.id !== id) })),
     [motion]
   )
+  const ghostsDone = useCallback(
+    (key: number) => motion.set((s) => (s.ghosts?.key === key ? { ghosts: null } : {})),
+    [motion]
+  )
 
-  // The active chip stays in view: the first time at once, then along with the scroller.
+  // The active chip stays in view: the first time at once, then along with the scroller – but
+  // at once again on a switch of group, whose chips are new and take their places from frame 0.
   const scrolledOnce = useRef(false)
+  const scrolledGroup = useRef(group.id)
   const membersKey = members.map((t) => t.id).join('|')
   useLayoutEffect(() => {
+    const switched = scrolledGroup.current !== group.id
+    scrolledGroup.current = group.id
     const scroller = scrollerRef.current
     const cell = activeTabId ? flip.element(stripCellKey(activeTabId)) : null
     if (!scroller || !cell) return
@@ -199,13 +306,13 @@ export const GroupStrip = memo(function GroupStrip({
     if (start < target) target = start
     else if (end > target + scroller.clientWidth) target = end - scroller.clientWidth
     target = Math.max(0, target)
-    const smooth = scrolledOnce.current && !reducedMotion() && !inert
+    const smooth = scrolledOnce.current && !switched && !reducedMotion() && !inert
     scrolledOnce.current = true
     if (Math.abs(target - scroller.scrollLeft) < 1) return
     if (typeof scroller.scrollTo === 'function')
       scroller.scrollTo({ left: target, behavior: smooth ? 'smooth' : 'auto' })
     else scroller.scrollLeft = target
-  }, [activeTabId, membersKey, flip, inert])
+  }, [activeTabId, membersKey, group.id, flip, inert])
 
   // The tray's slide: out of the bar's row when the strip enters, back behind it when it
   // leaves, on one spring that a change of mind turns round. The two ends are reported to the
@@ -297,6 +404,7 @@ export const GroupStrip = memo(function GroupStrip({
         style={{ '--zen-group-rgb': groupColorChannels(group.color) } as CSSProperties}
       >
         <button
+          ref={showRef}
           type="button"
           className="zen-group-chip zen-group-chip-show"
           data-strip-show
@@ -312,11 +420,18 @@ export const GroupStrip = memo(function GroupStrip({
                 }
           }
         >
-          <span className="zen-group-chip-face">
+          <span ref={showFaceRef} className="zen-group-chip-face">
             <GroupBadge folder={group} />
           </span>
         </button>
-        <div ref={setScroller} className="zen-group-scroller" data-strip-members>
+        <div
+          ref={setScroller}
+          className="zen-group-scroller"
+          data-strip-members
+          onScroll={(e) => {
+            lastScroll.current = e.currentTarget.scrollLeft
+          }}
+        >
           {members.map((tab) => (
             <MemberChip
               key={tab.id}
@@ -358,16 +473,80 @@ export const GroupStrip = memo(function GroupStrip({
             <Plus className="zen-group-chip-glyph" aria-hidden />
           </span>
         </button>
+        {ghosts && <GhostLayer key={ghosts.key} ghosts={ghosts} onDone={ghostsDone} />}
       </div>
     </div>
   )
 })
 
 /**
+ * The chips of the group the strip switched from (§11.4): a layer over the tray, out of the
+ * flow and out of reach, holding the group's dot and its members' chips where they stood – the
+ * members clipped and edge-faded at the scroller's box as they were – fading out as one over
+ * the chips that took their slots. Gone once the fade has landed.
+ */
+function GhostLayer({
+  ghosts,
+  onDone
+}: {
+  ghosts: StripGhosts
+  onDone: (key: number) => void
+}): JSX.Element {
+  const layer = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    const el = layer.current
+    if (!el) return
+    return fadeOver(el, 1, 0, GROUP_SWITCH_FADE_MS, () => onDone(ghosts.key))
+  }, [ghosts.key, onDone])
+  return (
+    <div
+      ref={layer}
+      className="zen-group-ghosts"
+      data-strip-ghosts={ghosts.group.id}
+      aria-hidden
+      style={{ '--zen-group-rgb': groupColorChannels(ghosts.group.color) } as CSSProperties}
+    >
+      <span className="zen-group-chip zen-group-chip-exit" style={{ left: ghosts.show }}>
+        <span className="zen-group-chip-face">
+          <GroupBadge folder={ghosts.group} />
+        </span>
+      </span>
+      <div
+        className="zen-group-ghost-members"
+        data-fade-axis="x"
+        style={
+          {
+            left: ghosts.box.left,
+            width: ghosts.box.width,
+            '--zen-fade-start': ghosts.fade[0],
+            '--zen-fade-end': ghosts.fade[1]
+          } as CSSProperties
+        }
+      >
+        {ghosts.cells.map((cell) => (
+          <span
+            key={cell.tab.id}
+            className="zen-group-chip zen-group-chip-exit"
+            data-strip-ghost={cell.tab.id}
+            aria-current={cell.tab.id === ghosts.active ? 'true' : undefined}
+            style={{ left: cell.x }}
+          >
+            <span className="zen-group-chip-face">
+              <Favicon tab={cell.tab} size={16} />
+            </span>
+          </span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/**
  * A member's chip: its favicon in a 36 circle, the cell the tracker glides. The face inside is
  * what the entrance scales – the cell's own transform belongs to the tracker, which writes it
- * every frame of a glide. Whether it enters (joins a strip already showing) is the ledger's
- * answer, asked in the layout effect that runs before the strip's own.
+ * every frame of a glide. How it arrives – on the spring as a member joining a strip already
+ * showing, by a 120 ms fade as the strip switches to its group (§11.4), or not at all – is the
+ * ledger's answer, asked in the layout effect that runs before the strip's own.
  */
 function MemberChip({
   tab,
@@ -387,8 +566,12 @@ function MemberChip({
   const face = useRef<HTMLSpanElement>(null)
   useLayoutEffect(() => {
     const el = face.current
-    if (!el || !ledger || !ledger.enters(groupId, tab.id)) return
-    const settled = (): void => ledger.entered(tab.id)
+    const how = el && ledger ? ledger.arrival(groupId, tab.id) : null
+    if (!el || !ledger || !how) return
+    const settled = (): void => ledger.arrived(tab.id)
+    // A switch of group is the same 120 ms fade with or without reduced motion (§11.4); an
+    // entrance under reduced motion is that fade in place of its spring (§11.3).
+    if (how === 'fade') return fadeOver(el, 0, 1, GROUP_SWITCH_FADE_MS, settled)
     if (reducedMotion()) {
       const fade = el.animate?.([{ opacity: 0 }, { opacity: 1 }], {
         duration: REDUCED_FADE_MS,

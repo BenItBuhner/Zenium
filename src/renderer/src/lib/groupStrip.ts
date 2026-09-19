@@ -75,6 +75,13 @@ function membersOf(state: UIState, group: Folder): Tab[] {
  * key changes (a member joins or leaves, the mark moves, a favicon or title arrives, the group
  * is renamed or recoloured) it re-renders once.
  */
+/**
+ * Length of the cross-fade when the strip's content changes in place – the active tab moves
+ * from one group to another and the chips of the second take the first's slots (v2 §11.4: on
+ * opacity, in the same slot, no slide and no cut; the same fade under reduced motion).
+ */
+export const GROUP_SWITCH_FADE_MS = 120
+
 export function stripKey(model: GroupStripModel): string {
   const { group, members, activeTabId } = model
   return [

@@ -2096,6 +2096,7 @@
     padding-top: 6px;
   }
   .zen-group-tray {
+    position: relative;
     display: flex;
     align-items: center;
     height: 100%;
@@ -2195,14 +2196,34 @@
     stroke-width: 1.75;
   }
   /*
-   * A member that left: its chip stays where it stood, off the flow, while it shrinks away. Its
-   * `left` is the slot's `offsetLeft`, a border edge, so the cell's margins are not applied again.
+   * A member that left, or a chip of the group the strip switched from: stays where it stood,
+   * off the flow, while it shrinks or fades away. Its `left` is the slot's `offsetLeft`, a border
+   * edge, so the cell's margins are not applied again.
    */
   .zen-group-chip-exit {
     position: absolute;
     top: 0;
     margin: 0;
     pointer-events: none;
+  }
+  /*
+   * A switch of group (v2 §11.4): the chips of the group the strip showed stay a fade longer –
+   * 120 ms on opacity, in the same slots, no slide and no cut – over the chips of the new group
+   * fading in. They are a layer over the tray, out of the flow and out of reach; its members'
+   * part sits at the scroller's box (set inline, as measured) and clips and edge-fades them as
+   * the scroller did, so the outgoing set ends exactly as it stood.
+   */
+  .zen-group-ghosts {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  .zen-group-ghost-members {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    overflow: hidden;
   }
   @media (prefers-reduced-motion: reduce) {
     .zen-group-chip-face {

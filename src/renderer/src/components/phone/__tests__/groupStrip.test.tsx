@@ -35,6 +35,7 @@ const {
   GROUP_STRIP_VAR,
   groupStripFor,
   leavingStripFor,
+  GROUP_SWITCH_FADE_MS,
   newTabAnchor,
   stripKey
 } = await import('@renderer/lib/groupStrip')
@@ -379,6 +380,116 @@ function swipe(target: HTMLElement, dx: number): void {
 }
 
 // --- (A) the model -------------------------------------------------------------------------------
+
+/**
+ * `Element.animate` as the strip's fades call it (happy-dom has none): every fade started, by
+ * element, and a way to land them all. `install` starts afresh.
+ */
+const animations = (() => {
+  const proto = HTMLElement.prototype as { animate?: unknown }
+  const hadAnimate = proto.animate
+  let fades: Array<{ el: HTMLElement; frames: unknown; options: KeyframeAnimationOptions }> = []
+  let finish: Array<() => void> = []
+  return {
+    install(): void {
+      fades = []
+      finish = []
+      proto.animate = function (
+        this: HTMLElement,
+        frames: unknown,
+        options: KeyframeAnimationOptions
+      ): { onfinish: (() => void) | null; cancel: () => void } {
+        fades.push({ el: this, frames, options })
+        const fade = { onfinish: null as (() => void) | null, cancel: () => undefined }
+        finish.push(() => fade.onfinish?.())
+        return fade
+      }
+    },
+    restore(): void {
+      proto.animate = hadAnimate
+    },
+    of(el: HTMLElement): typeof fades {
+      return fades.filter((f) => f.el === el)
+    },
+    finishAll(): void {
+      finish.forEach((done) => done())
+    }
+  }
+})()
+
+const GROUP2 = 'g2'
+const folder2: Folder = { ...folder, id: GROUP2, name: 'Reading', color: 'red' }
+const other = (id: string, patch: Partial<Tab> = {}): Tab => tab(id, { folderId: GROUP2, ...patch })
+/** Two groups in the track: a and b in Research, p, q and r in Reading. */
+const twoGroups = (active: string): UIState =>
+  stateOf([member('a'), member('b'), other('p'), other('q'), other('r')], active, [folder, folder2])
+const ghostsOf = (): string[] =>
+  [...host!.querySelectorAll('[data-strip-ghost]')].map((el) =>
+    el.getAttribute('data-strip-ghost')!
+  )
+const ghostOf = (id: string): HTMLElement =>
+  host!.querySelector<HTMLElement>(`[data-strip-ghost="${id}"]`)!
+
+/**
+ * The strip shows Research with a active; the active tab becomes p, in Reading. The strip's
+ * content changes in place (§11.4): Reading's chips and dot fade in at their slots over 120 ms
+ * while Research's stay mounted a fade longer as ghosts where they stood, fading out as one;
+ * nothing slides or glides, nothing cuts, the tray stands and the band holds. With `animations`
+ * installed; the same with and without reduced motion.
+ */
+function switchCrossFades(): void {
+  layChips(['a', 'b'])
+  render(twoGroups('a'))
+  expect(members()).toEqual(['a', 'b'])
+  const research = tray().style.getPropertyValue('--zen-group-rgb')
+  const writes = vi.spyOn(document.documentElement.style, 'setProperty')
+  layChips(['p', 'q', 'r'])
+  render(twoGroups('p'))
+  // The strip stands: no slide, no spring in flight, the band untouched.
+  expect(strip()!.dataset.phase).toBe('shown')
+  expect(tray().style.transform).toBe('')
+  expect(frames.size).toBe(0)
+  expect(bandWrites(writes)).toEqual([])
+  // Reading's chips are in the flow at their slots from this frame – no glide, no scale – each
+  // face fading in over 120 ms from nothing; its dot fades in on the show-group chip.
+  expect(members()).toEqual(['p', 'q', 'r'])
+  expect(chipOf('p').getAttribute('aria-current')).toBe('true')
+  for (const id of ['p', 'q', 'r']) {
+    expect(chipOf(id).style.transform).toBe('')
+    expect(faceOf(id).style.transform).toBe('')
+    const [enter] = animations.of(faceOf(id))
+    expect(enter.frames).toEqual([{ opacity: 0 }, { opacity: 1 }])
+    expect(enter.options).toMatchObject({ duration: GROUP_SWITCH_FADE_MS })
+  }
+  const [dot] = animations.of(showChip().querySelector<HTMLElement>('.zen-group-chip-face')!)
+  expect(dot.frames).toEqual([{ opacity: 0 }, { opacity: 1 }])
+  expect(dot.options).toMatchObject({ duration: GROUP_SWITCH_FADE_MS })
+  expect(showChip().getAttribute('aria-label')).toBe('Show group, Reading')
+  expect(tray().style.getPropertyValue('--zen-group-rgb')).not.toBe(research)
+  // Research's set is still mounted: its dot and a and b where they stood, out of the flow and
+  // out of reach, fading out as one over the same 120 ms and held at nothing until they go.
+  const ghosts = host!.querySelector<HTMLElement>('[data-strip-ghosts]')!
+  expect(ghosts.dataset.stripGhosts).toBe(GROUP)
+  expect(ghosts.getAttribute('aria-hidden')).toBe('true')
+  expect(ghosts.style.getPropertyValue('--zen-group-rgb')).toBe(research)
+  expect(ghostsOf()).toEqual(['a', 'b'])
+  expect(ghostOf('a').style.left).toBe('0px')
+  expect(ghostOf('b').style.left).toBe(`${PITCH}px`)
+  // a's ring fades out with its ghost; p's fades in with its face: the mark cross-fades too.
+  expect(ghostOf('a').getAttribute('aria-current')).toBe('true')
+  expect(ghostOf('b').getAttribute('aria-current')).toBeNull()
+  const [leave] = animations.of(ghosts)
+  expect(leave.frames).toEqual([{ opacity: 1 }, { opacity: 0 }])
+  expect(leave.options).toMatchObject({ duration: GROUP_SWITCH_FADE_MS, fill: 'forwards' })
+  // Nothing of Research leaves on the spring, nothing of Reading enters on it.
+  expect(host!.querySelectorAll('[data-strip-exit]')).toHaveLength(0)
+  for (const id of ['p', 'q', 'r']) expect(scaleOf(faceOf(id))).toBe(1)
+  // The fades land: the ghosts go, Reading stays, still nothing of the band.
+  act(() => animations.finishAll())
+  expect(host!.querySelector('[data-strip-ghosts]')).toBeNull()
+  expect(members()).toEqual(['p', 'q', 'r'])
+  expect(bandWrites(writes)).toEqual([])
+}
 
 describe('the strip model from the folders', () => {
   it('is the active tab’s group with its members in track order, the active one marked', () => {
@@ -908,31 +1019,45 @@ describe('a chip joining or leaving the strip', () => {
     expect(faceOf('y').style.transform).toBe('')
   })
 
-  describe('under reduced motion (§11.3)', () => {
-    const proto = HTMLElement.prototype as { animate?: unknown }
-    const hadAnimate = proto.animate
-    let fades: Array<{ el: HTMLElement; frames: unknown; options: KeyframeAnimationOptions }> = []
-    let finish: Array<() => void> = []
+  // --- (F) a switch of group (§11.4) ------------------------------------------------------------
 
+  describe('a switch of group (§11.4)', () => {
+    beforeEach(() => animations.install())
+    afterEach(() => animations.restore())
+
+    it('cross-fades the chips over 120 ms in the same slots: no slide, no cut, the band holds', () => {
+      switchCrossFades()
+    })
+
+    it('the ghosts stand where the chips were on screen, not in the content: a scrolled strip', () => {
+      layChips(['p', 'q', 'r'])
+      render(twoGroups('p'))
+      // Reading scrolled by a slot (a finger), then the active tab moves into Research, which
+      // is short: the browser clamps the scroll to 0 the moment the new chips are laid out.
+      scroller().scrollLeft = PITCH
+      act(() => scroller().dispatchEvent(new Event('scroll')))
+      layChips(['a', 'b'])
+      render(twoGroups('a'))
+      expect(members()).toEqual(['a', 'b'])
+      expect(ghostsOf()).toEqual(['p', 'q', 'r'])
+      expect(ghostOf('p').style.left).toBe(`${-PITCH}px`)
+      expect(ghostOf('q').style.left).toBe('0px')
+      expect(ghostOf('r').style.left).toBe(`${PITCH}px`)
+      // The scroll to keep a in view is at once, not smooth: the new set takes its place from
+      // the first frame.
+      for (const s of scrolls) expect(s.behavior).toBe('auto')
+      act(() => animations.finishAll())
+      expect(ghostsOf()).toEqual([])
+    })
+  })
+
+  describe('under reduced motion (§11.3)', () => {
     beforeEach(() => {
       vi.stubGlobal('matchMedia', (query: string) => ({ matches: query.includes('reduce') }))
-      fades = []
-      finish = []
-      proto.animate = function (
-        this: HTMLElement,
-        frames: unknown,
-        options: KeyframeAnimationOptions
-      ): { onfinish: (() => void) | null; cancel: () => void } {
-        fades.push({ el: this, frames, options })
-        const fade = { onfinish: null as (() => void) | null, cancel: () => undefined }
-        finish.push(() => fade.onfinish?.())
-        return fade
-      }
+      animations.install()
     })
-    afterEach(() => {
-      proto.animate = hadAnimate
-    })
-    const fadesOf = (el: HTMLElement): typeof fades => fades.filter((f) => f.el === el)
+    afterEach(() => animations.restore())
+    const fadesOf = animations.of
 
     it('the strip appears and leaves as a 120 ms fade in place, the band still once at each end', () => {
       layChips(['a', 'b'])
@@ -946,16 +1071,15 @@ describe('a chip joining or leaving the strip', () => {
       expect(appear.frames).toEqual([{ opacity: 0 }, { opacity: 1 }])
       expect(appear.options).toMatchObject({ duration: REDUCED_FADE_MS, fill: 'forwards' })
       expect(bandWrites(writes)).toEqual([`${GROUP_STRIP_HEIGHT}px`])
-      act(() => finish.forEach((done) => done()))
+      act(() => animations.finishAll())
       expect(strip()!.dataset.phase).toBe('shown')
-      fades = []
-      finish = []
+      animations.install()
       render(stateOf([member('a'), member('b'), tab('x')], 'x'))
       expect(strip()!.dataset.phase).toBe('leaving')
       const [leave] = fadesOf(tray())
       expect(leave.frames).toEqual([{ opacity: 1 }, { opacity: 0 }])
       expect(bandWrites(writes)).toHaveLength(1)
-      act(() => finish.forEach((done) => done()))
+      act(() => animations.finishAll())
       expect(strip()).toBeNull()
       expect(bandWrites(writes)).toEqual([`${GROUP_STRIP_HEIGHT}px`, '0px'])
     })
@@ -976,9 +1100,8 @@ describe('a chip joining or leaving the strip', () => {
         expect(chipOf(id).style.transform).toBe('')
         expect(fadesOf(chipOf(id))[0]?.frames).toEqual([{ opacity: 0 }, { opacity: 1 }])
       }
-      act(() => finish.forEach((done) => done()))
-      fades = []
-      finish = []
+      act(() => animations.finishAll())
+      animations.install()
       // d leaves: its stand-in fades out in place over 120 ms, held at the end.
       layChips(['a', 'b', 'c'])
       render(stateOf([member('a'), tab('d'), member('b'), member('c')], 'a'))
@@ -987,8 +1110,12 @@ describe('a chip joining or leaving the strip', () => {
       expect(leave.frames).toEqual([{ opacity: 1 }, { opacity: 0 }])
       expect(leave.options).toMatchObject({ duration: REDUCED_FADE_MS, fill: 'forwards' })
       expect(exit.style.left).toBe(`${PITCH}px`)
-      act(() => finish.forEach((done) => done()))
+      act(() => animations.finishAll())
       expect(exitOf('d')).toBeNull()
+    })
+
+    it('a switch of group is the same 120 ms cross-fade (§11.4)', () => {
+      switchCrossFades()
     })
   })
 })
