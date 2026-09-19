@@ -5,9 +5,10 @@
  * as a file on the app origin instead, fetched off the main thread like any resource.
  *
  *  - Boot documents. The boot payload inlines the core's documents while they are small; the
- *    rest (a Safe Browsing feed's prefix table) it lists by name, size and version tag, and
- *    {@link fetchDeferredDocuments} brings them in from `/zen-docs/<name>` while the platform and
- *    the core are built, so that the core's synchronous reads at start find them as before.
+ *    rest (a Safe Browsing feed's prefix table, an extension's rule-set document under
+ *    `blocking/sets/`) it lists by name, size and version tag, and {@link fetchDeferredDocuments}
+ *    brings them in from `/zen-docs/<name>` while the platform and the core are built, so that
+ *    the core's synchronous reads at start find them as before.
  *  - Fetched bodies. `net.fetch` answers a body over the host's inline limit as `{token, bytes}`;
  *    {@link readSpilledBody} fetches `/zen-net/<token>` and releases the file.
  *  - The bundled Safe Browsing snapshot, an asset of the APK, is fetched from the asset path.
@@ -66,7 +67,10 @@ export interface DeferredDocumentReader {
  */
 export const FETCH_TIMEOUT_MS = 5_000
 
-/** `/zen-docs/blocking/index.json`: names are one or two safe path segments (`Storage.fileFor`). */
+/**
+ * `/zen-docs/blocking/index.json`, `/zen-docs/blocking/sets/<name>.json`: names are one to three
+ * safe path segments (`Storage.fileFor`), each encoded on its own.
+ */
 export function documentUrl(name: string, origin = APP_ORIGIN): string {
   return `${origin}${DOCS_PATH}${name.split('/').map(encodeURIComponent).join('/')}`
 }

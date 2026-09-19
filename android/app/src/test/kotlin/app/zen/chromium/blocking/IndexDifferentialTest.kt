@@ -78,6 +78,44 @@ class IndexDifferentialTest {
         return o
     }
 
+    /** The golden fixture – the store's summary and its `sets/` document – as one entry with the rules inline. */
+    private fun connectivityProbesEntry(): JSONObject {
+        val fixtures = File(repoRoot(), "android/app/src/test/resources/blocking")
+        val summary = JSONObject(File(fixtures, "connectivity-probes.json").readText())
+        val document = JSONObject(File(fixtures, summary.getString("document")).readText())
+        assertEquals(summary.getString("id"), document.getString("id"))
+        summary.remove("document")
+        summary.remove("tag")
+        summary.remove("ruleCount")
+        return summary.put("rules", document.getJSONArray("rules"))
+    }
+
+    /**
+     * The layout the store writes and the engine reads on a device (`store.ts`, version 2): the
+     * index as summaries naming one document per set, the rules in those documents. The tag is
+     * opaque to the reader (it compares tags, never computes them), so any function of the
+     * document's text will do here.
+     */
+    private fun splitIntoSetDocuments(inline: JSONObject): Pair<String, Map<String, String>> {
+        val documents = LinkedHashMap<String, String>()
+        val summaries = JSONArray()
+        val sets = inline.getJSONArray("sets")
+        for (i in 0 until sets.length()) {
+            val entry = JSONObject(sets.getJSONObject(i).toString())
+            val rules = entry.optJSONArray("rules") ?: JSONArray()
+            entry.remove("rules")
+            entry.put("ruleCount", rules.length())
+            if (rules.length() > 0) {
+                val name = "sets/${entry.getString("id").replace(Regex("[^A-Za-z0-9._-]"), "_")}.json"
+                val text = JSONObject().put("id", entry.getString("id")).put("rules", rules).toString()
+                documents[name] = text
+                entry.put("document", name).put("tag", "${Integer.toHexString(text.length)}-${Integer.toHexString(text.hashCode())}")
+            }
+            summaries.put(entry)
+        }
+        return JSONObject().put("version", 2).put("sets", summaries).toString(2) to documents
+    }
+
     /** Structured sets shaped like what the runtime persists (`ext:` sets) and the builtins. */
     private fun generatedIndex(hosts: List<String>, random: Random): JSONObject {
         val words = listOf("pixel", "track", "ad", "ads", "banner", "js", "img", "api", "beacon", "lib", "main", "generate_204", "collect", "stats")
@@ -161,7 +199,7 @@ class IndexDifferentialTest {
         // Stylus's `.user.css` install redirect, conditioned on the response's content type.
         b.put(rule(id++, "redirect", JSONObject().put("regexFilter", "\\.user\\.css$").put("resourceTypes", JSONArray(listOf("main_frame"))).put("responseHeaders", headerConditions("content-type", "text/css*")), redirect = "https://safe.example/install-usercss"))
         val sets = JSONArray()
-        sets.put(JSONObject(File(repoRoot(), "android/app/src/test/resources/blocking/connectivity-probes.json").readText()))
+        sets.put(connectivityProbesEntry())
         sets.put(entry("ext:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:static:ruleset_1", "dnr", 2999, a, partitions = listOf("default", "work"), updatedAt = 1789633817801L))
         sets.put(entry("ext:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:_dynamic", "dnr", 2999, b, partitions = listOf("default", "work", "private"), updatedAt = 1789633817802L))
         sets.put(entry("user", "user", 10, JSONArray().put(rule(1, "block", JSONObject().put("urlFilter", "||${hosts[7]}^"))).put(rule(2, "allow", JSONObject().put("urlFilter", "||${hosts[0]}^")))))
@@ -178,11 +216,16 @@ class IndexDifferentialTest {
         assertTrue("hosts from the lists: ${listHosts.size}", listHosts.size > 5000)
         val random = Random(164)
         val indexJson = generatedIndex(listHosts, random)
-        val raw = indexJson.toString(2)
+        val (summaries, setDocuments) = splitIntoSetDocuments(indexJson)
+        assertTrue("the index is summaries only: ${summaries.length} chars", summaries.length < 4_000)
 
-        // Loaded exactly as the engine does (IndexReader) and as the fixtures do (org.json): the
-        // same sets, priorities, partitions and rule counts, and every declared rule compiled.
-        val streamed = IndexReader().read(raw)
+        // Loaded exactly as the engine does (IndexReader over the summaries and the set documents)
+        // and as the fixtures do (org.json over the entries with their rules inline): the same
+        // sets, priorities, partitions and rule counts, and every declared rule compiled.
+        val opened = ArrayList<String>()
+        val reader = IndexReader { line -> throw AssertionError("a set was left out: $line") }
+        val streamed = reader.read(summaries) { name -> opened.add(name); setDocuments[name] }
+        assertEquals("every set document opened once", setDocuments.keys.toList(), opened)
         val setsJson = indexJson.getJSONArray("sets")
         val document = (0 until setsJson.length()).mapNotNull { RuleSetInfo.parse(setsJson.getJSONObject(it)) }
         assertEquals(document.map { it.id }, streamed.map { it.id })
@@ -192,6 +235,14 @@ class IndexDifferentialTest {
             assertEquals("partitions of ${s.id}", d.partitions, s.partitions)
             assertEquals("priority of ${s.id}", d.priority, s.priority)
         }
+        // The same summaries again: no document opened, every set's compiled rules the previous read's.
+        val again = reader.read(summaries) { name -> opened.add(name); setDocuments[name] }
+        assertEquals(setDocuments.size, opened.size)
+        for ((s, a) in streamed.zip(again)) assertTrue("compiled rules of ${s.id} shared", s.compiled === a.compiled)
+        // The inline shape (version 1) still reads to the same sets: the first start after the migration.
+        val legacy = IndexReader().read(indexJson.toString(2))
+        assertEquals(streamed.map { it.id }, legacy.map { it.id })
+        assertEquals(streamed.map { it.rules.map { r -> r.id } }, legacy.map { it.rules.map { r -> r.id } })
         val declared = (0 until setsJson.length()).sumOf { setsJson.getJSONObject(it).getJSONArray("rules").length() }
         // Header-conditioned rules are the desktop's alone: `ruleCount` runs short of `declared`
         // by exactly those, through the streaming reader and the document parser alike.

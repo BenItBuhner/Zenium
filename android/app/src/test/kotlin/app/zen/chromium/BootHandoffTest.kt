@@ -41,19 +41,30 @@ class BootHandoffTest {
         val big = """{"version":1,"id":"phishing-database","prefixes":"${"A".repeat(2_000)}"}"""
         storage.writeSync("safebrowsing/phishing-database.json", big)
         storage.writeSync("safebrowsing/urlhaus.json", """{"version":1,"id":"urlhaus","prefixes":""}""")
+        // The rule sets' documents: a small one travels inline, uBlock Origin Lite's are deferred like the feed.
+        val ruleSet = """{"id":"ext:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:static:ruleset_1","rules":[${"""{"id":1,"action":{"type":"block"},"condition":{"urlFilter":"||ads.example^"}},""".repeat(40)}null]}"""
+        storage.writeSync("blocking/sets/ext_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_static_ruleset_1-0c0ffee0.json", ruleSet)
+        storage.writeSync("blocking/sets/user.json", """{"id":"user","rules":[]}""")
         // Not boot documents: a set's filter text, a temp file, a non-JSON file under a folder.
         storage.writeSync("blocking/easylist.json", """{"filterText":"${"x".repeat(5_000)}"}""")
         File(dir, "safebrowsing/urlhaus-filter.json.tmp").writeText(big)
+        File(dir, "blocking/sets/user.json.tmp").writeText("torn")
         storage.writeSync("safebrowsing/notes.txt", "not a feed")
 
         val documents = storage.bootDocuments(1_024)
         assertEquals(
-            setOf("history.json", "state.json", "blocking/index.json", "safebrowsing/urlhaus.json"),
+            setOf("history.json", "state.json", "blocking/index.json", "blocking/sets/user.json", "safebrowsing/urlhaus.json"),
             documents.files.keys().asSequence().toSet()
         )
         assertEquals("""{"version":1}""", documents.files.getString("state.json"))
-        assertEquals(1, documents.deferred.length())
-        val deferred = documents.deferred.getJSONObject(0)
+        assertEquals("""{"id":"user","rules":[]}""", documents.files.getString("blocking/sets/user.json"))
+        assertEquals(2, documents.deferred.length())
+        // The manifest's order is the payload's: the root, the blocking index and its set documents, the feeds.
+        val deferredSet = documents.deferred.getJSONObject(0)
+        assertEquals("blocking/sets/ext_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_static_ruleset_1-0c0ffee0.json", deferredSet.getString("name"))
+        assertEquals(ruleSet.length.toLong(), deferredSet.getLong("bytes"))
+        assertEquals(storage.etag(deferredSet.getString("name")), deferredSet.getString("etag"))
+        val deferred = documents.deferred.getJSONObject(1)
         assertEquals("safebrowsing/phishing-database.json", deferred.getString("name"))
         assertEquals(big.length.toLong(), deferred.getLong("bytes"))
         assertEquals(storage.etag("safebrowsing/phishing-database.json"), deferred.getString("etag"))
@@ -61,7 +72,8 @@ class BootHandoffTest {
         // Every boot document inline, whatever its size: the payload before the handoff.
         val all = storage.readAll()
         assertEquals(big, all.getString("safebrowsing/phishing-database.json"))
-        assertEquals(5, all.length())
+        assertEquals(ruleSet, all.getString(deferredSet.getString("name")))
+        assertEquals(7, all.length())
         assertEquals(0, storage.bootDocuments(Long.MAX_VALUE).deferred.length())
     }
 
@@ -114,11 +126,18 @@ class BootHandoffTest {
         assertEquals(text, handoff.document("/safebrowsing/phishing-database.json").text())
         assertEquals("""{"version":1}""", handoff.document("state.json").text())
         assertEquals("""{"version":1,"sets":[]}""", handoff.document("blocking/index.json").text())
+        // A rule set's document, at the name the index gives it (`/zen-docs/blocking/sets/<name>.json`).
+        storage.writeSync("blocking/sets/user.json", """{"id":"user","rules":[]}""")
+        val setDocument = handoff.document("/blocking/sets/user.json")
+        assertTrue(setDocument.ok)
+        assertEquals(storage.etag("blocking/sets/user.json"), setDocument.etag)
+        assertEquals("""{"id":"user","rules":[]}""", setDocument.text())
 
         // Not a boot document, missing, escaping the directory, a folder, a temp file, nothing at all: not found.
         val notServed = listOf(
             "blocking/easylist.json", "privacy/flags.json", "state.json.bak", "safebrowsing/notes.txt",
-            "safebrowsing/missing.json", "../escape.json", "safebrowsing", "state.json.tmp", ".json", "", "/"
+            "safebrowsing/missing.json", "../escape.json", "safebrowsing", "state.json.tmp", ".json", "", "/",
+            "blocking/sets", "blocking/sets/missing.json", "blocking/sets/user.json.tmp", "blocking/other/user.json"
         )
         for (path in notServed) {
             val missing = handoff.document(path)
@@ -131,11 +150,11 @@ class BootHandoffTest {
     }
 
     @Test
-    fun `the boot set is the root documents, the blocking index and the feed documents`() {
-        for (name in listOf("state.json", "extensions-runtime.json", "/state.json", "blocking/index.json", "safebrowsing/urlhaus.json", "safebrowsing//a.json")) {
+    fun `the boot set is the root documents, the blocking index and set documents, and the feed documents`() {
+        for (name in listOf("state.json", "extensions-runtime.json", "/state.json", "blocking/index.json", "safebrowsing/urlhaus.json", "safebrowsing//a.json", "blocking/sets/user.json", "/blocking/sets/ext_a_static_1-0c0ffee0.json")) {
             assertTrue(name, storage.isBootDocument(name))
         }
-        for (name in listOf("blocking/easylist.json", "blocking/index.json.tmp", "state.json.bak", "safebrowsing/notes.txt", "privacy/flags.json", "a/b/c.json", "blocking", ".json", "")) {
+        for (name in listOf("blocking/easylist.json", "blocking/index.json.tmp", "state.json.bak", "safebrowsing/notes.txt", "privacy/flags.json", "a/b/c.json", "blocking", ".json", "", "blocking/sets", "blocking/sets/.json", "blocking/sets/user.json.bak", "blocking/other/user.json", "safebrowsing/sets/a.json")) {
             assertFalse(name, storage.isBootDocument(name))
         }
     }
