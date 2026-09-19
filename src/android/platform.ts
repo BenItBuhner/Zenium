@@ -86,7 +86,7 @@ import { AndroidNewTabBackground } from './newTabBackground'
 import { AndroidSiteData } from './siteData'
 import { AndroidStoreIO } from './storeIo'
 import { AndroidTranslateHost, type TranslateProgressEvent } from './translate'
-import { AndroidTabViewHost, type ViewEventPayloads } from './views'
+import { AndroidTabViewHost, type HostHistory, type ViewEventPayloads } from './views'
 
 /** Android 13 (Tiramisu): the first release whose clipboard shows its own "copied" chip. */
 const CLIPBOARD_CHIP_SDK = 33
@@ -344,6 +344,11 @@ export interface HostEventPayloads {
   'view.drawn': { tabId: string; visible: boolean }
   /** Kotlin took a tab card picture and has it on disk (`Thumbnails.kt`). */
   'thumbnail.captured': ThumbnailPicture & { tabId: string }
+  /**
+   * A tab WebView's back/forward list changed, as the app-wide form of the view event of the
+   * same name (`AndroidTabView.dispatch('historyChanged')`): routed to the view named.
+   */
+  historyChanged: HostHistory & { tabId: string }
   'download.started': {
     token: string
     url: string
@@ -1082,6 +1087,11 @@ export class AndroidPlatform implements Platform {
       case 'thumbnail.captured':
         this.events.send('thumbnail.captured', payload as HostEventPayloads['thumbnail.captured'])
         return
+      case 'historyChanged': {
+        const p = payload as Partial<HostEventPayloads['historyChanged']>
+        if (typeof p.tabId === 'string') this.viewEvent(p.tabId, 'historyChanged', p as HostHistory)
+        return
+      }
       case 'environment':
         browser.pageControls.setEnvironment(payload as HostEventPayloads['environment'])
         return

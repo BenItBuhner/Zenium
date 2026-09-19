@@ -3834,6 +3834,15 @@ export interface WebAppBanner {
 export interface NavigationSnapshot {
   entries: NavigationSnapshotEntry[]
   index: number
+  /**
+   * An opaque, host-specific serialisation of the whole stack, for a host that cannot rebuild
+   * it from URLs and titles: on Android `WebView.saveState` (a Parcel, base64), which carries
+   * every entry's scroll and form state – the shape `pageState` takes there. Written and read by
+   * the same host only (desktop never writes it and ignores it; a host refusing a foreign blob
+   * loads the current entry instead); absent over 64 KB (`NAVIGATION_HOST_STATE_MAX_CHARS`) and
+   * after the entries were cut to `NAVIGATION_ENTRIES_MAX`, when it would describe another list.
+   */
+  hostState?: string
 }
 
 export interface NavigationSnapshotEntry {
