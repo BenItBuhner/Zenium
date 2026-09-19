@@ -10,15 +10,6 @@ name: Android extension compatibility sweep
 # only: the two run for about two hours each. The build, the emulator and the Gradle cache live in
 # android-emulator-demo.yml.
 on:
-  # TEMPORARY: the sweep branch's final measurement of all thirty rows on the head that carries
-  # main (the blocking store's per-set documents of #210), both jobs, then the rows the last fixes
-  # concern alone – here the rows with an extension page of their own open as a tab (the tab's
-  # sender: Vimium's options page, OneTab's list, LastPass's preferences, Adblock Plus's and
-  # Ghostery's options, Tampermonkey's and Violentmonkey's, JSON Formatter's, 1Password's app
-  # page) and the two live rows the 156 job last read F (SponsorBlock, Video Speed Controller) –
-  # since gh cannot dispatch from the agent; removed before the branch is returned.
-  push:
-    branches: [cursor/android-ext-compat-sweep-f955]
   workflow_dispatch:
     inputs:
       only:
@@ -31,11 +22,8 @@ permissions:
   contents: read
 
 # One sweep per ref at a time; a dispatched run finishes (its two hours are the measurement).
-# TEMPORARY, with the push trigger: one group per push, so this validation run is not held behind
-# the 156 job of run 35468648505, which hung in its driver step (the token here cannot cancel it);
-# the emulator jobs' own group in android-emulator-demo.yml supersedes that job when this one starts.
 concurrency:
-  group: android-ext-compat-sweep-${{ github.ref }}-${{ github.sha }}
+  group: android-ext-compat-sweep-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -47,7 +35,7 @@ jobs:
       artifact-name: android-ext-compat-sweep
       artifact-path: artifacts/android-ext-compat-sweep/
       script-env: |
-        SWEEP_ONLY=${{ inputs.only || 'cfhdojbkjhnklbpkdaibdccddilifddb,mlomiejdfkolichcflejclcbmpeaniij,aeblfdkhhhdcdjpifhhbdiojplfjncoa,hdokiejnpimakedhajhdlcegeplioahd,dbepggeogbaibhgnhhndojpepiihcmeb,dhdgffkkebhmkfjojejmpbldmpobfkfo,jinjaccalgkegednnccohejagnlnfdag,chphlpgkkbolifaimnlloiipkdnihall,bcjindcccaagfpapjjmafapmmgkkhgoa,mnjggcdmjocbbbhaepdhchncahnbgone,nffaoalbilbmmfgbnbgppjihopabppdk' }}
+        SWEEP_ONLY=${{ inputs.only }}
       timeout-minutes: 210
 
   # The same sweep on a Chromium snapshot SystemWebView.apk swapped onto an AOSP image (see
@@ -65,7 +53,7 @@ jobs:
       script-env: |
         WEBVIEW_APK=artifacts/webview/SystemWebView.apk
         SOFT_FAIL=1
-        SWEEP_ONLY=${{ inputs.only || 'cfhdojbkjhnklbpkdaibdccddilifddb,mlomiejdfkolichcflejclcbmpeaniij,aeblfdkhhhdcdjpifhhbdiojplfjncoa,hdokiejnpimakedhajhdlcegeplioahd,dbepggeogbaibhgnhhndojpepiihcmeb,dhdgffkkebhmkfjojejmpbldmpobfkfo,jinjaccalgkegednnccohejagnlnfdag,chphlpgkkbolifaimnlloiipkdnihall,bcjindcccaagfpapjjmafapmmgkkhgoa,mnjggcdmjocbbbhaepdhchncahnbgone,nffaoalbilbmmfgbnbgppjihopabppdk' }}
+        SWEEP_ONLY=${{ inputs.only }}
       setup-script: |
         base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
         rev=$(curl -fsSL "$base/LAST_CHANGE")
