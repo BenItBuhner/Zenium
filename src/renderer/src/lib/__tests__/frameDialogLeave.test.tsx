@@ -24,9 +24,10 @@ vi.mock('../api', () => ({
  * down is put back where it stood, inert and marked `data-leaving`, rides the slide down and is
  * dropped when the spring lands, when the chrome comes back and focus returns to the opener
  * (§9.22); under reduced motion the way down is the 120 ms fade in place (§11.3). The desktop
- * host retains nothing: its pose (the panel's own §9.5 pop) is not this mechanism's. Rendered for
- * real in happy-dom, the frame loop cranked by hand, the layout given sizes: the slot is 800 px
- * tall and a panel stands 300 px above its bottom edge, so the slide is 300.
+ * host's pose (the panel kept through its own §9.5 pop by `useLeavingPanels`, #188) is not this
+ * mechanism's: the sheet chassis writes nothing there. Rendered for real in happy-dom, the frame
+ * loop cranked by hand, the layout given sizes: the slot is 800 px tall and a panel stands 300 px
+ * above its bottom edge, so the slide is 300.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -393,7 +394,7 @@ describe('the desktop host is not this mechanism’s (the §9.5 pose stays as it
     viewportStore.set({ ...viewportStore.get(), formFactor: 'desktop' })
   })
 
-  it('a panel its owner unmounts goes as rendered: nothing kept, nothing marked, the scrim animating in as before', async () => {
+  it('a panel its owner unmounts is the pointer host’s to keep through its pop (#188): no slide, no recede, nothing of the sheet chassis on it', async () => {
     render(
       <FrameDialogHost>
         <Dialog name="edit" />
@@ -403,12 +404,28 @@ describe('the desktop host is not this mechanism’s (the §9.5 pose stays as it
     expect(scrim().classList.contains('zen-animate-in')).toBe(true)
     expect(chrome.hasAttribute('inert')).toBe(true)
     expect(document.documentElement.dataset.receding).toBeUndefined()
+    const node = panel('edit')!
     rerender(<FrameDialogHost />)
     await settle()
-    expect(panel('edit')).toBeNull()
-    expect(slot().childElementCount).toBe(0)
+    // Kept by `useLeavingPanels` for the §9.5 pop in reverse (main.css runs it on
+    // `data-leaving`), the host still up for it; the sheet chassis has written nothing.
+    expect(panel('edit')).toBe(node)
+    expect(node.hasAttribute('data-leaving')).toBe(true)
+    expect(node.hasAttribute('inert')).toBe(true)
+    expect(host().dataset.leaving).toBe('true')
+    expect(host().hasAttribute('data-sheet-up')).toBe(false)
     expect(slot().style.transform).toBe('')
     expect(slot().style.opacity).toBe('')
+    expect(recedeVar()).toBe('')
+    expect(document.documentElement.dataset.receding).toBeUndefined()
+    expect(chrome.hasAttribute('inert')).toBe(true)
+    expect(scheduled()).toBe(false)
+    // The pop's end drops it: the host down, the chrome back.
+    act(() => {
+      node.dispatchEvent(new Event('animationend'))
+    })
+    expect(panel('edit')).toBeNull()
+    expect(slot().childElementCount).toBe(0)
     expect(mount!.querySelector('.zen-frame-scrim')).toBeNull()
     expect(mount!.querySelector('[data-leaving]')).toBeNull()
     expect(chrome.hasAttribute('inert')).toBe(false)
