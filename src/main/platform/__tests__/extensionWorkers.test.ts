@@ -432,6 +432,59 @@ describe('ContextRegistry with a destroyed and recreated worker wrapper', () => 
     expect(eventsSentTo(worker)).toEqual([['runtime', 'onStartup']])
   })
 
+  it('fans a storage sync change out through the recreated wrapper, in order', () => {
+    const { engine, session, wired, install } = setup()
+    const { registry } = registryFor(session, wired)
+    engine.live.set(11, SCOPE)
+    const first = engine.getWorkerFromVersionID(11)!
+    wired.wire(asMain(first), session)
+    registry.workerStatus(11, session, 'starting')
+    const context = registry.helloWorker(EXT, asMain(first), session)
+    // What the shim of every context registers to keep its partition's mirror.
+    registry.listen(context, { event: '__zen.sync-mirror' }, true)
+    engine.running.add(11)
+    registry.workerStatus(11, session, 'running')
+    const one = { seq: 1, sync: { theme: { newValue: 'dark' } } }
+    expect(registry.dispatch(EXT, '__zen', 'sync-mirror', [one])).toBe(1)
+
+    engine.destroyWrapper(11)
+    const two = { seq: 2, sync: { theme: { oldValue: 'dark', newValue: 'light' } } }
+    expect(registry.dispatch(EXT, '__zen', 'sync-mirror', [two])).toBe(1)
+
+    const second = engine.created[1]!
+    expect(install).toHaveBeenCalledTimes(2)
+    expect(first.sent.map((s) => s.args[2])).toEqual([[one]])
+    expect(second.sent.map((s) => s.args[2])).toEqual([[two]])
+    expect(context.worker).toBe(asMain(second))
+    expect(engine.startWorkerForScope).not.toHaveBeenCalled()
+  })
+
+  it('wakeIn starts and wires the worker of the partition it is given, once at a time', async () => {
+    const { engine, session, wired, install } = setup()
+    const otherEngine = new FakeServiceWorkers()
+    const other = fakeSession(otherEngine, '/profile/container-b')
+    const acquired = vi.fn((versionId: number, ses: Session) => wired.acquire(versionId, ses))
+    const registry = new ContextRegistry({
+      sessionsFor: () => [session, other],
+      persistWorkerEvents: () => undefined,
+      placeFrame: () => ({}),
+      acquireWorker: acquired
+    })
+    otherEngine.live.set(11, SCOPE)
+    await Promise.all([registry.wakeIn(EXT, other), registry.wakeIn(EXT, other)])
+    expect(otherEngine.startWorkerForScope).toHaveBeenCalledTimes(1)
+    expect(otherEngine.startWorkerForScope).toHaveBeenCalledWith(SCOPE)
+    expect(engine.startWorkerForScope).not.toHaveBeenCalled()
+    expect(acquired).toHaveBeenCalledWith(11, other)
+    const worker = otherEngine.created[0]!
+    expect(install).toHaveBeenCalledTimes(1)
+    expect(worker.ipc.handlers.has(CALL)).toBe(true)
+    // A partition without a registration: nothing to start, nothing thrown.
+    await expect(registry.wakeIn(EXT, session)).resolves.toBeUndefined()
+    expect(engine.startWorkerForScope).toHaveBeenCalledWith(SCOPE)
+    expect(acquired).toHaveBeenCalledTimes(1)
+  })
+
   it('workerAcquired switches a registered context to the fresh wrapper', () => {
     const { engine, session, wired } = setup()
     const { registry } = registryFor(session, wired)

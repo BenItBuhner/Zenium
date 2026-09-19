@@ -21,12 +21,23 @@ export const USER_SCRIPTS_CHANNELS = {
   /** Document → host: the answer to a delivery or an execution, by token. */
   answer: 'zen-ext:us-answer',
   /**
-   * `sendSync` from an extension context's preload before the shim installs: the extension's
-   * toggles (`ShimOptions.toggles`), `userScripts` among them: with it off `chrome.userScripts`
-   * throws on access.
+   * `sendSync` from an extension context's preload before the shim installs: what the shim
+   * installs with (`HostShimOptions`): the extension's toggles (`ShimOptions.toggles`),
+   * `userScripts` among them (with it off `chrome.userScripts` throws on access), and the
+   * content-script storage prelude its install directory carries.
    */
   toggles: 'zen-ext:toggles'
 } as const
+
+/** The answer to `USER_SCRIPTS_CHANNELS.toggles`: an extension context's `ShimOptions`, as sent. */
+export interface HostShimOptions {
+  toggles: Record<string, boolean>
+  /**
+   * `ShimOptions.storagePrelude`: the file name of the content-script storage prelude in the
+   * extension's install directory, or null when the install carries none.
+   */
+  storagePrelude: string | null
+}
 
 /**
  * The notifications the shim sends the host over its own transport (`zen-ext:notify`) for the

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { ServiceWorkerMain, Session, WebContents, WebFrameMain } from 'electron'
 import type { EventDelivery, ExtensionView } from '../../../core/extensions/api/shim'
 import { matchesAnyUrlFilter, type UrlFilter } from '../../../core/extensions/api/urlFilter'
-import { workerKey } from './workers'
+import { sessionKey, workerKey } from './workers'
 
 export type FrameKind = ExtensionView['type']
 
@@ -519,28 +519,35 @@ export class ContextRegistry {
 
   private waking = new Set<string>()
 
-  /**
-   * Start the extension's MV3 worker in its primary session (a no-op when it is running). The
-   * wrapper it resolves with is the engine's current one for the version, wired on the spot: for
-   * a worker that was running all along it may be a fresh wrapper the queued events go to.
-   */
+  /** Start the extension's MV3 worker in its primary session (a no-op when it is running). */
   async wake(extensionId: string): Promise<void> {
-    if (this.waking.has(extensionId)) return
     const primary = this.hooks.sessionsFor(extensionId)[0]
-    if (!primary) return
-    this.waking.add(extensionId)
+    if (primary) await this.wakeIn(extensionId, primary)
+  }
+
+  /**
+   * Start the extension's MV3 worker in `session` (a no-op when it is running). The wrapper it
+   * resolves with is the engine's current one for the version, wired on the spot: for a worker
+   * that was running all along it may be a fresh wrapper the queued events go to. Nothing happens
+   * for an MV2 extension or a partition whose registration is not there yet (the hello of the
+   * next context there flushes what waits).
+   */
+  async wakeIn(extensionId: string, session: Session): Promise<void> {
+    const key = `${extensionId}@${sessionKey(session)}`
+    if (this.waking.has(key)) return
+    this.waking.add(key)
     try {
-      const worker = await primary.serviceWorkers.startWorkerForScope(
+      const worker = await session.serviceWorkers.startWorkerForScope(
         `chrome-extension://${extensionId}/`
       )
       if (worker && !worker.isDestroyed()) {
-        const wired = this.hooks.acquireWorker(worker.versionId, primary) ?? worker
-        this.workerAcquired(wired, primary)
+        const wired = this.hooks.acquireWorker(worker.versionId, session) ?? worker
+        this.workerAcquired(wired, session)
       }
     } catch {
       /* MV2 extension, or the registration is not ready yet – the hello flushes the queue */
     } finally {
-      this.waking.delete(extensionId)
+      this.waking.delete(key)
     }
   }
 

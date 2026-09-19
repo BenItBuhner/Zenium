@@ -973,6 +973,14 @@ export const STORAGE_METHODS = [
   'setAccessLevel'
 ] as const
 
+/**
+ * The shim's own calls for the content-script storage prelude (not members of `chrome.storage`):
+ * `syncWrite(op, args)` commits a content script's proxied `sync` write and answers with the
+ * change and its sequence number; `syncMirror()` is the snapshot a context starts its
+ * partition's mirror from.
+ */
+export const STORAGE_INTERNAL_METHODS = ['syncWrite', 'syncMirror'] as const
+
 /** Whether a call names a member of the table (the router refuses everything else). */
 export function isSpecMethod(spec: ApiSpec, namespace: string, method: string): boolean {
   const ns = spec[namespace]

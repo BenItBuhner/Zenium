@@ -67,23 +67,33 @@ function eventDelivery(raw: unknown): EventDelivery | undefined {
 }
 
 /**
- * The extension's per-extension toggles (`chrome.userScripts` behind "Allow user scripts"),
- * asked synchronously so the shim installs with them: a toggled namespace that is off throws on
- * access from the first script on. Off when the host cannot be asked.
+ * What the shim installs with, asked synchronously so it holds from the first script on
+ * (`HostShimOptions` of `shared/userScripts.ts`): the extension's per-extension toggles
+ * (`chrome.userScripts` behind "Allow user scripts"; a toggled namespace that is off throws on
+ * access), and the content-script storage prelude when the install directory carries one. Every
+ * toggle off and no prelude when the host cannot be asked.
  */
-function togglesFromHost(): Record<string, boolean> {
+function optionsFromHost(): ShimOptions {
   const toggles: Record<string, boolean> = { userScripts: false }
+  const options: ShimOptions = { toggles }
   try {
     const raw: unknown = ipcRenderer.sendSync(TOGGLES)
     if (raw !== null && typeof raw === 'object') {
-      for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
-        if (typeof value === 'boolean') toggles[key] = value
+      const record = raw as Record<string, unknown>
+      const sent = record.toggles
+      if (sent !== null && typeof sent === 'object') {
+        for (const [key, value] of Object.entries(sent as Record<string, unknown>)) {
+          if (typeof value === 'boolean') toggles[key] = value
+        }
+      }
+      if (typeof record.storagePrelude === 'string' && record.storagePrelude.length > 0) {
+        options.storagePrelude = record.storagePrelude
       }
     }
   } catch {
     /* no host: every toggled namespace stays off */
   }
-  return toggles
+  return options
 }
 
 /**
@@ -93,7 +103,7 @@ function togglesFromHost(): Record<string, boolean> {
  */
 function install(kind: 'frame' | 'worker'): void {
   const host = makeHost(kind)
-  const options: ShimOptions = { toggles: togglesFromHost() }
+  const options = optionsFromHost()
   try {
     if (!process.contextIsolated) {
       installExtensionApi(host, API_SPEC, options)

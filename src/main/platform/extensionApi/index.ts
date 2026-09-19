@@ -11,6 +11,7 @@ import {
   type Session,
   type WebContents
 } from 'electron'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   DEFAULT_CONTAINER_ID,
@@ -31,12 +32,18 @@ import type { InvokeResult } from '../../../core/extensions/api/shim'
 import {
   API_SPEC,
   PRIVACY_INTERNAL_METHODS,
+  STORAGE_INTERNAL_METHODS,
   STORAGE_METHODS,
   USER_SCRIPTS_INTERNAL_METHODS,
   WEB_REQUEST_INTERNAL_METHODS,
   isSpecMethod
 } from '../../../core/extensions/api/spec'
-import { USER_SCRIPTS_CHANNELS, USER_SCRIPTS_SHIM } from '../../../shared/userScripts'
+import { CONTENT_SCRIPT_PRELUDE_FILE } from '../../../core/extensions/api/contentScriptStorage'
+import {
+  USER_SCRIPTS_CHANNELS,
+  USER_SCRIPTS_SHIM,
+  type HostShimOptions
+} from '../../../shared/userScripts'
 import { normalizeEventFilters, type UrlFilter } from '../../../core/extensions/api/urlFilter'
 import type { KeyEventInput, MenuItemTemplate, PageContextParams } from '../../../core/platform'
 import type { RegistryEvent } from '../extensions'
@@ -201,6 +208,11 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   private readonly sessionContainers = new Map<Session, string>()
   /** Extensions the user allowed in private windows (`ExtensionInfo.allowPrivate`). */
   private readonly privateAllowed = new Set<string>()
+  /**
+   * Extensions whose loaded directory carries the content-script storage prelude
+   * (`CONTENT_SCRIPT_PRELUDE_FILE`): their contexts install the shim with `storagePrelude`.
+   */
+  private readonly preluded = new Set<string>()
   /** The MV3 worker wrappers carrying this router's IPC handlers (see `WiredWorkers`). */
   private readonly wiredWorkers = new WiredWorkers((worker, ses) =>
     this.installWorkerIpc(worker, ses)
@@ -317,9 +329,9 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     ipcMain.on(CHANNELS.notify, (event, kind, payload) =>
       this.notify(frameSender(event), kind, payload)
     )
-    // An extension document's preload asks for its toggles before the shim installs.
+    // An extension document's preload asks for its shim options before the shim installs.
     ipcMain.on(USER_SCRIPTS_CHANNELS.toggles, (event) => {
-      event.returnValue = this.togglesFor(frameSender(event))
+      event.returnValue = this.shimOptionsFor(frameSender(event))
     })
     // The page preload's side of `chrome.userScripts`, from every frame of every tab page:
     // the plan (synchronous, at document start), the worlds' messaging, and the answers to
@@ -487,16 +499,24 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       this.notify(sender(event), kind, payload)
     )
     worker.ipc.on(USER_SCRIPTS_CHANNELS.toggles, (event) => {
-      event.returnValue = this.togglesFor(sender(event))
+      event.returnValue = this.shimOptionsFor(sender(event))
     })
   }
 
-  /** `ShimOptions.toggles` of the calling extension context (every toggle off for a stranger). */
-  private togglesFor(sender: Sender | null): Record<string, boolean> {
+  /**
+   * What the calling extension context installs its shim with: `ShimOptions.toggles`, and the
+   * content-script storage prelude when its install directory carries one. Every toggle off and
+   * no prelude for a stranger.
+   */
+  private shimOptionsFor(sender: Sender | null): HostShimOptions {
     try {
-      return this.userScripts.togglesFor(this.contextFor(sender).extensionId)
+      const extensionId = this.contextFor(sender).extensionId
+      return {
+        toggles: this.userScripts.togglesFor(extensionId),
+        storagePrelude: this.preluded.has(extensionId) ? CONTENT_SCRIPT_PRELUDE_FILE : null
+      }
     } catch {
-      return { userScripts: false }
+      return { toggles: { userScripts: false }, storagePrelude: null }
     }
   }
 
@@ -524,6 +544,8 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       unpacked: isUnpacked(info)
     }
     this.extensions.set(ext.id, loaded)
+    if (existsSync(join(ext.path, CONTENT_SCRIPT_PRELUDE_FILE))) this.preluded.add(ext.id)
+    else this.preluded.delete(ext.id)
     if (info?.allowPrivate) this.privateAllowed.add(ext.id)
     else this.privateAllowed.delete(ext.id)
     this.registry.restoreWorkerEvents(ext.id, this.store.workerEvents(ext.id))
@@ -559,6 +581,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       return
     }
     this.extensions.delete(ext.id)
+    this.preluded.delete(ext.id)
     this.alarms.unload(ext.id)
     this.permissions.unload(ext.id)
     this.commands.unload(ext.id)
@@ -592,8 +615,10 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     loaded.sessions.sort((a, b) => Number(b === primary) - Number(a === primary))
   }
 
+  /** By id first: an unpacked folder is loaded from its shadow, not from the path its record has. */
   private infoFor(ext: Extension): ExtensionInfo | undefined {
-    return this.browser.extensions.list().find((info) => info.path === ext.path)
+    const infos = this.browser.extensions.list()
+    return infos.find((info) => info.id === ext.id) ?? infos.find((info) => info.path === ext.path)
   }
 
   // ---------------------------------------------------------------------------
@@ -649,7 +674,8 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       const routed = namespace === 'browserAction' ? 'action' : namespace
       const known =
         routed === 'storage'
-          ? (STORAGE_METHODS as readonly string[]).includes(method)
+          ? (STORAGE_METHODS as readonly string[]).includes(method) ||
+            (STORAGE_INTERNAL_METHODS as readonly string[]).includes(method)
           : routed === 'webRequest'
             ? (WEB_REQUEST_INTERNAL_METHODS as readonly string[]).includes(method)
             : routed === 'privacy'
