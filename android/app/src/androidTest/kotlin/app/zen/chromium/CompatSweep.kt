@@ -55,6 +55,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     private val arguments = InstrumentationRegistry.getArguments()
     private val only: Set<String>? = arguments.getString("only")?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }?.toSet()
     private val skipInstall = arguments.getString("skipInstall") == "1"
+    /** Prompts no reachable button answered on screen, answered through the chrome's command instead. */
+    private var promptsAnsweredByCommand = 0
 
     private class Grade(val verdict: String, val note: String, val extra: JSONObject? = null)
 
@@ -81,6 +83,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         } finally {
             memory.stop()
             results.put("appProcessMemory", memory.report())
+            results.put("promptsAnsweredByCommand", promptsAnsweredByCommand)
             write()
         }
     }
@@ -103,6 +106,13 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         results.put("startedAt", System.currentTimeMillis())
         // The core's toasts carry what an install refused to do (the store host toasts instead of rejecting).
         chromeJs("window.__toasts=[];window.zen.on('toast',function(p){window.__toasts.push(String(p&&p.message||p))});'ok'")
+        // The prompts the chrome raises (install, permissions), by request id, so one its sheet
+        // did not put a reachable button on screen can still be answered through the command.
+        chromeJs(
+            "window.__prompts=[];" +
+                "window.zen.on('extensionInstallRequest',function(p){window.__prompts.push({kind:'install',id:p.requestId,ok:p.okLabel||''})});" +
+                "window.zen.on('extensionPermissionRequest',function(p){window.__prompts.push({kind:'permission',id:p.requestId,ok:p.okLabel||''})});'ok'"
+        )
         fixtureTab = tabIdByUrl("$BASE/page-a.html") ?: createTab("$BASE/page-a.html")
         showTab(fixtureTab)
         SystemClock.sleep(1_500)
@@ -196,7 +206,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         }
         val total = SystemClock.uptimeMillis() - started
         val ext = poll(20_000, 400) { extensions().firstOrNull { it.getString("id") == row.id } }
-        val toasts = json(chromeJs("JSON.stringify(window.__toasts||[])")).let { if (it.has("raw")) JSONArray(it.optString("raw", "[]")) else JSONArray() }
+        // `evaluateJavascript` hands the stringified array back as a JSON string: unquote, then parse.
+        val toasts = runCatching { JSONArray(JSONTokener(chromeJs("JSON.stringify(window.__toasts||[])")).nextValue() as String) }.getOrDefault(JSONArray())
         val detail = JSONObject()
             .put("ms", total - promptMs)
             .put("promptMs", promptMs)
@@ -1107,6 +1118,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         )
         var prompted = false
         val deadline = SystemClock.uptimeMillis() + timeoutMs
+        var promptSeenAt = 0L
         while (SystemClock.uptimeMillis() < deadline) {
             val result = chromeJs("window.__sweep === undefined ? null : window.__sweep")
             if (result.isNotEmpty() && result != "null") {
@@ -1124,9 +1136,39 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                     onDialog(button)
                 }
             }
+            // The chrome raised a prompt but its sheet has had no reachable positive button for a
+            // while (a long permission list pushes it off screen, or the sheet never drew): answer
+            // through the command the sheet itself would send, and keep the picture as evidence.
+            if (!prompted) {
+                val pending = pendingPrompts()
+                if (pending.length() > 0) {
+                    if (promptSeenAt == 0L) promptSeenAt = SystemClock.uptimeMillis()
+                    else if (SystemClock.uptimeMillis() - promptSeenAt > PROMPT_TAP_TIMEOUT_MS) {
+                        prompted = true
+                        snap("prompt-without-button")
+                        promptsAnsweredByCommand++
+                        answerPrompts(pending)
+                    }
+                }
+            }
             SystemClock.sleep(300)
         }
         error("$command did not answer within ${timeoutMs / 1000} s")
+    }
+
+    /** The prompts the chrome raised since the last answer through the command: `[{kind, id, ok}]`. */
+    private fun pendingPrompts(): JSONArray =
+        runCatching { JSONArray(JSONTokener(chromeJs("JSON.stringify(window.__prompts||[])")).nextValue() as String) }.getOrDefault(JSONArray())
+
+    /** Accept every prompt in `pending` through the chrome's own answer command (a no-op for one the sheet answered). */
+    private fun answerPrompts(pending: JSONArray) {
+        for (i in 0 until pending.length()) {
+            val prompt = pending.optJSONObject(i) ?: continue
+            val command = if (prompt.optString("kind") == "permission") "extension.respondPermissionRequest" else "extension.confirmInstall"
+            runCatching { coreInvoke(command, JSONObject().put("requestId", prompt.optString("id")).put("accept", true).toString()) }
+                .onFailure { Log.w(TAG, "$command failed: ${it.message}") }
+        }
+        chromeJs("window.__prompts=[];'ok'")
     }
 
     // --- input and pictures ----------------------------------------------------------------------
@@ -1236,6 +1278,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val BACKGROUND_SETTLE_MS = 6_000L
         private const val POPUP_TIMEOUT_MS = 30_000L
         private const val OPTIONS_TIMEOUT_MS = 30_000L
+        /** How long a raised prompt may go without a reachable positive button before the command answers it. */
+        private const val PROMPT_TAP_TIMEOUT_MS = 8_000L
         /** The prompts' positive labels (ExtensionPromptDialog, hostStore.ts installPromptText). */
         private val POSITIVE_BUTTONS = setOf("Add extension", "Update extension", "Allow")
         /** The tracker hosts of sweep-ads.html, by the page's own names. */
