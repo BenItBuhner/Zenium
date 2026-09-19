@@ -73,7 +73,10 @@ export const layoutAnimations = {
     const a = animations.get(owner)
     if (!a || !a.running) return
     a.running = false
-    // No tracker to release the hold (the grid is gone): nothing waits for this record.
+    // No tracker to release the hold: nothing waits for this record. Only an unmounted grid
+    // gets here – a mounted one listens for its whole life (`useFlip` takes `listen()` in an
+    // effect that re-runs on every mount) – so a hold that never releases points at a tracker
+    // that stopped listening, not at this branch.
     if (settledListeners.size === 0) animations.delete(owner)
     else if (!layoutAnimations.any()) for (const listener of settledListeners) listener()
   },
@@ -163,7 +166,13 @@ export class FlipTracker {
   private rowMates = new Map<string, number>()
   private readonly releaseListeners = new Set<() => void>()
   private readonly frameListeners = new Set<() => void>()
-  private readonly unsubscribe: Array<() => void>
+  /**
+   * What `listen()` gave `layoutAnimations`, kept as the same two functions for the tracker's
+   * lifetime so that listening twice adds nothing and `unlisten()` removes exactly them.
+   */
+  private readonly onLayoutFrame = (): void => this.draw()
+  private readonly onLayoutSettled = (): void => this.release()
+  private unsubscribe: Array<() => void> = []
   /**
    * The spring runs over the longest displacement in px, and the shared progress is its position
    * divided by that – so it comes to rest by the px thresholds of its config, not before.
@@ -187,11 +196,27 @@ export class FlipTracker {
     }
   )
 
-  constructor() {
-    this.unsubscribe = [
-      layoutAnimations.onFrame(() => this.draw()),
-      layoutAnimations.onSettled(() => this.release())
-    ]
+  /**
+   * Hear of the groups' height animations: redraw on each of their frames, release the hold
+   * when they have settled. Returns the way to stop listening. Taken from an effect, not the
+   * constructor, and for as long as the grid is mounted: React's StrictMode (every dev build)
+   * mounts, cleans up and mounts again, so whatever a cleanup drops must be taken again by the
+   * effect that follows – a tracker that subscribed once, when it was made, would end deaf, its
+   * holds never released and a forming group's chrome never switched on. Listening twice adds
+   * nothing.
+   */
+  listen(): () => void {
+    if (this.unsubscribe.length === 0)
+      this.unsubscribe = [
+        layoutAnimations.onFrame(this.onLayoutFrame),
+        layoutAnimations.onSettled(this.onLayoutSettled)
+      ]
+    return () => this.unlisten()
+  }
+
+  /** Whether the tracker is hearing of layout animations. */
+  get listening(): boolean {
+    return this.unsubscribe.length > 0
   }
 
   /** Whether a glide is in flight. */
@@ -384,11 +409,20 @@ export class FlipTracker {
     for (const el of this.elements.values()) el.style.transform = ''
   }
 
-  /** `stop()`, and stop listening for layout animations. */
+  /**
+   * `stop()`, stop listening for layout animations and forget the finished ones this tracker
+   * would have released. Safe to call more than once, and `listen()` starts the tracker again
+   * (StrictMode's cleanup is followed by a mount).
+   */
   dispose(): void {
     this.stop()
-    for (const off of this.unsubscribe) off()
+    this.unlisten()
     layoutAnimations.release()
+  }
+
+  private unlisten(): void {
+    for (const off of this.unsubscribe) off()
+    this.unsubscribe = []
   }
 
   private draw(): void {

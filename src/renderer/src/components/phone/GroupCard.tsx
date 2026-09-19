@@ -95,6 +95,14 @@ export function GroupCard({
   useLayoutEffect(() => {
     latest.current = { folder, dissolving, onDissolved }
   })
+  // The height is the card's own business, never React's: collapsed it is clipped to its header,
+  // expanded it is whatever the body needs, dissolving it is nothing, and between any two heights
+  // a spring runs from wherever the card is right now. `settled` is the height the grid was last
+  // laid out at – what the tracker's positions assume – so a change in the body is caught on the
+  // commit it lands.
+  const mounted = useRef(false)
+  const settled = useRef<number | null>(null)
+  const wasCollapsed = useRef(collapsed)
   const spring = useRef<SpringAnimation | null>(null)
   useLayoutEffect(() => {
     const anim = new SpringAnimation(
@@ -128,17 +136,15 @@ export function GroupCard({
       anim.stop()
       spring.current = null
       layoutAnimations.end(key)
+      // Back to before the mount: StrictMode (every dev build) runs this cleanup and mounts
+      // again at once, and the height effect below must then take its mount branch again – a
+      // group being made sets out from the bare row a second time – rather than find the card
+      // "mounted" at a height whose spring this cleanup has just stopped.
+      mounted.current = false
+      settled.current = null
     }
   }, [key])
 
-  // The height is the card's own business, never React's: collapsed it is clipped to its header,
-  // expanded it is whatever the body needs, dissolving it is nothing, and between any two heights
-  // a spring runs from wherever the card is right now. `settled` is the height the grid was last
-  // laid out at – what the tracker's positions assume – so a change in the body is caught on the
-  // commit it lands.
-  const mounted = useRef(false)
-  const settled = useRef<number | null>(null)
-  const wasCollapsed = useRef(collapsed)
   useLayoutEffect(() => {
     const shell = shellRef.current
     const body = bodyRef.current

@@ -8,7 +8,9 @@ import { collectCells, FlipTracker } from '@renderer/lib/motion/flip'
  * and moves on the one spring. Nothing is measured while the grid is scaling in – the overview
  * re-renders every frame of that spring, and a forced layout per card per frame would slow the
  * very frames the spring is paced by. A group animating its height holds the cells below it
- * until it has settled; the tracker hears of that through `layoutAnimations` on its own.
+ * until it has settled; the tracker hears of that through `layoutAnimations` for as long as the
+ * grid is mounted – subscribed in an effect, so that StrictMode's mount, cleanup, mount (every
+ * dev build) leaves it listening, and unsubscribed with the grid.
  */
 export function useFlip(scroller: RefObject<HTMLElement | null>, enabled: boolean): FlipTracker {
   const tracker = useMemo(() => new FlipTracker(), [])
@@ -17,6 +19,9 @@ export function useFlip(scroller: RefObject<HTMLElement | null>, enabled: boolea
     if (enabled) tracker.commit(cells, scroller.current, true)
     else tracker.observe(cells)
   })
-  useEffect(() => () => tracker.dispose(), [tracker])
+  useEffect(() => {
+    tracker.listen()
+    return () => tracker.dispose()
+  }, [tracker])
   return tracker
 }

@@ -28,10 +28,14 @@ const settle = (): void => {
   for (let i = 0; i < 400 && frames.length; i++) frame()
 }
 
-/** Every tracker a test makes, disposed after it whatever happened to the test. */
+/**
+ * Every tracker a test makes, listening for layout animations as the grid's hook has it, and
+ * disposed after the test whatever happened to it.
+ */
 let trackers: FlipTracker[] = []
 const tracker = (): FlipTracker => {
   const t = new FlipTracker()
+  t.listen()
   trackers.push(t)
   return t
 }
@@ -334,6 +338,42 @@ describe('FlipTracker', () => {
       expect(layoutAnimations.has('group:x')).toBe(true)
       layoutAnimations.end('group:x')
       expect(layoutAnimations.has('group:x')).toBe(false)
+    })
+
+    it('hears again after dispose and listen – the mount, cleanup, mount of StrictMode', () => {
+      const { flip, cells, group, b, c, plus } = grid()
+      // A second `listen()` adds nothing: one dispose leaves the tracker deaf, as it should be.
+      const off = flip.listen()
+      expect(flip.listening).toBe(true)
+      flip.dispose()
+      expect(flip.listening).toBe(false)
+      // What the effect's cleanup dropped, the effect that follows takes again.
+      flip.listen()
+      expect(flip.listening).toBe(true)
+      const released = vi.fn()
+      flip.onRelease(released)
+      layoutAnimations.start('group:g', 300, 170)
+      b.remove()
+      b.moveTo(110, 0)
+      flip.commit(cells, null, true)
+      settle()
+      // The tracker hears the frames: the hold keeps the cells below where they were…
+      layoutFor(235, group, [c, plus])
+      layoutAnimations.frame('group:g', 235)
+      expect(translate(c).y).toBeCloseTo(65, 6)
+      // …and the settling, which releases them into their glide.
+      layoutFor(170, group, [c, plus])
+      layoutAnimations.frame('group:g', 170)
+      layoutAnimations.end('group:g')
+      expect(released).toHaveBeenCalledTimes(1)
+      expect(layoutAnimations.has('group:g')).toBe(false)
+      settle()
+      expect(c.style.transform).toBe('')
+      // Disposing twice, or after the unsubscribe it handed out, is nothing.
+      off()
+      flip.dispose()
+      flip.dispose()
+      expect(flip.listening).toBe(false)
     })
   })
 

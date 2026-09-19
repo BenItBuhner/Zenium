@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, createElement } from 'react'
+import { act, createElement, StrictMode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { Folder, Space, Tab, UIState } from '@shared/types'
 import { BLANK_URL, SETTINGS_URL } from '@shared/url'
@@ -235,6 +235,12 @@ afterEach(() => {
 let root: Root | null = null
 let host: HTMLElement | null = null
 
+/**
+ * Rendered under `StrictMode`, as every dev build (the preview host) renders it: React mounts,
+ * runs every effect's cleanup and mounts again, so a subscription taken once and dropped in a
+ * cleanup would be gone for good – the tracker's hearing of the groups' height animations was,
+ * once.
+ */
 function render(state: UIState): HTMLElement {
   if (!root) {
     host = document.createElement('div')
@@ -242,7 +248,13 @@ function render(state: UIState): HTMLElement {
     root = createRoot(host)
   }
   act(() =>
-    root!.render(createElement(TabOverview, { state, overview: OPEN, area: AREA, edge: 'bottom' }))
+    root!.render(
+      createElement(
+        StrictMode,
+        null,
+        createElement(TabOverview, { state, overview: OPEN, area: AREA, edge: 'bottom' })
+      )
+    )
   )
   return host!
 }
