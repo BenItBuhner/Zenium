@@ -191,11 +191,13 @@
   /*
    * A group's heading (a day, "Recently closed"): the shared `.zen-v2-heading` (main.css, 9.34:
    * 15/600 on the body line, 9.26), sentence case, with this list's beat as its modifier – 20
-   * above and 8 to its first row's box (9.27); the first sits 8 under what stays put above the
-   * list, which the field's own 8 supplies. Its ink is the panel's, inherited.
+   * above and 4 to its first row's box (9.27: heading text to the first label reads 14–16 on
+   * both platforms once the row's own 12 is added; the Settings tab's 20 / 4); the first sits 8
+   * under what stays put above the list, which the field's own 8 supplies. Its ink is the
+   * panel's, inherited.
    */
   .zen-v2-heading.zen-list-heading {
-    padding: 20px 16px 8px;
+    padding: 20px 16px 4px;
   }
   .zen-v2-heading.zen-list-heading:first-child {
     padding-top: 0;
