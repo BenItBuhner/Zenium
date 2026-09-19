@@ -22,11 +22,6 @@ name: Android QR scan demo
 # picks the driver.
 on:
   workflow_dispatch:
-  # TEMPORARY, removed in the next commit: the third run for PR #211, authorised by the
-  # coordinator for the driver's three untried steps and the Cancel path.
-  push:
-    branches:
-      - cursor/android-qr-scan-220b
 
 permissions:
   contents: read
