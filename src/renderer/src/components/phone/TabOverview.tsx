@@ -464,6 +464,15 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
         moveTo(theirs, undefined, other)
         return expect((s) => groupIdOf(s.tabs[tab.id] ?? tab, s) === theirs)
       }
+      // Dropped on a loose card: the two make a group, the dropped card right behind the other –
+      // the order joining a group gives, so the two gestures read as one rule (v2 §11.4). The
+      // stand-in holds its slot until the group shows, so the move is not seen on its own.
+      run('tab.move', {
+        tabId: tab.id,
+        spaceId: space.id,
+        section: 'regular',
+        index: regularWithout.indexOf(other) + 1
+      })
       void makeGroup([other.id, tab.id], false)
       return expect((s) => {
         const mine = s.tabs[tab.id]?.folderId

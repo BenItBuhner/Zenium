@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, createElement, StrictMode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -570,6 +572,93 @@ describe('a card dragged out of its group', () => {
   })
 })
 
+// --- a drop on a card: one order, making a group or joining one (v2 §11.4) -----------------------
+
+describe('a drop on a card', () => {
+  /** The keys of the cards inside the group, in the order the group shows them. */
+  const membersShown = (): string[] =>
+    [...cellOf(`group:${GROUP}`).querySelectorAll('[data-cell]')].map((el) =>
+      el.getAttribute('data-cell')!
+    )
+
+  it('a group made by a drop orders like joining one: the dropped card lands right behind the target', async () => {
+    // Three loose cards, a ahead of c in the grid.
+    place('a', 0, 0)
+    place('b', 110, 0)
+    place('c', 0, 140)
+    place(NEW_TAB_CELL, 110, 140)
+    render(
+      stateOf(
+        [
+          tab('a', 'https://a.example/'),
+          tab('b', 'https://b.example/'),
+          tab('c', 'https://c.example/')
+        ],
+        []
+      )
+    )
+    pickUp('a')
+    const ontoC = at('c', 0.5, 0.5)
+    drag(ontoC.x, ontoC.y)
+    expect(liftStore.get().target).toBe('card:c')
+    letGo(ontoC.x, ontoC.y)
+    await act(async () => {})
+    // a goes right behind c first, then the two are grouped – not grouped where they stood,
+    // which would have put a, the dropped card, ahead of the card it was dropped on.
+    expect(commands()).toEqual([
+      ['tab.move', { tabId: 'a', spaceId: SPACE, section: 'regular', index: 2 }],
+      ['folder.create', expect.objectContaining({ spaceId: SPACE, rename: false })],
+      ['tab.moveToFolder', { tabId: 'c', folderId: GROUP }],
+      ['tab.moveToFolder', { tabId: 'a', folderId: GROUP }]
+    ])
+    // The browser shows it: b loose, then the group with c first and a behind it.
+    const oneRow = 130 + GROUP_PAD
+    bodyHeights.set(`group:${GROUP}`, oneRow)
+    place('b', 0, 0)
+    place(`group:${GROUP}`, 0, 140, 220, GROUP_HEADER + oneRow)
+    place('c', 10, 176)
+    place('a', 120, 176)
+    place(NEW_TAB_CELL, 0, 140 + GROUP_HEADER + oneRow + 10)
+    land(
+      stateOf([
+        tab('b', 'https://b.example/'),
+        tab('c', 'https://c.example/', { folderId: GROUP }),
+        tab('a', 'https://a.example/', { folderId: GROUP })
+      ])
+    )
+    expect(liftStore.get().phase).toBe('idle')
+    expect(membersShown()).toEqual(['c', 'a'])
+    invoke.mockClear()
+
+    // Joining that group by a drop on a: the same rule, b lands right behind a.
+    pickUp('b')
+    const ontoA = at('a', 0.5, 0.5)
+    drag(ontoA.x, ontoA.y)
+    expect(liftStore.get().target).toBe('card:a')
+    letGo(ontoA.x, ontoA.y)
+    expect(commands()).toEqual([
+      ['tab.move', { tabId: 'b', spaceId: SPACE, section: 'regular', index: 2 }],
+      ['tab.moveToFolder', { tabId: 'b', folderId: GROUP }]
+    ])
+    const twoRows = 2 * 130 + 12 + GROUP_PAD
+    bodyHeights.set(`group:${GROUP}`, twoRows)
+    place(`group:${GROUP}`, 0, 0, 220, GROUP_HEADER + twoRows)
+    place('c', 10, 36)
+    place('a', 120, 36)
+    place('b', 10, 178)
+    place(NEW_TAB_CELL, 0, GROUP_HEADER + twoRows + 10)
+    land(
+      stateOf([
+        tab('c', 'https://c.example/', { folderId: GROUP }),
+        tab('a', 'https://a.example/', { folderId: GROUP }),
+        tab('b', 'https://b.example/', { folderId: GROUP })
+      ])
+    )
+    expect(liftStore.get().phase).toBe('idle')
+    expect(membersShown()).toEqual(['c', 'a', 'b'])
+  })
+})
+
 // --- (C) the sequence of a group changing height (v2 §11.4) --------------------------------------
 
 describe('a group changing height', () => {
@@ -922,7 +1011,9 @@ describe('a group changing height', () => {
       slot: { folderId: null, index: 0 }
     })
     await act(async () => {})
+    // c goes right behind a (the order joining a group gives), and the two are grouped.
     expect(commands()).toEqual([
+      ['tab.move', { tabId: 'c', spaceId: SPACE, section: 'regular', index: 1 }],
       ['folder.create', expect.objectContaining({ spaceId: SPACE, rename: false })],
       ['tab.moveToFolder', { tabId: 'a', folderId: GROUP }],
       ['tab.moveToFolder', { tabId: 'c', folderId: GROUP }]
@@ -943,8 +1034,8 @@ describe('a group changing height', () => {
     render(
       stateOf([
         tab('a', 'https://a.example/', { folderId: GROUP }),
-        tab('b', 'https://b.example/'),
-        tab('c', 'https://c.example/', { folderId: GROUP })
+        tab('c', 'https://c.example/', { folderId: GROUP }),
+        tab('b', 'https://b.example/')
       ])
     )
     // One step: the stand-in's slot went with the confirmation, so c is in the group from this
@@ -1132,5 +1223,161 @@ describe('under reduced motion', () => {
       for (const done of finish) done()
     })
     expect(departStore.get().items).toEqual([])
+  })
+})
+
+// --- (F) the chrome switch in the stylesheet (v2 §11.4, §11.3) -----------------------------------
+
+/** A style rule of main.css: its selectors, its declarations, whether it is under reduced motion. */
+interface CssRule {
+  selectors: string[]
+  declarations: Map<string, { value: string; important: boolean }>
+  reduced: boolean
+}
+
+/** The style rules of a stylesheet, walked through its layers and media queries; comments dropped. */
+function rulesOf(css: string): CssRule[] {
+  const rules: CssRule[] = []
+  const open: string[] = []
+  let buffer = ''
+  for (const ch of css.replace(/\/\*[\s\S]*?\*\//g, '')) {
+    if (ch === '{') {
+      open.push(buffer.trim().replace(/\s+/g, ' '))
+      buffer = ''
+    } else if (ch === '}') {
+      const prelude = open.pop()!
+      if (!prelude.startsWith('@')) {
+        const declarations = new Map<string, { value: string; important: boolean }>()
+        for (const line of buffer.split(';')) {
+          const at = line.indexOf(':')
+          if (at === -1) continue
+          const value = line
+            .slice(at + 1)
+            .trim()
+            .replace(/\s+/g, ' ')
+          declarations.set(line.slice(0, at).trim(), {
+            value: value.replace(/\s*!important$/, ''),
+            important: value.endsWith('!important')
+          })
+        }
+        rules.push({
+          selectors: prelude.split(',').map((s) => s.trim()),
+          declarations,
+          reduced: open.some((p) => p.includes('prefers-reduced-motion: reduce'))
+        })
+      }
+      buffer = ''
+    } else buffer += ch
+  }
+  return rules
+}
+
+/** A comma-separated list, split at the commas outside parentheses. */
+const commaList = (value: string): string[] => {
+  const items: string[] = []
+  let depth = 0
+  let current = ''
+  for (const ch of value) {
+    if (ch === '(') depth++
+    if (ch === ')') depth--
+    if (ch === ',' && depth === 0) {
+      items.push(current.trim())
+      current = ''
+    } else current += ch
+  }
+  items.push(current.trim())
+  return items
+}
+const ms = (token: string): number => {
+  const m = /^([\d.]+)(m?s)$/.exec(token)
+  if (!m) throw new Error(`${token} is no duration`)
+  return Number(m[1]) * (m[2] === 's' ? 1000 : 1)
+}
+
+describe('the chrome switch in the stylesheet', () => {
+  const rules = rulesOf(
+    readFileSync(resolve(__dirname, '../../../assets/main.css'), 'utf8')
+  ).filter((r) => r.selectors.some((s) => s === '*' || s.startsWith('.zen-group')))
+  const forSelector = (selector: string, reduced: boolean): CssRule[] =>
+    rules.filter((r) => r.reduced === reduced && r.selectors.includes(selector))
+  /** The last value a selector's own rules give a property, in full motion. */
+  const declared = (selector: string, property: string): string | undefined =>
+    forSelector(selector, false)
+      .map((r) => r.declarations.get(property)?.value)
+      .filter((v) => v !== undefined)
+      .at(-1)
+  /**
+   * The transitions an element matching `selector` (and nothing else) ends up with: the property
+   * and its duration in ms. Under reduced motion the sheet's rules for the selector apply over
+   * its full-motion `transition`, and then the sheet's closing `* { transition-duration: 0.01ms
+   * !important }` over every element (not a pseudo-element), unless the selector's own reduced
+   * rule holds its durations `!important` – a more specific important declaration wins.
+   */
+  const transitions = (selector: string, reduced = false): Map<string, number> => {
+    const list = commaList(declared(selector, 'transition') ?? '').filter(Boolean)
+    const properties = list.map((entry) => entry.split(' ')[0])
+    const durations = list.map((entry) => ms(entry.split(' ').find((t) => /m?s$/.test(t))!))
+    if (reduced) {
+      let held = false
+      for (const rule of forSelector(selector, true)) {
+        const shorthand = rule.declarations.get('transition')
+        if (shorthand) {
+          const entries = commaList(shorthand.value)
+          properties.splice(0, properties.length, ...entries.map((e) => e.split(' ')[0]))
+          durations.splice(
+            0,
+            durations.length,
+            ...entries.map((e) => ms(e.split(' ').find((t) => /m?s$/.test(t))!))
+          )
+          held = shorthand.important
+        }
+        const longhand = rule.declarations.get('transition-duration')
+        if (longhand) {
+          const given = commaList(longhand.value).map(ms)
+          properties.forEach((_, i) => (durations[i] = given[i % given.length]))
+          held = longhand.important
+        }
+      }
+      const everything = rules.find(
+        (r) => r.reduced && r.selectors.includes('*') && r.declarations.has('transition-duration')
+      )
+      if (
+        everything?.declarations.get('transition-duration')?.important &&
+        !held &&
+        !selector.includes('::')
+      )
+        durations.fill(ms(everything.declarations.get('transition-duration')!.value))
+    }
+    return new Map(properties.map((p, i) => [p, durations[i]]))
+  }
+
+  it('fades the header and the tint over 120 ms at the switch, and cuts the radius (v2 §11.4)', () => {
+    // With the chrome off, header and tint are at opacity 0 – the tint a layer of its own so
+    // that it can fade by itself; the group card carries no tint of its own to cut.
+    expect(declared(".zen-group[data-chrome='off'] > .zen-group-header", 'opacity')).toBe('0')
+    expect(declared(".zen-group[data-chrome='off']::before", 'opacity')).toBe('0')
+    expect(declared('.zen-group::before', 'background')).toContain('--zen-group-rgb')
+    expect(declared('.zen-group', 'background')).toBeUndefined()
+    expect(declared(".zen-group[data-chrome='off']", 'background')).toBeUndefined()
+    // The switch is a 120 ms opacity fade on both…
+    expect(transitions('.zen-group-header').get('opacity')).toBe(120)
+    expect(transitions('.zen-group::before').get('opacity')).toBe(120)
+    // …and the radius cuts: no transition on it, on the group, its tint or its header (the
+    // tint's radius is the group's own).
+    for (const selector of ['.zen-group', '.zen-group::before', '.zen-group-header']) {
+      const animated = [...transitions(selector).keys()]
+      expect(animated, selector).not.toContain('border-radius')
+      expect(animated, selector).not.toContain('all')
+    }
+    expect(declared('.zen-group::before', 'border-radius')).toBe('inherit')
+  })
+
+  it('under reduced motion the fade stays at 120 ms – an appearance in place – and every other transition is at most 1 ms (v2 §11.3)', () => {
+    const header = transitions('.zen-group-header', true)
+    expect(header.get('opacity')).toBe(120)
+    expect(header.get('background')).toBeLessThanOrEqual(1)
+    expect(transitions('.zen-group::before', true).get('opacity')).toBe(120)
+    for (const [property, duration] of transitions('.zen-group', true))
+      expect(duration, property).toBeLessThanOrEqual(1)
   })
 })

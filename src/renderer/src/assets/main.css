@@ -1772,10 +1772,29 @@
    * into or out of the group must not be cut at the group's edge on the way.
    */
   .zen-group {
+    position: relative;
+    isolation: isolate;
     border-radius: calc(var(--zen-card-radius) + 6px);
-    background: rgb(var(--zen-group-rgb) / 0.13);
     corner-shape: var(--zen-corner);
     transition: box-shadow 200ms var(--zen-ease);
+  }
+  /*
+   * The tint is a layer of its own, under the header and the cards, so that it can fade on its
+   * own: a group being made shows neither header nor tint until the end of the glide, and there
+   * both come on over 120 ms – their space is already made by the height animation, so nothing
+   * jumps – while the radius cuts (v2 §11.4: radius, header height and tint are not animated
+   * per frame). The header carries its own opacity; this layer carries the tint's.
+   */
+  .zen-group::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    corner-shape: inherit;
+    background: rgb(var(--zen-group-rgb) / 0.13);
+    pointer-events: none;
+    transition: opacity 120ms var(--zen-ease);
   }
   .zen-group[data-collapsed],
   .zen-group[data-clip] {
@@ -1784,18 +1803,19 @@
   .zen-group[data-targeted] {
     box-shadow: 0 0 0 2px rgb(var(--zen-group-rgb) / 0.6);
   }
-  /* A group being made: header and tint switch on at the end of the glide, not per frame (v2 §11.4). */
   .zen-group[data-chrome='off'] {
-    background: transparent;
     box-shadow: none;
   }
+  .zen-group[data-chrome='off']::before,
   .zen-group[data-chrome='off'] > .zen-group-header {
     opacity: 0;
   }
   .zen-group-header {
     border-radius: calc(var(--zen-card-radius) + 6px);
     corner-shape: var(--zen-corner);
-    transition: background 120ms var(--zen-ease);
+    transition:
+      background 120ms var(--zen-ease),
+      opacity 120ms var(--zen-ease);
   }
   .zen-group-header:active {
     background: rgb(var(--zen-group-rgb) / 0.12);
@@ -1812,7 +1832,9 @@
   /*
    * Reduced motion in the overview (v2 §11.3): the grid appears with a 120 ms fade at scale 1
    * (`TabOverview` leaves the transform and opacity alone then); state changes other than
-   * opacity's take at most 1 ms – the ghost's landing fade stays.
+   * opacity's take at most 1 ms – the ghost's landing fade stays. The group's header and tint
+   * keep their 120 ms opacity fade at the end of the glide, an appearance in place: their
+   * durations are held at the end of the sheet, past the global rule.
    */
   @media (prefers-reduced-motion: reduce) {
     .zen-overview {
@@ -1823,7 +1845,6 @@
     .zen-overview .zen-essential,
     .zen-overview-strip > button,
     .zen-group,
-    .zen-group-header,
     .zen-group-swatch {
       transition-duration: 1ms;
     }
@@ -5896,6 +5917,16 @@
   }
   /* The load bar's appearance and departure stay an opacity fade, at v2 §11.3's 120 ms, not a cut. */
   .zen-load-progress {
+    transition-duration: 120ms !important;
+  }
+  /*
+   * A group's header and tint come on at the end of the glide as an opacity fade, at v2 §11.3's
+   * 120 ms, not a cut (§11.4): the header's press fill, first in its transition list, cuts.
+   */
+  .zen-group-header {
+    transition-duration: 1ms, 120ms !important;
+  }
+  .zen-group::before {
     transition-duration: 120ms !important;
   }
 }
