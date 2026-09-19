@@ -268,13 +268,85 @@ describe('ElectronDownloads interrupt reasons', () => {
       url: 'https://example.com/a.txt',
       error: 'net::ERR_TIMED_OUT'
     })
-    item.fail()
-    await flush()
+    // A timeout is resumable in Chromium's book: the item settles through `updated`.
+    item.interrupt()
     expect(record).toMatchObject({
       state: 'interrupted',
       error: 'network-timeout',
       errorMessage: 'Check internet connection',
-      canResume: false
+      canResume: true
+    })
+    // A net error is checked with the server (Chromium's resume attempts may have got past
+    // it); a server that answers well confirms it.
+    expect(fakeNet.requests).toHaveLength(1)
+    fakeNet.requests[0]!.answer(200)
+    await flush()
+    expect(record.error).toBe('network-timeout')
+  })
+
+  it('a network error noted on the first request is stale once Chromium refused to resume: the server said no', async () => {
+    const h = harness()
+    const item = new FakeItem('https://example.com/resumed.bin', 'resumed.bin')
+    h.announce(item)
+    const record = h.service.items[0]!
+    // The first request drops mid-body; Chromium resumes on its own (a request the session's
+    // webRequest never sees) and the server refuses that with 404: the item ends for good.
+    item.received = 524_288
+    item.emit('updated', {}, 'progressing')
+    h.observer.fire('onErrorOccurred', {
+      url: 'https://example.com/resumed.bin',
+      error: 'net::ERR_CONTENT_LENGTH_MISMATCH'
+    })
+    item.received = 0 // Chromium discards the partial file of a non-resumable interruption.
+    item.fail()
+    await flush()
+    // Not the drop (every NETWORK_* reason resumes in Chromium): a refusal, coarse until asked.
+    expect(record).toMatchObject({ state: 'interrupted', canResume: false, error: 'server-failed' })
+    // The probe re-sends Chromium's resume request from where the transfer had got to.
+    const probe = fakeNet.requests[0]!
+    expect(probe.headers).toEqual({ Range: 'bytes=524288-' })
+    probe.answer(404)
+    await flush()
+    expect(record).toMatchObject({
+      error: 'server-bad-content',
+      errorMessage: 'File wasn’t available on site'
+    })
+  })
+
+  it('a net error that is not the network’s stands on a non-resumable end, and a network one on a resumable end', async () => {
+    const h = harness()
+    const blocked = new FakeItem('https://example.com/blocked.exe', 'blocked.exe')
+    h.announce(blocked)
+    h.observer.fire('onErrorOccurred', {
+      url: 'https://example.com/blocked.exe',
+      error: 'net::ERR_BLOCKED_BY_CLIENT'
+    })
+    blocked.fail()
+    await flush()
+    const blockedRecord = h.service.items.find((i) => i.url.endsWith('blocked.exe'))!
+    expect(blockedRecord).toMatchObject({ error: 'file-blocked', canResume: false })
+    // The server answering fine says nothing against a blocked file.
+    fakeNet.requests[0]!.answer(200)
+    await flush()
+    expect(blockedRecord.error).toBe('file-blocked')
+
+    const dropped = new FakeItem('https://example.com/dropped.bin', 'dropped.bin')
+    h.announce(dropped)
+    h.observer.fire('onErrorOccurred', {
+      url: 'https://example.com/dropped.bin',
+      error: 'net::ERR_CONNECTION_RESET'
+    })
+    dropped.received = 65_536
+    dropped.interrupt()
+    const droppedRecord = h.service.items.find((i) => i.url.endsWith('dropped.bin'))!
+    expect(droppedRecord).toMatchObject({ error: 'network-failed', canResume: true })
+    // Asked anyway: Chromium's resume may have met a refusal the first request did not.
+    expect(fakeNet.requests[1]!.headers).toEqual({ Range: 'bytes=65536-' })
+    fakeNet.requests[1]!.answer(500)
+    await flush()
+    expect(droppedRecord).toMatchObject({
+      error: 'server-failed',
+      errorMessage: 'Site wasn’t available'
     })
   })
 
@@ -398,7 +470,7 @@ describe('ElectronDownloads probe of a refused resume', () => {
     })
   })
 
-  it('maps each answer: the exact status, no range, a good answer as the file’s fault, no answer as nothing', async () => {
+  it('maps each answer: the exact status, no range, a good answer or no answer as nothing new', async () => {
     const cases: Array<[number, Record<string, string>, string]> = [
       [403, {}, 'server-forbidden'],
       [401, {}, 'server-unauthorized'],
@@ -407,8 +479,9 @@ describe('ElectronDownloads probe of a refused resume', () => {
       [500, {}, 'server-failed'],
       [503, {}, 'server-failed'],
       [200, {}, 'server-no-range'],
-      [200, { 'content-range': 'bytes 524288-4194303/4194304' }, 'file-failed'],
-      [206, { 'content-range': 'bytes 524288-4194303/4194304' }, 'file-failed']
+      // The server serves the range: the refusal was not repeated; Chromium's verdict stands.
+      [200, { 'content-range': 'bytes 524288-4194303/4194304' }, 'server-failed'],
+      [206, { 'content-range': 'bytes 524288-4194303/4194304' }, 'server-failed']
     ]
     for (const [status, headers, expected] of cases) {
       const { record, probe } = await refused()
@@ -438,6 +511,27 @@ describe('ElectronDownloads probe of a refused resume', () => {
     probe.answer(404)
     await flush()
     expect(record.error).toBe('server-bad-content')
+  })
+
+  it('asks from where the transfer had got to, even after Chromium restarted it from scratch', async () => {
+    const h = harness()
+    const item = new FakeItem('https://example.com/ranges.bin', 'ranges.bin')
+    h.announce(item)
+    const record = h.service.items[0]!
+    // 524288 bytes in, the connection drops; Chromium's resume is refused with 416, so it
+    // restarts from byte 0 (the item reads 0 again), gets as far, is refused again, and after
+    // its automatic attempts settles interrupted, resumable by the user, with nothing on disk.
+    for (const received of [131_072, 524_288, 0, 262_144, 524_288, 0]) {
+      item.received = received
+      item.emit('updated', {}, 'progressing')
+    }
+    item.interrupt()
+    expect(record).toMatchObject({ state: 'interrupted', canResume: true, error: 'network-failed' })
+    const probe = fakeNet.requests[0]!
+    expect(probe.headers).toEqual({ Range: 'bytes=524288-' })
+    probe.answer(416)
+    await flush()
+    expect(record).toMatchObject({ error: 'server-no-range', errorMessage: 'Something went wrong' })
   })
 
   it('leaves a row alone that was retried or removed while the server was being asked', async () => {

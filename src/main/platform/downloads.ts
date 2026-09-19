@@ -70,15 +70,30 @@ export interface ElectronDownloadSettings {
   directory: string | null
 }
 
+/**
+ * Why a transfer's request ended, from the session's `webRequest` events. Electron's item only
+ * says `interrupted`; this names the reason when the item settles. A refusing HTTP status read
+ * at `onHeadersReceived` is `exact`: Chromium interrupts on it right away. The `net::` error of
+ * `onErrorOccurred` is not: Chromium's automatic resume attempts (which never pass the
+ * session's `webRequest`) may have carried on past it, so the item may settle later for a
+ * different reason – the server refusing the resume – and the note is checked against
+ * Chromium's own verdict and the probe before it is trusted (see `wire`).
+ */
+interface Noted {
+  reason: DownloadInterruptReason
+  exact: boolean
+}
+
 interface Live {
   item: ElectronDownloadItem
   session: Session
+  noted?: Noted
   /**
-   * Why the transfer's request ended, from the session's `webRequest` events: the `net::` error
-   * of `onErrorOccurred` or a refusing HTTP status of `onCompleted`. Electron's item only says
-   * `interrupted`; this names the reason when the item settles.
+   * The transfer's last progress, in bytes: where Chromium's resume request asked to continue
+   * from. Kept because the item reads 0 again once Chromium discards the partial file (a
+   * non-resumable refusal, or a restart), while the probe re-sends that request.
    */
-  reason?: DownloadInterruptReason
+  offset: number
 }
 
 /** The one method of the `webRequest` multiplexer the host needs: observe-only listeners. */
@@ -131,8 +146,8 @@ const PENDING_REASON_MS = 60_000
 const MAX_PENDING_REASONS = 64
 /**
  * Ask the server what it answered Chromium's refused resume with (see `investigate`): one extra
- * request per interruption nobody noted a reason for, in exchange for the exact reason Chrome
- * shows ("No file", "Forbidden", …) instead of the coarse verdict.
+ * request per interruption no refusing status was noted for, in exchange for the exact reason
+ * Chrome shows ("No file", "Forbidden", …) instead of the coarse verdict.
  */
 const PROBE_REFUSED_RESUME = true
 const PROBE_TIMEOUT_MS = 10_000
@@ -171,11 +186,8 @@ export class ElectronDownloads implements DownloadHost {
    * "Save Link / Image / Video As…", which always ask in Chrome. Each entry serves one download.
    */
   private readonly saveAsUrls: string[] = []
-  /** Refusals of requests no live item claimed yet (canonical URL → reason), see `observeRequests`. */
-  private readonly pendingReasons = new Map<
-    string,
-    { reason: DownloadInterruptReason; at: number }
-  >()
+  /** Refusals of requests no live item claimed yet (canonical URL → note), see `observeRequests`. */
+  private readonly pendingReasons = new Map<string, Noted & { at: number }>()
   /**
    * Request ids whose refusals and errors are not a transfer's: our own probes of a refused
    * resume, and the frame navigations we made a failed row for (their `onErrorOccurred` follows).
@@ -259,7 +271,7 @@ export class ElectronDownloads implements DownloadHost {
           this.deadLink(details, reason)
           return
         }
-        this.noteReason(details.url, reason)
+        this.noteReason(details.url, { reason, exact: true })
       },
       options
     )
@@ -269,7 +281,7 @@ export class ElectronDownloads implements DownloadHost {
         if (this.ignoredRequests.delete(details.requestId)) return
         const error = details.error
         if (!error || /ERR_ABORTED$/.test(error)) return
-        this.noteReason(details.url, interruptReasonFromNetError(error))
+        this.noteReason(details.url, { reason: interruptReasonFromNetError(error), exact: false })
       },
       options
     )
@@ -319,10 +331,10 @@ export class ElectronDownloads implements DownloadHost {
     service.finish(record.id, 'interrupted', { canResume: false, error: reason })
   }
 
-  private noteReason(url: string, reason: DownloadInterruptReason): void {
+  private noteReason(url: string, noted: Noted): void {
     const live = this.liveFor(url)
     if (live) {
-      live.reason = reason
+      live.noted = noted
       return
     }
     const now = Date.now()
@@ -333,7 +345,7 @@ export class ElectronDownloads implements DownloadHost {
       const oldest = this.pendingReasons.keys().next().value
       if (oldest !== undefined) this.pendingReasons.delete(oldest)
     }
-    this.pendingReasons.set(canonical(url), { reason, at: now })
+    this.pendingReasons.set(canonical(url), { ...noted, at: now })
   }
 
   /** The live transfer whose request (any URL of its redirect chain) is `url`. */
@@ -349,13 +361,14 @@ export class ElectronDownloads implements DownloadHost {
 
   /** A new live entry, carrying the reason its request was refused with before it existed, if any. */
   private newLive(item: ElectronDownloadItem, session: Session): Live {
-    const live: Live = { item, session }
+    const live: Live = { item, session, offset: 0 }
     for (const url of [item.getURL(), ...item.getURLChain()]) {
       const key = canonical(url)
       const pending = this.pendingReasons.get(key)
       if (!pending) continue
       this.pendingReasons.delete(key)
-      if (Date.now() - pending.at <= PENDING_REASON_MS) live.reason = pending.reason
+      const { at, ...noted } = pending
+      if (Date.now() - at <= PENDING_REASON_MS) live.noted = noted
     }
     return live
   }
@@ -547,19 +560,30 @@ export class ElectronDownloads implements DownloadHost {
       totalBytes: item.getTotalBytes(),
       savePath: item.getSavePath() || record.savePath
     })
-    // The reason the request ended with (see `observeRequests`); Electron's item names none
+    // The note the request ended with (see `observeRequests`); Electron's item names no reason
     // itself, and the core reads a plain network failure into an interruption without one.
     // Taken once per interruption: a resumed transfer's next failure gets its own.
-    const reason = (): DownloadInterruptReason | undefined => {
+    const takeNote = (): Noted | undefined => {
       const live = this.live.get(record.id)
-      const known = live?.reason
-      if (live) delete live.reason
-      return known
+      const noted = live?.noted
+      if (live) delete live.noted
+      return noted
+    }
+    // Where Chromium's resume asked to continue from (see `Live.offset`).
+    const offset = (): number => {
+      const live = this.live.get(record.id)
+      const received = item.getReceivedBytes()
+      if (live && received > 0) live.offset = received
+      return live?.offset ?? received
     }
     item.on('updated', (_e, state) => {
       if (this.quitting) return
+      const from = offset()
       const interrupted = state === 'interrupted'
-      const noted = interrupted ? reason() : undefined
+      const noted = interrupted ? takeNote() : undefined
+      // Interrupted and still resumable (Electron's `updated`) is one of Chromium's resumable
+      // reasons: a network failure, a 5xx, a range the server would not serve (416), a file
+      // error. `network-failed` unless noted; the probe tells the server's ones apart.
       service.progress(record.id, {
         ...fields(),
         etag: item.getETag() || undefined,
@@ -568,15 +592,13 @@ export class ElectronDownloads implements DownloadHost {
           ? item.canResume()
           : Boolean(item.getETag() || item.getLastModifiedTime()),
         state: interrupted ? 'interrupted' : item.isPaused() ? 'paused' : 'progressing',
-        error: noted
+        error: interrupted ? (noted?.reason ?? 'network-failed') : undefined
       })
-      // Interrupted but resumable (Electron's `updated`): a network-class reason in Chromium's
-      // book, `network-failed` unless noted – or the server refusing the range (416), which
-      // only asking it tells.
-      if (interrupted && !noted) this.investigate(record, item, true)
+      if (interrupted && !noted?.exact) this.investigate(record, item, from)
     })
     item.once('done', (_e, state) => {
-      const noted = reason()
+      const from = offset()
+      const noted = takeNote()
       this.live.delete(record.id)
       // On quit Chromium cancels the item itself; the record was parked and persisted already.
       if (this.quitting) return
@@ -589,44 +611,47 @@ export class ElectronDownloads implements DownloadHost {
         if (partial.endsWith(PARTIAL_SUFFIX)) void rm(partial, { force: true })
         service.finish(record.id, 'cancelled', fields())
       } else {
-        // Electron's `done` with `interrupted` is Chromium's "cannot resume": Chromium marks
-        // the server's refusals (SERVER_FAILED, SERVER_BAD_CONTENT, SERVER_UNAUTHORIZED,
-        // SERVER_FORBIDDEN) non-resumable and every network failure resumable, so an http(s)
-        // transfer that reached the server and ends here with nothing noted (its resume
-        // requests do not pass the session's `webRequest`) was refused by the server.
-        const error = noted ?? (isHttp(record.url) ? 'server-failed' : undefined)
+        // Electron's `done` with `interrupted` is Chromium's "cannot resume", a verdict on the
+        // reason alone: the server refusing (SERVER_BAD_CONTENT, SERVER_UNAUTHORIZED,
+        // SERVER_FORBIDDEN), a certificate problem, a blocked file – never a network failure,
+        // which Chromium always lets resume. So an http(s) transfer that reached the server and
+        // ends here was refused by it (`server-failed` until the probe names the status), and a
+        // network reason noted on the way is stale: the first request's drop, which Chromium's
+        // own resume attempts got past before the server refused them.
+        const stale = noted && !noted.exact && isNetworkReason(noted.reason)
+        const error =
+          noted && !stale ? noted.reason : isHttp(record.url) ? 'server-failed' : noted?.reason
         service.finish(record.id, 'interrupted', { ...fields(), canResume: false, error })
-        if (!noted) this.investigate(record, item, false)
+        if (!noted?.exact) this.investigate(record, item, from)
       }
     })
   }
 
   /**
    * Chromium's own resume requests never pass the session's `webRequest`, so when a transfer
-   * interrupts with no reason noted the host asks the server itself: one GET of what Chromium's
-   * resume sent (`Range: bytes=<received>-` with the record's validator as `If-Range`, the
-   * referrer, the session's cookies), aborted as soon as the headers arrive. A refusing status
-   * is the exact reason (404 `server-bad-content`, 403 `server-forbidden`, 401 / 407
-   * `server-unauthorized`, 416 `server-no-range`, 5xx `server-failed`), and a full answer with
-   * no `Content-Range` to a request from past byte 0 is `server-no-range`. When the server
-   * answers well the coarse verdict stands for a resumable interruption (`network-failed`),
-   * and a non-resumable one reads `file-failed`: the server did not refuse, and Chromium's
-   * other non-resumable reasons are the file's. A probe that fails on the network changes
-   * nothing. One probe per interruption, http(s) only, `PROBE_TIMEOUT_MS`.
+   * settles interrupted without a refusing status noted the host asks the server itself: one
+   * GET of what Chromium's resume sent (`Range: bytes=<offset>-` with the record's validator as
+   * `If-Range`, the referrer, the session's cookies), aborted as soon as the headers arrive. A
+   * refusing status is the exact reason (404 `server-bad-content`, 403 `server-forbidden`,
+   * 401 / 407 `server-unauthorized`, 416 `server-no-range`, 5xx `server-failed`), and a full
+   * answer with no `Content-Range` to a request from past byte 0 is `server-no-range`. When
+   * the server answers well the row keeps what it has (`network-failed` for a resumable
+   * interruption, `server-failed` for one Chromium will not resume, a noted `net::` error): the
+   * refusal was not the server's or was not repeated, and Chromium keeps the rest of its reasons
+   * (the file's) to itself. A probe that fails on the network changes nothing. One probe per
+   * interruption, http(s) only, in the record's own session, `PROBE_TIMEOUT_MS`.
    */
-  private investigate(record: DownloadItem, item: ElectronDownloadItem, resumable: boolean): void {
+  private investigate(record: DownloadItem, item: ElectronDownloadItem, offset: number): void {
     if (!PROBE_REFUSED_RESUME || !isHttp(record.url)) return
     const ses = this.sessions.get(record.containerId)
     if (!ses) return
-    const offset = item.getReceivedBytes()
     const validator =
       item.getETag() || item.getLastModifiedTime() || record.etag || record.lastModified
     void this.probe(record.url, ses, { offset, validator, referrer: record.referrer }).then(
       (answer) => {
         if (!answer) return
         const exact = interruptReasonFromRangeResponse(answer.status, answer.contentRange, offset)
-        const reason = exact ?? (resumable ? null : 'file-failed')
-        if (reason) this.service?.reclassify(record.id, reason)
+        if (exact) this.service?.reclassify(record.id, exact)
       }
     )
   }
@@ -994,6 +1019,11 @@ function referrerOf(source: WebContents | undefined, downloadUrl: string): strin
 
 function isHttp(url: string): boolean {
   return /^https?:/i.test(url)
+}
+
+/** Chromium's `NETWORK_*` reasons: every one of them resumable, none of them a `done` verdict. */
+function isNetworkReason(reason: DownloadInterruptReason): boolean {
+  return reason.startsWith('network-')
 }
 
 /** The first value of a response header, by name in any case; null when absent or empty. */
