@@ -109,23 +109,49 @@ export function languageOptions(
 /** One key per language pair, the value a model picker hands back. */
 export const pairKey = (m: { from: string; to: string }): string => `${m.from}:${m.to}`
 
+/** The core's last answer about the registry's models, kept for the next reader. */
+let registryModels: TranslateModelInfo[] | null = null
+let registryRequest: Promise<TranslateModelInfo[]> | null = null
+
 /**
- * The registry's models, read from the core when the component mounts and again whenever `key`
- * changes (the set on the device moved); null until the first answer, empty when the core has
- * none to give.
+ * The registry's models with what is on the device, from the core: one request in flight at a
+ * time, the answer kept; a failure leaves the last answer (none at first) in place.
+ */
+function loadRegistryModels(): Promise<TranslateModelInfo[]> {
+  if (!registryRequest) {
+    registryRequest = cmd('translate.models', undefined)
+      .then(
+        (list) => (registryModels = Array.isArray(list) ? list : []),
+        () => registryModels ?? []
+      )
+      .finally(() => {
+        registryRequest = null
+      })
+  }
+  return registryRequest
+}
+
+/**
+ * Have the registry's models at hand before a list of them opens: a phone sheet measures its
+ * height as it mounts (the chassis's `BottomSheet`), so a list that arrived a frame later would
+ * leave the sheet sized to its "reading the list" row. A no-op once the answer is in or asked
+ * for; the Languages rows call it as they are built.
+ */
+export function warmRegistryModels(): void {
+  if (registryModels === null) void loadRegistryModels()
+}
+
+/**
+ * The registry's models: the kept answer at once when there is one, else null until the first
+ * arrives; read again whenever `key` changes (the set on the device moved).
  */
 export function useRegistryModels(key: string): TranslateModelInfo[] | null {
-  const [models, setModels] = useState<TranslateModelInfo[] | null>(null)
+  const [models, setModels] = useState<TranslateModelInfo[] | null>(registryModels)
   useEffect(() => {
     let cancelled = false
-    cmd('translate.models', undefined).then(
-      (list) => {
-        if (!cancelled) setModels(list)
-      },
-      () => {
-        if (!cancelled) setModels([])
-      }
-    )
+    void loadRegistryModels().then((list) => {
+      if (!cancelled) setModels(list)
+    })
     return () => {
       cancelled = true
     }
@@ -133,10 +159,18 @@ export function useRegistryModels(key: string): TranslateModelInfo[] | null {
   return models
 }
 
-/** The pairs neither on the device nor on their way, by name, as options with their size. */
-export function modelOptions(models: readonly TranslateModelInfo[]): LanguageOption[] {
+/**
+ * The pairs neither on the device nor on their way, by name, as options with their size. The
+ * registry's own flags may be a moment old (a kept answer); `onDevice` – the state's installed
+ * and downloading lists – is the current word.
+ */
+export function modelOptions(
+  models: readonly TranslateModelInfo[],
+  onDevice: readonly { from: string; to: string }[] = []
+): LanguageOption[] {
+  const taken = new Set(onDevice.map(pairKey))
   return models
-    .filter((m) => !m.installed && !m.downloading)
+    .filter((m) => !m.installed && !m.downloading && !taken.has(pairKey(m)))
     .map((m) => ({
       value: pairKey(m),
       label: pairLabel(m.from, m.to),

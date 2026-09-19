@@ -54,7 +54,7 @@ import {
 } from '@renderer/lib/newTabSettings'
 import { describePermissionRule } from '@renderer/lib/security'
 import { openOverlay } from '@renderer/lib/ui'
-import { languageOptions, pairKey, pairLabel } from '@renderer/lib/translate'
+import { languageOptions, pairKey, pairLabel, warmRegistryModels } from '@renderer/lib/translate'
 import { formatBytes, relativeTime } from '@renderer/lib/utils'
 import { ContainerIcon } from '../../ContainerIcon'
 import {
@@ -1181,6 +1181,10 @@ function searchSection({ state, set }: SectionContext): RowGroup[] {
 function languagesSection({ state }: SectionContext): RowGroup[] {
   const t = state.translate
   const prefs = t.preferences
+  // The "Download a model" sheet lists the registry's pairs, which the core is asked for: asked
+  // here, so the list is at hand by the time the sheet – which measures itself as it mounts –
+  // opens (once; nothing happens after the first answer).
+  warmRegistryModels()
   const set = (patch: Partial<TranslatePreferences>): void => run('translate.setPreferences', patch)
   const rule = (language: string, value: 'always' | 'never' | 'ask'): void =>
     run('translate.setLanguageRule', { language, rule: value })
@@ -1397,7 +1401,9 @@ function languagesSection({ state }: SectionContext): RowGroup[] {
           keywords: ['offline', 'language pair'],
           form: {
             title: 'Download a model',
-            render: (close) => <ModelPickList close={close} />
+            render: (close) => (
+              <ModelPickList onDevice={[...t.installed, ...t.downloading]} close={close} />
+            )
           }
         }
       ]
