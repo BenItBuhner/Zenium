@@ -2,6 +2,7 @@ package app.zen.chromium
 
 import android.os.SystemClock
 import android.util.Log
+import android.view.accessibility.AccessibilityNodeInfo
 import android.webkit.WebView
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.json.JSONObject
@@ -20,7 +21,8 @@ import java.util.concurrent.TimeUnit
  * in-chrome permission prompt that answers it (Allow remembered for the site, Allow once kept for
  * the tab), a private tab on its own WebView profile (the normal profile's cookie is not there,
  * its own cookie is gone once the last private tab closes), Clear browsing data with its count
- * preview, Safety check and the site-information snapshot.
+ * preview, Safety check and the site-information snapshot; then the chrome on those: Settings >
+ * Site settings, the Clear browsing data sheet, Settings > Safety check and the menu sheet.
  *
  * The page comes from a loopback HTTP server inside this process and reports what it sees
  * through its title, which the driver reads from the core's state. Command results are written
@@ -155,7 +157,134 @@ class SiteControlsDemo : DemoHarness("site-controls-demo-state.json", "services-
         note("  safetyCheck: ${invoke("privacy.safetyCheck")}")
         note("  siteInfo.snapshot: ${invoke("siteInfo.snapshot", """{"tabId":"tab_demo"}""")}")
         note("  permissions.defaults: ${invoke("permissions.defaults")}")
+
+        // 7. The chrome on those results: Settings > Site settings (the catalogue and a site with
+        //    its own rule), Clear browsing data as a sheet (Basic, then Advanced), Safety check
+        //    with its rows, and the menu sheet with New Private Tab.
+        //
+        //    The panel is opened by the action behind the menu's Settings row, not through the
+        //    sheet, and the three sections are visited inside the one panel: on the emulator the
+        //    sheet closing and the panel opening back to back – the page shown again, its stand-in
+        //    read once more, the page hidden – is where the host's software renderer died in four
+        //    boots of five (a page fault on its RenderThread; runs 35355397692, 35356823798 and
+        //    35359268332), while a surface opening over the page and closing back to it never did.
+        //    The sheets slide in slowly there and the tree's bounds trail them, so every press
+        //    waits for the sheet to settle and goes through the tree.
+        note("\n7. the chrome: Settings sections, the clear-data sheet, the menu sheet")
+        invoke("permissions.set", """{"origin":"$ORIGIN","permission":"camera","decision":"deny"}""")
+        if (openSettings("Site Settings")) {
+            waitFor("Camera", 8_000)
+            SystemClock.sleep(1_200)
+            shot("09-site-settings-catalogue")
+            beat()
+            if (reveal("Sites with their own settings") != null) {
+                SystemClock.sleep(800)
+                shot("10-site-settings-sites")
+                beat()
+            }
+            note("  site rules: ${invoke("permissions.listForPermission", """{"permission":"camera"}""")}")
+        }
+
+        if (openSettings("Clear Browsing Data") && press(f, "Clear browsing data")) {
+            waitFor("Clear data", 8_000)
+            SystemClock.sleep(SHEET_SETTLE)
+            shot("11-clear-data-basic")
+            beat()
+            if (press(f, "Advanced")) {
+                SystemClock.sleep(SHEET_SETTLE)
+                shot("12-clear-data-advanced")
+                beat()
+            }
+            if (!press(f, "Cancel")) back()
+            SystemClock.sleep(1_500)
+        }
+
+        if (openSettings("Safety Check") && press(f, "Check now")) {
+            waitFor("Passwords", 15_000)
+            SystemClock.sleep(1_500)
+            shot("13-safety-check-results")
+            beat()
+        }
+        closeSettings()
+
+        tapMenuButton()
+        SystemClock.sleep(SHEET_SETTLE)
+        val privateItem = reveal("New Private Tab") != null
+        note("  menu sheet: 'New Private Tab' ${if (privateItem) "shown" else "absent (capabilities.privateTabs=false)"}")
+        shot("14-menu-sheet")
+        beat()
+        back()
+        SystemClock.sleep(1_500)
         note("\ndone")
+    }
+
+    // --- settings ------------------------------------------------------------------------------
+
+    /**
+     * The Settings panel is up. On the phone the panel leaves the bar and its pill on screen, so
+     * the pill says nothing about it; the panel's own close button is in the tree only while it
+     * is open (run 35356823798 took the pill for "closed", pressed Settings in the menu once more
+     * and toggled the panel away).
+     */
+    private fun settingsOpen(): Boolean = findByLabel(PANEL_CLOSE_LABEL) != null
+
+    /**
+     * The Settings panel through the action the menu's Settings row runs (`settings.open`, which
+     * toggles the panel, so only when it is not up), then the section's chip in the row across
+     * the top (the new sections sit past the right edge). False when the panel or the chip never
+     * shows.
+     */
+    private fun openSettings(section: String): Boolean {
+        if (!settingsOpen()) {
+            invoke("urlbar.runCommand", """{"action":"settings.open"}""")
+            if (waitFor(PANEL_CLOSE_LABEL, 10_000) == null) {
+                note("  settings: the panel never opened")
+                return false
+            }
+            SystemClock.sleep(2_000)
+        }
+        if (reveal(section) == null || !clickByLabel(section)) {
+            note("  settings: no '$section' chip")
+            return false
+        }
+        SystemClock.sleep(2_000)
+        return true
+    }
+
+    /** Back closes what is open (a sheet, then the panel); the close button gone says it is done. */
+    private fun closeSettings() {
+        repeat(4) {
+            if (!settingsOpen()) return
+            back()
+            SystemClock.sleep(1_500)
+        }
+        note("  settings: the panel stayed up through four backs")
+    }
+
+    /**
+     * A press on the labelled control once it shows. The control itself when a node carrying the
+     * label is clickable (a row button under a group heading of the same words: the heading
+     * comes first in the tree and its nearest clickable ancestor is not the row, which is how run
+     * 35361605577 pressed beside Clear browsing data), the nearest clickable ancestor of the
+     * label otherwise, and a touch at the label's bounds when there is none. False when the
+     * label never comes.
+     */
+    private fun press(f: Finger, label: String, timeoutMs: Long = 8_000): Boolean {
+        val seen = waitFor(label, timeoutMs) ?: run {
+            note("  no '$label' to press")
+            return false
+        }
+        val shown = reveal(label) ?: seen
+        val control = findNodeWhere { node ->
+            node.isClickable &&
+                (node.contentDescription?.toString() == label || node.text?.toString() == label)
+        }
+        when {
+            control != null -> control.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            !clickByLabel(label) -> f.tap(shown.exactCenterX(), shown.exactCenterY())
+        }
+        SystemClock.sleep(600)
+        return true
     }
 
     // --- the prompt -----------------------------------------------------------------------------
@@ -333,5 +462,9 @@ class SiteControlsDemo : DemoHarness("site-controls-demo-state.json", "services-
         private const val PORT = 18124
         private const val ORIGIN = "http://127.0.0.1:$PORT"
         private const val DEMO_URL = "$ORIGIN/"
+        /** A sheet's slide, with the margin the software-rendered emulator needs. */
+        private const val SHEET_SETTLE = 2_500L
+        /** The overlay panel's close button (`OverlayShell`, its `title`), in the tree only while a panel is up. */
+        private const val PANEL_CLOSE_LABEL = "Close (Esc)"
     }
 }

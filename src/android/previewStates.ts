@@ -1,4 +1,5 @@
 import type { CertificateDetails, ClientCertificateInfo, Tab, UIState } from '@shared/types'
+import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import type { Browser } from '@core/browser'
 import { isCertificateError } from '@shared/siteInfo'
 import { run } from '@renderer/lib/api'
@@ -53,6 +54,8 @@ const STEP_SETTLE_MS = 450
 const SHEET_SURFACE = /^settings-(options|field|confirm|form|item):/
 /** How long a dismissed sheet may take to leave (its motion) before the reset gives up on it. */
 const SHEET_LEAVE_MS = 1500
+/** How long a seeded state may take to arrive in the store before the spec is reported reached anyway. */
+const SETTLE_TIMEOUT_MS = 4000
 
 /**
  * Chrome states selectable from outside the preview host (`npm run dev:android`), so screenshots
@@ -65,21 +68,26 @@ const SHEET_LEAVE_MS = 1500
  * downloads, addons, …: the chrome overlays a phone still has – Settings is not one, it is
  * `page=settings`; `show=<text>` scrolls the row with that text into view, `expand` rests a
  * sheet on its expanded detent), `menu=app` (the app menu sheet; `show=<text>` scrolls an item
- * into view), `find=<text>` (the find bar with that text typed), `pull=<n>` (the page held pulled
- * down at n percent of the refresh threshold; `pull=refresh` lets go past it), `zoom=<factor>`
- * (the page zoom sheet at that factor), `error=<code>` (the active tab's load failed with that
- * Chromium `net::` code, `url=<target>` naming the URL that failed: the zen://error page is up),
- * the message surfaces and the load bar: `toast=<text>&action=<label>`, `banners=<n>`,
- * `progress=<0…1>`, `webapp=<surface>` (an "Add to Home screen" surface on the active tab),
- * `download=<file>` (the stand-in downloader starts that transfer; see `PreviewDownloadSpec`),
- * `popups=<n>` (n pop-ups blocked on the page; `&list` opens the list, `&allowed` remembers the
- * site) or `prompt=http-auth` / `prompt=certificate` (a security dialog over the page;
- * `&failed`, `&proxy`, `&secure`). `rules=<n>` on any spec seeds n remembered site permissions
- * for Settings › Security; `blocking=<variant>` may accompany any spec too (see `seedBlocking`).
+ * into view), `prompt=<permission>` (the active page asks for that permission: the prompt sheet
+ * is up), `private=new` or `private=<url>` (a private tab, blank or on that page), `find=<text>`
+ * (the find bar with that text typed), `pull=<n>` (the page held pulled down at n percent of the
+ * refresh threshold; `pull=refresh` lets go past it), `zoom=<factor>` (the page zoom sheet at
+ * that factor), `error=<code>` (the active tab's load failed with that Chromium `net::` code,
+ * `url=<target>` naming the URL that failed: the zen://error page is up), the message surfaces
+ * and the load bar: `toast=<text>&action=<label>`, `banners=<n>`, `progress=<0…1>`,
+ * `webapp=<surface>` (an "Add to Home screen" surface on the active tab), `download=<file>`
+ * (the stand-in downloader starts that transfer; see `PreviewDownloadSpec`), `popups=<n>` (n
+ * pop-ups blocked on the page; `&list` opens the list, `&allowed` remembers the site) or
+ * `prompt=http-auth` / `prompt=certificate` (a security dialog over the page; `&failed`,
+ * `&proxy`, `&secure`). `rules=<n>` on any spec seeds n remembered site permissions for
+ * Settings › Security; `blocking=<variant>` may accompany any spec too (see `seedBlocking`).
  * It comes in as the URL hash, `http://localhost:41734/#overlay=history`, or as
  * `window.postMessage({ zenPreview: 'find=coffee' }, '*')`, which also re-applies an unchanged
  * state. Once applied it is echoed in `<html data-preview-state>` so a driver can wait for it;
  * `.github/scripts/android-preview-shots.mjs` is one.
+ *
+ * The seeds go through the core the way the host would: a prompt is the permission service asked
+ * by the active page, a private tab is `tab.newPrivate`.
  */
 export function installPreviewStates(browser: Browser): void {
   window.addEventListener('hashchange', () => apply(browser, location.hash.slice(1)))
@@ -98,7 +106,8 @@ function apply(browser: Browser, spec: string): void {
     // Every spec starts from idle so states do not stack: a pull in flight is put back at once
     // (a `cancel` would spring home, and the next pull would catch that spring part-way); the
     // pill's editor, the overview and the page's sheets a previous state's steps opened go too,
-    // and a request state a previous spec seeded stops being held.
+    // a request state a previous spec seeded stops being held, and the permission prompts up
+    // are answered as a dismissal, the way a press outside would.
     unseedBlocking()
     closeOverlay()
     closeMenu()
@@ -110,6 +119,8 @@ function apply(browser: Browser, spec: string): void {
     const tab = state ? activeTab(state) : null
     clearMessages(tab?.loading ? tab.id : null)
     closeBlockedPopups()
+    for (const prompt of state?.permissionPrompts ?? [])
+      run('permissions.respond', { id: prompt.id, answer: 'dismiss' })
     const securityAtRest = tab ? resetSecurity(browser, tab) : Promise.resolve()
     const seed = parsePreviewSeed(spec)
     if (seed.rules !== null) seedRules(browser, seed.rules)
@@ -208,6 +219,20 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
       )
     })
     run('app.menu', {})
+  } else if (target.kind === 'permission' && tab) {
+    // The active page asks, as its script would (`permissions.decide` is what the host calls
+    // from the WebView's permission request); the answer is the prompt sheet's business.
+    void browser.permissions.decide(target.permission, tab.url, { tabId: tab.id })
+    untilState(
+      (s) => s.permissionPrompts.some((p) => p.tabId === tab.id),
+      () => afterFrames(2, () => done(spec))
+    )
+  } else if (target.kind === 'private') {
+    void run('tab.newPrivate', target.url ? { url: target.url } : {})
+    untilState(
+      (s) => activeTab(s)?.containerId === PRIVATE_CONTAINER_ID,
+      () => afterFrames(2, () => done(spec))
+    )
   } else if (target.kind === 'zoom' && tab) {
     if (target.factor !== null) run('tab.setZoomFactor', { tabId: tab.id, factor: target.factor })
     openZoom(tab.id)
@@ -859,6 +884,36 @@ function safeHost(url: string): string {
 
 function done(spec: string): void {
   document.documentElement.dataset.previewState = spec
+}
+
+function afterFrames(count: number, fn: () => void): void {
+  if (count <= 0) fn()
+  else requestAnimationFrame(() => afterFrames(count - 1, fn))
+}
+
+/** Runs `fn` once the browser state satisfies `test`, or once waiting stops being worth it. */
+function untilState(test: (state: UIState) => boolean, fn: () => void): void {
+  const current = browserStore.get().state
+  if (current && test(current)) {
+    fn()
+    return
+  }
+  let settled = false
+  const settle = (): void => {
+    if (settled) return
+    settled = true
+    unsubscribe()
+    window.clearTimeout(timer)
+    fn()
+  }
+  const unsubscribe = browserStore.subscribe(() => {
+    const state = browserStore.get().state
+    if (state && test(state)) settle()
+  })
+  const timer = window.setTimeout(() => {
+    console.warn('[zen preview] the state did not arrive; reporting the spec reached anyway')
+    settle()
+  }, SETTLE_TIMEOUT_MS)
 }
 
 /** Runs `fn` once the browser state has arrived and the chrome has had a frame to render it. */
