@@ -283,6 +283,7 @@ describe('the two-pane Settings tab (§10.5)', () => {
       'Extensions',
       'AI Agents',
       'Passwords',
+      'Security',
       '|',
       'Sync',
       'Keyboard Shortcuts',

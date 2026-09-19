@@ -444,10 +444,10 @@ describe('desktop pill (NavRow)', () => {
       'Bookmark this tab'
     ])
     const stays = new Set(['Site information', '2 pop-ups blocked'])
-    for (const chip of chips)
-      expect(chip.classList.contains('zen-pill-chip'), chip.ariaLabel ?? undefined).toBe(
-        !stays.has(chip.ariaLabel ?? '')
-      )
+    for (const chip of chips) {
+      const label = chip.getAttribute('aria-label') ?? ''
+      expect(chip.classList.contains('zen-pill-chip'), label).toBe(!stays.has(label))
+    }
     // The address itself is never a chip.
     expect(focusable(pill)[0].classList.contains('zen-pill-chip')).toBe(false)
 
