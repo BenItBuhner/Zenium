@@ -932,13 +932,28 @@
     isolation: isolate;
     pointer-events: none;
   }
-  .zen-frame-dialogs[data-open] {
+  .zen-frame-dialogs[data-open],
+  .zen-frame-dialogs[data-leaving] {
     pointer-events: auto;
   }
   .zen-frame-scrim {
     position: absolute;
     inset: 0;
     background: var(--v2-scrim-modal);
+  }
+  /*
+   * The way out (lib/portals.tsx, `useLeavingPanels`): the host keeps a closed dialog's panel
+   * in the slot, `data-leaving`, through the pop in reverse – the same 180 ms as the way in –
+   * and fades its scrim with it; the host keeps the pointer meanwhile, so a press during the
+   * fade lands on nothing under it. The kept panel is `inert`: whatever the slot's open rule
+   * says, it takes no press. A chassis that slides the slot on a progress of its own turns the
+   * panel's animation off and reports the progress to the host instead.
+   */
+  .zen-frame-scrim[data-leaving] {
+    animation: zen-fade-out 180ms var(--zen-ease) forwards;
+  }
+  .zen-frame-dialogs-slot > [data-leaving] {
+    animation: zen-pop-out 180ms var(--zen-ease) forwards;
   }
   .zen-frame-dialogs-slot {
     position: absolute;
@@ -1109,6 +1124,25 @@
   to {
     opacity: 1;
     transform: none;
+  }
+}
+/* The pop in reverse and a plain fade: the frame dialog host's way out (`[data-leaving]`). */
+@keyframes zen-pop-out {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+}
+@keyframes zen-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
   }
 }
 @keyframes zen-spin {
@@ -6278,6 +6312,15 @@
   .zen-frame-dialogs[data-sheet] .zen-frame-scrim,
   .zen-frame-dialogs[data-sheet] .zen-frame-dialogs-slot {
     transition-duration: 120ms !important;
+  }
+  /*
+   * A frame dialog's way out stays a departure: the 120 ms fade in place of v2 §11.3, the pop's
+   * scale dropped (lib/portals.tsx keeps the panel until this ends).
+   */
+  .zen-frame-dialogs-slot > [data-leaving],
+  .zen-frame-scrim[data-leaving] {
+    animation-name: zen-fade-out;
+    animation-duration: 120ms !important;
   }
   /*
    * The phone overview's appearances in place stay the 120 ms fade too (v2 §11.3, §11.4): the
