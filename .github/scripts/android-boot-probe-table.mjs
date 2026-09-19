@@ -29,13 +29,17 @@ const kb = (bytes) =>
       : bytes >= 1000
         ? `${(bytes / 1000).toFixed(1)} KB`
         : `${bytes} B`
-const ms = (value) => (value === undefined || value === null || value < 0 ? '–' : `${Math.round(value)} ms`)
+const ms = (value) =>
+  value === undefined || value === null || value < 0 ? '–' : `${Math.round(value)} ms`
 
 /** `bytes, wall (stall)` for a replayed transfer; `–` when the path does not exist on that APK. */
 function transfer(sample, { sync = false } = {}) {
   if (!sample) return 'n/a'
   if (sync) return `${kb(sample.bytes)}, ${ms(sample.ms)} on the JS thread`
-  const stall = sample.stallMs === null || sample.stallMs === undefined ? '' : `, ${ms(sample.stallMs)} in long tasks`
+  const stall =
+    sample.stallMs === null || sample.stallMs === undefined
+      ? ''
+      : `, ${ms(sample.stallMs)} in long tasks`
   return `${kb(sample.bytes)}, ${ms(sample.wallMs)} wall${stall}`
 }
 
@@ -113,13 +117,17 @@ const rows = [
   ],
   [
     'Kotlin Safe Browsing load (`SafeBrowsing.reload`)',
-    (d) => `${d.kotlin?.safeBrowsingFeeds ?? '–'} feeds, ${d.kotlin?.safeBrowsingEntries ?? '–'} prefixes, ${ms(d.kotlin?.safeBrowsingLoadMs)}`
+    (d) =>
+      `${d.kotlin?.safeBrowsingFeeds ?? '–'} feeds, ${d.kotlin?.safeBrowsingEntries ?? '–'} prefixes, ${ms(d.kotlin?.safeBrowsingLoadMs)}`
   ],
   [
     '`net.fetch` of an 11 MB hosts list (`Host.fetchText` → `ChromeWebView.resolve` `evaluateJavascript` / `BootHandoff.readBody` spill → `readSpilledBody`)',
     (d) => netFetch(d)
   ],
-  ['Chrome ready: `window.zen` set, chrome clock since navigation start', (d) => ms(d.boot?.chromeReadyMs)],
+  [
+    'Chrome ready: `window.zen` set, chrome clock since navigation start',
+    (d) => ms(d.boot?.chromeReadyMs)
+  ],
   ['Chrome ready: wall time since `startActivity`', (d) => ms(d.boot?.launchToReadyMs)]
 ]
 
