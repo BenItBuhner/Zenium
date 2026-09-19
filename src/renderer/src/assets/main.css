@@ -303,13 +303,13 @@
 /*
  * The v2 button (design-language-v2-draft §6): the control's height and radius from the density
  * tokens (40 tall and radius 6 under a finger), the button weight, the text at 10 percent as the
- * secondary; `data-primary` for the one accent button of a view. This is the only rule for the
- * class, and it stays outside the cascade layers on purpose: a `Button` that carries the class
- * keeps its utilities (`h-8`, `px-3.5`, `rounded-lg`, `bg-[…]`), and only an unlayered rule beats
- * them. For the same reason a second copy inside `@layer components` would lose every declaration
- * to this one – its `[data-primary]` included, which turned primaries into secondaries – so a
- * surface that wants the button reads this rule and adds nothing. The focus ring is the shared
- * `zen-v2-*` rule above.
+ * secondary; `data-primary` for the one accent button of a view, `data-danger` for a secondary
+ * in danger ink (a destructive Discard). This is the only rule for the class, and it stays
+ * outside the cascade layers on purpose: a `Button` that carries the class keeps its utilities
+ * (`h-8`, `px-3.5`, `rounded-lg`, `bg-[…]`), and only an unlayered rule beats them. For the same
+ * reason a second copy inside `@layer components` would lose every declaration to this one – its
+ * `[data-primary]` included, which turned primaries into secondaries – so a surface that wants
+ * the button reads this rule and adds nothing. The focus ring is the shared `zen-v2-*` rule above.
  */
 .zen-v2-button {
   display: inline-flex;
@@ -3714,6 +3714,209 @@
 }
 
 /*
+ * The Android downloads sheet (design language v2 §6 sheets, §9.2, §9.3, §9.11, §9.17, §9.25;
+ * components/downloads/DownloadsSheet.tsx). The sheet is the phone chassis (`BottomSheet`,
+ * .zen-sheet above): its surface, scrim, grabber, the 48 header with the centred title and the
+ * trailing control, the hairline once the body scrolls, the empty sentence (.zen-sheet-empty),
+ * the Clear list action row (.zen-sheet-item) and the hairline before it (.zen-sheet-sep) are
+ * all the chassis's. A download is the shared `.zen-v2-row` (§9.34) with the `.zen-downloads-
+ * row` modifier, unlayered beside the primitive after this block: the §9.2 two-line floor (64
+ * on a phone: 12 + 20 + 20 + 12) that grows around a progress track or the Keep / Delete pair.
+ * What the row holds is this block – the 20 px glyph on the first text line, the name over its
+ * status, the 3 px track – and reads the tokens only: rows run edge to edge at the primitive's
+ * 16 gutter (§9.25), their trailing 44 icon buttons (the shared `.zen-v2-icon-button`) hang 12
+ * into it so the 20 px glyph sits on the gutter, and the Keep / Delete buttons are the shared
+ * `.zen-v2-button` with the extensions UI's busy rules (§9.30). Status is ink only (§1): the
+ * danger ink for a failure or a dangerous verdict, the warning ink for a lesser one, the
+ * deemphasised ink otherwise; the name and glyph of a record without a file dim as the desktop
+ * row's do. Motion is unchanged (v1 §7, §11): the sheet's spring and recede are the chassis's,
+ * presses the primitives' 120 ms fill, the bar a transform.
+ */
+@layer components {
+  /*
+   * The accessible row: a button while the file opens, else a focusable box, named
+   * `<name>. <status>`. It spans the row's height through the primitive's padding, so the whole
+   * 64 is its target (v1 §5), and the press fill is the row's (the primitive's), not its own.
+   */
+  .zen-downloads-main {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    align-self: stretch;
+    align-items: flex-start;
+    gap: 12px;
+    margin-block: calc(-1 * var(--v2-row-pad));
+    padding-block: var(--v2-row-pad);
+    color: inherit;
+    text-align: left;
+  }
+  /* The glyph sits on the first text line, (line − glyph) / 2 below its top (§9.2). */
+  .zen-downloads-glyph {
+    width: var(--v2-icon);
+    height: var(--v2-icon);
+    flex-shrink: 0;
+    margin-top: calc((var(--v2-line-body) - var(--v2-icon)) / 2);
+    color: var(--v2-text-deemphasized);
+  }
+  .zen-downloads-text {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    flex-direction: column;
+  }
+  /*
+   * The name on the 15/20 line, truncated in its middle as the desktop row's is – the head gives
+   * way, the tail (the extension) stays – with the §9.19 Private badge trailing it after 8.
+   */
+  .zen-downloads-name {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 8px;
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-body);
+    line-height: var(--v2-line-body);
+  }
+  .zen-downloads-name-text {
+    display: flex;
+    min-width: 0;
+  }
+  .zen-downloads-name-head {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: pre;
+  }
+  .zen-downloads-name-tail {
+    flex-shrink: 0;
+    white-space: pre;
+  }
+  /* The status is the row's second 13/20 line; a verdict's sentence wraps to two, then an ellipsis (§9.2). */
+  .zen-downloads-status {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+    font-variant-numeric: tabular-nums;
+    color: var(--v2-text-deemphasized);
+  }
+  .zen-downloads-status[data-tone='warn'] {
+    color: var(--v2-warn);
+  }
+  .zen-downloads-status[data-tone='danger'] {
+    color: var(--v2-danger);
+  }
+  /* A record without a file (cancelled, failed, deleted since) dims its glyph; a cancelled or Deleted row its name too. */
+  .zen-downloads-main[data-gone] .zen-downloads-glyph {
+    opacity: 0.4;
+  }
+  .zen-downloads-main[data-dim] .zen-downloads-name {
+    color: var(--v2-text-deemphasized);
+  }
+  /*
+   * Trailing icon buttons centre on the row (§9.18) inside its 64 rather than growing it – a 44
+   * button in a 40 content box overhangs the row's padding by 2 each side, which its negative
+   * block margin allows (§9.21: the row's floor is the larger of 64 and 44 + 8) – and hang 12
+   * into the gutter, so the glyph sits on it (§9.25).
+   */
+  .zen-downloads-actions {
+    display: flex;
+    flex-shrink: 0;
+    align-self: center;
+    margin-block: -6px;
+    margin-right: -12px;
+  }
+  /*
+   * Keep / Delete for a flagged file: the row's own footer, under its text and spanning the
+   * row, two peers splitting the width at an 8 gap, each 40 tall (§9.11); 8 below the text.
+   */
+  .zen-downloads-decision {
+    display: flex;
+    flex-basis: 100%;
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .zen-downloads-decision > * {
+    flex: 1;
+  }
+  /* A flagged row opens nothing on tap: its box keeps to its text and leaves the footer alone. */
+  .zen-downloads-row[data-flagged] .zen-downloads-main {
+    margin-block: 0;
+    padding-block: 0;
+  }
+
+  /* Progress under a running row: a 3 px track, the bar scales along it (transform only, §7.4). */
+  .zen-downloads-progress {
+    position: relative;
+    height: 3px;
+    margin-top: 6px;
+    overflow: hidden;
+    border-radius: 1.5px;
+    background: rgb(var(--v2-text-rgb) / 0.12);
+  }
+  .zen-downloads-progress-bar {
+    position: absolute;
+    inset: 0;
+    border-radius: 1.5px;
+    background: var(--v2-accent);
+    transform-origin: 0 50%;
+    transition: transform 250ms linear;
+  }
+  .zen-downloads-progress[data-paused] .zen-downloads-progress-bar {
+    background: var(--v2-text-deemphasized);
+  }
+  .zen-downloads-progress[data-indeterminate] .zen-downloads-progress-bar {
+    width: 30%;
+    transition: none;
+    animation: zen-downloads-progress-slide 1.4s var(--zen-ease) infinite;
+  }
+  @keyframes zen-downloads-progress-slide {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(333%);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .zen-downloads-progress-bar {
+      transition: none;
+    }
+    .zen-downloads-progress[data-indeterminate] .zen-downloads-progress-bar {
+      animation: none;
+      transform: none;
+      width: 100%;
+      opacity: 0.5;
+    }
+  }
+}
+
+/*
+ * What a download row adds to the shared v2 row (§9.34: a variant is a modifier on the
+ * primitive, unlayered beside it, never a copy): the §9.2 two-line floor; a flagged row wraps
+ * so its Keep / Delete footer takes the next line, without the primitive's 12 gap becoming a
+ * row gap there (the footer keeps its own 8 to the text); on the one row that is a target (its
+ * file opens) a pressed icon button fills itself and not the row around it – every other row is
+ * the static form (`data-static`, §9.34) and the primitive's own gate keeps the fill off it;
+ * and a sheet being dragged takes no press fill on the row under the finger.
+ */
+.zen-v2-row.zen-downloads-row {
+  min-height: var(--v2-row-two-line);
+}
+.zen-v2-row.zen-downloads-row[data-flagged] {
+  flex-wrap: wrap;
+  row-gap: 0;
+}
+.zen-v2-row.zen-downloads-row:has(button:active) {
+  background: transparent;
+}
+.zen-sheet[data-dragging='true'] .zen-v2-row.zen-downloads-row:active {
+  background: transparent;
+}
+
+/*
  * Fading scroll edges (`useFadeEdges`). The scroll container is masked, so content dissolves
  * into whatever is behind it – no gradient overlay, no assumption about the background. The
  * depth of each edge is a registered length: 0 at an edge with nothing past it, the fade size
@@ -4725,6 +4928,59 @@
 [aria-checked='true'] > .zen-v2-radio {
   border-color: var(--v2-accent);
   box-shadow: inset 0 0 0 calc((var(--v2-checkbox) - 6px) / 2) var(--v2-accent);
+}
+
+/*
+ * The shared checkbox (§9.34, §6; #93 owns the rule, the values are the ones the extensions
+ * surfaces drew it with): 16 on a mouse, 20 on a phone, radius 2, the accent fill with an
+ * on-accent check when on, the hover fill on a mouse. As a row's leading box it sits
+ * (line − box) / 2 below the first text line's top (§9.2) and never grows the line. Disabled is
+ * the one number (§9.30). A check row disabled as a dependent row puts the .4 on its content –
+ * not on the row, whose hairline is structure (§0) – and the box inside that content stays at 1
+ * so it does not compound to .16; the row says `aria-disabled`, which keeps the row primitive's
+ * hover and press fill off it. Those two rules sit here, unlayered, because a layered exception
+ * would lose to the unlayered `:disabled` above it.
+ */
+.zen-v2-checkbox {
+  appearance: none;
+  flex-shrink: 0;
+  width: var(--v2-checkbox);
+  height: var(--v2-checkbox);
+  margin: calc((var(--v2-line-body) - var(--v2-checkbox)) / 2) 0 0;
+  border: 1px solid rgb(var(--v2-text-rgb) / 0.3);
+  border-radius: var(--v2-radius-checkbox);
+  background: var(--v2-page);
+  display: grid;
+  place-items: center;
+  transition:
+    background 120ms var(--zen-ease),
+    border-color 120ms var(--zen-ease);
+}
+@media (hover: hover) {
+  .zen-v2-checkbox:hover:not(:disabled) {
+    background: var(--v2-fill);
+  }
+}
+.zen-v2-checkbox:checked {
+  background: var(--v2-accent);
+  border-color: var(--v2-accent);
+}
+.zen-v2-checkbox:checked::after {
+  content: '';
+  width: calc(var(--v2-checkbox) - 4px);
+  height: calc(var(--v2-checkbox) - 4px);
+  background: var(--v2-on-accent);
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+}
+.zen-v2-checkbox:disabled {
+  opacity: 0.4;
+}
+.zen-v2-check-row:has(.zen-v2-checkbox:disabled) > * {
+  opacity: 0.4;
+}
+.zen-v2-check-row .zen-v2-checkbox:disabled {
+  opacity: 1;
 }
 
 /* The page: the landing stays mounted beneath a drill-in, which slides over it (§10.2). */

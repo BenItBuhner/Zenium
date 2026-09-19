@@ -8,12 +8,12 @@
  * a form-factor override below exists only where the draft's phone value has no token yet.
  *
  * The primitives are main.css's (§9.34): `.zen-v2-row`, `.zen-v2-field`, `.zen-v2-icon-button`,
- * `.zen-v2-switch`, `.zen-v2-radio` and `.zen-v2-button` are one unlayered rule each there, and
- * nothing in this file restates them – a layered copy would lose every declaration to the
- * unlayered rule anyway. What is here is the extension surfaces' own: the row's inner anatomy
- * (body, lead, text, label, description, value), the rows-in-a-card hairlines and bleed, the
- * field's leading glyph, the icon button's expanded fill and pressed ink, and the controls the
- * shared set does not have yet (the checkbox, the menulist).
+ * `.zen-v2-switch`, `.zen-v2-radio`, `.zen-v2-checkbox` and `.zen-v2-button` are one unlayered
+ * rule each there, and nothing in this file restates them – a layered copy would lose every
+ * declaration to the unlayered rule anyway. What is here is the extension surfaces' own: the
+ * row's inner anatomy (body, lead, text, label, description, value), the rows-in-a-card
+ * hairlines and bleed, the field's leading glyph, the icon button's expanded fill and pressed
+ * ink, and the control the shared set does not have yet (the menulist).
  *
  * Every hover fill sits inside `@media (hover: hover)` (as main.css's app-icon grid): Chromium
  * keeps a tap's `:hover` on the element until the next touch, so on a phone an ungated rule
@@ -454,60 +454,13 @@
   }
 
   /*
-   * Checkbox: 16 at radius 2 (20 on a phone), the accent with an on-accent check when on. As a
-   * row's leading box it sits (line − box) / 2 below the first text line's top (§9.2).
+   * The checkbox is the shared `.zen-v2-checkbox` (§9.34), one unlayered rule in main.css beside
+   * the radio – with its §9.2 offset, its disabled .4 and the dependent check row's exception
+   * (§9.30: the row's content carries the .4, the box inside it stays at 1 so it does not
+   * compound to .16) – so nothing here restates it; the row that toggles it is this one.
    */
-  .zen-v2-checkbox {
-    appearance: none;
-    flex-shrink: 0;
-    width: var(--v2-checkbox);
-    height: var(--v2-checkbox);
-    margin: calc((var(--v2-line-body) - var(--v2-checkbox)) / 2) 0 0;
-    border: 1px solid rgb(var(--v2-text-rgb) / 0.3);
-    border-radius: var(--v2-radius-checkbox);
-    background: var(--v2-page);
-    display: grid;
-    place-items: center;
-    transition:
-      background 120ms var(--zen-ease),
-      border-color 120ms var(--zen-ease);
-  }
-  @media (hover: hover) {
-    .zen-v2-checkbox:hover:not(:disabled) {
-      background: var(--v2-fill);
-    }
-  }
-  .zen-v2-checkbox:checked {
-    background: var(--v2-accent);
-    border-color: var(--v2-accent);
-  }
-  .zen-v2-checkbox:checked::after {
-    content: '';
-    width: calc(var(--v2-checkbox) - 4px);
-    height: calc(var(--v2-checkbox) - 4px);
-    background: var(--v2-on-accent);
-    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E")
-      center / contain no-repeat;
-  }
-  .zen-v2-checkbox:disabled {
-    opacity: 0.4;
-  }
   .zen-v2-check-row {
     cursor: default;
-  }
-  /*
-   * A disabled check row is a dependent row (§9.30): the one number, opacity .4, on the row's
-   * text and control together, laid out at full size, with no ink swap on top. The .4 sits on
-   * the row's content and not on the row itself: the hairline above the row is its `border-top`
-   * and lines are structure (§0), so it keeps its full strength. The body carries the .4, so the
-   * box inside it does not compound to .16; a description already at 69% does. The row says
-   * `aria-disabled`, which is what keeps the primitive's hover and press fill off it (§9.30).
-   */
-  .zen-v2-check-row:has(.zen-v2-checkbox:disabled) > * {
-    opacity: 0.4;
-  }
-  .zen-v2-check-row .zen-v2-checkbox:disabled {
-    opacity: 1;
   }
 
   /*

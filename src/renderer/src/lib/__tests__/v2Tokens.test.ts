@@ -51,6 +51,11 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   ['.zen-dl-surface {', '@keyframes zen-dl-pop-out {'],
   // The bookmark chrome: bar, panels, star bubble, dialogs, manager (components/bookmarks/*).
   ['.zen-bm-bar {', '/*\n   * The first run on a phone'],
+  // The Android downloads sheet (components/downloads/DownloadsSheet.tsx): what its rows hold on
+  // the chassis and the shared row – glyph, name, status, progress track, the Keep / Delete
+  // footer – then its unlayered modifiers on the primitives. It follows the first run's block,
+  // whose span would enclose it, so it is cut out first.
+  ['.zen-downloads-main {', ' * Fading scroll edges'],
   // The phone first run (overlays/PhoneOnboarding.tsx, a window surface reading the §9.29
   // control roles). The gesture hint (phone/useGestureHint.ts) is a toast on the message cards
   // and the default-browser prompts (defaultbrowser/*) are the chassis' prompt composition:
@@ -401,7 +406,9 @@ describe('the v2 primitives (§9.34)', () => {
     '.zen-v2-icon-button',
     '.zen-v2-card-radio',
     '.zen-v2-switch',
-    '.zen-v2-radio'
+    '.zen-v2-radio',
+    // The checkbox (#93): the extensions UI's layered copy went with it.
+    '.zen-v2-checkbox'
   ]
 
   it('are one unlayered rule each, tokens only, with no layered or second copy', () => {

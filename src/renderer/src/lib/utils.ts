@@ -26,8 +26,8 @@ export function findCounter(
   return `${found ? result.activeMatchOrdinal : 0}/${found ? result.matches : 0}`
 }
 
-export function relativeTime(ts: number): string {
-  const diff = Date.now() - ts
+export function relativeTime(ts: number, now = Date.now()): string {
+  const diff = now - ts
   const minutes = Math.round(diff / 60_000)
   if (minutes < 1) return 'Just now'
   if (minutes < 60) return `${minutes} min ago`

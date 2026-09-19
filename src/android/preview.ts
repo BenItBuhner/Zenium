@@ -2,6 +2,7 @@ import type { ContentCover, Rect } from '@shared/types'
 import type { NativeBridge, NativeCall } from './bridge'
 import type { BootInfo } from './platform'
 import type { Platform } from '@shared/types'
+import { createPreviewDownloads } from './previewDownloads'
 
 interface HostGlobal {
   resolve(id: number, json: string | null): void
@@ -17,6 +18,8 @@ const RELOAD_DELAY_MS = 3000
 const PAGE_ROUTE = '/__zen/page/'
 /** Whether the preview "holds the browser role" (outside the file store: it is not profile data). */
 const DEFAULT_BROWSER_KEY = 'zen-preview-default-browser'
+/** Where the stand-in downloader says files go (`BootInfo.downloadsDir`). */
+const DOWNLOADS_DIR = '/Downloads'
 
 const hostGlobal = (): HostGlobal => (window as unknown as { __zenHost: HostGlobal }).__zenHost
 
@@ -97,8 +100,9 @@ export function postPreviewManifest(tabId: string, app: boolean): void {
 /**
  * A stand-in for the Kotlin host so the Android chrome can run in an ordinary desktop browser
  * (`npm run dev:android`): tab views are `<iframe>`s stacked above the chrome, persistence goes
- * to `localStorage`, dialogs use `window.confirm`. Handy for developing the mobile layout with
- * DevTools' device emulation; not a browser you would want to use.
+ * to `localStorage`, dialogs use `window.confirm`, downloads are played back by
+ * `previewDownloads.ts`. Handy for developing the mobile layout with DevTools' device emulation;
+ * not a browser you would want to use.
  */
 export function createPreviewBridge(): NativeBridge {
   const host = hostGlobal
@@ -181,7 +185,7 @@ export function createPreviewBridge(): NativeBridge {
       profiles: true,
       pinShortcuts: true,
       files,
-      downloadsDir: '/Downloads',
+      downloadsDir: DOWNLOADS_DIR,
       insets: { top: 0, right: 0, bottom: 0, left: 0 },
       fullscreen: false,
       environment: { largeScreen: false, pointerAndKeyboard: false, fontScale: 1 }
@@ -420,7 +424,7 @@ export function createPreviewBridge(): NativeBridge {
         return { ok: false, text: '' }
       }
     },
-    'download.open': () => undefined,
+    ...createPreviewDownloads(host, DOWNLOADS_DIR),
     'profile.clear': () => undefined,
     'profile.clearBrowsingData': () => undefined,
     // No jar or cache to measure in the preview, as on a device (the WebView cannot list cookies).
