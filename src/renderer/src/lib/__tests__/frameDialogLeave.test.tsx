@@ -180,9 +180,11 @@ describe('the frame dialog host keeps a panel for the way down (§11.1)', () => 
     rerender(<FrameDialogHost />)
     expect(host().hasAttribute('data-open')).toBe(false)
     await settle()
-    // Kept: the same node, back in the slot, inert and marked, before the first frame down.
+    // Kept: the same node, back in the slot, inert, hidden from assistive technology and
+    // marked, before the first frame down.
     expect(panel('picker')).toBe(node)
     expect(node.hasAttribute('inert')).toBe(true)
+    expect(node.getAttribute('aria-hidden')).toBe('true')
     expect(node.hasAttribute('data-leaving')).toBe(true)
     expect(recedeVar()).toBe('1.0000')
 

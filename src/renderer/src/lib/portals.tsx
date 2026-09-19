@@ -537,8 +537,10 @@ function useSheetChassis(
 
   /**
    * The slot's children changed: a panel taken out while the sheet is on its way down (nothing
-   * wanted up, something of it still showing) is kept, inert, where it stood – before any sheet
-   * on its own chassis, so it stays under one – until the landing drops it. A panel that moved
+   * wanted up, something of it still showing) is kept where it stood – before any sheet on its
+   * own chassis, so it stays under one – until the landing drops it: `inert` and `aria-hidden`
+   * (§9.22: it takes no press and no focus and is nothing to assistive technology), marked
+   * `data-leaving` (the marking the pointer host's kept panel carries too). A panel that moved
    * (still connected) or a sheet on its own chassis is not the host's to keep.
    */
   const retain = (records: MutationRecord[]): void => {
@@ -549,6 +551,7 @@ function useSheetChassis(
         if (!(node instanceof HTMLElement) || node.isConnected) continue
         if (node.hasAttribute('data-sheet-layer') || kept.current.includes(node)) continue
         node.setAttribute('inert', '')
+        node.setAttribute('aria-hidden', 'true')
         node.setAttribute('data-leaving', '')
         const ownSheet = [...slot.children].find((c) => c.hasAttribute('data-sheet-layer')) ?? null
         slot.insertBefore(node, ownSheet)
