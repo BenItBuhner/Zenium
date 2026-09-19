@@ -181,6 +181,20 @@ object Domains {
         return host.length > domain.length && host.endsWith(domain) && host[host.length - domain.length - 1] == '.'
     }
 
+    /** `host` and each parent domain, longest first (`a.b.example`, `b.example`, `example`); empty for "". */
+    fun suffixesOf(host: String): Array<String> {
+        if (host.isEmpty()) return emptyArray()
+        val out = ArrayList<String>(4)
+        var start = 0
+        while (true) {
+            out.add(if (start == 0) host else host.substring(start))
+            val dot = host.indexOf('.', start)
+            if (dot == -1) break
+            start = dot + 1
+        }
+        return out.toTypedArray()
+    }
+
     /**
      * Whether `url` is third party to `initiator` (an origin or URL). A request without an
      * initiator is first party (top-level navigations); one from a non-http(s) initiator is third party.

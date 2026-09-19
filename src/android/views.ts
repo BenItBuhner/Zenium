@@ -49,7 +49,12 @@ export interface ViewEventPayloads {
   stopLoading: ViewNavState
   /** `WebChromeClient.onProgressChanged`, throttled by Kotlin, as a fraction. */
   progress: { progress: number }
-  navigated: ViewNavState & { inPage: boolean }
+  /**
+   * A navigation committed. `document` is the tab's document generation (Kotlin's
+   * `BlockingTab.documentGeneration`), by which the extension runtime tells this document's
+   * request decisions from the last one's.
+   */
+  navigated: ViewNavState & { inPage: boolean; document?: number }
   title: { title: string }
   favicon: { url: string }
   /** A failed load; a refused certificate (`ERR_CERT_*`) comes with what the interstitial shows of it. */

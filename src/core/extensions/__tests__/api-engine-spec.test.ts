@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   CONTENT_SCRIPT_NAMESPACES,
+  ENGINE_NOOPS,
   ENGINE_SPEC,
+  ENGINE_STUB_RESULTS,
   engineApiSpec,
   namespaceGranted
 } from '../api/engineSpec'
@@ -78,6 +80,17 @@ describe('engineApiSpec', () => {
     for (const name of Object.keys(ENGINE_SPEC)) {
       const mv2Only = name === 'browserAction' || name === 'pageAction'
       expect(namespaceGranted(name, [name], mv2Only ? 2 : 3)).toBe(true)
+    }
+  })
+
+  it('lets every declarativeNetRequest member reach the host', () => {
+    // The host answers all of them from `core/extensions/dnr` (W2-3): a context-side no-op or
+    // stub here would silently swallow `setExtensionActionOptions` (the badge count) or answer
+    // `getMatchedRules` with nothing.
+    for (const method of Object.keys(ENGINE_SPEC.declarativeNetRequest.methods)) {
+      const key = `declarativeNetRequest.${method}`
+      expect(ENGINE_NOOPS.has(key), key).toBe(false)
+      expect(Object.prototype.hasOwnProperty.call(ENGINE_STUB_RESULTS, key), key).toBe(false)
     }
   })
 })
