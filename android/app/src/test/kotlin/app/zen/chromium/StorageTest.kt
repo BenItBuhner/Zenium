@@ -69,4 +69,32 @@ class StorageTest {
         assertEquals(File(dir, "ext_storage_x.json"), storage.fileFor("ext storage:x.json"))
         assertEquals("{}", storage.read("ext storage:x.json"))
     }
+
+    @Test
+    fun aCacheFileIsWrittenWholeReadBackAndDeletedWithoutAChangeNotification() {
+        val heard = ArrayList<String>()
+        val listener: (String) -> Unit = { heard.add(it) }
+        Storage.addChangeListener(listener)
+        try {
+            val bytes = ByteArray(4096) { (it * 7).toByte() }
+            assertNull(storage.readBytes("safebrowsing/tables.bin"))
+            assertTrue(storage.writeBytes("safebrowsing/tables.bin", bytes))
+            assertTrue(bytes.contentEquals(storage.readBytes("safebrowsing/tables.bin")!!))
+            assertFalse(File(dir, "safebrowsing/tables.bin.tmp").exists())
+            assertEquals(listOf("safebrowsing/tables.bin"), storage.list("safebrowsing"))
+            // A rewrite replaces the file whole.
+            assertTrue(storage.writeBytes("safebrowsing/tables.bin", ByteArray(3)))
+            assertEquals(3, storage.readBytes("safebrowsing/tables.bin")!!.size)
+            assertTrue(storage.deleteBytes("safebrowsing/tables.bin"))
+            assertNull(storage.readBytes("safebrowsing/tables.bin"))
+            assertTrue(storage.deleteBytes("safebrowsing/tables.bin"))
+            assertFalse(storage.writeBytes("../escape.bin", bytes))
+            assertFalse(storage.deleteBytes("../escape.bin"))
+            // A document's write is heard; the cache's never was.
+            storage.writeSync("safebrowsing/urlhaus.json", "{}")
+            assertEquals(listOf("safebrowsing/urlhaus.json"), heard)
+        } finally {
+            Storage.removeChangeListener(listener)
+        }
+    }
 }

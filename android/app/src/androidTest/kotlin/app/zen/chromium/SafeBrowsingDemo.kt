@@ -428,9 +428,10 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
      * the request carried (GPC, DNT, cookies) and what `navigator` says, `/cookies` a page with a
      * first-party cookie embedding a frame of another site, `/frame` that frame, which sets a
      * cross-site cookie and reports what it got back to its parent. A TLS handshake gets a
-     * plain-HTTP answer, so an https upgrade of any of these sites fails at once.
+     * plain-HTTP answer, so an https upgrade of any of these sites fails at once. The snapshot
+     * demo ([SafeBrowsingSnapshotDemo]) serves its sites from one too, on a port of its own.
      */
-    private class PrivacyDemoServer(private val port: Int) : Thread("safebrowsing-demo-server") {
+    internal class PrivacyDemoServer(private val port: Int) : Thread("safebrowsing-demo-server") {
         private val socket = ServerSocket(port, 16)
         @Volatile private var closed = false
 

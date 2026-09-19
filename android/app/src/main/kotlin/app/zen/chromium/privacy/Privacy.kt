@@ -54,12 +54,14 @@ class Privacy private constructor(
 
     // --- RequestPolicy (IO threads) --------------------------------------------------------------
 
-    override fun unsafe(url: String): SafeBrowsingHit? {
+    override fun unsafe(url: String, navigation: Boolean): SafeBrowsingHit? {
         val f = flags
         if (!f.safeBrowsing) return null
         val host = Domains.hostnameOf(url) ?: return null
         if (f.isBypassed(url)) return null
-        return safeBrowsing.tables.lookup(host)
+        // A navigation's check may be the process's first: that one waits for the tables (bounded).
+        val tables = if (navigation) safeBrowsing.tablesForNavigation() else safeBrowsing.tables
+        return tables.lookup(host)
     }
 
     override fun plaintextAllowed(url: String): Boolean = flags.plaintextAllowed(url)
