@@ -12,7 +12,7 @@ import {
   type RuleSetListener,
   type RuleSetSummary
 } from './rules'
-import { domainOf, hostMatchesDomain, hostnameOf, isThirdParty } from './domain'
+import { domainOf, hostnameOf, isThirdParty } from './domain'
 import { isNonUniqueHost } from '../../shared/nonUniqueHost'
 import {
   applyRegexSubstitution,
@@ -21,6 +21,18 @@ import {
   type UrlPredicate
 } from './urlFilter'
 import { countNetworkFilters } from './lists'
+import {
+  EVERY_URL,
+  RuleIndex,
+  RuleIndexBuilder,
+  hasDomainOf,
+  hostSuffixes,
+  regexSelector,
+  tokenize,
+  urlFilterSelector,
+  type IndexLookup,
+  type UrlSelector
+} from './ruleIndex'
 
 /**
  * What the platform's filter-text matcher answers for a request. `allow` means an exception
@@ -49,12 +61,25 @@ interface CompiledRule {
   effective: number
   rank: number
   rule: Rule
+  /**
+   * The rule's index in its set's `compiled` (resolution order: a stable sort of the set's own
+   * order by effective priority, then rank). On a full tie – equal effective priority and rank –
+   * the lower position wins, which is the rule the linear scan meets first; the index visits
+   * rules in bucket order and needs this to agree with it (and with the Kotlin engine).
+   */
+  position: number
+  /** `allowAllRequests`: kept apart by the index, matched against the document too. */
+  allowAll: boolean
+  /** How the index finds the rule from a URL (`ruleIndex.ts`). */
+  selector: UrlSelector
+  /** The last `decide` that visited the rule through an index (a rule under several buckets is visited once). */
+  seen: number
   url: UrlPredicate | null
   regex: RegExp | null
-  initiatorDomains: string[] | null
-  excludedInitiatorDomains: string[] | null
-  requestDomains: string[] | null
-  excludedRequestDomains: string[] | null
+  initiatorDomains: Set<string> | null
+  excludedInitiatorDomains: Set<string> | null
+  requestDomains: Set<string> | null
+  excludedRequestDomains: Set<string> | null
   excludedNonUniqueHosts: boolean
   resourceTypes: Set<ResourceType> | null
   excludedResourceTypes: Set<ResourceType> | null
@@ -68,13 +93,51 @@ interface CompiledRule {
 interface StoredSet {
   summary: RuleSetSummary
   rules: Rule[]
+  /** In resolution order; what `decideLinear` scans and `index` is built from. */
   compiled: CompiledRule[]
+  /** The set's index, or null while a large set's is still to be built (`decide` scans it then). */
+  index: RuleIndex<CompiledRule> | null
 }
 
+/**
+ * A matching rule's claim. `order` is where the linear scan would have met it – the set's place
+ * among the ordered sets above the rule's `position` – and breaks a full tie the way the scan
+ * does: the first met wins. A filter-text match is met after every structured rule (`Infinity`).
+ */
 interface Candidate {
   effective: number
   rank: number
+  order: number
   decision: Decision
+}
+
+/** A `modifyHeaders` rule that matched, with where the scan meets it. */
+interface HeaderCandidate {
+  rule: CompiledRule
+  order: number
+}
+
+/** `order` of a rule: `setIndex` above `position` (positions stay below 2^32). */
+const ORDER_BASE = 0x100000000
+
+/**
+ * Sets with at most this many rules are indexed on the spot; larger ones (an extension's static
+ * ruleset) keep answering through the linear scan while their index is built in slices on later
+ * ticks and swapped in (`buildIndexes` finishes every pending one now).
+ */
+const INDEX_INLINE_LIMIT = 2_000
+/** Milliseconds of index building per slice; decisions run in between. */
+const INDEX_SLICE_MS = 4
+/** Rules the builder advances between clock checks. */
+const INDEX_STEP_RULES = 256
+
+const now: () => number =
+  typeof performance !== 'undefined' ? () => performance.now() : () => Date.now()
+
+/** A pending index build for the set as it was when the build was queued. */
+interface IndexJob {
+  stored: StoredSet
+  builder: RuleIndexBuilder<CompiledRule>
 }
 
 /** Tie-break order inside one priority: allow > allowAllRequests > block > upgradeScheme > redirect. */
@@ -97,8 +160,8 @@ function effectivePriority(setPriority: number, rulePriority: number | undefined
 
 const TEXT_EFFECTIVE = effectivePriority(RULE_SET_PRIORITY.filterList, 1)
 
-function lower(list: string[] | undefined): string[] | null {
-  return list && list.length > 0 ? list.map((d) => d.toLowerCase()) : null
+function lower(list: string[] | undefined): Set<string> | null {
+  return list && list.length > 0 ? new Set(list.map((d) => d.toLowerCase())) : null
 }
 
 function set<T>(list: T[] | undefined): Set<T> | null {
@@ -110,17 +173,24 @@ function compileRule(setId: string, setPriority: number, rule: Rule): CompiledRu
   const caseSensitive = c.isUrlFilterCaseSensitive === true
   let url: UrlPredicate | null = null
   let regex: RegExp | null = null
+  let selector: UrlSelector = EVERY_URL
   if (c.regexFilter !== undefined) {
     regex = compileRegexFilter(c.regexFilter, caseSensitive)
     if (!regex) return null
+    selector = regexSelector(c.regexFilter)
   } else if (c.urlFilter) {
     url = compileUrlFilter(c.urlFilter, caseSensitive)
+    selector = urlFilterSelector(c.urlFilter, caseSensitive)
   }
   return {
     setId,
     effective: effectivePriority(setPriority, rule.priority),
     rank: RANK[rule.action.type] ?? 0,
     rule,
+    position: -1,
+    allowAll: rule.action.type === 'allowAllRequests',
+    selector,
+    seen: 0,
     url,
     regex,
     initiatorDomains: lower(c.initiatorDomains),
@@ -140,19 +210,51 @@ function compileRule(setId: string, setPriority: number, rule: Rule): CompiledRu
   }
 }
 
-/** Request facts computed once per `decide` call. */
-interface Facts {
-  url: string
-  host: string
-  initiatorHost: string
-  method: string
-  thirdParty: boolean
-  tabId: string | undefined
+/** Request facts computed once per `decide` call; also what the indexes are walked with. */
+class Facts implements IndexLookup {
+  readonly url: string
+  readonly type: ResourceType
+  readonly host: string
+  readonly initiatorHost: string
+  readonly method: string
+  readonly thirdParty: boolean
+  readonly tabId: string | undefined
+  /** The host and its parent domains: what a domain condition is looked up by. */
+  readonly hostSuffixes: string[]
+  readonly initiatorSuffixes: string[]
+  private urlTokens: number[] | null = null
+
+  constructor(ctx: RequestContext) {
+    const initiator = ctx.initiator ?? ctx.documentUrl
+    this.url = ctx.url
+    this.type = ctx.type
+    this.host = hostnameOf(ctx.url) ?? ''
+    this.initiatorHost = initiator ? (hostnameOf(initiator) ?? '') : ''
+    this.method = (ctx.method || 'GET').toLowerCase()
+    this.thirdParty = ctx.isThirdParty ?? isThirdParty(ctx.url, initiator)
+    this.tabId = tabIdFact(ctx)
+    this.hostSuffixes = hostSuffixes(this.host)
+    this.initiatorSuffixes = this.initiatorHost ? hostSuffixes(this.initiatorHost) : []
+  }
+
+  /** Tokens of the lowercased URL, for the token buckets; computed on first use. */
+  tokens(): number[] {
+    return (this.urlTokens ??= tokenize(this.url.toLowerCase()))
+  }
 }
 
-function matchesDomains(host: string, include: string[] | null, exclude: string[] | null): boolean {
-  if (exclude && exclude.some((d) => hostMatchesDomain(host, d))) return false
-  if (include) return include.some((d) => hostMatchesDomain(host, d))
+/**
+ * `hostMatchesDomain(host, d)` for some `d` of a set, as a membership test over the host's
+ * suffixes: a list of tens of thousands of domains (uBlock Origin Lite folds whole hosts files
+ * into one rule's `requestDomains`) costs as many lookups as the host has labels.
+ */
+function matchesDomains(
+  suffixes: readonly string[],
+  include: Set<string> | null,
+  exclude: Set<string> | null
+): boolean {
+  if (exclude && hasDomainOf(suffixes, exclude)) return false
+  if (include) return hasDomainOf(suffixes, include)
   return true
 }
 
@@ -165,11 +267,11 @@ function ruleMatches(r: CompiledRule, ctx: RequestContext, f: Facts): boolean {
   if (r.domainType === 'firstParty' && f.thirdParty) return false
   if (r.tabIds && (f.tabId === undefined || !r.tabIds.has(f.tabId))) return false
   if (r.excludedTabIds && f.tabId !== undefined && r.excludedTabIds.has(f.tabId)) return false
-  if (!matchesDomains(f.host, r.requestDomains, r.excludedRequestDomains)) return false
+  if (!matchesDomains(f.hostSuffixes, r.requestDomains, r.excludedRequestDomains)) return false
   if (r.excludedNonUniqueHosts && isNonUniqueHost(f.host)) return false
   if (r.initiatorDomains || r.excludedInitiatorDomains) {
     if (r.initiatorDomains && !f.initiatorHost) return false
-    if (!matchesDomains(f.initiatorHost, r.initiatorDomains, r.excludedInitiatorDomains))
+    if (!matchesDomains(f.initiatorSuffixes, r.initiatorDomains, r.excludedInitiatorDomains))
       return false
   }
   if (r.regex) return r.regex.test(f.url)
@@ -178,15 +280,27 @@ function ruleMatches(r: CompiledRule, ctx: RequestContext, f: Facts): boolean {
 }
 
 function factsFor(ctx: RequestContext): Facts {
-  const initiator = ctx.initiator ?? ctx.documentUrl
-  return {
-    url: ctx.url,
-    host: hostnameOf(ctx.url) ?? '',
-    initiatorHost: initiator ? (hostnameOf(initiator) ?? '') : '',
-    method: (ctx.method || 'GET').toLowerCase(),
-    thirdParty: ctx.isThirdParty ?? isThirdParty(ctx.url, initiator),
-    tabId: tabIdFact(ctx)
+  return new Facts(ctx)
+}
+
+/**
+ * Whether the URL's authority carries user information (`https://user@host/`): the desktop's
+ * `||host^` matcher is a regular expression over the URL that can meet the pattern in that part
+ * too, while the index looks the request host up. Such URLs, rare in what a request hook sees,
+ * take the linear scan.
+ */
+function hasUserInfo(url: string): boolean {
+  const at = url.indexOf('@')
+  if (at === -1) return false
+  let start = url.indexOf('://')
+  if (start === -1) return false
+  start += 3
+  for (let i = start; i < url.length; i++) {
+    const c = url.charCodeAt(i)
+    if (c === 47 || c === 63 || c === 35) return false // '/', '?', '#' end the authority
+    if (c === 64) return true
   }
+  return false
 }
 
 /**
@@ -265,6 +379,73 @@ function decisionFor(r: CompiledRule, f: Facts): Decision | null {
   }
 }
 
+/** The priority band (the set priority) an effective priority belongs to. */
+function bandOf(effective: number): number {
+  return Math.floor(effective / (RULE_PRIORITY_MAX + 1))
+}
+
+/**
+ * Whether a claim beats `best`: higher effective priority, then higher rank, then the lower
+ * `order` – the rule the linear scan meets first. The scan itself meets rules in `order`, so
+ * for it the last clause never fires; the index reaches them in bucket order and needs it.
+ */
+function better(effective: number, rank: number, order: number, best: Candidate): boolean {
+  if (effective !== best.effective) return effective > best.effective
+  if (rank !== best.rank) return rank > best.rank
+  return order < best.order
+}
+
+/**
+ * One `decide` in progress: the winner so far and the `modifyHeaders` rules met, fed by either
+ * path (the indexed lookup or the linear scan) in whatever order it reaches the rules.
+ */
+class Resolution {
+  best: Candidate | null = null
+  readonly headers: HeaderCandidate[] = []
+  private frameCtx: RequestContext | null | undefined
+  private frameFacts: Facts | null = null
+
+  constructor(
+    private readonly ctx: RequestContext,
+    readonly facts: Facts
+  ) {}
+
+  /**
+   * Whether the rule matches the request – or, for `allowAllRequests`, the document the request
+   * belongs to (everything under an excepted document is allowed).
+   */
+  matches(r: CompiledRule): boolean {
+    if (ruleMatches(r, this.ctx, this.facts)) return true
+    if (!r.allowAll) return false
+    if (this.frameCtx === undefined) {
+      this.frameCtx = frameContext(this.ctx)
+      this.frameFacts = this.frameCtx ? factsFor(this.frameCtx) : null
+    }
+    return (
+      this.frameCtx !== null &&
+      this.frameFacts !== null &&
+      ruleMatches(r, this.frameCtx, this.frameFacts)
+    )
+  }
+
+  /** A rule that matched, met at `order`. */
+  claim(r: CompiledRule, order: number): void {
+    if (r.rule.action.type === 'modifyHeaders') {
+      this.headers.push({ rule: r, order })
+      return
+    }
+    const decision = decisionFor(r, this.facts)
+    if (!decision) return
+    if (!this.best || better(r.effective, r.rank, order, this.best))
+      this.best = { effective: r.effective, rank: r.rank, order, decision }
+  }
+
+  /** Whether `set` can still change the outcome: a lower band cannot beat a definitive winner. */
+  worthScanning(set: StoredSet): boolean {
+    return !this.best || set.summary.priority >= bandOf(this.best.effective)
+  }
+}
+
 /**
  * The blocking engine: structured rules evaluated with declarativeNetRequest semantics plus an
  * optional platform text matcher for ABP filter lists (see `rules.ts` for the contract).
@@ -272,6 +453,13 @@ function decisionFor(r: CompiledRule, f: Facts): Decision | null {
  * Pure and synchronous. Persistence is a subscriber (`RuleSetStore`), so the engine never holds
  * on to filter text: `setRuleSet` compiles, notifies listeners (who see the text once) and keeps
  * only the summary.
+ *
+ * Decisions go through a per-set {@link RuleIndex} (`decide`); the linear scan of every rule is
+ * kept as `decideLinear`, the reference the index is tested against. Indexes are only built on
+ * an engine that decides – the first `decide` turns them on – so a host whose native engine
+ * decides (Android) compiles and persists sets without paying for them. A small set is indexed
+ * as it is set; a large one answers through the scan while its index is built in slices between
+ * decisions, then swapped in.
  */
 export class RuleEngine implements BlockingEngine {
   private readonly sets = new Map<string, StoredSet>()
@@ -279,6 +467,12 @@ export class RuleEngine implements BlockingEngine {
   private ordered: StoredSet[] | null = null
   private textMatcher: TextMatcher | null = null
   private readonly listeners = new Set<RuleSetListener>()
+  /** Whether sets get indexes: on from the first `decide`. */
+  private indexing = false
+  private readonly indexJobs: IndexJob[] = []
+  private indexTimer: ReturnType<typeof setTimeout> | null = null
+  /** Stamp of the current `decide`, marking the rules the index has visited for it. */
+  private stamp = 0
 
   /**
    * Add or replace a set. `options.persisted` registers a set whose text already lives on disk
@@ -295,6 +489,9 @@ export class RuleEngine implements BlockingEngine {
       if (c) compiled.push(c)
     }
     compiled.sort((a, b) => b.effective - a.effective || b.rank - a.rank)
+    compiled.forEach((c, i) => {
+      c.position = i
+    })
     const hasFilterText =
       input.filterText !== undefined ? input.filterText.length > 0 : Boolean(options.hasFilterText)
     const filterCount =
@@ -314,8 +511,10 @@ export class RuleEngine implements BlockingEngine {
     if (input.updatedAt !== undefined) summary.updatedAt = input.updatedAt
     if (input.attribution) summary.attribution = { ...input.attribution }
     if (input.partitions) summary.partitions = [...input.partitions]
-    this.sets.set(input.id, { summary, rules, compiled })
+    const stored: StoredSet = { summary, rules, compiled, index: null }
+    this.sets.set(input.id, stored)
     this.ordered = null
+    if (this.indexing) this.indexSet(stored)
     this.notify({
       kind: 'set',
       id: input.id,
@@ -329,6 +528,73 @@ export class RuleEngine implements BlockingEngine {
     if (!this.sets.delete(id)) return
     this.ordered = null
     this.notify({ kind: 'remove', id })
+  }
+
+  /**
+   * Finish every pending index build now. Tests call it to decide through the indexes of large
+   * sets deterministically; a host may before it measures.
+   */
+  buildIndexes(): void {
+    if (!this.indexing) this.startIndexing()
+    while (this.indexJobs.length > 0) this.advanceIndexJob(Infinity)
+    if (this.indexTimer !== null) {
+      clearTimeout(this.indexTimer)
+      this.indexTimer = null
+    }
+  }
+
+  /** How the rules of a set are indexed, for tests and diagnostics; undefined until it is indexed. */
+  indexOf(id: string): RuleIndex<CompiledRule> | null | undefined {
+    const stored = this.sets.get(id)
+    return stored ? stored.index : undefined
+  }
+
+  /** Turn indexing on: every set gets an index, small ones now and large ones in slices. */
+  private startIndexing(): void {
+    this.indexing = true
+    for (const stored of this.sets.values()) if (!stored.index) this.indexSet(stored)
+  }
+
+  private indexSet(stored: StoredSet): void {
+    if (stored.compiled.length <= INDEX_INLINE_LIMIT) {
+      stored.index = RuleIndex.build(stored.compiled)
+      return
+    }
+    this.indexJobs.push({ stored, builder: new RuleIndexBuilder(stored.compiled) })
+    this.scheduleIndexSlice()
+  }
+
+  private scheduleIndexSlice(): void {
+    if (this.indexTimer !== null) return
+    this.indexTimer = setTimeout(() => {
+      this.indexTimer = null
+      this.indexSlice()
+    }, 0)
+  }
+
+  /** Build for `INDEX_SLICE_MS`, then hand the tick back and continue on the next one. */
+  private indexSlice(): void {
+    const deadline = now() + INDEX_SLICE_MS
+    while (this.indexJobs.length > 0) {
+      this.advanceIndexJob(INDEX_STEP_RULES)
+      if (this.indexJobs.length > 0 && now() >= deadline) {
+        this.scheduleIndexSlice()
+        return
+      }
+    }
+  }
+
+  /** Advance the first pending build by `work` rules; drop it if its set was replaced meanwhile. */
+  private advanceIndexJob(work: number): void {
+    const job = this.indexJobs[0]
+    if (this.sets.get(job.stored.summary.id) !== job.stored) {
+      this.indexJobs.shift()
+      return
+    }
+    if (job.builder.step(work)) {
+      job.stored.index = job.builder.result
+      this.indexJobs.shift()
+    }
   }
 
   listRuleSets(): RuleSetSummary[] {
@@ -416,87 +682,100 @@ export class RuleEngine implements BlockingEngine {
     }
   }
 
+  /**
+   * Decide a request through the sets' indexes: each enabled set that applies, highest priority
+   * first, contributes the rules its index finds for the request, and the claim with the highest
+   * effective priority, then rank, then the earliest position wins – the same rule as
+   * {@link decideLinear}. A set whose index is not built yet is scanned.
+   */
   decide(ctx: RequestContext): Decision {
-    const f = factsFor(ctx)
-    let frameCtx: RequestContext | null | undefined
-    let frameFacts: Facts | null = null
-    let best: Candidate | null = null
-    const headerRules: CompiledRule[] = []
-
-    for (const stored of this.orderedSets()) {
+    if (!this.indexing) this.startIndexing()
+    // The `||host^` matcher can meet its host in the user information of a URL, where the index
+    // does not look: such requests (which Chromium's network stack does not make) are scanned.
+    if (hasUserInfo(ctx.url)) return this.decideLinear(ctx)
+    const resolution = new Resolution(ctx, factsFor(ctx))
+    const stamp = ++this.stamp
+    const ordered = this.orderedSets()
+    for (let i = 0; i < ordered.length; i++) {
+      const stored = ordered[i]
       if (!stored.summary.enabled || stored.compiled.length === 0) continue
       if (!appliesToPartition(stored.summary.partitions, ctx.partition)) continue
-      // Lower bands cannot beat a definitive winner from a higher band.
-      if (best && stored.summary.priority < Math.floor(best.effective / (RULE_PRIORITY_MAX + 1)))
-        break
-      for (const r of stored.compiled) {
-        const type = r.rule.action.type
-        // `allowAllRequests` matches the frame request itself or the document the request
-        // belongs to (everything under an excepted document is allowed).
-        let hit = ruleMatches(r, ctx, f)
-        if (!hit && type === 'allowAllRequests') {
-          if (frameCtx === undefined) {
-            frameCtx = frameContext(ctx)
-            frameFacts = frameCtx ? factsFor(frameCtx) : null
-          }
-          hit = frameCtx !== null && frameFacts !== null && ruleMatches(r, frameCtx, frameFacts)
-        }
-        if (!hit) continue
-        if (type === 'modifyHeaders') {
-          headerRules.push(r)
-          continue
-        }
-        const decision = decisionFor(r, f)
-        if (!decision) continue
-        const candidate = { effective: r.effective, rank: r.rank, decision }
-        if (
-          !best ||
-          candidate.effective > best.effective ||
-          (candidate.effective === best.effective && candidate.rank > best.rank)
-        ) {
-          best = candidate
-        }
+      if (!resolution.worthScanning(stored)) break
+      const index = stored.index
+      if (!index) {
+        this.scanSet(stored, i, resolution)
+        continue
       }
+      const base = i * ORDER_BASE
+      for (const r of index.allowAll)
+        if (resolution.matches(r)) resolution.claim(r, base + r.position)
+      index.forEachCandidate(resolution.facts, (r) => {
+        if (r.seen === stamp) return
+        r.seen = stamp
+        if (resolution.matches(r)) resolution.claim(r, base + r.position)
+      })
     }
+    return this.conclude(ctx, resolution)
+  }
 
+  /**
+   * The reference decision: every rule of every applicable set tested in order. What `decide`
+   * must agree with, rule for rule; slower by the size of the sets.
+   */
+  decideLinear(ctx: RequestContext): Decision {
+    const resolution = new Resolution(ctx, factsFor(ctx))
+    const ordered = this.orderedSets()
+    for (let i = 0; i < ordered.length; i++) {
+      const stored = ordered[i]
+      if (!stored.summary.enabled || stored.compiled.length === 0) continue
+      if (!appliesToPartition(stored.summary.partitions, ctx.partition)) continue
+      if (!resolution.worthScanning(stored)) break
+      this.scanSet(stored, i, resolution)
+    }
+    return this.conclude(ctx, resolution)
+  }
+
+  private scanSet(stored: StoredSet, setIndex: number, resolution: Resolution): void {
+    const base = setIndex * ORDER_BASE
+    for (const r of stored.compiled)
+      if (resolution.matches(r)) resolution.claim(r, base + r.position)
+  }
+
+  /** Weigh the text matcher's answer against the structured claims and apply header rules. */
+  private conclude(ctx: RequestContext, resolution: Resolution): Decision {
+    let best = resolution.best
     if (
       this.textMatcher &&
-      !(best && best.decision.action === 'allow' && best.effective >= TEXT_EFFECTIVE)
+      !(best && best.decision.action === 'allow' && best.effective >= TEXT_EFFECTIVE) &&
+      (!best || best.effective <= TEXT_EFFECTIVE)
     ) {
-      if (!best || best.effective <= TEXT_EFFECTIVE) {
-        const text = this.textMatcher.match(ctx)
-        if (text) {
-          const decision: Decision =
-            text.action === 'redirect' && text.redirectUrl
-              ? { action: 'redirect', redirectUrl: text.redirectUrl }
-              : { action: text.action === 'allow' ? 'allow' : 'block' }
-          decision.matched = { setId: TEXT_MATCH_SET_ID, filter: text.filter }
-          const rank = RANK[text.action] ?? 0
-          const candidate = { effective: TEXT_EFFECTIVE, rank, decision }
-          if (
-            !best ||
-            candidate.effective > best.effective ||
-            (candidate.effective === best.effective && candidate.rank > best.rank)
-          ) {
-            best = candidate
-          }
-        }
+      const text = this.textMatcher.match(ctx)
+      if (text) {
+        const decision: Decision =
+          text.action === 'redirect' && text.redirectUrl
+            ? { action: 'redirect', redirectUrl: text.redirectUrl }
+            : { action: text.action === 'allow' ? 'allow' : 'block' }
+        decision.matched = { setId: TEXT_MATCH_SET_ID, filter: text.filter }
+        const rank = RANK[text.action] ?? 0
+        // Met after every structured rule: a structured rule it ties with wins.
+        if (!best || better(TEXT_EFFECTIVE, rank, Infinity, best))
+          best = { effective: TEXT_EFFECTIVE, rank, order: Infinity, decision }
       }
     }
 
     if (best && best.decision.action !== 'allow') return best.decision
 
     const allowEffective = best ? best.effective : -1
-    const applicable = headerRules.filter((r) => r.effective > allowEffective)
+    const applicable = resolution.headers.filter((h) => h.rule.effective > allowEffective)
     if (applicable.length === 0) return best ? best.decision : ALLOW
-    applicable.sort((a, b) => b.effective - a.effective)
+    applicable.sort((a, b) => b.rule.effective - a.rule.effective || a.order - b.order)
     const requestHeaders: HeaderOp[] = []
     const responseHeaders: HeaderOp[] = []
-    for (const r of applicable) {
+    for (const { rule: r } of applicable) {
       if (r.rule.action.requestHeaders) requestHeaders.push(...r.rule.action.requestHeaders)
       if (r.rule.action.responseHeaders) responseHeaders.push(...r.rule.action.responseHeaders)
     }
-    const first = applicable[0]
+    const first = applicable[0].rule
     return {
       action: 'modifyHeaders',
       requestHeaders,
