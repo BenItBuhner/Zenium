@@ -35,7 +35,13 @@ import kotlin.math.roundToInt
  *     entry with two forward entries;
  *  5. the design gate: a hold on the bar's Back button opens the bar editor – the phone has no
  *     long-press history list (that is the desktop's) – so the full stack is read from the core
- *     (`tab.navigationEntries`, what such a list would draw) and nothing new is built here.
+ *     (`tab.navigationEntries`, what such a list would draw) and nothing new is built here;
+ *  6. a `zen://` page as the current entry: the tab goes on to an article and into Reader View
+ *     (`zen://reader?…`, the chrome's own document in the WebView's list as a `data:` item), is
+ *     closed from the quick menu and brought back with Undo: the host answered `restored: true`,
+ *     the restore was one `navigated` (no second copy of the page loaded on top), the URL shown
+ *     is the virtual one, the list has its three entries under their names, nothing was fetched;
+ *     then Back brings the article without a request.
  *
  * The pages come from a loopback server inside this process ([DemoServer]) with `max-age`
  * caching, so a page coming back without a request can be told from one fetched again
@@ -61,9 +67,10 @@ class NavSnapshotDemo : DemoHarness("nav-snapshot-demo-state.json", "nav-snapsho
                 "/one.html" to DemoServer.page("Page one", "<p id=\"next\"><a href=\"/two.html\">On to page two</a></p>${tint("#e3f2fd")}"),
                 "/two.html" to DemoServer.page("Page two", "<p id=\"next\"><a href=\"/three.html\">On to page three</a></p>${tint("#e8f5e9")}"),
                 "/three.html" to DemoServer.page("Page three", "<p>The top of a three-page stack.</p>${tint("#fff3e0")}"),
+                "/article.html" to DemoServer.page(ARTICLE_TITLE, ARTICLE_BODY),
                 "/other.html" to DemoServer.page("Another tab", "<p>Stays open while the demo's tab is closed.</p>")
             ),
-            cacheable = setOf("/one.html", "/two.html", "/three.html")
+            cacheable = setOf("/one.html", "/two.html", "/three.html", "/article.html")
         ).also { it.start() }
         try {
             runDemo()
@@ -92,6 +99,7 @@ class NavSnapshotDemo : DemoHarness("nav-snapshot-demo-state.json", "nav-snapsho
         undoRestores()
         backTwice()
         holdOnBack()
+        internalPageUndo()
         still("end")
         finding("\nend: ${describeActive()}")
         finding(if (failures == 0) "ALL CHECKS PASSED" else "$failures CHECK(S) FAILED")
@@ -114,25 +122,45 @@ class NavSnapshotDemo : DemoHarness("nav-snapshot-demo-state.json", "nav-snapsho
         expect("the core reads the same list synchronously: ${describe(core)}", urlsOf(core) == listOf(ONE, TWO, THREE) && core.optInt("index") == 2)
         val hostState = onMain { host.tabs.get(TAB)?.hostState() }
         expect("the hostState for it is there and under the cap (${hostState?.length ?: 0} chars of ${NavigationState.HOST_STATE_MAX})", hostState != null && hostState.length <= NavigationState.HOST_STATE_MAX)
-        expect("each page was fetched once (${hitsLine()})", hits() == listOf(1, 1, 1))
+        expect("each page was fetched once (${hitsLine()})", hits() == listOf(1, 1, 1, 0))
         still("stack-of-three")
     }
 
     /** 2. A hold on the Tabs button, a touch on Close Tab: the tab goes, the toast offers Undo. */
     private fun closeFromQuickMenu() {
         finding("\n2. Close Tab from the Tabs button's quick menu")
+        closeActiveTabFromQuickMenu("Closed Page three", "quick-menu")
+        still("closed-toast")
+    }
+
+    /**
+     * The touches that close the active tab ([TAB]): a hold on the Tabs button for its quick
+     * menu (a still of it as `menuStill`), a touch on Close Tab; then the toast, which has to
+     * read `toastText` and offer Undo, and another tab on screen. The host's mirror of the tab's
+     * state is described as the tab goes: what the core is about to pick up for the snapshot,
+     * and how long ago the view refreshed it.
+     */
+    private fun closeActiveTabFromQuickMenu(toastText: String, menuStill: String) {
         val tabs = tabsButton() ?: error("no Tabs button on the bar")
         val opened = holdUntil(tabs, "the Tabs button") { inDom(QUICK_MENU) }
         expect("a hold on Tabs opens its quick menu", opened)
         // The menu pops in over a few frames: the still once its rows are at rest.
         val closeTab = steadyRect { textRect("$QUICK_MENU-item", "Close Tab") }
-        still("quick-menu")
+        still(menuStill)
+        finding("  ${mirrorLine()}")
         val closed = touchUntil("Close Tab in the quick menu", { closeTab ?: steadyRect { textRect("$QUICK_MENU-item", "Close Tab") } }, { !tabExists(TAB) })
         expect("the touch on Close Tab closes the tab at once", closed)
         val toast = awaitToast("Closed ")
-        expect("the toast reads 'Closed Page three' with Undo: '${toast.orEmpty()}'", toast == "Closed Page three" && awaitRect({ undoRect() }, 3_000) != null)
+        expect("the toast reads '$toastText' with Undo: '${toast.orEmpty()}'", toast == toastText && awaitRect({ undoRect() }, 3_000) != null)
         expect("another tab is on screen meanwhile: ${activeTabId()}", activeTabId() == OTHER)
-        still("closed-toast")
+    }
+
+    /** The host's mirror of the demo tab's state at this moment: its size and its age, or its absence. */
+    private fun mirrorLine(): String {
+        val state = host.navigation.hostState(TAB)
+        val age = host.navigation.stateAge(TAB)
+        return if (state == null || age == null) "the host's mirror holds no state for the tab"
+        else "the host's mirror holds the tab's state: ${state.length} chars, refreshed $age ms ago"
     }
 
     /** 3. Undo: the tab comes back with its list rebuilt from the host's state, page three from the cache. */
@@ -194,6 +222,70 @@ class NavSnapshotDemo : DemoHarness("nav-snapshot-demo-state.json", "nav-snapsho
             expect("the system back closes the editor", awaitDom("!document.querySelector('$BAR_EDITOR')", 8_000))
             SystemClock.sleep(1_000)
         }
+    }
+
+    /**
+     * 6. A `zen://` page as the current entry. The tab (on page one, two forward entries) goes on
+     * to the article and into Reader View through the core (`tab.navigate`, `reader.toggle`: the
+     * page that is under test is the internal one, not the way there), which puts the chrome's
+     * document in the WebView's list as a `data:` item shown as `zen://reader?…`. Then the
+     * touches: Close Tab from the quick menu, Undo on the toast, Back on the bar. Undo has to be
+     * one restore and nothing on top of it: were the host to answer `restored: false` with the
+     * list already rebuilt, the core's `loadURL` -> `loadHtml` would land a second copy of the
+     * page (a fourth entry, a second `navigated`, the shown URL the `data:` one on the way).
+     */
+    private fun internalPageUndo() {
+        finding("\n6. A zen:// page (Reader View) as the current entry: close, Undo, Back")
+        coreInvoke("tab.navigate", JSONObject().put("tabId", TAB).put("input", ARTICLE).toString())
+        expect("the article loads", awaitLoaded(ARTICLE))
+        SystemClock.sleep(1_500)
+        var list = hostList()
+        expect("the list is page one and the article, the article current (the forward entries gone): ${describe(list)}", urlsOf(list) == listOf(ONE, ARTICLE) && list?.optInt("index") == 1)
+        val fetched = hits()
+
+        coreInvoke("reader.toggle", JSONObject().put("tabId", TAB).toString())
+        val entered = awaitLoadedWhere { it.startsWith(READER_PREFIX) }
+        val reader = onMain { host.tabs.get(TAB)?.url }.orEmpty()
+        expect("Reader View opens as the current entry, shown as $reader", entered && reader.startsWith(READER_PREFIX))
+        settle()
+        list = hostList()
+        expect("the host's list names it by that URL, third of three: ${describe(list)}", urlsOf(list) == listOf(ONE, ARTICLE, reader) && list?.optInt("index") == 2)
+        val core = coreList()
+        expect("so does the core's: ${describe(core)}", urlsOf(core) == listOf(ONE, ARTICLE, reader) && core.optInt("index") == 2)
+        val hostState = onMain { host.tabs.get(TAB)?.hostState() }
+        expect("the hostState for it, the reader document inside, is there and under the cap (${hostState?.length ?: 0} chars of ${NavigationState.HOST_STATE_MAX})", hostState != null && hostState.length <= NavigationState.HOST_STATE_MAX)
+        expect("the reader page fetched nothing (${hitsLine()})", hits() == fetched)
+        still("reader-view")
+
+        expect("the chrome's view events can be counted", countNavigations())
+        closeActiveTabFromQuickMenu("Closed $ARTICLE_TITLE", "reader-quick-menu")
+        val navigatedBefore = navigations()
+        expect("the touch on Undo takes", undo())
+        expect("the tab is back", awaitTab(TAB, exists = true))
+        expect("and active", awaitUntil(8_000) { activeTabId() == TAB })
+        expect("on the reader page", awaitLoadedWhere { it.startsWith(READER_PREFIX) })
+        settle()
+        val restored = onMain { host.tabs.get(TAB)?.lastRestore }
+        expect("the host answered restored: true (the list rebuilt from hostState, the internal entry matched by its document)", restored == true)
+        val navigated = navigations() - navigatedBefore
+        expect("the restore was one navigated event for the tab, no second copy of the page: $navigated (${navigationUrls()})", navigated == 1)
+        val shown = onMain { host.tabs.get(TAB)?.url }
+        expect("the URL shown is the virtual one: $shown", shown == reader)
+        expect("and the core's tab is on it: ${activeCoreTab()?.optString("url")}", activeCoreTab()?.optString("url") == reader)
+        list = hostList()
+        expect("the host's list is the same three entries under their names, the reader page current: ${describe(list)}", urlsOf(list) == listOf(ONE, ARTICLE, reader) && list?.optInt("index") == 2)
+        val coreAfter = coreList()
+        expect("so is the core's: ${describe(coreAfter)}", urlsOf(coreAfter) == listOf(ONE, ARTICLE, reader) && coreAfter.optInt("index") == 2)
+        expect("nothing was fetched for the restore (${hitsLine()})", hits() == fetched)
+        still("reader-undone")
+        awaitToastGone()
+
+        expect("Back brings the article", pressBack(ARTICLE))
+        SystemClock.sleep(1_500)
+        expect("without a request (${hitsLine()})", hits() == fetched)
+        list = hostList()
+        expect("the list stands at the article with the reader page ahead: ${describe(list)}", urlsOf(list) == listOf(ONE, ARTICLE, reader) && list?.optInt("index") == 1)
+        still("back-to-article")
     }
 
     // --- moves -----------------------------------------------------------------------------------
@@ -449,16 +541,40 @@ class NavSnapshotDemo : DemoHarness("nav-snapshot-demo-state.json", "nav-snapsho
     }
 
     /** Whether the demo tab's WebView comes to show `url`, loaded, in time. */
-    private fun awaitLoaded(url: String, timeoutMs: Long = 20_000): Boolean {
+    private fun awaitLoaded(url: String, timeoutMs: Long = 20_000): Boolean = awaitLoadedWhere(timeoutMs) { it == url }
+
+    /** Whether the demo tab's WebView comes to show a URL `accepted` takes, loaded, in time. */
+    private fun awaitLoadedWhere(timeoutMs: Long = 20_000, accepted: (String) -> Boolean): Boolean {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
+        var last = ""
         while (SystemClock.uptimeMillis() < deadline) {
             val (current, progress) = onMain { host.tabs.get(TAB).let { (it?.url ?: "") to (it?.progress ?: 0) } }
-            if (current == url && progress == 100) return true
+            if (accepted(current) && progress == 100) return true
+            last = current
             SystemClock.sleep(250)
         }
-        Log.w(tag, "gave up waiting for $url")
+        Log.w(tag, "gave up waiting for a page; the tab shows '$last'")
         return false
     }
+
+    /**
+     * Count the `navigated` events the host delivers to the chrome for the demo tab from now on
+     * (the wrapper on `__zenHost.viewEvent` the chrome's core hears through), skipping the
+     * in-page ones; true once it is in place. What [navigations] and [navigationUrls] read.
+     */
+    private fun countNavigations(): Boolean = jsString(
+        "(function(){if(window.__demoNav)return 'yes';var h=window.__zenHost;if(!h||typeof h.viewEvent!=='function')return '';" +
+            "var orig=h.viewEvent;window.__demoNav=[];h.viewEvent=function(tabId,name,json){" +
+            "if(name==='navigated'&&tabId===${JSONObject.quote(TAB)}){try{var p=JSON.parse(json);if(!p.inPage)window.__demoNav.push(String(p.url))}catch(e){}}" +
+            "return orig.call(h,tabId,name,json)};return 'yes'})()"
+    ) == "yes"
+
+    /** How many document navigations the chrome has heard of for the demo tab since [countNavigations]. */
+    private fun navigations(): Int = jsString("(function(){return String((window.__demoNav||[]).length)})()").toIntOrNull() ?: -1
+
+    /** The URLs of those navigations, newest last, for the findings. */
+    private fun navigationUrls(): String =
+        jsString("(function(){return (window.__demoNav||[]).map(function(u){return u.length>60?u.slice(0,60)+'…':u}).join(' | ')})()")
 
     /** The host's list for the demo tab (`navigationEntries()` on its WebView), null without a WebView. */
     private fun hostList(): JSONObject? = onMain { host.tabs.get(TAB)?.navigationEntries() }
@@ -474,10 +590,10 @@ class NavSnapshotDemo : DemoHarness("nav-snapshot-demo-state.json", "nav-snapsho
     private fun describe(list: JSONObject?): String =
         if (list == null) "no list" else "${urlsOf(list).map { it.substringAfterLast('/') }} at ${list.optInt("index", -1)}"
 
-    /** The server's requests so far for pages one, two and three. */
-    private fun hits(): List<Int> = listOf(server.hits("/one.html"), server.hits("/two.html"), server.hits("/three.html"))
+    /** The server's requests so far for pages one, two, three and the article. */
+    private fun hits(): List<Int> = listOf(server.hits("/one.html"), server.hits("/two.html"), server.hits("/three.html"), server.hits("/article.html"))
 
-    private fun hitsLine(): String = hits().let { "one ${it[0]}, two ${it[1]}, three ${it[2]}" }
+    private fun hitsLine(): String = hits().let { "one ${it[0]}, two ${it[1]}, three ${it[2]}, article ${it[3]}" }
 
     // --- the core's state ------------------------------------------------------------------------
 
@@ -514,6 +630,19 @@ class NavSnapshotDemo : DemoHarness("nav-snapshot-demo-state.json", "nav-snapsho
         private const val ONE = "$ORIGIN/one.html"
         private const val TWO = "$ORIGIN/two.html"
         private const val THREE = "$ORIGIN/three.html"
+        private const val ARTICLE = "$ORIGIN/article.html"
+        /** Where the core's Reader View pages live (`zen://reader?id=…&url=…`). */
+        private const val READER_PREFIX = "zen://reader"
+        private const val ARTICLE_TITLE = "The long read"
+        /** Enough of an article for Readability to make a reader page of it (its threshold is 500 characters of text). */
+        private val ARTICLE_BODY = """
+            <article>
+            <p>The Undo on a closed tab's toast used to bring the page back on its own, without the pages behind it: a tab restored by Undo or from Recently closed had no back/forward stack, because the core kept only the URL of the page on screen and the WebView that showed it was gone.</p>
+            <p>The navigation snapshot changes that. The host keeps the WebView's list current for the core with every commit, hands over the state a fresh WebView rebuilds the whole list from when the core records a stack, and rebuilds it on the way back, so the pages behind the one on screen are there again and come back without a request.</p>
+            <p>A page of the chrome's own, like this reader page, sits in that list as its document rather than as an address on the network. Restored, it has to be one document under its own name, not a second copy loaded on top of the first, which is what this scene watches for.</p>
+            <p>The pages here are served from inside the test process and may be cached for an hour, so a page coming back from the list can be told from one fetched again.</p>
+            </article>${tint("#f3e5f5")}
+        """.trimIndent()
         private const val TAB = "tab_demo"
         private const val OTHER = "tab_other"
         private const val QUICK_MENU = ".zen-quick-menu"
