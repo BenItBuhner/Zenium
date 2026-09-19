@@ -67,7 +67,8 @@ const DESKTOP: HostCapabilities = {
   newTabPage: true,
   pageTabs: false,
   pinShortcuts: false,
-  translate: true
+  translate: true,
+  voiceSearch: false
 }
 
 /**
@@ -108,7 +109,8 @@ const ANDROID: HostCapabilities = {
   pageTabs: true,
   // Kotlin's boot info turns this on where the launcher can pin (ShortcutManagerCompat).
   pinShortcuts: false,
-  translate: true
+  translate: true,
+  voiceSearch: false
 }
 
 function memoryIo(): StoreIO {
@@ -357,6 +359,7 @@ describe('the app menu', () => {
   it('on a phone keeps the page and library items in their desktop order', () => {
     expect(appMenu(harness(ANDROID, 'phone'))).toEqual([
       'New Tab',
+      'New Private Tab',
       'New Space…',
       '-',
       'Bookmarks',
@@ -386,6 +389,22 @@ describe('the app menu', () => {
       '-',
       'About Zenium 1.2.3'
     ])
+  })
+
+  it('offers private tabs where the host keeps the private session in tabs', () => {
+    // Private windows: the private entry is the window, as on desktop.
+    expect(appMenu(harness(DESKTOP))).not.toContain('New Private Tab')
+    expect(appMenu(harness({ ...ANDROID, privateTabs: false }, 'phone'))).not.toContain(
+      'New Private Tab'
+    )
+    const h = harness(ANDROID, 'phone')
+    expect(appMenu(h)).toContain('New Private Tab')
+    // Nothing to close until a private tab is open.
+    expect(appMenu(h)).not.toContain('Close Private Tabs')
+    h.browser.handleCommand(h.win, 'tab.newPrivate', {})
+    expect(appMenu(h)).toContain('Close Private Tabs')
+    h.browser.handleCommand(h.win, 'tab.closePrivate', undefined)
+    expect(appMenu(h)).not.toContain('Close Private Tabs')
   })
 
   it('on a phone follows the capabilities, not the platform name', () => {

@@ -90,6 +90,17 @@ export type PreviewState =
       /** Text of an item in the menu to scroll into view once it is open. */
       show?: string
     }
+  | {
+      /** The active page asks for a permission (`prompt=<permission>`; the security dialogs' `prompt=` values are `kind: 'prompt'`). */
+      kind: 'permission'
+      /** The permission the active page asks for (`camera`, `notifications`, `geolocation`, …). */
+      permission: string
+    }
+  | {
+      kind: 'private'
+      /** The page the private tab opens on; null for a blank one. */
+      url: string | null
+    }
   | { kind: 'find'; text: string }
   | {
       kind: 'pull'
@@ -140,6 +151,15 @@ export type PreviewState =
       /** `http-auth`: the credentials travel over TLS (no unencrypted-password notice). */
       secure: boolean
     }
+  | {
+      /**
+       * Voice search started from the active tab, the stand-in recogniser playing `script` back
+       * (`previewVoiceScript` in preview.ts: `listening`, `partial`, `no-match`, `network`,
+       * `busy`, `denied`, `denied-permanently`, `unavailable`, or the default run to a result).
+       */
+      kind: 'voice'
+      script: string
+    }
 
 /** More sample banners than the stack holds are pointless. */
 const MAX_PREVIEW_BANNERS = 3
@@ -178,7 +198,9 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * one of PREVIEW_OVERLAYS (with `section=<id>` for an overlay that has sections, `show=<text>`
  * to scroll a row of the overlay into view, and `expand` to rest a sheet that opened at its peek
  * detent on its expanded one), `menu=app` for the app menu sheet (with `show=<text>` to scroll an
- * item into view), `find=<text>` for the find bar with that text typed (`find=` opens it empty),
+ * item into view), `prompt=<permission>` for the active page asking for that permission (the
+ * prompt sheet), `private=new` for a blank private tab (`private=<url>` opens one on that page),
+ * `find=<text>` for the find bar with that text typed (`find=` opens it empty),
  * `pull=<n>` for the active page held pulled down at n percent of the refresh threshold
  * (`pull=refresh` pulls past it and lets go), `zoom=<factor>` for the page zoom sheet with the
  * active tab's site at that factor (`zoom=` opens it as it is), `error=<code>` for the active
@@ -192,10 +214,13 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * `mime=<type>`), `popups=<n>` for n pop-ups blocked on the active page (`&list` opens the list
  * of them, `&allowed` remembers the site as allowed), or `prompt=http-auth` /
  * `prompt=certificate` for a security dialog over the page (`&failed`, `&proxy`, `&secure` vary
- * the sign-in). When several are given, `page` wins over `overlay`, `overlay` over `menu`, `menu`
- * over `find`, `find` over `pull`, `pull` over `zoom`, `zoom` over `error`, `error` over the
- * messages, the messages over `webapp`, `webapp` over `download`, `download` over `popups`, and
- * `popups` over `prompt`. A leading `#` (the URL hash as read) is ignored.
+ * the sign-in); `prompt=<any other value>` is the permission that page asks for (the permission
+ * prompt sheet), and `private=new|<url>` opens a private tab. When several are given, `page`
+ * wins over `overlay`, `overlay` over `menu`, `menu` over the permission `prompt`, that over
+ * `private`, `private` over `find`, `find` over `pull`, `pull` over `zoom`, `zoom` over `error`,
+ * `error` over the messages, the messages over `webapp`, `webapp` over `download`, `download`
+ * over `popups`, and `popups` over the security `prompt`. A leading `#` (the URL hash as read)
+ * is ignored.
  */
 export function parsePreviewSpec(spec: string): PreviewState {
   const params = new URLSearchParams(spec.startsWith('#') ? spec.slice(1) : spec)
@@ -231,6 +256,15 @@ export function parsePreviewSpec(spec: string): PreviewState {
   if (params.get('menu') === 'app') {
     const show = params.get('show')
     return show ? { kind: 'menu', show } : { kind: 'menu' }
+  }
+  // `prompt=` names a permission the page asks for, unless it names one of the security dialogs
+  // (`http-auth`, `certificate`), which come up last in this order (below).
+  const prompt = params.get('prompt')
+  const securityPrompt = prompt === 'http-auth' || prompt === 'certificate'
+  if (prompt && !securityPrompt) return { kind: 'permission', permission: prompt }
+  const priv = params.get('private')
+  if (priv !== null && priv !== '') {
+    return { kind: 'private', url: /^https?:\/\//.test(priv) ? priv : null }
   }
   const find = params.get('find')
   if (find !== null) return { kind: 'find', text: find }
@@ -280,7 +314,6 @@ export function parsePreviewSpec(spec: string): PreviewState {
     const count = Math.min(PREVIEW_POPUPS_MAX, Math.max(0, Math.floor(Number(popups))))
     return { kind: 'popups', count, list: params.has('list'), allowed: params.has('allowed') }
   }
-  const prompt = params.get('prompt')
   if (prompt === 'http-auth' || prompt === 'certificate') {
     return {
       kind: 'prompt',
@@ -290,6 +323,8 @@ export function parsePreviewSpec(spec: string): PreviewState {
       secure: params.has('secure')
     }
   }
+  const voice = params.get('voice')
+  if (voice !== null) return { kind: 'voice', script: voice || 'heard' }
   return { kind: 'idle' }
 }
 

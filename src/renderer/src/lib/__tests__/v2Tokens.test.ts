@@ -61,6 +61,10 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // and the default-browser prompts (defaultbrowser/*) are the chassis' prompt composition:
   // neither has rules of its own.
   [' * The first run on a phone', ' * Fading scroll edges'],
+  // Settings > Privacy and Security (components/overlays/PrivacySection.tsx) and the URL bar's
+  // blocked-count chip (components/urlbar/BlockedChip.tsx). Its block sits between the find
+  // bar's and the Default Browser range, so it is cut out before the find bar's, which ends there.
+  ['.zen-privacy {', '/*\n * Settings → Default Browser and the'],
   // Find in page, zoom and fullscreen: the docked find bar (components/content/FindBar.tsx).
   ['.zen-find-bar {', '/*\n * Settings → Default Browser and the'],
   // The phone page zoom sheet, docked under the live page, and its own instance of the stepper
@@ -131,7 +135,20 @@ const V2_FILES: ReadonlyArray<string> = [
   'components/sidebar/SidebarTop.tsx',
   'components/sidebar/SpacePanel.tsx',
   // Site information (#39): the connection state's ok / warn / danger ink on its glyphs and values.
-  'components/siteinfo/SiteInfoSheet.tsx'
+  'components/siteinfo/SiteInfoSheet.tsx',
+  // Site controls (#135), a v2 surface: the shared glyph size and stroke (`V2_GLYPH`); the
+  // desktop popover, dialog and pane primitives' metrics and inks; the Settings panes' card
+  // padding and deemphasised ink; the builder rows' glyph ink; the pill's private badge in the
+  // window family's control roles (§9.19, §9.29).
+  'components/v2/controls.tsx',
+  'components/siteControls/primitives.tsx',
+  'components/siteControls/pane.tsx',
+  'components/siteControls/SiteInfoPopover.tsx',
+  'components/siteControls/ClearBrowsingDataDialog.tsx',
+  'components/siteControls/settingsRows.tsx',
+  'components/overlays/SiteSettingsSection.tsx',
+  'components/overlays/SafetyCheckSection.tsx',
+  'components/phone/PhoneShell.tsx'
 ]
 
 /** The text of the first `selector {` block found after `from`. */
@@ -561,5 +578,23 @@ describe('the fullscreen hint palette', () => {
       expect(palette.text).toBe(value(selector, from, '--v2-text'))
       expect(palette.fill).toBe(value(selector, from, '--v2-fill'))
     }
+  })
+})
+
+describe('live counts (§4)', () => {
+  it('are tabular wherever the request engine writes one, through the slot the count sits in', () => {
+    // "1,284 requests", "116,161 filters", "Updated 2 h ago": a count that changes under the
+    // user must not reflow its row. On a phone the counts sit in the Settings tab's value slot
+    // and group description; on desktop in the pane's card title, detail line and row
+    // descriptions; in the URL bar the chip's badge inherits it from the chip.
+    for (const selector of [
+      '.zen-settings-description',
+      '.zen-settings-group-description',
+      '.zen-privacy-card-title',
+      '.zen-privacy-muted',
+      '.zen-privacy-row-desc',
+      '.zen-v2-blocked-chip'
+    ])
+      expect(block(selector), selector).toMatch(/^ {2}font-variant-numeric: tabular-nums;$/m)
   })
 })

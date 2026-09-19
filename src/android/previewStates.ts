@@ -1,4 +1,5 @@
 import type { CertificateDetails, ClientCertificateInfo, Tab, UIState } from '@shared/types'
+import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import type { Browser } from '@core/browser'
 import { isCertificateError } from '@shared/siteInfo'
 import { run } from '@renderer/lib/api'
@@ -26,8 +27,23 @@ import {
   showBanner,
   uiStore
 } from '@renderer/lib/ui'
+import {
+  customListId,
+  DEFAULT_FILTER_LISTS,
+  enabledListsFor,
+  siteOriginOf,
+  type BlockingStatus,
+  type FilterListStatus,
+  type TrackingLevel
+} from '@shared/blocking'
+import { cancelVoiceSearch, startVoiceSearch } from '@renderer/lib/voiceSearch'
 import type { HostGlobal } from './boot'
-import { PREVIEW_WEB_APP, postPreviewManifest } from './preview'
+import {
+  PREVIEW_VOICE_EVENT,
+  PREVIEW_WEB_APP,
+  postPreviewManifest,
+  previewVoiceScript
+} from './preview'
 import { PREVIEW_DOWNLOAD_EVENT } from './previewDownloads'
 import {
   parsePreviewSeed,
@@ -44,6 +60,10 @@ const STEP_SETTLE_MS = 450
 const SHEET_SURFACE = /^settings-(options|field|confirm|form|item):/
 /** How long a dismissed sheet may take to leave (its motion) before the reset gives up on it. */
 const SHEET_LEAVE_MS = 1500
+/** How long a seeded state may take to arrive in the store before the spec is reported reached anyway. */
+const SETTLE_TIMEOUT_MS = 4000
+/** Past a voice script's last event: the listening sheet's halo spring settling on the level. */
+const VOICE_EVENT_MARGIN_MS = 250
 
 /**
  * Chrome states selectable from outside the preview host (`npm run dev:android`), so screenshots
@@ -56,21 +76,29 @@ const SHEET_LEAVE_MS = 1500
  * downloads, addons, …: the chrome overlays a phone still has – Settings is not one, it is
  * `page=settings`; `show=<text>` scrolls the row with that text into view, `expand` rests a
  * sheet on its expanded detent), `menu=app` (the app menu sheet; `show=<text>` scrolls an item
- * into view), `find=<text>` (the find bar with that text typed), `pull=<n>` (the page held pulled
- * down at n percent of the refresh threshold; `pull=refresh` lets go past it), `zoom=<factor>`
- * (the page zoom sheet at that factor), `error=<code>` (the active tab's load failed with that
- * Chromium `net::` code, `url=<target>` naming the URL that failed: the zen://error page is up),
- * the message surfaces and the load bar: `toast=<text>&action=<label>`, `banners=<n>`,
- * `progress=<0…1>`, `webapp=<surface>` (an "Add to Home screen" surface on the active tab),
- * `download=<file>` (the stand-in downloader starts that transfer; see `PreviewDownloadSpec`),
- * `popups=<n>` (n pop-ups blocked on the page; `&list` opens the list, `&allowed` remembers the
- * site) or `prompt=http-auth` / `prompt=certificate` (a security dialog over the page;
- * `&failed`, `&proxy`, `&secure`). `rules=<n>` on any spec seeds n remembered site permissions
- * for Settings › Security. It comes in as the URL hash,
- * `http://localhost:41734/#overlay=history`, or as
+ * into view), `prompt=<permission>` (the active page asks for that permission: the prompt sheet
+ * is up), `private=new` or `private=<url>` (a private tab, blank or on that page), `find=<text>`
+ * (the find bar with that text typed), `pull=<n>` (the page held pulled down at n percent of the
+ * refresh threshold; `pull=refresh` lets go past it), `zoom=<factor>` (the page zoom sheet at
+ * that factor), `error=<code>` (the active tab's load failed with that Chromium `net::` code,
+ * `url=<target>` naming the URL that failed: the zen://error page is up), the message surfaces
+ * and the load bar: `toast=<text>&action=<label>`, `banners=<n>`, `progress=<0…1>`,
+ * `webapp=<surface>` (an "Add to Home screen" surface on the active tab), `download=<file>`
+ * (the stand-in downloader starts that transfer; see `PreviewDownloadSpec`), `popups=<n>` (n
+ * pop-ups blocked on the page; `&list` opens the list, `&allowed` remembers the site),
+ * `prompt=http-auth` / `prompt=certificate` (a security dialog over the page; `&failed`,
+ * `&proxy`, `&secure`) or `voice=<script>` (voice search started, the stand-in recogniser
+ * playing that script into the listening sheet: `listening`, `listening-rest`, `partial`,
+ * `no-match`, `denied`, …; see `previewVoiceScript`). `rules=<n>` on any spec seeds n remembered
+ * site permissions for Settings › Security; `blocking=<variant>` may accompany any spec too (see
+ * `seedBlocking`).
+ * It comes in as the URL hash, `http://localhost:41734/#overlay=history`, or as
  * `window.postMessage({ zenPreview: 'find=coffee' }, '*')`, which also re-applies an unchanged
  * state. Once applied it is echoed in `<html data-preview-state>` so a driver can wait for it;
  * `.github/scripts/android-preview-shots.mjs` is one.
+ *
+ * The seeds go through the core the way the host would: a prompt is the permission service asked
+ * by the active page, a private tab is `tab.newPrivate`.
  */
 export function installPreviewStates(browser: Browser): void {
   window.addEventListener('hashchange', () => apply(browser, location.hash.slice(1)))
@@ -88,17 +116,23 @@ function apply(browser: Browser, spec: string): void {
   whenReady(() => {
     // Every spec starts from idle so states do not stack: a pull in flight is put back at once
     // (a `cancel` would spring home, and the next pull would catch that spring part-way); the
-    // pill's editor, the overview and the page's sheets a previous state's steps opened go too.
+    // pill's editor, the overview and the page's sheets a previous state's steps opened go too,
+    // a request state a previous spec seeded stops being held, and the permission prompts up
+    // are answered as a dismissal, the way a press outside would.
+    unseedBlocking()
     closeOverlay()
     closeMenu()
     closeUrlbar()
     dismissOverview()
     uiStore.set({ findOpen: false, findTabId: null, zoomTabId: null, install: null })
     abortPull()
+    cancelVoiceSearch()
     const state = browserStore.get().state
     const tab = state ? activeTab(state) : null
     clearMessages(tab?.loading ? tab.id : null)
     closeBlockedPopups()
+    for (const prompt of state?.permissionPrompts ?? [])
+      run('permissions.respond', { id: prompt.id, answer: 'dismiss' })
     const securityAtRest = tab ? resetSecurity(browser, tab) : Promise.resolve()
     const seed = parsePreviewSeed(spec)
     if (seed.rules !== null) seedRules(browser, seed.rules)
@@ -137,6 +171,17 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
   const state = browserStore.get().state
   const tab = state ? activeTab(state) : null
   const target = parsePreviewSpec(spec)
+  // The request engine's state the spec asks for is patched in once the target is up (the core's
+  // push on the way there would replace an earlier patch) and again before a page's rows are
+  // shown or tapped, so a row the seeded state adds is there for `show` and the steps.
+  const blocking = new URLSearchParams(spec.startsWith('#') ? spec.slice(1) : spec).get('blocking')
+  const seed = (): void => {
+    if (blocking) seedBlocking(blocking)
+  }
+  const finish = (): void => {
+    seed()
+    done(spec)
+  }
 
   if (target.kind === 'page') {
     // The page tab is the state: reached once the active tab is a page tab and the page has its
@@ -145,6 +190,7 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
     whenActiveTabIs(isInternalPageUrl, () => {
       whenPageRendered(() => {
         setTimeout(() => {
+          seed()
           // The landing keeps its query between states unless it is retyped: an empty one clears it.
           type('input[aria-label="Find in Settings"]', target.search ?? '')
           requestAnimationFrame(() => {
@@ -153,7 +199,7 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
               if (el.scrollTop > 0) el.scrollTop = 0
             }
             show(target.show)
-            steps(target.then ?? [], () => done(spec))
+            steps(target.then ?? [], finish)
           })
         }, 300)
       })
@@ -163,14 +209,14 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
     void openOverlay(target.overlay, tab?.id ?? null, null, null, target.section ?? null).then(
       () => {
         if (target.show) requestAnimationFrame(() => show(target.show))
-        if (target.expand) expandSheet(() => done(spec))
-        else done(spec)
+        if (target.expand) expandSheet(finish)
+        else finish()
       }
     )
   } else if (target.kind === 'download') {
     // The stand-in host (preview.ts) plays the transfer back; it reports like Kotlin would.
     window.dispatchEvent(new CustomEvent(PREVIEW_DOWNLOAD_EVENT, { detail: target.download }))
-    done(spec)
+    finish()
   } else if (target.kind === 'menu') {
     // The core answers with `menu.show`; the state is reached once the descriptor is in the store.
     const unsubscribe = uiStore.subscribe(() => {
@@ -180,32 +226,47 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
       requestAnimationFrame(() =>
         requestAnimationFrame(() => {
           show(target.show)
-          done(spec)
+          finish()
         })
       )
     })
     run('app.menu', {})
+  } else if (target.kind === 'permission' && tab) {
+    // The active page asks, as its script would (`permissions.decide` is what the host calls
+    // from the WebView's permission request); the answer is the prompt sheet's business.
+    void browser.permissions.decide(target.permission, tab.url, { tabId: tab.id })
+    untilState(
+      (s) => s.permissionPrompts.some((p) => p.tabId === tab.id),
+      () => afterFrames(2, () => done(spec))
+    )
+  } else if (target.kind === 'private') {
+    void run('tab.newPrivate', target.url ? { url: target.url } : {})
+    untilState(
+      (s) => activeTab(s)?.containerId === PRIVATE_CONTAINER_ID,
+      () => afterFrames(2, () => done(spec))
+    )
   } else if (target.kind === 'zoom' && tab) {
     if (target.factor !== null) run('tab.setZoomFactor', { tabId: tab.id, factor: target.factor })
     openZoom(tab.id)
-    requestAnimationFrame(() => done(spec))
+    requestAnimationFrame(finish)
   } else if (target.kind === 'find' && tab) {
     uiStore.set({ findOpen: true, findTabId: tab.id })
     // The bar mounts on the next render; type into it the way a keyboard would.
     requestAnimationFrame(() => {
       if (target.text) type('input[aria-label="Find in page"]', target.text)
-      done(spec)
+      finish()
     })
   } else if (target.kind === 'pull' && tab) {
     pull(tab.id, target.progress, target.released)
-    requestAnimationFrame(() => done(spec))
+    requestAnimationFrame(finish)
   } else if (target.kind === 'error' && tab) {
     failLoad(tab.id, target.code, target.url ?? tab.url)
-    requestAnimationFrame(() => done(spec))
+    requestAnimationFrame(finish)
   } else if (target.kind === 'messages') {
     showMessages(target, tab?.id ?? null)
-    done(spec)
+    finish()
   } else if (target.kind === 'webapp' && tab) {
+    seed()
     applyWebApp(target.surface, tab.id, spec)
   } else if (target.kind === 'popups' && tab) {
     seedPopups(browser, tab, target)
@@ -224,9 +285,161 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
       showPrompt(browser, tab, target)
       requestAnimationFrame(() => done(spec))
     })
+  } else if (target.kind === 'voice') {
+    // The stand-in recogniser takes the script, then the mic is "tapped" for the active tab: the
+    // listening sheet goes up and the script's events play into it. The state is reached at the
+    // script's end – a refusal's toast up (the sheet gone again), or the sheet up and the last
+    // event landed – so a still catches the level, the partial or the no-match the script names.
+    window.dispatchEvent(new CustomEvent(PREVIEW_VOICE_EVENT, { detail: target.script }))
+    const script = previewVoiceScript(target.script)
+    void startVoiceSearch({ tabId: tab?.id ?? null, newTab: false })
+    if (script.outcome === 'listening') {
+      const played = script.events.reduce((ms, [delay]) => ms + delay, 0)
+      whenStore(() => uiStore.get().voice !== null, spec, played + VOICE_EVENT_MARGIN_MS)
+    } else {
+      whenStore(() => uiStore.get().toasts.length > 0, spec)
+    }
   } else {
-    done(spec)
+    finish()
   }
+}
+
+// ---------------------------------------------------------------------------
+// Request blocking, seeded
+// ---------------------------------------------------------------------------
+
+const HOUR_MS = 60 * 60 * 1000
+/** Network filters per default list, about what the bundled snapshot carries. */
+const FILTER_COUNTS: Record<string, number> = {
+  urlhaus: 2183,
+  'ubo-badware': 3412,
+  easylist: 56828,
+  easyprivacy: 31207,
+  'ubo-filters': 18942,
+  'peter-lowe': 3589,
+  'ubo-privacy': 4210
+}
+const CUSTOM_LIST_URL = 'https://filters.adtidy.org/extension/ublock/filters/14.txt'
+const USER_FILTERS = '||ads.example.com^\n@@||news.example.com^$document\n||tracker.example^$foo'
+const EXCEPTED_SITES = [
+  'https://news.ycombinator.com',
+  'https://en.wikipedia.org',
+  'https://mail.proton.me'
+]
+/** Lets go of the request state the current spec holds over the core's pushes. */
+let blockingSeed: (() => void) | null = null
+
+/**
+ * Settings > Privacy and security and the URL bar's blocked-count chip in states this stand-in
+ * host cannot reach on its own (it has no request engine and ships no filter lists): the chrome's
+ * copy of the browser state is patched in place, and patched again over every state the core
+ * pushes while the spec stands (a row's tap is answered with one, and it would put the host's
+ * own request state back under an open sheet), until the next spec is applied. Variants: `on`
+ * (Balanced, lists fresh, requests blocked on the page), `off` (the master switch off),
+ * `level-off`, `strict`, `full` (excepted sites, a custom list, the user's filters with a parse
+ * error), `excepted` (the current site excepted), `updating`, `loading` and `bundled` (first run
+ * on the snapshot built into the app).
+ */
+function seedBlocking(variant: string): void {
+  unseedBlocking()
+  let seeded: UIState | null = null
+  const patch = (): void => {
+    const state = browserStore.get().state
+    if (!state || state === seeded) return
+    seeded = blockingFixture(state, variant, Date.now())
+    browserStore.set({ state: seeded })
+  }
+  patch()
+  blockingSeed = browserStore.subscribe(patch)
+}
+
+/** Stop holding a seeded request state over the core's pushes. */
+function unseedBlocking(): void {
+  blockingSeed?.()
+  blockingSeed = null
+}
+
+export function blockingFixture(state: UIState, variant: string, now: number): UIState {
+  const active = activeTab(state)
+  // The page the state is about: the active tab, or – with the Settings tab up – the web page it
+  // was opened from, whose site the "Sites without blocking" rows name (§10.5).
+  const opener = active?.openerTabId ? state.tabs[active.openerTabId] : undefined
+  const tab = active && siteOriginOf(active.url) ? active : (opener ?? active)
+  const origin = tab ? siteOriginOf(tab.url) : null
+  const level: TrackingLevel =
+    variant === 'strict' ? 'strict' : variant === 'level-off' ? 'off' : 'balanced'
+  const enabled = variant !== 'off'
+  const full = variant === 'full'
+  const bundled = variant === 'bundled'
+  const updating = variant === 'updating'
+  const customLists = full
+    ? [
+        {
+          id: customListId(CUSTOM_LIST_URL),
+          url: CUSTOM_LIST_URL,
+          name: 'AdGuard Annoyances',
+          enabled: true
+        }
+      ]
+    : []
+  const settings: UIState['settings'] = {
+    ...state.settings,
+    blocking: {
+      ...state.settings.blocking,
+      level,
+      lists: {},
+      customLists,
+      userFilters: full ? USER_FILTERS : '',
+      autoUpdate: true
+    }
+  }
+  const on = enabledListsFor(settings.blocking, enabled)
+  const updatedAt = bundled ? null : now - 2 * HOUR_MS
+  const lists: FilterListStatus[] = DEFAULT_FILTER_LISTS.map((l) => ({
+    ...l,
+    enabled: on.has(l.id),
+    version: bundled ? null : '202609170807',
+    updatedAt,
+    filterCount: FILTER_COUNTS[l.id] ?? 0,
+    bundled,
+    updating: updating && (l.id === 'easylist' || l.id === 'easyprivacy'),
+    lastError: null
+  }))
+  for (const c of customLists)
+    lists.push({
+      id: c.id,
+      name: c.name,
+      description: c.url,
+      url: c.url,
+      homepage: c.url,
+      licence: 'GPL-3.0',
+      tier: null,
+      enabled: c.enabled,
+      version: null,
+      updatedAt,
+      filterCount: 7120,
+      bundled: false,
+      updating: false,
+      lastError: null
+    })
+  const siteExceptions = [
+    ...(full ? EXCEPTED_SITES : []),
+    ...(variant === 'excepted' && origin ? [origin] : [])
+  ].sort()
+  const blocking: BlockingStatus = {
+    ready: variant !== 'loading',
+    enabled,
+    siteExceptions,
+    sessionBlocked: 1284,
+    lists,
+    updating,
+    lastUpdatedAt: bundled || variant === 'loading' ? null : now - 2 * HOUR_MS,
+    userFilterErrors: full ? [{ line: 3, message: 'Unknown option "foo"' }] : []
+  }
+  const blocks = enabled && level !== 'off' && !(origin !== null && siteExceptions.includes(origin))
+  const tabs = { ...state.tabs }
+  if (tab) tabs[tab.id] = { ...tab, blockedCount: blocks ? 12 : 0 }
+  return { ...state, settings, blocking, tabs }
 }
 
 /**
@@ -512,10 +725,17 @@ function applyWebApp(surface: PreviewWebAppSurface, tabId: string, spec: string)
   }
 }
 
-/** Echo `spec` once `ready` holds (or the wait runs out, so a driver sees the state it got). */
-function whenStore(ready: () => boolean, spec: string): void {
+/**
+ * Echo `spec` once `ready` holds (or the wait runs out, so a driver sees the state it got), and
+ * `after` more milliseconds when the surface has a script still playing into it.
+ */
+function whenStore(ready: () => boolean, spec: string, after = 0): void {
+  const echo = (): void => {
+    if (after > 0) window.setTimeout(() => done(spec), after)
+    else done(spec)
+  }
   if (ready()) {
-    done(spec)
+    echo()
     return
   }
   let settled = false
@@ -524,7 +744,7 @@ function whenStore(ready: () => boolean, spec: string): void {
     settled = true
     unsubscribe()
     clearTimeout(timer)
-    done(spec)
+    echo()
   }
   const unsubscribe = uiStore.subscribe(() => {
     if (ready()) finish()
@@ -697,6 +917,36 @@ function safeHost(url: string): string {
 
 function done(spec: string): void {
   document.documentElement.dataset.previewState = spec
+}
+
+function afterFrames(count: number, fn: () => void): void {
+  if (count <= 0) fn()
+  else requestAnimationFrame(() => afterFrames(count - 1, fn))
+}
+
+/** Runs `fn` once the browser state satisfies `test`, or once waiting stops being worth it. */
+function untilState(test: (state: UIState) => boolean, fn: () => void): void {
+  const current = browserStore.get().state
+  if (current && test(current)) {
+    fn()
+    return
+  }
+  let settled = false
+  const settle = (): void => {
+    if (settled) return
+    settled = true
+    unsubscribe()
+    window.clearTimeout(timer)
+    fn()
+  }
+  const unsubscribe = browserStore.subscribe(() => {
+    const state = browserStore.get().state
+    if (state && test(state)) settle()
+  })
+  const timer = window.setTimeout(() => {
+    console.warn('[zen preview] the state did not arrive; reporting the spec reached anyway')
+    settle()
+  }, SETTLE_TIMEOUT_MS)
 }
 
 /** Runs `fn` once the browser state has arrived and the chrome has had a frame to render it. */

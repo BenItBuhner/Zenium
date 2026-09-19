@@ -5,59 +5,68 @@ import org.json.JSONException
 import org.json.JSONObject
 
 /**
- * Reads `blocking/index.json` – what `RuleSetStore` (`store.ts`) writes: every set's metadata
- * with its structured rules inline – set by set, stepping over the text instead of building a
- * document of it, and compiles only the rules that changed since the previous read.
+ * Reads `blocking/index.json` – what `RuleSetStore` (`store.ts`) writes: one summary per set
+ * (`version: 2`) naming the document under `blocking/sets/` that holds the set's structured
+ * rules and the version tag of that document's bytes – opens the documents of the sets that
+ * changed since the previous read, rule by rule, and compiles only those. The previous shape
+ * (`version: 1`, every set's rules inline in the index) is still read, the same way, so the
+ * engine keeps blocking through the first start of the build whose core migrates it.
  *
- * The core rewrites the index whole for every change of any set (a filter list's update, an
- * extension's dynamic rule, a site exception), and with an extension like uBlock Origin Lite
- * installed it carries some 18,000 rules in five megabytes. Read into an `org.json` tree, each
- * rebuild was tens of megabytes of short-lived objects and a recompilation of every rule, and
- * the rebuilds of a start-up burst met the rest of the heap (a snapshot OOM on the emulator when
- * the safe-browsing feed's 11 MB fetch landed between two of them). Now an unchanged set costs
- * the scan of its text and nothing else: its [CompiledRules] are the previous read's, shared
- * with the snapshot still in use.
+ * With an extension like uBlock Origin Lite installed the sets carry some 18,000 rules in five
+ * megabytes; the index that named them inline was re-read whole for every change of any set (a
+ * filter list's update, an extension's dynamic rule, a site exception), and read into an
+ * `org.json` tree each rebuild was tens of megabytes of short-lived objects and a recompilation
+ * of every rule (a snapshot OOM on the emulator when the safe-browsing feed's 11 MB fetch landed
+ * between two of them). Now the index is a few kilobytes of summaries and an unchanged set costs
+ * the read of its summary and nothing else: its document is not opened, and its [CompiledRules]
+ * are the previous read's, shared with the snapshot still in use.
  *
- * "Unchanged" is known for an extension's sets (`source: "dnr"`): the translator stamps
- * `updatedAt` on every emission and emits a set only when its rules or priority changed
- * (`DnrTranslator`; the Android runtime keeps the stamps strictly increasing), so the pair
- * (priority, updatedAt) stands for the rules. The store writes those fields before `rules`; an
- * entry in another order is compiled once it has been read whole. The built-in sets carry no
- * stamp and are small; they are compiled at every read. One reader per engine, used on its
+ * "Unchanged" is exact: the store tags a set document with a hash of its bytes and rewrites it
+ * only when the rules changed, so the pair (priority, tag) stands for the compiled rules of any
+ * set – an extension's, the user's, a built-in's. In a version-1 index the pair (priority,
+ * updatedAt) stands in for an extension's set (`source: "dnr"`; the translator stamps every
+ * emission and the Android runtime keeps the stamps strictly increasing) and the other sets are
+ * compiled at every read, as before. A set whose document is missing, is another set's or is
+ * malformed (half-written) is left out with a line to `log`, never a failed read: the index
+ * that follows the document's rewrite brings it back. One reader per engine, used on its
  * builder thread only.
  */
-internal class IndexReader {
+internal class IndexReader(private val log: (String) -> Unit = {}) {
     private var compiled: Map<String, CompiledRules> = emptyMap()
 
-    /** The sets of a version-1 index (an empty list for another version). Throws [JSONException] on malformed text. */
-    fun read(raw: String): List<RuleSetInfo> {
-        val c = Cursor(raw)
+    /**
+     * The sets of the index `raw` (an empty list for a version other than 1 or 2), their rules
+     * from the documents `document` opens – the text of `blocking/<name>`, null when there is
+     * none. Throws [JSONException] on malformed index text.
+     */
+    fun read(raw: String, document: (String) -> String? = { null }): List<RuleSetInfo> {
+        val c = Cursor(raw, "blocking index")
         val next = HashMap<String, CompiledRules>()
         var version = -1
         var sets: List<RuleSetInfo> = emptyList()
         c.objectEntries { key ->
             when (key) {
                 "version" -> version = c.int()
-                "sets" -> sets = readSets(c, next)
+                "sets" -> sets = readSets(c, next, document)
                 else -> c.skipValue()
             }
         }
         c.end()
-        if (version != 1) return emptyList()
+        if (version != 1 && version != 2) return emptyList()
         compiled = next
         return sets
     }
 
-    private fun readSets(c: Cursor, next: HashMap<String, CompiledRules>): List<RuleSetInfo> {
+    private fun readSets(c: Cursor, next: HashMap<String, CompiledRules>, document: (String) -> String?): List<RuleSetInfo> {
         val out = ArrayList<RuleSetInfo>()
         c.arrayElements {
             // An element that is not an object is left out, as the document parser leaves it out.
-            if (c.atObject()) readSet(c, next)?.let { out.add(it) } else c.skipValue()
+            if (c.atObject()) readSet(c, next, document)?.let { out.add(it) } else c.skipValue()
         }
         return out
     }
 
-    private fun readSet(c: Cursor, next: HashMap<String, CompiledRules>): RuleSetInfo? {
+    private fun readSet(c: Cursor, next: HashMap<String, CompiledRules>, document: (String) -> String?): RuleSetInfo? {
         var id = ""
         var source = "filter-list"
         var priority: Int? = null
@@ -66,6 +75,8 @@ internal class IndexReader {
         var filterCount = 0
         var updatedAt = 0L
         var file: String? = null
+        var name: String? = null
+        var tag: String? = null
         var partitions: HashSet<String>? = null
         var rules: CompiledRules? = null
         var deferred: IntRange? = null
@@ -79,6 +90,8 @@ internal class IndexReader {
                 "filterCount" -> filterCount = c.int()
                 "updatedAt" -> updatedAt = c.long()
                 "file" -> file = c.stringOrNull()
+                "document" -> name = c.stringOrNull()
+                "tag" -> tag = c.stringOrNull()
                 "partitions" -> partitions = c.strings()
                 "rules" -> {
                     val p = priority
@@ -101,7 +114,12 @@ internal class IndexReader {
         val p = priority
         if (id.isEmpty() || p == null) return null
         val pending = deferred
+        val documentName = name
         val result = when {
+            documentName != null && documentName.isNotEmpty() -> {
+                val fingerprint = fingerprintOf(p, tag)
+                known(id, fingerprint) ?: readDocument(id, documentName, p, fingerprint, document) ?: return null
+            }
             pending != null -> {
                 val fingerprint = fingerprintOf(source, p, updatedAt)
                 known(id, fingerprint) ?: CompiledRules.parse(JSONArray(c.text(pending)), p, fingerprint)
@@ -127,6 +145,39 @@ internal class IndexReader {
     private fun known(id: String, fingerprint: String?): CompiledRules? =
         if (fingerprint == null) null else compiled[id]?.takeIf { it.fingerprint == fingerprint }
 
+    /**
+     * The set document `name` of set `id` (`{"id", "rules"}`, `store.ts`'s `SetDocument`)
+     * compiled; null, with a line to [log], when it is missing, is another set's, or is not a
+     * document (a write cut short) – the set is left out of this read.
+     */
+    private fun readDocument(id: String, name: String, priority: Int, fingerprint: String?, document: (String) -> String?): CompiledRules? {
+        val text = document(name)
+        if (text == null) {
+            log("blocking set $id left out: its document $name is missing")
+            return null
+        }
+        return try {
+            val c = Cursor(text, "blocking set document $name")
+            var documentId: String? = null
+            var rules: CompiledRules? = null
+            c.objectEntries { key ->
+                when (key) {
+                    "id" -> documentId = c.stringOrNull()
+                    "rules" -> rules = readRules(c, priority, fingerprint)
+                    else -> c.skipValue()
+                }
+            }
+            c.end()
+            if (documentId != id) {
+                log("blocking set $id left out: $name is the document of ${documentId ?: "no set"}")
+                null
+            } else rules ?: CompiledRules.of(ArrayList(), fingerprint)
+        } catch (e: JSONException) {
+            log("blocking set $id left out: ${e.message}")
+            null
+        }
+    }
+
     /** One rule at a time: a rule's object is the only document built, and only until it is compiled. */
     private fun readRules(c: Cursor, priority: Int, fingerprint: String?): CompiledRules {
         val out = ArrayList<DnrRule>()
@@ -138,7 +189,16 @@ internal class IndexReader {
     }
 
     companion object {
-        /** What a `dnr` set's compiled rules can be recognised by; null for sets that are compiled at every read. */
+        /**
+         * What a set's compiled rules can be recognised by from its summary: the priority they
+         * were compiled with and the tag of the document's bytes (`tagOf` in `store.ts`: a
+         * length and two hashes, never a bare number, so it cannot be mistaken for a version-1
+         * stamp). Null without a tag: compiled at every read.
+         */
+        internal fun fingerprintOf(priority: Int, tag: String?): String? =
+            if (tag.isNullOrEmpty()) null else "$priority:$tag"
+
+        /** A version-1 entry's: what a `dnr` set's compiled rules can be recognised by; null for sets that are compiled at every read. */
         internal fun fingerprintOf(source: String, priority: Int, updatedAt: Long): String? =
             if (source == "dnr" && updatedAt != 0L) "$priority:$updatedAt" else null
     }
@@ -146,13 +206,13 @@ internal class IndexReader {
 
 /**
  * A position in JSON text that steps over values without building them (RFC 8259 grammar; a
- * malformed document is a [JSONException] at the offending offset). Works on the text as a
- * `char[]`: with uBlock Origin Lite's index at 7.7 M chars and re-read for every rule change,
- * the scan is the cost, and the emulator's debug APK runs it without the JIT that hides
- * `String.charAt`'s dispatch – array reads keep it about `org.json`'s own tokeniser's speed
- * while allocating a fraction of what building its tree would.
+ * malformed document is a [JSONException] at the offending offset, naming `what`). Works on the
+ * text as a `char[]`: with uBlock Origin Lite's sets at 7.7 M chars between them, and read
+ * whole at first start and whenever they change, the scan is the cost, and the emulator's debug
+ * APK runs it without the JIT that hides `String.charAt`'s dispatch – array reads keep it about
+ * `org.json`'s own tokeniser's speed while allocating a fraction of what building its tree would.
  */
-private class Cursor(s: String) {
+private class Cursor(s: String, private val what: String) {
     private val a: CharArray = s.toCharArray()
     private val n = a.size
     private var i = 0
@@ -185,7 +245,7 @@ private class Cursor(s: String) {
         if (!take(ch)) fail("'$ch'")
     }
 
-    private fun fail(expected: String): Nothing = throw JSONException("blocking index: expected $expected at offset $i")
+    private fun fail(expected: String): Nothing = throw JSONException("$what: expected $expected at offset $i")
 
     /** Nothing but whitespace may follow the document. */
     fun end() {

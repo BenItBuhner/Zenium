@@ -45,17 +45,19 @@ export function readDocument(bridge: Bridge, name: string): string | null {
 /**
  * The root documents (and the rule-set index) arrive with the boot payload and are mirrored in
  * memory; documents in a folder – the filter lists' text under `blocking/`, the extensions'
- * storage under `ext-storage/`, megabytes each – stay on disk and are read through the bridge
- * when asked for, in pieces past {@link CHUNK_CHARS}.
+ * storage under `ext-storage/`, megabytes each, the rule sets' documents under `blocking/sets/`
+ * – stay on disk and are read through the bridge when asked for, in pieces past
+ * {@link CHUNK_CHARS}.
  *
  * Two things keep the boot path to one transfer per document (`BootHandoff.kt`, `handoff.ts`):
  *
  *  - Documents the payload deferred for their size come in by file ({@link adopt}) before the
  *    core starts, and the core's synchronous read at start finds them here, once: a folder
- *    document (a Safe Browsing feed's prefix table) is handed over and let go of, so the chrome
- *    does not hold a second copy of the megabytes the service keeps. A Safe Browsing document is
- *    never mirrored, whatever its size: a feed that arrives small and grows with its first
- *    refresh would otherwise park its whole text here for the rest of the process.
+ *    document (a Safe Browsing feed's prefix table, an extension's rule-set document) is handed
+ *    over and let go of, so the chrome does not hold a second copy of the megabytes the service
+ *    keeps. A folder document is never mirrored, whatever its size: a feed that arrives small
+ *    and grows with its first refresh would otherwise park its whole text here for the rest of
+ *    the process, and the rule-set store keeps a set's rules parsed, never its text.
  *  - A write of the very bytes the mirror already holds goes nowhere. The engine writes its index
  *    back at start (every set it loaded is set again) with the text it was booted with; sending
  *    it through the bridge had the Kotlin host rewrite the file and rebuild its request engine

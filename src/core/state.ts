@@ -32,6 +32,7 @@ import type {
   Platform,
   Rect,
   ResourceSnapshot,
+  SafetyCheckResult,
   SearchEngine,
   SecurityPrompt,
   Settings,
@@ -45,6 +46,7 @@ import type {
   UIState
 } from '../shared/types'
 import type { TranslateUIState } from '../shared/translate'
+import type { ContentDefault } from '../shared/contentSettings'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
 import { sanitizeAppIcon } from '../shared/appIcon'
 import { isChromePageUrl, parseInternalPageUrl } from '../shared/internalPages'
@@ -193,6 +195,8 @@ export interface StateExtras {
   defaultBrowser: DefaultBrowserStatus
   blockedPopups: Record<string, BlockedPopup[]>
   permissionRules: PermissionRule[]
+  permissionDefaults: Record<string, ContentDefault>
+  lastSafetyCheck: SafetyCheckResult | null
   permissionPrompts: PermissionPrompt[]
   securityPrompts: SecurityPrompt[]
   pageDialogs: PageDialog[]
@@ -320,6 +324,8 @@ export class BrowserState {
     defaultBrowser: { isDefault: null, prompt: null },
     blockedPopups: {},
     permissionRules: [],
+    permissionDefaults: {},
+    lastSafetyCheck: null,
     permissionPrompts: [],
     securityPrompts: [],
     pageDialogs: [],

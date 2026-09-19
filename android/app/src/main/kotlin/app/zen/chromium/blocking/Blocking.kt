@@ -18,10 +18,11 @@ import java.util.zip.GZIPInputStream
 
 /**
  * The Android request engine. The core persists its rule sets under `files/zen/blocking/`
- * (`index.json` with every set's structured rules, one file per set with its filter text – the
- * same documents the desktop reads); this class compiles them into an [EngineSnapshot] on a
- * background thread whenever the index is rewritten and answers `shouldInterceptRequest` from
- * the current snapshot on WebView's IO threads. It also hands the core the bundled snapshot of
+ * (`index.json` with every set's summary, `sets/<name>.json` with a set's structured rules, one
+ * file per set with its filter text – the same documents the desktop reads); this class
+ * compiles them into an [EngineSnapshot] on a background thread whenever the index is rewritten
+ * (the core writes a set's documents before the index that names them) and answers
+ * `shouldInterceptRequest` from the current snapshot on WebView's IO threads. It also hands the core the bundled snapshot of
  * the default lists (`assets/blocking/`), the `BlockingHost` half of the platform contract, and
  * hosts the `chrome.webRequest`-style [listeners] the extension platform's emulation registers
  * (the Android half of the desktop multiplexer's listener contract, see `WebRequest.kt`). The
@@ -47,7 +48,7 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
     private var scheduled: ScheduledFuture<*>? = null
     private var cachedText: Pair<String, TextEngine>? = null
     /** Builder thread only: keeps the compiled rules of the sets the last read saw. */
-    private val indexReader = IndexReader()
+    private val indexReader = IndexReader { line -> Log.w(TAG, line) }
 
     /** The listener registry; one for every tab and profile, like the desktop multiplexer. */
     val listeners = WebRequestListeners().also { registry ->
@@ -149,13 +150,16 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
     }
 
     /**
-     * The index set by set; the compiled rules of a set that did not change since the previous
-     * read are the previous read's ([IndexReader]). An unreadable index is an empty one, as before.
+     * The index set by set, each set's rules from its document under `blocking/sets/`; the
+     * compiled rules of a set that did not change since the previous read are the previous
+     * read's, its document unopened ([IndexReader]). An unreadable index is an empty one, as before.
      */
     private fun readIndex(): List<RuleSetInfo> {
         val raw = storage.read(Storage.BLOCKING_INDEX) ?: return emptyList()
         lastIndexChars = raw.length
-        return runCatching { indexReader.read(raw) }.getOrElse { e ->
+        return runCatching {
+            indexReader.read(raw) { name -> storage.read("${Storage.BLOCKING_DIR}/$name") }
+        }.getOrElse { e ->
             Log.w(TAG, "blocking index unreadable", e)
             emptyList()
         }

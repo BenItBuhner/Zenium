@@ -2203,6 +2203,73 @@
     flex: 1;
     min-width: 0;
   }
+  /*
+   * Voice search's listening sheet (OMN-19; `components/voice/VoiceSearchSheet.tsx`). The title
+   * block's glyph is the mic (20 at stroke 1.75, §9.3), plain at rest with no fill box behind it
+   * (§9.23); while sound comes a halo shows behind it, the page surface's accent at 30 %
+   * (`--v2-accent`, built as `--v2-selected` is, §9.29). The halo's diameter follows the sound
+   * level on the shared spring, in px (`shared/voice.ts`: 20 in silence to a 36 px disc at full
+   * level), but the element never changes size: it is the glyph's 20 px box, and the sheet writes
+   * its `transform: scale(diameter / 20)` and its opacity from that diameter per frame (§11:
+   * transform and opacity only) – none of the disc at 20, all of it at 36, so silence shows the
+   * bare glyph. `will-change` on the halo only while the recogniser listens (`data-listening` on
+   * the glyph, the sheet's own gate as `data-moving` is the zoom sheet's, §11.1's `data-receding`
+   * the frame's): a sheet that is starting, finishing or showing a no-match promotes nothing,
+   * and neither does one under reduced motion, where the halo never moves (§11.3). Its room is
+   * the block's 16 px padding above and to the left, the 4 px to the description below, and
+   * 12 px to the title (§9.23's one exception to its 8: the 4 is the halo's room, so the disc at
+   * full never reaches the first letter). The body is the transcript as it comes,
+   * body type in the text ink, in the 16 px gutter (§9.25) with the block's 16 above it and the
+   * footer's 16 below; before any words a hint in the deemphasized ink stands where the words
+   * will. After a no-match the description is the block's last line and the footer follows it
+   * at §9.23's 16 – the footer's own – so the block gives up its bottom padding there.
+   */
+  .zen-voice-glyph {
+    position: relative;
+    display: flex;
+    width: 20px;
+    height: 20px;
+    margin-right: 4px;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+  }
+  .zen-voice-glyph > svg {
+    position: relative;
+  }
+  .zen-voice-halo {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--v2-accent) 30%, transparent);
+    transform: scale(1);
+    opacity: 0;
+    pointer-events: none;
+  }
+  .zen-voice-glyph[data-listening] > svg {
+    color: var(--v2-accent);
+  }
+  .zen-voice-glyph[data-listening] .zen-voice-halo {
+    will-change: transform, opacity;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .zen-voice-glyph[data-listening] .zen-voice-halo {
+      will-change: auto;
+    }
+  }
+  .zen-voice-transcript {
+    min-height: 60px;
+    padding: 0 16px;
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
+    overflow-wrap: anywhere;
+  }
+  .zen-voice-transcript[data-hint='true'] {
+    color: var(--v2-text-deemphasized);
+  }
+  .zen-voice-sheet[data-voice-state='no-match'] .zen-sheet-title-block {
+    padding-bottom: 0;
+  }
   .zen-sheet-item:disabled {
     opacity: 0.4;
   }
@@ -4602,6 +4669,15 @@
   height: 44px;
   border-radius: 8px;
 }
+/* The phone omnibox field's trailing slot – the mic on an empty field, Clear once there is text –
+   at §9.3's 44 × 44 with the 20 glyph, in the window family the field draws in (`--zen-fg`).
+   Round rather than §9.3's radius 8: the field is a 44 px pill and the control, as tall as it and
+   flush with its end, is the pill's end cap; a radius-8 box there would break the cap's curve. */
+:root[data-pointer='coarse'] .zen-omnibox-field .zen-toolbar-button {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+}
 :root[data-pointer='coarse'] .zen-essential {
   height: 48px;
 }
@@ -5336,11 +5412,13 @@
 .zen-settings-body > .zen-settings-group:first-child > .zen-settings-heading {
   margin-top: 8px;
 }
+/* A live count in a description ("6 lists, 116,161 filters") is tabular (§4): it moves nothing when it changes. */
 .zen-settings-group-description {
   margin: 0 0 8px;
   padding: 0 16px;
   color: var(--v2-text-deemphasized);
   font-size: var(--v2-font-body);
+  font-variant-numeric: tabular-nums;
   line-height: var(--v2-line-body);
 }
 /* A group with nothing in it: one plain line where its rows would be, like a row's label at 69 %. */
@@ -5377,11 +5455,13 @@
   line-height: var(--v2-line-body);
   overflow-wrap: anywhere;
 }
+/* The value slot: a count under a label ("1,284 requests", "Updated 2 h ago") is tabular (§4). */
 .zen-settings-description {
   display: -webkit-box;
   overflow: hidden;
   color: var(--v2-text-deemphasized);
   font-size: var(--v2-font-small);
+  font-variant-numeric: tabular-nums;
   line-height: var(--v2-line-small);
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
@@ -6083,6 +6163,319 @@
     padding: 0;
     color: var(--v2-text);
   }
+}
+
+/*
+ * Settings > Privacy and Security (components/overlays/PrivacySection.tsx – the desktop pane,
+ * drawn in the tablet's two-pane Settings tab too; a phone reads pages/settings/tracking.tsx
+ * through the tab's own rows) and the URL bar's blocked-count chip (components/urlbar/
+ * BlockedChip.tsx), on design-language-v2-draft §1–§3, §6, §9. The row, checkbox, radio, field,
+ * icon button, badge and button are the shared primitives (§9.34: the Settings tab's block above
+ * and extensions.css); this block is the pane's own layout – the title block, sub-headings,
+ * cards, its row variants and the filters editor – and the chip.
+ */
+.zen-privacy {
+  display: flex;
+  max-width: var(--v2-content-max);
+  flex-direction: column;
+  color: var(--v2-text);
+  font-size: var(--v2-font-body);
+  font-weight: var(--v2-weight-body);
+  line-height: var(--v2-line-body);
+}
+/* Sections 32 apart (§5); the title block's 16 to the first card (§9.26). */
+.zen-privacy > * + * {
+  margin-top: 32px;
+}
+.zen-privacy-intro + * {
+  margin-top: 16px;
+}
+/* The pane's title block (§9.26): 22/600 at 28, the section description 15 at 69% 4 below it. */
+.zen-privacy-intro {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.zen-privacy-title {
+  font-size: var(--v2-font-title);
+  font-weight: var(--v2-weight-heading);
+  line-height: var(--v2-line-title);
+  letter-spacing: -0.01em;
+}
+.zen-privacy-muted {
+  color: var(--v2-text-deemphasized);
+  font-variant-numeric: tabular-nums;
+}
+.zen-privacy-warn {
+  color: var(--v2-warn);
+}
+/* A sub-heading (§9.27): 15/600 on the page, 8 to the first row's or the card's box. */
+.zen-privacy-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.zen-privacy-heading {
+  font-size: var(--v2-font-body);
+  font-weight: var(--v2-weight-heading);
+  line-height: var(--v2-line-body);
+}
+/*
+ * A card (§3, §6): flat, one hairline, radius 8; only where a group carries its own actions.
+ * Rows inside it bring their own 16 px sides and touch (§9.21): the card's block padding is
+ * what the first and last rows' own padding leaves of the 16.
+ */
+.zen-privacy-card {
+  padding: calc(var(--v2-card-padding) - var(--v2-row-pad)) 0;
+  border: 1px solid var(--v2-card-border);
+  border-radius: var(--v2-radius-card);
+  corner-shape: var(--zen-corner);
+  background: var(--v2-card);
+}
+/*
+ * The status card (§6, §9.27): a 17/600 title on the 22 px line (§4) with a 16 px glyph on its
+ * start after an 8 px gap, centred on the title's line; a 15 description at 69% under it; the
+ * button trailing, centred on the card (§9.18). Figures are tabular (§4).
+ */
+.zen-privacy-card-title {
+  font-size: var(--v2-font-heading);
+  font-weight: var(--v2-weight-heading);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--v2-line-heading);
+}
+.zen-privacy-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: var(--v2-card-padding);
+}
+.zen-privacy-status > svg {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin: calc((var(--v2-line-heading) - var(--v2-icon)) / 2) -4px 0 0;
+  stroke-width: var(--v2-icon-stroke);
+}
+/*
+ * Rows are the shared `.zen-v2-row` (§9.2, §9.18, §9.21) with this pane's variant on top: on the
+ * page they sit on the sub-heading's edge with the press fill 4 px wider at the inner radius (as
+ * the Downloads pane's rows do); in a card they keep the primitive's 16. A description makes
+ * the row two-line (52). A row whose box is disabled dims its text with the box (§9.30's .4,
+ * each its own, side by side – never compounded) and takes no fill; the primitive keys its fill
+ * on `aria-disabled`, which a label row cannot carry, so the box's state stands in for it. A
+ * row that is not itself a target – a list with its box and icon buttons, an excepted site with
+ * its trash button – is the primitive's static form (`data-static`, §9.34): the primitive's own
+ * gate keeps the hover and press fill off it, and no rule here restates that.
+ */
+.zen-privacy-rows {
+  display: flex;
+  flex-direction: column;
+}
+.zen-privacy-rows > .zen-privacy-row {
+  width: auto;
+  margin-inline: -4px;
+  padding-inline: 4px;
+  border-radius: var(--v2-radius-inner);
+}
+.zen-privacy-row:has(.zen-privacy-row-desc) {
+  min-height: var(--v2-row-two-line);
+}
+.zen-privacy-row:has(> :disabled) .zen-privacy-row-text {
+  opacity: 0.4;
+}
+.zen-v2-row.zen-privacy-row:has(> :disabled):active {
+  background: none;
+}
+@media (hover: hover) {
+  .zen-v2-row.zen-privacy-row:has(> :disabled):hover {
+    background: none;
+  }
+}
+/* A leading checkbox sits on the first text line (§9.2); the shared box carries the offset. */
+.zen-privacy-row > .zen-v2-checkbox {
+  align-self: flex-start;
+}
+.zen-privacy-row-text {
+  min-width: 0;
+  flex: 1;
+}
+.zen-privacy-row-label {
+  overflow-wrap: anywhere;
+}
+/*
+ * The description: 13 at 69% on the 20 px line under the label (§9.2), two lines at most,
+ * figures tabular (§4).
+ */
+.zen-privacy-row-desc {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--v2-line-small);
+  overflow-wrap: anywhere;
+}
+/*
+ * The level rows are one radio each (§9.14) on the shared glyph, the whole row the radio
+ * (`aria-checked` on the row lights the glyph); a disabled group is .4 on the whole control
+ * (§9.30), and `aria-disabled` on the row holds the primitive's fill off.
+ */
+.zen-privacy-radio-row {
+  cursor: default;
+}
+.zen-privacy-radio-row[aria-disabled='true'] {
+  opacity: 0.4;
+}
+/*
+ * Trailing icon buttons (§9.18, §9.21): the row grows around its controls to the control plus 8
+ * – 36 around a 28 button – and the 4 above and below are the row's own padding, so adjacent
+ * buttons sit 8 apart. The text (and a leading box) keep the row's own padding by carrying the
+ * rest themselves: two-line rows stay 52 beside rows without buttons, and the box stays on the
+ * first text line. The buttons are 4 px apart.
+ */
+.zen-privacy-row-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+}
+.zen-privacy-row:has(> .zen-privacy-row-actions) {
+  min-height: max(var(--v2-row), calc(var(--v2-icon-button) + 8px));
+  padding-block: 4px;
+}
+.zen-privacy-row:has(> .zen-privacy-row-actions) > .zen-privacy-row-text {
+  margin-block: calc(var(--v2-row-pad) - 4px);
+}
+.zen-privacy-row:has(> .zen-privacy-row-actions) > .zen-v2-checkbox {
+  margin-top: calc(var(--v2-row-pad) - 4px + (var(--v2-line-body) - var(--v2-checkbox)) / 2);
+}
+/* Three text lines (the description wrapped): the controls centre on the label's line instead. */
+.zen-privacy-row[data-wrapped] > .zen-privacy-row-actions {
+  align-self: flex-start;
+  margin-top: calc(var(--v2-row-pad) - 4px + (var(--v2-line-body) - var(--v2-icon-button)) / 2);
+}
+/*
+ * A form field in a card (§9.12, §9.21): its label above it, 15/400 on the 20 px line, 4 px to
+ * the field, the button beside the field, the validation line 4 under it; the block padding is
+ * a row's own, so the label sits 16 from the card's edge where it leads.
+ */
+.zen-privacy-add {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--v2-row-pad) var(--v2-card-padding);
+}
+.zen-privacy-add-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.zen-privacy-add-row > .zen-v2-field {
+  min-width: 0;
+  flex: 1;
+}
+/* A field on the page with its own lines under it (§9.12): validation, description, 4 px apart. */
+.zen-privacy-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.zen-privacy-field-desc {
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-small);
+}
+/*
+ * The filters editor, the pane's one multi-line field (§9.12): the shared field grown to a
+ * 128 px box that resizes down the page, in the body face – §4 keeps monospace for secrets.
+ * The phone's form sheet (pages/settings/tracking.tsx) takes the same modifier, without the
+ * resize grip: it cannot be dragged under a finger and only crowds the corner.
+ */
+.zen-v2-field.zen-privacy-editor {
+  height: auto;
+  min-height: 128px;
+  padding: 8px 12px;
+  resize: vertical;
+  user-select: text;
+}
+:root[data-form-factor='phone'] .zen-privacy-editor {
+  resize: none;
+}
+/*
+ * Empty state inside a card (§9.17): one plain row – 32 tall, the sentence at 15 and 69%
+ * left-aligned at the card's 16 padding like a row's label, no top gap; the card's next row is
+ * its follow-up.
+ */
+.zen-privacy-empty {
+  min-height: var(--v2-row);
+  padding: var(--v2-row-pad) var(--v2-card-padding);
+  color: var(--v2-text-deemphasized);
+  text-align: start;
+}
+/* Validation text (§9.12): 13 in the danger ink with a 16 px glyph, under the field it is about. */
+.zen-privacy-invalid {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--v2-danger);
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-small);
+}
+.zen-privacy-invalid svg {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  flex-shrink: 0;
+  margin-top: calc((var(--v2-line-small) - var(--v2-icon)) / 2);
+  stroke-width: var(--v2-icon-stroke);
+}
+/*
+ * The blocked-count chip in the URL pill: §9.3's icon button (28 with a 16 glyph at radius 6 on
+ * desktop, 44 with 20 at radius 8 on phones) holding a shield and, once something was blocked,
+ * the count as the shared §9.19 badge. It sits on a window surface, so it draws in the window
+ * family through the §9.29 control roles: the deemphasised ink at rest and no lit state (§9.22 –
+ * the glyph and the badge say what there is to say), the full ink and the window fill under the
+ * pointer or while its popover is up. The count is live, so its figures are tabular (§4): the
+ * badge inherits it, and 9 → 10 → 11 widens the pill by a glyph and never by a jitter.
+ */
+.zen-v2-blocked-chip {
+  display: inline-flex;
+  min-width: var(--v2-icon-button);
+  height: var(--v2-icon-button);
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 6px;
+  border-radius: var(--v2-radius-inner);
+  color: var(--v2-control-text-deemphasized);
+  font-variant-numeric: tabular-nums;
+  transition:
+    background 120ms var(--zen-ease),
+    color 120ms var(--zen-ease);
+}
+.zen-v2-blocked-chip > svg {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  stroke-width: var(--v2-icon-stroke);
+}
+.zen-v2-blocked-chip[aria-expanded='true'] {
+  background: var(--v2-control-fill-hover);
+  color: var(--v2-control-text);
+}
+@media (hover: hover) {
+  .zen-v2-blocked-chip:hover {
+    background: var(--v2-control-fill-hover);
+    color: var(--v2-control-text);
+  }
+}
+.zen-v2-blocked-chip:active {
+  background: var(--v2-control-fill-hover);
+}
+:root[data-form-factor='phone'] .zen-v2-blocked-chip {
+  border-radius: var(--v2-radius-card);
 }
 
 /*

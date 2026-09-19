@@ -3,12 +3,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { Camera, Globe, Mic, Search, Settings } from 'lucide-react'
 import type { Tab, UIState } from '@shared/types'
 import { getHost } from '@shared/url'
-import {
-  MAX_NEW_TAB_SHORTCUTS,
-  VISUAL_SEARCH_AVAILABLE,
-  VOICE_SEARCH_AVAILABLE,
-  newTabSections
-} from '@shared/newTab'
+import { MAX_NEW_TAB_SHORTCUTS, VISUAL_SEARCH_AVAILABLE, newTabSections } from '@shared/newTab'
+import { voiceSearchAvailable } from '@shared/voice'
 import { run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
 import { topSites, type TopSite } from '@renderer/lib/historyAdapter'
@@ -23,6 +19,7 @@ import {
 } from '@renderer/lib/newtab'
 import { contentAreaStore, openUrlbar } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { startVoiceSearch } from '@renderer/lib/voiceSearch'
 import { useLongPress } from '../phone/useLongPress'
 
 interface Props {
@@ -84,7 +81,7 @@ export function NewTabPage({ state, tab, hidden }: Props): JSX.Element {
       {wallpaper === 'image' && <div className="zen-ntp-scrim absolute inset-0" aria-hidden />}
       <div className="relative flex min-h-0 flex-1 flex-col items-center px-4">
         <div className="min-h-6" style={{ flex: 3 }} />
-        {sections.searchBox && <SearchField tab={tab} />}
+        {sections.searchBox && <SearchField state={state} tab={tab} />}
         {sections.shortcuts && <TopSites state={state} tab={tab} />}
         <div className="min-h-6" style={{ flex: 5 }} />
       </div>
@@ -102,15 +99,17 @@ export function NewTabPage({ state, tab, hidden }: Props): JSX.Element {
 }
 
 /**
- * The search field: the floating URL bar's field with a placeholder, the search glyph and, once
- * their handlers exist, the trailing icon buttons for voice and visual search. A tap opens the
- * omnibox for this tab – the field itself never takes input, so what is typed goes where every
- * other address does.
+ * The search field: the floating URL bar's field with a placeholder, the search glyph and the
+ * trailing icon buttons – the mic where the host has a speech recogniser (OMN-19: the listening
+ * sheet, its result loading in this tab), the camera once visual search has a handler. A tap on
+ * the field opens the omnibox for this tab – the field itself never takes input, so what is
+ * typed goes where every other address does.
  */
-function SearchField({ tab }: { tab: Tab }): JSX.Element {
+function SearchField({ state, tab }: { state: UIState; tab: Tab }): JSX.Element {
   const open = (): void => void openUrlbar('edit', tab.id, { attached: true })
-  const trailing = VOICE_SEARCH_AVAILABLE || VISUAL_SEARCH_AVAILABLE
-  const dispatch = (name: 'zen-voice-search' | 'zen-visual-search'): void => {
+  const voice = voiceSearchAvailable(state.capabilities)
+  const trailing = voice || VISUAL_SEARCH_AVAILABLE
+  const dispatch = (name: 'zen-visual-search'): void => {
     window.dispatchEvent(new CustomEvent(name, { detail: { tabId: tab.id } }))
   }
   return (
@@ -135,12 +134,12 @@ function SearchField({ tab }: { tab: Tab }): JSX.Element {
       </button>
       {trailing && (
         <span className="flex shrink-0 items-center gap-0.5 pr-1.5">
-          {VOICE_SEARCH_AVAILABLE && (
+          {voice && (
             <button
               type="button"
               className="zen-toolbar-button h-11 w-11"
               aria-label="Search by voice"
-              onClick={() => dispatch('zen-voice-search')}
+              onClick={() => void startVoiceSearch({ tabId: tab.id, newTab: false })}
             >
               <Mic className="h-5 w-5" strokeWidth={1.75} />
             </button>

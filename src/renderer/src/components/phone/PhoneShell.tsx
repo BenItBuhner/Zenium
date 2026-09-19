@@ -3,7 +3,8 @@ import { useEffect, useRef } from 'react'
 import { Globe, Languages, Lock, Search } from 'lucide-react'
 import { internalPageOf } from '@shared/internalPages'
 import type { PhoneBarPosition, Space, Tab, UIState } from '@shared/types'
-import { displayHost } from '@shared/url'
+import { PRIVATE_CONTAINER_ID } from '@shared/types'
+import { BLANK_URL, displayHost } from '@shared/url'
 import { run } from '@renderer/lib/api'
 import {
   contentShift,
@@ -38,6 +39,7 @@ import { Onboarding } from '../overlays/Onboarding'
 import { BlockedPopupsChip } from '../security/BlockedPopupsPanel'
 import { Favicon } from '../sidebar/Favicon'
 import { TabDialogs } from '../TabDialogs'
+import { BlockedChip } from '../urlbar/BlockedChip'
 import { PillChip } from '../urlbar/PillChip'
 import { Urlbar } from '../urlbar/Urlbar'
 import { BarButton } from './BarButton'
@@ -447,6 +449,9 @@ export function PillContent({
       ) : (
         <Search className="order-first h-4 w-4 shrink-0 opacity-60" />
       )}
+      {shown && !page && state.capabilities.requestBlocking && (
+        <BlockedChip tab={shown} state={state} variant="phone" interactive={interactive} />
+      )}
       {url && secure && !page && (
         <PillChip
           inert={!interactive}
@@ -477,6 +482,20 @@ export function PillContent({
         >
           <Languages className="h-3.5 w-3.5" />
         </Control>
+      )}
+      {/*
+        The private profile indicator (design language v2 §9.19): a private tab with a page shows
+        its favicon like any other, so the pill says "Private" in a neutral badge – the window
+        family, 20 tall, 13/600 – after the address; while the tab has no page the mask glyph in
+        the favicon slot is the marker, never glyph and badge together.
+      */}
+      {shown && shown.containerId === PRIVATE_CONTAINER_ID && shown.url !== BLANK_URL && (
+        <span
+          className="zen-private-badge inline-flex h-5 shrink-0 items-center rounded-full bg-[var(--v2-control-fill)] px-2 text-[13px] leading-5 font-semibold text-[var(--v2-control-text-deemphasized)]"
+          data-testid="private-badge"
+        >
+          Private
+        </span>
       )}
       {state.spaces.length > 1 && (
         <span className="max-w-[64px] shrink-0 truncate text-[11px] text-[var(--zen-muted)]">

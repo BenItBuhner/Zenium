@@ -171,9 +171,10 @@ class IndexReaderTest {
 
     @Test
     fun anotherVersionIsEmptyAndMalformedTextThrows() {
-        assertTrue(IndexReader().read(index(dnrEntry(), version = 2)).isEmpty())
+        assertTrue(IndexReader().read(index(dnrEntry(), version = 3)).isEmpty())
         assertTrue(IndexReader().read("""{"sets":[${dnrEntry()}]}""").isEmpty())
         assertTrue(IndexReader().read("""  {"version":1,"sets":[]}  """).isEmpty())
+        assertTrue(IndexReader().read("""  {"version":2,"sets":[]}  """).isEmpty())
         for (bad in listOf("", "not json", """{"version":1,"sets":[""", """{"version":1,"sets":[{"id":"x","priority":1,"rules":[{]}]}""", """{"version":1} trailing""", """{"version":1,"sets":[{"id":"\u12"}]}""")) {
             try {
                 IndexReader().read(bad)
@@ -182,6 +183,193 @@ class IndexReaderTest {
                 assertTrue(expected.message, expected.message!!.startsWith("blocking index:"))
             }
         }
+    }
+
+    // --- version 2: summaries in the index, the rules in one document per set ------------------
+
+    /** A summary as `RuleSetStore` writes it since the set documents: `document` and `tag` in place of `rules`. */
+    private fun summary(
+        id: String = "ext:abc:static:ads",
+        source: String = "dnr",
+        priority: Int = 2999,
+        updatedAt: Long = 1700000000000L,
+        partitions: String? = """["default","work"]""",
+        document: String? = "sets/ext_abc_static_ads-0f0f0f0f.json",
+        tag: String? = "1a2-deadbeefcafef00d",
+        ruleCount: Int = 4,
+        enabled: Boolean = true
+    ): String = buildString {
+        append("""{"id":"$id","source":"$source","priority":$priority,"enabled":$enabled,"updatedAt":$updatedAt,""")
+        if (partitions != null) append(""""partitions":$partitions,""")
+        append(""""ruleCount":$ruleCount,""")
+        if (document != null) append(""""document":"$document",""")
+        if (tag != null) append(""""tag":"$tag",""")
+        append(""""hasFilterText":false,"filterCount":0}""")
+    }
+
+    private fun setDocument(id: String, rules: String): String = """{"id":"$id","rules":$rules}"""
+
+    private val builtinSummary = summary(
+        id = "builtin:site-exceptions", source = "builtin", priority = 9000, updatedAt = 0L, partitions = null,
+        document = "sets/builtin_site-exceptions-9e0d7a1b.json", tag = "9c-0011223344556677", ruleCount = 1
+    )
+    private val builtinDocument = setDocument(
+        "builtin:site-exceptions",
+        """[{"id":1,"action":{"type":"allowAllRequests"},"condition":{"urlFilter":"|https://trusted.example/","resourceTypes":["main_frame","sub_frame"]}}]"""
+    )
+    private val listSummary =
+        """{"id":"easylist","source":"filter-list","priority":1000,"enabled":true,"version":"2024","updatedAt":1690000000000,""" +
+            """"attribution":{"name":"EasyList","url":"https://easylist.to/","licence":"GPL"},"ruleCount":0,"hasFilterText":true,"filterCount":123,"file":"easylist.json"}"""
+
+    private val documents = mapOf(
+        "sets/ext_abc_static_ads-0f0f0f0f.json" to setDocument("ext:abc:static:ads", defaultRules),
+        "sets/builtin_site-exceptions-9e0d7a1b.json" to builtinDocument
+    )
+
+    /** `IndexReader.read` over `documents`, counting the documents opened and collecting the lines logged. */
+    private class Reading(private val documents: Map<String, String>) {
+        val opened = ArrayList<String>()
+        val logged = ArrayList<String>()
+        val reader = IndexReader { logged.add(it) }
+
+        fun read(index: String): List<RuleSetInfo> = reader.read(index) { name ->
+            opened.add(name)
+            documents[name]
+        }
+    }
+
+    /** The document parser over the same summaries with the rules of their documents, as the fixtures are read. */
+    private fun parsed(index: String, documents: Map<String, String>): List<RuleSetInfo> {
+        val arr = JSONObject(index).getJSONArray("sets")
+        return (0 until arr.length()).mapNotNull { i ->
+            val o = arr.optJSONObject(i) ?: return@mapNotNull null
+            val rules = o.optString("document").takeIf { it.isNotEmpty() }?.let { documents[it] }?.let { JSONObject(it).getJSONArray("rules") }
+            RuleSetInfo.parse(o, rules)
+        }
+    }
+
+    @Test
+    fun readsTheSummariesAndOpensEachSetsDocument() {
+        val text = index(summary(), builtinSummary, listSummary, version = 2)
+        val reading = Reading(documents)
+        val sets = reading.read(text)
+        assertEquals(listOf("ext:abc:static:ads", "builtin:site-exceptions", "easylist"), sets.map { it.id })
+        // Every set with a document opened once, in index order; the list has none to open.
+        assertEquals(listOf("sets/ext_abc_static_ads-0f0f0f0f.json", "sets/builtin_site-exceptions-9e0d7a1b.json"), reading.opened)
+        assertEquals(emptyList<String>(), reading.logged)
+        assertEquals(4, sets[0].rules.size)
+        assertEquals(1, sets[1].rules.size)
+        assertTrue(sets[2].rules.isEmpty())
+        assertEquals("easylist.json", sets[2].file)
+        assertEquals(setOf("default", "work"), sets[0].partitions)
+
+        val expected = parsed(text, documents)
+        assertEquals(expected.map { it.id }, sets.map { it.id })
+        for ((e, s) in expected.zip(sets)) {
+            assertEquals(e.id, e.rules.map { it.id }, s.rules.map { it.id })
+            assertEquals(e.id, e.rules.map { it.effective }, s.rules.map { it.effective })
+            assertEquals(e.id, e.partitions, s.partitions)
+            assertEquals(e.id, e.textFingerprint, s.textFingerprint)
+        }
+        val snap = EngineSnapshot(sets, null)
+        assertEquals(Decision.Action.BLOCK, snap.decide(req("https://tracker.example/t.js", partition = "default")).action)
+        assertEquals(Decision.Action.ALLOW, snap.decide(req("https://tracker.example/ok.js", partition = "default")).action)
+        assertEquals(Decision.Action.ALLOW, snap.decide(req("https://tracker.example/t.js", partition = "private")).action)
+        val redirected = snap.decide(req("https://cdn.example/en/lib.js", partition = "work"))
+        assertEquals(Decision.Action.REDIRECT, redirected.action)
+        assertEquals("https://safe.example/noop.js", redirected.redirectUrl)
+    }
+
+    @Test
+    fun anUnchangedSetsDocumentIsNotOpenedAgainWhateverItsSource() {
+        val reading = Reading(documents)
+        val first = reading.read(index(summary(), builtinSummary, version = 2))
+        assertEquals(2, reading.opened.size)
+        assertEquals("2999:1a2-deadbeefcafef00d", first[0].compiled.fingerprint)
+        assertEquals("9000:9c-0011223344556677", first[1].compiled.fingerprint)
+
+        // The same summaries: nothing opened, the compiled rules shared – the built-in set's too,
+        // now that the tag names its bytes.
+        val again = reading.read(index(summary(), builtinSummary, version = 2))
+        assertEquals(2, reading.opened.size)
+        assertSame(first[0].compiled, again[0].compiled)
+        assertSame(first[1].compiled, again[1].compiled)
+
+        // An enable flip, a re-scope or a new stamp rewrites the summary alone: still not opened.
+        val flipped = reading.read(index(summary(enabled = false, partitions = """["default"]""", updatedAt = 1700000000009L), builtinSummary, version = 2))
+        assertEquals(2, reading.opened.size)
+        assertSame(first[0].compiled, flipped[0].compiled)
+        assertEquals(false, flipped[0].enabled)
+        assertEquals(setOf("default"), flipped[0].partitions)
+
+        // A new tag (the rules changed) opens the document and compiles it anew; so does another
+        // priority band, since the band is baked into the compiled rules.
+        val retagged = reading.read(index(summary(tag = "1a3-0000000000000001"), builtinSummary, version = 2))
+        assertEquals(3, reading.opened.size)
+        assertNotSame(first[0].compiled, retagged[0].compiled)
+        val rebanded = reading.read(index(summary(tag = "1a3-0000000000000001", priority = 2998), builtinSummary, version = 2))
+        assertEquals(4, reading.opened.size)
+        assertNotSame(retagged[0].compiled, rebanded[0].compiled)
+        assertEquals(DnrRule.effectivePriority(2998, 2), rebanded[0].rules.first().effective)
+
+        // A set gone from the index is forgotten: back with the same tag, its document is opened again.
+        reading.read(index(builtinSummary, version = 2))
+        val back = reading.read(index(summary(tag = "1a3-0000000000000001", priority = 2998), builtinSummary, version = 2))
+        assertEquals(5, reading.opened.size)
+        assertNotSame(rebanded[0].compiled, back[0].compiled)
+
+        // A summary without a tag is compiled at every read.
+        val untagged = index(summary(tag = null), version = 2)
+        val u1 = reading.read(untagged)
+        val u2 = reading.read(untagged)
+        assertNull(u1[0].compiled.fingerprint)
+        assertNotSame(u1[0].compiled, u2[0].compiled)
+        assertEquals(4, u2[0].rules.size)
+        assertEquals(emptyList<String>(), reading.logged)
+    }
+
+    @Test
+    fun aMissingHalfWrittenOrForeignDocumentLeavesItsSetOutWithALine() {
+        val truncated = documents["sets/ext_abc_static_ads-0f0f0f0f.json"]!!.let { it.substring(0, it.length / 2) }
+        val cases = listOf<Pair<String, Map<String, String>>>(
+            "is missing" to (documents - "sets/ext_abc_static_ads-0f0f0f0f.json"),
+            "expected" to (documents + ("sets/ext_abc_static_ads-0f0f0f0f.json" to truncated)),
+            "expected" to (documents + ("sets/ext_abc_static_ads-0f0f0f0f.json" to "")),
+            "is the document of builtin:site-exceptions" to (documents + ("sets/ext_abc_static_ads-0f0f0f0f.json" to builtinDocument)),
+            "is the document of no set" to (documents + ("sets/ext_abc_static_ads-0f0f0f0f.json" to """{"rules":[]}"""))
+        )
+        for ((expected, docs) in cases) {
+            val reading = Reading(docs)
+            val sets = reading.read(index(summary(), builtinSummary, listSummary, version = 2))
+            // The set is left out; the others are read, the index is not failed.
+            assertEquals(expected, listOf("builtin:site-exceptions", "easylist"), sets.map { it.id })
+            assertEquals(expected, 1, reading.logged.size)
+            assertTrue(reading.logged[0], reading.logged[0].startsWith("blocking set ext:abc:static:ads left out: "))
+            assertTrue(reading.logged[0], reading.logged[0].contains(expected))
+            assertEquals(1, sets[0].rules.size)
+        }
+
+        // The document written after all (the index that follows names it): the set is back.
+        val gone = Reading(documents - "sets/ext_abc_static_ads-0f0f0f0f.json")
+        assertEquals(listOf("builtin:site-exceptions"), gone.read(index(summary(), builtinSummary, version = 2)).map { it.id })
+        val back = Reading(documents)
+        val sets = back.read(index(summary(), builtinSummary, version = 2))
+        assertEquals(listOf("ext:abc:static:ads", "builtin:site-exceptions"), sets.map { it.id })
+        assertEquals(4, sets[0].rules.size)
+
+        // A document that is not the set's (the id differs) is left out even with the same rules inside.
+        val docs = documents + ("sets/ext_abc_static_ads-0f0f0f0f.json" to setDocument("ext:abc:static:other", defaultRules))
+        val foreign = Reading(docs)
+        assertEquals(listOf("builtin:site-exceptions"), foreign.read(index(summary(), builtinSummary, version = 2)).map { it.id })
+        assertTrue(foreign.logged.single(), foreign.logged.single().endsWith("is the document of ext:abc:static:other"))
+
+        // An empty document of the set's own: a set with no rules, read whole and remembered.
+        val empty = Reading(documents + ("sets/ext_abc_static_ads-0f0f0f0f.json" to setDocument("ext:abc:static:ads", "[]")))
+        val none = empty.read(index(summary(ruleCount = 0), builtinSummary, version = 2))
+        assertEquals(listOf("ext:abc:static:ads", "builtin:site-exceptions"), none.map { it.id })
+        assertTrue(none[0].rules.isEmpty())
+        assertEquals("2999:1a2-deadbeefcafef00d", none[0].compiled.fingerprint)
+        assertSame(none[0].compiled, empty.read(index(summary(ruleCount = 0), builtinSummary, version = 2))[0].compiled)
     }
 
     @Test

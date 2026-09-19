@@ -9,8 +9,9 @@
  * on `ERR_BLOCKED_BY_CLIENT`. Chrome's own lists leave these probes alone; so does Zenium, with
  * one `allow` rule per probe in the {@link BUILTIN_RULE_SETS.connectivityProbes} set.
  *
- * The set is structured (no filter text), so the store writes it into `blocking/index.json`
- * with its rules inline and the Kotlin engine on Android evaluates the very same rules. It sits
+ * The set is structured (no filter text), so the store writes its summary into
+ * `blocking/index.json` and its rules into its `blocking/sets/` document, and the Kotlin engine
+ * on Android evaluates the very same rules. It sits
  * in its own priority band above the lists and below the user's, is always enabled and is not a
  * user list: Settings does not show it.
  */

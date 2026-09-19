@@ -268,6 +268,37 @@ class StorageTest {
     }
 
     @Test
+    fun theRuleSetDocumentsAreTheOneSecondDirectoryLevel() {
+        // `blocking/sets/<name>.json` (`SETS_DIR` in store.ts): written, read, listed, removed, a boot document.
+        val document = """{"id":"ext:abc:_dynamic","rules":[{"id":1,"action":{"type":"block"},"condition":{"urlFilter":"||ads.example^"}}]}"""
+        storage.writeSync("blocking/sets/ext_abc__dynamic-1a2b3c4d.json", document)
+        assertEquals(File(dir, "blocking/sets/ext_abc__dynamic-1a2b3c4d.json"), storage.fileFor("blocking/sets/ext_abc__dynamic-1a2b3c4d.json"))
+        assertEquals(document, storage.read("blocking/sets/ext_abc__dynamic-1a2b3c4d.json"))
+        assertTrue(storage.exists("blocking/sets/ext_abc__dynamic-1a2b3c4d.json"))
+        assertEquals(document, storage.open("blocking/sets/ext_abc__dynamic-1a2b3c4d.json")!!.stream.use { String(it.readBytes()) })
+        assertTrue(storage.isBootDocument("blocking/sets/ext_abc__dynamic-1a2b3c4d.json"))
+        assertEquals(document, storage.readAll().getString("blocking/sets/ext_abc__dynamic-1a2b3c4d.json"))
+        storage.writeSync("blocking/sets/user.json", """{"id":"user","rules":[]}""")
+        File(dir, "blocking/sets/user.json.tmp").writeText("torn")
+        assertEquals(listOf("blocking/sets/ext_abc__dynamic-1a2b3c4d.json", "blocking/sets/user.json"), storage.list(Storage.BLOCKING_SETS_DIR).sorted())
+        assertEquals(storage.list("blocking/sets"), storage.list("/blocking/sets/"))
+        // The one place a second level is allowed: anywhere else it escapes nothing but is refused.
+        assertNull(storage.fileFor("blocking/other/x.json"))
+        assertNull(storage.fileFor("safebrowsing/sets/x.json"))
+        assertNull(storage.fileFor("a/b/c.json"))
+        assertNull(storage.fileFor("blocking/sets/a/b.json"))
+        assertNull(storage.fileFor("blocking/sets/../index.json"))
+        assertFalse(storage.isBootDocument("blocking/sets/x.txt"))
+        assertFalse(storage.isBootDocument("blocking/other/x.json"))
+        assertFalse(storage.isBootDocument("blocking/sets/.json"))
+        val removed = CountDownLatch(1)
+        storage.remove("blocking/sets/user.json") { removed.countDown() }
+        assertTrue(removed.await(5, TimeUnit.SECONDS))
+        assertFalse(storage.exists("blocking/sets/user.json"))
+        assertEquals(listOf("blocking/sets/ext_abc__dynamic-1a2b3c4d.json"), storage.list(Storage.BLOCKING_SETS_DIR))
+    }
+
+    @Test
     fun aCacheFileIsWrittenWholeReadBackAndDeletedWithoutAChangeNotification() {
         val heard = ArrayList<String>()
         val listener: (String) -> Unit = { heard.add(it) }

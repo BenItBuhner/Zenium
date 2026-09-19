@@ -6,6 +6,7 @@ import {
   Clock,
   Download,
   House,
+  Mic,
   MoreHorizontal,
   PanelLeft,
   PanelRight,
@@ -24,6 +25,7 @@ import { prepareNewTabGrow } from '@renderer/lib/newtab'
 import { activeSpace, activeTab, essentialsFor, tabsOf } from '@renderer/lib/selectors'
 import { openFindBar, openOverlay, openUrlbar } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { startVoiceSearch } from '@renderer/lib/voiceSearch'
 import { ReloadStopGlyph, TabCountBadge } from './BarGlyphs'
 
 /**
@@ -187,6 +189,14 @@ export const BAR_ITEMS: Record<PhoneBarItemId, BarItem> = {
       run('focus.chrome', undefined)
       openFindBar(tab.id)
     }
+  },
+  // OMN-19, offered where the host has a recogniser (`phoneBarOffered`): the listening sheet,
+  // its result loading in this tab as a submit from the bar's pill would.
+  voice: {
+    id: 'voice',
+    label: 'Voice search',
+    glyph: () => <Mic className={glyph} />,
+    run: ({ tab }) => void startVoiceSearch({ tabId: tab?.id ?? null })
   }
 }
 

@@ -28,9 +28,11 @@
  * ## Persistence and hand-over
  *
  * The engine serialises its sets as JSON in the profile: `blocking/index.json` lists every set
- * (structured rules inline, `filterText` replaced by `hasFilterText`) and `blocking/<id>.json`
- * holds the full set including its text. The Kotlin engine on Android reads exactly these files,
- * so a translator that calls `setRuleSet` in the core protects both platforms.
+ * as a summary (metadata, rule count, the name and version tag of its rules document,
+ * `filterText` replaced by `hasFilterText`), `blocking/sets/<id>.json` holds one set's structured
+ * rules and `blocking/<id>.json` holds the full set including its text (`store.ts`). The Kotlin
+ * engine on Android reads exactly these files, so a translator that calls `setRuleSet` in the
+ * core protects both platforms.
  */
 
 /** Resource types as named by `chrome.declarativeNetRequest.ResourceType`. */
@@ -292,9 +294,9 @@ export const ALLOW: Decision = Object.freeze({ action: 'allow' }) as Decision
 /**
  * Notification about a set that changed. For `set` changes the full set rides along (with its
  * `filterText` when the caller supplied it) so hosts can rebuild a text matcher, plus the
- * engine's summary of it. `persisted` marks a set whose text is already on disk (startup,
- * bundled snapshots, enable / disable flips): the store keeps its file bookkeeping and hosts
- * read the text back from `blocking/` instead of from the change.
+ * engine's summary of it. `persisted` marks a set whose content – rules document, text – is
+ * already on disk (startup, bundled snapshots, enable / disable flips): the store keeps its
+ * file bookkeeping and hosts read the text back from `blocking/` instead of from the change.
  */
 export interface RuleSetChange {
   kind: 'set' | 'remove'
