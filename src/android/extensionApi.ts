@@ -14,6 +14,7 @@ import { NATIVE_HOST_NOT_FOUND, type EngineContextKind } from '@core/extensions/
 import type { LocaleMessages } from '@core/extensions/api/i18n'
 import { globToRegExp, matchesAnyPattern } from '@core/extensions/api/matchPattern'
 import type { ExtensionRecord } from '@core/extensions/registry'
+import { toServedUrl } from '@core/extensions/runtime/extensionUrls'
 import type { RunAt, RuntimeManifest, ScriptWorld } from '@core/extensions/runtime/manifest'
 import {
   extensionOrigin,
@@ -622,7 +623,13 @@ export class ExtensionApi {
               return false
             if (q.url !== undefined) {
               const patterns = Array.isArray(q.url) ? q.url.map(String) : [String(q.url)]
-              if (!matchesAnyPattern(tab.url, patterns)) return false
+              // An extension-page tab's URL is Chrome's spelling; a pattern built from
+              // `runtime.getURL` (OneTab looks for its own list page that way) is the served one.
+              if (
+                !matchesAnyPattern(tab.url, patterns) &&
+                !matchesAnyPattern(toServedUrl(tab.url), patterns)
+              )
+                return false
             }
             if (q.windowId !== undefined && q.windowId !== -2 && q.windowId !== 1) return false
             if (q.currentWindow === false || q.lastFocusedWindow === false) return false

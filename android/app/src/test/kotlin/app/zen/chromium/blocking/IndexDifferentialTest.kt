@@ -47,9 +47,9 @@ class IndexDifferentialTest {
 
     private fun same(a: Decision, b: Decision): Boolean =
         a.action == b.action && a.redirectUrl == b.redirectUrl && a.matchedSet == b.matchedSet &&
-            a.matchedRule == b.matchedRule && a.matchedFilter == b.matchedFilter
+            a.matchedRule == b.matchedRule && a.matchedFilter == b.matchedFilter && a.needsHeaders == b.needsHeaders
 
-    private fun show(d: Decision) = "${d.action} url=${d.redirectUrl} set=${d.matchedSet} rule=${d.matchedRule} filter=${d.matchedFilter}"
+    private fun show(d: Decision) = "${d.action} url=${d.redirectUrl} set=${d.matchedSet} rule=${d.matchedRule} filter=${d.matchedFilter} headers=${d.needsHeaders}"
 
     private fun rule(id: Int, action: String, condition: JSONObject, priority: Int = 1, redirect: String? = null): JSONObject {
         val a = JSONObject().put("type", action)
@@ -244,8 +244,9 @@ class IndexDifferentialTest {
         assertEquals(streamed.map { it.id }, legacy.map { it.id })
         assertEquals(streamed.map { it.rules.map { r -> r.id } }, legacy.map { it.rules.map { r -> r.id } })
         val declared = (0 until setsJson.length()).sumOf { setsJson.getJSONObject(it).getJSONArray("rules").length() }
-        // Header-conditioned rules are the desktop's alone: `ruleCount` runs short of `declared`
-        // by exactly those, through the streaming reader and the document parser alike.
+        // Header-conditioned rules compile like the rest (their header stage is the relay's);
+        // `ruleCount` carries them, `headerRuleCount` counts them, through the streaming reader
+        // and the document parser alike.
         val headerConditioned = (0 until setsJson.length()).sumOf { s ->
             val rules = setsJson.getJSONObject(s).getJSONArray("rules")
             (0 until rules.length()).count { isHeaderConditioned(rules.getJSONObject(it)) }
@@ -253,8 +254,9 @@ class IndexDifferentialTest {
         assertEquals("header-conditioned rules in the corpus", 3, headerConditioned)
         val text = TextEngine.parse(texts)
         val snap = EngineSnapshot(streamed, text)
-        assertEquals("every declared rule but the header-conditioned compiled (declared $declared)", declared - headerConditioned, snap.ruleCount)
-        assertEquals("the document parser's sets decide the same", declared - headerConditioned, EngineSnapshot(document, text).ruleCount)
+        assertEquals("every declared rule compiled (declared $declared)", declared, snap.ruleCount)
+        assertEquals("header-conditioned rules counted", headerConditioned, snap.headerRuleCount)
+        assertEquals("the document parser's sets decide the same", declared, EngineSnapshot(document, text).ruleCount)
         assertTrue("filters loaded: ${snap.filterCount}", snap.filterCount > 50_000)
 
         val words = listOf("pixel", "track", "ad", "ads", "adsx", "banner", "js", "img", "api", "beacon", "beacon-12", "lib", "main", "generate_204", "collect", "stats", "statsx", "Banner", "trackXpixel", "track|pixel")

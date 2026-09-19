@@ -51,6 +51,7 @@ import androidx.webkit.WebViewFeature
 import app.zen.chromium.blocking.BlockingTab
 import app.zen.chromium.blocking.Decision
 import app.zen.chromium.blocking.SafeBrowsingHit
+import app.zen.chromium.ext.ExtensionUrls
 import app.zen.chromium.ext.NavigationReports
 import app.zen.chromium.privacy.PrivacyFlags
 import org.json.JSONArray
@@ -1061,7 +1062,9 @@ class TabWebView(
     }
 
     // A load the core asked for: the user agent follows the rules for the URL before it leaves.
-    override fun loadUrl(url: String) {
+    override fun loadUrl(requested: String) {
+        // The core spells an extension page's URL as Chrome does; the WebView loads the served origin.
+        val url = ExtensionUrls.toServed(requested)
         rememberCurrentPage()
         if (url.startsWith("http", ignoreCase = true)) currentDocument = url
         switchDesktopModeFor(url)
@@ -1090,7 +1093,8 @@ class TabWebView(
         super.loadUrl(url)
     }
 
-    override fun loadUrl(url: String, additionalHttpHeaders: MutableMap<String, String>) {
+    override fun loadUrl(requested: String, additionalHttpHeaders: MutableMap<String, String>) {
+        val url = ExtensionUrls.toServed(requested)
         rememberCurrentPage()
         switchDesktopModeFor(url)
         super.loadUrl(url, additionalHttpHeaders)
@@ -1295,8 +1299,14 @@ class TabWebView(
         PageCapture(this, host.activity.window, encoder, square, ::evaluate).run(mode, PageCapture.parseRegion(region), format, quality, callback)
     }
 
+    /**
+     * What the core hears as the tab's URL. An extension page loaded from its served origin is
+     * reported as Chrome spells it (`chrome-extension://<id>/...`, [ExtensionUrls.present]): that
+     * is the tab's canonical URL for the core's model, the URL bar and the extension APIs, and
+     * [loadUrl] takes it back to the served origin.
+     */
     fun navState(): JSONObject = json(
-        "url" to (url ?: ""),
+        "url" to ExtensionUrls.present(url ?: ""),
         "title" to reportableTitle(),
         "canGoBack" to canGoBack(),
         "canGoForward" to canGoForward()
@@ -1399,6 +1409,14 @@ class TabWebView(
                 "about", "data", "blob", "javascript" -> {
                     if (interceptNavigation(request)) return true
                     false
+                }
+                "chrome-extension" -> {
+                    // An extension's own page, spelled as Chrome spells it (a link or a
+                    // `location` assignment in an extension page): the served origin is loaded
+                    // in its place. A frame cannot be sent there from here; it fails as WebView
+                    // fails any unknown scheme.
+                    if (request.isForMainFrame) loadUrl(ExtensionUrls.toServed(url.toString()))
+                    true
                 }
                 DeepLinks.INTERNAL_SCHEME, DeepLinks.PAGE_SCHEME -> {
                     // The browser's own pages are the user's to open (typed, a menu, a deep link

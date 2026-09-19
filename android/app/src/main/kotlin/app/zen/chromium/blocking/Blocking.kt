@@ -80,6 +80,14 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
     @Volatile
     var redirector: RedirectExecutor? = null
 
+    /**
+     * The headers-received stage for documents ([HeaderStage]): a document request whose
+     * request-stage allow a header-conditioned rule could overturn is relayed through it. Null
+     * (no extension runtime attached) lets such a request through on the request stage's word.
+     */
+    @Volatile
+    var headerStage: HeaderStage? = null
+
     /** Wall-clock milliseconds of the last build, for the settings sheet and the demo. */
     @Volatile
     var lastBuildMs: Long = 0
@@ -198,6 +206,7 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
                 mapOf("Content-Length" to verdict.bytes.size.toString()), ByteArrayInputStream(verdict.bytes)
             )
             is Verdict.Redirect -> redirector?.redirect(tab, request, verdict.url, verdict.type)
+            is Verdict.HeaderStage -> headerStage?.relay(snapshot, tab, verdict.request, request.requestHeaders ?: emptyMap(), observer)?.toResponse()
         }
     }
 
@@ -375,7 +384,8 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
             val engine = evaluate(snap, tab, url, isMainFrame, headers["Accept"], method, policy, observer)
             if (listeners.isEmpty || !isHttp(url)) return engine
             val record = listeners.begin(tab, url, method, isMainFrame, ResourceType.guessKnown(url, isMainFrame, headers["Accept"]))
-            if (engine !is Verdict.Pass) {
+            // A relay to the header stage is a request that goes out: the listeners see it as one.
+            if (engine !is Verdict.Pass && engine !is Verdict.HeaderStage) {
                 if (engine is Verdict.Empty) listeners.errorOccurred(record, WebRequestListeners.BLOCKED_BY_CLIENT)
                 else listeners.end(record)
                 return engine
@@ -406,7 +416,7 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
                 listeners.unsupported(composed.redirectedBy ?: "", "redirectUrl", url)
             }
             listeners.sendHeaders(record, headers)
-            return Verdict.Pass
+            return engine
         }
 
         /**
@@ -460,7 +470,10 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
                 observer.onDecision(tab, req, decision, elapsed, if (cpuAfter < 0) -1L else cpuAfter - cpuBefore)
             }
             return when (decision.action) {
-                Decision.Action.ALLOW -> Verdict.Pass
+                // A document allowed for now that a header-conditioned rule may still overturn
+                // goes through the header stage's relay (HeaderStage); other requests keep the allow.
+                Decision.Action.ALLOW ->
+                    if (decision.needsHeaders && (isMainFrame || type == ResourceType.SUB_FRAME)) Verdict.HeaderStage(req) else Verdict.Pass
                 Decision.Action.BLOCK -> {
                     if (isMainFrame) {
                         tab.onDocumentBlocked(url)
@@ -616,6 +629,13 @@ sealed class Verdict {
      * to substitute; the request goes out unchanged when there is none.
      */
     class Redirect(val url: String, val type: ResourceType) : Verdict()
+
+    /**
+     * A document the request stage allowed subject to its response headers
+     * ([Decision.needsHeaders]): relayed through the [HeaderStage], which decides it again with
+     * the real headers; WebView loads it itself when there is none.
+     */
+    class HeaderStage(val request: Request) : Verdict()
 }
 
 /** Hears every decision the engine takes on a page's request; see [Blocking.observer]. */

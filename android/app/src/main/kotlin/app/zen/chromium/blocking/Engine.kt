@@ -12,6 +12,12 @@ package app.zen.chromium.blocking
  * priority with uBlock Origin's `@@` / `$important` semantics resolved inside the text engine.
  * Header edits are not applied on Android.
  *
+ * Rules with response header conditions (`responseHeaders` / `excludedResponseHeaders`) are
+ * decided in two stages as on the desktop: [decide] without headers is the request stage and
+ * marks an allow one of them could still overturn ([Decision.needsHeaders]); [decide] with the
+ * response's headers is the headers-received stage ([HeaderStage] relays the document request to
+ * reach it).
+ *
  * Structured rules are looked up through each set's [RuleIndex] (a request visits the rules
  * under its host's suffixes and its URL's tokens, plus the few with nothing to index them by),
  * so an extension's tens of thousands of rules cost a request microseconds, not a scan.
@@ -30,37 +36,38 @@ class EngineSnapshot(sets: Collection<RuleSetInfo>, private val text: TextEngine
     /** Structured rules across the enabled sets. */
     val ruleCount: Int = ordered.sumOf { it.rules.size }
 
+    /** Structured rules with response header conditions across the enabled sets. */
+    val headerRuleCount: Int = ordered.sumOf { set -> set.rules.count { it.needsHeaders } }
+
     /** The enabled sets with structured rules, highest priority first (diagnostics). */
     val ruleSets: List<RuleSetInfo> get() = ordered
 
     /**
-     * A matching rule's claim. `order` is where the linear scan would have met it – the set's
-     * place in [ordered] above the rule's [DnrRule.position] – and breaks a full tie the way
-     * the scan (and the TypeScript engine) does: the first met wins.
+     * Decide `req`. Without `responseHeaders` this is the request stage: rules with response
+     * header conditions are left aside, and an allow (or no match) that one of them – selected by
+     * its other conditions – could still overturn carries [Decision.needsHeaders]. With them (the
+     * response's headers indexed by lowercase name, [HeaderCondition.index]) it is the
+     * headers-received stage: those rules are evaluated too and the two stages merge as Chrome's
+     * `RulesetManager` merges them – a request-stage block or redirect stands, a request-stage
+     * allow caps the header stage (a header rule of equal or lower effective priority yields), a
+     * header-stage block or redirect wins over the allow.
      */
-    private class Candidate(val effective: Long, val rank: Int, val order: Long, val decision: Decision)
-
-    private fun orderOf(setIndex: Int, rule: DnrRule): Long = (setIndex.toLong() shl 32) or rule.position.toLong()
-
-    fun decide(req: Request): Decision {
-        var best: Candidate? = null
+    fun decide(req: Request, responseHeaders: Map<String, List<String>>? = null): Decision {
+        val resolution = Resolution(responseHeaders)
         var frameComputed = false
         var frame: Request? = null
         for ((setIndex, set) in ordered.withIndex()) {
             if (!set.appliesTo(req.partition)) continue
-            val current = best
             // Lower bands cannot beat a definitive winner from a higher band.
-            if (current != null && set.priority < current.effective / (DnrRule.RULE_PRIORITY_MAX + 1)) break
+            if (resolution.best != null && set.priority < resolution.band()) break
             set.index.forEachCandidate(req) { rule ->
-                if (rule.matches(req)) {
-                    decisionFor(set.id, rule, req)?.let {
-                        best = better(best, Candidate(rule.effective, rule.action.rank, orderOf(setIndex, rule), it))
-                    }
-                }
+                if (rule.matches(req)) resolution.claim(set.id, setIndex, rule, req)
             }
             for (rule in set.index.allowAll) {
                 var hit = rule.matches(req)
-                if (!hit) {
+                // The document's headers are not at hand: a header-conditioned `allowAllRequests`
+                // only matches the frame request itself (as on the desktop).
+                if (!hit && !rule.needsHeaders) {
                     if (!frameComputed) {
                         frame = frameContext(req)
                         frameComputed = true
@@ -69,15 +76,30 @@ class EngineSnapshot(sets: Collection<RuleSetInfo>, private val text: TextEngine
                     hit = f != null && rule.matches(f)
                 }
                 if (!hit) continue
-                val decision = decisionFor(set.id, rule, req) ?: continue
-                best = better(best, Candidate(rule.effective, rule.action.rank, orderOf(setIndex, rule), decision))
+                resolution.claim(set.id, setIndex, rule, req)
             }
         }
-        return resolveText(best, req)
+        return conclude(resolution, req)
+    }
+
+    /** Merge the stages of `resolution` with the filter lists' word (the desktop engine's `conclude`, header edits aside). */
+    private fun conclude(resolution: Resolution, req: Request): Decision {
+        val best = resolveText(resolution.best, req)
+        if (best != null && best.decision.action != Decision.Action.ALLOW) return best.decision
+        // The request stage's allow caps everything the header stage finds.
+        val allowEffective = best?.effective ?: -1L
+        val decision = best?.decision ?: Decision.ALLOW
+        if (resolution.headers == null) {
+            // A second round is only worth it when a header rule could beat the request stage's allow.
+            return if (resolution.lateEffective > allowEffective) decision.awaitingHeaders() else decision
+        }
+        val late = resolution.bestLate?.takeIf { it.effective > allowEffective }
+        if (late != null && late.decision.action != Decision.Action.ALLOW) return late.decision
+        return decision
     }
 
     /** The filter lists' word, against the structured rules' best candidate so far. */
-    private fun resolveText(structured: Candidate?, req: Request): Decision {
+    private fun resolveText(structured: Candidate?, req: Request): Candidate? {
         var best = structured
         if (text != null) {
             val current = best
@@ -102,47 +124,23 @@ class EngineSnapshot(sets: Collection<RuleSetInfo>, private val text: TextEngine
                 }
             }
         }
-        return best?.decision ?: Decision.ALLOW
-    }
-
-    private fun better(current: Candidate?, candidate: Candidate): Candidate =
-        if (current == null || candidate.effective > current.effective ||
-            (candidate.effective == current.effective &&
-                (candidate.rank > current.rank || (candidate.rank == current.rank && candidate.order < current.order)))
-        ) candidate else current
-
-    private fun decisionFor(setId: String, rule: DnrRule, req: Request): Decision? = when (rule.action) {
-        RuleAction.ALLOW, RuleAction.ALLOW_ALL_REQUESTS -> Decision(Decision.Action.ALLOW, matchedSet = setId, matchedRule = rule.id)
-        RuleAction.BLOCK -> Decision(Decision.Action.BLOCK, matchedSet = setId, matchedRule = rule.id)
-        RuleAction.UPGRADE_SCHEME -> rule.target(req.url)?.let { Decision(Decision.Action.UPGRADE, it, setId, rule.id) }
-        RuleAction.REDIRECT -> rule.target(req.url)?.let { Decision(Decision.Action.REDIRECT, it, setId, rule.id) }
-    }
-
-    /**
-     * The navigation request of the document `req` belongs to (what `allowAllRequests` rules are
-     * matched against); null for main-frame navigations and requests without a document.
-     */
-    private fun frameContext(req: Request): Request? {
-        if (req.type == ResourceType.MAIN_FRAME) return null
-        val url = req.documentUrl ?: return null
-        return Request(url, ResourceType.MAIN_FRAME, null, "GET", thirdParty = false, tabId = req.tabId, partition = req.partition)
+        return best
     }
 
     /**
      * The same resolution over every rule of every applicable set, without the index: the
      * reference [decide] is checked against in tests, and what a diagnostics run compares to.
      */
-    internal fun decideLinear(req: Request): Decision {
-        var best: Candidate? = null
+    internal fun decideLinear(req: Request, responseHeaders: Map<String, List<String>>? = null): Decision {
+        val resolution = Resolution(responseHeaders)
         var frameComputed = false
         var frame: Request? = null
         for ((setIndex, set) in ordered.withIndex()) {
             if (!set.appliesTo(req.partition)) continue
-            val current = best
-            if (current != null && set.priority < current.effective / (DnrRule.RULE_PRIORITY_MAX + 1)) break
+            if (resolution.best != null && set.priority < resolution.band()) break
             for (rule in set.rules) {
                 var hit = rule.matches(req)
-                if (!hit && rule.action == RuleAction.ALLOW_ALL_REQUESTS) {
+                if (!hit && rule.action == RuleAction.ALLOW_ALL_REQUESTS && !rule.needsHeaders) {
                     if (!frameComputed) {
                         frame = frameContext(req)
                         frameComputed = true
@@ -151,11 +149,10 @@ class EngineSnapshot(sets: Collection<RuleSetInfo>, private val text: TextEngine
                     hit = f != null && rule.matches(f)
                 }
                 if (!hit) continue
-                val decision = decisionFor(set.id, rule, req) ?: continue
-                best = better(best, Candidate(rule.effective, rule.action.rank, orderOf(setIndex, rule), decision))
+                resolution.claim(set.id, setIndex, rule, req)
             }
         }
-        return resolveText(best, req)
+        return conclude(resolution, req)
     }
 
     companion object {
@@ -167,4 +164,64 @@ class EngineSnapshot(sets: Collection<RuleSetInfo>, private val text: TextEngine
 
         val EMPTY = EngineSnapshot(emptyList(), null)
     }
+}
+
+/**
+ * A matching rule's claim. `order` is where the linear scan would have met it – the set's
+ * place in the snapshot's order above the rule's [DnrRule.position] – and breaks a full tie
+ * the way the scan (and the TypeScript engine) does: the first met wins.
+ */
+private class Candidate(val effective: Long, val rank: Int, val order: Long, val decision: Decision)
+
+/**
+ * The claims of one evaluation: the request stage's best candidate, and – for rules with
+ * response header conditions – either the strongest such rule the request's other conditions
+ * selected (`lateEffective`, without the headers) or the best one whose header conditions the
+ * response met (`bestLate`, with them). The desktop engine's `Resolution`, header edits aside.
+ */
+private class Resolution(val headers: Map<String, List<String>>?) {
+    var best: Candidate? = null
+    var bestLate: Candidate? = null
+    var lateEffective: Long = -1L
+
+    fun claim(setId: String, setIndex: Int, rule: DnrRule, req: Request) {
+        if (rule.needsHeaders) {
+            if (headers == null) {
+                if (rule.effective > lateEffective) lateEffective = rule.effective
+                return
+            }
+            if (!rule.matchesHeaders(headers)) return
+        }
+        val decision = decisionFor(setId, rule, req) ?: return
+        val candidate = Candidate(rule.effective, rule.action.rank, orderOf(setIndex, rule), decision)
+        if (rule.needsHeaders) bestLate = better(bestLate, candidate) else best = better(best, candidate)
+    }
+
+    /** The band the request stage's winner sits in; -1 without one. */
+    fun band(): Long = best?.let { it.effective / (DnrRule.RULE_PRIORITY_MAX + 1) } ?: -1L
+}
+
+private fun orderOf(setIndex: Int, rule: DnrRule): Long = (setIndex.toLong() shl 32) or rule.position.toLong()
+
+private fun better(current: Candidate?, candidate: Candidate): Candidate =
+    if (current == null || candidate.effective > current.effective ||
+        (candidate.effective == current.effective &&
+            (candidate.rank > current.rank || (candidate.rank == current.rank && candidate.order < current.order)))
+    ) candidate else current
+
+private fun decisionFor(setId: String, rule: DnrRule, req: Request): Decision? = when (rule.action) {
+    RuleAction.ALLOW, RuleAction.ALLOW_ALL_REQUESTS -> Decision(Decision.Action.ALLOW, matchedSet = setId, matchedRule = rule.id)
+    RuleAction.BLOCK -> Decision(Decision.Action.BLOCK, matchedSet = setId, matchedRule = rule.id)
+    RuleAction.UPGRADE_SCHEME -> rule.target(req.url)?.let { Decision(Decision.Action.UPGRADE, it, setId, rule.id) }
+    RuleAction.REDIRECT -> rule.target(req.url)?.let { Decision(Decision.Action.REDIRECT, it, setId, rule.id) }
+}
+
+/**
+ * The navigation request of the document `req` belongs to (what `allowAllRequests` rules are
+ * matched against); null for main-frame navigations and requests without a document.
+ */
+private fun frameContext(req: Request): Request? {
+    if (req.type == ResourceType.MAIN_FRAME) return null
+    val url = req.documentUrl ?: return null
+    return Request(url, ResourceType.MAIN_FRAME, null, "GET", thirdParty = false, tabId = req.tabId, partition = req.partition)
 }

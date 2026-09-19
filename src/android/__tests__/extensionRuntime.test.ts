@@ -1081,9 +1081,10 @@ describe('AndroidExtensionRuntime: an extension page open as a tab', () => {
       h.kt.to('bg1').filter((m) => m.t === 'deliver')
     expect(toBg()).toHaveLength(1)
     const sender = toBg()[0].sender as Record<string, unknown>
+    // The page names itself as Chrome spells it (extensionUrls.ts); `origin` stays the served one.
     expect(sender).toMatchObject({
       id: ID,
-      url: `${origin}/pages/options.html`,
+      url: `chrome-extension://${ID}/pages/options.html`,
       origin,
       frameId: 0,
       documentId: 'docP.1',
