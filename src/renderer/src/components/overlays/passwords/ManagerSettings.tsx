@@ -254,12 +254,18 @@ function usePassphraseForm(
   return { value, confirm, setValue, setConfirm, busy, mismatch, ready, save }
 }
 
-/** The fields (§9.12): the new passphrase and its confirmation, the mismatch said under the second. */
+/**
+ * The fields (§9.12): the new passphrase and its confirmation, the mismatch said under the
+ * second. The desktop's inline editor takes the focus itself as it appears in the pane
+ * (`autoFocus`); in a sheet the chassis puts the focus on the first field (§9.22).
+ */
 function PassphraseFields({
   form,
+  autoFocus = false,
   className
 }: {
   form: ReturnType<typeof usePassphraseForm>
+  autoFocus?: boolean
   className?: string
 }): JSX.Element {
   return (
@@ -269,7 +275,7 @@ function PassphraseFields({
           <TextField
             {...aria}
             type="password"
-            autoFocus
+            autoFocus={autoFocus}
             readOnly={form.busy}
             autoComplete="new-password"
             placeholder={`At least ${MIN_PASSPHRASE} characters`}
@@ -320,7 +326,11 @@ function PassphraseEditor({
         void form.save()
       }}
     >
-      <PassphraseFields form={form} className="sm:flex-row sm:items-start sm:[&>*]:flex-1" />
+      <PassphraseFields
+        form={form}
+        autoFocus
+        className="sm:flex-row sm:items-start sm:[&>*]:flex-1"
+      />
       <Description>{PASSPHRASE_WARNING}</Description>
       <FormActions>
         <Btn onClick={onDone} disabled={form.busy}>

@@ -234,7 +234,6 @@ function PromptForm({
               {...aria}
               ref={field}
               type="password"
-              autoFocus
               readOnly={busy}
               autoComplete={setup ? 'new-password' : 'current-password'}
               value={value}
