@@ -11,7 +11,7 @@ import {
   cssPx,
   dismissDock,
   dockStore,
-  phoneBarHeight
+  phoneBandHeight
 } from '@renderer/lib/gestures/dock'
 import { closeOverview, overviewIsOpen, stageStore } from '@renderer/lib/gestures/stage'
 import { closeSpacesDrawer } from '@renderer/lib/gestures/drawer'
@@ -44,12 +44,14 @@ import { PillChip } from '../urlbar/PillChip'
 import { Urlbar } from '../urlbar/Urlbar'
 import { BarButton } from './BarButton'
 import { barContext, barLayout } from './barItems'
+import { GroupStrip } from './GroupStrip'
 import { PhoneStage } from './PhoneStage'
 import { SpacesDrawer } from './SpacesDrawer'
 import { TabPreview } from './TabPreview'
 import { TabsQuickMenu } from './TabsQuickMenu'
 import { useBarHold, type BarHoldHandlers } from './useBarHold'
 import { useGestureHint } from './useGestureHint'
+import { useGroupStrip, type GroupStripPresence } from './useGroupStrip'
 import { usePillGestures, type PillGestureHandlers } from './usePillGestures'
 import './phonePanels.css'
 
@@ -149,6 +151,9 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
   })
 
   const barHidden = ui.urlbar.open
+  // The tab group strip (TAB-14): present while the active tab is grouped, and on its way out for
+  // a moment after it leaves; its share of the bar band is published by the hook.
+  const strip = useGroupStrip(state)
   // The one-time gesture hint (FRE-07) is a toast on the message cards, owed once the chrome is
   // calm: a page in view under nothing, the bar and its pill in place, no drag, overview or prompt.
   useGestureHint(
@@ -235,6 +240,7 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
           edge={edge}
           pill={pill}
           hold={hold}
+          strip={strip}
           overviewOpen={overviewOpen}
           pillLook={dock.phase === 'idle' ? 'docked' : 'well'}
           style={fromHere ? { opacity: barFade(edge, 1 - p) } : undefined}
@@ -246,6 +252,7 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
           state={state}
           edge={dock.from === 'bottom' ? 'top' : 'bottom'}
           pill={pill}
+          strip={strip}
           overviewOpen={overviewOpen}
           pillLook={p >= 0.5 ? 'well-target' : 'well'}
           inert
@@ -265,11 +272,14 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
   )
 }
 
-/** What the content column leaves free at `side`: the bar band on the bar's edge, a gutter elsewhere. */
+/**
+ * What the content column leaves free at `side`: the bar band on the bar's edge – the bar and,
+ * while the active tab is grouped, the group strip (`--zen-phone-band`) – a gutter elsewhere.
+ */
 function edgePadding(side: PhoneBarPosition, barEdge: PhoneBarPosition): string {
   const inset = `var(--zen-inset-${side})`
   return side === barEdge
-    ? `calc(${inset} + var(--zen-phone-bar))`
+    ? `calc(${inset} + var(--zen-phone-band))`
     : `calc(${inset} + var(--zen-padding))`
 }
 
@@ -280,15 +290,22 @@ type PillLook = 'docked' | 'well' | 'well-target'
  * (by default back · pill · new tab · tabs · menu). The pill is the gesture anchor: swipe it
  * sideways to move to the previous / next tab (the neighbour's card follows the finger), pull it
  * towards the middle of the screen for the tab overview, tap it for the URL bar, hold it to
- * carry the whole bar to the other edge. A hold anywhere else on the bar opens the editor that
- * rearranges it (on the Tabs button, its quick menu). Window chrome (v2 §9.29): the bar and the
- * pill carry `data-surface="window"`, so their chips draw in the window family.
+ * carry the whole bar to the other edge. A hold anywhere else on the bar's row opens the editor
+ * that rearranges it (on the Tabs button, its quick menu). Window chrome (v2 §9.29): the bar and
+ * the pill carry `data-surface="window"`, so their chips draw in the window family.
+ *
+ * The bar is a band of up to two rows: the row of controls at the edge and, while the active tab
+ * is in a group, the group strip (TAB-14) on the row's inner side – above a bottom-docked row,
+ * below a top-docked one. The strip is the row's sibling, so a touch on its chips never reaches
+ * the pill's recogniser or the row's hold; whatever translates the bar (a carry's fade today, a
+ * hide-on-scroll offset on `.zen-phone-bar` tomorrow) moves the strip with it.
  */
 export function PhoneBar({
   state,
   edge,
   pill,
   hold,
+  strip,
   overviewOpen,
   pillLook,
   inert,
@@ -298,6 +315,8 @@ export function PhoneBar({
   edge: PhoneBarPosition
   pill: PillGestureHandlers
   hold?: BarHoldHandlers
+  /** The group strip's presence (`useGroupStrip`): the strip is drawn while there is one. */
+  strip?: GroupStripPresence | null
   overviewOpen: boolean
   /** The pill in place, or the empty slot it left (highlighted when it is about to land here). */
   pillLook: PillLook
@@ -310,11 +329,14 @@ export function PhoneBar({
   const ctx = barContext(state, overviewOpen)
   const layout = barLayout(state)
   const inset = `var(--zen-inset-${edge})`
+  const groupStrip = strip ? (
+    <GroupStrip presence={strip} edge={edge} overviewOpen={overviewOpen} inert={inert} />
+  ) : null
 
   return (
     <nav
       className={cn(
-        'zen-phone-bar absolute z-30 flex items-center gap-1 px-2',
+        'zen-phone-bar absolute z-30 flex flex-col px-2',
         edge === 'bottom' ? 'bottom-0' : 'top-0',
         // While the pill is being carried the other buttons are on their way out too.
         pillLook !== 'docked' && 'zen-phone-bar-lifted',
@@ -333,36 +355,39 @@ export function PhoneBar({
         paddingTop: edge === 'top' ? `calc(${inset} + 6px)` : 6,
         paddingBottom: edge === 'bottom' ? `calc(${inset} + 6px)` : 6
       }}
-      {...(inert ? {} : hold)}
     >
-      {layout.left.map((id) => (
-        <BarButton key={id} id={id} ctx={ctx} inert={inert} />
-      ))}
-      {/*
-        The pill is a gesture surface, not a button: its site icon, address and lock are real
-        buttons inside it, so TalkBack gets a node for each (a button's descendants would all
-        collapse into one). Taps are told apart in onTap by what was under the finger.
-      */}
-      <div
-        role="group"
-        aria-label={inert ? undefined : 'Address'}
-        className={cn(
-          'zen-phone-pill flex h-11 min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-full px-3.5 text-left',
-          pillLook === 'docked' &&
-            'bg-[var(--zen-element-bg)] active:bg-[var(--zen-element-bg-hover)]',
-          pillLook !== 'docked' && 'zen-pill-well',
-          pillLook === 'well-target' && 'zen-pill-well-target'
-        )}
-        data-surface="window"
-        {...(inert ? {} : pill)}
-      >
-        {pillLook === 'docked' && (
-          <PillContent state={state} tab={tab} space={space} interactive={!inert} />
-        )}
+      {edge === 'bottom' && groupStrip}
+      <div className="zen-phone-bar-row flex items-center gap-1" {...(inert ? {} : hold)}>
+        {layout.left.map((id) => (
+          <BarButton key={id} id={id} ctx={ctx} inert={inert} />
+        ))}
+        {/*
+          The pill is a gesture surface, not a button: its site icon, address and lock are real
+          buttons inside it, so TalkBack gets a node for each (a button's descendants would all
+          collapse into one). Taps are told apart in onTap by what was under the finger.
+        */}
+        <div
+          role="group"
+          aria-label={inert ? undefined : 'Address'}
+          className={cn(
+            'zen-phone-pill flex h-11 min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-full px-3.5 text-left',
+            pillLook === 'docked' &&
+              'bg-[var(--zen-element-bg)] active:bg-[var(--zen-element-bg-hover)]',
+            pillLook !== 'docked' && 'zen-pill-well',
+            pillLook === 'well-target' && 'zen-pill-well-target'
+          )}
+          data-surface="window"
+          {...(inert ? {} : pill)}
+        >
+          {pillLook === 'docked' && (
+            <PillContent state={state} tab={tab} space={space} interactive={!inert} />
+          )}
+        </div>
+        {layout.right.map((id) => (
+          <BarButton key={id} id={id} ctx={ctx} inert={inert} />
+        ))}
       </div>
-      {layout.right.map((id) => (
-        <BarButton key={id} id={id} ctx={ctx} inert={inert} />
-      ))}
+      {edge === 'top' && groupStrip}
     </nav>
   )
 }
@@ -523,7 +548,8 @@ function BarDockLayer({
   const area = contentAreaStore.use((s) => s.area)
   const hero = dock.heroTabId ? (state.tabs[dock.heroTabId] ?? null) : null
   const space = activeSpace(state)
-  const bar = phoneBarHeight()
+  // The page slides by the band it leaves free at the bar's edge: the row plus the group strip.
+  const bar = phoneBandHeight()
   const gutter = cssPx('--zen-padding', 8)
   const dir = dock.from === 'bottom' ? -1 : 1
   const { slot } = dock

@@ -37,6 +37,9 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   ['.zen-v2-button {', '/*\n * The v2 badge (§9.19)'],
   // The Tabs button's hold menu (components/phone/TabsQuickMenu.tsx).
   ['.zen-quick-menu {', '/* The chassis sheet is the v2 surface (§6)'],
+  // The tab group strip in the phone bar (components/phone/GroupStrip.tsx, TAB-14): a window
+  // surface (§9.29) – the tray in the window fill, the chips in the theme's ink and accent.
+  ['.zen-group-strip {', "/* Titles of the phone's overview, drawer and sheets. */"],
   // The navigation bar's editor (components/phone/BarEditorSheet.tsx, BarPreview.tsx).
   ['.zen-bar-row {', '/* The editor draws a hairline when its rows scroll under the header'],
   // The zen://error page (shared/zenPages.ts cuts this block, the token block and the v2 button

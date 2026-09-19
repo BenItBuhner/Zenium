@@ -73,6 +73,13 @@
   --zen-card-radius: 14px;
   /* Height of the phone's bottom bar without the gesture-bar inset. */
   --zen-phone-bar: 56px;
+  /*
+   * The phone bar's band: the row of controls plus, while the active tab is in a group, the tab
+   * group strip. The shell writes the strip's share (`useGroupStrip`: 50 while the strip is
+   * present, 0 otherwise); the content column, the overview and a pill carry read the band.
+   */
+  --zen-group-strip: 0px;
+  --zen-phone-band: calc(var(--zen-phone-bar) + var(--zen-group-strip));
   --zen-sidebar-width: 240px;
   --zen-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
   /* Zen 1.22: the chrome uses squircles (superellipse corners) instead of plain rounding. */
@@ -1682,7 +1689,8 @@
   .zen-phone-bar {
     background: transparent;
   }
-  .zen-phone-bar-lifted > button:not(.zen-phone-pill) {
+  .zen-phone-bar-lifted .zen-phone-bar-row > button,
+  .zen-phone-bar-lifted .zen-group-strip {
     pointer-events: none;
   }
   /* The slot an address pill left behind while it is being carried: a shallow well. */
@@ -2063,6 +2071,164 @@
     background: rgb(var(--zen-group-rgb) / 0.22);
     backdrop-filter: blur(12px) saturate(1.2);
     will-change: opacity;
+  }
+  /*
+   * The tab group strip (TAB-14, `GroupStrip.tsx`): the second row the bar band gains while the
+   * active tab is in a group, on the inner side of the bar's row of controls. Window chrome
+   * (v2 §9.29): the tray is a pill in the window fill, the same height and radius as the address
+   * pill beside it (44, radius 22), and its chips – the group's dot, a favicon per member, a plus
+   * – are 36 circles set 4 inside it, so the radii are concentric (22 − 4 = 18); they draw in the
+   * theme's ink, the active member ringed in the theme's accent with the fill of a marked chip
+   * (§9.4's ring and fill). The strip's own box is the share of the band the shell publishes as
+   * `--zen-group-strip` (the tray plus its 6 gap to the row) and clips the tray's slide out of
+   * and back behind the row.
+   */
+  .zen-group-strip {
+    position: relative;
+    box-sizing: border-box;
+    height: var(--zen-group-strip);
+    overflow: hidden;
+  }
+  .zen-group-strip[data-edge='bottom'] {
+    padding-bottom: 6px;
+  }
+  .zen-group-strip[data-edge='top'] {
+    padding-top: 6px;
+  }
+  .zen-group-tray {
+    position: relative;
+    display: flex;
+    align-items: center;
+    height: 100%;
+    padding: 0 4px;
+    border-radius: 22px;
+    background: var(--v2-window-fill);
+    color: var(--zen-fg);
+  }
+  /*
+   * The members' chips scroll sideways when the group overflows; the edges fade (`useFadeEdges`).
+   * The scroller's 4 padding is the chips' inset in the tray and the room their focus ring needs
+   * inside the clip.
+   */
+  .zen-group-scroller {
+    position: relative;
+    display: flex;
+    flex: 1 1 0;
+    min-width: 0;
+    align-items: center;
+    gap: 4px;
+    height: 100%;
+    padding: 4px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    touch-action: pan-x;
+    overscroll-behavior-x: contain;
+  }
+  .zen-group-scroller::-webkit-scrollbar {
+    display: none;
+  }
+  /*
+   * A chip is two layers, as an overview card is its cell and the card inside: the chip itself is
+   * the cell the FLIP tracker glides – its transform is the tracker's, written every frame of a
+   * glide, so nothing here may transition it (a transition on the cell would ease each frame's
+   * write towards the last, and a neighbour would jump to its new slot and drift back before it
+   * glided) – and the face inside is what a chip shows: its fill, its mark, the pressed state's
+   * ease and squeeze (v2 §11's .98), and the scale a joining chip comes in on and a leaving chip
+   * goes out on (`GroupStrip.tsx`, which pauses the face's transition while a spring writes it
+   * and promotes the face – `will-change` – for those frames only: at rest it is `auto`).
+   *
+   * The cell is also the touch target: the tray's whole 44 height and the slot's whole 40 pitch
+   * (§9.2's 44), so the chips tile the tray with no dead space between two faces – a touch
+   * between them lands on the nearer chip – and no target is the 36 face alone. Its negative
+   * margins lay the 40 x 44 box over the 4 of padding the tray and the scroller keep around a 36
+   * margin box, so the pitch and the faces' geometry are unchanged. The one v2 ring (§9.6: 2px
+   * accent, offset 0 light, -2 dark) draws on the round face, not on the rectangular cell, which
+   * is why the cell does not carry a `zen-v2-` class: that unlayered ring rule would outrank
+   * anything written here.
+   */
+  .zen-group-chip {
+    position: relative;
+    display: flex;
+    flex: 0 0 auto;
+    width: 40px;
+    height: 44px;
+    margin: -4px -2px;
+    align-items: center;
+    justify-content: center;
+    color: inherit;
+  }
+  .zen-group-chip:focus-visible {
+    outline: none;
+  }
+  .zen-group-chip:focus-visible .zen-group-chip-face {
+    outline: 2px solid var(--v2-ring);
+    outline-offset: 0;
+  }
+  :root[data-theme='dark'] .zen-group-chip:focus-visible .zen-group-chip-face {
+    outline-offset: -2px;
+  }
+  .zen-group-chip-face {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 18px;
+    transition:
+      background 120ms var(--zen-ease),
+      transform 120ms var(--zen-ease);
+  }
+  .zen-group-chip:active .zen-group-chip-face {
+    background: var(--v2-window-fill-hover);
+    transform: scale(0.98);
+  }
+  .zen-group-chip[aria-current='true'] .zen-group-chip-face,
+  .zen-group-chip[aria-pressed='true'] .zen-group-chip-face {
+    background: var(--v2-window-fill);
+  }
+  .zen-group-chip[aria-current='true'] .zen-group-chip-face {
+    box-shadow: inset 0 0 0 2px var(--v2-control-accent);
+  }
+  .zen-group-chip-glyph {
+    width: 20px;
+    height: 20px;
+    stroke-width: 1.75;
+  }
+  /*
+   * A member that left, or a chip of the group the strip switched from: stays where it stood,
+   * off the flow, while it shrinks or fades away. Its `left` is the slot's `offsetLeft`, a border
+   * edge, so the cell's margins are not applied again.
+   */
+  .zen-group-chip-exit {
+    position: absolute;
+    top: 0;
+    margin: 0;
+    pointer-events: none;
+  }
+  /*
+   * A switch of group (v2 §11.4): the chips of the group the strip showed stay a fade longer –
+   * 120 ms on opacity, in the same slots, no slide and no cut – over the chips of the new group
+   * fading in. They are a layer over the tray, out of the flow and out of reach; its members'
+   * part sits at the scroller's box (set inline, as measured) and clips and edge-fades them as
+   * the scroller did, so the outgoing set ends exactly as it stood.
+   */
+  .zen-group-ghosts {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  .zen-group-ghost-members {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    overflow: hidden;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .zen-group-chip-face {
+      transition-duration: 1ms;
+    }
   }
   /* Titles of the phone's overview, drawer and sheets. */
   .zen-title {
