@@ -10,6 +10,10 @@
  * origin excepts that site), so the site-information sheet lists and resets them with the other
  * permissions; this service turns them into two builtin rule sets. A third builtin set, the
  * connectivity-probe exceptions (`connectivityProbes.ts`), is fixed and always on.
+ *
+ * Sets another layer feeds the engine on behalf of an owner (an extension's `ext:` sets) are
+ * persisted like the rest and reconciled with the owners present at that layer's start
+ * ({@link BlockingService.reconcileOwners}).
  */
 import {
   BLOCKING_PERMISSION,
@@ -39,7 +43,8 @@ import {
   USER_RULE_SET_ID,
   type Rule,
   type RuleSet,
-  type RuleSetAttribution
+  type RuleSetAttribution,
+  type RuleSetSource
 } from './rules'
 import { RuleSetStore } from './store'
 
@@ -65,6 +70,24 @@ interface ListSource {
   custom: boolean
 }
 
+/**
+ * Who the persisted sets of one source belong to, for {@link BlockingService.reconcileOwners}.
+ * A layer that feeds the engine on behalf of others – the extension layer's `ext:` sets
+ * (`source: 'dnr'`), one owner per extension – describes its sets here; the layer itself does
+ * not have to be running for its sets to apply (they are read from `blocking/index.json` at
+ * start), which is why the owners' presence is declared rather than inferred.
+ */
+export interface RuleSetOwnership {
+  /** The source whose sets are owned. */
+  source: RuleSetSource
+  /**
+   * The owner of one of the source's sets (for `ext:` sets the extension id), or undefined for a
+   * set no owner can claim – such a set is dropped by the reconciliation too, since nobody could
+   * ever remove it.
+   */
+  ownerOf(setId: string): string | undefined
+}
+
 export class BlockingService {
   readonly engine = new RuleEngine()
   readonly store: RuleSetStore
@@ -83,9 +106,42 @@ export class BlockingService {
   private unsubscribePermissions: (() => void) | null = null
   /** What the last `syncSets` applied, so the next one only touches what changed. */
   private synced: { userFilters: string; lists: Set<string> } | null = null
+  /** The fire-and-forget work started and not finished yet (see `whenSettled`). */
+  private readonly inflight = new Set<Promise<unknown>>()
+  private settleWaiters: (() => void)[] = []
 
   constructor(private readonly browser: Browser) {
     this.store = new RuleSetStore(browser.platform.io)
+  }
+
+  /**
+   * Resolves once the work this service set off on its own – the bundled snapshot's seeding, the
+   * list fetches queued by a settings change or a sweep, and the store's writes of what they
+   * produced – has finished, including work started in turn. The engine and `blocking/` are
+   * final at that point; tests and demo drivers wait on this instead of guessing how many ticks a
+   * fetch and its persistence take.
+   */
+  async whenSettled(): Promise<void> {
+    for (;;) {
+      while (this.inflight.size > 0)
+        await new Promise<void>((resolve) => this.settleWaiters.push(resolve))
+      await this.store.whenSettled()
+      if (this.inflight.size === 0) return
+    }
+  }
+
+  /** Runs `work` in the background and keeps it in `inflight` until it settles. */
+  private track<T>(work: Promise<T>): Promise<T> {
+    this.inflight.add(work)
+    const done = (): void => {
+      this.inflight.delete(work)
+      if (this.inflight.size > 0) return
+      const waiters = this.settleWaiters
+      this.settleWaiters = []
+      for (const wake of waiters) wake()
+    }
+    work.then(done, done)
+    return work
   }
 
   private get settings(): BlockingSettings {
@@ -114,11 +170,14 @@ export class BlockingService {
       this.browser.state.commitVolatile()
     })
     this.ready = true
-    void this.seedBundled().then(() => {
-      if (this.stopped) return
-      this.startupTimer = setTimeout(() => void this.sweep(), STARTUP_SWEEP_DELAY_MS)
-      this.sweepTimer = setInterval(() => void this.sweep(), SWEEP_INTERVAL_MS)
-    })
+    void this.track(
+      this.seedBundled().then(() => {
+        if (this.stopped) return
+        const sweep = (): void => void this.track(this.sweep())
+        this.startupTimer = setTimeout(sweep, STARTUP_SWEEP_DELAY_MS)
+        this.sweepTimer = setInterval(sweep, SWEEP_INTERVAL_MS)
+      })
+    )
     this.browser.state.commitVolatile()
   }
 
@@ -390,7 +449,7 @@ export class BlockingService {
     const rt = this.runtimeFor(id)
     rt.updating = true
     this.browser.state.commitVolatile()
-    const run = this.queue.then(() => this.fetchList(id))
+    const run = this.track(this.queue.then(() => this.fetchList(id)))
     this.queue = run.then(
       () => undefined,
       () => undefined
@@ -544,6 +603,36 @@ export class BlockingService {
     if (this.builtinSignatures.get(set.id) === signature && this.engine.has(set.id)) return
     this.builtinSignatures.set(set.id, signature)
     this.engine.setRuleSet(set)
+  }
+
+  // ---------------------------------------------------------------------------
+  // Owned sets
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Reconcile the persisted sets of one source with the owners that are present: every set of
+   * `ownership.source` whose owner is not among `alive` (or has none) is dropped, from the engine
+   * and, through the attached store, from `blocking/index.json` – the same removal as
+   * `removeRuleSet`, which the Kotlin engine follows by rebuilding without the set.
+   *
+   * Sets outlive their owner when the owner goes while the app is closed: an extension removed or
+   * disabled between two runs leaves its `ext:` sets in the index, `start()` loads them like every
+   * other set and they keep filtering. The layer that owns a source calls this once at its start,
+   * after `start()` here, with the owners it is about to bring up; an owner that is alive keeps its
+   * sets (its own layer replaces or removes them as it loads), so the order relative to those
+   * loads does not matter. Returns the ids dropped, for the caller's log.
+   */
+  reconcileOwners(ownership: RuleSetOwnership, alive: Iterable<string>): string[] {
+    const living = new Set(alive)
+    const dropped: string[] = []
+    for (const summary of this.engine.listRuleSets()) {
+      if (summary.source !== ownership.source) continue
+      const owner = ownership.ownerOf(summary.id)
+      if (owner !== undefined && living.has(owner)) continue
+      this.engine.removeRuleSet(summary.id)
+      dropped.push(summary.id)
+    }
+    return dropped
   }
 }
 

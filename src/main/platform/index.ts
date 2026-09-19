@@ -483,6 +483,9 @@ export class ElectronPlatform implements Platform {
     attachSecurityHandlers(browser, this.views)
     configurePlatformAuthenticators(__ZENIUM_APPLE_TEAM_ID__)
     browser.start()
+    // The engine has its persisted rule sets now: the ones of extensions removed or disabled
+    // while Zenium was closed go before the enabled ones load (`extensions.start`, above).
+    extensionApi.declarativeNetRequest.reconcile()
     // Toasts need the app id registered with Windows; a copy without installer shortcuts
     // (development, portable) registers it itself.
     if (process.platform === 'win32')
