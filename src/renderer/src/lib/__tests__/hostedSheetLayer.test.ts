@@ -35,6 +35,9 @@ const ROOT = fileURLToPath(new URL('../../', import.meta.url))
 const OWN_SCRIM_CONSUMERS = [
   'components/downloads/DownloadsSheet.tsx',
   'components/newtab/CustomizeSheet.tsx',
+  // The password manager's phone passphrase prompt, and its prompt and picker sheets (#92).
+  'components/overlays/passwords/PassphrasePrompt.tsx',
+  'components/overlays/passwords/shared.tsx',
   'components/pages/settings/sheets.tsx',
   'components/phone/InstallSheet.tsx',
   'components/phone/PhoneSheet.tsx'

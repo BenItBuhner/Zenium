@@ -14,7 +14,8 @@ export const PREVIEW_OVERLAYS: readonly OverlayKind[] = [
   'space-editor',
   'boosts',
   'addons',
-  'live-folder'
+  'live-folder',
+  'passwords'
 ]
 
 /** The furthest a held pull goes, as a multiple of the threshold (the disc is well out by then). */

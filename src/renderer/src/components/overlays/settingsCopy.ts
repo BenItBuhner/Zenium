@@ -1,4 +1,4 @@
-import type { Platform } from '@shared/types'
+import type { CheckupState, PasswordsStatus, Platform } from '@shared/types'
 import { describeUpdateTarget, type UpdateStatus } from '@shared/updates'
 import { formatBytes, relativeTime } from '@renderer/lib/utils'
 
@@ -103,4 +103,86 @@ export function detail(u: UpdateStatus): string {
     case 'error':
       return `${u.error ?? 'Unknown error'}. ${checked}`
   }
+}
+
+// ---------------------------------------------------------------------------
+// Settings › Passwords: the desktop section, the phone category and the manager's own settings
+// view say the same things about the same rows.
+// ---------------------------------------------------------------------------
+
+/** How long one re-authentication covers reveals, copies and exports (`reauthGraceSeconds`). */
+export const PASSWORD_GRACE_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: '0', label: 'Every time' },
+  { value: '30', label: 'After 30 seconds' },
+  { value: '60', label: 'After 1 minute' },
+  { value: '300', label: 'After 5 minutes' },
+  { value: '900', label: 'After 15 minutes' },
+  { value: '3600', label: 'After 1 hour' }
+]
+
+export const PASSWORDS_COPY = {
+  manage: 'Manage passwords',
+  checkup: 'Check passwords',
+  offerToSave: {
+    label: 'Offer to save passwords',
+    description:
+      'Ask to save logins typed into websites. The prompt itself arrives with in-page filling.'
+  },
+  grace: {
+    label: 'Ask again before showing or copying',
+    description: 'How long one verification covers reveals, copies and exports.'
+  },
+  protection: { label: 'Vault protection' },
+  lock: {
+    label: 'Lock the vault',
+    description: 'Forget the key until the manager is opened again.',
+    locked: 'The vault is locked.'
+  },
+  importCsv: {
+    label: 'Import passwords',
+    description: 'A CSV exported by Chrome, Edge, Firefox, Safari, Bitwarden, LastPass or KeePass.'
+  },
+  exportCsv: {
+    label: 'Export passwords',
+    description: 'Write every login to a CSV that Chrome and other managers can import.',
+    armed:
+      'The file is plain text: anyone who opens it can read every password. Delete it once it has been imported elsewhere.'
+  }
+} as const
+
+/** What the manager holds, in one line: the count, or why there is none to count yet. */
+export function passwordsSavedLabel(status: PasswordsStatus): string {
+  if (!status.locked) return `${status.count} ${status.count === 1 ? 'login' : 'logins'} saved`
+  return status.protection.os || status.protection.passphrase
+    ? 'The vault is locked'
+    : 'No vault yet'
+}
+
+/** How the vault's key is protected – or, before there is a vault, how it will be. */
+export function vaultProtectionLabel(status: PasswordsStatus): string {
+  const { os, passphrase } = status.protection
+  if (os && passphrase) return 'Device keychain and passphrase'
+  if (os) return 'Device keychain'
+  if (passphrase) return 'Passphrase'
+  return status.osKeystore
+    ? 'Device keychain, created with the first login'
+    : 'A passphrase, created with the first login'
+}
+
+/**
+ * The checkup in one line: its progress while it runs, what it found and when it last ran, or
+ * what it would look for. The count is of distinct logins across the three findings, the way
+ * the checkup view's headline counts them.
+ */
+export function checkupLabel(checkup: CheckupState): string {
+  if (checkup.running) return `Checking ${checkup.checked} of ${checkup.total}`
+  if (checkup.finishedAt === null)
+    return 'Finds passwords that appeared in data breaches, are reused across sites or are easy to guess.'
+  const issues = new Set([...checkup.compromised, ...checkup.weak, ...checkup.reused.flat()]).size
+  const found =
+    issues === 0
+      ? 'No problems found'
+      : `${issues} ${issues === 1 ? 'password needs' : 'passwords need'} attention`
+  const when = relativeTime(checkup.finishedAt)
+  return `${found} · Last checked ${when === 'Just now' ? 'just now' : when}`
 }

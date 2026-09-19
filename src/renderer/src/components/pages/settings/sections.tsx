@@ -51,9 +51,20 @@ import {
   newTabBackgroundValue
 } from '@renderer/lib/newTabSettings'
 import { describePermissionRule } from '@renderer/lib/security'
+import { openOverlay } from '@renderer/lib/ui'
 import { formatBytes, relativeTime } from '@renderer/lib/utils'
 import { ContainerIcon } from '../../ContainerIcon'
-import { APP_ICON_HINT, detail, headline, installLabel } from '../../overlays/settingsCopy'
+import {
+  APP_ICON_HINT,
+  PASSWORD_GRACE_OPTIONS,
+  PASSWORDS_COPY,
+  checkupLabel,
+  detail,
+  headline,
+  installLabel,
+  passwordsSavedLabel,
+  vaultProtectionLabel
+} from '../../overlays/settingsCopy'
 import {
   AddRouteForm,
   AppIconGrid,
@@ -124,6 +135,7 @@ const BUILDERS: Readonly<Record<string, Builder>> = {
   mods: modsSection,
   extensions: extensionsSection,
   agents: agentsSection,
+  passwords: passwordsSection,
   updates: updatesSection,
   about: aboutSection
 }
@@ -1795,6 +1807,120 @@ function agentsSection({ state, set }: SectionContext): RowGroup[] {
     })
   }
   return groups
+}
+
+// ---------------------------------------------------------------------------
+// Passwords (the desktop panel's Settings › Passwords and the manager's own settings view, as
+// phone rows: the ways into the manager, the two preferences, the vault's protection and lock,
+// import and export. The manager is an overlay over the Settings tab as over any page; the rows
+// about a vault operation land on the manager's view that does it, behind its re-authentication)
+// ---------------------------------------------------------------------------
+
+function passwordsSection({ state, tab, set }: SectionContext): RowGroup[] {
+  const status = state.passwords
+  const s = state.settings.passwords
+  const patch = (p: Partial<typeof s>): void => set({ passwords: { ...s, ...p } })
+  const open = (view: 'logins' | 'checkup' | 'settings'): void =>
+    void openOverlay('passwords', tab.id, null, null, view)
+  const unlocked = !status.locked && !status.error
+  return [
+    {
+      id: 'passwords-manager',
+      heading: 'Password manager',
+      rows: [
+        {
+          kind: 'action',
+          id: 'passwords-manage',
+          label: PASSWORDS_COPY.manage,
+          description: passwordsSavedLabel(status),
+          keywords: ['saved passwords', 'logins', 'vault', 'generator'],
+          leaves: 'chevron',
+          onPress: () => open('logins')
+        },
+        {
+          kind: 'action',
+          id: 'passwords-checkup',
+          label: PASSWORDS_COPY.checkup,
+          description: checkupLabel(status.checkup),
+          keywords: ['checkup', 'compromised', 'breach', 'reused', 'weak', 'leaked'],
+          leaves: 'chevron',
+          onPress: () => open('checkup')
+        }
+      ]
+    },
+    {
+      id: 'passwords-saving',
+      heading: 'Saving',
+      rows: [
+        {
+          kind: 'switch',
+          id: 'passwords-offer-to-save',
+          label: PASSWORDS_COPY.offerToSave.label,
+          description: PASSWORDS_COPY.offerToSave.description,
+          checked: s.offerToSave,
+          onChange: (v) => patch({ offerToSave: v })
+        }
+      ]
+    },
+    {
+      id: 'passwords-security',
+      heading: 'Security',
+      rows: [
+        choice({
+          id: 'passwords-reauth-grace',
+          label: PASSWORDS_COPY.grace.label,
+          sheetDescription: PASSWORDS_COPY.grace.description,
+          keywords: ['re-authentication', 'grace period', 'verify', 'reveal', 'copy'],
+          value: String(s.reauthGraceSeconds),
+          options: PASSWORD_GRACE_OPTIONS,
+          onChange: (v) => patch({ reauthGraceSeconds: Number(v) })
+        }),
+        {
+          kind: 'action',
+          id: 'passwords-protection',
+          label: PASSWORDS_COPY.protection.label,
+          description: vaultProtectionLabel(status),
+          keywords: ['passphrase', 'keychain', 'keystore', 'biometrics', 'fingerprint'],
+          leaves: 'chevron',
+          onPress: () => open('settings')
+        },
+        {
+          kind: 'action',
+          id: 'passwords-lock',
+          label: PASSWORDS_COPY.lock.label,
+          description: unlocked ? PASSWORDS_COPY.lock.description : PASSWORDS_COPY.lock.locked,
+          keywords: ['lock now', 'forget'],
+          // Nothing to lock: laid out at 40%, not pressable (§10.4), rather than a row that vanishes.
+          disabled: !unlocked,
+          onPress: () => run('passwords.lock', undefined)
+        }
+      ]
+    },
+    {
+      id: 'passwords-transfer',
+      heading: 'Import and export',
+      rows: [
+        {
+          kind: 'action',
+          id: 'passwords-import',
+          label: PASSWORDS_COPY.importCsv.label,
+          description: PASSWORDS_COPY.importCsv.description,
+          keywords: ['csv', 'chrome', 'firefox', 'bitwarden', 'lastpass', 'keepass'],
+          leaves: 'chevron',
+          onPress: () => open('settings')
+        },
+        {
+          kind: 'action',
+          id: 'passwords-export',
+          label: PASSWORDS_COPY.exportCsv.label,
+          description: PASSWORDS_COPY.exportCsv.description,
+          keywords: ['csv', 'backup'],
+          leaves: 'chevron',
+          onPress: () => open('settings')
+        }
+      ]
+    }
+  ]
 }
 
 // ---------------------------------------------------------------------------

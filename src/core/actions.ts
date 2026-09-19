@@ -21,6 +21,7 @@ export type AnyAction =
   | 'page.toggleMuteSite'
   | 'resources.trim'
   | 'resources.open'
+  | 'passwords.open'
 
 export interface ActionContext {
   /** Tab whose web contents produced the key event (null for the chrome). */
@@ -263,6 +264,9 @@ export class Actions {
         return
       case 'addons.open':
         return this.browser.emit('overlay.open', { kind: 'addons' }, win)
+      case 'passwords.open':
+        if (!state.capabilities.passwords) return
+        return this.browser.emit('overlay.open', { kind: 'passwords' }, win)
       case 'boost.new':
         if (target && /^https?:/.test(target.url))
           return this.browser.emit('overlay.open', { kind: 'boosts' }, win)

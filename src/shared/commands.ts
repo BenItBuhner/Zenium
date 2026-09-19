@@ -296,6 +296,13 @@ export const URLBAR_COMMANDS: CommandDescriptor[] = [
     keywords: ['resources', 'memory', 'cpu', 'gpu', 'budget', 'limit', 'performance'],
     action: 'resources.open',
     requires: 'resourceGovernor'
+  },
+  {
+    id: 'passwords',
+    label: 'Password Manager',
+    keywords: ['passwords', 'logins', 'credentials', 'vault', 'checkup', 'generator'],
+    action: 'passwords.open',
+    requires: 'passwords'
   }
 ]
 

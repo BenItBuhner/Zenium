@@ -76,7 +76,8 @@ export default defineConfig(
       'src/renderer/src/components/security/SecurityPromptDialog.tsx',
       'src/renderer/src/components/bookmarks/EditBookmarkDialog.tsx',
       'src/renderer/src/components/bookmarks/BookmarkAllTabsDialog.tsx',
-      'src/renderer/src/components/extensions/ExtensionPromptDialog.tsx'
+      'src/renderer/src/components/extensions/ExtensionPromptDialog.tsx',
+      'src/renderer/src/components/overlays/passwords/PassphrasePrompt.tsx'
     ],
     rules: {
       'no-restricted-syntax': [

@@ -11,6 +11,7 @@ import { BoostPanel } from './BoostPanel'
 import { DownloadsPanel } from './DownloadsPanel'
 import { HistoryPage } from './HistoryPage'
 import { LiveFolderEditor } from './LiveFolderEditor'
+import { PasswordsPanel } from './passwords/PasswordsPanel'
 import { SettingsPanel } from './SettingsPanel'
 import { SpaceEditor } from './SpaceEditor'
 import { ThemePicker } from './ThemePicker'
@@ -51,6 +52,8 @@ export function OverlayHost({ state, ui }: { state: UIState; ui: UiState }): JSX
       return <AddonsPanel state={state} />
     case 'live-folder':
       return <LiveFolderEditor state={state} folderId={ui.overlayFolderId} />
+    case 'passwords':
+      return <PasswordsPanel state={state} />
     default:
       return null
   }

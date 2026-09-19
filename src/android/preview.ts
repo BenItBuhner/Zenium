@@ -174,6 +174,13 @@ export function createPreviewBridge(): NativeBridge {
     platformParam === 'linux' || platformParam === 'win32' || platformParam === 'darwin'
       ? platformParam
       : 'android'
+  // `?vault=none` stands in for a device without a screen lock: no Keystore key and no
+  // BiometricPrompt, so the password manager takes its passphrase route (setup gate, prompt
+  // sheet). `?vault=locked` is a device whose credential sheet the user keeps dismissing (the
+  // key never unwraps). Otherwise a stand-in keystore wraps the vault key and every
+  // verification passes.
+  const vaultMode = params.get('vault') ?? 'os'
+  const PREVIEW_BLOB = 'preview-keystore:'
 
   const handlers: Record<string, (args: Record<string, unknown>) => unknown | Promise<unknown>> = {
     boot: (): BootInfo => ({
@@ -379,6 +386,21 @@ export function createPreviewBridge(): NativeBridge {
       setTimeout(() => URL.revokeObjectURL(a.href), 1000)
       return true
     },
+    // Passwords: the Android Keystore and BiometricPrompt stand-ins (see `vaultMode`). Refusals
+    // answer `{ failure, message }` the way VaultKeystore.kt does.
+    'vault.available': () => vaultMode !== 'none',
+    'vault.wrap': ({ key }) => PREVIEW_BLOB + String(key),
+    'vault.unwrap': ({ blob }) => {
+      if (vaultMode === 'locked')
+        return { failure: 'cancelled', message: 'Authentication was cancelled' }
+      const text = String(blob)
+      if (!text.startsWith(PREVIEW_BLOB))
+        return { failure: 'invalidated', message: 'The vault key was not protected on this device' }
+      return text.slice(PREVIEW_BLOB.length)
+    },
+    'reauth.available': () => vaultMode !== 'none',
+    // The system sheet would rise here; the preview approves after the time it takes to notice.
+    'reauth.verify': () => new Promise((resolve) => setTimeout(() => resolve(true), 400)),
     'clipboard.writeText': ({ text }) => void navigator.clipboard?.writeText(String(text)),
     // Like Kotlin: only a clipboard still holding the copied secret is emptied.
     'clipboard.clearText': async ({ expected }) => {
