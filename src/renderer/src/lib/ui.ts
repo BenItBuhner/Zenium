@@ -324,6 +324,16 @@ export interface UiState {
    * the view is hidden and the frame shows its capture, as for the main-process menus.
    */
   floatingChrome: number
+  /**
+   * Frame dialog hosts keeping the page under its picture (lib/portals.tsx,
+   * `holdFrameDialogCover`): a host holds from the moment some overlay covers the page while it
+   * has a dialog until that dialog's panel has finished its way out, so the view stays hidden
+   * and the capture stays for the exit that the dialog's own flag (`pageDialogOpen`,
+   * `starDialog`, …) no longer covers. Counted, one per host. Not in `overlayCoversContent`:
+   * the hold only ever outlasts a cover some flag there began, and nothing that reads the flags
+   * to tell panels from dialogs (`panelAloneOverContent`) should change its answer for it.
+   */
+  frameDialogCover: number
 }
 
 /** Where the content area is, in window coordinates (measured by the layout reporter). */
@@ -387,7 +397,8 @@ export const uiStore = createStore<UiState>(
     hoverCard: HOVER_CARD_HIDDEN,
     extensionPopup: null,
     extensionPrompts: [],
-    floatingChrome: 0
+    floatingChrome: 0,
+    frameDialogCover: 0
   },
   'ui'
 )
@@ -753,7 +764,8 @@ export function invalidateSnapshot(): void {
     ui.hoverCard.tabId === null &&
     !ui.newTabShortcutDialog &&
     !ui.siteDataConfirm &&
-    !bookmarkChromeOpen(ui)
+    !bookmarkChromeOpen(ui) &&
+    ui.frameDialogCover === 0
   ) {
     if (ui.snapshotTabId && pageOffScreen(pageViewStore.get(), ui.snapshotTabId)) {
       snapshotStale = true
@@ -833,6 +845,54 @@ if (!snapshotFlags.__zenSnapshotWired) {
   pageViewStore.subscribe(() => {
     if (snapshotStale) invalidateSnapshot()
   })
+}
+
+/**
+ * Whether the page views are hidden under the chrome right now – what `useLayoutReporter`
+ * reports as `contentHidden`: a chrome overlay covers the content, a compact sidebar or the
+ * toolbar is revealed over it, or a frame dialog host keeps the page under its picture for a
+ * panel's way out (`holdFrameDialogCover`).
+ */
+export function pageHidden(ui: UiState): boolean {
+  return overlayCoversContent(ui) || ui.compactHover || ui.toolbarHover || ui.frameDialogCover > 0
+}
+
+/**
+ * Keep the page under its picture for a frame dialog host (lib/portals.tsx) until the returned
+ * release runs – from the moment a chrome overlay covers the page while the host has a dialog,
+ * to the end of the last panel's way out. The dialogs' own flags (`pageDialogOpen`,
+ * `windowPromptOpen`, `bookmarkAllTabs`, …) hide the page and keep its capture only while they
+ * are set, and clear as the dialog closes – for some the flag is the dialog's very state,
+ * cleared before its panel has left – so the host holds from the open: nothing is captured or
+ * hidden here (over a page that shows live the host holds nothing, since hiding the page then
+ * would show a blank frame for the way out); the count only outlasts a cover some flag began,
+ * keeping the view hidden (`useLayoutReporter`) and the capture (`invalidateSnapshot`) until
+ * the release, which drops the capture if nothing else needs it. Focus is not touched: the
+ * dialogs hand it to the page through the core as they close, and the core gives it once the
+ * page shows again.
+ */
+export function holdFrameDialogCover(): () => void {
+  let live = true
+  let taken = false
+  let unsubscribe: (() => void) | null = null
+  const take = (): void => {
+    if (taken || !overlayCoversContent(uiStore.get())) return
+    taken = true
+    unsubscribe?.()
+    unsubscribe = null
+    uiStore.set((s) => ({ frameDialogCover: s.frameDialogCover + 1 }))
+  }
+  take()
+  if (!taken) unsubscribe = uiStore.subscribe(take)
+  return () => {
+    if (!live) return
+    live = false
+    unsubscribe?.()
+    unsubscribe = null
+    if (!taken) return
+    uiStore.set((s) => ({ frameDialogCover: Math.max(0, s.frameDialogCover - 1) }))
+    invalidateSnapshot()
+  }
 }
 
 // ---------------------------------------------------------------------------
