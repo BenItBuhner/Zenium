@@ -123,7 +123,9 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   newTabPage: true,
   // Settings stays an overlay on the desktop until its program adopts the page-tab model.
   pageTabs: false,
-  pinShortcuts: false
+  pinShortcuts: false,
+  // No speech recogniser on the desktop hosts; the mic buttons stay away.
+  voiceSearch: false
 }
 
 /**

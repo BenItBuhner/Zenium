@@ -25,19 +25,22 @@ export const PHONE_BAR_ITEM_IDS: readonly PhoneBarItemId[] = [
   'new-tab',
   'menu',
   'spaces',
-  'find'
+  'find',
+  'voice'
 ]
 
 /** The host abilities an item can depend on. */
-type Requirement = keyof Pick<HostCapabilities, 'share'>
+type Requirement = keyof Pick<HostCapabilities, 'share' | 'voiceSearch'>
 /** What a host must be able to do for an item to be offered; items not listed are always offered. */
 const REQUIRES: Partial<Record<PhoneBarItemId, Requirement>> = {
-  share: 'share'
+  share: 'share',
+  voice: 'voiceSearch'
 }
 
 /**
  * The catalogue as one host offers it: an item whose command the host lacks (Share without a
- * system share sheet) is neither listed by the editor nor drawn if a synced layout carries it.
+ * system share sheet, Voice search without a recogniser) is neither listed by the editor nor
+ * drawn if a synced layout carries it.
  */
 export function phoneBarOffered(
   capabilities: Pick<HostCapabilities, Requirement>

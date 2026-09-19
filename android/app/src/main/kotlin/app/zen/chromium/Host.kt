@@ -105,6 +105,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     val extStore = ExtensionStore(this, io, main)
     /** Home-screen shortcuts; the launcher's confirmations reach it through `ShortcutPinnedReceiver`. */
     val shortcuts = Shortcuts(activity, io)
+    /** Voice search: the device's speech recogniser behind the chrome's mic buttons (OMN-19). */
+    val voice = Voice(this)
     override var fullscreenTab: TabWebView? = null
         private set
     private var fullscreenCallback: WebChromeClient.CustomViewCallback? = null
@@ -180,7 +182,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 "insets" to activity.currentInsets(),
                 "fullscreen" to immersive,
                 "environment" to activity.environment(),
-                "pinShortcuts" to shortcuts.supported
+                "pinShortcuts" to shortcuts.supported,
+                // A speech recogniser on the device: the mic buttons show (voice search, OMN-19).
+                "voiceSearch" to voice.available
             )
         }
         // Answers `true` once the file is replaced; a failure throws, which the bridge reports as
@@ -397,6 +401,11 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             }
             "shortcut.pin" -> shortcuts.pin(args, reply)
 
+            // --- voice search (Voice.kt; the contract is `VoiceHost` in src/core/platform.ts) ----------
+            "voice.start" -> voice.start(reply)
+            "voice.cancel" -> { voice.cancel(); reply(null) }
+            "voice.openSettings" -> { voice.openSettings(); reply(null) }
+
             // --- AI agents (MCP server) ------------------------------------------------------------
             "agent.start" -> reply(agentServer.start(args.num("port", 41735.0).toInt(), args.bool("lan")))
             "agent.stop" -> { agentServer.stop(); reply(null) }
@@ -490,6 +499,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      */
     fun onStop() {
         if (immersive) setImmersive(false)
+        // A recogniser listening to a screen that is gone: the session ends, the sheet with it.
+        voice.abort()
     }
 
     /** Back while in Zenium's own fullscreen (and nothing is fullscreen on the page) leaves it. */
@@ -1013,6 +1024,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     fun destroy() {
         extensions.destroy()
         cancelProbe()
+        voice.destroy()
         shortcuts.destroy()
         agentServer.stop()
         downloads.destroy()

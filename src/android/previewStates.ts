@@ -22,8 +22,14 @@ import {
   showBanner,
   uiStore
 } from '@renderer/lib/ui'
+import { cancelVoiceSearch, startVoiceSearch } from '@renderer/lib/voiceSearch'
 import type { HostGlobal } from './boot'
-import { PREVIEW_WEB_APP, postPreviewManifest } from './preview'
+import {
+  PREVIEW_VOICE_EVENT,
+  PREVIEW_WEB_APP,
+  postPreviewManifest,
+  previewVoiceScript
+} from './preview'
 import { PREVIEW_DOWNLOAD_EVENT } from './previewDownloads'
 import { parsePreviewSpec, type PreviewStep, type PreviewWebAppSurface } from './previewSpec'
 
@@ -34,6 +40,8 @@ const STEP_SETTLE_MS = 450
 const SHEET_SURFACE = /^settings-(options|field|confirm|form|item):/
 /** How long a dismissed sheet may take to leave (its motion) before the reset gives up on it. */
 const SHEET_LEAVE_MS = 1500
+/** Past a voice script's last event: the listening sheet's halo spring settling on the level. */
+const VOICE_EVENT_MARGIN_MS = 250
 
 /**
  * Chrome states selectable from outside the preview host (`npm run dev:android`), so screenshots
@@ -51,8 +59,10 @@ const SHEET_LEAVE_MS = 1500
  * (the page zoom sheet at that factor), `error=<code>` (the active tab's load failed with that
  * Chromium `net::` code, `url=<target>` naming the URL that failed: the zen://error page is up),
  * the message surfaces and the load bar: `toast=<text>&action=<label>`, `banners=<n>`,
- * `progress=<0…1>`, `webapp=<surface>` (an "Add to Home screen" surface on the active tab) or
- * `download=<file>` (the stand-in downloader starts that transfer; see `PreviewDownloadSpec`). It
+ * `progress=<0…1>`, `webapp=<surface>` (an "Add to Home screen" surface on the active tab),
+ * `download=<file>` (the stand-in downloader starts that transfer; see `PreviewDownloadSpec`) or
+ * `voice=<script>` (voice search started, the stand-in recogniser playing that script into the
+ * listening sheet: `listening`, `partial`, `no-match`, `denied`, …; see `previewVoiceScript`). It
  * comes in as the URL hash, `http://localhost:41734/#overlay=history`, or as
  * `window.postMessage({ zenPreview: 'find=coffee' }, '*')`, which also re-applies an unchanged
  * state. Once applied it is echoed in `<html data-preview-state>` so a driver can wait for it;
@@ -81,6 +91,7 @@ function apply(spec: string): void {
     dismissOverview()
     uiStore.set({ findOpen: false, findTabId: null, zoomTabId: null, install: null })
     abortPull()
+    cancelVoiceSearch()
     const state = browserStore.get().state
     const tab = state ? activeTab(state) : null
     clearMessages(tab?.loading ? tab.id : null)
@@ -185,6 +196,20 @@ function reach(spec: string): void {
     done(spec)
   } else if (target.kind === 'webapp' && tab) {
     applyWebApp(target.surface, tab.id, spec)
+  } else if (target.kind === 'voice') {
+    // The stand-in recogniser takes the script, then the mic is "tapped" for the active tab: the
+    // listening sheet goes up and the script's events play into it. The state is reached at the
+    // script's end – a refusal's toast up (the sheet gone again), or the sheet up and the last
+    // event landed – so a still catches the level, the partial or the no-match the script names.
+    window.dispatchEvent(new CustomEvent(PREVIEW_VOICE_EVENT, { detail: target.script }))
+    const script = previewVoiceScript(target.script)
+    void startVoiceSearch({ tabId: tab?.id ?? null, newTab: false })
+    if (script.outcome === 'listening') {
+      const played = script.events.reduce((ms, [delay]) => ms + delay, 0)
+      whenStore(() => uiStore.get().voice !== null, spec, played + VOICE_EVENT_MARGIN_MS)
+    } else {
+      whenStore(() => uiStore.get().toasts.length > 0, spec)
+    }
   } else {
     done(spec)
   }
@@ -451,10 +476,17 @@ function applyWebApp(surface: PreviewWebAppSurface, tabId: string, spec: string)
   }
 }
 
-/** Echo `spec` once `ready` holds (or the wait runs out, so a driver sees the state it got). */
-function whenStore(ready: () => boolean, spec: string): void {
+/**
+ * Echo `spec` once `ready` holds (or the wait runs out, so a driver sees the state it got), and
+ * `after` more milliseconds when the surface has a script still playing into it.
+ */
+function whenStore(ready: () => boolean, spec: string, after = 0): void {
+  const echo = (): void => {
+    if (after > 0) window.setTimeout(() => done(spec), after)
+    else done(spec)
+  }
   if (ready()) {
-    done(spec)
+    echo()
     return
   }
   let settled = false
@@ -463,7 +495,7 @@ function whenStore(ready: () => boolean, spec: string): void {
     settled = true
     unsubscribe()
     clearTimeout(timer)
-    done(spec)
+    echo()
   }
   const unsubscribe = uiStore.subscribe(() => {
     if (ready()) finish()

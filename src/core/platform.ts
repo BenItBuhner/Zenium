@@ -57,6 +57,7 @@ import type { UpdateAsset, UpdateProgress, UpdateRelease, UpdateTarget } from '.
 import type { InterstitialAction } from '../shared/interstitial'
 import type { PrivacyFlags, SafeBrowsingHit } from '../shared/privacy'
 import type { RawWebAppManifest, ShortcutIconKind } from '../shared/webApp'
+import type { VoiceStartOutcome } from '../shared/voice'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
 import type { AgentHttpRequest, AgentHttpResponse } from './agent/http'
@@ -1504,6 +1505,20 @@ export interface ShortcutHost {
   pin(request: ShortcutRequest): Promise<boolean>
 }
 
+/**
+ * Voice search on a host with a speech recogniser (Android's `SpeechRecognizer`, `Voice.kt`).
+ * `start` asks for the microphone – the runtime permission prompt may show – and starts the
+ * recogniser in the user's language; while it listens the host raises `voice.event`s, which the
+ * platform hands to the window (`Browser.emit`). One session at a time: a start while one runs
+ * cancels the first.
+ */
+export interface VoiceHost {
+  start(): Promise<VoiceStartOutcome>
+  cancel(): void
+  /** The app's system settings screen, for a microphone refused for good. */
+  openSettings(): void
+}
+
 export interface Platform {
   readonly info: PlatformInfo
   readonly capabilities: HostCapabilities
@@ -1541,6 +1556,8 @@ export interface Platform {
   readonly newTabBackground?: NewTabBackgroundHost
   /** Home-screen shortcuts; hosts without it hide "Add to Home screen". */
   readonly shortcuts?: ShortcutHost
+  /** Voice search through the device's recogniser; omit when `capabilities.voiceSearch` is off. */
+  readonly voice?: VoiceHost
   /** Source of Mozilla's Readability library for Reader View, or null when unavailable. */
   readabilitySource(file: 'Readability.js' | 'Readability-readerable.js'): string | null
   /** Offline page translation; hosts without it report the feature as unavailable. */

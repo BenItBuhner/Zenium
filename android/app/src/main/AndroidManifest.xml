@@ -76,6 +76,14 @@
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="geo" />
         </intent>
+        <!--
+          Voice search (Voice.kt): on Android 11+ SpeechRecognizer.isRecognitionAvailable only sees
+          the device's recogniser service when the app declares it wants to; without this the mic
+          buttons would never show there.
+        -->
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
     </queries>
 
     <!--

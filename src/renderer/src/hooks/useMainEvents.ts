@@ -32,6 +32,7 @@ import {
 } from '@renderer/lib/ui'
 import { activeTab } from '@renderer/lib/selectors'
 import { browserStore } from '@renderer/lib/ui'
+import { voiceEvent } from '@renderer/lib/voiceSearch'
 import {
   closeExtensionPopup,
   enqueueExtensionPrompt,
@@ -215,6 +216,7 @@ export function useMainEvents(): void {
         (request) => void showExternalProtocol(request, currentActiveTabId())
       ),
       onEvent('externalProtocol.cancel', ({ requestId }) => cancelExternalProtocol(requestId)),
+      onEvent('voice.event', (event) => voiceEvent(event)),
       onEvent('webapp.install', (prompt) => {
         closeUrlbar()
         retireInstallBanner(prompt.tabId)
