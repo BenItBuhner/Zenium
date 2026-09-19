@@ -1,7 +1,7 @@
 name: Android downloads demo
 
 # Records the Zenium downloader on a hardware-accelerated Android emulator and uploads the video
-# and screenshots: a throttled file paused and resumed from the downloads panel, a connection the
+# and screenshots: a throttled file paused and resumed from the downloads sheet, a connection the
 # server cuts halfway that the downloader resumes on its own with Range, data: and blob: links
 # named from their anchors, the progress and completion notifications, a server that dies on
 # every attempt until the row fails as network-failed ("Check internet connection") and Retry
