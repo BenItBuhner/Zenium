@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest'
 import {
   collectBuiltins,
   createScopeProxy,
+  frameLocation,
   installTrustedTypesShield,
+  ownScriptMatcher,
+  stackFrame,
   type Any,
   type ShieldedWorld
 } from '../extensionIsolation'
@@ -232,5 +235,150 @@ describe('the Trusted Types shield of an isolated world', () => {
 
   it('does nothing without a factory', () => {
     expect(installTrustedTypesShield({}, 'zenium-ext-test')).toEqual({ policy: false, patched: 0 })
+  })
+})
+
+/** The host's `//# sourceURL` of the document-start script (ExtensionScripts.SOURCE_URL). */
+const OWN = 'zenium-ext://content-scripts/boot.js'
+
+/** `body`, compiled as a function whose frames carry the extension script's location. */
+const extensionCode = (params: string, body: string): ((...args: unknown[]) => unknown) =>
+  new Function(params, `${body}\n//# sourceURL=${OWN}`) as (...args: unknown[]) => unknown
+
+/** `body`, compiled as page code would be by `new Function`: an `<anonymous>` location. */
+const pageCode = (params: string, body: string): ((...args: unknown[]) => unknown) =>
+  new Function(params, body) as (...args: unknown[]) => unknown
+
+describe('the stack frames the page-realm shield judges by', () => {
+  it('reads the location out of both frame shapes', () => {
+    expect(
+      frameLocation('    at set src [as src] (zenium-ext://content-scripts/boot.js:12:34)')
+    ).toBe('zenium-ext://content-scripts/boot.js')
+    expect(frameLocation('    at zenium-ext://content-scripts/boot.js:12:34')).toBe(
+      'zenium-ext://content-scripts/boot.js'
+    )
+    expect(frameLocation('    at f (https://m.youtube.com/s/player.js:1:2)')).toBe(
+      'https://m.youtube.com/s/player.js'
+    )
+    expect(frameLocation('    at <anonymous>:1:2')).toBe('<anonymous>')
+    // An eval origin is not a location the shield accepts.
+    expect(
+      frameLocation('    at eval (eval at run (https://page.example/a.js:1:2), <anonymous>:1:1)')
+    ).toBe('')
+    expect(frameLocation('')).toBe('')
+  })
+
+  it('captures the frame at the asked depth and puts the Error statics back', () => {
+    const E = Error as ErrorConstructor & { stackTraceLimit: number; prepareStackTrace?: unknown }
+    const limit = E.stackTraceLimit
+    E.stackTraceLimit = 0
+    const hadPrepare = Object.prototype.hasOwnProperty.call(E, 'prepareStackTrace')
+    try {
+      const own = extensionCode('stackFrame', 'return stackFrame(Error, 1)')(stackFrame) as string
+      expect(frameLocation(own)).toBe(OWN)
+      expect(frameLocation(stackFrame(Error, 1))).not.toBe(OWN)
+      expect(E.stackTraceLimit).toBe(0)
+      expect(Object.prototype.hasOwnProperty.call(E, 'prepareStackTrace')).toBe(hadPrepare)
+    } finally {
+      E.stackTraceLimit = limit
+    }
+  })
+
+  it('knows its own script by the location the host named it with, and stays off without one', () => {
+    const matcher = extensionCode('own', 'return own(Error)')(ownScriptMatcher) as
+      ((frame: string) => boolean) | undefined
+    expect(matcher).toBeDefined()
+    const ownFrame = extensionCode(
+      'stackFrame',
+      'return stackFrame(Error, 1)'
+    )(stackFrame) as string
+    expect(matcher!(ownFrame)).toBe(true)
+    expect(matcher!('    at f (https://m.youtube.com/s/player.js:1:2)')).toBe(false)
+    expect(matcher!('    at <anonymous>:1:2')).toBe(false)
+    expect(matcher!('')).toBe(false)
+    // Called from a script without the host's name (this test file, `new Function` code): no matcher.
+    expect(ownScriptMatcher(Error)).toBeUndefined()
+    expect(pageCode('own', 'return own(Error)')(ownScriptMatcher)).toBeUndefined()
+    // A web location is never the extension's, even when named so.
+    const web = new Function(
+      'own',
+      'return own(Error)\n//# sourceURL=https://page.example/x.js'
+    ) as (o: unknown) => unknown
+    expect(web(ownScriptMatcher)).toBeUndefined()
+  })
+})
+
+describe('the Trusted Types shield of the page realm (the with-fallback)', () => {
+  const shield = (
+    options: { scriptOwnSetters: boolean; refusePolicy?: boolean } = { scriptOwnSetters: true }
+  ): ReturnType<typeof fakeWorld> & { result: ReturnType<typeof installTrustedTypesShield> } => {
+    const fake = fakeWorld(options)
+    const ownCaller = extensionCode('own', 'return own(Error)')(ownScriptMatcher) as (
+      frame: string
+    ) => boolean
+    const result = installTrustedTypesShield(fake.world, 'zenium-ext-test', { ownCaller, Error })
+    return { ...fake, result }
+  }
+
+  it("trusts the extension's refused string writes and keeps the page's policy for the page", () => {
+    const { script, div, assigned, result } = shield()
+    expect(result.policy).toBe(true)
+    extensionCode('s', 's.src = "https://cdn.example/x.js"')(script)
+    extensionCode('s', 's.textContent = "void 0"')(script)
+    extensionCode('s', 's.text = "void 1"')(script)
+    extensionCode('d', 'd.innerHTML = "<b>ext</b>"')(div)
+    extensionCode('d', 'd.setAttribute("onclick", "go()")')(div)
+    expect(assigned).toEqual([
+      'src=https://cdn.example/x.js',
+      'textContent=void 0',
+      'text=void 1',
+      'innerHTML=<b>ext</b>',
+      'onclick=go()'
+    ])
+    // The page's writes: refused as before the shield, by the page's own policy.
+    expect(() => pageCode('s', 's.src = "https://cdn.example/y.js"')(script)).toThrow(
+      /TrustedScriptURL/
+    )
+    expect(() => pageCode('d', 'd.innerHTML = "<b>page</b>"')(div)).toThrow(/TrustedHTML/)
+    expect(() => pageCode('d', 'd.setAttribute("onclick", "go()")')(div)).toThrow(/TrustedScript/)
+    expect(() => {
+      script.text = 'void 2'
+    }).toThrow(/TrustedScript/)
+    expect(assigned).toHaveLength(5)
+  })
+
+  it('passes writes the policy accepts and non-string writes straight through', () => {
+    const { script, div, assigned } = shield()
+    // Not a sink for a div: no policy involved, from anyone.
+    pageCode('d', 'd.textContent = "plain"')(div)
+    extensionCode('d', 'd.setAttribute("class", "x")')(div)
+    expect(assigned).toEqual(['Node.textContent=plain', 'class=x'])
+    // A non-string the policy refuses stays refused: the retry has nothing to trust.
+    expect(() => extensionCode('s', 's.src = 42')(script)).toThrow(/TrustedScriptURL/)
+    expect(assigned).toHaveLength(2)
+  })
+
+  it('lets any other error of a sink through untouched', () => {
+    const { world, div, assigned } = shield()
+    Object.defineProperty((world.Element as { prototype: object }).prototype, 'outerHTML', {
+      set: () => {
+        throw new RangeError('not Trusted Types')
+      },
+      configurable: true
+    })
+    installTrustedTypesShield(world, 'zenium-ext-test-2', {
+      ownCaller: () => true,
+      Error
+    })
+    expect(() => extensionCode('d', 'd.outerHTML = "<b>x</b>"')(div)).toThrow(RangeError)
+    expect(assigned).toEqual([])
+  })
+
+  it('does the same where only the inherited setters exist', () => {
+    const { script, div, assigned } = shield({ scriptOwnSetters: false })
+    extensionCode('s', 's.textContent = "void 0"')(script)
+    expect(() => pageCode('s', 's.textContent = "void 1"')(script)).toThrow(/TrustedScript/)
+    pageCode('d', 'd.textContent = "text"')(div)
+    expect(assigned).toEqual(['textContent=void 0', 'Node.textContent=text'])
   })
 })

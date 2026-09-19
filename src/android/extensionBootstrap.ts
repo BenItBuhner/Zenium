@@ -24,7 +24,9 @@ import {
   collectBuiltins,
   createScopeProxy,
   installTrustedTypesShield,
-  type Any
+  ownScriptMatcher,
+  type Any,
+  type ShieldResult
 } from './extensionIsolation'
 import { createScriptRecovery, type ScriptRecovery } from './extensionScriptRecovery'
 import {
@@ -488,13 +490,26 @@ declare const __zenExtBoot: Boot
    * (m.youtube.com's `require-trusted-types-for 'script'` would refuse a content script's
    * `innerHTML = …`); in Chrome the extension's CSP applies there instead. A pass-through policy
    * over the world's sinks gives the scripts the same freedom, and the page's prototypes stay as
-   * they were. Once per world.
+   * they were. In the `with` fallback the sinks are the page's own: there the shield only
+   * retries a refused string the extension's own frame wrote (`ownScriptMatcher`: the host names
+   * the document-start script with a `//# sourceURL`; without one the writers cannot be told
+   * apart and the page's policy stands for everyone). Once per document.
    */
   let shielded = false
-  function shieldWorld(ext: ExtensionBoot): void {
+  function shieldWorld(ext: ExtensionBoot, isolation: 'world' | 'with'): void {
     if (shielded) return
     shielded = true
-    const result = installTrustedTypesShield(realWindow, `zenium-ext-${ext.id.slice(0, 8)}`)
+    let result: ShieldResult = { policy: false, patched: 0 }
+    if (isolation === 'world')
+      result = installTrustedTypesShield(realWindow, `zenium-ext-${ext.id.slice(0, 8)}`)
+    else {
+      const ownCaller = ownScriptMatcher(Error)
+      if (ownCaller)
+        result = installTrustedTypesShield(realWindow, `zenium-ext-${ext.id.slice(0, 8)}`, {
+          ownCaller,
+          Error
+        })
+    }
     if (stats) stats.trustedTypes = result
   }
 
@@ -537,9 +552,10 @@ declare const __zenExtBoot: Boot
     const messaging = unitWorld !== 'user' || content.userScriptMessaging === true
     let root: Any
     if (isolation === 'world') {
-      shieldWorld(ext)
+      shieldWorld(ext, 'world')
       root = realWindow
     } else {
+      shieldWorld(ext, 'with')
       root = createScopeProxy(realWindow, builtins)
     }
     // A user-script world without `configureWorld({ messaging: true })` has no `chrome` at all.

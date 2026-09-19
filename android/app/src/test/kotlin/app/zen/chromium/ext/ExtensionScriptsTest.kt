@@ -34,7 +34,20 @@ class ExtensionScriptsTest {
         assertTrue(source in 0 until bootstrap)
         assertTrue(script.contains(",debug:true"))
         assertTrue(script.startsWith("(function(){var __zenExtBoot={"))
-        assertTrue(script.trimEnd().endsWith("})();"))
+        assertTrue(script.trimEnd().endsWith("})();\n//# sourceURL=zenium-ext://content-scripts/boot.js"))
+    }
+
+    @Test
+    fun `main-world scripts are named with a location no page script can have, after every file`() {
+        // A file's own magic comment comes first in the text; V8 keeps the last one, the host's.
+        val spoofing = ExtensionScripts.Group(group.extensionId, 3, listOf("void 0;\n//# sourceURL=https://page.example/own.js"), "with")
+        val script = ExtensionScripts.documentStart("void 0;", "{}", listOf(spoofing), emptyMap(), false)
+        assertTrue(script.lastIndexOf("//# sourceURL=https://page.example/own.js") < script.lastIndexOf("//# sourceURL=${ExtensionScripts.SOURCE_URL}"))
+        assertTrue(script.endsWith("\n//# sourceURL=${ExtensionScripts.SOURCE_URL}"))
+        assertFalse(ExtensionScripts.SOURCE_URL.startsWith("http"))
+        // The executeScript wrapper gets the same name when the host evaluates it in the main world.
+        val call = ExtensionScripts.guarded(ExtensionScripts.exec("tok", group.extensionId, "js", JSONObject(), "document.title", null, null))
+        assertEquals(call + "\n//# sourceURL=${ExtensionScripts.SOURCE_URL}", ExtensionScripts.named(call))
     }
 
     @Test

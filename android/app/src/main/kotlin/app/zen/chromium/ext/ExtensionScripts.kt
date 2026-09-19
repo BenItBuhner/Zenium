@@ -17,6 +17,17 @@ object ExtensionScripts {
     /** One content-script group: the extension id, the group index and its files' sources in order. */
     class Group(val extensionId: String, val index: Int, val sources: List<String>, val isolation: String)
 
+    /**
+     * The `//# sourceURL` of the scripts the host runs in a tab's main world (the document-start
+     * script, the `executeScript` wrapper): a location no page script can carry, so the bootstrap's
+     * Trusted Types shield can tell an extension's DOM write from the page's by its stack frame
+     * (`extensionIsolation.ts`, `ownScriptMatcher`). Also what DevTools and error events name them.
+     */
+    const val SOURCE_URL = "zenium-ext://content-scripts/boot.js"
+
+    /** `script` named [SOURCE_URL] for stack frames; last in the text, so a file's own magic comment does not win. */
+    fun named(script: String): String = "$script\n//# sourceURL=$SOURCE_URL"
+
     fun documentStart(
         bootstrap: String,
         configJson: String,
@@ -42,7 +53,7 @@ object ExtensionScripts {
             appendGroupFunction(sb, group)
         }
         sb.append("}};\n").append(bootstrap).append("\n})();")
-        return sb.toString()
+        return named(sb.toString())
     }
 
     /**

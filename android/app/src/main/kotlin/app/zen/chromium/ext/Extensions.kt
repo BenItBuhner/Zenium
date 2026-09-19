@@ -670,7 +670,8 @@ class Extensions(private val host: Host) {
             lateBoots++
             ExtensionScripts.lateBoot(bootstrap, ext.lateConfig, debug) + "\n" + call
         }
-        tab.evaluateJavascript(script) { result -> reply(unwrap(result)) }
+        // Named like the document-start script: the injected function's DOM writes are the extension's too.
+        tab.evaluateJavascript(ExtensionScripts.named(script)) { result -> reply(unwrap(result)) }
     }
 
     /** [ExtensionScripts.guarded] `call`, run in the frame and world of `endpoint` through its reply proxy. */
