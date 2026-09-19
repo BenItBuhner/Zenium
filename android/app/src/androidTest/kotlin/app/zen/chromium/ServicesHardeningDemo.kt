@@ -18,8 +18,7 @@ import android.view.KeyCharacterMap
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.accessibility.AccessibilityNodeInfo
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
+import android.view.accessibility.AccessibilityWindowInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Test
@@ -71,7 +70,8 @@ class ServicesHardeningDemo {
         val info = ui.serviceInfo
         info.flags = info.flags or
             AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS or
-            AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
+            AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
+            AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
         ui.serviceInfo = info
 
         seedProfile()
@@ -707,14 +707,15 @@ class ServicesHardeningDemo {
         return false
     }
 
-    /** The keyboard's inset in px per the window's insets; 0 while it is down. */
+    /**
+     * The keyboard's height in px, from its window in the accessibility window list
+     * (`FLAG_RETRIEVE_INTERACTIVE_WINDOWS`); 0 while it is down. The decor view's `WindowInsets`
+     * never reported it up on the emulator.
+     */
     private fun imeInset(): Int {
-        var inset = 0
-        instrumentation.runOnMainSync {
-            val insets = ViewCompat.getRootWindowInsets(activity.window.decorView) ?: return@runOnMainSync
-            if (insets.isVisible(WindowInsetsCompat.Type.ime())) inset = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
-        }
-        return inset
+        val ime = ui.windows.firstOrNull { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD } ?: return 0
+        val bounds = Rect().also(ime::getBoundsInScreen)
+        return max(0, height - bounds.top)
     }
 
     /**
