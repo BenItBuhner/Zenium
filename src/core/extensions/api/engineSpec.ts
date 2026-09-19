@@ -674,20 +674,27 @@ export const CONTENT_SCRIPT_NAMESPACES: ReadonlySet<string> = new Set([
 
 /**
  * Members the host answers with nothing after one console warning: setters and fire-and-forget
- * calls extensions make while starting (`setUninstallURL`, `userScripts.configureWorld`) must
- * not end their initialisation with a rejection. Keys are `namespace.method`.
+ * calls extensions make while starting (`setUninstallURL`, `omnibox.setDefaultSuggestion`) must
+ * not end their initialisation with a rejection. Keys are `namespace.method`. Nothing the host
+ * implements belongs here: a no-op answers on the context side, so the call never reaches the
+ * host (`userScripts.configureWorld` sat here after Android answered it, and the user-script
+ * world never got its `chrome`: Tampermonkey's and Violentmonkey's content scripts threw at
+ * document start on every page).
  */
 export const ENGINE_NOOPS: ReadonlySet<string> = new Set([
   'runtime.setUninstallURL',
   'tabs.highlight',
   'tabs.setZoomSettings',
-  'userScripts.configureWorld',
-  'userScripts.resetWorldConfiguration',
   'fontSettings.setFont',
   'fontSettings.clearFont',
   'fontSettings.setDefaultFontSize',
   'extension.setUpdateUrlData',
-  'webRequest.handlerBehaviorChanged'
+  'webRequest.handlerBehaviorChanged',
+  // No omnibox keyword and no side panel on the phone; the setters are start-up calls
+  // (Raindrop.io, OneTab, Bitwarden) whose rejection would be the only error of the worker.
+  'omnibox.setDefaultSuggestion',
+  'sidePanel.setOptions',
+  'sidePanel.setPanelBehavior'
 ])
 
 /**

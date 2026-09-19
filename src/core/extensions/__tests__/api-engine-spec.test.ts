@@ -83,6 +83,27 @@ describe('engineApiSpec', () => {
     }
   })
 
+  it('lets every userScripts member reach the host', () => {
+    // Android answers all of them (`extensionApi.ts`, `userScriptsCall`): `configureWorld` is
+    // the switch that gives the USER_SCRIPT world its `chrome`, and a context-side no-op in its
+    // place resolved the call without the host ever hearing of it (Tampermonkey's and
+    // Violentmonkey's content scripts then read `runtime` of undefined on every page).
+    for (const method of Object.keys(ENGINE_SPEC.userScripts.methods)) {
+      const key = `userScripts.${method}`
+      expect(ENGINE_NOOPS.has(key), key).toBe(false)
+      expect(Object.prototype.hasOwnProperty.call(ENGINE_STUB_RESULTS, key), key).toBe(false)
+    }
+  })
+
+  it('answers the omnibox and side-panel setters quietly', () => {
+    // The phone has neither; Raindrop.io, OneTab and Bitwarden call them while starting.
+    for (const key of ['omnibox.setDefaultSuggestion', 'sidePanel.setOptions', 'sidePanel.setPanelBehavior'])
+      expect(ENGINE_NOOPS.has(key), key).toBe(true)
+    // The getters keep rejecting: a quiet nothing would be a lie the caller acts on.
+    for (const key of ['sidePanel.getOptions', 'sidePanel.getPanelBehavior', 'sidePanel.open'])
+      expect(ENGINE_NOOPS.has(key), key).toBe(false)
+  })
+
   it('lets every declarativeNetRequest member reach the host', () => {
     // The host answers all of them from `core/extensions/dnr` (W2-3): a context-side no-op or
     // stub here would silently swallow `setExtensionActionOptions` (the badge count) or answer
