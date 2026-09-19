@@ -212,6 +212,18 @@ android {
     }
 }
 
+androidComponents {
+    onVariants { variant ->
+        // The static launcher shortcut (res/xml/shortcuts.xml) names its target activity by the
+        // build's applicationId, suffix included; res/ knows no manifest placeholders, so it is a
+        // resource of each variant's own.
+        variant.resValues.put(
+            variant.makeResValueKey("string", "application_id"),
+            variant.applicationId.map { com.android.build.api.variant.ResValue(it) }
+        )
+    }
+}
+
 // app/build/outputs/apk/<type>/zenium-<version>-<type>.apk instead of app-<type>.apk
 base {
     archivesName.set("zenium-$appVersion")
