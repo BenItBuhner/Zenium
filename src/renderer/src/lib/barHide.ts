@@ -563,19 +563,20 @@ let lastLoading = false
 function evaluateGate(): void {
   const gate = currentGate()
   const allowed = barMayHide(gate)
-  if (barHideStore.get().allowed !== allowed) {
-    barHideStore.set({ allowed })
-    if (!allowed && (machine.current > 0 || machine.state !== 'rest')) {
-      const closed = (Object.keys(gate) as Array<keyof BarHideGate>).filter((k) =>
-        k === 'enabled' ? !gate.enabled : gate[k]
-      )
-      note(`show: the gate closed (${closed.join(', ')})`)
-    }
+  const changed = barHideStore.get().allowed !== allowed
+  if (changed && !allowed && (machine.current > 0 || machine.state !== 'rest')) {
+    const closed = (Object.keys(gate) as Array<keyof BarHideGate>).filter((k) =>
+      k === 'enabled' ? !gate.enabled : gate[k]
+    )
+    note(`show: the gate closed (${closed.join(', ')})`)
   }
   // A sheet over a bottom-docked bar: the bar is back at once under the recede's fade (§11.1),
   // not slid in while fading. The top bar is not in the sheet's path and is not faded, so its
-  // return is seen and rides the spring.
+  // return is seen and rides the spring. The machine hears first, the store after: a subscriber
+  // that scrolls the moment the store says the gate is open (the preview's `barhide` state)
+  // finds the machine ready to take it.
   machine.setAllowed(allowed, !allowed && gate.covered && context.edge === 'bottom')
+  if (changed) barHideStore.set({ allowed })
   // Another tab, or a load starting on this one (a link followed, a reload): the bar starts in
   // place. The document itself is keyed by the host's `navigated` event (`dispatchBarNavigation`),
   // not by the URL, so a same-document navigation leaves the bar alone.
