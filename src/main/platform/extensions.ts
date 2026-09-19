@@ -79,11 +79,14 @@ import {
   downloadFromStores,
   downloadUpdate,
   electronStoreFetch,
+  ensureContentScriptPrelude,
   idForUnpackedPath,
   packageFromFile,
   parseStoreRef,
   pruneOldVersions,
   removeInstalledFiles,
+  removeShadow,
+  shadowUnpacked,
   storeLabel,
   sweepStagingDirs,
   writePackage
@@ -317,11 +320,12 @@ export class ExtensionService implements ExtensionHost {
       return
     }
     if (fresh) this.reportManifestWarnings(record)
+    const path = await this.loadPathFor(record)
     for (const [, ses] of this.sessions.persistent()) {
       try {
         const ext =
-          ses.extensions.getAllExtensions().find((e) => e.path === record.path) ??
-          (await ses.extensions.loadExtension(record.path, {
+          ses.extensions.getAllExtensions().find((e) => e.path === path) ??
+          (await ses.extensions.loadExtension(path, {
             allowFileAccess: record.allowFileAccess
           }))
         // Electron derives the id itself (from `manifest.key` or the path); trust what it says.
@@ -333,6 +337,28 @@ export class ExtensionService implements ExtensionHost {
         this.loadFailed(record, (error as Error).message)
       }
     }
+  }
+
+  /**
+   * The directory the engine loads for a record: the install directory itself, made to carry the
+   * content-script storage prelude when it was written before the prelude existed; for an
+   * unpacked folder its shadow (`shadowUnpacked`), the folder itself when the shadow cannot be
+   * built (the extension then runs without `storage.sync` in its content scripts, as before).
+   */
+  private async loadPathFor(record: ExtensionRecord): Promise<string> {
+    if (record.source === 'unpacked') {
+      try {
+        return await shadowUnpacked(this.root, record.id, record.path)
+      } catch (error) {
+        console.warn(
+          `[zen] extensions: could not shadow ${record.path}, loading it as is:`,
+          (error as Error).message
+        )
+        return record.path
+      }
+    }
+    await ensureContentScriptPrelude(record.path)
+    return record.path
   }
 
   private loadFailed(record: ExtensionRecord, message: string): void {
@@ -795,7 +821,9 @@ export class ExtensionService implements ExtensionHost {
     this.errors.delete(record.id)
     this.console.forget(record.id)
     this.updates.delete(record.id)
-    if (record.source !== 'unpacked' && isManagedPath(this.root, record.path))
+    if (record.source === 'unpacked')
+      await removeShadow(this.root, record.id).catch(() => undefined)
+    else if (isManagedPath(this.root, record.path))
       await removeInstalledFiles(this.root, record.id).catch((error: Error) =>
         console.warn(`[zen] extensions: could not delete ${record.path}:`, error.message)
       )

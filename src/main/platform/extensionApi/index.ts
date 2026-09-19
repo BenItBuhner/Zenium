@@ -549,8 +549,10 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     loaded.sessions.sort((a, b) => Number(b === primary) - Number(a === primary))
   }
 
+  /** By id first: an unpacked folder is loaded from its shadow, not from the path its record has. */
   private infoFor(ext: Extension): ExtensionInfo | undefined {
-    return this.browser.extensions.list().find((info) => info.path === ext.path)
+    const infos = this.browser.extensions.list()
+    return infos.find((info) => info.id === ext.id) ?? infos.find((info) => info.path === ext.path)
   }
 
   // ---------------------------------------------------------------------------
