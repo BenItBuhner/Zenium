@@ -378,7 +378,7 @@ class HistoryBookmarksDemo :
             touch("Edit…", "the editor is up with its Save", timeoutMs = 10_000) { present("Save") }
             SystemClock.sleep(1_800)
             shot("11-bookmarks-edit-sheet")
-            finding("editor: title 'Edit Bookmark' ${verdict(present("Edit Bookmark"))}, name field ${verdict(nameField("Hacker News") != null)}")
+            finding("editor: title 'Edit bookmark' ${verdict(present("Edit bookmark"))}, name field ${verdict(nameField("Hacker News") != null)}")
             // Put the caret at the end of the name, type, save.
             nameField("Hacker News")?.let { field ->
                 f.tap(field.right - 24 * density, field.exactCenterY())

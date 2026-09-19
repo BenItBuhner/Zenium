@@ -192,11 +192,10 @@
    * A group's heading (a day, "Recently closed"): the shared `.zen-v2-heading` (main.css, 9.34:
    * 15/600 on the body line, 9.26), sentence case, with this list's beat as its modifier – 20
    * above and 8 to its first row's box (9.27); the first sits 8 under what stays put above the
-   * list, which the field's own 8 supplies.
+   * list, which the field's own 8 supplies. Its ink is the panel's, inherited.
    */
   .zen-v2-heading.zen-list-heading {
     padding: 20px 16px 8px;
-    color: var(--v2-text);
   }
   .zen-v2-heading.zen-list-heading:first-child {
     padding-top: 0;
