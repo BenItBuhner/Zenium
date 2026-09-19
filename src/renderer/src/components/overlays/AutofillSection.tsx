@@ -24,7 +24,11 @@ import {
   passkeySubtitle,
   vaultGateCopy
 } from '@renderer/lib/autofill'
-import { useAutofillSettings, type AutofillSettingsData, type VaultGate } from '@renderer/lib/autofillSettings'
+import {
+  useAutofillSettings,
+  type AutofillSettingsData,
+  type VaultGate
+} from '@renderer/lib/autofillSettings'
 import { VaultPassphraseForm } from '../autofill/PassphraseForm'
 import { Btn, IconBtn, Menulist, type MenuOption } from '../autofill/controls'
 
@@ -254,7 +258,11 @@ function MenulistRow({
   const id = useId()
   const [text, wrapped] = useWrapped<HTMLSpanElement>()
   return (
-    <div className="zen-v2-row zen-v2-af-pane-row" data-static="" data-wrapped={wrapped || undefined}>
+    <div
+      className="zen-v2-row zen-v2-af-pane-row"
+      data-static=""
+      data-wrapped={wrapped || undefined}
+    >
       <RowText ref={text} label={label} description={description} htmlFor={id} />
       <Menulist id={id} label={label} value={value} options={options} onChange={onChange} />
     </div>
@@ -279,7 +287,11 @@ function EntryRow({
 }): JSX.Element {
   const [text, wrapped] = useWrapped<HTMLSpanElement>()
   return (
-    <div className="zen-v2-row zen-v2-af-pane-row" data-static="" data-wrapped={wrapped || undefined}>
+    <div
+      className="zen-v2-row zen-v2-af-pane-row"
+      data-static=""
+      data-wrapped={wrapped || undefined}
+    >
       <span className="zen-v2-af-row-icon">
         <Icon aria-hidden />
       </span>
@@ -451,7 +463,11 @@ function CardsGroup({
                 if (copying === null) copyCard(card)
               }}
             >
-              {copying === card.id ? <span className="zen-v2-spinner" aria-hidden /> : <Copy aria-hidden />}
+              {copying === card.id ? (
+                <span className="zen-v2-spinner" aria-hidden />
+              ) : (
+                <Copy aria-hidden />
+              )}
             </IconBtn>
             <IconBtn
               title="Edit card"
@@ -474,7 +490,11 @@ function CardsGroup({
   )
 }
 
-function PasskeysGroup({ autofill: { passkeys } }: { autofill: AutofillSettingsData }): JSX.Element {
+function PasskeysGroup({
+  autofill: { passkeys }
+}: {
+  autofill: AutofillSettingsData
+}): JSX.Element {
   return (
     <Section
       heading="Passkeys"

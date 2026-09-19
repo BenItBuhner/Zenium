@@ -103,28 +103,36 @@ function Editor({ edit, phone }: { edit: AutofillEdit; phone: boolean }): JSX.El
         register={(fn) => (submit.current = fn)}
       />
     )
-  // Cancel stays live while Save works (§9.30: busy dims nothing; the save completes on its own).
-  const footer = (
-    <Footer count={2}>
-      <Btn onClick={closeAutofillEdit}>Cancel</Btn>
-      <Btn type="submit" variant="primary" busy={busy}>
-        Save
-      </Btn>
-    </Footer>
-  )
   const onSubmit = (e: FormEvent): void => {
     e.preventDefault()
     if (!busy) void submit.current?.()
   }
   return phone ? (
-    <EditorSheet copy={copy} onSubmit={onSubmit}>
+    <EditorSheet copy={copy} busy={busy} onSubmit={onSubmit}>
       {form}
-      {footer}
     </EditorSheet>
   ) : (
-    <EditorDialog copy={copy} onSubmit={onSubmit} footer={footer}>
+    <EditorDialog copy={copy} busy={busy} onSubmit={onSubmit}>
       {form}
     </EditorDialog>
+  )
+}
+
+/**
+ * The editor's actions. A busy form (§9.30): only Save is busy, Cancel sits at .4 and the fields
+ * hold their values read-only until the save answers. `onCancel` is the shell's way out – the
+ * dialog closes, the sheet leaves with its motion.
+ */
+function EditorFooter({ busy, onCancel }: { busy: boolean; onCancel: () => void }): JSX.Element {
+  return (
+    <Footer count={2}>
+      <Btn disabled={busy} onClick={onCancel}>
+        Cancel
+      </Btn>
+      <Btn type="submit" variant="primary" busy={busy}>
+        Save
+      </Btn>
+    </Footer>
   )
 }
 
@@ -142,13 +150,13 @@ function Editor({ edit, phone }: { edit: AutofillEdit; phone: boolean }): JSX.El
  */
 function EditorDialog({
   copy,
+  busy,
   onSubmit,
-  footer,
   children
 }: {
   copy: EditorCopy
+  busy: boolean
   onSubmit: (e: FormEvent) => void
-  footer: ReactNode
   children: ReactNode
 }): JSX.Element {
   const panelRef = useRef<HTMLDivElement>(null)
@@ -174,49 +182,66 @@ function EditorDialog({
           <SheetCopy>{copy.description}</SheetCopy>
           <div className="zen-v2-af-form">{children}</div>
         </div>
-        <div className="zen-v2-af-dialog-footer">{footer}</div>
+        <div className="zen-v2-af-dialog-footer">
+          <EditorFooter busy={busy} onCancel={closeAutofillEdit} />
+        </div>
       </form>
     </div>
   )
 }
 
+/**
+ * The phone shell: the chassis sheet (§9.11, §9.16) in the frame's dialog host – `TabDialogs`
+ * renders the editor inside `FrameDialogHost`, so the sheet is `hosted` and owns its scrim
+ * (`useFrameDialog`); the chassis takes focus, traps Tab, holds the chrome inert and lifts the
+ * form above the keyboard (#172). The 48 header carries the title; the form follows the body
+ * copy and ends in its actions, Cancel leaving through the sheet's own motion.
+ */
 function EditorSheet({
   copy,
+  busy,
   onSubmit,
   children
 }: {
   copy: EditorCopy
+  busy: boolean
   onSubmit: (e: FormEvent) => void
   children: ReactNode
 }): JSX.Element {
   const sheet = useRef<BottomSheetHandle>(null)
   const titleId = useId()
+  const dismiss = (): void => sheet.current?.dismiss()
+  useFrameDialog({ onScrimPress: dismiss, ownScrim: true })
   useBackSurface({
     name: 'autofill-editor',
     onProgress: (p) => sheet.current?.backProgress(p),
     onCommit: () => sheet.current?.commitBack(),
     onCancel: () => sheet.current?.cancelBack()
   })
-  useEscape(() => sheet.current?.dismiss())
-  return createPortal(
-    <BottomSheet
-      ref={sheet}
-      onDismissed={closeAutofillEdit}
-      handleLabel="Dismiss"
-      className="zen-v2-af zen-v2-af-sheet"
-      header={<SheetHeader id={titleId} title={copy.title} />}
-      fitContent
-    >
-      <InSheet.Provider value>
-        <div className="zen-v2-af" data-surface="page" aria-labelledby={titleId}>
-          <SheetCopy>{copy.description}</SheetCopy>
-          <form className="zen-v2-af-form" onSubmit={onSubmit}>
-            {children}
-          </form>
-        </div>
-      </InSheet.Provider>
-    </BottomSheet>,
-    document.body
+  useEscape(dismiss)
+  return (
+    <div className="zen-v2-af absolute inset-0" data-surface="page">
+      <BottomSheet
+        ref={sheet}
+        hosted
+        onDismissed={closeAutofillEdit}
+        handleLabel="Dismiss"
+        labelledBy={titleId}
+        className="zen-v2-af zen-v2-af-sheet"
+        header={<SheetHeader id={titleId} title={copy.title} />}
+        fitContent
+      >
+        <InSheet.Provider value>
+          <div className="zen-v2-af" data-surface="page">
+            <SheetCopy>{copy.description}</SheetCopy>
+            <form className="zen-v2-af-form" onSubmit={onSubmit}>
+              {children}
+              <EditorFooter busy={busy} onCancel={dismiss} />
+            </form>
+          </div>
+        </InSheet.Provider>
+      </BottomSheet>
+    </div>
   )
 }
 
@@ -386,7 +411,7 @@ function AddressForm({ edit, phone, busy, setBusy, register }: FormProps): JSX.E
           label="Country"
           value={draft.country}
           options={countries}
-          disabled={busy}
+          readOnly={busy}
           onChange={(v) => set('country', v)}
         />
       </Labelled>
@@ -401,7 +426,7 @@ function AddressForm({ edit, phone, busy, setBusy, register }: FormProps): JSX.E
               ? `For example ${format.postalCodeExamples[0]}`
               : undefined
           }
-          disabled={busy}
+          readOnly={busy}
           ref={i === 0 ? first : undefined}
           onChange={(v) => set(spec.field, v)}
         />
@@ -420,7 +445,7 @@ function AddressLine({
   value,
   error,
   hint,
-  disabled,
+  readOnly,
   ref,
   onChange
 }: {
@@ -428,7 +453,7 @@ function AddressLine({
   value: string
   error: string | null
   hint?: string
-  disabled: boolean
+  readOnly: boolean
   ref?: Ref<HTMLInputElement | HTMLTextAreaElement>
   onChange: (value: string) => void
 }): JSX.Element {
@@ -446,7 +471,7 @@ function AddressLine({
         value={value || (spec.required ? '' : NO_REGION)}
         options={options}
         placeholder={spec.required ? 'Select' : undefined}
-        disabled={disabled}
+        readOnly={readOnly}
         onChange={(v) => onChange(v === NO_REGION ? '' : v)}
       />
     )
@@ -460,7 +485,7 @@ function AddressLine({
         rows={2}
         autoComplete={AUTOCOMPLETE[spec.field]}
         aria-invalid={error ? true : undefined}
-        disabled={disabled}
+        readOnly={readOnly}
         onChange={(e) => onChange(e.target.value)}
       />
     )
@@ -477,7 +502,7 @@ function AddressLine({
         inputMode={spec.field === 'phone' ? 'tel' : spec.field === 'email' ? 'email' : undefined}
         spellCheck={false}
         aria-invalid={error ? true : undefined}
-        disabled={disabled}
+        readOnly={readOnly}
         onChange={(e) => onChange(e.target.value)}
       />
     )
@@ -631,7 +656,7 @@ function CardForm({ edit, phone, busy, setBusy, register }: FormProps): JSX.Elem
           autoComplete="cc-number"
           spellCheck={false}
           aria-invalid={numberError ? true : undefined}
-          disabled={busy}
+          readOnly={busy}
           onChange={(e) => set('number', groupDigits(e.target.value))}
         />
       </Labelled>
@@ -642,7 +667,7 @@ function CardForm({ edit, phone, busy, setBusy, register }: FormProps): JSX.Elem
             label="Expiry month"
             value={draft.expMonth}
             options={MONTHS}
-            disabled={busy}
+            readOnly={busy}
             onChange={(v) => set('expMonth', v)}
           />
         </Labelled>
@@ -652,7 +677,7 @@ function CardForm({ edit, phone, busy, setBusy, register }: FormProps): JSX.Elem
             label="Expiry year"
             value={draft.expYear}
             options={yearOptions(existing?.expYear ?? null)}
-            disabled={busy}
+            readOnly={busy}
             onChange={(v) => set('expYear', v)}
           />
         </Labelled>
@@ -663,7 +688,7 @@ function CardForm({ edit, phone, busy, setBusy, register }: FormProps): JSX.Elem
           value={draft.name}
           autoComplete="cc-name"
           spellCheck={false}
-          disabled={busy}
+          readOnly={busy}
           onChange={(e) => set('name', e.target.value)}
         />
       </Labelled>
@@ -676,7 +701,7 @@ function CardForm({ edit, phone, busy, setBusy, register }: FormProps): JSX.Elem
           id={ids.nickname}
           value={draft.nickname}
           spellCheck={false}
-          disabled={busy}
+          readOnly={busy}
           onChange={(e) => set('nickname', e.target.value)}
         />
       </Labelled>
