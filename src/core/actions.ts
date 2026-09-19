@@ -206,6 +206,9 @@ export class Actions {
       case 'page.print':
         if (target) tabs.view(target.id)?.print()
         return
+      case 'page.printPreview':
+        if (target) this.browser.print.open(target.id, win)
+        return
       case 'page.viewSource':
         if (target && !target.url.startsWith('zen://'))
           tabs.createTab(

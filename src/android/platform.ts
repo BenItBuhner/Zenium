@@ -133,6 +133,10 @@ export function androidCapabilities({
     resourceGovernor: false,
     sync: false,
     print: true,
+    // The system print flow (`PrintRelay.kt`) has its own preview; no PDF rendering in the WebView.
+    printPreview: false,
+    // The WebView cannot draw a PDF: one it navigates to is downloaded and shown in `zen://pdf`.
+    pdfViewer: true,
     agents: true,
     updates: true,
     share: true,

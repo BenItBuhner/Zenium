@@ -104,6 +104,11 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   resourceGovernor: true,
   sync: true,
   print: true,
+  // Pages render to PDF (`printToPDF`) and printers are listed (`getPrintersAsync`): Ctrl+P opens
+  // Zenium's preview; Chromium's own preview is not part of Electron.
+  printPreview: true,
+  // Chromium's PDF viewer draws PDFs in the page itself.
+  pdfViewer: false,
   agents: true,
   updates: true,
   share: false,

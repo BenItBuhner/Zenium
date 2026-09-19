@@ -344,7 +344,8 @@ function sanitizeMargins(raw: unknown, fallback: PrintCustomMargins): PrintCusto
  * default when the id is not one this build lists.
  */
 export function sanitizePrintSettings(raw: unknown, defaults: PrintSettings): PrintSettings {
-  if (!isRecord(raw)) return { ...defaults, margins: { ...defaults.margins }, scale: { ...defaults.scale } }
+  if (!isRecord(raw))
+    return { ...defaults, margins: { ...defaults.margins }, scale: { ...defaults.scale } }
   const pages = isRecord(raw.pages) ? raw.pages : {}
   const margins = isRecord(raw.margins) ? raw.margins : {}
   const scale = isRecord(raw.scale) ? raw.scale : {}
@@ -467,7 +468,9 @@ export function parsePageRanges(text: string, pageCount: number | null = null): 
 }
 
 /** Chrome's copies field: an integer 1–999; the message otherwise. */
-export function validateCopies(text: string): { ok: true; value: number } | { ok: false; error: string } {
+export function validateCopies(
+  text: string
+): { ok: true; value: number } | { ok: false; error: string } {
   const trimmed = text.trim()
   if (!/^\d+$/.test(trimmed)) return { ok: false, error: PRINT_MESSAGES.copies }
   const value = Number(trimmed)
@@ -476,7 +479,9 @@ export function validateCopies(text: string): { ok: true; value: number } | { ok
 }
 
 /** Chrome's scale field: an integer 10–200; the message otherwise. */
-export function validateScale(text: string): { ok: true; value: number } | { ok: false; error: string } {
+export function validateScale(
+  text: string
+): { ok: true; value: number } | { ok: false; error: string } {
   const trimmed = text.trim()
   if (!/^\d+$/.test(trimmed)) return { ok: false, error: PRINT_MESSAGES.scale }
   const value = Number(trimmed)
@@ -490,10 +495,7 @@ export function validateScale(text: string): { ok: true; value: number } | { ok:
  * repeats (Chrome merges overlapping runs). Empty for a custom selection that does not parse,
  * or for odd / even pages of a document that has none.
  */
-export function pagesToPrint(
-  pages: PrintSettings['pages'],
-  pageCount: number
-): number[] {
+export function pagesToPrint(pages: PrintSettings['pages'], pageCount: number): number[] {
   if (pageCount <= 0) return []
   switch (pages.mode) {
     case 'all':
@@ -696,6 +698,32 @@ export function printJobOptions(
   }
   return options
 }
+
+// ---------------------------------------------------------------------------
+// The chrome's view of a session (`print.*` commands)
+// ---------------------------------------------------------------------------
+
+/** What the preview needs to open for a tab. */
+export interface PrintSessionInfo {
+  tabId: string
+  /** The page's title and address: the header and footer, the PDF's file name, the dialog's caption. */
+  title: string
+  url: string
+  printers: PrinterDescription[]
+  /** The settings the preview opens with: Chrome's sticky settings over the defaults. */
+  settings: PrintSettings
+}
+
+/** A preview render: the PDF's bytes, base64, or why there are none. */
+export type PrintPreviewResult = { ok: true; pdf: string } | { ok: false; error: string }
+
+/** How a Print / Save ended. */
+export type PrintRunResult =
+  | { ok: true; action: 'printed' }
+  | { ok: true; action: 'saved'; path: string }
+  /** The user dismissed the save dialog: the preview stays open, as Chrome's does. */
+  | { ok: true; action: 'cancelled' }
+  | { ok: false; error: string }
 
 // ---------------------------------------------------------------------------
 // The preview's own labels

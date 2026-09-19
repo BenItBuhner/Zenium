@@ -1407,6 +1407,8 @@ export class TabManager {
     this.browser.agents.onTabRemoved(tabId)
     this.browser.find.forget(tabId)
     this.browser.webApps.onTabRemoved(tabId)
+    this.browser.print.onTabRemoved(tabId)
+    this.browser.pdf.onTabRemoved(tabId)
     this.browser.liveFolders.onTabLeftFolder(tabId, tab.folderId)
     if (closed) this.browser.session.pushTab(closed)
     for (const { w, s, next } of reselect) {

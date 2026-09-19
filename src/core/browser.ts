@@ -57,6 +57,8 @@ import { LiveFolderService } from './livefolders'
 import { ModService } from './mods'
 import { SiteInfoService } from './siteInfo'
 import { TranslateService } from './translate/service'
+import { PrintService } from './print'
+import { PdfViewerService } from './pdf'
 import { PageControls } from './pageControls'
 import { SpellcheckService } from './spellcheck'
 import { FindMemory } from './find'
@@ -232,6 +234,10 @@ export class Browser {
   readonly protection: ProtectionService
   /** Offline page translation: detection, offers, the engine and its models. */
   readonly translate: TranslateService
+  /** The print preview (`zen://print`) on hosts whose engine has none of its own. */
+  readonly print: PrintService
+  /** The inline PDF viewer (`zen://pdf`) on hosts whose engine cannot draw a PDF. */
+  readonly pdf: PdfViewerService
   /** Desktop site, dark theme for sites and page zoom, remembered per site (Chrome's page controls). */
   readonly pageControls: PageControls
   readonly spellcheck: SpellcheckService
@@ -289,7 +295,8 @@ export class Browser {
         os: platform.info.os,
         settings: () => resolveDownloadSettings(this.state.settings),
         referrerFamiliar: (referrer) => this.history.visitedBeforeToday(referrer),
-        onDanger: (item) => this.emitDownload('download.danger', { id: item.id }, item.private)
+        onDanger: (item) => this.emitDownload('download.danger', { id: item.id }, item.private),
+        onBegin: (item, init) => this.pdf.onDownloadBegin(item, init)
       }
     )
     this.state.downloadsFor = (win) => ({
@@ -342,6 +349,8 @@ export class Browser {
     this.protection = new ProtectionService(this)
     this.translate = new TranslateService(this)
     this.spellcheck = new SpellcheckService(this)
+    this.print = new PrintService(this)
+    this.pdf = new PdfViewerService(this)
     this.privacy = new PrivacyService(this)
     this.webApps = new WebAppService(this, platform.io)
     this.state.extras = (win) => ({
@@ -1572,6 +1581,7 @@ export class Browser {
     this.passwords.flushSync()
     this.blocking.flushSync()
     this.translate.flushSync()
+    this.print.flushSync()
     this.webApps.flushSync()
   }
 
@@ -1894,6 +1904,10 @@ export class Browser {
     }
     if (message.type === 'focus') {
       this.revealTab(tabId)
+      return
+    }
+    if (message.type === 'pdf') {
+      if (message.pdf && typeof message.pdf === 'object') this.pdf.onReport(tabId, message.pdf)
       return
     }
     if (message.type === 'forms') {
@@ -2420,6 +2434,18 @@ export class Browser {
           win
         }),
       'page.print': ({ tabId }, win) => this.actions.run('page.print', { sourceTabId: tabId, win }),
+      'page.printPreview': ({ tabId }, win) =>
+        this.actions.run('page.printPreview', { sourceTabId: tabId, win }),
+      'print.session': ({ tabId }) => this.print.session(tabId),
+      'print.preview': ({ tabId, settings, pageCount }) =>
+        this.print.preview(tabId, settings, pageCount ?? null),
+      'print.run': ({ tabId, settings, pageCount }, win) =>
+        this.print.run(tabId, settings, pageCount, win),
+      'print.close': ({ tabId }) => this.print.close(tabId),
+      'pdf.openWith': ({ tabId }) => this.pdf.openWith(tabId),
+      'pdf.share': ({ tabId }) => this.pdf.share(tabId),
+      'pdf.state': ({ tabId }) => this.pdf.report(tabId),
+      'pdf.command': ({ tabId, command }) => this.pdf.command(tabId, command),
       'page.savePage': ({ tabId }, win) =>
         this.actions.run('page.savePage', { sourceTabId: tabId, win }),
       'page.viewSource': ({ tabId }, win) =>
