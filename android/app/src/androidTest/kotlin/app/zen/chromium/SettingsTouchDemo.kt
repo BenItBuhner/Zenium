@@ -267,26 +267,29 @@ class SettingsTouchDemo : DemoHarness("settings-tab-demo-state.json", "android-s
         }
         if (failures.size > before) return
 
+        // Each finding below is recorded on its own: one that does not hold is a failure of the
+        // run, not the end of the checks (a BEFORE run shows all three).
+        var keyboardUp = false
         step("The keyboard's lift under the prompt: no ResizeObserver loop (finding 3)") {
             chromeJs("window.__zenRoLoops=0")
             val field = findNodeWhere { it.isEditable && it.isVisibleToUser && it.packageName?.toString() == app.packageName }
                 ?: error("no editable field in the prompt")
             if (!touchTap(field)) error("the field is out of a finger's reach")
-            val up = awaitIme(shown = true, timeoutMs = 8_000)
+            keyboardUp = awaitIme(shown = true, timeoutMs = 8_000)
             val lifted = imeInset()
             // The lift's frames and the sheet's follow: the detents re-run on every inset frame.
             SystemClock.sleep(2_500)
             shot("07-keyboard-up")
             val loops = chromeValue("String(window.__zenRoLoops)").toIntOrNull() ?: -1
-            val ok = up && loops == 0
+            val ok = keyboardUp && loops == 0
             finding(
-                "  keyboard up $up (inset $lifted px); focus: ${focusedElement()}; " +
+                "  keyboard up $keyboardUp (inset $lifted px); focus: ${focusedElement()}; " +
                     "ResizeObserver loop errors during the lift: $loops ${verdict(ok)}"
             )
-            if (!up) failures += "the keyboard did not come up for the prompt's field"
+            if (!keyboardUp) failures += "the keyboard did not come up for the prompt's field"
             else if (loops != 0) failures += "$loops ResizeObserver loop error(s) during the keyboard's lift"
         }
-        if (failures.size > before) return
+        if (!keyboardUp) return
 
         step("A refused passphrase (9.30): the field keeps the focus and the keyboard comes back (finding 2)") {
             chromeJs(
@@ -329,6 +332,17 @@ class SettingsTouchDemo : DemoHarness("settings-tab-demo-state.json", "android-s
         }
 
         step("The prompt closed by its Cancel: focus back on the control that asked (9.22)") {
+            // The keyboard is a window of its own and takes a touch inside it: when Cancel sits
+            // under it (or it is not on the tree yet, behind the keyboard), one back lowers the
+            // keyboard first – the IME consumes that back, the sheet stays.
+            val inset = imeInset()
+            val cancel = if (inset > 0) waitFor("Cancel", 3_000) else null
+            if (inset > 0 && (cancel == null || cancel.bottom > height - inset)) {
+                back()
+                val down = awaitIme(shown = false, timeoutMs = 6_000)
+                finding("  keyboard lowered before Cancel (was $inset px, Cancel at ${cancel ?: "?"}): $down")
+                SystemClock.sleep(700)
+            }
             chromeJs("window.__zenFocusPath=[]")
             if (!touchTapLabel("Cancel")) error("no Cancel on screen")
             val gone = awaitChrome("document.querySelectorAll('.zen-sheet').length===0", 8_000)
