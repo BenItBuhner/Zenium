@@ -66,7 +66,8 @@ const DESKTOP: HostCapabilities = {
   secureDns: false,
   newTabPage: true,
   pageTabs: false,
-  pinShortcuts: false
+  pinShortcuts: false,
+  translate: true
 }
 
 /**
@@ -106,7 +107,8 @@ const ANDROID: HostCapabilities = {
   newTabPage: false,
   pageTabs: true,
   // Kotlin's boot info turns this on where the launcher can pin (ShortcutManagerCompat).
-  pinShortcuts: false
+  pinShortcuts: false,
+  translate: true
 }
 
 function memoryIo(): StoreIO {

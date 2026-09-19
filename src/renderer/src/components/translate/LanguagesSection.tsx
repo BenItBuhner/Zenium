@@ -5,20 +5,20 @@ import type { TranslateModelInfo, TranslatePreferences } from '@shared/translate
 import type { UIState } from '@shared/types'
 import { languageName } from '@shared/languageNames'
 import { cmd, run } from '@renderer/lib/api'
-import { useViewport } from '@renderer/lib/formFactor'
-import { languageOptions, pairLabel, type LanguageOption } from '@renderer/lib/translate'
+import { languageOptions, pairKey, pairLabel, type LanguageOption } from '@renderer/lib/translate'
 import { cn, formatBytes } from '@renderer/lib/utils'
 import { Checkbox, IconButton, Menulist } from './controls'
 
 /**
- * Settings > Languages: whether Zenium offers to translate, the languages the user reads (the
- * first is what pages are translated into), the always and never lists, the sites that are
- * never offered, and the translation models on the device. Laid out on the v2 draft: on the
- * desktop the pane opens on its 22/600 "Translation" section title (§9.26) and every list is
- * named by a 15/600 sub-heading over a 15 deemphasised description and a bordered card (§9.27:
- * a title above a card is a sub-heading, never 17), with 16 px checkboxes, bordered menulists
- * and 32 px rows; on phones 15/600 group headings throughout (§10.3) and the menulists that add
- * to a list are action rows opening a sheet (§9.13, §10.4).
+ * Settings > Languages, the desktop pane: whether Zenium offers to translate, the languages the
+ * user reads (the first is what pages are translated into), the always and never lists, the
+ * sites that are never offered, and the translation models on the device. Laid out on the v2
+ * draft (§6 settings page): the pane opens on its 22/600 "Translation" section title (§9.26)
+ * and every list is named by a 15/600 sub-heading over a 15 deemphasised description and a
+ * bordered card (§9.27: a title above a card is a sub-heading, never 17), with 16 px checkboxes,
+ * bordered menulists and 32 px rows. The `SettingsPanel` shows it behind the `translate`
+ * capability. On a phone Settings is a tab and these rows are the `languages` category's
+ * builder (`pages/settings/sections.tsx`), never this pane.
  */
 export function LanguagesSection({ state }: { state: UIState }): JSX.Element {
   const { translate } = state
@@ -26,18 +26,6 @@ export function LanguagesSection({ state }: { state: UIState }): JSX.Element {
   const set = (patch: Partial<TranslatePreferences>): void => run('translate.setPreferences', patch)
   const rule = (language: string, value: 'always' | 'never' | 'ask'): void =>
     run('translate.setLanguageRule', { language, rule: value })
-
-  if (!translate.available) {
-    return (
-      <div className="zen-translate-settings">
-        <Group
-          title="Translation"
-          description="This build of Zenium does not include the translation engine."
-          section
-        />
-      </div>
-    )
-  }
 
   return (
     <div className="zen-translate-settings">
@@ -124,11 +112,10 @@ export function LanguagesSection({ state }: { state: UIState }): JSX.Element {
 
 /**
  * A heading, its description and the content they introduce, boxed in a card when the group has
- * its own actions. The pane's opening group carries the 22/600 section title on the desktop
- * (§9.26: line-height 28, 16 below it); every other group – and every group on a phone, where
- * there is no 22 below the bar that names the page (§10.3) – is named by a 15/600 sub-heading
- * with its description 4 under it and 16 to the first row or the card's edge (§9.27). One name
- * per card: the card itself has none inside.
+ * its own actions. The pane's opening group carries the 22/600 section title (§9.26: line-height
+ * 28, 16 below it); every other group is named by a 15/600 sub-heading with its description 4
+ * under it and 16 to the first row or the card's edge (§9.27). One name per card: the card
+ * itself has none inside.
  */
 function Group({
   title,
@@ -139,18 +126,15 @@ function Group({
 }: {
   title: string
   description?: string
-  /** The pane's section title (desktop) rather than a sub-heading. */
+  /** The pane's section title rather than a sub-heading. */
   section?: boolean
   card?: boolean
   children?: ReactNode
 }): JSX.Element {
-  const phone = useViewport().formFactor === 'phone'
-  const Heading = section && !phone ? 'h2' : 'h3'
+  const Heading = section ? 'h2' : 'h3'
   return (
     <section className="zen-translate-group">
-      <Heading
-        className={section && !phone ? 'zen-translate-section-title' : 'zen-translate-group-title'}
-      >
+      <Heading className={section ? 'zen-translate-section-title' : 'zen-translate-group-title'}>
         {title}
       </Heading>
       {description && <p className="zen-translate-description">{description}</p>}
@@ -187,10 +171,7 @@ function Empty({ children }: { children: ReactNode }): JSX.Element {
   return <div className="zen-translate-empty">{children}</div>
 }
 
-/**
- * The control that adds to a list: on the desktop a menulist in a row of its own; on a phone
- * settings page the menulist is not drawn (§9.13) – a §10.4 action row opens the same sheet.
- */
+/** The control that adds to a list: a menulist in a row of its own (§9.21: 40 around its 32). */
 function AddRow({
   label,
   placeholder,
@@ -202,21 +183,16 @@ function AddRow({
   options: LanguageOption[]
   onPick: (value: string) => void
 }): JSX.Element {
-  const phone = useViewport().formFactor === 'phone'
-  const menulist = (
-    <Menulist
-      value={null}
-      placeholder={placeholder}
-      options={options}
-      onChange={onPick}
-      label={label}
-      row={phone}
-    />
-  )
-  return phone ? (
-    menulist
-  ) : (
-    <div className="zen-translate-row zen-translate-row-add">{menulist}</div>
+  return (
+    <div className="zen-translate-row zen-translate-row-add">
+      <Menulist
+        value={null}
+        placeholder={placeholder}
+        options={options}
+        onChange={onPick}
+        label={label}
+      />
+    </div>
   )
 }
 
@@ -281,8 +257,6 @@ function LanguageList({
 // ---------------------------------------------------------------------------
 // Models
 // ---------------------------------------------------------------------------
-
-const pairKey = (m: { from: string; to: string }): string => `${m.from}:${m.to}`
 
 /**
  * The translation models: those on the device with their size and a way to remove them, and a

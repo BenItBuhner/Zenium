@@ -57,6 +57,8 @@ export interface TranslateModelInfo {
   /** Size of the model files in bytes (the registry's figure until downloaded). */
   bytes: number
   installed: boolean
+  /** Its files are being fetched now – for a page being translated or ahead of time. */
+  downloading: boolean
 }
 
 export interface TranslateSelectionResult {
@@ -74,6 +76,8 @@ export interface TranslateUIState {
   languages: string[]
   /** Models downloaded to this device. */
   installed: TranslateModelInfo[]
+  /** Models whose files are arriving now (the Languages settings list them as downloading). */
+  downloading: TranslateModelInfo[]
   /** Date of the model registry in use (`YYYY-MM-DD`) and whether it came from a live refresh. */
   registryDate: string
   /** SPDX identifier of the licence the model files come under (shown next to the models). */
