@@ -42,7 +42,9 @@ import kotlin.math.sin
  * Every mic – the bar's Voice search control (the seeded bar carries it left of the pill), the
  * new tab page's button, the omnibox's – and every sheet action is pressed with an INJECTED
  * TOUCH ([touchTapLabel]), so the hit test has its say; the outcome is read afterwards from the
- * tree, the chrome's DOM or the core's state.
+ * tree, the chrome's DOM or the core's state, and the sheet's own controls are held to what they
+ * do ([touchTapLabelExpecting]: Try again starts the recogniser anew, Cancel cancels its
+ * session, the toast's Open settings brings the system's window in front).
  *
  * The emulator has no microphone and its image no recogniser service, so the run installs a
  * stand-in ([FakeRecognizer]) through `Voice.recognizerFactory` before the activity starts (the
@@ -164,7 +166,7 @@ class VoiceDemo : DemoHarness("voice-demo-state.json", "android-voice", "voice-d
         if (!fixed) return
         SystemClock.sleep(600)
         shot("03-denied-for-good-toast")
-        val opened = touchTapLabel(OPEN_SETTINGS_LABEL, timeoutMs = 3_000) && awaitSystemWindow(8_000)
+        val opened = touchTapLabelExpecting(OPEN_SETTINGS_LABEL, "the app's details screen is in front", timeoutMs = 8_000, findTimeoutMs = 3_000) { systemWindowInFront() }
         check("Open settings (touched) opens the app's details screen", opened)
         if (opened) {
             SystemClock.sleep(2_500)
@@ -214,12 +216,24 @@ class VoiceDemo : DemoHarness("voice-demo-state.json", "android-voice", "voice-d
         check("the partial transcript is the body copy", partial)
         SystemClock.sleep(800)
         shot("06-partial-transcript")
-        val cancelsBefore = fake.cancels
-        check("Cancel is touched", touchTapLabel(CANCEL_LABEL))
+        // Cancel and a touch that fell through to the scrim end the same way by design (the
+        // session is cancelled); the touch that tells the sheet's button from its scrim is Try
+        // again in [noMatchAndTryAgain], which only the button answers.
+        check("Cancel (touched) stops the recogniser", touchCancel())
         check("the sheet is down after Cancel", awaitSurface(false, 6_000))
-        check("Cancel stopped the recogniser", awaitCancels(cancelsBefore + 1, 3_000))
         SystemClock.sleep(1_500)
         shot("07-cancelled")
+    }
+
+    /** A real touch on Cancel, held to have cancelled the recogniser's session. */
+    private fun touchCancel(): Boolean {
+        val before = fake.cancels
+        return touchTapLabelExpecting(CANCEL_LABEL, "the recogniser's session is cancelled", timeoutMs = 3_000) { fake.cancels > before }
+    }
+
+    private fun systemWindowInFront(): Boolean {
+        val top = ui.rootInActiveWindow?.packageName?.toString()
+        return top != null && top != app.packageName
     }
 
     /** The new tab page's mic: the result goes through the profile's engine as a search. */
@@ -299,15 +313,16 @@ class VoiceDemo : DemoHarness("voice-demo-state.json", "android-voice", "voice-d
         check("the sheet's phase is no-match", awaitPhase(setOf("no-match"), 3_000))
         SystemClock.sleep(1_000)
         shot("13-no-match")
+        // The sheet's telling touch: only the button starts the recogniser anew (a touch on the
+        // scrim would take the sheet down instead).
         val startsBefore = fake.starts
-        check("Try again is touched", touchTapLabel(TRY_AGAIN_LABEL))
-        check("Try again starts the recogniser anew", awaitStarts(startsBefore + 1, 6_000))
+        check("Try again (touched) starts the recogniser anew", touchTapLabelExpecting(TRY_AGAIN_LABEL, "the recogniser is started again", timeoutMs = 6_000) { fake.starts > startsBefore })
         check("the sheet listens again", awaitPhase(setOf("starting", "listening"), 6_000) && waitFor(LISTENING_TITLE, 4_000) != null)
         fake.ready()
         fake.begin()
         pulse(1_200)
         shot("14-listening-again")
-        check("Cancel is touched", touchTapLabel(CANCEL_LABEL))
+        check("Cancel (touched) stops the recogniser", touchCancel())
         check("the sheet is down after Cancel", awaitSurface(false, 6_000))
         SystemClock.sleep(1_500)
     }
@@ -372,10 +387,6 @@ class VoiceDemo : DemoHarness("voice-demo-state.json", "android-voice", "voice-d
         }
         return phase() in phases
     }
-
-    private fun awaitStarts(n: Int, timeoutMs: Long): Boolean = awaitCount(timeoutMs) { fake.starts >= n }
-
-    private fun awaitCancels(n: Int, timeoutMs: Long): Boolean = awaitCount(timeoutMs) { fake.cancels >= n }
 
     private fun awaitCount(timeoutMs: Long, reached: () -> Boolean): Boolean {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
