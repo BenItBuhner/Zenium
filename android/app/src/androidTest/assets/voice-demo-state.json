@@ -1,0 +1,108 @@
+{
+  "version": 2,
+  "activeSpaceId": "space_work",
+  "spaces": [
+    {
+      "id": "space_work",
+      "name": "Work",
+      "icon": "💼",
+      "containerId": "default",
+      "theme": {
+        "type": "gradient",
+        "colors": [
+          {
+            "c": [
+              96,
+              110,
+              235
+            ],
+            "x": 0.3,
+            "y": 0.35,
+            "isPrimary": true
+          },
+          {
+            "c": [
+              214,
+              92,
+              160
+            ],
+            "x": 0.7,
+            "y": 0.65
+          }
+        ],
+        "opacity": 0.55,
+        "texture": 0,
+        "algorithm": "floating",
+        "monochrome": false,
+        "rotation": 40
+      },
+      "tabIds": [
+        "tab_www",
+        "tab_example"
+      ],
+      "activeTabId": "tab_example",
+      "pinnedCollapsed": false
+    }
+  ],
+  "folders": [],
+  "tabs": [
+    {
+      "id": "tab_www",
+      "spaceId": "space_work",
+      "containerId": "default",
+      "folderId": null,
+      "url": "https://info.cern.ch/hypertext/WWW/TheProject.html",
+      "title": "World Wide Web",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_example",
+      "spaceId": "space_work",
+      "containerId": "default",
+      "folderId": null,
+      "url": "https://example.com/",
+      "title": "Example Domain",
+      "pinned": false,
+      "essential": false
+    }
+  ],
+  "essentialTabIds": [],
+  "containers": [],
+  "splitGroups": [],
+  "settings": {
+    "onboardingDone": true,
+    "colorScheme": "light",
+    "searchEngineId": "duckduckgo",
+    "phoneBar": {
+      "left": [
+        "back",
+        "voice"
+      ],
+      "right": [
+        "new-tab",
+        "tabs",
+        "menu"
+      ]
+    },
+    "updates": {
+      "autoCheck": false,
+      "autoDownload": false,
+      "channel": "stable"
+    }
+  },
+  "shortcutOverrides": {},
+  "bookmarks": [],
+  "windows": [
+    {
+      "id": "window_main",
+      "bounds": null,
+      "maximized": false,
+      "activeSpaceId": "space_work",
+      "selection": {
+        "space_work": "tab_example"
+      },
+      "compact": false
+    }
+  ]
+}
