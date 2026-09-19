@@ -1,4 +1,4 @@
-import type { NewTabPinnedSite, NewTabShortcutStyle, Rect } from '@shared/types'
+import type { NewTabMode, NewTabShortcut, Rect } from '@shared/types'
 import { BLANK_URL, getHost } from '@shared/url'
 import { cmd } from './api'
 import { closeOverview, overviewIsOpen, setStageLayerShown } from './gestures/stage'
@@ -312,7 +312,7 @@ let wallpaperRequest: Promise<void> | null = null
 /** Fetch the picked wallpaper once; later callers share the answer. */
 export function loadWallpaperImage(): Promise<void> {
   if (wallpaperImageStore.get().loaded) return Promise.resolve()
-  wallpaperRequest ??= cmd('newTabPhone.wallpaper', undefined)
+  wallpaperRequest ??= cmd('newtab.backgroundImage', undefined)
     .then((dataUrl) => wallpaperImageStore.set({ loaded: true, dataUrl }))
     .catch(() => wallpaperImageStore.set({ loaded: true, dataUrl: null }))
     .finally(() => {
@@ -323,7 +323,7 @@ export function loadWallpaperImage(): Promise<void> {
 
 /** Store a picked image (or, with null, let it go); the page shows it as soon as it is stored. */
 export async function setWallpaperImage(dataUrl: string | null): Promise<void> {
-  await cmd('newTabPhone.setWallpaper', { dataUrl })
+  await cmd('newtab.setBackgroundImage', { dataUrl })
   wallpaperImageStore.set({ loaded: true, dataUrl })
 }
 
@@ -384,9 +384,9 @@ function tileHost(url: string): string {
  * knows its URL and title.
  */
 export function composeTiles(opts: {
-  pinned: readonly NewTabPinnedSite[]
+  pinned: readonly Pick<NewTabShortcut, 'url' | 'title'>[]
   ranked: readonly TopSite[]
-  style: NewTabShortcutStyle
+  style: NewTabMode
   n: number
   /** Icons known from elsewhere (open tabs), by host. */
   favicons?: ReadonlyMap<string, string>

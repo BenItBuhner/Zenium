@@ -4,11 +4,11 @@ import { Camera, Globe, Mic, Search, Settings } from 'lucide-react'
 import type { Tab, UIState } from '@shared/types'
 import { getHost } from '@shared/url'
 import {
-  MAX_TOP_SITES,
+  MAX_NEW_TAB_SHORTCUTS,
   VISUAL_SEARCH_AVAILABLE,
   VOICE_SEARCH_AVAILABLE,
   newTabSections
-} from '@shared/newTabPhone'
+} from '@shared/newTab'
 import { run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
 import { topSites, type TopSite } from '@renderer/lib/historyAdapter'
@@ -41,7 +41,7 @@ interface Props {
  * the space's colours – or a picked image under a legibility scrim – behind it all.
  */
 export function NewTabPage({ state, tab, hidden }: Props): JSX.Element {
-  const settings = state.settings.newTabPhone
+  const settings = state.settings.newTab
   const sections = newTabSections(settings)
   const growPhase = newTabGrowStore.use((s) => s.phase)
   const image = wallpaperImageStore.use()
@@ -54,7 +54,7 @@ export function NewTabPage({ state, tab, hidden }: Props): JSX.Element {
 
   const wallpaper: 'none' | 'space' | 'image' = !sections.wallpaper
     ? 'none'
-    : settings.wallpaper === 'image' && image.dataUrl
+    : settings.background === 'image' && image.dataUrl
       ? 'image'
       : 'space'
 
@@ -168,13 +168,14 @@ function SearchField({ tab }: { tab: Tab }): JSX.Element {
  * history is empty.
  */
 function TopSites({ state, tab }: { state: UIState; tab: Tab }): JSX.Element | null {
-  const { pinned, hiddenHosts, shortcutStyle } = state.settings.newTabPhone
+  const { mode } = state.settings.newTab
+  const { newTabShortcuts: pinned, newTabHiddenHosts: hiddenHosts } = state
   const [ranked, setRanked] = useState<TopSite[] | null>(null)
   const hiddenKey = hiddenHosts.join('\n')
 
   useEffect(() => {
     let cancelled = false
-    void topSites(MAX_TOP_SITES, hiddenHosts).then((sites) => {
+    void topSites(MAX_NEW_TAB_SHORTCUTS, hiddenHosts).then((sites) => {
       if (!cancelled) setRanked(sites)
     })
     return () => {
@@ -199,9 +200,9 @@ function TopSites({ state, tab }: { state: UIState; tab: Tab }): JSX.Element | n
   const tiles = useMemo(
     () =>
       ranked
-        ? composeTiles({ pinned, ranked, style: shortcutStyle, n: MAX_TOP_SITES, favicons })
+        ? composeTiles({ pinned, ranked, style: mode, n: MAX_NEW_TAB_SHORTCUTS, favicons })
         : [],
-    [ranked, pinned, shortcutStyle, favicons]
+    [ranked, pinned, mode, favicons]
   )
 
   // Nothing until the history has answered; once it has and there is nothing to show, the empty
@@ -210,7 +211,7 @@ function TopSites({ state, tab }: { state: UIState; tab: Tab }): JSX.Element | n
   if (tiles.length === 0) {
     return (
       <p className="zen-ntp-empty mt-12 w-full px-8 text-center" role="status">
-        {shortcutStyle === 'my-shortcuts'
+        {mode === 'my-shortcuts'
           ? 'Shortcuts you pin will appear here'
           : 'Sites you visit often will appear here'}
       </p>
@@ -238,7 +239,7 @@ function TopSites({ state, tab }: { state: UIState; tab: Tab }): JSX.Element | n
 function TopSiteTile({ site, tabId }: { site: TopSiteTile; tabId: string }): JSX.Element {
   const label = tileLabel(site.title, site.url)
   const hold = useLongPress(() =>
-    run('newTabPhone.tileContextMenu', { url: site.url, title: site.title })
+    run('newtab.tileContextMenu', { url: site.url, title: site.title })
   )
   return (
     <button

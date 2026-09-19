@@ -634,10 +634,22 @@ export interface TabViewHost {
  * only ever sees the address it hands the page.
  */
 export interface NewTabBackgroundHost {
-  /** Address of the current image, or null when none is set. */
+  /**
+   * Address of the current image, or null when none is set: a `zen://` address where the host
+   * serves the file (the desktop's page), a data URL where the chrome paints the page itself
+   * (the phone's).
+   */
   current(): string | null
-  /** Let the user pick an image file; resolves with its new address, or null when cancelled. */
-  pick(win: ZenWindow): Promise<string | null>
+  /**
+   * Let the user pick an image file with the host's dialog; resolves with its new address, or
+   * null when cancelled. Hosts without a file dialog leave it out and take `set` instead.
+   */
+  pick?(win: ZenWindow): Promise<string | null>
+  /**
+   * Keep an image the chrome read itself (the phone's file chooser hands the page a data URL),
+   * or with null let it go. Throws when the data is not an image or too large to keep.
+   */
+  set?(dataUrl: string | null): Promise<void>
   clear(): Promise<void>
 }
 

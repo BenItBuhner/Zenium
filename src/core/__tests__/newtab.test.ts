@@ -371,7 +371,7 @@ describe('NewTabService: state for the page', () => {
     tab.url = 'https://example.com/'
     expect(f.browser.newTab.stateFor(tab.id)).toBeNull()
     f.browser.newTab.handleAction(tab.id, { type: 'add-shortcut', title: 'X', url: 'x.example' })
-    expect(f.browser.state.newTabShortcuts).toEqual([])
+    expect(f.browser.state.newTabDevice.shortcuts).toEqual([])
   })
 
   it('pushes fresh state to every live page after a commit that changed it, and only then', async () => {
@@ -386,7 +386,10 @@ describe('NewTabService: state for the page', () => {
     f.browser.state.commit()
     await settle()
     expect(view.pushes.length).toBe(n)
-    f.browser.handleCommand(win, 'settings.update', { newTab: { greeting: true } })
+    // The greeting is a section: turning it on is the `custom` preset with that module set.
+    f.browser.handleCommand(win, 'settings.update', {
+      newTab: { preset: 'custom', modules: { greeting: true } }
+    })
     await settle()
     expect(view.pushes.length).toBe(n + 1)
     expect(view.pushes.at(-1)?.greeting).toBe(true)
@@ -412,7 +415,7 @@ describe('NewTabService: state for the page', () => {
     // The explainer stands where the grid would: a private page carries no shortcuts either.
     f.browser.newTab.addShortcut('Docs', 'docs.example')
     f.browser.updateSettings(
-      { newTab: { ...f.browser.state.settings.newTab, shortcuts: 'custom' } },
+      { newTab: { ...f.browser.state.settings.newTab, mode: 'my-shortcuts' } },
       main
     )
     expect(f.browser.newTab.stateFor(tab.id)!.shortcuts).toEqual([])
@@ -459,35 +462,96 @@ describe('NewTabService: my shortcuts and most visited', () => {
     expect(normalizeShortcutInput('nope', 'zen://newtab')).toBeNull()
   })
 
-  it('adds, edits, removes with undo, reorders and caps the grid at ten', () => {
+  it('adds, edits, removes with undo, reorders and caps the grid at eight', () => {
     const f = fixture()
     const svc = f.browser.newTab
+    const shortcuts = (): { id: string; title: string; url: string }[] =>
+      f.browser.state.newTabDevice.shortcuts
     const a = svc.addShortcut('A', 'a.example')!
     const b = svc.addShortcut('', 'https://b.example/path')!
-    expect(f.browser.state.newTabShortcuts).toEqual([
+    expect(shortcuts()).toEqual([
       { id: a, title: 'A', url: 'https://a.example/' },
       { id: b, title: 'b.example', url: 'https://b.example/path' }
     ])
     expect(svc.addShortcut('bad', '???')).toBeNull()
+    // A site that has a tile is not added twice: its tile answers.
+    expect(svc.addShortcut('A again', 'https://a.example/')).toBe(a)
+    expect(shortcuts()).toHaveLength(2)
     expect(svc.updateShortcut(a, 'AA', 'aa.example')).toBe(true)
     expect(svc.updateShortcut('missing', 'x', 'x.example')).toBe(false)
-    expect(f.browser.state.newTabShortcuts[0]).toEqual({
-      id: a,
-      title: 'AA',
-      url: 'https://aa.example/'
-    })
+    // Nor may an edit give a tile another tile's address.
+    expect(svc.updateShortcut(a, 'B too', 'https://b.example/path')).toBe(false)
+    expect(shortcuts()[0]).toEqual({ id: a, title: 'AA', url: 'https://aa.example/' })
     const removed = svc.removeShortcut(a)!
     expect(removed.index).toBe(0)
-    expect(f.browser.state.newTabShortcuts.map((s) => s.id)).toEqual([b])
+    expect(shortcuts().map((s) => s.id)).toEqual([b])
     expect(svc.restoreShortcut(removed.shortcut, removed.index)).toBe(true)
-    expect(f.browser.state.newTabShortcuts.map((s) => s.id)).toEqual([a, b])
+    expect(shortcuts().map((s) => s.id)).toEqual([a, b])
     // Restoring the same id twice is a no-op.
     expect(svc.restoreShortcut(removed.shortcut, 0)).toBe(false)
     svc.reorderShortcuts([b, 'bogus', a])
-    expect(f.browser.state.newTabShortcuts.map((s) => s.id)).toEqual([b, a])
+    expect(shortcuts().map((s) => s.id)).toEqual([b, a])
     for (let i = 0; i < MAX_NEW_TAB_SHORTCUTS; i++) svc.addShortcut(`S${i}`, `s${i}.example`)
-    expect(f.browser.state.newTabShortcuts).toHaveLength(MAX_NEW_TAB_SHORTCUTS)
+    expect(shortcuts()).toHaveLength(MAX_NEW_TAB_SHORTCUTS)
     expect(svc.addShortcut('one more', 'more.example')).toBeNull()
+  })
+
+  it('a shortcut fronts the most-visited grid in place of its host, in either mode', () => {
+    const f = fixture()
+    const svc = f.browser.newTab
+    for (const host of ['a', 'b', 'c'])
+      f.browser.history.visit(`https://${host}.example/`, host, null)
+    const win = f.browser.focusedWindow()
+    f.browser.handleCommand(win, 'newtab.open', undefined)
+    const tab = activeTab(f)!
+    svc.addShortcut('B', 'https://www.b.example/')
+    let state = svc.stateFor(tab.id)!
+    expect(state.shortcutsMode).toBe('most-visited')
+    expect(state.shortcuts.map((s) => s.url)).toEqual(['https://www.b.example/'])
+    expect(state.topSites.map((s) => s.url)).toEqual(['https://a.example/', 'https://c.example/'])
+    f.browser.handleCommand(win, 'settings.update', { newTab: { mode: 'my-shortcuts' } })
+    state = svc.stateFor(tab.id)!
+    expect(state.shortcutsMode).toBe('my-shortcuts')
+    expect(state.shortcuts.map((s) => s.url)).toEqual(['https://www.b.example/'])
+    expect(state.topSites).toEqual([])
+    // The shortcuts section off: no grid at all, whatever the mode says.
+    f.browser.handleCommand(win, 'settings.update', {
+      newTab: { preset: 'custom', modules: { shortcuts: false } }
+    })
+    state = svc.stateFor(tab.id)!
+    expect(state.shortcutsMode).toBe('hidden')
+    expect(state.shortcuts).toEqual([])
+    expect(state.topSites).toEqual([])
+  })
+
+  it("the phone's tile menu pins, unpins and removes through the same device state", () => {
+    const f = fixture()
+    const svc = f.browser.newTab
+    f.browser.history.visit('https://www.news.example/a', 'News', null)
+    f.browser.history.visit('https://docs.example/', 'Docs', null)
+    const device = (): { shortcuts: { url: string }[]; hiddenHosts: string[] } =>
+      f.browser.state.newTabDevice
+    svc.remove('https://www.news.example/a')
+    expect(device().hiddenHosts).toEqual(['news.example'])
+    expect(f.browser.history.topSites(8, device().hiddenHosts).map((s) => s.url)).toEqual([
+      'https://docs.example/'
+    ])
+    // Pinning a removed site brings its host back and gives it a tile.
+    svc.pin('https://news.example/', 'News')
+    expect(device().hiddenHosts).toEqual([])
+    expect(device().shortcuts.map((s) => s.url)).toEqual(['https://news.example/'])
+    // Pinning twice is once.
+    svc.pin('https://news.example/', 'News again')
+    expect(device().shortcuts).toHaveLength(1)
+    svc.unpin('https://news.example/')
+    expect(device().shortcuts).toEqual([])
+    expect(device().hiddenHosts).toEqual([])
+    // Removing a pinned site drops the tile and blocks the host.
+    svc.pin('https://docs.example/', 'Docs')
+    svc.remove('https://docs.example/')
+    expect(device()).toEqual({ shortcuts: [], hiddenHosts: ['docs.example'] })
+    svc.pin('javascript:alert(1)', 'nope')
+    expect(device().shortcuts).toEqual([])
   })
 
   it('actions from the page drive the same operations', async () => {
@@ -496,13 +560,15 @@ describe('NewTabService: my shortcuts and most visited', () => {
     f.browser.handleCommand(win, 'newtab.open', undefined)
     const tab = activeTab(f)!
     const svc = f.browser.newTab
+    const shortcuts = (): { id: string; title: string; url: string }[] =>
+      f.browser.state.newTabDevice.shortcuts
     svc.handleAction(tab.id, { type: 'add-shortcut', title: 'Zen', url: 'zen-browser.app' })
-    const [sc] = f.browser.state.newTabShortcuts
+    const [sc] = shortcuts()
     expect(sc).toMatchObject({ title: 'Zen', url: 'https://zen-browser.app/' })
     svc.handleAction(tab.id, { type: 'update-shortcut', id: sc.id, title: 'Z', url: sc.url })
-    expect(f.browser.state.newTabShortcuts[0].title).toBe('Z')
+    expect(shortcuts()[0].title).toBe('Z')
     svc.handleAction(tab.id, { type: 'remove-shortcut', id: sc.id })
-    expect(f.browser.state.newTabShortcuts).toEqual([])
+    expect(shortcuts()).toEqual([])
     svc.handleAction(tab.id, {
       type: 'restore-shortcut',
       id: sc.id,
@@ -510,7 +576,7 @@ describe('NewTabService: my shortcuts and most visited', () => {
       url: sc.url,
       index: 0
     })
-    expect(f.browser.state.newTabShortcuts.map((s) => s.id)).toEqual([sc.id])
+    expect(shortcuts().map((s) => s.id)).toEqual([sc.id])
     svc.handleAction(tab.id, { type: 'add-shortcut', title: 'bad', url: '!!' })
     await settle()
     expect(eventsNamed(f, 'toast')).toEqual([
@@ -574,8 +640,7 @@ describe('NewTabService: my shortcuts and most visited', () => {
       'Remove'
     ])
     expect(popups[0].options).toMatchObject({ source: 'page', x: 400, y: 260, keyboard: false })
-    // A custom shortcut's tile offers Edit as well.
-    f.browser.handleCommand(win, 'settings.update', { newTab: { shortcuts: 'custom' } })
+    // A shortcut's tile offers Edit as well (in either mode: shortcuts front the grid in both).
     const id = svc.addShortcut('Zen', 'zen-browser.app')!
     svc.handleAction(tab.id, {
       type: 'tile-menu',
@@ -640,10 +705,11 @@ describe('NewTabService: my shortcuts and most visited', () => {
     const tab = activeTab(f)!
     const svc = f.browser.newTab
     svc.handleAction(tab.id, { type: 'hide-site', url: 'https://www.news.example/a' })
-    expect(f.browser.state.newTabHiddenHosts).toEqual(['news.example'])
+    expect(f.browser.state.newTabDevice.hiddenHosts).toEqual(['news.example'])
+    expect(f.browser.state.snapshot(win).newTabHiddenHosts).toEqual(['news.example'])
     expect(svc.stateFor(tab.id)?.topSites.map((s) => s.url)).toEqual(['https://docs.example/'])
     svc.handleAction(tab.id, { type: 'unhide-site', url: 'https://news.example/other' })
-    expect(f.browser.state.newTabHiddenHosts).toEqual([])
+    expect(f.browser.state.newTabDevice.hiddenHosts).toEqual([])
     expect(svc.stateFor(tab.id)?.topSites).toHaveLength(2)
   })
 
@@ -675,6 +741,60 @@ describe('NewTabService: my shortcuts and most visited', () => {
     await svc.clearBackgroundImage()
     expect(f.browser.state.settings.newTab.background).toBe('space')
     expect(svc.stateFor(tab.id)?.backgroundImage).toBeNull()
+  })
+
+  it('a picked image is shown: on a layout without a wallpaper the section comes on', async () => {
+    const f = fixture({ withBackground: true })
+    const win = f.browser.focusedWindow()
+    f.browser.handleCommand(win, 'newtab.open', undefined)
+    const tab = activeTab(f)!
+    const svc = f.browser.newTab
+    expect(f.browser.state.settings.newTab.preset).toBe('focused')
+    await svc.pickBackgroundImage(win)
+    expect(f.browser.state.settings.newTab).toMatchObject({
+      preset: 'custom',
+      background: 'image',
+      modules: { wallpaper: true, greeting: false }
+    })
+    expect(svc.stateFor(tab.id)?.background).toBe('image')
+    // A layout that shows a wallpaper already keeps its name.
+    f.browser.handleCommand(win, 'settings.update', {
+      newTab: { preset: 'inspirational', background: 'space' }
+    })
+    await svc.pickBackgroundImage(win)
+    expect(f.browser.state.settings.newTab).toMatchObject({
+      preset: 'inspirational',
+      background: 'image'
+    })
+  })
+
+  it("the phone's chooser hands the image over through setBackgroundImage", async () => {
+    const stored: Array<string | null> = []
+    const f = fixture({ withBackground: true })
+    f.browser.platform.newTabBackground!.set = async (dataUrl) => {
+      stored.push(dataUrl)
+      f.background.current = dataUrl
+    }
+    const win = f.browser.focusedWindow()
+    await f.browser.handleCommand(win, 'newtab.setBackgroundImage', {
+      dataUrl: 'data:image/png;base64,AA'
+    })
+    expect(stored).toEqual(['data:image/png;base64,AA'])
+    expect(f.browser.handleCommand(win, 'newtab.backgroundImage', undefined)).toBe(
+      'data:image/png;base64,AA'
+    )
+    expect(f.browser.state.settings.newTab).toMatchObject({ preset: 'custom', background: 'image' })
+    await f.browser.handleCommand(win, 'newtab.setBackgroundImage', { dataUrl: null })
+    expect(stored).toEqual(['data:image/png;base64,AA', null])
+    expect(f.browser.state.settings.newTab.background).toBe('space')
+    expect(f.browser.state.settings.newTab.modules.wallpaper).toBe(true)
+    // A host with no way to keep an image refuses.
+    const bare = fixture()
+    await expect(
+      bare.browser.handleCommand(bare.browser.focusedWindow(), 'newtab.setBackgroundImage', {
+        dataUrl: 'data:image/png;base64,AA'
+      })
+    ).rejects.toThrow()
   })
 
   it('the chrome state says whether an image is set and whether the host can pick one', async () => {
@@ -719,22 +839,43 @@ describe('NewTabService: my shortcuts and most visited', () => {
   it('settings.update sanitises the new tab keys and keeps the rest of the settings', () => {
     const f = fixture()
     const win = f.browser.focusedWindow()
+    // The desktop's first spelling of the mode is read for one release; a one-section patch of
+    // the modules keeps the other sections.
     f.browser.handleCommand(win, 'settings.update', {
-      newTab: { shortcuts: 'custom', background: 'nope', greeting: true }
+      newTab: { mode: 'custom', preset: 'custom', background: 'nope', modules: { greeting: true } }
     })
+    const modules = {
+      searchBox: true,
+      shortcuts: true,
+      wallpaper: false,
+      feed: false,
+      greeting: true
+    }
     expect(f.browser.state.settings.newTab).toEqual({
       enabled: true,
-      shortcuts: 'custom',
-      background: 'space',
-      greeting: true
+      mode: 'my-shortcuts',
+      preset: 'custom',
+      modules,
+      background: 'space'
     })
     f.browser.handleCommand(win, 'settings.update', { newTab: { enabled: false } })
     expect(f.browser.state.settings.newTab).toEqual({
       enabled: false,
-      shortcuts: 'custom',
-      background: 'space',
-      greeting: true
+      mode: 'my-shortcuts',
+      preset: 'custom',
+      modules,
+      background: 'space'
     })
+    // A named preset stands over the modules: the page reads the preset's sections.
+    f.browser.handleCommand(win, 'settings.update', {
+      newTab: { enabled: true, preset: 'inspirational', background: 'image' }
+    })
+    f.browser.handleCommand(win, 'newtab.open', undefined)
+    const state = f.browser.newTab.stateFor(activeTab(f)!.id)!
+    expect(state.greeting).toBe(true)
+    // An image source with no image on this device paints the space gradient.
+    expect(state.background).toBe('space')
+    expect(f.browser.state.settings.newTab.modules).toEqual(modules)
   })
 })
 

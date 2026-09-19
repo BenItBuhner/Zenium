@@ -6,11 +6,11 @@ import { emptyBlockingStatus } from '@shared/blocking'
 import {
   DEFAULT_CONTAINERS,
   DEFAULT_SETTINGS,
-  MAX_NEW_TAB_SHORTCUTS,
   emptyAgentServerStatus,
   emptyPasswordsStatus,
   emptyResourceSnapshot
 } from '@shared/defaults'
+import { MAX_NEW_TAB_SHORTCUTS } from '@shared/newTab'
 import { DEFAULT_PAGE_ENVIRONMENT } from '@shared/pageControls'
 import { DEFAULT_SEARCH_ENGINES } from '@shared/search'
 import { emptyUpdateStatus } from '@shared/updates'
@@ -433,7 +433,9 @@ describe('the section model', () => {
     expect(newtab.groups.map((g) => g.heading)).toEqual(['New tab page', 'My shortcuts', null])
     expect(newtab.groups.every(groupShows)).toBe(true)
 
-    // The page's preferences patch inside `newTab`, keeping the rest of it.
+    // The page's preferences patch inside `newTab`, keeping the rest of it. The rows write the
+    // one model's sections as the phone's sheet does: a background other than the space gradient
+    // is a wallpaper, so the layout becomes Custom with the wallpaper section on.
     const enabled = row(newtab, 'newtab-enabled')
     if (enabled.kind !== 'switch') throw new Error('not a switch')
     enabled.onChange(false)
@@ -442,10 +444,68 @@ describe('the section model', () => {
     // No file picker on this host: the image option is not offered.
     expect(background.options.map((o) => o.value)).toEqual(['space', 'solid'])
     background.onChange('solid')
+    const focusedModules = { ...DEFAULT_SETTINGS.newTab.modules }
     expect(c.patches).toEqual([
       { newTab: { ...DEFAULT_SETTINGS.newTab, enabled: false } },
-      { newTab: { ...DEFAULT_SETTINGS.newTab, background: 'solid' } }
+      {
+        newTab: {
+          ...DEFAULT_SETTINGS.newTab,
+          preset: 'custom',
+          modules: { ...focusedModules, wallpaper: true },
+          background: 'solid'
+        }
+      }
     ])
+    // The layout row is the phone sheet's preset, with the same names; the feed layout is not
+    // offered while there is no feed.
+    const layout = row(newtab, 'newtab-layout')
+    if (layout.kind !== 'value') throw new Error('not a value row')
+    expect(layout.value).toBe('focused')
+    expect(layout.options.map((o) => o.label)).toEqual(['Focused', 'Inspirational', 'Custom'])
+    layout.onChange('inspirational')
+    expect(c.patches.at(-1)).toEqual({
+      newTab: { ...DEFAULT_SETTINGS.newTab, preset: 'inspirational' }
+    })
+    // Hide is the shortcuts section off; the greeting switch is that section.
+    const mode = row(newtab, 'newtab-shortcuts')
+    if (mode.kind !== 'value') throw new Error('not a value row')
+    expect(mode.value).toBe('most-visited')
+    expect(mode.options.map((o) => o.value)).toEqual(['most-visited', 'my-shortcuts', 'hidden'])
+    mode.onChange('hidden')
+    expect(c.patches.at(-1)).toEqual({
+      newTab: {
+        ...DEFAULT_SETTINGS.newTab,
+        preset: 'custom',
+        modules: { ...focusedModules, shortcuts: false }
+      }
+    })
+    const greeting = row(newtab, 'newtab-greeting')
+    if (greeting.kind !== 'switch') throw new Error('not a switch')
+    expect(greeting.checked).toBe(false)
+    greeting.onChange(true)
+    expect(c.patches.at(-1)).toEqual({
+      newTab: {
+        ...DEFAULT_SETTINGS.newTab,
+        preset: 'custom',
+        modules: { ...focusedModules, greeting: true }
+      }
+    })
+
+    // A layout synced from a phone has its switch here: Inspirational reads as its sections – a
+    // greeting on, the space colours as a wallpaper – and an image this device has not got as
+    // the space gradient.
+    const synced = section(
+      'newtab',
+      state({ capabilities: { ...ANDROID, newTabPage: true } } as Partial<UIState>, {
+        newTab: { ...DEFAULT_SETTINGS.newTab, preset: 'inspirational', background: 'image' }
+      })
+    )
+    const syncedLayout = row(synced, 'newtab-layout')
+    if (syncedLayout.kind !== 'value') throw new Error('not a value row')
+    expect(currentOptionLabel(syncedLayout)).toBe('Inspirational')
+    expect(row(synced, 'newtab-greeting')).toMatchObject({ checked: true })
+    expect(row(synced, 'newtab-background')).toMatchObject({ value: 'space' })
+    expect(row(synced, 'newtab-shortcuts')).toMatchObject({ value: 'most-visited' })
 
     // A shortcut without a name is listed by its address; its sheet edits, moves and removes it.
     expect(row(newtab, 'shortcut:b').label).toBe('https://b.test/')

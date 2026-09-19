@@ -22,6 +22,7 @@ import type {
   LiveFolderConfig,
   MediaState,
   Mod,
+  NewTabDeviceState,
   NewTabShortcut,
   PageDialog,
   PasswordsStatus,
@@ -55,7 +56,6 @@ import {
   emptyPasswordsStatus,
   emptyResourceSnapshot,
   sanitizeAutofillSettings,
-  sanitizeNewTabSettings,
   sanitizePasswordSettings
 } from '../shared/defaults'
 import { sanitizePhoneBar } from '../shared/phoneBar'
@@ -93,7 +93,12 @@ import {
 } from '../shared/blocking'
 import { DEFAULT_PAGE_ENVIRONMENT, sanitizePageControls } from '../shared/pageControls'
 import { emptyPrivacyStatus, sanitizePrivacySettings, type PrivacyStatus } from '../shared/privacy'
-import { sanitizeNewTabPhoneSettings } from '../shared/newTabPhone'
+import {
+  emptyNewTabDevice,
+  migrateNewTabDevice,
+  migrateNewTabSettings,
+  sanitizeNewTabSettings
+} from '../shared/newTab'
 import { defer, type StoreIO } from './platform'
 import { sanitizeClosedEntries, sanitizeSnapshot, summarizeClosed } from './session'
 import type { ZenWindow } from './window'
@@ -115,10 +120,10 @@ export interface PersistedWindow {
 
 /**
  * `state.json`. v1: one window; v2: every synced window; v3: the bookmark tree; v4: the new tab
- * page's shortcuts and its "Most visited" block list.
+ * page's shortcuts and its "Most visited" block list; v5: the new tab page's one model.
  */
 export interface Persisted {
-  version: 1 | 2 | 3 | 4
+  version: 1 | 2 | 3 | 4 | 5
   spaces: Space[]
   tabs: Tab[]
   essentialTabIds: string[]
@@ -151,43 +156,22 @@ export interface Persisted {
    * a power cut; the chrome then offers the pages instead of loading them (`crashRestore`).
    */
   cleanExit?: boolean
-  /** v4: "My shortcuts" of the new tab page (local to this device). */
+  /** v4 only: the desktop's "My shortcuts" of the new tab page (local to this device). */
   newTabShortcuts?: NewTabShortcut[]
-  /** v4: hosts removed from the new tab page's "Most visited" grid (local to this device). */
+  /** v4 only: hosts removed from the new tab page's "Most visited" grid (local to this device). */
   newTabHiddenHosts?: string[]
+  /**
+   * v5: the new tab page's device-local sets in one document – the user's shortcuts (the phone's
+   * pins of v4's `settings.newTabPhone` among them) and the removed hosts. Never synced.
+   */
+  newTabDevice?: NewTabDeviceState
 }
 
-export const PERSISTED_VERSION = 4
-
-/** Host block list from disk: lower-case strings, no `www.`, unique. */
-export function sanitizeHiddenHosts(raw: unknown): string[] {
-  if (!Array.isArray(raw)) return []
-  const out: string[] = []
-  for (const item of raw) {
-    if (typeof item !== 'string') continue
-    const host = item
-      .trim()
-      .toLowerCase()
-      .replace(/^www\./, '')
-    if (host && !out.includes(host)) out.push(host)
-  }
-  return out
-}
-
-/** Shortcut records from disk: strings only, unique ids, blank titles fall back to the URL. */
-export function sanitizeNewTabShortcuts(raw: unknown): NewTabShortcut[] {
-  if (!Array.isArray(raw)) return []
-  const out: NewTabShortcut[] = []
-  const seen = new Set<string>()
-  for (const item of raw as Array<Partial<Record<keyof NewTabShortcut, unknown>>>) {
-    if (!item || typeof item !== 'object') continue
-    const { id, url, title } = item
-    if (typeof id !== 'string' || !id || typeof url !== 'string' || !url || seen.has(id)) continue
-    seen.add(id)
-    out.push({ id, url, title: typeof title === 'string' && title.trim() ? title : url })
-  }
-  return out
-}
+/**
+ * v5 folds the phone's `settings.newTabPhone` into `settings.newTab` and moves its pins and
+ * removed hosts, with the desktop's two v4 lists, into `newTabDevice` (`shared/newTab.ts`).
+ */
+export const PERSISTED_VERSION = 5
 
 export type StateListener = () => void
 
@@ -274,10 +258,12 @@ export class BrowserState {
   readonly tabNavigation = new Map<string, NavigationSnapshot>()
   /** The new tab page's custom background image; provided by the Browser (the host owns the file). */
   newTabBackgroundFor: () => UIState['newTabBackground'] = () => ({ image: false, canPick: false })
-  /** "My shortcuts" of the new tab page, in grid order. */
-  newTabShortcuts: NewTabShortcut[] = []
-  /** Hosts the user removed from the new tab page's "Most visited" grid. */
-  newTabHiddenHosts: string[] = []
+  /**
+   * The new tab page's device-local sets: the user's shortcuts in grid order and the hosts
+   * removed from the most-visited tiles. Replaced whole by the `NewTabService` (never mutated in
+   * place), persisted with the profile, never synced.
+   */
+  newTabDevice: NewTabDeviceState = emptyNewTabDevice()
   media: MediaState[] = []
   devtoolsOpenFor = new Set<string>()
   resources: ResourceSnapshot = emptyResourceSnapshot()
@@ -376,7 +362,7 @@ export class BrowserState {
   /** Load the profile from disk (or create the first-run defaults). */
   load(): void {
     const data = this.store.readSync()
-    if (data && [1, 2, 3, 4].includes(data.version)) {
+    if (data && [1, 2, 3, 4, 5].includes(data.version)) {
       this.applyPersisted(data)
       // Profiles from before the marker count as clean; only an explicit false is a crash.
       this.uncleanExit = data.cleanExit === false
@@ -415,7 +401,12 @@ export class BrowserState {
         if (snapshot) this.tabNavigation.set(tabId, snapshot)
       }
     }
-    this.settings = { ...structuredClone(DEFAULT_SETTINGS), ...data.settings }
+    // The phone's frozen key of 0.3.x profiles (`settings.newTabPhone`) is folded into `newTab`
+    // below and kept nowhere else: it must not ride along into the settings (or a sync record).
+    const { newTabPhone, ...persistedSettings } = (data.settings ?? {}) as Settings & {
+      newTabPhone?: unknown
+    }
+    this.settings = { ...structuredClone(DEFAULT_SETTINGS), ...persistedSettings }
     this.settings.compactMode = { ...DEFAULT_SETTINGS.compactMode, ...data.settings?.compactMode }
     // Compact mode's "persistent sidebar" toggle is transient by design.
     this.settings.compactMode.sidebarPersistent = false
@@ -436,17 +427,26 @@ export class BrowserState {
       ? this.settings.mutedHosts.filter((h): h is string => typeof h === 'string' && h !== '')
       : []
     this.settings.privacy = sanitizePrivacySettings(data.settings?.privacy)
-    this.settings.newTab = sanitizeNewTabSettings(data.settings?.newTab)
-    this.settings.newTabPhone = sanitizeNewTabPhoneSettings(data.settings?.newTabPhone)
+    // The new tab page's one model (v5). The migration reads the desktop's first shape and the
+    // phone's key, and runs before the sanitiser, which knows nothing of the earlier fields; it
+    // reads its own result unchanged, so a migrated profile loads as it was written.
+    this.settings.newTab = sanitizeNewTabSettings(
+      migrateNewTabSettings({ newTab: data.settings?.newTab, newTabPhone })
+    )
     this.shortcutOverrides = data.shortcutOverrides ?? {}
     const preset = migrateShortcutPreset(data.settings?.shortcutPreset, this.shortcutOverrides)
     this.settings.shortcutPreset = preset.preset
     // Shortcuts matter where there is a keyboard; a phone is not told about them.
     if (preset.notice && this.platform !== 'android') this.migrationNotices.push(preset.notice)
     this.bookmarks = this.loadBookmarks(data)
-    // v4: before it the new tab page (its shortcuts and block list) did not exist.
-    this.newTabShortcuts = data.version >= 4 ? sanitizeNewTabShortcuts(data.newTabShortcuts) : []
-    this.newTabHiddenHosts = data.version >= 4 ? sanitizeHiddenHosts(data.newTabHiddenHosts) : []
+    // v5's one document, or v4's two lists and the phone key's pins and removed hosts (before v4
+    // the page did not exist: every source is missing and the sets start empty).
+    this.newTabDevice = migrateNewTabDevice({
+      newTabDevice: data.newTabDevice,
+      newTabShortcuts: data.newTabShortcuts,
+      newTabHiddenHosts: data.newTabHiddenHosts,
+      newTabPhone
+    })
     if (Array.isArray(data.windows) && data.windows.length) {
       this.restoredWindows = data.windows.filter((w) => w && typeof w.id === 'string')
     } else {
@@ -726,7 +726,8 @@ export class BrowserState {
       window: win.windowState(),
       ...this.downloadsFor(win),
       bookmarks: this.bookmarks,
-      newTabShortcuts: this.newTabShortcuts,
+      newTabShortcuts: this.newTabDevice.shortcuts,
+      newTabHiddenHosts: this.newTabDevice.hiddenHosts,
       newTabBackground: this.newTabBackgroundFor(),
       recentlyClosedCount: this.recentlyClosed.length,
       recentlyClosed: this.recentlyClosed.slice(0, 10).map(summarizeClosed),
@@ -833,8 +834,7 @@ export class BrowserState {
       recentlyClosed: this.recentlyClosed,
       navigation: this.persistedNavigation(m.tabs),
       cleanExit: this.exiting,
-      newTabShortcuts: this.newTabShortcuts,
-      newTabHiddenHosts: this.newTabHiddenHosts
+      newTabDevice: this.newTabDevice
     }
   }
 

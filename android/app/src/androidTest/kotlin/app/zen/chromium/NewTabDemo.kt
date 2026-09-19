@@ -38,7 +38,7 @@ import java.io.FileInputStream
  *  - the predictive back gesture on the sheet: held, the sheet follows the finger; let go, it is
  *    dismissed.
  *
- * The picture behind the Image source is written through `newTabPhone.setWallpaper` in the warm-up –
+ * The picture behind the Image source is written through `newtab.setBackgroundImage` in the warm-up –
  * the system's file picker is not driven – and the source is set back to the space's colours so
  * the recording shows the change. Gesture navigation is turned on for the run, since the
  * predictive back is an edge swipe. The seeded profile has HTTPS-only mode off: on (`ask`, the
@@ -116,8 +116,10 @@ class NewTabDemo : DemoHarness("newtab-demo-state.json", "android-ntp", "newtab-
         val ranked = coreInvoke("history.topSites", "{\"n\":8}")
         finding("history.topSites after the visits: ${summarise(ranked)}")
 
-        coreInvoke("newTabPhone.setWallpaper", "{\"dataUrl\":${JSONObject.quote(wallpaperDataUrl())}}")
-        updateNewTab { it.put("wallpaper", "space") }
+        // Storing the picture shows it (source `image`, wallpaper section on): back to the Focused
+        // layout on the space's colours, so the recording shows the change.
+        coreInvoke("newtab.setBackgroundImage", "{\"dataUrl\":${JSONObject.quote(wallpaperDataUrl())}}")
+        updateNewTab { it.put("background", "space"); it.put("preset", "focused") }
         finding("wallpaper picture stored (${newTabSettings()})")
 
         // The first new tab page pays for its layout; open and close one off camera.
@@ -282,7 +284,7 @@ class NewTabDemo : DemoHarness("newtab-demo-state.json", "android-ntp", "newtab-
             Finger().tap(imageRow.exactCenterX(), imageRow.exactCenterY())
             SystemClock.sleep(2_200)
             shot("08-wallpaper-image")
-            finding("  Image source: ${newTabSettings()} ${verdict(newTabSetting("wallpaper") == "image")}")
+            finding("  Image source: ${newTabSettings()} ${verdict(newTabSetting("background") == "image")}")
         } else {
             finding("  no Image row in reach")
         }
@@ -473,17 +475,17 @@ class NewTabDemo : DemoHarness("newtab-demo-state.json", "android-ntp", "newtab-
         settle()
     }
 
-    private fun newTabSettingsJson(): JSONObject = coreState().getJSONObject("settings").getJSONObject("newTabPhone")
+    private fun newTabSettingsJson(): JSONObject = coreState().getJSONObject("settings").getJSONObject("newTab")
 
     private fun newTabSetting(key: String): String = newTabSettingsJson().optString(key)
 
-    private fun newTabSettings(): String = newTabSettingsJson().let { "preset ${it.optString("preset")}, wallpaper ${it.optString("wallpaper")}, shortcuts ${it.optString("shortcutStyle")}" }
+    private fun newTabSettings(): String = newTabSettingsJson().let { "preset ${it.optString("preset")}, background ${it.optString("background")}, shortcuts ${it.optString("mode")}" }
 
     /** Write the new tab settings back with `edit` applied (`settings.update` takes the whole object). */
     private fun updateNewTab(edit: (JSONObject) -> Unit) {
         val next = newTabSettingsJson()
         edit(next)
-        coreInvoke("settings.update", "{\"newTabPhone\":$next}")
+        coreInvoke("settings.update", "{\"newTab\":$next}")
     }
 
     private fun summarise(topSites: String): String = runCatching {

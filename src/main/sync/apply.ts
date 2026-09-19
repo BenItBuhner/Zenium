@@ -1,7 +1,7 @@
 import type { Boost, Container, Space } from '../../shared/types'
 import { DEFAULT_CONTAINER_ID } from '../../shared/types'
 import { sanitizePhoneBar } from '../../shared/phoneBar'
-import { sanitizeNewTabSettings } from '../../shared/defaults'
+import { migrateNewTabSettings, sanitizeNewTabSettings } from '../../shared/newTab'
 import {
   createTabRecord,
   getSpace,
@@ -213,15 +213,21 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
       }
       case 'settings': {
         if (r.deleted || r.id !== SETTINGS_RECORD_ID) break
-        const data = r.data as Partial<SettingsData>
-        const { compactMode, ...rest } = data
+        const data = r.data as Partial<SettingsData> & { newTabPhone?: unknown }
+        // A peer on a 0.3.x build still sends the phone's frozen `newTabPhone` key: it is folded
+        // into `newTab` and never lands on the settings (else every sync would recreate it).
+        const { compactMode, newTabPhone, ...rest } = data
         Object.assign(state.settings, rest)
         if (compactMode)
           Object.assign(state.settings.compactMode, compactMode, { sidebarPersistent: false })
         // Another device's build may know bar items this one does not (or the other way round).
         if ('phoneBar' in rest) state.settings.phoneBar = sanitizePhoneBar(rest.phoneBar)
-        // Another device may run an older or newer build: only known new tab values apply.
-        state.settings.newTab = sanitizeNewTabSettings(state.settings.newTab)
+        // Another device may run an older or newer build: its new tab values arrive in whichever
+        // shape it writes (the desktop's first `newTab`, the phone's `newTabPhone`, the one
+        // model) and only known values apply.
+        state.settings.newTab = sanitizeNewTabSettings(
+          migrateNewTabSettings({ newTab: state.settings.newTab, newTabPhone })
+        )
         break
       }
       case 'shortcuts': {
