@@ -57,7 +57,7 @@ import {
 const STEP_SETTLE_MS = 450
 
 /** The back surfaces a page's sheets register (`settings-options:<row>`, `settings-confirm:<row>`, …). */
-const SHEET_SURFACE = /^settings-(options|field|confirm|form|item):/
+const SHEET_SURFACE = /^settings-(options|field|confirm|form|item|detail):/
 /** How long a dismissed sheet may take to leave (its motion) before the reset gives up on it. */
 const SHEET_LEAVE_MS = 1500
 /** How long a seeded state may take to arrive in the store before the spec is reported reached anyway. */

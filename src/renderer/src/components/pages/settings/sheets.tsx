@@ -6,17 +6,26 @@ import { FrameDialogPortal, useFrameDialog } from '@renderer/lib/portals'
 import { cn } from '@renderer/lib/utils'
 import { BottomSheet, type BottomSheetHandle } from '../../sheet/BottomSheet'
 import { Field, RadioOption, SheetActions, ValidationMessage } from './blocks'
-import type { ActionRow, FieldRow, ItemRow, RowGroup, SettingsRow, ValueRow } from './model'
+import type {
+  ActionRow,
+  DetailRow,
+  FieldRow,
+  ItemRow,
+  RowGroup,
+  SettingsRow,
+  ValueRow
+} from './model'
 import { findRow } from './model'
 import { GroupList, type RowContext, type SheetRequest } from './rows'
 import { SheetDismissContext, SheetRelayoutContext, useSheetDismiss } from './sheetContext'
 
 /**
  * The sheets a phone Settings row opens (v2 §9.13, §9.23–9.25, §10.4): a value row's picker, a
- * field row's one-field form, a destructive action's confirmation, an action's small form and an
- * item's rows. The page keeps a stack of at most two requests (§9.24: a sheet may open one sheet,
- * and that one opens nothing) and resolves each to its row again on every render, so a sheet
- * always shows the row's current value and closes by itself when its row is gone.
+ * field row's one-field form, a destructive action's confirmation, an action's small form, an
+ * item's rows and a detail row's level of them. The page keeps a stack of at most two requests
+ * (§9.24: a sheet may open one sheet, and that one opens nothing) and resolves each to its row
+ * again on every render, so a sheet always shows the row's current value and closes by itself
+ * when its row is gone.
  *
  * Sheets are modal dialogs, so they mount through the frame's `FrameDialogHost` (lib/portals.tsx,
  * reached with `FrameDialogPortal`): over the content frame, which recedes under a sheet and
@@ -95,6 +104,8 @@ function RowSheet({
       return <FormSheet row={row as ActionRow} under={under} close={close} />
     case 'item':
       return <ItemSheet row={row as ItemRow} under={under} ctx={ctx} close={close} />
+    case 'detail':
+      return <ItemSheet row={row as DetailRow} under={under} ctx={ctx} close={close} />
   }
 }
 
@@ -110,6 +121,8 @@ function fits(request: SheetRequest, row: SettingsRow): boolean {
       return row.kind === 'action' && row.form !== undefined
     case 'item':
       return row.kind === 'item'
+    case 'detail':
+      return row.kind === 'detail'
   }
 }
 
@@ -402,7 +415,8 @@ function FormBody({ render }: { render: (close: () => void) => ReactNode }): JSX
 
 /**
  * One thing of a list and the rows that act on it (the chassis focuses the first row as the
- * sheet opens); its value rows open the second sheet.
+ * sheet opens); its value and detail rows open the second sheet. A detail row's level is the
+ * same sheet of rows, one deeper (§9.24), so nothing in it opens another.
  */
 function ItemSheet({
   row,
@@ -410,14 +424,14 @@ function ItemSheet({
   ctx,
   close
 }: {
-  row: ItemRow
+  row: ItemRow | DetailRow
   under: boolean
   ctx: RowContext
   close(): void
 }): JSX.Element {
   return (
     <SettingsSheet
-      name={`settings-item:${row.id}`}
+      name={`settings-${row.kind}:${row.id}`}
       title={row.sheet.title}
       description={row.sheet.description}
       under={under}
