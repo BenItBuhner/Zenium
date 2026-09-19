@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  StrictMode,
   act,
   createRef,
   useState,
@@ -895,5 +896,117 @@ describe('keyboard-relative detents', () => {
     expect(body.scrollTop).toBe(248)
     act(() => frames.run(60))
     expect(sheet.style.height).toBe('760px')
+  })
+})
+
+/**
+ * A ResizeObserver for happy-dom, which has none: every `observe` goes on record, with whether
+ * it was made inside a delivery, and a test delivers a target's resize by hand, as the WebView
+ * does at the end of a frame.
+ */
+class FakeResizeObserver implements ResizeObserver {
+  static observed: Element[] = []
+  static observedInDelivery: Element[] = []
+  private static readonly live = new Set<FakeResizeObserver>()
+  private static delivering = false
+  private readonly targets = new Set<Element>()
+
+  constructor(private readonly callback: ResizeObserverCallback) {}
+
+  observe(target: Element): void {
+    this.targets.add(target)
+    FakeResizeObserver.live.add(this)
+    FakeResizeObserver.observed.push(target)
+    if (FakeResizeObserver.delivering) FakeResizeObserver.observedInDelivery.push(target)
+  }
+
+  unobserve(target: Element): void {
+    this.targets.delete(target)
+  }
+
+  disconnect(): void {
+    this.targets.clear()
+    FakeResizeObserver.live.delete(this)
+  }
+
+  static reset(): void {
+    FakeResizeObserver.observed = []
+    FakeResizeObserver.observedInDelivery = []
+    FakeResizeObserver.live.clear()
+    FakeResizeObserver.delivering = false
+  }
+
+  /** `target` changed size: one delivery to each of its observers. */
+  static deliver(target: Element): void {
+    FakeResizeObserver.delivering = true
+    try {
+      for (const o of FakeResizeObserver.live) if (o.targets.has(target)) o.callback([], o)
+    } finally {
+      FakeResizeObserver.delivering = false
+    }
+  }
+}
+
+describe("the keyboard lift and the sheet's observers", () => {
+  const bodyObservations = (body: Element): number =>
+    FakeResizeObserver.observed.filter((t) => t === body).length
+
+  beforeEach(() => {
+    FakeResizeObserver.reset()
+    vi.stubGlobal('ResizeObserver', FakeResizeObserver)
+  })
+
+  for (const strict of [false, true]) {
+    it(`the body is observed once for the life of the sheet, not once per frame of the lift${strict ? ' (under <StrictMode>)' : ''}`, async () => {
+      const sheet = (
+        <BottomSheet onDismissed={() => undefined}>
+          <input aria-label="Name" />
+        </BottomSheet>
+      )
+      render(strict ? <StrictMode>{sheet}</StrictMode> : sheet)
+      await settle()
+      act(() => frames.run(60))
+      const body = document.querySelector<HTMLElement>('.zen-sheet-scroll')!
+      const layer = document.querySelector<HTMLElement>('[data-sheet-layer]')!
+      const mounted = bodyObservations(body)
+      // StrictMode rehearses the ref: attached, let go of and attached again.
+      expect(mounted).toBe(strict ? 2 : 1)
+
+      // The keyboard's lift: the host streams the inset frame by frame, the sheet renders on
+      // each, and the layer's own observer sees it shrink.
+      for (let i = 1; i <= 12; i++) {
+        keyboard(i * 25)
+        act(() => FakeResizeObserver.deliver(layer))
+        act(() => frames.run(1))
+      }
+      expect(bodyObservations(body)).toBe(mounted)
+      expect(FakeResizeObserver.observedInDelivery).toEqual([])
+    })
+  }
+
+  it("a sheet rendered again inside a resize delivery – the layout reporter's flush – observes nothing anew", async () => {
+    render(
+      <BottomSheet onDismissed={() => undefined}>
+        <input aria-label="Name" />
+      </BottomSheet>
+    )
+    await settle()
+    act(() => frames.run(60))
+    const body = document.querySelector<HTMLElement>('.zen-sheet-scroll')!
+    const mounted = bodyObservations(body)
+
+    // The content frame's observer (`useLayoutReporter`) fires as the frame shrinks under the
+    // keyboard and writes a store the shell renders from, synchronously: the sheet renders again
+    // in that flush, inside the delivery. An observation made there, on an element no deeper
+    // than the frame, is one the delivery has already passed: the WebView's
+    // `ResizeObserver loop limit exceeded`.
+    const frame = new FakeResizeObserver(() => {
+      act(() => uiStore.set((s) => ({ insets: { ...s.insets, bottom: s.insets.bottom + 40 } })))
+    })
+    frame.observe(chrome)
+    for (let i = 0; i < 8; i++) FakeResizeObserver.deliver(chrome)
+    expect(uiStore.get().insets.bottom).toBe(320)
+    expect(FakeResizeObserver.observedInDelivery).toEqual([])
+    expect(bodyObservations(body)).toBe(mounted)
   })
 })
