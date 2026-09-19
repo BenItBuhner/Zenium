@@ -10,7 +10,6 @@ import type {
   Tab,
   UIState
 } from '@shared/types'
-import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import type { Browser } from '@core/browser'
 import { isCertificateError } from '@shared/siteInfo'
 import { cmd, run } from '@renderer/lib/api'
