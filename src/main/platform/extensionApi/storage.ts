@@ -14,30 +14,70 @@ import { ApiError, isRecord, type ApiContext, type ApiHost, type NamespaceHandle
 
 const AREAS: readonly StorageArea[] = ['local', 'sync', 'session', 'managed']
 
+/** The `sync` writes a content script's prelude proxies through the shim (`syncWrite`). */
+const SYNC_WRITE_OPS = ['set', 'remove', 'clear'] as const
+type SyncWriteOp = (typeof SYNC_WRITE_OPS)[number]
+
+/**
+ * A change to the extension's `sync` (or `managed`) items, numbered: what every context's shim
+ * writes into its partition's native `local` under the content-script prelude's reserved keys
+ * (`__zen.sync-mirror`), and what `syncWrite` answers with. `seq` counts the extension's changes
+ * in this process; a context that sees a gap takes the snapshot (`syncMirror`) again.
+ */
+export interface SyncMirrorChange {
+  seq: number
+  sync?: StorageChanges
+  managed?: StorageChanges
+}
+
+/** The snapshot a context starts its partition's mirror from. */
+export interface SyncMirrorSnapshot {
+  seq: number
+  sync: StorageItems
+  managed: StorageItems
+}
+
 /**
  * `chrome.storage` backends the engine lacks: `sync` (a per-extension JSON store shared by every
  * container partition) and `managed` (read-only policy files), plus the `onChanged` fan-out for
  * every area – the engine never delivers storage events to MV3 workers, so the shim reports
  * `local` / `session` writes here and this module tells every context of the extension.
+ *
+ * Content scripts have neither area natively; their prelude (`contentScriptStorage.ts`) reads a
+ * mirror of both from reserved keys of the partition's `local` and sends its writes to the
+ * extension's own worker or background page, whose shim calls `syncWrite` here. This module is
+ * the single writer of `sync`: every change is numbered and pushed to every live context
+ * (`__zen.sync-mirror`), and a partition with no live context gets its worker started so the
+ * mirror there catches up.
  */
 export class StorageApi {
   /** Write timestamps per extension, for the `sync` rate limits. */
   private readonly syncWrites = new Map<string, number[]>()
   /** In-memory fallback for `local` / `session` in a context whose engine bindings are missing. */
   private readonly fallback = new Map<string, StorageItems>()
+  /** The sequence number of the last `sync` / `managed` change per extension (this process). */
+  private readonly syncSeq = new Map<string, number>()
 
   constructor(private readonly host: ApiHost) {}
 
   readonly handlers: NamespaceHandlers = {
     get: (ctx, area, keys) => this.get(ctx, area, keys),
-    set: (ctx, area, items) => this.set(ctx, area, items),
-    remove: (ctx, area, keys) => this.remove(ctx, area, keys),
-    clear: (ctx, area) => this.clear(ctx, area),
+    set: (ctx, area, items) => {
+      this.set(ctx, area, items)
+    },
+    remove: (ctx, area, keys) => {
+      this.remove(ctx, area, keys)
+    },
+    clear: (ctx, area) => {
+      this.clear(ctx, area)
+    },
     getBytesInUse: (ctx, area, keys) => this.getBytesInUse(ctx, area, keys),
     getKeys: (ctx, area) => Object.keys(this.items(ctx, area)),
     setAccessLevel: (_ctx, area) => {
       this.areaOf(area)
-    }
+    },
+    syncWrite: (ctx, op, args) => this.syncWrite(ctx, op, args),
+    syncMirror: (ctx) => this.syncMirror(ctx)
   }
 
   private areaOf(area: unknown): StorageArea {
@@ -59,16 +99,73 @@ export class StorageApi {
     }
   }
 
+  /** Commits, and for `sync` numbers the change and pushes it to the contexts' mirrors. */
   private commit(
     ctx: ApiContext,
     area: StorageArea,
     next: StorageItems,
     changes: StorageChanges
-  ): void {
+  ): SyncMirrorChange {
     if (area === 'sync') this.host.store.setSyncItems(ctx.extensionId, next)
     else this.fallback.set(`${ctx.extensionId}:${area}`, next)
-    if (Object.keys(changes).length > 0) {
-      this.fanOut(ctx.extensionId, area, changes, area === 'sync' ? null : ctx.session)
+    const changed = Object.keys(changes).length > 0
+    if (changed) this.fanOut(ctx.extensionId, area, changes, area === 'sync' ? null : ctx.session)
+    if (area !== 'sync' || !changed) return { seq: this.syncSeq.get(ctx.extensionId) ?? 0 }
+    const seq = (this.syncSeq.get(ctx.extensionId) ?? 0) + 1
+    this.syncSeq.set(ctx.extensionId, seq)
+    const change: SyncMirrorChange = { seq, sync: changes }
+    this.host.dispatch(ctx.extensionId, '__zen', 'sync-mirror', [change])
+    void this.wakeIdlePartitions(ctx.extensionId)
+    return change
+  }
+
+  /**
+   * A content script's `sync` write, relayed by the shim of the extension's worker or background
+   * page: committed like the context's own, answered with the numbered change so the relaying
+   * shim writes it into its partition's mirror before it replies to the content script.
+   */
+  private syncWrite(ctx: ApiContext, op: unknown, args: unknown): SyncMirrorChange {
+    if (typeof op !== 'string' || !(SYNC_WRITE_OPS as readonly string[]).includes(op)) {
+      throw new ApiError('Invalid sync write')
+    }
+    const list = Array.isArray(args) ? args : []
+    switch (op as SyncWriteOp) {
+      case 'set':
+        return this.set(ctx, 'sync', list[0])
+      case 'remove':
+        return this.remove(ctx, 'sync', list[0])
+      case 'clear':
+        return this.clear(ctx, 'sync')
+    }
+  }
+
+  private syncMirror(ctx: ApiContext): SyncMirrorSnapshot {
+    return {
+      seq: this.syncSeq.get(ctx.extensionId) ?? 0,
+      sync: this.host.store.syncItems(ctx.extensionId),
+      managed: this.host.store.managedItems(ctx.extensionId)
+    }
+  }
+
+  /**
+   * The mirror of a partition is written by the extension's contexts in that partition; where
+   * none is alive the worker is started, and its shim takes the snapshot. The primary partition's
+   * worker is woken by the dispatch itself when it registered the event before it stopped.
+   */
+  private async wakeIdlePartitions(extensionId: string): Promise<void> {
+    const loaded = this.host.loaded(extensionId)
+    if (!loaded || loaded.manifest.manifest_version !== 3) return
+    const live = new Set<Session>()
+    for (const frame of this.host.registry.framesOf(extensionId)) live.add(frame.session)
+    for (const worker of this.host.registry.workersOf(extensionId)) live.add(worker.session)
+    const scope = `chrome-extension://${extensionId}/`
+    for (const session of loaded.sessions) {
+      if (live.has(session)) continue
+      try {
+        await session.serviceWorkers.startWorkerForScope(scope)
+      } catch {
+        /* no registration in this partition yet: the next context there takes the snapshot */
+      }
     }
   }
 
@@ -85,17 +182,17 @@ export class StorageApi {
     return selectItems(this.items(ctx, area), keys as null | string | string[] | StorageItems)
   }
 
-  private set(ctx: ApiContext, area: unknown, items: unknown): void {
+  private set(ctx: ApiContext, area: unknown, items: unknown): SyncMirrorChange {
     const name = this.areaOf(area)
     if (name === 'managed') throw new ApiError('This is a read-only store.')
     if (!isRecord(items)) throw new ApiError('Invalid items')
     if (name === 'sync') this.checkSyncRate(ctx.extensionId)
     const result = applySet(this.items(ctx, area), items, name === 'sync' ? SYNC_QUOTA : null)
     if (result.error) throw new ApiError(result.error)
-    this.commit(ctx, name, result.next, result.changes)
+    return this.commit(ctx, name, result.next, result.changes)
   }
 
-  private remove(ctx: ApiContext, area: unknown, keys: unknown): void {
+  private remove(ctx: ApiContext, area: unknown, keys: unknown): SyncMirrorChange {
     const name = this.areaOf(area)
     if (name === 'managed') throw new ApiError('This is a read-only store.')
     if (
@@ -106,15 +203,15 @@ export class StorageApi {
     }
     if (name === 'sync') this.checkSyncRate(ctx.extensionId)
     const result = applyRemove(this.items(ctx, area), keys as string | string[])
-    this.commit(ctx, name, result.next, result.changes)
+    return this.commit(ctx, name, result.next, result.changes)
   }
 
-  private clear(ctx: ApiContext, area: unknown): void {
+  private clear(ctx: ApiContext, area: unknown): SyncMirrorChange {
     const name = this.areaOf(area)
     if (name === 'managed') throw new ApiError('This is a read-only store.')
     if (name === 'sync') this.checkSyncRate(ctx.extensionId)
     const result = applyClear(this.items(ctx, area))
-    this.commit(ctx, name, result.next, result.changes)
+    return this.commit(ctx, name, result.next, result.changes)
   }
 
   private getBytesInUse(ctx: ApiContext, area: unknown, keys: unknown): number {
