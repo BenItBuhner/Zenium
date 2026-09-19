@@ -10,7 +10,7 @@
  * script relays them) and drives it through `window.__zeniumPdf.command`.
  */
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs'
-import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from 'pdfjs-dist'
+import type { PDFDocumentProxy, PDFPageProxy, PageViewport, RenderTask } from 'pdfjs-dist'
 import type { TextItem } from 'pdfjs-dist/types/src/display/api'
 import {
   PDF_VIEWER_GLOBAL,
@@ -115,8 +115,7 @@ class Viewer {
       cMapUrl: this.asset('cmaps/'),
       standardFontDataUrl: this.asset('standard_fonts/'),
       wasmUrl: this.asset('wasm/'),
-      iccUrl: this.asset('iccs/'),
-      isEvalSupported: false
+      iccUrl: this.asset('iccs/')
     })
     task.onPassword = (update: (password: string) => void, reason: number): void => {
       this.pendingPassword = update
@@ -519,8 +518,7 @@ class Viewer {
       return
     }
     const viewport = page.getViewport({ scale: 1, rotation: this.rotation })
-    const convert = (rect: [number, number, number, number]): number[] =>
-      viewport.convertToViewportRectangle(rect)
+    const convert = viewportRect(viewport)
     for (const annotation of annotations) {
       if (annotation.subtype !== 'Link') continue
       const rect = annotationRect(annotation.rect as number[], convert, viewport)
@@ -626,8 +624,7 @@ class Viewer {
     const page = slot.page
     if (!page || !slot.text) return
     const viewport = page.getViewport({ scale: 1, rotation: this.rotation })
-    const convert = (rect: [number, number, number, number]): number[] =>
-      viewport.convertToViewportRectangle(rect)
+    const convert = viewportRect(viewport)
     for (const match of matches) {
       const run = slot.text[match.run]
       const rect = run ? matchRect(run, match, convert, viewport) : null
@@ -751,6 +748,17 @@ class Viewer {
 function sizeOf(page: PDFPageProxy): PageSize {
   const viewport = page.getViewport({ scale: 1 })
   return { width: viewport.width, height: viewport.height }
+}
+
+/** A rectangle in the page's user space → its two corners in viewport pixels (pdf.js 6 dropped `convertToViewportRectangle`). */
+function viewportRect(
+  viewport: PageViewport
+): (rect: [number, number, number, number]) => number[] {
+  return ([x0, y0, x1, y1]) => {
+    const a = viewport.convertToViewportPoint(x0, y0) as number[]
+    const b = viewport.convertToViewportPoint(x1, y1) as number[]
+    return [a[0], a[1], b[0], b[1]]
+  }
 }
 
 function place(el: HTMLElement, rect: FractionRect): void {
