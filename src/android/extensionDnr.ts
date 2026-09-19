@@ -17,11 +17,7 @@ import {
 } from '@core/extensions/dnr/args'
 import type { ScopedRuleSink } from '@core/extensions/dnr/engineSink'
 import { parsePersistedState } from '@core/extensions/dnr/persist'
-import {
-  parseEngineSetId,
-  routeDecision,
-  type EngineDecisionAction
-} from '@core/extensions/dnr/sink'
+import { routeDecision, type EngineDecisionAction } from '@core/extensions/dnr/sink'
 import {
   DnrState,
   createGlobalStaticRulePool,
@@ -272,21 +268,6 @@ export class AndroidDeclarativeNetRequest {
     const io = this.host.io
     if (io.remove) await io.remove(doc).catch(() => undefined)
     else if (io.readSync(doc) !== null) await io.write(doc, '{}').catch(() => undefined)
-  }
-
-  /**
-   * Engine sets left by extensions the store no longer has (an uninstall the runtime never saw
-   * finish, an older build): removed at startup so they do not filter anything.
-   */
-  prune(known: (extensionId: string) => boolean, engineSetIds: readonly string[]): string[] {
-    const removed: string[] = []
-    for (const setId of engineSetIds) {
-      const parsed = parseEngineSetId(setId)
-      if (!parsed || known(parsed.extensionId)) continue
-      void this.sink.removeRuleSet(setId)
-      removed.push(setId)
-    }
-    return removed
   }
 
   /** The install order changed (Chrome ranks newer extensions' rules above older ones'). */

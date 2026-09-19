@@ -95,14 +95,20 @@ export class JsonStore<T> {
     this.timer = setTimeout(() => void this.flush(), this.debounceMs)
   }
 
-  /** Write immediately (used on quit). */
+  /**
+   * Write immediately (used on quit); resolves once the document is on disk – with nothing new
+   * pending, once the write already in flight (a debounce that fired) has landed.
+   */
   async flush(): Promise<void> {
     if (this.timer) {
       clearTimeout(this.timer)
       this.timer = null
     }
     const data = this.pending
-    if (data === null) return
+    if (data === null) {
+      await this.writing
+      return
+    }
     this.pending = null
     const seq = ++this.queued
     this.writing = this.track(

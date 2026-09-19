@@ -1,5 +1,6 @@
 import type { RuleEngine } from '../../blocking/engine'
 import type { Decision, RequestContext } from '../../blocking/rules'
+import type { RuleSetOwnership } from '../../blocking/service'
 import { parseEngineSetId, type EngineRuleSet, type RuleSink } from './sink'
 
 /**
@@ -25,10 +26,24 @@ import { parseEngineSetId, type EngineRuleSet, type RuleSink } from './sink'
  *
  * A host may rewrite sets on the way in (`RuleSetRewriter`): the desktop sends redirects to an
  * extension's `use_dynamic_url` resources to the origin it serves them from.
+ *
+ * The engine persists the sets across runs, so an extension removed or disabled while the app
+ * was closed leaves its sets behind; at start each host declares the extensions that are alive
+ * with `browser.blocking.reconcileOwners(DNR_OWNERSHIP, ids)` and the engine drops the rest.
  */
 export interface DnrSinkScope {
   /** The session partitions (container ids) an extension's rules apply to right now. */
   partitionsOf(extensionId: string): readonly string[]
+}
+
+/**
+ * Who owns an `ext:` set, for the engine's owner reconciliation at start
+ * (`BlockingService.reconcileOwners`): the extension whose id the set id carries; a `dnr` set
+ * with an id of another shape has no owner and is dropped.
+ */
+export const DNR_OWNERSHIP: RuleSetOwnership = {
+  source: 'dnr',
+  ownerOf: (setId) => parseEngineSetId(setId)?.extensionId
 }
 
 /** A `RuleSink` that also follows an extension's sessions. */
