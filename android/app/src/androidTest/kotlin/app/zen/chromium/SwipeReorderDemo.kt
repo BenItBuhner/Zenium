@@ -108,8 +108,12 @@ class SwipeReorderDemo : DemoHarness("overview-demo-state.json", "overview-swipe
         f.hold(300)
         f.up()
         SystemClock.sleep(2_000)
+        // The group sheet's injected touch (the rule in DemoHarness): its row under a finger, and
+        // the group's card must leave the grid on it.
         tap("Close group (2 tabs)")
-        SystemClock.sleep(3_500)
+        if (waitForGone("Group Group", 8_000)) Log.i(tag, "the group closed under the finger")
+        else touchFault("the touch on the group sheet's Close group left the group's card in the grid")
+        SystemClock.sleep(1_500)
         shot("06-end")
     }
 

@@ -212,6 +212,10 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
         // slides in across the frame's bottom edge (the 22:49 ruling), sampled with every frame.
         val slide = ArrayList<String>()
         if (findNode { it == CHANGE_ICON } != null) {
+            // Kept on the tree's click (the rule in DemoHarness names the exception): the row sits
+            // below the menu's peek, where no finger reaches it, and the menu must stay at the
+            // peek for the band that is measured; this driver's injected touch on a sheet is the
+            // editor's field below.
             probe("picker-open", Kind.TRANSITION, sample = { slotPose().also { slide += it } }) {
                 if (!clickByLabel(CHANGE_ICON)) Log.w(tag, "'$CHANGE_ICON' took no click through the tree")
             }
@@ -322,7 +326,9 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
                 probe("editor-keyboard", Kind.RECORD, KEYBOARD_MS, sample = { editorPose() }) {
                     f.tap(field.exactCenterX(), field.exactCenterY())
                 }
-                awaitIme(shown = true)
+                // The editor sheet's injected touch (the rule in DemoHarness): the field takes the
+                // finger and the keyboard comes up for it.
+                if (!awaitIme(shown = true)) touchFault("the touch on the bookmark editor's Address field at $field raised no keyboard")
                 SystemClock.sleep(800)
                 judgeKeyboard(editorPose())
                 ui.takeScreenshot()?.let { save(it, "editor-keyboard-up"); it.recycle() }

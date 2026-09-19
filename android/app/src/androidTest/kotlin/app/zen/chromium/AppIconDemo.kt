@@ -56,7 +56,12 @@ class AppIconDemo : DemoHarness("appicon-demo-state.json", "appicon-$THEME", "ap
         f.tap(menu.exactCenterX(), menu.exactCenterY())
         SystemClock.sleep(2_500)
         reveal("Settings")
-        if (!clickByLabel("Settings")) error("no Settings row in the menu")
+        // A finger on the row (the rule: one injected touch per sheet flow, its result asserted):
+        // Settings opens on its first section. The tree's click gets there when the row is not
+        // on screen to touch.
+        if (!touchTapLabelExpecting("Settings", "the Settings tab is up on Look and Feel") { findByLabel("Look and Feel") != null } &&
+            findByLabel("Look and Feel") == null && !clickByLabel("Settings")
+        ) error("no Settings row in the menu")
         SystemClock.sleep(3_000)
 
         // 2. Look and Feel is the first section; the App icon group sits under Appearance.

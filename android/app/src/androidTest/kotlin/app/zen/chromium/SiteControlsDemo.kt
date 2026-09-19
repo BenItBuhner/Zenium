@@ -57,8 +57,6 @@ class SiteControlsDemo : DemoHarness("site-controls-demo-state.json", "services-
     }
 
     override fun demo() {
-        val f = Finger()
-
         // 1. The normal tab with its data.
         note("\n1. normal tab, data stored on the default profile")
         shot("01-normal-tab-with-data")
@@ -74,7 +72,7 @@ class SiteControlsDemo : DemoHarness("site-controls-demo-state.json", "services-
             SystemClock.sleep(1_200)
             shot("02-prompt-location")
             beat()
-            answer(f, "Allow")
+            answer("Allow")
             val tab = waitForTitle("granted", 15_000, contains = true)
             note("  after Allow: ${describeTab(tab)}")
             note("  rules for geolocation: ${invoke("permissions.listForPermission", """{"permission":"geolocation"}""")}")
@@ -93,7 +91,7 @@ class SiteControlsDemo : DemoHarness("site-controls-demo-state.json", "services-
             waitFor("Allow once", 8_000)
             SystemClock.sleep(1_000)
             shot("04-prompt-location-again")
-            answer(f, "Allow once")
+            answer("Allow once")
             val tab = waitForTitle("granted", 15_000, contains = true)
             note("  after Allow once: ${describeTab(tab)}")
             note("  rules for geolocation: ${invoke("permissions.listForPermission", """{"permission":"geolocation"}""")}")
@@ -177,14 +175,22 @@ class SiteControlsDemo : DemoHarness("site-controls-demo-state.json", "services-
         return null
     }
 
-    /** A real touch on the prompt's button, or the accessibility click when the tree lags. */
-    private fun answer(f: Finger, label: String) {
-        if (!tapLabel(f, label, 6_000)) {
-            Log.w(tag, "no touch target for '$label'; clicking through the tree")
+    /**
+     * A real touch on the prompt's button – the prompt sheet's injected touch (the rule in
+     * DemoHarness), the page's title reporting the grant on it asserted – or the accessibility
+     * click when the tree carries no bounds for it.
+     */
+    private fun answer(label: String) {
+        val granted = { pageTitle().contains("granted") }
+        if (!touchTapLabelExpecting(label, "the page reports the grant", timeoutMs = 15_000, took = granted) && !granted()) {
+            Log.w(tag, "'$label' did not grant under a finger; clicking through the tree so the demo goes on")
             clickByLabel(label)
         }
         SystemClock.sleep(600)
     }
+
+    /** The demo tab's title as the core has it right now ("" when the tab is gone). */
+    private fun pageTitle(): String = state().getJSONObject("tabs").optJSONObject("tab_demo")?.optString("title").orEmpty()
 
     // --- private tabs ---------------------------------------------------------------------------
 

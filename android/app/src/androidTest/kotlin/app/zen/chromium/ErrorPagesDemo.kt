@@ -103,9 +103,12 @@ class ErrorPagesDemo : DemoHarness("share-demo-state.json", "errors", "errors-de
         SystemClock.sleep(1_800)
         shot("06-screenshot-toast")
         SystemClock.sleep(1_500)
-        menuItem("Downloads")
+        val touched = menuItem("Downloads")
         val row = awaitText(SCREENSHOT_ROW, 8_000)
         Log.i(tag, "downloads row for the screenshot: ${row ?: "none"}; numeric rows: ${texts(NUMERIC_ROW)}")
+        // The menu flow's injected touch (the rule in DemoHarness): its result is the panel with
+        // the screenshot's row, not the menu going away (a touch through to the scrim does that too).
+        if (touched && row == null) touchFault("the touch on the menu's Downloads row opened no panel with the screenshot's row")
         SystemClock.sleep(800)
         shot("07-downloads")
         dismissKeyboard()
@@ -293,14 +296,16 @@ class ErrorPagesDemo : DemoHarness("share-demo-state.json", "errors", "errors-de
     }
 
     /**
-     * Open the menu, expand it so the whole list is in reach, and tap the item labelled `label`
-     * (through accessibility when the tap left the menu open: bounds of scrolled content lag).
+     * Open the menu, expand it so the whole list is in reach, and touch the item labelled `label`
+     * – the menu flow's injected touch (the rule in DemoHarness); the caller asserts what the item
+     * did. True when a finger went in; false when the menu or the item never showed. A touch that
+     * left the menu open is a fault of the run, and the tree's click then gets to the item's page.
      */
-    private fun menuItem(label: String) {
+    private fun menuItem(label: String): Boolean {
         openMenu()
         if (waitFor(HANDLE_LABEL, 6_000) == null) {
             Log.w(tag, "the menu never opened for $label")
-            return
+            return false
         }
         SystemClock.sleep(1_200)
         val handle = findByLabel(HANDLE_LABEL)
@@ -316,15 +321,16 @@ class ErrorPagesDemo : DemoHarness("share-demo-state.json", "errors", "errors-de
         if (target == null) {
             Log.w(tag, "no $label in the menu")
             back()
-            return
+            return false
         }
         Finger().tap(target.exactCenterX(), target.exactCenterY())
         SystemClock.sleep(1_500)
         if (findByLabel(HANDLE_LABEL) != null) {
-            Log.w(tag, "the tap on $label left the menu open; clicking it")
+            touchFault("the touch on the menu's $label row at $target left the menu open")
             clickByLabel(label)
             SystemClock.sleep(1_500)
         }
+        return true
     }
 
     private fun tapByLabel(label: String) {

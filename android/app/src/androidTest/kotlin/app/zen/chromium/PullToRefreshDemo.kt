@@ -150,7 +150,12 @@ class PullToRefreshDemo : DemoHarness("ptr-demo-state.json", "ptr-$THEME", "ptr-
         Finger().tap(width - 62 * density, again.exactCenterY())
         SystemClock.sleep(800)
         reveal("Top")
-        if (!clickByLabel("Top")) error("no Top option for the bar position")
+        // The picker is a hosted sheet: a finger on its option (the rule's one injected touch for
+        // this flow), and the picker must close on it with the row reading the new value – the
+        // touch that fell through to the scrim (#192) closed it with the old one.
+        if (!touchTapLabelExpecting("Top", "the picker closed with the row reading Top") { rowReads(BAR_ROW, "Top") } &&
+            !rowReads(BAR_ROW, "Top") && !clickByLabel("Top")
+        ) error("no Top option for the bar position")
         SystemClock.sleep(1_200)
         back()
         SystemClock.sleep(2_500)
@@ -197,7 +202,11 @@ class PullToRefreshDemo : DemoHarness("ptr-demo-state.json", "ptr-$THEME", "ptr-
         Finger().tap(menu.exactCenterX(), menu.exactCenterY())
         SystemClock.sleep(2_500)
         reveal("Settings")
-        if (!clickByLabel("Settings")) error("no Settings row in the menu")
+        // A finger on the row (the menu flow's injected touch); the tree's click when the row is
+        // not on screen to touch.
+        if (!touchTapLabelExpecting("Settings", "the Settings tab is up on Look and Feel") { findByLabel("Look and Feel") != null } &&
+            findByLabel("Look and Feel") == null && !clickByLabel("Settings")
+        ) error("no Settings row in the menu")
         SystemClock.sleep(3_000)
     }
 
@@ -210,6 +219,8 @@ class PullToRefreshDemo : DemoHarness("ptr-demo-state.json", "ptr-$THEME", "ptr-
     companion object {
         private const val MENU_LABEL = "Menu"
         private const val PULL_ROW = "Pull to refresh"
+        /** The address bar's position row (Look and Feel); its picker offers Bottom and Top. */
+        private const val BAR_ROW = "Position on phones"
         /**
          * Finger travel in dp. The chrome's pull reaches its threshold at 120 CSS px of travel
          * past the slop (`lib/pull.ts`); 70 stays clearly under it, 240 clearly over.

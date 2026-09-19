@@ -215,6 +215,20 @@ class SheetLeaveDemo : DemoHarness("sheet-recede-demo-state.json", "leave", "she
         probe("stack-open", stackKind) { runInPage(second.script) }
         settleUp()
         finding("stack: sheet on top titled '${findNode { it.startsWith("Open in") || it.startsWith("Allow") }?.let { it.text ?: it.contentDescription } ?: "?"}', lower menu '$lower', pose ${poseNow()}")
+        // The stack's top sheet's injected touch (the rule in DemoHarness): the confirm's Always
+        // allow switch under a finger must read checked afterwards – a touch through to the scrim
+        // would take the confirm down instead – and the back below cancels the confirm, so nothing
+        // is remembered. The location prompt (the top sheet with no app for tel:) has no control
+        // a finger can press without answering it: nothing is touched then, and the findings say so.
+        // The Change Icon… row of step 2 stays on the tree's click: it sits below the context
+        // menu's peek, and the menu must stay at the peek for the band that is measured.
+        if (findNode { it == ALWAYS_LABEL } != null) {
+            val on = touchTapLabelExpecting(ALWAYS_LABEL, "the confirm's $ALWAYS_LABEL switch is on") { findNode { it == ALWAYS_LABEL }?.isChecked == true }
+            finding("stack: a finger on the confirm's '$ALWAYS_LABEL' switch: ${if (on) "it reads on" else "it did not take"}")
+            SystemClock.sleep(600)
+        } else {
+            finding("stack: the top sheet carries no '$ALWAYS_LABEL' switch to touch (the prompt's buttons would answer it)")
+        }
         val lowerGone = probe("stack-close-lower", stackKind, landed = noLeavingLayer) { finding("the host closed the lower sheet: ${hostClosesMenu()}") }
         judgeLowerLeave("stack-close-lower", lowerGone.poses, lower)
         settleUp()
@@ -865,6 +879,8 @@ class SheetLeaveDemo : DemoHarness("sheet-recede-demo-state.json", "leave", "she
         private const val PICKER_TITLE = "Change icon"
         /** The location prompt's heading starts so. */
         private const val LOCATION_TITLE = "Allow"
+        /** The external-protocol confirm's switch (its aria-label), the stack's touched control. */
+        private const val ALWAYS_LABEL = "Always allow"
         /** What the page runs to ask for its location: the prompt is the core's, in `state`. */
         private const val LOCATION_REQUEST = "navigator.geolocation.getCurrentPosition(function(){},function(){})"
         /** A frame-dialog slide is the sheet's whole height: at least this (CSS px), not a 24 px pop. */

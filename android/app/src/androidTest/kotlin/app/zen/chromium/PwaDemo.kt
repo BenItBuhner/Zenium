@@ -181,7 +181,12 @@ class PwaDemo : DemoHarness("pwa-demo-state.json", "android-pwa", "pwa-demo") {
         SystemClock.sleep(2_000)
         shot("06-system-pin-dialog")
         finding("${verdict(system)} the system's pin dialog came up (${ui.rootInActiveWindow?.packageName})")
-        if (!system) return false
+        // The install sheet's injected touch (the rule in DemoHarness): Add under a finger hands
+        // the request to the launcher – a finding, and a fault of the run when it did not.
+        if (!system) {
+            touchFault("the touch on the install sheet's Add brought no system pin dialog in 12 s")
+            return false
+        }
         val accepted = PIN_ACCEPT_LABELS.any { tapInWindows(f, it) }
         finding("${verdict(accepted)} accepted the pin dialog")
         val toast = awaitToast(15_000)

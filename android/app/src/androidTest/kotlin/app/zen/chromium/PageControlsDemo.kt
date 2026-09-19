@@ -116,7 +116,8 @@ open class PageControlsDemo(
         // 2. App menu -> Desktop Site: the user agent switches and the page is asked again from
         //    the URL the tab was opened with, so the desktop site answers.
         if (!pickMenuItem("Desktop Site", "menu-desktop-site")) return
-        if (awaitWikipedia("desktop", 40_000)) SystemClock.sleep(2_500) else Log.w(tag, "no desktop Wikipedia in time")
+        // What the touched item does, asserted (the rule in DemoHarness): the desktop site answers.
+        if (awaitWikipedia("desktop", 40_000)) SystemClock.sleep(2_500) else touchFault("Desktop Site under a finger brought no desktop Wikipedia in 40 s")
         probe("wikipedia desktop")
         snap("wikipedia-desktop")
         beat()
@@ -189,7 +190,8 @@ open class PageControlsDemo(
                 SystemClock.sleep(800)
                 snap("look-and-feel-site-exceptions")
             } else {
-                Log.w(tag, "no $CERN_SITE exception in Look and Feel")
+                // What the touched item does, asserted: the site's exception is listed.
+                touchFault("Dark Theme for This Site under a finger left no $CERN_SITE exception in Look and Feel")
             }
             ensureChromeClear()
             SystemClock.sleep(1_500)
@@ -354,7 +356,7 @@ open class PageControlsDemo(
      * submenu path), and with two strings Kotlin resolves to that one over a `(String, String?)`
      * of this name – it would tap the item and then hunt the menu for the screenshot's name.
      */
-    protected fun pickMenuItem(label: String, shotName: String?): Boolean {
+    protected fun pickMenuItem(label: String, shotName: String?, took: () -> Boolean = { findByLabel(HANDLE_LABEL) == null }): Boolean {
         if (!openMenu()) return false
         if (reveal(label) == null) {
             Log.w(tag, "no $label in the app menu")
@@ -362,8 +364,15 @@ open class PageControlsDemo(
             return false
         }
         if (shotName != null) snap(shotName)
-        if (!clickByLabel(label)) {
-            Log.w(tag, "$label could not be clicked")
+        // The menu flow's injected touch (the rule in DemoHarness), its result `took` asserted –
+        // by default the menu leaving on the item, a caller passing what the item does. A row
+        // without bounds on screen to touch goes through the tree.
+        if (!touchTapLabelExpecting(label, "the menu's $label did what it does", timeoutMs = 6_000, took = took) && !took()) {
+            if (findByLabel(HANDLE_LABEL) != null && clickByLabel(label)) {
+                SystemClock.sleep(1_500)
+                return true
+            }
+            Log.w(tag, "$label could not be pressed")
             ensureChromeClear()
             return false
         }
@@ -371,9 +380,9 @@ open class PageControlsDemo(
         return true
     }
 
-    /** Settings from the app menu, then the section with that tab label. */
+    /** Settings from the app menu (the Settings tab up on `section`'s chips), then the section with that tab label. */
     protected fun openSettings(section: String): Boolean {
-        if (!pickMenuItem("Settings", null)) return false
+        if (!pickMenuItem("Settings", null) { findByLabel(section) != null }) return false
         if (waitFor(section, 6_000) == null || !clickByLabel(section)) {
             Log.w(tag, "no $section section in Settings")
             return false
@@ -421,10 +430,14 @@ open class PageControlsDemo(
     }
 
     /**
-     * Pick `next` in the menulist of a Settings row that reads `current`. The trigger and then
-     * the option are clicked through the tree (the list opens on a click from anything but a
-     * mouse), each with a finger at its bounds should the tree's click not have taken. False when
-     * the row, the trigger or the option is not there; true once the row reads `next`.
+     * Pick `next` in the picker of a Settings row that reads `current`. The trigger is clicked
+     * through the tree (the picker opens on a click from anything but a mouse), with a finger at
+     * its bounds should the tree's click not have taken; the option is then under a finger – the
+     * picker's injected touch (the rule in DemoHarness): the picker must close on it with the
+     * row reading `next` (a touch through to the host's scrim, #192, closes it with `current`),
+     * else the run fails at its end and the tree's click sets the value for the rest of the
+     * recording. False when the row, the trigger or the option is not there; true once the row
+     * reads `next`.
      */
     protected fun chooseOption(row: String, current: String, next: String): Boolean {
         if (reveal(row) == null) {
@@ -432,8 +445,10 @@ open class PageControlsDemo(
             return false
         }
         SystemClock.sleep(600)
-        val trigger = findByLabel(current)
-        if (trigger == null || !clickByLabel(current)) {
+        val trigger = findByLabel(current) ?: findNode { it.startsWith(row) && it.endsWith(current) }?.let { node ->
+            Rect().also { node.getBoundsInScreen(it) }
+        }
+        if (trigger == null || !clickByLabel(current) && !rowClicked(row, current)) {
             Log.w(tag, "no $row menulist reading $current")
             return false
         }
@@ -445,17 +460,21 @@ open class PageControlsDemo(
                 return false
             }
         }
-        val option = findByLabel(next)
-        clickByLabel(next)
-        SystemClock.sleep(900)
-        if (findByLabel(current) != null && option != null) {
-            Log.w(tag, "$next did not take through the tree; tapping it")
-            Finger().tap(option.exactCenterX(), option.exactCenterY())
+        val reads = { rowReads(row, next) && findByLabel(current) == null }
+        if (!touchTapLabelExpecting(next, "the picker closed with the $row row reading $next", timeoutMs = 6_000, took = reads) && !reads()) {
+            clickByLabel(next)
             SystemClock.sleep(900)
         }
-        val reads = findByLabel(next) != null && findByLabel(current) == null
-        Log.i(tag, "$row: $current -> ${if (reads) next else "still $current"}")
-        return reads
+        val took = reads()
+        Log.i(tag, "$row: $current -> ${if (took) next else "still $current"}")
+        return took
+    }
+
+    /** Click the Settings row that reads `label` and `value` as one text (the picker's trigger on a phone). */
+    private fun rowClicked(label: String, value: String): Boolean {
+        var node: AccessibilityNodeInfo? = findNode { it.startsWith(label) && it.endsWith(value) } ?: return false
+        while (node != null && !node.isClickable) node = node.parent
+        return node?.performAction(AccessibilityNodeInfo.ACTION_CLICK) ?: false
     }
 
     /** The colour scheme the page sees (`prefers-color-scheme`), or null without a page. */

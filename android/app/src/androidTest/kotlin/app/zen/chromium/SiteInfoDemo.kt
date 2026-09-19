@@ -30,8 +30,10 @@ import kotlin.math.max
  * cookies (expanded and scrolled, then cleared through the confirmation sheet stacked on top) and
  * the permissions, where the Location grant is reset – pops back with the system back gesture,
  * drags the sheet away by its grabber, and finishes on the tab overview and Settings so the sheet
- * can be compared with its neighbours in the same colour scheme (`-e theme light|dark`). Only
- * asserts that it could run; what the chrome does is what the recording shows.
+ * can be compared with its neighbours in the same colour scheme (`-e theme light|dark`). Every
+ * press inside the sheet is a real touch; the run asserts what those on the sheet's own rows did
+ * (a level pushed in, the cookies cleared through the stacked confirm – the rule in DemoHarness),
+ * and what the chrome does with the rest is what the recording shows.
  *
  * Handshake with the workflow (files under the app's `files/siteinfo-demo/`), as in GestureDemo:
  * `record` once the warm-up is done, wait for `recording`, `done` when the sequence is over.
@@ -66,6 +68,17 @@ class SiteInfoDemo {
         handshake()
         demo()
         Log.i(TAG, "done")
+        if (touchFaults.isNotEmpty()) {
+            throw AssertionError("${touchFaults.size} touch(es) did not take: ${touchFaults.joinToString("; ")}")
+        }
+    }
+
+    /** The touches inside the sheet that did not take; [record] fails on them once the recording is done. */
+    private val touchFaults = ArrayList<String>()
+
+    private fun touchFault(message: String) {
+        Log.e(TAG, "TOUCH FAULT: $message")
+        touchFaults += message
     }
 
     // --- setup -----------------------------------------------------------------------------------
@@ -181,10 +194,14 @@ class SiteInfoDemo {
             if (tapUntil(f, "Clear cookies", "Confirm clear cookies")) {
                 SystemClock.sleep(1_200)
                 shot("05-clear-cookies-confirm")
-                tapLabel(f, "Confirm clear cookies")
-                // The jar is cleared and read again through Kotlin: wait for the empty state
-                // (the danger row leaves with the last cookie, §9.11) rather than a fixed time.
-                awaitGone("Clear cookies", 15_000)
+                // The stacked confirm's injected touch, its result asserted: the jar is cleared
+                // and read again through Kotlin, so wait for the empty state (the danger row
+                // leaves with the last cookie, §9.11) rather than a fixed time; the row still
+                // there means the touch did not take (a fall through to the scrim closes the
+                // confirm with the cookies kept).
+                if (tapLabel(f, "Confirm clear cookies") && !awaitGone("Clear cookies", 15_000)) {
+                    touchFault("the touch on the confirm's 'Confirm clear cookies' left the Clear cookies row: the jar was not cleared")
+                }
                 SystemClock.sleep(800)
                 shot("06-cookies-cleared")
             }
@@ -227,6 +244,8 @@ class SiteInfoDemo {
                 f.up()
                 SystemClock.sleep(1_200)
             }
+            // A comparison shot, not asserted: the tree's bounds for a row of the scrolled menu
+            // lag on the emulator, so this finger may miss; the sheet under test is the one above.
             if (tapLabel(f, "Settings")) {
                 SystemClock.sleep(2_500)
                 shot("10-settings")
@@ -260,8 +279,12 @@ class SiteInfoDemo {
     /**
      * Tap `label` and wait for `expected` to appear; a tap the WebView let pass as a scroll or a
      * settling sheet swallowed is tried again, a little higher in the row, up to three times.
+     * The sheet's injected touch, its result asserted (the rule in DemoHarness): three touches
+     * on the row with `expected` never up is a fault of the run – the sheet did not take the
+     * finger – reported once the recording is done. No touch goes in for a row that is not there.
      */
     private fun tapUntil(f: Finger, label: String, expected: String): Boolean {
+        var touched = 0
         repeat(3) { attempt ->
             awaitRest()
             val target = findByLabel(label) ?: run {
@@ -271,13 +294,14 @@ class SiteInfoDemo {
             val y = target.top + target.height() * (0.5f - 0.15f * attempt)
             Log.i(TAG, "tap '$label' (attempt ${attempt + 1}) at ${target.exactCenterX()},$y")
             f.tap(target.exactCenterX(), y)
+            touched++
             val deadline = SystemClock.uptimeMillis() + 3_000
             while (SystemClock.uptimeMillis() < deadline) {
                 if (findByLabel(expected) != null) return true
                 SystemClock.sleep(250)
             }
         }
-        Log.w(TAG, "'$expected' never appeared after tapping '$label'")
+        touchFault("$touched touch(es) on the sheet's '$label' row brought no '$expected'")
         return false
     }
 
@@ -300,14 +324,15 @@ class SiteInfoDemo {
         Log.w(TAG, "sheet still moving after 6 s")
     }
 
-    /** Wait until no node is labelled `label` any more, up to `timeoutMs`. */
-    private fun awaitGone(label: String, timeoutMs: Long) {
+    /** Wait until no node is labelled `label` any more, up to `timeoutMs`; false when it is still there. */
+    private fun awaitGone(label: String, timeoutMs: Long): Boolean {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         while (SystemClock.uptimeMillis() < deadline) {
-            if (findByLabel(label) == null) return
+            if (findByLabel(label) == null) return true
             SystemClock.sleep(300)
         }
         Log.w(TAG, "'$label' still there after $timeoutMs ms")
+        return false
     }
 
     private fun tapLabel(f: Finger, label: String): Boolean {
