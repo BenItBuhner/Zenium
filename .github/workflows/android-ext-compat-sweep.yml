@@ -31,8 +31,11 @@ permissions:
   contents: read
 
 # One sweep per ref at a time; a dispatched run finishes (its two hours are the measurement).
+# TEMPORARY, with the push trigger: one group per push, so this validation run is not held behind
+# the 156 job of run 35468648505, which hung in its driver step (the token here cannot cancel it);
+# the emulator jobs' own group in android-emulator-demo.yml supersedes that job when this one starts.
 concurrency:
-  group: android-ext-compat-sweep-${{ github.ref }}
+  group: android-ext-compat-sweep-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: false
 
 jobs:
