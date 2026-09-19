@@ -223,15 +223,16 @@ function PrivateNewTabPage({ state, tab, hidden }: Props): JSX.Element {
 }
 
 const COOKIES_SWITCH_LABEL = 'Block third-party cookies'
-const COOKIES_SWITCH_DESCRIPTION =
-  'Applies to every tab, the same setting as Settings → Privacy and Security.'
-const COOKIES_SWITCH_LOCKED = 'Blocked in every tab by Settings → Privacy and Security.'
+// One line at 13 px in the row's text column (about 300 px on a 412 px phone): the section is
+// named as the root named it, Privacy, the short form of the Settings nav's "Privacy and Security".
+const COOKIES_SWITCH_DESCRIPTION = 'Applies to every tab, as in Settings → Privacy.'
+const COOKIES_SWITCH_LOCKED = 'Blocked in every tab by Settings → Privacy.'
 
 /**
  * Chrome's Incognito page's "Block third-party cookies" switch (NTP-31) over the core's
  * `privacy.thirdPartyCookies` (#156), the browser-wide setting: on is the private-tabs mode,
- * off allows them everywhere, and the description says so – the switch is bound to the one
- * setting Settings > Privacy and Security writes, not to a private-only field (that field is a
+ * off allows them everywhere, and the description says so in one line – the switch is bound to
+ * the one setting Settings > Privacy and Security writes, not to a private-only field (that is a
  * services engine item; once it lands, a follow-up binds the switch to it and the line goes).
  * Blocked everywhere by Settings, the switch shows on and is locked (§9.30: laid out at .4,
  * inert), the description giving the reason. A §10.4 switch row on the shared row primitive

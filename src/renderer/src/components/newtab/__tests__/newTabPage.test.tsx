@@ -162,9 +162,7 @@ describe('the new tab route keyed on the container', () => {
     expect(row.getAttribute('aria-checked')).toBe('true')
     expect(row.getAttribute('aria-disabled')).toBeNull()
     expect(row.textContent).toContain('Block third-party cookies')
-    expect(row.textContent).toContain(
-      'Applies to every tab, the same setting as Settings → Privacy and Security.'
-    )
+    expect(row.textContent).toContain('Applies to every tab, as in Settings → Privacy.')
     expect(row.querySelector('.zen-v2-switch')).not.toBeNull()
     act(() => row.click())
     expect(invoke).toHaveBeenCalledWith('settings.update', {
@@ -187,7 +185,7 @@ describe('the new tab route keyed on the container', () => {
     const row = cookiesRow()
     expect(row.getAttribute('aria-checked')).toBe('true')
     expect(row.getAttribute('aria-disabled')).toBe('true')
-    expect(row.textContent).toContain('Blocked in every tab by Settings → Privacy and Security.')
+    expect(row.textContent).toContain('Blocked in every tab by Settings → Privacy.')
     act(() => row.click())
     expect(invoke).not.toHaveBeenCalledWith('settings.update', expect.anything())
   })
