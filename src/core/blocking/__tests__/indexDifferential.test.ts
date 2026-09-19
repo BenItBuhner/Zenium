@@ -22,11 +22,13 @@ import {
  * shaped like the desktop's, the connectivity-probes golden fixture, two `ext:` sets shaped like
  * uBlock Origin Lite's static and dynamic rules (big `requestDomains`, `||host^`, regexes with
  * optional separators, initiator-only and excluded-only conditions, tab ids, methods, case
- * sensitivity, `|` literals, partitions, `modifyHeaders`), a `user` set and
- * `builtin:site-exceptions`. Every decision must be the same rule, target and filter, not just
- * the same effect: `matched` feeds `getMatchedRules` and `onRuleMatchedDebug`, and two equal
- * redirects must name the target the Kotlin engine names. The port of the Kotlin engine's
- * `IndexDifferentialTest`.
+ * sensitivity, `|` literals, partitions, `modifyHeaders`, response header conditions), a `user`
+ * set and `builtin:site-exceptions`; requests at both stages, the header stage reached directly
+ * and through a request stage decision that asked for it. Every decision must be the same rule,
+ * target and filter, not just the same effect: `matched` feeds `getMatchedRules` and
+ * `onRuleMatchedDebug`, and two equal redirects must name the target the Kotlin engine names.
+ * The port of the Kotlin engine's `IndexDifferentialTest`, which parses the header-conditioned
+ * rules out instead.
  */
 
 const LIST_DIR = new URL('../../../../resources/blocking/', import.meta.url)
@@ -150,6 +152,16 @@ const WORDS = [
 const METHODS = ['get', 'post', 'head', 'put']
 const EXT_A = 'ext:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:static:ruleset_1'
 const EXT_B = 'ext:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:_dynamic'
+/** Response headers a request may be decided with at the headers-received stage. */
+const HEADER_SETS: ReadonlyArray<Record<string, string[]>> = [
+  {},
+  { 'content-type': ['text/html; charset=utf-8'] },
+  { 'Content-Type': ['text/css'], 'x-frame-options': ['DENY'] },
+  { 'content-type': ['image/png'], 'x-ads': ['1'] },
+  { 'X-Ads': ['banner'], 'set-cookie': ['a=1'] },
+  { 'x-trust': ['1'], 'content-type': ['text/html'] },
+  { 'content-type': ['application/json'] }
+]
 
 /**
  * Structured sets shaped like what the runtime persists (`ext:` sets) and the builtins. Set A is
@@ -280,6 +292,56 @@ function generatedSets(hosts: string[], random: () => number): RuleSet[] {
     condition: { regexFilter: '\\.(png|gif)$' }
   })
   a.push(rule(id++, 'allow', { urlFilter: '||hdr2.example/assets/quiet^' }))
+  // Header-conditioned rules, decided at the headers-received stage on the same quiet hosts: a
+  // block on a marker header, Stylus's content-type redirect, an allow on everything but HTML
+  // that outranks the block, response header edits stacked behind the request stage's.
+  a.push(
+    rule(
+      id++,
+      'block',
+      {
+        requestDomains: ['hdr.example', 'cdn.hdr.example'],
+        responseHeaders: [{ header: 'x-ads' }]
+      },
+      2
+    )
+  )
+  a.push(
+    rule(
+      id++,
+      'redirect',
+      {
+        regexFilter: '\\.css$',
+        resourceTypes: ['main_frame', 'stylesheet'],
+        responseHeaders: [{ header: 'content-type', values: ['text/css*'] }]
+      },
+      2,
+      'https://safe.example/install-usercss'
+    )
+  )
+  a.push(
+    rule(
+      id++,
+      'allow',
+      {
+        urlFilter: '||hdr2.example^',
+        excludedResponseHeaders: [{ header: 'content-type', values: ['text/html*'] }]
+      },
+      3
+    )
+  )
+  a.push({
+    id: id++,
+    priority: 1,
+    action: {
+      type: 'modifyHeaders',
+      responseHeaders: [{ header: 'x-frame-options', operation: 'remove' }]
+    },
+    condition: {
+      requestDomains: ['hdr.example', 'hdr2.example'],
+      responseHeaders: [{ header: 'x-frame-options' }]
+    }
+  })
   for (let i = 0; i < 2600; i++) {
     const h = host()
     const cond: RuleCondition = {}
@@ -331,6 +393,12 @@ function generatedSets(hosts: string[], random: () => number): RuleSet[] {
     if (int(10) === 0) cond.excludedRequestDomains = [host()]
     if (int(12) === 0) cond.tabIds = [7]
     if (int(12) === 0) cond.excludedNonUniqueHosts = true
+    // One rule in twenty is header-conditioned, over the hosts the request stage's rules cover.
+    if (i % 40 === 3) cond.responseHeaders = [{ header: 'x-ads' }]
+    if (i % 40 === 23)
+      cond.excludedResponseHeaders = [
+        { header: 'content-type', values: ['text/html*', 'application/json'] }
+      ]
     const action = pick(['block', 'block', 'block', 'allow', 'redirect', 'upgradeScheme'])
     a.push(
       rule(
@@ -374,6 +442,33 @@ function generatedSets(hosts: string[], random: () => number): RuleSet[] {
       )
     )
   }
+  // Stylus's `.user.css` install redirect, and an allowAllRequests a response header conditions
+  // (which allows the frame request itself and nothing after it).
+  b.push(
+    rule(
+      id++,
+      'redirect',
+      {
+        regexFilter: '\\.user\\.css$',
+        resourceTypes: ['main_frame'],
+        responseHeaders: [{ header: 'content-type', values: ['text/css*'] }]
+      },
+      1,
+      'https://safe.example/install-usercss'
+    )
+  )
+  b.push(
+    rule(
+      id++,
+      'allowAllRequests',
+      {
+        urlFilter: `|https://${hosts[12]}/`,
+        resourceTypes: ['main_frame', 'sub_frame'],
+        responseHeaders: [{ header: 'x-trust' }]
+      },
+      2
+    )
+  )
   const probes = JSON.parse(readFileSync(FIXTURE, 'utf8')) as RuleSet
   return [
     probes,
@@ -423,7 +518,8 @@ function generatedRequests(hosts: string[], random: () => number, count: number)
     hosts[5],
     hosts[6],
     hosts[7],
-    hosts[11]
+    hosts[11],
+    hosts[12]
   ]
   const allHosts = [...hosts, ...extraHosts]
   const out: RequestContext[] = []
@@ -463,6 +559,8 @@ function generatedRequests(hosts: string[], random: () => number, count: number)
     }
     const partition = pick(partitions)
     if (partition) ctx.partition = partition
+    // One request in four arrives at the headers-received stage directly.
+    if (int(4) === 0) ctx.responseHeaders = pick(HEADER_SETS)
     out.push(ctx)
   }
   return out
@@ -474,6 +572,10 @@ interface Tally {
   redirected: number
   headers: number
   byText: number
+  /** Request stage decisions a header-conditioned rule may still overturn. */
+  needsHeaders: number
+  /** Header stage decisions by a named rule. */
+  headerStage: number
   mismatches: string[]
 }
 
@@ -484,21 +586,31 @@ function compare(engine: RuleEngine, requests: readonly RequestContext[]): Tally
     redirected: 0,
     headers: 0,
     byText: 0,
+    needsHeaders: 0,
+    headerStage: 0,
     mismatches: []
   }
-  for (const ctx of requests) {
-    const indexed = engine.decide(ctx)
-    const linear = engine.decideLinear(ctx)
+  const check = (ctx: RequestContext, indexed: Decision, linear: Decision): void => {
     tally.total++
     if (linear.matched?.ruleId !== undefined) tally.decidedByRule++
     if (linear.matched?.setId === 'filter-text') tally.byText++
     if (linear.redirectUrl !== undefined) tally.redirected++
     if (linear.action === 'modifyHeaders') tally.headers++
+    if (ctx.responseHeaders && linear.matched?.ruleId !== undefined) tally.headerStage++
     if (!same(indexed, linear) && tally.mismatches.length < 40) {
       tally.mismatches.push(
-        `${ctx.url} type=${ctx.type} doc=${ctx.documentUrl} method=${ctx.method} tab=${ctx.tabId} partition=${ctx.partition}\n    index : ${show(indexed)}\n    linear: ${show(linear)}`
+        `${ctx.url} type=${ctx.type} doc=${ctx.documentUrl} method=${ctx.method} tab=${ctx.tabId} partition=${ctx.partition} headers=${JSON.stringify(ctx.responseHeaders)}\n    index : ${show(indexed)}\n    linear: ${show(linear)}`
       )
     }
+  }
+  for (const ctx of requests) {
+    const linear = engine.decideLinear(ctx)
+    check(ctx, engine.decide(ctx), linear)
+    if (!linear.needsHeaders) continue
+    // The host's second decision for a request the first one only noted a header rule for.
+    tally.needsHeaders++
+    const late = { ...ctx, responseHeaders: HEADER_SETS[tally.total % HEADER_SETS.length] }
+    check(late, engine.decide(late), engine.decideLinear(late))
   }
   return tally
 }
@@ -565,6 +677,10 @@ describe('RuleEngine.decide against decideLinear', () => {
     expect(after.byText, `decided by the lists: ${after.byText}`).toBeGreaterThan(100)
     expect(after.redirected, `redirected something: ${after.redirected}`).toBeGreaterThan(20)
     expect(after.headers, `header rules applied: ${after.headers}`).toBeGreaterThan(10)
+    expect(after.needsHeaders, `decided twice: ${after.needsHeaders}`).toBeGreaterThan(20)
+    expect(after.headerStage, `decided at the header stage: ${after.headerStage}`).toBeGreaterThan(
+      20
+    )
     expect(after.mismatches, 'mismatches:\n' + after.mismatches.join('\n')).toEqual([])
   }, 60_000)
 

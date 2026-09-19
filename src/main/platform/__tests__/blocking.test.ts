@@ -7,6 +7,7 @@ import { RuleEngine, TEXT_MATCH_SET_ID } from '../../../core/blocking/engine'
 import type { Decision, RequestContext, RuleSet } from '../../../core/blocking/rules'
 import { RuleSetStore } from '../../../core/blocking/store'
 import type { StoreIO } from '../../../core/platform'
+import type { DecisionStage } from '../blocking'
 import type { HostRequest } from '../webRequest'
 
 vi.mock('electron', () => ({
@@ -75,7 +76,9 @@ function hostRequest(c: RequestContext, tabId: string | null = 'tab-1'): HostReq
 describe('BlockingHandler', () => {
   function handler(
     decide: (c: RequestContext) => Decision,
-    csp: string | null = null
+    csp: string | null = null,
+    observer:
+      ((request: HostRequest, decision: Decision, stage: DecisionStage) => void) | null = null
   ): {
     handler: InstanceType<typeof BlockingHandler>
     blocked: Array<string | undefined>
@@ -87,7 +90,8 @@ describe('BlockingHandler', () => {
         recordBlocked: (tabId, count = 1) =>
           blocked.push(...Array<string | undefined>(count).fill(tabId))
       },
-      { cspDirectives: () => csp }
+      { cspDirectives: () => csp },
+      observer
     )
     return { handler: h, blocked }
   }
@@ -182,6 +186,133 @@ describe('BlockingHandler', () => {
     const untouched: Record<string, string[]> = { 'x-a': ['1'] }
     h.onHeadersReceived(plain, untouched)
     expect(untouched).toEqual({ 'x-a': ['1'] })
+  })
+
+  it('asks the engine again at headers-received when a header-conditioned rule may apply', () => {
+    // A decider shaped like the engine: at the request stage it only notes the header rule; with
+    // the headers in it redirects `.user.css` served as CSS, blocks `x-ads`, edits `x-frame`.
+    const asked: RequestContext[] = []
+    const { handler: h, blocked } = handler((c) => {
+      asked.push(c)
+      const wants = /user\.css|ads|frame/.test(c.url)
+      if (!c.responseHeaders) {
+        const edits: Decision = c.url.includes('frame')
+          ? {
+              action: 'modifyHeaders',
+              responseHeaders: [{ header: 'X-Early', operation: 'set', value: '1' }],
+              matched: { setId: 'ext', ruleId: 1 }
+            }
+          : { action: 'allow' }
+        return wants ? { ...edits, needsHeaders: true } : edits
+      }
+      const type = c.responseHeaders['content-type']?.[0] ?? ''
+      if (c.url.includes('user.css') && type.startsWith('text/css'))
+        return {
+          action: 'redirect',
+          redirectUrl: `chrome-extension://stylus/install-usercss.html#${c.url}`,
+          matched: { setId: 'ext', ruleId: 2 }
+        }
+      if (c.url.includes('ads') && c.responseHeaders['x-ads'])
+        return { action: 'block', matched: { setId: 'ext', ruleId: 3 } }
+      if (c.url.includes('frame'))
+        return {
+          action: 'modifyHeaders',
+          responseHeaders: [
+            { header: 'X-Early', operation: 'set', value: '1' },
+            ...(c.responseHeaders['x-frame-options']
+              ? [{ header: 'X-Frame-Options', operation: 'remove' as const }]
+              : [])
+          ],
+          matched: { setId: 'ext', ruleId: 1 }
+        }
+      return { action: 'allow' }
+    })
+
+    // Redirect once the content type says CSS; a plain HTML answer passes untouched.
+    const css = hostRequest(ctx('https://a.example/theme.user.css', { type: 'main_frame' }))
+    expect(h.onBeforeRequest(css)).toBeUndefined()
+    const cssHeaders = { 'content-type': ['text/css'] }
+    expect(h.onHeadersReceived(css, cssHeaders)).toEqual({
+      redirectURL: 'chrome-extension://stylus/install-usercss.html#https://a.example/theme.user.css'
+    })
+    expect(asked.at(-1)?.responseHeaders).toBe(cssHeaders)
+    const html = hostRequest(ctx('https://a.example/page.user.css', { type: 'main_frame' }))
+    h.onBeforeRequest(html)
+    expect(h.onHeadersReceived(html, { 'content-type': ['text/html'] })).toBeUndefined()
+
+    // Block once the marker header shows up, counted against the tab.
+    const ads = hostRequest(ctx('https://a.example/ads.js'))
+    expect(h.onBeforeRequest(ads)).toBeUndefined()
+    expect(h.onHeadersReceived(ads, { 'x-ads': ['1'] })).toEqual({ cancel: true })
+    expect(blocked).toEqual(['tab-1'])
+
+    // Header edits: the second decision's edits replace the first's (they contain them).
+    const frame = hostRequest(ctx('https://a.example/frame', { type: 'main_frame' }))
+    h.onBeforeRequest(frame)
+    const frameHeaders: Record<string, string[]> = { 'x-frame-options': ['DENY'] }
+    expect(h.onHeadersReceived(frame, frameHeaders)).toBeUndefined()
+    expect(frameHeaders).toEqual({ 'X-Early': ['1'] })
+    const noFrame = hostRequest(ctx('https://a.example/frame', { type: 'main_frame' }))
+    h.onBeforeRequest(noFrame)
+    const plainHeaders: Record<string, string[]> = { 'x-a': ['1'] }
+    h.onHeadersReceived(noFrame, plainHeaders)
+    expect(plainHeaders).toEqual({ 'x-a': ['1'], 'X-Early': ['1'] })
+
+    // A request no header rule could match is decided once.
+    const before = asked.length
+    const plain = hostRequest(ctx('https://a.example/plain.js'))
+    h.onBeforeRequest(plain)
+    h.onHeadersReceived(plain, { 'x-ads': ['1'] })
+    expect(asked.length).toBe(before + 1)
+  })
+
+  it('tells the observer which stage each named decision was taken at', () => {
+    // Rule 1 (request stage, modifyHeaders) also notes a header rule; rule 3 blocks at the
+    // header stage on `x-ads`; rule 9 blocks at the request stage; `late` matches nothing until
+    // the headers are in.
+    const early: Decision = {
+      action: 'modifyHeaders',
+      responseHeaders: [{ header: 'X-Early', operation: 'set', value: '1' }],
+      matched: { setId: 'ext', ruleId: 1 }
+    }
+    const seen: Array<[string, number | undefined, DecisionStage]> = []
+    const { handler: h } = handler(
+      (c) => {
+        if (!c.responseHeaders) {
+          if (c.url.includes('early')) return { ...early, needsHeaders: true }
+          if (c.url.includes('late')) return { action: 'allow', needsHeaders: true }
+          if (c.url.includes('blocked'))
+            return { action: 'block', matched: { setId: 'ext', ruleId: 9 } }
+          return { action: 'allow' }
+        }
+        if (c.responseHeaders['x-ads'])
+          return { action: 'block', matched: { setId: 'ext', ruleId: 3 } }
+        return c.url.includes('early') ? early : { action: 'allow' }
+      },
+      null,
+      (request, decision, stage) => seen.push([request.ctx.url, decision.matched?.ruleId, stage])
+    )
+    const run = (url: string, headers: Record<string, string[]>): void => {
+      const request = hostRequest(ctx(url))
+      if (h.onBeforeRequest(request)) return
+      h.onHeadersReceived(request, headers)
+    }
+    run('https://a.example/blocked.js', {})
+    run('https://a.example/late.js', { 'x-ads': ['1'] })
+    run('https://a.example/late-clean.js', {})
+    run('https://a.example/early.js', {})
+    run('https://a.example/early-ads.js', { 'x-ads': ['1'] })
+    run('https://a.example/plain.js', { 'x-ads': ['1'] })
+    expect(seen).toEqual([
+      ['https://a.example/blocked.js', 9, 'request'],
+      // The request stage's default allow is not reported; the header stage's block is.
+      ['https://a.example/late.js', 3, 'headersReceived'],
+      // The same rule at both stages is reported once.
+      ['https://a.example/early.js', 1, 'request'],
+      // Overturned at the header stage: both stages, in order.
+      ['https://a.example/early-ads.js', 1, 'request'],
+      ['https://a.example/early-ads.js', 3, 'headersReceived']
+    ])
   })
 })
 
