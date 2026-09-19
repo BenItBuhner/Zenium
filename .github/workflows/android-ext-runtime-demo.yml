@@ -11,6 +11,10 @@ name: Android extension runtime demo
 # sideloads.
 on:
   workflow_dispatch:
+  # TEMPORARY: the Android compat sweep's recordings (media ext-android-4-*); removed before the
+  # branch is returned.
+  push:
+    branches: [cursor/android-ext-compat-sweep-f955]
 
 permissions:
   contents: read
