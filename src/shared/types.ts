@@ -3002,8 +3002,9 @@ export interface Commands {
    * Third-party cookies in private windows and private tabs only
    * (`Settings.privacy.thirdPartyCookiesPrivate`): the private switch writes `block` when turned
    * on and `allow` when turned off (never `default`, so the choice survives a later change of
-   * the global mode); `default` follows the global mode again. Refused while
-   * `PrivacyStatus.privateThirdPartyCookies.locked`, the chrome disables the switch then.
+   * the global mode); `default` follows the global mode again. The chrome disables the switch
+   * while `PrivacyStatus.privateThirdPartyCookies.locked` (the global `block` wins); a choice
+   * stored anyway is kept for when the lock lifts. An unknown mode is refused.
    */
   'privacy.setThirdPartyCookiesPrivate': {
     args: { mode: ThirdPartyCookiePrivateMode }
