@@ -1,14 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { DownloadItem } from '@shared/types'
-import {
-  canRetry,
-  describeDownloadError,
-  downloadFolderLabel,
-  downloadStatus,
-  formatEta,
-  isQuarantined,
-  parseAutoOpenTypes
-} from '../downloadText'
+import { downloadFolderLabel, downloadStatus, formatEta } from '../downloadText'
 
 const NOW = 1_700_000_000_000
 
@@ -83,16 +75,52 @@ describe('downloadStatus', () => {
     expect(downloadStatus(done, NOW)).toBe('31 B · Just now')
   })
 
-  it('tells a resumable interruption apart from a failure', () => {
-    expect(downloadStatus(item({ state: 'interrupted', canResume: true }), NOW)).toBe(
-      'Interrupted · 1.7 MB of 3.0 MB'
-    )
+  it('reads a finished file the engine found gone as Deleted, as the desktop row does (#161)', () => {
+    expect(
+      downloadStatus(item({ state: 'completed', fileMissing: true, completedAt: NOW }), NOW)
+    ).toBe('Deleted')
+  })
+
+  it('reads a flagged file as blocked while it waits for Keep / Delete', () => {
+    const flagged = item({
+      state: 'completed',
+      danger: {
+        level: 'dangerous',
+        reason: 'file-type',
+        message: 'This file can harm your device.'
+      }
+    })
+    expect(downloadStatus(flagged, NOW)).toBe('Blocked · Dangerous')
     expect(
       downloadStatus(
-        item({ state: 'interrupted', canResume: false, error: 'network-timeout' }),
+        item({
+          state: 'completed',
+          danger: { level: 'suspicious', reason: 'url-verdict', message: '' }
+        }),
         NOW
       )
-    ).toBe('Failed · The connection timed out')
+    ).toBe('Blocked · Uncommon file')
+    expect(downloadStatus({ ...flagged, dangerAccepted: true, completedAt: NOW }, NOW)).toBe(
+      '3.0 MB · Just now'
+    )
+  })
+
+  it('reads a failure as Failed · with the engine’s sentence, resumable or not', () => {
+    const failed = item({
+      state: 'interrupted',
+      canResume: true,
+      error: 'network-failed',
+      errorMessage: 'Check internet connection'
+    })
+    expect(downloadStatus(failed, NOW)).toBe('Failed · Check internet connection')
+    expect(downloadStatus({ ...failed, canResume: false }, NOW)).toBe(
+      'Failed · Check internet connection'
+    )
+    // A record from before the engine sent sentences: Chrome's line for the reason, else bare.
+    expect(downloadStatus(item({ state: 'interrupted', error: 'file-no-space' }), NOW)).toBe(
+      'Failed · Out of storage space'
+    )
+    expect(downloadStatus(item({ state: 'interrupted' }), NOW)).toBe('Failed')
     expect(downloadStatus(item({ state: 'cancelled' }), NOW)).toBe('Cancelled')
   })
 })
@@ -114,56 +142,7 @@ describe('formatEta', () => {
   })
 })
 
-describe('describeDownloadError', () => {
-  it('turns the engine reasons into sentences', () => {
-    expect(describeDownloadError('shutdown')).toBe('Zenium was closed')
-    expect(describeDownloadError('file-no-space')).toBe('Not enough storage space')
-    expect(describeDownloadError('file-access-denied')).toBe('Zenium needs permission')
-    expect(describeDownloadError('file-error')).toBe('The file could not be saved')
-    expect(describeDownloadError('file-failed')).toBe('The file could not be saved')
-    expect(describeDownloadError('network-timeout')).toBe('The connection timed out')
-    expect(describeDownloadError('network-disconnected')).toBe('No internet connection')
-    expect(describeDownloadError('network-failed')).toBe('Network error')
-    expect(describeDownloadError('ERR_CONNECTION_RESET')).toBe('Network error')
-    expect(describeDownloadError('server-error')).toBe('The server stopped sending the file')
-  })
-
-  it('has a generic line for anything unknown', () => {
-    expect(describeDownloadError(undefined)).toBe('Something went wrong')
-    expect(describeDownloadError('interrupted')).toBe('Something went wrong')
-  })
-})
-
-describe('row predicates', () => {
-  it('quarantines a finished flagged file until it is kept', () => {
-    const flagged = item({
-      state: 'completed',
-      danger: {
-        level: 'dangerous',
-        reason: 'executable',
-        message: 'This file can harm your device.'
-      }
-    })
-    expect(isQuarantined(flagged)).toBe(true)
-    expect(isQuarantined({ ...flagged, dangerAccepted: true })).toBe(false)
-    expect(isQuarantined({ ...flagged, state: 'progressing' })).toBe(false)
-    expect(isQuarantined(item({ state: 'completed' }))).toBe(false)
-  })
-
-  it('offers a retry for failed and cancelled rows, but not for blob: bytes', () => {
-    expect(canRetry(item({ state: 'interrupted' }))).toBe(true)
-    expect(canRetry(item({ state: 'cancelled' }))).toBe(true)
-    expect(canRetry(item({ state: 'completed' }))).toBe(false)
-    expect(canRetry(item({ state: 'cancelled', url: 'blob:https://example.com/abc' }))).toBe(false)
-  })
-})
-
 describe('downloadFolderLabel', () => {
-  it('names the default folder', () => {
-    expect(downloadFolderLabel(null)).toBe('Downloads')
-    expect(downloadFolderLabel('')).toBe('Downloads')
-  })
-
   it('shows the relative path of an Android document tree', () => {
     expect(
       downloadFolderLabel(
@@ -175,16 +154,8 @@ describe('downloadFolderLabel', () => {
     ).toBe('Storage')
   })
 
-  it('shows the last segment of a plain path', () => {
-    expect(downloadFolderLabel('/home/me/Files/Invoices/')).toBe('Invoices')
-    expect(downloadFolderLabel('C:\\Users\\me\\Desktop')).toBe('Desktop')
-  })
-})
-
-describe('parseAutoOpenTypes', () => {
-  it('normalises a typed list', () => {
-    expect(parseAutoOpenTypes('pdf, PNG .jpg;txt  pdf')).toEqual(['pdf', 'png', 'jpg', 'txt'])
-    expect(parseAutoOpenTypes('')).toEqual([])
-    expect(parseAutoOpenTypes(' , . ')).toEqual([])
+  it('shows a desktop path as it is', () => {
+    expect(downloadFolderLabel('/home/me/Files/Invoices')).toBe('/home/me/Files/Invoices')
+    expect(downloadFolderLabel('C:\\Users\\me\\Desktop')).toBe('C:\\Users\\me\\Desktop')
   })
 })

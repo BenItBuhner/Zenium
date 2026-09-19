@@ -232,12 +232,13 @@ describe('parsePreviewSpec', () => {
         bytesPerSecond: 2_400_000,
         paused: false,
         error: null,
+        deleted: false,
         private: false
       }
     })
     expect(
       parsePreviewSpec(
-        'download=notes.txt&size=1000&at=25&speed=10&paused&fail=network-timeout&private&url=https%3A%2F%2Fx.test%2Fn&mime=text%2Fmarkdown'
+        'download=notes.txt&size=1000&at=25&speed=10&paused&fail=network-timeout&deleted&private&url=https%3A%2F%2Fx.test%2Fn&mime=text%2Fmarkdown'
       )
     ).toEqual({
       kind: 'download',
@@ -250,6 +251,7 @@ describe('parsePreviewSpec', () => {
         bytesPerSecond: 10,
         paused: true,
         error: 'network-timeout',
+        deleted: true,
         private: true
       }
     })

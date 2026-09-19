@@ -51,6 +51,8 @@ export interface PreviewDownloadSpec {
   paused: boolean
   /** The transfer fails where it is, with this error (`network-timeout`, `file-no-space`, …). */
   error: string | null
+  /** The transfer is already complete and its file since gone: the row reads Deleted (#166). */
+  deleted: boolean
   /** The file comes from the private container. */
   private: boolean
 }
@@ -157,7 +159,8 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * surfaces and the load bar, `webapp=<surface>` for one of PREVIEW_WEBAPP_SURFACES ("Add to
  * Home screen"), or `download=<file>` for a transfer the stand-in downloader plays back
  * (`size=<bytes>`, `at=<percent>` already received, `speed=<bytes per second>`, `paused`,
- * `fail=<error>`, `private`, `url=<url>`, `mime=<type>`). When several are given, `page` wins
+ * `fail=<error>`, `deleted` for a finished file since gone from disk, `private`, `url=<url>`,
+ * `mime=<type>`). When several are given, `page` wins
  * over `overlay`, `overlay` over `menu`, `menu` over `find`, `find` over `pull`, `pull` over
  * `zoom`, `zoom` over `error`, `error` over the messages, the messages over `webapp` and `webapp`
  * over `download`. A leading `#` (the URL hash as read) is ignored.
@@ -278,6 +281,7 @@ function parseDownload(filename: string, params: URLSearchParams): PreviewDownlo
     bytesPerSecond: Math.round(number('speed', 2_400_000)),
     paused: params.has('paused'),
     error: error ? error : null,
+    deleted: params.has('deleted'),
     private: params.has('private')
   }
 }

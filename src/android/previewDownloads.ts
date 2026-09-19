@@ -27,13 +27,18 @@ interface Playing {
  * the core binds it, and it then reports every quarter second at the requested speed until it
  * completes, pauses or fails where the spec says; Pause, Resume, Retry and Cancel from the sheet
  * go through the same `download.*` bridge calls the real host answers, so the Android downloads
- * UI can be exercised (and captured) in a desktop browser.
+ * UI can be exercised (and captured) in a desktop browser. The finished files it pretends to
+ * have written answer the engine's existence check (`download.exists`, which the sheet asks for
+ * as it opens) and its Delete file (`download.deleteFile`), so a `deleted` spec – or a Delete
+ * file from a mouse's panel – reads Deleted in the row as it does on a phone (#166).
  */
 export function createPreviewDownloads(
   host: () => HostEvents,
   downloadsDir: string
 ): Record<string, Handler> {
   const playing = new Map<string, Playing>()
+  /** Final paths of finished files that are gone again: deleted, or never there (`deleted`). */
+  const gone = new Set<string>()
   let sequence = 0
 
   const emit = (name: string, payload: Record<string, unknown>): void =>
@@ -97,6 +102,13 @@ export function createPreviewDownloads(
       finish(p, 'interrupted', p.spec.error)
       return
     }
+    // A finished file since gone: complete at once, and the file is not there when asked.
+    if (p.spec.deleted) {
+      p.received = p.spec.totalBytes
+      gone.add(finalPath(p))
+      finish(p, 'completed')
+      return
+    }
     if (p.spec.paused) {
       report(p, 'paused')
       return
@@ -156,11 +168,14 @@ export function createPreviewDownloads(
       bytesPerSecond: 2_400_000,
       paused: false,
       error: null,
+      deleted: false,
       private: args['private'] === true
     }
-    // The transfer the spec had failing or pausing has done that once; it runs on from here.
-    const running = { ...spec, paused: false, error: null }
+    // The transfer the spec had failing, pausing or losing its file has done that once; it runs
+    // on from here, and the file it writes is there again.
+    const running = { ...spec, paused: false, error: null, deleted: false }
     const received = fromScratch ? 0 : (previous?.received ?? 0)
+    gone.delete(`${downloadsDir}/${spec.filename}`)
     announce(running, id, received)
   }
 
@@ -195,6 +210,15 @@ export function createPreviewDownloads(
     }),
     'download.discard': () => undefined,
     'download.open': () => undefined,
+    // The engine's existence check and Delete file (#166), against the files pretended so far:
+    // a path is there unless it went, and deleting a gone one says so.
+    'download.exists': ({ savePath }) => !gone.has(String(savePath)),
+    'download.deleteFile': ({ savePath }) => {
+      const path = String(savePath)
+      if (gone.has(path)) return 'missing'
+      gone.add(path)
+      return 'deleted'
+    },
     'download.showAll': () => console.info('[zen preview] open the system Downloads app'),
     // A picked folder comes back as a document-tree URI, as the SAF picker would hand it over.
     'download.chooseDirectory': () =>

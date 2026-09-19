@@ -33,14 +33,17 @@ import org.junit.runner.RunWith
  * HTTPS-only mode off; at its default "ask" the first navigation would stop on the upgrade's
  * interstitial instead of the page.
  *
- * The panel on screen is the shared downloads page (`DownloadRow`): each row is one focusable
- * node labelled `<name>. <status>` on the accessibility tree with its controls as children, so
- * the driver reads a row's state from that label once the row holds still ([rowReads]; the
- * software-rendered emulator seldom serves the panel's subtree while a row moves, and its chrome
- * WebView answers an engine call seconds late meanwhile) and presses its controls through the
- * tree when they are there, else through the engine command the control runs ([press]); the
- * engine's own list is checked over `app.getState()` either way. The panel's search field takes
- * focus when it opens and the emulator raises the keyboard over the page; [hideKeyboard] drops it
+ * The surface on screen is the phone's downloads sheet (`DownloadsSheet`; with a pointer it
+ * would be the shared downloads page, `DownloadRow`): each row's accessible node is labelled
+ * `<name>. <status>` on the accessibility tree – the sheet's rows hold the name and status in
+ * one focusable node with the row's icon buttons (Pause, Resume, Retry, Cancel) as its labelled
+ * siblings, the page's as its children – so the driver reads a row's state from that label once
+ * the row holds still ([rowReads]; the software-rendered emulator seldom serves the sheet's
+ * subtree while a row moves, and its chrome WebView answers an engine call seconds late
+ * meanwhile) and presses its controls through the tree when they are there, else through the
+ * engine command the control runs ([press]); the engine's own list is checked over
+ * `app.getState()` either way. The sheet takes focus on its first row and raises no keyboard;
+ * the page's search field would, so [hideKeyboard] still blurs the chrome's focused element
  * before the settled screenshots.
  *
  * Run from the dispatch-only workflow `.github/workflows/android-downloads-demo.yml`, a caller of
@@ -307,8 +310,9 @@ class DownloadsDemo : DemoHarness("downloads-demo-state.json", "downloads", "dow
     }
 
     /**
-     * Drop the keyboard the panel's search field raised when it took focus: blur the chrome's
-     * focused element (what a tap outside the field does) and give the keyboard a moment to slide out.
+     * Drop the keyboard a focused field would have raised (the page's search field takes focus
+     * when it opens; the sheet focuses a row, which raises none): blur the chrome's focused
+     * element (what a tap outside the field does) and give the keyboard a moment to slide out.
      */
     private fun hideKeyboard() {
         chromeJs("document.activeElement&&document.activeElement.blur&&document.activeElement.blur()")
@@ -440,8 +444,11 @@ class DownloadsDemo : DemoHarness("downloads-demo-state.json", "downloads", "dow
         const val LINK_DATA = "Download hello-data.txt"
         const val LINK_BLOB = "Download hello-blob.txt"
         const val CLOSE = "Close (Esc)"
-        /** The panel's status line for a `network-failed` row: Chrome's wording behind "Failed –". */
-        const val FAILED_NETWORK = "Failed \u2013 Check internet connection"
+        /**
+         * The status line for a `network-failed` row: Chrome's wording behind `Failed ·`, the same
+         * on the phone sheet and the desktop rows (`lib/downloadsView.ts`, `lib/downloadText.ts`).
+         */
+        const val FAILED_NETWORK = "Failed \u00b7 Check internet connection"
         /** The phone sheet's header button (its label): how the driver knows the sheet is up. */
         const val SHEET_SETTINGS = "Downloads settings"
         const val SLOW_SIZE = 3L * 1024 * 1024

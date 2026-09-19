@@ -1,15 +1,22 @@
 import type { DownloadItem } from '@shared/types'
-import { normalizeExtension } from '@shared/downloads'
+import { needsDangerDecision } from '@shared/downloadsShell'
+import { blockedStatus, describeDownloadError, isDeletedRow } from './downloadsView'
 import { formatBytes, relativeTime } from './utils'
 
 /**
- * Words for the downloads sheet: every string a row shows apart from the file name. Pure, so
- * the sheet stays a layout and the wording is testable on its own.
+ * Words for the Android downloads sheet: the row's description line and the Downloads settings
+ * row's name for the folder. Pure, so the sheet stays a layout and the wording is testable on
+ * its own. The states a phone row shares with the desktop bubble read the same there (#161,
+ * `lib/downloadsView.ts`): `Failed · <reason>` in Chrome's words, `Deleted` for a finished file
+ * the engine found gone, `Blocked · …` while a flagged file waits; the phone's own lines are the
+ * running row's, which has one line to fit, and the finished row's size and age.
  */
 
 /**
  * A row's one description line, Chrome's phrasing: size and time left while running. The rate
- * only stands in while there is no estimate (unknown size), so the line fits a phone row.
+ * only stands in while there is no estimate (unknown size), so the line fits a phone row. An
+ * interrupted row reads the engine's sentence for its reason (`errorMessage`) after `Failed ·`,
+ * whether or not Resume can pick it up, as the desktop row does.
  */
 export function downloadStatus(item: DownloadItem, now = Date.now()): string {
   const size = item.totalBytes > 0 ? formatBytes(item.totalBytes) : ''
@@ -26,13 +33,13 @@ export function downloadStatus(item: DownloadItem, now = Date.now()): string {
     case 'paused':
       return `Paused · ${ofTotal}`
     case 'completed':
+      if (needsDangerDecision(item)) return blockedStatus(item.danger)
+      if (isDeletedRow(item)) return 'Deleted'
       return `${size || received} · ${relativeTime(item.completedAt ?? item.endedAt ?? item.startedAt, now)}`
     case 'cancelled':
       return 'Cancelled'
     case 'interrupted':
-      return item.canResume
-        ? `Interrupted · ${ofTotal}`
-        : `Failed · ${describeDownloadError(item.error)}`
+      return item.errorMessage ? `Failed · ${item.errorMessage}` : describeDownloadError(item.error)
   }
 }
 
@@ -50,52 +57,17 @@ export function formatEta(ms: number | null): string {
 }
 
 /**
- * The engine's `error` is a short machine reason (Android: `network-timeout`, `file-no-space`;
- * the core: `shutdown`, `file-error`; Electron: `interrupted`). One plain sentence each.
+ * The Downloads settings row's name for a picked folder. Android keeps it as a document-tree
+ * URI (`content://…/tree/primary%3ADownload%2FZenium`) whose last path segment is
+ * `volume:relative/path`, so the row shows the relative path (`Download/Zenium`); a desktop
+ * path is shown as it is, the way Chrome's Location row does.
  */
-export function describeDownloadError(error: string | undefined): string {
-  const e = (error ?? '').toLowerCase()
-  if (!e) return 'Something went wrong'
-  if (e === 'shutdown') return 'Zenium was closed'
-  if (e.includes('no-space') || e.includes('disk_full')) return 'Not enough storage space'
-  if (e.includes('access-denied') || e.includes('access_denied')) return 'Zenium needs permission'
-  if (e.startsWith('file')) return 'The file could not be saved'
-  if (e.includes('timeout') || e.includes('timed_out')) return 'The connection timed out'
-  if (e.includes('disconnected') || e.includes('internet')) return 'No internet connection'
-  if (e.startsWith('network') || e.includes('connection') || e.includes('name_not_resolved'))
-    return 'Network error'
-  if (e.startsWith('server')) return 'The server stopped sending the file'
-  return 'Something went wrong'
-}
-
-/** Whether the row is holding a flagged file behind its Keep / Discard warning. */
-export function isQuarantined(item: DownloadItem): boolean {
-  return item.state === 'completed' && item.danger.level !== 'safe' && !item.dangerAccepted
-}
-
-/** Whether the row can start its transfer again from scratch (`blob:` bytes are gone with the page). */
-export function canRetry(item: DownloadItem): boolean {
-  return (
-    (item.state === 'interrupted' || item.state === 'cancelled') && !item.url.startsWith('blob:')
-  )
-}
-
-/**
- * The Downloads settings row's name for the current folder. Android keeps a picked folder as a
- * document-tree URI (`content://…/tree/primary%3ADownload%2FZenium`); the last path segment is
- * `volume:relative/path`, so show the relative path (`Download/Zenium`). A plain path shows its
- * last segment, and nothing set is the platform's Downloads folder.
- */
-export function downloadFolderLabel(directory: string | null): string {
-  if (!directory) return 'Downloads'
-  if (directory.startsWith('content:')) {
-    const tree = directory.match(/\/tree\/([^/?#]+)/)
-    const segment = tree ? safeDecode(tree[1]) : safeDecode(directory)
-    const relative = segment.includes(':') ? segment.slice(segment.indexOf(':') + 1) : segment
-    return relative.replace(/^\/+|\/+$/g, '') || 'Storage'
-  }
-  const parts = directory.replace(/[\\/]+$/, '').split(/[\\/]/)
-  return parts[parts.length - 1] || directory
+export function downloadFolderLabel(directory: string): string {
+  if (!directory.startsWith('content:')) return directory
+  const tree = directory.match(/\/tree\/([^/?#]+)/)
+  const segment = tree ? safeDecode(tree[1]) : safeDecode(directory)
+  const relative = segment.includes(':') ? segment.slice(segment.indexOf(':') + 1) : segment
+  return relative.replace(/^\/+|\/+$/g, '') || 'Storage'
 }
 
 function safeDecode(value: string): string {
@@ -104,14 +76,4 @@ function safeDecode(value: string): string {
   } catch {
     return value
   }
-}
-
-/** "pdf, PNG, .jpg" -> ['pdf', 'png', 'jpg'], unique, in the order typed. */
-export function parseAutoOpenTypes(text: string): string[] {
-  const seen = new Set<string>()
-  for (const raw of text.split(/[\s,;]+/)) {
-    const ext = normalizeExtension(raw)
-    if (ext) seen.add(ext)
-  }
-  return [...seen]
 }
