@@ -86,6 +86,16 @@ export function visitTime(ms: number, options: DayGroupOptions = {}): string {
 }
 
 /**
+ * When something happened, for a row outside the day groups (a recently closed tab): the time
+ * of day when it was today, the day's heading ("Yesterday", the weekday, the date) otherwise.
+ */
+export function timeOrDay(ms: number, now: number, options: DayGroupOptions = {}): string {
+  const day = dayKey(ms, options.timeZone)
+  const today = dayKey(now, options.timeZone)
+  return day === today ? visitTime(ms, options) : dayLabel(day, today, options.locale)
+}
+
+/**
  * Bucket visits by calendar day, newest day first and newest visit first within a day. Ties in
  * `visitTime` keep their input order.
  */

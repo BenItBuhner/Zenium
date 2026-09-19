@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { dayKey, dayLabel, daysBetween, groupByDay, visitTime } from '../historyGroups'
+import { dayKey, dayLabel, daysBetween, groupByDay, timeOrDay, visitTime } from '../historyGroups'
 
 // 2026-09-17T12:00:00Z, a Thursday.
 const NOON_UTC = Date.UTC(2026, 8, 17, 12)
@@ -119,5 +119,23 @@ describe('visitTime', () => {
     expect(visitTime(t, { timeZone: 'UTC', locale: 'en-GB' })).toMatch(/^0?7:05$/)
     expect(visitTime(t, { timeZone: 'Europe/Berlin', locale: 'de-DE' })).toMatch(/^0?9:05$/)
     expect(visitTime(t, { timeZone: 'America/New_York', locale: 'en-US' })).toMatch(/3:05\sAM/)
+  })
+})
+
+describe('timeOrDay', () => {
+  const options = { timeZone: 'UTC', locale: 'en-GB' }
+
+  it('gives the time of day for today and the day heading for anything earlier', () => {
+    expect(timeOrDay(NOON_UTC - 5 * HOUR, NOON_UTC, options)).toMatch(/^0?7:00$/)
+    expect(timeOrDay(NOON_UTC - DAY, NOON_UTC, options)).toBe('Yesterday')
+    expect(timeOrDay(NOON_UTC - 3 * DAY, NOON_UTC, options)).toBe('Monday')
+    expect(timeOrDay(NOON_UTC - 10 * DAY, NOON_UTC, options)).toBe(
+      dayLabel('2026-09-07', '2026-09-17', 'en-GB')
+    )
+  })
+
+  it('judges today by the zone: an hour ago across midnight is yesterday', () => {
+    const justAfterMidnight = Date.UTC(2026, 8, 17, 0, 30)
+    expect(timeOrDay(justAfterMidnight - HOUR, justAfterMidnight, options)).toBe('Yesterday')
   })
 })
