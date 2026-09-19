@@ -23,9 +23,10 @@ interface Props {
 }
 
 /**
- * What a tab looks like when its live page is not available to draw: the last thumbnail the
- * chrome captured of it, or – for pages never shown since start-up – a quiet placeholder page
- * carrying the tab's identity.
+ * What a tab looks like when its live page is not available to draw: the last picture the host
+ * has of it (`lib/thumbnails.ts`: the card picture it keeps across restarts, or the full cover
+ * the chrome captured), or – for pages it has none of – a quiet placeholder page carrying the
+ * tab's identity.
  */
 export function TabPreview({
   tab,
@@ -34,7 +35,7 @@ export function TabPreview({
   className,
   style
 }: Props): JSX.Element {
-  const thumbnail = useThumbnail(tab.id)
+  const thumbnail = useThumbnail(tab.id, cover)
   // A chrome page is never captured: its card shows the page drawn small (v2 §10.1).
   if (isChromePageUrl(tab.url)) {
     return (

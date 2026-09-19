@@ -35,6 +35,8 @@ interface PageHost {
     /** HTTP sign-in and client-certificate requests. */
     val security: Security
     val snapshots: HistorySnapshots
+    /** The tab cards' pictures on disk ([Thumbnails]); a host without cards (a custom tab) keeps none. */
+    val thumbnails: Thumbnails? get() = null
     val tabs: TabHost
     val fullscreenTab: TabWebView?
     /** Whether the host is in its own fullscreen (Menu > Fullscreen: the bars hidden, no element fullscreen). */

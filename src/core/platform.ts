@@ -38,6 +38,7 @@ import type {
   SyncScope,
   SyncStatus,
   Tab,
+  ThumbnailPicture,
   WindowChrome,
   WindowMaterial
 } from '../shared/types'
@@ -1532,6 +1533,23 @@ export interface VoiceHost {
   openSettings(): void
 }
 
+/**
+ * Tab card thumbnails the host keeps on disk, one picture per tab (`thumbnail.*` in `Commands`).
+ * The host captures on its own – a page leaving the screen, the app going to the background,
+ * the cover it takes for a sheet – and raises `thumbnail.captured` to the window; the chrome
+ * reads a card's picture when it shows the card, and says which pictures are to go.
+ */
+export interface ThumbnailHost {
+  /** How wide a card is, in device pixels: what captures are scaled to. */
+  configure(width: number): void
+  /** The persisted picture of a tab, or null when there is none. */
+  load(tabId: string): Promise<ThumbnailPicture | null>
+  /** The tab navigated, or is gone for good: its picture is not to be shown again. */
+  drop(tabId: string): void
+  /** Once at boot: every picture but those of `keep` (the session's tabs) goes. */
+  sweep(keep: readonly string[]): void
+}
+
 export interface Platform {
   readonly info: PlatformInfo
   readonly capabilities: HostCapabilities
@@ -1571,6 +1589,8 @@ export interface Platform {
   readonly shortcuts?: ShortcutHost
   /** Voice search through the device's recogniser; omit when `capabilities.voiceSearch` is off. */
   readonly voice?: VoiceHost
+  /** Tab card thumbnails kept across restarts; hosts without it show placeholder cards. */
+  readonly thumbnails?: ThumbnailHost
   /** Source of Mozilla's Readability library for Reader View, or null when unavailable. */
   readabilitySource(file: 'Readability.js' | 'Readability-readerable.js'): string | null
   /** Offline page translation; hosts without it report the feature as unavailable. */

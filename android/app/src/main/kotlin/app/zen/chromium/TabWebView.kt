@@ -107,6 +107,10 @@ class TabWebView(
     private var committedIndex = -1
     private var committedUrl = ""
     private var lastRememberedAt = 0L
+    /** The copies of the window in flight for this page, shared between their askers (see [captureBitmap]). */
+    private val captureShare = CaptureShare<Bitmap>()
+    /** When the tab's card picture was last taken (uptime millis; 0: never), see [captureThumbnail]. */
+    private var thumbnailAt = 0L
     private var replyProxy: JavaScriptReplyProxy? = null
     /** Whether the bridge object the page script posts through is registered on this view. */
     private var bridgeInstalled = false
@@ -913,28 +917,86 @@ class TabWebView(
 
     /**
      * Downscaled RGB_565 copy of this view's pixels as they are on screen (null when it cannot be
-     * copied: hidden, unsized). Shared by the overlay snapshot and the history previews.
+     * copied: hidden, unsized). Shared by the overlay snapshot, the card thumbnail and the
+     * history previews – and shared in flight: a request while a copy with at least its pixels
+     * is under way gets that copy's bitmap rather than a second PixelCopy of the same frame
+     * ([CaptureShare]). The bitmap belongs to everyone who hears it; nobody recycles it.
      */
     private fun captureBitmap(scale: Float, callback: (Bitmap?) -> Unit) {
         if (width <= 0 || height <= 0 || !isShown) {
             callback(null)
             return
         }
+        val ticket = captureShare.request(scale, callback) ?: return
         val bitmap = Bitmap.createBitmap((width * scale).toInt().coerceAtLeast(1), (height * scale).toInt().coerceAtLeast(1), Bitmap.Config.RGB_565)
         val location = IntArray(2)
         getLocationInWindow(location)
         val rect = Rect(location[0], location[1], location[0] + width, location[1] + height)
         try {
             PixelCopy.request(host.activity.window, rect, bitmap, { result ->
-                callback(if (result == PixelCopy.SUCCESS) bitmap else null)
+                captureShare.complete(ticket, if (result == PixelCopy.SUCCESS) bitmap else null)
             }, Handler(Looper.getMainLooper()))
         } catch (e: Exception) {
             // Software fallback (e.g. before the window is attached).
-            runCatching {
+            val drawn = runCatching {
                 val canvas = Canvas(bitmap)
                 canvas.scale(scale, scale)
                 draw(canvas)
-            }.onSuccess { callback(bitmap) }.onFailure { callback(null) }
+            }.isSuccess
+            captureShare.complete(ticket, if (drawn) bitmap else null)
+        }
+    }
+
+    /** The scale the cover and the card picture copy the page at: at most 1400 px wide, else half. */
+    private fun coverScale(): Float = if (width > 1400) 1400f / width else 0.5f
+
+    // --- card thumbnails (the pictures of the tab overview's cards, `Thumbnails.kt`) --------------
+
+    /**
+     * Take the card picture of this page now, if there is anything to take: the page is on
+     * screen, not mid navigation (a copy would be of the page it is leaving, under the URL it is
+     * going to) or mid back gesture, and its last picture is not fresh ([Thumbnails.FRESH_MS]:
+     * the cover a sheet just captured, the copy a hide a frame ago made). Called on the page's
+     * way off the screen ([Host.setTabVisible]'s hide), as the app leaves the foreground
+     * ([Host.onPause]) and before a shown tab's view goes ([TabHost.destroy], for an undo).
+     */
+    fun captureThumbnail() {
+        if (host.thumbnails == null || backTransition != null || awaitingCommit) return
+        if (width <= 0 || height <= 0 || !isShown) return
+        if (Thumbnails.isFresh(thumbnailAt, SystemClock.uptimeMillis())) return
+        // A view with no document yet shows nothing worth a picture; its card has its placeholder.
+        val document = currentDocument ?: return
+        if (document == "about:blank") return
+        captureBitmap(coverScale()) { bitmap -> if (bitmap != null) publishThumbnail(bitmap, document) }
+    }
+
+    /**
+     * The card picture from a copy of the page: scaled to the card's width and encoded off the
+     * main thread, written to disk ([Thumbnails.save]) and handed to the chrome
+     * (`thumbnail.captured`). Not of a page that navigated since the copy was asked for, and not
+     * twice for one frame – a cover and a hide that shared the copy publish once between them.
+     */
+    private fun publishThumbnail(bitmap: Bitmap, document: String?) {
+        val thumbnails = host.thumbnails ?: return
+        val now = SystemClock.uptimeMillis()
+        if (document == null || document != currentDocument || Thumbnails.isFresh(thumbnailAt, now)) return
+        thumbnailAt = now
+        val id = tabId
+        val cardWidth = thumbnails.width
+        val target = host
+        encoder.execute {
+            val picture = Thumbnails.encode(bitmap, cardWidth)?.takeIf { thumbnails.save(id, it.jpeg) }
+            Handler(Looper.getMainLooper()).post {
+                // The page navigated while the picture was encoded: it is of the page before, and
+                // the card must not show it (BH-14) – not now, not after a restart. Nor does a
+                // picture that never made it to disk count as taken.
+                if (picture == null || document != currentDocument) {
+                    thumbnailAt = 0L
+                    if (picture != null) encoder.execute { thumbnails.drop(id) }
+                    return@post
+                }
+                target.hostEvent("thumbnail.captured", json("tabId" to id, "data" to picture.dataUrl, "width" to picture.width, "height" to picture.height))
+            }
         }
     }
 
@@ -1103,23 +1165,28 @@ class TabWebView(
         clearMatches()
     }
 
-    /** Downscaled JPEG of what is on screen right now, for the dimmed preview behind overlays. */
+    /**
+     * Downscaled JPEG of what is on screen right now, for the dimmed preview behind overlays.
+     * The tab's card picture comes out of the same copy ([publishThumbnail]): the page under a
+     * sheet or the overview is never copied a second time for its card.
+     */
     fun snapshot(callback: (String?) -> Unit) {
         if (backTransition != null) {
             callback(null)
             return
         }
-        val scale = if (width > 1400) 1400f / width else 0.5f
         // The chrome asks just before it hides the page (menu, URL bar, overview): the copy is the
         // last chance to remember this history entry before a load from within that UI replaces it.
         val index = committedIndex
         val url = committedUrl
-        captureBitmap(scale) { bitmap ->
+        val document = currentDocument
+        captureBitmap(coverScale()) { bitmap ->
             if (bitmap == null) {
                 callback(null)
                 return@captureBitmap
             }
             if (index >= 0 && url.isNotEmpty() && url == (copyBackForwardList().currentItem?.url ?: "")) remember(index, url, bitmap)
+            if (!awaitingCommit) publishThumbnail(bitmap, document)
             encoder.execute {
                 val out = ByteArrayOutputStream()
                 bitmap.compress(Bitmap.CompressFormat.JPEG, 62, out)

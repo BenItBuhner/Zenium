@@ -6,11 +6,17 @@ import { offerChromeShortcut } from '@renderer/lib/chromeShortcuts'
 import { chromeUnderPages } from '@renderer/lib/cover'
 import { remoteDragOver } from '@renderer/lib/drag'
 import { startDownloadsUi } from '@renderer/lib/downloads'
-import { isPhone } from '@renderer/lib/formFactor'
+import { isPhone, viewportStore } from '@renderer/lib/formFactor'
 import { presentInstallBanner, retireInstallBanner } from '@renderer/lib/installBanner'
 import { onLayoutApplied, onViewDrawn } from '@renderer/lib/pageView'
 import { APP_MENU_EVENT } from '@renderer/lib/shortcuts'
 import { openSettings } from '@renderer/lib/pages'
+import {
+  configureThumbnails,
+  rememberCard,
+  thumbnailWidthFor,
+  trackTabs
+} from '@renderer/lib/thumbnails'
 import {
   cancelExternalProtocol,
   closeMenu,
@@ -253,8 +259,17 @@ export function useMainEvents(): void {
       }),
       onEvent('view.drawn', ({ tabId, visible }) => {
         if (followsCover()) onViewDrawn(tabId, visible)
-      })
+      }),
+      // Tab card pictures (lib/thumbnails.ts): the host's captures, the tabs' navigations and
+      // closes, and the card width the host scales its captures to.
+      onEvent('thumbnail.captured', ({ tabId, ...picture }) => rememberCard(tabId, picture)),
+      browserStore.subscribe(() => trackTabs(browserStore.get().state)),
+      viewportStore.subscribe(() =>
+        configureThumbnails(thumbnailWidthFor(viewportStore.get().width, window.devicePixelRatio))
+      )
     ]
+    trackTabs(browserStore.get().state)
+    configureThumbnails(thumbnailWidthFor(viewportStore.get().width, window.devicePixelRatio))
     return () => offs.forEach((off) => off())
   }, [])
 }
