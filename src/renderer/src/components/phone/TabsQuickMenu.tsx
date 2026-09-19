@@ -4,6 +4,7 @@ import { Plus, X } from 'lucide-react'
 import type { PhoneBarPosition, Rect, UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { useBackSurface } from '@renderer/lib/back'
+import { closeWithUndo } from '@renderer/lib/closeUndo'
 import { stageStore } from '@renderer/lib/gestures/stage'
 import { activeTab } from '@renderer/lib/selectors'
 import { uiStore } from '@renderer/lib/ui'
@@ -71,6 +72,16 @@ export function TabsQuickMenu({
     onClose()
     action()
   }
+  /** Close Tab comes with Undo on the toast, as the overview's closes do (lib/closeUndo.ts). */
+  const closeTab = (): void => {
+    if (!tab) return
+    closeWithUndo({
+      tabs: [tab],
+      settings: state.settings,
+      activeTabId: tab.id,
+      close: () => run('tab.close', { tabId: tab.id })
+    })
+  }
   const vertical =
     edge === 'bottom'
       ? { bottom: window.innerHeight - anchor.y + GAP }
@@ -110,7 +121,7 @@ export function TabsQuickMenu({
           role="menuitem"
           className="zen-quick-menu-item"
           disabled={!tab}
-          onClick={() => pick(() => tab && run('tab.close', { tabId: tab.id }))}
+          onClick={() => pick(closeTab)}
         >
           <X className="h-5 w-5 shrink-0" strokeWidth={1.75} />
           <span className="min-w-0 flex-1 truncate">Close Tab</span>

@@ -1,6 +1,6 @@
 import type { CSSProperties, JSX } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { PanelLeft, PanelRight, Plus } from 'lucide-react'
+import { Ellipsis, PanelLeft, PanelRight, Plus } from 'lucide-react'
 import type {
   Folder,
   FolderColor,
@@ -13,6 +13,7 @@ import type {
 import { FOLDER_COLORS } from '@shared/defaults'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { cmd, run } from '@renderer/lib/api'
+import { closeWithUndo } from '@renderer/lib/closeUndo'
 import { useViewport } from '@renderer/lib/formFactor'
 import { openSpacesDrawer } from '@renderer/lib/gestures/drawer'
 import type { DropOutcome } from '@renderer/lib/gestures/dropTarget'
@@ -22,6 +23,7 @@ import {
   type OverviewState
 } from '@renderer/lib/gestures/stage'
 import { groupColorHex, groupsOf, nextGroupColor } from '@renderer/lib/groups'
+import { historyAdapter, type ClosedEntrySummary } from '@renderer/lib/historyAdapter'
 import { overviewColumns } from '@renderer/lib/layout'
 import { FRAME_SHADOW, cardShadow, lerpShadow, shadowCss } from '@renderer/lib/motion/elevation'
 import { reducedMotion } from '@renderer/lib/motion/spring'
@@ -34,15 +36,18 @@ import {
   regularOf,
   tabTitle
 } from '@renderer/lib/selectors'
-import { uiStore } from '@renderer/lib/ui'
+import { browserStore, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { Favicon } from '../sidebar/Favicon'
 import { SpaceGlyph } from '../SpaceGlyph'
+import { CloseAllSheet } from './CloseAllSheet'
 import { Departures } from './Departures'
 import { clearDepartures, depart, rectOf } from './departureStore'
 import { DEFAULT_FOLDER_ICON, GroupCard } from './GroupCard'
 import { CARD_HEADER, CARD_RADIUS, CardBody, OverviewCard } from './OverviewCard'
 import { OverviewSheet, type SheetAction } from './OverviewSheet'
+import { noteSheetOpener } from './phonePanel'
+import { RecentlyClosedSheet } from './RecentlyClosedSheet'
 import { TabPreview } from './TabPreview'
 import { cancelLift, liftStore, retargetLift, settleLift, type LiftHover } from './useCardLift'
 import { useFlip } from './useFlip'
@@ -54,6 +59,8 @@ const NEW_GROUP_NAME = 'Group'
 export const NEW_TAB_CELL = 'new-tab'
 /** How long a dropped card waits for the browser to confirm its new place before it lands anyway. */
 const DROP_TIMEOUT_MS = 900
+/** How long a restored tab is waited for before the overview leaves on whatever tab is active. */
+const RESTORE_TIMEOUT_MS = 800
 /**
  * The middle of a card, as fractions of its width and height inset from each edge, is where a
  * dragged card merges into it; the bands outside put the dragged card before or after it.
@@ -70,7 +77,16 @@ interface Props {
   edge: PhoneBarPosition
 }
 
-type Sheet = { kind: 'tab'; tabId: string } | { kind: 'group'; folderId: string }
+/**
+ * The sheet up over the grid: a card's or a group's menu, the header's menu (with the recently
+ * closed list as the menu read it), the close-all question, the recently closed list.
+ */
+type Sheet =
+  | { kind: 'tab'; tabId: string }
+  | { kind: 'group'; folderId: string }
+  | { kind: 'menu'; closed: ClosedEntrySummary[] }
+  | { kind: 'close-all' }
+  | { kind: 'recently-closed'; closed: ClosedEntrySummary[] }
 
 interface PendingDrop {
   /** True once the browser state shows the drop – then the card's new slot can be measured. */
@@ -147,6 +163,12 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   const fadeGrid = useFadeEdges<HTMLDivElement>({ axis: 'y' })
   const [heroCell, setHeroCell] = useState<Rect | null>(null)
   const [sheet, setSheet] = useState<Sheet | null>(null)
+  /**
+   * A sheet has left: forget it – unless the row it was dismissed for has put the next sheet up
+   * already (the menu's "Close all tabs" opens the question as the menu goes).
+   */
+  const leaveSheet = (kind: Sheet['kind']): void =>
+    setSheet((current) => (current?.kind === kind ? null : current))
   const handle = useOverviewHandle({ edge })
   // Every `data-cell` under the grid – page and blank-tab cards, group cards, the New Tab card –
   // is one set on one spring; the same set answers where a card is for the morph and the exits.
@@ -499,24 +521,57 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   /** Tabs told to close leave the grid visibly: their cards collapse where they stand. */
   const closesForReal = (tab: Tab): boolean =>
     !(tab.pinned || tab.essential) || state.settings.pinnedCloseBehavior === 'close'
-  const closeTabs = (tabs: Tab[]): void => {
+  /**
+   * Every close goes through at once and comes with Undo on the toast (lib/closeUndo.ts):
+   * "Closed <title>" or "N tabs closed", the restore through the core's recently closed store.
+   */
+  const undoable = (tabs: Tab[], close: () => void): void =>
+    closeWithUndo({ tabs, settings: state.settings, activeTabId: active?.id ?? null, close })
+  const departAll = (tabs: Tab[]): void =>
     depart(
       tabs.flatMap((tab) => {
         const rect = closesForReal(tab) ? rectOf(flip.element(tab.id)) : null
         return rect ? [{ key: tab.id, kind: 'tab' as const, tab, rect }] : []
       })
     )
-    for (const tab of tabs) run('tab.close', { tabId: tab.id })
+  const closeTabs = (tabs: Tab[]): void => {
+    departAll(tabs)
+    undoable(tabs, () => {
+      for (const tab of tabs) run('tab.close', { tabId: tab.id })
+    })
   }
   const closeOthers = (tab: Tab): void => {
     const others = regular.filter((t) => t.id !== tab.id)
-    depart(
-      others.flatMap((t) => {
-        const rect = rectOf(flip.element(t.id))
-        return rect ? [{ key: t.id, kind: 'tab' as const, tab: t, rect }] : []
-      })
-    )
-    run('tab.closeOthers', { tabId: tab.id })
+    departAll(others)
+    undoable(others, () => run('tab.closeOthers', { tabId: tab.id }))
+  }
+  /** "Close all tabs": every unpinned tab of the space goes (Zen's Clear tabs); pinned ones stay. */
+  const closeAll = (): void => {
+    departAll(regular)
+    undoable(regular, () => run('space.closeUnpinned', { spaceId: space.id }))
+  }
+  const closeAllAsked = (): void => {
+    if (regular.length === 0) return
+    if (state.settings.confirmCloseAll) setSheet({ kind: 'close-all' })
+    else closeAll()
+  }
+  /** The header's menu: it reads the recently closed list first, so its row can say how many. */
+  const openMenu = async (): Promise<void> => {
+    noteSheetOpener()
+    const closed = await historyAdapter.recentlyClosed().catch(() => [])
+    setSheet({ kind: 'menu', closed: closed.filter((entry) => entry.kind === 'tab') })
+  }
+  /**
+   * A recently closed tab picked from the sheet comes back into its place and the overview
+   * leaves on it: the tab is a new record, so the leave waits for the browser to show it.
+   */
+  const restoreClosed = (entry: ClosedEntrySummary): void => {
+    const known = new Set(Object.keys(state.tabs))
+    void historyAdapter.restoreClosed(entry.id)
+    void whenState(
+      (s) => Object.keys(s.tabs).find((id) => !known.has(id)) ?? null,
+      RESTORE_TIMEOUT_MS
+    ).then((tabId) => closeOverview(tabId ?? undefined))
   }
   const closeGroup = (folder: Folder): void => {
     const rect = rectOf(flip.element(`group:${folder.id}`))
@@ -534,7 +589,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     run('folder.delete', { folderId: folder.id, unpack: false })
   }
   /** A card swiped off the grid is already out of sight: just close the tab. */
-  const swipedAway = (tab: Tab): void => run('tab.close', { tabId: tab.id })
+  const swipedAway = (tab: Tab): void => undoable([tab], () => run('tab.close', { tabId: tab.id }))
 
   const card = (tab: Tab): JSX.Element => (
     <OverviewCard
@@ -610,6 +665,15 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
               ) : (
                 <PanelLeft className="h-[18px] w-[18px]" />
               )}
+            </button>
+            <button
+              type="button"
+              className="zen-toolbar-button h-9 w-9"
+              aria-label="More"
+              aria-haspopup="menu"
+              onClick={() => void openMenu()}
+            >
+              <Ellipsis className="h-[18px] w-[18px]" />
             </button>
           </header>
           {state.spaces.length > 1 && <SpaceStrip spaces={state.spaces} activeId={space.id} />}
@@ -721,8 +785,75 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
           onCloseGroup={closeGroup}
         />
       )}
+      {interactive && sheet?.kind === 'menu' && (
+        <OverviewMenuSheet
+          title={space.name}
+          open={regular.length}
+          closed={sheet.closed.length}
+          onClose={() => leaveSheet('menu')}
+          onRecentlyClosed={() => setSheet({ kind: 'recently-closed', closed: sheet.closed })}
+          onCloseAll={closeAllAsked}
+        />
+      )}
+      {interactive && sheet?.kind === 'close-all' && (
+        <CloseAllSheet
+          count={regular.length}
+          spaceName={space.name}
+          onClose={() => leaveSheet('close-all')}
+          onConfirm={(askAgain) => {
+            if (!askAgain) run('settings.update', { confirmCloseAll: false })
+            closeAll()
+          }}
+        />
+      )}
+      {interactive && sheet?.kind === 'recently-closed' && (
+        <RecentlyClosedSheet
+          initial={sheet.closed}
+          onClose={() => leaveSheet('recently-closed')}
+          onRestore={restoreClosed}
+        />
+      )}
     </>
   )
+}
+
+/**
+ * The header's menu: the recently closed list (matrix TAB-22, TAB-23) and "Close all tabs" (TAB-06);
+ * "Close other tabs" stays on a card's own menu, where it names the card it keeps.
+ */
+function OverviewMenuSheet({
+  title,
+  open,
+  closed,
+  onClose,
+  onRecentlyClosed,
+  onCloseAll
+}: {
+  title: string
+  /** How many tabs "Close all tabs" would close (the unpinned ones). */
+  open: number
+  /** How many tabs the recently closed list holds. */
+  closed: number
+  onClose: () => void
+  onRecentlyClosed: () => void
+  onCloseAll: () => void
+}): JSX.Element {
+  const actions: SheetAction[] = [
+    {
+      id: 'recently-closed',
+      label: closed > 0 ? `Recently closed (${closed})` : 'Recently closed',
+      disabled: closed === 0,
+      onPick: onRecentlyClosed
+    },
+    {
+      id: 'close-all',
+      label: open > 0 ? `Close all tabs (${open})` : 'Close all tabs',
+      destructive: true,
+      disabled: open === 0,
+      onPick: onCloseAll
+    }
+  ]
+  return <OverviewSheet title={title} actions={actions} onClose={onClose} />
 }
 
 /** The card in the hand: follows the finger, tucks in over a target, flies into its slot. */
@@ -940,6 +1071,28 @@ function SpaceStrip({ spaces, activeId }: { spaces: Space[]; activeId: string })
       })}
     </div>
   )
+}
+
+/** The first browser state `pick` answers for, within `ms`; null once that time has passed. */
+function whenState<T>(pick: (state: UIState) => T | null, ms: number): Promise<T | null> {
+  return new Promise((resolve) => {
+    let done = false
+    const finish = (value: T | null): void => {
+      if (done) return
+      done = true
+      unsubscribe()
+      clearTimeout(timer)
+      resolve(value)
+    }
+    const check = (): void => {
+      const s = browserStore.get().state
+      const value = s ? pick(s) : null
+      if (value !== null) finish(value)
+    }
+    const unsubscribe = browserStore.subscribe(check)
+    const timer = setTimeout(() => finish(null), ms)
+    check()
+  })
 }
 
 function lerpRect(a: Rect, b: Rect, t: number): Rect {
