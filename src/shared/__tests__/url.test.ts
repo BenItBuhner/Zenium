@@ -12,6 +12,7 @@ import {
   displayUrl,
   errorPageCertificate,
   errorPageUrl,
+  extensionPageOf,
   fullUrl,
   getDomain,
   inputToUrl,
@@ -20,6 +21,8 @@ import {
   isNewTabUrl,
   isProbablyUrl,
   isSameSite,
+  isWebPageUrl,
+  presentedUrl,
   titleForUrl
 } from '../url'
 
@@ -242,6 +245,67 @@ describe('internal pages', () => {
     expect(fullUrl('zen://settings/privacy')).toBe('zenium://settings/privacy')
     expect(fullUrl('https://www.example.com/a?b=c')).toBe('https://www.example.com/a?b=c')
     expect(fullUrl('zen://history')).toBe('zen://history')
+  })
+})
+
+describe('extension pages (v2 §10.1 applied to chrome-extension://)', () => {
+  const id = 'dbepggeogbaibhgnhhndojpepiihcmeb'
+  const chromeForm = `chrome-extension://${id}/pages/options.html?tab=2#keys`
+  const emulatedForm = `https://${id}.ext.zenium.invalid/pages/options.html?tab=2#keys`
+
+  it('recognises both the chrome-extension:// form and the runtime’s emulated origin', () => {
+    expect(extensionPageOf(chromeForm)).toEqual({ id, url: chromeForm })
+    expect(extensionPageOf(emulatedForm)).toEqual({ id, url: chromeForm })
+    expect(extensionPageOf(`https://${id}.ext.zenium.invalid/`)).toEqual({
+      id,
+      url: `chrome-extension://${id}/`
+    })
+  })
+
+  it('leaves the web, internal pages and malformed ids alone', () => {
+    expect(extensionPageOf('https://example.com/ext.zenium.invalid')).toBeNull()
+    expect(extensionPageOf('https://notanid.ext.zenium.invalid/x.html')).toBeNull()
+    expect(
+      extensionPageOf('http://dbepggeogbaibhgnhhndojpepiihcmeb.ext.zenium.invalid/')
+    ).toBeNull()
+    expect(extensionPageOf('chrome-extension://not-an-id/options.html')).toBeNull()
+    expect(extensionPageOf('zen://settings')).toBeNull()
+    expect(extensionPageOf('')).toBeNull()
+    expect(extensionPageOf('not a url')).toBeNull()
+  })
+
+  it('is not a page of the web, whatever origin the runtime serves it from', () => {
+    expect(isWebPageUrl('https://example.com/')).toBe(true)
+    expect(isWebPageUrl('http://localhost:3000/')).toBe(true)
+    expect(isWebPageUrl(chromeForm)).toBe(false)
+    expect(isWebPageUrl(emulatedForm)).toBe(false)
+    expect(isWebPageUrl('zen://settings')).toBe(false)
+    expect(isWebPageUrl('file:///tmp/a.html')).toBe(false)
+  })
+
+  it('shows, copies and shares the chrome-extension:// address in full for either form', () => {
+    expect(displayUrl(chromeForm)).toBe(chromeForm)
+    expect(displayUrl(emulatedForm)).toBe(chromeForm)
+    expect(fullUrl(chromeForm)).toBe(chromeForm)
+    expect(fullUrl(emulatedForm)).toBe(chromeForm)
+    expect(presentedUrl(emulatedForm)).toBe(chromeForm)
+    expect(presentedUrl(chromeForm)).toBe(chromeForm)
+    expect(presentedUrl('zen://settings/privacy')).toBe('zenium://settings/privacy')
+    expect(presentedUrl('https://www.example.com/a?b=c')).toBe('https://www.example.com/a?b=c')
+    expect(displayUrl(emulatedForm)).not.toContain('ext.zenium.invalid')
+  })
+
+  it('has no host to show: the id stands in for it, and for a missing title', () => {
+    expect(displayHost(chromeForm)).toBe(id)
+    expect(displayHost(emulatedForm)).toBe(id)
+    expect(titleForUrl(chromeForm)).toBe(id)
+    expect(titleForUrl(emulatedForm)).toBe(id)
+  })
+
+  it('is typed and navigated like any address', () => {
+    expect(isProbablyUrl(chromeForm)).toBe(true)
+    expect(inputToUrl(chromeForm)).toBe(chromeForm)
+    expect(isNavigableUrl(chromeForm)).toBe(true)
   })
 })
 
