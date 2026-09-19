@@ -49,11 +49,18 @@ export function PickList({
  * Settings › Languages › Download a model, on a phone: the pairs the registry offers that are
  * not on the device, each with its size; a pick starts the download (the models group shows it
  * arriving) and closes the sheet. While the list is on its way, and when every pair is already
- * on the device, one static row says so (§9.17, §9.34).
+ * on the device, one static row says so (§9.17, §9.34). `onDevice` is the state's installed and
+ * downloading lists, which keep the options current when the registry's kept answer is older.
  */
-export function ModelPickList({ close }: { close: () => void }): JSX.Element {
-  const models = useRegistryModels('')
-  const options = models ? modelOptions(models) : []
+export function ModelPickList({
+  onDevice,
+  close
+}: {
+  onDevice: readonly { from: string; to: string }[]
+  close: () => void
+}): JSX.Element {
+  const models = useRegistryModels(onDevice.map(pairKey).join(' '))
+  const options = models ? modelOptions(models, onDevice) : []
   if (models === null || options.length === 0) {
     return (
       <div className="zen-settings-sheet-rows">

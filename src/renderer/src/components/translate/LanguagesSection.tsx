@@ -1,11 +1,18 @@
 import type { JSX, ReactNode } from 'react'
-import { Children, useEffect, useState } from 'react'
+import { Children } from 'react'
 import { ArrowUp, Trash2, type LucideIcon } from 'lucide-react'
-import type { TranslateModelInfo, TranslatePreferences } from '@shared/translate'
+import type { TranslatePreferences } from '@shared/translate'
 import type { UIState } from '@shared/types'
 import { languageName } from '@shared/languageNames'
-import { cmd, run } from '@renderer/lib/api'
-import { languageOptions, pairKey, pairLabel, type LanguageOption } from '@renderer/lib/translate'
+import { run } from '@renderer/lib/api'
+import {
+  languageOptions,
+  modelOptions,
+  pairKey,
+  pairLabel,
+  useRegistryModels,
+  type LanguageOption
+} from '@renderer/lib/translate'
 import { cn, formatBytes } from '@renderer/lib/utils'
 import { V2CheckRow, V2IconButton } from '../extensions/v2'
 import { Menulist } from './Menulist'
@@ -303,35 +310,17 @@ function LanguageList({
  * Translations set under the licence the registry names.
  */
 function ModelsGroup({ state }: { state: UIState }): JSX.Element {
-  const { installed, registryDate, modelLicense } = state.translate
-  const [models, setModels] = useState<TranslateModelInfo[]>([])
-  const [pending, setPending] = useState<string[]>([])
-
-  // The registry's pairs, read again whenever the set on the device changes.
-  useEffect(() => {
-    let cancelled = false
-    cmd('translate.models', undefined).then(
-      (list) => {
-        if (!cancelled) setModels(list)
-      },
-      () => undefined
-    )
-    return () => {
-      cancelled = true
-    }
-  }, [installed])
-
+  const { installed, downloading, registryDate, modelLicense } = state.translate
+  // The registry's pairs, read again whenever the set on the device changes; the pairs on the
+  // device or on their way (the engine lists a download from the moment it is asked for) are
+  // left out of the menulist.
+  const onDevice = [...installed, ...downloading]
+  const models = useRegistryModels(onDevice.map(pairKey).join(' ')) ?? []
+  const available = modelOptions(models, onDevice)
   const download = (key: string): void => {
     const model = models.find((m) => pairKey(m) === key)
-    if (!model) return
-    setPending((p) => [...p, key])
-    void cmd('translate.downloadModel', { from: model.from, to: model.to })
-      .catch(() => undefined)
-      .then(() => setPending((p) => p.filter((k) => k !== key)))
+    if (model) run('translate.downloadModel', { from: model.from, to: model.to })
   }
-
-  const available = models.filter((m) => !m.installed && !pending.includes(pairKey(m)))
-  const downloading = models.filter((m) => !m.installed && pending.includes(pairKey(m)))
   const total = installed.reduce((sum, m) => sum + m.bytes, 0)
 
   return (
@@ -359,11 +348,7 @@ function ModelsGroup({ state }: { state: UIState }): JSX.Element {
         <AddRow
           label="Download a translation model"
           placeholder="Download a model…"
-          options={available.map((m) => ({
-            value: pairKey(m),
-            label: pairLabel(m.from, m.to),
-            description: formatBytes(m.bytes)
-          }))}
+          options={available}
           onPick={download}
         />
       )}

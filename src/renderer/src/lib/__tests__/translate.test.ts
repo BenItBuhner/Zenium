@@ -93,4 +93,15 @@ describe('modelOptions (Settings > Languages > download a model)', () => {
     })
     expect(options[1]?.description).toBe(formatBytes(17_000_000))
   })
+
+  it("leaves out the pairs the state lists on the device or arriving, whatever the registry's kept flags say", () => {
+    const options = modelOptions(
+      [model('de', 'en'), model('en', 'de'), model('fr', 'en')],
+      [
+        { from: 'de', to: 'en' },
+        { from: 'fr', to: 'en' }
+      ]
+    )
+    expect(options.map((o) => o.value)).toEqual(['en:de'])
+  })
 })
