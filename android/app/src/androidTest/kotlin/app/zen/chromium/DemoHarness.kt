@@ -597,6 +597,50 @@ abstract class DemoHarness(
         return touchTap(node)
     }
 
+    /**
+     * A real touch on the first node whose label or text `matches`, found again right before the
+     * finger lands. A node held across a wait, a screenshot or a script can be gone from the
+     * WebView's tree by the time it is touched (Blink rebuilds the nodes under a list that
+     * re-renders, as the suggestions do while their requests answer), and [touchTap] on a stale
+     * node touches nothing. Up to three fresh finds within `timeoutMs`; false when none is on
+     * screen in time or none stays put for the touch.
+     */
+    protected fun touchTapFresh(timeoutMs: Long = 8_000, matches: (String) -> Boolean): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        repeat(3) { attempt ->
+            val left = deadline - SystemClock.uptimeMillis()
+            if (left <= 0) return false
+            val node = awaitNode(left, matches) ?: return false
+            if (touchTap(node)) return true
+            Log.w(tag, "the node went stale before the touch (attempt ${attempt + 1}); finding it again")
+            SystemClock.sleep(300)
+        }
+        return false
+    }
+
+    /**
+     * Wait for the system's clipboard overlay (Android 13+, SystemUI's "ClipboardOverlay" window:
+     * the copied text's preview chip with its actions at the bottom of the screen, up for about six
+     * seconds after every copy) to go, so the next touch near the bottom lands in the app and not on
+     * one of the chip's actions (a touch on it sent the clip to Nearby Share, which paused the app).
+     * Returns at once when no such window is up; true when it is gone within `timeoutMs`.
+     */
+    protected fun awaitClipboardOverlayGone(timeoutMs: Long = 12_000): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        var seen = false
+        while (SystemClock.uptimeMillis() < deadline) {
+            val up = ui.windows.any { it.title?.toString() == CLIPBOARD_OVERLAY_WINDOW }
+            if (!up) {
+                if (seen) Log.i(tag, "the clipboard overlay is gone")
+                return true
+            }
+            seen = true
+            SystemClock.sleep(250)
+        }
+        Log.w(tag, "the clipboard overlay is still up after $timeoutMs ms")
+        return false
+    }
+
     /** Poll up to `timeoutMs` for the first node whose label or text `matches`, with bounds on screen. */
     protected fun awaitNode(timeoutMs: Long = 8_000, matches: (String) -> Boolean): AccessibilityNodeInfo? {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
@@ -1012,6 +1056,8 @@ abstract class DemoHarness(
         private const val STEP_MS = 8L
         /** Two reads of a node's bounds this far apart agreeing count as settled ([steadyBounds]). */
         private const val BOUNDS_SETTLE_MS = 350L
+        /** SystemUI's window title for the clipboard overlay (`ClipboardOverlayWindow`, Android 13+). */
+        private const val CLIPBOARD_OVERLAY_WINDOW = "ClipboardOverlay"
         /** The 3-button navigation bar's window, in dp, whatever inset it reports (see [touchable]). */
         private const val NAV_BAR_WINDOW_DP = 48
         /** Past the 8 CSS px slop at any plausible density, hardly visible on the track. */

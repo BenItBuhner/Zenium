@@ -381,6 +381,25 @@ describe('the URL keyboard (OMN-25)', () => {
     expect(field.getAttribute('autocomplete')).toBe('off')
     expect(field.getAttribute('spellcheck')).toBe('false')
   })
+
+  it('submits on Enter while the keyboard still has the last word composing', async () => {
+    // Gboard keeps the current word in a composition (the underline) and lets a hardware Enter
+    // through with it open; Chrome's omnibox submits on it, and so does the pill's editor.
+    const el = await render(phone(tab(PAGE)))
+    const field = input(el)
+    await type(field, 'single origin')
+    invoke.mockClear()
+    await act(async () => {
+      field.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, isComposing: true })
+      )
+      await Promise.resolve()
+    })
+    await act(async () => {
+      await vi.waitFor(() => expect(commands()).toContain('urlbar.submit'))
+    })
+    expect(callsTo('urlbar.submit')[0]).toMatchObject({ input: 'single origin' })
+  })
 })
 
 describe('the desktop bar is as it was', () => {
@@ -408,5 +427,14 @@ describe('the desktop bar is as it was', () => {
     })
     expect(el.querySelector('[aria-label="Refine"]')).toBeNull()
     expect(el.querySelector('.zen-omnibox')?.getAttribute('data-surface')).toBe('page')
+    // A desktop IME's Enter commits its candidate; the bar leaves it alone.
+    invoke.mockClear()
+    await act(async () => {
+      input(el).dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, isComposing: true })
+      )
+      await Promise.resolve()
+    })
+    expect(commands()).not.toContain('urlbar.submit')
   })
 })

@@ -447,7 +447,11 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
     const el = inputRef.current
-    if (e.nativeEvent.isComposing) return
+    // A key during an IME composition is the IME's (a desktop CJK IME's Enter commits the
+    // candidate), except Enter on the phone: Android keyboards keep the current word composing
+    // (Gboard's underline) and let a hardware Enter through with the composition open, and
+    // Chrome's omnibox submits on it. The field holds the composing word already.
+    if (e.nativeEvent.isComposing && !(phone && e.key === 'Enter')) return
     switch (e.key) {
       case 'Escape': {
         e.preventDefault()

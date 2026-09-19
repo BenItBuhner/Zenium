@@ -188,7 +188,18 @@ class OmniboxDemo : DemoHarness("omnibox-demo-state.json", "android-omnibox", "o
             )
             val urlBefore = activeCoreTab()?.optString("url").orEmpty()
             if (refine == null) error("no row grew a Refine arrow for '$QUERY'")
-            val touched = touchTap(refine)
+            // THE touch: the first Refine as the tree has it now (the node found above is stale once
+            // the list re-rendered under it), else where the DOM lays the first arrow out.
+            var touched = touchTapFresh(6_000) { it == REFINE_LABEL }
+            if (!touched) {
+                val dom = refineDomRect()
+                val point = dom?.let { touchPoint(it) }
+                if (point != null) {
+                    finding("  the tree lost the Refine node; finger at ${point.x},${point.y} from the DOM rect $dom")
+                    Finger().tap(point.x, point.y)
+                    touched = true
+                }
+            }
             val set = touched && expected.isNotEmpty() && awaitChrome("(document.querySelector('$FIELD')||{}).value===${JSONObject.quote(expected)}", 6_000)
             SystemClock.sleep(2_000)
             val urlAfter = activeCoreTab()?.optString("url").orEmpty()
@@ -217,7 +228,7 @@ class OmniboxDemo : DemoHarness("omnibox-demo-state.json", "android-omnibox", "o
             val menu = awaitNode(8_000) { it == COPY_LINK_ITEM }
             SystemClock.sleep(1_000)
             shot("07-link-menu")
-            var copied = menu != null && touchTap(menu) && awaitClipboard(GUIDE_URL, 6_000)
+            var copied = menu != null && touchTapFresh(6_000) { it == COPY_LINK_ITEM } && awaitClipboard(GUIDE_URL, 6_000)
             var how = if (menu != null) "touched" else "not in the menu"
             // The link menu is the way to the state, not the claim: when the finger did not copy,
             // the tree's click gets there and the findings say so.
@@ -233,6 +244,11 @@ class OmniboxDemo : DemoHarness("omnibox-demo-state.json", "android-omnibox", "o
                 back()
                 SystemClock.sleep(1_000)
             }
+            // The system's clipboard overlay sits over the bar for some six seconds after the copy;
+            // the pill's touch waits it out (a touch on its chip sends the clip to Nearby Share).
+            val overlayGone = awaitClipboardOverlayGone()
+            finding("  clipboard overlay gone before the pill $overlayGone")
+            ensureForeground()
             tapPill()
             val show = awaitNode(8_000) { it == SHOW_LABEL }
             SystemClock.sleep(1_200)
@@ -240,14 +256,14 @@ class OmniboxDemo : DemoHarness("omnibox-demo-state.json", "android-omnibox", "o
             val peek = chromeValue("(function(){var r=document.querySelector('$ROWS[data-kind=clipboard]');return r?(r.querySelector('span')||{}).textContent||'':''})()")
             finding("  the pill again: clipboard row '$peek' with Show ${show != null} ${verdict(show != null && peek.endsWith("you copied"))}")
             if (show == null) error("no clipboard row behind Show")
-            val revealed = touchTap(show) && awaitChrome("(function(){var r=document.querySelector('$ROWS[data-kind=clipboard]');return !!r&&(r.querySelector('span')||{}).textContent===${JSONObject.quote(GUIDE_URL)}})()", 6_000)
+            val revealed = touchTapFresh(6_000) { it == SHOW_LABEL } && awaitChrome("(function(){var r=document.querySelector('$ROWS[data-kind=clipboard]');return !!r&&(r.querySelector('span')||{}).textContent===${JSONObject.quote(GUIDE_URL)}})()", 6_000)
             SystemClock.sleep(1_200)
             shot("09-clipboard-revealed")
             // The option reads its title and subtitle together ("<address> Link you copied").
             val row = awaitNode(6_000) { it.startsWith(GUIDE_URL) }
             finding("  Show touched; the row reads '${chromeValue("(function(){var r=document.querySelector('$ROWS[data-kind=clipboard]');return r?r.textContent:''})()")}' $revealed")
             if (!revealed || row == null) error("Show did not reveal the copied address")
-            val opened = touchTap(row) && awaitPageUrl(GUIDE_URL, 10_000)
+            val opened = touchTapFresh(6_000) { it.startsWith(GUIDE_URL) } && awaitPageUrl(GUIDE_URL, 10_000)
             SystemClock.sleep(2_500)
             shot("10-clipboard-opened")
             finding("  the revealed row touched; tab URL '${activeCoreTab()?.optString("url")}' ${verdict(opened)}")
@@ -580,6 +596,17 @@ class OmniboxDemo : DemoHarness("omnibox-demo-state.json", "android-omnibox", "o
             "(function(){var b=Array.from(document.querySelectorAll('.zen-sheet [role=radio]'))" +
                 ".find(function(e){return e.textContent.trim().indexOf(${JSONObject.quote(label)})===0});" +
                 "if(!b)return '';var r=b.getBoundingClientRect();" +
+                "return [r.left,r.top,r.right,r.bottom].map(function(v){return Math.round(v*$density)}).join(',')})()"
+        )
+        val px = text.split(',').map { it.toIntOrNull() ?: return null }
+        if (px.size != 4) return null
+        return Rect(px[0], px[1], px[2], px[3])
+    }
+
+    /** The first row's Refine arrow as the DOM lays it out, in screen px (as [optionDomRect]); null when no row has one. */
+    private fun refineDomRect(): Rect? {
+        val text = chromeValue(
+            "(function(){var b=document.querySelector('$ROWS .zen-omnibox-refine');if(!b)return '';var r=b.getBoundingClientRect();" +
                 "return [r.left,r.top,r.right,r.bottom].map(function(v){return Math.round(v*$density)}).join(',')})()"
         )
         val px = text.split(',').map { it.toIntOrNull() ?: return null }
