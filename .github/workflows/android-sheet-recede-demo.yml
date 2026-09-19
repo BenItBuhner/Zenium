@@ -25,10 +25,6 @@ on:
         options:
           - light
           - dark
-  # The PR branch is added for its one run (plus one retry) on the rebased head and taken out again.
-  push:
-    branches:
-      - cursor/android-sheet-recede-221e
 
 permissions:
   contents: read
