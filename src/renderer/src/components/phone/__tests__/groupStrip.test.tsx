@@ -110,7 +110,9 @@ function stateOf(tabs: Tab[], active: string, folders: Folder[] = [folder]): UIS
     window: { kind: 'normal', fullscreen: false, htmlFullscreenTabId: null },
     boosts: [],
     extensions: [],
-    bookmarks: []
+    bookmarks: [],
+    // The pill reads the translate slice for its chip (an engine that is up, no tab offered).
+    translate: { available: true, tabs: {} }
   } as unknown as UIState
 }
 
