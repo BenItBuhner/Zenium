@@ -1,7 +1,9 @@
 package app.zen.chromium
 
+import android.graphics.Rect
 import android.os.SystemClock
 import android.util.Log
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Test
@@ -127,13 +129,12 @@ class PullToRefreshDemo : DemoHarness("ptr-demo-state.json", "ptr-$THEME", "ptr-
 
         // 6. Settings → Look and Feel → Pull to refresh off: the same drag is the page's.
         openLookAndFeel()
-        val row = reveal(PULL_ROW) ?: error("no $PULL_ROW row in Look and Feel")
+        val row = revealRow(PULL_ROW) ?: error("no $PULL_ROW row in Look and Feel")
         shot("12-settings-row")
         Finger().tap(width - 62 * density, row.exactCenterY())
         SystemClock.sleep(1_200)
         shot("13-settings-row-off")
-        back()
-        SystemClock.sleep(2_000)
+        leaveSettings()
         Finger().apply {
             down(pageX, pageY)
             moveBy(0f, PAST * density, 900)
@@ -146,19 +147,23 @@ class PullToRefreshDemo : DemoHarness("ptr-demo-state.json", "ptr-$THEME", "ptr-
         // 7. Back on, and the address bar carried to the top: the disc still comes from the
         //    frame's top edge, now under the bar.
         openLookAndFeel()
-        val again = reveal(PULL_ROW) ?: error("no $PULL_ROW row in Look and Feel")
+        val again = revealRow(PULL_ROW) ?: error("no $PULL_ROW row in Look and Feel")
         Finger().tap(width - 62 * density, again.exactCenterY())
         SystemClock.sleep(800)
-        reveal("Top")
-        // The picker is a hosted sheet: a finger on its option (the rule's one injected touch for
-        // this flow), and the picker must close on it with the row reading the new value – the
-        // touch that fell through to the scrim (#192) closed it with the old one.
+        // The bar position's picker (a hosted sheet since #134, no inline options): a finger on
+        // the row opens it – a Settings-page row, not a sheet's, so the tree's click stands in
+        // when it is not on screen – then a finger on its Top option, the rule's one injected
+        // touch for this flow, and the picker must close on it with the row reading the new
+        // value – the touch that fell through to the scrim (#192) closed it with the old one.
+        revealRow(BAR_ROW) ?: error("no $BAR_ROW row in Look and Feel")
+        if (!touchTapLabel(BAR_ROW, prefix = true)) clickRow(BAR_ROW)
+        if (waitFor("Top", 8_000) == null) error("no Top option for the bar position")
         if (!touchTapLabelExpecting("Top", "the picker closed with the row reading Top") { rowReads(BAR_ROW, "Top") } &&
             !rowReads(BAR_ROW, "Top") && !clickByLabel("Top")
         ) error("no Top option for the bar position")
         SystemClock.sleep(1_200)
-        back()
-        SystemClock.sleep(2_500)
+        leaveSettings()
+        SystemClock.sleep(500)
         shot("15-bar-top")
         Finger().apply {
             down(pageX, pageY)
@@ -195,7 +200,10 @@ class PullToRefreshDemo : DemoHarness("ptr-demo-state.json", "ptr-$THEME", "ptr-
         SystemClock.sleep(1_200)
     }
 
-    /** Settings from the menu sheet; Look and Feel is the section it opens on. */
+    /**
+     * Settings from the menu sheet, then Look and Feel over the tab's landing (since #134 the
+     * Settings tab opens on its categories; the rows are in the section).
+     */
     private fun openLookAndFeel() {
         ensureForeground()
         val menu = findByLabel(MENU_LABEL) ?: error("no menu button")
@@ -203,11 +211,52 @@ class PullToRefreshDemo : DemoHarness("ptr-demo-state.json", "ptr-$THEME", "ptr-
         SystemClock.sleep(2_500)
         reveal("Settings")
         // A finger on the row (the menu flow's injected touch); the tree's click when the row is
-        // not on screen to touch.
-        if (!touchTapLabelExpecting("Settings", "the Settings tab is up on Look and Feel") { findByLabel("Look and Feel") != null } &&
-            findByLabel("Look and Feel") == null && !clickByLabel("Settings")
+        // not on screen to touch. The landing's Look and Feel row is the sign the tab is up.
+        val landing = { findNode { it.startsWith(LOOK_AND_FEEL) } != null }
+        if (!touchTapLabelExpecting("Settings", "the Settings tab is up on its landing", took = landing) &&
+            !landing() && !clickByLabel("Settings")
         ) error("no Settings row in the menu")
+        SystemClock.sleep(1_500)
+        // The section over the landing: a finger on the landing's row (a Settings-page row, not a
+        // sheet's; the tree's click when it is not on screen), its Appearance heading the sign.
+        val section = { findByLabel(APPEARANCE) != null }
+        if (!section() && !touchTapLabelExpecting(LOOK_AND_FEEL, "the Look and Feel section is up", prefix = true, took = section) &&
+            !section() && !clickRow(LOOK_AND_FEEL)
+        ) error("no $LOOK_AND_FEEL row on the Settings landing")
         SystemClock.sleep(3_000)
+    }
+
+    /**
+     * Leave the Settings tab for the page: a back at the section pops it to the landing, and a
+     * back at the landing closes the tab to the one that opened it (`rootBackAction`'s opener
+     * rule); the landing's row without the section's heading says which back is next.
+     */
+    private fun leaveSettings() {
+        back()
+        SystemClock.sleep(2_000)
+        if (findNode { it.startsWith(LOOK_AND_FEEL) } != null && findByLabel(APPEARANCE) == null) {
+            back()
+            SystemClock.sleep(2_500)
+        }
+    }
+
+    /**
+     * Scroll the Settings row whose text starts with `label` into view and return where it is;
+     * null when there is none. A row is one button whose label and description (or value) run
+     * together in the tree, so an exact label finds nothing.
+     */
+    private fun revealRow(label: String): Rect? {
+        val node = findNode { it.startsWith(label) } ?: return null
+        node.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.id)
+        SystemClock.sleep(1_500)
+        return findNode { it.startsWith(label) }?.let { row -> Rect().also { row.getBoundsInScreen(it) } }
+    }
+
+    /** Click the Settings row whose text starts with `label` through the tree (the nearest clickable ancestor). */
+    private fun clickRow(label: String): Boolean {
+        var node = findNode { it.startsWith(label) }
+        while (node != null && !node.isClickable) node = node.parent
+        return node?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
     }
 
     /** Run a shell command with the instrumentation's shell permissions; returns its output. */
@@ -221,6 +270,9 @@ class PullToRefreshDemo : DemoHarness("ptr-demo-state.json", "ptr-$THEME", "ptr-
         private const val PULL_ROW = "Pull to refresh"
         /** The address bar's position row (Look and Feel); its picker offers Bottom and Top. */
         private const val BAR_ROW = "Position on phones"
+        /** The landing's category row, and the section's first group heading (the sign it is up). */
+        private const val LOOK_AND_FEEL = "Look and Feel"
+        private const val APPEARANCE = "Appearance"
         /**
          * Finger travel in dp. The chrome's pull reaches its threshold at 120 CSS px of travel
          * past the slop (`lib/pull.ts`); 70 stays clearly under it, 240 clearly over.

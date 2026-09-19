@@ -78,8 +78,8 @@ class TouchFixDemo : DemoHarness("touchfix-demo-state.json", "touchfix-$THEME", 
         back()
         SystemClock.sleep(1_500)
 
-        // 2. Bookmarks, the same way.
-        openPanel("Bookmarks", "Remove bookmark")
+        // 2. Bookmarks, the same way; the panel is one level down, under the Bookmarks submenu.
+        openPanel("Bookmarks", "Remove bookmark", via = "Show Bookmarks")
         dismissKeyboard()
         shot("03-bookmarks")
         removeFirst("Remove bookmark")
@@ -145,10 +145,12 @@ class TouchFixDemo : DemoHarness("touchfix-demo-state.json", "touchfix-$THEME", 
 
     /**
      * Open the menu, expand it so the whole list is in reach, tap the item labelled `item` with a
-     * finger, and wait for `expect` (something only the opened surface has) to show up – the
-     * menu flow's injected touch, its result asserted (the run errors out without `expect`).
+     * finger – then, when `item` opens a submenu, the submenu's row `via` with another (once the
+     * submenu has slid in and the sheet shrunk to it, on bounds that hold still) – and wait for
+     * `expect` (something only the opened surface has) to show up: the menu flow's injected
+     * touch, its result asserted (the run errors out without `expect`).
      */
-    private fun openPanel(item: String, expect: String) {
+    private fun openPanel(item: String, expect: String, via: String? = null) {
         openMenu()
         waitFor(HANDLE_LABEL, 6_000) ?: error("the menu never opened")
         SystemClock.sleep(1_200)
@@ -161,7 +163,11 @@ class TouchFixDemo : DemoHarness("touchfix-demo-state.json", "touchfix-$THEME", 
         SystemClock.sleep(2_000)
         val target = reveal(item) ?: error("no $item in the menu")
         Finger().tap(target.exactCenterX(), target.exactCenterY())
-        waitFor(expect, 8_000) ?: error("$item opened nothing with $expect")
+        if (via != null) {
+            SystemClock.sleep(1_500)
+            if (!touchTapLabel(via)) error("$item opened no submenu with $via")
+        }
+        waitFor(expect, 8_000) ?: error("${via ?: item} opened nothing with $expect")
         SystemClock.sleep(2_000)
     }
 

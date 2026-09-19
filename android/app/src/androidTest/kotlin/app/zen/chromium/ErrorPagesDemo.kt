@@ -333,8 +333,9 @@ class ErrorPagesDemo : DemoHarness("share-demo-state.json", "errors", "errors-de
             SystemClock.sleep(1_500)
             return false
         }
-        SystemClock.sleep(1_500)
-        if (findByLabel(HANDLE_LABEL) != null) {
+        // The menu's leave takes three seconds on the software GPU and the tree reports it
+        // later still, so the menu is polled for going rather than read once.
+        if (!waitForGone(HANDLE_LABEL, 10_000)) {
             touchFault("the touch on the menu's $label row left the menu open")
             clickByLabel(label)
             SystemClock.sleep(1_500)
@@ -434,7 +435,8 @@ class ErrorPagesDemo : DemoHarness("share-demo-state.json", "errors", "errors-de
         private const val ERROR_PREFIX = "zen://error"
         /** WebView's built-in error page's title: must not reach history or the zero-suggest. */
         private const val INTERSTITIAL_TITLE = "Webpage not available"
-        private val SCREENSHOT_ROW = Regex("^Screenshot .*\\.png$")
+        /** The downloads sheet's row for the screenshot: its name, then its status and summary in one label (`<name>. <status>. <summary>`). */
+        private val SCREENSHOT_ROW = Regex("^Screenshot .*\\.png")
         private val NUMERIC_ROW = Regex("^\\d{6,}$")
         private val FAILED_URLS = Regex("nonexistent\\.invalid|localhost:1|localhost:81")
     }
