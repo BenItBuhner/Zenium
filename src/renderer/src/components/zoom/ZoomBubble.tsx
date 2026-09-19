@@ -16,6 +16,7 @@ import {
   viewportSize
 } from '@renderer/lib/portals'
 import { activeTab } from '@renderer/lib/selectors'
+import { hint } from '@renderer/lib/shortcuts'
 import { closeZoomBubble, type UiState } from '@renderer/lib/ui'
 import { useEscapeTrap } from '../bookmarks/escape'
 import { focusAnchor, wrapTab } from '../bookmarks/popover'
@@ -153,7 +154,8 @@ export function ZoomBubble({ state, bubble }: { state: UIState; bubble: Bubble }
           <h2 id="zen-zoom-title" className="zen-bm-title">
             Zoom
           </h2>
-          <p id="zen-zoom-level" className="zen-bm-title-desc tabular-nums" aria-live="polite">
+          {/* The level is the dialog's description; each change is said by the chrome's status region. */}
+          <p id="zen-zoom-level" className="zen-bm-title-desc tabular-nums">
             {formatZoom(factor)}
           </p>
         </div>
@@ -163,7 +165,7 @@ export function ZoomBubble({ state, bubble }: { state: UIState; bubble: Bubble }
             type="button"
             className="zen-button zen-zoom-step"
             aria-label="Zoom out"
-            title="Zoom out (Ctrl+-)"
+            title={hint('Zoom out', state, 'zoom.out')}
             disabled={factor <= ZOOM_FLOOR + 0.005}
             onClick={() => step(-1)}
           >
@@ -173,7 +175,7 @@ export function ZoomBubble({ state, bubble }: { state: UIState; bubble: Bubble }
             type="button"
             className="zen-button zen-zoom-step"
             aria-label="Zoom in"
-            title="Zoom in (Ctrl++)"
+            title={hint('Zoom in', state, 'zoom.in')}
             disabled={factor >= ZOOM_CEILING - 0.005}
             onClick={() => step(1)}
           >
@@ -182,7 +184,7 @@ export function ZoomBubble({ state, bubble }: { state: UIState; bubble: Bubble }
           <button
             type="button"
             className="zen-button ml-auto"
-            title={`Back to ${formatZoom(defaultZoom)} (Ctrl+0)`}
+            title={hint(`Back to ${formatZoom(defaultZoom)}`, state, 'zoom.reset')}
             disabled={atDefault}
             onClick={() => step(null)}
           >

@@ -9,6 +9,7 @@ import { contextMenuAnchor } from '@renderer/lib/menuKeys'
 import { dropStore } from '@renderer/lib/drag'
 import { openSettings } from '@renderer/lib/pages'
 import { activeTab, isLocalWindow, tabTitle } from '@renderer/lib/selectors'
+import { hint } from '@renderer/lib/shortcuts'
 import { claimMessageCards, openOverlay, pickToastAction, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { ToastCard } from '../messages/ToastCard'
@@ -106,7 +107,7 @@ export function SidebarBottom({ state, compact, isDark }: Props): JSX.Element {
             <button
               type="button"
               className="zen-toolbar-button h-7 w-7 opacity-50 hover:opacity-100"
-              title="New Space"
+              title={hint('New Space', state, 'space.new')}
               onClick={() => void openOverlay('space-editor', current?.id ?? null, null)}
             >
               <Plus className="h-3.5 w-3.5" />

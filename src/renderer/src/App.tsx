@@ -25,6 +25,7 @@ import { cn } from '@renderer/lib/utils'
 import { useCaptionOverlay } from '@renderer/hooks/useCaptionOverlay'
 import { useMainEvents } from '@renderer/hooks/useMainEvents'
 import { useTheme } from '@renderer/hooks/useTheme'
+import { Announcer } from './components/Announcer'
 import { BookmarksBar } from './components/bookmarks/BookmarksBar'
 import { captionBandInMain } from '@renderer/lib/layout'
 import { ContentArea } from './components/content/ContentArea'
@@ -62,6 +63,8 @@ export function App(): JSX.Element {
       )}
       {/* The extension popup's frame is a popover: it renders through the chrome layer. */}
       <PopupFrame />
+      {/* The one status region a screen reader hears tab switches, downloads, find and zoom from. */}
+      <Announcer />
     </>
   )
 }

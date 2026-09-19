@@ -10,7 +10,7 @@ import { dropStore, listMotions } from '@renderer/lib/drag'
 import { openGroupEditor } from '@renderer/lib/groupEditor'
 import { SlideMotion } from '@renderer/lib/motion/slide'
 import { pinnedOf, regularOf } from '@renderer/lib/selectors'
-import { useHint } from '@renderer/lib/shortcuts'
+import { hint, useHint } from '@renderer/lib/shortcuts'
 import { stripFocusIn, stripFocusOut, stripKeyDown, useStripTabIndex } from '@renderer/lib/tabStrip'
 import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
@@ -128,7 +128,7 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
                     type="button"
                     tabIndex={-1}
                     className="zen-toolbar-button h-5 w-5 opacity-0 group-hover/sep:opacity-70"
-                    title="Clear unpinned tabs"
+                    title={hint('Clear unpinned tabs', state, 'space.closeUnpinned')}
                     onClick={() => run('space.closeUnpinned', { spaceId: space.id })}
                   >
                     <Brush className="h-3 w-3" />

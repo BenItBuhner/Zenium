@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import type { Rect, UIState } from '@shared/types'
+import { announce, startAnnouncer, zoomAnnouncement } from '@renderer/lib/announce'
 import { onEvent, run } from '@renderer/lib/api'
 import { starredOnPhone } from '@renderer/lib/bookmarkEdit'
 import { offerChromeShortcut } from '@renderer/lib/chromeShortcuts'
@@ -72,6 +73,8 @@ export function useMainEvents(): void {
     const offs = [
       // The downloads button and bubble follow the engine's list and the `downloads.reveal` event.
       startDownloadsUi(),
+      // The status region hears of the tab that came to the front and of tabs muted or unmuted.
+      startAnnouncer(),
       onEvent('urlbar.toggle', ({ mode, text }) => {
         const ui = uiStore.get()
         if (ui.urlbar.open && ui.urlbar.mode === mode && text === undefined) {
@@ -157,9 +160,11 @@ export function useMainEvents(): void {
       onEvent('focus.page', () => void releaseChromeFocus()),
       onEvent('zoom.changed', ({ tabId, factor }) => {
         // Chrome's bubble, for the page on screen. The host with the page-controls sheet
-        // (Android) shows the zoom there instead.
+        // (Android) shows the zoom there instead. Either way the reader hears the new level.
         const state: UIState | null = browserStore.get().state
-        if (!state || state.capabilities.pageControls || tabId !== currentActiveTabId()) return
+        if (!state || tabId !== currentActiveTabId()) return
+        announce(zoomAnnouncement(factor))
+        if (state.capabilities.pageControls) return
         void showZoomBubble(tabId, factor)
       }),
       onEvent('zoom.open', ({ tabId }) => {
