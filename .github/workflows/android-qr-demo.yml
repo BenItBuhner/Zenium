@@ -22,6 +22,10 @@ name: Android QR scan demo
 # picks the driver.
 on:
   workflow_dispatch:
+  # TEMPORARY, removed before the branch is marked ready: the one budgeted run for PR #211.
+  push:
+    branches:
+      - cursor/android-qr-scan-220b
 
 permissions:
   contents: read
