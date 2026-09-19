@@ -40,6 +40,15 @@ class MemoryIO implements StoreIO {
 class FakeDownloadHost implements DownloadHost {
   calls: string[] = []
   opened: string[] = []
+  /** The released files "on disk"; `exists` and `deleteFile` read and write it. */
+  files = new Set<string>()
+  async exists(item: DownloadItem): Promise<boolean> {
+    return this.files.has(item.savePath)
+  }
+  async deleteFile(item: DownloadItem): Promise<'deleted' | 'missing' | 'failed'> {
+    this.calls.push(`deleteFile:${item.id}`)
+    return this.files.delete(item.savePath) ? 'deleted' : 'missing'
+  }
   pause(id: string): void {
     this.calls.push(`pause:${id}`)
   }
@@ -147,7 +156,7 @@ function harness(): {
     confirm: async () => answers.shift() ?? false
   }
   const bridge = {
-    files: new Set<string>(),
+    files: downloadHost.files,
     targets: new Map<string, string>(),
     determiner: null as FilenameDeterminer | null,
     started: [] as ProgrammaticDownload[],
@@ -167,10 +176,6 @@ function harness(): {
       bridge.determiner = determiner
     },
     targetPath: (id: string) => bridge.targets.get(id) ?? null,
-    fileExists: (path: string) => bridge.files.has(path),
-    async deleteFile(path: string): Promise<boolean> {
-      return bridge.files.delete(path)
-    },
     async fileIcon(path: string, size: 16 | 32): Promise<string | null> {
       return path.endsWith('.none') ? null : `data:image/png;base64,${size}`
     },
@@ -496,12 +501,20 @@ describe('DownloadsApi methods', () => {
     await failsWith(h.api, 'open', h.ctx(EXT_A), ERROR_NOT_COMPLETE, id)
     h.service.finish(item.id, 'completed')
     await h.flush()
+    h.bridge.files.add('/dl/report.pdf')
     h.answers.push(false)
     await call(h.api, 'open', h.ctx(EXT_A), id)
     expect(h.downloadHost.opened).toEqual([])
     h.answers.push(true)
     await call(h.api, 'open', h.ctx(EXT_A), id)
     expect(h.downloadHost.opened).toEqual([item.id])
+    // A file gone from disk is not opened: the row reads `exists: false` instead.
+    h.bridge.files.delete('/dl/report.pdf')
+    h.out.length = 0
+    h.answers.push(true)
+    await call(h.api, 'open', h.ctx(EXT_A), id)
+    expect(h.downloadHost.opened).toEqual([item.id])
+    expect((h.out[0]!.args[0] as DownloadDelta).exists).toEqual({ previous: true, current: false })
     await call(h.api, 'show', h.ctx(EXT_A), id)
     expect(h.downloadHost.calls).toContain(`show:${item.id}`)
     await call(h.api, 'showDefaultFolder', h.ctx(EXT_A))

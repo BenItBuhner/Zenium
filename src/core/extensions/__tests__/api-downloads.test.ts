@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import type { DownloadItem } from '../../../shared/types'
+import { INTERRUPT_REASONS } from '../../../shared/downloads'
 import {
   DownloadArgumentError,
+  INTERRUPT_REASONS as CHROME_INTERRUPT_REASONS,
   ERROR_INVALID_DANGER,
   ERROR_INVALID_FILENAME,
   ERROR_INVALID_FILTER,
@@ -59,7 +61,6 @@ function record(over: Partial<DownloadItem> = {}): DownloadItem {
 const view = (over: Partial<DownloadView> = {}): DownloadView => ({
   id: 7,
   targetPath: null,
-  fileGone: false,
   ...over
 })
 
@@ -127,23 +128,28 @@ describe('Chrome download shape', () => {
       error: 'USER_CANCELED',
       canResume: false
     })
-    expect(shape({ state: 'interrupted', error: 'shutdown', canResume: true })).toMatchObject({
+    expect(shape({ state: 'interrupted', error: 'user-shutdown', canResume: true })).toMatchObject({
       state: 'interrupted',
       error: 'USER_SHUTDOWN',
       canResume: true
     })
-    expect(chromeInterruptReason(record({ state: 'interrupted', error: 'file-error' }))).toBe(
+    expect(chromeInterruptReason(record({ state: 'interrupted', error: 'file-failed' }))).toBe(
       'FILE_FAILED'
     )
-    expect(chromeInterruptReason(record({ state: 'interrupted', error: 'ERR_TIMED_OUT' }))).toBe(
+    expect(chromeInterruptReason(record({ state: 'interrupted', error: 'network-timeout' }))).toBe(
       'NETWORK_TIMEOUT'
     )
     expect(
-      chromeInterruptReason(record({ state: 'interrupted', error: 'ERR_CERT_DATE_INVALID' }))
-    ).toBe('SERVER_CERT_PROBLEM')
-    expect(chromeInterruptReason(record({ state: 'interrupted', error: 'interrupted' }))).toBe(
-      'NETWORK_FAILED'
-    )
+      chromeInterruptReason(record({ state: 'interrupted', error: 'file-security-check-failed' }))
+    ).toBe('FILE_SECURITY_CHECK_FAILED')
+    expect(chromeInterruptReason(record({ state: 'interrupted', error: 'crash' }))).toBe('CRASH')
+    // Every member of the model's union is one of Chrome's reasons.
+    for (const reason of INTERRUPT_REASONS) {
+      const chrome = chromeInterruptReason(record({ state: 'interrupted', error: reason }))
+      expect(chrome).toBe(reason.toUpperCase().replace(/-/g, '_'))
+      expect(CHROME_INTERRUPT_REASONS).toContain(chrome)
+    }
+    expect(chromeInterruptReason(record({ state: 'interrupted' }))).toBe('NETWORK_FAILED')
     expect(chromeInterruptReason(record())).toBeUndefined()
   })
 
@@ -184,7 +190,7 @@ describe('Chrome download shape', () => {
     expect(
       shape({ state: 'completed', totalBytes: 0, receivedBytes: 0, savePath: '/d/x' }).totalBytes
     ).toBe(0)
-    expect(shape({ state: 'completed', savePath: '/d/x' }, { fileGone: true }).exists).toBe(false)
+    expect(shape({ state: 'completed', savePath: '/d/x', fileMissing: true }).exists).toBe(false)
   })
 
   it('carries the starting extension', () => {
@@ -210,7 +216,7 @@ describe('onChanged delta', () => {
     const before = shape()
     const after = shape({
       state: 'interrupted',
-      error: 'interrupted',
+      error: 'network-failed',
       endedAt: NOW,
       canResume: false
     })
@@ -222,8 +228,8 @@ describe('onChanged delta', () => {
 
   it('rewinds a settled row to the shape Chrome creates it in, so the settling is the delta', () => {
     const done = shape(
-      { receivedBytes: 1000, state: 'completed', endedAt: NOW },
-      { targetPath: '/home/u/Downloads/report.pdf', fileGone: true }
+      { receivedBytes: 1000, state: 'completed', endedAt: NOW, fileMissing: true },
+      { targetPath: '/home/u/Downloads/report.pdf' }
     )
     const created = creationShape(done)
     expect(created).toMatchObject({
@@ -248,7 +254,7 @@ describe('onChanged delta', () => {
       exists: { previous: true, current: false }
     })
 
-    const failed = shape({ state: 'interrupted', error: 'interrupted', endedAt: NOW })
+    const failed = shape({ state: 'interrupted', error: 'network-failed', endedAt: NOW })
     const rewound = creationShape(failed)
     expect(rewound.error).toBeUndefined()
     expect(downloadDelta(rewound, failed)).toMatchObject({

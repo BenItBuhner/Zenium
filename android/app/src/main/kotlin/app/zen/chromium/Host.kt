@@ -329,6 +329,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "download.retry" -> { downloads.retry(args); reply(null) }
             "download.release" -> downloads.release(args, reply)
             "download.discard" -> downloads.discard(args, reply)
+            "download.exists" -> downloads.exists(args.str("savePath"), reply)
+            "download.deleteFile" -> downloads.deleteFile(args.str("savePath"), reply)
             "download.chooseDirectory" -> downloads.chooseDirectory(reply)
             "download.open" -> { downloads.open(args.str("savePath"), args.str("mimeType")); reply(null) }
             "download.showAll" -> { downloads.showAll(); reply(null) }

@@ -1685,8 +1685,10 @@ export class Menus {
    * `autoOpenTypes`), Show in folder, Copy download link, then the transfer's own verb – Pause,
    * Resume or Cancel while it runs, Retry once it failed or was cancelled – and Remove from list
    * for anything settled. A flagged file waiting on Keep / Delete offers only its link and its
-   * removal (Delete on the row is what takes the file away). Deleting a finished file is not an
-   * engine command yet (`download.deleteFile`), so the menu has no such item.
+   * removal (Delete on the row is what takes the file away). A finished file the engine found
+   * gone from disk (`fileMissing`) has nothing to open or show and offers Retry instead. The
+   * engine's `download.deleteFile` exists; whether the menu grows a Delete file item is the
+   * desktop UI's call.
    */
   showDownloadContextMenu(
     id: string,
@@ -1697,7 +1699,7 @@ export class Menus {
     const item = downloads.item(id)
     if (!item) return
     const inFlight = isInFlight(item.state)
-    const onDisk = item.state === 'completed' && !isQuarantined(item)
+    const onDisk = item.state === 'completed' && !isQuarantined(item) && !item.fileMissing
     const resumable = item.state === 'paused' || (item.state === 'interrupted' && item.canResume)
     const retryable = canRetry(item)
     const name = item.finalName || item.filename

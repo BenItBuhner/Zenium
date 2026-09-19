@@ -2010,6 +2010,8 @@ export class Browser {
       'download.acceptDanger': ({ id }) => this.downloads.acceptDanger(id),
       'download.discard': ({ id }) => this.downloads.discard(id),
       'download.setOpenWhenDone': ({ id, on }) => this.downloads.setOpenWhenDone(id, on),
+      'download.deleteFile': ({ id }) => this.downloads.deleteFile(id),
+      'download.exists': ({ id }) => this.downloads.exists(id),
       'download.chooseDirectory': (_args, win) => this.downloads.chooseDirectory(win),
       'download.openPanel': (_args, win) => this.emit('overlay.open', { kind: 'downloads' }, win),
       'download.dragOut': ({ id }, win) => {

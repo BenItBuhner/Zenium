@@ -1065,6 +1065,48 @@ export interface DownloadDanger {
   message: string
 }
 
+/**
+ * Why an interrupted download stopped: Chromium's `download_interrupt_reasons` in kebab case,
+ * grouped as Chromium groups them. `network-*` failures of a resumable transfer are retried by
+ * the hosts on their own before they reach the row; `user-shutdown` is a transfer the browser
+ * quit over (Resume continues from the kept bytes); `crash` is one the browser did not get to
+ * shut down. The hosts map their engine's errors onto this set (Electron: the item's state and
+ * the `net::` error or HTTP status its request ended with; Android: the downloader's
+ * exceptions and HTTP statuses); `interruptMessage` in `shared/downloads.ts` words each for
+ * the row and `DownloadItem.errorMessage` carries that wording.
+ */
+export type DownloadInterruptReason =
+  | 'network-failed'
+  | 'network-timeout'
+  | 'network-disconnected'
+  | 'network-server-down'
+  | 'server-failed'
+  | 'server-no-range'
+  | 'server-bad-content'
+  | 'server-unauthorized'
+  | 'server-forbidden'
+  | 'server-unreachable'
+  | 'file-failed'
+  | 'file-access-denied'
+  | 'file-no-space'
+  | 'file-name-too-long'
+  | 'file-too-large'
+  | 'file-virus-infected'
+  | 'file-blocked'
+  | 'file-security-check-failed'
+  | 'file-same-as-source'
+  | 'user-canceled'
+  | 'user-shutdown'
+  | 'crash'
+
+/**
+ * What `download.deleteFile` did: the file is gone now, was gone already (`missing`, the row is
+ * marked `fileMissing` either way), could not be removed (`failed`: locked, a folder, no
+ * permission), or the row has no completed file to delete (`not-completed`: unknown id, in
+ * flight, cancelled, interrupted or still quarantined behind a danger warning).
+ */
+export type DownloadDeleteFileResult = 'deleted' | 'missing' | 'failed' | 'not-completed'
+
 export interface DownloadItem {
   id: string
   url: string
@@ -1090,8 +1132,17 @@ export interface DownloadItem {
   mimeType: string
   /** The server honours Range requests, so paused and interrupted transfers can continue. */
   canResume: boolean
-  /** Why an interrupted download stopped (Chromium's `net::` error name or a short reason). */
-  error?: string
+  /** Why an interrupted download stopped; set exactly while `state` is `interrupted`. */
+  error?: DownloadInterruptReason
+  /** `error` in the words of Chrome's download bubble ("Check internet connection"), for the row. */
+  errorMessage?: string
+  /**
+   * The completed file is no longer where `savePath` says: deleted through `download.deleteFile`
+   * or found missing by an existence check (when the list loads, when the row is opened or
+   * revealed, on `download.exists`). Chrome greys such a row "Deleted" and offers Retry, which
+   * downloads the file again into the same row.
+   */
+  fileMissing?: boolean
   danger: DownloadDanger
   /** The user chose "Keep" for a flagged file: it left quarantine and may be opened. */
   dangerAccepted: boolean
@@ -2889,6 +2940,16 @@ export interface Commands {
   /** "Discard": delete a flagged file (or what is left of a failed one) and drop the row. */
   'download.discard': { args: { id: string }; result: void }
   'download.setOpenWhenDone': { args: { id: string; on: boolean }; result: void }
+  /**
+   * Delete a completed download's file from disk (Chrome's "Delete file"); the row stays and
+   * reads `fileMissing`. Resolves with what happened, `missing` when the file was gone already.
+   */
+  'download.deleteFile': { args: { id: string }; result: DownloadDeleteFileResult }
+  /**
+   * Whether a completed download's file is still on disk, checked now; the row's `fileMissing`
+   * follows the answer. False for rows without a completed file.
+   */
+  'download.exists': { args: { id: string }; result: boolean }
   /** Let the user pick the default downloads folder; resolves with it (or null when dismissed). */
   'download.chooseDirectory': { args: void; result: string | null }
   /** Show the downloads panel (Ctrl/Cmd+J, the app menu, a completion notification). */

@@ -9,7 +9,7 @@ import type {
   ShareAction
 } from '@shared/types'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '@shared/types'
-import { resolveDownloadSettings } from '@shared/downloads'
+import { interruptReasonFrom, resolveDownloadSettings } from '@shared/downloads'
 import { newId } from '@shared/ids'
 import type { SharedIntent } from '@shared/shareTarget'
 import {
@@ -324,6 +324,7 @@ export interface HostEventPayloads {
     /** The name the file is actually written under (MediaStore may have made it unique). */
     finalName?: string
     mimeType?: string
+    /** A `DownloadInterruptReason` (Kotlin's `DownloadInterruptReason.wire`) while `interrupted`. */
     error?: string
   }
   'download.done': {
@@ -334,6 +335,7 @@ export interface HostEventPayloads {
     receivedBytes?: number
     totalBytes?: number
     canResume?: boolean
+    /** A `DownloadInterruptReason` when `interrupted`; `dismissed` on a `cancelled` save dialog. */
     error?: string
     mimeType?: string
   }
@@ -845,6 +847,14 @@ export class AndroidPlatform implements Platform {
           notify: options.notify
         }),
       deletePartial: (item) => bridge.call('download.discard', describe(item)),
+      // Kotlin resolves the recorded location (a MediaStore or SAF `content:` uri, or a path).
+      exists: (item) => bridge.call<boolean>('download.exists', { savePath: item.savePath }),
+      deleteFile: async (item) => {
+        const result = await bridge.call<string>('download.deleteFile', {
+          savePath: item.savePath
+        })
+        return result === 'deleted' || result === 'missing' ? result : 'failed'
+      },
       open: (item) =>
         bridge.call('download.open', {
           id: item.id,
@@ -1050,7 +1060,7 @@ export class AndroidPlatform implements Platform {
             savePath: p.savePath || undefined,
             finalName: p.finalName || undefined,
             mimeType: p.mimeType || undefined,
-            error: p.error
+            error: p.state === 'interrupted' && p.error ? interruptReasonFrom(p.error) : undefined
           })
         return
       }
@@ -1070,7 +1080,7 @@ export class AndroidPlatform implements Platform {
           receivedBytes: p.receivedBytes,
           totalBytes: p.totalBytes,
           canResume: p.canResume,
-          error: p.error,
+          error: p.state === 'interrupted' && p.error ? interruptReasonFrom(p.error) : undefined,
           mimeType: p.mimeType || undefined
         })
         return
