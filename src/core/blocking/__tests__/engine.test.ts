@@ -181,9 +181,9 @@ describe('RuleEngine conditions', () => {
     // A main-frame navigation's top-level host is its own (Chrome's
     // `top_level_frame_or_initiator_host`): going to the tracker's own site is not blocked, even
     // when the navigation came from elsewhere.
-    expect(
-      e.decide(req('https://www.tracker.example/', { type: 'main_frame' })).action
-    ).toBe('allow')
+    expect(e.decide(req('https://www.tracker.example/', { type: 'main_frame' })).action).toBe(
+      'allow'
+    )
     expect(
       e.decide(
         req('https://www.tracker.example/', {
@@ -689,9 +689,7 @@ describe('RuleEngine headers-received stage', () => {
     const early = e.decide(req('https://r.example/'))
     expect(early.requestHeaders).toEqual([{ header: 'X-Early', operation: 'set', value: '1' }])
     expect(early.needsHeaders).toBe(true)
-    const late = e.decide(
-      req('https://r.example/', { responseHeaders: { 'Set-Cookie': ['a=1'] } })
-    )
+    const late = e.decide(req('https://r.example/', { responseHeaders: { 'Set-Cookie': ['a=1'] } }))
     expect(late.action).toBe('modifyHeaders')
     expect(late.responseHeaders).toEqual([{ header: 'Set-Cookie', operation: 'remove' }])
     expect(late.requestHeaders).toEqual([{ header: 'X-Early', operation: 'set', value: '1' }])
