@@ -308,11 +308,6 @@
     pointer-events: none;
     color: var(--v2-text-deemphasized);
   }
-  /* Disabled (§9.30): opacity .4 on the whole control, border and fill included, at full size. */
-  .zen-v2-menulist:disabled {
-    opacity: 0.4;
-  }
-
   /*
    * A form field (§9.12): label above, 4 to the field, the message (description or validation)
    * under it; actions that belong to the field follow it on a desktop and, on a phone, become a
@@ -381,43 +376,14 @@
   }
 
   /*
-   * Menulist (§6, §9.13): the rectangular control, 32 (40 on a phone) with a 1px border and a
-   * 16 chevron at its end; a button, since its popup is the renderer's, never the native one.
+   * The menulist trigger is main.css's `.zen-v2-menulist` (§6, §9.13, §9.34): the rectangular
+   * control, 32 (40 on a phone) with a 1px border and a 16 chevron at its end, one unlayered
+   * rule there like the other primitives. What is here is its popup: a panel at radius 12 with
+   * 6 padding, 28 rows at radius 6, a trailing check on the current option. The compound
+   * selector outranks `.zen-v2-panel` (further down this layer, `--v2-radius-card` 8) so the
+   * §9.13 radius wins; the popup measured 8 while both were single-class rules.
    */
-  .zen-v2-menulist {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    width: 100%;
-    height: var(--v2-control);
-    padding: 0 12px;
-    border: 1px solid rgb(var(--v2-text-rgb) / 0.3);
-    border-radius: var(--v2-radius-control);
-    background: var(--v2-page);
-    color: var(--v2-text);
-    text-align: left;
-    font-size: var(--v2-font-body);
-    line-height: var(--v2-line-body);
-    transition: background 120ms var(--zen-ease);
-  }
-  .zen-v2-menulist[aria-expanded='true'] {
-    background: color-mix(in srgb, var(--v2-page), var(--v2-text) 7%);
-  }
-  @media (hover: hover) {
-    .zen-v2-menulist:hover:not(:disabled) {
-      background: color-mix(in srgb, var(--v2-page), var(--v2-text) 7%);
-    }
-  }
-  .zen-v2-menulist:focus-visible {
-    border-color: var(--v2-accent);
-  }
-  .zen-v2-menulist > .lucide {
-    flex-shrink: 0;
-    width: var(--v2-icon);
-    height: var(--v2-icon);
-  }
-  /* Its desktop popup: a panel at radius 12 with 6 padding, 28 rows at radius 6, a trailing check. */
-  .zen-v2-menulist-popup {
+  .zen-v2-panel.zen-v2-menulist-popup {
     display: flex;
     flex-direction: column;
     padding: 6px;

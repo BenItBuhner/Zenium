@@ -1731,7 +1731,10 @@ async function scenarioWalkthrough() {
 
     await s.step('settings', async () => {
       await s.reset()
-      const panel = s.chrome.locator('[data-testid="settings-panel"]')
+      // Settings is a page tab (design language v2 §10): a view-less tab of the chrome's own
+      // document, `zenium://settings` in the pill, the §10.5 two-pane inside it.
+      const page = s.chrome.locator('[data-testid="settings-page"]')
+      const rowsBefore = await s.sidebarTabCount()
       if (IS_MAC) {
         await s.press('Meta+,')
       } else {
@@ -1746,11 +1749,68 @@ async function scenarioWalkthrough() {
           .first()
           .click({ timeout: 5000 })
       }
-      await panel.first().waitFor({ state: 'visible', timeout: 10000 })
+      await page.first().waitFor({ state: 'visible', timeout: 10000 })
+      await waitFor(
+        async () => (await s.sidebarTabCount()) === rowsBefore + 1,
+        8000,
+        `a sidebar row for the Settings tab (${rowsBefore} rows before)`
+      )
+      await s.settle()
+      const activeTitle = await s.chrome
+        .locator('[data-testid="tab"][data-active="true"] [data-testid="tab-title"]')
+        .first()
+        .textContent()
+      if ((activeTitle ?? '').trim() !== 'Settings') {
+        throw new Error(`the active sidebar row is "${activeTitle}", expected "Settings"`)
+      }
+      // The pill: `zenium://settings` while its field fits the address, the page's title
+      // "Settings" once it does not (the sidebar's default width, §10.1's chrome note); the
+      // tooltip carries the `zenium://` address either way, never `zen://`.
+      const pill = s.chrome.locator('[role="group"][aria-label="Address"]').first()
+      const reads = await pill.locator('[data-reads]').first().getAttribute('data-reads')
+      const address = ((await pill.locator(':scope > button').first().textContent()) ?? '').trim()
+      const expected = reads === 'title' ? 'Settings' : 'zenium://settings'
+      if (!['address', 'title'].includes(reads ?? '') || address !== expected) {
+        throw new Error(`the pill reads "${address}" (${reads}), expected "${expected}"`)
+      }
+      const tooltip = await pill.getAttribute('title')
+      if (tooltip !== 'zenium://settings') {
+        throw new Error(`the pill's tooltip is "${tooltip}", expected "zenium://settings"`)
+      }
       await s.shot('08-settings')
+      // Ctrl+F on the tab is "Find in Settings" (the page claims `find.open`), not the find bar;
+      // Escape with nothing to clear leaves the field and the tab stays.
+      await s.press(`${ACCEL}+f`)
+      const owner = await waitFor(
+        async () => {
+          const o = await s.keyboardOwner()
+          return o === 'chrome:settings-find' ? o : null
+        },
+        5000,
+        'the keyboard in Find in Settings'
+      )
+      if (await s.chrome.locator('[data-testid="find-bar"]').first().isVisible()) {
+        throw new Error('the find bar opened over the Settings tab')
+      }
       await s.press('Escape')
-      await panel.first().waitFor({ state: 'hidden', timeout: 8000 })
-      return 'opened and closed'
+      const after = await waitFor(
+        async () => {
+          const o = await s.keyboardOwner()
+          return o !== 'chrome:settings-find' ? o : null
+        },
+        5000,
+        'Escape leaving Find in Settings'
+      )
+      if (!(await page.first().isVisible())) throw new Error('Escape closed the Settings tab')
+      // Ctrl+W closes the tab like any other.
+      await s.press(`${ACCEL}+w`)
+      await page.first().waitFor({ state: 'hidden', timeout: 8000 })
+      await waitFor(
+        async () => (await s.sidebarTabCount()) === rowsBefore,
+        8000,
+        `the Settings row gone (${rowsBefore} rows before)`
+      )
+      return { address, reads, tooltip, owner, after, rows: rowsBefore }
     })
 
     await s.step('context-menu', async () => {
