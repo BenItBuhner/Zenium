@@ -365,6 +365,54 @@ describe('the v2 button', () => {
   })
 })
 
+/**
+ * Whether the rule at `index` sits inside an `@layer` block: the headers of the blocks still
+ * open there, innermost last (a `@media` block is not a layer).
+ */
+function layered(index: number): boolean {
+  const stack: string[] = []
+  let headerStart = 0
+  const before = bare.slice(0, index)
+  for (const match of before.matchAll(/[{};]/g)) {
+    if (match[0] === '{') stack.push(before.slice(headerStart, match.index).trim())
+    else if (match[0] === '}') stack.pop()
+    headerStart = match.index + 1
+  }
+  return stack.some((header) => header.startsWith('@layer'))
+}
+
+describe('the v2 primitives (§9.34)', () => {
+  const PRIMITIVES = [
+    '.zen-v2-row',
+    '.zen-v2-field',
+    '.zen-v2-icon-button',
+    '.zen-v2-card-radio',
+    '.zen-v2-switch',
+    '.zen-v2-radio'
+  ]
+
+  it('are one unlayered rule each, tokens only, with no layered or second copy', () => {
+    for (const cls of PRIMITIVES) {
+      // One base rule, and it is the shared one: unscoped, so every program's control takes it.
+      expect(bare.match(new RegExp(`\\n\\${cls} \\{`, 'g')) ?? [], cls).toHaveLength(1)
+      const rules = [...bare.matchAll(new RegExp(`[^\\n]*\\${cls}(?![\\w-])[^{]*\\{`, 'g'))]
+      expect(rules.length, cls).toBeGreaterThan(0)
+      for (const rule of rules) {
+        const selector = rule[0].trim()
+        expect(layered(rule.index), `"${selector}" is layered`).toBe(false)
+        // Tokens only: no literal colour in a primitive's declarations.
+        const body = bare.slice(rule.index + rule[0].length, bare.indexOf('}', rule.index))
+        expect(body, `"${selector}" states a colour`).not.toMatch(/#[0-9a-f]{3,8}\b/i)
+      }
+    }
+  })
+
+  it('pad the row with the --v2-row-pad token, not a local knob', () => {
+    expect(block('.zen-v2-row')).toMatch(/padding: var\(--v2-row-pad\) 16px/)
+    expect(css).not.toMatch(/--zen-settings-pad/)
+  })
+})
+
 describe('the Settings drill-in pane (§10.2)', () => {
   it('enters by a keyframe animation that does not fill, so the back gesture’s inline transform moves it', () => {
     // BackDismissal writes `transform` inline as the finger moves and as the commit slides the
