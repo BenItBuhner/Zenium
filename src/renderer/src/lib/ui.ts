@@ -272,6 +272,8 @@ export interface UiState {
   barMenuOpen: boolean
   /** A permission prompt ("Allow example.com to use your camera?") is up over the page. */
   permissionPromptOpen: boolean
+  /** The Clear browsing data dialog (or sheet) is up over the page or over Settings. */
+  clearBrowsingDataOpen: boolean
   /** Zen's multi-select: tabs picked with Ctrl / Shift+click (acted on together). */
   selectedTabIds: string[]
   /** Last plainly clicked / toggled tab – the anchor for Shift+click ranges. */
@@ -377,6 +379,7 @@ export const uiStore = createStore<UiState>(
     siteDataConfirm: null,
     barMenuOpen: false,
     permissionPromptOpen: false,
+    clearBrowsingDataOpen: false,
     selectedTabIds: [],
     selectionAnchorId: null,
     glanceActive: false,
@@ -712,6 +715,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.downloadsOpen &&
     !ui.defaultBrowserPrompt &&
     !ui.install &&
+    !ui.clearBrowsingDataOpen &&
     !ui.stageActive &&
     !ui.zoomBubble &&
     !ui.newTabShortcutDialog &&
@@ -759,6 +763,7 @@ export function invalidateSnapshot(): void {
     !ui.downloadsOpen &&
     !ui.defaultBrowserPrompt &&
     !ui.install &&
+    !ui.clearBrowsingDataOpen &&
     !ui.stageActive &&
     !ui.zoomBubble &&
     ui.hoverCard.tabId === null &&
@@ -1266,6 +1271,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.downloadsOpen ||
     ui.defaultBrowserPrompt ||
     ui.install !== null ||
+    ui.clearBrowsingDataOpen ||
     ui.stageActive ||
     ui.zoomBubble !== null ||
     ui.hoverCard.tabId !== null ||
@@ -1401,11 +1407,30 @@ export function closeTabsMenu(): void {
 }
 
 /**
+ * Clear browsing data (`siteControls/ClearBrowsingDataDialog`): a dialog through the frame dialog
+ * host on a mouse, a sheet on a phone, over whatever is up – Settings, where its row lives, or
+ * the page, whose snapshot then has to exist first for the scrim to dim.
+ */
+export async function openClearBrowsingData(activeTabId: string | null): Promise<void> {
+  if (uiStore.get().clearBrowsingDataOpen) return
+  if (uiStore.get().overlay === 'none') await captureActiveTab(activeTabId)
+  run('focus.chrome', undefined)
+  uiStore.set({ clearBrowsingDataOpen: true })
+}
+
+export function closeClearBrowsingData(): void {
+  if (!uiStore.get().clearBrowsingDataOpen) return
+  uiStore.set({ clearBrowsingDataOpen: false })
+  invalidateSnapshot()
+  returnFocusToPage()
+}
+
+/**
  * Only anchored panels are up: a bar panel, the star bubble, the zoom bubble, the tab hover
- * card, the downloads bubble, site information. The page behind them is captured all the same
- * (they overlap the live view), but panels draw no scrim, so the capture shows undimmed; dialogs
- * dim it. A chassis sheet's scrim is its own one dim (§11.5), so the same holds under the
- * site-information sheet.
+ * card, the downloads bubble, site information, a permission prompt. The page behind them is
+ * captured all the same (they overlap the live view), but panels draw no scrim, so the capture
+ * shows undimmed; dialogs dim it. A chassis sheet's scrim is its own one dim (§11.5), so the
+ * same holds under the site-information sheet and the prompt sheet on a phone.
  */
 export function panelAloneOverContent(ui: UiState): boolean {
   return (
@@ -1414,9 +1439,10 @@ export function panelAloneOverContent(ui: UiState): boolean {
       ui.zoomBubble !== null ||
       ui.hoverCard.tabId !== null ||
       ui.downloadsOpen ||
-      // Site information is a popover on a mouse (no scrim, §9.5) and a chassis sheet on a
-      // phone, whose own scrim is the one dim over the page (§11.5).
-      ui.siteInfoOpen) &&
+      // Site information and the permission prompt are popovers on a mouse (no scrim, §9.5) and
+      // chassis sheets on a phone, whose own scrim is the one dim over the page (§11.5).
+      ui.siteInfoOpen ||
+      ui.permissionPromptOpen) &&
     !overlayCoversContent({
       ...ui,
       barMenuOpen: false,
@@ -1424,7 +1450,8 @@ export function panelAloneOverContent(ui: UiState): boolean {
       zoomBubble: null,
       hoverCard: HOVER_CARD_HIDDEN,
       downloadsOpen: false,
-      siteInfoOpen: false
+      siteInfoOpen: false,
+      permissionPromptOpen: false
     })
   )
 }
