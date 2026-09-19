@@ -4,10 +4,12 @@ import app.zen.chromium.ext.ZipFixtures
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
+import java.io.IOException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -35,9 +37,78 @@ class StorageTest {
     @Test
     fun anAsynchronousWriteReportsWhenItIsOnDisk() {
         val done = CountDownLatch(1)
-        storage.write("extensions.json", registry) { done.countDown() }
+        var failure: Throwable? = IllegalStateException("not called")
+        storage.write("extensions.json", registry) { failure = it; done.countDown() }
         assertTrue(done.await(10, TimeUnit.SECONDS))
+        assertNull(failure)
         assertEquals(registry, storage.read("extensions.json"))
+    }
+
+    @Test
+    fun aWriteThatCannotReplaceTheDocumentReportsItsFailure() {
+        // A directory with something in it where the document should be: the temp file cannot be
+        // renamed over it, and it cannot be removed to make way.
+        File(dir, "extensions.json/keep").apply { parentFile!!.mkdirs() }.writeText("x")
+        val failure = runCatching { storage.writeSync("extensions.json", registry) }.exceptionOrNull()
+        assertTrue("$failure", failure is IOException)
+        assertFalse(File(dir, "extensions.json.tmp").exists())
+
+        val done = CountDownLatch(1)
+        var reported: Throwable? = null
+        storage.write("extensions.json", registry) { reported = it; done.countDown() }
+        assertTrue(done.await(10, TimeUnit.SECONDS))
+        assertTrue("$reported", reported is IOException)
+        assertTrue(File(dir, "extensions.json").isDirectory)
+
+        // A name outside the directory is a failure too, not a silent no-op.
+        assertTrue(runCatching { storage.writeSync("../escape.json", "{}") }.exceptionOrNull() is IOException)
+    }
+
+    @Test
+    fun aBackupKeepsThePreviousDocumentAcrossAWrite() {
+        val first = """{"version":1,"tabs":["a"]}"""
+        val second = """{"version":1,"tabs":["a","b"]}"""
+        val third = """{"version":1,"tabs":["a","b","c"]}"""
+        // Nothing to keep the first time: the document appears, no backup.
+        storage.writeSync("state.json", first, backup = true)
+        assertEquals(first, storage.read("state.json"))
+        assertNull(storage.read("state.json.bak"))
+        // The document that was there becomes the backup, whole; the write itself replaces the document.
+        storage.writeSync("state.json", second, backup = true)
+        assertEquals(second, storage.read("state.json"))
+        assertEquals(first, storage.read("state.json.bak"))
+        val done = CountDownLatch(1)
+        storage.write("state.json", third, backup = true) { done.countDown() }
+        assertTrue(done.await(10, TimeUnit.SECONDS))
+        assertEquals(third, storage.read("state.json"))
+        assertEquals(second, storage.read("state.json.bak"))
+        // A write without the option leaves the backup as it was; the payload never carries backups.
+        storage.writeSync("state.json", first)
+        assertEquals(second, storage.read("state.json.bak"))
+        assertEquals(setOf("state.json"), storage.readAll().keys().asSequence().toSet())
+        assertFalse(storage.isBootDocument("state.json.bak"))
+        assertEquals(setOf("state.json", "state.json.bak"), dir.list()!!.toSet())
+    }
+
+    @Test
+    fun aRewriteOfTheSameSizeWithinTheMillisecondIsAnotherVersion() {
+        storage.writeSync("state.json", """{"version":1,"tabs":["a"]}""")
+        val file = File(dir, "state.json")
+        // The document's clock is put well ahead: the rewrite lands "within the same millisecond".
+        val ahead = file.lastModified() + 5_000
+        assertTrue(file.setLastModified(ahead))
+        val before = storage.etag("state.json")
+        storage.writeSync("state.json", """{"version":1,"tabs":["b"]}""")
+        assertEquals("""{"version":1,"tabs":["b"]}""", storage.read("state.json"))
+        assertEquals(ahead + 1, file.lastModified())
+        assertNotEquals(before, storage.etag("state.json"))
+        // Once more, with a backup: the backup keeps the previous clock, the document moves on again.
+        storage.writeSync("state.json", """{"version":1,"tabs":["c"]}""", backup = true)
+        assertEquals(ahead + 1, File(dir, "state.json.bak").lastModified())
+        assertEquals(ahead + 2, file.lastModified())
+        // Another size is another version by itself: the clock is the write's own.
+        storage.writeSync("state.json", """{"version":1,"tabs":["c","d"]}""")
+        assertTrue(file.lastModified() < ahead)
     }
 
     @Test
@@ -50,13 +121,25 @@ class StorageTest {
 
     @Test
     fun namesThatEscapeTheDirectoryAreRefused() {
-        storage.writeSync("../escape.json", "{}")
+        runCatching { storage.writeSync("../escape.json", "{}") }
         assertFalse(File(dir.parentFile, "escape.json").exists())
         assertNull(storage.read("../escape.json"))
         assertNull(storage.fileFor("../escape.json"))
         assertNull(storage.fileFor("a/b/c.json"))
         assertEquals(emptyList<String>(), dir.list()!!.toList())
         assertNull(storage.read("missing.json"))
+    }
+
+    @Test
+    fun aDocumentOpensForStreamingWithItsVersionTag() {
+        assertNull(storage.open("extensions.json"))
+        storage.writeSync("extensions.json", registry)
+        val opened = storage.open("extensions.json")!!
+        assertEquals(storage.etag("extensions.json"), opened.etag)
+        assertEquals(registry.toByteArray().size.toLong(), opened.length)
+        assertEquals(registry, opened.stream.use { String(it.readBytes()) })
+        assertNull(storage.open("../escape.json"))
+        assertNull(storage.open("blocking"))
     }
 
     @Test

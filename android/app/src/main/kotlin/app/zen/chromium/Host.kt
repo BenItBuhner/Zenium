@@ -51,6 +51,8 @@ import java.util.concurrent.Executors
  */
 class Host(override val activity: MainActivity, private val root: FrameLayout, private val fullscreenLayer: FrameLayout) : PageHost {
     val storage = Storage(activity)
+    /** The file-backed handoffs to the chrome: the big boot documents and the big fetched bodies (`BootHandoff.kt`). */
+    val handoff = BootHandoff(storage, File(activity.cacheDir, BootHandoff.SPILL_DIR))
     /** The process's request engine, built from the rule sets the core persists, before any tab exists. */
     override val blocking = Blocking.shared(activity)
     /** The process's privacy host: the policy the core pushes, the Safe Browsing tables it writes. */
@@ -87,6 +89,11 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         private set
     private val io = Executors.newCachedThreadPool { r -> Thread(r, "zen-io") }
     private val main = Handler(Looper.getMainLooper())
+
+    init {
+        // Spilled bodies the last chrome document never released (it, or the process, went away).
+        io.execute(handoff::sweep)
+    }
     /** The share sheet, in both directions (after `io`: it fetches on it). */
     val share = Share(this, io)
     /** Links that leave the web: held here while the core (and the user) decide. */
@@ -149,32 +156,41 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
 
     /** Synchronous methods (bridge thread!). Only cheap, thread-safe work belongs here. */
     fun dispatchSync(method: String, args: JSONObject): Any? = when (method) {
-        "boot" -> json(
-            "version" to BuildConfig.VERSION_NAME,
-            // The OS release decides a few capabilities (the clipboard chip, the share sheet's row).
-            "sdkInt" to Build.VERSION.SDK_INT,
-            "signer" to Updates.signerSha256(activity),
-            // The applicationId; a release whose APK carries another one installs as a new app.
-            "packageName" to activity.packageName,
-            // Multi-profile WebView: what makes a private tab private (and containers separate).
-            "profiles" to Profiles.supported,
-            "appIcon" to launcherIcon.current(),
-            "files" to storage.readAll(),
-            "downloadsDir" to (Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)?.absolutePath ?: ""),
-            // Where the extension store installs; its presence turns the extensions capability on.
-            "extensionsRoot" to extStore.root.absolutePath,
-            // Whether content scripts get real isolated worlds (decided once, when the runtime was built).
-            "isolatedWorlds" to extensions.isolatedWorlds,
-            "insets" to activity.currentInsets(),
-            "fullscreen" to immersive,
-            "environment" to activity.environment(),
-            "pinShortcuts" to shortcuts.supported
-        )
-        "storage.writeSync" -> {
-            storage.writeSync(args.str("name"), args.str("text"))
-            null
+        "boot" -> {
+            // The core's documents: the small ones inline, the big ones listed for the chrome to
+            // fetch through the document handler (`BootHandoff.kt`, `src/android/handoff.ts`).
+            val documents = storage.bootDocuments(BootHandoff.BOOT_INLINE_LIMIT)
+            json(
+                "version" to BuildConfig.VERSION_NAME,
+                // The OS release decides a few capabilities (the clipboard chip, the share sheet's row).
+                "sdkInt" to Build.VERSION.SDK_INT,
+                "signer" to Updates.signerSha256(activity),
+                // The applicationId; a release whose APK carries another one installs as a new app.
+                "packageName" to activity.packageName,
+                // Multi-profile WebView: what makes a private tab private (and containers separate).
+                "profiles" to Profiles.supported,
+                "appIcon" to launcherIcon.current(),
+                "files" to documents.files,
+                "deferred" to documents.deferred,
+                "downloadsDir" to (Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)?.absolutePath ?: ""),
+                // Where the extension store installs; its presence turns the extensions capability on.
+                "extensionsRoot" to extStore.root.absolutePath,
+                // Whether content scripts get real isolated worlds (decided once, when the runtime was built).
+                "isolatedWorlds" to extensions.isolatedWorlds,
+                "insets" to activity.currentInsets(),
+                "fullscreen" to immersive,
+                "environment" to activity.environment(),
+                "pinShortcuts" to shortcuts.supported
+            )
         }
-        // Documents outside the boot payload (the rule-set files under blocking/).
+        // Answers `true` once the file is replaced; a failure throws, which the bridge reports as
+        // no answer, and the chrome keeps its mirror as it was (`AndroidStoreIO.writeSync`).
+        "storage.writeSync" -> {
+            storage.writeSync(args.str("name"), args.str("text"), args.bool("backup"))
+            true
+        }
+        // Documents outside the boot payload (the rule-set files under blocking/), and a boot
+        // document the core reads before its fetched file has arrived.
         "storage.read" -> storage.read(args.str("name"))
         "storage.exists" -> storage.exists(args.str("name"))
         else -> throw IllegalArgumentException("Unknown sync method: $method")
@@ -185,7 +201,10 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         val tabId = args.strOrNull("tabId")
         val tab = tabId?.let { tabs.get(it) }
         when (method) {
-            "storage.write" -> storage.write(args.str("name"), args.str("text")) { main.post { reply(null) } }
+            // A write that failed rejects the call: the chrome must not remember it as made.
+            "storage.write" -> storage.write(args.str("name"), args.str("text"), args.bool("backup")) { failure ->
+                main.post { reply(if (failure == null) null else Rejection(failure.message ?: failure.javaClass.simpleName)) }
+            }
             "storage.remove" -> storage.remove(args.str("name")) { main.post { reply(null) } }
 
             // --- request blocking (the BlockingHost contract and diagnostics) ----------------------
@@ -333,6 +352,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 reply(null)
             }
             "net.fetch" -> fetchText(args.str("url"), args.obj("headers"), args.num("timeoutMs").toInt(), reply)
+            // The chrome has read a spilled body (`BootHandoff.readBody`): its file goes.
+            "net.release" -> { io.execute { handoff.release(args.str("token")) }; reply(null) }
             "download.bind" -> { downloads.bind(args.str("token"), args.str("id"), args.obj("destination"), args.bool("private")); reply(null) }
             "download.cancel" -> { downloads.cancel(args.str("id")); reply(null) }
             "download.pause" -> { downloads.pause(args.str("id")); reply(null) }
@@ -681,7 +702,12 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         }
     }
 
-    /** `timeoutMs` ≤ 0 keeps the short default meant for suggestions and Live Folders. */
+    /**
+     * `timeoutMs` ≤ 0 keeps the short default meant for suggestions and Live Folders. A body
+     * over `BootHandoff.NET_INLINE_LIMIT` is not answered inline (JSON-quoted into a script the
+     * chrome's main thread parses) but spilled to a file the chrome fetches by token
+     * (`body: {token, bytes}`; `fetchText` in `src/android/platform.ts` reads it and releases it).
+     */
     private fun fetchText(url: String, headers: JSONObject, timeoutMs: Int, reply: (Any?) -> Unit) {
         io.execute {
             val result = runCatching {
@@ -693,12 +719,16 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 }
                 val status = conn.responseCode
                 val ok = status in 200..299
-                val text = if (ok) conn.inputStream.bufferedReader().use { it.readText() } else ""
+                val body = if (ok) conn.inputStream.use { handoff.readBody(it) } else BootHandoff.Body.Inline("")
                 // The validators a later conditional fetch sends back (`If-None-Match`, `If-Modified-Since`).
                 val responseHeaders = JSONObject()
                 conn.getHeaderField("ETag")?.let { responseHeaders.put("etag", it) }
                 conn.getHeaderField("Last-Modified")?.let { responseHeaders.put("last-modified", it) }
-                json("ok" to ok, "status" to status, "text" to text, "headers" to responseHeaders)
+                val result = json("ok" to ok, "status" to status, "headers" to responseHeaders)
+                when (body) {
+                    is BootHandoff.Body.Inline -> result.put("text", body.text)
+                    is BootHandoff.Body.Spilled -> result.put("text", "").put("body", json("token" to body.token, "bytes" to body.bytes))
+                }
             }.getOrElse { json("ok" to false, "status" to 0, "text" to "") }
             main.post { reply(result) }
         }
@@ -917,6 +947,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     fun onChromeDocumentReplaced() {
         cancelProbe()
         tabs.dropAll()
+        // The old core's unread spilled bodies went with its document.
+        io.execute(handoff::sweep)
     }
 
     /**
@@ -956,6 +988,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         if (dead !== chrome || activity.isFinishing || activity.isDestroyed) return
         cancelProbe()
         tabs.dropAll()
+        // Spilled bodies the dead chrome never released would otherwise stay for the process lifetime.
+        io.execute(handoff::sweep)
         val index = root.indexOfChild(dead)
         val params = dead.layoutParams ?: FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,

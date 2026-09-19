@@ -533,4 +533,82 @@ class SafeBrowsingTest {
             cold.stop()
         }
     }
+
+    @Test
+    fun `a reload parses only the documents whose version changed and keeps the others' tables`() {
+        val safeBrowsing = SafeBrowsing(storage)
+        storage.writeSync("safebrowsing/urlhaus.json", document("urlhaus", "malware", listOf("listed.example")))
+        storage.writeSync("safebrowsing/phishing-database.json", document("phishing-database", "phishing", listOf("evil.example.com")))
+        safeBrowsing.reload()
+        assertEquals(2, safeBrowsing.lastParsed)
+        val phishing = safeBrowsing.tables.feeds.first { it.id == "phishing-database" }
+
+        // Nothing written: nothing parsed, the same tables.
+        safeBrowsing.reload()
+        assertEquals(0, safeBrowsing.lastParsed)
+        assertSame(phishing, safeBrowsing.tables.feeds.first { it.id == "phishing-database" })
+        assertEquals(2, safeBrowsing.tables.entries)
+
+        // One feed refreshed (a later moment, other bytes): that one is parsed, the other kept.
+        File(dir, "safebrowsing/urlhaus.json").setLastModified(System.currentTimeMillis() - 60_000)
+        storage.writeSync("safebrowsing/urlhaus.json", document("urlhaus", "malware", listOf("fresh.example", "another.example")))
+        safeBrowsing.reload()
+        assertEquals(1, safeBrowsing.lastParsed)
+        assertSame(phishing, safeBrowsing.tables.feeds.first { it.id == "phishing-database" })
+        assertEquals("urlhaus", safeBrowsing.tables.lookup("fresh.example")!!.feedId)
+        assertNull(safeBrowsing.tables.lookup("listed.example"))
+
+        // A document that is not a feed stays known as such (not parsed again) until it changes;
+        // a removed document drops out with its table.
+        storage.writeSync("safebrowsing/broken.json", "not json")
+        safeBrowsing.reload()
+        assertEquals(1, safeBrowsing.lastParsed)
+        assertEquals(listOf("phishing-database", "urlhaus"), safeBrowsing.tables.feeds.map { it.id })
+        safeBrowsing.reload()
+        assertEquals(0, safeBrowsing.lastParsed)
+        File(dir, "safebrowsing/phishing-database.json").delete()
+        safeBrowsing.reload()
+        assertEquals(0, safeBrowsing.lastParsed)
+        assertEquals(listOf("urlhaus"), safeBrowsing.tables.feeds.map { it.id })
+        assertNull(safeBrowsing.tables.lookup("evil.example.com"))
+        // Written back (as a fresh file), it is parsed once more.
+        storage.writeSync("safebrowsing/phishing-database.json", document("phishing-database", "phishing", listOf("evil.example.com")))
+        safeBrowsing.reload()
+        assertEquals(1, safeBrowsing.lastParsed)
+        assertEquals("phishing", safeBrowsing.tables.lookup("evil.example.com")!!.threat)
+    }
+
+    @Test
+    fun `the snapshot names the documents by the version tag the incremental load keys on`() {
+        storage.writeSync("safebrowsing/urlhaus.json", document("urlhaus", "malware", listOf("listed.example")))
+        storage.writeSync("safebrowsing/phishing-database.json", document("phishing-database", "phishing", listOf("evil.example.com")))
+        val writer = SafeBrowsing(storage)
+        writer.reload()
+        assertEquals(2, writer.lastParsed)
+        assertEquals(SafeBrowsing.SnapshotOutcome.WRITTEN, writer.lastSnapshot)
+
+        // The header's tags are `Storage.etag`, the files' size and time and nothing of this
+        // process: a Storage of its own over the directory (the next process) recognises the snapshot.
+        val next = SafeBrowsing(Storage(dir))
+        assertTrue(next.loadSnapshot())
+        assertEquals(2, next.tables.entries)
+        assertEquals("urlhaus", next.tables.lookup("listed.example")!!.feedId)
+
+        // A feed refreshed with other bytes of the same size, within the millisecond: another
+        // version to the incremental load (parsed again) and to the header (written again).
+        storage.writeSync("safebrowsing/urlhaus.json", document("urlhaus", "malware", listOf("fresh1.example")))
+        writer.reload()
+        assertEquals(1, writer.lastParsed)
+        assertEquals(SafeBrowsing.SnapshotOutcome.WRITTEN, writer.lastSnapshot)
+        assertEquals("urlhaus", writer.tables.lookup("fresh1.example")!!.feedId)
+        assertNull(writer.tables.lookup("listed.example"))
+        val again = SafeBrowsing(Storage(dir))
+        assertTrue(again.loadSnapshot())
+        assertEquals("urlhaus", again.tables.lookup("fresh1.example")!!.feedId)
+        assertNull(again.tables.lookup("listed.example"))
+        // The instance that loaded the snapshot parses the documents once (its own cache is empty) and leaves it alone.
+        again.reload()
+        assertEquals(2, again.lastParsed)
+        assertEquals(SafeBrowsing.SnapshotOutcome.UNCHANGED, again.lastSnapshot)
+    }
 }
