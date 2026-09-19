@@ -72,9 +72,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     init {
         // A private session the last run did not get to end (a crash, the system killing the app)
         // ends now, before any tab exists and while its profile is free to be deleted; the card
-        // that offered to close its tabs goes with it.
+        // that offered to close its tabs goes with the PrivateSession below.
         Profiles.wipePrivate(activity)
-        PrivateSession.dismissStale(activity)
     }
 
     /** The launcher icon colour (one enabled `activity-alias`), driven by Settings → Look and Feel. */
@@ -163,6 +162,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     override fun pullEvent(tabId: String, phase: String, payload: JSONObject?) = chrome.pullEvent(tabId, phase, payload)
     override fun selectionMenu(tabId: String, text: String, reply: (String?) -> Unit) = chrome.selectionMenu(tabId, text, reply)
     override fun progress(tabId: String, percent: Int) = chrome.viewEvent(tabId, "progress", json("progress" to percent / 100.0))
+    override fun onViewsChanged() = privateSession.onViewsChanged()
     override val underlay: View get() = chrome
     override fun backChanged() = back.refresh()
     override fun onPageTransitionEnded(transition: PageBackTransition) = back.onPageTransitionEnded(transition)

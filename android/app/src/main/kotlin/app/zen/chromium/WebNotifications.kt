@@ -9,7 +9,6 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -17,6 +16,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import org.json.JSONObject
+import java.net.URI
 import java.util.concurrent.Executor
 
 /**
@@ -286,7 +286,7 @@ class SitesChannels(private val context: Context) {
 
         /** How a site reads on its channel and under its notifications: the host (with a port when it has one), no scheme. */
         fun displayName(origin: String): String {
-            val uri = runCatching { Uri.parse(origin) }.getOrNull()
+            val uri = runCatching { URI(origin) }.getOrNull()
             val host = uri?.host?.takeIf(String::isNotEmpty) ?: return origin
             val port = uri.port
             return if (port > 0) "$host:$port" else host

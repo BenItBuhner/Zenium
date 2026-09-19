@@ -6,6 +6,8 @@ import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.view.View
+import android.view.WindowManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 
@@ -22,20 +24,30 @@ import androidx.core.app.NotificationManagerCompat
  * card after the process died still takes the card down; with the host alive it asks the core to
  * close every private tab (`private.closeAll`), and the count coming back to 0 ends the session
  * (the profile wipe, the downloads, the certificate decisions – `Browser.endPrivateSessionIfOver`).
+ *
+ * While private browsing is on the screen ([onScreen]) the window is secure
+ * (`FLAG_SECURE`, Chrome's default for Incognito): the system's Recents card of the app goes
+ * blank instead of a picture of the private page being written to disk, and screenshots and
+ * screen recordings of it are refused. A regular page in front of private tabs is not secured.
  */
 class PrivateSession(private val host: Host) {
     private val context: Context = host.activity.applicationContext
     private val manager = NotificationManagerCompat.from(context)
     private var openTabs = 0
+    private var secured = false
 
     init {
         live = this
+        // A card a process that died with private tabs open left behind: the core never restores
+        // them, so a session starts with none and the card comes down.
+        manager.cancel(NOTIFICATION_ID)
     }
 
     /** `private.setOpenTabs`: how many private tabs there are now. */
     fun setOpenTabs(count: Int) {
         val before = openTabs
         openTabs = count.coerceAtLeast(0)
+        refreshSecure()
         if (openTabs == 0) {
             if (before > 0) manager.cancel(NOTIFICATION_ID)
             return
@@ -64,14 +76,54 @@ class PrivateSession(private val host: Host) {
         host.hostEvent("private.closeAll", null)
     }
 
+    /** A page came, went, or changed visibility: the window's secure flag follows what is on screen. */
+    fun onViewsChanged() = refreshSecure()
+
+    private fun refreshSecure() {
+        val pages = host.tabs.all().map { Page(Profiles.isPrivate(it.containerId), it.visibility == View.VISIBLE) }
+        setSecure(onScreen(pages))
+    }
+
+    private fun setSecure(on: Boolean) {
+        if (on == secured) return
+        secured = on
+        val window = host.activity.window ?: return
+        runCatching {
+            if (on) window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+            else window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
+    }
+
     fun destroy() {
         if (live === this) live = null
+        setSecure(false)
         // The activity is going (a recreation or the end): the private tabs go with the core's
         // document, so the card has nothing left to close.
         manager.cancel(NOTIFICATION_ID)
     }
 
+    /** A page as [onScreen] sees it: in the private container, and visible. */
+    class Page(val private: Boolean, val showing: Boolean)
+
     companion object {
+        /**
+         * Whether private browsing is on the screen: a private page showing, or – with no page
+         * showing at all – the chrome's own surface over private tabs (the tab overview with
+         * their cards, the private new tab page). A regular page in front of private tabs, and a
+         * screen with no private tab at all, are not.
+         */
+        fun onScreen(pages: Iterable<Page>): Boolean {
+            var anyShowing = false
+            var anyPrivate = false
+            for (page in pages) {
+                anyPrivate = anyPrivate || page.private
+                if (!page.showing) continue
+                if (page.private) return true
+                anyShowing = true
+            }
+            return anyPrivate && !anyShowing
+        }
+
         /** Chrome's channel for it is "Incognito", low importance. */
         const val CHANNEL_ID = "zenium.private"
         const val CHANNEL_NAME = "Private browsing"
@@ -85,11 +137,6 @@ class PrivateSession(private val host: Host) {
         @Volatile
         var live: PrivateSession? = null
             private set
-
-        /** A card left by a process that died with private tabs open: down, at the next start. */
-        fun dismissStale(context: Context) {
-            if (live == null) NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID)
-        }
 
         fun ensureChannel(context: Context) {
             val system = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
