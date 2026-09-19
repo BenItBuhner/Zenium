@@ -477,8 +477,20 @@ export class Browser {
     }
     const record = this.webApps.pinnedFor(url)
     const app: AppWindowInfo = record
-      ? { name: record.name, icon: record.icon ?? null, scope: record.scope, appId: record.id }
-      : { name: displayHost(url) || url, icon: null, scope: new URL(url).origin + '/', appId: null }
+      ? {
+          name: record.name,
+          icon: record.icon ?? null,
+          scope: record.scope,
+          appId: record.id,
+          startUrl: record.startUrl
+        }
+      : {
+          name: displayHost(url) || url,
+          icon: null,
+          scope: new URL(url).origin + '/',
+          appId: null,
+          startUrl: url
+        }
     const win = this.createWindow({
       kind: 'unsynced',
       from: opts.from,

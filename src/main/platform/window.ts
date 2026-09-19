@@ -10,6 +10,7 @@ import {
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { is } from '@electron-toolkit/utils'
+import { ElectronShortcuts } from './shortcuts'
 import type { EventName, Events, Rect, WindowChrome } from '../../shared/types'
 import { CAPTION_HEIGHT, type CaptionColors } from '../../shared/theme'
 import type { Browser } from '../../core/browser'
@@ -148,6 +149,18 @@ export class ElectronWindow implements WindowHost {
     this.titles = new TitleThrottle((title) => {
       if (this.alive) win.setTitle(title)
     }, init.title)
+    // Windows groups taskbar buttons by AppUserModelID: an installed app's windows get their
+    // own group, icon and pin ("pin to taskbar" relaunches the app), as Chrome's app windows do.
+    if (process.platform === 'win32' && init.app?.appId) {
+      const icon = init.app.icon?.startsWith('file:') ? fileURLToPath(init.app.icon) : null
+      const ico = icon ? icon.replace(/\.png$/i, '.ico') : null
+      win.setAppDetails({
+        appId: ElectronShortcuts.appUserModelId(init.app.appId),
+        ...(ico ? { appIconPath: ico, appIconIndex: 0 } : {}),
+        relaunchCommand: ElectronShortcuts.relaunchCommand(init.app.startUrl),
+        relaunchDisplayName: init.app.name
+      })
+    }
     if (init.maximized) win.maximize()
 
     win.once('ready-to-show', () => win.show())

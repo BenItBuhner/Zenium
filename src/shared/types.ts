@@ -267,6 +267,8 @@ export interface AppWindowInfo {
   scope: string
   /** The installed app's id when the window belongs to one (`webapp.launch`), else null. */
   appId: string | null
+  /** The URL a launcher of this app opens (`--app=<startUrl>`): the record's, else the page's. */
+  startUrl: string
 }
 /** System-drawn material behind a translucent chrome (Windows 11). */
 export type WindowMaterial = 'none' | 'mica'

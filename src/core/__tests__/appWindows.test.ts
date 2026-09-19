@@ -161,7 +161,8 @@ describe('standalone app windows (MW-23)', () => {
       name: 'app.example',
       icon: null,
       scope: 'https://app.example/',
-      appId: null
+      appId: null,
+      startUrl: APP_URL
     })
     // The host learns about the app at creation (icon on the frame, taskbar grouping).
     const host = f.hostOf(win)
@@ -244,7 +245,8 @@ describe('standalone app windows (MW-23)', () => {
       name: 'Dash',
       icon: 'file:///icons/dash.png',
       scope: 'https://app.example/dash/',
-      appId: 'https://app.example/dash/'
+      appId: 'https://app.example/dash/',
+      startUrl: 'https://app.example/dash/'
     })
     expect(f.browser.tabs.activeTabFor(appWin)?.url).toBe(APP_URL)
     expect(f.browser.tabs.tab(tab.id)).toBeUndefined()
@@ -283,7 +285,7 @@ describe('standalone app windows (MW-23)', () => {
     expect(owner).toBe(browserWin)
     expect(f.browser.tabs.activeTabFor(browserWin)?.id).toBe(adopted.tab.id)
     // Not "next to the opener": the opener's tab is not in this window.
-    expect(adopted.tab.parentTabId ?? null).toBeNull()
+    expect(adopted.tab.openerTabId).toBeNull()
     expect(f.hostOf(browserWin).shown).toBe(1)
   })
 

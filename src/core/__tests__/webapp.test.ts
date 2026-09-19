@@ -115,7 +115,13 @@ function harness(options: { pinOk?: boolean; desktop?: boolean } = {}): Harness 
         isClosing: false,
         closeApproved: false,
         app: record
-          ? { name: record.name, icon: record.icon ?? null, scope: record.scope, appId: record.id }
+          ? {
+              name: record.name,
+              icon: record.icon ?? null,
+              scope: record.scope,
+              appId: record.id,
+              startUrl: record.startUrl
+            }
           : null,
         host: {
           show: () => {
@@ -304,7 +310,7 @@ describe('WebAppService', () => {
     h.service.launch(MANIFEST_ID, h.win)
     expect(h.appWindows).toHaveLength(1)
     expect(h.appWindows[0].shown).toBe(2)
-    h.appWindows[0].win.isClosing = true
+    ;(h.appWindows[0].win as { isClosing: boolean }).isClosing = true
     h.service.launch(MANIFEST_ID, h.win)
     expect(h.appWindows).toHaveLength(2)
     expect(h.appWindows[1].url).toBe(DOCUMENT_URL)

@@ -77,6 +77,7 @@ import { ElectronPrintingHost } from './printing'
 import { ElectronUpdateHost } from './updates'
 import { applyAppIcon, iconPngPath } from './appIcon'
 import { ElectronDefaultBrowser } from './defaultBrowser'
+import { ElectronShortcuts } from './shortcuts'
 import { ensureWindowsAppIdRegistered, notificationPermissionStatus } from './notifications'
 import { createPasswordsHost } from './passwords'
 import { attachWebAuthnHandlers, configurePlatformAuthenticators } from './webauthn'
@@ -131,7 +132,9 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   newTabPage: true,
   // Settings stays an overlay on the desktop until its program adopts the page-tab model.
   pageTabs: false,
-  pinShortcuts: false,
+  // Installed web apps get a launcher (Start menu / applications menu / ~/Applications) that
+  // opens them in a window of their own (platform/shortcuts.ts, MW-22 / MW-23).
+  pinShortcuts: true,
   translate: true,
   // No speech recogniser on the desktop hosts; the mic buttons stay away.
   voiceSearch: false,
@@ -175,6 +178,8 @@ export class ElectronPlatform implements Platform {
   readonly printing = new ElectronPrintingHost(browserWindowOf)
   /** Default-browser status and registration on Windows, macOS and Linux. */
   readonly defaultBrowser = new ElectronDefaultBrowser()
+  /** Installed web apps' launchers and icons (MW-22). */
+  readonly shortcuts: ElectronShortcuts
   readonly newTabBackground: ElectronNewTabBackground
   /** Taskbar progress, dock badge and completion notifications for downloads. */
   downloadsShell: ElectronDownloadsShell | null = null
@@ -187,6 +192,11 @@ export class ElectronPlatform implements Platform {
     this.io = new FileStoreIO(this.profileDir)
     this.blocking = new ElectronBundledLists(bundledListsDirectory(), this.profileDir)
     this.newTabBackground = new ElectronNewTabBackground(join(this.profileDir, 'newtab'))
+    // The launcher confirms to the core once its files are written (the browser exists by then:
+    // pins are asked for from a page).
+    this.shortcuts = new ElectronShortcuts(join(this.profileDir, 'webapps'), (id, details) =>
+      this.browser.webApps.onPinned(id, details)
+    )
     this.windows = new ElectronWindowFactory()
     this.translate = new ElectronTranslateHost(userDataDir, () =>
       focusedChromeWebContents((id) => this.windows.windowForWebContents(id) !== undefined)
