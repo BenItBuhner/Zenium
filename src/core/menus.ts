@@ -396,6 +396,14 @@ export class Menus {
           }
         )
       }
+      // Hosts that keep private browsing in tabs (Android): Chrome's "Open in Incognito tab",
+      // second item; the link opens in the private container of this window, in front.
+      if (caps.privateTabs) {
+        open.push({
+          label: 'Open Link in Private Tab',
+          click: () => tabs.newPrivateTab(url, win)
+        })
+      }
       open.push(
         {
           label: 'Open Link in Glance',
