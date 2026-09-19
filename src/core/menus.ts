@@ -28,6 +28,7 @@ import { bookmarkUrlCount, isBookmarkRoot } from '../shared/bookmarks'
 import { fileExtension, resolveDownloadSettings } from '../shared/downloads'
 import { canRetryDownload, deleteFileToast, displayName } from '../shared/downloadsShell'
 import { languageName, sortedByName } from '../shared/languageNames'
+import { dictionaryFor } from '../shared/spellcheck'
 import { isInFlight, isQuarantined } from './downloads'
 import { mayAutoOpen } from './downloads/danger'
 import { applicationMenu, menuSignature, runFromMenuBar } from './menuBar'
@@ -124,6 +125,8 @@ export function tidySeparators(template: Template): Template {
 const SELECTION_LABEL_MAX = 50
 /** Chrome lists at most five spelling suggestions. */
 const SPELLING_SUGGESTIONS_MAX = 5
+/** The "Spell check" submenu lists the user's languages, not every dictionary there is. */
+const SPELLCHECK_MENU_LANGUAGES_MAX = 8
 
 /**
  * Context menus. Zen (Firefox) uses native-styled menus everywhere; the core builds the templates
@@ -236,6 +239,10 @@ export class Menus {
       const tail =
         selection && !params.misspelledWord ? this.selectionGroup(tab, selection, win).slice(1) : []
       groups.push(this.editGroup(params, { tail }))
+      // Chrome's "Spell check" submenu, its own group after the editing items, on hosts with a
+      // spellchecker of the browser's own.
+      const spellcheck = this.spellcheckSubmenu(win)
+      if (spellcheck) groups.push([spellcheck])
     } else if (selection) {
       groups.push(this.selectionGroup(tab, selection, win, { x: params.x, y: params.y }))
     }
@@ -590,9 +597,65 @@ export class Menus {
     if (items.length === 0) items.push({ label: 'No Spelling Suggestions', enabled: false })
     items.push({
       label: 'Add to Dictionary',
-      click: () => view.addWordToDictionary(params.misspelledWord)
+      // The profile's one custom dictionary (every session), not this view's session alone.
+      click: () => void this.browser.spellcheck.addWord(params.misspelledWord, view)
     })
     return items
+  }
+
+  /**
+   * Chrome's "Spell check" submenu of an editable field: the languages the fields are checked
+   * in (checked) and the user's other languages with a dictionary (unchecked), each a toggle;
+   * then "Check the spelling of text fields" and the way to Settings › Languages. Null on a host
+   * without a spellchecker of its own (Android) and on one that follows the OS's languages
+   * (macOS), where the item would have nothing to offer.
+   */
+  private spellcheckSubmenu(win: ZenWindow): MenuItemTemplate | null {
+    const { spellcheck, state, translate } = this.browser
+    const status = spellcheck.uiState()
+    if (!status.available || status.systemLanguages) return null
+    const checked = new Set(spellcheck.languages())
+    const available = status.languages.map((l) => l.code)
+    // The user's languages: the ones checked now, the UI locales' dictionaries and the
+    // languages they read (the translate preferences), in that order, without repeats.
+    const candidates = [
+      ...checked,
+      ...this.browser.platform.spellcheck!.locales,
+      ...translate.uiState().preferences.preferred
+    ]
+    const codes: string[] = []
+    for (const candidate of candidates) {
+      const code = dictionaryFor(candidate, available)
+      if (code && !codes.includes(code)) codes.push(code)
+      if (codes.length === SPELLCHECK_MENU_LANGUAGES_MAX) break
+    }
+    const nameOf = new Map(status.languages.map((l) => [l.code, l.name]))
+    const enabled = state.settings.spellcheck.enabled
+    const languages: Template = codes.map((code) => ({
+      label: nameOf.get(code) ?? code,
+      type: 'checkbox',
+      checked: checked.has(code),
+      enabled,
+      click: () => spellcheck.setLanguage(code, !checked.has(code))
+    }))
+    return {
+      label: 'Spell Check',
+      submenu: [
+        ...languages,
+        ...(languages.length > 0 ? [{ type: 'separator' as const }] : []),
+        {
+          label: 'Check the Spelling of Text Fields',
+          type: 'checkbox',
+          checked: enabled,
+          click: () => spellcheck.setEnabled(!enabled)
+        },
+        { type: 'separator' },
+        {
+          label: 'Language Settings',
+          click: () => void this.browser.pages.open('settings', 'languages', win)
+        }
+      ]
+    }
   }
 
   /**

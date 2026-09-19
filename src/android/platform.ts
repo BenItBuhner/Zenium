@@ -890,7 +890,8 @@ export class AndroidPlatform implements Platform {
       showItemInFolder: () => bridge.send('download.showAll'),
       share: (payload) => bridge.call('app.share', payload),
       openAppLinkSettings: () => bridge.send('app.openAppLinkSettings'),
-      openPrivateDnsSettings: () => bridge.send('app.openPrivateDnsSettings')
+      openPrivateDnsSettings: () => bridge.send('app.openPrivateDnsSettings'),
+      openKeyboardSettings: () => bridge.send('app.openKeyboardSettings')
     }
     this.externalProtocols = {
       respond: (requestId, allow) => bridge.send('externalProtocol.respond', { requestId, allow })

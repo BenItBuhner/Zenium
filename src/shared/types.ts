@@ -24,6 +24,8 @@ import type { WebAppInfo } from './webApp'
 import type { ContentDefault } from './contentSettings'
 import type { VoiceEvent, VoiceStartOutcome } from './voice'
 import type { QrEvent, QrStartOutcome } from './qrScan'
+import type { SpellcheckSettings, SpellcheckStatus } from './spellcheck'
+import type { ReaderPreferences } from './reader'
 
 export type Platform = 'linux' | 'win32' | 'darwin' | 'android'
 
@@ -1770,6 +1772,13 @@ export interface Settings {
   newTab: NewTabSettings
   /** The one-time gesture hint (a toast after the first page) has been shown (phones). */
   gestureHintDone: boolean
+  /**
+   * Spell checking of text fields: on / off and the dictionary languages (Settings › Languages).
+   * Absent in profiles from before it existed (`sanitizeSpellcheck` fills the defaults).
+   */
+  spellcheck: SpellcheckSettings
+  /** Reader View's text size, font, colour theme and column width (`zen://reader`). */
+  reader: ReaderPreferences
 }
 
 // ---------------------------------------------------------------------------
@@ -2525,6 +2534,8 @@ export interface UIState {
   translate: TranslateUIState
   /** The device facts the page controls resolve against (screen class, peripherals, font scale). */
   pageEnvironment: PageEnvironment
+  /** Spell check on this host: its dictionaries and their state, or the Android limit. */
+  spellcheck: SpellcheckStatus
 }
 
 export interface FindResult {
@@ -3285,7 +3296,11 @@ export interface Commands {
     args: { tabId: string; section: string | null; replace?: boolean }
     result: void
   }
-  'page.screenshot': { args: { tabId: string }; result: void }
+  /**
+   * Save a screenshot of the page to Downloads: the whole page (Edge's "Capture full page",
+   * beyond the viewport) unless `fullPage` is false, which captures the visible area only.
+   */
+  'page.screenshot': { args: { tabId: string; fullPage?: boolean }; result: void }
   'page.print': { args: { tabId: string }; result: void }
   'page.savePage': { args: { tabId: string }; result: void }
   'page.viewSource': { args: { tabId: string }; result: void }
@@ -3322,6 +3337,19 @@ export interface Commands {
   'boost.stopZap': { args: { tabId: string }; result: void }
 
   'reader.toggle': { args: { tabId: string }; result: void }
+  /** Change Reader View's text preferences; every open reader page follows at once. */
+  'reader.setPreferences': { args: Partial<ReaderPreferences>; result: void }
+
+  /** Chrome's "Check the spelling of text fields". */
+  'spellcheck.setEnabled': { args: { enabled: boolean }; result: void }
+  /** Check (or stop checking) in one of the host's dictionary languages. */
+  'spellcheck.setLanguage': { args: { code: string; on: boolean }; result: void }
+  /** The custom dictionary (words added with "Add to Dictionary"), sorted. */
+  'spellcheck.words': { args: void; result: string[] }
+  'spellcheck.addWord': { args: { word: string }; result: boolean }
+  'spellcheck.removeWord': { args: { word: string }; result: boolean }
+  /** Android: the system's keyboard settings, where the spell checker that checks pages is set. */
+  'spellcheck.openKeyboardSettings': { args: void; result: void }
 
   'liveFolder.save': {
     args: {
