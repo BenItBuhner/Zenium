@@ -1,0 +1,56 @@
+name: Android site controls demo
+
+# Records the site controls on the phone: the page-event permission prompt sheet (Allow, then
+# Allow once after the decision is forgotten), a private tab on its own profile, Clear browsing
+# data, and the Settings tab's Privacy and Security rows – Safety check, the Clear browsing data
+# form sheet with its range picker, Site settings with a type's sheet and its picker – and the
+# menu sheet, on a hardware-accelerated Android emulator; uploads the video, the screenshots and
+# the driver's notes. Dispatch-only, like the other demos: it takes about fifteen minutes and says
+# nothing about a change being correct. Same caveats as the gesture demo about frame rate and the
+# software GPU (the renderer is the shared workflow's default). The build, the emulator and the
+# Gradle cache live in android-emulator-demo.yml; this file only picks the driver.
+on:
+  workflow_dispatch:
+  # TEMPORARY (round #134 on PR #135): one recording on the branch's head for the Android stills;
+  # removed once the run has been read.
+  push:
+    branches: [cursor/services-site-controls-ui-24d1]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-site-controls-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Site controls demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver picks the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.SiteControlsDemo
+        DEMO_DIR=site-controls-demo
+        DEMO_OUT=artifacts/android-site-controls-demo
+        DEMO_VIDEO=services-site-controls-android-run.mp4
+      artifact-name: android-site-controls-demo
+      artifact-path: artifacts/android-site-controls-demo/
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed: a run is then spent on the demo rather than on the runner.
+  record-again:
+    name: Site controls demo, second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.SiteControlsDemo
+        DEMO_DIR=site-controls-demo
+        DEMO_OUT=artifacts/android-site-controls-demo
+        DEMO_VIDEO=services-site-controls-android-run.mp4
+      artifact-name: android-site-controls-demo-second-boot
+      artifact-path: artifacts/android-site-controls-demo/
