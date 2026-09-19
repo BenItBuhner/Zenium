@@ -16,9 +16,6 @@ name: Android group strip demo
 # android-emulator-demo.yml; this file only picks the driver.
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - cursor/android-group-strip-c2b7
 
 permissions:
   contents: read
