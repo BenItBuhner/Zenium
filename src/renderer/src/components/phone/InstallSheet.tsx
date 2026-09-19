@@ -2,7 +2,7 @@ import type { JSX } from 'react'
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import type { WebAppInstallPrompt } from '@shared/types'
-import { tileInk, tileLetter, type WebAppScreenshot } from '@shared/webApp'
+import { installSheetCopy, tileInk, tileLetter, type WebAppScreenshot } from '@shared/webApp'
 import { cmd, run } from '@renderer/lib/api'
 import { useBackSurface } from '@renderer/lib/back'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
@@ -49,6 +49,9 @@ function InstallSheet({ prompt }: { prompt: WebAppInstallPrompt }): JSX.Element 
   })
 
   const name = title.trim() || prompt.title
+  // Desktop speaks of installing (Chrome's "Install app" / "Create shortcut"), the phone of the
+  // Home screen, until the desktop's own dialog lands.
+  const copy = installSheetCopy(prompt.surface, info)
   const add = async (): Promise<void> => {
     if (accepted.current) return
     accepted.current = true
@@ -73,7 +76,7 @@ function InstallSheet({ prompt }: { prompt: WebAppInstallPrompt }): JSX.Element 
       contentKey={`${prompt.tabId}:${info ? 'app' : 'page'}`}
       header={
         <h2 id={TITLE_ID} className="zen-sheet-title">
-          Add to Home screen
+          {copy.title}
         </h2>
       }
       footer={
@@ -85,11 +88,15 @@ function InstallSheet({ prompt }: { prompt: WebAppInstallPrompt }): JSX.Element 
             type="button"
             className="zen-v2-button"
             data-primary
-            aria-label="Add"
+            aria-label={copy.action}
             aria-busy={busy || undefined}
             onClick={() => void add()}
           >
-            {busy ? <Loader2 className="zen-spin h-4 w-4" strokeWidth={2} aria-hidden /> : 'Add'}
+            {busy ? (
+              <Loader2 className="zen-spin h-4 w-4" strokeWidth={2} aria-hidden />
+            ) : (
+              copy.action
+            )}
           </button>
         </>
       }
