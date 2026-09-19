@@ -27,7 +27,10 @@
 //                      `zoom=<factor>` (the page zoom sheet), `error=<code>&url=<failed url>`
 //                      (the zen://error page; see `previewSpec.ts`) or the messages and the load
 //                      bar: `toast=<text>&action=<label>` (`&kind=error`), `banners=<n>`,
-//                      `progress=<0…1>`, in any combination.
+//                      `progress=<0…1>`, in any combination. `&pressed=<selector>;<selector>`
+//                      (the script's own key, not the page's) draws the elements those
+//                      selectors match in their pressed state for the still – `:active` forced
+//                      through DevTools – for a record of a press fill or its absence.
 //                      The label defaults to the state with punctuation turned into dashes.
 //                      Default: history:overlay=history,bookmarks:overlay=bookmarks,
 //                               downloads:overlay=downloads,find:find=coffee
@@ -499,6 +502,36 @@ async function inner(opts) {
     }
   }
 
+  // `pressed=<selector>;<selector>` in a state (a key the page does not read; `;`-separated
+  // because `,` separates the states): the elements those selectors match are drawn in their
+  // pressed state while the still is taken – `:active` forced through DevTools, as the Styles
+  // pane's :hov toggle does – for a record of a press fill, or of its absence on a row that is
+  // not a target (§9.34). Returns the release, or null when the state names nothing.
+  const press = async (state) => {
+    const selector = new URLSearchParams(state).get('pressed')
+    if (!selector) return null
+    await cdp('DOM.enable')
+    await cdp('CSS.enable')
+    const { root } = await cdp('DOM.getDocument', { depth: 0 })
+    const { nodeIds } = await cdp('DOM.querySelectorAll', {
+      nodeId: root.nodeId,
+      selector: selector.split(';').join(',')
+    })
+    if (nodeIds.length === 0) throw new Error(`pressed: nothing matches ${selector}`)
+    const force = (forcedPseudoClasses) =>
+      Promise.all(
+        nodeIds.map((nodeId) => cdp('CSS.forcePseudoState', { nodeId, forcedPseudoClasses }))
+      )
+    await force(['active'])
+    // The fill's 120 ms transition.
+    await sleep(300)
+    return async () => {
+      await force([])
+      await cdp('CSS.disable')
+      await cdp('DOM.disable')
+    }
+  }
+
   let failures = 0
   for (const scheme of schemes) {
     nativeTheme.themeSource = scheme
@@ -509,6 +542,7 @@ async function inner(opts) {
     ).catch((e) => console.warn(e.message))
     for (const { label, state } of states) {
       const file = path.join(opts.out, `${opts.prefix}${label}-${scheme}.png`)
+      let release = null
       try {
         await pointerModality()
         await js(`document.documentElement.dataset.previewState = ''`)
@@ -519,12 +553,15 @@ async function inner(opts) {
           `state ${state}`
         )
         await sleep(opts.settle)
+        release = await press(state)
         const png = (await wc.capturePage()).toPNG()
         fs.writeFileSync(file, png)
         console.log(`shot ${file} (${png.readUInt32BE(16)}x${png.readUInt32BE(20)})`)
       } catch (e) {
         failures++
         console.error(`failed ${label} ${scheme}: ${e.message}`)
+      } finally {
+        await release?.().catch((e) => console.warn(`release: ${e.message}`))
       }
     }
   }

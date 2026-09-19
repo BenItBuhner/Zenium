@@ -51,6 +51,11 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   ['.zen-dl-surface {', '@keyframes zen-dl-pop-out {'],
   // The bookmark chrome: bar, panels, star bubble, dialogs, manager (components/bookmarks/*).
   ['.zen-bm-bar {', '/*\n   * The first run on a phone'],
+  // The Android downloads sheet (components/downloads/DownloadsSheet.tsx): what its rows hold on
+  // the chassis and the shared row – glyph, name, status, progress track, the Keep / Delete
+  // footer – then its unlayered modifiers on the primitives. It follows the first run's block,
+  // whose span would enclose it, so it is cut out first.
+  ['.zen-downloads-main {', ' * Fading scroll edges'],
   // The phone first run (overlays/PhoneOnboarding.tsx, a window surface reading the §9.29
   // control roles). The gesture hint (phone/useGestureHint.ts) is a toast on the message cards
   // and the default-browser prompts (defaultbrowser/*) are the chassis' prompt composition:
@@ -401,7 +406,9 @@ describe('the v2 primitives (§9.34)', () => {
     '.zen-v2-icon-button',
     '.zen-v2-card-radio',
     '.zen-v2-switch',
-    '.zen-v2-radio'
+    '.zen-v2-radio',
+    // The checkbox (#93): the extensions UI's layered copy went with it.
+    '.zen-v2-checkbox'
   ]
 
   it('are one unlayered rule each, tokens only, with no layered or second copy', () => {
@@ -423,6 +430,36 @@ describe('the v2 primitives (§9.34)', () => {
   it('pad the row with the --v2-row-pad token, not a local knob', () => {
     expect(block('.zen-v2-row')).toMatch(/padding: var\(--v2-row-pad\) 16px/)
     expect(css).not.toMatch(/--zen-settings-pad/)
+  })
+
+  it('gate the row’s hover fill, press fill and pointer cursor on [data-static], as part of the one row rule', () => {
+    // The static row (§9.34) is the row primitive with `data-static`: the attribute is read in
+    // exactly three places, all in the row's own rule set – the static rule, and the `:not()` of
+    // the press gate and of the hover gate inside the row's `(hover: hover)` media block – so no
+    // surface has to fight the fill with a rule of its own, and nothing elsewhere gates on it.
+    // (The test above already holds each of them unlayered and free of literal colour.)
+    expect([...bare.matchAll(/[^\n]*\[data-static\][^{]*\{/g)].map((m) => m[0].trim())).toEqual([
+      '.zen-v2-row[data-static] {',
+      ".zen-v2-row:active:not([aria-disabled='true'], [data-static]) {",
+      ".zen-v2-row:hover:not([aria-disabled='true'], [data-static]) {"
+    ])
+    const hoverGate = bare.indexOf(".zen-v2-row:hover:not([aria-disabled='true'], [data-static])")
+    const hoverMedia = bare.lastIndexOf('@media (hover: hover) {', hoverGate)
+    expect(hoverMedia).toBeGreaterThan(bare.indexOf('.zen-v2-row[data-static] {'))
+    expect(bare.slice(hoverMedia, hoverGate)).not.toMatch(/\}/)
+    // The static rule turns off the pointer cursor and states nothing else: the row's geometry
+    // (height, padding, gap, text and glyph placement) is the row rule's, not a second copy.
+    expect(block('.zen-v2-row[data-static]').match(/^ {2}[a-z-]+:[^;]+;/gm)).toEqual([
+      '  cursor: default;'
+    ])
+    // No second static row: no other stylesheet of the renderer reads the attribute.
+    const root = fileURLToPath(new URL('../../', import.meta.url))
+    for (const file of readdirSync(root, { recursive: true, encoding: 'utf8' })
+      .map((f) => f.split('\\').join('/'))
+      .filter((f) => f.endsWith('.css') && f !== 'assets/main.css'))
+      expect(readFileSync(join(root, file), 'utf8'), `${file} gates on data-static`).not.toMatch(
+        /data-static/
+      )
   })
 })
 

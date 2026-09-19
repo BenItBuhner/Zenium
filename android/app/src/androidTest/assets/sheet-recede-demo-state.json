@@ -1,49 +1,57 @@
 {
   "version": 2,
-  "activeSpaceId": "space_work",
+  "activeSpaceId": "space_main",
   "spaces": [
     {
-      "id": "space_work",
-      "name": "Work",
-      "icon": "",
+      "id": "space_main",
+      "name": "Browse",
+      "icon": "🧭",
       "containerId": "default",
       "theme": {
         "type": "gradient",
         "colors": [
           {
-            "c": [96, 110, 235],
+            "c": [
+              70,
+              120,
+              220
+            ],
             "x": 0.3,
-            "y": 0.35,
+            "y": 0.3,
             "isPrimary": true
           },
           {
-            "c": [214, 92, 160],
+            "c": [
+              200,
+              110,
+              170
+            ],
             "x": 0.7,
-            "y": 0.65
+            "y": 0.7
           }
         ],
         "opacity": 0.55,
         "texture": 0,
         "algorithm": "floating",
         "monochrome": false,
-        "rotation": 40
+        "rotation": 30
       },
       "tabIds": [
-        "tab_dl"
+        "tab_article"
       ],
-      "activeTabId": "tab_dl",
+      "activeTabId": "tab_article",
       "pinnedCollapsed": false
     }
   ],
   "folders": [],
   "tabs": [
     {
-      "id": "tab_dl",
-      "spaceId": "space_work",
+      "id": "tab_article",
+      "spaceId": "space_main",
       "containerId": "default",
       "folderId": null,
-      "url": "http://10.0.2.2:18923/page.html",
-      "title": "Zenium download test",
+      "url": "http://127.0.0.1:18134/",
+      "title": "Sheets over a page",
       "pinned": false,
       "essential": false
     }
@@ -54,13 +62,11 @@
   "settings": {
     "onboardingDone": true,
     "colorScheme": "light",
+    "phoneBarPosition": "bottom",
     "updates": {
       "autoCheck": false,
       "autoDownload": false,
       "channel": "stable"
-    },
-    "privacy": {
-      "httpsOnly": "off"
     }
   },
   "shortcutOverrides": {},
@@ -70,9 +76,9 @@
       "id": "window_main",
       "bounds": null,
       "maximized": false,
-      "activeSpaceId": "space_work",
+      "activeSpaceId": "space_main",
       "selection": {
-        "space_work": "tab_dl"
+        "space_main": "tab_article"
       },
       "compact": false
     }

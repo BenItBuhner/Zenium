@@ -348,6 +348,24 @@ describe('the section model', () => {
     await new Promise((r) => setTimeout(r, 0))
     // The one-key patch goes inside `downloads`; `askWhereToSave` stays at the top level.
     expect(c.patches).toEqual([{ downloads: { directory: '/sdcard/Zenium' } }])
+    // A folder picked on Android is a document-tree URI: the row reads its relative path (#93).
+    const picked = buildSection(
+      PAGE.sections.find((x) => x.id === 'downloads')!,
+      context(
+        state(
+          {},
+          {
+            downloads: {
+              ...DEFAULT_SETTINGS.downloads,
+              directory:
+                'content://com.android.externalstorage.documents/tree/primary%3ADownload%2FZenium'
+            }
+          }
+        )
+      ).ctx
+    )
+    expect(row(picked, 'download-directory').description).toBe('Download/Zenium')
+    expect(row(picked, 'download-directory-default').disabled).toBe(false)
     const ask = row(downloads, 'ask-where-to-save')
     if (ask.kind !== 'switch') throw new Error('not a switch')
     expect(ask.checked).toBe(DEFAULT_SETTINGS.askWhereToSave)

@@ -174,10 +174,14 @@ export function RowView({
         />
       )
     case 'info':
+      // Not a target (§9.34): the shared row for its geometry, `data-static` for no fill and no
+      // pointer cursor, no role – a div, since static text is not a button.
       return (
         <div
           ref={row.trailing ? attachLineCount : undefined}
-          className={cn('zen-settings-row', row.disabled && 'zen-settings-row-disabled')}
+          data-row={row.id}
+          data-static=""
+          className={cn('zen-settings-row zen-v2-row', row.disabled && 'zen-settings-row-disabled')}
         >
           <RowText label={row.label} description={row.description} caption={caption} />
           {row.trailing && <span className="zen-settings-trailing">{row.trailing}</span>}

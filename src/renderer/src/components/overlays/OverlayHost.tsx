@@ -3,6 +3,7 @@ import type { UIState } from '@shared/types'
 import { useViewport } from '@renderer/lib/formFactor'
 import type { UiState } from '@renderer/lib/ui'
 import { BookmarkManager } from '../bookmarks/BookmarkManager'
+import { DownloadsSheet } from '../downloads/DownloadsSheet'
 import { PhoneBookmarksPanel } from '../phone/PhoneBookmarksPanel'
 import { PhoneHistoryPanel } from '../phone/PhoneHistoryPanel'
 import { AddonsPanel } from './AddonsPanel'
@@ -21,8 +22,8 @@ import { ThemePicker } from './ThemePicker'
  * panel – `openOverlay` routes the kind to `page.open` before it reaches the store.
  */
 export function OverlayHost({ state, ui }: { state: UIState; ui: UiState }): JSX.Element | null {
-  // History and bookmarks are lists a phone reads and touches differently (rows, swipes, a
-  // selection header); desktop and tablet keep their panels.
+  // History, bookmarks and downloads are lists a phone reads and touches differently (rows,
+  // swipes, a selection header, a sheet); desktop and tablet keep their panels.
   const phone = useViewport().formFactor === 'phone'
   const pageTabs = state.capabilities.pageTabs
   switch (ui.overlay) {
@@ -37,7 +38,9 @@ export function OverlayHost({ state, ui }: { state: UIState; ui: UiState }): JSX
     case 'bookmarks':
       return phone ? <PhoneBookmarksPanel state={state} /> : <BookmarkManager state={state} />
     case 'downloads':
-      return <DownloadsPanel state={state} />
+      // A phone gets the sheet; a mouse (DeX, a tablet trackpad) and the desktop keep the
+      // docked panel like the menus do.
+      return phone ? <DownloadsSheet state={state} /> : <DownloadsPanel state={state} />
     case 'theme':
       return <ThemePicker state={state} spaceId={ui.overlaySpaceId ?? state.activeSpaceId} />
     case 'space-editor':

@@ -124,8 +124,13 @@
   /* Zen's control accent: the space colour mixed towards black (light) or white (dark). */
   --v2-accent: color-mix(in srgb, var(--zen-accent) 40%, #000);
   --v2-on-accent: #fff;
-  /* Behind a sheet: black, never the gradient's tint. */
-  --v2-scrim: rgb(0 0 0 / 0.4);
+  /*
+   * Behind a sheet: black, never the gradient's tint. The alpha is a token of its own so the
+   * recede registry (lib/motion/recede.ts) can hand the one scrim over exactly between two
+   * stacked sheets – two scrims multiply, and it keeps the page at this alpha, never past it.
+   */
+  --zen-scrim-alpha: 0.4;
+  --v2-scrim: rgb(0 0 0 / var(--zen-scrim-alpha));
   /*
    * The chassis scrim (`.zen-sheet-scrim`, `.zen-overview-scrim`, the Android host's native dim)
    * is the v2 scrim (design language v2 §9.28): flat black, one tone under every sheet and
@@ -210,7 +215,8 @@
   --v2-fill-hover: rgb(251 251 254 / 0.16);
   --v2-accent: color-mix(in srgb, var(--zen-accent) 40%, #fff);
   --v2-on-accent: #15141a;
-  --v2-scrim: rgb(0 0 0 / 0.55);
+  --zen-scrim-alpha: 0.55;
+  --v2-scrim: rgb(0 0 0 / var(--zen-scrim-alpha));
   --v2-shadow-urlbar: 0 30px 140px -15px rgb(0 0 0 / 0.8);
   --v2-window-fill: rgb(var(--zen-fg-rgb) / 0.1);
   --v2-window-fill-hover: rgb(var(--zen-fg-rgb) / 0.16);
@@ -297,13 +303,13 @@
 /*
  * The v2 button (design-language-v2-draft §6): the control's height and radius from the density
  * tokens (40 tall and radius 6 under a finger), the button weight, the text at 10 percent as the
- * secondary; `data-primary` for the one accent button of a view. This is the only rule for the
- * class, and it stays outside the cascade layers on purpose: a `Button` that carries the class
- * keeps its utilities (`h-8`, `px-3.5`, `rounded-lg`, `bg-[…]`), and only an unlayered rule beats
- * them. For the same reason a second copy inside `@layer components` would lose every declaration
- * to this one – its `[data-primary]` included, which turned primaries into secondaries – so a
- * surface that wants the button reads this rule and adds nothing. The focus ring is the shared
- * `zen-v2-*` rule above.
+ * secondary; `data-primary` for the one accent button of a view, `data-danger` for a secondary
+ * in danger ink (a destructive Discard). This is the only rule for the class, and it stays
+ * outside the cascade layers on purpose: a `Button` that carries the class keeps its utilities
+ * (`h-8`, `px-3.5`, `rounded-lg`, `bg-[…]`), and only an unlayered rule beats them. For the same
+ * reason a second copy inside `@layer components` would lose every declaration to this one – its
+ * `[data-primary]` included, which turned primaries into secondaries – so a surface that wants
+ * the button reads this rule and adds nothing. The focus ring is the shared `zen-v2-*` rule above.
  */
 .zen-v2-button {
   display: inline-flex;
@@ -949,6 +955,54 @@
   }
   .zen-frame-dialogs[data-open] .zen-frame-dialogs-slot > * {
     pointer-events: auto;
+  }
+  /*
+   * On a phone the host's dialogs are sheets, and the host is on the sheet chassis (v2 draft
+   * §11.1, §11.5, `useSheetChassis` in lib/portals.tsx): its scrim is the sheet scrim at the
+   * sheet's progress and the slot slides its whole height in across the frame's bottom edge on
+   * the sheet spring (a 9.23 sheet, not the desktop dialog's 24 px pop), both written per frame
+   * with the page's recede; the panels' own pop does not run on top of the slide. Under another
+   * sheet the slot recedes about its bottom centre like any lower sheet (§11.2), on the same
+   * rule as `.zen-sheet`. The host carries `data-sheet-up` while anything of the sheet shows: it
+   * takes the pointer that long, so a press on the way down lands on the scrim and not on the
+   * page under it; at progress 0 (the wait for the page's cover) the dialogs take none – except
+   * a sheet on the chassis already (`[data-sheet-layer]`, `BottomSheet` placed `hosted`), which
+   * runs its own progress and keeps the host's chassis down. The scrim and the slot are
+   * promoted only while the sheet is about to move or moving (§9.33): from a dialog's open
+   * (`data-open`, the wait for the cover included) until the spring has landed back at 0
+   * (`data-sheet-up`), never while the host stands idle.
+   */
+  .zen-frame-dialogs[data-sheet] .zen-frame-scrim {
+    background: var(--zen-scrim);
+    animation: none;
+  }
+  .zen-frame-dialogs[data-sheet-up] {
+    pointer-events: auto;
+  }
+  .zen-frame-dialogs[data-sheet] .zen-frame-dialogs-slot {
+    --zen-layer-scale: calc(1 - 0.03 * var(--zen-layer-recede, 0) * var(--zen-recede-gain, 1));
+    transform-origin: 50% 100%;
+  }
+  .zen-frame-dialogs[data-sheet]:is([data-open], [data-sheet-up]) .zen-frame-scrim {
+    will-change: opacity;
+  }
+  .zen-frame-dialogs[data-sheet]:is([data-open], [data-sheet-up]) .zen-frame-dialogs-slot {
+    will-change: transform, opacity;
+  }
+  .zen-frame-dialogs[data-sheet] .zen-frame-dialogs-slot > * {
+    animation: none;
+  }
+  .zen-frame-dialogs[data-sheet]:not([data-sheet-up])
+    .zen-frame-dialogs-slot
+    > :not([data-sheet-layer]) {
+    pointer-events: none;
+  }
+  /* Reduced motion (§11.3): the spring jumps, and the jump becomes a 120 ms fade in place. */
+  @media (prefers-reduced-motion: reduce) {
+    .zen-frame-dialogs[data-sheet] .zen-frame-scrim,
+    .zen-frame-dialogs[data-sheet] .zen-frame-dialogs-slot {
+      transition: opacity 120ms var(--zen-ease);
+    }
   }
   .zen-chrome-layer {
     position: fixed;
@@ -1877,16 +1931,23 @@
    * The phone sheet chassis (design language v2 §6 sheets, §3, §9.16, §9.25): a neutral, opaque
    * dialog surface with a hairline edge and the sheet shadow, radius 12 on top, no side padding
    * of its own – rows run edge to edge and carry the 16 px gutter themselves. Dark adds nothing:
-   * the border is the edge. Under a sheet stacked on it (§11.2) it recedes as a page does, on
-   * `--zen-sheet-recede` (0…1, written per frame by the sheet above): scaled about its bottom
-   * edge so it does not lift off it, its top corners 12 → 18.
+   * the border is the edge.
+   *
+   * Under a sheet stacked on it (v2 draft §11.2) it recedes as the page does, on
+   * `--zen-layer-recede` (0…1, written by the chassis from the upper sheet's progress): scaled
+   * about its bottom centre so it does not lift off the edge it rests on, its top corners
+   * 12 → 18; the sheet's own radius stays in `--zen-sheet-radius` so a surface at another
+   * radius keeps it.
    */
   .zen-sheet {
+    --zen-sheet-radius: var(--v2-radius-sheet);
+    --zen-layer-scale: calc(1 - 0.03 * var(--zen-layer-recede, 0) * var(--zen-recede-gain, 1));
+    --zen-layer-radius: calc(
+      var(--zen-sheet-radius) + 6px * var(--zen-layer-recede, 0) * var(--zen-recede-gain, 1)
+    );
     border: 1px solid var(--v2-border);
     border-bottom: 0;
-    /* Under a second sheet the corner grows by 6 with the recede (v2 §9.24), as the page's does. */
-    border-radius: calc(var(--v2-radius-sheet) + 6px * var(--zen-sheet-recede, 0))
-      calc(var(--v2-radius-sheet) + 6px * var(--zen-sheet-recede, 0)) 0 0;
+    border-radius: var(--zen-layer-radius) var(--zen-layer-radius) 0 0;
     background: var(--v2-panel);
     color: var(--v2-text);
     box-shadow: var(--v2-shadow-sheet);
@@ -1979,6 +2040,17 @@
   }
   .zen-sheet-detents[data-recessed] {
     will-change: transform, scale;
+  }
+  /*
+   * Reduced motion (v2 §11.3): the spring jumps the sheet to its detent and off it, and the
+   * chassis turns each jump into a 120 ms opacity fade in place – the sheet's and its scrim's.
+   * Nowhere else does the chassis put a timed transition on a sheet.
+   */
+  @media (prefers-reduced-motion: reduce) {
+    .zen-sheet-scrim,
+    .zen-sheet-detents {
+      transition: opacity 120ms var(--zen-ease);
+    }
   }
   /*
    * The grabber's tap target is a 44 px band (v2 §9.9), drawn as the same 32×4 bar 8 px from the
@@ -3642,6 +3714,209 @@
 }
 
 /*
+ * The Android downloads sheet (design language v2 §6 sheets, §9.2, §9.3, §9.11, §9.17, §9.25;
+ * components/downloads/DownloadsSheet.tsx). The sheet is the phone chassis (`BottomSheet`,
+ * .zen-sheet above): its surface, scrim, grabber, the 48 header with the centred title and the
+ * trailing control, the hairline once the body scrolls, the empty sentence (.zen-sheet-empty),
+ * the Clear list action row (.zen-sheet-item) and the hairline before it (.zen-sheet-sep) are
+ * all the chassis's. A download is the shared `.zen-v2-row` (§9.34) with the `.zen-downloads-
+ * row` modifier, unlayered beside the primitive after this block: the §9.2 two-line floor (64
+ * on a phone: 12 + 20 + 20 + 12) that grows around a progress track or the Keep / Delete pair.
+ * What the row holds is this block – the 20 px glyph on the first text line, the name over its
+ * status, the 3 px track – and reads the tokens only: rows run edge to edge at the primitive's
+ * 16 gutter (§9.25), their trailing 44 icon buttons (the shared `.zen-v2-icon-button`) hang 12
+ * into it so the 20 px glyph sits on the gutter, and the Keep / Delete buttons are the shared
+ * `.zen-v2-button` with the extensions UI's busy rules (§9.30). Status is ink only (§1): the
+ * danger ink for a failure or a dangerous verdict, the warning ink for a lesser one, the
+ * deemphasised ink otherwise; the name and glyph of a record without a file dim as the desktop
+ * row's do. Motion is unchanged (v1 §7, §11): the sheet's spring and recede are the chassis's,
+ * presses the primitives' 120 ms fill, the bar a transform.
+ */
+@layer components {
+  /*
+   * The accessible row: a button while the file opens, else a focusable box, named
+   * `<name>. <status>`. It spans the row's height through the primitive's padding, so the whole
+   * 64 is its target (v1 §5), and the press fill is the row's (the primitive's), not its own.
+   */
+  .zen-downloads-main {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    align-self: stretch;
+    align-items: flex-start;
+    gap: 12px;
+    margin-block: calc(-1 * var(--v2-row-pad));
+    padding-block: var(--v2-row-pad);
+    color: inherit;
+    text-align: left;
+  }
+  /* The glyph sits on the first text line, (line − glyph) / 2 below its top (§9.2). */
+  .zen-downloads-glyph {
+    width: var(--v2-icon);
+    height: var(--v2-icon);
+    flex-shrink: 0;
+    margin-top: calc((var(--v2-line-body) - var(--v2-icon)) / 2);
+    color: var(--v2-text-deemphasized);
+  }
+  .zen-downloads-text {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    flex-direction: column;
+  }
+  /*
+   * The name on the 15/20 line, truncated in its middle as the desktop row's is – the head gives
+   * way, the tail (the extension) stays – with the §9.19 Private badge trailing it after 8.
+   */
+  .zen-downloads-name {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 8px;
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-body);
+    line-height: var(--v2-line-body);
+  }
+  .zen-downloads-name-text {
+    display: flex;
+    min-width: 0;
+  }
+  .zen-downloads-name-head {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: pre;
+  }
+  .zen-downloads-name-tail {
+    flex-shrink: 0;
+    white-space: pre;
+  }
+  /* The status is the row's second 13/20 line; a verdict's sentence wraps to two, then an ellipsis (§9.2). */
+  .zen-downloads-status {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+    font-variant-numeric: tabular-nums;
+    color: var(--v2-text-deemphasized);
+  }
+  .zen-downloads-status[data-tone='warn'] {
+    color: var(--v2-warn);
+  }
+  .zen-downloads-status[data-tone='danger'] {
+    color: var(--v2-danger);
+  }
+  /* A record without a file (cancelled, failed, deleted since) dims its glyph; a cancelled or Deleted row its name too. */
+  .zen-downloads-main[data-gone] .zen-downloads-glyph {
+    opacity: 0.4;
+  }
+  .zen-downloads-main[data-dim] .zen-downloads-name {
+    color: var(--v2-text-deemphasized);
+  }
+  /*
+   * Trailing icon buttons centre on the row (§9.18) inside its 64 rather than growing it – a 44
+   * button in a 40 content box overhangs the row's padding by 2 each side, which its negative
+   * block margin allows (§9.21: the row's floor is the larger of 64 and 44 + 8) – and hang 12
+   * into the gutter, so the glyph sits on it (§9.25).
+   */
+  .zen-downloads-actions {
+    display: flex;
+    flex-shrink: 0;
+    align-self: center;
+    margin-block: -6px;
+    margin-right: -12px;
+  }
+  /*
+   * Keep / Delete for a flagged file: the row's own footer, under its text and spanning the
+   * row, two peers splitting the width at an 8 gap, each 40 tall (§9.11); 8 below the text.
+   */
+  .zen-downloads-decision {
+    display: flex;
+    flex-basis: 100%;
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .zen-downloads-decision > * {
+    flex: 1;
+  }
+  /* A flagged row opens nothing on tap: its box keeps to its text and leaves the footer alone. */
+  .zen-downloads-row[data-flagged] .zen-downloads-main {
+    margin-block: 0;
+    padding-block: 0;
+  }
+
+  /* Progress under a running row: a 3 px track, the bar scales along it (transform only, §7.4). */
+  .zen-downloads-progress {
+    position: relative;
+    height: 3px;
+    margin-top: 6px;
+    overflow: hidden;
+    border-radius: 1.5px;
+    background: rgb(var(--v2-text-rgb) / 0.12);
+  }
+  .zen-downloads-progress-bar {
+    position: absolute;
+    inset: 0;
+    border-radius: 1.5px;
+    background: var(--v2-accent);
+    transform-origin: 0 50%;
+    transition: transform 250ms linear;
+  }
+  .zen-downloads-progress[data-paused] .zen-downloads-progress-bar {
+    background: var(--v2-text-deemphasized);
+  }
+  .zen-downloads-progress[data-indeterminate] .zen-downloads-progress-bar {
+    width: 30%;
+    transition: none;
+    animation: zen-downloads-progress-slide 1.4s var(--zen-ease) infinite;
+  }
+  @keyframes zen-downloads-progress-slide {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(333%);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .zen-downloads-progress-bar {
+      transition: none;
+    }
+    .zen-downloads-progress[data-indeterminate] .zen-downloads-progress-bar {
+      animation: none;
+      transform: none;
+      width: 100%;
+      opacity: 0.5;
+    }
+  }
+}
+
+/*
+ * What a download row adds to the shared v2 row (§9.34: a variant is a modifier on the
+ * primitive, unlayered beside it, never a copy): the §9.2 two-line floor; a flagged row wraps
+ * so its Keep / Delete footer takes the next line, without the primitive's 12 gap becoming a
+ * row gap there (the footer keeps its own 8 to the text); on the one row that is a target (its
+ * file opens) a pressed icon button fills itself and not the row around it – every other row is
+ * the static form (`data-static`, §9.34) and the primitive's own gate keeps the fill off it;
+ * and a sheet being dragged takes no press fill on the row under the finger.
+ */
+.zen-v2-row.zen-downloads-row {
+  min-height: var(--v2-row-two-line);
+}
+.zen-v2-row.zen-downloads-row[data-flagged] {
+  flex-wrap: wrap;
+  row-gap: 0;
+}
+.zen-v2-row.zen-downloads-row:has(button:active) {
+  background: transparent;
+}
+.zen-sheet[data-dragging='true'] .zen-v2-row.zen-downloads-row:active {
+  background: transparent;
+}
+
+/*
  * Fading scroll edges (`useFadeEdges`). The scroll container is masked, so content dissolves
  * into whatever is behind it – no gradient overlay, no assumption about the background. The
  * depth of each edge is a registered length: 0 at an edge with nothing past it, the fade size
@@ -4162,18 +4437,31 @@
 
 /*
  * A sheet coming up pushes the page back: the content frame recedes (scale 1 → .97, its corner
- * 14 → 20) and the bottom bar fades out, both from the sheet's own progress – `--zen-recede`,
- * 0…1, written per frame by the sheet along with its scrim. The frame is promoted only while a
- * sheet is up (`data-receding`).
+ * +6 px) and the bottom bar fades out, both from the sheet's own progress – `--zen-recede`,
+ * 0…1, written per frame by the sheet chassis (`lib/motion/recede.ts`) along with its scrim;
+ * every sheet on the chassis drives it, and a second sheet over the first pushes the page no
+ * further (design language v2 draft §11.1, §11.2). The frame is promoted only while a sheet is
+ * up (`data-receding`). Under `prefers-reduced-motion` the value is still written but the gain
+ * is 0: the page does not recede and the bar does not fade (§11.3); the sheet's spring jumps.
  */
+:root {
+  --zen-recede-gain: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --zen-recede-gain: 0;
+  }
+}
 :root[data-form-factor='phone'] .zen-content-frame {
-  transform: scale(calc(1 - 0.03 * var(--zen-recede, 0)));
-  border-radius: calc(var(--zen-content-radius) + 6px * var(--zen-recede, 0));
+  transform: scale(calc(1 - 0.03 * var(--zen-recede, 0) * var(--zen-recede-gain, 1)));
+  border-radius: calc(
+    var(--zen-content-radius) + 6px * var(--zen-recede, 0) * var(--zen-recede-gain, 1)
+  );
 }
 /* The load bar and the messages sit on the frame's edges: they recede with it. */
 :root[data-form-factor='phone'] .zen-load-progress-layer,
 :root[data-form-factor='phone'] .zen-message-frame {
-  transform: scale(calc(1 - 0.03 * var(--zen-recede, 0)));
+  transform: scale(calc(1 - 0.03 * var(--zen-recede, 0) * var(--zen-recede-gain, 1)));
 }
 
 /*
@@ -4218,8 +4506,16 @@
 :root[data-form-factor='phone'][data-receding] .zen-content-frame {
   will-change: transform;
 }
-:root[data-form-factor='phone'] .zen-phone-bar {
-  opacity: calc(1 - var(--zen-recede, 0));
+/*
+ * The bar docked at the bottom edge – where the sheet arrives – fades with the sheet's progress
+ * (§11.1): `1 − p`, gone at p = 1, the receded page alone under the scrim; the bar gives way to
+ * the sheet rather than being slid over. A bar docked at the top is not in the sheet's path and
+ * does not fade: it stays at its opacity, inert (`holdChromeInert`) and dimmed by the scrim
+ * like the page (ruled 23:50). The shell writes no rest opacity of its own over this; a pill
+ * carry composes its share into the same product at the bottom edge (`barFade`, recede.ts).
+ */
+:root[data-form-factor='phone'] .zen-phone-bar[data-edge='bottom'] {
+  opacity: calc(1 - var(--zen-recede, 0) * var(--zen-recede-gain, 1));
 }
 
 /* Mobile hosts: keep the chrome out of the status bar, cutouts, gesture bar and keyboard. */
@@ -4476,11 +4772,22 @@
   line-height: var(--v2-line-body);
   transition: background 120ms var(--zen-ease);
 }
-.zen-v2-row:active:not([aria-disabled='true']) {
+/*
+ * The static row (§9.34): a row that is not a target – a permission warning, a Source value, an
+ * "It can:" list, a version line – keeps the primitive for its geometry (height, padding,
+ * `--v2-row-pad`, where its text and glyphs sit) and carries `data-static`, which turns off the
+ * hover fill, the press fill and the pointer cursor. A static row carries `data-static` and NO
+ * `role`: static text does not restate the row's layout under another class, it is this row.
+ * An interactive row is never made static to hide its fill – the fill is what says it is a target.
+ */
+.zen-v2-row[data-static] {
+  cursor: default;
+}
+.zen-v2-row:active:not([aria-disabled='true'], [data-static]) {
   background: var(--v2-fill);
 }
 @media (hover: hover) {
-  .zen-v2-row:hover:not([aria-disabled='true']) {
+  .zen-v2-row:hover:not([aria-disabled='true'], [data-static]) {
     background: var(--v2-fill);
   }
 }
@@ -4621,6 +4928,59 @@
 [aria-checked='true'] > .zen-v2-radio {
   border-color: var(--v2-accent);
   box-shadow: inset 0 0 0 calc((var(--v2-checkbox) - 6px) / 2) var(--v2-accent);
+}
+
+/*
+ * The shared checkbox (§9.34, §6; #93 owns the rule, the values are the ones the extensions
+ * surfaces drew it with): 16 on a mouse, 20 on a phone, radius 2, the accent fill with an
+ * on-accent check when on, the hover fill on a mouse. As a row's leading box it sits
+ * (line − box) / 2 below the first text line's top (§9.2) and never grows the line. Disabled is
+ * the one number (§9.30). A check row disabled as a dependent row puts the .4 on its content –
+ * not on the row, whose hairline is structure (§0) – and the box inside that content stays at 1
+ * so it does not compound to .16; the row says `aria-disabled`, which keeps the row primitive's
+ * hover and press fill off it. Those two rules sit here, unlayered, because a layered exception
+ * would lose to the unlayered `:disabled` above it.
+ */
+.zen-v2-checkbox {
+  appearance: none;
+  flex-shrink: 0;
+  width: var(--v2-checkbox);
+  height: var(--v2-checkbox);
+  margin: calc((var(--v2-line-body) - var(--v2-checkbox)) / 2) 0 0;
+  border: 1px solid rgb(var(--v2-text-rgb) / 0.3);
+  border-radius: var(--v2-radius-checkbox);
+  background: var(--v2-page);
+  display: grid;
+  place-items: center;
+  transition:
+    background 120ms var(--zen-ease),
+    border-color 120ms var(--zen-ease);
+}
+@media (hover: hover) {
+  .zen-v2-checkbox:hover:not(:disabled) {
+    background: var(--v2-fill);
+  }
+}
+.zen-v2-checkbox:checked {
+  background: var(--v2-accent);
+  border-color: var(--v2-accent);
+}
+.zen-v2-checkbox:checked::after {
+  content: '';
+  width: calc(var(--v2-checkbox) - 4px);
+  height: calc(var(--v2-checkbox) - 4px);
+  background: var(--v2-on-accent);
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+}
+.zen-v2-checkbox:disabled {
+  opacity: 0.4;
+}
+.zen-v2-check-row:has(.zen-v2-checkbox:disabled) > * {
+  opacity: 0.4;
+}
+.zen-v2-check-row .zen-v2-checkbox:disabled {
+  opacity: 1;
 }
 
 /* The page: the landing stays mounted beneath a drill-in, which slides over it (§10.2). */
@@ -4828,16 +5188,12 @@
   text-align: center;
 }
 
-/* Rows (§10.4): label 15 on the first line, description 13/69 % under it, at most two lines. */
-.zen-settings-row {
-  display: flex;
-  width: 100%;
-  min-height: var(--v2-row);
-  align-items: center;
-  gap: 12px;
-  padding: var(--v2-row-pad) 16px;
-  text-align: left;
-}
+/*
+ * Rows (§10.4): every row of the page is the shared `.zen-v2-row` – a pressable one as the
+ * button that is the target, an info row as the static form (`data-static`, §9.34) – so no rule
+ * here states the row's geometry; `zen-settings-row` is the page's hook for what is its own:
+ * label 15 on the first line, description 13/69 % under it, at most two lines.
+ */
 .zen-settings-row-text {
   display: flex;
   min-width: 0;
@@ -5911,8 +6267,16 @@
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
-  /* The load bar's appearance and departure stay an opacity fade, at v2 §11.3's 120 ms, not a cut. */
-  .zen-load-progress {
+  /*
+   * The load bar's appearance and departure stay an opacity fade, at v2 §11.3's 120 ms, not a
+   * cut; so do a sheet's and its scrim's (the chassis rules above transition opacity alone under
+   * reduced motion, and the phone frame-dialog host's sheet does the same).
+   */
+  .zen-load-progress,
+  .zen-sheet-scrim,
+  .zen-sheet-detents,
+  .zen-frame-dialogs[data-sheet] .zen-frame-scrim,
+  .zen-frame-dialogs[data-sheet] .zen-frame-dialogs-slot {
     transition-duration: 120ms !important;
   }
   /*
