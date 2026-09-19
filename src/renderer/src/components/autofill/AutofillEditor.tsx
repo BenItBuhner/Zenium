@@ -219,29 +219,29 @@ function EditorSheet({
     onCancel: () => sheet.current?.cancelBack()
   })
   useEscape(dismiss)
+  // The sheet's layer is the host slot's child itself (`data-sheet-layer`: a sheet on its own
+  // chassis keeps the pointer while the host's chassis stays down for it).
   return (
-    <div className="zen-v2-af absolute inset-0" data-surface="page">
-      <BottomSheet
-        ref={sheet}
-        hosted
-        onDismissed={closeAutofillEdit}
-        handleLabel="Dismiss"
-        labelledBy={titleId}
-        className="zen-v2-af zen-v2-af-sheet"
-        header={<SheetHeader id={titleId} title={copy.title} />}
-        fitContent
-      >
-        <InSheet.Provider value>
-          <div className="zen-v2-af" data-surface="page">
-            <SheetCopy>{copy.description}</SheetCopy>
-            <form className="zen-v2-af-form" onSubmit={onSubmit}>
-              {children}
-              <EditorFooter busy={busy} onCancel={dismiss} />
-            </form>
-          </div>
-        </InSheet.Provider>
-      </BottomSheet>
-    </div>
+    <BottomSheet
+      ref={sheet}
+      hosted
+      onDismissed={closeAutofillEdit}
+      handleLabel="Dismiss"
+      labelledBy={titleId}
+      className="zen-v2-af zen-v2-af-sheet"
+      header={<SheetHeader id={titleId} title={copy.title} />}
+      fitContent
+    >
+      <InSheet.Provider value>
+        <div className="zen-v2-af" data-surface="page">
+          <SheetCopy>{copy.description}</SheetCopy>
+          <form className="zen-v2-af-form" onSubmit={onSubmit}>
+            {children}
+            <EditorFooter busy={busy} onCancel={dismiss} />
+          </form>
+        </div>
+      </InSheet.Provider>
+    </BottomSheet>
   )
 }
 

@@ -77,39 +77,38 @@ function PassphraseSheet({ ask }: { ask: Ask }): JSX.Element {
     onCancel: () => sheet.current?.cancelBack()
   })
   useEscape(leave)
+  // The sheet's layer is the host slot's child itself (`data-sheet-layer`).
   return (
-    <div className="zen-v2-af absolute inset-0" data-surface="page">
-      <BottomSheet
-        ref={sheet}
-        hosted
-        onDismissed={() => {
-          if (dismissed.current) return
-          dismissed.current = true
-          cancelPassphrase()
-        }}
-        handleLabel="Dismiss"
-        labelledBy={titleId}
-        className="zen-v2-af zen-v2-af-sheet"
-        fitContent
-      >
-        <InSheet.Provider value>
-          <div className="zen-v2-af" data-surface="page">
-            <SheetTitleBlock
-              id={titleId}
-              icon={Lock}
-              title={ask.title}
-              description={ask.description}
-            />
-            <PassphraseForm
-              error={ask.error}
-              busy={ask.busy}
-              focusOnOpen={false}
-              onCancel={leave}
-              onSubmit={(passphrase) => void answerPassphrase(passphrase)}
-            />
-          </div>
-        </InSheet.Provider>
-      </BottomSheet>
-    </div>
+    <BottomSheet
+      ref={sheet}
+      hosted
+      onDismissed={() => {
+        if (dismissed.current) return
+        dismissed.current = true
+        cancelPassphrase()
+      }}
+      handleLabel="Dismiss"
+      labelledBy={titleId}
+      className="zen-v2-af zen-v2-af-sheet"
+      fitContent
+    >
+      <InSheet.Provider value>
+        <div className="zen-v2-af" data-surface="page">
+          <SheetTitleBlock
+            id={titleId}
+            icon={Lock}
+            title={ask.title}
+            description={ask.description}
+          />
+          <PassphraseForm
+            error={ask.error}
+            busy={ask.busy}
+            focusOnOpen={false}
+            onCancel={leave}
+            onSubmit={(passphrase) => void answerPassphrase(passphrase)}
+          />
+        </div>
+      </InSheet.Provider>
+    </BottomSheet>
   )
 }

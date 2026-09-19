@@ -723,44 +723,43 @@ function HostedMenuSheet<T extends string>({
     if (v !== value) onChange(v)
     dismiss()
   }
+  // The sheet's layer is the host slot's child itself (`data-sheet-layer`).
   return (
-    <div className="zen-v2-af absolute inset-0" data-surface="page">
-      <BottomSheet
-        ref={sheet}
-        hosted
-        onDismissed={onClose}
-        handleLabel="Dismiss"
-        labelledBy={titleId}
-        className="zen-v2-af zen-v2-af-sheet"
-        header={description ? undefined : <SheetHeader id={titleId} title={title} />}
-      >
-        <div className="zen-v2-af zen-v2-af-choices" data-surface="page">
-          {description && <SheetTitleBlock id={titleId} title={title} description={description} />}
-          <div
-            ref={list}
-            role="radiogroup"
-            aria-labelledby={titleId}
-            className="zen-v2-af-list"
-            onKeyDown={onKeyDown}
-          >
-            {options.map((o) => (
-              <button
-                key={o.value}
-                type="button"
-                role="radio"
-                aria-checked={o.value === value}
-                className="zen-v2-row zen-v2-af-row"
-                onClick={() => pick(o.value)}
-              >
-                <span className="zen-v2-radio" aria-hidden />
-                <span className="zen-v2-af-row-text">
-                  <span className="zen-v2-af-row-title">{o.label}</span>
-                </span>
-              </button>
-            ))}
-          </div>
+    <BottomSheet
+      ref={sheet}
+      hosted
+      onDismissed={onClose}
+      handleLabel="Dismiss"
+      labelledBy={titleId}
+      className="zen-v2-af zen-v2-af-sheet"
+      header={description ? undefined : <SheetHeader id={titleId} title={title} />}
+    >
+      <div className="zen-v2-af zen-v2-af-choices" data-surface="page">
+        {description && <SheetTitleBlock id={titleId} title={title} description={description} />}
+        <div
+          ref={list}
+          role="radiogroup"
+          aria-labelledby={titleId}
+          className="zen-v2-af-list"
+          onKeyDown={onKeyDown}
+        >
+          {options.map((o) => (
+            <button
+              key={o.value}
+              type="button"
+              role="radio"
+              aria-checked={o.value === value}
+              className="zen-v2-row zen-v2-af-row"
+              onClick={() => pick(o.value)}
+            >
+              <span className="zen-v2-radio" aria-hidden />
+              <span className="zen-v2-af-row-text">
+                <span className="zen-v2-af-row-title">{o.label}</span>
+              </span>
+            </button>
+          ))}
         </div>
-      </BottomSheet>
-    </div>
+      </div>
+    </BottomSheet>
   )
 }
