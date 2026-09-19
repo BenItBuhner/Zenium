@@ -9,7 +9,7 @@ import { PhoneEmptyNote, PhoneListRow, RowFavicon } from './PhoneList'
 import { PhoneSheet } from './PhoneSheet'
 
 /**
- * The overview menu's "Recently closed" (matrix TAB-08): the core's recently closed tabs
+ * The overview menu's "Recently closed" (matrix TAB-22, TAB-23): the core's recently closed tabs
  * (`session.recentlyClosed`, the history contract v0) as a sheet on the frame's dialog host,
  * one v2 row per tab – favicon, title, host and when it closed (§9.13) – newest first; a tap
  * brings the tab back through `session.restoreClosed`, into its space and position, once the

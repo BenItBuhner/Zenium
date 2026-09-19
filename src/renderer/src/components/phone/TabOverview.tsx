@@ -826,7 +826,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
 }
 
 /**
- * The header's menu: the recently closed list (matrix TAB-08) and "Close all tabs" (TAB-06);
+ * The header's menu: the recently closed list (matrix TAB-22, TAB-23) and "Close all tabs" (TAB-06);
  * "Close other tabs" stays on a card's own menu, where it names the card it keeps.
  */
 function OverviewMenuSheet({

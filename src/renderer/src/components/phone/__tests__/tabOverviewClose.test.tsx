@@ -7,7 +7,7 @@ import { DEFAULT_SETTINGS } from '@shared/defaults'
 import { BLANK_URL } from '@shared/url'
 
 /*
- * Closing tabs from the phone overview (matrix TAB-05, TAB-06, TAB-08; v2 draft §9.23, §9.33,
+ * Closing tabs from the phone overview (matrix TAB-05, TAB-06, TAB-22, TAB-23; v2 draft §9.23, §9.33,
  * §11.4): a card's X closes at once and departs, and the toast that follows the core's filing
  * offers Undo; the header's menu carries "Recently closed" and "Close all tabs"; Close all asks
  * first on a prompt sheet with a "Don't ask again" row bound to `settings.confirmCloseAll`, and
@@ -435,7 +435,7 @@ describe('Close all tabs', () => {
   })
 })
 
-// --- Recently closed (TAB-08) ------------------------------------------------------------------
+// --- Recently closed (TAB-22, TAB-23) ----------------------------------------------------------
 
 describe('Recently closed', () => {
   it('lists the contract’s tab entries newest first – title, host, when – and a tap restores one; the overview leaves on the tab that comes back', async () => {
