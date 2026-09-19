@@ -379,6 +379,131 @@ describe('switching categories', () => {
   })
 })
 
+/** Type `text` into a controlled input: the native value set behind React's tracker, then `input`. */
+function type(input: HTMLInputElement, text: string): void {
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+  act(() => {
+    setter.call(input, text)
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+}
+
+function key(el: HTMLElement, key: string): void {
+  act(() => {
+    el.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
+  })
+}
+
+const findField = (el: HTMLElement): HTMLInputElement =>
+  el.querySelector<HTMLInputElement>('.zen-settings-find input[role="searchbox"]')!
+
+describe('Find in Settings (§10.5)', () => {
+  it('is the 32 px field at the top of the content column, before the section title', () => {
+    const markup = render(state())
+    const column = markup.match(/<div class="zen-settings-content"[^>]*>([\s\S]*)/)?.[1] ?? ''
+    const field = column.indexOf('placeholder="Find in Settings"')
+    const title = column.indexOf('zen-settings-section-title')
+    expect(field).toBeGreaterThan(-1)
+    expect(field).toBeLessThan(title)
+    expect(column).toMatch(/<div class="zen-settings-find">/)
+    expect(column).toContain('class="zen-v2-field zen-settings-search-field"')
+    // No clear button and no results without a query.
+    expect(column).not.toContain('Clear search')
+    expect(column).not.toContain('zen-settings-find-results')
+  })
+
+  it('takes Ctrl+F / "Find in Page" for the tab and focuses the field', async () => {
+    const { offerChromeShortcut } = await import('@renderer/lib/chromeShortcuts')
+    const el = mountPage(state())
+    const field = findField(el)
+    expect(document.activeElement).not.toBe(field)
+    expect(offerChromeShortcut('find.open', { tabId: 'other', text: '' })).toBe(false)
+    expect(document.activeElement).not.toBe(field)
+    expect(offerChromeShortcut('find.open', { tabId: 'settings', text: '' })).toBe(true)
+    expect(document.activeElement).toBe(field)
+  })
+
+  it('filters the open category in place and lists the other categories\u2019 matches under a caption', () => {
+    const el = mountPage(state(DESKTOP, 'linux', {}, 'zen://settings/look'))
+    const before = el.querySelectorAll('.zen-settings-pane [data-row]').length
+    type(findField(el), 'tab')
+    const results = el.querySelector<HTMLElement>('.zen-settings-find-results')
+    expect(results).not.toBeNull()
+    // The title stays; the open category's matching groups keep their headings and drop the
+    // rows that do not match.
+    expect(el.querySelector('.zen-settings-section-title')?.textContent).toBe('Look and Feel')
+    const here = [...results!.querySelectorAll<HTMLElement>('.zen-settings-group[data-group]')]
+    expect(here.length).toBeGreaterThan(0)
+    const hereRows = here.flatMap((g) => [...g.querySelectorAll<HTMLElement>('[data-row]')])
+    expect(hereRows.length).toBeGreaterThan(0)
+    expect(hereRows.length).toBeLessThan(before)
+    expect(hereRows.map((r) => r.dataset.row)).toContain('sidebar-expanded')
+    for (const group of here) expect(group.querySelector('.zen-settings-heading')).not.toBeNull()
+    // A row of the open category carries no caption; another category's carries its own.
+    for (const group of here) expect(group.querySelector('.zen-settings-caption')).toBeNull()
+    const other = el.querySelector<HTMLElement>('.zen-settings-other-categories')
+    expect(other).not.toBeNull()
+    expect(other!.querySelector('.zen-settings-heading')?.textContent).toBe('Other categories')
+    const captions = [...other!.querySelectorAll('.zen-settings-caption')].map(
+      (c) => c.textContent ?? ''
+    )
+    expect(captions.length).toBeGreaterThan(0)
+    for (const caption of captions) expect(caption).toMatch(/^[A-Z][^›]+ › .+/)
+    expect(captions.some((c) => c.startsWith('Tab Management › '))).toBe(true)
+    expect(captions.some((c) => c.startsWith('Look and Feel'))).toBe(false)
+    // The rows are the desktop's (a menulist, not a picker chevron).
+    expect(results!.querySelector('.zen-v2-menulist')).not.toBeNull()
+  })
+
+  it('says so when nothing matches anywhere', () => {
+    const el = mountPage(state())
+    type(findField(el), 'qzxv nothing')
+    const status = el.querySelector('[role="status"]')
+    expect(status?.textContent).toBe('No settings match “qzxv nothing”')
+    expect(el.querySelector('.zen-settings-find-results')).toBeNull()
+  })
+
+  it('Escape clears the query and puts the category back; a second Escape leaves the field', () => {
+    const el = mountPage(state())
+    const field = findField(el)
+    act(() => field.focus())
+    type(field, 'engine')
+    expect(el.querySelector('.zen-settings-find-results')).not.toBeNull()
+    expect(el.querySelector('[aria-label="Clear search"]')).not.toBeNull()
+    key(field, 'Escape')
+    expect(field.value).toBe('')
+    expect(el.querySelector('.zen-settings-find-results')).toBeNull()
+    expect(el.querySelector('[data-group="appearance"]')).not.toBeNull()
+    expect(document.activeElement).toBe(field)
+    key(field, 'Escape')
+    expect(document.activeElement).not.toBe(field)
+  })
+
+  it('the clear button restores the category and keeps the focus in the field', () => {
+    const el = mountPage(state())
+    type(findField(el), 'engine')
+    act(() => el.querySelector<HTMLButtonElement>('[aria-label="Clear search"]')!.click())
+    expect(findField(el).value).toBe('')
+    expect(el.querySelector('.zen-settings-find-results')).toBeNull()
+    expect(document.activeElement).toBe(findField(el))
+  })
+
+  it('choosing a category in the nav drops the query with it', () => {
+    const el = mountPage(state())
+    type(findField(el), 'engine')
+    act(() =>
+      el.querySelector<HTMLButtonElement>('.zen-settings-nav-item[data-section="search"]')!.click()
+    )
+    expect(invoke).toHaveBeenCalledWith('page.navigate', {
+      tabId: 'settings',
+      section: 'search',
+      replace: true
+    })
+    expect(findField(el).value).toBe('')
+    expect(el.querySelector('.zen-settings-find-results')).toBeNull()
+  })
+})
+
 describe('below the two-pane width', () => {
   it('shows the phone landing and drill-in (§10.2) instead', () => {
     viewport(TWO_PANE_MIN_WIDTH - 1, false)

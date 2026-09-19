@@ -86,17 +86,22 @@ export interface RowContext {
   open(request: SheetRequest): void
 }
 
-/** The groups of a section (or an item sheet): heading, description, rows, or the empty line. */
+/**
+ * The groups of a section (or an item sheet): heading, description, rows, or the empty line.
+ * `children` come after the groups, as one more of them (a search's "Other categories").
+ */
 export function GroupList({
   groups,
   ctx,
   className,
-  variant = 'phone'
+  variant = 'phone',
+  children
 }: {
   groups: readonly RowGroup[]
   ctx: RowContext
   className?: string
   variant?: RowVariant
+  children?: ReactNode
 }): JSX.Element {
   return (
     <div className={cn('zen-settings-groups', className)}>
@@ -118,6 +123,7 @@ export function GroupList({
           )}
         </section>
       ))}
+      {children}
     </div>
   )
 }
