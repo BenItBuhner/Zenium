@@ -31,6 +31,7 @@ import {
   toggleSelected,
   type Selection
 } from '@renderer/lib/multiSelect'
+import { openInPrivateItems } from '@renderer/lib/privateTabs'
 import { activeTab } from '@renderer/lib/selectors'
 import {
   browserStore,
@@ -198,6 +199,9 @@ export function PhoneBookmarksPanel({ state }: { state: UIState }): JSX.Element 
 
   // Menu items are Title Case (v2 draft 9.1) and read as the core's bookmark menus do (#119:
   // "Edit…" and "Rename…" open a sheet, "Open All (N)" counts what a folder opens).
+  /** The addresses under `ids`, for the private rows (INC-08; a private tab is opened by URL). */
+  const urlsUnder = (ids: readonly string[]): string[] =>
+    ids.flatMap((id) => tree.urlsUnder(id)).map((node) => node.url ?? '')
   const rowMenu = (node: BookmarkNode): void => {
     noteSheetOpener()
     const urlCount = tree.urlsUnder(node.id).length
@@ -210,12 +214,14 @@ export function PhoneBookmarksPanel({ state }: { state: UIState }): JSX.Element 
               enabled: urlCount > 0,
               onSelect: () => openInNewTabs([node.id])
             },
+            ...openInPrivateItems(state.capabilities, urlsUnder([node.id]), exitSelection),
             MENU_GAP,
             { label: 'Delete', danger: true, onSelect: () => remove([node.id]) }
           ]
         : [
             { label: 'Edit…', onSelect: () => edit(node) },
             { label: 'Open in New Tab', onSelect: () => openInNewTabs([node.id]) },
+            ...openInPrivateItems(state.capabilities, urlsUnder([node.id]), exitSelection),
             { label: 'Copy Link', onSelect: () => copyLinks([node.id]) },
             // The system share sheet, where the host has one (`app.share`, capabilities.share).
             ...(state.capabilities.share
@@ -245,6 +251,7 @@ export function PhoneBookmarksPanel({ state }: { state: UIState }): JSX.Element 
           enabled: urlCount > 0,
           onSelect: () => openInNewTabs(ids)
         },
+        ...openInPrivateItems(state.capabilities, urlsUnder(ids), exitSelection),
         {
           label: urlCount === 1 ? 'Copy Link' : 'Copy Links',
           enabled: urlCount > 0,
