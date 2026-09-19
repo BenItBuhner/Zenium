@@ -45,7 +45,7 @@ class PrivateBrowsingTest {
         val build = read("build.gradle.kts", "app/build.gradle.kts")
         assertTrue("""makeResValueKey("string", "application_id")""" in build)
         // One shortcut: the launcher shows the app's own before any pinned web app.
-        assertEquals(1, shortcuts.split("<shortcut ").size - 1)
+        assertEquals(1, Regex("<shortcut\\s").findAll(shortcuts).count())
     }
 
     @Test
