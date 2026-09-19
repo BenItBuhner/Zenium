@@ -97,7 +97,9 @@ function apply(browser: Browser, spec: string): void {
   whenReady(() => {
     // Every spec starts from idle so states do not stack: a pull in flight is put back at once
     // (a `cancel` would spring home, and the next pull would catch that spring part-way); the
-    // pill's editor, the overview and the page's sheets a previous state's steps opened go too.
+    // pill's editor, the overview and the page's sheets a previous state's steps opened go too,
+    // and a request state a previous spec seeded stops being held.
+    unseedBlocking()
     closeOverlay()
     closeMenu()
     closeUrlbar()
@@ -273,20 +275,37 @@ const EXCEPTED_SITES = [
   'https://en.wikipedia.org',
   'https://mail.proton.me'
 ]
+/** Lets go of the request state the current spec holds over the core's pushes. */
+let blockingSeed: (() => void) | null = null
 
 /**
  * Settings > Privacy and security and the URL bar's blocked-count chip in states this stand-in
  * host cannot reach on its own (it has no request engine and ships no filter lists): the chrome's
- * copy of the browser state is patched in place until the core next pushes one. Variants: `on`
+ * copy of the browser state is patched in place, and patched again over every state the core
+ * pushes while the spec stands (a row's tap is answered with one, and it would put the host's
+ * own request state back under an open sheet), until the next spec is applied. Variants: `on`
  * (Balanced, lists fresh, requests blocked on the page), `off` (the master switch off),
  * `level-off`, `strict`, `full` (excepted sites, a custom list, the user's filters with a parse
  * error), `excepted` (the current site excepted), `updating`, `loading` and `bundled` (first run
  * on the snapshot built into the app).
  */
 function seedBlocking(variant: string): void {
-  const state = browserStore.get().state
-  if (!state) return
-  browserStore.set({ state: blockingFixture(state, variant, Date.now()) })
+  unseedBlocking()
+  let seeded: UIState | null = null
+  const patch = (): void => {
+    const state = browserStore.get().state
+    if (!state || state === seeded) return
+    seeded = blockingFixture(state, variant, Date.now())
+    browserStore.set({ state: seeded })
+  }
+  patch()
+  blockingSeed = browserStore.subscribe(patch)
+}
+
+/** Stop holding a seeded request state over the core's pushes. */
+function unseedBlocking(): void {
+  blockingSeed?.()
+  blockingSeed = null
 }
 
 export function blockingFixture(state: UIState, variant: string, now: number): UIState {

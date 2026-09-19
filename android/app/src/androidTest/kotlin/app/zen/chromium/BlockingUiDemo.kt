@@ -128,15 +128,16 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
         shot("04-settings-privacy")
         beat()
 
-        // 4. The level: the picker sheet, Balanced -> Strict adds uBlock Origin's privacy list; the engine follows.
+        // 4. The level: the picker sheet, Balanced -> Strict adds uBlock Origin's privacy list; the engine
+        // follows, its filter count growing (the sets are the same files, one of them turned on).
         note("\n4. level Balanced -> Strict through the picker sheet")
-        val before = engine.snapshot.setCount
+        val before = engine.snapshot.filterCount
         if (openPicker("Level", "tracking-level", "Strict")) {
             SystemClock.sleep(600)
             shot("05-level-picker")
             beat()
             if (pickOption("Strict") { level() == "strict" }) {
-                note("  level=${level()} engine followed in ${waitForEngine { it.setCount > before }} ms (${describeEngine()})")
+                note("  level=${level()} engine followed in ${waitForEngine { it.filterCount > before }} ms (${describeEngine()})")
                 awaitNoSheet()
                 revealRow("Level")
                 SystemClock.sleep(600)
@@ -150,9 +151,9 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
             note("  the Level row did not open its picker")
         }
         note("\n   level Strict -> Balanced")
-        val strictSets = engine.snapshot.setCount
+        val strictFilters = engine.snapshot.filterCount
         if (openPicker("Level", "tracking-level", "Balanced") && pickOption("Balanced") { level() == "balanced" }) {
-            note("  level=${level()} engine followed in ${waitForEngine { it.setCount < strictSets }} ms (${describeEngine()})")
+            note("  level=${level()} engine followed in ${waitForEngine { it.filterCount < strictFilters }} ms (${describeEngine()})")
             awaitNoSheet()
         } else {
             note("  the Balanced option did not take (level=${level()}); setting it through the command")
@@ -179,6 +180,10 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
 
         // 6. Sites without blocking: the current site's switch row, off to except it.
         note("\n6. per-site exception from the current site's row")
+        // Should the section have been left (a back too many), come back to it before looking for its rows.
+        if (activeCoreTab()?.optString("url") != "$SETTINGS_URL/privacy" && !openPrivacySettings(throughMenu = false)) {
+            note("  the section is not up; skipping the row")
+        }
         if (revealRow("Sites without blocking") != null) {
             SystemClock.sleep(600)
             shot("09-sites")
@@ -418,14 +423,21 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
         while (SystemClock.uptimeMillis() < deadline && sheetCount() != 0) SystemClock.sleep(200)
     }
 
-    /** Back out of the sheets that are up, a few at most; the section itself stays. */
+    /**
+     * Back out of the sheets that are up, a few at most; the section itself stays. Each back is
+     * given until the closing sheet has left the tree before the count is read again: a sheet on
+     * its way out still counts, and a back pressed on top of it would take the section itself back
+     * to the landing (run 35418016367 lost the exception rows to that).
+     */
     private fun closeSheets() {
+        var count = sheetCount()
         repeat(3) {
-            if (sheetCount() <= 0) return
+            if (count <= 0) return
             back()
-            SystemClock.sleep(900)
+            val deadline = SystemClock.uptimeMillis() + 6_000
+            while (SystemClock.uptimeMillis() < deadline && sheetCount() >= count) SystemClock.sleep(200)
+            count = sheetCount()
         }
-        awaitNoSheet()
     }
 
     /** The master switch through its row; true once the core reports `enabled`. */
