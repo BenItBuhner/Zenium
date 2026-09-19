@@ -5,6 +5,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.FileInputStream
+import java.io.IOException
 import java.io.InputStream
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArraySet
@@ -74,6 +75,21 @@ class Storage(private val dir: File) {
     }
 
     /**
+     * Whether a name is one [bootFiles] can list – a root `*.json` document, the blocking index,
+     * a Safe Browsing feed document – and so one the document handler serves. Not the filter
+     * text under `blocking/`, not a backup, not a temp file: those the chrome reads through the
+     * bridge when it needs them, as before.
+     */
+    fun isBootDocument(name: String): Boolean {
+        val parts = name.split('/').filter { it.isNotEmpty() }
+        return when (parts.size) {
+            1 -> parts[0].endsWith(".json") && parts[0] != ".json"
+            2 -> parts[0] == SAFE_BROWSING_DIR && parts[1].endsWith(".json") || parts == BLOCKING_INDEX.split('/')
+            else -> false
+        }
+    }
+
+    /**
      * The version tag of a document: its size, its modification time and the number of writes
      * this process made to it. Every write changes it (writes replace the file whole, see
      * [writeAtomic]; the count tells two rewrites within the modification time's millisecond
@@ -89,11 +105,16 @@ class Storage(private val dir: File) {
     private fun etagOf(file: File, length: Long): String =
         "${java.lang.Long.toHexString(length)}-${java.lang.Long.toHexString(file.lastModified())}-${writeCounts[file.absolutePath] ?: 0}"
 
-    /** A boot document opened for streaming (the document handler), or null when it does not exist. */
+    /**
+     * A boot document opened for streaming (the document handler), or null when it does not
+     * exist. The stream is opened first and the length taken from it, so the `Content-Length`
+     * describes the bytes that are streamed even if a write renames a new file over the name in
+     * between; the tag is one stat after that.
+     */
     fun open(name: String): OpenDocument? {
         val file = fileFor(name)?.takeIf { it.isFile } ?: return null
-        val length = file.length()
         val stream = runCatching { FileInputStream(file) }.getOrNull() ?: return null
+        val length = runCatching { stream.channel.size() }.getOrElse { stream.close(); return null }
         return OpenDocument(etagOf(file, length), length, stream)
     }
 
@@ -124,17 +145,24 @@ class Storage(private val dir: File) {
         return file
     }
 
-    fun write(name: String, text: String, done: () -> Unit) {
+    /**
+     * Replace a document on the storage thread; `done` hears the failure, if any, so the chrome
+     * can reject the write instead of remembering it as made.
+     */
+    fun write(name: String, text: String, done: (Throwable?) -> Unit) {
         executor.execute {
-            runCatching { writeAtomic(name, text) }
-            notifyChanged(name)
-            done()
+            val failure = runCatching { writeAtomic(name, text) }.exceptionOrNull()
+            if (failure == null) notifyChanged(name)
+            done(failure)
         }
     }
 
-    /** Called on the bridge thread when the app is being backgrounded; must finish before returning. */
+    /**
+     * Called on the bridge thread when the app is being backgrounded; must finish before
+     * returning. Throws when the document could not be replaced (the file is as it was).
+     */
     fun writeSync(name: String, text: String) {
-        runCatching { writeAtomic(name, text) }
+        writeAtomic(name, text)
         notifyChanged(name)
     }
 
@@ -185,14 +213,21 @@ class Storage(private val dir: File) {
         executor.execute(work)
     }
 
+    /**
+     * The text goes to a temp file that is renamed over the target, so a crash mid-write never
+     * leaves a torn document. Throws when the document could not be replaced.
+     */
     private fun writeAtomic(name: String, text: String) {
-        val target = fileFor(name) ?: return
+        val target = fileFor(name) ?: throw IOException("not a document name: $name")
         target.parentFile?.mkdirs()
         val tmp = File(target.parentFile, "${target.name}.tmp")
         tmp.writeText(text)
         if (!tmp.renameTo(target)) {
             target.delete()
-            tmp.renameTo(target)
+            if (!tmp.renameTo(target)) {
+                tmp.delete()
+                throw IOException("could not replace $name")
+            }
         }
         writeCounts.merge(target.absolutePath, 1, Int::plus)
     }

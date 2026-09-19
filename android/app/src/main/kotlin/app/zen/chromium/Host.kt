@@ -183,11 +183,14 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 "pinShortcuts" to shortcuts.supported
             )
         }
+        // Answers `true` once the file is replaced; a failure throws, which the bridge reports as
+        // no answer, and the chrome keeps its mirror as it was (`AndroidStoreIO.writeSync`).
         "storage.writeSync" -> {
             storage.writeSync(args.str("name"), args.str("text"))
-            null
+            true
         }
-        // Documents outside the boot payload (the rule-set files under blocking/).
+        // Documents outside the boot payload (the rule-set files under blocking/), and a boot
+        // document the core reads before its fetched file has arrived.
         "storage.read" -> storage.read(args.str("name"))
         "storage.exists" -> storage.exists(args.str("name"))
         else -> throw IllegalArgumentException("Unknown sync method: $method")
@@ -198,7 +201,10 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         val tabId = args.strOrNull("tabId")
         val tab = tabId?.let { tabs.get(it) }
         when (method) {
-            "storage.write" -> storage.write(args.str("name"), args.str("text")) { main.post { reply(null) } }
+            // A write that failed rejects the call: the chrome must not remember it as made.
+            "storage.write" -> storage.write(args.str("name"), args.str("text")) { failure ->
+                main.post { reply(if (failure == null) null else Rejection(failure.message ?: failure.javaClass.simpleName)) }
+            }
             "storage.remove" -> storage.remove(args.str("name")) { main.post { reply(null) } }
 
             // --- request blocking (the BlockingHost contract and diagnostics) ----------------------
@@ -941,6 +947,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     fun onChromeDocumentReplaced() {
         cancelProbe()
         tabs.dropAll()
+        // The old core's unread spilled bodies went with its document.
+        io.execute(handoff::sweep)
     }
 
     /**
@@ -980,6 +988,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         if (dead !== chrome || activity.isFinishing || activity.isDestroyed) return
         cancelProbe()
         tabs.dropAll()
+        // Spilled bodies the dead chrome never released would otherwise stay for the process lifetime.
+        io.execute(handoff::sweep)
         val index = root.indexOfChild(dead)
         val params = dead.layoutParams ?: FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,

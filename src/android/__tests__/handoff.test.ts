@@ -7,7 +7,8 @@ import {
   type HandoffFetch
 } from '../handoff'
 
-type Reply = { status: number; etag?: string; text: string } | Error
+type Reply =
+  { status: number; etag?: string; text: string; textError?: Error; never?: boolean } | Error
 
 /** A `fetch` answering each URL from `replies`, recording what was asked for. */
 function fakeFetch(replies: Record<string, Reply>): { fetch: HandoffFetch; urls: string[] } {
@@ -19,11 +20,15 @@ function fakeFetch(replies: Record<string, Reply>): { fetch: HandoffFetch; urls:
     if (!reply)
       return { ok: false, status: 404, headers: { get: () => null }, text: async () => '' }
     if (reply instanceof Error) throw reply
+    if (reply.never) return new Promise(() => undefined)
     return {
       ok: reply.status >= 200 && reply.status < 300,
       status: reply.status,
       headers: { get: (name) => (name === 'ETag' && reply.etag ? `"${reply.etag}"` : null) },
-      text: async () => reply.text
+      text: async () => {
+        if (reply.textError) throw reply.textError
+        return reply.text
+      }
     }
   }
   return { fetch, urls }
@@ -112,6 +117,70 @@ describe('fetchDeferredDocuments', () => {
     expect(warn).toHaveBeenCalledOnce()
   })
 
+  it('falls back to the bridge on an error status that is not 404, and says so', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const { fetch } = fakeFetch({
+      [`${ORIGIN}/zen-docs/state.json`]: { status: 500, text: 'boom' }
+    })
+    const docs = await fetchDeferredDocuments([{ name: 'state.json', bytes: 9, etag: '9-1' }], {
+      fetch,
+      readSync: () => '{"ok":1}'
+    })
+    expect(docs).toEqual({ 'state.json': '{"ok":1}' })
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('answered 500'))
+  })
+
+  it('falls back to the bridge when the body cannot be read (a truncated document)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const { fetch } = fakeFetch({
+      [`${ORIGIN}/zen-docs/state.json`]: {
+        status: 200,
+        etag: '9-1',
+        text: '',
+        textError: new TypeError('network error')
+      }
+    })
+    const readSync = vi.fn(() => '{"ok":1}')
+    const docs = await fetchDeferredDocuments([{ name: 'state.json', bytes: 9, etag: '9-1' }], {
+      fetch,
+      readSync
+    })
+    expect(docs).toEqual({ 'state.json': '{"ok":1}' })
+    expect(readSync).toHaveBeenCalledWith('state.json')
+    expect(warn).toHaveBeenCalledOnce()
+  })
+
+  it('gives up on a fetch that never answers and reads the document through the bridge', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const { fetch } = fakeFetch({
+      [`${ORIGIN}/zen-docs/safebrowsing/phishing-database.json`]: {
+        status: 200,
+        text: '',
+        never: true
+      },
+      [`${ORIGIN}/zen-docs/state.json`]: { status: 200, etag: '9-1', text: '{"fast":true}' }
+    })
+    const readSync = vi.fn((name: string) =>
+      name === 'safebrowsing/phishing-database.json' ? '{"prefixes":"AAAA"}' : null
+    )
+    const docs = await fetchDeferredDocuments(
+      [
+        { name: 'safebrowsing/phishing-database.json', bytes: 500000, etag: '7a120-18f3' },
+        { name: 'state.json', bytes: 9, etag: '9-1' }
+      ],
+      { fetch, readSync, timeoutMs: 20 }
+    )
+    expect(docs).toEqual({
+      'safebrowsing/phishing-database.json': '{"prefixes":"AAAA"}',
+      'state.json': '{"fast":true}'
+    })
+    expect(readSync).toHaveBeenCalledTimes(1)
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('safebrowsing/phishing-database.json'),
+      expect.objectContaining({ message: expect.stringContaining('20 ms') })
+    )
+  })
+
   it('has nothing to do for a payload without a manifest (an older host, the preview host)', async () => {
     const { fetch, urls } = fakeFetch({})
     expect(await fetchDeferredDocuments(undefined, { fetch, readSync: () => null })).toEqual({})
@@ -138,6 +207,21 @@ describe('readSpilledBody', () => {
     const { fetch } = fakeFetch({})
     const release = vi.fn()
     await expect(readSpilledBody({ token, bytes: 24 }, fetch, release)).rejects.toThrow('404')
+    expect(release).toHaveBeenCalledWith(token)
+  })
+
+  it('releases the file when the body cannot be read, and reports that too', async () => {
+    const { fetch } = fakeFetch({
+      [`${ORIGIN}/zen-net/${token}`]: {
+        status: 200,
+        text: '',
+        textError: new TypeError('network error')
+      }
+    })
+    const release = vi.fn()
+    await expect(readSpilledBody({ token, bytes: 24 }, fetch, release)).rejects.toThrow(
+      'network error'
+    )
     expect(release).toHaveBeenCalledWith(token)
   })
 

@@ -4,6 +4,7 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.io.IOException
 import java.io.InputStream
 import java.security.SecureRandom
 
@@ -22,9 +23,10 @@ import java.security.SecureRandom
  *    parsed tables by the same tag and re-parses only what changed (`SafeBrowsing.reload`).
  *  - Fetched bodies. `net.fetch` answers with the body inline up to [NET_INLINE_LIMIT] bytes; a
  *    bigger one (the 11 MB phishing-domains list) is written to a file under the cache directory
- *    as it arrives ([readBody]) and the reply names it by token; the chrome fetches
- *    `/zen-net/<token>` ([spilled]) and releases it ([release]). Files a chrome that went away
- *    never released are swept at the next start ([sweep]).
+ *    as it arrives ([readBody], no further than [NET_BODY_LIMIT]) and the reply names it by
+ *    token; the chrome fetches `/zen-net/<token>` ([spilled], which consumes the file) and
+ *    releases what it never read ([release]). Files a chrome that went away never released are
+ *    swept when the next chrome document boots and at process start ([sweep]).
  *
  * Pure file work, so the JVM tests can exercise it; the WebView answers are built in `ChromeWebView`.
  */
@@ -40,10 +42,14 @@ class BootHandoff(private val storage: Storage, private val spillDir: File) {
         class Spilled(val token: String, val bytes: Long) : Body()
     }
 
-    /** `/zen-docs/<name>`: one of the core's documents, whole, with its ETag; 404 when there is none. */
+    /**
+     * `/zen-docs/<name>`: one of the boot documents ([Storage.isBootDocument]), whole, with its
+     * ETag; 404 for anything else – a document that is not one of them (the filter text under
+     * `blocking/`) is not served here, whether or not it exists.
+     */
     fun document(path: String): Answer {
         val name = path.trim('/')
-        if (name.isEmpty() || name.endsWith(".tmp")) return NOT_FOUND
+        if (!storage.isBootDocument(name)) return NOT_FOUND
         val doc = storage.open(name) ?: return NOT_FOUND
         return Answer(200, "application/json", doc.etag, doc.length, doc.stream)
     }
@@ -53,8 +59,10 @@ class BootHandoff(private val storage: Storage, private val spillDir: File) {
      * spill file – the first bytes buffered so far first, the rest streamed straight from the
      * connection, so the body is never held in memory whole. Decoded as UTF-8 either way (the
      * chrome reads the spill file as `text/plain; charset=utf-8`), as the inline path always was.
+     * A body over `maxBytes`, or one whose connection fails midway, leaves no file behind and
+     * fails the fetch (an [IOException]).
      */
-    fun readBody(stream: InputStream, inlineLimit: Int = NET_INLINE_LIMIT): Body {
+    fun readBody(stream: InputStream, inlineLimit: Int = NET_INLINE_LIMIT, maxBytes: Long = NET_BODY_LIMIT): Body {
         val head = ByteArrayOutputStream()
         val buffer = ByteArray(64 * 1024)
         while (head.size() <= inlineLimit) {
@@ -64,22 +72,37 @@ class BootHandoff(private val storage: Storage, private val spillDir: File) {
         }
         val token = newToken()
         val file = spillFile(token) ?: throw IllegalStateException("no spill directory")
-        FileOutputStream(file).use { out ->
-            head.writeTo(out)
-            while (true) {
-                val n = stream.read(buffer)
-                if (n < 0) break
-                out.write(buffer, 0, n)
+        try {
+            var written = 0L
+            FileOutputStream(file).use { out ->
+                head.writeTo(out)
+                written += head.size()
+                while (true) {
+                    val n = stream.read(buffer)
+                    if (n < 0) break
+                    written += n
+                    if (written > maxBytes) throw IOException("the body exceeds $maxBytes bytes")
+                    out.write(buffer, 0, n)
+                }
             }
+            return Body.Spilled(token, written)
+        } catch (e: Throwable) {
+            file.delete()
+            throw e
         }
-        return Body.Spilled(token, file.length())
     }
 
-    /** `/zen-net/<token>`: a spilled body, once; 404 for a token that is not a live spill file. */
+    /**
+     * `/zen-net/<token>`: a spilled body, once – the file goes as soon as it is opened (the open
+     * stream reads on), so a token is consumed by its first read; 404 for a token that is not a
+     * live spill file. [release] covers the body the chrome never reads.
+     */
     fun spilled(path: String): Answer {
         val file = spillFile(path.trim('/'))?.takeIf { it.isFile } ?: return NOT_FOUND
         val stream = runCatching { FileInputStream(file) }.getOrNull() ?: return NOT_FOUND
-        return Answer(200, "text/plain", null, file.length(), stream)
+        val length = runCatching { stream.channel.size() }.getOrElse { stream.close(); return NOT_FOUND }
+        file.delete()
+        return Answer(200, "text/plain", null, length, stream)
     }
 
     /** The chrome has read the body (or gave up on it): the spill file goes. */
@@ -121,6 +144,12 @@ class BootHandoff(private val storage: Storage, private val spillDir: File) {
          * are far under it, and a filter list or a Safe Browsing feed far over.
          */
         const val NET_INLINE_LIMIT = 256 * 1024
+
+        /**
+         * No fetched body is spilled beyond this: a runaway download cannot fill the cache
+         * directory. Ten times the biggest feed the core fetches (the 11 MB phishing-domains list).
+         */
+        const val NET_BODY_LIMIT = 128L * 1024 * 1024
 
         private val NOT_FOUND = Answer(404, "text/plain", null, 0, null)
         private val TOKEN = Regex("^[0-9a-f]{32}$")

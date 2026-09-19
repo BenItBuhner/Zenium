@@ -141,7 +141,7 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
      * the `ETag` is the version tag the boot manifest named, for the chrome to compare.
      */
     private fun handoffResponse(url: Uri): WebResourceResponse? {
-        if (url.host != APP_HOST) return null
+        if (url.scheme != "https" || url.host != APP_HOST) return null
         val path = url.path ?: return null
         val answer = when {
             path.startsWith(BootHandoff.DOCS_PATH) -> host.handoff.document(path.removePrefix(BootHandoff.DOCS_PATH))

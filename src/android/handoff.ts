@@ -55,7 +55,16 @@ export interface DeferredDocumentReader {
   /** The pre-handoff path (`storage.read` through the bridge), for a document the fetch cannot bring. */
   readSync(name: string): string | null
   origin?: string
+  /** How long one document's fetch may take before the bridge reads it instead ({@link FETCH_TIMEOUT_MS}). */
+  timeoutMs?: number
 }
+
+/**
+ * A boot fetch that has not answered by then is given up on: the document is read the old way,
+ * so a fetch that never settles cannot leave the boot pending and the chrome blank. Generous
+ * against the 50 ms a 7.5 MB document measured on the emulator.
+ */
+export const FETCH_TIMEOUT_MS = 5_000
 
 /** `/zen-docs/blocking/index.json`: names are one or two safe path segments (`Storage.fileFor`). */
 export function documentUrl(name: string, origin = APP_ORIGIN): string {
@@ -90,19 +99,49 @@ async function fetchDocument(
   reader: DeferredDocumentReader
 ): Promise<string | null> {
   try {
-    const response = await reader.fetch(documentUrl(doc.name, reader.origin), { cache: 'no-store' })
-    if (response.ok) {
-      const tag = response.headers.get('ETag')?.replace(/^"|"$/g, '') ?? null
-      if (tag !== null && tag !== doc.etag)
-        console.info(`[zen] ${doc.name} was rewritten while booting (${doc.etag} → ${tag})`)
-      return await response.text()
-    }
-    if (response.status !== 404)
-      console.warn(`[zen] the document handler answered ${response.status} for ${doc.name}`)
+    const text = await withTimeout(
+      fetchDocumentText(doc, reader),
+      reader.timeoutMs ?? FETCH_TIMEOUT_MS
+    )
+    if (text !== null) return text
   } catch (error) {
     console.warn(`[zen] could not fetch ${doc.name} from the document handler:`, error)
   }
   return reader.readSync(doc.name)
+}
+
+/** The document's text from the handler, or null for an answer that is not the document (404, an error status). */
+async function fetchDocumentText(
+  doc: DeferredDocument,
+  reader: DeferredDocumentReader
+): Promise<string | null> {
+  const response = await reader.fetch(documentUrl(doc.name, reader.origin), { cache: 'no-store' })
+  if (response.ok) {
+    const tag = response.headers.get('ETag')?.replace(/^"|"$/g, '') ?? null
+    if (tag !== null && tag !== doc.etag)
+      console.info(`[zen] ${doc.name} was rewritten while booting (${doc.etag} → ${tag})`)
+    return await response.text()
+  }
+  if (response.status !== 404)
+    console.warn(`[zen] the document handler answered ${response.status} for ${doc.name}`)
+  return null
+}
+
+/** `work`, or a rejection once `ms` have passed without it settling (the work itself runs on). */
+function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`no answer within ${ms} ms`)), ms)
+    work.then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      (error: unknown) => {
+        clearTimeout(timer)
+        reject(error instanceof Error ? error : new Error(String(error)))
+      }
+    )
+  })
 }
 
 /**

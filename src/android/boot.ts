@@ -65,8 +65,12 @@ export interface HostGlobal {
  * Kotlin bridge (plain browser / dev server).
  *
  * Asynchronous for one reason: the boot payload names the core's big documents instead of
- * carrying them, and they are fetched as files (`handoff.ts`) while the platform and the core
- * are built; the core starts once they are in the store, and reads them there as it always did.
+ * carrying them, and they are fetched as files (`handoff.ts`) while the platform is built; the
+ * core is built once they are in the store, so that its constructors' synchronous reads (the
+ * session, the history, the downloads, the permissions, the extension registry) find every
+ * document as they always did. A document read before its file has arrived is read through the
+ * bridge instead (`AndroidStoreIO`), never reported absent: a profile is not mistaken for a first
+ * run and overwritten.
  */
 export async function bootAndroid(): Promise<{ browser: Browser; api: ZenApi; preview: boolean }> {
   const native = getNativeBridge()
@@ -82,11 +86,11 @@ export async function bootAndroid(): Promise<{ browser: Browser; api: ZenApi; pr
     readSync: (name) => bridge.callSync<string | null | undefined>('storage.read', { name }) ?? null
   })
   const platform = new AndroidPlatform(bridge, boot)
-  const browser = new Browser(platform)
-  platform.bind(browser)
   platform.io.adopt(await deferred)
   // From here on nothing yields until the core has started: what the host sends in reaches a
   // started core, as it did when this was one synchronous run.
+  const browser = new Browser(platform)
+  platform.bind(browser)
   platformRef.current = platform
   syncNativeTheme(bridge, platform, browser)
   syncBackState(bridge)

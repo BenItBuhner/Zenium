@@ -790,7 +790,7 @@ export class AndroidPlatform implements Platform {
       pinShortcuts: boot.pinShortcuts === true
     }
     this.bootEnvironment = boot.environment ?? null
-    this.io = new AndroidStoreIO(bridge, boot.files)
+    this.io = new AndroidStoreIO(bridge, boot.files, boot.deferred)
     this.newTabBackground = new AndroidNewTabBackground(this.io)
     this.agentTransport = new AndroidAgentTransport(bridge)
     this.updateHost = new AndroidUpdateHost(bridge, boot.signer ?? null, boot.packageName ?? null)

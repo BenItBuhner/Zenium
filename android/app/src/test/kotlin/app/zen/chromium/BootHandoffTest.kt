@@ -93,6 +93,11 @@ class BootHandoffTest {
         val text = """{"version":1,"id":"phishing-database","prefixes":"QUJDREVGR0g="}"""
         storage.writeSync("safebrowsing/phishing-database.json", text)
         storage.writeSync("state.json", """{"version":1}""")
+        storage.writeSync("blocking/index.json", """{"version":1,"sets":[]}""")
+        // On disk, readable through the bridge, but not boot documents: not served here.
+        storage.writeSync("blocking/easylist.json", """{"filterText":"||ads^"}""")
+        storage.writeSync("privacy/flags.json", """{"doNotTrack":true}""")
+        storage.writeSync("state.json.bak", """{"version":0}""")
 
         val answer = handoff.document("safebrowsing/phishing-database.json")
         assertTrue(answer.ok)
@@ -103,13 +108,30 @@ class BootHandoffTest {
         // A leading slash (the path as the URL carries it) names the same document.
         assertEquals(text, handoff.document("/safebrowsing/phishing-database.json").text())
         assertEquals("""{"version":1}""", handoff.document("state.json").text())
+        assertEquals("""{"version":1,"sets":[]}""", handoff.document("blocking/index.json").text())
 
-        // Missing, escaping the directory, a folder, a temp file, nothing at all: not found.
-        for (path in listOf("safebrowsing/missing.json", "../escape.json", "safebrowsing", "state.json.tmp", "", "/")) {
+        // Not a boot document, missing, escaping the directory, a folder, a temp file, nothing at all: not found.
+        val notServed = listOf(
+            "blocking/easylist.json", "privacy/flags.json", "state.json.bak", "safebrowsing/notes.txt",
+            "safebrowsing/missing.json", "../escape.json", "safebrowsing", "state.json.tmp", ".json", "", "/"
+        )
+        for (path in notServed) {
             val missing = handoff.document(path)
             assertFalse(path, missing.ok)
             assertEquals(404, missing.status)
             assertNull(missing.stream)
+        }
+        assertTrue(storage.exists("blocking/easylist.json"))
+        assertEquals("""{"filterText":"||ads^"}""", storage.read("blocking/easylist.json"))
+    }
+
+    @Test
+    fun `the boot set is the root documents, the blocking index and the feed documents`() {
+        for (name in listOf("state.json", "extensions-runtime.json", "/state.json", "blocking/index.json", "safebrowsing/urlhaus.json", "safebrowsing//a.json")) {
+            assertTrue(name, storage.isBootDocument(name))
+        }
+        for (name in listOf("blocking/easylist.json", "blocking/index.json.tmp", "state.json.bak", "safebrowsing/notes.txt", "privacy/flags.json", "a/b/c.json", "blocking", ".json", "")) {
+            assertFalse(name, storage.isBootDocument(name))
         }
     }
 
@@ -137,19 +159,61 @@ class BootHandoffTest {
         assertEquals(bytes.size.toLong(), spilled.bytes)
         assertEquals(listOf(spilled.token), spill.list()!!.toList())
 
-        val answer = handoff.spilled(spilled.token)
+        val answer = handoff.spilled("/${spilled.token}")
         assertTrue(answer.ok)
         assertEquals("text/plain", answer.mimeType)
         assertEquals(bytes.size.toLong(), answer.length)
+        // The first read consumes the file (the open stream reads on); a second fetch of the token finds nothing.
+        assertTrue(spill.listFiles().isNullOrEmpty())
+        assertEquals(404, handoff.spilled(spilled.token).status)
         assertEquals(body, answer.text())
-        assertEquals(body, handoff.spilled("/${spilled.token}").text())
 
+        // Releasing a consumed token, one released already, or something that is not a token, is harmless.
+        handoff.release(spilled.token)
+        handoff.release(spilled.token)
+        handoff.release("../../${spilled.token}")
+        assertEquals(404, handoff.spilled(spilled.token).status)
+    }
+
+    @Test
+    fun `a spilled body the chrome never reads is released by token`() {
+        val body = ByteArray(300 * 1024) { 'b'.code.toByte() }
+        val spilled = handoff.readBody(ByteArrayInputStream(body)) as BootHandoff.Body.Spilled
+        assertEquals(listOf(spilled.token), spill.list()!!.toList())
         handoff.release(spilled.token)
         assertTrue(spill.listFiles().isNullOrEmpty())
         assertEquals(404, handoff.spilled(spilled.token).status)
-        // Releasing again, or something that is not a token, is harmless.
-        handoff.release(spilled.token)
-        handoff.release("../../${spilled.token}")
+    }
+
+    @Test
+    fun `a connection that fails midway leaves no spill file and fails the fetch`() {
+        val failing = object : java.io.InputStream() {
+            private var served = 0
+            override fun read(): Int = throw UnsupportedOperationException()
+            override fun read(b: ByteArray, off: Int, len: Int): Int {
+                if (served >= 200 * 1024) throw java.io.IOException("connection reset")
+                val n = minOf(len, 64 * 1024)
+                b.fill('c'.code.toByte(), off, off + n)
+                served += n
+                return n
+            }
+        }
+        val failure = runCatching { handoff.readBody(failing, inlineLimit = 64 * 1024) }.exceptionOrNull()
+        assertTrue("$failure", failure is java.io.IOException)
+        assertEquals("connection reset", failure!!.message)
+        assertTrue(spill.listFiles().isNullOrEmpty())
+    }
+
+    @Test
+    fun `a body over the cap is not spilled`() {
+        val big = ByteArray(2 * 1024 * 1024) { 'd'.code.toByte() }
+        val failure = runCatching { handoff.readBody(ByteArrayInputStream(big), inlineLimit = 64 * 1024, maxBytes = 1024 * 1024) }.exceptionOrNull()
+        assertTrue("$failure", failure is java.io.IOException)
+        assertTrue(spill.listFiles().isNullOrEmpty())
+        // At the cap exactly it is fine.
+        val atCap = handoff.readBody(ByteArrayInputStream(ByteArray(1024 * 1024)), inlineLimit = 64 * 1024, maxBytes = 1024 * 1024)
+        assertEquals(1024L * 1024, (atCap as BootHandoff.Body.Spilled).bytes)
+        assertEquals(128L * 1024 * 1024, BootHandoff.NET_BODY_LIMIT)
     }
 
     @Test

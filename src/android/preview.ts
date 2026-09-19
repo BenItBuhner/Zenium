@@ -199,8 +199,11 @@ export function createPreviewBridge(): NativeBridge {
     }),
     'storage.write': ({ name, text }) =>
       localStorage.setItem(STORAGE_PREFIX + String(name), String(text)),
-    'storage.writeSync': ({ name, text }) =>
-      localStorage.setItem(STORAGE_PREFIX + String(name), String(text)),
+    'storage.writeSync': ({ name, text }) => {
+      localStorage.setItem(STORAGE_PREFIX + String(name), String(text))
+      // Landed (the Kotlin host answers the same; the store's mirror follows only then).
+      return true
+    },
     'storage.read': ({ name }) => localStorage.getItem(STORAGE_PREFIX + String(name)),
     'storage.exists': ({ name }) => localStorage.getItem(STORAGE_PREFIX + String(name)) !== null,
     'storage.remove': ({ name }) => localStorage.removeItem(STORAGE_PREFIX + String(name)),

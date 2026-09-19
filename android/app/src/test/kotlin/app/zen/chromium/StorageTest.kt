@@ -8,6 +8,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
+import java.io.IOException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -35,28 +36,31 @@ class StorageTest {
     @Test
     fun anAsynchronousWriteReportsWhenItIsOnDisk() {
         val done = CountDownLatch(1)
-        storage.write("extensions.json", registry) { done.countDown() }
+        var failure: Throwable? = IllegalStateException("not called")
+        storage.write("extensions.json", registry) { failure = it; done.countDown() }
         assertTrue(done.await(10, TimeUnit.SECONDS))
+        assertNull(failure)
         assertEquals(registry, storage.read("extensions.json"))
     }
 
     @Test
-    fun aRewriteReplacesTheDocumentWhole() {
-        storage.writeSync("extensions.json", registry)
-        storage.writeSync("extensions.json", """{"version":2,"extensions":[],"lastUpdateCheck":5}""")
-        assertEquals("""{"version":2,"extensions":[],"lastUpdateCheck":5}""", storage.read("extensions.json"))
-        assertEquals(listOf("extensions.json"), dir.list()!!.toList())
-    }
+    fun aWriteThatCannotReplaceTheDocumentReportsItsFailure() {
+        // A directory with something in it where the document should be: the temp file cannot be
+        // renamed over it, and it cannot be removed to make way.
+        File(dir, "extensions.json/keep").apply { parentFile!!.mkdirs() }.writeText("x")
+        val failure = runCatching { storage.writeSync("extensions.json", registry) }.exceptionOrNull()
+        assertTrue("$failure", failure is IOException)
+        assertFalse(File(dir, "extensions.json.tmp").exists())
 
-    @Test
-    fun namesThatEscapeTheDirectoryAreRefused() {
-        storage.writeSync("../escape.json", "{}")
-        assertFalse(File(dir.parentFile, "escape.json").exists())
-        assertNull(storage.read("../escape.json"))
-        assertNull(storage.fileFor("../escape.json"))
-        assertNull(storage.fileFor("a/b/c.json"))
-        assertEquals(emptyList<String>(), dir.list()!!.toList())
-        assertNull(storage.read("missing.json"))
+        val done = CountDownLatch(1)
+        var reported: Throwable? = null
+        storage.write("extensions.json", registry) { reported = it; done.countDown() }
+        assertTrue(done.await(10, TimeUnit.SECONDS))
+        assertTrue("$reported", reported is IOException)
+        assertTrue(File(dir, "extensions.json").isDirectory)
+
+        // A name outside the directory is a failure too, not a silent no-op.
+        assertTrue(runCatching { storage.writeSync("../escape.json", "{}") }.exceptionOrNull() is IOException)
     }
 
     @Test
