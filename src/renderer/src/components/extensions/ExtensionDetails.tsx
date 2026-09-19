@@ -2,26 +2,31 @@ import type { JSX, ReactNode } from 'react'
 import {
   ArrowLeft,
   ArrowUpRight,
+  Bug,
+  CircleAlert,
   Ellipsis,
   Info,
   ShieldCheck,
-  SlidersHorizontal
+  SlidersHorizontal,
+  TriangleAlert
 } from 'lucide-react'
-import type { ExtensionInfo } from '@shared/types'
+import type { ExtensionErrorEntry, ExtensionInfo } from '@shared/types'
 import { anchorOf, type Anchor } from '@renderer/lib/anchor'
 import { run } from '@renderer/lib/api'
-import { formatDate } from '@renderer/lib/extensions/format'
+import { errorDetail, newestFirst } from '@renderer/lib/extensions/errorText'
+import { formatDate, relativeTime } from '@renderer/lib/extensions/format'
 import { sourceLabel, storePageUrl } from '@renderer/lib/extensions/storeInput'
 import { closeOverlay } from '@renderer/lib/ui'
 import { ExtensionIcon } from './ExtensionIcon'
 import { PageHeader } from './PageHeader'
-import { V2Card, V2CheckRow, V2IconButton, V2Row, V2Switch } from './v2'
+import { useNow } from './useNow'
+import { V2Button, V2Card, V2CheckRow, V2IconButton, V2Row, V2Switch } from './v2'
 import { WarningRow } from './WarningRow'
 
 /**
  * One extension, pushed in over the list: a back header with the name as the page title, the
- * description, then Permissions, Source and Options as bordered cards with 17/600 titles (v2
- * draft §6) whose rows are parted by hairlines, as Zen's add-on detail rows are.
+ * description, then Permissions, Source, Options and Errors as bordered cards with 17/600 titles
+ * (v2 draft §6) whose rows are parted by hairlines, as Zen's add-on detail rows are.
  */
 export function ExtensionDetails({
   ext,
@@ -153,16 +158,69 @@ export function ExtensionDetails({
               />
               <V2CheckRow
                 label="Allow in private windows"
-                description="Not available yet"
-                checked={false}
-                disabled
-                onChange={() => undefined}
+                description="Its request rules and scripts apply while browsing privately."
+                checked={Boolean(ext.allowPrivate)}
+                disabled={Boolean(ext.error)}
+                onChange={(v) => run('extension.setAllowPrivate', { id: ext.id, allowed: v })}
               />
             </div>
           </V2Card>
+
+          <ErrorsCard ext={ext} />
         </div>
       </div>
     </>
+  )
+}
+
+/**
+ * The error console (`ExtensionInfo.errors`): its lines newest first as static rows – the 16 px
+ * status glyph in the §1 ink for the level, the message as the label (two lines, then an
+ * ellipsis, §9.2), where and when it happened under it – and, once there is anything to clear,
+ * "Clear errors" hugging the card's end in a §9.11 footer, in the danger ink like site
+ * information's Clear. Empty, the one plain row of §9.17.
+ */
+function ErrorsCard({ ext }: { ext: ExtensionInfo }): JSX.Element {
+  const now = useNow()
+  const entries = newestFirst(ext.errors)
+  return (
+    <V2Card title="Errors" icon={Bug} className="zen-ext-errors">
+      <div className="zen-v2-rows">
+        {entries.length === 0 ? (
+          <V2Row label={<span className="zen-v2-deemphasized">No errors</span>} />
+        ) : (
+          entries.map((entry) => (
+            <ErrorRow key={entry.id} entry={entry} extensionId={ext.id} now={now} />
+          ))
+        )}
+      </div>
+      {entries.length > 0 && (
+        <div className="zen-ext-card-footer">
+          <V2Button variant="danger" onClick={() => run('extension.clearErrors', { id: ext.id })}>
+            Clear errors
+          </V2Button>
+        </div>
+      )}
+    </V2Card>
+  )
+}
+
+function ErrorRow({
+  entry,
+  extensionId,
+  now
+}: {
+  entry: ExtensionErrorEntry
+  extensionId: string
+  now: number
+}): JSX.Element {
+  return (
+    <V2Row
+      className={`zen-ext-log zen-ext-log-${entry.level}`}
+      lead={entry.level === 'error' ? CircleAlert : TriangleAlert}
+      label={<span title={entry.message}>{entry.message}</span>}
+      description={errorDetail(entry, extensionId, (t) => relativeTime(t, now))}
+    />
   )
 }
 

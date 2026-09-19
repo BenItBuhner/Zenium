@@ -1,0 +1,67 @@
+import {
+  AppWindow,
+  Bell,
+  Bluetooth,
+  Bookmark,
+  Camera,
+  Clipboard,
+  Cookie,
+  Download,
+  Eye,
+  Globe,
+  HardDrive,
+  History,
+  Image,
+  Keyboard,
+  KeyRound,
+  Lock,
+  MapPin,
+  Mic,
+  Monitor,
+  Network,
+  Printer,
+  Puzzle,
+  Search,
+  Shield,
+  Terminal,
+  TextCursorInput,
+  Usb,
+  User,
+  type LucideIcon
+} from 'lucide-react'
+import type { WarningGlyph } from '@renderer/lib/extensions/warningGlyph'
+
+/**
+ * The Lucide glyph for each of Chrome's permission warning kinds (`warningGlyph`): the desktop
+ * details card's and the install dialogs' `WarningRow`, and the phone's permission rows.
+ */
+export const WARNING_GLYPHS: Readonly<Record<WarningGlyph, LucideIcon>> = {
+  globe: Globe,
+  history: History,
+  download: Download,
+  bell: Bell,
+  clipboard: Clipboard,
+  puzzle: Puzzle,
+  'hard-drive': HardDrive,
+  terminal: Terminal,
+  shield: Shield,
+  bookmark: Bookmark,
+  'app-window': AppWindow,
+  lock: Lock,
+  cookie: Cookie,
+  monitor: Monitor,
+  usb: Usb,
+  bluetooth: Bluetooth,
+  mic: Mic,
+  camera: Camera,
+  'map-pin': MapPin,
+  printer: Printer,
+  keyboard: Keyboard,
+  search: Search,
+  image: Image,
+  network: Network,
+  user: User,
+  'text-cursor-input': TextCursorInput,
+  eye: Eye,
+  'key-round': KeyRound
+}

@@ -5679,11 +5679,24 @@
   flex-direction: column;
 }
 .zen-settings-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
   margin: 20px 0 4px;
   padding: 0 16px;
   font-size: var(--v2-font-body);
   font-weight: var(--v2-weight-heading);
   line-height: var(--v2-line-body);
+}
+/* The heading's aside (§10.3): a count or size at the gutter on the heading's line, 13 at 69 %, tabular. */
+.zen-settings-heading-aside {
+  flex-shrink: 0;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  font-weight: var(--v2-weight-body);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--v2-line-small);
 }
 .zen-settings-body > .zen-settings-group:first-child > .zen-settings-heading {
   margin-top: 8px;
@@ -5745,6 +5758,24 @@
 .zen-settings-description-full {
   display: block;
   -webkit-line-clamp: none;
+}
+/* A description that reports a status (a load error, a retirement notice): §1 status ink, text only. */
+.zen-settings-description[data-tone='warn'] {
+  color: var(--v2-warn);
+}
+.zen-settings-description[data-tone='danger'] {
+  color: var(--v2-danger);
+}
+/* A sheet whose description is a load error (an extension's details, §9.23): the same ink. */
+.zen-settings-sheet .zen-sheet-title-block p[data-tone='danger'] {
+  color: var(--v2-danger);
+}
+/* A label that is prose (an error console line): two lines, then an ellipsis (§9.2). */
+.zen-settings-row-clamp .zen-settings-label {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 .zen-settings-row-danger .zen-settings-label {
   color: var(--v2-danger);
@@ -5811,12 +5842,24 @@
   min-height: var(--v2-line-body);
   margin-top: var(--zen-settings-label-top, 0px);
 }
+/* A detail row's summary (§10.4): what its sheet holds, 13 at 69 % on the trailing side, before the chevron. */
+.zen-settings-summary {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
 /* Busy (§9.30): a 16 px spinner where the action's glyph would be; the row keeps its ink. */
 .zen-settings-spinner {
   animation: zen-spin 900ms linear infinite;
 }
+/* Status glyphs in the §1 status inks (ink only, no filled surface). */
 .zen-settings-ok {
   color: var(--v2-ok);
+}
+.zen-settings-warn {
+  color: var(--v2-warn);
+}
+.zen-settings-danger {
+  color: var(--v2-danger);
 }
 
 /* The switch and the plain radio are the shared `.zen-v2-switch` / `.zen-v2-radio` above (§9.34). */
