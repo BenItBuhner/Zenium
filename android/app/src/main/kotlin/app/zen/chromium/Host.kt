@@ -129,6 +129,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         private set
     /** Previews of the pages a back gesture would return to. */
     override val snapshots = HistorySnapshots(activity)
+    /** The tab cards' pictures, one JPEG per tab under the cache dir (`thumbnail.*`, [TabWebView.captureThumbnail]). */
+    override val thumbnails = Thumbnails(File(activity.cacheDir, Thumbnails.DIR))
     /**
      * Page views go behind the chrome no earlier than with the chrome's next drawn frame, and the
      * chrome hears when the frame carrying each change is on screen (`view.drawn`, [reportDrawn]).
@@ -147,6 +149,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     override fun hostEvent(name: String, payload: Any?) = chrome.hostEvent(name, payload)
     override fun onKey(tabId: String?, input: JSONObject) = chrome.onKey(tabId, input)
     override fun pullEvent(tabId: String, phase: String, payload: JSONObject?) = chrome.pullEvent(tabId, phase, payload)
+    override fun selectionMenu(tabId: String, text: String, reply: (String?) -> Unit) = chrome.selectionMenu(tabId, text, reply)
     override fun progress(tabId: String, percent: Int) = chrome.viewEvent(tabId, "progress", json("progress" to percent / 100.0))
     override val underlay: View get() = chrome
     override fun backChanged() = back.refresh()
@@ -258,6 +261,32 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             }
             "privacy.bundledFeed" -> reply(privacy.bundledFeed(args.str("id")))
 
+            // --- tab card thumbnails (the ThumbnailHost contract; `Thumbnails.kt` is the file layer) ---
+            "thumbnail.configure" -> { thumbnails.width = args.num("width").toInt(); reply(null) }
+            // A read per card the chrome shows (it keeps a few in flight at a time), off the main
+            // thread; the file's bytes go over as a data URL with their size, so the chrome can
+            // count them against its budget. Nothing for a picture of another page than the tab's.
+            "thumbnail.load" -> io.execute {
+                val picture = thumbnails.loadPicture(args.str("tabId"), args.str("url"))
+                main.post { reply(picture?.let { json("data" to it.dataUrl, "width" to it.width, "height" to it.height) }) }
+            }
+            // Drops and the sweep queue behind the writes on the pictures' own thread: a drop the
+            // chrome sends on a navigation lands after the save of the page before it – and, with
+            // the URL the tab left, spares a save of the page after it that got in first. The
+            // tab's last picture no longer stands either way: its next hide takes one.
+            "thumbnail.drop" -> {
+                val tabId = args.str("tabId")
+                val left = args.strOrNull("url")
+                thumbnails.stale(tabId)
+                thumbnails.disk.execute { thumbnails.drop(tabId, left) }
+                reply(null)
+            }
+            "thumbnail.sweep" -> {
+                val keep = args.arr("keep").let { ids -> (0 until ids.length()).mapTo(HashSet()) { ids.optString(it) } }
+                thumbnails.disk.execute { thumbnails.sweep(keep) }
+                reply(null)
+            }
+
             // --- views -----------------------------------------------------------------------
             "view.create" -> { tabs.create(args.str("tabId"), args.str("containerId", Profiles.DEFAULT_CONTAINER)); reply(null) }
             "view.destroy" -> { tabs.destroy(args.str("tabId")); reply(null) }
@@ -359,6 +388,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "app.setIcon" -> { launcherIcon.apply(args.str("id"), activity); reply(null) }
             "app.share" -> share.share(args, reply)
             "app.openAppLinkSettings" -> { openAppLinkSettings(); reply(null) }
+            "app.openPrivateDnsSettings" -> { openPrivateDnsSettings(); reply(null) }
             "externalProtocol.respond" -> { externalProtocols.respond(args.str("requestId"), args.bool("allow")); reply(null) }
             "app.isDefaultBrowser" -> reply(DefaultBrowser.isDefault(activity))
             "app.requestDefaultBrowser" -> activity.requestDefaultBrowser(reply)
@@ -598,6 +628,22 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         }
     }
 
+    /**
+     * Android's Private DNS setting (encrypted DNS for every app, Android 9+) lives in the
+     * Network & internet screen; there is no intent for the row itself. The main Settings screen
+     * is the fallback on devices that lack even that action.
+     */
+    private fun openPrivateDnsSettings() {
+        for (action in listOf(Settings.ACTION_WIRELESS_SETTINGS, Settings.ACTION_SETTINGS)) {
+            try {
+                activity.startActivity(Intent(action))
+                return
+            } catch (e: ActivityNotFoundException) {
+                // The next screen down is on every device.
+            }
+        }
+    }
+
     private fun confirm(args: JSONObject, reply: (Any?) -> Unit) {
         var answered = false
         val done = { ok: Boolean -> if (!answered) { answered = true; reply(ok) } }
@@ -802,9 +848,14 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         scheduleProbe(attempt = 0, delayMs = HostLifecycle.PROBE_DELAY_MS)
     }
 
-    /** Leaving the foreground: a probe answered while hidden would only mislead. */
+    /**
+     * Leaving the foreground: a probe answered while hidden would only mislead. The pages on
+     * screen have their card pictures taken while the window still shows them – the tab the app
+     * comes back to in the overview, or is restored with, is the one it was left on.
+     */
     fun onPause() {
         cancelProbe()
+        for (tab in tabs.all()) tab.captureThumbnail()
     }
 
     /** Ask every WebView on screen for a fresh frame at its current size. */
@@ -821,6 +872,10 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      */
     private fun setTabVisible(tabId: String, visible: Boolean) {
         val ticket = pageVisibility.request(tabId, visible) ?: return
+        // A page on its way off the screen has its card picture taken while it is still there. The
+        // chrome may have just captured its cover for the same frame: the copy is shared, and a
+        // fresh cover stands as the picture ([TabWebView.captureThumbnail]).
+        tabs.get(tabId)?.captureThumbnail()
         val deadline = Runnable {
             if (pageVisibility.complete(ticket)) Log.d(TAG, "hide of $tabId: chrome drew no frame within the deadline")
         }

@@ -293,12 +293,18 @@ export function CssEditor({
   )
 }
 
-/** The two footer actions of a sheet (§9.11): peers splitting the width, the primary trailing. */
+/**
+ * The two footer actions of a sheet (§9.11): peers splitting the width, the primary trailing.
+ * While the form is busy (§9.30) the primary is the shared busy button – full opacity, its
+ * label kept in the flow unpainted under the 16 px `.zen-v2-spinner`, `aria-busy` – the
+ * secondary waits at .4, and neither takes a press.
+ */
 export function SheetActions({
   cancel,
   action,
   destructive = false,
   disabled = false,
+  busy = false,
   onCancel,
   onAction
 }: {
@@ -306,12 +312,13 @@ export function SheetActions({
   action: string
   destructive?: boolean
   disabled?: boolean
+  busy?: boolean
   onCancel: () => void
   onAction: () => void
 }): JSX.Element {
   return (
-    <div className="zen-settings-sheet-actions">
-      <button type="button" className="zen-v2-button" onClick={onCancel}>
+    <div className="zen-settings-sheet-actions" data-busy={busy || undefined}>
+      <button type="button" className="zen-v2-button" onClick={busy ? undefined : onCancel}>
         {cancel ?? 'Cancel'}
       </button>
       <button
@@ -319,9 +326,17 @@ export function SheetActions({
         className={cn('zen-v2-button', destructive && 'zen-settings-danger-button')}
         data-primary={destructive ? undefined : true}
         disabled={disabled}
-        onClick={onAction}
+        aria-busy={busy || undefined}
+        onClick={busy ? undefined : onAction}
       >
-        {action}
+        {busy ? (
+          <>
+            <span className="zen-v2-button-label">{action}</span>
+            <span className="zen-v2-spinner" aria-hidden="true" />
+          </>
+        ) : (
+          action
+        )}
       </button>
     </div>
   )

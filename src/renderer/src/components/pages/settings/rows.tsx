@@ -8,6 +8,7 @@ import {
   type RowGroup,
   type SettingsRow
 } from './model'
+import { useSheetDismiss } from './sheetContext'
 
 /**
  * The phone Settings rows (design language v2 §10.3–10.4) as React: one flat row per model row,
@@ -64,6 +65,7 @@ export type SheetRequest =
   | { kind: 'confirm'; rowId: string }
   | { kind: 'form'; rowId: string }
   | { kind: 'item'; rowId: string }
+  | { kind: 'detail'; rowId: string }
 
 export interface RowContext {
   open(request: SheetRequest): void
@@ -87,7 +89,12 @@ export function GroupList({
           className="zen-settings-group"
           aria-label={group.heading ?? undefined}
         >
-          {group.heading !== null && <h3 className="zen-settings-heading">{group.heading}</h3>}
+          {group.heading !== null && (
+            <h3 className="zen-settings-heading">
+              {group.heading}
+              {group.aside && <span className="zen-settings-heading-aside">{group.aside}</span>}
+            </h3>
+          )}
           {group.description && (
             <p className="zen-settings-group-description">{group.description}</p>
           )}
@@ -112,6 +119,8 @@ export function RowView({
   ctx: RowContext
   caption?: string
 }): JSX.Element {
+  // The sheet this row sits in, for an action that opens a surface of its own over the page.
+  const dismissSheet = useSheetDismiss()
   switch (row.kind) {
     case 'value':
       return (
@@ -149,6 +158,7 @@ export function RowView({
           onPress={() => {
             if (row.confirm) ctx.open({ kind: 'confirm', rowId: row.id })
             else if (row.form) ctx.open({ kind: 'form', rowId: row.id })
+            else if (row.closesSheet) dismissSheet(() => row.onPress?.())
             else row.onPress?.()
           }}
         />
@@ -174,6 +184,24 @@ export function RowView({
           onPress={() => ctx.open({ kind: 'item', rowId: row.id })}
         />
       )
+    case 'detail':
+      // §10.4's detail row: the summary in 13 at 69 % then the 16 px chevron, both trailing.
+      return (
+        <PressableRow
+          row={row}
+          caption={caption}
+          description={row.description}
+          leading={row.leading}
+          haspopup="dialog"
+          trailing={
+            <>
+              {row.summary && <span className="zen-settings-summary">{row.summary}</span>}
+              <ChevronRight aria-hidden="true" />
+            </>
+          }
+          onPress={() => ctx.open({ kind: 'detail', rowId: row.id })}
+        />
+      )
     case 'info':
       // Not a target (§9.34): the shared row for its geometry, `data-static` for no fill and no
       // pointer cursor, no role – a div, since static text is not a button.
@@ -182,14 +210,23 @@ export function RowView({
           ref={row.trailing ? attachLineCount : undefined}
           data-row={row.id}
           data-static=""
-          className={cn('zen-settings-row zen-v2-row', row.disabled && 'zen-settings-row-disabled')}
+          className={cn(
+            'zen-settings-row zen-v2-row',
+            row.disabled && 'zen-settings-row-disabled',
+            row.clamp && 'zen-settings-row-clamp'
+          )}
         >
           {row.leading && (
             <span className="zen-settings-leading" aria-hidden="true">
               {row.leading}
             </span>
           )}
-          <RowText label={row.label} description={row.description} caption={caption} />
+          <RowText
+            label={row.label}
+            description={row.description}
+            tone={row.tone}
+            caption={caption}
+          />
           {row.trailing && <span className="zen-settings-trailing">{row.trailing}</span>}
         </div>
       )
@@ -269,27 +306,36 @@ function PressableRow({
           {leading}
         </span>
       )}
-      <RowText label={row.label} description={description} caption={caption} />
+      <RowText label={row.label} description={description} tone={row.tone} caption={caption} />
       {trail && <span className="zen-settings-trailing">{trail}</span>}
     </button>
   )
 }
 
-/** Label on the first line, the description under it at 13/69 %, at most two lines (§9.2). */
+/**
+ * Label on the first line, the description under it at 13/69 %, at most two lines (§9.2) – in
+ * a §1 status ink when the row has a `tone`.
+ */
 export function RowText({
   label,
   description,
+  tone,
   caption
 }: {
   label: string
   description?: string
+  tone?: 'warn' | 'danger'
   caption?: string
 }): JSX.Element {
   return (
     <span className="zen-settings-row-text">
       {caption && <span className="zen-settings-caption">{caption}</span>}
       <span className="zen-settings-label">{label}</span>
-      {description && <span className="zen-settings-description">{description}</span>}
+      {description && (
+        <span className="zen-settings-description" data-tone={tone}>
+          {description}
+        </span>
+      )}
     </span>
   )
 }

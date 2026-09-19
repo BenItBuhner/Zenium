@@ -4,7 +4,7 @@ import { SPRING_GENTLE, SPRING_SNAPPY, SpringAnimation } from '../motion/spring'
 import { pushBackSurface } from '../back'
 import { activeSpace, activeTab, tabOrderOf } from '../selectors'
 import { createStore } from '../store'
-import { captureThumbnail, pruneThumbnails } from '../thumbnails'
+import { captureThumbnail } from '../thumbnails'
 import {
   browserStore,
   contentAreaStore,
@@ -177,7 +177,6 @@ const tabSpring = new SpringAnimation(
 export function prepareStage(state: UIState): void {
   const tab = activeTab(state)
   if (!tab) return
-  pruneThumbnails((id) => Boolean(state.tabs[id]))
   pendingCapture = captureThumbnail(tab.id)
 }
 

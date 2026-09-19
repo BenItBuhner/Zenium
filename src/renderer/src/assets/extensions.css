@@ -631,6 +631,21 @@
   .zen-ext-card[data-disabled] .zen-ext-fade {
     opacity: 0.4;
   }
+  /*
+   * The error console's summary on the card's trailing side ("2 errors, 1 warning"): 13 in the
+   * §1 status ink for the worst level, tabular, one line – text among the controls, never a
+   * filled badge (§1: status inks only).
+   */
+  .zen-ext-card-errors {
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    color: var(--v2-warn);
+  }
+  .zen-ext-card-errors[data-tone='danger'] {
+    color: var(--v2-danger);
+  }
   .zen-ext-card-controls {
     display: flex;
     flex-shrink: 0;
@@ -651,6 +666,34 @@
     margin: 0;
     padding: 0;
     list-style: none;
+  }
+  /*
+   * The details level's Errors card: each line's leading glyph takes the §1 ink of its level
+   * (the row primitive's lead is deemphasised otherwise), its message clamps to two lines then
+   * an ellipsis (§9.2; a log line can be long), and "Clear errors" sits in a §9.11 desktop
+   * footer – hugging, end-aligned, 32 tall – 12 under the rows as the Permissions card's caption
+   * is.
+   */
+  .zen-ext-log-error .zen-v2-row-lead {
+    color: var(--v2-danger);
+  }
+  .zen-ext-log-warning .zen-v2-row-lead {
+    color: var(--v2-warn);
+  }
+  .zen-ext-log .zen-v2-label {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .zen-ext-card-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  [data-form-factor='phone'] .zen-ext-card-footer > .zen-v2-button {
+    flex: 1 1 0;
   }
   /*
    * The list's empty state (§9.17): one sentence 15/400 at 69%, centred inside a 32 gutter (the

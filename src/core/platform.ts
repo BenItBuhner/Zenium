@@ -38,6 +38,7 @@ import type {
   SyncScope,
   SyncStatus,
   Tab,
+  ThumbnailPicture,
   WindowChrome,
   WindowMaterial
 } from '../shared/types'
@@ -702,6 +703,13 @@ export interface WindowHost {
    * chrome's own context menus; hosts whose chrome draws its menus itself leave it out.
    */
   menuTargetAt?(x: number, y: number): Promise<{ target: string; tabId: string | null } | null>
+  /**
+   * Show the popup surface – a second chrome document (`index.html?surface=autofill`) floated
+   * above the page views – at `bounds` (window CSS pixels), or take it down with null. It never
+   * takes the keyboard when shown; the page the picker hangs from keeps it. Hosts without a
+   * layered view (`HostCapabilities.popupSurface` false) leave this out.
+   */
+  setPopupSurface?(bounds: Rect | null): void
 }
 
 export interface WindowCreateInit {
@@ -908,6 +916,11 @@ export interface ShellHost {
   share?(payload: SharePayload): Promise<void>
   /** The OS screen for which links open in this app (`capabilities.appLinkSettings`). */
   openAppLinkSettings?(): void
+  /**
+   * The OS screen where encrypted DNS is set for every app (Android's Private DNS); for hosts
+   * without a resolver of their own (`capabilities.secureDns` false).
+   */
+  openPrivateDnsSettings?(): void
 }
 
 /**
@@ -1520,6 +1533,27 @@ export interface VoiceHost {
   openSettings(): void
 }
 
+/**
+ * Tab card thumbnails the host keeps on disk, one picture per tab (`thumbnail.*` in `Commands`).
+ * The host captures on its own – a page leaving the screen, the app going to the background,
+ * the cover it takes for a sheet – and raises `thumbnail.captured` to the window; the chrome
+ * reads a card's picture when it shows the card, and says which pictures are to go.
+ */
+export interface ThumbnailHost {
+  /** How wide a card is, in device pixels: what captures are scaled to. */
+  configure(width: number): void
+  /** The persisted picture of a tab at `url`, or null when there is none (or none of that page). */
+  load(tabId: string, url: string): Promise<ThumbnailPicture | null>
+  /**
+   * The tab left `url`: its picture of that page is not to be shown again (one of another page,
+   * a newer capture the word overtook, stays). Without `url` the tab is gone for good, and so
+   * is whatever picture is under its id.
+   */
+  drop(tabId: string, url?: string): void
+  /** Once at boot: every picture but those of `keep` (the session's tabs) goes. */
+  sweep(keep: readonly string[]): void
+}
+
 export interface Platform {
   readonly info: PlatformInfo
   readonly capabilities: HostCapabilities
@@ -1559,6 +1593,8 @@ export interface Platform {
   readonly shortcuts?: ShortcutHost
   /** Voice search through the device's recogniser; omit when `capabilities.voiceSearch` is off. */
   readonly voice?: VoiceHost
+  /** Tab card thumbnails kept across restarts; hosts without it show placeholder cards. */
+  readonly thumbnails?: ThumbnailHost
   /** Source of Mozilla's Readability library for Reader View, or null when unavailable. */
   readabilitySource(file: 'Readability.js' | 'Readability-readerable.js'): string | null
   /** Offline page translation; hosts without it report the feature as unavailable. */

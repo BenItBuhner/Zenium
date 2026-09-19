@@ -6,17 +6,26 @@ import { FrameDialogPortal, useFrameDialog } from '@renderer/lib/portals'
 import { cn } from '@renderer/lib/utils'
 import { BottomSheet, type BottomSheetHandle } from '../../sheet/BottomSheet'
 import { Field, RadioOption, SheetActions, ValidationMessage } from './blocks'
-import type { ActionRow, FieldRow, ItemRow, RowGroup, SettingsRow, ValueRow } from './model'
+import type {
+  ActionRow,
+  DetailRow,
+  FieldRow,
+  ItemRow,
+  RowGroup,
+  SettingsRow,
+  ValueRow
+} from './model'
 import { findRow } from './model'
 import { GroupList, type RowContext, type SheetRequest } from './rows'
 import { SheetDismissContext, SheetRelayoutContext, useSheetDismiss } from './sheetContext'
 
 /**
  * The sheets a phone Settings row opens (v2 §9.13, §9.23–9.25, §10.4): a value row's picker, a
- * field row's one-field form, a destructive action's confirmation, an action's small form and an
- * item's rows. The page keeps a stack of at most two requests (§9.24: a sheet may open one sheet,
- * and that one opens nothing) and resolves each to its row again on every render, so a sheet
- * always shows the row's current value and closes by itself when its row is gone.
+ * field row's one-field form, a destructive action's confirmation, an action's small form, an
+ * item's rows and a detail row's level of them. The page keeps a stack of at most two requests
+ * (§9.24: a sheet may open one sheet, and that one opens nothing) and resolves each to its row
+ * again on every render, so a sheet always shows the row's current value and closes by itself
+ * when its row is gone.
  *
  * Sheets are modal dialogs, so they mount through the frame's `FrameDialogHost` (lib/portals.tsx,
  * reached with `FrameDialogPortal`): over the content frame, which recedes under a sheet and
@@ -95,6 +104,8 @@ function RowSheet({
       return <FormSheet row={row as ActionRow} under={under} close={close} />
     case 'item':
       return <ItemSheet row={row as ItemRow} under={under} ctx={ctx} close={close} />
+    case 'detail':
+      return <ItemSheet row={row as DetailRow} under={under} ctx={ctx} close={close} />
   }
 }
 
@@ -110,6 +121,8 @@ function fits(request: SheetRequest, row: SettingsRow): boolean {
       return row.kind === 'action' && row.form !== undefined
     case 'item':
       return row.kind === 'item'
+    case 'detail':
+      return row.kind === 'detail'
   }
 }
 
@@ -123,6 +136,8 @@ interface SheetProps {
   title: string
   /** With a description the sheet opens on a §9.23 title block instead of the 48 px header. */
   description?: string
+  /** A description that reports a status (an extension's load error): the §1 status ink. */
+  descriptionTone?: 'warn' | 'danger'
   /** A prompt (title, at most one paragraph, actions) opens on a title block either way (§9.23). */
   prompt?: boolean
   /** Another sheet is open over this one: Escape is that sheet's until it leaves. */
@@ -154,6 +169,7 @@ function HostedSheet({
   name,
   title,
   description,
+  descriptionTone,
   prompt = false,
   under,
   onClose,
@@ -165,8 +181,8 @@ function HostedSheet({
   const own = useRef<BottomSheetHandle>(null)
   const sheet = sheetRef ?? own
   const titleId = useId()
-  const dismiss = (): void => sheet.current?.dismiss()
-  useFrameDialog({ onScrimPress: dismiss, ownScrim: true })
+  const dismiss = (after?: () => void): void => sheet.current?.dismiss(after)
+  useFrameDialog({ onScrimPress: () => dismiss(), ownScrim: true })
   useBackSurface({
     name,
     onProgress: (progress) => sheet.current?.backProgress(progress),
@@ -214,7 +230,7 @@ function HostedSheet({
             // 15 at 69 % on the body line 4 under, 16 to what follows.
             <div className="zen-sheet-title-block">
               <h2 id={titleId}>{title}</h2>
-              {description && <p>{description}</p>}
+              {description && <p data-tone={descriptionTone}>{description}</p>}
             </div>
           )}
           <SheetDismissContext.Provider value={dismiss}>
@@ -274,7 +290,13 @@ export function OptionsSheet({
   )
 }
 
-/** A desktop input as a sheet: the one field (§9.12), its validation message, Cancel and Save. */
+/**
+ * A desktop input as a sheet: the one field (§9.12), its validation message, Cancel and Save.
+ * A commit that takes time (a key tried against its API, a resolver asked a question) makes it
+ * the §9.30 busy form: the field read-only with the typed value at full opacity, Save busy with
+ * the spinner in place of its label, Cancel at .4; a refusal clears the field, gives it the
+ * focus and shows the message under it; acceptance closes the sheet with the value still shown.
+ */
 function FieldSheet({
   row,
   under,
@@ -285,13 +307,33 @@ function FieldSheet({
   close(): void
 }): JSX.Element {
   const sheet = useRef<BottomSheetHandle>(null)
+  const input = useRef<HTMLInputElement>(null)
   const [value, setValue] = useState(row.value)
   const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
   const id = `settings-field-${row.id.replace(/[^a-z0-9-]/gi, '-')}`
+  const refuse = (message: string): void => {
+    setError(message)
+    setValue('')
+    input.current?.focus()
+  }
   const save = (): void => {
-    const message = row.onCommit(value)
-    if (message) {
-      setError(message)
+    if (busy) return
+    const outcome = row.onCommit(value)
+    if (outcome instanceof Promise) {
+      setBusy(true)
+      setError(null)
+      outcome
+        .catch((e: unknown) => (e instanceof Error && e.message) || 'The check did not finish')
+        .then((message) => {
+          setBusy(false)
+          if (message) refuse(message)
+          else sheet.current?.dismiss()
+        })
+      return
+    }
+    if (outcome) {
+      setError(outcome)
       return
     }
     sheet.current?.dismiss()
@@ -304,11 +346,12 @@ function FieldSheet({
       onClose={close}
       sheetRef={sheet}
     >
-      <div className="zen-settings-form">
+      <div className="zen-settings-form" aria-busy={busy || undefined}>
         <Field id={id} label={row.label} description={error ? undefined : row.description}>
           <input
+            ref={input}
             id={id}
-            className="zen-settings-input zen-v2-field"
+            className={cn('zen-settings-input zen-v2-field', row.secret && 'zen-settings-secret')}
             type={row.input === 'number' ? 'number' : 'text'}
             inputMode={row.input === 'number' ? 'numeric' : 'text'}
             min={row.min}
@@ -316,7 +359,9 @@ function FieldSheet({
             placeholder={row.placeholder}
             autoCapitalize="off"
             autoCorrect="off"
+            autoComplete="off"
             spellCheck={false}
+            readOnly={busy}
             aria-invalid={error ? true : undefined}
             value={value}
             onChange={(e) => {
@@ -329,7 +374,12 @@ function FieldSheet({
           />
           {error && <ValidationMessage message={error} />}
         </Field>
-        <SheetActions action="Save" onCancel={() => sheet.current?.dismiss()} onAction={save} />
+        <SheetActions
+          action="Save"
+          busy={busy}
+          onCancel={() => sheet.current?.dismiss()}
+          onAction={save}
+        />
       </div>
     </SettingsSheet>
   )
@@ -402,7 +452,8 @@ function FormBody({ render }: { render: (close: () => void) => ReactNode }): JSX
 
 /**
  * One thing of a list and the rows that act on it (the chassis focuses the first row as the
- * sheet opens); its value rows open the second sheet.
+ * sheet opens); its value and detail rows open the second sheet. A detail row's level is the
+ * same sheet of rows, one deeper (§9.24), so nothing in it opens another.
  */
 function ItemSheet({
   row,
@@ -410,16 +461,17 @@ function ItemSheet({
   ctx,
   close
 }: {
-  row: ItemRow
+  row: ItemRow | DetailRow
   under: boolean
   ctx: RowContext
   close(): void
 }): JSX.Element {
   return (
     <SettingsSheet
-      name={`settings-item:${row.id}`}
+      name={`settings-${row.kind}:${row.id}`}
       title={row.sheet.title}
       description={row.sheet.description}
+      descriptionTone={row.sheet.descriptionTone}
       under={under}
       onClose={close}
       contentKey={String(row.sheet.groups.reduce((n, g) => n + g.rows.length, 0))}

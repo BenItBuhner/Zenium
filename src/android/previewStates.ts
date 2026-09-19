@@ -1,8 +1,14 @@
-import type { CertificateDetails, ClientCertificateInfo, Tab, UIState } from '@shared/types'
+import type {
+  CertificateDetails,
+  ClientCertificateInfo,
+  ExtensionInfo,
+  Tab,
+  UIState
+} from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import type { Browser } from '@core/browser'
 import { isCertificateError } from '@shared/siteInfo'
-import { run } from '@renderer/lib/api'
+import { cmd, run } from '@renderer/lib/api'
 import { dispatchBackEvent, topBackSurface } from '@renderer/lib/back'
 import { dismissOverview, openOverview } from '@renderer/lib/gestures/stage'
 import { abortPull, dispatchPullEvent, PULL_THRESHOLD, pullTravelFor } from '@renderer/lib/pull'
@@ -10,7 +16,9 @@ import { Download, Smartphone, Star } from 'lucide-react'
 import { installBannerShown, presentInstallBanner } from '@renderer/lib/installBanner'
 import { isInternalPageUrl } from '@shared/internalPages'
 import { blockedPopupsOf, closeBlockedPopups, openBlockedPopups } from '@renderer/lib/security'
-import { activeTab } from '@renderer/lib/selectors'
+import { BLANK_URL } from '@shared/url'
+import { DEFAULT_FOLDER_ICON } from '@renderer/components/phone/GroupCard'
+import { activeSpace, activeTab, regularOf } from '@renderer/lib/selectors'
 import {
   browserStore,
   closeMenu,
@@ -44,6 +52,7 @@ import {
   postPreviewManifest,
   previewVoiceScript
 } from './preview'
+import { clearAutofill, stageAutofill } from './previewAutofill'
 import { PREVIEW_DOWNLOAD_EVENT } from './previewDownloads'
 import {
   parsePreviewSeed,
@@ -57,7 +66,7 @@ import {
 const STEP_SETTLE_MS = 450
 
 /** The back surfaces a page's sheets register (`settings-options:<row>`, `settings-confirm:<row>`, …). */
-const SHEET_SURFACE = /^settings-(options|field|confirm|form|item):/
+const SHEET_SURFACE = /^settings-(options|field|confirm|form|item|detail):/
 /** How long a dismissed sheet may take to leave (its motion) before the reset gives up on it. */
 const SHEET_LEAVE_MS = 1500
 /** How long a seeded state may take to arrive in the store before the spec is reported reached anyway. */
@@ -72,13 +81,17 @@ const VOICE_EVENT_MARGIN_MS = 250
  * over the landing, `search=<text>` types into the landing's search, `show=<text>` scrolls a row
  * into view, `then=tap:<text>;back;overview;urlbar` takes steps on the open page in order: a tap
  * on a row opens its sheet and a second tap stacks one, `back` closes the top sheet, `overview`
- * opens the tab overview, `urlbar` the pill for editing), `overlay=<kind>` (history, bookmarks,
+ * opens the tab overview, `urlbar` the pill for editing), `group=<n>` (the active tab in a
+ * group of n members made on the spot, so the group strip is up in the bar band; `then=` steps
+ * run once the group has formed), `overlay=<kind>` (history, bookmarks,
  * downloads, addons, …: the chrome overlays a phone still has – Settings is not one, it is
  * `page=settings`; `show=<text>` scrolls the row with that text into view, `expand` rests a
  * sheet on its expanded detent), `menu=app` (the app menu sheet; `show=<text>` scrolls an item
  * into view), `prompt=<permission>` (the active page asks for that permission: the prompt sheet
- * is up), `private=new` or `private=<url>` (a private tab, blank or on that page), `find=<text>`
- * (the find bar with that text typed), `pull=<n>` (the page held pulled down at n percent of the
+ * is up), `private=new` or `private=<url>` (a private tab, blank or on that page),
+ * `autofill=<surface>` (a save prompt, the passkey chooser, a picker strip or the vault
+ * passphrase dialog staged with sample data; see `PREVIEW_AUTOFILL`), `find=<text>` (the find
+ * bar with that text typed), `pull=<n>` (the page held pulled down at n percent of the
  * refresh threshold; `pull=refresh` lets go past it), `zoom=<factor>` (the page zoom sheet at
  * that factor), `error=<code>` (the active tab's load failed with that Chromium `net::` code,
  * `url=<target>` naming the URL that failed: the zen://error page is up), the message surfaces
@@ -87,18 +100,20 @@ const VOICE_EVENT_MARGIN_MS = 250
  * (the stand-in downloader starts that transfer; see `PreviewDownloadSpec`), `popups=<n>` (n
  * pop-ups blocked on the page; `&list` opens the list, `&allowed` remembers the site),
  * `prompt=http-auth` / `prompt=certificate` (a security dialog over the page; `&failed`,
- * `&proxy`, `&secure`) or `voice=<script>` (voice search started, the stand-in recogniser
+ * `&proxy`, `&secure`), `voice=<script>` (voice search started, the stand-in recogniser
  * playing that script into the listening sheet: `listening`, `listening-rest`, `partial`,
- * `no-match`, `denied`, …; see `previewVoiceScript`). `rules=<n>` on any spec seeds n remembered
- * site permissions for Settings › Security; `blocking=<variant>` may accompany any spec too (see
- * `seedBlocking`).
+ * `no-match`, `denied`, …; see `previewVoiceScript`) or `overview` (the tab overview open over
+ * the active page, its cards with whatever pictures the stand-in host has of the tabs).
+ * `rules=<n>` on any spec seeds n remembered site permissions for Settings › Security;
+ * `blocking=<variant>` may accompany any spec too (see `seedBlocking`).
  * It comes in as the URL hash, `http://localhost:41734/#overlay=history`, or as
  * `window.postMessage({ zenPreview: 'find=coffee' }, '*')`, which also re-applies an unchanged
  * state. Once applied it is echoed in `<html data-preview-state>` so a driver can wait for it;
  * `.github/scripts/android-preview-shots.mjs` is one.
  *
  * The seeds go through the core the way the host would: a prompt is the permission service asked
- * by the active page, a private tab is `tab.newPrivate`.
+ * by the active page, a private tab is `tab.newPrivate`, and the core (`browser`) stages what the
+ * chrome cannot reach through its own state: the autofill surfaces.
  */
 export function installPreviewStates(browser: Browser): void {
   window.addEventListener('hashchange', () => apply(browser, location.hash.slice(1)))
@@ -120,6 +135,7 @@ function apply(browser: Browser, spec: string): void {
     // a request state a previous spec seeded stops being held, and the permission prompts up
     // are answered as a dismissal, the way a press outside would.
     unseedBlocking()
+    unseedExtensions()
     closeOverlay()
     closeMenu()
     closeUrlbar()
@@ -136,8 +152,104 @@ function apply(browser: Browser, spec: string): void {
     const securityAtRest = tab ? resetSecurity(browser, tab) : Promise.resolve()
     const seed = parsePreviewSeed(spec)
     if (seed.rules !== null) seedRules(browser, seed.rules)
-    closeSheets(() => reach(browser, spec, securityAtRest))
+    // The autofill surfaces are the core's: cleared before the sheets close, so a staged prompt
+    // or picker of the previous state is gone with them – and before the group goes, since
+    // they hang from the tab that was active in it.
+    void clearAutofill(browser)
+      .then(dissolveGroup)
+      .then(() => closeSheets(() => reach(browser, spec, securityAtRest)))
   })
+}
+
+/** The name and colour of the group a `group=<n>` state makes. */
+const PREVIEW_GROUP_NAME = 'Research'
+/** Pages for the members a `group=<n>` state has to make when the space has too few tabs. */
+const PREVIEW_GROUP_PAGES = [
+  'https://en.wikipedia.org/wiki/Tea',
+  'https://news.ycombinator.com/',
+  'https://www.rfc-editor.org/rfc/rfc2324.html',
+  'https://developer.mozilla.org/en-US/docs/Web/CSS/corner-shape',
+  'https://en.wikipedia.org/wiki/Damping',
+  'https://www.rfc-editor.org/rfc/rfc1149.html',
+  'https://en.wikipedia.org/wiki/Spring_(device)',
+  'https://developer.mozilla.org/en-US/docs/Web/API/Web_Animations_API',
+  'https://en.wikipedia.org/wiki/Kerning'
+]
+/**
+ * The group the last `group=<n>` state made and the world before it (the tab that was active,
+ * the tabs there were), put back before the next state: a run of stills takes each state from
+ * the same loose profile.
+ */
+let previewGroup: { folderId: string; activeId: string; tabIds: ReadonlySet<string> } | null = null
+
+/**
+ * Put the active tab in a group of `members`: the space's loose pages join first, then tabs made
+ * for the purpose, each filed after the last member so it lands in the group – the way the plus
+ * chip's tab does. The strip enters on its spring as the group forms.
+ */
+async function makeGroup(activeId: string, members: number): Promise<void> {
+  const state = browserStore.get().state
+  if (!state) return
+  const space = activeSpace(state)
+  const folderId = await cmd('folder.create', {
+    spaceId: space.id,
+    name: PREVIEW_GROUP_NAME,
+    icon: DEFAULT_FOLDER_ICON,
+    color: 'blue',
+    rename: false
+  })
+  previewGroup = { folderId, activeId, tabIds: new Set(Object.keys(state.tabs)) }
+  await cmd('tab.moveToFolder', { tabId: activeId, folderId })
+  const loose = regularOf(state, space).filter(
+    (t) => t.id !== activeId && !t.folderId && !isInternalPageUrl(t.url) && t.url !== BLANK_URL
+  )
+  let last = activeId
+  for (let i = 1; i < members; i++) {
+    const next = loose.shift()
+    if (next) {
+      await cmd('tab.moveToFolder', { tabId: next.id, folderId })
+      last = next.id
+    } else {
+      last = await cmd('tab.create', {
+        url: PREVIEW_GROUP_PAGES[i % PREVIEW_GROUP_PAGES.length],
+        active: false,
+        afterTabId: last
+      })
+    }
+  }
+}
+
+/**
+ * The group a previous state made goes and the world before it comes back: the tab that was
+ * active then is active again (first, so closing the others never has the core pick a
+ * neighbour), the tabs made since – for the group, or in it by its plus chip – close, and the
+ * folder is deleted with its tabs unpacked, so the next state starts loose.
+ */
+async function dissolveGroup(): Promise<void> {
+  const made = previewGroup
+  previewGroup = null
+  const state = made ? browserStore.get().state : null
+  if (!made || !state) return
+  const quiet = (): undefined => undefined
+  const restored = state.tabs[made.activeId] ? made.activeId : null
+  if (restored && activeTab(state)?.id !== restored)
+    await cmd('tab.activate', { tabId: restored }).catch(quiet)
+  for (const id of Object.keys(state.tabs)) {
+    if (!made.tabIds.has(id)) await cmd('tab.close', { tabId: id, force: true }).catch(quiet)
+  }
+  if (state.folders[made.folderId])
+    await cmd('folder.delete', { folderId: made.folderId, unpack: true }).catch(quiet)
+  // A command's answer comes before the state it changed does: the next state reads the store,
+  // so the store is waited for (bounded) to show the folder gone and the tab back.
+  await new Promise<void>((resolve) =>
+    untilState(
+      (s) =>
+        !s.folders[made.folderId] &&
+        (restored === null || activeTab(s)?.id === restored) &&
+        Object.keys(s.tabs).every((id) => made.tabIds.has(id)),
+      resolve
+    )
+  )
 }
 
 /**
@@ -174,37 +286,40 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
   // The request engine's state the spec asks for is patched in once the target is up (the core's
   // push on the way there would replace an earlier patch) and again before a page's rows are
   // shown or tapped, so a row the seeded state adds is there for `show` and the steps.
-  const blocking = new URLSearchParams(spec.startsWith('#') ? spec.slice(1) : spec).get('blocking')
+  const params = new URLSearchParams(spec.startsWith('#') ? spec.slice(1) : spec)
+  const blocking = params.get('blocking')
+  const extensions = params.get('extensions')
   const seed = (): void => {
     if (blocking) seedBlocking(blocking)
+    if (extensions) seedExtensions(extensions)
   }
   const finish = (): void => {
     seed()
     done(spec)
   }
 
-  if (target.kind === 'page') {
-    // The page tab is the state: reached once the active tab is a page tab and the page has its
-    // rows (its chunk loads on the first open), then a moment for its drill-in's slide to settle
-    // before the search is typed, a row shown or a step taken.
-    whenActiveTabIs(isInternalPageUrl, () => {
-      whenPageRendered(() => {
-        setTimeout(() => {
-          seed()
-          // The landing keeps its query between states unless it is retyped: an empty one clears it.
-          type('input[aria-label="Find in Settings"]', target.search ?? '')
-          requestAnimationFrame(() => {
-            // The page keeps where a previous state scrolled it; every state starts at the top.
-            for (const el of document.querySelectorAll<HTMLElement>('[data-page] *')) {
-              if (el.scrollTop > 0) el.scrollTop = 0
-            }
-            show(target.show)
-            steps(target.then ?? [], finish)
-          })
-        }, 300)
-      })
+  if (target.kind === 'autofill') {
+    void stageAutofill(browser, target.surface, tab).then((page) => {
+      // A manager state is the Settings tab on its Autofill section (staged vault behind it):
+      // reached the way a page state is. Any other surface mounts on the next render; the
+      // sheets take a moment to rise.
+      if (page) settlePage(target, seed, finish)
+      else requestAnimationFrame(() => requestAnimationFrame(() => done(spec)))
     })
+  } else if (target.kind === 'page') {
+    // The Extensions category is only on a host with the capability: the seed turns it on before
+    // the page opens on that section, so the section resolves and its rows are what is waited for.
+    if (extensions) seedExtensions(extensions)
+    settlePage(target, seed, finish)
     run('page.open', { id: target.page, section: target.section ?? null })
+  } else if (target.kind === 'group' && tab) {
+    // The state is reached as the group forms (the strip is entering: a driver that wants it
+    // mid-slide captures at once); the steps wait for the entrance to settle.
+    void makeGroup(tab.id, target.members).then(() => {
+      const then = target.then ?? []
+      if (then.length === 0) finish()
+      else setTimeout(() => steps(then, finish), STEP_SETTLE_MS)
+    })
   } else if (target.kind === 'overlay') {
     void openOverlay(target.overlay, tab?.id ?? null, null, null, target.section ?? null).then(
       () => {
@@ -299,6 +414,10 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
     } else {
       whenStore(() => uiStore.get().toasts.length > 0, spec)
     }
+  } else if (target.kind === 'overview' && state) {
+    // The grid mounts on the next render and its cards read their pictures then.
+    openOverview(state)
+    requestAnimationFrame(() => done(spec))
   } else {
     finish()
   }
@@ -442,6 +561,286 @@ export function blockingFixture(state: UIState, variant: string, now: number): U
   return { ...state, settings, blocking, tabs }
 }
 
+// ---------------------------------------------------------------------------
+// Extensions, seeded
+// ---------------------------------------------------------------------------
+
+/** Lets go of the extension state the current spec holds over the core's pushes. */
+let extensionsSeed: (() => void) | null = null
+
+/**
+ * Settings > Extensions in states this stand-in host cannot reach (it has no extension store, so
+ * it reports the capability off and installs nothing): the chrome's copy of the browser state is
+ * patched with the capability on and a set of installed extensions, and patched again over every
+ * state the core pushes while the spec stands, as the request state is. Variants: `installed`
+ * (six extensions: two stores, an unpacked one on Manifest V2, one turned off, one that failed to
+ * load, one whose error console holds errors and warnings), `empty` (the capability on, nothing
+ * installed) and `checking` (the update check running).
+ */
+function seedExtensions(variant: string): void {
+  unseedExtensions()
+  let seeded: UIState | null = null
+  const patch = (): void => {
+    const state = browserStore.get().state
+    if (!state || state === seeded) return
+    seeded = extensionsFixture(state, variant, Date.now())
+    browserStore.set({ state: seeded })
+  }
+  patch()
+  extensionsSeed = browserStore.subscribe(patch)
+}
+
+/** Stop holding a seeded extension state over the core's pushes. */
+function unseedExtensions(): void {
+  extensionsSeed?.()
+  extensionsSeed = null
+}
+
+/** A 48 px icon for a fixture extension: a rounded tile in its colour with its initial. */
+function fixtureIcon(letter: string, fill: string): string {
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">` +
+    `<rect width="48" height="48" rx="10" fill="${fill}"/>` +
+    `<text x="24" y="32" text-anchor="middle" font-family="system-ui, sans-serif" ` +
+    `font-size="24" font-weight="600" fill="#fff">${letter}</text></svg>`
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`
+}
+
+function fixtureExtension(now: number, over: Partial<ExtensionInfo>): ExtensionInfo {
+  return {
+    id: '',
+    name: '',
+    version: '1.0.0',
+    description: '',
+    path: '',
+    enabled: true,
+    icon: null,
+    popup: 'popup.html',
+    error: null,
+    source: 'chrome-web-store',
+    publisher: 'chrome-web-store',
+    updateUrl: 'https://clients2.google.com/service/update2/crx',
+    installedAt: now - 40 * 24 * HOUR_MS,
+    updatedAt: now - 40 * 24 * HOUR_MS,
+    pinned: false,
+    toolbarPinned: false,
+    allowFileAccess: false,
+    allowPrivate: false,
+    allowUserScripts: false,
+    manifestVersion: 3,
+    permissions: ['storage'],
+    hostPermissions: [],
+    optionsPage: null,
+    newTabPage: null,
+    newTabOverride: false,
+    warnings: [],
+    pendingWarnings: null,
+    updateState: 'up-to-date',
+    availableVersion: null,
+    updateError: null,
+    updateCheckedAt: now - 2 * HOUR_MS,
+    errors: [],
+    ...over
+  }
+}
+
+export function extensionsFixture(state: UIState, variant: string, now: number): UIState {
+  const darkReader = 'eimadpbcbfnmbkopoojfekhnkhdbieeh'
+  const tabTools = 'pkmhldhpnjffdmnnpcgfcjoaebbhbmcn'
+  const extensions: ExtensionInfo[] =
+    variant === 'empty'
+      ? []
+      : [
+          fixtureExtension(now, {
+            id: darkReader,
+            name: 'Dark Reader',
+            version: '4.9.132',
+            description:
+              'Dark mode for every website. Take care of your eyes, use dark theme for night and daily browsing.',
+            path: `/data/user/0/app.zen.chromium/files/zen/extensions/${darkReader}`,
+            icon: fixtureIcon('D', '#3f3f52'),
+            permissions: ['alarms', 'contextMenus', 'storage', 'tabs', 'theme', 'fontSettings'],
+            hostPermissions: ['<all_urls>'],
+            optionsPage: 'ui/options/index.html',
+            warnings: [
+              'Read and change all your data on all websites',
+              'Change your settings that control websites’ access to features such as cookies, JavaScript, plugins, geolocation, microphone, camera etc.'
+            ],
+            installedAt: now - 90 * 24 * HOUR_MS,
+            updatedAt: now - 6 * 24 * HOUR_MS,
+            errors: [
+              {
+                id: 1,
+                level: 'warning',
+                source: 'load',
+                message: 'browser_specific_settings: Unrecognized manifest key',
+                url: `chrome-extension://${darkReader}/manifest.json`,
+                line: null,
+                context: null,
+                at: now - 6 * 24 * HOUR_MS,
+                lastAt: now - 6 * 24 * HOUR_MS,
+                count: 1
+              },
+              {
+                id: 2,
+                level: 'error',
+                source: 'worker',
+                message: "Uncaught TypeError: Cannot read properties of undefined (reading 'id')",
+                url: `chrome-extension://${darkReader}/background/index.js`,
+                line: 214,
+                context: `chrome-extension://${darkReader}/background/index.js`,
+                at: now - 3 * HOUR_MS,
+                lastAt: now - 25 * 60 * 1000,
+                count: 3
+              },
+              {
+                id: 3,
+                level: 'error',
+                source: 'page',
+                message:
+                  'Unchecked runtime.lastError: The message port closed before a response was received.',
+                url: `chrome-extension://${darkReader}/ui/popup/index.js`,
+                line: 58,
+                context: `chrome-extension://${darkReader}/ui/popup/index.html`,
+                at: now - 40 * 60 * 1000,
+                lastAt: now - 40 * 60 * 1000,
+                count: 1
+              },
+              {
+                id: 4,
+                level: 'warning',
+                source: 'content',
+                message:
+                  'Deprecated: chrome.extension.sendRequest is not supported; use chrome.runtime.sendMessage',
+                url: `chrome-extension://${darkReader}/inject/index.js`,
+                line: 3,
+                context: 'https://news.ycombinator.com/',
+                at: now - 8 * 60 * 1000,
+                lastAt: now - 4 * 60 * 1000,
+                count: 2
+              }
+            ]
+          }),
+          fixtureExtension(now, {
+            id: 'ddkjiahejlhfcafbddmgiahcphecmpfh',
+            name: 'uBlock Origin Lite',
+            version: '2026.912.1352',
+            description: 'An efficient content blocker. Easy on CPU and memory.',
+            icon: fixtureIcon('U', '#800000'),
+            permissions: ['activeTab', 'declarativeNetRequest', 'scripting', 'storage'],
+            hostPermissions: ['<all_urls>'],
+            optionsPage: 'dashboard.html',
+            warnings: ['Read and change all your data on all websites'],
+            updateState: 'available',
+            availableVersion: '2026.918.1145',
+            installedAt: now - 60 * 24 * HOUR_MS,
+            updatedAt: now - 7 * 24 * HOUR_MS
+          }),
+          fixtureExtension(now, {
+            id: 'nngceckbapebfimnlniiiahkandclblb',
+            name: 'Bitwarden Password Manager',
+            version: '2026.8.2',
+            description:
+              'At home, at work, or on the go, Bitwarden easily secures all your passwords, passkeys and sensitive information.',
+            icon: fixtureIcon('B', '#175ddc'),
+            permissions: [
+              'tabs',
+              'contextMenus',
+              'storage',
+              'clipboardRead',
+              'clipboardWrite',
+              'webRequest',
+              'alarms',
+              'scripting'
+            ],
+            hostPermissions: ['http://*/*', 'https://*/*'],
+            optionsPage: 'popup/index.html#/settings',
+            warnings: [
+              'Read and change all your data on all websites',
+              'Read data you copy and paste',
+              'Modify data you copy and paste'
+            ],
+            installedAt: now - 120 * 24 * HOUR_MS,
+            updatedAt: now - 20 * 24 * HOUR_MS
+          }),
+          fixtureExtension(now, {
+            id: 'gebbhagfogifgggkldgodflihgfeippi',
+            name: 'Return YouTube Dislike',
+            version: '3.0.0.19',
+            description: 'Returns ability to see dislike statistics on YouTube',
+            icon: fixtureIcon('R', '#ff4c4c'),
+            enabled: false,
+            hostPermissions: ['*://*.youtube.com/*', '*://returnyoutubedislikeapi.com/*'],
+            warnings: [
+              'Read and change your data on all youtube.com sites and returnyoutubedislikeapi.com'
+            ],
+            installedAt: now - 200 * 24 * HOUR_MS,
+            updatedAt: now - 200 * 24 * HOUR_MS
+          }),
+          fixtureExtension(now, {
+            id: tabTools,
+            name: 'Zenium Tab Tools',
+            version: '0.4.1',
+            description: 'Sorts and groups the tabs of a Space by site.',
+            path: `/storage/emulated/0/Download/zenium-tab-tools`,
+            icon: fixtureIcon('Z', '#6264dc'),
+            source: 'unpacked',
+            publisher: null,
+            updateUrl: null,
+            updateState: 'unknown',
+            updateCheckedAt: null,
+            manifestVersion: 2,
+            permissions: ['tabs', 'tabGroups', 'storage', 'userScripts'],
+            hostPermissions: [],
+            warnings: ['Read your browsing history'],
+            installedAt: now - 3 * 24 * HOUR_MS,
+            updatedAt: now - 3 * 24 * HOUR_MS
+          }),
+          fixtureExtension(now, {
+            id: 'bfnaelmomeimhlpmgjnjophhpkkoljpa',
+            name: 'Phantom',
+            version: '25.19.0',
+            description: 'A friendly crypto wallet built for DeFi and NFTs.',
+            icon: fixtureIcon('P', '#ab9ff2'),
+            source: 'crx',
+            publisher: 'unknown',
+            updateUrl: null,
+            updateState: 'unknown',
+            updateCheckedAt: null,
+            popup: null,
+            error: 'manifest_version: Required key is missing',
+            permissions: [],
+            hostPermissions: [],
+            warnings: [],
+            installedAt: now - HOUR_MS,
+            updatedAt: now - HOUR_MS,
+            errors: [
+              {
+                id: 1,
+                level: 'error',
+                source: 'load',
+                message: 'manifest_version: Required key is missing',
+                url: `chrome-extension://bfnaelmomeimhlpmgjnjophhpkkoljpa/manifest.json`,
+                line: null,
+                context: null,
+                at: now - HOUR_MS,
+                lastAt: now - HOUR_MS,
+                count: 1
+              }
+            ]
+          })
+        ]
+  return {
+    ...state,
+    capabilities: { ...state.capabilities, extensions: true },
+    extensions,
+    extensionUpdates: {
+      lastCheckedAt: variant === 'empty' ? null : now - 2 * HOUR_MS,
+      checking: variant === 'checking'
+    }
+  }
+}
+
 /**
  * The certificate the host reports with a certificate error (`failLoad` in `views.ts`), so that
  * `error=<ERR_CERT_*>` shows the interstitial whole: the Advanced block lists these fields and
@@ -453,6 +852,36 @@ const PREVIEW_CERTIFICATE: CertificateDetails = {
   validStart: Date.UTC(2015, 3, 9),
   validExpiry: Date.UTC(2015, 3, 12),
   fingerprint: 'sha256/1DqoEDv6Bl2oL9bHAXqmcK+mfhLl7Ts2kyR6DDzgROo='
+}
+
+/**
+ * A page tab is the state: reached once the active tab is a page tab and the page has its rows
+ * (its chunk loads on the first open), then a moment for its drill-in's slide to settle before
+ * the search is typed, a row shown or a step taken. `seed` patches the seeded state in before the
+ * rows are shown (a row it adds is there for `show` and the steps); `finish` ends the state.
+ */
+function settlePage(
+  target: { search?: string; show?: string; then?: readonly PreviewStep[] },
+  seed: () => void,
+  finish: () => void
+): void {
+  whenActiveTabIs(isInternalPageUrl, () => {
+    whenPageRendered(() => {
+      setTimeout(() => {
+        seed()
+        // The landing keeps its query between states unless it is retyped: an empty one clears it.
+        type('input[aria-label="Find in Settings"]', target.search ?? '')
+        requestAnimationFrame(() => {
+          // The page keeps where a previous state scrolled it; every state starts at the top.
+          for (const el of document.querySelectorAll<HTMLElement>('[data-page] *')) {
+            if (el.scrollTop > 0) el.scrollTop = 0
+          }
+          show(target.show)
+          steps(target.then ?? [], finish)
+        })
+      }, 300)
+    })
+  })
 }
 
 /**

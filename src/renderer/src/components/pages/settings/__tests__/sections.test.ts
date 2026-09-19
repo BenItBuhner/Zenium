@@ -1,6 +1,14 @@
 // @vitest-environment happy-dom
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { HostCapabilities, SafetyCheckResult, Settings, Tab, UIState } from '@shared/types'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type {
+  ExtensionErrorEntry,
+  ExtensionInfo,
+  HostCapabilities,
+  SafetyCheckResult,
+  Settings,
+  Tab,
+  UIState
+} from '@shared/types'
 import { INTERNAL_PAGES, availableSections } from '@shared/internalPages'
 import {
   DEFAULT_BLOCKING_SETTINGS,
@@ -13,6 +21,7 @@ import {
   DEFAULT_CONTAINERS,
   DEFAULT_SETTINGS,
   emptyAgentServerStatus,
+  emptyAutofillUIState,
   emptyPasswordsStatus,
   emptyResourceSnapshot
 } from '@shared/defaults'
@@ -20,6 +29,7 @@ import { MAX_NEW_TAB_SHORTCUTS } from '@shared/newTab'
 import { DEFAULT_PAGE_ENVIRONMENT } from '@shared/pageControls'
 import { DEFAULT_SEARCH_ENGINES } from '@shared/search'
 import type { TranslateUIState } from '@shared/translate'
+import { emptyPrivacyStatus, type PrivacyStatus } from '@shared/privacy'
 import { emptyUpdateStatus } from '@shared/updates'
 
 /*
@@ -36,9 +46,11 @@ const { buildSection, buildSections } = await import('../sections')
 const { allRows, currentOptionLabel, findRow, groupShows, rowText, searchRows } =
   await import('../model')
 const { uiStore } = await import('@renderer/lib/ui')
+const { idleAutofillSettings } = await import('@renderer/lib/autofillSettings')
 
 type Model = ReturnType<typeof buildSection>
 type Row = ReturnType<typeof allRows>[number]
+type RowGroup = Model['groups'][number]
 
 const ANDROID: HostCapabilities = {
   windowControls: false,
@@ -73,7 +85,9 @@ const ANDROID: HostCapabilities = {
   // Kotlin's boot info turns this on where the launcher can pin (ShortcutManagerCompat).
   pinShortcuts: false,
   translate: true,
-  voiceSearch: false
+  voiceSearch: false,
+  selectionToolbar: true,
+  popupSurface: false
 }
 
 function tab(id: string, url: string, patch: Partial<Tab> = {}): Tab {
@@ -137,6 +151,42 @@ const TRANSLATE: TranslateUIState = {
   tabs: {}
 }
 
+/** Safe Browsing with two feeds in memory, refreshed two minutes ago (#156's rows read it). */
+const SAFE_BROWSING: PrivacyStatus['safeBrowsing'] = {
+  ready: true,
+  enabled: true,
+  entries: 4895,
+  updating: false,
+  lastUpdatedAt: Date.now() - 2 * 60_000,
+  remoteLookups: false,
+  remoteErrors: 0,
+  feeds: [
+    {
+      id: 'urlhaus',
+      name: 'URLhaus',
+      homepage: 'https://urlhaus.abuse.ch/',
+      licence: 'CC0',
+      entries: 4000,
+      updatedAt: Date.now() - 2 * 60_000,
+      bundled: false,
+      updating: false,
+      lastError: null
+    },
+    {
+      id: 'phishing-database',
+      name: 'Phishing.Database',
+      homepage: 'https://phish.co.za/',
+      licence: 'MIT',
+      entries: 895,
+      updatedAt: null,
+      bundled: true,
+      updating: false,
+      lastError: null
+    }
+  ]
+}
+const PRIVACY_STATUS: PrivacyStatus = { ...emptyPrivacyStatus(), safeBrowsing: SAFE_BROWSING }
+
 function state(patch: Partial<UIState> = {}, settings: Partial<Settings> = {}): UIState {
   return {
     platform: 'android',
@@ -182,11 +232,13 @@ function state(patch: Partial<UIState> = {}, settings: Partial<Settings> = {}): 
     agentServer: emptyAgentServerStatus(),
     updates: emptyUpdateStatus('0.3.0-test', { os: 'android', arch: 'arm64', kind: 'apk' }),
     passwords: emptyPasswordsStatus(),
+    autofill: emptyAutofillUIState(),
     defaultBrowser: { isDefault: false, prompt: null },
     permissionRules: [],
     permissionDefaults: {},
     lastSafetyCheck: null,
     blocking: emptyBlockingStatus(),
+    privacy: emptyPrivacyStatus(),
     pageEnvironment: DEFAULT_PAGE_ENVIRONMENT,
     newTabShortcuts: [],
     newTabBackground: { image: false, canPick: false },
@@ -254,10 +306,16 @@ function blockingState(patch: Partial<UIState> = {}): UIState {
   )
 }
 
-/** A context that records what the rows ask of the page; a touch host unless `pointer` says so. */
+type AutofillData = Parameters<typeof buildSection>[1]['autofill']
+
+/**
+ * A context that records what the rows ask of the page; a touch host unless `pointer` says so.
+ * The vault reads idle (no lists, the gate idle) unless `autofill` brings some.
+ */
 function context(
   s: UIState = state(),
-  pointer = false
+  pointer = false,
+  autofill: Partial<AutofillData> = {}
 ): {
   ctx: Parameters<typeof buildSection>[1]
   patches: Partial<Settings>[]
@@ -276,7 +334,8 @@ function context(
     openBarEditor: () => {
       record.barEditor += 1
     },
-    boost: (tabId) => boosted.push(tabId)
+    boost: (tabId) => boosted.push(tabId),
+    autofill: { ...idleAutofillSettings(), ...autofill }
   }
   return {
     ctx,
@@ -321,6 +380,7 @@ describe('the section model', () => {
       'tabs',
       'downloads',
       'search',
+      'autofill',
       'languages',
       'privacy',
       'spaces',
@@ -455,7 +515,7 @@ describe('the section model', () => {
     })
 
     // Without the engine its groups build to nothing (`availableSections` hides the whole
-    // category, `requires`); #135's groups are the ones left.
+    // category, `requires`); #135's and #156's groups are the ones left.
     const without = section(
       'privacy',
       blockingState({ capabilities: { ...ANDROID, requestBlocking: false } })
@@ -465,12 +525,46 @@ describe('the section model', () => {
       'safety-check',
       'safety-check-results',
       'safety-check-actions',
+      'safe-browsing',
+      'safe-browsing-feeds',
       'clear-data',
+      'cookies',
+      'cookies-related-sites',
+      'cookies-add-site',
       'sites-permissions',
       'sites-content',
       'sites-additional',
-      'sites-own'
+      'sites-own',
+      'https-only',
+      'https-only-sites',
+      'secure-dns',
+      'signals'
     ])
+  })
+
+  it('carries the overview’s "Confirm before closing all tabs" switch in Tabs, bound to confirmCloseAll (TAB-06)', () => {
+    const c = context(state({}, { confirmCloseAll: false }))
+    const tabs = buildSection(
+      PAGE.sections.find((x) => x.id === 'tabs')!,
+      c.ctx
+    )
+    const ids = tabs.groups.find((g) => g.id === 'tabs')?.rows.map((r) => r.id) ?? []
+    // A row among the tab rows, right before the session ones; no card of its own (§9.17).
+    expect(ids.indexOf('confirm-close-all')).toBe(ids.indexOf('restore-session') - 1)
+    const confirm = row(tabs, 'confirm-close-all')
+    if (confirm.kind !== 'switch') throw new Error('not a switch')
+    expect(confirm.label).toBe('Confirm before closing all tabs')
+    expect(confirm.checked).toBe(false)
+    confirm.onChange(true)
+    expect(c.patches).toEqual([{ confirmCloseAll: true }])
+    expect(DEFAULT_SETTINGS.confirmCloseAll).toBe(true)
+
+    // A windowed host has no tab overview and no Close all tabs: the switch stays off its Tabs.
+    const desktop = buildSection(
+      PAGE.sections.find((x) => x.id === 'tabs')!,
+      context(state({ platform: 'linux', capabilities: { ...ANDROID, windows: true } })).ctx
+    )
+    expect(findRow(desktop.groups, 'confirm-close-all')).toBeNull()
   })
 
   it('carries #129’s session rows where the desktop panel has them: Tabs, on a windowed host only', () => {
@@ -592,6 +686,288 @@ describe('the section model', () => {
       'download-open-on-start',
       'download-always-show-button'
     ])
+  })
+
+  describe('#145’s Autofill category', () => {
+    const AUTOFILL = PAGE.sections.find((x) => x.id === 'autofill')!
+    const unlocked = (): UIState =>
+      state({ passwords: { ...emptyPasswordsStatus(), locked: false } })
+    const address = {
+      id: 'a1',
+      country: 'US',
+      name: 'Ada Lovelace',
+      organization: 'Analytical Engines',
+      streetAddress: '12 Ada Way',
+      locality: 'Springfield',
+      region: 'CA',
+      postalCode: '90210',
+      sortingCode: '',
+      phone: '',
+      email: '',
+      createdAt: 0,
+      updatedAt: 0,
+      lastUsedAt: null
+    }
+    const card = {
+      id: 'c1',
+      last4: '4242',
+      network: 'visa' as const,
+      expMonth: 12,
+      expYear: 2031,
+      expired: false,
+      name: 'Ada Lovelace',
+      nickname: 'Work Visa',
+      createdAt: 0,
+      updatedAt: 0,
+      lastUsedAt: null
+    }
+    const passkey = {
+      id: 'p1',
+      rpId: 'example.com',
+      rpName: 'Example',
+      userName: 'ada@example.com',
+      userDisplayName: 'Ada',
+      credentialId: '',
+      origin: 'https://example.com',
+      createdAt: 0,
+      lastUsedAt: null
+    }
+
+    it('is listed behind the passwords capability, like the desktop section', () => {
+      expect(AUTOFILL.requires).toBe('passwords')
+      const without = state({ capabilities: { ...ANDROID, passwords: false } })
+      expect(phoneSections(without).some((m) => m.section.id === 'autofill')).toBe(false)
+      expect(phoneSections().some((m) => m.section.id === 'autofill')).toBe(true)
+    })
+
+    it('carries the password switches and the clipboard choice, patching inside `passwords`', () => {
+      const c = context(state())
+      const model = buildSection(AUTOFILL, c.ctx)
+      const offer = row(model, 'autofill-offer-to-save')
+      if (offer.kind !== 'switch') throw new Error('not a switch')
+      expect(offer.checked).toBe(DEFAULT_SETTINGS.passwords.offerToSave)
+      offer.onChange(!offer.checked)
+      const auto = row(model, 'autofill-auto-sign-in')
+      if (auto.kind !== 'switch') throw new Error('not a switch')
+      auto.onChange(true)
+      const clear = row(model, 'autofill-clipboard-clear')
+      if (clear.kind !== 'value') throw new Error('not a value row')
+      expect(clear.value).toBe(String(DEFAULT_SETTINGS.passwords.clipboardClearSeconds))
+      expect(clear.options.map((o) => o.value)).toEqual(['0', '30', '60', '120', '300'])
+      clear.onChange('120')
+      expect(c.patches).toEqual([
+        { passwords: { ...DEFAULT_SETTINGS.passwords, offerToSave: !offer.checked } },
+        { passwords: { ...DEFAULT_SETTINGS.passwords, autoSignIn: true } },
+        { passwords: { ...DEFAULT_SETTINGS.passwords, clipboardClearSeconds: 120 } }
+      ])
+    })
+
+    it('offers Zenium as the provider on Android alone: pressable while a system service is set, naming it', () => {
+      const none = buildSection(AUTOFILL, context(state()).ctx)
+      const off = row(none, 'autofill-android-provider')
+      if (off.kind !== 'switch') throw new Error('not a switch')
+      // No service set: Zenium fills either way, so the switch reads on and cannot be moved.
+      expect(off.checked).toBe(true)
+      expect(off.disabled).toBe(true)
+      expect(off.description).toMatch(/No autofill service is set/)
+
+      const google = context(
+        state({
+          autofill: {
+            ...emptyAutofillUIState(),
+            systemAutofill: {
+              enabled: true,
+              service: 'com.google.android.gms/.autofill.service.AutofillService'
+            }
+          }
+        })
+      )
+      const on = row(buildSection(AUTOFILL, google.ctx), 'autofill-android-provider')
+      if (on.kind !== 'switch') throw new Error('not a switch')
+      expect(on.checked).toBe(false)
+      expect(on.disabled).toBeFalsy()
+      expect(on.description).toMatch(/^Google saves and fills passwords/)
+      on.onChange(true)
+      expect(google.patches).toEqual([
+        { passwords: { ...DEFAULT_SETTINGS.passwords, androidProvider: 'zenium' } }
+      ])
+
+      const desktop = buildSection(AUTOFILL, context(state({ platform: 'linux' })).ctx)
+      expect(findRow(desktop.groups, 'autofill-android-provider')).toBeNull()
+    })
+
+    it('while the vault is locked shows its gate – Unlock as an action, the passphrase form once asked – and none of the lists', () => {
+      const unlock = vi.fn()
+      const idle = buildSection(
+        AUTOFILL,
+        context(state(), false, {
+          gate: { step: 'idle', busy: false, error: null, unlock, reset: () => undefined }
+        }).ctx
+      )
+      expect(idle.groups.map((g) => g.id)).toEqual(['autofill-passwords', 'autofill-vault'])
+      expect(idle.groups[1]?.heading).toBe('The vault is locked')
+      const action = row(idle, 'autofill-unlock')
+      if (action.kind !== 'action') throw new Error('not an action')
+      expect(action.busy).toBe(false)
+      action.onPress?.()
+      expect(unlock).toHaveBeenCalledWith()
+      expect(findRow(idle.groups, 'autofill-add-address')).toBeNull()
+
+      // Busy while the device checks; a refusal is the gate's description.
+      const busy = buildSection(
+        AUTOFILL,
+        context(state(), false, {
+          gate: { step: 'idle', busy: true, error: null, unlock, reset: () => undefined }
+        }).ctx
+      )
+      const checking = row(busy, 'autofill-unlock')
+      if (checking.kind !== 'action') throw new Error('not an action')
+      expect(checking.busy).toBe(true)
+      const refused = buildSection(
+        AUTOFILL,
+        context(state(), false, {
+          gate: {
+            step: 'idle',
+            busy: false,
+            error: 'The vault stayed locked.',
+            unlock,
+            reset: () => undefined
+          }
+        }).ctx
+      )
+      expect(refused.groups[1]?.description).toBe('The vault stayed locked.')
+
+      // Once the vault asks for its passphrase the form takes the gate's place, as a custom row.
+      const asked = buildSection(
+        AUTOFILL,
+        context(state(), false, {
+          gate: { step: 'passphrase', busy: false, error: null, unlock, reset: () => undefined }
+        }).ctx
+      )
+      expect(row(asked, 'autofill-vault-passphrase').kind).toBe('custom')
+      expect(findRow(asked.groups, 'autofill-unlock')).toBeNull()
+      const setup = buildSection(
+        AUTOFILL,
+        context(state(), false, {
+          gate: { step: 'setup', busy: false, error: null, unlock, reset: () => undefined }
+        }).ctx
+      )
+      expect(setup.groups[1]?.heading).toBe('Set a vault passphrase')
+
+      // An unreadable vault: the gate says so and Unlock is not pressable.
+      const broken = buildSection(
+        AUTOFILL,
+        context(
+          state({ passwords: { ...emptyPasswordsStatus(), error: 'The vault file is damaged.' } })
+        ).ctx
+      )
+      expect(broken.groups[1]?.description).toBe('The vault file is damaged.')
+      expect(row(broken, 'autofill-unlock').disabled).toBe(true)
+    })
+
+    it('unlocked: the address, payment method and passkey switches and lists, empty until fetched, one line when empty', () => {
+      const c = context(unlocked())
+      const model = buildSection(AUTOFILL, c.ctx)
+      expect(model.groups.map((g) => g.id)).toEqual([
+        'autofill-passwords',
+        'autofill-addresses',
+        'autofill-addresses-list',
+        'autofill-addresses-add',
+        'autofill-cards',
+        'autofill-cards-list',
+        'autofill-cards-add',
+        'autofill-passkeys'
+      ])
+      // Lists not yet fetched draw nothing: no rows and no empty line.
+      const addresses = model.groups.find((g) => g.id === 'autofill-addresses-list')!
+      expect(addresses.rows).toEqual([])
+      expect(addresses.empty).toBeUndefined()
+      expect(groupShows(addresses)).toBe(false)
+      const saveAddresses = row(model, 'autofill-save-addresses')
+      if (saveAddresses.kind !== 'switch') throw new Error('not a switch')
+      saveAddresses.onChange(false)
+      const saveCards = row(model, 'autofill-save-cards')
+      if (saveCards.kind !== 'switch') throw new Error('not a switch')
+      saveCards.onChange(false)
+      expect(c.patches).toEqual([
+        { autofill: { ...DEFAULT_SETTINGS.autofill, addresses: false } },
+        { autofill: { ...DEFAULT_SETTINGS.autofill, cards: false } }
+      ])
+
+      // Fetched and empty: the §9.17 line, one per list.
+      const fetched = buildSection(
+        AUTOFILL,
+        context(unlocked(), false, { addresses: [], cards: [], passkeys: [] }).ctx
+      )
+      const empties = fetched.groups.filter((g) => g.rows.length === 0).map((g) => g.empty)
+      expect(empties).toEqual(['No addresses saved yet', 'No cards saved yet', 'No passkeys yet'])
+      expect(fetched.groups.every(groupShows)).toBe(true)
+    })
+
+    it('lists each entry as an item with a glyph and its sheet: edit closes the sheet for the editor, delete confirms, copy is busy while it runs', async () => {
+      const { uiStore } = await import('@renderer/lib/ui')
+      const copyCard = vi.fn()
+      const c = context(unlocked(), false, {
+        addresses: [address],
+        cards: [card],
+        passkeys: [passkey],
+        copying: 'c1',
+        copyCard
+      })
+      const model = buildSection(AUTOFILL, c.ctx)
+      const ids = allRows(model.groups).map((r) => r.id)
+      expect(new Set(ids).size).toBe(ids.length)
+
+      const a = row(model, 'autofill-address:a1')
+      if (a.kind !== 'item') throw new Error('not an item')
+      expect(a.label).toBe('Ada Lovelace')
+      expect(a.description).toMatch(/12 Ada Way/)
+      expect(a.leading).toBeTruthy()
+      expect(rowText(a)).toMatch(/Analytical Engines/)
+      const edit = findRow(a.sheet.groups, 'autofill-address:a1:edit')
+      if (edit?.kind !== 'action') throw new Error('not an action')
+      expect(edit.closesSheet).toBe(true)
+      edit.onPress?.()
+      expect(uiStore.get().autofillEdit).toEqual({ kind: 'address', id: 'a1' })
+      const remove = findRow(a.sheet.groups, 'autofill-address:a1:delete')
+      if (remove?.kind !== 'action') throw new Error('not an action')
+      expect(remove.destructive).toBe(true)
+      expect(remove.confirm?.action).toBe('Delete')
+      remove.onPress?.()
+      expect(invoke).toHaveBeenCalledWith('autofill.removeAddress', { id: 'a1' })
+
+      const k = row(model, 'autofill-card:c1')
+      if (k.kind !== 'item') throw new Error('not an item')
+      expect(k.label).toBe('Work Visa')
+      expect(k.description).toBe('Ada Lovelace, expires 12/31')
+      // The network and last four are what a search finds it by, nickname or not.
+      expect(rowText(k)).toMatch(/Visa/)
+      expect(rowText(k)).toMatch(/4242/)
+      const copy = findRow(k.sheet.groups, 'autofill-card:c1:copy')
+      if (copy?.kind !== 'action') throw new Error('not an action')
+      expect(copy.busy).toBe(true)
+      copy.onPress?.()
+      expect(copyCard).toHaveBeenCalledWith(card)
+      const editCard = findRow(k.sheet.groups, 'autofill-card:c1:edit')
+      if (editCard?.kind !== 'action') throw new Error('not an action')
+      editCard.onPress?.()
+      expect(uiStore.get().autofillEdit).toEqual({ kind: 'card', id: 'c1' })
+      const add = row(model, 'autofill-add-card')
+      if (add.kind !== 'action') throw new Error('not an action')
+      add.onPress?.()
+      expect(uiStore.get().autofillEdit).toEqual({ kind: 'card', id: null })
+      uiStore.set({ autofillEdit: null })
+
+      const p = row(model, 'autofill-passkey:p1')
+      if (p.kind !== 'item') throw new Error('not an item')
+      expect(p.label).toBe('Ada')
+      expect(rowText(p)).toMatch(/example\.com/)
+      const forget = findRow(p.sheet.groups, 'autofill-passkey:p1:forget')
+      if (forget?.kind !== 'action') throw new Error('not an action')
+      expect(forget.destructive).toBe(true)
+      forget.onPress?.()
+      expect(invoke).toHaveBeenCalledWith('autofill.removePasskey', { id: 'p1' })
+    })
   })
 
   it('carries #148’s New Tab rows on a host that renders the page; the phone has none', () => {
@@ -1010,21 +1386,32 @@ describe('the section model', () => {
       PAGE.sections.find((x) => x.id === 'privacy')!,
       c.ctx
     )
-    // The remembered per-site answers are Security's since #62 (no `permissions` group here).
+    // The whole category in Chrome's order – #135's, #156's and #115's groups (each program's
+    // own order and content is its own test); the remembered per-site answers are Security's
+    // since #62 (no `permissions` group here).
     expect(privacy.groups.map((g) => g.id)).toEqual([
       'safety-check',
       'safety-check-results',
       'safety-check-actions',
+      'safe-browsing',
+      'safe-browsing-feeds',
       'tracking-prevention',
       'tracking-lists',
       'tracking-custom-lists',
       'tracking-filters',
       'tracking-exceptions',
       'clear-data',
+      'cookies',
+      'cookies-related-sites',
+      'cookies-add-site',
       'sites-permissions',
       'sites-content',
       'sites-additional',
-      'sites-own'
+      'sites-own',
+      'https-only',
+      'https-only-sites',
+      'secure-dns',
+      'signals'
     ])
     expect(privacy.groups.every(groupShows)).toBe(true)
 
@@ -1615,6 +2002,477 @@ describe('what a row does', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// Extensions (wave 4 UI)
+// ---------------------------------------------------------------------------
+
+const EXT_ID = 'a'.repeat(32)
+const NOW = 1_800_000_000_000
+
+/** An installed extension as the host reports it; `over` is what a case is about. */
+function ext(over: Partial<ExtensionInfo>): ExtensionInfo {
+  return {
+    id: EXT_ID,
+    name: 'Dark Reader',
+    version: '4.9.132',
+    description: 'Dark mode for every website',
+    path: '/data/extensions/dark-reader',
+    enabled: true,
+    icon: 'data:image/png;base64,AAAA',
+    popup: 'popup.html',
+    error: null,
+    source: 'chrome-web-store',
+    publisher: 'chrome-web-store',
+    updateUrl: 'https://clients2.google.com/service/update2/crx',
+    installedAt: NOW - 30 * 24 * 60 * 60 * 1000,
+    updatedAt: NOW - 30 * 24 * 60 * 60 * 1000,
+    pinned: false,
+    toolbarPinned: false,
+    allowFileAccess: false,
+    allowPrivate: false,
+    allowUserScripts: false,
+    manifestVersion: 3,
+    permissions: ['storage', 'tabs'],
+    hostPermissions: ['<all_urls>'],
+    optionsPage: 'options.html',
+    newTabPage: null,
+    newTabOverride: false,
+    warnings: ['Read and change all your data on all websites', 'Read your browsing history'],
+    pendingWarnings: null,
+    updateState: 'up-to-date',
+    availableVersion: null,
+    updateError: null,
+    updateCheckedAt: null,
+    errors: [],
+    ...over
+  }
+}
+
+function entry(over: Partial<ExtensionErrorEntry>): ExtensionErrorEntry {
+  return {
+    id: 1,
+    level: 'error',
+    source: 'worker',
+    message: 'Uncaught TypeError: Cannot read properties of undefined',
+    url: `chrome-extension://${EXT_ID}/background.js`,
+    line: 12,
+    context: null,
+    at: NOW - 10 * 60 * 1000,
+    lastAt: NOW - 10 * 60 * 1000,
+    count: 1,
+    ...over
+  }
+}
+
+/** The host with extensions on, as the Android runtime and the desktop report it. */
+function extState(
+  extensions: ExtensionInfo[],
+  patch: Partial<UIState> = {},
+  capabilities: Partial<HostCapabilities> = {}
+): UIState {
+  return state({
+    extensions,
+    extensionUpdates: { lastCheckedAt: null, checking: false },
+    capabilities: { ...ANDROID, extensions: true, ...capabilities },
+    ...patch
+  })
+}
+
+/** The lines of the console the details sheet surfaces: one repeated worker error, a warning, a load failure. */
+const CONSOLE: ExtensionErrorEntry[] = [
+  entry({ id: 1, at: NOW - 60 * 60 * 1000, lastAt: NOW - 60 * 60 * 1000 }),
+  entry({
+    id: 2,
+    level: 'warning',
+    source: 'content',
+    message: 'Deprecated API',
+    url: 'https://news.example/app.js',
+    line: null,
+    context: 'https://news.example/',
+    at: NOW - 30 * 60 * 1000,
+    lastAt: NOW - 5 * 60 * 1000,
+    count: 3
+  }),
+  entry({
+    id: 3,
+    source: 'load',
+    message: 'Manifest file is missing or unreadable',
+    url: null,
+    line: null,
+    at: NOW - 60 * 1000,
+    lastAt: NOW - 60 * 1000
+  })
+]
+
+function sheetOf(r: Row): RowGroup[] {
+  if (r.kind !== 'item' && r.kind !== 'detail') throw new Error(`${r.id} opens no sheet`)
+  return r.sheet.groups
+}
+
+describe('the Extensions category', () => {
+  beforeEach(() => vi.spyOn(Date, 'now').mockReturnValue(NOW))
+  afterEach(() => vi.restoreAllMocks())
+
+  it('with nothing installed: the empty line, the three ways in, the update check disabled', () => {
+    const model = section('extensions', extState([]))
+    expect(model.groups.map((g) => g.id)).toEqual([
+      'extensions',
+      'install-extension',
+      'extension-updates'
+    ])
+    const [list, install] = model.groups
+    // The group is "Installed" under the bar's "Extensions", not the title again.
+    expect(list!.heading).toBe('Installed')
+    expect(list!.rows).toEqual([])
+    expect(list!.empty).toBe('No extensions yet')
+    expect(list!.aside).toBeUndefined()
+    expect(install!.rows.map((r) => r.id)).toEqual([
+      'install-from-store',
+      'install-from-file',
+      'load-unpacked'
+    ])
+    const check = row(model, 'extensions-check-updates')
+    expect(check).toMatchObject({ kind: 'action', disabled: true, description: 'Not checked yet' })
+    // The store form is a sheet; the two file rows run the hosts' pickers.
+    expect(row(model, 'install-from-store')).toMatchObject({ kind: 'action' })
+    if (row(model, 'install-from-store').kind === 'action') {
+      expect((row(model, 'install-from-store') as { form?: unknown }).form).toBeDefined()
+    }
+    const file = row(model, 'install-from-file')
+    if (file.kind !== 'action') throw new Error('not an action')
+    file.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('extension.installFromFile', undefined)
+    const unpacked = row(model, 'load-unpacked')
+    if (unpacked.kind !== 'action') throw new Error('not an action')
+    unpacked.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('extension.add', undefined)
+  })
+
+  it('one extension: an item row with its icon, name and line, opening the details sheet', () => {
+    const model = section('extensions', extState([ext({})]))
+    const list = model.groups[0]!
+    expect(list.aside).toBe('1')
+    const item = row(model, `extension:${EXT_ID}`)
+    expect(item).toMatchObject({
+      kind: 'item',
+      label: 'Dark Reader',
+      description: 'Dark mode for every website'
+    })
+    expect(item.tone).toBeUndefined()
+    if (item.kind !== 'item') throw new Error('not an item')
+    expect(item.leading).toBeDefined()
+    expect(item.keywords).toEqual(expect.arrayContaining([EXT_ID, '4.9.132']))
+    // The details sheet: the name as its title block, the line as the description (§9.23).
+    expect(item.sheet.title).toBe('Dark Reader')
+    expect(item.sheet.description).toBe('Dark mode for every website')
+    expect(item.sheet.descriptionTone).toBeUndefined()
+    const groups = sheetOf(item)
+    expect(groups.map((g) => g.heading)).toEqual([null, 'Access', 'Source', null])
+    // Controls: Enabled, Options (the manifest has a page), Errors; no toolbar on a phone.
+    expect(groups[0]!.rows.map((r) => [r.id, r.kind])).toEqual([
+      [`extension:${EXT_ID}:enabled`, 'switch'],
+      [`extension:${EXT_ID}:options`, 'action'],
+      [`extension:${EXT_ID}:errors`, 'detail']
+    ])
+    expect(row(model, `extension:${EXT_ID}:options`)).toMatchObject({ leaves: 'chevron' })
+    // Permissions: the detail row then the switches; no user scripts without the permission.
+    expect(groups[1]!.rows.map((r) => [r.id, r.kind])).toEqual([
+      [`extension:${EXT_ID}:permissions`, 'detail'],
+      [`extension:${EXT_ID}:file-access`, 'switch'],
+      [`extension:${EXT_ID}:private`, 'switch']
+    ])
+    expect(row(model, `extension:${EXT_ID}:private`).label).toBe('Allow in private tabs')
+    // Source: the store as an external link, then the facts; no Updated (never updated), no MV2 note.
+    expect(groups[2]!.rows.map((r) => [r.id, r.kind])).toEqual([
+      [`extension:${EXT_ID}:source`, 'action'],
+      [`extension:${EXT_ID}:id`, 'info'],
+      [`extension:${EXT_ID}:version`, 'info'],
+      [`extension:${EXT_ID}:installed`, 'info']
+    ])
+    expect(row(model, `extension:${EXT_ID}:source`)).toMatchObject({
+      description: 'Chrome Web Store',
+      leaves: 'external'
+    })
+    expect(row(model, `extension:${EXT_ID}:id`).description).toBe(EXT_ID)
+    expect(row(model, `extension:${EXT_ID}:version`).description).toBe('4.9.132')
+    // Remove, destructive, with its confirm sheet (depth two from the details sheet).
+    const remove = row(model, `extension:${EXT_ID}:remove`)
+    expect(remove).toMatchObject({ kind: 'action', destructive: true })
+    if (remove.kind !== 'action') throw new Error('not an action')
+    expect(remove.confirm).toMatchObject({ title: 'Remove Dark Reader?', action: 'Remove' })
+  })
+
+  it('the Permissions detail row counts the warning lines and the sites, and lists both', () => {
+    const model = section('extensions', extState([ext({})]))
+    const permissions = row(model, `extension:${EXT_ID}:permissions`)
+    expect(permissions).toMatchObject({ kind: 'detail', summary: '3 permissions' })
+    const [lines, sites] = sheetOf(permissions)
+    expect(lines!.rows.map((r) => r.label)).toEqual([
+      'Read and change all your data on all websites',
+      'Read your browsing history'
+    ])
+    expect(lines!.rows.every((r) => r.kind === 'info' && r.leading)).toBe(true)
+    expect(sites!.heading).toBe('Site access')
+    expect(sites!.rows.map((r) => r.label)).toEqual(['All sites'])
+
+    // Distinct hosts, one line each; none at all reads as none.
+    const scoped = section(
+      'extensions',
+      extState([
+        ext({
+          warnings: [],
+          hostPermissions: [
+            'https://*.example.com/*',
+            'https://news.example/*',
+            '*://*.example.com/*'
+          ]
+        })
+      ])
+    )
+    const detail = row(scoped, `extension:${EXT_ID}:permissions`)
+    expect(detail).toMatchObject({ summary: '2 permissions' })
+    const [noLines, hosts] = sheetOf(detail)
+    expect(noLines!.rows).toEqual([])
+    expect(noLines!.empty).toBe('This extension requires no special permissions')
+    expect(hosts!.rows.map((r) => r.label).sort()).toEqual(['*.example.com', 'news.example'])
+    const bare = section('extensions', extState([ext({ warnings: [], hostPermissions: [] })]))
+    expect(row(bare, `extension:${EXT_ID}:permissions`)).toMatchObject({ summary: 'None' })
+  })
+
+  it('several extensions sort by name; the line is the error, else Off, else the description', () => {
+    const broken = ext({
+      id: 'b'.repeat(32),
+      name: 'Broken',
+      error: 'Manifest file is missing or unreadable',
+      source: 'unpacked',
+      publisher: null,
+      updateUrl: null
+    })
+    const off = ext({ id: 'c'.repeat(32), name: 'Adblock', enabled: false })
+    const noisy = ext({ id: 'd'.repeat(32), name: 'Noisy', errors: CONSOLE })
+    const model = section('extensions', extState([noisy, broken, ext({}), off]))
+    const list = model.groups[0]!
+    expect(list.aside).toBe('4')
+    expect(list.rows.map((r) => r.label)).toEqual(['Adblock', 'Broken', 'Dark Reader', 'Noisy'])
+    expect(row(model, `extension:${off.id}`)).toMatchObject({ description: 'Off' })
+    expect(row(model, `extension:${off.id}`).tone).toBeUndefined()
+    expect(row(model, `extension:${broken.id}`)).toMatchObject({
+      description: 'Manifest file is missing or unreadable',
+      tone: 'danger'
+    })
+    // The details sheet repeats the error where the line would be; its controls that need a
+    // loaded extension are disabled; an unpacked extension reloads and has no store link.
+    const brokenItem = row(model, `extension:${broken.id}`)
+    if (brokenItem.kind !== 'item') throw new Error('not an item')
+    expect(brokenItem.sheet.description).toBe('Manifest file is missing or unreadable')
+    expect(brokenItem.sheet.descriptionTone).toBe('danger')
+    expect(row(model, `extension:${broken.id}:file-access`).disabled).toBe(true)
+    expect(row(model, `extension:${broken.id}:options`).disabled).toBe(true)
+    expect(row(model, `extension:${broken.id}:reload`)).toMatchObject({ kind: 'action' })
+    expect(row(model, `extension:${broken.id}:source`)).toMatchObject({
+      kind: 'info',
+      description: 'Unpacked'
+    })
+    // Every id is unique through the item sheets and the detail sheets inside them.
+    const ids = allRows(model.groups).map((r) => r.id)
+    expect(new Set(ids).size).toBe(ids.length)
+    expect(ids).toContain(`extension:${noisy.id}:clear-errors`)
+    expect(ids).toContain(`extension:${noisy.id}:error:2`)
+  })
+
+  it('the Errors detail row sums the console and lists it newest first, then Clear errors', () => {
+    const noisy = ext({ errors: CONSOLE })
+    const model = section('extensions', extState([noisy]))
+    const errors = row(model, `extension:${EXT_ID}:errors`)
+    expect(errors).toMatchObject({
+      kind: 'detail',
+      label: 'Errors',
+      summary: '2 errors, 1 warning'
+    })
+    if (errors.kind !== 'detail') throw new Error('not a detail row')
+    expect(errors.sheet.title).toBe('Errors')
+    expect(errors.sheet.description).toBe('Dark Reader')
+    const [lines, clear] = errors.sheet.groups
+    // Newest by its latest occurrence: the load failure (1 min), the repeated warning (5 min), the hour-old error.
+    expect(lines!.rows.map((r) => r.id)).toEqual([
+      `extension:${EXT_ID}:error:3`,
+      `extension:${EXT_ID}:error:2`,
+      `extension:${EXT_ID}:error:1`
+    ])
+    expect(lines!.rows.map((r) => r.label)).toEqual([
+      'Manifest file is missing or unreadable',
+      'Deprecated API',
+      'Uncaught TypeError: Cannot read properties of undefined'
+    ])
+    // Source · when · ×count · file:line, each only when known; the extension's own origin drops.
+    expect(lines!.rows.map((r) => r.description)).toEqual([
+      'Loading · 1 min ago',
+      'Content script · 5 min ago · ×3 · https://news.example/app.js',
+      'Service worker · 1 h ago · background.js:12'
+    ])
+    expect(lines!.rows.every((r) => r.kind === 'info' && r.clamp && r.leading)).toBe(true)
+    // Clear errors: destructive, no confirm (a third sheet would break §9.24; a cleared log is no loss).
+    expect(clear!.rows.map((r) => r.id)).toEqual([`extension:${EXT_ID}:clear-errors`])
+    const clearRow = clear!.rows[0]!
+    expect(clearRow).toMatchObject({ kind: 'action', label: 'Clear errors', destructive: true })
+    if (clearRow.kind !== 'action') throw new Error('not an action')
+    expect(clearRow.confirm).toBeUndefined()
+    clearRow.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('extension.clearErrors', { id: EXT_ID })
+
+    // Only warnings, only errors, none: the summary's other forms and the §9.17 empty state.
+    const warned = section('extensions', extState([ext({ errors: [CONSOLE[1]!] })]))
+    expect(row(warned, `extension:${EXT_ID}:errors`)).toMatchObject({ summary: '1 warning' })
+    const quiet = section('extensions', extState([ext({})]))
+    const none = row(quiet, `extension:${EXT_ID}:errors`)
+    expect(none).toMatchObject({ summary: 'None' })
+    if (none.kind !== 'detail') throw new Error('not a detail row')
+    expect(none.sheet.groups).toHaveLength(1)
+    expect(none.sheet.groups[0]!.rows).toEqual([])
+    expect(none.sheet.groups[0]!.empty).toBe('No errors')
+  })
+
+  it('the rows run the extension commands they stand for', () => {
+    const model = section(
+      'extensions',
+      extState([ext({ permissions: ['storage', 'userScripts'] })])
+    )
+    const enabled = row(model, `extension:${EXT_ID}:enabled`)
+    if (enabled.kind !== 'switch') throw new Error('not a switch')
+    expect(enabled.checked).toBe(true)
+    enabled.onChange(false)
+    expect(invoke).toHaveBeenCalledWith('extension.setEnabled', { id: EXT_ID, enabled: false })
+    const options = row(model, `extension:${EXT_ID}:options`)
+    if (options.kind !== 'action') throw new Error('not an action')
+    options.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('extension.openOptions', { id: EXT_ID })
+    for (const [suffix, command, key] of [
+      ['file-access', 'extension.setAllowFileAccess', 'allow'],
+      ['private', 'extension.setAllowPrivate', 'allowed'],
+      ['user-scripts', 'extension.setAllowUserScripts', 'allowed']
+    ] as const) {
+      const r = row(model, `extension:${EXT_ID}:${suffix}`)
+      if (r.kind !== 'switch') throw new Error(`${suffix} is not a switch`)
+      r.onChange(true)
+      expect(invoke).toHaveBeenCalledWith(command, { id: EXT_ID, [key]: true })
+    }
+    const remove = row(model, `extension:${EXT_ID}:remove`)
+    if (remove.kind !== 'action') throw new Error('not an action')
+    remove.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('extension.remove', { id: EXT_ID })
+    const source = row(model, `extension:${EXT_ID}:source`)
+    if (source.kind !== 'action') throw new Error('not an action')
+    source.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('tab.create', {
+      url: `https://chromewebstore.google.com/detail/${EXT_ID}`,
+      active: true
+    })
+    const check = row(model, 'extensions-check-updates')
+    if (check.kind !== 'action') throw new Error('not an action')
+    expect(check.disabled).toBe(false)
+    check.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('extension.checkForUpdates', undefined)
+  })
+
+  it('the update check is busy while it runs and says when it last ran (§9.30)', () => {
+    const checking = section(
+      'extensions',
+      extState([ext({})], { extensionUpdates: { lastCheckedAt: null, checking: true } })
+    )
+    expect(row(checking, 'extensions-check-updates')).toMatchObject({
+      busy: true,
+      description: 'Checking for updates…'
+    })
+    const checked = section(
+      'extensions',
+      extState([ext({ updateCheckedAt: NOW - 2 * 60 * 60 * 1000 })], {
+        extensionUpdates: { lastCheckedAt: NOW - 3 * 60 * 60 * 1000, checking: false }
+      })
+    )
+    expect(row(checked, 'extensions-check-updates')).toMatchObject({
+      busy: false,
+      description: 'Last checked 2 h ago'
+    })
+    // An update on offer is a row of the details sheet, busy while it is taken.
+    const offered = section(
+      'extensions',
+      extState([ext({ updateState: 'available', availableVersion: '4.9.133' })])
+    )
+    const update = row(offered, `extension:${EXT_ID}:update`)
+    expect(update).toMatchObject({
+      kind: 'action',
+      label: 'Update to 4.9.133',
+      description: 'Version 4.9.132 is installed.',
+      busy: false
+    })
+    if (update.kind !== 'action') throw new Error('not an action')
+    update.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('extension.update', { id: EXT_ID })
+    const updating = section('extensions', extState([ext({ updateState: 'updating' })]))
+    expect(row(updating, `extension:${EXT_ID}:update`)).toMatchObject({
+      label: 'Update',
+      busy: true
+    })
+  })
+
+  it('follows the host: a toolbar pin only with windows, private windows on a desktop, MV2 and Updated when they apply', () => {
+    const desktop = section(
+      'extensions',
+      extState(
+        [
+          ext({
+            manifestVersion: 2,
+            toolbarPinned: true,
+            updatedAt: NOW - 24 * 60 * 60 * 1000,
+            source: 'edge-add-ons',
+            publisher: 'edge-add-ons'
+          })
+        ],
+        {},
+        { windows: true, privateTabs: false }
+      )
+    )
+    const pinned = row(desktop, `extension:${EXT_ID}:pinned`)
+    expect(pinned).toMatchObject({ kind: 'switch', label: 'Pin to toolbar', checked: true })
+    if (pinned.kind !== 'switch') throw new Error('not a switch')
+    pinned.onChange(false)
+    expect(invoke).toHaveBeenCalledWith('extension.setToolbarPinned', { id: EXT_ID, pinned: false })
+    expect(row(desktop, `extension:${EXT_ID}:private`).label).toBe('Allow in private windows')
+    expect(row(desktop, `extension:${EXT_ID}:updated`)).toMatchObject({
+      kind: 'info',
+      description: '1 d ago'
+    })
+    expect(row(desktop, `extension:${EXT_ID}:mv2`)).toMatchObject({
+      kind: 'info',
+      label: 'Manifest V2',
+      tone: 'warn'
+    })
+    expect(row(desktop, `extension:${EXT_ID}:source`)).toMatchObject({
+      description: 'Edge Add-ons',
+      leaves: 'external'
+    })
+    const phone = section('extensions', extState([ext({})]))
+    expect(findRow(phone.groups, `extension:${EXT_ID}:pinned`)).toBeNull()
+    expect(findRow(phone.groups, `extension:${EXT_ID}:updated`)).toBeNull()
+    expect(findRow(phone.groups, `extension:${EXT_ID}:mv2`)).toBeNull()
+  })
+
+  it('the landing search finds an extension by name, id and version; its sheets stay inside', () => {
+    const s = extState([ext({ errors: CONSOLE })])
+    const models = buildSections(availableSections(PAGE, s.capabilities, 'phone'), context(s).ctx)
+    expect(models.map((m) => m.section.id)).toContain('extensions')
+    const hit = searchRows(models, 'dark reader')
+    expect(hit.map((h) => h.row.id)).toContain(`extension:${EXT_ID}`)
+    expect(hit.find((h) => h.row.id === `extension:${EXT_ID}`)?.caption).toBe(
+      'Extensions › Installed'
+    )
+    expect(searchRows(models, EXT_ID).map((h) => h.row.id)).toEqual([`extension:${EXT_ID}`])
+    expect(searchRows(models, '4.9.132').map((h) => h.row.id)).toEqual([`extension:${EXT_ID}`])
+    // The rows of the details and detail sheets are reached from the item row, not as hits.
+    expect(searchRows(models, 'clear errors')).toEqual([])
+  })
+})
+
 describe('searching the rows', () => {
   it('finds rows by label, description, keywords and option labels, with their caption', () => {
     const models = phoneSections()
@@ -1659,5 +2517,337 @@ describe('searching the rows', () => {
     const after = row(tabs, 'unload-after')
     expect(after.kind).toBe('field')
     expect(rowText(after)).toContain(after.kind === 'field' ? (after.display ?? after.value) : '')
+  })
+
+  it('carries #156’s protection groups at Chrome’s positions: Safe Browsing after Safety check, cookies after Clear browsing data, HTTPS-only, secure DNS and the signals after Site settings', () => {
+    const privacy = section('privacy', state({ privacy: PRIVACY_STATUS }))
+    const ids = privacy.groups.map((g) => g.id)
+    // The protection groups' own order and content are asserted here; the whole category's
+    // order, with #135's and #115's groups around them, is #135's test.
+    const families = ['safe-browsing', 'cookies', 'https-only', 'secure-dns', 'signals']
+    const familyOf = (id: string): string | undefined =>
+      families.find((f) => id === f || id.startsWith(`${f}-`))
+    const protection = privacy.groups.filter((g) => familyOf(g.id) !== undefined)
+    expect(protection.map((g) => g.id)).toEqual([
+      'safe-browsing',
+      'safe-browsing-feeds',
+      'cookies',
+      'cookies-related-sites',
+      'cookies-add-site',
+      'https-only',
+      'https-only-sites',
+      'secure-dns',
+      'signals'
+    ])
+    // Each family sits at its Chrome position among the neighbours' groups.
+    const at = (id: string): number => ids.indexOf(id)
+    expect(at('safe-browsing')).toBe(at('safety-check-actions') + 1)
+    expect(at('safe-browsing-feeds')).toBe(at('tracking-prevention') - 1)
+    expect(at('cookies')).toBe(at('clear-data') + 1)
+    expect(at('cookies-add-site')).toBe(at('sites-permissions') - 1)
+    expect(at('https-only')).toBe(at('sites-own') + 1)
+    expect(at('signals')).toBe(ids.length - 1)
+    // The remembered per-site answers are the Security section's (#62), not a privacy group.
+    expect(ids).not.toContain('permissions')
+    expect(privacy.groups.every(groupShows)).toBe(true)
+    // Every protection row is one of the five families, and a family never straddles a group.
+    for (const group of protection) {
+      const family = familyOf(group.id)!
+      for (const r of group.rows) expect(r.id, group.id).toMatch(new RegExp(`^${family}(-|:)`))
+    }
+    expect(privacy.groups.find((g) => g.id === 'safe-browsing')?.heading).toBe('Safe Browsing')
+    expect(privacy.groups.find((g) => g.id === 'signals')?.heading).toBe('Privacy signals')
+
+    // The level choice stands for the one switch; the key row never shows the key itself.
+    const level = row(privacy, 'safe-browsing-level')
+    if (level.kind !== 'value') throw new Error('not a value row')
+    expect(level.value).toBe('standard')
+    expect(level.options.map((o) => o.value)).toEqual(['standard', 'off'])
+    const key = row(privacy, 'safe-browsing-api-key')
+    if (key.kind !== 'field') throw new Error('not a field')
+    expect(key.secret).toBe(true)
+    expect(key.display).toBe('Not set · optional, adds Google Safe Browsing lookups')
+    expect(rowText(key)).not.toContain('AIza')
+    // Update feeds now runs the service; each feed is an item whose sheet refreshes it alone.
+    const update = row(privacy, 'safe-browsing-update')
+    if (update.kind !== 'action') throw new Error('not an action')
+    expect(update.description).toBe('4,895 sites across 2 feeds · Updated 2 min ago')
+    update.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('protection.updateFeeds', {})
+    const feed = row(privacy, 'safe-browsing-feed:urlhaus')
+    if (feed.kind !== 'item') throw new Error('not an item')
+    expect(feed.description).toBe('4,000 sites · 2 min ago')
+    const refresh = row(privacy, 'safe-browsing-feed:urlhaus:update')
+    if (refresh.kind !== 'action') throw new Error('not an action')
+    refresh.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('protection.updateFeeds', { id: 'urlhaus' })
+    expect(row(privacy, 'safe-browsing-feed:urlhaus:homepage')).toMatchObject({
+      kind: 'action',
+      leaves: 'external'
+    })
+
+    // Cookies: the middle mode speaks of private tabs on a host without windows.
+    const cookies = row(privacy, 'cookies-mode')
+    if (cookies.kind !== 'value') throw new Error('not a value row')
+    expect(cookies.options.map((o) => o.label)).toEqual([
+      'Allow third-party cookies',
+      'Block third-party cookies in private tabs',
+      'Block third-party cookies'
+    ])
+    expect(privacy.groups.find((g) => g.id === 'cookies-related-sites')?.empty).toBe(
+      'No related sites yet'
+    )
+    expect(row(privacy, 'cookies-add-site')).toMatchObject({ kind: 'action', disabled: false })
+
+    // HTTPS-only: the three modes with the shared words; no site allowed over http yet.
+    const https = row(privacy, 'https-only-mode')
+    if (https.kind !== 'value') throw new Error('not a value row')
+    expect(https.options.map((o) => o.value)).toEqual(['off', 'ask', 'always'])
+    expect(https.sheetDescription).toContain('over https first')
+    expect(privacy.groups.find((g) => g.id === 'https-only-sites')?.empty).toBe(
+      'No sites allowed over http yet'
+    )
+
+    // Android has no resolver of its own: one row opens the system's Private DNS screen.
+    expect(privacy.groups.find((g) => g.id === 'secure-dns')?.rows.map((r) => r.id)).toEqual([
+      'secure-dns-private-dns'
+    ])
+    const privateDns = row(privacy, 'secure-dns-private-dns')
+    if (privateDns.kind !== 'action') throw new Error('not an action')
+    expect(privateDns.leaves).toBe('external')
+    privateDns.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('protection.openPrivateDnsSettings', undefined)
+
+    expect(row(privacy, 'signals-gpc').kind).toBe('switch')
+    expect(row(privacy, 'signals-dnt').kind).toBe('switch')
+  })
+
+  it('#156’s rows patch settings.privacy on top of what is there, and run the protection commands', async () => {
+    const c = context(state({ privacy: PRIVACY_STATUS }))
+    const privacy = buildSection(
+      PAGE.sections.find((x) => x.id === 'privacy')!,
+      c.ctx
+    )
+    const level = row(privacy, 'safe-browsing-level')
+    if (level.kind !== 'value') throw new Error('not a value row')
+    level.onChange('off')
+    const https = row(privacy, 'https-only-mode')
+    if (https.kind !== 'value') throw new Error('not a value row')
+    https.onChange('always')
+    const cookies = row(privacy, 'cookies-mode')
+    if (cookies.kind !== 'value') throw new Error('not a value row')
+    cookies.onChange('block')
+    const gpc = row(privacy, 'signals-gpc')
+    if (gpc.kind !== 'switch') throw new Error('not a switch')
+    gpc.onChange(true)
+    const base = DEFAULT_SETTINGS.privacy
+    expect(c.patches).toEqual([
+      { privacy: { ...base, safeBrowsingEnabled: false } },
+      { privacy: { ...base, httpsOnly: 'always' } },
+      { privacy: { ...base, thirdPartyCookies: 'block' } },
+      { privacy: { ...base, gpc: true } }
+    ])
+
+    // The key field is a §9.30 busy form: a malformed key is refused at once, a well-formed one
+    // is tried against the API and kept only when Google takes it; clearing it needs no check.
+    const key = row(privacy, 'safe-browsing-api-key')
+    if (key.kind !== 'field') throw new Error('not a field')
+    expect(key.onCommit('not a key!')).toBe(
+      'A key is letters, digits, dashes and underscores, up to 128 of them'
+    )
+    invoke.mockResolvedValueOnce({ ok: false, problem: 'Google rejected this key' } as never)
+    const refused = key.onCommit('AIzaSyBad')
+    expect(refused).toBeInstanceOf(Promise)
+    await expect(refused).resolves.toBe('Google rejected this key')
+    expect(invoke).toHaveBeenCalledWith('protection.checkApiKey', { key: 'AIzaSyBad' })
+    expect(c.patches.length).toBe(4)
+    invoke.mockResolvedValueOnce({ ok: true } as never)
+    await expect(key.onCommit(' AIzaSyGood ')).resolves.toBeUndefined()
+    expect(c.patches.at(-1)).toEqual({ privacy: { ...base, safeBrowsingApiKey: 'AIzaSyGood' } })
+    // The value as stored is no change; clearing a stored key needs no check.
+    expect(key.onCommit('')).toBeUndefined()
+    expect(c.patches.length).toBe(5)
+    const keyed = context(
+      state({ privacy: PRIVACY_STATUS }, { privacy: { ...base, safeBrowsingApiKey: 'AIzaSyOld' } })
+    )
+    const withKey = buildSection(
+      PAGE.sections.find((x) => x.id === 'privacy')!,
+      keyed.ctx
+    )
+    const stored = row(withKey, 'safe-browsing-api-key')
+    if (stored.kind !== 'field') throw new Error('not a field')
+    expect(stored.display).toBe('Set · lookups start with the next page you open')
+    expect(stored.onCommit('')).toBeUndefined()
+    expect(keyed.patches).toEqual([{ privacy: { ...base, safeBrowsingApiKey: '' } }])
+    expect(invoke).toHaveBeenCalledTimes(2)
+
+    // The feed rows and the key wait at .4 while Safe Browsing is off; the level stays live.
+    const off = buildSection(
+      PAGE.sections.find((x) => x.id === 'privacy')!,
+      context(
+        state(
+          { privacy: { ...PRIVACY_STATUS, safeBrowsing: { ...SAFE_BROWSING, enabled: false } } },
+          { privacy: { ...base, safeBrowsingEnabled: false } }
+        )
+      ).ctx
+    )
+    expect(row(off, 'safe-browsing-level')).toMatchObject({ value: 'off' })
+    expect(row(off, 'safe-browsing-level').disabled).toBeFalsy()
+    expect(row(off, 'safe-browsing-api-key').disabled).toBe(true)
+    expect(row(off, 'safe-browsing-update').disabled).toBe(true)
+    expect(row(off, 'safe-browsing-feed:urlhaus').disabled).toBe(true)
+
+    // Related sites: each an item whose sheet removes it; the list waits while cookies are allowed.
+    const listed = context(
+      state(
+        { privacy: PRIVACY_STATUS },
+        {
+          privacy: {
+            ...base,
+            thirdPartyCookies: 'block',
+            thirdPartyCookieExceptions: ['accounts.example', 'login.example']
+          }
+        }
+      )
+    )
+    const withSites = buildSection(
+      PAGE.sections.find((x) => x.id === 'privacy')!,
+      listed.ctx
+    )
+    expect(
+      withSites.groups.find((g) => g.id === 'cookies-related-sites')?.rows.map((r) => r.id)
+    ).toEqual(['cookies-site:accounts.example', 'cookies-site:login.example'])
+    const remove = row(withSites, 'cookies-site:accounts.example:remove')
+    if (remove.kind !== 'action') throw new Error('not an action')
+    remove.onPress?.()
+    expect(listed.patches).toEqual([
+      {
+        privacy: {
+          ...base,
+          thirdPartyCookies: 'block',
+          thirdPartyCookieExceptions: ['login.example']
+        }
+      }
+    ])
+    const allowed = buildSection(
+      PAGE.sections.find((x) => x.id === 'privacy')!,
+      context(
+        state(
+          { privacy: PRIVACY_STATUS },
+          {
+            privacy: {
+              ...base,
+              thirdPartyCookies: 'allow',
+              thirdPartyCookieExceptions: ['a.example']
+            }
+          }
+        )
+      ).ctx
+    )
+    expect(row(allowed, 'cookies-site:a.example').disabled).toBe(true)
+    expect(row(allowed, 'cookies-add-site').disabled).toBe(true)
+
+    // Sites allowed over http: stored ones forget through the permission, session ones through
+    // the service; a site in both lists is one row.
+    const plaintext = buildSection(
+      PAGE.sections.find((x) => x.id === 'privacy')!,
+      context(
+        state({
+          privacy: {
+            ...PRIVACY_STATUS,
+            httpsOnlyExceptions: ['old.example'],
+            httpsOnlySessionExceptions: ['old.example', 'today.example']
+          }
+        })
+      ).ctx
+    )
+    expect(
+      plaintext.groups.find((g) => g.id === 'https-only-sites')?.rows.map((r) => r.id)
+    ).toEqual(['https-only-site:old.example', 'https-only-session:today.example'])
+    const forget = row(plaintext, 'https-only-site:old.example:forget')
+    if (forget.kind !== 'action') throw new Error('not an action')
+    forget.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('permissions.set', {
+      origin: 'http://old.example',
+      permission: 'https-only',
+      decision: null
+    })
+    const forgetSession = row(plaintext, 'https-only-session:today.example:forget')
+    if (forgetSession.kind !== 'action') throw new Error('not an action')
+    forgetSession.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('protection.forgetPlaintext', { host: 'today.example' })
+  })
+
+  it('#156’s secure DNS rows on a host with a resolver: the switch, one resolver choice, the custom field as a busy form', async () => {
+    const caps = { ...ANDROID, secureDns: true, windows: true }
+    const c = context(
+      state({ platform: 'linux', capabilities: caps, privacy: PRIVACY_STATUS } as Partial<UIState>)
+    )
+    const privacy = buildSection(
+      PAGE.sections.find((x) => x.id === 'privacy')!,
+      c.ctx
+    )
+    expect(findRow(privacy.groups, 'secure-dns-private-dns')).toBeNull()
+    expect(privacy.groups.find((g) => g.id === 'secure-dns')?.rows.map((r) => r.id)).toEqual([
+      'secure-dns-enabled',
+      'secure-dns-resolver'
+    ])
+    const base = DEFAULT_SETTINGS.privacy
+    const enabled = row(privacy, 'secure-dns-enabled')
+    if (enabled.kind !== 'switch') throw new Error('not a switch')
+    expect(enabled.checked).toBe(base.secureDnsMode !== 'off')
+    enabled.onChange(false)
+    expect(c.patches).toEqual([{ privacy: { ...base, secureDnsMode: 'off' } }])
+    const resolver = row(privacy, 'secure-dns-resolver')
+    if (resolver.kind !== 'value') throw new Error('not a value row')
+    expect(resolver.options[0]).toMatchObject({ value: 'automatic' })
+    expect(resolver.options.at(-1)).toMatchObject({ value: 'custom', label: 'Custom resolver' })
+    resolver.onChange('custom')
+    expect(c.patches.at(-1)).toEqual({
+      privacy: { ...base, secureDnsMode: 'provider', secureDnsProvider: 'custom' }
+    })
+    // The middle cookie mode speaks of private windows here.
+    const cookies = row(privacy, 'cookies-mode')
+    if (cookies.kind !== 'value') throw new Error('not a value row')
+    expect(cookies.options[1]?.label).toBe('Block third-party cookies in private windows')
+
+    // With the custom entry picked the field appears: refused at once for a non-https address,
+    // asked one question for a well-formed one, kept when the resolver answers.
+    const custom = context(
+      state(
+        { platform: 'linux', capabilities: caps, privacy: PRIVACY_STATUS } as Partial<UIState>,
+        {
+          privacy: { ...base, secureDnsMode: 'provider', secureDnsProvider: 'custom' }
+        }
+      )
+    )
+    const withField = buildSection(
+      PAGE.sections.find((x) => x.id === 'privacy')!,
+      custom.ctx
+    )
+    const field = row(withField, 'secure-dns-custom')
+    if (field.kind !== 'field') throw new Error('not a field')
+    expect(field.display).toBe('Not set')
+    expect(field.onCommit('http://dns.example/dns-query')).toBe(
+      'The address must start with https://'
+    )
+    invoke.mockResolvedValueOnce({ ok: false, problem: 'No answer' } as never)
+    await expect(field.onCommit('https://dns.example/dns-query')).resolves.toBe('No answer')
+    expect(invoke).toHaveBeenCalledWith('protection.checkResolver', {
+      url: 'https://dns.example/dns-query'
+    })
+    expect(custom.patches).toEqual([])
+    invoke.mockResolvedValueOnce({ ok: true } as never)
+    await expect(field.onCommit('https://dns.example/dns-query')).resolves.toBeUndefined()
+    expect(custom.patches).toEqual([
+      {
+        privacy: {
+          ...base,
+          secureDnsMode: 'provider',
+          secureDnsProvider: 'custom',
+          secureDnsCustomUrl: 'https://dns.example/dns-query'
+        }
+      }
+    ])
   })
 })

@@ -82,12 +82,12 @@ export const HTTPS_ONLY_LABELS: Record<HttpsOnlyMode, { label: string; descripti
   ask: {
     label: 'Ask before loading pages over plaintext',
     description:
-      'Every page is upgraded to https. When a site cannot be reached securely, Zenium asks before loading it over http.'
+      'Pages are upgraded to https. Zenium asks before loading a site it can only reach over http.'
   },
   always: {
     label: 'Always use secure connections',
     description:
-      'Pages and everything they load are upgraded to https. Images and scripts a site only offers over http do not load.'
+      'Pages and what they load are upgraded to https. Content offered only over http does not load.'
   }
 }
 
@@ -203,6 +203,14 @@ export function isValidDohTemplate(url: string): boolean {
     return false
   }
 }
+
+/**
+ * The answer of a check the Settings form waits for (design-language-v2-draft §9.30's busy
+ * form): a Google Safe Browsing key tried against the API (`protection.checkApiKey`), a custom
+ * resolver asked one question (`protection.checkResolver`). Refused with `problem` as the
+ * field's validation text.
+ */
+export type ProtectionCheck = { ok: true } | { ok: false; problem: string }
 
 /** The DoH templates the settings ask for, or none when secure DNS is off or automatic. */
 export function secureDnsServers(settings: PrivacySettings): string[] {

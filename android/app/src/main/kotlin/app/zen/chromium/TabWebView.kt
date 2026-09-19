@@ -2,6 +2,7 @@ package app.zen.chromium
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.res.Resources
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
@@ -15,9 +16,12 @@ import android.os.Message
 import android.os.SystemClock
 import android.util.Base64
 import android.util.Log
+import android.view.ActionMode
 import android.view.InputDevice
 import android.view.KeyCharacterMap
 import android.view.KeyEvent
+import android.view.Menu
+import android.view.MenuItem
 import android.view.MotionEvent
 import android.view.PixelCopy
 import android.view.View
@@ -103,6 +107,8 @@ class TabWebView(
     private var committedIndex = -1
     private var committedUrl = ""
     private var lastRememberedAt = 0L
+    /** The copies of the window in flight for this page, shared between their askers (see [captureBitmap]). */
+    private val captureShare = CaptureShare<Bitmap>()
     private var replyProxy: JavaScriptReplyProxy? = null
     /** Whether the bridge object the page script posts through is registered on this view. */
     private var bridgeInstalled = false
@@ -140,6 +146,16 @@ class TabWebView(
     private val domReady = DomReadyGate()
     /** `onPageStarted` fired for a document whose commit `doUpdateVisitedHistory` has not reported yet. */
     private var awaitingCommit = false
+    /**
+     * The document whose pixels the view shows: the one `onPageCommitVisible` (WebView's word that
+     * nothing of the page before is drawn any more) or `onPageFinished` last reported, carried
+     * across the in-page commits of that same document. Null until the view has drawn any
+     * document at all – a tab restored at boot whose page has not answered yet shows a blank
+     * window, and WebView says nothing of a load before the response comes (`onPageStarted`
+     * waits for it), so this is the only word that there is a page to picture: the card picture
+     * is taken of this document alone ([captureThumbnail], [snapshot]).
+     */
+    private var paintedDocument: String? = null
     /**
      * The main-frame URL whose load failed last. WebView has already committed its own error page
      * under that URL (or is about to, and reports the commit through `doUpdateVisitedHistory` and
@@ -645,6 +661,123 @@ class TabWebView(
         return false
     }
 
+    // --- the text-selection toolbar (see SelectionToolbar.kt) ------------------------------------
+
+    /**
+     * The WebView starts the system's floating action mode over selected text with its own
+     * callback (Copy, Share, Select all, Web search); wrapped, so Zenium's items from the core
+     * join them after Copy. The mode itself – floating type, handles, position – is the system's.
+     * Anything else (a primary action mode, another caller's callback) passes through untouched.
+     */
+    override fun startActionMode(callback: ActionMode.Callback, type: Int): ActionMode? {
+        if (type != ActionMode.TYPE_FLOATING || callback !is ActionMode.Callback2) return super.startActionMode(callback, type)
+        return super.startActionMode(SelectionActionMode(callback), type)
+    }
+
+    /**
+     * The WebView's selection callback with Zenium's items added (`SelectionToolbar.plan`). The
+     * items come from the core for the text selected, and again on every prepare of a selection
+     * menu (`SelectionToolbar.Listing`): the WebView keeps one mode across selection changes – a
+     * handle drag, Select all – and invalidates it, so the list is re-read then and the mode
+     * invalidated once more when the items change (the system's items show at once; Zenium's
+     * join within the toolbar's own entrance). A touch on one reads the selection again, sends
+     * `selection.action` to the core and finishes the mode, which clears the selection as the
+     * system's items do.
+     */
+    private inner class SelectionActionMode(private val system: ActionMode.Callback2) : ActionMode.Callback2() {
+        private var mode: ActionMode? = null
+        private var finished = false
+        /** The core's items, kept current with the selection across the mode's life. */
+        private val listing = SelectionToolbar.Listing(
+            readSelection = { onText -> evaluateJavascript(SelectionToolbar.SELECTION_SCRIPT) { raw -> onText(SelectionToolbar.selectionText(raw)) } },
+            listItems = { text, onJson -> host.selectionMenu(tabId, text, onJson) },
+            invalidate = { mode?.invalidate() }
+        )
+        /** Where the selection sits on this view (`onGetContentRect`), for a glance's origin. */
+        private val selectionRect = Rect()
+        private val strings by lazy { frameworkStrings() }
+
+        override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean {
+            this.mode = mode
+            Log.d(SELECTION_TAG, "selection mode of $tabId created")
+            return system.onCreateActionMode(mode, menu)
+        }
+
+        override fun onPrepareActionMode(mode: ActionMode, menu: Menu): Boolean {
+            val prepared = system.onPrepareActionMode(mode, menu)
+            menu.removeGroup(SelectionToolbar.GROUP)
+            val systemItems = (0 until menu.size()).map(menu::getItem)
+            val plan = SelectionToolbar.plan(
+                systemItems.map { SelectionToolbar.SystemItem(it.groupId, it.order, it.title?.toString() ?: "", it.itemId) },
+                listing.items,
+                strings
+            )
+            Log.d(SELECTION_TAG, "selection mode of $tabId prepared: anchored ${plan.anchored}, items ${plan.items.map { it.id }}")
+            // A menu with Copy is a text selection: ask for the items for the selection as it is
+            // now (a Paste toolbar or a password field gets nothing); the menu shows the last
+            // answer meanwhile, and a different one invalidates the mode again.
+            if (plan.anchored) listing.onPrepare()
+            for (index in plan.hidden) systemItems[index].isVisible = false
+            plan.items.forEachIndexed { index, item ->
+                menu.add(SelectionToolbar.GROUP, SelectionToolbar.FIRST_ITEM_ID + index, plan.order, item.title).apply {
+                    setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS or MenuItem.SHOW_AS_ACTION_WITH_TEXT)
+                    contentDescription = item.title
+                }
+            }
+            return prepared || !plan.isEmpty
+        }
+
+        override fun onActionItemClicked(mode: ActionMode, item: MenuItem): Boolean {
+            if (item.groupId != SelectionToolbar.GROUP) return system.onActionItemClicked(mode, item)
+            val action = SelectionToolbar.itemAt(listing.items, item.itemId) ?: return true
+            val originX = SelectionToolbar.fraction(selectionRect.exactCenterX(), width)
+            val originY = SelectionToolbar.fraction(selectionRect.exactCenterY(), height)
+            evaluateJavascript(SelectionToolbar.SELECTION_SCRIPT) { raw ->
+                val selected = SelectionToolbar.selectionText(raw).ifEmpty { listing.text }
+                if (selected.isNotBlank()) host.hostEvent("selection.action", SelectionToolbar.action(tabId, action.id, selected, originX, originY))
+                if (!finished) mode.finish()
+            }
+            return true
+        }
+
+        override fun onDestroyActionMode(mode: ActionMode) {
+            finished = true
+            listing.finish()
+            this.mode = null
+            Log.d(SELECTION_TAG, "selection mode of $tabId destroyed after ${listing.asks} ask(s)")
+            system.onDestroyActionMode(mode)
+        }
+
+        override fun onGetContentRect(mode: ActionMode, view: View, outRect: Rect) {
+            system.onGetContentRect(mode, view, outRect)
+            selectionRect.set(outRect)
+        }
+    }
+
+    /**
+     * What the system's selection items are told by (see `SelectionToolbar.plan`): Copy and Paste
+     * are the public `android.R.string.copy` and `android.R.string.paste`; the WebView's Share is
+     * its own `select_action_menu_share` id, resolved in the WebView package's resources (loaded
+     * into this process as a shared library, so the id is the one its items carry; 0 when the
+     * lookup fails); the framework's own Share string (its text fields' item) is not public, so it
+     * is looked up by name and may be missing – the title fallback for the id.
+     */
+    private fun frameworkStrings(): SelectionToolbar.Strings {
+        val share = Resources.getSystem().let { system ->
+            system.getIdentifier("share", "string", "android").takeIf { it != 0 }?.let { id -> runCatching { system.getString(id) }.getOrNull() }
+        }
+        val shareItemId = runCatching {
+            val webViewPackage = WebView.getCurrentWebViewPackage()?.packageName ?: return@runCatching 0
+            resources.getIdentifier(SelectionToolbar.SHARE_ITEM_ID_NAME, "id", webViewPackage)
+        }.getOrDefault(0)
+        return SelectionToolbar.Strings(
+            copy = context.getString(android.R.string.copy),
+            share = share,
+            paste = context.getString(android.R.string.paste),
+            shareItemId = shareItemId
+        )
+    }
+
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (event.action == KeyEvent.ACTION_DOWN) {
             reportActivation()
@@ -792,28 +925,131 @@ class TabWebView(
 
     /**
      * Downscaled RGB_565 copy of this view's pixels as they are on screen (null when it cannot be
-     * copied: hidden, unsized). Shared by the overlay snapshot and the history previews.
+     * copied: hidden, unsized). Shared by the overlay snapshot, the card thumbnail and the
+     * history previews – and shared in flight: a request while a copy with at least its pixels
+     * is under way gets that copy's bitmap rather than a second PixelCopy of the same frame
+     * ([CaptureShare]). The bitmap belongs to everyone who hears it; nobody recycles it.
      */
     private fun captureBitmap(scale: Float, callback: (Bitmap?) -> Unit) {
         if (width <= 0 || height <= 0 || !isShown) {
             callback(null)
             return
         }
+        val ticket = captureShare.request(scale, callback) ?: return
         val bitmap = Bitmap.createBitmap((width * scale).toInt().coerceAtLeast(1), (height * scale).toInt().coerceAtLeast(1), Bitmap.Config.RGB_565)
         val location = IntArray(2)
         getLocationInWindow(location)
         val rect = Rect(location[0], location[1], location[0] + width, location[1] + height)
         try {
             PixelCopy.request(host.activity.window, rect, bitmap, { result ->
-                callback(if (result == PixelCopy.SUCCESS) bitmap else null)
+                captureShare.complete(ticket, if (result == PixelCopy.SUCCESS) bitmap else null)
             }, Handler(Looper.getMainLooper()))
         } catch (e: Exception) {
             // Software fallback (e.g. before the window is attached).
-            runCatching {
+            val drawn = runCatching {
                 val canvas = Canvas(bitmap)
                 canvas.scale(scale, scale)
                 draw(canvas)
-            }.onSuccess { callback(bitmap) }.onFailure { callback(null) }
+            }.isSuccess
+            captureShare.complete(ticket, if (drawn) bitmap else null)
+        }
+    }
+
+    /** The scale the cover and the card picture copy the page at: at most 1400 px wide, else half. */
+    private fun coverScale(): Float = if (width > 1400) 1400f / width else 0.5f
+
+    // --- card thumbnails (the pictures of the tab overview's cards, `Thumbnails.kt`) --------------
+
+    /**
+     * Take the card picture of this page now, if there is anything to take: the page is on
+     * screen, not mid navigation (a copy would be of the page it is leaving, under the URL it is
+     * going to) or mid back gesture, and its last picture is not fresh ([Thumbnails.FRESH_MS]:
+     * the cover a sheet just captured, the copy a hide a frame ago made). Called on the page's
+     * way off the screen ([Host.setTabVisible]'s hide), as the app leaves the foreground
+     * ([Host.onPause]) and before a shown tab's view goes ([TabHost.destroy], for an undo).
+     */
+    fun captureThumbnail() {
+        val thumbnails = host.thumbnails ?: return
+        if (backTransition != null || awaitingCommit) return
+        if (width <= 0 || height <= 0 || !isShown) return
+        if (thumbnails.fresh(tabId, SystemClock.uptimeMillis())) return
+        // A view with no document yet shows nothing worth a picture; its card has its placeholder.
+        val document = currentDocument ?: return
+        if (document == "about:blank") return
+        // Nor is a document the view has not drawn yet: a tab restored at boot whose page is still
+        // on its way shows a blank window, and a copy of it would take the place of the picture
+        // on disk – the very one the card is to show until the page paints (BH-33).
+        if (document != paintedDocument) return
+        val asked = SystemClock.uptimeMillis()
+        captureBitmap(coverScale()) { bitmap ->
+            if (bitmap != null) publishThumbnail(bitmap, document, SystemClock.uptimeMillis() - asked)
+        }
+    }
+
+    /**
+     * The card picture from a copy of the page: scaled to the card's width and encoded on the
+     * pictures' own thread ([Thumbnails.disk] – never the cover's `zen-encode`, whose work the
+     * chrome waits for), written to disk ([Thumbnails.save]) and handed to the chrome
+     * (`thumbnail.captured`). `document` is the one the copy shows (the caller's word: it was
+     * [paintedDocument] when the copy was asked for). Not of a page that navigated since – checked
+     * on the main thread before anything is written, and again before the chrome hears of it, so
+     * a picture of the page before is never on disk under the new page's tab (BH-14, across a
+     * kill too) – and not twice for one frame: a cover and a hide that shared the copy publish
+     * once between them. A private tab's picture goes to the chrome alone: nothing of it is
+     * written (the private profile leaves no file to wipe). `copyMs` is what the copy took when
+     * this call asked for it (-1: the copy was the cover's); the debug log line carries it with
+     * the encode and save times, for the cost of a picture per switch.
+     */
+    private fun publishThumbnail(bitmap: Bitmap, document: String, copyMs: Long = -1L) {
+        val thumbnails = host.thumbnails ?: return
+        val now = SystemClock.uptimeMillis()
+        if (document != currentDocument || thumbnails.fresh(tabId, now)) return
+        thumbnails.taken(tabId, now)
+        val id = tabId
+        val cardWidth = thumbnails.width
+        val persisted = containerId != Profiles.PRIVATE_CONTAINER
+        val target = host
+        val main = Handler(Looper.getMainLooper())
+        fun captured(picture: Thumbnails.Picture) =
+            target.hostEvent("thumbnail.captured", json("tabId" to id, "data" to picture.dataUrl, "width" to picture.width, "height" to picture.height))
+        thumbnails.disk.execute {
+            val started = SystemClock.uptimeMillis()
+            val picture = Thumbnails.encode(bitmap, cardWidth)
+            val encodeMs = SystemClock.uptimeMillis() - started
+            main.post {
+                // The page navigated while the picture was encoded: it is of the page before, and
+                // the card must not show it – nothing is written. Nor does a picture that could
+                // not be encoded count as taken.
+                if (picture == null || document != currentDocument) {
+                    thumbnails.stale(id)
+                    return@post
+                }
+                if (!persisted) {
+                    captured(picture)
+                    return@post
+                }
+                thumbnails.disk.execute {
+                    val writing = SystemClock.uptimeMillis()
+                    val saved = thumbnails.save(id, picture.jpeg, document)
+                    if (BuildConfig.DEBUG) {
+                        Log.d(
+                            "ZenTab",
+                            "thumbnail of $id: ${picture.width}x${picture.height} ${picture.jpeg.size} bytes, " +
+                                "copy ${if (copyMs < 0) "shared" else "$copyMs ms"}, encode $encodeMs ms, save ${SystemClock.uptimeMillis() - writing} ms"
+                        )
+                    }
+                    main.post {
+                        // Navigated during the write: the file names the page before
+                        // ([Thumbnails.stamp]), so no read shows it, and the chrome's own drop
+                        // for the navigation is behind the write on the same thread.
+                        if (!saved || document != currentDocument) {
+                            thumbnails.stale(id)
+                            return@post
+                        }
+                        captured(picture)
+                    }
+                }
+            }
         }
     }
 
@@ -982,29 +1218,39 @@ class TabWebView(
         clearMatches()
     }
 
-    /** Downscaled JPEG of what is on screen right now, for the dimmed preview behind overlays. */
+    /**
+     * Downscaled JPEG of what is on screen right now, for the dimmed preview behind overlays.
+     * The tab's card picture comes out of the same copy ([publishThumbnail]): the page under a
+     * sheet or the overview is never copied a second time for its card. The cover's own encode
+     * is queued first and runs on its own thread; the card's work never stands in front of it.
+     */
     fun snapshot(callback: (String?) -> Unit) {
         if (backTransition != null) {
             callback(null)
             return
         }
-        val scale = if (width > 1400) 1400f / width else 0.5f
         // The chrome asks just before it hides the page (menu, URL bar, overview): the copy is the
         // last chance to remember this history entry before a load from within that UI replaces it.
         val index = committedIndex
         val url = committedUrl
-        captureBitmap(scale) { bitmap ->
+        // The card picture comes out of this copy only when the pixels are the document's own
+        // ([paintedDocument]): the cover of a window whose page has not painted is a cover of
+        // white, which is what the sheet is to stand over – not what the card is to keep.
+        val painted = currentDocument?.takeIf { it == paintedDocument }
+        captureBitmap(coverScale()) { bitmap ->
             if (bitmap == null) {
                 callback(null)
                 return@captureBitmap
             }
             if (index >= 0 && url.isNotEmpty() && url == (copyBackForwardList().currentItem?.url ?: "")) remember(index, url, bitmap)
+            // The cover first: the chrome mounts its sheet on this data URL (#168).
             encoder.execute {
                 val out = ByteArrayOutputStream()
                 bitmap.compress(Bitmap.CompressFormat.JPEG, 62, out)
                 val data = "data:image/jpeg;base64," + Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
                 Handler(Looper.getMainLooper()).post { callback(data) }
             }
+            if (painted != null && !awaitingCommit) publishThumbnail(bitmap, painted)
         }
     }
 
@@ -1270,10 +1516,16 @@ class TabWebView(
                 host.backChanged()
                 return
             }
-            currentDocument = url
             // pushState / hash navigations have no onPageStarted of their own.
             val inPage = !awaitingCommit
             awaitingCommit = false
+            // The document on screen took a new URL in place: the pixels are still its own. (Not
+            // when the one drawn is another: its own commit-visible is the word for that.)
+            if (inPage && paintedDocument != null && paintedDocument == currentDocument) paintedDocument = url
+            currentDocument = url
+            // Whatever card picture there was is of the page before – the chrome drops it on the
+            // URL change – and the next hide takes a new one, however fresh the last (BH-14).
+            host.thumbnails?.stale(tabId)
             // Another page committed: the failed load's own error page is not coming any more.
             failedUrl = null
             interstitial = false
@@ -1289,11 +1541,16 @@ class TabWebView(
         }
 
         override fun onPageCommitVisible(view: WebView, url: String) {
+            // WebView's word that nothing of the page before is drawn any more: from here the
+            // pixels are this document's, and so may its card picture be.
+            paintedDocument = url
             backTransition?.onNavigation(PageBackTransition.NavigationEvent.COMMIT_VISIBLE)
         }
 
         override fun onPageFinished(view: WebView, url: String) {
             loading = false
+            // A document that finished has drawn (the word for one whose commit-visible never came).
+            paintedDocument = url
             if (pendingFlags && host.pageScript.isNotEmpty()) {
                 evaluateJavascript(startScriptSource(), null)
             }
@@ -1488,6 +1745,8 @@ class TabWebView(
 
     companion object {
         private const val PULL_TAG = "ZenPull"
+        /** The text-selection action mode's life, for the emulator driver's record (`SelectionDemo`). */
+        const val SELECTION_TAG = "ZenSelection"
         /** The core's error pages and interstitials (`ERROR_URL_PREFIX` in `src/shared/url.ts`). */
         private const val ERROR_PAGE_PREFIX = "zen://error"
         /** The object the page script posts to (and the wrappers in [evaluate] and [postToPage] name). */

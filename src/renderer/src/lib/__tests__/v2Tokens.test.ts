@@ -37,6 +37,9 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   ['.zen-v2-button {', '/*\n * The v2 badge (§9.19)'],
   // The Tabs button's hold menu (components/phone/TabsQuickMenu.tsx).
   ['.zen-quick-menu {', '/* The chassis sheet is the v2 surface (§6)'],
+  // The tab group strip in the phone bar (components/phone/GroupStrip.tsx, TAB-14): a window
+  // surface (§9.29) – the tray in the window fill, the chips in the theme's ink and accent.
+  ['.zen-group-strip {', "/* Titles of the phone's overview, drawer and sheets. */"],
   // The navigation bar's editor (components/phone/BarEditorSheet.tsx, BarPreview.tsx).
   ['.zen-bar-row {', '/* The editor draws a hairline when its rows scroll under the header'],
   // The zen://error page (shared/zenPages.ts cuts this block, the token block and the v2 button
@@ -61,6 +64,11 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // and the default-browser prompts (defaultbrowser/*) are the chassis' prompt composition:
   // neither has rules of its own.
   [' * The first run on a phone', ' * Fading scroll edges'],
+  // Settings > Privacy and Security, the protection groups of the desktop pane (components/
+  // overlays/ProtectionSection.tsx, overlays/protection/*): what they add under their own
+  // `.zen-protection-*` names to the pane's vocabulary above them. The block sits between the
+  // pane's and the Default Browser range, so it is cut out before the pane's, which ends there.
+  ['.zen-privacy + .zen-privacy.zen-protection {', '/*\n * Settings → Default Browser and the'],
   // Settings > Privacy and Security (components/overlays/PrivacySection.tsx) and the URL bar's
   // blocked-count chip (components/urlbar/BlockedChip.tsx). Its block sits between the find
   // bar's and the Default Browser range, so it is cut out before the find bar's, which ends there.
@@ -112,6 +120,10 @@ const V2_FILES: ReadonlyArray<string> = [
   // the translation bar, the selection popover and sheet, the language menulist's list and
   // picker sheet, the desktop Languages pane.
   'assets/translate.css',
+  // The autofill surfaces' own stylesheet, imported by components/autofill/controls.tsx (#145):
+  // the save / update prompts, the pickers, the passkey and passphrase dialogs, the editors and
+  // Settings > Autofill with its managers.
+  'assets/autofill.css',
   // The desktop bookmark manager's selection count pill (components/bookmarks/*, #90).
   'components/bookmarks/BookmarkManager.tsx',
   // The window prompts' checkbox accent (§9.5 modals, #129).

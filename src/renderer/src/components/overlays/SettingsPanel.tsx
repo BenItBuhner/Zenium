@@ -40,6 +40,7 @@ import { LanguagesSection } from '../translate/LanguagesSection'
 import { AgentsSection } from './AgentsSection'
 import { ClearBrowsingDataSection } from './ClearBrowsingDataSection'
 import { AppIconGroup } from './AppIconPicker'
+import { AutofillSection } from './AutofillSection'
 import { ExtensionsSection, ModsSection } from './AddonsPanel'
 import { DefaultBrowserSection } from './DefaultBrowserSection'
 import { NewTabSection } from './NewTabSection'
@@ -52,6 +53,7 @@ import {
 } from './PageControlsSettings'
 import { PasswordsSection } from './PasswordsSection'
 import { PrivacySection } from './PrivacySection'
+import { ProtectionSection } from './ProtectionSection'
 import { ResourcesSection } from './ResourcesSection'
 import { SafetyCheckSection } from './SafetyCheckSection'
 import { SecuritySection } from './SecuritySection'
@@ -70,6 +72,7 @@ export type SettingsSection =
   | 'downloads'
   | 'resources'
   | 'search'
+  | 'autofill'
   | 'languages'
   | 'privacy'
   | 'site-settings'
@@ -98,6 +101,7 @@ const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
   { id: 'downloads', label: 'Downloads' },
   { id: 'resources', label: 'Resources' },
   { id: 'search', label: 'Search' },
+  { id: 'autofill', label: 'Autofill' },
   { id: 'languages', label: 'Languages' },
   { id: 'privacy', label: 'Privacy and Security' },
   { id: 'site-settings', label: 'Site Settings' },
@@ -123,6 +127,7 @@ const SECTION_CAPABILITY: Partial<Record<SettingsSection, keyof HostCapabilities
   accessibility: 'pageControls',
   newtab: 'newTabPage',
   resources: 'resourceGovernor',
+  autofill: 'passwords',
   languages: 'translate',
   privacy: 'requestBlocking',
   extensions: 'extensions',
@@ -235,8 +240,10 @@ export function SettingsBody({
           {section === 'downloads' && <DownloadsSection state={state} set={set} />}
           {section === 'resources' && <ResourcesSection state={state} set={set} />}
           {section === 'search' && <SearchSection state={state} set={set} />}
+          {section === 'autofill' && <AutofillSection state={state} set={set} />}
           {section === 'languages' && <LanguagesSection state={state} />}
           {section === 'privacy' && <PrivacySection state={state} set={set} />}
+          {section === 'privacy' && <ProtectionSection state={state} set={set} />}
           {section === 'site-settings' && <SiteSettingsSection state={state} />}
           {section === 'clear-data' && <ClearBrowsingDataSection state={state} />}
           {section === 'safety-check' && (

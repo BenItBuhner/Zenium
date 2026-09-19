@@ -11,8 +11,9 @@ import { matchesQuery } from '@shared/internalPages'
  * Row kinds are the four v2 phone rows – value (opens a picker sheet), switch, action, and the
  * field row that stands in for a desktop text or number input (opens a one-field sheet) – plus
  * an info row (a fact with nothing to do), an item row (one thing in a list, opening a sheet of
- * rows about it) and a custom row for the few blocks that are not rows (image radio cards, the
- * zoom stepper).
+ * rows about it), a detail row (a level of an item's sheet – permissions, errors – with a
+ * summary trailing, opening the second sheet) and a custom row for the few blocks that are not
+ * rows (image radio cards, the zoom stepper).
  */
 
 export interface RowBase {
@@ -22,6 +23,8 @@ export interface RowBase {
   label: string
   /** 13 at 69% under the label, at most two lines (§9.2). */
   description?: string
+  /** The description in a §1 status ink (text only): a load error, a retirement notice. */
+  tone?: 'warn' | 'danger'
   /** Terms the search matches besides the visible text. */
   keywords?: readonly string[]
   /** A dependent row whose parent is off: 40%, still laid out, not pressable (§10.4). */
@@ -71,6 +74,13 @@ export interface ActionRow extends RowBase {
   confirm?: { title: string; description?: string; action: string }
   /** A sheet holding a small form (add a route, create a container) instead of a plain press. */
   form?: FormSheet
+  /**
+   * `onPress` opens a surface of its own over the page (an editor sheet): inside an item's sheet
+   * the row dismisses that sheet first and presses once it has gone, so the editor is the one
+   * sheet over the page and may open its own pickers (§9.24: a sheet opens one sheet, and that
+   * one opens nothing). On the page itself the press is immediate.
+   */
+  closesSheet?: boolean
 }
 
 /** A sheet with a §9.12 form in it; `render` gets the function that closes the sheet. */
@@ -90,8 +100,15 @@ export interface FieldRow extends RowBase {
   placeholder?: string
   min?: number
   max?: number
-  /** Commit an edited value; a returned string is a validation message that keeps the sheet up. */
-  onCommit(value: string): string | undefined
+  /** A secret (an API key): the platform monospace in the field (§4), never shown on the row. */
+  secret?: boolean
+  /**
+   * Commit an edited value; a returned string is a validation message that keeps the sheet up.
+   * A promise makes the sheet a §9.30 busy form while it settles: the field read-only with the
+   * typed value, Save busy, Cancel at .4; a message refuses (the field clears, takes the focus
+   * and shows it), `undefined` accepts and closes the sheet.
+   */
+  onCommit(value: string): string | undefined | Promise<string | undefined>
 }
 
 /** A fact: label and description, optionally a leading or trailing glyph or value; nothing to press. */
@@ -100,6 +117,8 @@ export interface InfoRow extends RowBase {
   /** A 20 px glyph on the label's line (§9.2): a status glyph in the §1 status ink. */
   leading?: ReactNode
   trailing?: ReactNode
+  /** The label is a line of prose (an error message): two lines, then an ellipsis (§9.2). */
+  clamp?: boolean
 }
 
 /** One thing in a list (a container, a route, a Boost): opens a sheet of rows about it. */
@@ -109,9 +128,24 @@ export interface ItemRow extends RowBase {
   sheet: ItemSheet
 }
 
+/**
+ * A level of an item's sheet (§10.4 detail row): 44 tall, a summary of what is inside trailing
+ * in 13 at 69% before a 16 px chevron, opening the second sheet (§9.24: the item's sheet is
+ * depth one, this one depth two, and nothing opens over it).
+ */
+export interface DetailRow extends RowBase {
+  kind: 'detail'
+  /** "4 permissions", "2 errors", "None": what the sheet holds, at a glance. */
+  summary?: string
+  leading?: ReactNode
+  sheet: ItemSheet
+}
+
 export interface ItemSheet {
   title: string
   description?: string
+  /** The description reports a status (an extension's load error): the §1 status ink. */
+  descriptionTone?: 'warn' | 'danger'
   groups: RowGroup[]
 }
 
@@ -122,12 +156,14 @@ export interface CustomRow extends RowBase {
 }
 
 export type SettingsRow =
-  ValueRow | SwitchRow | ActionRow | FieldRow | InfoRow | ItemRow | CustomRow
+  ValueRow | SwitchRow | ActionRow | FieldRow | InfoRow | ItemRow | DetailRow | CustomRow
 
 export interface RowGroup {
   id: string
   /** 15/600 sentence-case heading, 20 above and 4 below (§10.3); null for rows without one. */
   heading: string | null
+  /** A count or size trailing on the heading's line at the gutter, 13 at 69% (§10.3). */
+  aside?: string
   /** 13/69% under the heading: the section's introductory paragraph. */
   description?: string
   rows: SettingsRow[]
@@ -203,15 +239,15 @@ export function groupShows(group: RowGroup): boolean {
 }
 
 /**
- * The row with `id` among the groups, looking inside item sheets too (a sheet over an item's
- * sheet names a row of the inner one). A model is rebuilt from the state on every render, so a
- * sheet keeps a row id and resolves it here to draw the row's current value.
+ * The row with `id` among the groups, looking inside item and detail sheets too (a sheet over
+ * an item's sheet names a row of the inner one). A model is rebuilt from the state on every
+ * render, so a sheet keeps a row id and resolves it here to draw the row's current value.
  */
 export function findRow(groups: readonly RowGroup[], id: string): SettingsRow | null {
   for (const group of groups) {
     for (const row of group.rows) {
       if (row.id === id) return row
-      if (row.kind === 'item') {
+      if (row.kind === 'item' || row.kind === 'detail') {
         const inner = findRow(row.sheet.groups, id)
         if (inner) return inner
       }
@@ -220,13 +256,13 @@ export function findRow(groups: readonly RowGroup[], id: string): SettingsRow | 
   return null
 }
 
-/** Every row of the groups, item sheets included, in reading order (what a test walks). */
+/** Every row of the groups, item and detail sheets included, in reading order (what a test walks). */
 export function allRows(groups: readonly RowGroup[]): SettingsRow[] {
   const out: SettingsRow[] = []
   for (const group of groups) {
     for (const row of group.rows) {
       out.push(row)
-      if (row.kind === 'item') out.push(...allRows(row.sheet.groups))
+      if (row.kind === 'item' || row.kind === 'detail') out.push(...allRows(row.sheet.groups))
     }
   }
   return out

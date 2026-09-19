@@ -1,4 +1,4 @@
-import { BrowserWindow, screen, shell, webContents } from 'electron'
+import { BrowserWindow, WebContentsView, screen, shell, webContents } from 'electron'
 import { join } from 'node:path'
 import { is } from '@electron-toolkit/utils'
 import type { EventName, Events, Rect, WindowChrome } from '../../shared/types'
@@ -38,11 +38,23 @@ const TOOLBAR_KEEP_ZONE = 120
  * maximise button its Snap Layouts flyout. macOS keeps its traffic lights; Linux draws Zenium's.
  */
 const CAPTION_OVERLAY = process.platform === 'win32'
+/**
+ * The popup surface is kept loaded for this long after it was last shown, so the next picker
+ * comes up without a document load; then it is closed to give its memory back.
+ */
+const POPUP_SURFACE_IDLE_MS = 30_000
+
+/** Where the factory keeps the chrome documents that may send commands for a window. */
+export interface ChromeContentsRegistry {
+  add(id: number): void
+  remove(id: number): void
+}
 
 /**
  * The Electron side of one `ZenWindow`: a frameless `BrowserWindow` whose web contents render
  * Zen's chrome. Tab pages are `WebContentsView` children the core positions through the window's
- * layout reports. Frame events (focus, bounds, close) are forwarded to the core window.
+ * layout reports. Frame events (focus, bounds, close) are forwarded to the core window. The popup
+ * surface (`setPopupSurface`) is a second chrome document in a `WebContentsView` above the pages.
  */
 export class ElectronWindow implements WindowHost {
   readonly win: BrowserWindow
@@ -52,11 +64,17 @@ export class ElectronWindow implements WindowHost {
   private readonly toolbarEdge = new EdgeTracker()
   private readonly titles: TitleThrottle
   private captionColors: CaptionColors
+  private popup: WebContentsView | null = null
+  private popupIdleTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(
     private readonly browser: Browser,
     readonly zen: ZenWindow,
-    init: WindowCreateInit
+    init: WindowCreateInit,
+    private readonly registry: ChromeContentsRegistry = {
+      add: () => undefined,
+      remove: () => undefined
+    }
   ) {
     let initial = init.bounds
     let displayId = init.displayId
@@ -157,6 +175,7 @@ export class ElectronWindow implements WindowHost {
     win.on('closed', () => {
       this.stopCompactTracking()
       this.titles.cancel()
+      this.closePopupSurface()
       zen.onClosed()
     })
     this.startCompactTracking()
@@ -212,7 +231,11 @@ export class ElectronWindow implements WindowHost {
   // ---------------------------------------------------------------------------
 
   send<K extends EventName>(name: K, payload: Events[K]): void {
-    if (this.alive) this.win.webContents.send('zen:event', name, payload)
+    if (!this.alive) return
+    this.win.webContents.send('zen:event', name, payload)
+    // The popup surface mirrors the window's state like the chrome does (the picker lives in it).
+    const popup = this.popup?.webContents
+    if (popup && !popup.isDestroyed()) popup.send('zen:event', name, payload)
   }
 
   focusChrome(): void {
@@ -330,6 +353,101 @@ export class ElectronWindow implements WindowHost {
   }
 
   // ---------------------------------------------------------------------------
+  // Popup surface
+  // ---------------------------------------------------------------------------
+
+  /**
+   * The picker's document in a `WebContentsView` above every page view, at `bounds` (window CSS
+   * pixels); null hides it. Showing never moves the keyboard: the view is added without focus and
+   * the page field keeps typing. Hidden, the document stays loaded for `POPUP_SURFACE_IDLE_MS` so
+   * the next picker is instant, then it is closed.
+   */
+  setPopupSurface(bounds: Rect | null): void {
+    if (!this.alive) return
+    if (!bounds) {
+      this.hidePopupSurface()
+      return
+    }
+    if (this.popupIdleTimer) {
+      clearTimeout(this.popupIdleTimer)
+      this.popupIdleTimer = null
+    }
+    const view = this.popup ?? this.createPopupSurface()
+    view.setBounds({
+      x: Math.round(bounds.x),
+      y: Math.round(bounds.y),
+      width: Math.round(bounds.width),
+      height: Math.round(bounds.height)
+    })
+    // Adding again moves the view to the top of the z-order, over a page view placed since.
+    this.win.contentView.addChildView(view)
+    if (!view.getVisible()) view.setVisible(true)
+  }
+
+  private createPopupSurface(): WebContentsView {
+    const view = new WebContentsView({
+      webPreferences: {
+        preload: join(__dirname, '../preload/index.js'),
+        sandbox: true,
+        contextIsolation: true,
+        nodeIntegration: false,
+        spellcheck: false,
+        backgroundThrottling: false
+      }
+    })
+    // The panel draws its own background and shadow; the margin around it shows the page.
+    view.setBackgroundColor('#00000000')
+    this.popup = view
+    const wc = view.webContents
+    const id = wc.id
+    this.registry.add(id)
+    wc.setWindowOpenHandler(({ url }) => {
+      if (/^https?:/.test(url)) void shell.openExternal(url)
+      return { action: 'deny' }
+    })
+    wc.on('will-navigate', (event) => event.preventDefault())
+    wc.on('context-menu', (event) => event.preventDefault())
+    wc.on('destroyed', () => {
+      this.registry.remove(id)
+      if (this.popup === view) this.popup = null
+    })
+    if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+      const url = new URL(process.env['ELECTRON_RENDERER_URL'])
+      url.searchParams.set('surface', 'autofill')
+      void wc.loadURL(url.toString())
+    } else {
+      void wc.loadFile(join(__dirname, '../renderer/index.html'), {
+        query: { surface: 'autofill' }
+      })
+    }
+    return view
+  }
+
+  private hidePopupSurface(): void {
+    const view = this.popup
+    if (!view) return
+    if (view.getVisible()) view.setVisible(false)
+    if (this.alive) this.win.contentView.removeChildView(view)
+    if (this.popupIdleTimer) clearTimeout(this.popupIdleTimer)
+    this.popupIdleTimer = setTimeout(() => {
+      this.popupIdleTimer = null
+      this.closePopupSurface()
+    }, POPUP_SURFACE_IDLE_MS)
+  }
+
+  private closePopupSurface(): void {
+    if (this.popupIdleTimer) clearTimeout(this.popupIdleTimer)
+    this.popupIdleTimer = null
+    const view = this.popup
+    if (!view) return
+    this.popup = null
+    if (this.alive) this.win.contentView.removeChildView(view)
+    const wc = view.webContents
+    this.registry.remove(wc.id)
+    if (!wc.isDestroyed()) wc.close()
+  }
+
+  // ---------------------------------------------------------------------------
   // Bounds persistence
   // ---------------------------------------------------------------------------
 
@@ -417,7 +535,11 @@ export class ElectronWindowFactory implements WindowHostFactory {
   }
 
   create(win: ZenWindow, init: WindowCreateInit): WindowHost {
-    const host = new ElectronWindow(this.browser, win, init)
+    // The popup surface's document sends commands for the window like the chrome does.
+    const host = new ElectronWindow(this.browser, win, init, {
+      add: (id) => this.byWebContentsId.set(id, win),
+      remove: (id) => this.byWebContentsId.delete(id)
+    })
     const id = host.win.webContents.id
     this.byWebContentsId.set(id, win)
     host.win.on('closed', () => this.byWebContentsId.delete(id))

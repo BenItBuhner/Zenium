@@ -58,6 +58,22 @@ describe('parsePreviewSpec', () => {
     expect(parsePreviewSpec('find=x&zoom=2')).toEqual({ kind: 'find', text: 'x' })
   })
 
+  it('groups the active tab with this many members, behind a page but ahead of an overlay, its steps kept', () => {
+    expect(parsePreviewSpec('group=3')).toEqual({ kind: 'group', members: 3 })
+    expect(parsePreviewSpec('group=12&then=tap:Show group, Research;overview')).toEqual({
+      kind: 'group',
+      members: 12,
+      then: [{ kind: 'tap', text: 'Show group, Research' }, { kind: 'overview' }]
+    })
+    // A group is at least the tab itself and at most what a strip can be asked to scroll.
+    expect(parsePreviewSpec('group=0')).toEqual({ kind: 'group', members: 1 })
+    expect(parsePreviewSpec('group=99')).toEqual({ kind: 'group', members: 24 })
+    expect(parsePreviewSpec('group=')).toEqual({ kind: 'idle' })
+    expect(parsePreviewSpec('group=abc')).toEqual({ kind: 'idle' })
+    expect(parsePreviewSpec('group=3&overlay=history')).toEqual({ kind: 'group', members: 3 })
+    expect(parsePreviewSpec('page=settings&group=3')).toEqual({ kind: 'page', page: 'settings' })
+  })
+
   it('opens the app menu, behind an overlay but ahead of the bars', () => {
     expect(parsePreviewSpec('menu=app')).toEqual({ kind: 'menu' })
     expect(parsePreviewSpec('menu=app&show=Desktop Site')).toEqual({
@@ -99,6 +115,12 @@ describe('parsePreviewSpec', () => {
     }
     expect(parsePreviewSpec('webapp=splash')).toEqual({ kind: 'idle' })
     expect(parsePreviewSpec('find=x&webapp=banner')).toEqual({ kind: 'find', text: 'x' })
+  })
+
+  it('opens the tab overview, behind every other state', () => {
+    expect(parsePreviewSpec('overview')).toEqual({ kind: 'overview' })
+    expect(parsePreviewSpec('overview=1')).toEqual({ kind: 'overview' })
+    expect(parsePreviewSpec('find=x&overview')).toEqual({ kind: 'find', text: 'x' })
   })
 
   it('treats idle, an unknown overlay and junk as idle', () => {
@@ -209,6 +231,28 @@ describe('parsePreviewSpec', () => {
     expect(parsePreviewSteps(null)).toEqual([])
     expect(parsePreviewSpec('page=settings&then=')).toEqual({ kind: 'page', page: 'settings' })
     expect(parsePreviewSpec('page=settings&then=wave')).toEqual({ kind: 'page', page: 'settings' })
+  })
+
+  it('stages an autofill surface, a manager one scrolled and stepped through like a page', () => {
+    expect(parsePreviewSpec('autofill=save-login')).toEqual({
+      kind: 'autofill',
+      surface: 'save-login'
+    })
+    expect(
+      parsePreviewSpec(
+        'autofill=manager&show=Payment%20methods&then=tap:Visa%20%E2%80%A2%E2%80%A2%E2%80%A2%E2%80%A2%204242'
+      )
+    ).toEqual({
+      kind: 'autofill',
+      surface: 'manager',
+      show: 'Payment methods',
+      then: [{ kind: 'tap', text: 'Visa \u2022\u2022\u2022\u2022 4242' }]
+    })
+    expect(parsePreviewSpec('autofill=manager&show=&then=')).toEqual({
+      kind: 'autofill',
+      surface: 'manager'
+    })
+    expect(parsePreviewSpec('autofill=bogus')).toEqual({ kind: 'idle' })
   })
 
   it('asks for a sheet on its expanded detent', () => {

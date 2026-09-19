@@ -18,23 +18,36 @@ interface Props {
    * a switch): the page is kept until the card's picture is painted (see `lib/cover.ts`).
    */
   cover?: boolean
+  /**
+   * This card is drawn at the page's size without standing in for it (a neighbour on the swipe
+   * track): the full cover is preferred over the card picture when the chrome has one.
+   */
+  sharp?: boolean
+  /**
+   * Whether the card is on screen (the overview grid says so per card): off screen it holds no
+   * picture and reads none. On by default for the cards that are up whenever they are mounted.
+   */
+  visible?: boolean
   className?: string
   style?: CSSProperties
 }
 
 /**
- * What a tab looks like when its live page is not available to draw: the last thumbnail the
- * chrome captured of it, or – for pages never shown since start-up – a quiet placeholder page
- * carrying the tab's identity.
+ * What a tab looks like when its live page is not available to draw: the last picture the host
+ * has of it (`lib/thumbnails.ts`: the card picture it keeps across restarts, or the full cover
+ * the chrome captured), or – for pages it has none of – a quiet placeholder page carrying the
+ * tab's identity.
  */
 export function TabPreview({
   tab,
   scale = 1,
   cover = false,
+  sharp = false,
+  visible = true,
   className,
   style
 }: Props): JSX.Element {
-  const thumbnail = useThumbnail(tab.id)
+  const thumbnail = useThumbnail(tab.id, { cover, sharp, visible })
   // A chrome page is never captured: its card shows the page drawn small (v2 §10.1).
   if (isChromePageUrl(tab.url)) {
     return (

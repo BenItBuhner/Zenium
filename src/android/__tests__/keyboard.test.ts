@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { installKeyboardPolicy, type KeyboardMessage } from '../keyboard'
+import { installKeyboardPolicy, takesTypedText, type KeyboardMessage } from '../keyboard'
 
 /*
  * The chrome's keyboard policy on the device: `focusin` on a field asks the host for the
@@ -69,6 +69,62 @@ describe('the keyboard follows the focus', () => {
     name.focus()
     address.focus()
     expect(sent).toEqual(['chrome.showKeyboard', 'chrome.showKeyboard'])
+  })
+
+  it('asks for nothing as a radio or a checkbox takes the focus, and asks it down as a field leaves to one', () => {
+    const radio = document.createElement('input')
+    radio.type = 'radio'
+    const checkbox = document.createElement('input')
+    checkbox.type = 'checkbox'
+    const name = field()
+    document.body.append(radio, checkbox)
+    radio.focus()
+    checkbox.focus()
+    expect(sent).toEqual([])
+    name.focus()
+    expect(sent).toEqual(['chrome.showKeyboard'])
+    checkbox.focus()
+    expect(sent).toEqual(['chrome.showKeyboard', 'chrome.hideKeyboard'])
+    radio.focus()
+    expect(sent).toEqual(['chrome.showKeyboard', 'chrome.hideKeyboard'])
+  })
+})
+
+describe('takesTypedText (what focus raises the soft keyboard for)', () => {
+  function input(type: string): HTMLInputElement {
+    const el = document.createElement('input')
+    el.setAttribute('type', type)
+    return el
+  }
+
+  it('is true for the fields the chrome types into', () => {
+    for (const type of ['text', 'search', 'url', 'email', 'password', 'number', 'tel']) {
+      expect(takesTypedText(input(type)), type).toBe(true)
+    }
+    expect(takesTypedText(document.createElement('input'))).toBe(true)
+    expect(takesTypedText(document.createElement('textarea'))).toBe(true)
+  })
+
+  it('is false for a radio, a checkbox and the other controls that take no text', () => {
+    for (const type of [
+      'radio',
+      'checkbox',
+      'button',
+      'submit',
+      'reset',
+      'range',
+      'color',
+      'file'
+    ]) {
+      expect(takesTypedText(input(type)), type).toBe(false)
+    }
+  })
+
+  it('is false for anything that is not an input', () => {
+    expect(takesTypedText(document.createElement('button'))).toBe(false)
+    expect(takesTypedText(document.createElement('div'))).toBe(false)
+    expect(takesTypedText(document.body)).toBe(false)
+    expect(takesTypedText(null)).toBe(false)
   })
 })
 

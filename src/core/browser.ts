@@ -1452,6 +1452,13 @@ export class Browser {
     else this.toast('Link handling is set in the system settings on this device.', 'info', win)
   }
 
+  /** The system's Private DNS screen (Android), where a host without its own secure DNS sends the user. */
+  openPrivateDnsSettings(win: ZenWindow): void {
+    const { shell } = this.platform
+    if (shell.openPrivateDnsSettings) shell.openPrivateDnsSettings()
+    else this.toast('Secure DNS is set in the system settings on this device.', 'info', win)
+  }
+
   /**
    * The app is going away for good (every check passed, or the system is shutting down): stop
    * the services, write the profile one last time – with the clean-exit marker – and freeze it.
@@ -1764,6 +1771,9 @@ export class Browser {
       'autofill.respond': ({ id, response }) => this.autofill.respond(id, response),
       'autofill.pick': ({ id, itemId, passphrase }, win) =>
         this.autofill.pick(id, itemId, passphrase, win),
+      'autofill.surfaceSize': ({ id, height }) => this.autofill.surfaceSize(id, height),
+      'autofill.surfaceFocus': ({ id, focused }) => this.autofill.surfaceFocus(id, focused),
+      'autofill.manage': (_args, win) => this.autofill.manage(win),
       'autofill.listAddresses': () => this.autofill.listAddresses(),
       'autofill.addAddress': ({ address }) => this.autofill.addAddress(address),
       'autofill.updateAddress': ({ id, patch }) => this.autofill.updateAddress(id, patch),
@@ -1973,6 +1983,12 @@ export class Browser {
         this.extensions.omniboxDeleteSuggestion(input, win),
 
       'overlay.snapshot': ({ tabId, fresh }, win) => win.snapshot(tabId, fresh),
+
+      // Tab card pictures are the host's (`ThumbnailHost`); a host without them has none to show.
+      'thumbnail.configure': ({ width }) => this.platform.thumbnails?.configure(width),
+      'thumbnail.load': ({ tabId, url }) => this.platform.thumbnails?.load(tabId, url) ?? null,
+      'thumbnail.drop': ({ tabId, url }) => this.platform.thumbnails?.drop(tabId, url),
+      'thumbnail.sweep': ({ keep }) => this.platform.thumbnails?.sweep(keep),
 
       'site.info': ({ tabId }) => this.siteInfo.info(tabId),
       'siteInfo.snapshot': ({ tabId }) => this.siteInfo.snapshot(tabId),
@@ -2322,6 +2338,11 @@ export class Browser {
       'blocking.setEnabled': ({ enabled }) => this.blocking.setEnabled(enabled),
       'blocking.setSiteException': ({ site, excepted }) =>
         this.blocking.setSiteException(site, excepted),
+      'protection.updateFeeds': ({ id }) => this.protection.safeBrowsing.refresh(id),
+      'protection.forgetPlaintext': ({ host }) => this.protection.forgetPlaintext(host),
+      'protection.checkApiKey': ({ key }) => this.protection.safeBrowsing.checkKey(key),
+      'protection.checkResolver': ({ url }) => this.protection.checkResolver(url),
+      'protection.openPrivateDnsSettings': (_a, win) => this.openPrivateDnsSettings(win),
       'translate.page': ({ tabId, target, source }) =>
         this.translate.translatePage(tabId, { target, source }),
       'translate.revert': ({ tabId }) => this.translate.revert(tabId),

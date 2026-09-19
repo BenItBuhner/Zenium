@@ -35,6 +35,8 @@ interface PageHost {
     /** HTTP sign-in and client-certificate requests. */
     val security: Security
     val snapshots: HistorySnapshots
+    /** The tab cards' pictures on disk ([Thumbnails]); a host without cards (a custom tab) keeps none. */
+    val thumbnails: Thumbnails? get() = null
     val tabs: TabHost
     val fullscreenTab: TabWebView?
     /** Whether the host is in its own fullscreen (Menu > Fullscreen: the bars hidden, no element fullscreen). */
@@ -78,6 +80,13 @@ interface PageHost {
 
     /** A pull-to-refresh on a page moved on: `start`, `move`, `release` or `cancel` (see `lib/pull.ts`). */
     fun pullEvent(tabId: String, phase: String, payload: JSONObject?) {}
+
+    /**
+     * Zenium's items for the floating toolbar over `text` selected in a page (`Menus.selectionToolbar`
+     * in the core): `reply` gets the JSON text of `[{ id, title }]` in order, or null for none. A
+     * host without a core (a custom tab) has none; the system's toolbar stands as it is.
+     */
+    fun selectionMenu(tabId: String, text: String, reply: (String?) -> Unit) = reply(null)
 
     /** A physical key the shortcut table matched (`tabId` null: typed into the chrome). */
     fun onKey(tabId: String?, input: JSONObject)

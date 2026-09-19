@@ -13,7 +13,7 @@ import type {
 import type { EngineRelayRequest, EngineRelayResponse } from './translateEngine'
 import type { UpdateSettings, UpdateStatus } from './updates'
 import type { BlockingSettings, BlockingStatus } from './blocking'
-import type { PrivacySettings, PrivacyStatus } from './privacy'
+import type { PrivacySettings, PrivacyStatus, ProtectionCheck } from './privacy'
 import type { InternalPageId } from './internalPages'
 import type { WebAppInfo } from './webApp'
 import type { ContentDefault } from './contentSettings'
@@ -136,6 +136,18 @@ export interface HostCapabilities {
    * (`voice.start`, `shared/voice.ts`). Off, no mic button shows anywhere.
    */
   voiceSearch: boolean
+  /**
+   * Selected page text gets the system's floating toolbar (Android's action mode) rather than
+   * the page context menu; the host asks the core for Zenium's items in it and dispatches the
+   * one touched (`Menus.selectionToolbar` / `runSelectionAction`). Desktop hosts show the menu.
+   */
+  selectionToolbar: boolean
+  /**
+   * The host can float a second chrome document above the page views (`WindowHost.setPopupSurface`):
+   * the autofill picker hangs from a page field there, over a page the user keeps typing into.
+   * Hosts without it (phones) draw the picker in the chrome's own document beside the page.
+   */
+  popupSurface: boolean
 }
 
 export interface Rect {
@@ -1686,6 +1698,11 @@ export interface Settings {
   restoreSession: boolean
   /** Ask before a window with more than one tab closes (Firefox's warning; Edge has the setting). */
   warnOnCloseWindow: boolean
+  /**
+   * Phone: the tab overview's "Close all tabs" asks first ("Close N tabs?"); its "Don't ask
+   * again" turns this off. Absent in profiles from before it existed (read as true).
+   */
+  confirmCloseAll: boolean
   /** After an unclean exit: offer the last session's pages, bring them back, or start fresh. */
   crashRestore: CrashRestoreMode
   /** Firefox's "Always ask you where to save files"; off saves straight into the Downloads folder. */
@@ -2920,6 +2937,23 @@ export interface Commands {
    */
   'overlay.snapshot': { args: { tabId: string; fresh?: boolean }; result: string | null }
 
+  /**
+   * Tab card thumbnails, on hosts that keep them (`Platform.thumbnails`; the Android host). The
+   * host takes the pictures itself – of a page leaving the screen, of the app going to the
+   * background, from the cover it captures for a sheet – and raises `thumbnail.captured` for
+   * each; the chrome only says how wide a card is (`configure`, device pixels), reads the
+   * persisted picture of a card it shows (`load`, lazily, a few at a time – never in the boot
+   * payload; with the tab's `url`, so a picture of a page the tab has left is never answered),
+   * and forgets the pictures of pages that navigated or tabs that are gone for good (`drop`,
+   * with the `url` the tab left so a drop that arrives after the capture of the next page does
+   * not take that one; without a `url` for a tab gone for good – and `sweep` once at boot with
+   * the session's tab ids).
+   */
+  'thumbnail.configure': { args: { width: number }; result: void }
+  'thumbnail.load': { args: { tabId: string; url: string }; result: ThumbnailPicture | null }
+  'thumbnail.drop': { args: { tabId: string; url?: string }; result: void }
+  'thumbnail.sweep': { args: { keep: string[] }; result: void }
+
   /** Connection, cookies, storage and permissions of the tab's site (null for an unknown tab). */
   'site.info': { args: { tabId: string }; result: SiteInfo | null }
   /** Remove the cookies of the tab's site; resolves with how many were removed. */
@@ -3432,6 +3466,21 @@ export interface Commands {
     args: { id: string; itemId: string | null; passphrase?: string }
     result: ReauthOutcome<null>
   }
+  /**
+   * The desktop picker's document (`?surface=autofill`) reports the height its content wants;
+   * the core sizes and places the popup surface from it (`placePickerSurface`).
+   */
+  'autofill.surfaceSize': { args: { id: string; height: number }; result: void }
+  /**
+   * The popup surface took or lost the keyboard: while it holds it the page field's blur does
+   * not close the picker (a press on a row blurs the field first).
+   */
+  'autofill.surfaceFocus': { args: { id: string; focused: boolean }; result: void }
+  /**
+   * The picker's "Manage…" row: the picker closes and Settings opens on the Autofill section of
+   * the window the picker belongs to (the desktop picker's document is not that window's chrome).
+   */
+  'autofill.manage': { args: void; result: void }
   /** Saved addresses, most recently used first. */
   'autofill.listAddresses': { args: void; result: AddressEntry[] }
   'autofill.addAddress': { args: { address: AddressInput }; result: AddressEntry }
@@ -3515,6 +3564,22 @@ export interface Commands {
   'blocking.setEnabled': { args: { enabled: boolean }; result: void }
   /** Except a site (origin, URL or host) from blocking, or block on it again. */
   'blocking.setSiteException': { args: { site: string; excepted: boolean }; result: void }
+  /** Refresh one Safe Browsing feed (or every feed) now, whatever its age. */
+  'protection.updateFeeds': { args: { id?: string }; result: void }
+  /** Ask again before loading `host` over plaintext: forget its session and stored allowance. */
+  'protection.forgetPlaintext': { args: { host: string }; result: void }
+  /**
+   * Try a Google Safe Browsing key against the API before it is kept (one lookup of a prefix on
+   * no list); refused when Google rejects the key (v2 §9.30's busy form behind the key field).
+   */
+  'protection.checkApiKey': { args: { key: string }; result: ProtectionCheck }
+  /** Ask a custom DNS-over-HTTPS resolver one question before it is kept; refused when it does not answer. */
+  'protection.checkResolver': { args: { url: string }; result: ProtectionCheck }
+  /**
+   * The system's Private DNS screen (Android, where secure DNS is the system's: no
+   * `capabilities.secureDns`); a toast on hosts without one.
+   */
+  'protection.openPrivateDnsSettings': { args: void; result: void }
   /** Translate the tab's page (into the default target when `target` is omitted). */
   'translate.page': {
     args: { tabId: string; target?: string; source?: string }
@@ -3688,6 +3753,12 @@ export interface Events {
    * the swap between the live page and its cover.
    */
   'view.drawn': { tabId: string; visible: boolean }
+  /**
+   * The host took a card thumbnail of `tabId`'s page (it left the screen, the app went to the
+   * background, a sheet's cover was captured) and has it on disk: the chrome's copy for its
+   * cards (`lib/thumbnails.ts`).
+   */
+  'thumbnail.captured': ThumbnailPicture & { tabId: string }
   /** A login was deleted; `passwords.restore` brings it back for a while. */
   'passwords.removed': { id: string; site: string }
   /**
@@ -3763,6 +3834,15 @@ export interface WebAppBanner {
 export interface NavigationSnapshot {
   entries: NavigationSnapshotEntry[]
   index: number
+  /**
+   * An opaque, host-specific serialisation of the whole stack, for a host that cannot rebuild
+   * it from URLs and titles: on Android `WebView.saveState` (a Parcel, base64), which carries
+   * every entry's scroll and form state – the shape `pageState` takes there. Written and read by
+   * the same host only (desktop never writes it and ignores it; a host refusing a foreign blob
+   * loads the current entry instead); absent over 64 KB (`NAVIGATION_HOST_STATE_MAX_CHARS`) and
+   * after the entries were cut to `NAVIGATION_ENTRIES_MAX`, when it would describe another list.
+   */
+  hostState?: string
 }
 
 export interface NavigationSnapshotEntry {
@@ -3795,6 +3875,17 @@ export interface ClosedWindowEntry {
 }
 
 export type ClosedEntry = ClosedTabEntry | ClosedWindowEntry
+
+/**
+ * A tab card's picture as the host hands it over: a JPEG data URL of the page as it was last
+ * seen, scaled to the card's width in device pixels, with the size of its pixels so the chrome
+ * can keep its cache by bytes rather than by count.
+ */
+export interface ThumbnailPicture {
+  data: string
+  width: number
+  height: number
+}
 
 /** What menus and the history page show for a closed entry (no full tab records). */
 export interface ClosedEntrySummary {

@@ -1,4 +1,4 @@
-import type { ContentCover, Rect } from '@shared/types'
+import type { ContentCover, Rect, ThumbnailPicture } from '@shared/types'
 import type { NativeBridge, NativeCall } from './bridge'
 import type { BootInfo } from './platform'
 import type { Platform } from '@shared/types'
@@ -22,6 +22,10 @@ const PAGE_ROUTE = '/__zen/page/'
 const DEFAULT_BROWSER_KEY = 'zen-preview-default-browser'
 /** Where the stand-in downloader says files go (`BootInfo.downloadsDir`). */
 const DOWNLOADS_DIR = '/Downloads'
+/** Where the stand-in keeps the tab cards' pictures (Kotlin: `cacheDir/zen-thumbs/<tabId>.jpg`). */
+const THUMB_PREFIX = 'zen-thumb:'
+/** Kotlin's `Thumbnails.FRESH_MS`: a picture younger than this stands, no second one is taken. */
+const CARD_FRESH_MS = 2000
 
 const hostGlobal = (): HostGlobal => (window as unknown as { __zenHost: HostGlobal }).__zenHost
 
@@ -304,6 +308,8 @@ export function createPreviewBridge(): NativeBridge {
           /* cross-origin */
         }
         frame.dataset.title = title
+        // The document on screen is this URL's now (what a card picture may be taken of).
+        frame.dataset.painted = frame.dataset.url ?? ''
         // The frame's document is complete: its DOM is ready, then it has finished loading.
         viewEvent(String(tabId), 'domReady', null)
         viewEvent(String(tabId), 'stopLoading', { ...navState(frame), title })
@@ -323,6 +329,9 @@ export function createPreviewBridge(): NativeBridge {
       frame.dataset.url = String(url)
       frame.dataset.title = ''
       frame.dataset.load = ''
+      // Whatever card picture there was is of the page before: the next hide takes a new one,
+      // however fresh the last (Kotlin's `Thumbnails.stale`, BH-14).
+      cardTakenAt.delete(String(tabId))
       viewEvent(String(tabId), 'startLoading', null)
       frame.src = String(url)
       viewEvent(String(tabId), 'navigated', { ...navState(frame), inPage: false })
@@ -346,6 +355,7 @@ export function createPreviewBridge(): NativeBridge {
       const frame = views.get(String(tabId))
       if (!frame) return
       frame.dataset.url = String(url)
+      cardTakenAt.delete(String(tabId))
       void showDocument(frame, String(html))
       viewEvent(String(tabId), 'navigated', { ...navState(frame), inPage: false })
     },
@@ -394,6 +404,8 @@ export function createPreviewBridge(): NativeBridge {
     'view.setVisible': ({ tabId, visible }) => {
       const frame = views.get(String(tabId))
       if (!frame) return
+      // Like Kotlin, a page on its way off the screen has its card picture taken first.
+      if (!visible && frame.style.display !== 'none') void captureCard(String(tabId), frame)
       frame.style.display = visible ? 'block' : 'none'
       requestAnimationFrame(() =>
         host().hostEvent('view.drawn', JSON.stringify({ tabId: String(tabId), visible }))
@@ -409,7 +421,44 @@ export function createPreviewBridge(): NativeBridge {
     },
     'view.snapshot': ({ tabId }) => {
       const frame = views.get(String(tabId))
-      return frame && frame.style.display !== 'none' ? snapshotFrame(frame) : null
+      if (!frame || frame.style.display === 'none') return null
+      // The cover's capture is the card's picture too (Kotlin derives it from the same copy).
+      const capture = snapshotFrame(frame)
+      void captureCard(String(tabId), frame, capture)
+      return capture
+    },
+    // Tab card thumbnails (Kotlin's `Thumbnails.kt`): one picture per tab in `localStorage`,
+    // read when the chrome shows the card, never with the boot payload.
+    'thumbnail.configure': ({ width }) => {
+      cardWidth = Number(width) || 0
+    },
+    // A picture is kept with the document it shows and read for that document alone (Kotlin
+    // stamps the file): a tab that left the page gets nothing, whatever is under its id.
+    'thumbnail.load': ({ tabId, url }) => {
+      const stored = localStorage.getItem(THUMB_PREFIX + String(tabId))
+      if (!stored) return null
+      const record = JSON.parse(stored) as ThumbnailPicture & { url?: string }
+      if (record.url !== String(url)) return null
+      return { data: record.data, width: record.width, height: record.height }
+    },
+    // A drop names the document the tab left: a picture of another one (the next page's, captured
+    // before the drop arrived) stays. A drop without one is a tab gone for good.
+    'thumbnail.drop': ({ tabId, url }) => {
+      const key = THUMB_PREFIX + String(tabId)
+      if (url !== undefined) {
+        const stored = localStorage.getItem(key)
+        const of = stored ? (JSON.parse(stored) as { url?: string }).url : undefined
+        if (of !== undefined && of !== String(url)) return
+      }
+      localStorage.removeItem(key)
+    },
+    'thumbnail.sweep': ({ keep }) => {
+      const kept = new Set((keep as string[]).map(String))
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const key = localStorage.key(i)
+        if (key?.startsWith(THUMB_PREFIX) && !kept.has(key.slice(THUMB_PREFIX.length)))
+          localStorage.removeItem(key)
+      }
     },
     'view.eval': () => {
       throw new Error('not available in the preview host')
@@ -512,6 +561,7 @@ export function createPreviewBridge(): NativeBridge {
     'voice.start': () => voice.start(),
     'voice.cancel': () => voice.cancel(),
     'voice.openSettings': () => console.info('[zen preview] app settings (microphone)'),
+    'app.openPrivateDnsSettings': () => console.info('[zen preview] private DNS settings'),
     'externalProtocol.respond': ({ requestId, allow }) =>
       console.info('[zen preview] external protocol', requestId, allow ? 'allowed' : 'refused'),
     // The browser role, remembered per preview profile; the "role dialog" is a confirm().
@@ -593,6 +643,79 @@ export function createPreviewBridge(): NativeBridge {
   }
 
   const snapshots = new WeakMap<HTMLIFrameElement, { key: string; data: string | null }>()
+
+  /** How wide a card is, in device pixels, as the chrome said (`thumbnail.configure`). */
+  let cardWidth = 0
+  /** When each tab's card picture was last taken (`performance.now()`), for the freshness rule. */
+  const cardTakenAt = new Map<string, number>()
+
+  /**
+   * The stand-in for Kotlin's card capture (`TabWebView.captureThumbnail`): the frame's cover
+   * capture scaled to the card's width, kept in `localStorage` under the tab, and announced as
+   * `thumbnail.captured`. Not twice within Kotlin's freshness window – a hide right after the
+   * cover it shares the capture with publishes once between them.
+   */
+  async function captureCard(
+    tabId: string,
+    frame: HTMLIFrameElement,
+    capture?: Promise<string | null>
+  ): Promise<void> {
+    const url = frame.dataset.url ?? ''
+    // A frame whose document has not loaded shows white, and a picture of that would take the
+    // place of the one kept from before (Kotlin's `paintedDocument`, BH-33).
+    if (!url || frame.dataset.painted !== url) return
+    const now = performance.now()
+    if (now - (cardTakenAt.get(tabId) ?? -Infinity) < CARD_FRESH_MS) return
+    cardTakenAt.set(tabId, now)
+    const cover = await (capture ?? snapshotFrame(frame))
+    const picture = cover ? await scaleToCard(cover, cardWidth || 480) : null
+    // The page navigated meanwhile: the picture is of the page before (BH-14), and nothing of
+    // it is kept.
+    if (!picture || frame.dataset.url !== url) {
+      cardTakenAt.delete(tabId)
+      return
+    }
+    localStorage.setItem(THUMB_PREFIX + tabId, JSON.stringify({ ...picture, url }))
+    host().hostEvent('thumbnail.captured', JSON.stringify({ tabId, ...picture }))
+  }
+
+  /** `cover` (a data URL) scaled to `width` pixels wide, its aspect kept, as a JPEG. */
+  async function scaleToCard(cover: string, width: number): Promise<ThumbnailPicture | null> {
+    try {
+      const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const img = new Image()
+        img.onload = () => resolve(img)
+        img.onerror = () => reject(new Error('card failed'))
+        img.src = cover
+      })
+      const w = Math.max(1, Math.min(width, image.naturalWidth))
+      const h = Math.max(1, Math.round((image.naturalHeight * w) / image.naturalWidth))
+      const canvas = document.createElement('canvas')
+      canvas.width = w
+      canvas.height = h
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return null
+      ctx.drawImage(image, 0, 0, w, h)
+      return { data: canvas.toDataURL('image/jpeg', 0.8), width: w, height: h }
+    } catch {
+      return null
+    }
+  }
+
+  // The app going to the background (Kotlin's `Host.onPause`): the pages on screen are pictured.
+  // Not on the way out of the document (a reload: `pagehide` comes first, then the hidden
+  // state): nothing could finish, and an image a document loads while unloading is a beacon to
+  // Chromium, which the chrome's connect-src then refuses in the console.
+  let unloading = false
+  window.addEventListener('pagehide', () => {
+    unloading = true
+  })
+  document.addEventListener('visibilitychange', () => {
+    if (unloading || document.visibilityState !== 'hidden') return
+    for (const [tabId, frame] of views) {
+      if (frame.style.display !== 'none') void captureCard(tabId, frame)
+    }
+  })
 
   /**
    * The preview's stand-in for the hosts' page capture: same-origin frames are serialised into an

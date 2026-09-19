@@ -61,8 +61,44 @@ export interface PreviewDownloadSpec {
 /** The most blocked pop-ups a preview seeds on the page (the list scrolls past a handful). */
 export const PREVIEW_POPUPS_MAX = 12
 
+/**
+ * The autofill surfaces a preview state may stage with sample data: the four save prompts and
+ * the passkey chooser (sheets), the picker strip for logins, addresses and cards (behind a
+ * passphrase vault, `?vault=none`, its rows wear the lock and a tap asks for the passphrase),
+ * Settings > Autofill with saved entries (`manager`), with none (`manager-empty`) and behind the
+ * vault gate (`manager-locked`), its two editors (`edit-address` adds one, `edit-card` edits a
+ * saved card) and the vault passphrase dialog a re-authenticated command puts up (`passphrase`,
+ * the real one behind a passphrase vault).
+ */
+export const PREVIEW_AUTOFILL = [
+  'save-login',
+  'update-login',
+  'save-address',
+  'save-card',
+  'passkey-account',
+  'picker',
+  'picker-address',
+  'picker-card',
+  'manager',
+  'manager-empty',
+  'manager-locked',
+  'edit-address',
+  'edit-card',
+  'passphrase'
+] as const
+
+export type PreviewAutofillSurface = (typeof PREVIEW_AUTOFILL)[number]
+
 export type PreviewState =
   | { kind: 'idle' }
+  | {
+      kind: 'autofill'
+      surface: PreviewAutofillSurface
+      /** For a manager surface (the Settings tab): text of a row to scroll into view once it is open. */
+      show?: string
+      /** For a manager surface: steps taken on the page once it is open and scrolled. */
+      then?: PreviewStep[]
+    }
   | {
       /** An internal page in its tab (`page.open`): Settings, on its landing or a section. */
       kind: 'page'
@@ -73,6 +109,15 @@ export type PreviewState =
       /** Text typed into the page's search field once it is open (the Settings landing). */
       search?: string
       /** Steps taken after the page is open, searched and scrolled. */
+      then?: PreviewStep[]
+    }
+  | {
+      /**
+       * The active tab in a group of this many members, made on the spot (the group strip is up
+       * in the bar band); `then` steps are taken once the group has formed.
+       */
+      kind: 'group'
+      members: number
       then?: PreviewStep[]
     }
   | {
@@ -160,9 +205,13 @@ export type PreviewState =
       kind: 'voice'
       script: string
     }
+  /** The tab overview over the active page, as a pull on the pill opens it. */
+  | { kind: 'overview' }
 
 /** More sample banners than the stack holds are pointless. */
 const MAX_PREVIEW_BANNERS = 3
+/** A group of more members than this would only scroll the strip further. */
+const MAX_PREVIEW_GROUP = 24
 
 /** What a spec seeds before its state is applied; `null` leaves the store as it is. */
 export interface PreviewSeed {
@@ -194,13 +243,18 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * A preview state spec is a query string: `idle` (or anything unrecognised), `page=<id>` for an
  * internal page opened in its tab (`section=<id>` for one of its sections, `search=<text>` types
  * into its search field, `show=<text>` scrolls a row into view, `then=<steps>` takes steps on it
- * afterwards, `;`-separated: `tap:<text>`, `back`, `overview`, `urlbar`), `overlay=<kind>` for
+ * afterwards, `;`-separated: `tap:<text>`, `back`, `overview`, `urlbar`), `group=<n>` for the
+ * active tab in a group of n members made on the spot, the group strip up in the bar band (with
+ * `then=<steps>` taken once the group has formed: `tap:Show group, Research` presses the strip's
+ * show chip, `tap:New tab in Research` its plus chip), `overlay=<kind>` for
  * one of PREVIEW_OVERLAYS (with `section=<id>` for an overlay that has sections, `show=<text>`
  * to scroll a row of the overlay into view, and `expand` to rest a sheet that opened at its peek
  * detent on its expanded one), `menu=app` for the app menu sheet (with `show=<text>` to scroll an
  * item into view), `prompt=<permission>` for the active page asking for that permission (the
  * prompt sheet), `private=new` for a blank private tab (`private=<url>` opens one on that page),
- * `find=<text>` for the find bar with that text typed (`find=` opens it empty),
+ * `autofill=<surface>` for one of PREVIEW_AUTOFILL staged with sample data (a manager surface is
+ * the Settings tab on its Autofill section and takes `show=<text>` and `then=<steps>` like
+ * `page`), `find=<text>` for the find bar with that text typed (`find=` opens it empty),
  * `pull=<n>` for the active page held pulled down at n percent of the refresh threshold
  * (`pull=refresh` pulls past it and lets go), `zoom=<factor>` for the page zoom sheet with the
  * active tab's site at that factor (`zoom=` opens it as it is), `error=<code>` for the active
@@ -212,15 +266,17 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * (`size=<bytes>`, `at=<percent>` already received, `speed=<bytes per second>`, `paused`,
  * `fail=<error>`, `deleted` for a finished file since gone from disk, `private`, `url=<url>`,
  * `mime=<type>`), `popups=<n>` for n pop-ups blocked on the active page (`&list` opens the list
- * of them, `&allowed` remembers the site as allowed), or `prompt=http-auth` /
- * `prompt=certificate` for a security dialog over the page (`&failed`, `&proxy`, `&secure` vary
- * the sign-in); `prompt=<any other value>` is the permission that page asks for (the permission
- * prompt sheet), and `private=new|<url>` opens a private tab. When several are given, `page`
- * wins over `overlay`, `overlay` over `menu`, `menu` over the permission `prompt`, that over
- * `private`, `private` over `find`, `find` over `pull`, `pull` over `zoom`, `zoom` over `error`,
- * `error` over the messages, the messages over `webapp`, `webapp` over `download`, `download`
- * over `popups`, and `popups` over the security `prompt`. A leading `#` (the URL hash as read)
- * is ignored.
+ * of them, `&allowed` remembers the site as allowed), `prompt=http-auth` / `prompt=certificate`
+ * for a security dialog over the page (`&failed`, `&proxy`, `&secure` vary the sign-in);
+ * `prompt=<any other value>` is the permission that page asks for (the permission prompt
+ * sheet), `private=new|<url>` opens a private tab, and `overview` opens the tab overview over
+ * the active page (the grid of cards, with whatever pictures the stand-in host has of the tabs).
+ * When several are given, `page` wins over `group`, `group` over `overlay`, `overlay` over
+ * `menu`, `menu` over the permission `prompt`, that over `private`, `private` over `autofill`,
+ * `autofill` over `find`, `find` over `pull`, `pull` over `zoom`, `zoom` over `error`, `error`
+ * over the messages, the messages over `webapp`, `webapp` over `download`, `download` over
+ * `popups`, `popups` over the security `prompt`, and that over `overview`. A leading `#` (the
+ * URL hash as read) is ignored.
  */
 export function parsePreviewSpec(spec: string): PreviewState {
   const params = new URLSearchParams(spec.startsWith('#') ? spec.slice(1) : spec)
@@ -239,6 +295,12 @@ export function parsePreviewSpec(spec: string): PreviewState {
     const then = parsePreviewSteps(params.get('then'))
     if (then.length > 0) state.then = then
     return state
+  }
+  const group = params.get('group')
+  if (group !== null && group !== '' && Number.isFinite(Number(group))) {
+    const members = Math.min(MAX_PREVIEW_GROUP, Math.max(1, Math.floor(Number(group))))
+    const then = parsePreviewSteps(params.get('then'))
+    return then.length > 0 ? { kind: 'group', members, then } : { kind: 'group', members }
   }
   const overlay = params.get('overlay')
   if (overlay !== null && (PREVIEW_OVERLAYS as readonly string[]).includes(overlay)) {
@@ -265,6 +327,18 @@ export function parsePreviewSpec(spec: string): PreviewState {
   const priv = params.get('private')
   if (priv !== null && priv !== '') {
     return { kind: 'private', url: /^https?:\/\//.test(priv) ? priv : null }
+  }
+  const autofill = params.get('autofill')
+  if (autofill !== null && (PREVIEW_AUTOFILL as readonly string[]).includes(autofill)) {
+    const state: Extract<PreviewState, { kind: 'autofill' }> = {
+      kind: 'autofill',
+      surface: autofill as PreviewAutofillSurface
+    }
+    const show = params.get('show')
+    if (show) state.show = show
+    const then = parsePreviewSteps(params.get('then'))
+    if (then.length > 0) state.then = then
+    return state
   }
   const find = params.get('find')
   if (find !== null) return { kind: 'find', text: find }
@@ -325,6 +399,7 @@ export function parsePreviewSpec(spec: string): PreviewState {
   }
   const voice = params.get('voice')
   if (voice !== null) return { kind: 'voice', script: voice || 'heard' }
+  if (params.has('overview')) return { kind: 'overview' }
   return { kind: 'idle' }
 }
 

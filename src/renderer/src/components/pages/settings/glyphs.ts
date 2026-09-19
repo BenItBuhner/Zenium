@@ -40,6 +40,7 @@ export const SECTION_GLYPHS: Readonly<Record<string, LucideIcon>> = {
   privacy: Shield,
   resources: Gauge,
   search: Search,
+  autofill: KeyRound,
   languages: Languages,
   spaces: Waypoints,
   containers: Container,

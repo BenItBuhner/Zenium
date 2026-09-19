@@ -153,9 +153,25 @@ export function sanitizeClosedEntries(raw: unknown): ClosedEntry[] {
 export const NAVIGATION_ENTRIES_MAX = 50
 
 /**
+ * A stack's host state (`NavigationSnapshot.hostState`, Android's `WebView.saveState` bundle as
+ * base64) is kept up to this size, like an entry's page state on desktop; a longer one – a long
+ * stack of pages with big forms – is left out and the host loads the current entry instead.
+ */
+export const NAVIGATION_HOST_STATE_MAX_CHARS = 64 * 1024
+
+/** Whether `value` is a host state blob worth keeping: a non-empty string within the cap. */
+export function isKeepableHostState(value: unknown): value is string {
+  return (
+    typeof value === 'string' && value !== '' && value.length <= NAVIGATION_HOST_STATE_MAX_CHARS
+  )
+}
+
+/**
  * A stored back/forward stack, or null when it is not one. Entries keep their URL and title;
  * `pageState` (the engine's serialised scroll and form state) stays when it is a string. The
- * current index is clamped into the entries that survived.
+ * current index is clamped into the entries that survived. The stack's `hostState` stays only
+ * when it is a string within `NAVIGATION_HOST_STATE_MAX_CHARS` and every entry survived: cut to
+ * `NAVIGATION_ENTRIES_MAX` (or rid of a malformed entry), the list is not the one it describes.
  */
 export function sanitizeSnapshot(value: unknown): NavigationSnapshot | null {
   if (!value || typeof value !== 'object') return null
@@ -177,7 +193,10 @@ export function sanitizeSnapshot(value: unknown): NavigationSnapshot | null {
   const kept = entries.slice(-NAVIGATION_ENTRIES_MAX)
   const dropped = entries.length - kept.length
   const index = Math.min(Math.max(Math.round(s.index) - dropped, 0), kept.length - 1)
-  return { entries: kept, index }
+  const out: NavigationSnapshot = { entries: kept, index }
+  if (kept.length === s.entries.length && isKeepableHostState(s.hostState))
+    out.hostState = s.hostState
+  return out
 }
 
 // ---------------------------------------------------------------------------

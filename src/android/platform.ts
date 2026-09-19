@@ -6,7 +6,8 @@ import type {
   HostCapabilities,
   PageEnvironment,
   Platform as PlatformOs,
-  ShareAction
+  ShareAction,
+  ThumbnailPicture
 } from '@shared/types'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '@shared/types'
 import { interruptReasonFrom, resolveDownloadSettings } from '@shared/downloads'
@@ -23,6 +24,7 @@ import {
 import { Browser } from '@core/browser'
 import type { HostExternalRequest } from '@core/externalProtocols'
 import { NoExtensions } from '@core/hostDefaults'
+import type { SelectionToolbarItem } from '@core/menus'
 import { RendererMenuHost } from '@core/rendererMenus'
 import type { ZenWindow } from '@core/window'
 import type {
@@ -52,6 +54,7 @@ import type {
   ShortcutHost,
   VoiceHost,
   SystemAutofillStatus,
+  ThumbnailHost,
   UpdateHost,
   WindowHost,
   WindowHostFactory
@@ -83,7 +86,7 @@ import { AndroidNewTabBackground } from './newTabBackground'
 import { AndroidSiteData } from './siteData'
 import { AndroidStoreIO } from './storeIo'
 import { AndroidTranslateHost, type TranslateProgressEvent } from './translate'
-import { AndroidTabViewHost, type ViewEventPayloads } from './views'
+import { AndroidTabViewHost, type HostHistory, type ViewEventPayloads } from './views'
 
 /** Android 13 (Tiramisu): the first release whose clipboard shows its own "copied" chip. */
 const CLIPBOARD_CHIP_SDK = 33
@@ -147,7 +150,11 @@ export function androidCapabilities({
     pageTabs: true,
     pinShortcuts: false,
     translate: true,
-    voiceSearch: false
+    voiceSearch: false,
+    // The WebView's floating action mode, with Zenium's items added after Copy (`TabWebView.kt`).
+    selectionToolbar: true,
+    // One document: the picker is drawn in the chrome, above the keyboard.
+    popupSurface: false
   }
 }
 
@@ -318,11 +325,30 @@ export interface HostEventPayloads {
   'externalProtocol.request': HostExternalRequest
   /** A tap on one of Zenium's own buttons in the system share sheet (Android 14). */
   'share.action': ShareAction
+  /**
+   * A Zenium item of a page's floating text-selection toolbar was touched (`TabWebView.kt`,
+   * the items `selectionMenu` listed): the action's id, the text selected at the touch and
+   * where the selection sits in the page (0…1 of its width and height).
+   */
+  'selection.action': {
+    tabId: string
+    id: string
+    text: string
+    originX?: number
+    originY?: number
+  }
   pause: void
   /** The window is coming back on screen after being hidden (screen off, another app in front). */
   resume: void
   /** A page view's visibility change (`view.setVisible`) is on screen (`Host.setTabVisible`). */
   'view.drawn': { tabId: string; visible: boolean }
+  /** Kotlin took a tab card picture and has it on disk (`Thumbnails.kt`). */
+  'thumbnail.captured': ThumbnailPicture & { tabId: string }
+  /**
+   * A tab WebView's back/forward list changed, as the app-wide form of the view event of the
+   * same name (`AndroidTabView.dispatch('historyChanged')`): routed to the view named.
+   */
+  historyChanged: HostHistory & { tabId: string }
   'download.started': {
     token: string
     url: string
@@ -768,6 +794,11 @@ export class AndroidPlatform implements Platform {
   readonly translate: AndroidTranslateHost
   readonly shortcuts: ShortcutHost
   readonly voice: VoiceHost
+  /**
+   * Tab card pictures, Kotlin's (`Thumbnails.kt`, `cacheDir/zen-thumbs/<tabId>.jpg`): it takes
+   * them and raises `thumbnail.captured`; the chrome reads one when it shows the card.
+   */
+  readonly thumbnails: ThumbnailHost
   /** The new tab page's picked wallpaper, in its own document (`newtab-wallpaper.json`). */
   readonly newTabBackground: AndroidNewTabBackground
   browser!: Browser
@@ -849,7 +880,8 @@ export class AndroidPlatform implements Platform {
       openPath: (path) => bridge.call('app.openPath', { path }),
       showItemInFolder: () => bridge.send('download.showAll'),
       share: (payload) => bridge.call('app.share', payload),
-      openAppLinkSettings: () => bridge.send('app.openAppLinkSettings')
+      openAppLinkSettings: () => bridge.send('app.openAppLinkSettings'),
+      openPrivateDnsSettings: () => bridge.send('app.openPrivateDnsSettings')
     }
     this.externalProtocols = {
       respond: (requestId, allow) => bridge.send('externalProtocol.respond', { requestId, allow })
@@ -959,6 +991,12 @@ export class AndroidPlatform implements Platform {
       cancel: () => bridge.send('voice.cancel'),
       openSettings: () => bridge.send('voice.openSettings')
     }
+    this.thumbnails = {
+      configure: (width) => bridge.send('thumbnail.configure', { width }),
+      load: (tabId, url) => bridge.call<ThumbnailPicture | null>('thumbnail.load', { tabId, url }),
+      drop: (tabId, url) => bridge.send('thumbnail.drop', url === undefined ? { tabId } : { tabId, url }),
+      sweep: (keep) => bridge.send('thumbnail.sweep', { keep })
+    }
     this.events.send('insets', boot.insets)
   }
 
@@ -1020,6 +1058,16 @@ export class AndroidPlatform implements Platform {
     if (name === 'destroyed') this.views.forget(tabId)
   }
 
+  /**
+   * Zenium's items for the floating toolbar over a page's selected text (`TabWebView.kt` asks
+   * as the system's action mode comes up, and again as the selection changes): ids and titles
+   * in order, from the one list the page context menu draws from (`Menus.selectionToolbar`).
+   */
+  selectionMenu(tabId: string, request: { text?: unknown }): SelectionToolbarItem[] {
+    const text = typeof request.text === 'string' ? request.text : ''
+    return this.browser.menus.selectionToolbar(tabId, text)
+  }
+
   /** A physical key pressed while a page WebView had focus (already matched by Kotlin). */
   viewKey(tabId: string | null, input: KeyEventInput): boolean {
     if (tabId === null) return this.browser.keys.handle(input, null, this.window)
@@ -1036,6 +1084,14 @@ export class AndroidPlatform implements Platform {
       case 'view.drawn':
         this.events.send('view.drawn', payload as HostEventPayloads['view.drawn'])
         return
+      case 'thumbnail.captured':
+        this.events.send('thumbnail.captured', payload as HostEventPayloads['thumbnail.captured'])
+        return
+      case 'historyChanged': {
+        const p = payload as Partial<HostEventPayloads['historyChanged']>
+        if (typeof p.tabId === 'string') this.viewEvent(p.tabId, 'historyChanged', p as HostHistory)
+        return
+      }
       case 'environment':
         browser.pageControls.setEnvironment(payload as HostEventPayloads['environment'])
         return
@@ -1078,6 +1134,22 @@ export class AndroidPlatform implements Platform {
       case 'share.action':
         browser.onShareAction(payload as HostEventPayloads['share.action'], this.window)
         return
+      case 'selection.action': {
+        // The host's payload, checked before it names an action: the text is a page's.
+        const action = payload as Partial<HostEventPayloads['selection.action']>
+        if (
+          typeof action.tabId !== 'string' ||
+          typeof action.id !== 'string' ||
+          typeof action.text !== 'string'
+        )
+          return
+        const origin =
+          typeof action.originX === 'number' && typeof action.originY === 'number'
+            ? { x: action.originX, y: action.originY }
+            : undefined
+        browser.menus.runSelectionAction(action.tabId, action.id, action.text, origin)
+        return
+      }
       case 'pause':
         browser.flushSync()
         return
