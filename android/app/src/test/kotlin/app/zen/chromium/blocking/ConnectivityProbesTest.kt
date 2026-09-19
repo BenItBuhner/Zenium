@@ -4,22 +4,28 @@ import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 
 /**
  * The builtin connectivity-probe exceptions (`src/core/blocking/connectivityProbes.ts`) as this
- * engine reads them from `blocking/index.json`. The fixture under `src/test/resources/blocking`
- * is the set exactly as the core's store writes it; `service.test.ts` on the TypeScript side
- * asserts the two never drift apart.
+ * engine reads them from `blocking/index.json` and the set's document under `blocking/sets/`.
+ * The fixtures under `src/test/resources/blocking` are the set exactly as the core's store
+ * writes it – its summary and, at the name the summary gives, its document; `service.test.ts`
+ * on the TypeScript side asserts the two never drift apart.
  */
 class ConnectivityProbesTest {
-    private val entry: JSONObject = JSONObject(
-        checkNotNull(javaClass.getResourceAsStream("/blocking/connectivity-probes.json")) {
-            "fixture missing: android/app/src/test/resources/blocking/connectivity-probes.json"
+    private fun resource(name: String): String =
+        checkNotNull(javaClass.getResourceAsStream("/blocking/$name")) {
+            "fixture missing: android/app/src/test/resources/blocking/$name"
         }.bufferedReader().readText()
-    )
-    private val probes: RuleSetInfo = checkNotNull(RuleSetInfo.parse(entry)) { "the fixture did not parse" }
+
+    private val entry: JSONObject = JSONObject(resource("connectivity-probes.json"))
+    private val document: JSONObject = JSONObject(resource(entry.getString("document")))
+    private val probes: RuleSetInfo =
+        checkNotNull(RuleSetInfo.parse(entry, document.getJSONArray("rules"))) { "the fixture did not parse" }
 
     /** EasyPrivacy's `generate_204` heuristic and a tracker on the sign-in host, as the lists would have them. */
     private val lists = TextEngine.parse(listOf("/generate_204?\$image\n||accounts.google.com/tracker.gif\n"))
@@ -97,16 +103,44 @@ class ConnectivityProbesTest {
     }
 
     @Test
-    fun theIndexEntryCarriesTheRulesInlineForThisEngine() {
-        // What `Blocking.readIndex` needs: structured rules in the entry, no text file to look up.
-        assertTrue(entry.has("rules"))
-        assertEquals(probeUrls.size, entry.getJSONArray("rules").length())
+    fun theSummaryNamesTheDocumentThatCarriesTheRulesForThisEngine() {
+        // What `Blocking.readIndex` needs: a summary naming the set's document and its tag, the
+        // structured rules in that document under the set's own id, no text file to look up.
+        assertFalse(entry.has("rules"))
+        assertEquals(probeUrls.size, entry.getInt("ruleCount"))
+        assertTrue(entry.getString("document").startsWith("sets/builtin_connectivity-probes-"))
+        assertTrue(entry.getString("tag").isNotEmpty())
         assertFalse(entry.optBoolean("hasFilterText", true))
+        assertEquals("builtin:connectivity-probes", document.getString("id"))
+        val rules = document.getJSONArray("rules")
+        assertEquals(probeUrls.size, rules.length())
         for (i in probeUrls.indices) {
-            val rule = entry.getJSONArray("rules").getJSONObject(i)
+            val rule = rules.getJSONObject(i)
             assertEquals(i + 1, rule.getInt("id"))
             assertEquals("allow", rule.getJSONObject("action").getString("type"))
             assertEquals("||${probeUrls[i]}^", rule.getJSONObject("condition").getString("urlFilter"))
         }
+    }
+
+    @Test
+    fun theEngineReadsTheFixtureThroughTheIndexReaderAsItReadsTheProfile() {
+        val index = """{"version":2,"sets":[${entry}]}"""
+        val opened = ArrayList<String>()
+        val reader = IndexReader { fail("no set left out: $it") }
+        val sets = reader.read(index) { name -> opened.add(name); resource(name) }
+        assertEquals(listOf(entry.getString("document")), opened)
+        val read = sets.single()
+        assertEquals(probes.id, read.id)
+        assertEquals(probes.priority, read.priority)
+        assertEquals(probes.rules.map { it.id }, read.rules.map { it.id })
+        assertEquals("${probes.priority}:${entry.getString("tag")}", read.compiled.fingerprint)
+        val snap = EngineSnapshot(sets, lists)
+        val allowed = snap.decide(Request("https://accounts.google.com/generate_204?x", ResourceType.IMAGE, signIn))
+        assertEquals(Decision.Action.ALLOW, allowed.action)
+        assertEquals("builtin:connectivity-probes", allowed.matchedSet)
+        // Read again from the same summary: the document stays closed, the compiled rules are shared.
+        val again = reader.read(index) { name -> opened.add(name); resource(name) }
+        assertEquals(1, opened.size)
+        assertSame(read.compiled, again.single().compiled)
     }
 }

@@ -123,6 +123,39 @@ describe('AndroidStoreIO', () => {
       expect(files).toEqual({ 'state.json': '{}' })
     })
 
+    it('hands a rule set’s document under blocking/sets/ to the store once, deferred or inlined, and never mirrors it', async () => {
+      const big = 'blocking/sets/ext_a_static_ruleset_1-0c0ffee0.json'
+      const small = 'blocking/sets/user.json'
+      const rules = `{"id":"ext:a:static:ruleset_1","rules":[${'{"id":1,"action":{"type":"block"},"condition":{"urlFilter":"||ads.example^"}},'.repeat(3000)}null]}`
+      const user = '{"id":"user","rules":[]}'
+      const { bridge, calls } = fakeBridge({ [big]: rules, [small]: user })
+      const files = { 'blocking/index.json': INDEX, [small]: user }
+      const io = new AndroidStoreIO(bridge, files, manifest(big))
+      // The small document the payload inlined is handed over like a deferred one, not mirrored.
+      expect(files).toEqual({ 'blocking/index.json': INDEX })
+      io.adopt({ [big]: rules })
+      expect(io.exists(big)).toBe(true)
+      expect(io.readSync(big)).toBe(rules)
+      expect(io.readSync(small)).toBe(user)
+      // The store keeps the rules parsed; the chrome holds no second copy of the megabytes.
+      expect(calls).toEqual([])
+      expect(files).toEqual({ 'blocking/index.json': INDEX })
+      expect(io.readSync(big)).toBe(rules)
+      expect(calls).toEqual([{ method: 'storage.read', args: { name: big } }])
+      // A rewrite (a dynamic rule) goes to the host every time – the store itself skips a
+      // document whose bytes did not change – and is not kept here either.
+      const changed = user.replace(
+        '[]',
+        '[{"id":1,"action":{"type":"block"},"condition":{"urlFilter":"||x^"}}]'
+      )
+      await io.write(small, changed)
+      await io.write(small, changed)
+      expect(calls.slice(1).map((c) => c.method)).toEqual(['storage.write', 'storage.write'])
+      expect(files).toEqual({ 'blocking/index.json': INDEX })
+      await io.remove(small)
+      expect(calls.at(-1)).toEqual({ method: 'storage.remove', args: { name: small } })
+    })
+
     it('mirrors a deferred root document or rule index like one the payload carried inline', () => {
       const { bridge, calls } = fakeBridge()
       const io = new AndroidStoreIO(

@@ -251,9 +251,9 @@ class CompiledRules private constructor(val rules: List<DnrRule>, val fingerprin
 }
 
 /**
- * A rule set as the core persists it (`blocking/index.json` entry or a `blocking.sync` change):
- * metadata, compiled structured rules (and their [RuleIndex]), the partitions it is scoped to,
- * and where its filter text lives.
+ * A rule set as the core persists it (a `blocking/index.json` summary with the structured rules
+ * of its `blocking/sets/` document, or a `blocking.sync` change): metadata, compiled structured
+ * rules (and their [RuleIndex]), the partitions it is scoped to, and where its filter text lives.
  */
 class RuleSetInfo(
     val id: String,
@@ -291,8 +291,12 @@ class RuleSetInfo(
     }
 
     companion object {
-        /** One entry of the index as an `org.json` document (the tests' fixtures; the engine reads the file through [IndexReader]). */
-        fun parse(o: JSONObject): RuleSetInfo? {
+        /**
+         * One entry of the index as an `org.json` document with its `rules` – inline in a
+         * version-1 entry, or passed in from the set's document (`blocking/sets/<name>.json`) for
+         * a summary. The tests' fixtures; the engine reads the files through [IndexReader].
+         */
+        fun parse(o: JSONObject, rules: JSONArray? = o.optJSONArray("rules")): RuleSetInfo? {
             val id = o.optString("id")
             if (id.isEmpty() || !o.has("priority")) return null
             val priority = o.optInt("priority")
@@ -310,7 +314,7 @@ class RuleSetInfo(
                 source = o.optString("source", "filter-list"),
                 priority = priority,
                 enabled = o.optBoolean("enabled", true),
-                compiled = CompiledRules.parse(o.optJSONArray("rules"), priority),
+                compiled = CompiledRules.parse(rules, priority),
                 hasFilterText = hasText,
                 file = o.optString("file").takeIf { hasText && it.isNotEmpty() },
                 updatedAt = o.optLong("updatedAt", 0L),

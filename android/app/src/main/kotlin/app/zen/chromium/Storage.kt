@@ -15,12 +15,13 @@ import java.util.concurrent.Executors
  * `files/zen/`. Writes go to a temp file that is renamed over the target, mirroring the Electron
  * host.
  *
- * Names may carry one directory level (`blocking/index.json`): the core's rule sets live in
- * `blocking/` and are read by the Kotlin request engine from the same files, and the Safe
- * Browsing feed documents live in `safebrowsing/`. What the core reads at boot ([bootDocuments])
- * travels inline in the boot payload while small, and is fetched through the chrome WebView's
- * document handler (`BootHandoff.kt`) once it is not; the (megabytes of) filter text stays on
- * disk and is read on demand.
+ * Names may carry one directory level (`blocking/index.json`), two for the rule sets' documents
+ * alone (`blocking/sets/<name>.json`): the core's rule sets live in `blocking/` and are read by
+ * the Kotlin request engine from the same files, and the Safe Browsing feed documents live in
+ * `safebrowsing/`. What the core reads at boot ([bootDocuments]) travels inline in the boot
+ * payload while small, and is fetched through the chrome WebView's document handler
+ * (`BootHandoff.kt`) once it is not; the (megabytes of) filter text stays on disk and is read
+ * on demand.
  *
  * The directory is a constructor argument so the JUnit tests can point an instance at a
  * temporary folder; the app passes its `files/zen/`.
@@ -59,34 +60,39 @@ class Storage(private val dir: File) {
     fun readAll(): JSONObject = bootDocuments(Long.MAX_VALUE).files
 
     /**
-     * The root documents, the blocking index and the Safe Browsing feed documents, in the order
-     * the payload lists them: the root first, by name, then the folders.
+     * The root documents, the blocking index and its set documents, and the Safe Browsing feed
+     * documents, in the order the payload lists them: the root first, by name, then the folders.
      */
     private fun bootFiles(): List<Pair<String, File>> {
         val out = ArrayList<Pair<String, File>>()
         dir.listFiles { f -> f.isFile && f.name.endsWith(".json") }?.sortedBy { it.name }?.forEach { out.add(it.name to it) }
         fileFor(BLOCKING_INDEX)?.takeIf { it.isFile }?.let { out.add(BLOCKING_INDEX to it) }
-        for (name in list(SAFE_BROWSING_DIR).sorted()) {
-            if (!name.endsWith(".json")) continue
-            fileFor(name)?.takeIf { it.isFile }?.let { out.add(name to it) }
+        for (folder in listOf(BLOCKING_SETS_DIR, SAFE_BROWSING_DIR)) {
+            for (name in list(folder).sorted()) {
+                if (!name.endsWith(".json")) continue
+                fileFor(name)?.takeIf { it.isFile }?.let { out.add(name to it) }
+            }
         }
         return out
     }
 
     /**
      * Whether a name is one [bootFiles] can list – a root `*.json` document, the blocking index,
-     * a Safe Browsing feed document – and so one the document handler serves. Not the filter
-     * text under `blocking/`, not a backup, not a temp file: those the chrome reads through the
-     * bridge when it needs them, as before.
+     * a rule set's document under `blocking/sets/`, a Safe Browsing feed document – and so one
+     * the document handler serves. Not the filter text under `blocking/`, not a backup, not a
+     * temp file: those the chrome reads through the bridge when it needs them, as before.
      */
     fun isBootDocument(name: String): Boolean {
         val parts = name.split('/').filter { it.isNotEmpty() }
         return when (parts.size) {
-            1 -> parts[0].endsWith(".json") && parts[0] != ".json"
-            2 -> parts[0] == SAFE_BROWSING_DIR && parts[1].endsWith(".json") || parts == BLOCKING_INDEX.split('/')
+            1 -> isJsonName(parts[0])
+            2 -> parts[0] == SAFE_BROWSING_DIR && isJsonName(parts[1]) || parts == BLOCKING_INDEX.split('/')
+            3 -> parts[0] == BLOCKING_DIR && parts[1] == BLOCKING_SETS && isJsonName(parts[2])
             else -> false
         }
     }
+
+    private fun isJsonName(name: String): Boolean = name.endsWith(".json") && name != ".json"
 
     /**
      * The version tag of a document: its size and its modification time. Every write changes it
@@ -126,17 +132,22 @@ class Storage(private val dir: File) {
 
     fun exists(name: String): Boolean = fileFor(name)?.isFile == true
 
-    /** The documents under one directory level (`safebrowsing`), as names (`safebrowsing/urlhaus.json`). */
+    /** The documents under a directory (`safebrowsing`, `blocking/sets`), as names (`safebrowsing/urlhaus.json`). */
     fun list(dir: String): List<String> {
         val folder = fileFor(dir) ?: return emptyList()
         if (folder == this.dir || !folder.isDirectory) return emptyList()
-        return folder.listFiles { f -> f.isFile && !f.name.endsWith(".tmp") }?.map { "${folder.name}/${it.name}" } ?: emptyList()
+        val prefix = dir.split('/').filter { it.isNotEmpty() }.joinToString("/")
+        return folder.listFiles { f -> f.isFile && !f.name.endsWith(".tmp") }?.map { "$prefix/${it.name}" } ?: emptyList()
     }
 
-    /** The file a document name resolves to (null for names that escape the storage directory). */
+    /**
+     * The file a document name resolves to: null for names that escape the storage directory
+     * and for a second directory level anywhere but under `blocking/sets/`.
+     */
     fun fileFor(name: String): File? {
         val parts = name.split('/').filter { it.isNotEmpty() }
-        if (parts.isEmpty() || parts.size > 2) return null
+        if (parts.isEmpty() || parts.size > 3) return null
+        if (parts.size == 3 && (parts[0] != BLOCKING_DIR || parts[1] != BLOCKING_SETS)) return null
         var file = dir
         for (part in parts) {
             if (part == "." || part == "..") return null
@@ -256,6 +267,9 @@ class Storage(private val dir: File) {
         /** The rule-set index the core keeps (`src/core/blocking/store.ts`). */
         const val BLOCKING_DIR = "blocking"
         const val BLOCKING_INDEX = "$BLOCKING_DIR/index.json"
+        private const val BLOCKING_SETS = "sets"
+        /** The rule sets' documents (`SETS_DIR` in `store.ts`): one `<name>.json` of structured rules per set. */
+        const val BLOCKING_SETS_DIR = "$BLOCKING_DIR/$BLOCKING_SETS"
         /** The Safe Browsing feed documents (`SAFE_BROWSING_DIR` in `src/core/safebrowsing/service.ts`). */
         const val SAFE_BROWSING_DIR = "safebrowsing"
         private val UNSAFE = Regex("[^A-Za-z0-9._-]")
