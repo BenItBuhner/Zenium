@@ -129,6 +129,7 @@ export class PageControls {
   onViewCreated(tab: Tab, view: TabView): void {
     if (!this.enabled && !isWebPage(tab.url)) {
       if (tab.zoom !== 1) view.setZoom(tab.zoom)
+      this.undarken(view)
       return
     }
     tab.zoom = this.applyTo(view, tab.url)
@@ -142,9 +143,19 @@ export class PageControls {
   onNavigated(tab: Tab, view: TabView): void {
     if (!this.enabled && !isWebPage(tab.url)) {
       tab.zoom = view.getZoom()
+      this.undarken(view)
       return
     }
     tab.zoom = this.applyTo(view, tab.url)
+  }
+
+  /**
+   * A page that is not a web page is never darkened – `zen://reader` has a theme of its own, an
+   * error page and a file have Zenium's – and the override a darkened web page left on the view
+   * outlives the navigation, so it is taken off here.
+   */
+  private undarken(view: TabView): void {
+    if (this.darkening) view.setDarkening?.(false)
   }
 
   /** Whether pages can be darkened on this host (the "Apply dark theme to sites" rows). */

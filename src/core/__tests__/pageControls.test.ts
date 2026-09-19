@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import type { HostCapabilities, PageRules, Platform as PlatformOs } from '../../shared/types'
 import { Browser } from '../browser'
-import type { AppHost, Platform, StoreIO, TabView, TabViewHost, WindowHost } from '../platform'
+import type {
+  AppHost,
+  Platform,
+  StoreIO,
+  TabView,
+  TabViewEvents,
+  TabViewHost,
+  WindowHost
+} from '../platform'
 import type { ZenWindow } from '../window'
 
 /** In-memory documents; `state.json` is what the settings round-trip through. */
@@ -32,6 +40,9 @@ interface Recorded {
   darken: boolean[]
   loads: string[]
   reloads: number
+  events: TabViewEvents
+  /** The page committed a navigation to `url` (what the engine reports through the events). */
+  navigate: (url: string) => void
 }
 
 type Host = 'android' | 'desktop'
@@ -82,13 +93,26 @@ function fakePlatform(
         })
     },
     views: stub<TabViewHost>({
-      createView: (tab) => {
-        const record: Recorded = { zoom: [], desktop: [], darken: [], loads: [], reloads: 0 }
+      createView: (tab, events) => {
+        let url = tab.url
+        const record: Recorded = {
+          zoom: [],
+          desktop: [],
+          darken: [],
+          loads: [],
+          reloads: 0,
+          events,
+          navigate: (next: string) => {
+            url = next
+            events.onNavigated(next, false)
+          }
+        }
         records.set(tab.id, record)
         let zoom = 1
         return stub<TabView>({
           isDestroyed: () => false,
           isVisible: () => false,
+          getURL: () => url,
           getZoom: () => zoom,
           setZoom: (factor: number) => {
             zoom = factor
@@ -327,6 +351,27 @@ describe('zoom memory on the desktop', () => {
       'github.com': false
     })
     expect(platform.rules).toEqual([])
+  })
+
+  it('takes the darkening off a page that leaves the web for the reader or an error page', () => {
+    // The DevTools override outlives a navigation, and zen://reader has a theme of its own (a
+    // sepia article came out inverted before the page was undarkened on the way in).
+    const { browser, platform, win } = start(memoryIo(), 'desktop', true)
+    browser.handleCommand(win, 'settings.update', { pageControls: { darkenSites: true } })
+    const tab = browser.tabs.createTab({ url: 'https://example.com/story', active: true }, win)
+    const record = platform.records.get(tab.id)!
+    expect(last(record.darken)).toBe(true)
+    record.navigate('zen://reader?url=https%3A%2F%2Fexample.com%2Fstory')
+    expect(last(record.darken)).toBe(false)
+    // Back on the web the site's rule applies again.
+    record.navigate('https://example.com/next')
+    expect(last(record.darken)).toBe(true)
+    // A restored reader tab is created undarkened as well.
+    const reader = browser.tabs.createTab(
+      { url: 'zen://reader?url=https%3A%2F%2Fexample.com%2Fother', active: false },
+      win
+    )
+    expect(platform.records.get(reader.id)!.darken).toEqual([false])
   })
 
   it("climbs Chrome's presets to 500 percent and down to 25", () => {
