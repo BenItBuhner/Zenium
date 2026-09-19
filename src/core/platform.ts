@@ -244,9 +244,18 @@ export interface LoadDetails {
 }
 
 export interface PageContextParams {
-  /** Click position in the view's coordinates (DIP), as the host's `context-menu` event gives it. */
+  /**
+   * Click position in the view's coordinates (DIP), as the host's `context-menu` event gives it;
+   * for the keyboard (Shift+F10, the Menu key) Chromium reports the caret or the focused
+   * element's middle.
+   */
   x: number
   y: number
+  /**
+   * What asked for the menu, as Chromium names it (`menuSourceType`): `'keyboard'` opens the
+   * menu at `x`,`y` with its first item selected; a pointer opens it at the pointer.
+   */
+  menuSourceType?: MenuSourceType
   linkURL: string
   /** Text of the clicked link (Edge's "Copy link text"); empty for image links. */
   linkText?: string
@@ -274,6 +283,20 @@ export interface PageContextParams {
     canSelectAll: boolean
   }
 }
+
+/** Chromium's `ui::MenuSourceType` names, as Electron's `context-menu` event reports them. */
+export type MenuSourceType =
+  | 'none'
+  | 'mouse'
+  | 'keyboard'
+  | 'touch'
+  | 'touchMenu'
+  | 'longPress'
+  | 'longTap'
+  | 'touchHandle'
+  | 'stylus'
+  | 'adjustSelection'
+  | 'adjustSelectionReset'
 
 /** Chromium's media flags of a clicked media element (the subset the menus read). */
 export interface MediaContextFlags {
@@ -304,9 +327,11 @@ export const CHROME_MENU_TARGETS: readonly ChromeMenuTarget[] = ['urlbar', 'urlp
  * (`data-zen-menu` in the renderer; null when none).
  */
 export interface ChromeContextParams {
-  /** Click position in chrome CSS pixels. */
+  /** Click position in chrome CSS pixels (the caret or the focused element's middle for the keyboard). */
   x: number
   y: number
+  /** Raised by Shift+F10 or the Menu key: the menu opens at `x`,`y` with its first item selected. */
+  keyboard?: boolean
   /** `data-zen-menu` of the innermost marked element under the pointer, or null. */
   target: ChromeMenuTarget | null
   /** Tab the marked element acts on (`data-zen-menu-tab`); null for a new-tab URL bar. */

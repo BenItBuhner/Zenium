@@ -1,6 +1,7 @@
 import type { JSX } from 'react'
 import type { Tab } from '@shared/types'
 import { run } from '@renderer/lib/api'
+import { contextMenuAnchor } from '@renderer/lib/menuKeys'
 import { dropStore, startTabDrag } from '@renderer/lib/drag'
 import { activeTab, tabTitle, tabTooltip } from '@renderer/lib/selectors'
 import { stripFocusIn, stripFocusOut, stripKeyDown, useStripTabIndex } from '@renderer/lib/tabStrip'
@@ -127,11 +128,12 @@ function EssentialTile({
       }}
       onContextMenu={(e) => {
         e.preventDefault()
+        const anchor = contextMenuAnchor(e)
         const ids = uiStore.get().selectedTabIds
         if (ids.length > 1 && ids.includes(tab.id))
-          return run('tab.selectionContextMenu', { tabIds: ids })
+          return run('tab.selectionContextMenu', { tabIds: ids, ...anchor })
         clearTabSelection()
-        run('tab.contextMenu', { tabId: tab.id })
+        run('tab.contextMenu', { tabId: tab.id, ...anchor })
       }}
     >
       {showDropZones && (

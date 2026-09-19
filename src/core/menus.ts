@@ -16,6 +16,7 @@ import {
   type BookmarkNode,
   type BookmarksBarMode,
   type DownloadDeleteFileResult,
+  type MenuAnchor,
   type MenuItemDescriptor,
   type Rect,
   type Settings,
@@ -181,16 +182,30 @@ export class Menus {
     }, APPLICATION_MENU_DEBOUNCE_MS)
   }
 
-  private popup(
-    template: Template,
-    win: ZenWindow,
-    source: MenuSource,
-    anchor?: { x?: number; y?: number; keyboard?: boolean }
-  ): void {
+  private popup(template: Template, win: ZenWindow, source: MenuSource, anchor?: MenuAnchor): void {
     const items = withAccelerators(tidySeparators(template), this.browser.state.shortcuts, (a) =>
       this.browser.actions.run(a, { sourceTabId: null, win })
     )
     this.browser.platform.menus.popup(items, { source, win, ...anchor })
+  }
+
+  /**
+   * Where a page's menu opens for Shift+F10 or the Menu key (Chrome's rule): at the caret or the
+   * focused element, where Chromium reports the event, with the first item selected. The
+   * event's coordinates are the view's; the window's come from where the chrome placed it. A
+   * pointer's menu opens at the pointer, which the host does by itself.
+   */
+  private pageAnchor(tabId: string, params: PageContextParams, win: ZenWindow): MenuAnchor {
+    if (params.menuSourceType !== 'keyboard') return {}
+    const rect = win.viewRect(tabId)
+    return rect
+      ? { x: rect.x + params.x, y: rect.y + params.y, keyboard: true }
+      : { keyboard: true }
+  }
+
+  /** The chrome document's own: the event's coordinates are the window's already. */
+  private chromeAnchor(params: ChromeContextParams): MenuAnchor {
+    return params.keyboard ? { x: params.x, y: params.y, keyboard: true } : {}
   }
 
   private containerSubmenu(onPick: (containerId: string) => void): Template {
@@ -281,7 +296,7 @@ export class Menus {
       })
     }
     groups.push(developer)
-    this.popup(joinGroups(groups), win, 'page')
+    this.popup(joinGroups(groups), win, 'page', this.pageAnchor(tabId, params, win))
   }
 
   /**
@@ -969,9 +984,10 @@ export class Menus {
   async showChromeContextMenu(params: ChromeContextParams, win: ZenWindow): Promise<void> {
     const { tabs, state } = this.browser
     const tab = params.tabId ? tabs.tab(params.tabId) : undefined
+    const anchor = this.chromeAnchor(params)
     if (params.target === 'reload') {
       if (!tab || !state.devtoolsOpenFor.has(tab.id)) return
-      this.popup(this.reloadItems(tab), win, 'urlbar')
+      this.popup(this.reloadItems(tab), win, 'urlbar', anchor)
       return
     }
     if (params.target === 'urlbar' || params.target === 'urlpill') {
@@ -1012,14 +1028,15 @@ export class Menus {
           click: () => void this.browser.pages.open('settings', 'search', win)
         }
       ])
-      this.popup(joinGroups(groups), win, 'urlbar')
+      this.popup(joinGroups(groups), win, 'urlbar', anchor)
       return
     }
     if (params.isEditable) {
-      this.popup(this.editGroup(params), win, 'urlbar')
+      this.popup(this.editGroup(params), win, 'urlbar', anchor)
       return
     }
-    if (params.selectionText.trim()) this.popup([{ label: 'Copy', role: 'copy' }], win, 'urlbar')
+    if (params.selectionText.trim())
+      this.popup([{ label: 'Copy', role: 'copy' }], win, 'urlbar', anchor)
   }
 
   /** Chrome's "Always show full URLs": the address pill's elision setting (`showFullUrls`). */
@@ -1065,7 +1082,7 @@ export class Menus {
    * The context menu of an extension's toolbar button: Chrome's layout of the extension's own
    * `contextMenus` items (`action` / `browser_action` contexts) above the browser's entries.
    */
-  showExtensionActionMenu(id: string, win: ZenWindow, anchor?: { x: number; y: number }): void {
+  showExtensionActionMenu(id: string, win: ZenWindow, anchor?: MenuAnchor): void {
     const { extensions } = this.browser
     const info = extensions.list().find((entry) => entry.id === id)
     if (!info) return
@@ -1206,7 +1223,7 @@ export class Menus {
   // Tabs
   // ---------------------------------------------------------------------------
 
-  showTabContextMenu(tabId: string, win: ZenWindow): void {
+  showTabContextMenu(tabId: string, win: ZenWindow, anchor?: MenuAnchor): void {
     const { tabs, state } = this.browser
     const tab = tabs.tab(tabId)
     if (!tab) return
@@ -1446,11 +1463,11 @@ export class Menus {
         ? [{ label: 'Remove Tab', click: () => void tabs.requestClose(tabId, true, win) }]
         : [])
     ]
-    this.popup(template, win, 'tab')
+    this.popup(template, win, 'tab', anchor)
   }
 
   /** Zen: select several tabs (Ctrl / Shift+click) and act on all of them at once. */
-  showSelectionContextMenu(tabIds: string[], win: ZenWindow): void {
+  showSelectionContextMenu(tabIds: string[], win: ZenWindow, anchor?: MenuAnchor): void {
     const { tabs, state } = this.browser
     const m = state.model
     const selected = tabIds
@@ -1549,11 +1566,12 @@ export class Menus {
         }
       ],
       win,
-      'selection'
+      'selection',
+      anchor
     )
   }
 
-  showNewTabContextMenu(win: ZenWindow): void {
+  showNewTabContextMenu(win: ZenWindow, anchor?: MenuAnchor): void {
     const { tabs, state } = this.browser
     const space = win.activeSpace()
     const local = Boolean(win.localSpace)
@@ -1600,7 +1618,8 @@ export class Menus {
         }
       ],
       win,
-      'newtab'
+      'newtab',
+      anchor
     )
   }
 
@@ -1635,7 +1654,7 @@ export class Menus {
   // Spaces & folders
   // ---------------------------------------------------------------------------
 
-  showSpaceContextMenu(spaceId: string, win: ZenWindow): void {
+  showSpaceContextMenu(spaceId: string, win: ZenWindow, anchor?: MenuAnchor): void {
     const { tabs, state } = this.browser
     const space = state.model.spaces.find((s) => s.id === spaceId)
     if (!space) return
@@ -1678,7 +1697,8 @@ export class Menus {
         }
       ],
       win,
-      'space'
+      'space',
+      anchor
     )
   }
 
@@ -1694,7 +1714,7 @@ export class Menus {
     return win.isPrivate ? `${label} (Private)` : label
   }
 
-  showFolderContextMenu(folderId: string, win: ZenWindow): void {
+  showFolderContextMenu(folderId: string, win: ZenWindow, anchor?: MenuAnchor): void {
     const { state } = this.browser
     const folder = state.model.folders[folderId]
     if (!folder) return
@@ -1767,7 +1787,8 @@ export class Menus {
         }
       ],
       win,
-      'folder'
+      'folder',
+      anchor
     )
   }
 
@@ -1784,7 +1805,7 @@ export class Menus {
   showBookmarkContextMenu(
     ids: string[],
     folderId: string,
-    anchor: { x: number; y: number },
+    anchor: MenuAnchor & { x: number; y: number },
     win: ZenWindow,
     surface: 'manager' | 'bar' = 'manager'
   ): void {
@@ -1994,7 +2015,7 @@ export class Menus {
   // ---------------------------------------------------------------------------
 
   /** Context menu of one visit on the history page. */
-  showHistoryContextMenu(visitId: string, url: string, win: ZenWindow): void {
+  showHistoryContextMenu(visitId: string, url: string, win: ZenWindow, anchor?: MenuAnchor): void {
     const { tabs, history, state } = this.browser
     const caps = state.capabilities
     const host = getDomain(url)
@@ -2033,7 +2054,8 @@ export class Menus {
         }
       ],
       win,
-      'history'
+      'history',
+      anchor
     )
   }
 

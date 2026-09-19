@@ -17,6 +17,7 @@ import { CONTAINER_COLORS } from '@shared/defaults'
 import { run } from '@renderer/lib/api'
 import { dropStore, startTabDrag } from '@renderer/lib/drag'
 import { hoverCard, measureRow } from '@renderer/lib/hoverCard'
+import { contextMenuAnchor } from '@renderer/lib/menuKeys'
 import { activeTab, containerOf, tabTitle, tabTooltip } from '@renderer/lib/selectors'
 import {
   browserStore,
@@ -122,13 +123,16 @@ export function TabItem({ tab, active, compact, indent, parent }: Props): JSX.El
 
   const onContextMenu = (e: React.MouseEvent): void => {
     e.preventDefault()
+    // At the pointer, or – Shift+F10, the Menu key on the focused row – at the row, in
+    // keyboard mode (lib/menuKeys.ts).
+    const anchor = contextMenuAnchor(e)
     const ids = uiStore.get().selectedTabIds
     if (ids.length > 1 && ids.includes(tab.id)) {
-      run('tab.selectionContextMenu', { tabIds: ids })
+      run('tab.selectionContextMenu', { tabIds: ids, ...anchor })
       return
     }
     clearTabSelection()
-    run('tab.contextMenu', { tabId: tab.id })
+    run('tab.contextMenu', { tabId: tab.id, ...anchor })
   }
 
   const onAuxClick = (e: React.MouseEvent): void => {

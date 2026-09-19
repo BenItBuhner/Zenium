@@ -2122,8 +2122,8 @@ export class Browser {
       'tab.setIcon': ({ tabId, icon }) => tabs.setIcon(tabId, icon),
       'tab.addRoute': ({ tabId, spaceId }) => this.addRouteForTab(tabId, spaceId),
       'tab.altClick': ({ tabId }, win) => tabs.altClick(tabId, win),
-      'tab.selectionContextMenu': ({ tabIds }, win) =>
-        this.menus.showSelectionContextMenu(tabIds, win),
+      'tab.selectionContextMenu': ({ tabIds, ...anchor }, win) =>
+        this.menus.showSelectionContextMenu(tabIds, win, anchor),
       'tab.duplicate': ({ tabId }, win) => void tabs.duplicate(tabId, win),
       'tab.unload': ({ tabId }) => tabs.discard(tabId),
       'tab.freeze': ({ tabId }) => this.governor.freezeTab(tabId),
@@ -2164,7 +2164,8 @@ export class Browser {
       'tab.setDesktopSite': ({ tabId, on }) => this.pageControls.setDesktopSite(tabId, on),
       'tab.setDarkenSite': ({ tabId, on }) => this.pageControls.setDarkenSite(tabId, on),
       'pageControls.forgetSite': ({ kind, domain }) => this.pageControls.forgetSite(kind, domain),
-      'tab.contextMenu': ({ tabId }, win) => this.menus.showTabContextMenu(tabId, win),
+      'tab.contextMenu': ({ tabId, ...anchor }, win) =>
+        this.menus.showTabContextMenu(tabId, win, anchor),
       'tab.toggleDevtools': ({ tabId }) => tabs.toggleDevtools(tabId),
       'tab.copyUrl': ({ tabId, markdown }) => tabs.copyUrl(tabId, markdown),
 
@@ -2211,15 +2212,17 @@ export class Browser {
         state.commit()
       },
       'space.closeUnpinned': ({ spaceId }, win) => tabs.closeUnpinned(spaceId, win),
-      'space.contextMenu': ({ spaceId }, win) => this.menus.showSpaceContextMenu(spaceId, win),
+      'space.contextMenu': ({ spaceId, ...anchor }, win) =>
+        this.menus.showSpaceContextMenu(spaceId, win, anchor),
 
       'folder.create': ({ spaceId, name, icon, color, rename }, win) =>
         this.createFolder(spaceId, name, icon, win, { color, rename }).id,
       'folder.update': ({ folderId, patch }) => this.updateFolder(folderId, patch),
       'folder.delete': ({ folderId, unpack }) => this.deleteFolder(folderId, unpack),
-      'folder.contextMenu': ({ folderId }, win) => this.menus.showFolderContextMenu(folderId, win),
+      'folder.contextMenu': ({ folderId, ...anchor }, win) =>
+        this.menus.showFolderContextMenu(folderId, win, anchor),
       'folder.newTab': ({ folderId }, win) => this.newTabInFolder(folderId, win),
-      'newtab.contextMenu': (_a, win) => this.menus.showNewTabContextMenu(win),
+      'newtab.contextMenu': (anchor, win) => this.menus.showNewTabContextMenu(win, anchor ?? {}),
       'newtab.tileContextMenu': ({ url, title }, win) =>
         this.menus.showTopSiteContextMenu(url, title, win),
       'app.menu': ({ anchor, keyboard }, win) =>
@@ -2353,8 +2356,8 @@ export class Browser {
       'page.navigate': ({ tabId, section, replace }) =>
         this.pages.navigate(tabId, section, replace ?? false),
 
-      'history.contextMenu': ({ visitId, url }, win) =>
-        this.menus.showHistoryContextMenu(visitId, url, win),
+      'history.contextMenu': ({ visitId, url, ...anchor }, win) =>
+        this.menus.showHistoryContextMenu(visitId, url, win, anchor),
       'history.dayMenu': ({ dayKey, count }, win) =>
         this.menus.showHistoryDayMenu(dayKey, count, win),
 
@@ -2399,8 +2402,14 @@ export class Browser {
       'bookmark.allTabs': (_a, win) => this.bookmarkTabs(win),
       'bookmark.createFromTabs': ({ tabIds, title, parentId }, win) =>
         this.createBookmarksFromTabs(tabIds, title, parentId, win),
-      'bookmark.contextMenu': ({ ids, folderId, x, y, surface }, win) =>
-        this.menus.showBookmarkContextMenu(ids, folderId, { x, y }, win, surface ?? 'manager'),
+      'bookmark.contextMenu': ({ ids, folderId, x, y, keyboard, surface }, win) =>
+        this.menus.showBookmarkContextMenu(
+          ids,
+          folderId,
+          { x, y, keyboard },
+          win,
+          surface ?? 'manager'
+        ),
       'bookmark.menu': ({ x, y }, win) => this.menus.showBookmarksMenu({ x, y }, win),
       'bookmark.toggleBar': (_a, win) => this.toggleBookmarksBar(win),
       'bookmark.cut': ({ ids }) => this.clipBookmarks(ids, 'cut'),
@@ -2608,12 +2617,8 @@ export class Browser {
       'extension.resizePopup': ({ bounds, visible }) =>
         this.extensions.resizePopup(bounds, visible),
       'extension.closePopup': () => this.extensions.closePopup(),
-      'extension.actionContextMenu': ({ id, x, y }, win) =>
-        this.menus.showExtensionActionMenu(
-          id,
-          win,
-          x !== undefined && y !== undefined ? { x, y } : undefined
-        ),
+      'extension.actionContextMenu': ({ id, ...anchor }, win) =>
+        this.menus.showExtensionActionMenu(id, win, anchor),
       'extension.actionMenuItems': ({ id }, win) => this.menus.extensionActionMenuItems(id, win),
       'extension.actionMenuClick': ({ id, itemId }) =>
         this.menus.runExtensionActionMenuItem(id, itemId),

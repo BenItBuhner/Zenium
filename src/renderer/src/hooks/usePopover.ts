@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
+import { handleMenuKey } from '@renderer/lib/menuKeys'
 import { focusableIn, wrapTab } from '@renderer/lib/popover'
 import { useEscape } from './useEscape'
 
@@ -98,30 +99,26 @@ export function usePopover(
 /**
  * Arrow keys move focus among a popover's items (menu items, options): Down and Up wrap, Home
  * and End jump; from the container itself Down starts at the first item, as Firefox's app menu
- * does when opened by pointer.
+ * does when opened by pointer. A menu (`mnemonics`) also answers a letter as Chrome's native
+ * menus do: it goes to the next item whose label starts with it, and runs the item when it is
+ * the only one (lib/menuKeys.ts; on macOS the letter only moves, as the system's menus do).
  */
-export function useArrowKeys(ref: RefObject<HTMLElement | null>, itemSelector: string): void {
+export function useArrowKeys(
+  ref: RefObject<HTMLElement | null>,
+  itemSelector: string,
+  options: { mnemonics?: boolean } = {}
+): void {
+  const { mnemonics = false } = options
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       const root = ref.current
       if (!root) return
-      if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return
-      const items = [...root.querySelectorAll<HTMLElement>(itemSelector)].filter(
-        (el) => !(el as HTMLButtonElement).disabled && el.getAttribute('aria-disabled') !== 'true'
-      )
+      const items = [...root.querySelectorAll<HTMLElement>(itemSelector)]
       if (items.length === 0) return
-      const current = document.activeElement
-      const index = current instanceof HTMLElement ? items.indexOf(current) : -1
-      let next: HTMLElement | undefined
-      if (e.key === 'Home') next = items[0]
-      else if (e.key === 'End') next = items.at(-1)
-      else if (e.key === 'ArrowDown') next = items[index === -1 ? 0 : (index + 1) % items.length]
-      else next = items[index <= 0 ? items.length - 1 : index - 1]
-      if (!next) return
-      e.preventDefault()
-      next.focus()
+      // A letter is the menu's only while the keyboard is in it (the URL bar may open over it).
+      handleMenuKey(e, items, { mnemonics: mnemonics && root.contains(document.activeElement) })
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [itemSelector, ref])
+  }, [itemSelector, mnemonics, ref])
 }

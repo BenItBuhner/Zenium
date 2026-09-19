@@ -5,6 +5,7 @@ import type { Folder, Space, Tab, UIState } from '@shared/types'
 import { FOLDER_COLORS } from '@shared/defaults'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { run } from '@renderer/lib/api'
+import { contextMenuAnchor } from '@renderer/lib/menuKeys'
 import { dropStore, listMotions } from '@renderer/lib/drag'
 import { openGroupEditor } from '@renderer/lib/groupEditor'
 import { SlideMotion } from '@renderer/lib/motion/slide'
@@ -219,7 +220,7 @@ function SpaceHeader({
       onClick={() => run('space.togglePinnedCollapsed', { spaceId: space.id })}
       onContextMenu={(e) => {
         e.preventDefault()
-        run('space.contextMenu', { spaceId: space.id })
+        run('space.contextMenu', { spaceId: space.id, ...contextMenuAnchor(e) })
       }}
     >
       <SpaceGlyph icon={space.icon} size={14} />
@@ -297,7 +298,7 @@ function NewTabButton({
       onClick={() => window.dispatchEvent(new CustomEvent('zen-new-tab'))}
       onContextMenu={(e) => {
         e.preventDefault()
-        run('newtab.contextMenu', undefined)
+        run('newtab.contextMenu', contextMenuAnchor(e))
       }}
     >
       <Plus className="h-4 w-4 shrink-0" />
@@ -377,7 +378,7 @@ function FolderRow({
         }}
         onContextMenu={(e) => {
           e.preventDefault()
-          run('folder.contextMenu', { folderId: folder.id })
+          run('folder.contextMenu', { folderId: folder.id, ...contextMenuAnchor(e) })
         }}
         title={compact ? folder.name : undefined}
       >

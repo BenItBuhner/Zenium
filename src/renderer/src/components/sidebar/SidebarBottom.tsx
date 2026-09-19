@@ -5,6 +5,7 @@ import type { MediaState, Space, UIState } from '@shared/types'
 import { resolveTheme, rgbToHex } from '@shared/theme'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { run } from '@renderer/lib/api'
+import { contextMenuAnchor } from '@renderer/lib/menuKeys'
 import { dropStore } from '@renderer/lib/drag'
 import { openSettings } from '@renderer/lib/pages'
 import { activeTab, isLocalWindow, tabTitle } from '@renderer/lib/selectors'
@@ -197,7 +198,7 @@ function SpaceIcon({
       onClick={() => run('space.activate', { spaceId: space.id })}
       onContextMenu={(e) => {
         e.preventDefault()
-        run('space.contextMenu', { spaceId: space.id })
+        run('space.contextMenu', { spaceId: space.id, ...contextMenuAnchor(e) })
       }}
     >
       {dragging && <span data-drop={`space:${space.id}`} className="absolute inset-0 z-10" />}

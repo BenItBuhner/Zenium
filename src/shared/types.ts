@@ -2755,6 +2755,18 @@ export interface MenuItemDescriptor {
   danger?: boolean
 }
 
+/**
+ * Where a chrome element's context menu opens, from the `contextmenu` event that asked for it
+ * (Chrome's rule): a right-click opens it at the pointer; Shift+F10 and the Menu key open it at
+ * the focused element – Chromium raises the event at the element's middle – in keyboard mode,
+ * so its first item starts selected and the arrow keys take over at once. Chrome CSS pixels.
+ */
+export interface MenuAnchor {
+  x?: number
+  y?: number
+  keyboard?: boolean
+}
+
 export interface MenuDescriptor {
   id: string
   items: MenuItemDescriptor[]
@@ -2995,7 +3007,7 @@ export interface Commands {
     args: { kind: 'desktop' | 'darken' | 'zoom'; domain: string }
     result: void
   }
-  'tab.contextMenu': { args: { tabId: string }; result: void }
+  'tab.contextMenu': { args: { tabId: string } & MenuAnchor; result: void }
   'tab.toggleDevtools': { args: { tabId: string }; result: void }
   'tab.copyUrl': { args: { tabId: string; markdown?: boolean }; result: void }
   'tab.setIcon': { args: { tabId: string; icon: string | null }; result: void }
@@ -3004,7 +3016,7 @@ export interface Commands {
   /** Alt+click on a sidebar tab: split it with (or separate it from) the active tab. */
   'tab.altClick': { args: { tabId: string }; result: void }
   /** Context menu for several selected tabs (Ctrl / Shift+click in the sidebar). */
-  'tab.selectionContextMenu': { args: { tabIds: string[] }; result: void }
+  'tab.selectionContextMenu': { args: { tabIds: string[] } & MenuAnchor; result: void }
 
   'space.create': {
     args: { name: string; icon: string; containerId: string; theme: SpaceTheme | null }
@@ -3026,7 +3038,7 @@ export interface Commands {
   'space.unloadOthers': { args: void; result: void }
   'space.togglePinnedCollapsed': { args: { spaceId: string }; result: void }
   'space.closeUnpinned': { args: { spaceId?: string }; result: void }
-  'space.contextMenu': { args: { spaceId: string }; result: void }
+  'space.contextMenu': { args: { spaceId: string } & MenuAnchor; result: void }
 
   'folder.create': {
     args: {
@@ -3047,13 +3059,13 @@ export interface Commands {
     result: void
   }
   'folder.delete': { args: { folderId: string; unpack: boolean }; result: void }
-  'folder.contextMenu': { args: { folderId: string }; result: void }
+  'folder.contextMenu': { args: { folderId: string } & MenuAnchor; result: void }
   /**
    * Chrome's "New tab in group" (tabs-13): a new tab at the end of the folder, active, in the
    * folder's space and the container of its last member. Resolves with the new tab's id.
    */
   'folder.newTab': { args: { folderId: string }; result: string }
-  'newtab.contextMenu': { args: void; result: void }
+  'newtab.contextMenu': { args: MenuAnchor | void; result: void }
   /** Long-press on a phone new tab page tile: pin / unpin, remove, open in a new tab. */
   'newtab.tileContextMenu': { args: { url: string; title: string }; result: void }
   /**
@@ -3237,7 +3249,7 @@ export interface Commands {
   /** Open the history page (`zen://history`). */
   'history.open': { args: void; result: void }
   /** Context menu of a history row (open in new tab / window / private window, copy, remove…). */
-  'history.contextMenu': { args: { visitId: string; url: string }; result: void }
+  'history.contextMenu': { args: { visitId: string; url: string } & MenuAnchor; result: void }
   /** Menu of a day heading on the history page (delete the day). */
   'history.dayMenu': { args: { dayKey: string; count: number }; result: void }
 
@@ -3340,6 +3352,8 @@ export interface Commands {
       folderId: string
       x: number
       y: number
+      /** Opened with Shift+F10 or the Menu key: the first item starts selected (`MenuAnchor`). */
+      keyboard?: boolean
       /** The bar and its folder panels get Chrome's bar menu (open targets, "Show bookmarks bar"). */
       surface?: 'manager' | 'bar'
     }
@@ -3621,7 +3635,7 @@ export interface Commands {
   }
   'extension.closePopup': { args: void; result: void }
   /** Context menu of an extension's toolbar button (its `contextMenus` items plus Zenium's). */
-  'extension.actionContextMenu': { args: { id: string; x?: number; y?: number }; result: void }
+  'extension.actionContextMenu': { args: { id: string } & MenuAnchor; result: void }
   /**
    * The items an extension adds to its own action's context menu (`chrome.contextMenus` items
    * with the `action` context, in Chrome's layout: check states, submenus, separators), for the
