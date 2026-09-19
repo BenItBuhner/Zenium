@@ -8,7 +8,7 @@ import {
 import type { ClosedEntrySummary, TabSearchCandidate } from '@shared/types'
 import { run } from './api'
 import { openedFromKeyboard } from './popover'
-import { uiStore } from './ui'
+import { closeUrlbar, uiStore } from './ui'
 
 /*
  * The tab search popover's request (tabs-17): Ctrl+Shift+A, the menu bar's Window › Search
@@ -29,6 +29,10 @@ export function toggleTabSearch(): void {
     return
   }
   const keyboard = openedFromKeyboard()
+  // The URL bar gives way as it does to every other chrome surface (Chrome's Ctrl+Shift+A works
+  // from the omnibox): over a new tab page it stays up on its own, and the popover opened under
+  // it would be put away again at once.
+  closeUrlbar()
   run('focus.chrome', undefined)
   uiStore.set({ tabSearch: { keyboard }, drawerOpen: false })
 }

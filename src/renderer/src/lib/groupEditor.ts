@@ -1,6 +1,6 @@
 import { run } from './api'
 import { openedFromKeyboard } from './popover'
-import { uiStore } from './ui'
+import { closeUrlbar, uiStore } from './ui'
 
 /*
  * The group editor bubble's request (tabs-13): a folder header's double-click, the folder
@@ -17,6 +17,10 @@ import { uiStore } from './ui'
  */
 export function openGroupEditor(folderId: string): void {
   const keyboard = openedFromKeyboard()
+  // The URL bar gives way like it does to every other chrome surface: over a new tab page it
+  // stays up on its own until something replaces it, and a bubble opened under it would be
+  // put away again at once.
+  closeUrlbar()
   run('focus.chrome', undefined)
   uiStore.set({ groupEditor: { folderId, keyboard }, drawerOpen: false })
 }

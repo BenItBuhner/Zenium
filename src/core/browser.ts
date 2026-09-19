@@ -1177,8 +1177,17 @@ export class Browser {
     const color = options.color ?? nextFolderColor(this.state.model, spaceId)
     const folder = createFolder(this.state.model, spaceId, name, icon, color)
     this.state.commit()
-    if (options.rename !== false) this.emit('folder.edit', { folderId: folder.id }, win)
+    if (options.rename !== false) this.editFolder(folder.id, win)
     return folder
+  }
+
+  /**
+   * Show the folder's editor in the chrome (`folder.edit`), once the state that holds the folder
+   * has gone out: the bubble hangs from the folder's header row and shows the folder's own name
+   * and colour, so it must not arrive ahead of them.
+   */
+  private editFolder(folderId: string, win?: ZenWindow): void {
+    this.state.afterBroadcast(() => this.emit('folder.edit', { folderId }, win))
   }
 
   /** Chrome's "Add tab to new group": a new folder around the tab, its editor open. */
@@ -1192,7 +1201,7 @@ export class Browser {
     )
     this.tabs.moveToFolder(tabId, folder.id)
     this.state.commit()
-    this.emit('folder.edit', { folderId: folder.id }, win)
+    this.editFolder(folder.id, win)
   }
 
   /**

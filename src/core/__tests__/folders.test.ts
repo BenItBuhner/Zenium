@@ -121,9 +121,11 @@ function item(items: MenuItemTemplate[], label: string): MenuItemTemplate {
 const palette = FOLDER_COLOR_ORDER
 const events = (h: Harness, name: string): unknown[] =>
   h.sent.filter((e) => e.name === name).map((e) => e.payload)
+/** Let the state broadcast of the tick go out (and the events queued behind it). */
+const tick = (): Promise<void> => new Promise((r) => setImmediate(r))
 
 describe('making a folder (tab group)', () => {
-  it('folder.create colours the group with the next free colour and opens its editor', () => {
+  it('folder.create colours the group with the next free colour and opens its editor', async () => {
     const h = harness()
     const space = h.win.activeSpaceId
     const first = h.browser.handleCommand(h.win, 'folder.create', {
@@ -136,7 +138,14 @@ describe('making a folder (tab group)', () => {
       color: palette[0],
       collapsed: false
     })
+    // The editor hangs from the folder's header: the event waits for the state that holds it.
+    expect(events(h, 'folder.edit')).toEqual([])
+    await tick()
     expect(events(h, 'folder.edit')).toEqual([{ folderId: first }])
+    const stateAt = h.sent.findIndex((e) => e.name === 'state')
+    const editAt = h.sent.findIndex((e) => e.name === 'folder.edit')
+    expect(stateAt).toBeGreaterThanOrEqual(0)
+    expect(editAt).toBeGreaterThan(stateAt)
     expect(events(h, 'folder.startRename')).toEqual([])
     const second = h.browser.handleCommand(h.win, 'folder.create', {
       spaceId: space,
@@ -145,6 +154,7 @@ describe('making a folder (tab group)', () => {
       rename: false
     }) as string
     expect(h.browser.state.model.folders[second].color).toBe(palette[1])
+    await tick()
     expect(events(h, 'folder.edit')).toEqual([{ folderId: first }])
   })
 
@@ -159,7 +169,7 @@ describe('making a folder (tab group)', () => {
     expect(h.browser.state.model.folders[id].color).toBe('pink')
   })
 
-  it('Add Tab to New Folder wraps the tab in a coloured folder and opens the editor', () => {
+  it('Add Tab to New Folder wraps the tab in a coloured folder and opens the editor', async () => {
     const h = harness()
     const tab = h.open('https://a.test/')
     h.browser.newFolderWithTab(h.win.activeSpaceId, tab, h.win)
@@ -167,6 +177,7 @@ describe('making a folder (tab group)', () => {
     expect(folders).toHaveLength(1)
     expect(folders[0]).toMatchObject({ name: 'New Folder', color: palette[0] })
     expect(h.browser.tabs.tab(tab)?.folderId).toBe(folders[0].id)
+    await tick()
     expect(events(h, 'folder.edit')).toEqual([{ folderId: folders[0].id }])
   })
 })

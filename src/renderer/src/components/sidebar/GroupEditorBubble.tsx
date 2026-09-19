@@ -173,19 +173,22 @@ function GroupEditorBubble({
   }
 
   // Escape puts the bubble away and the chrome keeps the keyboard, which `usePopover` hands to
-  // the header row the bubble hangs from (§9.22).
+  // the header row the bubble hangs from (§9.22). The keyboard moves in once the bubble is
+  // placed: until then it is painted hidden for the measurement, and a hidden field takes no
+  // focus.
+  const placed = ready && box !== null
   usePopover(panelRef, {
     onClose: () => {
       focusOnClose.current = 'chrome'
       close()
     },
-    active: ready,
+    active: placed,
     initial: () => fieldRef.current,
     returnTo: anchor
   })
   useEffect(() => {
-    if (ready) fieldRef.current?.select()
-  }, [ready])
+    if (placed) fieldRef.current?.select()
+  }, [placed])
   // The chrome layer's light dismiss (§9.20): a press anywhere else puts the bubble away – the
   // header's own press included, which then does not fold the folder – and the page gets the
   // keyboard back on release.
