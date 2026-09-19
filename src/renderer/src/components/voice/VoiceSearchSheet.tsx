@@ -114,11 +114,15 @@ function TitleBlock({
  * The mic at 20 px (§9.3) over a halo whose diameter follows the level on the shared snappy
  * spring, run in px (20 → 36, `shared/voice.ts`): each `rms` retargets the spring, so the halo
  * swells and settles over a run of frames rather than stepping on the bridge's clock, and a
- * level that stops coming (the end of speech) lets it come to rest on the glyph. Per frame only
- * the transform and the opacity move (§11), both derived from the diameter: at rest the halo is
- * unseen and the glyph stands plain (§9.23). Under reduced motion (§11.3) the halo holds at
- * rest – a disc changing size at the bridge's rate is the movement the setting removes – and the
- * glyph's accent ink while live is the sign of listening.
+ * level that stops coming (the end of speech) lets it come to rest on the glyph. The diameter is
+ * the model only: the halo is a fixed 20 px disc (the glyph's own box) and per frame the sheet
+ * writes its `transform: scale(diameter / 20)` and its opacity, nothing else (§11: transform and
+ * opacity only, never a size), so at rest the halo is unseen and the glyph stands plain (§9.23).
+ * `data-listening` stands on the glyph while the recogniser listens: the halo's `will-change`
+ * (main.css) and the glyph's accent ink hang on it, so a sheet at idle – starting, finishing, a
+ * no-match – promotes nothing. Under reduced motion (§11.3) the halo holds at rest – a disc
+ * changing size at the bridge's rate is the movement the setting removes – and the glyph's
+ * accent ink while listening is the sign of it.
  */
 function MicGlyph({
   level,
@@ -152,7 +156,7 @@ function MicGlyph({
   }, [level, live])
   const Icon = off ? MicOff : Mic
   return (
-    <span className="zen-voice-glyph" data-live={live} aria-hidden>
+    <span className="zen-voice-glyph" data-listening={live ? '' : undefined} aria-hidden>
       <span ref={halo} className="zen-voice-halo" data-testid="voice-halo" />
       <Icon className="h-5 w-5" strokeWidth={1.75} />
     </span>

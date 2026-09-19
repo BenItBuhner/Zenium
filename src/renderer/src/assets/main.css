@@ -2209,11 +2209,16 @@
    * (§9.23); while sound comes a halo shows behind it, the page surface's accent at 30 %
    * (`--v2-accent`, built as `--v2-selected` is, §9.29). The halo's diameter follows the sound
    * level on the shared spring, in px (`shared/voice.ts`: 20 in silence to a 36 px disc at full
-   * level), and the sheet writes its transform and its opacity from that diameter per frame: none
-   * of the disc at 20, all of it at 36, so silence shows the bare glyph. Its room is the block's
-   * 16 px padding above and to the left, the 4 px to the description below, and 12 px to the
-   * title where §9.23's glyph-to-title gap is 8: the h2's 8 plus 4 px the glyph keeps for itself,
-   * so the disc at full never reaches the first letter. The body is the transcript as it comes,
+   * level), but the element never changes size: it is the glyph's 20 px box, and the sheet writes
+   * its `transform: scale(diameter / 20)` and its opacity from that diameter per frame (§11:
+   * transform and opacity only) – none of the disc at 20, all of it at 36, so silence shows the
+   * bare glyph. `will-change` on the halo only while the recogniser listens (`data-listening` on
+   * the glyph, the sheet's own gate as `data-moving` is the zoom sheet's, §11.1's `data-receding`
+   * the frame's): a sheet that is starting, finishing or showing a no-match promotes nothing,
+   * and neither does one under reduced motion, where the halo never moves (§11.3). Its room is
+   * the block's 16 px padding above and to the left, the 4 px to the description below, and
+   * 12 px to the title (§9.23's one exception to its 8: the 4 is the halo's room, so the disc at
+   * full never reaches the first letter). The body is the transcript as it comes,
    * body type in the text ink, in the 16 px gutter (§9.25) with the block's 16 above it and the
    * footer's 16 below; before any words a hint in the deemphasized ink stands where the words
    * will. After a no-match the description is the block's last line and the footer follows it
@@ -2241,8 +2246,16 @@
     opacity: 0;
     pointer-events: none;
   }
-  .zen-voice-glyph[data-live='true'] > svg {
+  .zen-voice-glyph[data-listening] > svg {
     color: var(--v2-accent);
+  }
+  .zen-voice-glyph[data-listening] .zen-voice-halo {
+    will-change: transform, opacity;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .zen-voice-glyph[data-listening] .zen-voice-halo {
+      will-change: auto;
+    }
   }
   .zen-voice-transcript {
     min-height: 60px;
@@ -4655,6 +4668,15 @@
   width: 44px;
   height: 44px;
   border-radius: 8px;
+}
+/* The phone omnibox field's trailing slot – the mic on an empty field, Clear once there is text –
+   at §9.3's 44 × 44 with the 20 glyph, in the window family the field draws in (`--zen-fg`).
+   Round rather than §9.3's radius 8: the field is a 44 px pill and the control, as tall as it and
+   flush with its end, is the pill's end cap; a radius-8 box there would break the cap's curve. */
+:root[data-pointer='coarse'] .zen-omnibox-field .zen-toolbar-button {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
 }
 :root[data-pointer='coarse'] .zen-essential {
   height: 48px;

@@ -498,7 +498,9 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
         hint={results.length === 0 && !text ? placeholder : null}
         field={
           <div
-            className="zen-omnibox-field flex h-11 min-w-0 flex-1 items-center gap-2.5 rounded-full pl-2 pr-1.5"
+            // The trailing slot's control is a §9.3 icon button, 44 × 44 with the 20 glyph: as
+            // tall as the pill, round, flush with its end, so it is the pill's end cap.
+            className="zen-omnibox-field flex h-11 min-w-0 flex-1 items-center gap-2.5 rounded-full pl-2"
             style={fieldGrowFrom(
               phoneBarForHost(state.settings.phoneBar, phoneBarOffered(state.capabilities))
             )}
@@ -531,13 +533,13 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
             {text ? (
               <button
                 type="button"
-                className="zen-toolbar-button h-8 w-8 shrink-0 rounded-full"
+                className="zen-toolbar-button h-11 w-11 shrink-0 rounded-full"
                 aria-label="Clear"
                 // Keep the input focused so the keyboard stays where it is.
                 onPointerDown={(e) => e.preventDefault()}
                 onClick={clear}
               >
-                <X className="h-4 w-4" />
+                <X className="h-5 w-5" strokeWidth={1.75} />
               </button>
             ) : (
               voiceSearchAvailable(state.capabilities) && (
@@ -545,13 +547,13 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
                 // takes the frame from the bar, and its result loads where a submit here would.
                 <button
                   type="button"
-                  className="zen-toolbar-button h-8 w-8 shrink-0 rounded-full"
+                  className="zen-toolbar-button h-11 w-11 shrink-0 rounded-full"
                   aria-label="Search by voice"
                   onClick={() =>
                     void startVoiceSearch({ tabId: tab?.id ?? null, newTab: submitsToNewTab() })
                   }
                 >
-                  <Mic className="h-4 w-4" strokeWidth={1.75} />
+                  <Mic className="h-5 w-5" strokeWidth={1.75} />
                 </button>
               )
             )}
