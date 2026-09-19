@@ -94,7 +94,16 @@ class TabWebView(
         private set
     /** How far the page sits below the top of its frame during a pull-to-refresh (device px). */
     private var pullOffsetPx = 0f
-    private val pull = PullToRefreshGesture(this, { super.onTouchEvent(it) }) { event -> onPull(event) }
+    /** The bar that hides on scroll: what of the touches and the scroll it hears (see `BarHideGesture`). */
+    val barHide = BarHideGesture(this) { phase, payload -> host.barScroll(tabId, phase, payload) }
+    /**
+     * With the bar hiding off the top edge, the page is laid out tall and slid up by the bar's
+     * offset, and the part of it that then pokes past the frame's bottom edge is clipped; the
+     * strip a bottom-docked bar has not yet left is clipped the same way (see `TabHost.place`).
+     */
+    private var barShiftPx = 0f
+    private var barClipPx = 0
+    private val pull = PullToRefreshGesture(this, { event -> barHide.forward(event) { super.onTouchEvent(it) } }) { event -> onPull(event) }
     /** Strips at the top and bottom edges that chrome messages cover (see `ContentCover`). */
     val cover = ContentCover({ resources.displayMetrics.density }) { invalidateOutline() }
     /** The in-page predictive back in flight on this view, if any (see `PredictiveBack.kt`). */
@@ -306,8 +315,28 @@ class TabWebView(
         pull.offsetApplied(px / resources.displayMetrics.density)
         if (px == pullOffsetPx) return
         pullOffsetPx = px
-        translationY = px
+        applyTranslation()
         invalidateOutline()
+    }
+
+    // --- the bar that hides on scroll ---------------------------------------------------------------
+
+    /**
+     * Slide the page by `shiftPx` (a top-docked bar in motion takes the page's top edge with it)
+     * and clip `clipPx` off its bottom edge (the frame's edge where the tall layout runs past it,
+     * or the strip a bottom-docked bar has not yet left). Both 0 with the bar at rest.
+     */
+    fun setBarHideShift(shiftPx: Float, clipPx: Int) {
+        if (shiftPx == barShiftPx && clipPx == barClipPx) return
+        barShiftPx = shiftPx
+        barClipPx = clipPx.coerceAtLeast(0)
+        applyTranslation()
+        invalidateOutline()
+    }
+
+    /** The page sits below its frame's top during a pull and above it behind a hiding top bar. */
+    private fun applyTranslation() {
+        translationY = pullOffsetPx + barShiftPx
     }
 
     /** Whether a drag down from the top of this page may become a pull-to-refresh right now. */
@@ -338,15 +367,21 @@ class TabWebView(
         pull.onOverScrolled(scrollY, clampedY)
     }
 
+    override fun onScrollChanged(l: Int, t: Int, oldl: Int, oldt: Int) {
+        super.onScrollChanged(l, t, oldl, oldt)
+        barHide.onScrollChanged(t, oldt)
+    }
+
     // --- the covered strips (chrome messages) ---------------------------------------------------
 
     /**
-     * Where the page's visible part starts and ends (device px): inside the covered strips, and
-     * above the frame's bottom edge while the page sits lower during a pull.
+     * Where the page's visible part starts and ends (device px): inside the covered strips,
+     * above the frame's bottom edge while the page sits lower during a pull, and above the strip
+     * the bar that hides on scroll still holds (see [setBarHideShift]).
      */
     private fun visibleTop(): Int = cover.topPx.coerceAtMost(height)
     private fun visibleBottom(): Int =
-        (height - maxOf(cover.bottomPx.toFloat(), pullOffsetPx)).roundToInt().coerceIn(visibleTop(), height)
+        (height - maxOf(cover.bottomPx.toFloat(), pullOffsetPx, barClipPx.toFloat())).roundToInt().coerceIn(visibleTop(), height)
 
     /**
      * A touch landing on a covered strip is the chrome's: the message card drawn there wants it.
@@ -592,7 +627,9 @@ class TabWebView(
         lastTouchX = event.x
         lastTouchY = event.y
         if (event.actionMasked == MotionEvent.ACTION_UP) reportActivation()
-        // The pull decides what of the touch the WebView sees (see PullToRefreshGesture).
+        // The bar that hides on scroll hears every touch; the pull decides what of it the WebView
+        // sees (see PullToRefreshGesture), and the bar shifts that by what it has taken.
+        barHide.onTouch(event)
         return pull.onTouchEvent(event)
     }
 

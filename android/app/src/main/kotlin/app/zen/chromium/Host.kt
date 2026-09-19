@@ -145,6 +145,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     override fun hostEvent(name: String, payload: Any?) = chrome.hostEvent(name, payload)
     override fun onKey(tabId: String?, input: JSONObject) = chrome.onKey(tabId, input)
     override fun pullEvent(tabId: String, phase: String, payload: JSONObject?) = chrome.pullEvent(tabId, phase, payload)
+    override fun barScroll(tabId: String, phase: String, payload: JSONObject?) = chrome.barScroll(tabId, phase, payload)
     override fun progress(tabId: String, percent: Int) = chrome.viewEvent(tabId, "progress", json("progress" to percent / 100.0))
     override val underlay: View get() = chrome
     override fun backChanged() = back.refresh()
@@ -312,6 +313,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 for (view in tabs.all()) view.applyPullToRefreshMode()
                 reply(null)
             }
+            // The bar that hides on scroll says where it is (per frame while it moves) or that it
+            // may not hide: every page's edge on the bar's side follows (see `TabHost.place`).
+            "chrome.setBarHide" -> { tabs.setBarHide(BarHideFrame.parse(args, activity.resources.displayMetrics.density)); reply(null) }
             "back.update" -> { back.update(args.bool("chrome"), args.strOrNull("tabId"), args.optBoolean("root")); reply(null) }
             "window.setFullscreen" -> { setImmersive(args.bool("fullscreen")); reply(null) }
             "app.quit" -> { activity.finishAndRemoveTask(); reply(null) }

@@ -2,10 +2,13 @@ package app.zen.chromium
 
 import android.content.Context
 import android.content.MutableContextWrapper
+import android.graphics.Rect
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import org.json.JSONObject
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /**
  * Owns the tab WebViews and places them above the chrome exactly where the core says, in device
@@ -13,6 +16,8 @@ import org.json.JSONObject
  */
 class TabHost(private val container: FrameLayout, private val host: PageHost) {
     private val views = HashMap<String, TabWebView>()
+    /** The frame the chrome last laid each page out at (device px), what [place] works from. */
+    private val reported = HashMap<String, Rect>()
     private var popupSeq = 0
     private val density: Float get() = container.resources.displayMetrics.density
 
@@ -44,6 +49,7 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
      */
     fun release(tabId: String): TabWebView? {
         val view = views.remove(tabId) ?: return null
+        reported.remove(tabId)
         host.exitFullscreen(view)
         view.backTransition?.abort()
         host.snapshots.forget(tabId)
@@ -86,6 +92,7 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         val view = views.remove(viewId) ?: return
         view.tabId = tabId
         views[tabId] = view
+        reported.remove(viewId)?.let { reported[tabId] = it }
         // Whatever the popup loaded before the core knew its tab id is reported now.
         host.viewEvent(tabId, "navigated", view.navState().put("inPage", false))
         if (!view.title.isNullOrEmpty()) host.viewEvent(tabId, "title", json("title" to view.title))
@@ -93,6 +100,7 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
 
     fun destroy(tabId: String) {
         val view = views.remove(tabId) ?: return
+        reported.remove(tabId)
         drop(view)
         host.viewEvent(tabId, "destroyed", null)
     }
@@ -109,6 +117,7 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
     fun dropAll() {
         for (view in views.values.toList()) drop(view)
         views.clear()
+        reported.clear()
         host.snapshots.clear()
     }
 
@@ -149,6 +158,7 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         dead.cover.reset()
         container.addView(fresh, if (index >= 0) index else -1, lp ?: FrameLayout.LayoutParams(0, 0))
         views[tabId] = fresh
+        place(fresh)
         return true
     }
 
@@ -159,10 +169,74 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         val y = (rect.num("y") * d).toInt()
         val w = (rect.num("width") * d).toInt().coerceAtLeast(0)
         val h = (rect.num("height") * d).toInt().coerceAtLeast(0)
+        reported[tabId] = Rect(x, y, x + w, y + h)
+        place(view)
+    }
+
+    /** Where the bar that hides on scroll is, per the chrome's last `chrome.setBarHide`; null: it may not hide. */
+    var barHide: BarHideFrame? = null
+        private set
+
+    fun setBarHide(frame: BarHideFrame?) {
+        barHide = frame
+        for (view in views.values) place(view)
+    }
+
+    /**
+     * Lay `view` out where the chrome put it, adjusted for the bar that hides on scroll
+     * (`lib/barHide.ts`; the preview host's `applyFrame` does the same in CSS px):
+     *
+     * The chrome's content column takes one of two layouts – short, with the bar's band left
+     * free (`S`), or tall, into the band, once the bar is hidden and at rest (`H`) – and reports
+     * whichever it is in; the report can trail the bar by a frame or two either way, so which
+     * one it is is read off the frame's `shownEdge`, not assumed. From that the page's edge on
+     * the bar's side follows the bar: at rest the layout is the chrome's own, `S` or `H`, and
+     * while the bar is off its edge but not fully the page is laid out tall once (one relayout
+     * per gesture, not one per frame, and it never pushes the page's content) and its far edge
+     * is clipped to what the bar has left. A bottom-docked bar's page grows at the bottom under
+     * the clip; a top-docked bar's page is slid up with the bar and clipped at the frame's bottom,
+     * so the content under the bar moves with it and the page holds still under the finger.
+     */
+    private fun place(view: TabWebView) {
+        val r = reported[view.tabId] ?: return
+        val frame = barHide
+        var top = r.top
+        var bottom = r.bottom
+        var shift = 0f
+        var clip = 0
+        if (frame != null) {
+            val t = frame.travelPx
+            val o = frame.offsetPx
+            when (frame.edge) {
+                BarHideFrame.Edge.TOP -> {
+                    // `S` starts at the shown edge, `H` a band above it; whichever the report is nearer.
+                    val shownTop = if (abs(r.top - frame.shownEdgePx) <= abs(r.top + t - frame.shownEdgePx)) r.top else r.top + t
+                    when {
+                        o <= 0f -> top = shownTop
+                        o < t -> {
+                            top = shownTop
+                            bottom = r.bottom + t
+                            shift = -o
+                            clip = (t - o).roundToInt()
+                        }
+                        else -> top = shownTop - t
+                    }
+                }
+                BarHideFrame.Edge.BOTTOM -> {
+                    val shownBottom = if (abs(r.bottom - frame.shownEdgePx) <= abs(r.bottom - t - frame.shownEdgePx)) r.bottom else r.bottom - t
+                    bottom = if (o <= 0f) shownBottom else shownBottom + t
+                    if (o > 0f && o < t) clip = (t - o).roundToInt()
+                }
+            }
+        }
+        view.barHide.frame = frame
+        view.setBarHideShift(shift, clip)
+        val w = r.width()
+        val h = (bottom - top).coerceAtLeast(0)
         val lp = (view.layoutParams as? FrameLayout.LayoutParams) ?: FrameLayout.LayoutParams(w, h)
-        if (lp.leftMargin == x && lp.topMargin == y && lp.width == w && lp.height == h) return
-        lp.leftMargin = x
-        lp.topMargin = y
+        if (lp.leftMargin == r.left && lp.topMargin == top && lp.width == w && lp.height == h) return
+        lp.leftMargin = r.left
+        lp.topMargin = top
         lp.width = w
         lp.height = h
         view.layoutParams = lp

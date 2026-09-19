@@ -471,17 +471,23 @@ export function currentGate(): BarHideGate {
   }
 }
 
-let lastTabId: string | null | undefined
+/** The active tab and its document (`id`, URL without the fragment) and whether it is loading. */
+let lastPage: string | null | undefined
+let lastLoading = false
 
 function evaluateGate(): void {
   const allowed = barMayHide(currentGate())
   if (barHideStore.get().allowed !== allowed) barHideStore.set({ allowed })
   machine.setAllowed(allowed)
-  // Another tab is showing: it starts with its bar in place, as Chrome's does.
+  // Another tab, another document or a reload starting: the bar starts in place, as Chrome's
+  // does. A fragment navigation stays on the page and keeps the bar where it is.
   const state = browserStore.get().state
-  const tabId = state ? (activeTab(state)?.id ?? null) : null
-  if (lastTabId !== undefined && tabId !== lastTabId) machine.show()
-  lastTabId = tabId
+  const tab = state ? activeTab(state) : null
+  const page = tab ? `${tab.id}\n${tab.url.split('#')[0]}` : null
+  const loading = Boolean(tab?.loading)
+  if (lastPage !== undefined && (page !== lastPage || (loading && !lastLoading))) machine.show()
+  lastPage = page
+  lastLoading = loading
   publishHost()
 }
 

@@ -2,6 +2,7 @@ import { run } from '@renderer/lib/api'
 import { dispatchBackEvent, topBackSurface } from '@renderer/lib/back'
 import { dismissOverview, openOverview } from '@renderer/lib/gestures/stage'
 import { abortPull, dispatchPullEvent, PULL_THRESHOLD, pullTravelFor } from '@renderer/lib/pull'
+import { barHideStore, dispatchBarScroll, resetBarHide } from '@renderer/lib/barHide'
 import { Download, Smartphone, Star } from 'lucide-react'
 import { installBannerShown, presentInstallBanner } from '@renderer/lib/installBanner'
 import { isInternalPageUrl } from '@shared/internalPages'
@@ -81,6 +82,7 @@ function apply(spec: string): void {
     dismissOverview()
     uiStore.set({ findOpen: false, findTabId: null, zoomTabId: null, install: null })
     abortPull()
+    resetBarHide()
     const state = browserStore.get().state
     const tab = state ? activeTab(state) : null
     clearMessages(tab?.loading ? tab.id : null)
@@ -176,6 +178,9 @@ function reach(spec: string): void {
     })
   } else if (target.kind === 'pull' && tab) {
     pull(tab.id, target.progress, target.released)
+    requestAnimationFrame(() => done(spec))
+  } else if (target.kind === 'barhide' && tab) {
+    barHide(tab.id, target.progress, target.released)
     requestAnimationFrame(() => done(spec))
   } else if (target.kind === 'error' && tab) {
     failLoad(tab.id, target.code, target.url ?? tab.url)
@@ -316,6 +321,22 @@ function pull(tabId: string, progress: number, released: boolean): void {
   if (released) {
     dispatchPullEvent(tabId, 'move', { travel, time: time + 16 })
     dispatchPullEvent(tabId, 'release', { travel, time: time + 32 })
+  }
+}
+
+/**
+ * A finger's worth of scroll reports for the bar that hides on scroll, as the host would send
+ * them (`lib/barHide.ts`): down, one move of the page by the part of the bar's travel that puts
+ * it at `progress`, and – released – a lift there, on which the bar snaps to the nearer end.
+ */
+function barHide(tabId: string, progress: number, released: boolean): void {
+  const time = performance.now()
+  const delta = progress * barHideStore.get().travel
+  dispatchBarScroll(tabId, 'start', null)
+  dispatchBarScroll(tabId, 'move', { delta, time })
+  if (released) {
+    dispatchBarScroll(tabId, 'move', { delta: 0, time: time + 16 })
+    dispatchBarScroll(tabId, 'end', { time: time + 32 })
   }
 }
 

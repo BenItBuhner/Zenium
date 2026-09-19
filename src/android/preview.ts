@@ -143,10 +143,14 @@ export function createPreviewBridge(): NativeBridge {
     shownEdge: number
   } | null = null
   /**
-   * Like `TabWebView.applyFrame`: the page's edge on the bar's side follows the bar. Docked at
-   * the bottom the frame grows into the band as the bar leaves it, clipped to the bar's travel
-   * so far; docked at the top the page moves with the bar's bottom edge (its top pinned to it,
-   * its bottom held at the frame's) and grows by the band at its far end.
+   * Like `TabHost.place`: the page's edge on the bar's side follows the bar. The chrome's content
+   * column is laid out short (the bar's band free, `S`) or, once the bar is hidden and at rest,
+   * tall into the band (`H`), and its report can trail the bar by a frame either way, so which
+   * one it is in is read off the frame's `shownEdge`. At rest the layout is the chrome's own;
+   * with the bar part-way the frame is laid out tall and clipped to what the bar has left:
+   * docked at the bottom it grows into the band under the clip, docked at the top it is slid up
+   * with the bar (its content moves with the bar, the page holds still under the finger) and
+   * clipped at the frame's bottom edge.
    */
   const applyFrame = (tabId: string): void => {
     const frame = views.get(tabId)
@@ -158,16 +162,21 @@ export function createPreviewBridge(): NativeBridge {
     let shift = 0
     clip.bar = 0
     if (barHide) {
-      const { edge, offset, travel, shownEdge } = barHide
-      const away = offset > 0
-      if (edge === 'bottom') {
-        bottom = away ? shownEdge + travel : shownEdge
-        if (away && offset < travel) clip.bar = bottom - (shownEdge + offset)
+      const { edge, offset: o, travel: t, shownEdge } = barHide
+      if (edge === 'top') {
+        const shownTop = Math.abs(r.y - shownEdge) <= Math.abs(r.y + t - shownEdge) ? r.y : r.y + t
+        if (o <= 0) top = shownTop
+        else if (o < t) {
+          top = shownTop
+          bottom = r.y + r.height + t
+          shift = -o
+          clip.bar = t - o
+        } else top = shownTop - t
       } else {
-        top = shownEdge
-        bottom = r.y + r.height + (away ? travel : 0)
-        shift = -offset
-        if (away && offset < travel) clip.bar = travel - offset
+        const rb = r.y + r.height
+        const shownBottom = Math.abs(rb - shownEdge) <= Math.abs(rb - t - shownEdge) ? rb : rb - t
+        bottom = o <= 0 ? shownBottom : shownBottom + t
+        if (o > 0 && o < t) clip.bar = t - o
       }
     }
     frame.style.left = `${r.x / density}px`
