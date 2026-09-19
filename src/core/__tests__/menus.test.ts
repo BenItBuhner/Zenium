@@ -274,6 +274,7 @@ function appMenu(h: Harness): string[] {
 /** The desktop app menu as it was before the phone variant existed. */
 const DESKTOP_APP_MENU = [
   'New Tab',
+  'Search Tabs…',
   'New Space…',
   '-',
   'New Window',
@@ -325,7 +326,7 @@ const DESKTOP_APP_MENU = [
   'Quit'
 ]
 
-const DESKTOP_ONLY = ['Keyboard Shortcuts', 'Compact Mode', 'Fullscreen', 'Quit']
+const DESKTOP_ONLY = ['Search Tabs…', 'Keyboard Shortcuts', 'Compact Mode', 'Fullscreen', 'Quit']
 
 describe('the app menu', () => {
   it('is unchanged on the desktop', () => {
