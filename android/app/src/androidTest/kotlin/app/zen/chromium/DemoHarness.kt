@@ -308,7 +308,8 @@ abstract class DemoHarness(
     /** Every node in the active window labelled `label`, breadth first (a panel's per-row controls). */
     protected fun findNodes(label: String): List<AccessibilityNodeInfo> = findNodes { it == label }
 
-    private fun findNodes(matches: (String) -> Boolean): List<AccessibilityNodeInfo> =
+    /** Every node in the active window whose label or text satisfies `matches`, breadth first (per-row controls named after their row). */
+    protected fun findNodes(matches: (String) -> Boolean): List<AccessibilityNodeInfo> =
         findNodesWhere(accept = labelled(matches))
 
     /** Accepts a node whose content description or text satisfies `matches`. */

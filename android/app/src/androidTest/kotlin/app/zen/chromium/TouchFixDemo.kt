@@ -13,10 +13,11 @@ import java.io.File
 
 /**
  * Shows the phone chrome's touch fixes on a device so the `android-touchfix-demo` workflow can
- * record them: the History, Bookmarks and Downloads panels with their per-row Remove buttons
- * visible under a finger (no hover on a touch screen), one history entry and one bookmark removed
- * by tapping that button, and the find bar in its phone layout (flexing field, 44 px buttons, a
- * compact n/m counter, the keyboard's search key) stepping through the matches on example.com.
+ * record them: the History and Downloads panels with their per-row Remove buttons visible under
+ * a finger (no hover on a touch screen), one history entry removed by tapping that button, one
+ * bookmark removed through its row's 3-dot menu (#90's panel has no Remove button on a row), and
+ * the find bar in its phone layout (flexing field, 44 px buttons, a compact n/m counter, the
+ * keyboard's search key) stepping through the matches on example.com.
  *
  * The profile is seeded with a few visits, bookmarks and downloads (the `touchfix-demo-*.json`
  * assets; `{{now-Nh}}` stamps become timestamps N hours before the run so the panels show
@@ -78,11 +79,15 @@ class TouchFixDemo : DemoHarness("touchfix-demo-state.json", "touchfix-$THEME", 
         back()
         SystemClock.sleep(1_500)
 
-        // 2. Bookmarks, the same way; the panel is one level down, under the Bookmarks submenu.
-        openPanel("Bookmarks", "Remove bookmark", via = "Show Bookmarks")
+        // 2. Bookmarks: the panel is one level down, under the Bookmarks submenu, and since #90
+        //    its rows carry a 3-dot menu button (as Chrome's) rather than a Remove button. The
+        //    first row's button under a finger – the panel's injected touch, its row menu up on it
+        //    – then the menu's Delete under another – the row menu's injected touch – and the
+        //    panel lists one row fewer.
+        openPanel("Bookmarks", BOOKMARKS_TITLE, via = "Show Bookmarks")
         dismissKeyboard()
         shot("03-bookmarks")
-        removeFirst("Remove bookmark")
+        deleteFirstBookmark()
         SystemClock.sleep(1_500)
         shot("04-bookmarks-removed")
         back()
@@ -199,6 +204,24 @@ class TouchFixDemo : DemoHarness("touchfix-demo-state.json", "touchfix-$THEME", 
         touchFault("the touch on the panel's first '$label' left $now of $before rows in place")
     }
 
+    /**
+     * Delete the bookmarks panel's first row through its 3-dot menu, both presses a finger's: the
+     * row's button (named `More options for <title>`, so the rows are counted by that prefix),
+     * whose menu must come up with its Delete; then Delete, after which the panel must list one
+     * row fewer (the menu leaves on a touch through to the scrim too, but then every row stays).
+     * The panel is inert under the menu and out of the tree until the menu has left, so the
+     * count is read once it is back.
+     */
+    private fun deleteFirstBookmark() {
+        val rows = { findNodes { it.startsWith(ROW_MENU_PREFIX) } }
+        val before = rows().size
+        val first = rows().firstOrNull() ?: error("no bookmark row with a menu button in the panel")
+        val button = (first.contentDescription ?: first.text).toString()
+        if (!touchTapLabelExpecting(button, "the row menu is up with its Delete", timeoutMs = 6_000) { findByLabel("Delete") != null }) return
+        SystemClock.sleep(1_200)
+        touchTapLabelExpecting("Delete", "the panel lists ${before - 1} rows, from $before", timeoutMs = 8_000) { rows().size == before - 1 }
+    }
+
     companion object {
         private val THEME = InstrumentationRegistry.getArguments().getString("theme").let {
             if (it == "dark") "dark" else "light"
@@ -206,5 +229,9 @@ class TouchFixDemo : DemoHarness("touchfix-demo-state.json", "touchfix-$THEME", 
         private val STAMP = Regex("\"\\{\\{now(?:-(\\d+)h)?\\}\\}\"")
         private const val MENU_LABEL = "Menu"
         private const val HANDLE_LABEL = "Resize menu"
+        /** The bookmarks panel's header (#90: the mobile folder is what opens). */
+        private const val BOOKMARKS_TITLE = "Mobile bookmarks"
+        /** A bookmark row's 3-dot button is named after its row: `More options for <title>`. */
+        private const val ROW_MENU_PREFIX = "More options for "
     }
 }

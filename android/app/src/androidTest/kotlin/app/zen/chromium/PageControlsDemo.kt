@@ -307,12 +307,16 @@ open class PageControlsDemo protected constructor(
      * pause: the first recording lost its second half when Settings, closing under a colour
      * scheme change on the software GPU, reported its surface down 1.7 s after the back – past
      * the pause – and the next back went to the system, which put the app away.
+     *
+     * With every surface down, the Settings tab may still be in front (a back at a section only
+     * pops it to the landing): [leaveSettingsTab] on every way out, not just the last – the
+     * audit's second run left it in front from here, and the menu's page items did nothing.
      */
     protected fun ensureChromeClear(): Boolean {
         for (attempt in 1..4) {
             val handle = findByLabel(HANDLE_LABEL)
             val surface = chromeSurfaceUp()
-            if (!surface && handle == null) return true
+            if (!surface && handle == null) return leaveSettingsTab()
             Log.i(tag, "chrome surface up (host=$surface, handle=${handle != null}); clearing, attempt $attempt")
             when {
                 surface && attempt <= 2 -> backWhileSurfaceUp()
@@ -740,9 +744,14 @@ open class PageControlsDemo protected constructor(
      * The one page of a site that forbids pinching, served on the loopback interface from a port
      * the system picks: `user-scalable=no` and a pinned `maximum-scale` in the HTML, as many sites
      * ship them. Every request gets the page; the socket closes with the process.
+     *
+     * Bound to 127.0.0.1 by its bytes, as [DemoServer] is: Android's `getLoopbackAddress()` is
+     * `::1`, and a socket there refuses the `127.0.0.1` the address below names – every
+     * recording of this driver until the audit had the locked tab on ERR_CONNECTION_REFUSED and
+     * skipped its zoom and font sections.
      */
     private class LockedPageServer : Thread("locked-page") {
-        private val socket = ServerSocket(0, 8, InetAddress.getLoopbackAddress())
+        private val socket = ServerSocket(0, 8, InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1)))
         val url: String = "http://127.0.0.1:${socket.localPort}/"
 
         init {
