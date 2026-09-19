@@ -919,6 +919,70 @@ describe('AndroidExtensionRuntime: scripting into frames', () => {
   })
 })
 
+describe('AndroidExtensionRuntime: chrome.userScripts', () => {
+  it('gives the user-script world its chrome on configureWorld and carries code entries in place', async () => {
+    const h = harness()
+    await h.runtime.attach(
+      record(h, {}, manifest({ permissions: ['storage', 'userScripts', 'scripting'] }))
+    )
+    backgroundUp(h, 'bg1')
+    const userUnit = (): Record<string, unknown> => {
+      const plan = h.kt.calledWith('ext.configure').at(-1)
+      const units = plan?.units as Array<Record<string, unknown>>
+      const unit = units.find((u) => String(u.key).startsWith('user:'))
+      if (!unit) throw new Error('no user unit planned')
+      return unit
+    }
+    // Tampermonkey's start: the messaging switch first, then the registrations (its user
+    // scripts are `{ code }` entries around the file its content script comes from).
+    const configured = await call(h, 'bg1', 'userScripts', 'configureWorld', [
+      { csp: "script-src 'self'", messaging: true }
+    ])
+    expect(configured.error).toBeUndefined()
+    expect(h.runtime.userScriptMessaging(ID)).toBe(true)
+    const registered = await call(h, 'bg1', 'userScripts', 'register', [
+      [
+        {
+          id: 'tm-content',
+          matches: ['<all_urls>'],
+          runAt: 'document_start',
+          allFrames: true,
+          js: [{ code: 'window.tm_scripts = null;' }, { file: 'content.js' }, { code: 'run();' }]
+        }
+      ]
+    ])
+    expect(registered.error).toBeUndefined()
+    const unit = userUnit()
+    const config = JSON.parse(String(unit.config)) as Record<string, unknown>
+    expect(config.world).toBe('user')
+    expect(config.userScriptMessaging).toBe(true)
+    const groups = unit.groups as Array<{ js: string[] }>
+    expect(groups).toHaveLength(1)
+    expect(groups[0].js).toEqual(['\u0000window.tm_scripts = null;', 'content.js', '\u0000run();'])
+    // The registration reads back as it went in.
+    const listed = await call(h, 'bg1', 'userScripts', 'getScripts', [{}])
+    expect(listed.result).toEqual([
+      expect.objectContaining({
+        id: 'tm-content',
+        world: 'USER_SCRIPT',
+        js: [{ code: 'window.tm_scripts = null;' }, { file: 'content.js' }, { code: 'run();' }]
+      })
+    ])
+    // An update that names no js leaves the scripts as they are (Chrome patches fields).
+    const updated = await call(h, 'bg1', 'userScripts', 'update', [
+      [{ id: 'tm-content', matches: ['https://example.com/*'] }]
+    ])
+    expect(updated.error).toBeUndefined()
+    expect((userUnit().groups as Array<{ js: string[] }>)[0].js).toHaveLength(3)
+    expect(h.runtime.registered(ID)[0].matches).toEqual(['https://example.com/*'])
+    // The switch off again: the world keeps its scripts and loses its chrome.
+    await call(h, 'bg1', 'userScripts', 'resetWorldConfiguration', [])
+    expect(h.runtime.userScriptMessaging(ID)).toBe(false)
+    const off = JSON.parse(String(userUnit().config)) as Record<string, unknown>
+    expect(off.userScriptMessaging).toBe(false)
+  })
+})
+
 describe('AndroidExtensionRuntime: popups and options', () => {
   it('opens the manifest popup as a sheet, or raises action.onClicked when there is none', async () => {
     const h = harness()

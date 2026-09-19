@@ -85,7 +85,8 @@ class UnitCompiler(private val bootstrap: () -> String) {
                 val files = g.optJSONArray("js") ?: JSONArray()
                 val sources = List(files.length()) { k ->
                     val path = files.optString(k, "")
-                    source(entry, path, read)
+                    if (path.startsWith(INLINE_CODE)) path.substring(INLINE_CODE.length)
+                    else source(entry, path, read)
                         ?: "console.error(${JSONObject.quote("[Zenium] extension $ext: missing content script $path")});"
                 }
                 groups.add(ExtensionScripts.Group(ext, g.optInt("index"), sources, g.optString("isolation", "with")))
@@ -142,6 +143,14 @@ class UnitCompiler(private val bootstrap: () -> String) {
     companion object {
         /** Marks a path whose file is missing or unreadable, so it is not read again for the version. */
         private val MISSING = Any()
+
+        /**
+         * A `js` entry that is the script's text rather than a path: `userScripts.register` takes
+         * `{ code }` entries (Tampermonkey registers every user script that way, Ghostery its
+         * scriptlets), and the core carries them in the group's `js` list behind a NUL – a
+         * character no path has (`extensionApi.ts`, `inlineScript`).
+         */
+        const val INLINE_CODE = "\u0000"
 
         fun sha256(text: String): String {
             val digest = MessageDigest.getInstance("SHA-256").digest(text.toByteArray())

@@ -1002,7 +1002,9 @@ export class ExtensionApi {
   /**
    * `chrome.userScripts`: registrations live next to the content scripts, in the `USER_SCRIPT`
    * world (their own unit and, with `configureWorld({ messaging: true })`, a messaging-only
-   * `chrome`); `js` entries are `{ file }` / `{ code }` objects, only files are injected here.
+   * `chrome`). `js` entries are `{ file }` / `{ code }` objects; a code entry travels in the
+   * group's `js` list as an inline script (`inlineScript`), which the host's compiler pastes in
+   * place of a file's text. An `update` patch without `js` leaves the scripts as they are.
    */
   private async userScriptsCall(
     ext: AttachedExtension,
@@ -1013,13 +1015,22 @@ export class ExtensionApi {
     const isUser = (s: RegisteredContentScript): boolean => s.world === 'USER_SCRIPT'
     const fromUserScript = (raw: unknown): Record<string, unknown> => {
       const script = asRecord(raw)
-      const js = Array.isArray(script.js) ? script.js.map((j) => asRecord(j).file) : []
-      return {
-        ...script,
-        js: asStringArray(js),
-        world: script.world === 'MAIN' ? 'MAIN' : 'USER_SCRIPT'
+      if (!Array.isArray(script.js)) return script
+      const js: string[] = []
+      for (const entry of script.js) {
+        const source = asRecord(entry)
+        if (typeof source.code === 'string') js.push(inlineScript(source.code))
+        else if (typeof source.file === 'string') js.push(source.file)
       }
+      return { ...script, js }
     }
+    const toUserScript = (s: RegisteredContentScript): Record<string, unknown> => ({
+      ...registeredToChrome(s),
+      js: s.js.map((entry) => {
+        const code = inlineScriptCode(entry)
+        return code === null ? { file: entry } : { code }
+      })
+    })
     switch (method) {
       case 'register':
         return this.register(
@@ -1034,7 +1045,7 @@ export class ExtensionApi {
           .registered(id)
           .filter(isUser)
           .filter((s) => filter.length === 0 || filter.includes(s.id))
-          .map((s) => ({ ...registeredToChrome(s), js: s.js.map((file) => ({ file })) }))
+          .map(toUserScript)
       }
       case 'unregister':
         return this.unregister(id, args[0], isUser)
@@ -1441,6 +1452,23 @@ export function contextTypeOf(context: EngineContextKind): string {
     default:
       return 'TAB'
   }
+}
+
+/**
+ * A `userScripts.register` `{ code }` entry in a group's `js` list: the text behind a NUL, a
+ * character no extension path carries, so it rides in the same list as the files and keeps its
+ * place among them (Chrome runs a registration's entries in order). Kotlin's `UnitCompiler`
+ * reads it back (`INLINE_CODE`); `getScripts` reports it as `{ code }` again.
+ */
+const INLINE_SCRIPT_PREFIX = '\u0000'
+
+export function inlineScript(code: string): string {
+  return INLINE_SCRIPT_PREFIX + code
+}
+
+/** The code of an inline `js` entry, or null for a file path. */
+export function inlineScriptCode(entry: string): string | null {
+  return entry.startsWith(INLINE_SCRIPT_PREFIX) ? entry.slice(INLINE_SCRIPT_PREFIX.length) : null
 }
 
 /** A `scripting.registerContentScripts` / `userScripts.register` entry, normalised. */
