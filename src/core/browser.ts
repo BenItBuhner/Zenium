@@ -61,6 +61,8 @@ import { PageControls } from './pageControls'
 import { FindMemory } from './find'
 import { FullscreenService } from './fullscreen'
 import { WebAppService } from './webapp'
+import { MediaSessionService } from './mediaSession'
+import { WebNotificationService } from './webNotifications'
 import { UpdateService } from './updates'
 import { ExternalProtocolService } from './externalProtocols'
 import { PasswordService } from './credentials/service'
@@ -232,6 +234,10 @@ export class Browser {
   readonly fullscreen: FullscreenService
   /** Web app manifests, "Add to Home screen" and the ambient install prompt. */
   readonly webApps: WebAppService
+  /** The pages' media as the OS controls and the in-app player see it (the Media Session). */
+  readonly mediaSession: MediaSessionService
+  /** Web Notifications of pages on hosts whose engine lacks the API (the page script's polyfill). */
+  readonly webNotifications: WebNotificationService
   readonly windows = new Map<string, ZenWindow>()
   /** Set by `shutdown()`: the app is going away, windows close without further questions. */
   quitting = false
@@ -334,6 +340,8 @@ export class Browser {
     this.translate = new TranslateService(this)
     this.privacy = new PrivacyService(this)
     this.webApps = new WebAppService(this, platform.io)
+    this.mediaSession = new MediaSessionService(this)
+    this.webNotifications = new WebNotificationService(this)
     this.state.extras = (win) => ({
       boosts: this.boosts.all(),
       zappingTabId: this.boosts.zappingTabId(),
@@ -870,11 +878,13 @@ export class Browser {
     this.fullscreen.onNavigated(tabId)
   }
 
+  /**
+   * The media list (`UIState.media`): every audible tab, plus – on hosts whose page script
+   * reports the Media Session – what its controls show. The session for the OS controls is
+   * pushed to the host alongside; a closed tab drops out of both.
+   */
   updateMedia(): void {
-    const media: MediaState[] = []
-    for (const [tabId, view] of this.tabs.allViews()) {
-      if (!view.isDestroyed() && view.isCurrentlyAudible()) media.push({ tabId, playing: true })
-    }
+    const media: MediaState[] = this.mediaSession.refresh()
     const before = JSON.stringify(this.state.media)
     this.state.media = media
     if (before !== JSON.stringify(media)) this.state.commitVolatile()
@@ -1846,8 +1856,13 @@ export class Browser {
       if (!this.tabs.view(tabId)) return
       tab.audible = Boolean(message.playing)
       this.governor.onMedia(tabId, Boolean(message.playing))
+      if (message.media) this.mediaSession.onReport(tabId, message.media)
       this.state.commitVolatile()
       this.updateMedia()
+      return
+    }
+    if (message.type === 'notification') {
+      if (message.notification) this.webNotifications.handle(tabId, message.notification)
       return
     }
     if (typeof message.url !== 'string' || !/^https?:\/\//i.test(message.url)) return
@@ -2090,12 +2105,24 @@ export class Browser {
       'media.toggle': ({ tabId }) => {
         const view = tabs.view(tabId)
         if (!view) return
+        // A page whose script reports its media takes the toggle as a Media Session action (its
+        // own handler, or the element that plays); elsewhere the first media element is toggled.
+        if (
+          this.mediaSession.sessionTab === tabId ||
+          this.state.media.some((m) => m.tabId === tabId && m.actions)
+        ) {
+          this.mediaSession.act(tabId, 'toggle')
+          return
+        }
         void view
           .executeJavaScript(
             `(() => { const m = [...document.querySelectorAll('video,audio')].find(e => !e.paused) || document.querySelector('video,audio'); if (!m) return false; if (m.paused) { m.play().catch(() => {}); } else { m.pause(); } return true })()`
           )
           .catch(() => undefined)
       },
+      'media.action': ({ tabId, action, seekTime }) =>
+        this.mediaSession.act(tabId, action, { seekTime }),
+      'media.pictureInPicture': ({ tabId }) => this.mediaSession.enterPictureInPicture(tabId),
 
       'split.create': ({ tabIds, layout }, win) => tabs.createSplit(tabIds, layout, win),
       'split.toggleLayout': ({ layout }, win) => tabs.toggleSplitLayout(layout, win),

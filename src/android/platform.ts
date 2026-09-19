@@ -43,6 +43,8 @@ import type {
   KdfParams,
   KeyEventInput,
   KeyWrapHost,
+  MediaSessionAction,
+  MediaSessionHost,
   NetHost,
   PasswordsHost,
   PickedTextFile,
@@ -58,6 +60,7 @@ import type {
   SystemAutofillStatus,
   ThumbnailHost,
   UpdateHost,
+  WebNotificationHost,
   WindowHost,
   WindowHostFactory
 } from '@core/platform'
@@ -93,6 +96,9 @@ import { AndroidTabViewHost, type HostHistory, type ViewEventPayloads } from './
 /** Android 13 (Tiramisu): the first release whose clipboard shows its own "copied" chip. */
 const CLIPBOARD_CHIP_SDK = 33
 
+/** Android 8 (Oreo): `Activity.enterPictureInPictureMode` with parameters. */
+const PICTURE_IN_PICTURE_SDK = 26
+
 export interface AndroidCapabilityInputs {
   /** `Build.VERSION.SDK_INT`. */
   sdkInt: number
@@ -126,7 +132,8 @@ export function androidCapabilities({
     windowDrag: false,
     devtools: false,
     compactReveal: false,
-    pictureInPicture: false,
+    // The window goes into the OS's picture-in-picture for a playing video (Android 8+).
+    pictureInPicture: sdkInt >= PICTURE_IN_PICTURE_SDK,
     viewSource: false,
     windows: false,
     extensions,
@@ -445,6 +452,21 @@ export interface HostEventPayloads {
   'voice.event': VoiceEvent
   /** The camera reports while a QR scan runs (`QrScan.kt`; `shared/qrScan.ts`). */
   'qr.event': QrEvent
+  /**
+   * The OS media controls acted (`MediaSessions.kt`: the notification, the lock screen, a
+   * headset button, the PiP window's buttons): the Media Session action for the tab the
+   * controls showed (null: whichever holds the session), `seekTime` for `seekto` in seconds.
+   */
+  'media.action': {
+    tabId: string | null
+    action: MediaSessionAction | 'toggle'
+    seekTime?: number
+    seekOffset?: number
+  }
+  /** The window entered (`active`) or left picture-in-picture, showing `tabId`'s page (`PictureInPicture.kt`). */
+  'media.pip': { tabId: string; active: boolean }
+  /** The shade's tap (`click`) or swipe (`close`) on a page's notification (`WebNotifications.kt`). */
+  'notification.event': { id: string; event: 'click' | 'close' }
 }
 
 /**
@@ -807,6 +829,8 @@ export class AndroidPlatform implements Platform {
    */
   readonly thumbnails: ThumbnailHost
   readonly qrScan: QrScanHost
+  readonly mediaSession: MediaSessionHost
+  readonly webNotifications: WebNotificationHost
   /** The new tab page's picked wallpaper, in its own document (`newtab-wallpaper.json`). */
   readonly newTabBackground: AndroidNewTabBackground
   browser!: Browser
@@ -1003,7 +1027,8 @@ export class AndroidPlatform implements Platform {
     this.thumbnails = {
       configure: (width) => bridge.send('thumbnail.configure', { width }),
       load: (tabId, url) => bridge.call<ThumbnailPicture | null>('thumbnail.load', { tabId, url }),
-      drop: (tabId, url) => bridge.send('thumbnail.drop', url === undefined ? { tabId } : { tabId, url }),
+      drop: (tabId, url) =>
+        bridge.send('thumbnail.drop', url === undefined ? { tabId } : { tabId, url }),
       sweep: (keep) => bridge.send('thumbnail.sweep', { keep })
     }
     // Kotlin asks for the camera, opens it and decodes (`QrScan.kt`); its reports come back as
@@ -1014,6 +1039,20 @@ export class AndroidPlatform implements Platform {
       layout: (slot) => bridge.send('qr.layout', slot),
       setTorch: (on) => bridge.send('qr.setTorch', { on }),
       openSettings: () => bridge.send('qr.openSettings')
+    }
+    // The OS media controls (`MediaSessions.kt`): a MediaSessionCompat behind the media-style
+    // notification, the lock screen and the headset buttons, fed with the session the core
+    // resolves; the window's picture-in-picture for a video (`PictureInPicture.kt`).
+    this.mediaSession = {
+      update: (session) => bridge.send('media.update', { session }),
+      enterPictureInPicture: (session) => bridge.call<boolean>('media.pip', { session })
+    }
+    // Web Notifications of the pages (`WebNotifications.kt`): one channel per site on the shade.
+    this.webNotifications = {
+      show: (request) => bridge.call<boolean>('notification.show', request),
+      close: (id) => bridge.send('notification.close', { id }),
+      forgetOrigin: (origin) => bridge.send('notification.forgetOrigin', { origin }),
+      ensureAllowed: () => bridge.call<boolean>('notification.ensureAllowed')
     }
     this.events.send('insets', boot.insets)
   }
@@ -1331,6 +1370,27 @@ export class AndroidPlatform implements Platform {
       case 'qr.event':
         browser.emit('qr.event', payload as HostEventPayloads['qr.event'], this.window)
         return
+      case 'media.action': {
+        const p = payload as Partial<HostEventPayloads['media.action']>
+        if (typeof p.action !== 'string') return
+        browser.mediaSession.act(typeof p.tabId === 'string' ? p.tabId : null, p.action, {
+          seekTime: typeof p.seekTime === 'number' ? p.seekTime : undefined,
+          seekOffset: typeof p.seekOffset === 'number' ? p.seekOffset : undefined
+        })
+        return
+      }
+      case 'media.pip': {
+        const p = payload as Partial<HostEventPayloads['media.pip']>
+        if (typeof p.tabId === 'string')
+          browser.mediaSession.onPictureInPicture(p.tabId, p.active === true)
+        return
+      }
+      case 'notification.event': {
+        const p = payload as Partial<HostEventPayloads['notification.event']>
+        if (typeof p.id === 'string' && (p.event === 'click' || p.event === 'close'))
+          browser.webNotifications.onHostEvent(p.id, p.event)
+        return
+      }
       case 'view.adopt': {
         const p = payload as HostEventPayloads['view.adopt']
         // Kotlin created the WebView for a popup. Pick the tab id first and bind it before the
