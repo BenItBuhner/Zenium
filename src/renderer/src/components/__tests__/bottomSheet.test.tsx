@@ -4,6 +4,7 @@ import { act, createRef, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 import { recedeDepth } from '@renderer/lib/motion/recede'
+import { uiStore } from '@renderer/lib/ui'
 
 /*
  * The sheet chassis as the home of the recede (design language v2 draft §11): a `BottomSheet`
@@ -263,6 +264,67 @@ describe('BottomSheet on the recede chassis', () => {
     for (let i = 0; i < 60 && frames.scheduled; i++) act(() => frames.run(1))
     expect(onDismissed).toHaveBeenCalledTimes(1)
     expect(recedeVar()).toBe('0.0000')
+  })
+
+  it('the keyboard raises the detent: the sheet grows on its own value with the recede held at 1, and a dismissal from the raised pose runs p over the actual travel', async () => {
+    // The sheet pads for the bottom inset (the gesture bar, or the keyboard while it is up), so
+    // its content stands taller by the keyboard – the peek is measured above the keys (§11.1).
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+      configurable: true,
+      get(this: HTMLElement) {
+        return 300 + (parseFloat(this.style.paddingBottom) || 0)
+      }
+    })
+    const insets = uiStore.get().insets
+    uiStore.set({ insets: { ...insets, bottom: 48 } })
+    const onDismissed = vi.fn()
+    render(<BottomSheet onDismissed={onDismissed}>rows</BottomSheet>)
+    await settle()
+    frames.run(120)
+    expect(recedeVar()).toBe('1.0000')
+    const rested = parseFloat(sheets()[0].style.height)
+    expect(rested).toBe(348)
+
+    // The keyboard comes up: the host reports it as the bottom inset.
+    act(() => uiStore.set({ insets: { ...insets, bottom: 356 } }))
+    expect(frames.scheduled).toBe(true)
+    let judged = 0
+    for (let i = 0; i < 200 && frames.scheduled; i++) {
+      act(() => frames.run(1))
+      // Every frame of the growth: the page does not move, the scrim does not thin.
+      expect(recedeVar()).toBe('1.0000')
+      expect(opacity(scrims()[0])).toBe(1)
+      judged++
+    }
+    expect(judged).toBeGreaterThan(5)
+    const raised = parseFloat(sheets()[0].style.height)
+    expect(raised).toBe(656)
+    expect(sheets()[0].style.transform).toContain('translate3d(0, 0px, 0)')
+
+    // Dismissed from the raised pose: p runs 1 → 0 over the 656 px the sheet stands at.
+    act(() => {
+      press(scrims()[0])
+    })
+    let last = 1
+    let pastTheOldDetent = 0
+    for (let i = 0; i < 200 && frames.scheduled; i++) {
+      act(() => frames.run(1))
+      const p = Number(recedeVar())
+      const translateY = parseFloat(
+        /translate3d\(0, ([-\d.]+)px/.exec(sheets()[0].style.transform)![1]
+      )
+      expect(p).toBeCloseTo(Math.max(0, 1 - translateY / 656), 3)
+      expect(p).toBeLessThanOrEqual(last + 1e-9)
+      expect(last - p).toBeLessThan(0.25)
+      if (translateY > 348 && p > 0) pastTheOldDetent++
+      last = p
+    }
+    // Still on its way down past the height it had before the keyboard: the old detent is
+    // not where the recede's travel starts.
+    expect(pastTheOldDetent).toBeGreaterThan(0)
+    expect(onDismissed).toHaveBeenCalledTimes(1)
+    expect(recedeVar()).toBe('0.0000')
+    uiStore.set({ insets })
   })
 
   it('dismissed while still waiting for the page to be covered, the sheet is simply gone', () => {

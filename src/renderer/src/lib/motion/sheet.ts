@@ -130,7 +130,11 @@ export interface SheetFrame {
   height: number
   /** How far (px) the sheet is pushed down off its resting place. */
   translateY: number
-  /** 0…1 share of the scrim's full opacity. */
+  /**
+   * 0…1 share of the scrim's full opacity – the sheet's presence `p` (v2 draft §11.1), which is
+   * also the page's recede: the sheet's progress from closed to its rest over its own travel,
+   * clamped at 1.
+   */
   scrim: number
 }
 
@@ -138,7 +142,8 @@ export interface SheetFrame {
  * Geometry for a sheet whose visible height is `position`. Between the detents the sheet
  * changes height – content stays anchored to the top edge and the bottom edge, with its fading
  * scroll edge, stays on screen; below the peek detent the whole sheet slides down instead, and
- * the scrim thins out with it.
+ * the scrim thins out with it. The scrim's share here is measured over the peek detent; the
+ * motion measures it over the sheet's actual travel (`SheetMotion.frame`).
  */
 export function sheetFrame(position: number, detents: SheetDetents): SheetFrame {
   const visible = Math.max(0, position)
@@ -230,6 +235,15 @@ export interface SheetMotionOptions {
  * `progress` reports the dismissal share of it, `frame()` the height and offset to lay out. A
  * sheet with two detents also expands and collapses along the same track (`settleTo`), and
  * follows its detents when they are measured again (`refresh`).
+ *
+ * The sheet's presence `p` (`frame().scrim`: the scrim's share and the page's recede, v2 draft
+ * §11.1) is its progress from closed to its rest over its own travel, clamped at 1 – a sheet
+ * expanded past its first detent pushes the page no further. That travel is the detent the
+ * sheet came in to; when the detents move under a resting sheet (the keyboard came up or went
+ * and the peek is measured above it) the sheet follows them on its own value while `p` holds at
+ * 1 – the recede never breathes with the keyboard – and from where the follow ends, at rest or
+ * caught by a finger or a dismissal, `p` is measured over the travel the sheet actually has
+ * there, so a dismissal from a raised pose runs 1 → 0 across all of it and nothing jumps.
  */
 export class SheetMotion {
   private state: SheetState = SHEET_CLOSED
@@ -242,6 +256,10 @@ export class SheetMotion {
   private backOrigin: number | null = null
   /** Where the spring is heading (px); 0 = away. */
   private target = 0
+  /** The travel (px) `p` is measured over: the height the sheet came in to, or last rested at. */
+  private presenceTravel = 0
+  /** Following detents that moved under it at rest: `p` holds at 1 until the follow ends. */
+  private following = false
   private readonly spring: SpringAnimation
 
   constructor(private readonly options: SheetMotionOptions) {
@@ -278,9 +296,9 @@ export class SheetMotion {
     return this.state.phase === 'settling' && this.target === 0
   }
 
-  /** Height, offset and scrim share for the current position. */
+  /** Height and offset for the current position, and the sheet's presence `p` as the scrim's share. */
   frame(): SheetFrame {
-    return sheetFrame(this.position, this.detents())
+    return { ...sheetFrame(this.position, this.detents()), scrim: this.presence() }
   }
 
   /** Bring the sheet in (from wherever it is – closed, or half dismissed). */
@@ -288,6 +306,8 @@ export class SheetMotion {
     if (this.state.phase === 'closed') {
       this.position = 0
       this.resting = 'collapsed'
+      // `p` runs 0 → 1 over the way in to the detent.
+      this.presenceTravel = this.detents()[this.resting]
     } else {
       this.hold()
     }
@@ -311,7 +331,12 @@ export class SheetMotion {
     this.go(this.detents()[detent])
   }
 
-  /** The detents were measured again: follow them, unless a finger or a dismissal is in charge. */
+  /**
+   * The detents were measured again: follow them, unless a finger or a dismissal is in charge.
+   * A sheet at rest follows on its own value with `p` held at 1 (the keyboard raising or
+   * lowering its detent never moves the page); a sheet still on its way in keeps running `p`
+   * over the travel it set out on and clamps at 1 from there.
+   */
   refresh(): void {
     if (this.state.phase === 'closed' || this.state.phase === 'dragging' || this.dismissing) return
     const to = this.detents()[this.resting]
@@ -319,6 +344,9 @@ export class SheetMotion {
       this.target = to
       this.spring.retarget(to)
     } else if (this.position !== to) {
+      // A sheet that rested at nothing (measured before it had a layout) comes in as presented.
+      if (this.position > 0) this.following = true
+      else this.presenceTravel = to
       this.go(to)
     } else {
       this.set(this.state)
@@ -379,6 +407,7 @@ export class SheetMotion {
   /** Take the sheet down at once, without animation (the layout changed, another surface opened). */
   close(): void {
     this.spring.stop()
+    this.following = false
     if (this.state.phase === 'closed') return
     this.position = 0
     this.backOrigin = null
@@ -392,9 +421,31 @@ export class SheetMotion {
     return { collapsed: travel, expanded: travel }
   }
 
+  /**
+   * The sheet's presence: 1 while it follows detents that moved under it, else its position over
+   * the travel it is measured on, clamped – a sheet above its first detent is fully present.
+   */
+  private presence(): number {
+    if (this.following) return 1
+    if (this.presenceTravel <= 0) return 0
+    return Math.min(1, Math.max(0, this.position / this.presenceTravel))
+  }
+
+  /**
+   * A follow of the detents ends where the sheet is – at rest, or caught by a finger, a back
+   * gesture or a dismissal: from here `p` runs over the travel the sheet actually has, the
+   * shorter of its height and its first detent (above the detent it is present in full).
+   */
+  private land(): void {
+    if (!this.following) return
+    this.following = false
+    this.presenceTravel = Math.min(this.position, this.detents().collapsed)
+  }
+
   /** Freeze whatever motion is running and report where the sheet is. */
   private hold(): number {
     if (this.state.phase === 'settling') this.position = this.spring.stop().x
+    this.land()
     return this.position
   }
 
@@ -417,9 +468,14 @@ export class SheetMotion {
     if (this.state.phase !== 'settling') return
     if (this.target === 0) {
       this.position = 0
+      this.following = false
       this.set(SHEET_CLOSED)
       this.options.onClosed()
     } else {
+      // At rest: from here a dismissal runs `p` over the travel the sheet stands at (its
+      // height up to its first detent), wherever it came in from.
+      this.following = false
+      this.presenceTravel = Math.min(position, this.detents().collapsed)
       this.moveTo(position, 'open')
     }
   }
