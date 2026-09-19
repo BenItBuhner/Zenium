@@ -30,8 +30,8 @@
 
 /*
  * The §9.34 primitives are read as main.css defines them, one unlayered rule each: `.zen-v2-row`
- * (the target row – `--v2-row-pad` by 16, the hover and press fill, `[data-static]` for a row
- * that is no target), `.zen-v2-button` (the secondary, `[data-primary]`, the press, disabled
+ * (the target row – `--v2-row-pad` by 16, the hover and press fill, the static attribute for a
+ * row that is no target), `.zen-v2-button` (the secondary, `[data-primary]`, the press, disabled
  * .4; extensions.css adds the hover fill on a mouse, `[data-variant='danger']`, the glyph size
  * and the 8 gap, and §9.30's busy form – the label kept in the flow at opacity 0 under a 16
  * `.zen-v2-spinner`), `.zen-v2-field` (32 / 40 tall, radius 4 / 6, the text at 30% as the
@@ -460,7 +460,7 @@ textarea.zen-v2-field {
 .zen-v2-af-form > .zen-v2-af-list {
   padding: 0;
 }
-/* The static row of what a prompt would save (§9.2, `data-static`): at the form's 16, no fill. */
+/* The static row of what a prompt would save (§9.2, §9.34's static row): at the form's 16, no fill. */
 .zen-v2-af-preview,
 .zen-v2-af-popover .zen-v2-af-preview,
 .zen-v2-af-dialog .zen-v2-af-preview {
@@ -714,7 +714,7 @@ textarea.zen-v2-field {
  * §9.34): 32 one line, 52 with a description – label and description each on a 20 px line, the
  * primitive's 6 above and below – growing with content. A check row is the target and keeps
  * the row's fill; a row whose target is a control inside it – the menulist, the entries' icon
- * buttons – is static (`data-static`).
+ * buttons – is §9.34's static row.
  */
 .zen-v2-af-pane-row:has(.zen-v2-af-pane-desc) {
   min-height: var(--v2-row-two-line);

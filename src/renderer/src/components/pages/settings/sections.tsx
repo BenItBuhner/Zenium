@@ -1253,7 +1253,12 @@ function autofillSection({ state, set, autofill }: SectionContext): RowGroup[] {
     }
   ]
   if (state.passwords.locked) return [...groups, vaultGateGroup(state.passwords, autofill.gate)]
-  return [...groups, ...addressGroups(state, set, autofill), ...cardGroups(state, set, autofill), passkeysGroup(autofill)]
+  return [
+    ...groups,
+    ...addressGroups(state, set, autofill),
+    ...cardGroups(state, set, autofill),
+    passkeysGroup(autofill)
+  ]
 }
 
 /**

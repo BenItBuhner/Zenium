@@ -434,12 +434,7 @@ function MenulistValue<T extends string>({
   placeholder?: string
 }): JSX.Element {
   return (
-    <span
-      className={cn(
-        'min-w-0 flex-1 truncate',
-        !current && 'text-[var(--v2-text-deemphasized)]'
-      )}
-    >
+    <span className={cn('min-w-0 flex-1 truncate', !current && 'zen-v2-af-muted')}>
       {current?.label ?? placeholder ?? ''}
     </span>
   )
@@ -740,9 +735,7 @@ function HostedMenuSheet<T extends string>({
         header={description ? undefined : <SheetHeader id={titleId} title={title} />}
       >
         <div className="zen-v2-af zen-v2-af-choices" data-surface="page">
-          {description && (
-            <SheetTitleBlock id={titleId} title={title} description={description} />
-          )}
+          {description && <SheetTitleBlock id={titleId} title={title} description={description} />}
           <div
             ref={list}
             role="radiogroup"

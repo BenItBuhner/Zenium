@@ -598,8 +598,9 @@ describe('the section model', () => {
       // An unreadable vault: the gate says so and Unlock is not pressable.
       const broken = buildSection(
         AUTOFILL,
-        context(state({ passwords: { ...emptyPasswordsStatus(), error: 'The vault file is damaged.' } }))
-          .ctx
+        context(
+          state({ passwords: { ...emptyPasswordsStatus(), error: 'The vault file is damaged.' } })
+        ).ctx
       )
       expect(broken.groups[1]?.description).toBe('The vault file is damaged.')
       expect(row(broken, 'autofill-unlock').disabled).toBe(true)

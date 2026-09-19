@@ -279,9 +279,7 @@ export function addressRowSubtitle(address: AddressEntry): string {
 export function passkeySubtitle(passkey: PasskeyEntry): string {
   return [
     passkey.rpName || passkey.rpId,
-    passkey.userDisplayName && passkey.userName !== passkey.userDisplayName
-      ? passkey.userName
-      : '',
+    passkey.userDisplayName && passkey.userName !== passkey.userDisplayName ? passkey.userName : '',
     passkey.lastUsedAt
       ? `used ${relativeTime(passkey.lastUsedAt).toLowerCase()}`
       : `created ${relativeTime(passkey.createdAt).toLowerCase()}`
@@ -440,6 +438,9 @@ export async function unlockVault(passphrase?: string): Promise<ReauthOutcome<nu
 }
 
 /** What a refused attempt says when the host gave no reason of its own. */
-export function unlockRefusal(result: { status: 'denied'; reason?: string }, answered: boolean): string {
+export function unlockRefusal(
+  result: { status: 'denied'; reason?: string },
+  answered: boolean
+): string {
   return result.reason ?? (answered ? 'That passphrase is not right.' : 'The vault stayed locked.')
 }
