@@ -236,7 +236,7 @@ describe('AndroidExtensionRuntime: attaching records', () => {
     hello(h, 'doc1.n.abcdefgh', 'content')
     expect(h.runtime.router.of(ID)).toHaveLength(2)
     await call(h, 'bg1', 'storage', 'set', ['local', { a: 1 }])
-    expect(h.saved(`ext-storage-${ID}.json`).local).toEqual({ a: 1 })
+    expect(h.saved(`ext-storage/${ID}.json`).local).toEqual({ a: 1 })
     await h.runtime.forget(ID)
     expect(h.runtime.router.of(ID)).toHaveLength(0)
     expect(h.kt.calledWith('ext.detach')).toEqual([{ id: ID }])
@@ -244,7 +244,7 @@ describe('AndroidExtensionRuntime: attaching records', () => {
     const saved = h.saved('extensions-runtime.json')
     expect(saved.installed).toEqual({})
     // No debounced write of the dropped storage document resurrects it.
-    expect(h.files.has(`ext-storage-${ID}.json`)).toBe(false)
+    expect(h.files.has(`ext-storage/${ID}.json`)).toBe(false)
   })
 })
 
@@ -441,7 +441,7 @@ describe('AndroidExtensionRuntime: chrome.storage on the shared helpers', () => 
     const changed = events(h, 'bg1', 'storage.onChanged')
     expect(changed).toHaveLength(1)
     expect(changed[0].args).toEqual([{ a: { newValue: 1 }, b: { newValue: 'two' } }, 'local'])
-    const doc = h.saved(`ext-storage-${ID}.json`)
+    const doc = h.saved(`ext-storage/${ID}.json`)
     expect(doc.local).toEqual({ a: 1, b: 'two' })
     const bytes = await call(h, 'doc1.n.abcdefgh', 'storage', 'getBytesInUse', ['local', null])
     expect(bytes.result).toBe(Buffer.byteLength('a1b"two"'))
@@ -474,7 +474,7 @@ describe('AndroidExtensionRuntime: chrome.storage on the shared helpers', () => 
     expect(heard[0].args).toEqual([{ s: { newValue: 1 } }, 'session'])
     // Session items never touch the disk.
     h.runtime.flushSync()
-    expect(h.files.has(`ext-storage-${ID}.json`)).toBe(false)
+    expect(h.files.has(`ext-storage/${ID}.json`)).toBe(false)
   })
 
   it('chrome.extension reads the file-access and private toggles from the record', async () => {

@@ -60,6 +60,88 @@ class StorageTest {
     }
 
     @Test
+    fun aDocumentWrittenInPiecesLandsWholeWithASurrogatePairAcrossTwoPieces() {
+        val changed = ArrayList<String>()
+        val listener: (String) -> Unit = { changed.add(it) }
+        Storage.addChangeListener(listener)
+        try {
+            val doc = "{\"a\":\"" + "x".repeat(10) + "\uD83D\uDE42" + "y".repeat(10) + "\"}"
+            val cut = doc.indexOf('\uD83D') + 1
+            val token = storage.beginWrite("ext-storage/abc.json")!!
+            assertTrue(storage.writeChunk(token, doc.substring(0, cut)))
+            assertTrue(storage.writeChunk(token, doc.substring(cut)))
+            assertTrue(storage.hasPending(token))
+            assertEquals(emptyList<String>(), changed)
+            assertTrue(storage.endWrite(token))
+            assertFalse(storage.hasPending(token))
+            assertEquals(doc, storage.read("ext-storage/abc.json"))
+            assertEquals(listOf("abc.json"), File(dir, "ext-storage").list()!!.toList())
+            assertEquals(listOf("ext-storage/abc.json"), changed)
+            assertFalse(storage.endWrite(token))
+            assertFalse(storage.writeChunk(token, "late"))
+        } finally {
+            Storage.removeChangeListener(listener)
+        }
+    }
+
+    @Test
+    fun anAbortedWriteInPiecesLeavesTheDocumentAndNoTempFile() {
+        storage.writeSync("ext-storage/abc.json", "old")
+        val token = storage.beginWrite("ext-storage/abc.json")!!
+        assertTrue(storage.writeChunk(token, "new"))
+        storage.abortWrite(token)
+        assertEquals("old", storage.read("ext-storage/abc.json"))
+        assertEquals(listOf("abc.json"), File(dir, "ext-storage").list()!!.toList())
+        assertNull(storage.beginWrite("../escape.json"))
+    }
+
+    @Test
+    fun twoWritesOfOneDocumentInFlightTogetherKeepTheirOwnTempFilesAndTheLastEndWins() {
+        val first = storage.beginWrite("ext-storage/abc.json")!!
+        val second = storage.beginWrite("ext-storage/abc.json")!!
+        assertTrue(storage.writeChunk(first, "first"))
+        assertTrue(storage.writeChunk(second, "second"))
+        assertEquals(2, File(dir, "ext-storage").list()!!.count { it.endsWith(".tmp") })
+        assertTrue(storage.endWrite(first))
+        assertEquals("first", storage.read("ext-storage/abc.json"))
+        assertTrue(storage.endWrite(second))
+        assertEquals("second", storage.read("ext-storage/abc.json"))
+        assertEquals(listOf("abc.json"), File(dir, "ext-storage").list()!!.toList())
+    }
+
+    @Test
+    fun aDocumentIsReadInPiecesUntilNull() {
+        val doc = "a".repeat(2 * 1024 * 1024 + 3)
+        storage.writeSync("ext-storage/abc.json", doc)
+        assertNull(storage.beginRead("ext-storage/missing.json"))
+        val token = storage.beginRead("ext-storage/abc.json")!!
+        val pieces = ArrayList<String>()
+        while (true) pieces.add(storage.readChunk(token, 1 shl 20) ?: break)
+        assertEquals(listOf(1 shl 20, 1 shl 20, 3), pieces.map { it.length })
+        assertEquals(doc, pieces.joinToString(""))
+        assertFalse(storage.hasPending(token))
+        assertNull(storage.readChunk(token, 1 shl 20))
+        val early = storage.beginRead("ext-storage/abc.json")!!
+        assertEquals(7, storage.readChunk(early, 7)!!.length)
+        storage.endRead(early)
+        assertFalse(storage.hasPending(early))
+    }
+
+    @Test
+    fun legacyExtensionStorageMovesIntoItsFolderAndOutOfTheBootPayload() {
+        File(dir, "ext-storage-abc.json").writeText("""{"local":{"a":1}}""")
+        File(dir, "ext-storage-def.json").writeText("""{"local":{"d":1}}""")
+        File(dir, "ext-storage").mkdirs()
+        File(dir, "ext-storage/def.json").writeText("""{"local":{"d":2}}""")
+        File(dir, "extensions.json").writeText(registry)
+        val fresh = Storage(dir)
+        assertEquals("""{"local":{"a":1}}""", fresh.read("ext-storage/abc.json"))
+        assertEquals("""{"local":{"d":2}}""", fresh.read("ext-storage/def.json"))
+        assertEquals(listOf("ext-storage", "extensions.json"), dir.list()!!.sorted())
+        assertEquals(listOf("extensions.json"), fresh.readAll().keys().asSequence().toList())
+    }
+
+    @Test
     fun oneDirectoryLevelIsAllowedAndUnsafeCharactersAreReplaced() {
         storage.writeSync("blocking/index.json", """{"lists":[]}""")
         assertEquals("""{"lists":[]}""", storage.read("blocking/index.json"))

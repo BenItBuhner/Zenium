@@ -280,8 +280,13 @@ function readData(saved: Partial<RuntimeData> | null): RuntimeData {
   return data
 }
 
-function storageDocName(id: string): string {
-  return `ext-storage-${id}.json`
+/**
+ * An extension's `chrome.storage` document (`local` and `sync`), in a folder of its own: folder
+ * documents stay out of the boot payload and are read on first use, in pieces – a filter-list
+ * extension's storage runs to tens of megabytes (Kotlin's `Storage.EXT_STORAGE_DIR`).
+ */
+export function storageDocName(id: string): string {
+  return `ext-storage/${id}.json`
 }
 
 /** The locale messages an extension gets: the UI locale, its language, then the manifest default. */
