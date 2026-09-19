@@ -12,9 +12,6 @@ name: Android privacy demo
 # (SafeBrowsingDemo.kt).
 on:
   workflow_dispatch:
-  # TEMPORARY: one run for the merge-step re-round onto 545ca203 (removed after).
-  push:
-    branches: [cursor/services-safebrowsing-https-ui-24d1]
 
 permissions:
   contents: read
