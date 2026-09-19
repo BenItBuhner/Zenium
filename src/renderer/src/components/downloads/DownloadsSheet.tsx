@@ -40,6 +40,7 @@ import {
   type FileGlyph
 } from '@renderer/lib/downloadsView'
 import { openSettings } from '@renderer/lib/pages'
+import { FrameDialogPortal, useFrameDialog } from '@renderer/lib/portals'
 import { browserStore, closeOverlay } from '@renderer/lib/ui'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 
@@ -70,8 +71,23 @@ const BUSY_TIMEOUT_MS = 8000
  * trailing control opens Settings › Downloads; an action row under the list, past a hairline,
  * clears the finished rows. As the sheet opens, the finished files are checked for still being
  * on disk, so a row whose file went since reads Deleted (the desktop page does the same).
+ *
+ * The overlay host renders it inside the shell's content column, which is chrome that goes
+ * inert under a sheet (`holdChromeInert`, lib/portals.tsx), so the sheet must not mount there:
+ * it is placed through the frame's dialog host (`FrameDialogPortal`, the way the phone panels'
+ * and the Settings tab's sheets are), over the content frame, drawing the stack's one scrim
+ * itself.
  */
 export function DownloadsSheet({ state }: { state: UIState }): JSX.Element {
+  return (
+    <FrameDialogPortal>
+      <HostedDownloadsSheet state={state} />
+    </FrameDialogPortal>
+  )
+}
+
+/** The sheet inside the host: registered with it as a dialog that draws its own scrim. */
+function HostedDownloadsSheet({ state }: { state: UIState }): JSX.Element {
   const items = downloadsEngine.list(state)
   const sheet = useRef<BottomSheetHandle>(null)
   const titleId = useId()
@@ -80,13 +96,15 @@ export function DownloadsSheet({ state }: { state: UIState }): JSX.Element {
 
   // The system back gesture pulls the sheet down with the finger; the back button, a hardware
   // Escape and a scrim tap slide it away.
+  const dismiss = (): void => sheet.current?.dismiss()
+  useFrameDialog({ onScrimPress: dismiss, ownScrim: true })
   useBackSurface({
     name: 'downloads',
     onProgress: (progress) => sheet.current?.backProgress(progress),
     onCommit: () => sheet.current?.commitBack(),
     onCancel: () => sheet.current?.cancelBack()
   })
-  useEscape(() => sheet.current?.dismiss())
+  useEscape(dismiss)
 
   useEffect(() => {
     const current = browserStore.get().state
@@ -119,6 +137,7 @@ export function DownloadsSheet({ state }: { state: UIState }): JSX.Element {
   return (
     <BottomSheet
       ref={sheet}
+      hosted
       onDismissed={() => {
         if (!handoff.current) closeOverlay()
       }}
