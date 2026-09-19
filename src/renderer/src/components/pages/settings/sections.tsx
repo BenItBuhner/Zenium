@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Check, Puzzle } from 'lucide-react'
+import { Check, CreditCard, Fingerprint, MapPin, Puzzle } from 'lucide-react'
 import type { InternalPageSection } from '@shared/internalPages'
 import type {
   ColorScheme,
@@ -14,6 +14,7 @@ import type {
   NewTabPreset,
   NewTabSettings,
   NewTabShortcutsMode,
+  PasswordsStatus,
   PermissionRule,
   PhoneBarPosition,
   PinnedCloseBehavior,
@@ -44,6 +45,19 @@ import { inputToUrl } from '@shared/url'
 import { languageName } from '@shared/languageNames'
 import type { TranslatePreferences } from '@shared/translate'
 import { run } from '@renderer/lib/api'
+import {
+  CLIPBOARD_CLEAR_OPTIONS,
+  NETWORK_NAMES,
+  addressRowSubtitle,
+  addressTitle,
+  androidProviderHint,
+  cardSubtitle,
+  cardTitle,
+  openAutofillEdit,
+  passkeySubtitle,
+  vaultGateCopy
+} from '@renderer/lib/autofill'
+import type { AutofillSettingsData, VaultGate } from '@renderer/lib/autofillSettings'
 import { downloadFolderLabel } from '@renderer/lib/downloadText'
 import { downloadsEngine } from '@renderer/lib/downloadsEngine'
 import {
@@ -56,6 +70,7 @@ import { describePermissionRule, siteLabel } from '@renderer/lib/security'
 import { openOverlay } from '@renderer/lib/ui'
 import { languageOptions, pairKey, pairLabel, warmRegistryModels } from '@renderer/lib/translate'
 import { formatBytes, relativeTime } from '@renderer/lib/utils'
+import { VaultPassphraseForm } from '../../autofill/PassphraseForm'
 import { ContainerIcon } from '../../ContainerIcon'
 import {
   clearDataGroups,
@@ -121,6 +136,12 @@ export interface SectionContext {
   openBarEditor(): void
   /** Leave for `tabId` and open the Boost editor on it (Boosts › Boost the site you came from). */
   boost(tabId: string): void
+  /**
+   * What Settings › Autofill reads of the vault – its lists while unlocked, its gate while
+   * locked – and does to it (`useAutofillSettings`); `idleAutofillSettings()` where there is no
+   * vault to read (a test, the landing's search).
+   */
+  autofill: AutofillSettingsData
 }
 
 export function buildSection(section: InternalPageSection, ctx: SectionContext): SectionModel {
@@ -146,6 +167,7 @@ const BUILDERS: Readonly<Record<string, Builder>> = {
   downloads: downloadsSection,
   privacy: privacySection,
   search: searchSection,
+  autofill: autofillSection,
   languages: languagesSection,
   spaces: spaceRoutingSection,
   containers: containersSection,
