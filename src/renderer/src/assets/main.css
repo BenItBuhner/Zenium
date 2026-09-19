@@ -5336,11 +5336,13 @@
 .zen-settings-body > .zen-settings-group:first-child > .zen-settings-heading {
   margin-top: 8px;
 }
+/* A live count in a description ("6 lists, 116,161 filters") is tabular (§4): it moves nothing when it changes. */
 .zen-settings-group-description {
   margin: 0 0 8px;
   padding: 0 16px;
   color: var(--v2-text-deemphasized);
   font-size: var(--v2-font-body);
+  font-variant-numeric: tabular-nums;
   line-height: var(--v2-line-body);
 }
 /* A group with nothing in it: one plain line where its rows would be, like a row's label at 69 %. */
@@ -5377,11 +5379,13 @@
   line-height: var(--v2-line-body);
   overflow-wrap: anywhere;
 }
+/* The value slot: a count under a label ("1,284 requests", "Updated 2 h ago") is tabular (§4). */
 .zen-settings-description {
   display: -webkit-box;
   overflow: hidden;
   color: var(--v2-text-deemphasized);
   font-size: var(--v2-font-small);
+  font-variant-numeric: tabular-nums;
   line-height: var(--v2-line-small);
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
@@ -6183,7 +6187,10 @@
  * the Downloads pane's rows do); in a card they keep the primitive's 16. A description makes
  * the row two-line (52). A row whose box is disabled dims its text with the box (§9.30's .4,
  * each its own, side by side – never compounded) and takes no fill; the primitive keys its fill
- * on `aria-disabled`, which a label row cannot carry, so the box's state stands in for it.
+ * on `aria-disabled`, which a label row cannot carry, so the box's state stands in for it. A
+ * row that is not itself a target – a list with its box and icon buttons, an excepted site with
+ * its trash button – is the primitive's static form (`data-static`, §9.34): the primitive's own
+ * gate keeps the hover and press fill off it, and no rule here restates that.
  */
 .zen-privacy-rows {
   display: flex;
@@ -6354,7 +6361,8 @@
  * the count as the shared §9.19 badge. It sits on a window surface, so it draws in the window
  * family through the §9.29 control roles: the deemphasised ink at rest and no lit state (§9.22 –
  * the glyph and the badge say what there is to say), the full ink and the window fill under the
- * pointer or while its popover is up.
+ * pointer or while its popover is up. The count is live, so its figures are tabular (§4): the
+ * badge inherits it, and 9 → 10 → 11 widens the pill by a glyph and never by a jitter.
  */
 .zen-v2-blocked-chip {
   display: inline-flex;
@@ -6367,6 +6375,7 @@
   padding: 0 6px;
   border-radius: var(--v2-radius-inner);
   color: var(--v2-control-text-deemphasized);
+  font-variant-numeric: tabular-nums;
   transition:
     background 120ms var(--zen-ease),
     color 120ms var(--zen-ease);
