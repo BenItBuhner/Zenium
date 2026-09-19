@@ -1,6 +1,6 @@
 import type { Folder, Tab, UIState } from '@shared/types'
 import { groupOf } from './groups'
-import { activeSpace, activeTab, regularOf } from './selectors'
+import { activeSpace, activeTab, regularOf, tabTitle } from './selectors'
 
 /**
  * The tab group strip (TAB-14): while the active tab belongs to a group the bar band gains a
@@ -51,18 +51,53 @@ export function groupStripFor(state: UIState): GroupStripModel | null {
 }
 
 /**
- * The strip of group `groupId` as it stands now, for a strip on its way out after the active
- * tab left the group: the group's remaining members, none of them active. Null once the group
- * itself is gone (dissolved) or the user is in another space, when there is nothing to slide out.
+ * What a strip on its way out shows, after the active tab left its group: the group as it stands
+ * now – its remaining members, none of them active – while it is still a group of this space.
+ * A group that is gone (dissolved) or left behind in another space has no present to show, so
+ * the strip slides out as it last stood (`last`, the model it drew before), its mark gone: a
+ * surface whose state is gone still runs its own dismissal from where it is (v2 §11.2).
  */
-export function leavingStripFor(state: UIState, groupId: string | null): GroupStripModel | null {
-  const group = groupId ? (state.folders[groupId] ?? null) : null
-  if (!group || group.spaceId !== activeSpace(state).id) return null
+export function leavingStripFor(state: UIState, last: GroupStripModel): GroupStripModel {
+  const group = state.folders[last.group.id]
+  if (!group || group.spaceId !== activeSpace(state).id) return { ...last, activeTabId: null }
   return { group, members: membersOf(state, group), activeTabId: null }
 }
 
 function membersOf(state: UIState, group: Folder): Tab[] {
   return regularOf(state, activeSpace(state)).filter((t) => t.folderId === group.id)
+}
+
+/**
+ * Everything the strip draws of a model, as one string: two models with the same key show the
+ * same strip. The presence keeps the model it showed last while the key holds, so a browser
+ * state that changed nothing the strip shows – a tick of another tab's loading, a scroll – hands
+ * the strip the very same model and it neither re-renders nor re-measures its chips; when the
+ * key changes (a member joins or leaves, the mark moves, a favicon or title arrives, the group
+ * is renamed or recoloured) it re-renders once.
+ */
+export function stripKey(model: GroupStripModel): string {
+  const { group, members, activeTabId } = model
+  return [
+    group.id,
+    group.name,
+    group.color,
+    group.icon,
+    activeTabId ?? '',
+    ...members.map(chipKey)
+  ].join('\u001f')
+}
+
+/** What a member's chip draws: its label and the inputs of its `Favicon`. */
+function chipKey(tab: Tab): string {
+  return [
+    tab.id,
+    tabTitle(tab),
+    tab.url,
+    tab.favicon ?? '',
+    tab.customIcon ?? '',
+    tab.loading && !tab.discarded ? 'loading' : '',
+    tab.containerId
+  ].join('\u001e')
 }
 
 /**

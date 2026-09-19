@@ -330,13 +330,7 @@ export function PhoneBar({
   const layout = barLayout(state)
   const inset = `var(--zen-inset-${edge})`
   const groupStrip = strip ? (
-    <GroupStrip
-      presence={strip}
-      state={state}
-      edge={edge}
-      overviewOpen={overviewOpen}
-      inert={inert}
-    />
+    <GroupStrip presence={strip} edge={edge} overviewOpen={overviewOpen} inert={inert} />
   ) : null
 
   return (

@@ -1,7 +1,7 @@
 import type { CSSProperties, JSX } from 'react'
-import { useCallback, useLayoutEffect, useRef, useState } from 'react'
+import { memo, useCallback, useLayoutEffect, useRef, useState } from 'react'
 import { Plus } from 'lucide-react'
-import type { PhoneBarPosition, Tab, UIState } from '@shared/types'
+import type { PhoneBarPosition, Tab } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { closeOverview, overviewIsOpen, toggleOverview } from '@renderer/lib/gestures/stage'
 import { groupColorChannels } from '@renderer/lib/groups'
@@ -11,6 +11,7 @@ import { reducedMotion, SPRING_SNAPPY, SpringAnimation } from '@renderer/lib/mot
 import { openNewTabPage, prepareNewTabGrow } from '@renderer/lib/newtab'
 import { tabTitle } from '@renderer/lib/selectors'
 import { createStore, type Store } from '@renderer/lib/store'
+import { browserStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { Favicon } from '../sidebar/Favicon'
@@ -31,19 +32,28 @@ const EASE = 'cubic-bezier(0.2, 0.8, 0.2, 1)'
 const KEEP_IN_VIEW_PAD = 8
 
 /**
- * A chip's face back at rest after a spring wrote it: the scale and fade gone, and the
- * stylesheet's transition (paused while the spring ran, or the pressed state's ease would have
- * dragged on every frame) back for the pressed state.
+ * A chip's face as a spring starts to write it: the stylesheet's transition paused (or the
+ * pressed state's ease would drag on every frame), and the compositor told what moves – only
+ * for as long as it does (v2 §11): at rest a face computes `will-change: auto`.
+ */
+function moveFace(el: HTMLElement): void {
+  el.style.transition = 'none'
+  el.style.willChange = 'transform, opacity'
+}
+
+/**
+ * A chip's face back at rest after a spring wrote it: the scale and fade gone, the transition
+ * back for the pressed state, and the compositor's layer let go.
  */
 function restFace(el: HTMLElement): void {
   el.style.transform = ''
   el.style.opacity = ''
   el.style.transition = ''
+  el.style.willChange = ''
 }
 
 interface Props {
   presence: GroupStripPresence
-  state: UIState
   edge: PhoneBarPosition
   /** The overview is up: a member chip closes it into its card, the show-group chip is pressed. */
   overviewOpen: boolean
@@ -115,8 +125,18 @@ class StripLedger {
  *
  * The strip takes only its own band: nothing on it reaches the pill's gesture recogniser or the
  * bar's hold (both live on siblings), and the bar's hold-to-edit does not reach the chips.
+ *
+ * A `memo`: the strip is mounted for as long as the tab is grouped, and every render of it
+ * commits the FLIP set – every chip's transform cleared and its rect read. Its presence hands it
+ * the same model while nothing it draws has changed (`useGroupStrip`), so a browser state that
+ * moved something else leaves it be; what it needs at a tap it reads then.
  */
-export function GroupStrip({ presence, state, edge, overviewOpen, inert }: Props): JSX.Element {
+export const GroupStrip = memo(function GroupStrip({
+  presence,
+  edge,
+  overviewOpen,
+  inert
+}: Props): JSX.Element {
   const { model, phase, onEntered, onLeft } = presence
   const { group, members, activeTabId } = model
   const trayRef = useRef<HTMLDivElement>(null)
@@ -281,7 +301,14 @@ export function GroupStrip({ presence, state, edge, overviewOpen, inert }: Props
           aria-label={`Show group, ${label}`}
           aria-pressed={inert ? undefined : overviewOpen}
           tabIndex={inert ? -1 : 0}
-          onClick={inert ? undefined : () => toggleOverview(state)}
+          onClick={
+            inert
+              ? undefined
+              : () => {
+                  const state = browserStore.get().state
+                  if (state) toggleOverview(state)
+                }
+          }
         >
           <span className="zen-group-chip-face">
             <GroupBadge folder={group} />
@@ -332,7 +359,7 @@ export function GroupStrip({ presence, state, edge, overviewOpen, inert }: Props
       </div>
     </div>
   )
-}
+})
 
 /**
  * A member's chip: its favicon in a 36 circle, the cell the tracker glides. The face inside is
@@ -383,7 +410,7 @@ function MemberChip({
     })
     spring.start(CHIP_TRAVEL, 0, 0)
     // Small and clear from this commit: the spring's first frame is a frame away.
-    el.style.transition = 'none'
+    moveFace(el)
     draw(CHIP_TRAVEL)
     return () => {
       spring.stop()
@@ -439,7 +466,7 @@ function ExitChip({ exit, onDone }: { exit: ChipExit; onDone: (id: string) => vo
     }
     const spring = new SpringAnimation(SPRING_SNAPPY, draw, finish)
     spring.start(CHIP_TRAVEL, 0, 0)
-    el.style.transition = 'none'
+    moveFace(el)
     draw(CHIP_TRAVEL)
     return () => spring.stop()
   }, [exit.tab.id, onDone])

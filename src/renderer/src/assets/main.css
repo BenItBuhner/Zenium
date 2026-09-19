@@ -2133,8 +2133,9 @@
    * glide, so nothing here may transition it (a transition on the cell would ease each frame's
    * write towards the last, and a neighbour would jump to its new slot and drift back before it
    * glided) – and the face inside is what a chip shows: its fill, its mark, the pressed state's
-   * ease and squeeze, and the scale a joining chip comes in on and a leaving chip goes out on
-   * (`GroupStrip.tsx`, which pauses the face's transition while a spring writes it).
+   * ease and squeeze (v2 §11's .98), and the scale a joining chip comes in on and a leaving chip
+   * goes out on (`GroupStrip.tsx`, which pauses the face's transition while a spring writes it
+   * and promotes the face – `will-change` – for those frames only: at rest it is `auto`).
    */
   .zen-group-chip {
     position: relative;
@@ -2154,14 +2155,13 @@
     width: 100%;
     height: 100%;
     border-radius: inherit;
-    will-change: transform, opacity;
     transition:
       background 120ms var(--zen-ease),
       transform 120ms var(--zen-ease);
   }
   .zen-group-chip:active .zen-group-chip-face {
     background: var(--v2-window-fill-hover);
-    transform: scale(0.97);
+    transform: scale(0.98);
   }
   .zen-group-chip[aria-current='true'] .zen-group-chip-face,
   .zen-group-chip[aria-pressed='true'] .zen-group-chip-face {

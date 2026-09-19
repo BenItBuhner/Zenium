@@ -30,8 +30,14 @@ Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 
 const { PhoneBar } = await import('../PhoneShell')
 const { useGroupStrip } = await import('../useGroupStrip')
-const { GROUP_STRIP_HEIGHT, GROUP_STRIP_VAR, groupStripFor, leavingStripFor, newTabAnchor } =
-  await import('@renderer/lib/groupStrip')
+const {
+  GROUP_STRIP_HEIGHT,
+  GROUP_STRIP_VAR,
+  groupStripFor,
+  leavingStripFor,
+  newTabAnchor,
+  stripKey
+} = await import('@renderer/lib/groupStrip')
 const { FlipTracker, REDUCED_FADE_MS } = await import('@renderer/lib/motion/flip')
 const { phoneBandHeight, phoneBarHeight } = await import('@renderer/lib/gestures/dock')
 const { dismissStage, stageStore } = await import('@renderer/lib/gestures/stage')
@@ -404,14 +410,49 @@ describe('the strip model from the folders', () => {
   })
 
   it('a strip on its way out shows the group as it stands, none of it active', () => {
-    const state = loose()
-    const model = leavingStripFor(state, GROUP)!
+    const last = groupStripFor(three('b'))!
+    const model = leavingStripFor(loose(), last)
+    expect(model.group).toBe(loose().folders[GROUP])
     expect(model.members.map((t) => t.id)).toEqual(['a', 'b'])
     expect(model.activeTabId).toBeNull()
-    // A dissolved group, or one of another space, has nothing to slide out.
-    expect(leavingStripFor(stateOf([tab('x')], 'x', []), GROUP)).toBeNull()
-    expect(leavingStripFor(loose(), null)).toBeNull()
-    expect(leavingStripFor(loose(), 'elsewhere')).toBeNull()
+  })
+
+  it('a strip whose group is gone, or left in another space, goes out as it last stood (§11.2)', () => {
+    const last = groupStripFor(three('b'))!
+    // Dissolved: the folder is gone from the state, and the tabs are loose.
+    const dissolved = leavingStripFor(stateOf([tab('a'), tab('b'), tab('c')], 'b', []), last)
+    expect(dissolved.group).toBe(last.group)
+    expect(dissolved.members).toBe(last.members)
+    expect(dissolved.activeTabId).toBeNull()
+    // Another space: the group stands, but not here.
+    const away = { ...three('b'), activeSpaceId: 'elsewhere' } as UIState
+    away.spaces = [
+      ...away.spaces,
+      { ...away.spaces[0], id: 'elsewhere', name: 'Home', tabIds: ['h'], activeTabId: 'h' }
+    ]
+    away.tabs.h = tab('h', { spaceId: 'elsewhere' })
+    expect(groupStripFor(away)).toBeNull()
+    const left = leavingStripFor(away, last)
+    expect(left.members).toBe(last.members)
+    expect(left.activeTabId).toBeNull()
+  })
+
+  it('the key is what the strip draws: two states that show the same strip share it', () => {
+    const keyOf = (tabs: Tab[], active = 'b', folders = [folder]): string =>
+      stripKey(groupStripFor(stateOf(tabs, active, folders))!)
+    const abc = [member('a'), member('b'), member('c')]
+    const key = keyOf(abc)
+    // Another tab loading, a tick of anything the strip does not show: the same key.
+    expect(keyOf([...abc, tab('x', { loading: true })])).toBe(key)
+    // The mark moving, a member joining, a favicon or a title arriving, a member loading, a new
+    // colour or name for the group: not.
+    expect(keyOf(abc, 'a')).not.toBe(key)
+    expect(keyOf([...abc, member('d')])).not.toBe(key)
+    expect(keyOf([member('a', { favicon: 'data:,a' }), member('b'), member('c')])).not.toBe(key)
+    expect(keyOf([member('a', { title: 'Alpha' }), member('b'), member('c')])).not.toBe(key)
+    expect(keyOf([member('a', { loading: true }), member('b'), member('c')])).not.toBe(key)
+    expect(keyOf(abc, 'b', [{ ...folder, color: 'red' }])).not.toBe(key)
+    expect(keyOf(abc, 'b', [{ ...folder, name: 'Reading' }])).not.toBe(key)
   })
 })
 
@@ -658,13 +699,56 @@ describe('the strip’s appearance and departure', () => {
     expect(tray().style.transform).toBe('')
   })
 
-  it('a dissolved group has nothing to slide out: the strip simply goes and the band closes', () => {
-    layChips(['x'])
-    render(stateOf([member('x')], 'x'))
+  it('a dissolved group takes the strip out as it last stood: the chips it had, none current, the band closing when the slide has landed (§11.2)', () => {
+    layChips(['a', 'x'])
+    render(stateOf([member('a'), member('x')], 'x'))
     expect(strip()!.dataset.phase).toBe('shown')
-    render(stateOf([tab('x')], 'x', []))
+    const writes = vi.spyOn(document.documentElement.style, 'setProperty')
+    // The group is dissolved: the folder is gone from the state, its tabs loose. The strip has
+    // no group to read any more, so it slides out with the last one it drew.
+    render(stateOf([tab('a'), tab('x')], 'x', []))
+    expect(strip()!.dataset.phase).toBe('leaving')
+    expect(members()).toEqual(['a', 'x'])
+    expect(host!.querySelector('[aria-current="true"]')).toBeNull()
+    expect(showChip().getAttribute('aria-label')).toBe('Show group, Research')
+    expect(slide(tray())).toBe(0)
+    expect(bandWrites(writes)).toEqual([])
+    const gone = framesUntil(() => slide(tray()) > GROUP_STRIP_HEIGHT / 2)
+    expect(gone).toBeGreaterThan(0)
+    expect(strip()!.dataset.phase).toBe('leaving')
+    expect(members()).toEqual(['a', 'x'])
+    expect(document.documentElement.style.getPropertyValue(GROUP_STRIP_VAR)).toBe(
+      `${GROUP_STRIP_HEIGHT}px`
+    )
+    act(() => settleSprings())
     expect(strip()).toBeNull()
-    expect(document.documentElement.style.getPropertyValue(GROUP_STRIP_VAR)).toBe('0px')
+    expect(bandWrites(writes)).toEqual(['0px'])
+  })
+
+  it('a switch of space away from a grouped tab does the same: the strip leaves as it was', () => {
+    layChips(['a', 'b'])
+    const home = { ...stateOf([member('a'), member('b')], 'b') } as UIState
+    render(home)
+    expect(strip()!.dataset.phase).toBe('shown')
+    // To another space, whose active tab is loose: the group stands, but not here.
+    const away = { ...home, activeSpaceId: 'elsewhere' } as UIState
+    away.spaces = [
+      ...home.spaces,
+      { ...home.spaces[0], id: 'elsewhere', name: 'Home', tabIds: ['h'], activeTabId: 'h' }
+    ]
+    away.tabs = { ...home.tabs, h: tab('h', { spaceId: 'elsewhere' }) }
+    render(away)
+    expect(strip()!.dataset.phase).toBe('leaving')
+    expect(members()).toEqual(['a', 'b'])
+    expect(host!.querySelector('[aria-current="true"]')).toBeNull()
+    framesUntil(() => slide(tray()) > 10)
+    // Back to the space, mid-slide: the strip turns round, b current again.
+    render(home)
+    expect(strip()!.dataset.phase).toBe('shown')
+    expect(chipOf('b').getAttribute('aria-current')).toBe('true')
+    act(() => settleSprings())
+    expect(strip()!.dataset.phase).toBe('shown')
+    expect(tray().style.transform).toBe('')
   })
 
   it('the band’s height is what the content column leaves free: the row plus the strip’s share', () => {
@@ -694,25 +778,50 @@ describe('a chip joining or leaving the strip', () => {
     expect(translate(chipOf('c'))).toBe(-PITCH)
     expect(chipOf('a').style.transform).toBe('')
     // d's face sets out small and clear, on its own spring – the cell itself is the tracker's –
-    // with the stylesheet's transition (the pressed state's ease) paused while the spring writes.
+    // with the stylesheet's transition (the pressed state's ease) paused while the spring
+    // writes, and promoted (`will-change`) for just those frames; the chips at rest are not.
     expect(scaleOf(faceOf('d'))).toBeCloseTo(0.6, 3)
     expect(faceOf('d').style.opacity).toBe('0.000')
     expect(faceOf('d').style.transition).toBe('none')
+    expect(faceOf('d').style.willChange).toBe('transform, opacity')
     expect(chipOf('d').style.transform).toBe('')
-    for (const id of ['a', 'b', 'c']) expect(faceOf(id).style.transform).toBe('')
+    for (const id of ['a', 'b', 'c']) {
+      expect(faceOf(id).style.transform).toBe('')
+      expect(faceOf(id).style.willChange).toBe('')
+    }
     // Both run together…
     const midway = framesUntil(() => translate(chipOf('b')) > -PITCH / 2)
     expect(midway).toBeGreaterThan(0)
     expect(scaleOf(faceOf('d'))).toBeGreaterThan(0.6)
     expect(scaleOf(faceOf('d'))).toBeLessThan(1)
-    // …and settle clean, the transition back with the face at rest.
+    // …and settle clean, the transition back with the face at rest and nothing promoted.
     act(() => settleSprings())
     for (const id of ['a', 'd', 'b', 'c']) {
       expect(chipOf(id).style.transform).toBe('')
       expect(faceOf(id).style.transform).toBe('')
       expect(faceOf(id).style.opacity).toBe('')
       expect(faceOf(id).style.transition).toBe('')
+      expect(faceOf(id).style.willChange).toBe('')
     }
+  })
+
+  it('sits out a browser state that changes nothing it draws: no render, no chip measured', () => {
+    layChips(['a', 'b', 'c'])
+    render(three('b'))
+    const commit = vi.spyOn(FlipTracker.prototype, 'commit')
+    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+    const chips = [...host!.querySelectorAll<HTMLElement>('[data-strip-member]')]
+    // Another tab starts loading, a setting changes: the bar re-renders on each, and the strip
+    // is handed the model it had – the tracker commits nothing, no chip is measured.
+    render(stateOf([member('a'), member('b'), member('c'), tab('x', { loading: true })], 'b'))
+    const three2 = three('b')
+    render({ ...three2, settings: { ...three2.settings, theme: 'dark' } } as UIState)
+    expect(commit).not.toHaveBeenCalled()
+    expect(rect.mock.contexts.filter((el) => chips.includes(el as HTMLElement))).toHaveLength(0)
+    // A favicon arriving for a member is drawn: one render, one commit of the whole set.
+    render(stateOf([member('a', { favicon: 'data:,a' }), member('b'), member('c')], 'b'))
+    expect(commit).toHaveBeenCalledTimes(1)
+    expect(chipOf('a').querySelector('img')?.getAttribute('src')).toBe('data:,a')
   })
 
   it('the cell is the tracker’s alone: the stylesheet eases the face, never the chip (§11)', () => {
@@ -727,7 +836,11 @@ describe('a chip joining or leaving the strip', () => {
     }
     expect(rule('.zen-group-chip')).not.toMatch(/transition|transform/)
     expect(rule('.zen-group-chip-face')).toMatch(/transition:[^;]*transform 120ms/)
-    expect(rule('.zen-group-chip:active .zen-group-chip-face')).toMatch(/transform: scale\(0\.97\)/)
+    // The press is v2's .98; and nothing is promoted at rest – `will-change` is the spring's,
+    // for the frames it writes (§11).
+    expect(rule('.zen-group-chip:active .zen-group-chip-face')).toMatch(/transform: scale\(0\.98\)/)
+    expect(rule('.zen-group-chip-face')).not.toMatch(/will-change/)
+    expect(rule('.zen-group-chip')).not.toMatch(/will-change/)
     expect(css).not.toMatch(/\n {2}\.zen-group-chip:active \{/)
   })
 
@@ -747,6 +860,7 @@ describe('a chip joining or leaving the strip', () => {
     const face = exit.querySelector<HTMLElement>('.zen-group-chip-face')!
     expect(scaleOf(face)).toBeCloseTo(1, 3)
     expect(face.style.transition).toBe('none')
+    expect(face.style.willChange).toBe('transform, opacity')
     const shrinking = framesUntil(() => scaleOf(face) < 0.9)
     expect(shrinking).toBeGreaterThan(0)
     expect(Number(face.style.opacity)).toBeLessThan(1)
