@@ -183,6 +183,8 @@ function state(patch: Partial<UIState> = {}, settings: Partial<Settings> = {}): 
     passwords: emptyPasswordsStatus(),
     defaultBrowser: { isDefault: false, prompt: null },
     permissionRules: [],
+    permissionDefaults: {},
+    lastSafetyCheck: null,
     blocking: emptyBlockingStatus(),
     pageEnvironment: DEFAULT_PAGE_ENVIRONMENT,
     newTabShortcuts: [],
