@@ -92,6 +92,16 @@ interface Touch {
 }
 
 /**
+ * The control each mounted sheet returns focus to when it goes (§9.22), by its layer, in mount
+ * order – the recede stack's. A sheet going from under another hands its opener up: a sheet
+ * above it whose opener lies inside it (a menu popping over an open one finds a row of the one
+ * on its way out focused) or whose opener was nothing (that row already blurred as it went
+ * inert) takes it, so that when the sheet above goes in its turn, focus comes back to the
+ * control that opened the first, not to nothing.
+ */
+const openers = new Map<HTMLElement, { current: HTMLElement | null }>()
+
+/**
  * Feed a move event to the tracker – including the samples the browser coalesced into it while
  * the main thread was busy, so a fling is measured from the real finger path.
  */
@@ -147,8 +157,11 @@ function track(tracker: VelocityTracker, e: ReactPointerEvent<HTMLElement>): voi
  * focuses it from its own effect, which runs after this one and wins) – and moves in again when
  * the content is swapped from under it; Tab wraps inside the sheet; the chrome behind the scrim
  * is inert while the sheet is up (`holdChromeInert`, the one mechanism the frame dialog host
- * uses); and when the sheet has gone, focus returns to the control that opened it. Escape is
- * the surface's (`useEscape`), since some sheets step back a level before they close.
+ * uses); and when the sheet has gone, focus returns to the control that opened it – a sheet
+ * going from under another hands that control up to it (`openers`), so a stack unwound from
+ * the top, or a menu that popped over a leaving one, still ends on the control that opened the
+ * first. Escape is the surface's (`useEscape`), since some sheets step back a level before
+ * they close.
  */
 export function BottomSheet({
   ref,
@@ -378,10 +391,16 @@ export function BottomSheet({
   // the lower sheet come back first, and then focus – still in this sheet, or dropped to nothing
   // by a scrim tap or the inert beneath – returns to the control that opened it (§9.22, §9.24),
   // which for a stacked sheet is a row of the sheet beneath; a sheet leaving from under another
-  // leaves focus to that one.
+  // leaves focus to that one, and hands it its own opener where the one above had found its
+  // focus in this sheet's rows, or nothing (`openers`).
   useLayoutEffect(() => {
     const sheet = sheetRef.current
-    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const layer = layerRef.current
+    const focused = document.activeElement
+    const opener = {
+      current: focused instanceof HTMLElement && focused !== document.body ? focused : null
+    }
+    if (layer) openers.set(layer, opener)
     const releaseChrome = holdChromeInert()
     const handle = registerRecedeLayer((frame) => {
       layerFrame.current = frame
@@ -393,12 +412,21 @@ export function BottomSheet({
       recede.current = null
       handle.release()
       releaseChrome()
+      if (layer) {
+        let upper = false
+        for (const [el, o] of openers) {
+          if (el === layer) upper = true
+          else if (upper && (o.current === null || layer.contains(o.current)))
+            o.current = opener.current
+        }
+        openers.delete(layer)
+      }
       // The layout reporter measures the content frame on resize; a measurement taken while the
       // frame stood receded is 3 % small, so have it look again now that the frame is back.
       if (resizedWhileUp.current) window.dispatchEvent(new Event('resize'))
       const active = document.activeElement
       if (!above && (!active || active === document.body || sheet?.contains(active)))
-        opener?.focus({ preventScroll: true })
+        opener.current?.focus({ preventScroll: true })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- registered once per mount
   }, [])

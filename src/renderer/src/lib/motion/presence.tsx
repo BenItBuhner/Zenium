@@ -41,7 +41,10 @@ import {
  * are told apart by the child's `key`, so a layer that can be asked for a new sheet while one is
  * up keys the child by the request (`MenuLayer` by `menu.id`); a keyless child is one request
  * for as long as it is rendered. A child that never reads {@link useSheetLeave} (a mouse popover
- * standing in for the sheet) is dropped the moment its request goes, as before.
+ * standing in for the sheet) is dropped the moment its request goes, as before – and so is a
+ * leaving generation whose last reader unmounts without landing (the menu's sheet swapped for
+ * that popover by a live `pointer: coarse` flip mid-leave): nothing would answer `onLeft` for
+ * it, so it is dropped once the commit is over rather than retained for good.
  *
  * The frame dialog host retains its panels on the phone in the same spirit but on the DOM
  * (`FrameDialogHost` in lib/portals.tsx: a panel its owner unmounts while the host's sheet is on
@@ -167,6 +170,9 @@ function Present({
   children: ReactElement
 }): JSX.Element {
   const consumers = useRef(0)
+  const leavingRef = useRef(leaving)
+  /** Unmounted (dropped, or the wrapper gone): a late answer has nothing to drop. */
+  const gone = useRef(false)
   const onLeft = useCallback(() => drop(id), [drop, id])
   const value = useMemo<LeaveSlot>(
     () => ({
@@ -176,13 +182,29 @@ function Present({
         consumers.current++
         return () => {
           consumers.current--
+          // The last reader detached. At the flip of `leaving` it attaches again in this same
+          // commit (the slot it reads changed under it); a reader unmounted mid-leave without
+          // landing – the menu's sheet swapped for a popover by a live `pointer: coarse` flip –
+          // does not, and nothing would ever answer `onLeft`: once the commit is over, a
+          // leaving generation that no one reads is dropped rather than retained for good.
+          if (consumers.current === 0)
+            queueMicrotask(() => {
+              if (!gone.current && consumers.current === 0 && leavingRef.current) onLeft()
+            })
         }
       }
     }),
     [leaving, onLeft]
   )
+  useLayoutEffect(() => {
+    gone.current = false
+    return () => {
+      gone.current = true
+    }
+  }, [])
   // Nothing in the subtree reads the leave: the generation goes with its request, as before.
   useLayoutEffect(() => {
+    leavingRef.current = leaving
     if (leaving && consumers.current === 0) onLeft()
   }, [leaving, onLeft])
   return <SheetLeaveContext.Provider value={value}>{children}</SheetLeaveContext.Provider>

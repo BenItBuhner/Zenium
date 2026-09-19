@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it } from 'vitest'
-import { StrictMode, act, useEffect, type JSX, type ReactNode } from 'react'
+import { StrictMode, act, useEffect, useSyncExternalStore, type JSX, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { SheetPresence, useSheetLeave } from '../motion/presence'
 
@@ -69,6 +69,23 @@ function Sheet({ name, label = name }: { name: string; label?: string }): JSX.El
 /** A mouse popover standing in for the sheet: never reads the leave. */
 function Popover({ name }: { name: string }): JSX.Element {
   return <div data-popover={name} />
+}
+
+/** The pointer, read live (`useViewport().coarse` in `MenuSheet`): the sheet on touch, else the popover. */
+let coarse = true
+const pointerListeners = new Set<() => void>()
+const subscribePointer = (listener: () => void): (() => void) => {
+  pointerListeners.add(listener)
+  return () => pointerListeners.delete(listener)
+}
+function setCoarse(value: boolean): void {
+  coarse = value
+  for (const listener of pointerListeners) listener()
+}
+/** `MenuSheet`'s shape: one request, the sheet or the popover for it by the pointer of the moment. */
+function Menu({ name }: { name: string }): JSX.Element {
+  const touch = useSyncExternalStore(subscribePointer, () => coarse)
+  return touch ? <Sheet name={name} /> : <Popover name={name} />
 }
 
 const sheets = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>('[data-sheet]')]
@@ -293,6 +310,48 @@ describe('SheetPresence (under StrictMode)', () => {
     land('menu')
     expect(names()).toEqual([])
     expect(document.querySelector('[data-surface]')).toBeNull()
+  })
+
+  it('a leaving generation whose last reader unmounts without landing – the menu swapping its sheet for the popover on a live pointer flip – is dropped once the commit is over, not retained for good', async () => {
+    coarse = true
+    render(
+      <SheetPresence>
+        <Menu name="menu" />
+      </SheetPresence>
+    )
+    expect(names()).toEqual(['menu'])
+    rerender(<SheetPresence>{null}</SheetPresence>)
+    expect(leaving()).toEqual(['menu'])
+    log = []
+
+    // Mid-leave a mouse arrives: the retained element renders the popover, and the sheet – the
+    // one reader – unmounts without ever answering.
+    act(() => setCoarse(false))
+    expect(names()).toEqual([])
+    expect(log).toEqual(['unmount menu'])
+    expect(document.querySelector('[data-popover]')).not.toBeNull()
+    // Once the commit is over, nothing reads the leave: the generation goes, popover and all.
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(document.querySelector('[data-popover]')).toBeNull()
+    expect(mount!.innerHTML).toBe('')
+
+    // A reader unmounting from a LIVE generation drops nothing: the request stands.
+    coarse = true
+    rerender(
+      <SheetPresence>
+        <Menu name="next" />
+      </SheetPresence>
+    )
+    act(() => setCoarse(false))
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(document.querySelector('[data-popover="next"]')).not.toBeNull()
+    // And when its request goes, the popover goes with it, as before.
+    rerender(<SheetPresence>{null}</SheetPresence>)
+    expect(mount!.innerHTML).toBe('')
   })
 
   it('takes one element or nothing: text is not a request', () => {

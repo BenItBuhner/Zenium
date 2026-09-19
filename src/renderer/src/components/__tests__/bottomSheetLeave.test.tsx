@@ -600,9 +600,12 @@ describe('focus (§9.22)', () => {
     const caught = presence(sheet)
     expect(caught).toBeLessThan(1)
     expect(caught).toBeGreaterThan(0)
-    // The finger lands on the sheet: the spring stops where it is.
+    // The finger lands on the layer's scrim share – the sheet itself is inert, so no hit-test
+    // reaches it; a press on the scrim over a moving sheet is the catch: the spring stops where
+    // it is.
+    const scrim = scrims()[0]
     act(() => {
-      sheet.dispatchEvent(
+      scrim.dispatchEvent(
         new PointerEvent('pointerdown', {
           bubbles: true,
           cancelable: true,
@@ -623,7 +626,7 @@ describe('focus (§9.22)', () => {
     // It lets go: the leave goes on to its landing and the sheet unmounts; there is no detent
     // to come back to.
     act(() => {
-      sheet.dispatchEvent(
+      scrim.dispatchEvent(
         new PointerEvent('pointerup', {
           bubbles: true,
           cancelable: true,
@@ -703,6 +706,91 @@ describe('the menu (MenuLayer’s shape: the sheet keyed by the menu’s id)', (
     frame()
     frame()
     expect(presence(b)).toBeLessThan(rising)
+  })
+
+  it('a menu popped over a leaving one takes over its opener (§9.22): when the new menu closes, focus is back on the control that opened the first, not on a row of the sheet that went', async () => {
+    render(layer(menu('a')))
+    await settle()
+    frames.run(60)
+    // Focus is in the first menu, on its first row.
+    expect(active()).toBe(byText('Copy'))
+    expect(active()).not.toBe(opener)
+
+    // `menu.hide` and the new menu land in one commit: the new sheet mounts while the focus
+    // still sits in a row of the one on its way out (inert from this commit on) – what it finds
+    // as its opener – and then takes the focus itself, being on top.
+    rerender(layer(menu('b')))
+    const [a, b] = sheets()
+    expect(a.hasAttribute('inert')).toBe(true)
+    expect(b.contains(active())).toBe(true)
+    await settle()
+    runLeave()
+    // The first has landed and gone; the second stands at rest and holds the focus.
+    expect(sheets()).toEqual([b])
+    expect(b.contains(active())).toBe(true)
+    expect(recedeVar()).toBe('1.0000')
+
+    // The second menu is dismissed (a scrim press); its landing clears the request.
+    act(() => {
+      press(scrims()[0])
+    })
+    runLeave()
+    rerender(layer(null))
+    expect(sheets()).toHaveLength(0)
+    expect(active()).toBe(opener)
+  })
+
+  it('the same when the new menu comes in a later commit, after the leaving row lost the focus (an element gone inert is blurred): a sheet mounted with the focus on nothing takes the leaving sheet’s opener', async () => {
+    render(layer(menu('a')))
+    await settle()
+    frames.run(60)
+    rerender(layer(null))
+    frame()
+    frame()
+    // What the browser does to a focused element that went inert.
+    act(() => {
+      ;(active() as HTMLElement).blur()
+    })
+    expect(active()).toBe(document.body)
+
+    rerender(layer(menu('b')))
+    expect(sheets()).toHaveLength(2)
+    const b = sheets()[1]
+    await settle()
+    runLeave()
+    expect(sheets()).toEqual([b])
+    expect(b.contains(active())).toBe(true)
+
+    act(() => {
+      press(scrims()[0])
+    })
+    runLeave()
+    rerender(layer(null))
+    expect(sheets()).toHaveLength(0)
+    expect(active()).toBe(opener)
+  })
+
+  it('a leaving menu whose sheet is swapped for the popover by a live pointer flip – the reader unmounts without landing – is dropped: no popover is retained for a menu with no request', async () => {
+    render(layer(menu('a')))
+    await settle()
+    frames.run(60)
+    rerender(layer(null))
+    frame()
+    frame()
+    expect(sheets()).toHaveLength(1)
+    expect(presence(sheets()[0])).toBeLessThan(1)
+
+    // A mouse arrives mid-leave (`(pointer: coarse)` no longer matches): `MenuSheet` renders
+    // the popover in place of the sheet, and the popover reads no leave.
+    act(() => viewportStore.set({ ...viewportStore.get(), coarse: false, formFactor: 'desktop' }))
+    expect(sheets()).toHaveLength(0)
+    expect(recedeDepth()).toBe(0)
+    // Nothing is left to answer `onLeft` for the sheet that went: once the commit is over the
+    // wrapper drops the generation, and the popover with it.
+    await settle()
+    expect(mount!.childElementCount).toBe(0)
+    expect(recedeVar()).toBe('')
+    expect(chrome.hasAttribute('inert')).toBe(false)
   })
 })
 
