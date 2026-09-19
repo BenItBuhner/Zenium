@@ -146,6 +146,7 @@ class QrDemo : DemoHarness("qr-demo-state.json", "android-qr", "qr-demo") {
     /** The page's camera, the system's prompt, Don't allow: the sheet goes again, the toast says why. */
     private fun refusedOnce() {
         finding("\ncamera refused once")
+        watchToasts()
         check("a touch on the page's camera button starts the request", touchTapLabel(CAMERA_LABEL))
         val prompted = awaitSystemWindow(10_000)
         check("the system's camera prompt shows", prompted)
@@ -154,9 +155,11 @@ class QrDemo : DemoHarness("qr-demo-state.json", "android-qr", "qr-demo") {
             shot("02-permission-prompt")
             check("Don't allow is touched", touchDialog(DENY_LABELS))
         }
-        val toast = waitFor(DENIED_TOAST, 8_000) != null
+        // The toast is pushed with the reply and lives 2.8 s, while the sheet's leave takes the
+        // emulator seconds; it is read from the record (watchToasts), not the tree, which trails.
+        val toast = awaitToast(DENIED_TOAST, 12_000)
         check("the refusal's toast: '$DENIED_TOAST'", toast)
-        check("the sheet is down after the refusal", awaitSurface(false, 4_000))
+        check("the sheet is down after the refusal", awaitSurface(false, 6_000))
         if (toast) shot("03-denied-toast")
         SystemClock.sleep(3_500)
     }
@@ -170,6 +173,7 @@ class QrDemo : DemoHarness("qr-demo-state.json", "android-qr", "qr-demo") {
         finding("\ncamera refused for good")
         var fixed = false
         for (attempt in 1..3) {
+            watchToasts()
             if (!touchTapLabel(CAMERA_LABEL)) {
                 finding("  attempt $attempt: no camera button to touch")
                 break
@@ -180,13 +184,13 @@ class QrDemo : DemoHarness("qr-demo-state.json", "android-qr", "qr-demo") {
             } else {
                 finding("  attempt $attempt: no prompt (auto-refused)")
             }
-            val deadline = SystemClock.uptimeMillis() + 8_000
+            val deadline = SystemClock.uptimeMillis() + 12_000
             while (SystemClock.uptimeMillis() < deadline) {
-                if (findByLabel(FIXED_TOAST) != null) {
+                if (toastSeen(FIXED_TOAST)) {
                     fixed = true
                     break
                 }
-                if (findByLabel(DENIED_TOAST) != null) break
+                if (toastSeen(DENIED_TOAST)) break
                 SystemClock.sleep(200)
             }
             if (fixed) break
@@ -194,9 +198,13 @@ class QrDemo : DemoHarness("qr-demo-state.json", "android-qr", "qr-demo") {
         }
         check("the fixed refusal's toast: '$FIXED_TOAST'", fixed)
         if (!fixed) return
-        SystemClock.sleep(600)
+        // The record has the toast the moment it is pushed; the still waits for the sheet to have
+        // left. The action is touched through the tree, which lists the toast a while after the
+        // DOM has it; a toast with an action lives 5 s.
+        awaitSurface(false, 6_000)
+        SystemClock.sleep(300)
         shot("04-denied-for-good-toast")
-        val opened = touchTapLabelExpecting(OPEN_SETTINGS_LABEL, "the app's details screen is in front", timeoutMs = 8_000, findTimeoutMs = 3_000) { systemWindowInFront() }
+        val opened = touchTapLabelExpecting(OPEN_SETTINGS_LABEL, "the app's details screen is in front", timeoutMs = 8_000, findTimeoutMs = 4_000) { systemWindowInFront() }
         check("Open settings (touched) opens the app's details screen", opened)
         if (opened) {
             SystemClock.sleep(2_500)
