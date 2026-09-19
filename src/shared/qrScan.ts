@@ -1,11 +1,12 @@
 /**
- * QR / barcode scanning (OMN-22, NTP-03): the model behind the camera buttons on the new tab
+ * QR / barcode scanning (OMN-22, NTP-04): the model behind the camera buttons on the new tab
  * page's field and in the phone's omnibox. The host (Android's camera2 behind `QrScan.kt`)
  * runs the camera, shows the preview natively over the sheet's slot and decodes with ZXing; it
  * reports through `qr.event`. This module owns what is pure about the feature – the scan sheet's
  * state machine and what becomes of a decoded payload – so the chrome can be tested without a
  * camera.
  */
+import { INTERNAL_ALIAS_SCHEME, INTERNAL_SCHEME } from './internalPages'
 import type { HostCapabilities } from './types'
 import { inputToUrl } from './url'
 
@@ -126,21 +127,35 @@ export function qrPayloadKind(payload: string): QrPayloadKind {
   return 'text'
 }
 
-export type QrDestination = { kind: 'navigate'; url: string } | { kind: 'search'; query: string }
+export type QrDestination =
+  /** An address: the tab loads it (`url` as `inputToUrl` resolved it). */
+  | { kind: 'navigate'; url: string }
+  /** Words: a search through the default engine. */
+  | { kind: 'search'; query: string }
+  /**
+   * An address of the browser's own – a Zenium page (`zen://`, `zenium://`), a Chromium page
+   * (`chrome://`), `about:` – which a code may not open: a code is content somebody else authored,
+   * like a link on a page, and #134 refuses those the same way (`refusedFromDocument`); a poster
+   * carrying `zen://error?…` has no user need behind it. Nothing loads; the sheet says so.
+   */
+  | { kind: 'refused'; url: string }
 
 /**
  * Where a decoded payload goes – the same decision `urlbar.submit` makes for typed text
  * (`inputToUrl`): an address is navigated to, everything else is a search through the default
- * engine. A Wi-Fi payload is searched by its network name alone – the password in it never
- * reaches a search engine – and a contact by the name it carries; both fall back to the payload's
- * text without its line breaks when the field is missing. Null for a payload with no text.
+ * engine – except an internal address, which is refused. A Wi-Fi payload is searched by its
+ * network name alone – the password in it never reaches a search engine – and a contact by the
+ * name it carries; both fall back to the payload's text without its line breaks when the field is
+ * missing. Null for a payload with no text.
  */
 export function qrDestination(payload: string): QrDestination | null {
   const text = qrText(payload)
   if (!text) return null
   switch (qrPayloadKind(text)) {
-    case 'url':
-      return { kind: 'navigate', url: inputToUrl(text)! }
+    case 'url': {
+      const url = inputToUrl(text)!
+      return { kind: refusedScheme(url) || refusedScheme(text) ? 'refused' : 'navigate', url }
+    }
     case 'wifi':
       return { kind: 'search', query: wifiNetworkName(text) ?? 'Wi-Fi network' }
     case 'contact':
@@ -150,16 +165,52 @@ export function qrDestination(payload: string): QrDestination | null {
   }
 }
 
-/**
- * What is submitted to `urlbar.submit` for a payload: the address as scanned (the core resolves
- * it as it would typed text, keyword rules included), or the search words. Null when there is
- * nothing to submit.
- */
-export function qrSubmitInput(payload: string): string | null {
-  const destination = qrDestination(payload)
-  if (!destination) return null
-  return destination.kind === 'navigate' ? qrText(payload) : destination.query
+/** The schemes a code may not open (see `QrDestination`'s `refused`). */
+const REFUSED_SCHEMES: ReadonlySet<string> = new Set([
+  INTERNAL_SCHEME,
+  INTERNAL_ALIAS_SCHEME,
+  'chrome',
+  'about'
+])
+
+function refusedScheme(url: string): boolean {
+  const match = /^([a-z][a-z0-9+.-]*):/i.exec(url.trim())
+  return match !== null && REFUSED_SCHEMES.has(match[1]!.toLowerCase())
 }
+
+export type QrSubmission =
+  /** Text for `urlbar.submit` as the user might have typed it. */
+  | { kind: 'typed'; input: string }
+  /** A search through the default engine, whatever the words look like. */
+  | { kind: 'search'; query: string }
+  | { kind: 'refused'; url: string }
+
+/**
+ * How a payload is handed to the address bar's submit (`urlbar.submit`). An address goes as
+ * scanned and words as one line, both as typed text – the core resolves them as it would the
+ * typed address or words, keyword rules included, so a scan follows the typing rule. The name out
+ * of a Wi-Fi or contact payload is a search whatever it looks like: a network named `cafe.net` or
+ * a contact whose name reads as a host is not an address to go to, and typed text would be read
+ * as one. An internal address is refused (`QrDestination`); nothing for a payload with no text.
+ */
+export function qrSubmission(payload: string): QrSubmission | null {
+  const text = qrText(payload)
+  const destination = qrDestination(text)
+  if (!destination) return null
+  switch (destination.kind) {
+    case 'navigate':
+      return { kind: 'typed', input: text }
+    case 'refused':
+      return destination
+    case 'search':
+      return qrPayloadKind(text) === 'text'
+        ? { kind: 'typed', input: destination.query }
+        : { kind: 'search', query: destination.query }
+  }
+}
+
+/** The toast for a code the scan refuses to open (`QrDestination`'s `refused`). */
+export const QR_REFUSED_MESSAGE = 'This code points to a Zenium page'
 
 function oneLine(text: string): string {
   return text.replace(/\s+/g, ' ').trim()

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  QR_REFUSED_MESSAGE,
   contactName,
   newQrSession,
   qrDestination,
@@ -8,7 +9,7 @@ import {
   qrScanAvailable,
   qrSessionOver,
   qrStartMessage,
-  qrSubmitInput,
+  qrSubmission,
   qrText,
   reduceQr,
   wifiNetworkName,
@@ -50,7 +51,20 @@ describe('qrDestination: what becomes of a decoded payload', () => {
     const destination = qrDestination(payload)
     expect(destination).toEqual({ kind: 'search', query: 'Cafe Lisboa' })
     expect(JSON.stringify(destination)).not.toContain('hunter2')
-    expect(qrSubmitInput(payload)).toBe('Cafe Lisboa')
+    expect(qrSubmission(payload)).toEqual({ kind: 'search', query: 'Cafe Lisboa' })
+  })
+
+  it('submits a network or contact name as a search outright, whatever it looks like', () => {
+    // Typed, `cafe.net` would be read as an address; a name is not one.
+    expect(qrSubmission('WIFI:T:WPA;S:cafe.net;P:x;;')).toEqual({
+      kind: 'search',
+      query: 'cafe.net'
+    })
+    expect(qrSubmission('MECARD:N:ly,bit.;;')).toEqual({ kind: 'search', query: 'bit. ly' })
+    expect(qrSubmission('BEGIN:VCARD\nVERSION:3.0\nFN:bit.ly\nEND:VCARD')).toEqual({
+      kind: 'search',
+      query: 'bit.ly'
+    })
   })
 
   it('reads a Wi-Fi network name with escaped separators and falls back without one', () => {
@@ -83,15 +97,63 @@ describe('qrDestination: what becomes of a decoded payload', () => {
     expect(qrDestination('geo:38.7,-9.1')?.kind).toBe('search')
   })
 
+  it('searches javascript: and intent: payloads as typed text would be, never running them', () => {
+    expect(qrDestination('javascript:alert(1)')).toEqual({
+      kind: 'search',
+      query: 'javascript:alert(1)'
+    })
+    expect(qrSubmission('javascript:alert(1)')).toEqual({
+      kind: 'typed',
+      input: 'javascript:alert(1)'
+    })
+    expect(qrDestination('intent://scan/#Intent;scheme=zxing;end')).toEqual({
+      kind: 'search',
+      query: 'intent://scan/#Intent;scheme=zxing;end'
+    })
+    expect(qrPayloadKind('intent://scan/#Intent;scheme=zxing;end')).toBe('text')
+  })
+
+  it('navigates a data: address as typed text does (a known scheme, not new to the scan)', () => {
+    expect(qrDestination('data:text/html,<p>hi</p>')).toEqual({
+      kind: 'navigate',
+      url: 'data:text/html,<p>hi</p>'
+    })
+    expect(qrSubmission('data:text/html,<p>hi</p>')).toEqual({
+      kind: 'typed',
+      input: 'data:text/html,<p>hi</p>'
+    })
+  })
+
+  it("refuses the browser's own addresses: a code is authored content, like a link (#134)", () => {
+    expect(qrDestination('zenium://settings')).toEqual({
+      kind: 'refused',
+      url: 'zen://settings'
+    })
+    expect(qrDestination('zen://history')).toEqual({ kind: 'refused', url: 'zen://history' })
+    expect(qrDestination('zen://error?url=https://bank.example')?.kind).toBe('refused')
+    expect(qrDestination('chrome://settings/privacy')?.kind).toBe('refused')
+    expect(qrDestination('chrome://flags')).toEqual({ kind: 'refused', url: 'chrome://flags' })
+    expect(qrDestination('about:blank')?.kind).toBe('refused')
+    expect(qrDestination('ZENIUM://Settings')?.kind).toBe('refused')
+    expect(qrSubmission('zenium://settings')).toEqual({ kind: 'refused', url: 'zen://settings' })
+    expect(QR_REFUSED_MESSAGE).toBe('This code points to a Zenium page')
+    // The web is not refused: a site under any of these names is a host, not a scheme.
+    expect(qrDestination('https://about.example/zen')?.kind).toBe('navigate')
+    expect(qrDestination('zen.example.org')?.kind).toBe('navigate')
+  })
+
   it('has nothing to submit for an empty payload', () => {
     expect(qrDestination('')).toBeNull()
     expect(qrDestination(' \n ')).toBeNull()
-    expect(qrSubmitInput('')).toBeNull()
+    expect(qrSubmission('')).toBeNull()
   })
 
-  it('submits an address as scanned so the core resolves it like typed text', () => {
-    expect(qrSubmitInput(' example.org\n')).toBe('example.org')
-    expect(qrSubmitInput('weather  in\nLisbon')).toBe('weather in Lisbon')
+  it('submits an address as scanned and words as one line, both as typed text', () => {
+    expect(qrSubmission(' example.org\n')).toEqual({ kind: 'typed', input: 'example.org' })
+    expect(qrSubmission('weather  in\nLisbon')).toEqual({
+      kind: 'typed',
+      input: 'weather in Lisbon'
+    })
   })
 
   it('trims and normalizes line breaks', () => {

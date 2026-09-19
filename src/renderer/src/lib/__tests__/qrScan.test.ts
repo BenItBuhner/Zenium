@@ -4,6 +4,7 @@ import type { Rect } from '@shared/types'
 
 vi.mock('../api', () => ({ cmd: vi.fn(), run: vi.fn() }))
 vi.mock('../ui', () => ({
+  browserStore: { get: () => ({ state: null }) },
   pushToast: vi.fn(),
   openQrSheet: vi.fn(),
   closeQrSheet: vi.fn()
@@ -16,6 +17,7 @@ import {
   layoutQrPreview,
   qrEvent,
   qrStore,
+  releaseQrSession,
   setQrScanIo,
   startQrScan,
   toggleQrTorch,
@@ -40,6 +42,7 @@ function harness(outcome: QrStartOutcome | (() => QrStartOutcome) = 'scanning'):
   torch: boolean[]
   layouts: Slot[]
   submits: Array<{ input: string; prompt: QrPrompt }>
+  searches: Array<{ query: string; prompt: QrPrompt }>
   toasts: Toast[]
   opened: QrPrompt[]
   closed: number[]
@@ -52,6 +55,7 @@ function harness(outcome: QrStartOutcome | (() => QrStartOutcome) = 'scanning'):
     torch: [] as boolean[],
     layouts: [] as Slot[],
     submits: [] as Array<{ input: string; prompt: QrPrompt }>,
+    searches: [] as Array<{ query: string; prompt: QrPrompt }>,
     toasts: [] as Toast[],
     opened: [] as QrPrompt[],
     closed: [] as number[]
@@ -66,6 +70,7 @@ function harness(outcome: QrStartOutcome | (() => QrStartOutcome) = 'scanning'):
     setTorch: (on) => void rec.torch.push(on),
     openSettings: () => void rec.settings++,
     submit: (input, prompt) => void rec.submits.push({ input, prompt }),
+    search: (query, prompt) => void rec.searches.push({ query, prompt }),
     haptic: () => void rec.haptics++,
     toast: (message, kind, action) => void rec.toasts.push({ message, kind, action }),
     openSheet: async (prompt) => void rec.opened.push(prompt),
@@ -239,13 +244,61 @@ describe('qrEvent: the camera reporting', () => {
     expect(h.haptics).toBe(1)
   })
 
-  it('searches a Wi-Fi payload by its network name, never its password', async () => {
+  it('searches a Wi-Fi payload by its network name outright, never its password', async () => {
     const h = harness()
     restore = setQrScanIo(h.io)
-    await scanning(h)
-    qrEvent({ kind: 'decoded', text: 'WIFI:T:WPA;S:Cafe Lisboa;P:hunter2;;' })
-    expect(h.submits[0]?.input).toBe('Cafe Lisboa')
-    expect(JSON.stringify(h.submits)).not.toContain('hunter2')
+    const prompt = await scanning(h)
+    // A network named like a host is still a name: the search, not the typed path that would
+    // read it as an address.
+    qrEvent({ kind: 'decoded', text: 'WIFI:T:WPA;S:cafe.net;P:hunter2;;' })
+    expect(h.searches).toEqual([{ query: 'cafe.net', prompt }])
+    expect(h.submits).toEqual([])
+    expect(JSON.stringify(h.searches)).not.toContain('hunter2')
+    expect(h.haptics).toBe(1)
+  })
+
+  it('searches a contact by its name outright', async () => {
+    const h = harness()
+    restore = setQrScanIo(h.io)
+    const prompt = await scanning(h)
+    qrEvent({ kind: 'decoded', text: 'BEGIN:VCARD\nVERSION:3.0\nFN:bit.ly\nEND:VCARD' })
+    expect(h.searches).toEqual([{ query: 'bit.ly', prompt }])
+    expect(h.submits).toEqual([])
+  })
+
+  it('refuses a code naming a Zenium page: a toast, the sheet down, nothing loaded', async () => {
+    const h = harness()
+    restore = setQrScanIo(h.io)
+    const prompt = await scanning(h)
+    qrEvent({ kind: 'decoded', text: 'zenium://settings' })
+    expect(h.submits).toEqual([])
+    expect(h.searches).toEqual([])
+    expect(h.haptics).toBe(0)
+    expect(h.toasts).toEqual([
+      { message: 'This code points to a Zenium page', kind: 'info', action: undefined }
+    ])
+    expect(h.cancels).toBe(1)
+    expect(h.closed).toEqual([prompt.id])
+    expect(currentQrPrompt()).toBeNull()
+  })
+
+  it('drops a decode the camera reports after Cancel: nothing loads', async () => {
+    const h = harness()
+    restore = setQrScanIo(h.io)
+    const prompt = await scanning(h)
+    // Cancel (the button, Escape, the back gesture's commit) ends the session at once; the
+    // camera's last frame may still come in as the sheet falls.
+    cancelQrScan()
+    expect(h.cancels).toBe(1)
+    expect(h.closed).toEqual([prompt.id])
+    qrEvent({ kind: 'decoded', text: 'https://example.org/' })
+    qrEvent({ kind: 'decoded', text: 'weather in Lisbon' })
+    expect(h.submits).toEqual([])
+    expect(h.searches).toEqual([])
+    expect(h.haptics).toBe(0)
+    expect(h.toasts).toEqual([])
+    // The session the leaving sheet draws is cancelled, its window no longer live.
+    expect(qrStore.get().session).toMatchObject({ phase: 'cancelled', torchOn: false })
   })
 
   it('a decode with no text is nothing found: the session keeps scanning', async () => {
@@ -355,5 +408,33 @@ describe('cancel and the preview slot', () => {
     cancelQrScan()
     layoutQrPreview({ ...slot, visible: false })
     expect(h.layouts).toHaveLength(1)
+  })
+})
+
+describe('the session after the sheet', () => {
+  it('keeps the terminal session, still and all, for the leave and lets it go once the sheet has left', async () => {
+    const h = harness()
+    restore = setQrScanIo(h.io)
+    const prompt = await scanning(h)
+    qrEvent({ kind: 'still', dataUrl: 'data:image/jpeg;base64,AAAA' })
+    cancelQrScan()
+    expect(qrStore.get().session?.still).toBe('data:image/jpeg;base64,AAAA')
+    releaseQrSession(prompt.id)
+    expect(qrStore.get().session).toBeNull()
+  })
+
+  it('does not let a live session go, nor a newer one, for a sheet that has left', async () => {
+    const h = harness()
+    restore = setQrScanIo(h.io)
+    const first = await scanning(h)
+    // React's development double-mount unmounts and mounts the live sheet once: nothing goes.
+    releaseQrSession(first.id)
+    expect(qrStore.get().session?.phase).toBe('scanning')
+    // A second start while the first sheet is still leaving: the first sheet's release, when it
+    // lands, must not take the second's session with it.
+    cancelQrScan()
+    await startQrScan({ tabId: 't2' })
+    releaseQrSession(first.id)
+    expect(qrStore.get().session?.phase).toBe('starting')
   })
 })

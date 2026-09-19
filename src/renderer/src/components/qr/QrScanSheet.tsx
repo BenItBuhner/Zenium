@@ -2,15 +2,21 @@ import type { JSX, RefObject } from 'react'
 import { useEffect, useRef } from 'react'
 import { Flashlight, QrCode } from 'lucide-react'
 import type { QrSession } from '@shared/qrScan'
-import { useEscape } from '@renderer/hooks/useEscape'
+import { useEscapeUnlessLeaving } from '@renderer/hooks/useEscape'
 import { useBackSurface } from '@renderer/lib/back'
 import { SheetPresence, useSheetLeave } from '@renderer/lib/motion/presence'
-import { cancelQrScan, layoutQrPreview, qrStore, toggleQrTorch } from '@renderer/lib/qrScan'
+import {
+  cancelQrScan,
+  layoutQrPreview,
+  qrStore,
+  releaseQrSession,
+  toggleQrTorch
+} from '@renderer/lib/qrScan'
 import { uiStore } from '@renderer/lib/ui'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 
 /**
- * The scan sheet (OMN-22, NTP-03): a prompt sheet on the chassis (design language v2 draft
+ * The scan sheet (OMN-22, NTP-04): a prompt sheet on the chassis (design language v2 draft
  * §9.23) that goes up as a camera button is tapped and stays while the host's camera looks for a
  * code. The title block reads "Scan a QR code" with the code glyph before it and a line on what
  * to do; the body is the framed target – a square window the host lays its live preview over,
@@ -23,41 +29,40 @@ import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
  * window's rectangle by the host and clipped to its corners. It only shows while the window
  * stands still: the sheet's rise, a drag, the back gesture and the leave hide it, and the last
  * still the host sent stands in the window meanwhile (`useNativePreview`), so the picture moves
- * with the sheet instead of trailing it.
+ * with the sheet instead of trailing it. The host decodes only while the window shows the live
+ * picture, so a code in front of the camera as the sheet moves is not read.
  *
  * Mounted once, above whichever shell is up. The leave outlives the request (`SheetPresence`,
- * §11.1): the store's `null` – a payload submitted, an error toasted – runs the sheet down; a
- * new start meanwhile is a new sheet above it.
+ * §11.1): the store's `null` – a payload submitted, an error toasted, Cancel – runs the sheet
+ * down; a new start meanwhile is a new sheet above it. Cancel in all its forms (the button,
+ * Escape, the back gesture) ends the session first and lets the sheet leave on that, so the
+ * camera is released as the fall starts and a decode during the fall lands on nothing; only a
+ * drag or a scrim press, which the chassis answers itself, reach `onDismissed` at the landing.
  */
 export function QrScanLayer(): JSX.Element | null {
   const prompt = uiStore.use((s) => s.qrScan)
-  return <SheetPresence>{prompt ? <QrSheet key={prompt.id} /> : null}</SheetPresence>
+  return <SheetPresence>{prompt ? <QrSheet key={prompt.id} id={prompt.id} /> : null}</SheetPresence>
 }
 
-function QrSheet(): JSX.Element {
+function QrSheet({ id }: { id: number }): JSX.Element {
   const sheet = useRef<BottomSheetHandle>(null)
   const slot = useRef<HTMLDivElement>(null)
   const session = qrStore.use((s) => s.session)
   const leaving = useSheetLeave()?.leaving === true
-  // The system back gesture pulls the sheet down like a drag; commit or the back button slides
-  // it away, which is Cancel (`onDismissed`).
+  // The system back gesture pulls the sheet down like a drag; its commit, or the back button,
+  // is Cancel: the session ends and the sheet leaves from where the gesture left it.
   useBackSurface({
     name: 'qr-scan',
     onProgress: (progress) => sheet.current?.backProgress(progress),
-    onCommit: () => sheet.current?.commitBack(),
+    onCommit: cancelQrScan,
     onCancel: () => sheet.current?.cancelBack()
   })
-  const dismiss = (): void => {
-    // The preview goes before the sheet moves, so the still rides the fall.
-    layoutQrPreview({ rect: { x: 0, y: 0, width: 0, height: 0 }, radius: 0, visible: false })
-    sheet.current?.dismiss()
-  }
   // Escape cancels (hardware keyboards exist on tablets and DeX); a sheet on its way out lets
   // the key by.
-  useEscape(() => {
-    if (!leaving) dismiss()
-  })
+  useEscapeUnlessLeaving(cancelQrScan, leaving)
   useNativePreview(slot, session?.phase === 'scanning' && !leaving)
+  // The sheet has left: the session it drew goes with it (the still among it).
+  useEffect(() => () => releaseQrSession(id), [id])
 
   const phase = session?.phase ?? 'cancelled'
   return (
@@ -70,7 +75,7 @@ function QrSheet(): JSX.Element {
       // chip stands above the Cancel row rather than under it.
       contentKey={session?.torch ? 'torch' : 'plain'}
       footer={
-        <button type="button" className="zen-v2-button" onClick={dismiss}>
+        <button type="button" className="zen-v2-button" onClick={cancelQrScan}>
           Cancel
         </button>
       }

@@ -103,7 +103,7 @@ export function NewTabPage({ state, tab, hidden }: Props): JSX.Element {
 /**
  * The search field: the floating URL bar's field with a placeholder, the search glyph and the
  * trailing icon buttons – the mic where the host has a speech recogniser (OMN-19: the listening
- * sheet, its result loading in this tab), the camera where it has a back camera (OMN-22, NTP-03:
+ * sheet, its result loading in this tab), the camera where it has a back camera (OMN-22, NTP-04:
  * the scan sheet, its payload loading in this tab). A tap on the field opens the omnibox for
  * this tab – the field itself never takes input, so what is typed goes where every other
  * address does.
