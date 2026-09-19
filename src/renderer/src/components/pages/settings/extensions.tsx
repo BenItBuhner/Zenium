@@ -32,7 +32,9 @@ export function extensionsGroups({ state }: SectionContext): RowGroup[] {
   return [
     {
       id: 'extensions',
-      heading: 'Extensions',
+      // "Installed", not the bar's "Extensions" again: the page reads bar "Extensions", group
+      // "Installed  6" (the design lead's nit on #212).
+      heading: 'Installed',
       aside: extensions.length > 0 ? extensions.length.toLocaleString() : undefined,
       description:
         'Chrome extensions from the Chrome Web Store or a folder with a manifest.json. Extensions run in every container.',

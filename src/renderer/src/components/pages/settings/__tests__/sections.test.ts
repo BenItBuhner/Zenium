@@ -1802,6 +1802,8 @@ describe('the Extensions category', () => {
       'extension-updates'
     ])
     const [list, install] = model.groups
+    // The group is "Installed" under the bar's "Extensions", not the title again.
+    expect(list!.heading).toBe('Installed')
     expect(list!.rows).toEqual([])
     expect(list!.empty).toBe('No extensions yet')
     expect(list!.aside).toBeUndefined()
@@ -2143,7 +2145,7 @@ describe('the Extensions category', () => {
     const hit = searchRows(models, 'dark reader')
     expect(hit.map((h) => h.row.id)).toContain(`extension:${EXT_ID}`)
     expect(hit.find((h) => h.row.id === `extension:${EXT_ID}`)?.caption).toBe(
-      'Extensions › Extensions'
+      'Extensions › Installed'
     )
     expect(searchRows(models, EXT_ID).map((h) => h.row.id)).toEqual([`extension:${EXT_ID}`])
     expect(searchRows(models, '4.9.132').map((h) => h.row.id)).toEqual([`extension:${EXT_ID}`])

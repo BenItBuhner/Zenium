@@ -350,7 +350,9 @@ function ExtensionCard({
 }): JSX.Element {
   const mv2 = ext.manifestVersion === 2
   const disabledLook = !ext.enabled && !ext.error
-  const log = ext.errors.length > 0 ? errorCounts(ext.errors) : null
+  // One red line per card: while the load error is the sub-line, the console (which holds that
+  // same error) is not summarised beside it (the design lead's ruling on #212).
+  const log = ext.errors.length > 0 && !ext.error ? errorCounts(ext.errors) : null
   return (
     <li className="zen-v2-card zen-ext-card" data-disabled={disabledLook || undefined}>
       <button
@@ -386,7 +388,7 @@ function ExtensionCard({
         {/*
           The error console's summary on the row's trailing side (13 in the §1 status ink, the
           details page's Errors card has the lines): the one thing about an installed extension
-          that its own sub-line does not say.
+          that its own sub-line does not say – so not while the sub-line is the load error.
         */}
         {log && (
           <span className="zen-ext-card-errors mr-1" data-tone={log.errors > 0 ? 'danger' : 'warn'}>

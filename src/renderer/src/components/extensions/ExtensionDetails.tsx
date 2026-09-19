@@ -158,10 +158,10 @@ export function ExtensionDetails({
               />
               <V2CheckRow
                 label="Allow in private windows"
-                description="Not available yet"
-                checked={false}
-                disabled
-                onChange={() => undefined}
+                description="Its request rules and scripts apply while browsing privately."
+                checked={Boolean(ext.allowPrivate)}
+                disabled={Boolean(ext.error)}
+                onChange={(v) => run('extension.setAllowPrivate', { id: ext.id, allowed: v })}
               />
             </div>
           </V2Card>

@@ -204,4 +204,51 @@ describe('the list card’s console summary', () => {
     const controls = cards[0]!.querySelector('.zen-ext-card-controls')
     expect(controls?.firstElementChild?.classList.contains('zen-ext-card-errors')).toBe(true)
   })
+
+  it('says nothing while the load error is the sub-line: one red line per card', () => {
+    const h = page([
+      ext({
+        error: 'Manifest file is missing or unreadable',
+        errors: [entry({ source: 'load', message: 'Manifest file is missing or unreadable' })]
+      })
+    ])
+    const card = h.querySelector<HTMLElement>('.zen-ext-card')!
+    expect(card.textContent).toContain('Manifest file is missing or unreadable')
+    expect(card.querySelector('.zen-ext-card-errors')).toBeNull()
+  })
+})
+
+describe('the Options card’s private-windows switch', () => {
+  const privateRow = (h: HTMLElement): HTMLLabelElement => {
+    const row = [...h.querySelectorAll<HTMLLabelElement>('.zen-v2-check-row')].find((r) =>
+      r.textContent?.includes('Allow in private windows')
+    )
+    if (!row) throw new Error('no private-windows row')
+    return row
+  }
+
+  it('reads allowPrivate and runs extension.setAllowPrivate, like the phone switch', () => {
+    const h = details(ext({ allowPrivate: false }))
+    const row = privateRow(h)
+    const box = row.querySelector<HTMLInputElement>('input[type="checkbox"]')!
+    expect(box.checked).toBe(false)
+    expect(box.disabled).toBe(false)
+    expect(row.getAttribute('aria-disabled')).not.toBe('true')
+    expect(row.textContent).not.toContain('Not available yet')
+    act(() => box.click())
+    expect(invoke).toHaveBeenCalledWith('extension.setAllowPrivate', { id: ID, allowed: true })
+  })
+
+  it('is checked while the extension is allowed in private windows', () => {
+    const on = privateRow(details(ext({ allowPrivate: true })))
+    expect(on.querySelector<HTMLInputElement>('input[type="checkbox"]')!.checked).toBe(true)
+  })
+
+  it('is disabled while the extension failed to load, as the file-URLs switch is', () => {
+    const h = details(ext({ error: 'Manifest file is missing or unreadable' }))
+    const boxes = [...h.querySelectorAll<HTMLInputElement>('.zen-v2-check-row input[type="checkbox"]')]
+    expect(boxes).toHaveLength(2)
+    expect(boxes.map((b) => b.disabled)).toEqual([true, true])
+    expect(privateRow(h).getAttribute('aria-disabled')).toBe('true')
+  })
 })
