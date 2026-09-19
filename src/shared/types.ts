@@ -9,6 +9,8 @@ import type { EngineRelayRequest, EngineRelayResponse } from './translateEngine'
 import type { UpdateSettings, UpdateStatus } from './updates'
 import type { BlockingSettings, BlockingStatus } from './blocking'
 import type { PrivacySettings, PrivacyStatus } from './privacy'
+import type { InternalPageId } from './internalPages'
+import type { WebAppInfo } from './webApp'
 
 export type Platform = 'linux' | 'win32' | 'darwin' | 'android'
 
@@ -106,6 +108,15 @@ export interface HostCapabilities {
    * Without it new tabs stay blank and the URL bar alone stands in for a new tab page.
    */
   newTabPage: boolean
+  /**
+   * The chrome can draw an internal page inside the content area, so chrome-rendered pages
+   * (Settings) open as tabs of their own rather than as an overlay above the current tab
+   * (`shared/internalPages.ts`, `render: 'chrome'`). Android has this; the desktop keeps its
+   * overlay until its program adopts the page model. Document pages are tabs on every host.
+   */
+  pageTabs: boolean
+  /** Pages can be pinned to the launcher / Home screen ("Add to Home screen"). */
+  pinShortcuts: boolean
 }
 
 export interface Rect {
@@ -269,12 +280,15 @@ export interface Tab {
   /** Requests the blocking engine stopped for the current document (resets on navigation). */
   blockedCount: number
   /**
-   * Tab whose page opened this one (a link into a new tab, `window.open`). Mobile system back at
-   * the tab's first page closes it and returns there, as Chrome does for a child tab.
+   * Tab whose page opened this one (a link into a new tab, `window.open`; the tab an internal
+   * page such as Settings was opened from). Mobile system back at the tab's first page closes it
+   * and returns there, as Chrome does for a child tab. A session's own: not persisted.
    */
   openerTabId: string | null
   /** Opened by another app's intent or share; system back at its first page returns to that app. */
   fromIntent: boolean
+  /** The web app manifest of the current page, once its page script has posted it; not persisted. */
+  webApp: WebAppInfo | null
 }
 
 /** Colours a tab group (folder) can wear; the phone chrome paints group cards with them. */
@@ -3049,6 +3063,31 @@ export interface Commands {
   /** Blank windows: move every local tab back into one of the real spaces. */
   'window.moveTabsToSpace': { args: { spaceId: string }; result: void }
 
+  /**
+   * Open an internal page (`shared/internalPages.ts`) in its tab. A page with `reuse: 'window'`
+   * that the window already has (in any of its spaces) is focused and, when `section` is given,
+   * moved to that section; otherwise a new tab opens after `openerTabId` (default: the active
+   * tab) and remembers it as its opener (`Tab.openerTabId`), so a back at the page's first entry
+   * closes it back to that tab. `section: null` is the landing page; leaving it out keeps the
+   * section a reused tab is on. A chrome page's section history is the tab's history: `tab.back`
+   * / `tab.forward` step through it and `Tab.canGoBack` reads it. A chrome page on a host
+   * without `capabilities.pageTabs` opens as its overlay instead. Resolves with the tab id, or
+   * null when an overlay was opened.
+   */
+  'page.open': {
+    args: { id: InternalPageId; section?: string | null; openerTabId?: string | null }
+    result: string | null
+  }
+  /**
+   * Move a page tab to a section of its page (`null` is the landing page): a new history entry,
+   * or with `replace` the current one rewritten – the two-pane layout's nav switches categories
+   * without stacking them (v2 §10.5, Firefox's `about:preferences#category`). A document page
+   * loads the section's address in its view.
+   */
+  'page.navigate': {
+    args: { tabId: string; section: string | null; replace?: boolean }
+    result: void
+  }
   'page.screenshot': { args: { tabId: string }; result: void }
   'page.print': { args: { tabId: string }; result: void }
   'page.savePage': { args: { tabId: string }; result: void }
@@ -3391,6 +3430,14 @@ export interface Commands {
   'translate.removeModel': { args: { from: string; to: string }; result: void }
   /** The chrome renderer hands back an answer of the engine worker it runs for the core. */
   'translate.engineResponse': { args: EngineRelayResponse; result: void }
+  /** Open the install / name-edit sheet for a tab (the ambient banner's "Add"). */
+  'webapp.openInstall': { args: { tabId: string }; result: void }
+  /** Pin the tab's page to the Home screen under `title` (the sheet's primary button). */
+  'webapp.pin': { args: { tabId: string; title: string }; result: void }
+  /** The install sheet closed without pinning (a site's deferred `prompt()` learns "dismissed"). */
+  'webapp.cancelInstall': { args: { tabId: string }; result: void }
+  /** The ambient banner went away: swiped (starts the cooldown) or timed out. */
+  'webapp.dismissBanner': { args: { tabId: string; reason: 'swipe' | 'timeout' }; result: void }
 }
 
 export type CommandName = keyof Commands
@@ -3507,9 +3554,43 @@ export interface Events {
   /** An install finished; the renderer toasts it with a Pin action while it is not in the toolbar. */
   'extension.installed': { id: string; name: string; toolbarPinned: boolean }
   // ---- end PROVISIONAL ----------------------------------------------------------------------------
+  /** Show the install sheet (with a manifest) or the lighter name-edit sheet (without one). */
+  'webapp.install': WebAppInstallPrompt
+  /** Show the ambient "Add <app> to Home screen" banner over the page. */
+  'webapp.banner': WebAppBanner
+  /** Take the banner down (navigation left the app, or it was pinned another way). */
+  'webapp.bannerHide': { tabId: string }
+  /**
+   * The launcher confirmed a Home screen shortcut (NOT-20): the chrome toasts "Added <name> to
+   * Home screen" with an Open action that takes `tabId` to `url`, the shortcut's own.
+   */
+  'webapp.pinned': { tabId: string | null; name: string; url: string | null }
 }
 
 export type EventName = keyof Events
+
+/** Everything the install sheet shows; a snapshot so it survives the tab navigating on. */
+export interface WebAppInstallPrompt {
+  tabId: string
+  /** Suggested launcher title (the manifest's short name, else the page title or host). */
+  title: string
+  url: string
+  origin: string
+  /** Icon to preview: a manifest icon, else the page's favicon, else null for a letter tile. */
+  icon: string | null
+  /** The manifest, when the page has one; null selects the name-edit sheet. */
+  info: WebAppInfo | null
+  /** Colour behind the letter tile (the manifest's theme colour or the space accent). */
+  tint: string | null
+}
+
+export interface WebAppBanner {
+  tabId: string
+  name: string
+  origin: string
+  icon: string | null
+  tint: string | null
+}
 
 // ---------------------------------------------------------------------------
 // Recently closed tabs and windows (persisted in state.json, summaries in the snapshot)

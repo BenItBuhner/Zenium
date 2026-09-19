@@ -126,7 +126,8 @@ export function createTabRecord(
     readerable: false,
     blockedCount: 0,
     openerTabId: init.openerTabId ?? null,
-    fromIntent: init.fromIntent ?? false
+    fromIntent: init.fromIntent ?? false,
+    webApp: null
   }
 }
 

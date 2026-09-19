@@ -1,24 +1,11 @@
 import type { JSX, RefObject } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import {
-  ArrowRight,
-  Bookmark,
-  Calculator,
-  Clock,
-  Globe,
-  Info,
-  Layers,
-  Puzzle,
-  Search,
-  Terminal,
-  X
-} from 'lucide-react'
+import { ArrowRight, X } from 'lucide-react'
 import type {
   PhoneBarLayout,
   PhoneBarPosition,
   Rect,
   Suggestion,
-  SuggestionKind,
   Tab,
   UIState
 } from '@shared/types'
@@ -30,6 +17,7 @@ import {
   phoneBarOffered
 } from '@shared/phoneBar'
 import { SEARCH_SCOPES, completeWwwCom, matchKeyword } from '@shared/search'
+import { internalPageAliasUrl } from '@shared/internalPages'
 import { ERROR_URL_PREFIX, isEmptyTabUrl, isNewTabUrl } from '@shared/url'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { cmd, run } from '@renderer/lib/api'
@@ -37,6 +25,7 @@ import { useBackDismissal } from '@renderer/lib/back'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { closeUrlbar, uiStore, type UrlbarState } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { suggestionIcon } from './suggestionIcon'
 
 interface Props {
   state: UIState
@@ -55,8 +44,9 @@ const drafts = new Map<string, string>()
 let keywordSeq = 0
 
 /**
- * The text the field holds for a page: its address, or the address an error page stands in for.
- * Empty tabs – blank and the new tab page alike – hold nothing, as Chrome's omnibox does there.
+ * The text the field holds for a page: its address, the address an error page stands in for, or
+ * an internal page's user-facing `zenium://` alias (`zen://` never shows; v2 §10.1). Empty tabs –
+ * blank and the new tab page alike – hold nothing, as Chrome's omnibox does there.
  */
 function pageTextFor(tab: Tab): string {
   if (isEmptyTabUrl(tab.url)) return ''
@@ -67,7 +57,7 @@ function pageTextFor(tab: Tab): string {
       return ''
     }
   }
-  return tab.url
+  return internalPageAliasUrl(tab.url)
 }
 
 function initialTextFor(state: UIState, urlbar: UrlbarState): string {
@@ -251,8 +241,9 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
   const draftKey = tab && urlbar.mode !== 'new-tab' ? `${tab.id}|${tab.url}` : 'new'
   const close = useCallback(
     (keepDraft: boolean) => {
-      if (keepDraft && text.trim() && text !== tab?.url) drafts.set(draftKey, text)
-      else drafts.delete(draftKey)
+      if (keepDraft && text.trim() && (!tab || text !== pageTextFor(tab))) {
+        drafts.set(draftKey, text)
+      } else drafts.delete(draftKey)
       // An extension's omnibox session, if one was on, ends without an entry.
       run('urlbar.cancel', undefined)
       closeUrlbar()
@@ -733,20 +724,6 @@ function fieldGrowFrom(layout: PhoneBarLayout): React.CSSProperties {
   } as React.CSSProperties
 }
 
-const ROW_ICONS: Record<SuggestionKind, typeof Globe> = {
-  url: Globe,
-  search: Search,
-  history: Clock,
-  bookmark: Bookmark,
-  tab: Globe,
-  space: Layers,
-  command: Terminal,
-  engine: Search,
-  answer: Calculator,
-  entity: Info,
-  omnibox: Puzzle
-}
-
 function SuggestionRow({
   id,
   item,
@@ -765,7 +742,7 @@ function SuggestionRow({
   const touch = useRef(false)
   // A favicon that fails to load leaves the kind's glyph, as Chrome's globe (never a blank cell).
   const [faviconBroken, setFaviconBroken] = useState(false)
-  const Icon = ROW_ICONS[item.kind]
+  const { Icon, page } = suggestionIcon(item)
   const pointerProps = {
     onPointerDown: (e: React.PointerEvent) => {
       // Keep the input focused (no blur → no keyboard flicker on phones). A mouse picks on
@@ -781,7 +758,7 @@ function SuggestionRow({
     }
   }
   const icon =
-    item.favicon && !faviconBroken ? (
+    item.favicon && !faviconBroken && !page ? (
       <img
         src={item.favicon}
         alt=""

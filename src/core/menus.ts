@@ -740,8 +740,7 @@ export class Menus {
         this.fullUrlsItem(win),
         {
           label: 'Manage Search Engines…',
-          click: () =>
-            this.browser.emit('overlay.open', { kind: 'settings', section: 'search' }, win)
+          click: () => void this.browser.pages.open('settings', 'search', win)
         }
       ])
       this.popup(joinGroups(groups), win, 'urlbar')
@@ -1326,7 +1325,7 @@ export class Menus {
         { type: 'separator' },
         {
           label: 'Space Routing Settings…',
-          click: () => this.browser.emit('overlay.open', { kind: 'settings' }, win)
+          click: () => void this.browser.pages.open('settings', undefined, win)
         },
         { type: 'separator' },
         {
@@ -1810,6 +1809,31 @@ export class Menus {
   }
 
   /**
+   * "Add to Home screen" on hosts that pin shortcuts, for web pages outside private windows.
+   * Inside the scope of an app that is already on the Home screen the item reads
+   * "Open <app>" and goes to the app's start URL instead (PWA-11).
+   */
+  private homeScreenItems(active: Tab | undefined, win: ZenWindow): Template {
+    const { webApps } = this.browser
+    if (!active || !webApps.canPin(active, win)) return []
+    const pinned = webApps.pinnedFor(active.url)
+    if (pinned) {
+      return [
+        {
+          label: `Open ${pinned.name}`,
+          click: () => this.browser.tabs.navigate(active.id, pinned.startUrl)
+        }
+      ]
+    }
+    return [
+      {
+        label: 'Add to Home Screen',
+        click: () => webApps.openInstall(active.id, win)
+      }
+    ]
+  }
+
+  /**
    * The "⋯" application menu in the toolbar (Firefox's hamburger menu). One list for every
    * layout: an item the host cannot do is left out (`caps`), and the phone layout – which has no
    * sidebar, window frame or keyboard to speak of – also drops the items that only act on those
@@ -1995,6 +2019,7 @@ export class Menus {
           enabled: Boolean(active) && /^https?:/i.test(active!.url),
           click: () => active && this.browser.shareTab(active.id, win)
         }),
+        ...this.homeScreenItems(active, win),
         ...when(caps.print, {
           label: 'Print…',
           action: 'page.print',
@@ -2036,19 +2061,18 @@ export class Menus {
             { type: 'separator' },
             {
               label: 'Resource Settings…',
-              click: () =>
-                this.browser.emit('overlay.open', { kind: 'settings', section: 'resources' }, win)
+              click: () => void this.browser.pages.open('settings', 'resources', win)
             }
           ]
         }),
         ...desktop({
           label: 'Keyboard Shortcuts',
-          click: () => this.browser.emit('overlay.open', { kind: 'shortcuts' }, win)
+          click: () => void this.browser.pages.open('settings', 'shortcuts', win)
         }),
         {
           label: 'Settings',
           action: 'settings.open',
-          click: () => this.browser.emit('overlay.open', { kind: 'settings' }, win)
+          click: () => void this.browser.pages.open('settings', undefined, win)
         },
         ...when(caps.devtools, {
           label: 'Developer Tools',

@@ -1,10 +1,12 @@
 import type { CSSProperties, JSX } from 'react'
+import { isChromePageUrl } from '@shared/internalPages'
 import type { Tab } from '@shared/types'
 import { getHost, isEmptyTabUrl } from '@shared/url'
 import { tabTitle } from '@renderer/lib/selectors'
 import { useThumbnail } from '@renderer/lib/thumbnails'
 import { cn } from '@renderer/lib/utils'
 import { CoverImage } from '../content/CoverImage'
+import { SettingsPreview } from '../pages/settings/SettingsPreview'
 import { Favicon } from '../sidebar/Favicon'
 
 interface Props {
@@ -33,6 +35,14 @@ export function TabPreview({
   style
 }: Props): JSX.Element {
   const thumbnail = useThumbnail(tab.id)
+  // A chrome page is never captured: its card shows the page drawn small (v2 §10.1).
+  if (isChromePageUrl(tab.url)) {
+    return (
+      <div className={cn('h-full w-full', className)} style={style}>
+        <SettingsPreview />
+      </div>
+    )
+  }
   if (thumbnail) {
     return (
       <CoverImage

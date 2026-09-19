@@ -122,6 +122,18 @@
                 <action android:name="android.intent.action.WEB_SEARCH" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
+            <!-- Zenium's own pages: a `zenium://settings/privacy` deep link (from a notification, a
+                 shortcut, another app, `adb shell am start`) opens the page's tab in the browser
+                 window – see src/shared/internalPages.ts. The browser's task is the only place it
+                 can land. DEFAULT only, no BROWSABLE: a web page must not be able to launch the
+                 browser's own pages (Chrome does not register chrome:// either; the desktop takes
+                 `zenium://` from argv and open-url but registers no OS handler), and TabWebView
+                 refuses a web document's own navigation to them (DeepLinks.refusedFromDocument). -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="zenium" />
+            </intent-filter>
             <!-- Share target: text and links open or search; an image opens as a page (Share.kt). -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
@@ -293,6 +305,11 @@
             </intent-filter>
         </activity-alias>
         <!-- app-icon-aliases:end -->
+
+        <!-- The launcher's confirmation that a Home-screen shortcut was pinned (Shortcuts.kt). -->
+        <receiver
+            android:name=".ShortcutPinnedReceiver"
+            android:exported="false" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

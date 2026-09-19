@@ -471,6 +471,8 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
         <div
           ref={rootRef}
           className="zen-overview absolute inset-0 flex flex-col"
+          // The overview backdrop is window chrome (v2 §9.29): its controls draw in the window family.
+          data-surface="window"
           style={{
             opacity: Math.min(1, p * 1.6),
             transform: `scale(${0.94 + 0.06 * p})`

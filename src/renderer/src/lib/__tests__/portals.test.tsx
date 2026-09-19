@@ -26,10 +26,12 @@ import {
 
 /*
  * Where chrome surfaces render (lib/portals.tsx): modal dialogs in the content frame through
- * FrameDialogHost, whose scrim dims the frame only and makes the window chrome inert (§9.5);
- * popovers, menus and toasts through ChromePortal, in the window-wide chrome layer, with the
- * layer's light dismiss (lib/popoverStore.ts, tested in popoverStore.test.tsx); §9.20 geometry
- * from placePopover. Both layers are page surfaces (§9.29): their roots carry
+ * FrameDialogHost, whose scrim dims the frame only and makes the window chrome inert (§9.5) –
+ * reached from inside the frame with FrameDialogPortal, and left to a sheet that draws the
+ * stack's one scrim itself (ownScrim); popovers, menus and toasts through ChromePortal, in the
+ * window-wide chrome layer, with the layer's light dismiss (lib/popoverStore.ts, tested in
+ * popoverStore.test.tsx); §9.20 geometry from placePopover. Both layers are page surfaces
+ * (§9.29): their roots carry
  * `data-surface="page"`.
  */
 
@@ -75,14 +77,16 @@ function Dialog({
   name,
   onScrimPress,
   active,
-  onPress
+  onPress,
+  ownScrim
 }: {
   name: string
   onScrimPress?: () => void
   active?: boolean
   onPress?: () => void
+  ownScrim?: boolean
 }): JSX.Element {
-  useFrameDialog({ onScrimPress, active })
+  useFrameDialog({ onScrimPress, active, ownScrim })
   return (
     <div data-dialog={name} onPointerDown={onPress}>
       {name}
@@ -370,6 +374,19 @@ describe('FrameDialogPortal', () => {
     )
     expect(slot().querySelector('[data-dialog="edit"]')).not.toBeNull()
     expect(host().getAttribute('data-open')).toBe('true')
+  })
+
+  it('finds the frame host wherever it sits in the tree, never a host that is not the frame’s', () => {
+    render(
+      <div>
+        <FrameDialogHost />
+        <FrameDialogPortal>
+          <Dialog name="sheet" />
+        </FrameDialogPortal>
+      </div>
+    )
+    expect(mount!.querySelector('[data-dialog="sheet"]')).toBeNull()
+    expect(host().hasAttribute('data-open')).toBe(false)
   })
 })
 

@@ -12,7 +12,12 @@ export type ExternalUrlClass =
   /** Handled by another app, after confirmation. */
   | { kind: 'external'; scheme: string; label: string | null; canRemember: boolean }
 
-/** Schemes a page has no business opening outside of itself. */
+/**
+ * Schemes a page has no business opening outside of itself. `zen` and its user-facing alias
+ * `zenium` name the browser's own pages: web content may not open `zenium://settings/privacy`,
+ * as it may not open `chrome://settings` in Chrome (the Android host refuses the navigation in
+ * `shouldOverrideUrlLoading`; a `window.open` to it is denied in `core/windowOpen.ts`).
+ */
 const BLOCKED_SCHEMES = new Set([
   'about',
   'blob',
@@ -26,7 +31,8 @@ const BLOCKED_SCHEMES = new Set([
   'view-source',
   'ws',
   'wss',
-  'zen'
+  'zen',
+  'zenium'
 ])
 
 /** What the sheet calls the common schemes, so "Open in another app?" says what would open. */

@@ -532,8 +532,8 @@ class TabWebView(
         postToPage(formsConfig())
     }
 
-    /** Deliver a browser → page message over the reply proxy (or the legacy bridge). */
-    private fun postToPage(payload: String) {
+    /** Deliver a browser → page message (JSON text) over the reply proxy (or the legacy bridge). */
+    fun postToPage(payload: String) {
         val proxy = replyProxy
         if (proxy != null) {
             runCatching { proxy.postMessage(payload) }
@@ -1153,6 +1153,21 @@ class TabWebView(
                 "about", "data", "blob", "javascript" -> {
                     if (interceptNavigation(request)) return true
                     false
+                }
+                DeepLinks.INTERNAL_SCHEME, DeepLinks.PAGE_SCHEME -> {
+                    // The browser's own pages are the user's to open (typed, a menu, a deep link
+                    // from another app), never a web page's: Chrome's rule for chrome://. Only
+                    // one of Zenium's own documents may link to a page, and that goes the way a
+                    // deep link does – a VIEW intent to the browser window, which a custom tab
+                    // has no chrome to draw it in either. Nothing under these schemes is ever
+                    // loaded from here.
+                    val target = url.toString()
+                    if (DeepLinks.refusedFromDocument(currentDocument, target)) {
+                        Log.i("ZenTab", "refused a navigation from web content to an internal page in $tabId")
+                    } else if (request.isForMainFrame) {
+                        host.openExternal(DeepLinks.aliasOf(target))
+                    }
+                    true
                 }
                 else -> {
                     // mailto:, tel:, intent://, a custom scheme: held until the core (and the user) agree.
