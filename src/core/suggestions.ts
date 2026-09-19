@@ -84,7 +84,7 @@ export class SuggestionService {
     const isPrivate = win.isPrivate
     const local = Boolean(win.localSpace)
 
-    if (!query) return isPrivate ? [] : this.emptyState()
+    if (!query) return isPrivate ? [] : await this.emptyState()
 
     // An extension's `chrome.omnibox` keyword owns the input from the space after it on: the
     // rows are what the extension suggests, nothing else (Chrome's keyword mode).
@@ -536,17 +536,40 @@ export class SuggestionService {
     return finish(rows, query)
   }
 
-  private emptyState(): Suggestion[] {
-    return this.browser.history.recent(8).map((entry) => ({
-      id: `hist:${entry.url}`,
-      kind: 'history' as const,
-      title: entry.title,
-      subtitle: displayUrl(entry.url),
-      url: entry.url,
-      favicon: entry.favicon,
-      targetId: null,
-      fill: displayUrl(entry.url)
-    }))
+  /**
+   * Nothing typed yet: what the clipboard holds first (Chrome's "Link you copied" / "Text you
+   * copied"; the kind alone, from the clip's description – the content is read only when the
+   * user reveals or picks the row), then the recent history.
+   */
+  private async emptyState(): Promise<Suggestion[]> {
+    const rows: Suggestion[] = []
+    const clip = await this.browser.searchEngines.peekClipboard()
+    // An image on the clipboard has nowhere to go: Zenium has no visual search, so no row.
+    if (clip === 'url' || clip === 'text') {
+      rows.push({
+        id: 'clipboard',
+        kind: 'clipboard',
+        title: clip === 'url' ? 'Link you copied' : 'Text you copied',
+        subtitle: '',
+        url: null,
+        favicon: null,
+        targetId: clip,
+        fill: ''
+      })
+    }
+    for (const entry of this.browser.history.recent(8)) {
+      rows.push({
+        id: `hist:${entry.url}`,
+        kind: 'history' as const,
+        title: entry.title,
+        subtitle: displayUrl(entry.url),
+        url: entry.url,
+        favicon: entry.favicon,
+        targetId: null,
+        fill: displayUrl(entry.url)
+      })
+    }
+    return rows
   }
 
   // ---------------------------------------------------------------------------

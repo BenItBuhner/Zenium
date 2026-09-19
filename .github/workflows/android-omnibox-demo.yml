@@ -1,0 +1,58 @@
+name: Android omnibox demo
+
+# Records the phone omnibox against Chrome for Android on a hardware-accelerated Android emulator,
+# under injected touches: the pill on a page opening search-ready with the page's title and address
+# in a header row and Share, Copy link and Edit (Copy link read back off the clipboard, Share's
+# system sheet, Edit filling the field with the caret at the end), the URL keyboard's attributes,
+# a typed query's suggestions with a Refine arrow each and one refined without a submit, a link
+# copied from a page's long-press menu offered as "Link you copied" behind Show and opened once
+# revealed, a page's OpenSearch engine discovered on load, picked under Recently visited in
+# Settings > Search and searched with from the pill. Both sites are the driver's own on the
+# loopback. Dispatch-only, like the other demos: it takes about ten minutes and says nothing about
+# a change being correct. The build, the emulator and the Gradle cache live in
+# android-emulator-demo.yml; this file only picks the driver and the demo it runs.
+on:
+  workflow_dispatch:
+  push:
+    branches: [cursor/android-omnibox-parity-cfe1]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-omnibox-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Omnibox demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.OmniboxDemo
+        DEMO_DIR=omnibox-demo
+        DEMO_OUT=artifacts/android-omnibox-demo
+        DEMO_VIDEO=android-omnibox-demo.mp4
+        DEMO_THEME=light
+      artifact-name: android-omnibox-demo
+      artifact-path: artifacts/android-omnibox-demo/
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed: a run is then spent on the demo rather than on the runner.
+  record-again:
+    name: Omnibox demo, second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.OmniboxDemo
+        DEMO_DIR=omnibox-demo
+        DEMO_OUT=artifacts/android-omnibox-demo
+        DEMO_VIDEO=android-omnibox-demo.mp4
+        DEMO_THEME=light
+      artifact-name: android-omnibox-demo-second-boot
+      artifact-path: artifacts/android-omnibox-demo/

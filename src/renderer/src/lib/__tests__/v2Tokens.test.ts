@@ -94,6 +94,9 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // wallpaper, stagger, the customise sheet's presets grid and previews, the grow surface
   // (components/newtab/NewTabPage.tsx, CustomizeSheet.tsx, NewTabGrowLayer.tsx).
   ['.zen-ntp-field {', '/*\n * A sheet coming up pushes the page back'],
+  // The phone omnibox's search-ready header, chips, Refine arrow and clipboard Show
+  // (components/urlbar/Urlbar.tsx; a window surface reading the §9.29 control roles).
+  ['.zen-omnibox-header {', ' * Settings as a tab (design language v2 draft'],
   // The Settings tab (components/pages/settings): the page host, the shared v2 rows, fields,
   // icon buttons and image radio cards it introduces, its sheets and its overview thumbnail.
   ['.zen-page-host {', ' * History page (design language v2 draft'],

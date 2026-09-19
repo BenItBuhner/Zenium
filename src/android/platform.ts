@@ -937,7 +937,14 @@ export class AndroidPlatform implements Platform {
       writeText: (text, sensitive) =>
         bridge.send('clipboard.writeText', { text, sensitive: sensitive === true }),
       writeImageFromUrl: (url) => bridge.call<boolean>('clipboard.writeImage', { url }),
-      clearText: (expected) => bridge.call('clipboard.clearText', { expected })
+      clearText: (expected) => bridge.call('clipboard.clearText', { expected }),
+      // The URL bar's clipboard row: `peek` reads the clip's description alone (no Android 12+
+      // toast), `read` its text once on the user's reveal or pick (ClipboardPeek.kt).
+      peek: async () => {
+        const kind = await bridge.call<string>('clipboard.peek', {})
+        return kind === 'url' || kind === 'text' || kind === 'image' ? kind : 'none'
+      },
+      read: () => bridge.call<string>('clipboard.read', {})
     }
     this.shell = {
       openExternal: (url) => bridge.send('app.openExternal', { url }),

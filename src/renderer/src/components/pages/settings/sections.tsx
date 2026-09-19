@@ -18,6 +18,7 @@ import type {
   PermissionRule,
   PhoneBarPosition,
   PinnedCloseBehavior,
+  SearchEngine,
   Settings,
   Tab,
   ThirdPartyPinnedBehavior,
@@ -40,11 +41,12 @@ import {
   setNewTabShortcutsMode
 } from '@shared/newTab'
 import { formatZoom } from '@shared/pageControls'
+import { engineHost } from '@shared/search'
 import { describeUpdateTarget, type UpdateChannel } from '@shared/updates'
 import { inputToUrl } from '@shared/url'
 import { languageName } from '@shared/languageNames'
 import type { TranslatePreferences } from '@shared/translate'
-import { run } from '@renderer/lib/api'
+import { cmd, run } from '@renderer/lib/api'
 import {
   CLIPBOARD_CLEAR_OPTIONS,
   NETWORK_NAMES,
@@ -95,7 +97,9 @@ import {
   CodeBlock,
   CopyRow,
   CssEditor,
+  EngineGlyph,
   NewContainerForm,
+  SearchEngineForm,
   ShortcutForm,
   UpdateStatusBlock,
   UrlForm,
@@ -1097,8 +1101,17 @@ function privacySection(ctx: SectionContext): RowGroup[] {
 // Search
 // ---------------------------------------------------------------------------
 
+/**
+ * Chrome for Android's Search settings: the engine picker lists the shipped engines and the ones
+ * added by hand, then a "Recently visited" heading with the engines pages offered through
+ * OpenSearch (OMN-27), each with its favicon; the user's engines are listed under the picker
+ * with Make default and Remove, and a form adds one by name and `%s` template.
+ */
 function searchSection({ state, set }: SectionContext): RowGroup[] {
   const s = state.settings
+  const engines = state.searchEngines
+  const own = engines.filter((e) => e.source === 'custom' || e.source === 'discovered')
+  const glyph = (e: SearchEngine): ReactNode => <EngineGlyph engine={e} />
   return [
     {
       id: 'search',
@@ -1108,7 +1121,13 @@ function searchSection({ state, set }: SectionContext): RowGroup[] {
           id: 'search-engine',
           label: 'Default search engine',
           value: s.searchEngineId,
-          options: state.searchEngines.map((e) => ({ value: e.id, label: e.name })),
+          options: engines.map((e) => ({
+            value: e.id,
+            label: e.name,
+            description: e.source === 'discovered' ? (engineHost(e) ?? undefined) : undefined,
+            leading: glyph(e),
+            group: e.source === 'discovered' ? 'Recently visited' : undefined
+          })),
           onChange: (v) => set({ searchEngineId: v })
         }),
         {
@@ -1123,7 +1142,77 @@ function searchSection({ state, set }: SectionContext): RowGroup[] {
           kind: 'info',
           id: 'search-keywords',
           label: 'Engine keywords',
-          description: `Type a keyword, then a space: ${state.searchEngines.map((e) => e.keyword).join(' · ')}`
+          description: `Type a keyword, then a space: ${engines.map((e) => e.keyword).join(' · ')}`
+        }
+      ]
+    },
+    {
+      id: 'search-engines',
+      heading: 'Added search engines',
+      description:
+        'Engines you added, and engines from sites you visited that offer one. Sites in private tabs are never listed.',
+      rows: own.map((e) =>
+        item(
+          `search-engine:${e.id}`,
+          e.name,
+          e.id === s.searchEngineId
+            ? 'Default search engine'
+            : e.source === 'discovered'
+              ? `Recently visited · ${engineHost(e) ?? e.searchUrl}`
+              : (engineHost(e) ?? e.searchUrl),
+          [
+            {
+              kind: 'action',
+              id: `search-engine:${e.id}:default`,
+              label: 'Make default',
+              description: `Searches from the URL bar use ${e.name}.`,
+              disabled: e.id === s.searchEngineId,
+              onPress: () => set({ searchEngineId: e.id })
+            },
+            {
+              kind: 'action',
+              id: `search-engine:${e.id}:remove`,
+              label: 'Remove',
+              description:
+                e.source === 'discovered'
+                  ? 'The site offers it again on your next visit.'
+                  : undefined,
+              destructive: true,
+              confirm: {
+                title: `Remove ${e.name}?`,
+                description:
+                  e.id === s.searchEngineId
+                    ? 'The URL bar goes back to the default engine.'
+                    : undefined,
+                action: 'Remove'
+              },
+              onPress: () => run('search.removeEngine', { id: e.id })
+            }
+          ],
+          { leading: glyph(e), keywords: [e.keyword, engineHost(e) ?? ''] }
+        )
+      ),
+      empty: 'No search engines added yet'
+    },
+    {
+      id: 'add-search-engine',
+      heading: null,
+      rows: [
+        {
+          kind: 'action',
+          id: 'add-search-engine',
+          label: 'Add search engine',
+          keywords: ['custom', 'opensearch', '%s'],
+          form: {
+            title: 'Add search engine',
+            description: 'Put %s in the URL where the search terms go.',
+            render: (close) => (
+              <SearchEngineForm
+                onAdd={(name, url) => cmd('search.addEngine', { name, url })}
+                close={close}
+              />
+            )
+          }
         }
       ]
     }

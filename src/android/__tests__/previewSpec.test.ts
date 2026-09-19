@@ -399,4 +399,43 @@ describe('parsePreviewSpec', () => {
     })
     expect(parsePreviewSpec('private=new&find=x')).toEqual({ kind: 'private', url: null })
   })
+
+  it('reads the pill editor: its text, a new tab, the stand-in clipboard and its steps', () => {
+    // Search-ready over the page: nothing typed, the clipboard untouched.
+    expect(parsePreviewSpec('urlbar=')).toEqual({
+      kind: 'urlbar',
+      text: '',
+      newTab: false,
+      clip: null
+    })
+    expect(parsePreviewSpec('urlbar=wiki&newtab')).toEqual({
+      kind: 'urlbar',
+      text: 'wiki',
+      newTab: true,
+      clip: null
+    })
+    // The clipboard row: the stand-in clipboard seeded (an empty `clip=` clears it), Show pressed.
+    expect(parsePreviewSpec('urlbar=&clip=https%3A%2F%2Fexample.com%2F&then=tap:Show')).toEqual({
+      kind: 'urlbar',
+      text: '',
+      newTab: false,
+      clip: 'https://example.com/',
+      then: [{ kind: 'tap', text: 'Show' }]
+    })
+    expect(parsePreviewSpec('urlbar=&clip=')).toMatchObject({ clip: '' })
+    // A form filled in: `type:<id>=<text>` keeps every `=` after the first in the text.
+    expect(
+      parsePreviewSpec(
+        'page=settings&section=search&then=tap:Add search engine;type:search-engine-url=https://x.test/?q=%s;type:=x;type:name'
+      )
+    ).toMatchObject({
+      then: [
+        { kind: 'tap', text: 'Add search engine' },
+        { kind: 'type', id: 'search-engine-url', text: 'https://x.test/?q=%s' }
+      ]
+    })
+    // A download wins over the editor; no `urlbar` is idle.
+    expect(parsePreviewSpec('download=a.bin&urlbar=').kind).toBe('download')
+    expect(parsePreviewSpec('newtab')).toEqual({ kind: 'idle' })
+  })
 })

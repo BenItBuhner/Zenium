@@ -7,6 +7,7 @@ import type { QrEvent, QrStartOutcome } from '@shared/qrScan'
 import { extensionPageOf } from '@shared/url'
 import { createPreviewDownloads } from './previewDownloads'
 import { CHUNK_CHARS } from './storeIo'
+import { isProbablyUrl } from '@shared/url'
 
 interface HostGlobal {
   resolve(id: number, json: string | null): void
@@ -33,6 +34,15 @@ const hostGlobal = (): HostGlobal => (window as unknown as { __zenHost: HostGlob
 
 /** Demo images the dev server serves straight from the source tree (never part of a build). */
 const previewAsset = (name: string): string => `${location.origin}/preview-assets/webapp/${name}`
+/** The dev server's relay for `net.fetch` (`previewFetch` in vite.android.config.ts). */
+const PREVIEW_FETCH_ROUTE = '/__zen/fetch'
+
+/**
+ * Raised on `window` by a `urlbar=` preview state's `clip=<text>`: the stand-in clipboard takes
+ * the detail (a string; empty clears it), so the omnibox's clipboard row can be captured without
+ * a copy first.
+ */
+export const PREVIEW_CLIP_EVENT = 'zen-preview-clip'
 
 /**
  * The web app the preview's pages can "declare": a cross-origin iframe cannot post its own
@@ -265,6 +275,13 @@ export function createPreviewBridge(): NativeBridge {
   let pieceSeq = 0
   const pieceWrites = new Map<number, { name: string; parts: string[] }>()
   const pieceReads = new Map<number, { text: string; at: number }>()
+  // The stand-in clipboard behind the URL bar's clipboard row: what the chrome copied, or
+  // `?clip=<text>` seeded for the stills (a `urlbar=` preview state's `clip=` re-seeds it through
+  // PREVIEW_CLIP_EVENT). The peek tells a link from text as the core would.
+  let previewClip = params.get('clip') ?? ''
+  window.addEventListener(PREVIEW_CLIP_EVENT, (e) => {
+    previewClip = String((e as CustomEvent<unknown>).detail ?? '')
+  })
 
   const handlers: Record<string, (args: Record<string, unknown>) => unknown | Promise<unknown>> = {
     boot: (): BootInfo => ({
@@ -599,7 +616,17 @@ export function createPreviewBridge(): NativeBridge {
     'reauth.available': () => vaultMode !== 'none',
     // The system sheet would rise here; the preview approves after the time it takes to notice.
     'reauth.verify': () => new Promise((resolve) => setTimeout(() => resolve(true), 400)),
-    'clipboard.writeText': ({ text }) => void navigator.clipboard?.writeText(String(text)),
+    'clipboard.writeText': ({ text }) => {
+      previewClip = String(text)
+      void navigator.clipboard?.writeText(previewClip)
+    },
+    'clipboard.peek': () =>
+      !previewClip
+        ? 'none'
+        : isProbablyUrl(previewClip) && !/\s/.test(previewClip)
+          ? 'url'
+          : 'text',
+    'clipboard.read': () => previewClip,
     // Like Kotlin: only a clipboard still holding the copied secret is emptied.
     'clipboard.clearText': async ({ expected }) => {
       const current = await navigator.clipboard?.readText().catch(() => null)
@@ -646,10 +673,16 @@ export function createPreviewBridge(): NativeBridge {
       localStorage.setItem(DEFAULT_BROWSER_KEY, granted ? 'true' : 'false')
       return granted
     },
-    'net.fetch': async ({ url }) => {
+    // Out through the dev server (`previewFetch` in vite.android.config.ts), as the Kotlin host
+    // reaches a site for the chrome: the suggest endpoints and OpenSearch descriptions the core
+    // asks for send no CORS headers, so the chrome's own fetch to them would be refused.
+    'net.fetch': async ({ url, headers }) => {
       try {
-        const res = await fetch(String(url))
-        return { ok: res.ok, text: res.ok ? await res.text() : '' }
+        const accept = (headers as Record<string, string> | undefined)?.accept
+        const res = await fetch(`${PREVIEW_FETCH_ROUTE}?url=${encodeURIComponent(String(url))}`, {
+          headers: accept ? { accept } : {}
+        })
+        return { ok: res.ok, status: res.status, text: res.ok ? await res.text() : '' }
       } catch {
         return { ok: false, text: '' }
       }

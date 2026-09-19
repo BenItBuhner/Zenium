@@ -5327,6 +5327,94 @@
 }
 
 /* ---------------------------------------------------------------------------
+ * The phone omnibox's search-ready header, chips and row controls (design language v2 draft;
+ * `components/urlbar/Urlbar.tsx`; OMN-05, OMN-09, OMN-14). The omnibox is the pill grown over the
+ * frame – a window surface (§9.29), `data-surface="window"` on the sheet – so everything here
+ * draws in the window family through the control roles: fg ink, 69 % for the address, the window
+ * fills for the chips and the pressed controls. The header is the shared static two-line row
+ * (§9.2, §9.34: `.zen-v2-row[data-static]`, the page's icon aligned with its first line) and the
+ * three chips are the shared `.zen-v2-button` as actions inside a row (§9.11: hugging their label
+ * at the 88 minimum, 40 tall) at the 16 gutter, a glyph before the label; a hairline in the
+ * window ink separates the header from the list. At a bottom-docked bar
+ * the header is mirrored like the list – the page's row nearest the field, the chips past it.
+ * The Refine arrow is the shared icon button, the clipboard row's Show the shared button, each
+ * the row's trailing 44 control at 2 px margins (§9.16). Unlayered like the primitives it
+ * modifies, so the modifiers win over the shared rules.
+ * ------------------------------------------------------------------------- */
+.zen-omnibox-header {
+  display: flex;
+  flex-direction: column;
+  color: var(--v2-control-text);
+  border-bottom: 1px solid var(--v2-window-fill-hover);
+}
+.zen-omnibox-header[data-edge='bottom'] {
+  flex-direction: column-reverse;
+  border-bottom: 0;
+  border-top: 1px solid var(--v2-window-fill-hover);
+}
+.zen-v2-row.zen-omnibox-page {
+  color: var(--v2-control-text);
+}
+.zen-omnibox-page-glyph {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin-top: calc((var(--v2-line-body) - var(--v2-icon)) / 2);
+  stroke-width: var(--v2-icon-stroke);
+}
+.zen-omnibox-page-title {
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+}
+.zen-omnibox-page-url {
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-small);
+  color: var(--v2-control-text-deemphasized);
+}
+.zen-omnibox-chips {
+  display: flex;
+  gap: 8px;
+  padding: 0 16px 12px;
+}
+.zen-omnibox-header[data-edge='bottom'] .zen-omnibox-chips {
+  padding: 12px 16px 0;
+}
+.zen-v2-button.zen-omnibox-chip {
+  flex: 0 1 auto;
+  min-width: 88px;
+  gap: 8px;
+  padding: 0 12px;
+  background: var(--v2-control-fill);
+  color: var(--v2-control-text);
+}
+.zen-v2-button.zen-omnibox-chip:active:not(:disabled) {
+  background: var(--v2-control-fill-hover);
+}
+.zen-v2-button.zen-omnibox-chip > svg {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  flex-shrink: 0;
+  stroke-width: var(--v2-icon-stroke);
+}
+.zen-v2-button.zen-omnibox-reveal {
+  min-width: 88px;
+  padding: 0 12px;
+  background: var(--v2-control-fill);
+  color: var(--v2-control-text);
+}
+.zen-v2-button.zen-omnibox-reveal:active:not(:disabled) {
+  background: var(--v2-control-fill-hover);
+}
+.zen-v2-icon-button.zen-omnibox-refine {
+  margin-right: -6px;
+  color: var(--v2-control-text-deemphasized);
+}
+.zen-v2-icon-button.zen-omnibox-refine:active:not(:disabled) {
+  background: var(--v2-control-fill);
+}
+
+/* ---------------------------------------------------------------------------
  * Settings as a tab (design language v2 draft §10; `components/pages/settings`).
  *
  * An internal page tab has no page view: the chrome draws the page where the view would be, an
@@ -6047,6 +6135,28 @@
   width: var(--v2-icon);
   height: var(--v2-icon);
   border-radius: var(--v2-radius-checkbox);
+}
+/*
+ * A search engine's mark in the glyph slot (Search › Default search engine, Added search
+ * engines): a page's favicon at the icon size, else the URL bar's letter in a disc of the
+ * hover fill – 16 like every leading glyph, so the picker's rows line up whichever it is.
+ */
+.zen-settings-engine-favicon {
+  border-radius: var(--v2-radius-checkbox);
+  object-fit: contain;
+}
+.zen-settings-engine-glyph {
+  display: inline-flex;
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--v2-fill-hover);
+  color: var(--v2-text);
+  font-size: 10px;
+  font-weight: var(--v2-weight-heading);
+  line-height: 1;
 }
 .zen-settings-tint,
 .zen-settings-agent-dot {

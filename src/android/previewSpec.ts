@@ -24,13 +24,15 @@ export const PREVIEW_PULL_MAX = 2.5
 /**
  * A step taken on a page once it is open, in order: `tap` presses the first button whose label
  * or text reads so (a row opens its sheet, a sheet's row stacks another, a destructive action
- * asks first), `hold` long-presses it (a row's menu opens), `back` is one system back (the top
- * sheet closes, a section pops), `overview` opens the tab overview over the page, `urlbar` opens
- * the pill for editing.
+ * asks first), `hold` long-presses it (a row's menu opens), `type` fills the field with that id
+ * the way a keyboard would and leaves it (the field is touched: a form's validation shows),
+ * `back` is one system back (the top sheet closes, a section pops), `overview` opens the tab
+ * overview over the page, `urlbar` opens the pill for editing.
  */
 export type PreviewStep =
   | { kind: 'tap'; text: string }
   | { kind: 'hold'; text: string }
+  | { kind: 'type'; id: string; text: string }
   | { kind: 'back' }
   | { kind: 'overview' }
   | { kind: 'urlbar' }
@@ -247,6 +249,18 @@ export type PreviewState =
     }
   /** The tab overview over the active page, as a pull on the pill opens it. */
   | { kind: 'overview' }
+  | {
+      /** The pill's editor (the phone omnibox) over the active tab, or over a new tab. */
+      kind: 'urlbar'
+      /** What has been typed; empty for the search-ready state with the page's header row. */
+      text: string
+      /** Over a new tab page (no header row) rather than the active tab's page. */
+      newTab: boolean
+      /** What the stand-in clipboard holds (null: unchanged); the clipboard row reads its kind. */
+      clip: string | null
+      /** Steps taken once the suggestions are up (`tap:Show`, `tap:Edit`, `tap:Refine`). */
+      then?: PreviewStep[]
+    }
 
 /** More sample banners than the stack holds are pointless. */
 const MAX_PREVIEW_BANNERS = 3
@@ -283,10 +297,10 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * A preview state spec is a query string: `idle` (or anything unrecognised), `page=<id>` for an
  * internal page opened in its tab (`section=<id>` for one of its sections, `search=<text>` types
  * into its search field, `show=<text>` scrolls a row into view, `then=<steps>` takes steps on it
- * afterwards, `;`-separated: `tap:<text>`, `hold:<text>`, `back`, `overview`, `urlbar`),
- * `extension-page=<id>/<path>` for an extension's page open as a tab (its options page, say;
- * `extensions=<variant>` alongside seeds the extensions the chrome knows, `then=<steps>` takes
- * steps once it has loaded), `group=<n>` for the
+ * afterwards, `;`-separated: `tap:<text>`, `hold:<text>`, `type:<id>=<text>`, `back`,
+ * `overview`, `urlbar`), `extension-page=<id>/<path>` for an extension's page open as a tab (its
+ * options page, say; `extensions=<variant>` alongside seeds the extensions the chrome knows,
+ * `then=<steps>` takes steps once it has loaded), `group=<n>` for the
  * active tab in a group of n members made on the spot, the group strip up in the bar band (with
  * `then=<steps>` taken once the group has formed: `tap:Show group, Research` presses the strip's
  * show chip, `tap:New tab in Research` its plus chip), `overlay=<kind>` for
@@ -312,17 +326,22 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * `fail=<error>`, `deleted` for a finished file since gone from disk, `private`, `url=<url>`,
  * `mime=<type>`), `popups=<n>` for n pop-ups blocked on the active page (`&list` opens the list
  * of them, `&allowed` remembers the site as allowed), `prompt=http-auth` / `prompt=certificate`
- * for a security dialog over the page (`&failed`, `&proxy`, `&secure` vary the sign-in);
- * `prompt=<any other value>` is the permission that page asks for (the permission prompt
- * sheet), `private=new|<url>` opens a private tab, and `overview` opens the tab overview over
- * the active page (the grid of cards, with whatever pictures the stand-in host has of the tabs).
- * When several are given, `page` wins over `extension-page`, that over `group`, `group` over
- * `overlay`, `overlay` over `menu`, `menu` over `sheet`, `sheet` over the permission `prompt`,
- * that over `private`, `private` over `autofill`,
- * `autofill` over `find`, `find` over `pull`, `pull` over `zoom`, `zoom` over `error`, `error`
- * over the messages, the messages over `webapp`, `webapp` over `download`, `download` over
- * `popups`, `popups` over the security `prompt`, and that over `overview`. A leading `#` (the
- * URL hash as read) is ignored.
+ * for a security dialog over the page (`&failed`, `&proxy`, `&secure` vary the sign-in),
+ * `prompt=<any other value>` for the permission that page asks for (the permission prompt
+ * sheet), `private=new|<url>` for a private tab, `voice=<script>` for voice search from the
+ * active tab, `overview` for the tab overview over the active page (the grid of cards, with
+ * whatever pictures the stand-in host has of the tabs), or `urlbar=<text>` for the pill's
+ * editor over the active tab with that text typed (`urlbar=` opens it search-ready, with the
+ * page's header row; `newtab` opens it over a new tab page instead; `clip=<text>` puts that on
+ * the stand-in clipboard first, so the clipboard row shows; `then=tap:<label>;…` presses the
+ * editor's controls once the suggestions are up: `Show`, `Edit`, `Refine`). When several are
+ * given, `page` wins over `extension-page`, that over `group`, `group` over `overlay`, `overlay`
+ * over `menu`, `menu` over `sheet`, `sheet` over the permission `prompt`, that over `private`,
+ * `private` over `autofill`, `autofill` over `find`, `find` over `pull`, `pull` over `zoom`,
+ * `zoom` over `error`, `error` over the messages, the messages over `webapp`, `webapp` over
+ * `download`, `download` over `popups`, `popups` over the security `prompt`, that over `voice`,
+ * `voice` over `overview`, and `overview` over `urlbar`. A leading `#` (the URL hash as read) is
+ * ignored.
  */
 export function parsePreviewSpec(spec: string): PreviewState {
   const params = new URLSearchParams(spec.startsWith('#') ? spec.slice(1) : spec)
@@ -462,12 +481,24 @@ export function parsePreviewSpec(spec: string): PreviewState {
   const voice = params.get('voice')
   if (voice !== null) return { kind: 'voice', script: voice || 'heard' }
   if (params.has('overview')) return { kind: 'overview' }
+  const urlbar = params.get('urlbar')
+  if (urlbar !== null) {
+    const state: Extract<PreviewState, { kind: 'urlbar' }> = {
+      kind: 'urlbar',
+      text: urlbar,
+      newTab: params.has('newtab'),
+      clip: params.get('clip')
+    }
+    const then = parsePreviewSteps(params.get('then'))
+    if (then.length > 0) state.then = then
+    return state
+  }
   return { kind: 'idle' }
 }
 
 /**
- * The `then=` list: `tap:<text>;hold:<text>;back;overview;urlbar`; blanks and unknown steps are
- * dropped.
+ * The `then=` list: `tap:<text>;hold:<text>;type:<id>=<text>;back;overview;urlbar`; blanks and
+ * unknown steps are dropped.
  */
 export function parsePreviewSteps(list: string | null): PreviewStep[] {
   if (!list) return []
@@ -478,6 +509,10 @@ export function parsePreviewSteps(list: string | null): PreviewStep[] {
       const kind = step.startsWith('tap:') ? 'tap' : 'hold'
       const text = step.slice(kind.length + 1).trim()
       if (text) steps.push({ kind, text })
+    } else if (step.startsWith('type:')) {
+      const at = step.indexOf('=')
+      const id = at === -1 ? '' : step.slice('type:'.length, at).trim()
+      if (id) steps.push({ kind: 'type', id, text: step.slice(at + 1) })
     } else if (step === 'back' || step === 'overview' || step === 'urlbar') {
       steps.push({ kind: step })
     }

@@ -10,6 +10,7 @@
  */
 import type {
   CertificateDetails,
+  ClipboardPeekKind,
   ColorScheme,
   ContentCover,
   DownloadItem,
@@ -159,7 +160,15 @@ export interface PageMessage {
     | 'reader'
     /** The PDF viewer document (`zen://pdf`) reports where it stands (`shared/pdfPage.ts`). */
     | 'pdf'
+    /**
+     * The page links an OpenSearch description (`<link rel="search"
+     * type="application/opensearchdescription+xml">`): `url` is the description's absolute
+     * address, `title` the link's title if any. The core fetches and parses it (`shared/search`).
+     */
+    | 'opensearch'
   url?: string
+  /** `opensearch`: the link's `title` attribute, the engine's name when the XML has none. */
+  title?: string
   x?: number
   y?: number
   background?: boolean
@@ -956,6 +965,19 @@ export interface ClipboardHost {
    * cannot clear, and the core says so in the copy toast.
    */
   clearText?(expected: string): Promise<void>
+  /**
+   * What the clipboard holds, from its DESCRIPTION alone (Android's
+   * `getPrimaryClipDescription()`: mime types, the system's URL classification, the sensitive
+   * flag, the timestamp) – never its content, which Android 12+ announces to the user with a
+   * toast. Hosts with it get the URL bar's "Link you copied" / "Text you copied" row; `none`
+   * for an empty, stale (over ten minutes), sensitive or unreadable clip.
+   */
+  peek?(): Promise<ClipboardPeekKind>
+  /**
+   * The clipboard's text, read ONCE when the user reveals or picks the clipboard row (the
+   * system may toast the read); '' when it holds none.
+   */
+  read?(): Promise<string>
 }
 
 export interface ShellHost {

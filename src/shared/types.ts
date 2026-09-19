@@ -1326,6 +1326,13 @@ export interface DownloadSettings {
 // Search
 // ---------------------------------------------------------------------------
 
+/**
+ * Where an engine came from: shipped with Zenium (`DEFAULT_SEARCH_ENGINES`), added by hand in
+ * Settings > Search ("Add search engine"), or discovered on a visited page through its
+ * OpenSearch description (Chrome's "Recently visited" engines).
+ */
+export type SearchEngineSource = 'default' | 'custom' | 'discovered'
+
 export interface SearchEngine {
   id: string
   name: string
@@ -1335,6 +1342,21 @@ export interface SearchEngine {
   keyword: string
   /** Simple glyph shown in the URL bar. */
   glyph: string
+  /** Absent on the shipped engines (read as `default`). */
+  source?: SearchEngineSource
+  /** The site's icon, for the engine picker's rows; null when the site offered none. */
+  favicon?: string | null
+  /** A discovered engine: when its site was last visited (orders "Recently visited"). */
+  visitedAt?: number
+}
+
+/** What the clipboard holds, read from its description only (never its content). */
+export type ClipboardPeekKind = 'url' | 'text' | 'image' | 'none'
+
+/** The clipboard's content, read on the user's reveal tap; `kind` says what the text is. */
+export interface ClipboardContent {
+  kind: 'url' | 'text' | 'none'
+  text: string
 }
 
 // ---------------------------------------------------------------------------
@@ -1740,6 +1762,12 @@ export interface Settings {
    */
   mutedHosts: string[]
   searchEngineId: string
+  /**
+   * The engines the user added (Settings > Search) or that visited pages offered through
+   * OpenSearch (`source: 'discovered'`, ordered by `visitedAt`), on top of the shipped ones;
+   * synced with the settings. Absent in profiles from before it existed (read as none).
+   */
+  searchEngines?: SearchEngine[]
   searchSuggestions: boolean
   /**
    * Chrome's "Always show full URLs": the address pill keeps the scheme and `www.` instead of
@@ -2627,6 +2655,12 @@ export type SuggestionKind =
   | 'entity'
   /** A `chrome.omnibox` row: the input belongs to an extension whose keyword starts it. */
   | 'omnibox'
+  /**
+   * What the clipboard holds, offered on an empty field (Chrome's "Link you copied" / "Text
+   * you copied"): the row names the kind only, read from the clip's description; the content is
+   * read once, on the reveal or the pick (`clipboard.read`). `targetId` is the kind.
+   */
+  | 'clipboard'
 
 export interface Suggestion {
   id: string
@@ -3190,6 +3224,20 @@ export interface Commands {
     args: { text: string; sensitive?: boolean; confirmation?: string }
     result: void
   }
+  /**
+   * The URL bar's clipboard row (Chrome's "Link you copied"): `peek` names what the clipboard
+   * holds from its description alone and never reads the content; `read` reads it once, on the
+   * user's reveal or pick. Hosts without the bridge answer `none` / no text.
+   */
+  'clipboard.peek': { args: void; result: ClipboardPeekKind }
+  'clipboard.read': { args: void; result: ClipboardContent }
+  /**
+   * Settings > Search: add an engine by hand (`%s` in `url` stands for the query), forget one
+   * the user added or a page offered, or make one the default. The shipped engines cannot be
+   * removed; `search.remove` on the default falls back to the shipped default.
+   */
+  'search.addEngine': { args: { name: string; url: string }; result: string }
+  'search.removeEngine': { args: { id: string }; result: void }
 
   /**
    * Ctrl+T, the sidebar's New Tab button, double-click on the sidebar: a tab at `zen://newtab`
