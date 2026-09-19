@@ -33,14 +33,15 @@ import kotlin.math.roundToInt
  *
  * Positions come from the chrome's DOM (`getBoundingClientRect`, checked once against the
  * accessibility bounds of the overview's Spaces button), because the WebView's accessibility
- * tree trails the software-rendered emulator by seconds. Every touch on a control is checked
- * for having taken ([touchUntil]): while the emulator's main thread is held (seven pages going
- * away at once), the WebView's gesture detector turns a tap whose down waited into a long press
- * (it shortens its long-press clock by the wait), and a long press is nothing to a button, so
- * such a touch is made again while the control is still there. The bulk close races the toast's
- * five-second clock through [closeAllThenUndo]: one read per poll, the Undo touched the moment
- * the toast is at rest, the slow checks after it; a scenario whose Undo failed puts the tabs
- * back through the core so the next one still runs. Findings go to `tab-close-findings.txt`
+ * tree trails the software-rendered emulator by seconds. Every touch is a down and an up a
+ * frame apart ([touch]), and every touch on a control is checked for having taken
+ * ([touchUntil]): while the emulator's main thread is held (seven pages going away at once),
+ * the WebView's gesture detector turns a tap into a long press when a long task falls between
+ * its down and its up, and a long press is nothing to a button, so such a touch is made again
+ * while the control is still there. The bulk close races the toast's five-second clock through
+ * [closeAllThenUndo]: one read per poll, the Undo touched at the first sighting of the toast,
+ * the still and the slow checks after it; a scenario whose Undo failed puts the tabs back
+ * through the core so the next one still runs. Findings go to `tab-close-findings.txt`
  * next to the stills (one PASS or FAIL per claim, ALL CHECKS PASSED at the end); the run fails
  * on any FAIL. Profile `overview-demo-state.json`: the Work space with the group Research
  * [World Wide Web, Damping] and the loose tabs example.com (active), Hacker News, RFC 2324, Tea,
@@ -203,16 +204,18 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
     /**
      * The bulk close and its Undo, against the toast's five-second clock. Once the seven pages
      * go, the emulator's main thread is held for seconds (their WebViews going away, the
-     * Essential that takes over loading), every read of the chrome costs a second or two, and
-     * a touch that lands then is turned into a hold by the WebView's gesture detector as often
-     * as not (it shortens its long-press clock by the time the down waited). So: `trigger` (the
-     * prompt's Close all, or the menu row when there is no prompt) is touched, and touched
-     * again when the sheet still stands after [SHEET_WAIT] with no toast up; the toast is watched
-     * for with ONE read per poll, which also has the core snapshot its state the first time the
-     * toast is seen; the still is captured (not encoded) and the Undo touched the moment the
-     * toast is at rest; and when the next read finds the toast still standing, the Undo is
-     * touched again, up to [TOUCH_ATTEMPTS] times, each touch buying a second of the clock at
-     * least (a finger on the card holds it). The checks that take their time come after.
+     * Essential that takes over loading): every read of the chrome, and every touch, waits a
+     * second or two in its queue, while the toast's clock and its entry run in the chrome's
+     * renderer, which does not wait. So: `trigger` (the prompt's Close all, or the menu row when
+     * there is no prompt) is touched, and touched again when the sheet still stands after
+     * [SHEET_WAIT] with no toast up; the toast is watched for with ONE read per poll, which also
+     * has the core snapshot its state the first time the toast is seen; and the Undo is touched
+     * at the first sighting – where the read found it, or, when the card was still coming up,
+     * where it comes to rest, [ENTRY_WAIT] later – before the still is captured and before
+     * anything else is read. When the next read finds the toast still standing (a touch read as
+     * a hold; see [touch]), the Undo is touched again, up to [TOUCH_ATTEMPTS] times: a finger on
+     * the card holds its clock and lets it go with a second on it at least. The checks that take
+     * their time come after.
      */
     private fun closeAllThenUndo(what: String, trigger: () -> Rect?, stillName: String?): BulkClose {
         jsString("(function(){window.__demoSnap=undefined;return ''})()")
@@ -225,7 +228,10 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
         val deadline = touchedAt + BULK_TOAST_WAIT
         var promptSeen = false
         var state = toastState()
-        while (!(state.text.startsWith(BULK_TOAST) && !state.moving && state.undo != null && touchPoint(state.undo) != null)) {
+        // The toast is sighted once its text is up and its Undo will be on the screen at rest.
+        fun sighted(s: ToastState): Boolean =
+            s.text.startsWith(BULK_TOAST) && s.undo != null && (s.undoAtRest ?: s.undo).let { touchPoint(it) != null }
+        while (!sighted(state)) {
             promptSeen = promptSeen || state.prompt
             if (SystemClock.uptimeMillis() >= deadline) {
                 finding("  (no '$BULK_TOAST' toast within ${BULK_TOAST_WAIT / 1000} s: '${state.text}')")
@@ -243,13 +249,20 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
             state = toastState()
         }
         promptSeen = promptSeen || state.prompt
+        if (state.moving) {
+            // Still coming up: the card rests within ENTRY_WAIT (SPRING_GENTLE from the edge).
+            finding("  (the toast is still entering: touching where its Undo comes to rest)")
+            SystemClock.sleep(ENTRY_WAIT)
+        }
+        touch(state.undoAtRest ?: state.undo!!, "the toast's Undo")
+        // Captured after the touch, which is still in its queue while the main thread is held:
+        // the screen shows the toast standing, and the touch lost nothing to the capture.
         if (stillName != null) still(stillName)
-        touch(state.undo!!, "the toast's Undo")
         // The snapshot the first sighting started comes with the next read at the latest; it
         // was taken before that touch's click could run, so it is the state at the toast.
         var unpinned = state.unpinned
         for (attempt in 1..TOUCH_ATTEMPTS) {
-            SystemClock.sleep(UNDO_TOOK_WAIT)
+            SystemClock.sleep(BULK_UNDO_READ_WAIT)
             val after = toastState()
             if (unpinned == null) unpinned = after.unpinned
             if (after.text.isEmpty() || after.moving) break
@@ -281,6 +294,8 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
         val text: String,
         val moving: Boolean,
         val undo: Rect?,
+        /** Where the Undo is once the card rests: [undo] with the card's transform (its entry, still under way) taken out. */
+        val undoAtRest: Rect?,
         val prompt: Boolean,
         val menu: Boolean,
         val cards: Int,
@@ -289,25 +304,29 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
     )
 
     /**
-     * The toast (text, whether it is moving, where its button is), whether the prompt or the
-     * menu sheet is up, how many cards the grid holds, in one evaluation. The first time it
-     * finds a toast up it also has the core snapshot its state (`app.getState`, in-process on
-     * Android, settled in the microtask after this script and so before any touch's click);
-     * the snapshot comes back with the next read.
+     * The toast (text, whether it is moving, where its button is, and where the button is once
+     * the card rests: the card rides a `translate3d` while it enters, taken out of the box),
+     * whether the prompt or the menu sheet is up, how many cards the grid holds, in one
+     * evaluation. The first time it finds a toast up it also has the core snapshot its state
+     * (`app.getState`, in-process on Android, settled in the microtask after this script and so
+     * before any touch's click); the snapshot comes back with the next read.
      */
     private fun toastState(): ToastState {
         val raw = jsString(
             "(function(){var t=document.querySelector('.zen-message-toast');" +
                 "var x=t?(t.querySelector('.zen-message-text')||{textContent:''}).textContent:'';" +
                 "var b=t?t.querySelector('.zen-message-button'):null;var r=b?b.getBoundingClientRect():null;" +
+                "var tr=t?getComputedStyle(t).transform:'none';var mx=(tr&&tr!=='none')?new DOMMatrix(tr):null;" +
+                "var dx=mx?mx.m41:0,dy=mx?mx.m42:0;var d=window.devicePixelRatio;" +
                 "if(t&&window.__demoSnap===undefined){window.__demoSnap='pending';" +
                 "window.zen.invoke('app.getState',null).then(function(s){window.__demoSnap=JSON.stringify(s)},function(){window.__demoSnap='ERR'})}" +
                 "var snap=(window.__demoSnap&&window.__demoSnap!=='pending')?window.__demoSnap:null;" +
-                "return JSON.stringify({x:x,m:!!(t&&t.hasAttribute('data-moving')),u:r?{l:r.left,t:r.top,r:r.right,b:r.bottom,d:window.devicePixelRatio}:null," +
+                "return JSON.stringify({x:x,m:!!(t&&t.hasAttribute('data-moving')),u:r?{l:r.left,t:r.top,r:r.right,b:r.bottom,d:d}:null," +
+                "ur:r?{l:r.left-dx,t:r.top-dy,r:r.right-dx,b:r.bottom-dy,d:d}:null," +
                 "p:Array.prototype.some.call(document.querySelectorAll('.zen-frame-dialogs'),function(n){return n.textContent.indexOf(${JSONObject.quote(PROMPT)})>=0})," +
                 "menu:!!document.querySelector('.zen-sheet-item'),c:document.querySelectorAll('.zen-overview-grid [data-tab-id]').length,snap:snap})})()"
         )
-        if (raw.isEmpty()) return ToastState("", false, null, false, false, -1, null)
+        if (raw.isEmpty()) return ToastState("", false, null, null, false, false, -1, null)
         val o = JSONObject(raw)
         val snap = o.optString("snap", "")
         val unpinned = if (snap.isEmpty() || snap == "ERR" || o.isNull("snap")) null else trackOrder(JSONObject(snap)).size
@@ -315,6 +334,7 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
             o.optString("x"),
             o.optBoolean("m"),
             if (o.isNull("u")) null else rectFrom(o.getJSONObject("u").toString()),
+            if (o.isNull("ur")) null else rectFrom(o.getJSONObject("ur").toString()),
             o.optBoolean("p"),
             o.optBoolean("menu"),
             o.optInt("c", -1),
@@ -363,11 +383,21 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
 
     // --- moves -----------------------------------------------------------------------------------
 
-    /** A real touch on the middle of `box` (screen px), logged. */
+    /**
+     * A real touch on the middle of `box` (screen px), logged: the finger's down and up
+     * [TAP_HOLD_MS] apart. The WebView's gesture detector reads a tap as a long press when a
+     * long task on the main thread (a page's WebView going away) falls between its handling of
+     * the down and the arrival of the up; a down and an up already queued together are handled
+     * back to back, with no room for one. So the two are injected as close together as a
+     * frame, not the harness's 60 ms.
+     */
     private fun touch(box: Rect, what: String) {
         val point = touchPoint(box) ?: error("$what at $box is out of the touchable window $touchable")
         finding("  touch at ${point.x.roundToInt()},${point.y.roundToInt()} on $what")
-        Finger().tap(point.x, point.y)
+        val f = Finger()
+        f.down(point.x, point.y)
+        f.hold(TAP_HOLD_MS)
+        f.up()
     }
 
     /** [touch] when `box` is inside the touchable window; false, and a note, when it is not (a sheet on its way out). */
@@ -756,6 +786,8 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
         private const val OPEN_ATTEMPTS = 4
         /** Touches on a control [touchUntil] makes before giving up (each may be read as a hold). */
         private const val TOUCH_ATTEMPTS = 4
+        /** The finger's down and up this far apart ([touch]): a frame, so the two queue together under load. */
+        private const val TAP_HOLD_MS = 16L
         /** How long a touch has to show it took before it is made again. */
         private const val TOUCH_TOOK_WAIT = 900L
         /**
@@ -763,6 +795,14 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
          * clock with a second at least, and the next touch has to come within it.
          */
         private const val UNDO_TOOK_WAIT = 650L
+        /**
+         * Between the touch on a bulk close's Undo and the read that says whether it took: the
+         * read waits its turn behind the touch on the held main thread anyway, and every
+         * millisecond before the next touch is one off the toast's clock.
+         */
+        private const val BULK_UNDO_READ_WAIT = 200L
+        /** A toast sighted while entering rests within this (SPRING_GENTLE from the edge settles in ~400 ms). */
+        private const val ENTRY_WAIT = 500L
         /**
          * And for a touch whose outcome is a sheet coming up or going (its rise or exit under
          * load, a callback that runs as it lands): longer, since a touch made again too soon
