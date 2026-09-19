@@ -348,6 +348,13 @@ export interface BarHideHostFrame {
 export interface BarHideHost {
   /** Per frame while anything moves, and once with `null` when the bar may not hide at all. */
   apply(frame: BarHideHostFrame | null): void
+  /**
+   * The bar moved by itself – not under the finger's scroll: a gate closing, another tab, a
+   * load, a document committing, focus landing on the hidden pill, the host's own `show` – or
+   * changed phase. For the host's record, so a bar found where a finger did not put it can be
+   * read back to what put it there.
+   */
+  note?(reason: string): void
 }
 
 let host: BarHideHost | null = null
@@ -357,6 +364,16 @@ export function setBarHideHost(next: BarHideHost | null): void {
   host = next
   lastHostFrame = null
   publishHost()
+}
+
+function note(reason: string): void {
+  host?.note?.(reason)
+}
+
+/** A show that will move the bar (one with the bar home and at rest is nothing) is noted first. */
+function showNoted(reason: string): void {
+  if (machine.current > 0 || machine.state !== 'rest') note(`show: ${reason}`)
+  machine.show()
 }
 
 /** What the shell knows: where the bar is docked and whether this layout has one at all. */
@@ -453,6 +470,7 @@ const machine = new BarHideMachine(
       barHideStore.set({ phase })
       publishHidden(machine.hidden)
       publishHost()
+      note(`${phase} at ${Math.round(machine.current * 100) / 100} of ${machine.travel}`)
     }
   },
   50
@@ -476,6 +494,7 @@ export function dispatchBarScroll(
   const state = browserStore.get().state
   // Only the page on screen moves the bar.
   if (state && activeTab(state)?.id !== tabId) return
+  if (phase === 'show') note('show: the host (a fling reached the top)')
   machine.dispatch(phase, payload)
 }
 
@@ -497,7 +516,7 @@ export function setBarHideContext(next: Partial<BarHideContext>): void {
 
 /** Bring the bar back (TalkBack focus landing on the hidden pill, a tap on its edge). */
 export function showBar(): void {
-  machine.show()
+  showNoted('asked by the host (focus on the hidden pill)')
 }
 
 /** Put the bar back at once and forget any motion (the preview's reset). */
@@ -534,7 +553,7 @@ export function dispatchBarNavigation(tabId: string, inPage: boolean): void {
   if (inPage) return
   const state = browserStore.get().state
   if (state && activeTab(state)?.id !== tabId) return
-  machine.show()
+  showNoted('a document committed on the page')
 }
 
 /** The active tab (`id`) and whether it is loading, as of the last state seen. */
@@ -544,7 +563,15 @@ let lastLoading = false
 function evaluateGate(): void {
   const gate = currentGate()
   const allowed = barMayHide(gate)
-  if (barHideStore.get().allowed !== allowed) barHideStore.set({ allowed })
+  if (barHideStore.get().allowed !== allowed) {
+    barHideStore.set({ allowed })
+    if (!allowed && (machine.current > 0 || machine.state !== 'rest')) {
+      const closed = (Object.keys(gate) as Array<keyof BarHideGate>).filter((k) =>
+        k === 'enabled' ? !gate.enabled : gate[k]
+      )
+      note(`show: the gate closed (${closed.join(', ')})`)
+    }
+  }
   // A sheet over a bottom-docked bar: the bar is back at once under the recede's fade (§11.1),
   // not slid in while fading. The top bar is not in the sheet's path and is not faded, so its
   // return is seen and rides the spring.
@@ -556,7 +583,9 @@ function evaluateGate(): void {
   const tab = state ? activeTab(state) : null
   const tabId = tab?.id ?? null
   const loading = Boolean(tab?.loading)
-  if (lastTabId !== undefined && (tabId !== lastTabId || (loading && !lastLoading))) machine.show()
+  if (lastTabId !== undefined && (tabId !== lastTabId || (loading && !lastLoading))) {
+    showNoted(tabId !== lastTabId ? 'another tab' : 'a load began on the page')
+  }
   lastTabId = tabId
   lastLoading = loading
   publishHost()

@@ -80,11 +80,18 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         // Chrome's controls do, so what was focused is on screen. Chromium raises the event
         // through the WebView's parent; with the bar off nothing else of the chrome is up to land
         // on (a sheet or a panel keeps the bar shown), so the pill and its buttons are the only
-        // way here. The event goes on to the system unchanged.
+        // way here. Not while a finger is on the page: a service's focus never comes with one
+        // (TalkBack's swipe is its own gesture and explore by touch is hover), and Chromium
+        // re-raises the event for the node it already has as it restores its state, which under a
+        // drag would snap a bar the finger is moving one to one. The event goes on unchanged.
         root.accessibilityDelegate = object : View.AccessibilityDelegate() {
             override fun onRequestSendAccessibilityEvent(host: ViewGroup, child: View, event: AccessibilityEvent): Boolean {
-                if (child === chrome && event.eventType == AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED && tabs.barHide?.away == true) {
-                    chrome.barShow()
+                if (child === chrome && event.eventType == AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED) {
+                    val frame = tabs.barHide
+                    val touching = tabs.touchingPage()
+                    val shows = frame?.away == true && !touching
+                    if (shows) chrome.barShow()
+                    Log.d(TAG, "accessibility focus in the chrome: bar ${frame?.let { "${it.edge} ${it.offsetPx}/${it.travelPx}px" } ?: "at rest"}, finger on the page $touching: ${if (shows) "the bar comes back" else "left as it is"}")
                 }
                 return super.onRequestSendAccessibilityEvent(host, child, event)
             }

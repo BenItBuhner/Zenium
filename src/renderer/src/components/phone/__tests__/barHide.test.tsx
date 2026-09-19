@@ -352,6 +352,53 @@ describe('the published hide progress', () => {
     expectAgreement()
   })
 
+  it("the host's record has every return that was not the finger's, and none while the bar is home", () => {
+    const notes: string[] = []
+    setBarHideHost({ apply: (frame) => hostFrames.push(frame), note: (r) => notes.push(r) })
+    // Home and at rest: a tab switch, a focus, a document have nothing to move and say nothing of a show.
+    browserStore.set({ state: state('bottom', 'https://example.com/other') })
+    showBar()
+    dispatchBarNavigation('t1', false)
+    expect(notes.filter((n) => n.startsWith('show'))).toEqual([])
+    // A drag off and its release: the phases, with the offset, are the record of the finger's own motion.
+    scroll([60])
+    now += 16
+    dispatchBarScroll('t1', 'end', { time: now })
+    settle()
+    expect(notes.filter((n) => n.startsWith('show'))).toEqual([])
+    expect(notes).toEqual(['dragging at 0 of 48', 'rest at 48 of 48'])
+    // Hidden: the focus, the document, the host's fling and the gate each leave their word before the bar moves.
+    notes.length = 0
+    showBar()
+    settle()
+    expect(notes[0]).toBe('show: asked by the host (focus on the hidden pill)')
+    scroll([60])
+    now += 16
+    dispatchBarScroll('t1', 'end', { time: now })
+    settle()
+    notes.length = 0
+    dispatchBarNavigation('t1', false)
+    settle()
+    expect(notes[0]).toBe('show: a document committed on the page')
+    scroll([60])
+    now += 16
+    dispatchBarScroll('t1', 'end', { time: now })
+    settle()
+    notes.length = 0
+    dispatchBarScroll('t1', 'show', null)
+    settle()
+    expect(notes[0]).toBe('show: the host (a fling reached the top)')
+    scroll([60])
+    now += 16
+    dispatchBarScroll('t1', 'end', { time: now })
+    settle()
+    notes.length = 0
+    uiStore.set({ findOpen: true })
+    expect(notes[0]).toBe('show: the gate closed (panelDocked)')
+    uiStore.set({ findOpen: false })
+    expectAgreement()
+  })
+
   it('docked at the top the same value moves the bar off the top edge, and the host hears that edge', () => {
     browserStore.set({ state: state('top') })
     setBarHideContext({ edge: 'top' })

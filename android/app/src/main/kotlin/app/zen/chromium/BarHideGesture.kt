@@ -1,6 +1,7 @@
 package app.zen.chromium
 
 import android.os.SystemClock
+import android.util.Log
 import android.view.MotionEvent
 import android.view.ViewConfiguration
 import org.json.JSONObject
@@ -105,6 +106,9 @@ class BarHideGesture(
     /** The last three `move` deltas sent to the chrome (CSS px), oldest first: what a record of a bar that stayed off reads (the demo's warm-up). */
     val recentMoves = ArrayDeque<Double>(3)
 
+    /** A finger is on the page (the down seen, no lift yet). */
+    val touching: Boolean get() = filter.touching
+
     private val flush = Runnable {
         flushPosted = false
         if (pending == 0.0) return@Runnable
@@ -194,7 +198,11 @@ class BarHideGesture(
             BarHideScrollFilter.Verdict.NONE -> return
             BarHideScrollFilter.Verdict.HELD -> {}
             BarHideScrollFilter.Verdict.REPORT -> report((scrollY - oldScrollY).toFloat())
-            BarHideScrollFilter.Verdict.SHOW -> emit("show", null)
+            BarHideScrollFilter.Verdict.SHOW -> {
+                // Rare (a fling's end), and the one word from here that moves the bar by itself: on the record.
+                Log.d(TAG, "show on ${view.tabId}: scroll $oldScrollY -> $scrollY, ${describe()}")
+                emit("show", null)
+            }
         }
         if (filter.touching) share.rootScrolled()
     }
@@ -213,6 +221,7 @@ class BarHideGesture(
     }
 
     companion object {
+        private const val TAG = "BarHide"
         /**
          * A page that has not scrolled for this long after the finger lifted is done flinging.
          * The chrome waits longer than this for a fling's scroll to end (`BAR_HIDE_FLING_GAP_MS`,

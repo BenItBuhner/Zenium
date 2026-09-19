@@ -182,6 +182,9 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
     var barHide: BarHideFrame? = null
         private set
 
+    /** A finger is down on a page on screen (its bar-hide gesture has seen the down and no lift). */
+    fun touchingPage(): Boolean = views.values.any { it.visibility == View.VISIBLE && it.barHide.touching }
+
     /** Per frame while the bar moves: only the views on screen are laid out for it; one coming on screen catches up in [setVisible]. */
     fun setBarHide(frame: BarHideFrame?) {
         barHide = frame
