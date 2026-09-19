@@ -298,16 +298,26 @@ class DownloadsDemo : DemoHarness("downloads-demo-state.json", "downloads", "dow
      * The downloads surface must go before the next link can be tapped. Every download opens it
      * (the default setting), so it may still be on its way in when the file has already landed.
      * On a phone it is the v2 bottom sheet, which the back gesture dismisses (its header's
-     * settings button is how we know it is up); with a pointer it is the panel with a close
-     * button. Its dismissal is a spring and the frame's return, which the tree trails, so this
-     * waits for the surface to be gone rather than for a fixed time.
+     * settings button is how we know it is up on the tree; the chrome's DOM says so at once
+     * where the tree trails); with a pointer it is the panel with a close button. Its dismissal
+     * is a spring and the frame's return, which the tree trails, so this waits for the surface
+     * to be gone – off the tree and out of the DOM – rather than for a fixed time.
      */
     private fun closePanel() {
-        if (findByLabel(CLOSE) != null) click(CLOSE) else if (waitFor(SHEET_SETTINGS, 4_000) != null) back()
+        if (findByLabel(CLOSE) != null) {
+            click(CLOSE)
+        } else if (waitFor(SHEET_SETTINGS, 4_000) != null || sheetInDom()) {
+            back()
+        }
         val deadline = SystemClock.uptimeMillis() + 6_000
-        while (SystemClock.uptimeMillis() < deadline && findAny(SHEET_SETTINGS, CLOSE) != null) SystemClock.sleep(200)
+        while (SystemClock.uptimeMillis() < deadline && (findAny(SHEET_SETTINGS, CLOSE) != null || sheetInDom())) {
+            SystemClock.sleep(200)
+        }
         SystemClock.sleep(1_200)
     }
+
+    /** Whether a v2 sheet stands in the chrome's DOM (what the accessibility tree shows a beat later). */
+    private fun sheetInDom(): Boolean = chromeJs("!!document.querySelector('.zen-sheet')") == "true"
 
     /**
      * Drop the keyboard a focused field would have raised (the page's search field takes focus
