@@ -69,6 +69,43 @@ class DownloadLogicTest {
     }
 
     @Test
+    fun aRefusedResumeReadsTheStatusLikeTheDesktopProbe() {
+        // The desktop fixture's /resume-status/<code>: the first request streams 512 KiB and drops,
+        // the Range request that follows is refused with <code>. The Electron host learns the code
+        // from one probe (interruptReasonFromRangeResponse); this downloader sees it on the resume
+        // itself. Same reason on both, and it reaches the row at once: a server's answer is never
+        // retried quietly, whatever the transfer's resumability or retry budget.
+        val offset = 512L * 1024
+        for ((code, reason) in listOf(404 to R.SERVER_BAD_CONTENT, 403 to R.SERVER_FORBIDDEN, 401 to R.SERVER_UNAUTHORIZED, 500 to R.SERVER_FAILED)) {
+            val decision = DownloadLogic.continuation(code, null, offset, 4L * 1024 * 1024)
+            assertEquals("status $code", DownloadLogic.Continuation.Fail(reason), decision)
+            assertEquals("status $code", DownloadLogic.serverReason(code), (decision as DownloadLogic.Continuation.Fail).reason)
+            assertFalse("status $code", DownloadLogic.shouldAutoResume(reason, true, 0, false))
+        }
+        // A 416 on the resume is Chromium's SERVER_NO_RANGE, whose resume mode is a restart from
+        // zero: the downloader starts over rather than surfacing it (the desktop only names it once
+        // Chromium's own restarts are spent), and a 416 whose total matches the file is done.
+        assertEquals(DownloadLogic.Continuation.Restart, DownloadLogic.continuation(416, "bytes */4194304", offset, 4L * 1024 * 1024))
+        assertEquals(DownloadLogic.Continuation.AlreadyComplete, DownloadLogic.continuation(416, "bytes */524288", offset, 524288))
+        assertEquals(R.SERVER_NO_RANGE, DownloadLogic.serverReason(416))
+    }
+
+    @Test
+    fun aRefusedDownloadLinkReadsTheStatusLikeTheDesktopsSynthesizedRow() {
+        // The desktop fixture's /status/<code>: a link answered <code> with Content-Disposition:
+        // attachment. Chromium creates no DownloadItem for it, so the Electron host synthesizes the
+        // interrupted row from the status; here WebView's download listener still fires and the
+        // first request reads the same status. Same reason on both, not resumable, no quiet retry.
+        for ((code, reason) in listOf(404 to R.SERVER_BAD_CONTENT, 403 to R.SERVER_FORBIDDEN, 401 to R.SERVER_UNAUTHORIZED, 500 to R.SERVER_FAILED)) {
+            assertEquals("status $code", DownloadLogic.Continuation.Fail(reason), DownloadLogic.continuation(code, null, 0, -1))
+            assertFalse("status $code", DownloadLogic.shouldAutoResume(reason, false, 0, false))
+        }
+        // Chrome's row for the 404 reads "File wasn’t available on site" on both platforms.
+        assertEquals(R.SERVER_BAD_CONTENT.message, DownloadNotifications.describe("server-bad-content"))
+        assertEquals("File wasn’t available on site", R.SERVER_BAD_CONTENT.message)
+    }
+
+    @Test
     fun resumabilityNeedsRangesOrAValidator() {
         assertTrue(DownloadLogic.canResume("bytes", null, null))
         assertTrue(DownloadLogic.canResume(null, "\"etag\"", null))
