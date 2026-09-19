@@ -1897,6 +1897,8 @@ export class Browser {
         this.privacy.clearBrowsingData(range, types, passphrase, win),
       'privacy.clearBrowsingDataCounts': ({ range }) => this.privacy.counts(range),
       'privacy.safetyCheck': () => this.privacy.runSafetyCheck(),
+      'privacy.setThirdPartyCookiesPrivate': ({ mode }, win) =>
+        this.protection.setThirdPartyCookiesPrivate(mode, win),
       'security.respond': ({ id, response }) => this.security.respond(id, response),
       'pageDialog.respond': ({ id, response }) => this.pageDialogs.respond(id, response),
       'window.respondPrompt': ({ id, accepted }) => this.windowPrompts.respond(id, accepted),

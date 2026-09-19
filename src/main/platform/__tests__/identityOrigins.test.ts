@@ -190,6 +190,7 @@ function pipeline(flags: Partial<PrivacyFlags> = {}): {
     httpsOnly: DEFAULT_PRIVACY_SETTINGS.httpsOnly,
     httpsOnlyAllowed: [],
     thirdPartyCookies: DEFAULT_PRIVACY_SETTINGS.thirdPartyCookies,
+    thirdPartyCookiesPrivate: DEFAULT_PRIVACY_SETTINGS.thirdPartyCookiesPrivate,
     thirdPartyCookieExceptions: [],
     gpc: DEFAULT_PRIVACY_SETTINGS.gpc,
     dnt: DEFAULT_PRIVACY_SETTINGS.dnt,

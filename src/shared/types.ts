@@ -13,7 +13,12 @@ import type {
 import type { EngineRelayRequest, EngineRelayResponse } from './translateEngine'
 import type { UpdateSettings, UpdateStatus } from './updates'
 import type { BlockingSettings, BlockingStatus } from './blocking'
-import type { PrivacySettings, PrivacyStatus, ProtectionCheck } from './privacy'
+import type {
+  PrivacySettings,
+  PrivacyStatus,
+  ProtectionCheck,
+  ThirdPartyCookiePrivateMode
+} from './privacy'
 import type { InternalPageId } from './internalPages'
 import type { WebAppInfo } from './webApp'
 import type { ContentDefault } from './contentSettings'
@@ -2993,6 +2998,17 @@ export interface Commands {
   }
   /** Run Safety check now: updates, Safe Browsing, passwords, permissions, notifications, extensions. */
   'privacy.safetyCheck': { args: void; result: SafetyCheckResult }
+  /**
+   * Third-party cookies in private windows and private tabs only
+   * (`Settings.privacy.thirdPartyCookiesPrivate`): the private switch writes `block` when turned
+   * on and `allow` when turned off (never `default`, so the choice survives a later change of
+   * the global mode); `default` follows the global mode again. Refused while
+   * `PrivacyStatus.privateThirdPartyCookies.locked`, the chrome disables the switch then.
+   */
+  'privacy.setThirdPartyCookiesPrivate': {
+    args: { mode: ThirdPartyCookiePrivateMode }
+    result: void
+  }
 
   /** Take a fresh resource sample right now and return it. */
   'resources.snapshot': { args: void; result: ResourceSnapshot }
