@@ -1561,8 +1561,8 @@ export class Menus {
     if (win) this.browser.tabs.switchSpace(spaceId, win)
   }
 
-  /** How a window is named in "Move to Window": its active tab, like Chrome's submenu. */
-  private windowLabel(win: ZenWindow): string {
+  /** How a window is named in "Move Tab to Another Window" and tab search: its active tab, like Chrome's submenu. */
+  windowLabel(win: ZenWindow): string {
     const title = this.browser.tabs.activeTitleFor(win)?.trim()
     const label = title ? (title.length > 60 ? `${title.slice(0, 57)}…` : title) : 'Empty window'
     return win.isPrivate ? `${label} (Private)` : label
@@ -2114,6 +2114,13 @@ export class Menus {
     this.popup(
       [
         { label: 'New Tab', action: 'tab.new', click: () => this.browser.openNewTab(win) },
+        // Chrome's tab search (tabs-17): a popover of the sidebar layouts; the phone's tab
+        // switcher searches on its own.
+        ...desktop({
+          label: 'Search Tabs…',
+          action: 'tab.search',
+          click: () => this.browser.emit('tabsearch.open', undefined, win)
+        }),
         // Hosts without private windows (Android) keep the private session in tabs: New Private
         // Tab is Chrome's second item, and Close Private Tabs ends the session while one is open.
         ...when(caps.privateTabs, {

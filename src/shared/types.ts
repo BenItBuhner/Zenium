@@ -2799,6 +2799,16 @@ export interface Commands {
   'tab.moveToNewWindow': { args: { tabId: string }; result: void }
   /** Restore the newest recently closed entry (a window entry as a whole window). */
   'tab.reopenClosed': { args: void; result: void }
+  /**
+   * The tabs this window's tab search (Ctrl+Shift+A) lists: every tab of every window that
+   * shares the window's privacy, most recently active first. The renderer matches and ranks them.
+   */
+  'tab.searchCandidates': { args: void; result: TabSearchCandidate[] }
+  /**
+   * Switch to a tab from tab search: in this window when it can show it, else in the window that
+   * does (a blank or private window's own tab), which is brought to the front.
+   */
+  'tab.switchTo': { args: { tabId: string }; result: void }
   /** The tab's back/forward stack for the long-press list on the back / forward buttons. */
   'tab.navigationEntries': { args: { tabId: string }; result: NavigationSnapshot }
   'tab.goToIndex': { args: { tabId: string; index: number }; result: void }
@@ -3705,6 +3715,11 @@ export interface Events {
    */
   'menu.app': void
   /**
+   * Ctrl+Shift+A (or the menu item) asked for tab search: the chrome opens the popover from the
+   * sidebar's top row with the keyboard in its field (`tab.searchCandidates` lists the tabs).
+   */
+  'tabsearch.open': void
+  /**
    * The user zoomed a page (keyboard, Ctrl+wheel, the menu, the bubble's own controls): the
    * chrome shows the zoom bubble for the tab. `factor` is the page's effective zoom; `siteKey`
    * the site the factor is remembered for, null for a page that zooms on its own.
@@ -3926,3 +3941,29 @@ export interface ClosedEntrySummary {
 
 /** The pre-visit-model name; new code uses `ClosedTabEntry`. */
 export type ClosedTab = ClosedTabEntry
+
+/**
+ * One tab the tab search popover can switch to (tabs-17): what its row shows and what the
+ * renderer matches on. `windowLabel` names the other window a tab lives in (a blank or private
+ * window's own tab, named by its active tab as the "Move Tab to Another Window" submenu names
+ * windows); null for a tab this window shows itself.
+ */
+export interface TabSearchCandidate {
+  id: string
+  /** The user's name for the tab when it has one, else the page's title. */
+  title: string
+  url: string
+  favicon: string | null
+  /** The user's emoji for the tab ("Change Icon…"), shown in place of the favicon. */
+  customIcon: string | null
+  containerId: string
+  windowLabel: string | null
+  /** The tab this window (or the window the tab lives in) shows right now. */
+  active: boolean
+  /** Playing sound (or muted while it would): the "Audio and video" section. */
+  audible: boolean
+  muted: boolean
+  loading: boolean
+  discarded: boolean
+  lastActiveAt: number
+}

@@ -2963,6 +2963,54 @@
     line-height: var(--v2-line-small);
     color: var(--v2-text-deemphasized);
   }
+  /*
+   * The tab search popover (components/tabsearch/TabSearchPopover.tsx; tabs-17): the shared
+   * `.zen-bm-popover` chrome and title block, the shared `.zen-v2-field` under the title, the
+   * shared `.zen-v2-row` for every tab. Only what those do not say lives here: the section
+   * heading's beat (12 above, 4 below, the first 4 under the title block – the rows are two
+   * lines tall, so the Settings groups' 20 would read as a gap), the selected row (the
+   * keyboard's, the pointer's) in the row's own press fill, the query's matches in the heading
+   * weight with no highlight fill, the trailing glyphs in the deemphasised ink, and the close
+   * button shown for the selected row and when it has the focus alone, as Chrome shows its X.
+   */
+  .zen-tab-search-heading {
+    flex-shrink: 0;
+    margin: 12px 0 4px;
+    padding: 0 16px;
+    color: var(--v2-text-deemphasized);
+  }
+  .zen-tab-search-heading:first-child {
+    margin-top: 4px;
+  }
+  .zen-tab-search-row {
+    flex-shrink: 0;
+    cursor: default;
+  }
+  .zen-tab-search-row[aria-selected='true'] {
+    background: var(--v2-fill);
+  }
+  .zen-tab-search-row mark {
+    background: none;
+    color: inherit;
+    font-weight: var(--v2-weight-heading);
+  }
+  .zen-tab-search-glyph {
+    flex-shrink: 0;
+    color: var(--v2-text-deemphasized);
+  }
+  .zen-tab-search-close {
+    opacity: 0;
+    transition:
+      opacity 120ms var(--zen-ease),
+      background 120ms var(--zen-ease);
+  }
+  .zen-tab-search-row[aria-selected='true'] .zen-tab-search-close,
+  .zen-tab-search-close:focus-visible {
+    opacity: 1;
+  }
+  .zen-tab-search-empty {
+    color: var(--v2-text-deemphasized);
+  }
   /* A list popover's body: 16 around 32px rows (§9.20); the empty line 32 below the top (§9.17). */
   .zen-bm-popover-list {
     padding: 16px;

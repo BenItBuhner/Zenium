@@ -13,12 +13,18 @@ import { cn } from '@renderer/lib/utils'
  * a globe for blank tabs, and an internal page's registered glyph (the gear for Settings) for a
  * page tab, which never fetches an icon (v2 §10.1); a page with no glyph falls through.
  */
+/** What the favicon is drawn from: a tab, or a row that carries the same fields (tab search). */
+export type FaviconSource = Pick<
+  Tab,
+  'url' | 'title' | 'favicon' | 'customIcon' | 'customTitle' | 'loading' | 'discarded' | 'containerId'
+>
+
 export function Favicon({
   tab,
   size = 16,
   className
 }: {
-  tab: Tab
+  tab: FaviconSource
   size?: number
   className?: string
 }): JSX.Element {

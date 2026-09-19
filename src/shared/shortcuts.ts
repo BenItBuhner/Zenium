@@ -545,13 +545,11 @@ const DEFS: Def[] = [
     chrome: { key: 'k', mods: ACCEL_SHIFT }
   },
   {
-    // Chrome's tab search. Reserved: the chord is taken so it never runs something else, and
-    // the row stays out of the list until tab search ships.
+    // Chrome's tab search popover (tabs-17).
     id: 'key_tabSearch',
     action: 'tab.search',
     group: 'windowAndTabManagement',
     label: 'Search Tabs',
-    hidden: true,
     zen: UNBOUND,
     chrome: { key: 'a', mods: ACCEL_SHIFT }
   },
