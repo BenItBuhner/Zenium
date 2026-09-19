@@ -66,7 +66,10 @@ function pdfViewerFiles(): Plugin {
     apply: 'build',
     closeBundle() {
       mkdirSync(PDF_ASSETS_DIR, { recursive: true })
-      cpSync(resolve(dist, 'legacy/build/pdf.worker.min.mjs'), resolve(PDF_ASSETS_DIR, 'pdf.worker.mjs'))
+      cpSync(
+        resolve(dist, 'legacy/build/pdf.worker.min.mjs'),
+        resolve(PDF_ASSETS_DIR, 'pdf.worker.mjs')
+      )
       for (const dir of ['cmaps', 'standard_fonts', 'wasm', 'iccs'])
         cpSync(resolve(dist, dir), resolve(PDF_ASSETS_DIR, dir), { recursive: true })
     }

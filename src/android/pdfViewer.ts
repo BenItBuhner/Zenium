@@ -447,15 +447,15 @@ class Viewer {
       this.pinch = null
       return
     }
-    this.pinch = pinchOf(
-      [e.touches[0], e.touches[1]],
-      this.zoom,
-      { x: window.scrollX, y: window.scrollY }
-    )
+    this.pinch = pinchOf([e.touches[0], e.touches[1]], this.zoom, {
+      x: window.scrollX,
+      y: window.scrollY
+    })
     this.pinching = true
     this.pinched = null
     this.lastTap = null
-    if (this.pinch) pagesRoot.style.transformOrigin = `${this.pinch.focus.x}px ${this.pinch.focus.y}px`
+    if (this.pinch)
+      pagesRoot.style.transformOrigin = `${this.pinch.focus.x}px ${this.pinch.focus.y}px`
   }
 
   private movePinch(e: TouchEvent): void {
@@ -492,7 +492,11 @@ class Viewer {
     const now = performance.now()
     const last = this.lastTap
     this.lastTap = { at: now, x: touch.clientX, y: touch.clientY }
-    if (!last || now - last.at > 300 || Math.hypot(touch.clientX - last.x, touch.clientY - last.y) > 40)
+    if (
+      !last ||
+      now - last.at > 300 ||
+      Math.hypot(touch.clientX - last.x, touch.clientY - last.y) > 40
+    )
       return
     this.lastTap = null
     const fitted = this.fitted('width')
@@ -642,7 +646,8 @@ class Viewer {
   }
 
   private markCurrent(): void {
-    for (const el of pagesRoot.querySelectorAll('.zen-pdf-hit.current')) el.classList.remove('current')
+    for (const el of pagesRoot.querySelectorAll('.zen-pdf-hit.current'))
+      el.classList.remove('current')
     const match = this.matches[this.matchIndex]
     if (!match) return
     const slot = this.slots[match.page - 1]

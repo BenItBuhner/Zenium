@@ -62,7 +62,10 @@ describe('page ranges', () => {
 
   it('reports syntax errors with the message Chrome shows', () => {
     for (const text of ['', '  ', 'a', '1-2-3', '5-3', '0', ',', '1,,2', '2 3'])
-      expect(parsePageRanges(text, 10)).toEqual({ ok: false, error: PRINT_MESSAGES.pageRangeSyntax })
+      expect(parsePageRanges(text, 10)).toEqual({
+        ok: false,
+        error: PRINT_MESSAGES.pageRangeSyntax
+      })
   })
 
   it('reports pages past the document with the limit', () => {
@@ -321,7 +324,14 @@ describe('render options', () => {
   })
 
   it('lists the paper Chrome offers its PDF destination', () => {
-    expect(PAPER_SIZES.map((p) => p.label)).toEqual(['Letter', 'Legal', 'Tabloid', 'A3', 'A4', 'A5'])
+    expect(PAPER_SIZES.map((p) => p.label)).toEqual([
+      'Letter',
+      'Legal',
+      'Tabloid',
+      'A3',
+      'A4',
+      'A5'
+    ])
     expect(PAPER_SIZES.find((p) => p.id === 'a4')).toMatchObject({
       widthMicrons: 210000,
       heightMicrons: 297000
@@ -388,7 +398,10 @@ describe('job options', () => {
   })
 
   it('maps the margin modes, one-sided jobs, and headers off', () => {
-    const base = settings({ destination: { kind: 'printer', name: 'Office_HP' }, headerFooter: false })
+    const base = settings({
+      destination: { kind: 'printer', name: 'Office_HP' },
+      headerFooter: false
+    })
     const o = printJobOptions(base, 2, page)
     expect(o?.margins).toEqual({ marginType: 'default' })
     expect(o?.duplexMode).toBe('simplex')

@@ -364,6 +364,7 @@ export const INTERNAL_PAGES: Readonly<Record<InternalPageId, InternalPageDefinit
     singleton: false,
     pill: { showStar: true },
     splittable: true,
+    requires: 'pdfViewer',
     sections: []
   }
 }

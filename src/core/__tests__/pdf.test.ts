@@ -197,7 +197,9 @@ describe('what counts as a PDF for the viewer', () => {
     expect(opensInViewer(PDF_INIT('tab_1', { disposition: 'attachment' }), true)).toBe(false)
     expect(opensInViewer(PDF_INIT('tab_1', { navigation: false }), true)).toBe(false)
     expect(opensInViewer(PDF_INIT(null), true)).toBe(false)
-    expect(opensInViewer(PDF_INIT('tab_1', { mimeType: 'application/zip', filename: 'a.zip' }), true)).toBe(false)
+    expect(
+      opensInViewer(PDF_INIT('tab_1', { mimeType: 'application/zip', filename: 'a.zip' }), true)
+    ).toBe(false)
     expect(opensInViewer(PDF_INIT('tab_1'), false)).toBe(false)
   })
 })

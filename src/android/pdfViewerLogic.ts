@@ -291,7 +291,9 @@ export function failureText(error: unknown): string {
     case 'PasswordException':
       return 'This document is password protected.'
     default:
-      return message.trim() ? `This PDF could not be loaded (${message.trim()}).` : 'This PDF could not be loaded.'
+      return message.trim()
+        ? `This PDF could not be loaded (${message.trim()}).`
+        : 'This PDF could not be loaded.'
   }
 }
 
