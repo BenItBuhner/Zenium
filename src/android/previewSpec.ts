@@ -88,7 +88,14 @@ export type PreviewAutofillSurface = (typeof PREVIEW_AUTOFILL)[number]
 
 export type PreviewState =
   | { kind: 'idle' }
-  | { kind: 'autofill'; surface: PreviewAutofillSurface }
+  | {
+      kind: 'autofill'
+      surface: PreviewAutofillSurface
+      /** For a manager surface (the Settings tab): text of a row to scroll into view once it is open. */
+      show?: string
+      /** For a manager surface: steps taken on the page once it is open and scrolled. */
+      then?: PreviewStep[]
+    }
   | {
       /** An internal page in its tab (`page.open`): Settings, on its landing or a section. */
       kind: 'page'
@@ -179,8 +186,9 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * one of PREVIEW_OVERLAYS (with `section=<id>` for an overlay that has sections, `show=<text>`
  * to scroll a row of the overlay into view, and `expand` to rest a sheet that opened at its peek
  * detent on its expanded one), `menu=app` for the app menu sheet (with `show=<text>` to scroll an
- * item into view), `autofill=<surface>` for one of PREVIEW_AUTOFILL staged with sample data,
- * `find=<text>` for the find bar with that text typed (`find=` opens it empty), `pull=<n>` for
+ * item into view), `autofill=<surface>` for one of PREVIEW_AUTOFILL staged with sample data
+ * (a manager surface is the Settings tab on its Autofill section and takes `show=<text>` and
+ * `then=<steps>` like `page`), `find=<text>` for the find bar with that text typed (`find=` opens it empty), `pull=<n>` for
  * the active page held pulled down at n percent of the refresh threshold
  * (`pull=refresh` pulls past it and lets go), `zoom=<factor>` for the page zoom sheet with the
  * active tab's site at that factor (`zoom=` opens it as it is), `error=<code>` for the active
@@ -233,7 +241,15 @@ export function parsePreviewSpec(spec: string): PreviewState {
   }
   const autofill = params.get('autofill')
   if (autofill !== null && (PREVIEW_AUTOFILL as readonly string[]).includes(autofill)) {
-    return { kind: 'autofill', surface: autofill as PreviewAutofillSurface }
+    const state: Extract<PreviewState, { kind: 'autofill' }> = {
+      kind: 'autofill',
+      surface: autofill as PreviewAutofillSurface
+    }
+    const show = params.get('show')
+    if (show) state.show = show
+    const then = parsePreviewSteps(params.get('then'))
+    if (then.length > 0) state.then = then
+    return state
   }
   const find = params.get('find')
   if (find !== null) return { kind: 'find', text: find }

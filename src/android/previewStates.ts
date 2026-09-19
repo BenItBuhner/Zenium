@@ -124,30 +124,15 @@ function reach(browser: Browser, spec: string): void {
   const target = parsePreviewSpec(spec)
 
   if (target.kind === 'autofill') {
-    void stageAutofill(browser, target.surface, tab).then(() => {
-      // The surface mounts on the next render; the sheets take a moment to rise.
-      requestAnimationFrame(() => requestAnimationFrame(() => done(spec)))
+    void stageAutofill(browser, target.surface, tab).then((page) => {
+      // A manager state is the Settings tab on its Autofill section (staged vault behind it):
+      // reached the way a page state is. Any other surface mounts on the next render; the
+      // sheets take a moment to rise.
+      if (page) settlePage(target, spec)
+      else requestAnimationFrame(() => requestAnimationFrame(() => done(spec)))
     })
   } else if (target.kind === 'page') {
-    // The page tab is the state: reached once the active tab is a page tab and the page has its
-    // rows (its chunk loads on the first open), then a moment for its drill-in's slide to settle
-    // before the search is typed, a row shown or a step taken.
-    whenActiveTabIs(isInternalPageUrl, () => {
-      whenPageRendered(() => {
-        setTimeout(() => {
-          // The landing keeps its query between states unless it is retyped: an empty one clears it.
-          type('input[aria-label="Find in Settings"]', target.search ?? '')
-          requestAnimationFrame(() => {
-            // The page keeps where a previous state scrolled it; every state starts at the top.
-            for (const el of document.querySelectorAll<HTMLElement>('[data-page] *')) {
-              if (el.scrollTop > 0) el.scrollTop = 0
-            }
-            show(target.show)
-            steps(target.then ?? [], () => done(spec))
-          })
-        }, 300)
-      })
-    })
+    settlePage(target, spec)
     run('page.open', { id: target.page, section: target.section ?? null })
   } else if (target.kind === 'overlay') {
     void openOverlay(target.overlay, tab?.id ?? null, null, null, target.section ?? null).then(
@@ -200,6 +185,33 @@ function reach(browser: Browser, spec: string): void {
   } else {
     done(spec)
   }
+}
+
+/**
+ * A page tab is the state: reached once the active tab is a page tab and the page has its rows
+ * (its chunk loads on the first open), then a moment for its drill-in's slide to settle before
+ * the search is typed, a row shown or a step taken; `spec` is echoed at the end.
+ */
+function settlePage(
+  target: { search?: string; show?: string; then?: readonly PreviewStep[] },
+  spec: string
+): void {
+  whenActiveTabIs(isInternalPageUrl, () => {
+    whenPageRendered(() => {
+      setTimeout(() => {
+        // The landing keeps its query between states unless it is retyped: an empty one clears it.
+        type('input[aria-label="Find in Settings"]', target.search ?? '')
+        requestAnimationFrame(() => {
+          // The page keeps where a previous state scrolled it; every state starts at the top.
+          for (const el of document.querySelectorAll<HTMLElement>('[data-page] *')) {
+            if (el.scrollTop > 0) el.scrollTop = 0
+          }
+          show(target.show)
+          steps(target.then ?? [], () => done(spec))
+        })
+      }, 300)
+    })
+  })
 }
 
 /**

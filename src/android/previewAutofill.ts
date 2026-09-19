@@ -1,14 +1,14 @@
 import type { Browser } from '@core/browser'
 import { normalizeOrigin, siteLabel } from '@core/credentials/origins'
 import type { FormFieldKind, FormGroup, Tab } from '@shared/types'
-import { cmd } from '@renderer/lib/api'
+import { cmd, run } from '@renderer/lib/api'
 import {
   cancelPassphrase,
   closeAutofillEdit,
   openAutofillEdit,
   withPassphrase
 } from '@renderer/lib/autofill'
-import { browserStore, openOverlay, uiStore } from '@renderer/lib/ui'
+import { browserStore, uiStore } from '@renderer/lib/ui'
 import type { HostGlobal } from './boot'
 import type { PreviewAutofillSurface } from './previewSpec'
 
@@ -16,8 +16,10 @@ import type { PreviewAutofillSurface } from './previewSpec'
  * The autofill surfaces staged for the preview host (`autofill=<surface>` in a preview state):
  * prompts queued and pickers shown through the core's own doors (`AutofillService.present`,
  * `presentPicker`), so the chrome renders them exactly as the engine's would arrive, with
- * sample data and nothing saved behind them; the managers on a vault unlocked through the
- * preview's keystore stand-in and seeded with an address, two cards and a passkey record.
+ * sample data and nothing saved behind them; the managers are the Settings tab on its Autofill
+ * section (`page.open`, the phone's `autofill` builder in `pages/settings/sections.tsx`) over
+ * a vault unlocked through the preview's keystore stand-in and seeded with an address, two
+ * cards and a passkey record.
  */
 
 /** The sample site when no tab is open to take one from. */
@@ -60,18 +62,22 @@ export async function clearAutofill(browser: Browser): Promise<void> {
   uiStore.set({ autofillPassphrase: null, autofillPromptCollapsed: null })
 }
 
-/** Stage `surface` for the active tab. Prompts and pickers need a tab; the managers do not. */
+/**
+ * Stage `surface` for the active tab. Prompts and pickers need a tab; the managers do not: they
+ * open the Settings tab on its Autofill section, and say so (true) – the state is reached the
+ * way a page state is, once the page has rendered.
+ */
 export async function stageAutofill(
   browser: Browser,
   surface: PreviewAutofillSurface,
   tab: Tab | null
-): Promise<void> {
+): Promise<boolean> {
   const tabId = tab?.id ?? null
   const { origin, site } = siteOf(tab)
   switch (surface) {
     case 'save-login':
     case 'update-login':
-      if (!tabId) return
+      if (!tabId) return false
       // The site's favicon is the desktop prompt's title glyph: a cross-origin frame's cannot
       // be read, so a stand-in arrives the way a page's would, through the view's favicon event.
       previewHost().viewEvent(tabId, 'favicon', JSON.stringify({ url: faviconFor(site) }))
@@ -84,9 +90,9 @@ export async function stageAutofill(
         username: 'ada@example.com',
         existingId: surface === 'update-login' ? 'preview-existing' : null
       })
-      return
+      return false
     case 'save-address':
-      if (!tabId) return
+      if (!tabId) return false
       void browser.autofill.present({
         id: 'preview-save-address',
         kind: 'save-address',
@@ -107,9 +113,9 @@ export async function stageAutofill(
         },
         preview: '12 St James\u2019s Square, London SW1Y 4LB'
       })
-      return
+      return false
     case 'save-card':
-      if (!tabId) return
+      if (!tabId) return false
       void browser.autofill.present({
         id: 'preview-save-card',
         kind: 'save-card',
@@ -122,7 +128,7 @@ export async function stageAutofill(
         expYear: 2031,
         name: 'Ada Lovelace'
       })
-      return
+      return false
     case 'passkey-account':
       void browser.autofill.present({
         id: 'preview-passkey-account',
@@ -134,11 +140,11 @@ export async function stageAutofill(
           { credentialId: 'preview-cred-2', userName: 'ada.lovelace' }
         ]
       })
-      return
+      return false
     case 'picker':
     case 'picker-address':
     case 'picker-card': {
-      if (!tabId) return
+      if (!tabId) return false
       // The picker is the core's own, built from a seeded vault by the focus event the forms
       // script would send: its rows fill (into nothing, here) and ask for the passphrase behind
       // a passphrase vault (`?vault=none`), where they wear the lock.
@@ -158,24 +164,24 @@ export async function stageAutofill(
         hasValue: false,
         fields: [{ id: 'preview-field', kind, hasValue: false }]
       })
-      return
+      return false
     }
     case 'manager-locked':
       // The vault as the preview starts it – locked, so the section shows its gate – which an
       // earlier state's unlock must not have undone.
       browser.passwords.lock()
-      await openOverlay('settings', tabId, null, null, 'autofill')
-      return
+      run('page.open', { id: 'settings', section: 'autofill' })
+      return true
     case 'manager-empty':
       await unlockAndSeed(browser, { seed: false })
-      await openOverlay('settings', tabId, null, null, 'autofill')
-      return
+      run('page.open', { id: 'settings', section: 'autofill' })
+      return true
     case 'manager':
     case 'edit-address':
     case 'edit-card':
     case 'passphrase': {
       const seeded = await unlockAndSeed(browser)
-      await openOverlay('settings', tabId, null, null, 'autofill')
+      run('page.open', { id: 'settings', section: 'autofill' })
       if (surface === 'edit-address') openAutofillEdit({ kind: 'address', id: null })
       else if (surface === 'edit-card') openAutofillEdit({ kind: 'card', id: seeded.cardId })
       else if (surface === 'passphrase') {
@@ -194,7 +200,7 @@ export async function stageAutofill(
           )
         } else uiStore.set({ autofillPassphrase: { ...copy, error: null, busy: false } })
       }
-      return
+      return true
     }
   }
 }
