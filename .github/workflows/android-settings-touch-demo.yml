@@ -12,11 +12,6 @@ name: Android Settings sheet touch check
 # the driver.
 on:
   workflow_dispatch:
-  # TEMPORARY: the worker's token cannot dispatch workflows; removed before the PR is marked ready.
-  push:
-    branches:
-      - cursor/android-settings-sheet-touch-23d7
-      - cursor/android-settings-touch-before-23d7
 
 permissions:
   contents: read
