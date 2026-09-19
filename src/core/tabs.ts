@@ -1803,11 +1803,25 @@ export class TabManager {
     this.browser.state.commit()
   }
 
+  /**
+   * Chrome's Duplicate (tabs-22): a copy right after the tab, in its container and folder, with
+   * its back/forward stack – and, through the entries' page state, its scroll position – not a
+   * bare load of the current URL. The stack is queued for the copy's page, which replays it
+   * when it is created (`createView`), as a reopened tab's is. An unloaded tab gives what it
+   * remembers of its stack; one with nothing remembered gets a plain load of its URL.
+   */
   duplicate(tabId: string, win: ZenWindow = this.windowFor(tabId)): Tab | undefined {
     const tab = this.tab(tabId)
     if (!tab) return undefined
+    const id = newId('tab')
+    const view = this.view(tabId)
+    const history = view
+      ? view.navigationEntries()
+      : (this.pendingNavigation.get(tabId) ?? this.browser.state.tabNavigation.get(tabId))
+    if (history && history.entries.length > 0) this.pendingNavigation.set(id, history)
     return this.createTab(
       {
+        id,
         url: tab.url,
         spaceId: win.activeSpace().id,
         containerId: tab.containerId,
@@ -2182,9 +2196,23 @@ export class TabManager {
     if (content && key) this.dropTab(tabId, key, target)
     this.activateTab(tabId, target)
     this.showNeighbour(source, leaving, tabId)
+    this.closeIfEmptied(source)
     this.browser.state.commit()
     target.host.focus()
     return true
+  }
+
+  /**
+   * Chrome closes a window whose only tab went to another window – torn off, dropped into
+   * another window, or sent there from the tab menu. A blank or private window with nothing
+   * left does the same here (deferred: the drag that asked for the move may still be
+   * finishing). A synced window keeps its spaces and stays.
+   */
+  private closeIfEmptied(source: ZenWindow): void {
+    if (!source.localSpace || source.localSpace.tabIds.length > 0 || !source.alive) return
+    defer(() => {
+      if (source.alive) source.host.close()
+    })
   }
 
   /**
@@ -2277,13 +2305,7 @@ export class TabManager {
     }
     this.activateTab(tabId, win)
     this.showNeighbour(source, leaving, tabId)
-    // Chrome closes a window whose only tab was torn off; a blank window with nothing left does
-    // the same here (deferred: the drag that asked for this may still be finishing).
-    if (source.localSpace && source.localSpace.tabIds.length === 0 && source.alive) {
-      defer(() => {
-        if (source.alive) source.host.close()
-      })
-    }
+    this.closeIfEmptied(source)
     this.browser.state.commit()
     return win
   }

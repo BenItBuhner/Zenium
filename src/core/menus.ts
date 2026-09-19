@@ -1238,12 +1238,14 @@ export class Menus {
           ]),
       ...(caps.windows
         ? [
+            // Chrome's pair (tabs-23, context-menus-93): the second lists the other windows by
+            // their active tab, most recently focused first, and is greyed with none to go to.
             {
               label: 'Move Tab to New Window',
               click: () => void tabs.moveTabToNewWindow(tabId, null, win)
             },
             {
-              label: 'Move to Window',
+              label: 'Move Tab to Another Window',
               enabled: otherWindows.length > 0,
               submenu: otherWindows.map((w) => ({
                 label: this.windowLabel(w),
