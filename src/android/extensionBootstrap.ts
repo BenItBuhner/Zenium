@@ -70,7 +70,9 @@ import { installCorsProxy } from './extensionCorsProxy'
  * that world). The object is captured and deleted from the global before any page script can
  * see it; in the main world the transport janitor (`extensionTransport.ts`) has done that
  * already and hands it over through `__zenExtTransport.claim(token)`, and the runtime and exec
- * objects go into the slots it reserved. A late boot (`config.late`) is this same script
+ * objects go into the slots it reserved. The janitor keeps one sink, so whichever copy claims
+ * last is the one the host reaches: an extension page open as a tab installs a runtime of its
+ * own for that reason (page mode below). A late boot (`config.late`) is this same script
  * evaluated by the host into a document that predates the extension's world (or on a WebView
  * without worlds): no groups run, but `scripting.executeScript` / `insertCSS` get a scope and a
  * bridge to work with.
@@ -322,6 +324,29 @@ declare const __zenExtBoot: Boot
     const context = boot.config.context
     const frame = frameContext()
     const engine = makeEngine(ext, context, frame, realWindow, false)
+    // An extension page open as a tab shares its main world with every other document-start
+    // copy of this script whose origin rule covers it – the units over `*` of this extension
+    // (a `world: "MAIN"` group on a WebView with isolated worlds, every group without them) and
+    // of every other, and a late boot for an injection aimed at the tab. Chrome injects no
+    // content scripts into extension pages and neither do those copies (they return in content
+    // mode below), but a copy that finds no runtime installed claims the janitor's transport for
+    // itself first, and the janitor's one sink moves to a copy that is about to return: from
+    // then on nothing the host sends this page reaches its engine, without an error to show for
+    // it (Adblock Plus's options page waited for good on the `app.get` it asks before it shows its
+    // body, Ghostery's settings page on three `storage.get`, all four answered by the host). So
+    // the page's copy installs the runtime the later copies attach to, with nothing of their
+    // boots to run here, and an injection into the page is refused as Chrome refuses it. Only
+    // the janitor's world hosts other copies: an ExtensionWebView runs the page script alone.
+    if (janitor) {
+      const pageRuntime: Runtime = { attach: () => undefined }
+      Object.freeze(pageRuntime)
+      janitor.install(boot.config.token, pageRuntime, (token: unknown) => {
+        if (token !== boot.config.token) throw new Error('bad token')
+        throw new Error(
+          'Cannot access contents of the page. Extension manifest must request permission to access the respective host.'
+        )
+      })
+    }
     const pageWindow = realWindow
     const origin = extensionOrigin(ext.id)
     const endpointId = endpointIdFor(ext.id)
