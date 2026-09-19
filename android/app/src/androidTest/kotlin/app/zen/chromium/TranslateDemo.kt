@@ -11,13 +11,14 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 /**
- * Drives offline page translation for the `android-translate-demo` workflow. The engine PR has no
- * surface of its own yet, so the driver speaks to the core the way the translate bar will: through
- * `window.zen.invoke` in the chrome WebView. It seeds a profile with two fixture pages served from
- * the workflow runner (Spanish with a `lang` attribute, German without one), lets the auto-offer
- * detect each, translates them (models downloaded on first use, then read from `files/translate/`),
- * checks the page DOM, waits for late content to be translated, reverts, translates a selection,
- * and writes what it measured to `translate-results.json` next to the screenshots.
+ * Drives the translation engine for the `android-translate-demo` workflow's `engine` sequence,
+ * speaking to the core through `window.zen.invoke` in the chrome WebView (the way the translate
+ * bar does), so the engine's own behaviour is measured without the UI in between. It seeds a
+ * profile with two fixture pages served from the workflow runner (Spanish with a `lang` attribute,
+ * German without one), lets the auto-offer detect each, translates them (models downloaded on
+ * first use, then read from `files/translate/`), checks the page DOM, waits for late content to be
+ * translated, reverts, translates a selection, and writes what it measured to
+ * `translate-results.json` next to the screenshots. The UI sequence is [TranslateUiDemo].
  *
  * Two of its measurements are about the page's `domReady` reaching the core rather than about the
  * engine: `esOnLoad`, the status the Spanish tab reaches with nothing asked of it (`offered` when
@@ -25,11 +26,8 @@ import java.util.concurrent.TimeUnit
  * verdict on the same article from the same event. The run fails when either is missing.
  */
 @RunWith(AndroidJUnit4::class)
-class TranslateDemo : DemoHarness("translate-demo-state.json", "services-translate-android", "translate-demo") {
+class TranslateDemo : TranslateDemoBase("services-translate-android") {
     override val tag = "TranslateDemo"
-    private val results = JSONObject()
-    private val startedAt = SystemClock.uptimeMillis()
-    private var nextId = 1
 
     @Test
     fun record() = runDemo()
@@ -149,10 +147,33 @@ class TranslateDemo : DemoHarness("translate-demo-state.json", "services-transla
         check(results.optBoolean("esReaderableOnLoad")) { "es was not detected readable on load" }
     }
 
+    private fun awaitLateContent(): String? {
+        val deadline = SystemClock.uptimeMillis() + 40_000
+        while (SystemClock.uptimeMillis() < deadline) {
+            val text = pageString(ES_TAB, "(function(){var p=document.getElementById('aviso');return p.hidden?null:p.textContent})()")
+            if (text != null && !text.startsWith("Aviso de última hora")) return text
+            SystemClock.sleep(400)
+        }
+        return null
+    }
+}
+
+/**
+ * What the translate demos share: the seeded profile (`tab_es` and `tab_de` on the runner's
+ * fixture pages), the core reached through `window.zen.invoke` in the chrome WebView, the tabs'
+ * translate state polled with its changes logged, scripts run in a page, and the measurements
+ * collected for `translate-results.json`.
+ */
+abstract class TranslateDemoBase(shotPrefix: String) :
+    DemoHarness("translate-demo-state.json", shotPrefix, "translate-demo") {
+    protected val results = JSONObject()
+    protected val startedAt = SystemClock.uptimeMillis()
+    private var nextId = 1
+
     // --- translation with timing --------------------------------------------------------------
 
     /** `translate.page` on a tab, following the state until it settles; returns the measurements. */
-    private fun translate(tabId: String, chars: Int): JSONObject {
+    protected fun translate(tabId: String, chars: Int): JSONObject {
         val t0 = SystemClock.uptimeMillis()
         var firstDownload = -1L
         var firstTranslating = -1L
@@ -179,7 +200,7 @@ class TranslateDemo : DemoHarness("translate-demo-state.json", "services-transla
     }
 
     /** Poll a tab's translate state (logging changes) until `done(status)` holds. */
-    private fun awaitStatus(tabId: String, timeoutMs: Long, done: (String) -> Boolean): JSONObject? {
+    protected fun awaitStatus(tabId: String, timeoutMs: Long, done: (String) -> Boolean): JSONObject? {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         var last = ""
         while (SystemClock.uptimeMillis() < deadline) {
@@ -198,11 +219,11 @@ class TranslateDemo : DemoHarness("translate-demo-state.json", "services-transla
         return tabState(tabId)
     }
 
-    private fun tabState(tabId: String): JSONObject? =
+    protected fun tabState(tabId: String): JSONObject? =
         await("window.zen.invoke('app.getState').then(function(s){return s.translate.tabs[${JSONObject.quote(tabId)}]||null})", 15_000)
 
     /** Poll the core's tab for Reader View's verdict (`readerable`, decided at dom-ready). */
-    private fun awaitReaderable(tabId: String, timeoutMs: Long): Boolean {
+    protected fun awaitReaderable(tabId: String, timeoutMs: Long): Boolean {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         while (SystemClock.uptimeMillis() < deadline) {
             val tab = await("window.zen.invoke('app.getState').then(function(s){return s.tabs[${JSONObject.quote(tabId)}]||null})", 15_000)
@@ -212,19 +233,9 @@ class TranslateDemo : DemoHarness("translate-demo-state.json", "services-transla
         return false
     }
 
-    private fun awaitLateContent(): String? {
-        val deadline = SystemClock.uptimeMillis() + 40_000
-        while (SystemClock.uptimeMillis() < deadline) {
-            val text = pageString(ES_TAB, "(function(){var p=document.getElementById('aviso');return p.hidden?null:p.textContent})()")
-            if (text != null && !text.startsWith("Aviso de última hora")) return text
-            SystemClock.sleep(400)
-        }
-        return null
-    }
-
     // --- the chrome's core through window.zen ----------------------------------------------------
 
-    private fun awaitCore() {
+    protected fun awaitCore() {
         val deadline = SystemClock.uptimeMillis() + 60_000
         while (SystemClock.uptimeMillis() < deadline) {
             if (chrome("typeof window.zen!=='undefined'&&typeof window.zen.invoke==='function'") == "true") return
@@ -233,11 +244,11 @@ class TranslateDemo : DemoHarness("translate-demo-state.json", "services-transla
         error("the chrome never exposed window.zen")
     }
 
-    private fun invoke(name: String, args: String = "{}", timeoutMs: Long = 60_000): JSONObject? =
+    protected fun invoke(name: String, args: String = "{}", timeoutMs: Long = 60_000): JSONObject? =
         await("window.zen.invoke(${JSONObject.quote(name)}, $args)", timeoutMs)
 
     /** Fire a command without waiting for its promise (its progress is followed through the state). */
-    private fun startInvoke(name: String, args: String) {
+    protected fun startInvoke(name: String, args: String) {
         chrome("window.zen.invoke(${JSONObject.quote(name)}, $args).catch(function(e){console.warn('translate demo: '+(e&&e.message||e))})")
     }
 
@@ -245,7 +256,7 @@ class TranslateDemo : DemoHarness("translate-demo-state.json", "services-transla
      * Run a promise-returning expression in the chrome and wait for it to settle. The result lands
      * in a window slot that is polled, since `evaluateJavascript` cannot await.
      */
-    private fun await(expression: String, timeoutMs: Long): JSONObject? {
+    protected fun await(expression: String, timeoutMs: Long): JSONObject? {
         val id = nextId++
         chrome(
             "(function(){var s=window.__translateDemo=window.__translateDemo||{};" +
@@ -267,7 +278,7 @@ class TranslateDemo : DemoHarness("translate-demo-state.json", "services-transla
     }
 
     /** Evaluate in the chrome WebView; the answer is the JSON text of the value (`null` when none). */
-    private fun chrome(script: String): String? {
+    protected fun chrome(script: String): String? {
         val latch = CountDownLatch(1)
         var result: String? = null
         instrumentation.runOnMainSync {
@@ -282,7 +293,7 @@ class TranslateDemo : DemoHarness("translate-demo-state.json", "services-transla
 
     // --- the page in a tab ------------------------------------------------------------------------
 
-    private fun page(tabId: String, script: String): String? {
+    protected fun page(tabId: String, script: String): String? {
         val latch = CountDownLatch(1)
         var result: String? = null
         instrumentation.runOnMainSync {
@@ -300,16 +311,16 @@ class TranslateDemo : DemoHarness("translate-demo-state.json", "services-transla
         return result
     }
 
-    private fun pageString(tabId: String, script: String): String? {
+    protected fun pageString(tabId: String, script: String): String? {
         val raw = page(tabId, script) ?: return null
         if (raw == "null") return null
         return runCatching { org.json.JSONTokener(raw).nextValue() as? String }.getOrNull() ?: raw
     }
 
-    private fun pageInt(tabId: String, script: String): Int = page(tabId, script)?.toIntOrNull() ?: 0
+    protected fun pageInt(tabId: String, script: String): Int = page(tabId, script)?.toIntOrNull() ?: 0
 
     /** The WebView's URL and load progress for a tab, read on the main thread. */
-    private fun tabLoad(tabId: String): Pair<String, Int> {
+    protected fun tabLoad(tabId: String): Pair<String, Int> {
         var url = ""
         var progress = 0
         instrumentation.runOnMainSync {
@@ -320,9 +331,9 @@ class TranslateDemo : DemoHarness("translate-demo-state.json", "services-transla
         return url to progress
     }
 
-    private fun tabUrl(tabId: String): String = tabLoad(tabId).first
+    protected fun tabUrl(tabId: String): String = tabLoad(tabId).first
 
-    private fun awaitLoaded(tabId: String, urlPart: String) {
+    protected fun awaitLoaded(tabId: String, urlPart: String) {
         val deadline = SystemClock.uptimeMillis() + 30_000
         while (SystemClock.uptimeMillis() < deadline) {
             val (url, progress) = tabLoad(tabId)
@@ -336,7 +347,7 @@ class TranslateDemo : DemoHarness("translate-demo-state.json", "services-transla
     }
 
     companion object {
-        private const val ES_TAB = "tab_es"
-        private const val DE_TAB = "tab_de"
+        const val ES_TAB = "tab_es"
+        const val DE_TAB = "tab_de"
     }
 }

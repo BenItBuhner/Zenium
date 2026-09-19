@@ -40,7 +40,11 @@ const OWN_SCRIM_CONSUMERS = [
   'components/overlays/passwords/shared.tsx',
   'components/pages/settings/sheets.tsx',
   'components/phone/InstallSheet.tsx',
-  'components/phone/PhoneSheet.tsx'
+  'components/phone/PhoneSheet.tsx',
+  // The translate surfaces' phone sheets (#106): a language menulist's picker (over the bar or
+  // the selection sheet) and the selection translation sheet.
+  'components/translate/Menulist.tsx',
+  'components/translate/SelectionPopover.tsx'
 ]
 
 function sourceFiles(dir: string): string[] {

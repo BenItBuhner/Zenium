@@ -41,6 +41,8 @@ import {
 import { formatZoom } from '@shared/pageControls'
 import { describeUpdateTarget, type UpdateChannel } from '@shared/updates'
 import { inputToUrl } from '@shared/url'
+import { languageName } from '@shared/languageNames'
+import type { TranslatePreferences } from '@shared/translate'
 import { run } from '@renderer/lib/api'
 import { downloadFolderLabel } from '@renderer/lib/downloadText'
 import { downloadsEngine } from '@renderer/lib/downloadsEngine'
@@ -52,6 +54,7 @@ import {
 } from '@renderer/lib/newTabSettings'
 import { describePermissionRule } from '@renderer/lib/security'
 import { openOverlay } from '@renderer/lib/ui'
+import { languageOptions, pairKey, pairLabel, warmRegistryModels } from '@renderer/lib/translate'
 import { formatBytes, relativeTime } from '@renderer/lib/utils'
 import { ContainerIcon } from '../../ContainerIcon'
 import {
@@ -65,6 +68,7 @@ import {
   passwordsSavedLabel,
   vaultProtectionLabel
 } from '../../overlays/settingsCopy'
+import { ModelPickList, PickList } from '../../translate/pickers'
 import {
   AddRouteForm,
   AppIconGrid,
@@ -129,6 +133,7 @@ const BUILDERS: Readonly<Record<string, Builder>> = {
   downloads: downloadsSection,
   privacy: privacySection,
   search: searchSection,
+  languages: languagesSection,
   spaces: spaceRoutingSection,
   containers: containersSection,
   boosts: boostsSection,
@@ -1154,6 +1159,252 @@ function searchSection({ state, set }: SectionContext): RowGroup[] {
           id: 'search-keywords',
           label: 'Engine keywords',
           description: `Type a keyword, then a space: ${state.searchEngines.map((e) => e.keyword).join(' · ')}`
+        }
+      ]
+    }
+  ]
+}
+
+// ---------------------------------------------------------------------------
+// Languages (page translation, #106)
+// ---------------------------------------------------------------------------
+
+/**
+ * Settings › Languages, the desktop pane (`LanguagesSection.tsx`) row for row: whether Zenium
+ * offers to translate, the languages the user reads – the first is what pages are translated
+ * into – as item rows that promote or remove, the always and never lists, the sites never
+ * offered, and the models on the device with their size and a confirmed removal. What the
+ * desktop adds through a menulist is an action row here (§9.13: no menulist on a phone settings
+ * page) opening a sheet of the languages or models left to pick. The lists read the core's
+ * translate state and write through its commands, so both platforms keep one set of rules.
+ */
+function languagesSection({ state }: SectionContext): RowGroup[] {
+  const t = state.translate
+  const prefs = t.preferences
+  // The "Download a model" sheet lists the registry's pairs, which the core is asked for: asked
+  // here, so the list is at hand by the time the sheet – which measures itself as it mounts –
+  // opens (once; nothing happens after the first answer).
+  warmRegistryModels()
+  const set = (patch: Partial<TranslatePreferences>): void => run('translate.setPreferences', patch)
+  const rule = (language: string, value: 'always' | 'never' | 'ask'): void =>
+    run('translate.setLanguageRule', { language, rule: value })
+
+  /** The languages in `codes` as item rows, each opening the rows `actions` gives it. */
+  const languageRows = (
+    prefix: string,
+    codes: readonly string[],
+    actions: (code: string, index: number) => SettingsRow[],
+    description?: (code: string, index: number) => string | undefined
+  ): SettingsRow[] =>
+    codes.map((code, index) =>
+      item(
+        `${prefix}:${code}`,
+        languageName(code),
+        description?.(code, index),
+        actions(code, index),
+        { keywords: [code] }
+      )
+    )
+
+  /** The action row that adds to a list, in a group of its own after it; none when nothing is left. */
+  const addGroup = (
+    id: string,
+    title: string,
+    codes: readonly string[],
+    onAdd: (code: string) => void
+  ): RowGroup[] => {
+    const options = languageOptions(t.languages.filter((code) => !codes.includes(code)))
+    if (options.length === 0) return []
+    return [
+      {
+        id: `${id}-add`,
+        heading: null,
+        rows: [
+          {
+            kind: 'action',
+            id: `languages-${id}-add`,
+            label: 'Add a language',
+            keywords: [title],
+            form: {
+              title,
+              render: (close) => (
+                <PickList label={title} options={options} onPick={onAdd} close={close} />
+              )
+            }
+          }
+        ]
+      }
+    ]
+  }
+
+  const preferred = prefs.preferred
+  const installedBytes = t.installed.reduce((sum, m) => sum + m.bytes, 0)
+  const modelRows: SettingsRow[] = [
+    ...t.installed.map((m) => {
+      const pair = pairLabel(m.from, m.to)
+      return item(`languages-model:${pairKey(m)}`, pair, formatBytes(m.bytes), [
+        {
+          kind: 'action',
+          id: `languages-model:${pairKey(m)}:remove`,
+          label: 'Remove model',
+          description: 'It is downloaded again the next time these languages are translated.',
+          destructive: true,
+          confirm: {
+            title: `Remove the ${pair} model?`,
+            description: `${formatBytes(m.bytes)} is freed; the model is downloaded again the next time a page in these languages is translated.`,
+            action: 'Remove'
+          },
+          onPress: () => run('translate.removeModel', { from: m.from, to: m.to })
+        }
+      ])
+    }),
+    ...t.downloading.map((m): SettingsRow => ({
+      kind: 'info',
+      id: `languages-model:${pairKey(m)}`,
+      label: pairLabel(m.from, m.to),
+      description: 'Downloading…'
+    }))
+  ]
+  if (t.installed.length > 0) {
+    modelRows.push({
+      kind: 'info',
+      id: 'languages-models-total',
+      label: `${formatBytes(installedBytes)} on this device`,
+      keywords: ['storage', 'space']
+    })
+  }
+
+  return [
+    {
+      id: 'translation',
+      heading: 'Translation',
+      description:
+        'Pages in other languages are translated on this device, with models Zenium downloads the first time a language pair is used. Nothing leaves the device.',
+      rows: [
+        {
+          kind: 'switch',
+          id: 'languages-offer',
+          label: 'Offer to translate pages in other languages',
+          keywords: ['automatic', 'translation bar', 'auto offer'],
+          checked: prefs.autoOffer,
+          onChange: (autoOffer) => set({ autoOffer })
+        }
+      ]
+    },
+    {
+      id: 'read',
+      heading: 'Languages you read',
+      description:
+        'Pages in these languages are shown as they are; the first one is the language other pages are translated into.',
+      rows: languageRows(
+        'languages-read',
+        preferred,
+        (code, index) => [
+          ...(index > 0
+            ? [
+                {
+                  kind: 'action',
+                  id: `languages-read:${code}:first`,
+                  label: 'Translate pages into this language',
+                  description: 'Puts it first among the languages you read.',
+                  onPress: () => set({ preferred: [code, ...preferred.filter((c) => c !== code)] })
+                } satisfies SettingsRow
+              ]
+            : []),
+          ...(preferred.length > 1
+            ? [
+                {
+                  kind: 'action',
+                  id: `languages-read:${code}:remove`,
+                  label: 'Remove',
+                  description: 'Pages in this language are offered for translation again.',
+                  onPress: () => set({ preferred: preferred.filter((c) => c !== code) })
+                } satisfies SettingsRow
+              ]
+            : [])
+        ],
+        (_code, index) => (index === 0 ? 'Pages are translated into this language' : undefined)
+      )
+    },
+    ...addGroup('read', 'Add a language you read', preferred, (code) =>
+      set({ preferred: [...preferred, code] })
+    ),
+    {
+      id: 'always',
+      heading: 'Always translate',
+      description: 'Pages in these languages are translated as soon as they load, without asking.',
+      rows: languageRows('languages-always', prefs.alwaysTranslate, (code) => [
+        {
+          kind: 'action',
+          id: `languages-always:${code}:ask`,
+          label: 'Remove',
+          description: 'Zenium asks before translating pages in this language again.',
+          onPress: () => rule(code, 'ask')
+        }
+      ]),
+      empty: 'No languages yet'
+    },
+    ...addGroup('always', 'Always translate', prefs.alwaysTranslate, (code) =>
+      rule(code, 'always')
+    ),
+    {
+      id: 'never',
+      heading: 'Never translate',
+      description: 'Zenium never offers to translate pages in these languages.',
+      rows: languageRows('languages-never', prefs.neverTranslate, (code) => [
+        {
+          kind: 'action',
+          id: `languages-never:${code}:ask`,
+          label: 'Remove',
+          description: 'Zenium offers to translate pages in this language again.',
+          onPress: () => rule(code, 'ask')
+        }
+      ]),
+      empty: 'No languages yet'
+    },
+    ...addGroup('never', 'Never translate', prefs.neverTranslate, (code) => rule(code, 'never')),
+    {
+      id: 'sites',
+      heading: 'Sites never translated',
+      description:
+        'Zenium does not offer to translate these sites. Add one from the translation bar’s options while you are on the site.',
+      rows: prefs.neverTranslateSites.map((site) =>
+        item(`languages-site:${site}`, site, undefined, [
+          {
+            kind: 'action',
+            id: `languages-site:${site}:forget`,
+            label: 'Remove',
+            description: 'Zenium offers to translate this site again.',
+            onPress: () =>
+              set({ neverTranslateSites: prefs.neverTranslateSites.filter((s) => s !== site) })
+          }
+        ])
+      ),
+      empty: 'No sites yet'
+    },
+    {
+      id: 'models',
+      heading: 'Translation models',
+      description: `Downloaded the first time a language pair is translated and kept on this device. Mozilla’s Firefox Translations models (${t.modelLicense}); list from ${t.registryDate}.`,
+      rows: modelRows,
+      empty: 'No models on this device yet'
+    },
+    {
+      id: 'models-add',
+      heading: null,
+      rows: [
+        {
+          kind: 'action',
+          id: 'languages-model-download',
+          label: 'Download a model',
+          description: 'Fetch a language pair ahead of time, for pages read offline.',
+          keywords: ['offline', 'language pair'],
+          form: {
+            title: 'Download a model',
+            render: (close) => (
+              <ModelPickList onDevice={[...t.installed, ...t.downloading]} close={close} />
+            )
+          }
         }
       ]
     }

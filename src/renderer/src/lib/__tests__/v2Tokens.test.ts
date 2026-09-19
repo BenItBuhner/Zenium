@@ -104,6 +104,10 @@ const V2_FILES: ReadonlyArray<string> = [
   // The password manager's own stylesheet, imported by main.css (components/overlays/passwords/*,
   // #92): the manager's page, panes, rows, dialog, prompt sheet, popover and picker sheet.
   'assets/passwords.css',
+  // The translate surfaces' stylesheet, imported by main.css (components/translate/*, #106):
+  // the translation bar, the selection popover and sheet, the language menulist's list and
+  // picker sheet, the desktop Languages pane.
+  'assets/translate.css',
   // The desktop bookmark manager's selection count pill (components/bookmarks/*, #90).
   'components/bookmarks/BookmarkManager.tsx',
   // The window prompts' checkbox accent (§9.5 modals, #129).
@@ -412,7 +416,12 @@ describe('the v2 primitives (§9.34)', () => {
     '.zen-v2-switch',
     '.zen-v2-radio',
     // The checkbox (#93): the extensions UI's layered copy went with it.
-    '.zen-v2-checkbox'
+    '.zen-v2-checkbox',
+    // The menulist (#106) with its popover's popup and option: the extensions UI's layered
+    // copies and the translate stylesheet's own went with it.
+    '.zen-v2-menulist',
+    '.zen-v2-menulist-popup',
+    '.zen-v2-menulist-option'
   ]
 
   it('are one unlayered rule each, tokens only, with no layered or second copy', () => {

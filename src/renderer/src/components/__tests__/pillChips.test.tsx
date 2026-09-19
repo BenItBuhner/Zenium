@@ -86,7 +86,9 @@ function state(t: Tab | null, bookmarks: BookmarkNode[] = []): UIState {
     downloads: [],
     downloadsProgress: { received: 0, total: 0, indeterminate: false, active: 0 },
     // Tooltips quote the chord from the active key table (the default Chrome set here).
-    shortcuts: defaultShortcuts('linux', 'chrome')
+    shortcuts: defaultShortcuts('linux', 'chrome'),
+    // The host runs the translation engine (every desktop build); no tab has left idle.
+    translate: { available: true, tabs: {} }
   } as unknown as UIState
 }
 
@@ -176,6 +178,7 @@ describe('desktop pill (NavRow)', () => {
     expect(labels(order.slice(1))).toEqual([
       'Site information',
       'Reader View',
+      'Translate this page',
       'Boost this site',
       'Copy URL',
       'Bookmark this tab'
@@ -200,6 +203,8 @@ describe('desktop pill (NavRow)', () => {
     // Actions and toggles open nothing.
     expect(chip('Copy URL').hasAttribute('aria-haspopup')).toBe(false)
     expect(chip('Copy URL').hasAttribute('aria-expanded')).toBe(false)
+    expect(chip('Translate this page').hasAttribute('aria-haspopup')).toBe(false)
+    expect(chip('Translate this page').hasAttribute('aria-pressed')).toBe(false)
     expect(chip('Reader View').hasAttribute('aria-haspopup')).toBe(false)
     expect(chip('Reader View').getAttribute('aria-pressed')).toBe('false')
 
@@ -344,13 +349,13 @@ describe('desktop pill (NavRow)', () => {
     const pill = el.querySelector<HTMLElement>('[role="group"]')!
     // Every chip carries the marker and sits in the chips' focus scope; the address does neither.
     const field = focusable(pill)[0]
-    expect(el.querySelectorAll('[data-pill-chip]').length).toBe(5)
+    expect(el.querySelectorAll('[data-pill-chip]').length).toBe(6)
     expect(field.hasAttribute('data-pill-chip')).toBe(false)
     const scope = pill.querySelector<HTMLElement>('.group\\/chips')!
     expect(scope.className).toContain('contents')
     expect(scope.contains(field)).toBe(false)
-    expect(scope.querySelectorAll('[data-pill-chip]').length).toBe(5)
-    for (const label of ['Boost this site', 'Copy URL']) {
+    expect(scope.querySelectorAll('[data-pill-chip]').length).toBe(6)
+    for (const label of ['Translate this page', 'Boost this site', 'Copy URL']) {
       const chip = el.querySelector<HTMLElement>(`[aria-label="${label}"]`)!
       expect(chip.className).toContain('hidden')
       expect(chip.className).toContain('group-hover/pill:flex')

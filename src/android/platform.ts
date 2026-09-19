@@ -143,7 +143,8 @@ export function androidCapabilities({
     // The WebView has no preload bridge for `zen://newtab` yet; new tabs stay URL-bar-only.
     newTabPage: false,
     pageTabs: true,
-    pinShortcuts: false
+    pinShortcuts: false,
+    translate: true
   }
 }
 

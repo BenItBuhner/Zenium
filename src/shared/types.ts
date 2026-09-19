@@ -4,7 +4,12 @@
  */
 import type { AppIconId } from './appIcon'
 import type { SiteInfo, SiteInfoSnapshot } from './siteInfo'
-import type { TranslatePreferences, TranslateSelectionResult, TranslateUIState } from './translate'
+import type {
+  TranslateModelInfo,
+  TranslatePreferences,
+  TranslateSelectionResult,
+  TranslateUIState
+} from './translate'
 import type { EngineRelayRequest, EngineRelayResponse } from './translateEngine'
 import type { UpdateSettings, UpdateStatus } from './updates'
 import type { BlockingSettings, BlockingStatus } from './blocking'
@@ -117,6 +122,12 @@ export interface HostCapabilities {
   pageTabs: boolean
   /** Pages can be pinned to the launcher / Home screen ("Add to Home screen"). */
   pinShortcuts: boolean
+  /**
+   * The host runs the offline translation engine (a `TranslateHost`: the model store and the
+   * chrome-side engine worker), so pages and selections can be translated and Settings has its
+   * Languages section. Every desktop and Android build; a host without it shows neither.
+   */
+  translate: boolean
 }
 
 export interface Rect {
@@ -2543,6 +2554,7 @@ export interface CommandDescriptor {
     | 'resources.trim'
     | 'resources.open'
     | 'passwords.open'
+    | 'translate.open'
   /** The host capability the command needs; not offered where it is false. */
   requires?: keyof HostCapabilities
   /** The layouts the command does something in; absent means all of them. */
@@ -2582,6 +2594,7 @@ export interface MenuDescriptor {
     | 'history'
     | 'download'
     | 'urlbar'
+    | 'translate'
   /** What the phone sheet calls the menu (a bookmark's name, "3 selected"); the source's generic name when absent. */
   title?: string
   /** Anchor in chrome CSS pixels, when known. */
@@ -3484,6 +3497,31 @@ export interface Commands {
   'translate.revert': { args: { tabId: string }; result: void }
   /** Close the translation offer for this page load. */
   'translate.dismiss': { args: { tabId: string }; result: void }
+  /**
+   * The user asked for the translation UI (a menu item, the address pill's button): put the
+   * offer up for the tab, identifying the page language first when it is not known yet. A
+   * running or finished translation only gets its bar shown again.
+   */
+  'translate.offer': { args: { tabId: string }; result: void }
+  /** Change the languages the tab's offer would translate from or into, without translating. */
+  'translate.retarget': {
+    args: { tabId: string; source?: string; target?: string }
+    result: void
+  }
+  /**
+   * The translation options menu of a tab (always or never translate its language, never this
+   * site, offer to translate, the Languages settings), anchored at `x`,`y` in chrome pixels
+   * where the host draws its own menus.
+   */
+  'translate.menu': { args: { tabId: string; x?: number; y?: number }; result: void }
+  /**
+   * Put the selection-translation popover up for `text` (the tab's selection when omitted),
+   * anchored at `x`,`y` in CSS pixels of the page view when the caller knows where the user asked.
+   */
+  'translate.showSelection': {
+    args: { tabId: string; text?: string; x?: number; y?: number }
+    result: void
+  }
   /** Translate the tab's selection (or `text`); null when nothing is selected. */
   'translate.selection': {
     args: { tabId: string; text?: string; target?: string }
@@ -3499,6 +3537,8 @@ export interface Commands {
   'translate.setSiteRule': { args: { tabId: string; never: boolean }; result: void }
   'translate.downloadModel': { args: { from: string; to: string }; result: void }
   'translate.removeModel': { args: { from: string; to: string }; result: void }
+  /** Every language pair the model registry offers, flagged with whether it is on this device. */
+  'translate.models': { args: void; result: TranslateModelInfo[] }
   /** The chrome renderer hands back an answer of the engine worker it runs for the core. */
   'translate.engineResponse': { args: EngineRelayResponse; result: void }
   /** Open the install / name-edit sheet for a tab (the ambient banner's "Add"). */
@@ -3626,6 +3666,11 @@ export interface Events {
    * the payload carries `ArrayBuffer`s, so it is structured-cloned rather than JSON).
    */
   'translate.engine': EngineRelayRequest
+  /**
+   * Show the selection-translation popover for `text` in the tab. `x`,`y` is where the user
+   * asked, in CSS pixels of the page view, when known.
+   */
+  'translate.selection': { tabId: string; text: string; x: number | null; y: number | null }
   // ---- PROVISIONAL: extensions UI (PR #68), see the matching block in `Commands` --------------
   /** The popup's document asked for this size (CSS px); the renderer fits its frame around it. */
   'extension.popupSize': { id: string; width: number; height: number }
