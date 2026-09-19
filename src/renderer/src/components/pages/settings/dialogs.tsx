@@ -1,0 +1,423 @@
+import type { JSX, ReactNode } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import { FrameDialogPortal, POPOVER_WIDTH, useFrameDialog } from '@renderer/lib/portals'
+import { cn } from '@renderer/lib/utils'
+import { wrapTab } from '../../bookmarks/popover'
+import { V2TitleBlock } from '../../extensions/v2'
+import { Field, RadioOption, SheetActions, ValidationMessage } from './blocks'
+import type { ActionRow, FieldRow, ItemRow, RowGroup, SettingsRow, ValueRow } from './model'
+import { findRow } from './model'
+import { GroupList, type RowContext, type SheetRequest } from './rows'
+import { SheetDismissContext } from './sheetContext'
+
+/**
+ * The dialogs a desktop Settings row opens (v2 §9.5, §9.22–9.24, §10.5): the same five requests
+ * the phone's sheets answer (`sheets.tsx`) – a value row's picker where a row has no room for
+ * its menulist (a search result's), a field row's one-field form, a destructive action's
+ * confirmation, an action's small form and an item's rows – as the shared `.zen-v2-dialog` at
+ * the form width, centred over the content frame by the frame's dialog host (lib/portals.tsx),
+ * which draws the §9.5 scrim, makes the chrome inert and takes the pointer. The stack is the
+ * page's (`useSheetStack`, at most two deep, §9.24): a dialog under another is `inert` and
+ * leaves Escape to the one on top; each resolves its row again on every render, so it always
+ * shows the row's current value and closes by itself when its row is gone.
+ *
+ * Keyboard (§9.22): focus moves into a dialog as it opens – the checked option of a picker, the
+ * field of a form, else its first control (a prompt's Cancel) – Tab wraps inside it, Escape and
+ * the scrim close it, and when it leaves the focus returns to the control that opened it. Titles
+ * are the rows' own and sentence case (§9.1).
+ */
+
+/** Every open dialog, lowest first; each resolves its row in `groups`. */
+export function DialogStack({
+  requests,
+  groups,
+  ctx,
+  closeTop
+}: {
+  requests: readonly SheetRequest[]
+  groups: readonly RowGroup[]
+  ctx: RowContext
+  closeTop(): void
+}): JSX.Element | null {
+  if (requests.length === 0) return null
+  return (
+    <>
+      {requests.map((request, index) => {
+        const row = findRow(groups, request.rowId)
+        const top = index === requests.length - 1
+        return (
+          <RowDialog
+            key={`${request.kind}:${request.rowId}`}
+            request={request}
+            row={row}
+            under={!top}
+            ctx={ctx}
+            close={closeTop}
+          />
+        )
+      })}
+    </>
+  )
+}
+
+function RowDialog({
+  request,
+  row,
+  under,
+  ctx,
+  close
+}: {
+  request: SheetRequest
+  row: SettingsRow | null
+  under: boolean
+  ctx: RowContext
+  close(): void
+}): JSX.Element | null {
+  // The row a dialog was opened for is gone (its item was deleted, its list changed): the
+  // dialog has nothing to show and leaves.
+  const orphan = row === null || !fits(request, row)
+  useEffect(() => {
+    if (orphan) close()
+  }, [orphan, close])
+  if (orphan) return null
+  switch (request.kind) {
+    case 'options':
+      return <OptionsDialog row={row as ValueRow} under={under} close={close} />
+    case 'field':
+      return <FieldDialog row={row as FieldRow} under={under} close={close} />
+    case 'confirm':
+      return <ConfirmDialog row={row as ActionRow} under={under} close={close} />
+    case 'form':
+      return <FormDialog row={row as ActionRow} under={under} close={close} />
+    case 'item':
+      return <ItemDialog row={row as ItemRow} under={under} ctx={ctx} close={close} />
+  }
+}
+
+function fits(request: SheetRequest, row: SettingsRow): boolean {
+  switch (request.kind) {
+    case 'options':
+      return row.kind === 'value'
+    case 'field':
+      return row.kind === 'field'
+    case 'confirm':
+      return row.kind === 'action' && row.confirm !== undefined
+    case 'form':
+      return row.kind === 'action' && row.form !== undefined
+    case 'item':
+      return row.kind === 'item'
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The dialog chassis
+// ---------------------------------------------------------------------------
+
+interface DialogProps {
+  /** The dialog's `data-dialog`, for the tests and the harness. */
+  name: string
+  title: string
+  description?: string
+  /** Another dialog is open over this one: it is inert, and Escape is that dialog's. */
+  under: boolean
+  onClose(): void
+  children: ReactNode
+  /**
+   * Where the focus goes as the dialog opens: the element this finds in the dialog, else the
+   * first tabbable control.
+   */
+  initial?(root: HTMLElement): HTMLElement | null
+  className?: string
+}
+
+const TABBABLE =
+  'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
+/**
+ * One v2 dialog in the frame's dialog host: the shared `.zen-v2-dialog` (the neutral panel,
+ * radius 12, a hairline, the sheet shadow) at the form width, a §9.23 title block with the
+ * hairline once the body has scrolled, the body scrolling between the title and whatever footer
+ * its content draws (§9.11: the buttons hug the end). Escape (on top only) and the scrim close
+ * it; the focus moves in as it opens and back out to its opener as it leaves.
+ */
+export function SettingsDialog(props: DialogProps): JSX.Element {
+  return (
+    <FrameDialogPortal>
+      <HostedDialog {...props} />
+    </FrameDialogPortal>
+  )
+}
+
+function HostedDialog({
+  name,
+  title,
+  description,
+  under,
+  onClose,
+  children,
+  initial,
+  className
+}: DialogProps): JSX.Element {
+  const ref = useRef<HTMLDivElement>(null)
+  const titleId = useId()
+  const [scrolled, setScrolled] = useState(false)
+  useFrameDialog({ onScrimPress: onClose })
+  // Escape is the top dialog's: a dialog under another is inert and leaves the key to it.
+  useEffect(() => {
+    if (under) return
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      onClose()
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [under, onClose])
+  // Focus in as the dialog opens (§9.22), and back to the opener as it leaves (§9.24) – unless
+  // the user has already put it somewhere else outside the dialog host.
+  const initialRef = useRef(initial)
+  useLayoutEffect(() => {
+    initialRef.current = initial
+  }, [initial])
+  useEffect(() => {
+    const root = ref.current
+    if (!root) return
+    const active = document.activeElement
+    const opener =
+      active instanceof HTMLElement && !active.closest('.zen-frame-dialogs') ? active : null
+    const target = initialRef.current?.(root) ?? root.querySelector<HTMLElement>(TABBABLE) ?? root
+    target.focus({ preventScroll: true })
+    return () => {
+      const now = document.activeElement
+      const lost = !now || now === document.body || now.closest('.zen-frame-dialogs') !== null
+      if (lost && opener?.isConnected) opener.focus({ preventScroll: true })
+    }
+  }, [])
+  return (
+    <div
+      ref={ref}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
+      data-dialog={name}
+      data-surface="page"
+      inert={under || undefined}
+      tabIndex={-1}
+      className={cn('zen-v2-dialog zen-settings-dialog zen-animate-pop', className)}
+      style={{ width: POPOVER_WIDTH.form }}
+      onKeyDown={(e) => wrapTab(e, ref.current)}
+    >
+      <V2TitleBlock id={titleId} title={title} description={description} scrolled={scrolled} />
+      <div
+        className="zen-settings-dialog-body"
+        onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 0)}
+      >
+        <SheetDismissContext.Provider value={onClose}>{children}</SheetDismissContext.Provider>
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// The five dialogs
+// ---------------------------------------------------------------------------
+
+/**
+ * §9.13 as a dialog: the options as radio rows, the current one marked and focused as it opens;
+ * a pick closes it. A value row in the content column trails its menulist and never opens this;
+ * a search result's does (`rows.tsx`).
+ */
+function OptionsDialog({
+  row,
+  under,
+  close
+}: {
+  row: ValueRow
+  under: boolean
+  close(): void
+}): JSX.Element {
+  return (
+    <SettingsDialog
+      name={`options:${row.id}`}
+      title={row.label}
+      description={row.sheetDescription}
+      under={under}
+      onClose={close}
+      initial={(root) => root.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]')}
+    >
+      <div role="radiogroup" aria-label={row.label} className="zen-settings-sheet-rows">
+        {row.options.map((option) => (
+          <RadioOption
+            key={option.value}
+            label={option.label}
+            description={option.description}
+            checked={option.value === row.value}
+            onSelect={() => {
+              if (option.value !== row.value) row.onChange(option.value)
+              close()
+            }}
+          />
+        ))}
+      </div>
+    </SettingsDialog>
+  )
+}
+
+/** The one field (§9.12), focused and selected as the dialog opens, its validation, Cancel and Save. */
+function FieldDialog({
+  row,
+  under,
+  close
+}: {
+  row: FieldRow
+  under: boolean
+  close(): void
+}): JSX.Element {
+  const [value, setValue] = useState(row.value)
+  const [error, setError] = useState<string | null>(null)
+  const id = `settings-field-${row.id.replace(/[^a-z0-9-]/gi, '-')}`
+  const save = (): void => {
+    const message = row.onCommit(value)
+    if (message) {
+      setError(message)
+      return
+    }
+    close()
+  }
+  return (
+    <SettingsDialog
+      name={`field:${row.id}`}
+      title={row.label}
+      under={under}
+      onClose={close}
+      initial={(root) => {
+        const input = root.querySelector<HTMLInputElement>('input')
+        input?.select()
+        return input
+      }}
+    >
+      <div className="zen-settings-form">
+        <Field id={id} label={row.label} description={error ? undefined : row.description}>
+          <input
+            id={id}
+            className="zen-settings-input zen-v2-field"
+            type={row.input === 'number' ? 'number' : 'text'}
+            inputMode={row.input === 'number' ? 'numeric' : 'text'}
+            min={row.min}
+            max={row.max}
+            placeholder={row.placeholder}
+            autoCapitalize="off"
+            autoCorrect="off"
+            spellCheck={false}
+            aria-invalid={error ? true : undefined}
+            value={value}
+            onChange={(e) => {
+              setValue(e.target.value)
+              setError(null)
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') save()
+            }}
+          />
+          {error && <ValidationMessage message={error} />}
+        </Field>
+        <SheetActions action="Save" onCancel={close} onAction={save} />
+      </div>
+    </SettingsDialog>
+  )
+}
+
+/**
+ * A prompt (§9.23): the question as the title block, the destructive action trailing (§9.11);
+ * Cancel, the first button, takes the focus as the dialog opens.
+ */
+function ConfirmDialog({
+  row,
+  under,
+  close
+}: {
+  row: ActionRow
+  under: boolean
+  close(): void
+}): JSX.Element {
+  const confirm = row.confirm!
+  return (
+    <SettingsDialog
+      name={`confirm:${row.id}`}
+      title={confirm.title}
+      description={confirm.description ?? row.description}
+      under={under}
+      onClose={close}
+      className="zen-settings-dialog-prompt"
+    >
+      <SheetActions
+        action={confirm.action}
+        destructive={row.destructive}
+        onCancel={close}
+        onAction={() => {
+          close()
+          row.onPress?.()
+        }}
+      />
+    </SettingsDialog>
+  )
+}
+
+/** A small form (add a route, create a container): the form draws its own footer. */
+function FormDialog({
+  row,
+  under,
+  close
+}: {
+  row: ActionRow
+  under: boolean
+  close(): void
+}): JSX.Element {
+  const form = row.form!
+  return (
+    <SettingsDialog
+      name={`form:${row.id}`}
+      title={form.title}
+      description={form.description}
+      under={under}
+      onClose={close}
+      initial={(root) => root.querySelector<HTMLElement>('input, textarea')}
+    >
+      {form.render(close)}
+    </SettingsDialog>
+  )
+}
+
+/**
+ * One thing of a list and the rows that act on it, in the desktop vocabulary (a value row
+ * trails its menulist, a boolean is a check row); its rows may open the second dialog.
+ */
+function ItemDialog({
+  row,
+  under,
+  ctx,
+  close
+}: {
+  row: ItemRow
+  under: boolean
+  ctx: RowContext
+  close(): void
+}): JSX.Element {
+  return (
+    <SettingsDialog
+      name={`item:${row.id}`}
+      title={row.sheet.title}
+      description={row.sheet.description}
+      under={under}
+      onClose={close}
+    >
+      <GroupList
+        groups={row.sheet.groups}
+        ctx={ctx}
+        variant="desktop"
+        className="zen-settings-sheet-rows"
+      />
+    </SettingsDialog>
+  )
+}

@@ -718,7 +718,19 @@ describe('the section model', () => {
   })
 
   it('orders Look and Feel identity, chrome, page behaviour, Glance (design lead, #134)', () => {
+    // Without a layout every row shows; the phone shell's list has no Bookmarks group (no bar).
     expect(section('look').groups.map((g) => g.id)).toEqual([
+      'appearance',
+      'app-icon',
+      'bookmarks',
+      'url-bar',
+      'pages',
+      'sites',
+      'site-exceptions',
+      'glance'
+    ])
+    const phone = buildSection(PAGE.sections[0], { ...context().ctx, formFactor: 'phone' })
+    expect(phone.groups.map((g) => g.id)).toEqual([
       'appearance',
       'app-icon',
       'url-bar',
@@ -727,6 +739,10 @@ describe('the section model', () => {
       'site-exceptions',
       'glance'
     ])
+    expect(findRow(phone.groups, 'navigation-bar')).not.toBeNull()
+    const desktop = buildSection(PAGE.sections[0], { ...context().ctx, formFactor: 'desktop' })
+    expect(findRow(desktop.groups, 'navigation-bar')).toBeNull()
+    expect(findRow(desktop.groups, 'bookmarks-bar')?.kind).toBe('value')
   })
 
   it('tells a touch host its own gestures: no double-click, Glance from the link menu', () => {
