@@ -389,35 +389,6 @@
   white-space: nowrap;
 }
 
-/* The shared v2 field (§9.12): the control height, a hairline, the page behind it. */
-.zen-v2-field {
-  display: block;
-  width: 100%;
-  height: var(--v2-control);
-  padding: 0 12px;
-  border: 1px solid var(--v2-border);
-  border-radius: var(--v2-radius-control);
-  background: var(--v2-page);
-  color: var(--v2-text);
-  font-size: var(--v2-font-body);
-  font-weight: var(--v2-weight-body);
-  line-height: var(--v2-line-body);
-  outline: none;
-}
-.zen-v2-field::placeholder {
-  color: var(--v2-text-deemphasized);
-}
-.zen-v2-field:focus-visible {
-  border-color: var(--v2-accent);
-}
-.zen-v2-field[aria-invalid='true'] {
-  border-color: var(--v2-danger);
-}
-/* Disabled is one number on the whole control (§9.30), as `.zen-v2-button:disabled` above. */
-.zen-v2-field:disabled {
-  opacity: 0.4;
-}
-
 /* Safe-area insets pushed by mobile hosts (status bar, gesture bar, IME); zero on desktop. */
 :root {
   --zen-inset-top: 0px;
