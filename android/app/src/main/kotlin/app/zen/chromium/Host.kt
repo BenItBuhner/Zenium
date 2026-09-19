@@ -237,8 +237,16 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 main.post { reply(picture?.let { json("data" to it.dataUrl, "width" to it.width, "height" to it.height) }) }
             }
             // Drops and the sweep queue behind the writes on the pictures' own thread: a drop the
-            // chrome sends on a navigation lands after the save of the page before it.
-            "thumbnail.drop" -> { thumbnails.disk.execute { thumbnails.drop(args.str("tabId")) }; reply(null) }
+            // chrome sends on a navigation lands after the save of the page before it – and, with
+            // the URL the tab left, spares a save of the page after it that got in first. The
+            // tab's last picture no longer stands either way: its next hide takes one.
+            "thumbnail.drop" -> {
+                val tabId = args.str("tabId")
+                val left = args.strOrNull("url")
+                thumbnails.stale(tabId)
+                thumbnails.disk.execute { thumbnails.drop(tabId, left) }
+                reply(null)
+            }
             "thumbnail.sweep" -> {
                 val keep = args.arr("keep").let { ids -> (0 until ids.length()).mapTo(HashSet()) { ids.optString(it) } }
                 thumbnails.disk.execute { thumbnails.sweep(keep) }

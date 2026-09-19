@@ -61,6 +61,27 @@ class ThumbnailsTest {
     }
 
     @Test
+    fun aDropNamingThePageTheTabLeftSparesAPictureOfTheNextPage() {
+        // The chrome's drop for a navigation arrived after the capture of the new page was saved
+        // (the two queue on one thread; the drop was the later): the new page's picture stays.
+        val next = "https://example.com/b"
+        assertTrue(thumbnails.save("tab-1", realJpeg(), next))
+        assertFalse(thumbnails.drop("tab-1", document = page))
+        assertEquals(Thumbnails.digest(next), Thumbnails.documentOf(thumbnails.load("tab-1")!!))
+        // The picture of the page the tab left goes on its name, and a picture of no known page
+        // (nothing stamped) goes on any.
+        assertTrue(thumbnails.drop("tab-1", document = next))
+        assertNull(thumbnails.load("tab-1"))
+        thumbnails.fileFor("tab-1")!!.also { dir.mkdirs() }.writeBytes(realJpeg())
+        assertTrue(thumbnails.drop("tab-1", document = page))
+        assertNull(thumbnails.load("tab-1"))
+        // Without a page named the tab is gone for good: whatever is there goes.
+        assertTrue(thumbnails.save("tab-1", realJpeg(), next))
+        assertTrue(thumbnails.drop("tab-1"))
+        assertNull(thumbnails.load("tab-1"))
+    }
+
+    @Test
     fun aSweepKeepsTheSessionsTabsOnly() {
         for (id in listOf("kept-1", "kept-2", "gone-1", "gone-2")) thumbnails.save(id, jpeg, page)
         File(dir, "half-written.jpg.tmp").writeBytes(jpeg)

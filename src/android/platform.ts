@@ -989,7 +989,7 @@ export class AndroidPlatform implements Platform {
     this.thumbnails = {
       configure: (width) => bridge.send('thumbnail.configure', { width }),
       load: (tabId, url) => bridge.call<ThumbnailPicture | null>('thumbnail.load', { tabId, url }),
-      drop: (tabId) => bridge.send('thumbnail.drop', { tabId }),
+      drop: (tabId, url) => bridge.send('thumbnail.drop', url === undefined ? { tabId } : { tabId, url }),
       sweep: (keep) => bridge.send('thumbnail.sweep', { keep })
     }
     this.events.send('insets', boot.insets)

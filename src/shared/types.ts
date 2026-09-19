@@ -2945,11 +2945,13 @@ export interface Commands {
    * persisted picture of a card it shows (`load`, lazily, a few at a time – never in the boot
    * payload; with the tab's `url`, so a picture of a page the tab has left is never answered),
    * and forgets the pictures of pages that navigated or tabs that are gone for good (`drop`,
-   * and `sweep` once at boot with the session's tab ids).
+   * with the `url` the tab left so a drop that arrives after the capture of the next page does
+   * not take that one; without a `url` for a tab gone for good – and `sweep` once at boot with
+   * the session's tab ids).
    */
   'thumbnail.configure': { args: { width: number }; result: void }
   'thumbnail.load': { args: { tabId: string; url: string }; result: ThumbnailPicture | null }
-  'thumbnail.drop': { args: { tabId: string }; result: void }
+  'thumbnail.drop': { args: { tabId: string; url?: string }; result: void }
   'thumbnail.sweep': { args: { keep: string[] }; result: void }
 
   /** Connection, cookies, storage and permissions of the tab's site (null for an unknown tab). */

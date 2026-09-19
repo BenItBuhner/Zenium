@@ -175,7 +175,9 @@ describe('a navigation (BH-14)', () => {
     expect(hasCard('a')).toBe(false)
     expect(thumbnailOf('a')).toBeNull()
     expect(hasCard('b')).toBe(true)
-    expect(sent('thumbnail.drop')).toEqual([[{ tabId: 'a' }]])
+    // The host hears which page the tab left: a picture of the next page, captured before the
+    // drop reached it, is not the one to go.
+    expect(sent('thumbnail.drop')).toEqual([[{ tabId: 'a', url: 'https://one.example/' }]])
   })
 
   it('shows the placeholder, not a stale read, until the host captures the new page', async () => {
@@ -206,11 +208,14 @@ describe('a navigation (BH-14)', () => {
     trackTabs(stateOf({ a: 'https://one.example/#2' }))
     trackTabs(stateOf({ a: 'https://one.example/#3' }))
     trackTabs(stateOf({ a: 'https://one.example/#4' }))
-    expect(sent('thumbnail.drop')).toEqual([[{ tabId: 'a' }]])
+    expect(sent('thumbnail.drop')).toEqual([[{ tabId: 'a', url: 'https://one.example/#1' }]])
     // The host captured the new page: there is a picture again, and the next change drops it.
     rememberCard('a', MB4)
     trackTabs(stateOf({ a: 'https://one.example/#5' }))
-    expect(sent('thumbnail.drop')).toEqual([[{ tabId: 'a' }], [{ tabId: 'a' }]])
+    expect(sent('thumbnail.drop')).toEqual([
+      [{ tabId: 'a', url: 'https://one.example/#1' }],
+      [{ tabId: 'a', url: 'https://one.example/#4' }]
+    ])
     // A read that came back empty is the same word: nothing there to drop.
     vi.mocked(run).mockReset()
     trackTabs(stateOf({ a: 'https://one.example/#5', b: 'u' }))
@@ -232,7 +237,8 @@ describe('a closed tab', () => {
     expect(hasCard('a')).toBe(true)
     vi.advanceTimersByTime(1)
     expect(hasCard('a')).toBe(false)
-    expect(sent('thumbnail.drop')).toEqual([[{ tabId: 'a' }]])
+    // Gone for good: no page named, the host's file goes whatever it shows.
+    expect(sent('thumbnail.drop')).toStrictEqual([[{ tabId: 'a' }]])
   })
 
   it('brought back within the grace keeps its picture', () => {

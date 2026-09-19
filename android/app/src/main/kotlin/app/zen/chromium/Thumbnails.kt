@@ -94,12 +94,21 @@ class Thumbnails(private val dir: File) {
         }.getOrDefault(false)
     }
 
-    /** Forget the picture of a tab; true when nothing is left under its name. */
-    fun drop(tabId: String): Boolean {
+    /**
+     * Forget the picture of a tab; true when nothing is left under its name. With `document`, the
+     * URL the tab left, the picture of that page alone: one stamped with another (the next page's,
+     * saved before the chrome's word arrived – the drop is the later on this thread) stays, and
+     * the answer is false. One without a stamp goes: it is of no known page.
+     */
+    fun drop(tabId: String, document: String? = null): Boolean {
         val file = fileFor(tabId) ?: return false
         return runCatching {
             File(dir, "${file.name}$TMP_SUFFIX").delete()
-            !file.exists() || file.delete()
+            when {
+                !file.exists() -> true
+                document != null && documentOf(file.readBytes()).let { it != null && it != digest(document) } -> false
+                else -> file.delete()
+            }
         }.getOrDefault(false)
     }
 

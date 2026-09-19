@@ -1987,7 +1987,7 @@ export class Browser {
       // Tab card pictures are the host's (`ThumbnailHost`); a host without them has none to show.
       'thumbnail.configure': ({ width }) => this.platform.thumbnails?.configure(width),
       'thumbnail.load': ({ tabId, url }) => this.platform.thumbnails?.load(tabId, url) ?? null,
-      'thumbnail.drop': ({ tabId }) => this.platform.thumbnails?.drop(tabId),
+      'thumbnail.drop': ({ tabId, url }) => this.platform.thumbnails?.drop(tabId, url),
       'thumbnail.sweep': ({ keep }) => this.platform.thumbnails?.sweep(keep),
 
       'site.info': ({ tabId }) => this.siteInfo.info(tabId),

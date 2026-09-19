@@ -319,11 +319,14 @@ export async function captureThumbnail(tabId: string): Promise<string | null> {
 /**
  * Forget every picture of a tab, here and on the host's disk. The host is told once per picture
  * it may have: not again while the tab is known to have none there (a page that rewrites its
- * URL as it scrolls is one drop, not one per step) – unless the tab is gone for good, when the
- * host's file goes whatever the chrome knows of it. Never for a private tab: nothing is there.
+ * URL as it scrolls is one drop, not one per step) – and told which page the tab left (the URL
+ * on record here, the one before the change), so a drop that lands after the host's capture of
+ * the next page does not take that one. Unless the tab is gone for good, when the host's file
+ * goes whatever the chrome knows of it. Never for a private tab: nothing is there.
  */
 export function dropThumbnail(tabId: string, gone = false): void {
   const had = missing.has(tabId)
+  const left = urls.get(tabId)
   thumbnailStore.set((s) => {
     if (!s.cards.has(tabId) && !s.covers.has(tabId)) return {}
     const cards = new Map(s.cards)
@@ -335,7 +338,7 @@ export function dropThumbnail(tabId: string, gone = false): void {
   unqueue(tabId)
   missing.add(tabId)
   if (privateTabs.has(tabId) || (had && !gone)) return
-  run('thumbnail.drop', { tabId })
+  run('thumbnail.drop', gone || left === undefined ? { tabId } : { tabId, url: left })
 }
 
 /**

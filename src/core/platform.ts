@@ -1544,8 +1544,12 @@ export interface ThumbnailHost {
   configure(width: number): void
   /** The persisted picture of a tab at `url`, or null when there is none (or none of that page). */
   load(tabId: string, url: string): Promise<ThumbnailPicture | null>
-  /** The tab navigated, or is gone for good: its picture is not to be shown again. */
-  drop(tabId: string): void
+  /**
+   * The tab left `url`: its picture of that page is not to be shown again (one of another page,
+   * a newer capture the word overtook, stays). Without `url` the tab is gone for good, and so
+   * is whatever picture is under its id.
+   */
+  drop(tabId: string, url?: string): void
   /** Once at boot: every picture but those of `keep` (the session's tabs) goes. */
   sweep(keep: readonly string[]): void
 }

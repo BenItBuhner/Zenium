@@ -392,7 +392,17 @@ export function createPreviewBridge(): NativeBridge {
       if (record.url !== String(url)) return null
       return { data: record.data, width: record.width, height: record.height }
     },
-    'thumbnail.drop': ({ tabId }) => localStorage.removeItem(THUMB_PREFIX + String(tabId)),
+    // A drop names the document the tab left: a picture of another one (the next page's, captured
+    // before the drop arrived) stays. A drop without one is a tab gone for good.
+    'thumbnail.drop': ({ tabId, url }) => {
+      const key = THUMB_PREFIX + String(tabId)
+      if (url !== undefined) {
+        const stored = localStorage.getItem(key)
+        const of = stored ? (JSON.parse(stored) as { url?: string }).url : undefined
+        if (of !== undefined && of !== String(url)) return
+      }
+      localStorage.removeItem(key)
+    },
     'thumbnail.sweep': ({ keep }) => {
       const kept = new Set((keep as string[]).map(String))
       for (let i = localStorage.length - 1; i >= 0; i--) {
