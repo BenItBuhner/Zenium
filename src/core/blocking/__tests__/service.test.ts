@@ -12,9 +12,11 @@ import type { Tab } from '../../../shared/types'
 import type { Browser } from '../../browser'
 import { PermissionService } from '../../permissions'
 import type { BlockingHost, BundledFilterList, StoreIO } from '../../platform'
+import { DNR_OWNERSHIP } from '../../extensions/dnr/engineSink'
+import { engineSetId } from '../../extensions/dnr/sink'
 import { CONNECTIVITY_PROBES, connectivityProbesRuleSet } from '../connectivityProbes'
 import { TEXT_MATCH_SET_ID, type TextMatch } from '../engine'
-import { BlockingService, siteExceptionRule } from '../service'
+import { BlockingService, siteExceptionRule, type RuleSetOwnership } from '../service'
 import type { IndexFile } from '../store'
 import {
   BUILTIN_RULE_SETS,
@@ -85,10 +87,6 @@ function harness(
   }
   h.browser = browser as unknown as Browser
   return h
-}
-
-const settle = async (): Promise<void> => {
-  for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r))
 }
 
 function enabledIds(service: BlockingService): string[] {
@@ -205,7 +203,7 @@ describe('BlockingService levels', () => {
     h.settings.blocking = { ...h.settings.blocking, level: 'strict' }
     service.onSettingsChanged()
     expect(service.status().lists.find((l) => l.id === 'ubo-privacy')?.updating).toBe(true)
-    await settle()
+    await service.whenSettled()
     expect(h.fetched).toEqual([DEFAULT_FILTER_LISTS.find((d) => d.id === 'ubo-privacy')?.url])
     const status = service.status().lists.find((l) => l.id === 'ubo-privacy')
     expect(status).toMatchObject({
@@ -475,7 +473,7 @@ describe('BlockingService custom lists and updates', () => {
       enabled: true,
       hasFilterText: false
     })
-    await settle()
+    await service.whenSettled()
     expect(h.fetched).toEqual([url])
     expect(service.engine.summary(id)).toMatchObject({
       filterCount: 2,
@@ -496,8 +494,13 @@ describe('BlockingService custom lists and updates', () => {
     h.settings.blocking = { ...h.settings.blocking, customLists: [] }
     service.onSettingsChanged()
     expect(service.engine.has(id)).toBe(false)
-    await service.store.flush()
+    await service.whenSettled()
     expect(h.io.files.has(`blocking/${id}.json`)).toBe(false)
+    expect(
+      (JSON.parse(h.io.files.get('blocking/index.json') ?? 'null') as IndexFile).sets.map(
+        (s) => s.id
+      )
+    ).not.toContain(id)
   })
 
   it('reports failed downloads and content that is not a filter list', async () => {
@@ -569,7 +572,7 @@ describe('BlockingService bundled snapshot', () => {
     ])
     const h = harness({ io, host: snapshot })
     const service = start(h)
-    await settle()
+    await service.whenSettled()
     expect(
       snapshot.installed.map((i) => [i.set.id, i.file, i.set.updatedAt, i.set.version])
     ).toEqual([
@@ -590,7 +593,6 @@ describe('BlockingService bundled snapshot', () => {
       filterCount: 40_000
     })
     expect(status.lastUpdatedAt).toBeNull()
-    await service.store.flush()
 
     // A second start finds the snapshot persisted and does not install it again.
     service.stop()
@@ -599,7 +601,7 @@ describe('BlockingService bundled snapshot', () => {
     ])
     const h2 = harness({ io, host: again })
     const service2 = start(h2)
-    await settle()
+    await service2.whenSettled()
     expect(again.installed).toEqual([])
     expect(service2.engine.summary('easylist')).toMatchObject({
       hasFilterText: true,
@@ -622,7 +624,7 @@ describe('BlockingService bundled snapshot', () => {
       filterText: '||x^',
       updatedAt: 10_000
     })
-    await settle()
+    await service3.whenSettled()
     expect(newer.installed.map((i) => i.set.id)).toEqual(['easylist'])
     expect(service3.engine.summary('easylist')?.filterCount).toBe(41_000)
     expect(service3.engine.summary('urlhaus')?.updatedAt).toBe(10_000)
@@ -638,11 +640,178 @@ describe('BlockingService bundled snapshot', () => {
       }
     })
     const service = start(h)
-    await settle()
+    await service.whenSettled()
     expect(service.status().lists.every((l) => !l.bundled)).toBe(true)
     const plain = start(harness())
-    await settle()
+    await plain.whenSettled()
     expect(plain.status().ready).toBe(true)
+  })
+})
+
+describe('BlockingService owner reconciliation', () => {
+  const ALIVE = 'abcdefghijklmnopabcdefghijklmnop'
+  const GONE = 'ponmlkjihgfedcbaponmlkjihgfedcba'
+  const blocks = (id: string, host: string, extra: Partial<RuleSet> = {}): RuleSet => ({
+    id,
+    source: 'dnr',
+    priority: RULE_SET_PRIORITY.dnr + 5,
+    enabled: true,
+    rules: [{ id: 1, action: { type: 'block' }, condition: { urlFilter: `||${host}^` } }],
+    ...extra
+  })
+  const indexIds = (h: Harness): string[] =>
+    (JSON.parse(h.io.files.get('blocking/index.json') ?? 'null') as IndexFile).sets.map((s) => s.id)
+
+  it('drops the persisted sets of extensions that are gone at start and keeps the rest', async () => {
+    // Run one: two extensions' sets reach the engine under the sink's ids and are persisted.
+    const h = harness()
+    const service = start(h)
+    const kept = engineSetId(ALIVE, { kind: 'static', rulesetId: 'ads' })
+    const keptDynamic = engineSetId(ALIVE, { kind: 'dynamic' })
+    const gone = engineSetId(GONE, { kind: 'static', rulesetId: 'ads' })
+    const goneSession = engineSetId(GONE, { kind: 'session' })
+    service.engine.setRuleSet(blocks(kept, 'kept.example', { partitions: ['default'] }))
+    service.engine.setRuleSet(blocks(keptDynamic, 'kept-dynamic.example'))
+    service.engine.setRuleSet(blocks(gone, 'gone.example'))
+    service.engine.setRuleSet(blocks(goneSession, 'gone-session.example', { enabled: false }))
+    // A `dnr` set no extension can claim (not an `ext:` id): nobody could ever remove it.
+    service.engine.setRuleSet(blocks('orphan', 'orphan.example'))
+    await service.whenSettled()
+    service.stop()
+
+    // Run two: the engine loads what the index holds and the stale sets filter until the
+    // extension layer says which extensions are enabled.
+    const h2 = harness({ io: h.io })
+    const service2 = start(h2)
+    for (const id of [kept, keptDynamic, gone, goneSession, 'orphan'])
+      expect(service2.engine.has(id), id).toBe(true)
+    expect(service2.engine.decide(req('https://gone.example/a.js')).action).toBe('block')
+
+    const dropped = service2.reconcileOwners(DNR_OWNERSHIP, [ALIVE, 'someone-else'])
+    expect([...dropped].sort()).toEqual([gone, goneSession, 'orphan'].sort())
+    for (const id of dropped) expect(service2.engine.has(id), id).toBe(false)
+    expect(service2.engine.decide(req('https://gone.example/a.js'))).toEqual({ action: 'allow' })
+    // The alive extension's sets are untouched, scope included; its layer replaces them as it loads.
+    expect(service2.engine.summary(kept)).toMatchObject({ enabled: true, partitions: ['default'] })
+    const inDefault = req('https://kept.example/a.js', { partition: 'default' })
+    expect(service2.engine.decide(inDefault).matched?.setId).toBe(kept)
+    expect(service2.engine.decide(req('https://kept.example/a.js', { partition: 'work' }))).toEqual(
+      {
+        action: 'allow'
+      }
+    )
+    expect(service2.engine.has(keptDynamic)).toBe(true)
+    // Zenium's own sets are not the layer's to reconcile.
+    expect(enabledIds(service2).length).toBeGreaterThan(0)
+    expect(service2.engine.has(BUILTIN_RULE_SETS.connectivityProbes)).toBe(true)
+    expect(service2.engine.has(BUILTIN_RULE_SETS.globalOff)).toBe(true)
+    // Nothing more goes on a second call, whatever holds the ids.
+    expect(service2.reconcileOwners(DNR_OWNERSHIP, new Set([ALIVE]))).toEqual([])
+
+    // The index follows, as for any removal (the Kotlin engine rebuilds from it).
+    await service2.whenSettled()
+    const ids = indexIds(h)
+    expect(ids).toContain(kept)
+    expect(ids).toContain(keptDynamic)
+    for (const id of dropped) expect(ids).not.toContain(id)
+    service2.stop()
+    const service3 = start(harness({ io: h.io }))
+    expect(service3.engine.has(kept)).toBe(true)
+    expect(service3.engine.has(gone)).toBe(false)
+  })
+
+  it('reads the owner of an ext: set from its id and looks at the ownership’s source only', () => {
+    expect(DNR_OWNERSHIP.source).toBe('dnr')
+    for (const kind of [
+      { kind: 'static', rulesetId: 'ruleset_1' },
+      { kind: 'dynamic' },
+      { kind: 'session' }
+    ] as const)
+      expect(DNR_OWNERSHIP.ownerOf(engineSetId(ALIVE, kind))).toBe(ALIVE)
+    for (const stranger of ['easylist', 'ext:', `ext:${ALIVE}`, `ext:${ALIVE}:static:`, 'orphan'])
+      expect(DNR_OWNERSHIP.ownerOf(stranger), stranger).toBeUndefined()
+
+    const h = harness()
+    const service = start(h)
+    const set = engineSetId(GONE, { kind: 'dynamic' })
+    service.engine.setRuleSet(blocks(set, 'x.example'))
+    // An ownership over another source: the extension's set is none of its business.
+    const users: RuleSetOwnership = { source: 'user', ownerOf: () => 'me' }
+    expect(service.reconcileOwners(users, [])).toEqual([])
+    expect(service.engine.has(set)).toBe(true)
+    expect(service.reconcileOwners(DNR_OWNERSHIP, [])).toEqual([set])
+  })
+})
+
+describe('BlockingService.whenSettled', () => {
+  /** A `StoreIO` whose asynchronous writes and removals land only once released. */
+  function gatedIo(): StoreIO & { files: Map<string, string>; release: () => void } {
+    const io = memoryIo()
+    const gates: Array<() => void> = []
+    const gate = (): Promise<void> => new Promise((resolve) => gates.push(resolve))
+    return {
+      ...io,
+      write: async (name, text) => {
+        await gate()
+        io.files.set(name, text)
+      },
+      remove: async (name) => {
+        await gate()
+        io.files.delete(name)
+      },
+      release: () => {
+        for (const open of gates.splice(0)) open()
+      }
+    }
+  }
+  const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 1))
+
+  it('resolves at once when nothing is in flight, else once the fetch and its writes have landed', async () => {
+    const io = gatedIo()
+    const h = harness({ io })
+    const service = start(h)
+    // Nothing queued and no snapshot host: the seeding is over before anyone asks.
+    let settled = false
+    void service.whenSettled().then(() => {
+      settled = true
+    })
+    // The index has the sets of `start()` to write, gated: not settled until it landed.
+    await tick()
+    expect(settled).toBe(false)
+    io.release()
+    await tick()
+    expect(settled).toBe(true)
+    expect(io.files.has('blocking/index.json')).toBe(true)
+    await service.whenSettled()
+
+    // A level change queues a fetch: the fetch, the text file and the index all come first.
+    let answer: (result: FetchResult) => void = () => undefined
+    h.respond = () => new Promise<FetchResult>((resolve) => (answer = resolve))
+    h.settings.blocking = { ...h.settings.blocking, level: 'strict' }
+    service.onSettingsChanged()
+    settled = false
+    const wait = service.whenSettled().then(() => {
+      settled = true
+    })
+    await tick()
+    expect(h.fetched).toHaveLength(1)
+    expect(settled).toBe(false)
+    answer({ ok: true, status: 200, text: '||fingerprint.example^\n' })
+    await tick()
+    // Fetched and in the engine, but nothing has reached the disk yet.
+    expect(service.engine.summary('ubo-privacy')?.hasFilterText).toBe(true)
+    expect(io.files.has('blocking/ubo-privacy.json')).toBe(false)
+    expect(settled).toBe(false)
+    io.release()
+    await wait
+    expect(io.files.has('blocking/ubo-privacy.json')).toBe(true)
+    const index = JSON.parse(io.files.get('blocking/index.json') ?? 'null') as IndexFile
+    expect(index.sets.find((s) => s.id === 'ubo-privacy')).toMatchObject({
+      hasFilterText: true,
+      filterCount: 1,
+      file: 'ubo-privacy.json'
+    })
+    expect(service.status().lists.find((l) => l.id === 'ubo-privacy')?.updating).toBe(false)
   })
 })
 

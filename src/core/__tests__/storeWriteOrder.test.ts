@@ -103,6 +103,30 @@ describe('the order of a store\u2019s writes', () => {
     expect(io.landed).toEqual([text(1), text(2)])
   })
 
+  it('an asynchronous flush with nothing new waits for the write already in flight', async () => {
+    const io = gatedIo()
+    const store = new JsonStore<{ v: number }>(io, 'doc.json', { debounceMs: 0 })
+    store.write({ v: 1 })
+    await tick()
+    expect(io.landed).toEqual([])
+
+    // The debounce fired and its write is on its way: whoever flushes now waits for it, so that
+    // "flushed" means "on disk" for a reader that goes to the file next.
+    let flushed = false
+    const flushing = store.flush().then(() => {
+      flushed = true
+    })
+    await tick()
+    expect(flushed).toBe(false)
+    io.release()
+    await flushing
+    expect(io.files['doc.json']).toBe(text(1))
+
+    // With nothing pending and nothing in flight it resolves at once.
+    await store.flush()
+    expect(io.landed).toEqual([text(1)])
+  })
+
   it('keeps later asynchronous writes in order after the repeat', async () => {
     const io = gatedIo()
     const store = new JsonStore<{ v: number }>(io, 'doc.json', { debounceMs: 0 })
