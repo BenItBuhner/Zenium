@@ -61,6 +61,11 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // and the default-browser prompts (defaultbrowser/*) are the chassis' prompt composition:
   // neither has rules of its own.
   [' * The first run on a phone', ' * Fading scroll edges'],
+  // Settings > Privacy and Security, the protection groups of the desktop pane (components/
+  // overlays/ProtectionSection.tsx, overlays/protection/*): what they add under their own
+  // `.zen-protection-*` names to the pane's vocabulary above them. The block sits between the
+  // pane's and the Default Browser range, so it is cut out before the pane's, which ends there.
+  ['.zen-privacy + .zen-privacy.zen-protection {', '/*\n * Settings → Default Browser and the'],
   // Settings > Privacy and Security (components/overlays/PrivacySection.tsx) and the URL bar's
   // blocked-count chip (components/urlbar/BlockedChip.tsx). Its block sits between the find
   // bar's and the Default Browser range, so it is cut out before the find bar's, which ends there.

@@ -908,6 +908,11 @@ export interface ShellHost {
   share?(payload: SharePayload): Promise<void>
   /** The OS screen for which links open in this app (`capabilities.appLinkSettings`). */
   openAppLinkSettings?(): void
+  /**
+   * The OS screen where encrypted DNS is set for every app (Android's Private DNS); for hosts
+   * without a resolver of their own (`capabilities.secureDns` false).
+   */
+  openPrivateDnsSettings?(): void
 }
 
 /**

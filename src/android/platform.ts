@@ -864,7 +864,8 @@ export class AndroidPlatform implements Platform {
       openPath: (path) => bridge.call('app.openPath', { path }),
       showItemInFolder: () => bridge.send('download.showAll'),
       share: (payload) => bridge.call('app.share', payload),
-      openAppLinkSettings: () => bridge.send('app.openAppLinkSettings')
+      openAppLinkSettings: () => bridge.send('app.openAppLinkSettings'),
+      openPrivateDnsSettings: () => bridge.send('app.openPrivateDnsSettings')
     }
     this.externalProtocols = {
       respond: (requestId, allow) => bridge.send('externalProtocol.respond', { requestId, allow })

@@ -1,0 +1,35 @@
+name: Android privacy demo
+
+# Records the privacy engine and its Settings UI in the phone chrome on a hardware-accelerated
+# Android emulator and uploads the video, the screenshots and the driver's notes: HTTPS-only
+# mode's warning page answered each way, Safe Browsing's warning page for a listed host (details,
+# back to safety, proceed anyway), third-party cookies blocked and allowed by the exception list
+# and in a private tab, the GPC / DNT signals on the request, then the Settings tab's Privacy and
+# Security section – the picker, field, form and item sheets each pressed by a real finger with
+# what the control did asserted (the rule in DemoHarness.kt), the Private DNS row into the
+# system's screen and back. Dispatch-only: it takes about ten minutes. The build, the emulator
+# and the Gradle cache live in android-emulator-demo.yml; this file only picks the driver
+# (SafeBrowsingDemo.kt).
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-safebrowsing-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: privacy demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.SafeBrowsingDemo
+        DEMO_DIR=safebrowsing-demo
+        DEMO_OUT=artifacts/android-safebrowsing-demo
+        DEMO_VIDEO=services-safebrowsing-android-demo.mp4
+      artifact-name: android-safebrowsing-demo
+      artifact-path: artifacts/android-safebrowsing-demo/

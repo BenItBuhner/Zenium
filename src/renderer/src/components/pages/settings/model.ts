@@ -93,8 +93,15 @@ export interface FieldRow extends RowBase {
   placeholder?: string
   min?: number
   max?: number
-  /** Commit an edited value; a returned string is a validation message that keeps the sheet up. */
-  onCommit(value: string): string | undefined
+  /** A secret (an API key): the platform monospace in the field (§4), never shown on the row. */
+  secret?: boolean
+  /**
+   * Commit an edited value; a returned string is a validation message that keeps the sheet up.
+   * A promise makes the sheet a §9.30 busy form while it settles: the field read-only with the
+   * typed value, Save busy, Cancel at .4; a message refuses (the field clears, takes the focus
+   * and shows it), `undefined` accepts and closes the sheet.
+   */
+  onCommit(value: string): string | undefined | Promise<string | undefined>
 }
 
 /** A fact: label and description, optionally a leading or trailing glyph or value; nothing to press. */

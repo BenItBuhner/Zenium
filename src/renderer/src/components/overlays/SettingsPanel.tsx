@@ -52,6 +52,7 @@ import {
 } from './PageControlsSettings'
 import { PasswordsSection } from './PasswordsSection'
 import { PrivacySection } from './PrivacySection'
+import { ProtectionSection } from './ProtectionSection'
 import { ResourcesSection } from './ResourcesSection'
 import { SafetyCheckSection } from './SafetyCheckSection'
 import { SecuritySection } from './SecuritySection'
@@ -237,6 +238,7 @@ export function SettingsBody({
           {section === 'search' && <SearchSection state={state} set={set} />}
           {section === 'languages' && <LanguagesSection state={state} />}
           {section === 'privacy' && <PrivacySection state={state} set={set} />}
+          {section === 'privacy' && <ProtectionSection state={state} set={set} />}
           {section === 'site-settings' && <SiteSettingsSection state={state} />}
           {section === 'clear-data' && <ClearBrowsingDataSection state={state} />}
           {section === 'safety-check' && (
