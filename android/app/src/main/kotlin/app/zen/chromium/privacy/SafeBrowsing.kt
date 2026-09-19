@@ -193,9 +193,10 @@ class SafeBrowsingTables(val feeds: List<FeedTable>) {
  * see [writeSnapshot]) is written after every load that changed them and read back first at
  * [start], ahead of the documents, in tens of milliseconds ([loadSnapshot]); it is a cache this
  * side owns, keyed on the documents it was built from and never trusted when they differ, and
- * the core never reads it. And the process's first main-frame navigation waits for the first
- * load, snapshot or documents, up to [FIRST_NAVIGATION_HOLD_MS] before going on with what there
- * is ([tablesForNavigation]).
+ * the core never reads it; the documents' load that follows it parses only what changed since
+ * it was written, nothing as a rule. And the process's first main-frame navigation waits for
+ * the first load, snapshot or documents, up to [FIRST_NAVIGATION_HOLD_MS] before going on with
+ * what there is ([tablesForNavigation]).
  */
 class SafeBrowsing(private val storage: Storage) {
     @Volatile
@@ -222,6 +223,14 @@ class SafeBrowsing(private val storage: Storage) {
     var snapshotRejected: String? = null
         private set
 
+    /**
+     * Documents the snapshot seeded the load's cache with (the ones its header names), so the
+     * load that follows parses none of them; 0 when no snapshot was loaded. For diagnostics.
+     */
+    @Volatile
+    var snapshotSeeded: Int = 0
+        private set
+
     /** What the last load did about the snapshot, for diagnostics. */
     @Volatile
     var lastSnapshot: SnapshotOutcome = SnapshotOutcome.NONE
@@ -238,7 +247,9 @@ class SafeBrowsing(private val storage: Storage) {
     /**
      * Every document as last parsed, by name, with the version tag ([Storage.etag]) it was
      * parsed from: a load re-parses only the documents the core rewrote since (a refreshed
-     * feed's), the megabytes of the others – decoded, sorted – stay as they are. Loader thread only.
+     * feed's), the megabytes of the others – decoded, sorted – stay as they are. A verified
+     * snapshot seeds it ([loadSnapshot]), so the first load of a process that had one parses
+     * nothing. Loader thread only.
      */
     private val parsed = HashMap<String, Pair<String, FeedTable?>>()
 
@@ -380,7 +391,7 @@ class SafeBrowsing(private val storage: Storage) {
     private fun loadSnapshotLogged() {
         try {
             if (loadSnapshot()) {
-                log("snapshot: ${tables.entries} prefixes from ${tables.feeds.size} feeds in $snapshotLoadMs ms")
+                log("snapshot: ${tables.entries} prefixes from ${tables.feeds.size} feeds in $snapshotLoadMs ms; $snapshotSeeded documents seeded, none to parse")
             } else {
                 snapshotRejected?.let { log("snapshot ignored and deleted: $it") }
             }
@@ -395,6 +406,12 @@ class SafeBrowsing(private val storage: Storage) {
      * version, a body of the length the header adds up to, and the body's checksum. Anything
      * else is ignored and deleted (the documents' load that follows writes a fresh one). True
      * when tables were published. Loader thread (and tests).
+     *
+     * A snapshot that passed is also what [reload] would parse the documents to, so it seeds
+     * [parsed] – every document the header names, under its tag, with the table rebuilt from
+     * the body (none for a document that was not a feed) – and the load that follows parses
+     * nothing unless a document changed in between, which it re-parses as it would any other.
+     * A snapshot that did not pass seeds nothing.
      */
     internal fun loadSnapshot(): Boolean {
         val started = System.nanoTime()
@@ -414,17 +431,23 @@ class SafeBrowsing(private val storage: Storage) {
         val named = header.feeds.map { "$DIR/${it.id}.json" to it.tag }
         if (named != present) return rejectSnapshot("the documents present are not the ones it was built from")
 
+        // Verified: the header names the documents present, each under its tag, and the body is
+        // whole. From here the snapshot stands for the documents, to the tables and to [parsed].
         val longs = ByteBuffer.wrap(bytes, bodyStart, bytes.size - bodyStart).order(ByteOrder.BIG_ENDIAN).asLongBuffer()
         val feeds = ArrayList<FeedTable>(header.feeds.size)
+        parsed.clear()
         for (feed in header.feeds) {
             val values = LongArray(feed.count)
             longs.get(values)
             // A document present that was not a feed when the snapshot was written has no table.
-            if (feed.threat.isNotEmpty()) feeds.add(FeedTable(feed.id, feed.threat, PrefixTable.sorted(values)))
+            val table = if (feed.threat.isEmpty()) null else FeedTable(feed.id, feed.threat, PrefixTable.sorted(values))
+            table?.let { feeds.add(it) }
+            parsed["$DIR/${feed.id}.json"] = feed.tag to table
         }
         tables = SafeBrowsingTables(feeds)
         snapshotHeader = header.feeds
         snapshotRejected = null
+        snapshotSeeded = header.feeds.size
         snapshotLoadMs = (System.nanoTime() - started) / 1_000_000
         firstLoad.countDown()
         return true
