@@ -10,12 +10,11 @@ import type { FormFactor, Tab, UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { useChromeShortcut } from '@renderer/lib/chromeShortcuts'
 import { openBarEditor, openOverlay } from '@renderer/lib/ui'
-import { SettingsBody } from '../../overlays/SettingsPanel'
 import { DialogStack } from './dialogs'
 import { SECTION_GLYPH, SECTION_GLYPHS } from './glyphs'
 import { searchRows, type RowGroup, type SearchHit, type SectionModel } from './model'
 import { GroupList, RowView, type RowContext } from './rows'
-import { buildSection, buildSections, hasRows, type SectionContext } from './sections'
+import { buildSection, buildSections, type SectionContext } from './sections'
 import { SheetStack } from './sheets'
 import { useSheetStack } from './useSheetStack'
 
@@ -139,19 +138,13 @@ export function DesktopSettings({
         <ContentColumn key={shown.id} section={shown} query={query} onQuery={setQuery} field={find}>
           {searching ? (
             <FindResults section={shown} term={term} hits={hits} ctx={sheets.ctx} />
-          ) : hasRows(shown.id) ? (
+          ) : (
             <GroupList
               groups={model.groups}
               ctx={sheets.ctx}
               variant="desktop"
               className="zen-settings-body"
             />
-          ) : (
-            // A category the phone has no rows for (Compact Mode, Resources, Sync, Keyboard
-            // Shortcuts, Default Browser): the desktop's own content.
-            <div className="zen-settings-body zen-settings-desktop-body">
-              <SettingsBody state={state} section={shown.id} />
-            </div>
           )}
         </ContentColumn>
       )}

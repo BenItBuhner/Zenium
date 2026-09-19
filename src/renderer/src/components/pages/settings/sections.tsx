@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Check, Puzzle } from 'lucide-react'
+import { Check, CircleAlert, Puzzle } from 'lucide-react'
 import type { InternalPageSection } from '@shared/internalPages'
 import type {
   BookmarksBarMode,
@@ -11,6 +11,8 @@ import type {
   DownloadSettings,
   FormFactor,
   GlanceTrigger,
+  GovernorActionKind,
+  GpuMode,
   NewTabBackgroundKind,
   NewTabPosition,
   NewTabPreset,
@@ -18,7 +20,13 @@ import type {
   NewTabShortcutsMode,
   PhoneBarPosition,
   PinnedCloseBehavior,
+  ResourceEnforcement,
+  ResourceProcessProfile,
+  ResourceSettings,
   Settings,
+  ShortcutGroup,
+  ShortcutPreset,
+  SyncScope,
   Tab,
   ThirdPartyPinnedBehavior,
   ToolbarLayout,
@@ -41,9 +49,20 @@ import {
   setNewTabShortcutsMode
 } from '@shared/newTab'
 import { formatZoom, zoomChoices, zoomKey } from '@shared/pageControls'
+import {
+  SHORTCUT_GROUP_LABELS,
+  SHORTCUT_PRESETS,
+  SHORTCUT_PRESET_DESCRIPTIONS,
+  SHORTCUT_PRESET_LABELS,
+  bindingsEqual,
+  defaultShortcuts,
+  formatBinding,
+  shortcutHint
+} from '@shared/shortcuts'
 import { describeUpdateTarget, type UpdateChannel } from '@shared/updates'
 import { inputToUrl } from '@shared/url'
 import { run } from '@renderer/lib/api'
+import { requestDefaultBrowser } from '@renderer/lib/defaultBrowser'
 import { downloadFolderLabel } from '@renderer/lib/downloadText'
 import { downloadsEngine } from '@renderer/lib/downloadsEngine'
 import {
@@ -53,6 +72,7 @@ import {
   newTabBackgroundValue
 } from '@renderer/lib/newTabSettings'
 import { describePermissionRule } from '@renderer/lib/security'
+import { tabTitle } from '@renderer/lib/selectors'
 import { openOverlay } from '@renderer/lib/ui'
 import { formatBytes, relativeTime } from '@renderer/lib/utils'
 import { ContainerIcon } from '../../ContainerIcon'
@@ -74,20 +94,26 @@ import {
   CopyRow,
   CssEditor,
   NewContainerForm,
+  ResourceMeter,
   ShortcutForm,
+  SyncSetupForm,
   UpdateStatusBlock,
   UrlForm,
   ZoomBlock
 } from './blocks'
-import { choice, type RowGroup, type SectionModel, type SettingsRow } from './model'
+import { choice, type FieldRow, type RowGroup, type SectionModel, type SettingsRow } from './model'
+import { ShortcutRow } from './ShortcutRow'
 
 /**
- * The phone Settings sections as data: one builder per category turns the browser state into
- * the groups and rows of `model.ts`. Every row of the desktop panel (`SettingsPanel.tsx`,
- * `PageControlsSettings.tsx`, `AgentsSection.tsx`, `UpdatesSection.tsx`, `AddonsPanel.tsx`) is
- * here in its v2 phone form – a menulist is a value row, a checkbox a switch row, a button an
- * action row, an input a field row, a list a group of item rows – reading the same settings and
- * running the same commands, so nothing is reachable on one platform only.
+ * The Settings sections as data: one builder per category turns the browser state into the
+ * groups and rows of `model.ts`. Every row the desktop overlay once drew with its own components
+ * is here in its v2 form – a menulist is a value row, a checkbox a switch row, a button an action
+ * row (with the desktop's `button` where Zen's about:preferences trails one), an input a field
+ * row, a list a group of item rows – reading the same settings and running the same commands, so
+ * nothing is reachable on one platform only. The phone draws the rows in its vocabulary (§10.4)
+ * and the desktop two-pane in its own (§10.5); the categories the phone never lists (Compact
+ * Mode, Resources, Sync, Keyboard Shortcuts, Default Browser) are builders all the same, so
+ * "Find in Settings" reaches their rows.
  */
 
 export interface SectionContext {
@@ -118,15 +144,6 @@ export function buildSection(section: InternalPageSection, ctx: SectionContext):
   return { section, groups: builder ? builder(ctx) : [] }
 }
 
-/**
- * Whether the section is defined as rows here. One that is not (Compact Mode, Resources, Sync,
- * Keyboard Shortcuts, Default Browser) is a desktop-only category the two-pane layout draws
- * with the desktop's own content (`SettingsBody`); the phone never lists it.
- */
-export function hasRows(sectionId: string): boolean {
-  return sectionId in BUILDERS
-}
-
 /** Every listed section, built; what the landing's search filters. */
 export function buildSections(
   sections: readonly InternalPageSection[],
@@ -139,10 +156,12 @@ type Builder = (ctx: SectionContext) => RowGroup[]
 
 const BUILDERS: Readonly<Record<string, Builder>> = {
   look: lookSection,
+  compact: compactSection,
   accessibility: accessibilitySection,
   newtab: newTabSection,
   tabs: tabsSection,
   downloads: downloadsSection,
+  resources: resourcesSection,
   privacy: privacySection,
   search: searchSection,
   spaces: spaceRoutingSection,
@@ -152,6 +171,9 @@ const BUILDERS: Readonly<Record<string, Builder>> = {
   extensions: extensionsSection,
   agents: agentsSection,
   passwords: passwordsSection,
+  sync: syncSection,
+  shortcuts: shortcutsSection,
+  'default-browser': defaultBrowserSection,
   updates: updatesSection,
   about: aboutSection
 }
@@ -179,6 +201,37 @@ function item(
       title: label,
       description: extra.sheetDescription ?? description,
       groups: [{ id: `${id}-actions`, heading: null, rows }]
+    }
+  }
+}
+
+/**
+ * A whole number the desktop keeps in a 96 px field (§9.12): the row shows it, the sheet or the
+ * inline field edits it, and a value outside `min`…`max` (or no number) is refused with the one
+ * message; `unit` follows the value in the row's description ("10 min").
+ */
+function numberRow(
+  row: Omit<FieldRow, 'kind' | 'input' | 'value' | 'display' | 'onCommit'> & {
+    value: number
+    min: number
+    max: number
+    unit?: string
+    onCommit(value: number): void
+  }
+): FieldRow {
+  const { value, unit, onCommit, ...rest } = row
+  return {
+    ...rest,
+    kind: 'field',
+    input: 'number',
+    value: String(value),
+    display: unit ? `${value} ${unit}` : undefined,
+    onCommit: (text) => {
+      const n = Number(text.trim())
+      if (text.trim() === '' || !Number.isInteger(n) || n < row.min || n > row.max)
+        return `Enter a whole number from ${row.min} to ${row.max}`
+      if (n !== value) onCommit(n)
+      return undefined
     }
   }
 }
@@ -450,6 +503,7 @@ function lookSection({
             id: `desktop-site:${domain}:forget`,
             label: 'Remove exception',
             description: 'The site follows the Desktop site setting again.',
+            button: 'Remove',
             onPress: () => run('pageControls.forgetSite', { kind: 'desktop', domain })
           }
         ])
@@ -461,6 +515,7 @@ function lookSection({
             id: `darken:${domain}:forget`,
             label: 'Remove exception',
             description: 'The site follows the dark theme setting again.',
+            button: 'Remove',
             onPress: () => run('pageControls.forgetSite', { kind: 'darken', domain })
           }
         ])
@@ -513,6 +568,55 @@ function lookSection({
     ]
   })
   return groups
+}
+
+// ---------------------------------------------------------------------------
+// Compact Mode (the desktop and tablet shells; the phone shell has no bars to hide)
+// ---------------------------------------------------------------------------
+
+/**
+ * Zen's compact mode: the mode itself, then which bars it hides. Hiding neither would hide
+ * nothing, so turning one off turns the other on, as Zen's preferences do.
+ */
+function compactSection({ state, set }: SectionContext): RowGroup[] {
+  const s = state.settings
+  const cm = s.compactMode
+  const chord = shortcutHint(state.shortcuts ?? [], 'compact.toggle', state.platform)
+  return [
+    {
+      id: 'compact',
+      heading: 'Compact mode',
+      rows: [
+        {
+          kind: 'switch',
+          id: 'compact-enabled',
+          label: 'Enable compact mode',
+          description: `${chord ? `${chord}. ` : ''}Hidden bars reappear when you hover the window edge.`,
+          keywords: ['hide', 'sidebar', 'toolbar', 'fullscreen'],
+          checked: cm.enabled,
+          onChange: (v) => set({ compactMode: { ...cm, enabled: v } })
+        },
+        {
+          kind: 'switch',
+          id: 'compact-hide-sidebar',
+          label: 'Hide sidebar',
+          checked: cm.hideSidebar,
+          onChange: (v) =>
+            set({ compactMode: { ...cm, hideSidebar: v, hideToolbar: v ? cm.hideToolbar : true } })
+        },
+        {
+          kind: 'switch',
+          id: 'compact-hide-toolbar',
+          label: 'Hide top toolbar',
+          description: 'Only applies to the Multiple / Collapsed toolbar layouts.',
+          checked: cm.hideToolbar,
+          disabled: s.toolbarLayout === 'single',
+          onChange: (v) =>
+            set({ compactMode: { ...cm, hideToolbar: v, hideSidebar: v ? cm.hideSidebar : true } })
+        }
+      ]
+    }
+  ]
 }
 
 // ---------------------------------------------------------------------------
@@ -576,6 +680,7 @@ function accessibilitySection({ state, set }: SectionContext): RowGroup[] {
             id: `zoom:${domain}:forget`,
             label: 'Remove zoom',
             description: 'The site opens at the default zoom again.',
+            button: 'Remove',
             onPress: () => run('pageControls.forgetSite', { kind: 'zoom', domain })
           }
         ])
@@ -666,13 +771,29 @@ function newTabSection({ state, set }: SectionContext): RowGroup[] {
             else write(setNewTabBackground(prefs, v))
           }
         }),
-        {
-          kind: 'action',
-          id: 'newtab-remove-image',
-          label: 'Remove background image',
-          disabled: !image,
-          onPress: () => run('newtab.clearBackgroundImage', undefined)
-        },
+        // The image rows exist where a file can be picked; both depend on an image being set.
+        ...(canPick
+          ? [
+              {
+                kind: 'action',
+                id: 'newtab-change-image',
+                label: 'Change background image',
+                description: 'Pick another file; the current image is replaced.',
+                keywords: ['wallpaper', 'photo'],
+                button: 'Change…',
+                disabled: !image,
+                onPress: () => run('newtab.pickBackgroundImage', undefined)
+              } satisfies SettingsRow,
+              {
+                kind: 'action',
+                id: 'newtab-remove-image',
+                label: 'Remove background image',
+                button: 'Remove',
+                disabled: !image,
+                onPress: () => run('newtab.clearBackgroundImage', undefined)
+              } satisfies SettingsRow
+            ]
+          : []),
         {
           kind: 'switch',
           id: 'newtab-greeting',
@@ -727,6 +848,7 @@ function newTabSection({ state, set }: SectionContext): RowGroup[] {
             kind: 'action',
             id: `shortcut:${shortcut.id}:up`,
             label: 'Move up',
+            button: 'Up',
             disabled: i === 0,
             onPress: () => move(-1)
           },
@@ -734,6 +856,7 @@ function newTabSection({ state, set }: SectionContext): RowGroup[] {
             kind: 'action',
             id: `shortcut:${shortcut.id}:down`,
             label: 'Move down',
+            button: 'Down',
             disabled: i === shortcuts.length - 1,
             onPress: () => move(1)
           },
@@ -741,6 +864,7 @@ function newTabSection({ state, set }: SectionContext): RowGroup[] {
             kind: 'action',
             id: `shortcut:${shortcut.id}:remove`,
             label: 'Remove shortcut',
+            button: 'Remove…',
             destructive: true,
             confirm: {
               title: `Remove ${shortcut.title || shortcut.url}?`,
@@ -764,6 +888,7 @@ function newTabSection({ state, set }: SectionContext): RowGroup[] {
           description: full ? `The grid holds ${MAX_NEW_TAB_SHORTCUTS} shortcuts.` : undefined,
           disabled: full,
           keywords: ['tile', 'site'],
+          button: 'Add…',
           form: {
             title: 'Add shortcut',
             render: (close) => (
@@ -876,6 +1001,7 @@ function tabsSection({ state, set }: SectionContext): RowGroup[] {
           label: 'Open a blank window',
           description:
             'Ctrl+Shift+N opens a window without Spaces, pinned tabs or Essentials. Its tabs are temporary.',
+          button: 'Open',
           onPress: () => run('window.newUnsynced', undefined)
         }
       ]
@@ -1067,6 +1193,7 @@ function downloadsSection({ state, set }: SectionContext): RowGroup[] {
       label: 'Open certain file types automatically',
       description: types,
       keywords: ['auto open', 'always open'],
+      button: 'Stop…',
       confirm: {
         title: 'Stop opening these files automatically?',
         description: `Files of these types are saved without opening: ${types}.`,
@@ -1127,6 +1254,475 @@ function downloadsSection({ state, set }: SectionContext): RowGroup[] {
 }
 
 // ---------------------------------------------------------------------------
+// Resources (the resource governor; hosts with the `resourceGovernor` capability)
+// ---------------------------------------------------------------------------
+
+const GOVERNOR_ACTION_LABELS: Record<GovernorActionKind, string> = {
+  purge: 'Purged memory of',
+  throttle: 'Throttled CPU of',
+  unthrottle: 'Unthrottled',
+  freeze: 'Froze',
+  thaw: 'Woke',
+  discard: 'Unloaded',
+  reload: 'Reloaded',
+  'pause-media': 'Paused media in',
+  defer: 'Deferred loading'
+}
+
+function fmtMb(mb: number): string {
+  if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`
+  return `${Math.round(mb).toLocaleString('en-US')} MB`
+}
+
+function ago(at: number): string {
+  const s = Math.max(0, Math.round((Date.now() - at) / 1000))
+  if (s < 5) return 'just now'
+  if (s < 60) return `${s}s ago`
+  const m = Math.round(s / 60)
+  if (m < 60) return `${m} min ago`
+  return `${Math.round(m / 60)} h ago`
+}
+
+function concurrencyFor(r: ResourceSettings, cores: number): string {
+  if (!cores) return '?'
+  if (!r.enabled || r.cpuPercent >= 100) return String(cores)
+  return String(Math.max(1, Math.min(cores, Math.round((cores * r.cpuPercent) / 100))))
+}
+
+const percent = (v: number): string => `${v}%`
+
+/**
+ * The resource governor (the desktop overlay's Resources section, row for row): live usage as
+ * meters with the two actions, the biggest pages as items that can be unloaded, then the
+ * governor's switch and enforcement, the budgets (the two shares as slider rows), sleeping and
+ * unloading, what it never touches, the process profile that needs a relaunch, and its log.
+ */
+function resourcesSection({ state, set }: SectionContext): RowGroup[] {
+  const r = state.settings.resources
+  const snap = state.resources
+  const setR = (patch: Partial<ResourceSettings>): void => set({ resources: { ...r, ...patch } })
+  const setP = (patch: Partial<ResourceProcessProfile>): void =>
+    set({ resources: { ...r, process: { ...r.process, ...patch } } })
+  const totalMb = snap.system.totalMemoryMb
+  const percentBudget = totalMb ? Math.round((totalMb * r.memoryPercent) / 100) : 0
+  const notes: string[] = []
+  if (snap.system.onBattery)
+    notes.push(`On battery – budgets are tightened to ${Math.round(r.batteryFactor * 100)}%.`)
+  if (snap.system.idle) notes.push('System idle – hidden pages are frozen.')
+  const livePages = snap.tabs.filter((u) => {
+    const tab = state.tabs[u.tabId]
+    return tab !== undefined && !tab.discarded
+  })
+  const groups: RowGroup[] = [
+    {
+      id: 'usage',
+      heading: 'Live usage',
+      description:
+        'The resource governor keeps every Chromium process of this browser under the budgets you set. Hidden pages are purged, CPU-throttled, frozen and finally unloaded – cheapest first – and background loads queue up instead of all starting at once.',
+      rows: [
+        {
+          kind: 'custom',
+          id: 'usage-meters',
+          label: 'Memory, CPU and GPU memory',
+          keywords: ['usage', 'live', 'gauge', 'battery', 'idle'],
+          render: () => (
+            <div className="zen-settings-meters">
+              <ResourceMeter
+                label="Memory"
+                gauge={snap.memory}
+                fallbackMax={totalMb}
+                format={fmtMb}
+                note={`${snap.loadedTabs} live · ${snap.frozenTabs} frozen · ${snap.throttledTabs} throttled · ${snap.queuedLoads} waiting to load · ${fmtMb(snap.overheadMb)} browser, GPU and network overhead`}
+              />
+              <ResourceMeter
+                label="CPU"
+                gauge={snap.cpu}
+                fallbackMax={100}
+                format={(v) => `${Math.round(v)}%`}
+                note={`Share of all ${snap.system.cpuCount || '?'} cores; pages see ${concurrencyFor(r, snap.system.cpuCount)} of them.`}
+              />
+              <ResourceMeter
+                label="GPU memory"
+                gauge={snap.gpu}
+                fallbackMax={0}
+                format={fmtMb}
+                note={r.gpuMode === 'off' ? 'Hardware acceleration is off.' : undefined}
+              />
+              {notes.map((note) => (
+                <span key={note} className="zen-settings-description zen-settings-description-full">
+                  {note}
+                </span>
+              ))}
+            </div>
+          )
+        },
+        {
+          kind: 'action',
+          id: 'resources-trim',
+          label: 'Free up memory now',
+          description: 'Purges and unloads what the governor can spare.',
+          keywords: ['trim', 'purge', 'memory'],
+          button: 'Free up',
+          onPress: () => run('resources.trim', undefined)
+        },
+        {
+          kind: 'action',
+          id: 'resources-snapshot',
+          label: 'Refresh the sample',
+          description: snap.sampledAt
+            ? `Sampled ${ago(snap.sampledAt)}.`
+            : 'Waiting for the first sample…',
+          button: 'Refresh',
+          onPress: () => run('resources.snapshot', undefined)
+        }
+      ]
+    },
+    {
+      id: 'biggest',
+      heading: 'Biggest pages',
+      rows: livePages.slice(0, 8).map((u) => {
+        const tab = state.tabs[u.tabId]
+        const states: string[] = []
+        if (tab.frozen) states.push('frozen')
+        if (tab.cpuThrottle > 1) states.push(`CPU ×${tab.cpuThrottle}`)
+        return item(
+          `page:${u.tabId}`,
+          tabTitle(tab),
+          `${fmtMb(u.memoryMb)} · ${u.cpuPercent.toFixed(1)}% CPU · ${u.processes} process${u.processes === 1 ? '' : 'es'}${states.length ? ` · ${states.join(' · ')}` : ''}`,
+          [
+            {
+              kind: 'action',
+              id: `page:${u.tabId}:unload`,
+              label: 'Unload',
+              description: 'The tab stays; the page reloads when you return to it.',
+              button: 'Unload',
+              onPress: () => run('tab.unload', { tabId: u.tabId })
+            }
+          ]
+        )
+      }),
+      empty: 'No pages are loaded'
+    },
+    {
+      id: 'governor',
+      heading: 'Resource governor',
+      rows: [
+        {
+          kind: 'switch',
+          id: 'governor-enabled',
+          label: 'Keep the browser within budgets',
+          description: 'Turning this off also drops the startup switches below after a relaunch.',
+          checked: r.enabled,
+          onChange: (v) => setR({ enabled: v })
+        },
+        choice<ResourceEnforcement>({
+          id: 'governor-enforcement',
+          label: 'Enforcement',
+          value: r.enforcement,
+          sheetDescription:
+            'Balanced only touches hidden pages. Strict may also purge and throttle visible panes. Extreme may throttle and, as a last resort, reload the page you are looking at.',
+          options: [
+            { value: 'balanced', label: 'Balanced – hidden pages only' },
+            { value: 'strict', label: 'Strict – visible panes too' },
+            { value: 'extreme', label: 'Extreme – even the active page' }
+          ],
+          onChange: (v) => setR({ enforcement: v })
+        })
+      ]
+    },
+    {
+      id: 'budgets',
+      heading: 'Budgets',
+      rows: [
+        numberRow({
+          id: 'memory-mb',
+          label: 'Memory budget',
+          description:
+            r.memoryMb > 0
+              ? 'Every Chromium process together. Set to 0 to use a share of installed RAM instead.'
+              : `Using ${r.memoryPercent}% of installed RAM${totalMb ? ` = ${fmtMb(percentBudget)}` : ''}.`,
+          keywords: ['ram'],
+          value: r.memoryMb,
+          min: 0,
+          max: 1_048_576,
+          unit: 'MB',
+          onCommit: (v) => setR({ memoryMb: v })
+        }),
+        {
+          kind: 'slider',
+          id: 'memory-percent',
+          label: 'Share of installed RAM',
+          description: 'Used when the memory budget above is 0.',
+          value: r.memoryPercent,
+          min: 5,
+          max: 100,
+          step: 5,
+          format: percent,
+          disabled: r.memoryMb > 0,
+          onChange: (v) => setR({ memoryPercent: v })
+        },
+        {
+          kind: 'slider',
+          id: 'cpu-percent',
+          label: 'CPU budget',
+          description:
+            'Share of the whole machine. Pages are also told they have proportionally fewer cores. 100% = no limit.',
+          keywords: ['hardwareConcurrency', 'cores'],
+          value: r.cpuPercent,
+          min: 5,
+          max: 100,
+          step: 5,
+          format: percent,
+          onChange: (v) => setR({ cpuPercent: v })
+        },
+        numberRow({
+          id: 'gpu-memory-mb',
+          label: 'GPU memory budget',
+          description: '0 = no limit. Also caps Chromium’s GPU tile memory after a relaunch.',
+          value: r.gpuMemoryMb,
+          min: 0,
+          max: 65_536,
+          unit: 'MB',
+          onCommit: (v) => setR({ gpuMemoryMb: v })
+        }),
+        choice({
+          id: 'battery-factor',
+          label: 'On battery, shrink budgets to',
+          value: String(Math.round(r.batteryFactor * 100)),
+          options: [
+            { value: '100', label: '100% (no change)' },
+            { value: '85', label: '85%' },
+            { value: '70', label: '70%' },
+            { value: '50', label: '50%' },
+            { value: '25', label: '25%' }
+          ],
+          onChange: (v) => setR({ batteryFactor: Number(v) / 100 })
+        })
+      ]
+    },
+    {
+      id: 'sleeping',
+      heading: 'Sleeping and unloading',
+      rows: [
+        numberRow({
+          id: 'freeze-after',
+          label: 'Freeze hidden pages after',
+          description:
+            'A frozen page keeps its state but runs no script or timers, like Chrome’s tab freezing. 0 freezes as soon as a page is hidden.',
+          value: r.freezeAfterMinutes,
+          min: 0,
+          max: 1440,
+          unit: 'min',
+          onCommit: (v) => setR({ freezeAfterMinutes: v })
+        }),
+        numberRow({
+          id: 'idle-freeze',
+          label: 'Freeze everything when idle for',
+          description:
+            'No input anywhere on the system. 0 = off. Extreme enforcement freezes visible pages as well.',
+          value: r.idleFreezeMinutes,
+          min: 0,
+          max: 1440,
+          unit: 'min',
+          onCommit: (v) => setR({ idleFreezeMinutes: v })
+        }),
+        {
+          kind: 'switch',
+          id: 'resources-unload',
+          label: 'Unload hidden pages',
+          description: 'Zen’s tab unloading; the same setting as under Tab Management.',
+          checked: state.settings.unloadEnabled,
+          onChange: (v) => set({ unloadEnabled: v })
+        },
+        numberRow({
+          id: 'resources-unload-after',
+          label: 'Unload hidden pages after',
+          value: state.settings.unloadTimeoutMinutes,
+          min: 1,
+          max: 1440,
+          unit: 'min',
+          disabled: !state.settings.unloadEnabled,
+          onCommit: (v) => set({ unloadTimeoutMinutes: v })
+        }),
+        numberRow({
+          id: 'max-loaded',
+          label: 'Maximum live pages',
+          description:
+            'Hard cap on pages kept in memory; the oldest hidden page is unloaded to make room. 0 = unlimited.',
+          value: r.maxLoadedTabs,
+          min: 0,
+          max: 500,
+          onCommit: (v) => setR({ maxLoadedTabs: v })
+        }),
+        numberRow({
+          id: 'max-loads',
+          label: 'Background loads at once',
+          description:
+            'Further background tabs wait in a queue instead of starting more renderers.',
+          value: r.maxConcurrentLoads,
+          min: 1,
+          max: 16,
+          onCommit: (v) => setR({ maxConcurrentLoads: v })
+        })
+      ]
+    },
+    {
+      id: 'protect',
+      heading: 'Never touch',
+      rows: [
+        {
+          kind: 'switch',
+          id: 'protect-audible',
+          label: 'Pages playing audio',
+          checked: r.protectAudible,
+          onChange: (v) => setR({ protectAudible: v })
+        },
+        {
+          kind: 'switch',
+          id: 'protect-pinned',
+          label: 'Pinned tabs',
+          checked: r.protectPinned,
+          onChange: (v) => setR({ protectPinned: v })
+        },
+        {
+          kind: 'switch',
+          id: 'protect-essentials',
+          label: 'Essentials',
+          checked: r.protectEssentials,
+          onChange: (v) => setR({ protectEssentials: v })
+        },
+        {
+          kind: 'info',
+          id: 'protect-domains',
+          label: 'Excluded domains',
+          description: state.settings.unloadExcludedDomains.length
+            ? state.settings.unloadExcludedDomains.join(', ')
+            : 'None – add them under Tab Management › Never unload these domains.',
+          keywords: state.settings.unloadExcludedDomains
+        }
+      ]
+    },
+    {
+      id: 'process',
+      heading: 'Process profile',
+      description: 'These switches take effect when the browser starts.',
+      rows: [
+        ...(snap.restartRequired
+          ? [
+              {
+                kind: 'action',
+                id: 'resources-relaunch',
+                label: 'Relaunch to apply',
+                description: 'The process profile changed since the browser started.',
+                button: 'Relaunch',
+                onPress: () => run('resources.relaunch', undefined)
+              } satisfies SettingsRow
+            ]
+          : []),
+        choice<GpuMode>({
+          id: 'gpu-mode',
+          label: 'GPU',
+          value: r.gpuMode,
+          sheetDescription:
+            'Low keeps compositing on the GPU but rasterises, decodes video and draws canvases on the CPU. Off disables hardware acceleration.',
+          keywords: ['hardware acceleration'],
+          options: [
+            { value: 'auto', label: 'Automatic' },
+            { value: 'low', label: 'Low GPU usage' },
+            { value: 'off', label: 'Off – software rendering' }
+          ],
+          onChange: (v) => setR({ gpuMode: v })
+        }),
+        numberRow({
+          id: 'renderer-limit',
+          label: 'Renderer process limit',
+          description:
+            'Chromium reuses processes across sites once the limit is reached. 0 = Chromium’s default.',
+          value: r.process.rendererProcessLimit,
+          min: 0,
+          max: 64,
+          onCommit: (v) => setP({ rendererProcessLimit: v })
+        }),
+        numberRow({
+          id: 'renderer-heap',
+          label: 'JavaScript heap cap per page',
+          description:
+            'A page that grows past its V8 heap cap is unloaded instead of bloating. 0 = default.',
+          value: r.process.rendererHeapMb,
+          min: 0,
+          max: 16384,
+          unit: 'MB',
+          onCommit: (v) => setP({ rendererHeapMb: v })
+        }),
+        {
+          kind: 'switch',
+          id: 'low-end-device',
+          label: 'Low-end device mode',
+          description:
+            'Chromium sizes every cache and tile budget as if this were a low-memory device.',
+          checked: r.process.lowEndDeviceMode,
+          onChange: (v) => setP({ lowEndDeviceMode: v })
+        },
+        {
+          kind: 'switch',
+          id: 'no-spare-renderer',
+          label: 'No spare renderer process',
+          description:
+            'Chromium otherwise keeps a warm, empty renderer waiting for the next navigation.',
+          checked: r.process.disableSpareRenderer,
+          onChange: (v) => setP({ disableSpareRenderer: v })
+        },
+        {
+          kind: 'switch',
+          id: 'no-bfcache',
+          label: 'Drop the back/forward cache',
+          description: 'Chromium otherwise keeps up to six previous documents alive per tab.',
+          checked: r.process.disableBackForwardCache,
+          onChange: (v) => setP({ disableBackForwardCache: v })
+        },
+        {
+          kind: 'switch',
+          id: 'no-prerender',
+          label: 'Block prerendering',
+          description: 'Stops pages from loading other pages in hidden renderers ahead of time.',
+          checked: r.process.disablePrerender,
+          onChange: (v) => setP({ disablePrerender: v })
+        },
+        numberRow({
+          id: 'raster-threads',
+          label: 'Raster threads per page',
+          description: '0 = Chromium’s default.',
+          value: r.process.rasterThreads,
+          min: 0,
+          max: 8,
+          onCommit: (v) => setP({ rasterThreads: v })
+        }),
+        {
+          kind: 'switch',
+          id: 'v8-size',
+          label: 'V8: favour memory over speed',
+          description: 'Smaller heaps, slightly slower script.',
+          checked: r.process.v8OptimizeForSize,
+          onChange: (v) => setP({ v8OptimizeForSize: v })
+        }
+      ]
+    },
+    {
+      id: 'log',
+      heading: 'Recent actions',
+      rows: snap.recentActions.slice(0, 15).map((a, i) => ({
+        kind: 'info',
+        id: `action:${a.at}:${i}`,
+        label: `${GOVERNOR_ACTION_LABELS[a.kind]} ${a.title || 'a tab'}`,
+        description: `${ago(a.at)} – ${a.reason}`
+      })),
+      empty: 'Nothing yet – the governor has not had to act'
+    }
+  ]
+  return groups
+}
+
+// ---------------------------------------------------------------------------
 // Privacy and Security (ad and tracker blocking, site permissions)
 // ---------------------------------------------------------------------------
 
@@ -1179,7 +1775,8 @@ function privacySection({ state, set }: SectionContext): RowGroup[] {
           id: 'blocking-update-now',
           label: 'Update filter lists now',
           description: listsDescription,
-          disabled: status.updating,
+          button: 'Update now',
+          busy: status.updating,
           onPress: () => run('blocking.updateLists', {})
         }
       ]
@@ -1216,6 +1813,7 @@ function privacySection({ state, set }: SectionContext): RowGroup[] {
                 id: `permission:${rule.origin}:${rule.permission}:forget`,
                 label: 'Forget this answer',
                 description: 'The site asks again the next time it needs it.',
+                button: 'Forget',
                 onPress: () =>
                   run('permissions.forget', { origin: rule.origin, permission: rule.permission })
               }
@@ -1228,6 +1826,7 @@ function privacySection({ state, set }: SectionContext): RowGroup[] {
                 kind: 'action',
                 id: 'permissions-reset',
                 label: 'Forget all site permissions',
+                button: 'Forget all…',
                 destructive: true,
                 confirm: {
                   title: 'Forget all site permissions?',
@@ -1317,6 +1916,7 @@ function spaceRoutingSection({ state, set }: SectionContext): RowGroup[] {
               kind: 'action',
               id: `route:${domain}:remove`,
               label: 'Remove route',
+              button: 'Remove',
               onPress: () => remove(domain)
             }
           ]
@@ -1332,6 +1932,7 @@ function spaceRoutingSection({ state, set }: SectionContext): RowGroup[] {
           kind: 'action',
           id: 'add-route',
           label: 'Add route',
+          button: 'Add…',
           keywords: ['domain', 'space'],
           disabled: state.spaces.length === 0,
           form: {
@@ -1393,6 +1994,7 @@ function containersSection({ state }: SectionContext): RowGroup[] {
                 kind: 'action',
                 id: `container:${c.id}:up`,
                 label: 'Move up',
+                button: 'Up',
                 disabled: i <= 1,
                 onPress: () => run('container.reorder', { id: c.id, index: i - 1 })
               },
@@ -1400,6 +2002,7 @@ function containersSection({ state }: SectionContext): RowGroup[] {
                 kind: 'action',
                 id: `container:${c.id}:down`,
                 label: 'Move down',
+                button: 'Down',
                 disabled: i >= containers.length - 1,
                 onPress: () => run('container.reorder', { id: c.id, index: i + 1 })
               },
@@ -1408,6 +2011,7 @@ function containersSection({ state }: SectionContext): RowGroup[] {
                 id: `container:${c.id}:delete`,
                 label: 'Delete container',
                 description: 'Its cookies and site data are cleared.',
+                button: 'Delete…',
                 destructive: true,
                 confirm: {
                   title: `Delete ${c.name}?`,
@@ -1437,6 +2041,7 @@ function containersSection({ state }: SectionContext): RowGroup[] {
           id: 'new-container',
           label: 'New container',
           keywords: ['create', 'colour', 'icon'],
+          button: 'New…',
           form: {
             title: 'New container',
             render: (close) => (
@@ -1491,6 +2096,7 @@ function boostsSection({ state, tab, boost }: SectionContext): RowGroup[] {
               kind: 'action',
               id: `boost:${b.domain}:remove`,
               label: 'Remove Boost',
+              button: 'Remove…',
               destructive: true,
               confirm: {
                 title: `Remove the Boost for ${b.domain}?`,
@@ -1527,6 +2133,7 @@ function boostsSection({ state, tab, boost }: SectionContext): RowGroup[] {
           description: site
             ? 'Opens the Boost editor on the site you came from.'
             : 'Open a site and tap the sparkle in the address bar.',
+          button: 'Boost…',
           disabled: !site,
           onPress: () => site && boost(site.id)
         }
@@ -1588,6 +2195,7 @@ function modsSection({ state }: SectionContext): RowGroup[] {
               kind: 'action',
               id: `mod:${mod.id}:remove`,
               label: 'Remove Mod',
+              button: 'Remove…',
               destructive: true,
               confirm: { title: `Remove ${mod.name}?`, action: 'Remove' },
               onPress: () => run('mod.remove', { id: mod.id })
@@ -1607,12 +2215,14 @@ function modsSection({ state }: SectionContext): RowGroup[] {
           id: 'new-mod',
           label: 'New Mod',
           description: 'Starts an empty stylesheet you edit here.',
+          button: 'New',
           onPress: () => run('mod.add', { name: 'New Mod', css: '/* your CSS */\n' })
         },
         {
           kind: 'action',
           id: 'import-mod-url',
           label: 'Import from URL',
+          button: 'Import…',
           form: {
             title: 'Import a Mod from a URL',
             render: (close) => (
@@ -1631,6 +2241,7 @@ function modsSection({ state }: SectionContext): RowGroup[] {
           kind: 'action',
           id: 'import-mod-file',
           label: 'Import from file',
+          button: 'Import…',
           onPress: () => run('mod.importFile', undefined)
         }
       ]
@@ -1666,6 +2277,7 @@ function extensionsSection({ state }: SectionContext): RowGroup[] {
               kind: 'action',
               id: `extension:${ext.id}:remove`,
               label: 'Remove extension',
+              button: 'Remove…',
               destructive: true,
               confirm: { title: `Remove ${ext.name}?`, action: 'Remove' },
               onPress: () => run('extension.remove', { id: ext.id })
@@ -1692,6 +2304,7 @@ function extensionsSection({ state }: SectionContext): RowGroup[] {
           id: 'install-from-store',
           label: 'From the Chrome Web Store',
           description: 'Paste an extension id, or a Chrome Web Store or Edge Add-ons link.',
+          button: 'Install…',
           form: {
             title: 'Install from the Chrome Web Store',
             render: (close) => (
@@ -1711,6 +2324,7 @@ function extensionsSection({ state }: SectionContext): RowGroup[] {
           id: 'install-from-file',
           label: 'From a file',
           description: 'A packed .crx or .zip.',
+          button: 'Install…',
           onPress: () => run('extension.installFromFile', undefined)
         },
         {
@@ -1718,6 +2332,7 @@ function extensionsSection({ state }: SectionContext): RowGroup[] {
           id: 'load-unpacked',
           label: 'Load unpacked',
           description: 'A folder with a manifest.json.',
+          button: 'Load…',
           onPress: () => run('extension.add', undefined)
         }
       ]
@@ -1783,6 +2398,11 @@ function agentsSection({ state, set }: SectionContext): RowGroup[] {
   if (a.enabled && server.running && server.url) {
     const url = server.url
     const httpConfig = JSON.stringify({ mcpServers: { zenium: { url } } }, null, 2)
+    const stdioConfig = JSON.stringify(
+      { mcpServers: { zenium: { command: 'zenium', args: ['--mcp'] } } },
+      null,
+      2
+    )
     groups.push({
       id: 'connect',
       heading: 'Connect an agent',
@@ -1809,14 +2429,24 @@ function agentsSection({ state, set }: SectionContext): RowGroup[] {
         {
           kind: 'custom',
           id: 'mcp-config',
-          label: 'mcp.json',
-          render: () => <CodeBlock label="mcp.json" value={httpConfig} />
+          label: 'mcp.json (URL)',
+          keywords: ['config', 'streamable http'],
+          render: () => <CodeBlock label="mcp.json (URL)" value={httpConfig} />
+        },
+        {
+          kind: 'custom',
+          id: 'mcp-config-stdio',
+          label: 'mcp.json (command)',
+          description: 'For clients that start the server themselves over stdio.',
+          keywords: ['config', 'stdio', 'command'],
+          render: () => <CodeBlock label="mcp.json (command)" value={stdioConfig} />
         },
         {
           kind: 'action',
           id: 'mcp-regenerate',
           label: 'Regenerate token',
           description: 'Agents using the old token must reconnect.',
+          button: 'Regenerate…',
           destructive: true,
           confirm: {
             title: 'Regenerate the connection token?',
@@ -1897,6 +2527,7 @@ function agentsSection({ state, set }: SectionContext): RowGroup[] {
               id: `agent:${agent.id}:disconnect`,
               label: 'Disconnect',
               description: 'Releases the tabs it opened.',
+              button: 'Disconnect…',
               destructive: true,
               confirm: { title: `Disconnect ${agent.name}?`, action: 'Disconnect' },
               onPress: () => run('agent.disconnect', { id: agent.id })
@@ -1929,6 +2560,7 @@ function agentsSection({ state, set }: SectionContext): RowGroup[] {
             id: `approved:${name}:forget`,
             label: 'Forget',
             description: 'It is asked about the next time it connects.',
+            button: 'Forget',
             onPress: () => run('agent.forget', { name })
           }
         ])
@@ -2020,6 +2652,7 @@ function passwordsSection({ state, tab, set }: SectionContext): RowGroup[] {
           description: unlocked ? PASSWORDS_COPY.lock.description : PASSWORDS_COPY.lock.locked,
           keywords: ['lock now', 'forget'],
           // Nothing to lock: laid out at 40%, not pressable (§10.4), rather than a row that vanishes.
+          button: 'Lock now',
           disabled: !unlocked,
           onPress: () => run('passwords.lock', undefined)
         }
@@ -2053,6 +2686,345 @@ function passwordsSection({ state, tab, set }: SectionContext): RowGroup[] {
 }
 
 // ---------------------------------------------------------------------------
+// Sync (hosts with the `sync` capability)
+// ---------------------------------------------------------------------------
+
+const SYNC_SCOPE_LABELS: ReadonlyArray<{
+  key: keyof SyncScope
+  label: string
+  hint?: string
+}> = [
+  { key: 'spaces', label: 'Spaces', hint: 'Names, icons, themes and order' },
+  { key: 'folders', label: 'Folders' },
+  { key: 'pinnedTabs', label: 'Pinned tabs' },
+  { key: 'essentials', label: 'Essentials' },
+  { key: 'openTabs', label: 'Open tabs', hint: 'Unpinned tabs arrive unloaded on other devices' },
+  { key: 'containers', label: 'Containers' },
+  { key: 'bookmarks', label: 'Bookmarks' },
+  { key: 'settings', label: 'Settings' },
+  { key: 'shortcuts', label: 'Keyboard shortcuts' },
+  { key: 'boosts', label: 'Boosts' }
+]
+
+/**
+ * Zen 1.22's "Sync your Spaces across devices" through a folder a cloud drive or Syncthing
+ * keeps in sync, encrypted on this device first. Not set up: the explanation and the one action
+ * whose dialog is the setup form. Set up: the status with Sync now, a merge question while the
+ * folder held data already, this device's name, the other devices, what to sync, and the two
+ * ways off – confirmed, the second destructive.
+ */
+function syncSection({ state }: SectionContext): RowGroup[] {
+  const sync = state.sync
+  const intro: RowGroup = {
+    id: 'sync',
+    heading: 'Sync across devices',
+    description:
+      'Keep your Spaces, folders, pinned tabs, Essentials and settings the same on every computer. Pick a folder that is already synced between your devices (Dropbox, iCloud Drive, Google Drive, OneDrive, Nextcloud, Syncthing…) and a passphrase. Everything is encrypted on this device before it is written – the folder only ever holds ciphertext.',
+    rows: []
+  }
+  if (!sync.enabled) {
+    intro.rows.push({
+      kind: 'action',
+      id: 'sync-setup',
+      label: 'Set up sync',
+      description: 'Choose the folder and a passphrase; this device joins the folder.',
+      keywords: ['folder', 'passphrase', 'connect', 'dropbox', 'syncthing'],
+      button: 'Set up…',
+      form: {
+        title: 'Set up sync',
+        description: 'Use the same folder and passphrase on every device.',
+        render: (close) => (
+          <SyncSetupForm deviceName={sync.deviceName} scope={sync.scope} close={close} />
+        )
+      }
+    })
+    return [intro]
+  }
+  intro.rows.push(
+    {
+      kind: 'info',
+      id: 'sync-status',
+      label: sync.syncing
+        ? 'Syncing…'
+        : sync.lastSyncAt
+          ? `Last synced ${relativeTime(sync.lastSyncAt)}`
+          : 'Waiting for the first sync',
+      description: sync.lastError ?? sync.folder ?? undefined,
+      keywords: ['status', 'folder', 'error'],
+      trailing: sync.lastError ? (
+        <CircleAlert
+          className="zen-settings-trailing-glyph zen-settings-danger"
+          aria-label="Error"
+        />
+      ) : undefined
+    },
+    {
+      kind: 'action',
+      id: 'sync-now',
+      label: 'Sync now',
+      description: 'Write this device’s changes to the folder and read the other devices’.',
+      button: 'Sync now',
+      busy: sync.syncing,
+      disabled: sync.pendingMerge,
+      onPress: () => run('sync.now', undefined)
+    }
+  )
+  const groups: RowGroup[] = [intro]
+  if (sync.pendingMerge) {
+    groups.push({
+      id: 'sync-merge',
+      heading: 'This folder already contains synced data',
+      description:
+        'Merge it with the Spaces on this device, or keep only this device’s data and replace what the other devices have.',
+      rows: [
+        {
+          kind: 'action',
+          id: 'sync-merge',
+          label: 'Merge with this device',
+          description: 'The folder’s Spaces and this device’s are combined.',
+          button: 'Merge',
+          onPress: () => run('sync.confirmMerge', { merge: true })
+        },
+        {
+          kind: 'action',
+          id: 'sync-keep-mine',
+          label: 'Keep only this device’s data',
+          description: 'What the other devices have is replaced.',
+          button: 'Keep mine…',
+          destructive: true,
+          confirm: {
+            title: 'Replace the other devices’ data?',
+            description:
+              'The folder’s synced data is replaced with this device’s; the other devices take it on their next sync.',
+            action: 'Replace'
+          },
+          onPress: () => run('sync.confirmMerge', { merge: false })
+        }
+      ]
+    })
+  }
+  groups.push(
+    {
+      id: 'sync-device',
+      heading: 'This device',
+      rows: [
+        {
+          kind: 'field',
+          id: 'sync-device-name',
+          label: 'Name',
+          description: 'How the other devices list this one.',
+          value: sync.deviceName,
+          input: 'text',
+          onCommit: (value) => {
+            const name = value.trim()
+            if (!name) return 'Enter a name'
+            if (name !== sync.deviceName) run('sync.setDeviceName', { name })
+            return undefined
+          }
+        }
+      ]
+    },
+    {
+      id: 'sync-devices',
+      heading: 'Devices',
+      rows: sync.devices.map((d) => ({
+        kind: 'info',
+        id: `device:${d.id}`,
+        label: d.name,
+        description: `Last seen ${relativeTime(d.lastSeen)}`
+      })),
+      empty:
+        'No other device has synced to this folder yet – set up sync there with the same folder and passphrase'
+    },
+    {
+      id: 'sync-scope',
+      heading: 'What to sync',
+      rows: SYNC_SCOPE_LABELS.map((entry) => ({
+        kind: 'switch',
+        id: `scope:${entry.key}`,
+        label: entry.label,
+        description: entry.hint,
+        checked: sync.scope[entry.key],
+        onChange: (v: boolean) => run('sync.setScope', { [entry.key]: v })
+      }))
+    },
+    {
+      id: 'sync-off',
+      heading: null,
+      rows: [
+        {
+          kind: 'action',
+          id: 'sync-disconnect',
+          label: 'Turn off sync',
+          description: 'This device keeps its data and stops reading and writing the folder.',
+          button: 'Turn off…',
+          confirm: {
+            title: 'Turn off sync?',
+            description:
+              'This device keeps everything it has; the folder is left as it is for the other devices.',
+            action: 'Turn off'
+          },
+          onPress: () => run('sync.disconnect', { wipeRemote: false })
+        },
+        {
+          kind: 'action',
+          id: 'sync-wipe',
+          label: 'Turn off and remove this device’s data',
+          description: 'Its records leave the folder; the other devices forget it.',
+          button: 'Remove…',
+          destructive: true,
+          confirm: {
+            title: 'Remove this device from sync?',
+            description:
+              'Sync turns off and this device’s records are deleted from the folder. Its Spaces stay on this device.',
+            action: 'Remove'
+          },
+          onPress: () => run('sync.disconnect', { wipeRemote: true })
+        }
+      ]
+    }
+  )
+  return groups
+}
+
+// ---------------------------------------------------------------------------
+// Keyboard Shortcuts (the desktop and tablet shells)
+// ---------------------------------------------------------------------------
+
+const SHORTCUT_GROUP_ORDER: readonly ShortcutGroup[] = [
+  'zen-compact-mode',
+  'zen-workspace',
+  'zen-split-view',
+  'zen-other',
+  'windowAndTabManagement',
+  'navigation',
+  'searchAndFind',
+  'pageOperations',
+  'historyAndBookmarks',
+  'mediaAndDisplay',
+  'devTools'
+]
+
+/**
+ * Zen's keyboard shortcut manager: the preset and the count of rows changed from it, then every
+ * shortcut in Zen's groups, each a row of its own (`ShortcutRow.tsx`) whose button records a
+ * new chord. "Find in Settings" filters them – by label or by chord – so the manager's own
+ * filter field is gone.
+ */
+function shortcutsSection({ state }: SectionContext): RowGroup[] {
+  const preset = state.settings.shortcutPreset
+  const defaults = new Map(
+    defaultShortcuts(state.platform, preset).map((s) => [s.id, s.binding] as const)
+  )
+  const changed = state.shortcuts.filter((s) => {
+    const base = defaults.get(s.id)
+    return base !== undefined && !bindingsEqual(base, s.binding)
+  }).length
+  const groups: RowGroup[] = [
+    {
+      id: 'preset',
+      heading: 'Preset',
+      description: 'Click a shortcut, then press the new keys. Backspace clears it, Esc cancels.',
+      rows: [
+        choice<ShortcutPreset>({
+          id: 'shortcut-preset',
+          label: 'Shortcut set',
+          value: preset,
+          sheetDescription: SHORTCUT_PRESET_DESCRIPTIONS[preset],
+          options: SHORTCUT_PRESETS.map((p) => ({ value: p, label: SHORTCUT_PRESET_LABELS[p] })),
+          onChange: (next) => run('settings.update', { shortcutPreset: next })
+        }),
+        {
+          kind: 'action',
+          id: 'shortcuts-reset',
+          label: 'Your changes',
+          description:
+            changed === 0
+              ? 'Every shortcut is the preset’s.'
+              : `${changed} ${changed === 1 ? 'shortcut differs' : 'shortcuts differ'} from the preset.`,
+          keywords: ['reset', 'defaults'],
+          button: 'Reset to preset',
+          disabled: changed === 0,
+          onPress: () => run('shortcuts.reset', undefined)
+        }
+      ]
+    }
+  ]
+  for (const group of SHORTCUT_GROUP_ORDER) {
+    const items = state.shortcuts.filter((s) => s.group === group && !s.hidden)
+    if (items.length === 0) continue
+    groups.push({
+      id: `shortcuts-${group}`,
+      heading: SHORTCUT_GROUP_LABELS[group],
+      rows: items.map((s) => ({
+        kind: 'custom',
+        id: `shortcut:${s.id}`,
+        label: s.label,
+        keywords: [
+          formatBinding(s.binding, state.platform),
+          ...(s.unsupported ? ['unsupported'] : [])
+        ],
+        bare: true,
+        render: () => (
+          <ShortcutRow shortcut={s} shortcuts={state.shortcuts} platform={state.platform} />
+        )
+      }))
+    })
+  }
+  return groups
+}
+
+// ---------------------------------------------------------------------------
+// Default Browser (the desktop OSes; Android keeps its one row under About)
+// ---------------------------------------------------------------------------
+
+/**
+ * Which browser the OS hands web links to, and the request to make it Zenium: a status row
+ * while the OS is asked, the ✓ once Zenium holds the role, the Make default button otherwise –
+ * on Windows with the note that it opens Windows Settings, where the user presses Set default.
+ * `state.defaultBrowser` is what the core's DefaultBrowserService refreshes at start, on window
+ * focus and when the OS answers.
+ */
+function defaultBrowserSection({ state }: SectionContext): RowGroup[] {
+  const isDefault = state.defaultBrowser.isDefault
+  const row: SettingsRow =
+    isDefault === true
+      ? {
+          kind: 'info',
+          id: 'default-browser',
+          label: 'Zenium is your default browser',
+          description: 'Links from other apps open here.',
+          keywords: ['default browser', 'links'],
+          trailing: (
+            <Check
+              className="zen-settings-trailing-glyph zen-settings-ok"
+              aria-label="Zenium is the default browser"
+            />
+          )
+        }
+      : isDefault === false
+        ? {
+            kind: 'action',
+            id: 'default-browser',
+            label: 'Zenium is not your default browser',
+            description:
+              state.platform === 'win32'
+                ? 'Make default opens Windows Settings, where you press Set default.'
+                : 'Open links from other apps in Zenium.',
+            keywords: ['default browser', 'links', 'make default'],
+            button: 'Make default',
+            onPress: () => void requestDefaultBrowser('settings')
+          }
+        : {
+            kind: 'info',
+            id: 'default-browser',
+            label: 'Checking which browser opens your links',
+            keywords: ['default browser', 'links']
+          }
+  return [{ id: 'default-browser', heading: 'Default browser', rows: [row] }]
+}
+
+// ---------------------------------------------------------------------------
 // Updates
 // ---------------------------------------------------------------------------
 
@@ -2069,13 +3041,15 @@ function updatesSection({ state, set }: SectionContext): RowGroup[] {
           kind: 'action',
           id: 'update-cancel',
           label: 'Cancel download',
+          button: 'Cancel',
           onPress: () => run('updates.cancel', undefined)
         }
       : u.phase === 'ready'
         ? {
             kind: 'action',
             id: 'update-install',
-            label: inPlace ? 'Restart to update' : 'Install',
+            label: inPlace ? 'Restart to update' : 'Install the update',
+            button: inPlace ? 'Restart' : 'Install',
             onPress: () => run('updates.install', undefined)
           }
         : u.phase === 'available' && canDownload
@@ -2086,12 +3060,14 @@ function updatesSection({ state, set }: SectionContext): RowGroup[] {
               description: release?.asset
                 ? `${release.asset.name} (${formatBytes(release.asset.size)})`
                 : undefined,
+              button: 'Download',
               onPress: () => run('updates.download', undefined)
             }
           : {
               kind: 'action',
               id: 'update-check',
-              label: 'Check now',
+              label: 'Check for updates',
+              button: 'Check now',
               busy,
               onPress: () => run('updates.check', undefined)
             }
