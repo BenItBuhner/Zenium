@@ -1,0 +1,58 @@
+name: Android tab close demo
+
+# Records closing tabs from the phone's tab overview and taking it back (matrix TAB-05, TAB-06,
+# TAB-07, TAB-22, TAB-23, GN-16, BH-26): a card closed with its X and one swiped off the grid,
+# each followed by Undo on the toast; the header menu's Close all tabs with its "Close N tabs?"
+# prompt, the "N tabs closed" toast and Undo bringing every tab back in order; Don't ask again
+# turning the prompt off; and a tab restored from the Recently closed sheet. Every press is a
+# real touch and the driver reads each outcome off the core's state (findings text in the
+# artifact; the run fails on a FAIL). Dispatch-only, like the overview demo: it takes about ten
+# minutes and says nothing about a change being correct. The build, the emulator and the Gradle
+# cache live in android-emulator-demo.yml; this file only picks the driver.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - cursor/android-tab-close-undo-1dde
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-tab-close-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Tab close demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.TabCloseDemo
+        DEMO_DIR=tabclose-demo
+        DEMO_OUT=artifacts/android-tab-close-demo
+        DEMO_VIDEO=android-tab-close-demo.mp4
+      # The guest kernel's console in the log, should the emulator go away mid-demo.
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel
+      artifact-name: android-tab-close-demo
+      artifact-path: artifacts/android-tab-close-demo/
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed: a run is then spent on the demo rather than on the runner.
+  record-again:
+    name: Tab close demo, second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.TabCloseDemo
+        DEMO_DIR=tabclose-demo
+        DEMO_OUT=artifacts/android-tab-close-demo
+        DEMO_VIDEO=android-tab-close-demo.mp4
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel
+      artifact-name: android-tab-close-demo-second-boot
+      artifact-path: artifacts/android-tab-close-demo/
