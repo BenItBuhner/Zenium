@@ -26,9 +26,10 @@ describe('the page registry', () => {
   it('registers Settings with stable section ids in nav order', () => {
     expect(Object.keys(INTERNAL_PAGES)).toEqual(['settings'])
     expect(INTERNAL_PAGES.settings.title).toBe('Settings')
-    // Zen's features, Privacy and Security after Search, Security (the remembered per-site
-    // answers and the session's sign-ins) last among them, then the browser-wide group past the
-    // first hairline: Sync, Accessibility, Keyboard Shortcuts, Updates; About past the second.
+    // Zen's features, Autofill, Languages and then Privacy after Search; Agents, Passwords and
+    // Security (the remembered per-site answers and the session's sign-ins) last among them; then
+    // the browser-wide group past the first hairline: Sync, Accessibility, Keyboard Shortcuts,
+    // Updates; About past the second.
     expect(SETTINGS_SECTIONS.map((s) => s.id)).toEqual([
       'look',
       'compact',
@@ -37,6 +38,7 @@ describe('the page registry', () => {
       'downloads',
       'resources',
       'search',
+      'autofill',
       'languages',
       'privacy',
       'spaces',
