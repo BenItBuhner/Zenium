@@ -43,6 +43,8 @@ export function V2Menulist<T extends string>({
   value,
   options,
   onChange,
+  disabled = false,
+  readOnly = false,
   className
 }: {
   /** What the list chooses (the accessible name of the control and the phone sheet's title). */
@@ -50,6 +52,10 @@ export function V2Menulist<T extends string>({
   value: T
   options: readonly MenulistOption<T>[]
   onChange: (value: T) => void
+  /** The control at §9.30's .4 (`.zen-v2-menulist:disabled`), opening nothing. */
+  disabled?: boolean
+  /** A busy form's control (§9.30): full opacity, its value in place, opening nothing. */
+  readOnly?: boolean
   className?: string
 }): JSX.Element {
   const [anchor, setAnchor] = useState<Anchor | null>(null)
@@ -74,7 +80,11 @@ export function V2Menulist<T extends string>({
         aria-label={label}
         aria-haspopup={viewport.coarse ? 'dialog' : 'listbox'}
         aria-expanded={anchor !== null || undefined}
-        onClick={(e) => setAnchor(anchorOf(e.currentTarget))}
+        aria-readonly={readOnly || undefined}
+        disabled={disabled}
+        onClick={(e) => {
+          if (!readOnly) setAnchor(anchorOf(e.currentTarget))
+        }}
       >
         <span className="min-w-0 flex-1 truncate">{current?.label ?? ''}</span>
         <ChevronDown />

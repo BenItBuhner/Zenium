@@ -11,15 +11,14 @@ vi.mock('@renderer/lib/api', () => ({
 
 import { FrameDialogHost, closeAllPopovers, openPopoverCount } from '@renderer/lib/portals'
 import { viewportStore } from '@renderer/lib/formFactor'
-import { openSheetCount } from '@renderer/lib/sheetStack'
 import {
   DesktopDialog,
   DesktopPopover,
   Footer,
   ListRow,
   Menulist,
-  MenulistSheet,
   RowValue,
+  TitleBlock,
   V2Sheet,
   type DialogApi
 } from '../primitives'
@@ -29,14 +28,16 @@ import {
  * FrameDialogHost so it paints over the host's scrim after its pop animation, takes the 400 form
  * width, and hands focus back to its anchor on Escape and through `api.close` (not after a
  * scrim press), a desktop Footer has the two §9.20 forms (a gutter hairline then 12 over a row
- * list; 16 and no hairline under a body or a title block), a
- * DesktopPopover asked to focus its container (a prompt) arms no button and still hands focus
- * back on Escape, a DesktopPopover is dismissed by the chrome layer's registry (an outside
- * press, consumed; a resize – unless it follows its anchor – and a menulist opening inside it is
- * its child), a ListRow's trailing slot is capped at 55% of the row (the value truncates inside
- * it, the label keeps the larger share), and on a phone a stacked footer takes the chassis's
- * `flex: 1` off its buttons, a sheet over a sheet recedes and dims the lower one under the
- * stack's one scrim (§9.24), and a picker without a description opens on the 48 header.
+ * list; 16 and no hairline under a body or a title block), a DesktopPopover asked to focus its
+ * container (a prompt) arms no button and still hands focus back on Escape, one beside a chip
+ * takes no focus at all and collapses into the chip on "not now" (§9.22), a DesktopPopover is
+ * dismissed by the chrome layer's registry (an outside press, consumed; a resize – unless it
+ * follows its anchor – and a menulist opening inside it is its child), a ListRow's trailing slot
+ * is capped at 55% of the row (the value truncates inside it, the label keeps the larger share)
+ * and a row without a press is `data-static` (§9.34), a busy menulist is read-only at full
+ * opacity (§9.30), and on a phone a stacked footer takes the chassis's `flex: 1` off its
+ * buttons and a sheet opens on the 48 header with a title, on a title block with one (§9.23;
+ * the stack over another sheet, its one scrim and the focus are the chassis's, tested with it).
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -138,22 +139,41 @@ describe('DesktopDialog in the FrameDialogHost', () => {
     return anchor
   }
 
-  it('moves focus in, and Escape hands it back to the anchor before cancelling', () => {
-    const anchor = withAnchor()
-    const onCancel = vi.fn()
-    render(
+  /** The owner's `onCancel` clears its store flag and the dialog unmounts: what `Dialog` stands in for. */
+  function Dialog({
+    open,
+    onCancel,
+    api
+  }: {
+    open: boolean
+    onCancel: () => void
+    api?: { current: DialogApi | null }
+  }): ReactElement {
+    return (
       <FrameDialogHost>
-        <DesktopDialog labelledBy="t" onCancel={onCancel}>
-          <h2 id="t">Clear browsing data</h2>
-          <button type="button">Cancel</button>
-        </DesktopDialog>
+        {open && (
+          <DesktopDialog labelledBy="t" onCancel={onCancel} api={api}>
+            <h2 id="t">Clear browsing data</h2>
+            <button type="button" onClick={() => api?.current?.close()}>
+              Cancel
+            </button>
+          </DesktopDialog>
+        )}
       </FrameDialogHost>
     )
+  }
+
+  it('moves focus in, and Escape cancels; focus goes back to the anchor as the dialog leaves', () => {
+    const anchor = withAnchor()
+    const onCancel = vi.fn()
+    render(<Dialog open onCancel={onCancel} />)
     expect(document.activeElement?.textContent).toBe('Cancel')
     act(() => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     })
     expect(onCancel).toHaveBeenCalledTimes(1)
+    // The chassis's `usePopover` (§9.22): the owner unmounts the dialog and focus returns.
+    act(() => root!.render(<Dialog open={false} onCancel={onCancel} />))
     expect(document.activeElement).toBe(anchor)
     anchor.remove()
   })
@@ -162,34 +182,20 @@ describe('DesktopDialog in the FrameDialogHost', () => {
     const anchor = withAnchor()
     const onCancel = vi.fn()
     const api = { current: null as DialogApi | null }
-    const el = render(
-      <FrameDialogHost>
-        <DesktopDialog labelledBy="t" onCancel={onCancel} api={api}>
-          <h2 id="t">Clear browsing data</h2>
-          <button type="button" onClick={() => api.current?.close()}>
-            Cancel
-          </button>
-        </DesktopDialog>
-      </FrameDialogHost>
-    )
+    const el = render(<Dialog open onCancel={onCancel} api={api} />)
     const cancel = el.querySelector<HTMLButtonElement>('[role="dialog"] button')!
     cancel.focus()
     act(() => cancel.click())
     expect(onCancel).toHaveBeenCalledTimes(1)
+    act(() => root!.render(<Dialog open={false} onCancel={onCancel} api={api} />))
     expect(document.activeElement).toBe(anchor)
 
-    // Opened again: an outside press on the scrim cancels without touching focus (§9.22).
+    // Opened again: an outside press on the scrim cancels without touching focus (§9.22) – the
+    // press moved it off the dialog already, so nothing is inside to bring back.
     act(() => root!.unmount())
     anchor.focus()
     const again = vi.fn()
-    const el2 = render(
-      <FrameDialogHost>
-        <DesktopDialog labelledBy="t" onCancel={again}>
-          <h2 id="t">Clear browsing data</h2>
-          <button type="button">Cancel</button>
-        </DesktopDialog>
-      </FrameDialogHost>
-    )
+    const el2 = render(<Dialog open onCancel={again} />)
     const scrim = el2.querySelector<HTMLElement>('.zen-frame-scrim')!
     act(() => {
       scrim.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }))
@@ -197,6 +203,9 @@ describe('DesktopDialog in the FrameDialogHost', () => {
       scrim.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
     })
     expect(again).toHaveBeenCalledTimes(1)
+    expect(document.activeElement).not.toBe(anchor)
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+    act(() => root!.render(<Dialog open={false} onCancel={again} />))
     expect(document.activeElement).not.toBe(anchor)
     anchor.remove()
   })
@@ -210,131 +219,91 @@ describe('on a phone', () => {
   it('a stacked footer keeps every button at its own height', () => {
     phone()
     const el = render(
-      <Footer count={3}>
-        <button type="button">Allow</button>
-        <button type="button">Allow once</button>
-        <button type="button">Block</button>
-      </Footer>
+      <div className="zen-sheet-footer">
+        <Footer count={3}>
+          <button type="button">Allow</button>
+          <button type="button">Allow once</button>
+          <button type="button">Block</button>
+        </Footer>
+      </div>
     )
-    const footer = el.querySelector<HTMLElement>('.zen-sheet-footer')!
-    expect(footer.classList.contains('flex-col')).toBe(true)
-    // The chassis's `> * { flex: 1 }` shares a row's width between peers; in a column it would
-    // share the height, so the stack takes it off (§9.11: each button 40).
-    expect(footer.classList.contains('[&>*]:flex-none')).toBe(true)
+    const slot = el.querySelector<HTMLElement>('.zen-sheet-footer')!
+    // Three or more: one column wrapper in the chassis's slot, so the slot's `> * { flex: 1 }`
+    // widens the wrapper rather than sharing a height between the buttons (§9.11: each 40).
+    expect(slot.children).toHaveLength(1)
+    const stack = slot.firstElementChild as HTMLElement
+    expect(stack.classList.contains('flex-col')).toBe(true)
+    expect(stack.classList.contains('[&>*]:flex-none')).toBe(true)
+    expect(stack.children).toHaveLength(3)
+    // Two peers: the buttons themselves, splitting the slot's row.
     const pair = render(
-      <Footer count={2}>
-        <button type="button">Cancel</button>
-        <button type="button">Clear data</button>
-      </Footer>
+      <div className="zen-sheet-footer">
+        <Footer count={2}>
+          <button type="button">Cancel</button>
+          <button type="button">Clear data</button>
+        </Footer>
+      </div>
     ).querySelector<HTMLElement>('.zen-sheet-footer')!
-    expect(pair.classList.contains('flex-col')).toBe(false)
-    expect(pair.classList.contains('[&>*]:flex-none')).toBe(false)
+    expect(pair.children).toHaveLength(2)
+    expect(pair.firstElementChild?.tagName).toBe('BUTTON')
   })
 
-  it('a sheet over a sheet: one scrim, the lower receded and inert, whole again when the upper leaves', () => {
+  it('a sheet with a title opens on the 48 header; a prompt opens on a title block with its glyph first (§9.23)', () => {
     phone()
-    function Stack({ upper }: { upper: boolean }): ReactElement {
-      return (
-        <>
-          <V2Sheet
-            name="lower"
-            title="Clear browsing data"
-            handleLabel="Resize lower"
-            onDismissed={() => undefined}
-            data-testid="lower"
-          >
-            <div>rows</div>
-          </V2Sheet>
-          {upper && (
-            <V2Sheet
-              name="upper"
-              title="Time range"
-              handleLabel="Resize upper"
-              onDismissed={() => undefined}
-              data-testid="upper"
-            >
-              <div>options</div>
-            </V2Sheet>
-          )}
-        </>
-      )
-    }
-    render(<Stack upper={false} />)
-    expect(openSheetCount()).toBe(1)
-    const layers = (): NodeListOf<HTMLElement> =>
-      document.querySelectorAll<HTMLElement>('#zen-chrome-layer .zen-sheet')
-    const lower = layers()[0]!
-    expect(document.documentElement.dataset.receding).toBe('true')
-    expect(lower.hasAttribute('inert')).toBe(false)
-
-    act(() => root!.render(<Stack upper />))
-    expect(openSheetCount()).toBe(2)
-    const [, upper] = [...layers()]
-    expect(upper).toBeDefined()
-    // The upper draws the stack's scrim itself: no override thins it.
-    const scrims = document.querySelectorAll<HTMLElement>('#zen-chrome-layer .zen-sheet-scrim')
-    expect(scrims).toHaveLength(2)
-    expect(upper!.closest('.fixed')!.className).not.toContain('bg-transparent')
-    // With no layout to measure, the motion reads the sheet as fully present at once: the lower
-    // is receded, dimmed out and inert from the upper's first frame, and the page's recede is
-    // left where the lower put it.
-    expect(lower.style.getPropertyValue('--zen-sheet-recede')).toBe('1.0000')
-    expect(lower.hasAttribute('inert')).toBe(true)
-    expect(scrims[0]!.style.opacity).toBe('0.0000')
-    expect(scrims[1]!.style.opacity).toBe('1.0000')
-    expect(document.documentElement.dataset.receding).toBe('true')
-
-    act(() => root!.render(<Stack upper={false} />))
-    expect(openSheetCount()).toBe(1)
-    expect(lower.hasAttribute('inert')).toBe(false)
-    expect(lower.style.getPropertyValue('--zen-sheet-recede')).toBe('')
-    expect(
-      document.querySelector<HTMLElement>('#zen-chrome-layer .zen-sheet-scrim')!.style.opacity
-    ).toBe('1.0000')
-    expect(document.documentElement.dataset.receding).toBe('true')
-
-    act(() => root!.unmount())
-    expect(openSheetCount()).toBe(0)
-    expect(document.documentElement.dataset.receding).toBeUndefined()
-  })
-
-  it('a picker without a description opens on the 48 header, with one on a title block', () => {
-    phone()
-    const options = [
-      { value: 'hour', label: 'Last hour' },
-      { value: 'all', label: 'All time' }
-    ]
     render(
-      <MenulistSheet
+      <V2Sheet
         name="range"
         title="Time range"
-        value="hour"
-        options={options}
-        onPick={() => undefined}
+        handleLabel="Resize"
         onDismissed={() => undefined}
-      />
+        data-testid="range"
+      >
+        <div>options</div>
+      </V2Sheet>
     )
-    const header = document.querySelector<HTMLElement>('.zen-sheet-header .zen-sheet-title')
+    const header = document.querySelector<HTMLElement>(
+      '#zen-chrome-layer .zen-sheet-header .zen-sheet-title'
+    )
     expect(header?.textContent).toBe('Time range')
     expect(document.querySelector('.zen-sheet-title-block')).toBeNull()
-    expect(document.querySelector('[role="radiogroup"]')?.getAttribute('aria-labelledby')).toBe(
-      header!.id
-    )
+    expect(document.querySelector('[data-testid="range"]')?.textContent).toBe('options')
     act(() => root!.unmount())
 
     render(
-      <MenulistSheet
-        name="camera"
-        title="Camera"
-        description="What sites may do with the camera"
-        value="hour"
-        options={options}
-        onPick={() => undefined}
+      <V2Sheet
+        name="prompt"
+        handleLabel="Resize"
         onDismissed={() => undefined}
-      />
+        titleBlock={
+          <TitleBlock
+            id="t"
+            glyph={<svg data-glyph="camera" />}
+            title="Allow example.com to use your camera?"
+            description="Your choice is remembered for this site."
+          />
+        }
+        footer={
+          <Footer count={2}>
+            <button type="button">Block</button>
+            <button type="button">Allow</button>
+          </Footer>
+        }
+      >
+        <div />
+      </V2Sheet>
     )
     expect(document.querySelector('.zen-sheet-header')).toBeNull()
-    expect(document.querySelector('.zen-sheet-title-block h2')?.textContent).toBe('Camera')
+    const block = document.querySelector<HTMLElement>('.zen-sheet-title-block')!
+    // The chassis's title block: the glyph on the title's start inside the heading, the
+    // description under both (no fill tile, nothing but the block's own padding).
+    const heading = block.querySelector('h2')!
+    expect(heading.firstElementChild?.querySelector('[data-glyph="camera"]')).not.toBeNull()
+    expect(heading.textContent).toBe('Allow example.com to use your camera?')
+    expect(block.querySelector('p')?.textContent).toBe('Your choice is remembered for this site.')
+    // The footer is the chassis's, outside the scrolling body.
+    const footer = document.querySelector<HTMLElement>('#zen-chrome-layer .zen-sheet-footer')!
+    expect(footer.closest('.zen-sheet-body')).toBeNull()
+    expect(footer.textContent).toBe('BlockAllow')
   })
 })
 
@@ -353,6 +322,60 @@ describe('DesktopPopover focus', () => {
       </DesktopPopover>
     )
     expect(el.ownerDocument.activeElement?.textContent).toBe('Connection')
+  })
+
+  it('with focus="none" leaves the focus with the page, and "not now" collapses it into its chip', () => {
+    vi.useFakeTimers()
+    try {
+      const page = document.createElement('button')
+      page.textContent = 'page'
+      document.body.appendChild(page)
+      page.focus()
+      const onClosed = vi.fn()
+      function Prompt({ closing }: { closing: boolean }): ReactElement {
+        return (
+          <DesktopPopover
+            anchor={anchor}
+            labelledBy="t"
+            focus="none"
+            closing={closing}
+            collapse
+            onDismiss={() => undefined}
+            onClosed={onClosed}
+            data-testid="prompt"
+          >
+            {() => (
+              <>
+                <h2 id="t">Allow example.com to use your camera?</h2>
+                <button type="button">Allow</button>
+              </>
+            )}
+          </DesktopPopover>
+        )
+      }
+      render(<Prompt closing={false} />)
+      const panel = document.querySelector<HTMLElement>('[role="dialog"]')!
+      // A page event raised it beside a chip: nothing in it is armed, the page keeps the focus.
+      expect(document.activeElement).toBe(page)
+      expect(panel.hasAttribute('data-collapsing')).toBe(false)
+
+      act(() => root!.render(<Prompt closing />))
+      // The reversed pop: the transition CSS draws it toward the anchor, fading (§9.20, 180 ms).
+      expect(panel.getAttribute('data-collapsing')).toBe('true')
+      expect(panel.style.opacity).toBe('0')
+      expect(panel.style.transform).toContain('scale(0.94)')
+      expect(panel.style.transition).toContain('180ms')
+      expect(onClosed).not.toHaveBeenCalled()
+      act(() => {
+        panel.dispatchEvent(new Event('transitionend'))
+      })
+      expect(onClosed).toHaveBeenCalledTimes(1)
+      // The page keeps the focus throughout: a popover that took none hands none back.
+      expect(document.activeElement).toBe(page)
+      page.remove()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('with focus="container" holds the panel itself, and Escape hands focus back to the opener', () => {
@@ -387,7 +410,8 @@ describe('DesktopPopover focus', () => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     })
     expect(onDismiss).toHaveBeenCalledTimes(1)
-    // The opener, not the panel the hook saw holding focus, gets it back.
+    // The owner answers the dismissal and the popover leaves: the opener gets the focus back.
+    act(() => root!.unmount())
     expect(document.activeElement).toBe(opener)
     opener.remove()
   })
@@ -453,7 +477,7 @@ describe('DesktopPopover light dismiss', () => {
     outside.remove()
   })
 
-  it('a menulist opening inside it is its child: the popover stays up, a press in the list keeps both', () => {
+  it('a menulist opening inside it is its child: the popover stays up, a press in the list keeps both', async () => {
     const onDismiss = vi.fn()
     render(
       <DesktopPopover
@@ -479,7 +503,12 @@ describe('DesktopPopover light dismiss', () => {
       </DesktopPopover>
     )
     const trigger = document.querySelector<HTMLElement>('[aria-haspopup="listbox"]')!
-    press(trigger)
+    // The list holds its first paint until the page's capture is in place (useFloatingChrome):
+    // a few microtasks in the test, where there is no page.
+    await act(async () => {
+      press(trigger)
+      await Promise.resolve()
+    })
     const list = document.querySelector<HTMLElement>('[role="listbox"]')
     expect(list).not.toBeNull()
     expect(openPopoverCount()).toBe(2)
@@ -507,14 +536,52 @@ describe('ListRow trailing values', () => {
     expect(slot.classList.contains('shrink-0')).toBe(true)
   })
 
-  it('forwards data attributes to its root in both forms', () => {
+  it('forwards data attributes to its root in both forms; a row without a press is static (§9.34)', () => {
     const el = render(
       <>
         <ListRow label="A" onClick={() => undefined} data-safety-row="updates" />
         <ListRow label="B" data-safety-row="passwords" />
+        <ListRow
+          label="C"
+          control
+          trailing={<button type="button">Reset</button>}
+          data-site="example.com"
+        />
       </>
     )
-    expect(el.querySelector('button[data-safety-row="updates"]')).not.toBeNull()
-    expect(el.querySelector('div[data-safety-row="passwords"]')).not.toBeNull()
+    const pressable = el.querySelector('button[data-safety-row="updates"]')!
+    expect(pressable.hasAttribute('data-static')).toBe(false)
+    expect(pressable.classList.contains('zen-v2-row')).toBe(true)
+    // A fact and a row holding a control of its own are not targets: no hover or press fill.
+    expect(el.querySelector('div[data-safety-row="passwords"]')?.hasAttribute('data-static')).toBe(
+      true
+    )
+    const holder = el.querySelector<HTMLElement>('div[data-site="example.com"]')!
+    expect(holder.hasAttribute('data-static')).toBe(true)
+    expect(holder.querySelector('button')?.textContent).toBe('Reset')
+  })
+})
+
+describe('Menulist in a busy form (§9.30)', () => {
+  it('read-only keeps its value at full opacity and opens nothing', () => {
+    const el = render(
+      <Menulist
+        value="hour"
+        options={[
+          { value: 'hour', label: 'Last hour' },
+          { value: 'all', label: 'All time' }
+        ]}
+        onChange={() => undefined}
+        label="Time range"
+        readOnly
+      />
+    )
+    const trigger = el.querySelector<HTMLButtonElement>('[aria-haspopup="listbox"]')!
+    expect(trigger.disabled).toBe(false)
+    expect(trigger.getAttribute('aria-readonly')).toBe('true')
+    expect(trigger.textContent).toBe('Last hour')
+    press(trigger)
+    expect(document.querySelector('[role="listbox"]')).toBeNull()
+    expect(openPopoverCount()).toBe(0)
   })
 })

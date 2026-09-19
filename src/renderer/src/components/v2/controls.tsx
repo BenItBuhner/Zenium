@@ -8,10 +8,11 @@ import { cn } from '@renderer/lib/utils'
  * the `zen-v2-` class prefix gives every control the shared focus ring. Shipped surfaces keep the
  * v1 primitives until the proof mock is approved; surfaces still in development build on these.
  *
- * One definition per control: the button is the `.zen-v2-button` rule and the checkbox, radio,
- * field and textarea are the `.zen-v2-check`, `.zen-v2-radio`, `.zen-v2-field` and
- * `.zen-v2-textarea` rules in main.css; `siteControls/primitives.tsx` wraps those with their
- * labels and text metrics. Nothing here restates a control in utilities.
+ * One definition per control (§9.34): the button is the `.zen-v2-button` rule, and the checkbox,
+ * radio, field, icon button, switch and row are main's shared `.zen-v2-checkbox`, `.zen-v2-radio`,
+ * `.zen-v2-field`, `.zen-v2-icon-button`, `.zen-v2-switch` and `.zen-v2-row` rules in main.css;
+ * `siteControls/primitives.tsx` wraps those with their labels and text metrics. Nothing here
+ * restates a control in utilities.
  */
 
 /**

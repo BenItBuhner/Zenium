@@ -4,16 +4,43 @@ import {
   contentSettingId,
   contentSettingsFor,
   type ContentDefault,
+  type ContentGroup,
   type ContentSetting
 } from '@shared/contentSettings'
 import { permissionLabel } from '@shared/siteInfo'
 import type { MenulistOption } from '@renderer/components/siteControls/primitives'
 
 /**
- * The words and orderings of Settings > Site settings (`components/overlays/SiteSettingsSection`):
- * what a content type's default menulist offers and means, and how the sites with answers of
- * their own line up.
+ * The words and orderings of Settings > Site settings (the desktop pane
+ * `components/overlays/SiteSettingsSection`, the phone's `sites-*` groups of
+ * `components/siteControls/settingsRows`): what a content type's default menulist offers and
+ * means, how the catalogue's groups are headed, and how the sites with answers of their own
+ * line up.
  */
+
+/** Chrome's three groups of Site settings, in Chrome's order. */
+export const SITE_SETTINGS_GROUPS: ReadonlyArray<{
+  id: ContentGroup
+  heading: string
+  description: string
+}> = [
+  {
+    id: 'permissions',
+    heading: 'Permissions',
+    description:
+      'What sites may ask to use. A site that asked keeps your answer until you reset it.'
+  },
+  {
+    id: 'content',
+    heading: 'Content',
+    description: 'What sites may show and run without asking.'
+  },
+  {
+    id: 'additional',
+    heading: 'Additional permissions',
+    description: 'Less common capabilities, off or asked about unless a site needs them.'
+  }
+]
 
 const WORDS: Record<ContentDefault, string> = { ask: 'Ask', allow: 'Allow', deny: 'Block' }
 
