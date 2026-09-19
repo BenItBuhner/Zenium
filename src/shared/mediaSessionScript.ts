@@ -184,14 +184,14 @@ export function installMediaTracking(transport: MediaTrackingTransport): void {
     }
   })
 
+  /** An exact seek (Chrome's default handlers set `currentTime`; `fastSeek` lands on a keyframe). */
   const seek = (element: HTMLMediaElement, to: number): void => {
     const duration = Number.isFinite(element.duration) ? element.duration : Infinity
     const target = Math.max(0, Math.min(to, duration))
     try {
-      if (typeof element.fastSeek === 'function') element.fastSeek(target)
-      else element.currentTime = target
-    } catch {
       element.currentTime = target
+    } catch {
+      /* no seekable range yet (nothing loaded): the seek is dropped, as Chrome drops it */
     }
   }
 
