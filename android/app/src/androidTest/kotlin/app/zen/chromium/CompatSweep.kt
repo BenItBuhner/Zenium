@@ -488,9 +488,17 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             )
         } else {
             val sheet = popupView()
-            val opened = tabUrls().filterKeys { it !in tabsBefore }.values.toList()
+            val openedTabs = tabUrls().filterKeys { it !in tabsBefore }
+            val opened = openedTabs.values.toList()
             detail.put("openedTabs", JSONArray(opened))
             if (sheet != null) detail.put("sheetDom", json(tabEval(sheet, DOM_REPORT))).put("sheetConsole", JSONArray(consoleOf(sheet).takeLast(20)))
+            // A tab that opened and drew nothing: its document's report (scripts, readyState) and console are
+            // the evidence of why (Adblock Plus's and Ghostery's options pages stayed blank on both jobs).
+            openedTabs.entries.firstOrNull { it.value.contains(".ext.zenium.invalid/") }?.let { blank ->
+                var v: TabWebView? = null
+                instrumentation.runOnMainSync { v = host.tabs.get(blank.key) }
+                v?.let { detail.put("tabReport", json(tabEval(it, BLANK_PAGE_REPORT))).put("tabConsole", JSONArray(consoleOf(it).takeLast(20))) }
+            }
             stage(
                 entry, "options",
                 if (sheet != null || opened.isNotEmpty()) "PARTIAL" else "F",
@@ -953,6 +961,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         if (listTab != null) {
             val view = waitForView(listTab.key)
             list = pollExpr(view, "JSON.stringify({pass: document.querySelectorAll('a[href*=\"page-\"]').length >= 3, links: document.querySelectorAll('a[href*=\"page-\"]').length, text: document.body.innerText.replace(/\\s+/g,' ').trim().slice(0,200)})", 10_000)
+            // The list page drew nothing but its "..." placeholder (the 156 job): its document and console.
+            if (!list.optBoolean("pass")) extra.put("listReport", json(tabEval(view, BLANK_PAGE_REPORT))).put("listConsole", JSONArray(consoleOf(view).takeLast(20)))
         }
         SystemClock.sleep(1_000)
         val openAfter = tabUrls().values.count { fixture.containsMatchIn(it) && !it.endsWith("/page-a.html") }
@@ -1714,6 +1724,15 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             "(function(){var r=document.body?document.body.getBoundingClientRect():{width:0,height:0};var deep=function(root){var n=0;var all=root.querySelectorAll('*');for(var i=0;i<all.length;i++){n++;if(all[i].shadowRoot)n+=deep(all[i].shadowRoot)}return n};" +
                 "return JSON.stringify({text:document.body?document.body.innerText.replace(/\\s+/g,' ').trim().slice(0,200):'',els:document.body?deep(document.body):0,h:Math.round(r.height),w:Math.round(r.width),title:document.title,url:location.href," +
                 "scrollWidth:document.documentElement.scrollWidth,scrollHeight:document.documentElement.scrollHeight,innerWidth:innerWidth,innerHeight:innerHeight,readyState:document.readyState})})()"
+        /**
+         * A page that drew nothing: what it loaded (its scripts by URL and type, the stylesheets), its
+         * `readyState`, whether its `chrome` is there, the body's markup size, and the first of the body.
+         */
+        private const val BLANK_PAGE_REPORT =
+            "(function(){var s=Array.prototype.slice.call(document.scripts).map(function(x){return (x.type||'classic')+':'+(x.src?x.src.replace(location.origin,''):'inline:'+x.textContent.length)});" +
+                "var css=Array.prototype.slice.call(document.styleSheets).map(function(x){return x.href?x.href.replace(location.origin,''):'inline'});" +
+                "var c=typeof chrome==='object'&&chrome?Object.keys(chrome).sort():null;var rt=c&&chrome.runtime?{id:chrome.runtime.id,hasSendMessage:typeof chrome.runtime.sendMessage}:null;" +
+                "return JSON.stringify({readyState:document.readyState,url:location.href,title:document.title,scripts:s.slice(0,30),styleSheets:css.slice(0,15),chrome:c,runtime:rt,bodyHtml:document.body?document.body.innerHTML.length:-1,bodyStart:document.body?document.body.innerHTML.replace(/\\s+/g,' ').slice(0,300):'',hidden:document.body?document.body.hidden:null,bodyDisplay:document.body?getComputedStyle(document.body).display:null,visibility:document.visibilityState})})()"
         /** What one extension's world sees on a page: the bootstrap's statistics and its `chrome`. */
         private const val WORLD_REPORT =
             "JSON.stringify({stats: window.__zenExtStats || null, chrome: typeof chrome, runtimeId: (typeof chrome === 'object' && chrome && chrome.runtime) ? chrome.runtime.id : null})"
