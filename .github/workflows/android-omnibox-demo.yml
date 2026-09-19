@@ -26,6 +26,8 @@ concurrency:
 jobs:
   record:
     name: Omnibox demo
+    # Dispatch only: a push run here exists to enter the concurrency group and cancel the run before it.
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
       script: .github/scripts/android-gesture-demo.sh
