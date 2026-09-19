@@ -121,8 +121,14 @@ export class AndroidStoreIO implements StoreIO {
     return this.files[name] === text
   }
 
-  /** The host has the bytes on disk: the mirror follows; a copy still held for a first read is stale. */
+  /**
+   * The host has the bytes on disk: the mirror follows; a copy still held for a first read is
+   * stale, and so would be the fetched copy of a deferred document that has yet to arrive
+   * ({@link adopt} leaves a written name alone, mirrored or not).
+   */
   private remember(name: string, text: string): void {
+    this.pending.delete(name)
+    this.served.add(name)
     if (this.mirrored(name)) this.files[name] = text
     else this.handed.delete(name)
   }

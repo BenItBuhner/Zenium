@@ -206,6 +206,26 @@ describe('AndroidStoreIO', () => {
       )
     })
 
+    it('keeps what the core wrote to a folder document too, and does not hand the fetched copy out later', async () => {
+      const refreshed = FEED.replace('"A', '"B')
+      const { bridge, calls } = fakeBridge({ 'safebrowsing/phishing-database.json': FEED })
+      const io = new AndroidStoreIO(bridge, {}, manifest('safebrowsing/phishing-database.json'))
+      // The service refreshed the feed before the boot fetch of the old file landed.
+      await io.write('safebrowsing/phishing-database.json', refreshed)
+      io.adopt({ 'safebrowsing/phishing-database.json': FEED })
+      expect(io.readSync('safebrowsing/phishing-database.json')).toBe(refreshed)
+      // The same for a synchronous write.
+      io.writeSync('safebrowsing/phishing-database.json', FEED)
+      io.adopt({ 'safebrowsing/phishing-database.json': refreshed })
+      expect(io.readSync('safebrowsing/phishing-database.json')).toBe(FEED)
+      expect(calls.map((c) => c.method)).toEqual([
+        'storage.write',
+        'storage.read',
+        'storage.writeSync',
+        'storage.read'
+      ])
+    })
+
     it('boots the session store from the profile, not from first-run defaults, when the core is built before the fetch lands', () => {
       const { bridge, calls } = fakeBridge({ 'state.json': BIG_STATE, 'history.json': '{}' })
       const io = new AndroidStoreIO(bridge, { 'history.json': '{}' }, manifest('state.json'))
