@@ -6,6 +6,7 @@ import {
   dialog,
   nativeImage,
   net,
+  webContents,
   type BrowserWindow,
   type BrowserWindowConstructorOptions,
   type LoadURLOptions,
@@ -126,6 +127,20 @@ function snapshotEntry(entry: Electron.NavigationEntry): NavigationSnapshotEntry
     out.pageState = state
   }
   return out
+}
+
+/**
+ * The page or chrome of `win` that has the keyboard: the window's own contents or one of the
+ * views in it. Null when the keyboard is in no page or in another window's.
+ */
+function focusedContentsOf(win: BrowserWindow): WebContents | null {
+  const focused = webContents.getFocusedWebContents()
+  if (!focused || focused.isDestroyed()) return null
+  if (focused === win.webContents) return focused
+  const inWindow = win.contentView.children.some(
+    (child) => (child as Partial<WebContentsView>).webContents === focused
+  )
+  return inWindow ? focused : null
 }
 
 interface HostNavigation {
@@ -683,7 +698,15 @@ export class ElectronTabView implements TabView {
     this.detach()
     this.host = target
     const win = this.win
-    if (win) win.contentView.addChildView(this.view)
+    if (!win) return
+    // Adding a WebContentsView gives its page the keyboard, hidden or not (Electron 44): a tab
+    // opened in the background – a middle-clicked link, a page's `target=_blank` – would take it
+    // from the page or the chrome the user is typing in, and the shortcuts pressed next (Ctrl+1,
+    // Ctrl+W) would go to a page that is not on screen. The keyboard goes back where it was; the
+    // core focuses the page it shows on its own (`ZenWindow.focusContent`).
+    const keyboard = focusedContentsOf(win)
+    win.contentView.addChildView(this.view)
+    if (keyboard && keyboard !== this.wc && !keyboard.isDestroyed()) keyboard.focus()
   }
 
   detach(): void {
