@@ -12,6 +12,7 @@ import {
 } from '@shared/defaults'
 import { MAX_NEW_TAB_SHORTCUTS } from '@shared/newTab'
 import { DEFAULT_PAGE_ENVIRONMENT } from '@shared/pageControls'
+import { emptyPrivacyStatus, type PrivacyStatus } from '@shared/privacy'
 import { DEFAULT_SEARCH_ENGINES } from '@shared/search'
 import { emptyUpdateStatus } from '@shared/updates'
 
@@ -106,6 +107,42 @@ function tab(id: string, url: string, patch: Partial<Tab> = {}): Tab {
 const SITE = tab('site', 'https://news.example/')
 const SETTINGS = tab('settings', 'zen://settings', { openerTabId: 'site', title: 'Settings' })
 
+/** Safe Browsing with two feeds in memory, refreshed two minutes ago (#156's rows read it). */
+const SAFE_BROWSING: PrivacyStatus['safeBrowsing'] = {
+  ready: true,
+  enabled: true,
+  entries: 4895,
+  updating: false,
+  lastUpdatedAt: Date.now() - 2 * 60_000,
+  remoteLookups: false,
+  remoteErrors: 0,
+  feeds: [
+    {
+      id: 'urlhaus',
+      name: 'URLhaus',
+      homepage: 'https://urlhaus.abuse.ch/',
+      licence: 'CC0',
+      entries: 4000,
+      updatedAt: Date.now() - 2 * 60_000,
+      bundled: false,
+      updating: false,
+      lastError: null
+    },
+    {
+      id: 'phishing-database',
+      name: 'Phishing.Database',
+      homepage: 'https://phish.co.za/',
+      licence: 'MIT',
+      entries: 895,
+      updatedAt: null,
+      bundled: true,
+      updating: false,
+      lastError: null
+    }
+  ]
+}
+const PRIVACY_STATUS: PrivacyStatus = { ...emptyPrivacyStatus(), safeBrowsing: SAFE_BROWSING }
+
 function state(patch: Partial<UIState> = {}, settings: Partial<Settings> = {}): UIState {
   return {
     platform: 'android',
@@ -154,6 +191,7 @@ function state(patch: Partial<UIState> = {}, settings: Partial<Settings> = {}): 
     defaultBrowser: { isDefault: false, prompt: null },
     permissionRules: [],
     blocking: emptyBlockingStatus(),
+    privacy: emptyPrivacyStatus(),
     pageEnvironment: DEFAULT_PAGE_ENVIRONMENT,
     newTabShortcuts: [],
     newTabBackground: { image: false, canPick: false },
@@ -715,6 +753,331 @@ describe('the section model', () => {
     expect(c.patches.at(-1)).toEqual({
       passwords: { ...DEFAULT_SETTINGS.passwords, reauthGraceSeconds: 300 }
     })
+  })
+
+  it('carries #156’s protection groups in Chrome’s order: Safe Browsing, cookies, HTTPS-only, secure DNS, the signals', () => {
+    const privacy = section('privacy', state({ privacy: PRIVACY_STATUS }))
+    const ids = privacy.groups.map((g) => g.id)
+    const order = [
+      'safe-browsing',
+      'safe-browsing-feeds',
+      'tracking',
+      'cookies',
+      'cookies-related-sites',
+      'cookies-add-site',
+      'https-only',
+      'https-only-sites',
+      'secure-dns',
+      'signals'
+    ]
+    expect(order.map((id) => ids.indexOf(id))).toEqual(
+      [...order.map((id) => ids.indexOf(id))].sort((a, b) => a - b)
+    )
+    expect(ids.indexOf('safe-browsing')).toBe(0)
+    // The remembered per-site answers are the Security section's (#62), not a privacy group.
+    expect(ids).not.toContain('permissions')
+    expect(privacy.groups.every(groupShows)).toBe(true)
+    // Every protection row is one of the five families, and a family never straddles a group.
+    const families = ['safe-browsing', 'cookies', 'https-only', 'secure-dns', 'signals']
+    for (const group of privacy.groups) {
+      const family = families.find((f) => group.id === f || group.id.startsWith(`${f}-`))
+      if (!family) continue
+      for (const r of group.rows) expect(r.id, group.id).toMatch(new RegExp(`^${family}(-|:)`))
+    }
+    expect(privacy.groups.find((g) => g.id === 'safe-browsing')?.heading).toBe('Safe Browsing')
+    expect(privacy.groups.find((g) => g.id === 'signals')?.heading).toBe('Privacy signals')
+
+    // The level choice stands for the one switch; the key row never shows the key itself.
+    const level = row(privacy, 'safe-browsing-level')
+    if (level.kind !== 'value') throw new Error('not a value row')
+    expect(level.value).toBe('standard')
+    expect(level.options.map((o) => o.value)).toEqual(['standard', 'off'])
+    const key = row(privacy, 'safe-browsing-api-key')
+    if (key.kind !== 'field') throw new Error('not a field')
+    expect(key.secret).toBe(true)
+    expect(key.display).toBe('Not set · optional, adds Google Safe Browsing lookups')
+    expect(rowText(key)).not.toContain('AIza')
+    // Update feeds now runs the service; each feed is an item whose sheet refreshes it alone.
+    const update = row(privacy, 'safe-browsing-update')
+    if (update.kind !== 'action') throw new Error('not an action')
+    expect(update.description).toBe('4,895 sites across 2 feeds · Updated 2 min ago')
+    update.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('protection.updateFeeds', {})
+    const feed = row(privacy, 'safe-browsing-feed:urlhaus')
+    if (feed.kind !== 'item') throw new Error('not an item')
+    expect(feed.description).toBe('4,000 sites · 2 min ago')
+    const refresh = row(privacy, 'safe-browsing-feed:urlhaus:update')
+    if (refresh.kind !== 'action') throw new Error('not an action')
+    refresh.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('protection.updateFeeds', { id: 'urlhaus' })
+    expect(row(privacy, 'safe-browsing-feed:urlhaus:homepage')).toMatchObject({
+      kind: 'action',
+      leaves: 'external'
+    })
+
+    // Cookies: the middle mode speaks of private tabs on a host without windows.
+    const cookies = row(privacy, 'cookies-mode')
+    if (cookies.kind !== 'value') throw new Error('not a value row')
+    expect(cookies.options.map((o) => o.label)).toEqual([
+      'Allow third-party cookies',
+      'Block third-party cookies in private tabs',
+      'Block third-party cookies'
+    ])
+    expect(privacy.groups.find((g) => g.id === 'cookies-related-sites')?.empty).toBe(
+      'No related sites yet'
+    )
+    expect(row(privacy, 'cookies-add-site')).toMatchObject({ kind: 'action', disabled: false })
+
+    // HTTPS-only: the three modes with the shared words; no site allowed over http yet.
+    const https = row(privacy, 'https-only-mode')
+    if (https.kind !== 'value') throw new Error('not a value row')
+    expect(https.options.map((o) => o.value)).toEqual(['off', 'ask', 'always'])
+    expect(https.sheetDescription).toContain('over https first')
+    expect(privacy.groups.find((g) => g.id === 'https-only-sites')?.empty).toBe(
+      'No sites allowed over http yet'
+    )
+
+    // Android has no resolver of its own: one row opens the system's Private DNS screen.
+    expect(privacy.groups.find((g) => g.id === 'secure-dns')?.rows.map((r) => r.id)).toEqual([
+      'secure-dns-private-dns'
+    ])
+    const privateDns = row(privacy, 'secure-dns-private-dns')
+    if (privateDns.kind !== 'action') throw new Error('not an action')
+    expect(privateDns.leaves).toBe('external')
+    privateDns.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('protection.openPrivateDnsSettings', undefined)
+
+    expect(row(privacy, 'signals-gpc').kind).toBe('switch')
+    expect(row(privacy, 'signals-dnt').kind).toBe('switch')
+  })
+
+  it('#156’s rows patch settings.privacy on top of what is there, and run the protection commands', async () => {
+    const c = context(state({ privacy: PRIVACY_STATUS }))
+    const privacy = buildSection(
+      PAGE.sections.find((x) => x.id === 'privacy')!,
+      c.ctx
+    )
+    const level = row(privacy, 'safe-browsing-level')
+    if (level.kind !== 'value') throw new Error('not a value row')
+    level.onChange('off')
+    const https = row(privacy, 'https-only-mode')
+    if (https.kind !== 'value') throw new Error('not a value row')
+    https.onChange('always')
+    const cookies = row(privacy, 'cookies-mode')
+    if (cookies.kind !== 'value') throw new Error('not a value row')
+    cookies.onChange('block')
+    const gpc = row(privacy, 'signals-gpc')
+    if (gpc.kind !== 'switch') throw new Error('not a switch')
+    gpc.onChange(true)
+    const base = DEFAULT_SETTINGS.privacy
+    expect(c.patches).toEqual([
+      { privacy: { ...base, safeBrowsingEnabled: false } },
+      { privacy: { ...base, httpsOnly: 'always' } },
+      { privacy: { ...base, thirdPartyCookies: 'block' } },
+      { privacy: { ...base, gpc: true } }
+    ])
+
+    // The key field is a §9.30 busy form: a malformed key is refused at once, a well-formed one
+    // is tried against the API and kept only when Google takes it; clearing it needs no check.
+    const key = row(privacy, 'safe-browsing-api-key')
+    if (key.kind !== 'field') throw new Error('not a field')
+    expect(key.onCommit('not a key!')).toBe(
+      'A key is letters, digits, dashes and underscores, up to 128 of them'
+    )
+    invoke.mockResolvedValueOnce({ ok: false, problem: 'Google rejected this key' } as never)
+    const refused = key.onCommit('AIzaSyBad')
+    expect(refused).toBeInstanceOf(Promise)
+    await expect(refused).resolves.toBe('Google rejected this key')
+    expect(invoke).toHaveBeenCalledWith('protection.checkApiKey', { key: 'AIzaSyBad' })
+    expect(c.patches.length).toBe(4)
+    invoke.mockResolvedValueOnce({ ok: true } as never)
+    await expect(key.onCommit(' AIzaSyGood ')).resolves.toBeUndefined()
+    expect(c.patches.at(-1)).toEqual({ privacy: { ...base, safeBrowsingApiKey: 'AIzaSyGood' } })
+    // The value as stored is no change; clearing a stored key needs no check.
+    expect(key.onCommit('')).toBeUndefined()
+    expect(c.patches.length).toBe(5)
+    const keyed = context(
+      state({ privacy: PRIVACY_STATUS }, { privacy: { ...base, safeBrowsingApiKey: 'AIzaSyOld' } })
+    )
+    const withKey = buildSection(
+      PAGE.sections.find((x) => x.id === 'privacy')!,
+      keyed.ctx
+    )
+    const stored = row(withKey, 'safe-browsing-api-key')
+    if (stored.kind !== 'field') throw new Error('not a field')
+    expect(stored.display).toBe('Set · lookups start with the next page you open')
+    expect(stored.onCommit('')).toBeUndefined()
+    expect(keyed.patches).toEqual([{ privacy: { ...base, safeBrowsingApiKey: '' } }])
+    expect(invoke).toHaveBeenCalledTimes(2)
+
+    // The feed rows and the key wait at .4 while Safe Browsing is off; the level stays live.
+    const off = buildSection(
+      PAGE.sections.find((x) => x.id === 'privacy')!,
+      context(
+        state(
+          { privacy: { ...PRIVACY_STATUS, safeBrowsing: { ...SAFE_BROWSING, enabled: false } } },
+          { privacy: { ...base, safeBrowsingEnabled: false } }
+        )
+      ).ctx
+    )
+    expect(row(off, 'safe-browsing-level')).toMatchObject({ value: 'off' })
+    expect(row(off, 'safe-browsing-level').disabled).toBeFalsy()
+    expect(row(off, 'safe-browsing-api-key').disabled).toBe(true)
+    expect(row(off, 'safe-browsing-update').disabled).toBe(true)
+    expect(row(off, 'safe-browsing-feed:urlhaus').disabled).toBe(true)
+
+    // Related sites: each an item whose sheet removes it; the list waits while cookies are allowed.
+    const listed = context(
+      state(
+        { privacy: PRIVACY_STATUS },
+        {
+          privacy: {
+            ...base,
+            thirdPartyCookies: 'block',
+            thirdPartyCookieExceptions: ['accounts.example', 'login.example']
+          }
+        }
+      )
+    )
+    const withSites = buildSection(
+      PAGE.sections.find((x) => x.id === 'privacy')!,
+      listed.ctx
+    )
+    expect(
+      withSites.groups.find((g) => g.id === 'cookies-related-sites')?.rows.map((r) => r.id)
+    ).toEqual(['cookies-site:accounts.example', 'cookies-site:login.example'])
+    const remove = row(withSites, 'cookies-site:accounts.example:remove')
+    if (remove.kind !== 'action') throw new Error('not an action')
+    remove.onPress?.()
+    expect(listed.patches).toEqual([
+      {
+        privacy: {
+          ...base,
+          thirdPartyCookies: 'block',
+          thirdPartyCookieExceptions: ['login.example']
+        }
+      }
+    ])
+    const allowed = buildSection(
+      PAGE.sections.find((x) => x.id === 'privacy')!,
+      context(
+        state(
+          { privacy: PRIVACY_STATUS },
+          {
+            privacy: {
+              ...base,
+              thirdPartyCookies: 'allow',
+              thirdPartyCookieExceptions: ['a.example']
+            }
+          }
+        )
+      ).ctx
+    )
+    expect(row(allowed, 'cookies-site:a.example').disabled).toBe(true)
+    expect(row(allowed, 'cookies-add-site').disabled).toBe(true)
+
+    // Sites allowed over http: stored ones forget through the permission, session ones through
+    // the service; a site in both lists is one row.
+    const plaintext = buildSection(
+      PAGE.sections.find((x) => x.id === 'privacy')!,
+      context(
+        state({
+          privacy: {
+            ...PRIVACY_STATUS,
+            httpsOnlyExceptions: ['old.example'],
+            httpsOnlySessionExceptions: ['old.example', 'today.example']
+          }
+        })
+      ).ctx
+    )
+    expect(
+      plaintext.groups.find((g) => g.id === 'https-only-sites')?.rows.map((r) => r.id)
+    ).toEqual(['https-only-site:old.example', 'https-only-session:today.example'])
+    const forget = row(plaintext, 'https-only-site:old.example:forget')
+    if (forget.kind !== 'action') throw new Error('not an action')
+    forget.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('permissions.set', {
+      origin: 'http://old.example',
+      permission: 'https-only',
+      decision: null
+    })
+    const forgetSession = row(plaintext, 'https-only-session:today.example:forget')
+    if (forgetSession.kind !== 'action') throw new Error('not an action')
+    forgetSession.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('protection.forgetPlaintext', { host: 'today.example' })
+  })
+
+  it('#156’s secure DNS rows on a host with a resolver: the switch, one resolver choice, the custom field as a busy form', async () => {
+    const caps = { ...ANDROID, secureDns: true, windows: true }
+    const c = context(
+      state({ platform: 'linux', capabilities: caps, privacy: PRIVACY_STATUS } as Partial<UIState>)
+    )
+    const privacy = buildSection(
+      PAGE.sections.find((x) => x.id === 'privacy')!,
+      c.ctx
+    )
+    expect(findRow(privacy.groups, 'secure-dns-private-dns')).toBeNull()
+    expect(privacy.groups.find((g) => g.id === 'secure-dns')?.rows.map((r) => r.id)).toEqual([
+      'secure-dns-enabled',
+      'secure-dns-resolver'
+    ])
+    const base = DEFAULT_SETTINGS.privacy
+    const enabled = row(privacy, 'secure-dns-enabled')
+    if (enabled.kind !== 'switch') throw new Error('not a switch')
+    expect(enabled.checked).toBe(base.secureDnsMode !== 'off')
+    enabled.onChange(false)
+    expect(c.patches).toEqual([{ privacy: { ...base, secureDnsMode: 'off' } }])
+    const resolver = row(privacy, 'secure-dns-resolver')
+    if (resolver.kind !== 'value') throw new Error('not a value row')
+    expect(resolver.options[0]).toMatchObject({ value: 'automatic' })
+    expect(resolver.options.at(-1)).toMatchObject({ value: 'custom', label: 'Custom resolver' })
+    resolver.onChange('custom')
+    expect(c.patches.at(-1)).toEqual({
+      privacy: { ...base, secureDnsMode: 'provider', secureDnsProvider: 'custom' }
+    })
+    // The middle cookie mode speaks of private windows here.
+    const cookies = row(privacy, 'cookies-mode')
+    if (cookies.kind !== 'value') throw new Error('not a value row')
+    expect(cookies.options[1]?.label).toBe('Block third-party cookies in private windows')
+
+    // With the custom entry picked the field appears: refused at once for a non-https address,
+    // asked one question for a well-formed one, kept when the resolver answers.
+    const custom = context(
+      state(
+        { platform: 'linux', capabilities: caps, privacy: PRIVACY_STATUS } as Partial<UIState>,
+        {
+          privacy: { ...base, secureDnsMode: 'provider', secureDnsProvider: 'custom' }
+        }
+      )
+    )
+    const withField = buildSection(
+      PAGE.sections.find((x) => x.id === 'privacy')!,
+      custom.ctx
+    )
+    const field = row(withField, 'secure-dns-custom')
+    if (field.kind !== 'field') throw new Error('not a field')
+    expect(field.display).toBe('Not set')
+    expect(field.onCommit('http://dns.example/dns-query')).toBe(
+      'The address must start with https://'
+    )
+    invoke.mockResolvedValueOnce({ ok: false, problem: 'No answer' } as never)
+    await expect(field.onCommit('https://dns.example/dns-query')).resolves.toBe('No answer')
+    expect(invoke).toHaveBeenCalledWith('protection.checkResolver', {
+      url: 'https://dns.example/dns-query'
+    })
+    expect(custom.patches).toEqual([])
+    invoke.mockResolvedValueOnce({ ok: true } as never)
+    await expect(field.onCommit('https://dns.example/dns-query')).resolves.toBeUndefined()
+    expect(custom.patches).toEqual([
+      {
+        privacy: {
+          ...base,
+          secureDnsMode: 'provider',
+          secureDnsProvider: 'custom',
+          secureDnsCustomUrl: 'https://dns.example/dns-query'
+        }
+      }
+    ])
   })
 
   it('orders Look and Feel identity, chrome, page behaviour, Glance (design lead, #134)', () => {

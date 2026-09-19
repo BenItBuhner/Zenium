@@ -79,6 +79,13 @@ import {
   ZoomBlock
 } from './blocks'
 import { choice, type RowGroup, type SectionModel, type SettingsRow } from './model'
+import {
+  cookiesGroups,
+  httpsOnlyGroups,
+  safeBrowsingGroups,
+  secureDnsGroups,
+  signalsGroups
+} from './protectionRows'
 
 /**
  * The phone Settings sections as data: one builder per category turns the browser state into
@@ -1008,9 +1015,14 @@ function downloadsSection({ state, set }: SectionContext): RowGroup[] {
 }
 
 // ---------------------------------------------------------------------------
-// Privacy and Security (ad and tracker blocking; the remembered per-site answers are Security's)
+// Privacy and Security (ad and tracker blocking and the protection groups of
+// `protectionRows.tsx`; the remembered per-site answers are Security's)
 // ---------------------------------------------------------------------------
 
+/**
+ * Groups in Chrome's Privacy and security order: Safe Browsing, tracking protection, cookies,
+ * HTTPS-only mode, secure DNS, the privacy signals (site permissions sit in Security, #62).
+ */
 function privacySection({ state, set }: SectionContext): RowGroup[] {
   const b = state.settings.blocking
   const status = state.blocking
@@ -1021,6 +1033,7 @@ function privacySection({ state, set }: SectionContext): RowGroup[] {
       ? `${enabledLists.length} lists · updated ${relativeTime(status.lastUpdatedAt)}`
       : `${enabledLists.length} lists`
   return [
+    ...safeBrowsingGroups(state, set),
     {
       id: 'tracking',
       heading: 'Tracking protection',
@@ -1080,7 +1093,11 @@ function privacySection({ state, set }: SectionContext): RowGroup[] {
         ])
       ),
       empty: 'No exceptions yet'
-    }
+    },
+    ...cookiesGroups(state, set),
+    ...httpsOnlyGroups(state, set),
+    ...secureDnsGroups(state, set),
+    ...signalsGroups(state, set)
   ]
 }
 

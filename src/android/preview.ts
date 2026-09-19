@@ -432,6 +432,7 @@ export function createPreviewBridge(): NativeBridge {
       else console.info('[zen preview] share', data)
     },
     'app.openAppLinkSettings': () => console.info('[zen preview] open-by-default settings'),
+    'app.openPrivateDnsSettings': () => console.info('[zen preview] private DNS settings'),
     'externalProtocol.respond': ({ requestId, allow }) =>
       console.info('[zen preview] external protocol', requestId, allow ? 'allowed' : 'refused'),
     // The browser role, remembered per preview profile; the "role dialog" is a confirm().

@@ -62,7 +62,11 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // neither has rules of its own.
   [' * The first run on a phone', ' * Fading scroll edges'],
   // Find in page, zoom and fullscreen: the docked find bar (components/content/FindBar.tsx).
-  ['.zen-find-bar {', '/*\n * Settings → Default Browser and the'],
+  ['.zen-find-bar {', '/*\n * Settings > Privacy and Security'],
+  // Settings > Privacy and Security: the pane's shared vocabulary and controls (#115's
+  // PrivacySection.tsx) and the protection groups (components/overlays/ProtectionSection.tsx,
+  // overlays/protection/*).
+  ['.zen-privacy {', '/*\n * Settings → Default Browser'],
   // The phone page zoom sheet, docked under the live page, and its own instance of the stepper
   // (components/content/ZoomSheet.tsx, components/ZoomStepper.tsx). The last block before the
   // reduced-motion rules, so it is cut out before the Default Browser range that ends there.

@@ -126,7 +126,8 @@ export async function bootAndroid(): Promise<{ browser: Browser; api: ZenApi; pr
 
   // Chrome inputs (URL bar, rename, settings) are focused programmatically after an async
   // snapshot, i.e. outside the tap's user-gesture window, so the WebView would not raise the
-  // keyboard on its own; and a busy form's field turned editable again gets it back (keyboard.ts).
+  // keyboard on its own; only fields count (a radio or a checkbox taking focus wants none), and
+  // a busy form's field turned editable again gets it back (keyboard.ts).
   if (!preview) installKeyboardPolicy((message) => bridge.send(message))
 
   const api: ZenApi = {

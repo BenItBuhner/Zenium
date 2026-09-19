@@ -49,6 +49,7 @@ import {
   SitesGroups
 } from './PageControlsSettings'
 import { PasswordsSection } from './PasswordsSection'
+import { ProtectionSection } from './ProtectionSection'
 import { ResourcesSection } from './ResourcesSection'
 import { SecuritySection } from './SecuritySection'
 import { Choice, Group, MENULIST_HEIGHT, Row, SWITCH_HEIGHT, Segmented } from './SettingsPrimitives'
@@ -65,6 +66,7 @@ export type SettingsSection =
   | 'downloads'
   | 'resources'
   | 'search'
+  | 'privacy'
   | 'spaces'
   | 'containers'
   | 'boosts'
@@ -88,6 +90,7 @@ const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
   { id: 'downloads', label: 'Downloads' },
   { id: 'resources', label: 'Resources' },
   { id: 'search', label: 'Search' },
+  { id: 'privacy', label: 'Privacy and Security' },
   { id: 'spaces', label: 'Space Routing' },
   { id: 'containers', label: 'Containers' },
   { id: 'boosts', label: 'Boosts' },
@@ -218,6 +221,7 @@ export function SettingsBody({
           {section === 'downloads' && <DownloadsSection state={state} set={set} />}
           {section === 'resources' && <ResourcesSection state={state} set={set} />}
           {section === 'search' && <SearchSection state={state} set={set} />}
+          {section === 'privacy' && <ProtectionSection state={state} set={set} />}
           {section === 'spaces' && <SpaceRoutingSection state={state} set={set} />}
           {section === 'containers' && <ContainersSection state={state} />}
           {section === 'boosts' && <BoostsSection state={state} />}

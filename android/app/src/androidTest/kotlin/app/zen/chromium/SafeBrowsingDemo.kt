@@ -1,8 +1,10 @@
 package app.zen.chromium
 
+import android.os.Bundle
 import android.os.SystemClock
 import android.util.Base64
 import android.util.Log
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import app.zen.chromium.blocking.Blocking
 import app.zen.chromium.blocking.Decision
@@ -16,6 +18,7 @@ import org.junit.runner.RunWith
 import java.io.BufferedInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.security.MessageDigest
@@ -27,12 +30,27 @@ import java.util.concurrent.TimeUnit
  * plaintext site fails (continue for the session, always allow, off), Safe Browsing's warning
  * page for a listed host (details, back to safety, proceed anyway), third-party cookies blocked
  * and allowed by the exception list and blocked in a private tab, and the GPC / DNT signals on
- * the request and on `navigator`. Secure DNS has no scene: Android resolves through the system.
+ * the request and on `navigator`; then the Settings tab's Privacy and Security section, its
+ * protection rows pressed and their sheets opened. Secure DNS has no engine scene: Android
+ * resolves through the system, and its row leaves for the system's Private DNS screen.
  *
- * The pages come from a loopback HTTP server inside this process, answering as several sites:
- * every `127.0.0.x` address is its own site to the WebView, so the demo needs no DNS. The
- * server answers a TLS handshake with plain HTTP, which is how the upgrade of a plaintext site
- * fails here. Safe Browsing's hit on `127.0.0.5` comes from a feed document seeded next to the
+ * Every sheet flow of the Settings scenes puts a real finger on a control inside the sheet and
+ * asserts what the control did (the rule in [DemoHarness], the audit after #194): the picker
+ * sheets' options against the core's setting they flip, the key sheet's Save against the
+ * validation line a malformed key earns, the form sheet's Add site and the item sheet's Remove
+ * against the exception list. A touch that went in and did not take is a touch fault the run
+ * fails on once the recording is done ([touchRowExpecting]). The rows of the pane itself, and
+ * a control the soft keyboard may cover, keep the accessibility tree's click, said so at the
+ * step.
+ *
+ * The pages come from a loopback HTTP server inside this process, answering as several sites.
+ * HTTPS-only mode leaves loopback and every other non-unique host alone (as Chrome's HTTPS-First
+ * does), so the sites it has to upgrade are `127.0.0.x.nip.io` names: the nip.io wildcard DNS
+ * answers each with the address in its name, the server answers by `Host`, and every name is a
+ * site of its own (`nip.io` is a public suffix to both engines). The server answers a TLS
+ * handshake with plain HTTP, which is how the upgrade of a plaintext site fails here. The
+ * tracker frame and the phishing host stay bare `127.0.0.x` addresses (each its own site to the
+ * WebView): Safe Browsing's hit on `127.0.0.5` comes from a feed document seeded next to the
  * bundled ones (the Kotlin guard loads every document under `safebrowsing/`; the core ignores
  * ids it does not know), `malware.zenium.test` from the reserved test hosts. Notes go to
  * `<shotPrefix>-notes.txt` next to the screenshots. See [DemoHarness] for the plumbing.
@@ -42,6 +60,16 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
     override val tag = "SafeBrowsingDemo"
     private lateinit var server: PrivacyDemoServer
     private lateinit var notes: File
+
+    /**
+     * The plaintext sites of the HTTPS-only scenes: the `nip.io` names once [chooseSites] has
+     * seen them resolve, the bare loopback addresses otherwise – which the mode leaves alone, so
+     * the warning-page scenes are then skipped with a note rather than waited out.
+     */
+    private var demoHost = DEMO_IP
+    private var legacyHost = LEGACY_IP
+    private var plainHost = PLAIN_IP
+    private var plaintextSites = false
 
     @Test
     fun record() {
@@ -62,19 +90,22 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
         notes = File(out, "services-safebrowsing-android-notes.txt")
         notes.writeText("Zenium Android privacy demo (Safe Browsing, HTTPS-only, cookies, GPC / DNT)\n\n")
         note("demo server: ${server.selfCheck()}")
+        chooseSites()
         val privacy = Privacy.shared(app)
         val blocking = Blocking.shared(app)
 
         // The core seeds the bundled feeds after boot and the Kotlin guard follows the files;
-        // the engine rebuilds its snapshot from the rule index the core writes. Wait for both.
+        // the engine rebuilds its snapshot from the rule index the core writes. Wait for both
+        // (the engine's upgrade only where the plaintext site is one it upgrades).
         val deadline = SystemClock.uptimeMillis() + 120_000
         var lastReport = 0L
         while (SystemClock.uptimeMillis() < deadline) {
             val status = runCatching { state().getJSONObject("privacy").getJSONObject("safeBrowsing") }.getOrNull()
             val coreReady = status?.optBoolean("ready") == true && status.optInt("entries") > 0
             val guardReady = privacy.safeBrowsing.tables.lookup(PHISHING_HOST) != null
-            val upgrade = upgradeDecision("http://$DEMO_HOST:$PORT/")
-            val engineReady = upgrade.action == Decision.Action.UPGRADE && upgrade.matchedSet == Blocking.HTTPS_ONLY_SET
+            val upgrade = upgradeDecision("http://$demoHost:$PORT/")
+            val engineReady = !plaintextSites ||
+                (upgrade.action == Decision.Action.UPGRADE && upgrade.matchedSet == Blocking.HTTPS_ONLY_SET)
             if (coreReady && guardReady && engineReady) break
             if (SystemClock.uptimeMillis() - lastReport > 10_000) {
                 lastReport = SystemClock.uptimeMillis()
@@ -93,8 +124,8 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
             "[${privacy.safeBrowsing.tables.feeds.joinToString(", ") { "${it.id}(${it.threat}, ${it.table.size})" }}] " +
             "in ${privacy.safeBrowsing.lastLoadMs} ms")
         note("guard: flags=${privacy.flags.toJson()} signalHeadersByProfile=${privacy.headersSupported}")
-        val upgrade = upgradeDecision("http://$DEMO_HOST:$PORT/")
-        note("engine: http://$DEMO_HOST:$PORT/ -> ${upgrade.action} by ${upgrade.matchedSet} to ${upgrade.redirectUrl}; " +
+        val upgrade = upgradeDecision("http://$demoHost:$PORT/")
+        note("engine: http://$demoHost:$PORT/ -> ${upgrade.action} by ${upgrade.matchedSet} to ${upgrade.redirectUrl}; " +
             "${blocking.snapshot.setCount} sets, ${blocking.snapshot.filterCount} filters")
         note("settings.privacy=${state().getJSONObject("settings").getJSONObject("privacy")}")
         // The seeded tab is on the exempt loopback name: it loads over http without a question.
@@ -106,64 +137,14 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
     override fun demo() {
         val f = Finger()
 
-        // 1. HTTPS-only mode (ask, the default): the upgrade of a plaintext-only site fails and
-        //    Zenium asks before loading it over http.
-        note("\n1. HTTPS-only mode (ask): a site https cannot reach")
-        navigate("http://$DEMO_HOST:$PORT/")
-        var tab = waitForUrl("zen://error", 25_000)
-        note("  ${describeTab(tab)}")
-        shot("01-https-only-warning")
-        beat()
-
-        // 1b. Back to safety: the page before the failed upgrade (WebView's own entry for the
-        //     failed https load sits in between and is stepped over).
-        note("\n1b. Back to safety from the warning")
-        pressInterstitial(f, "Back to safety", "back", "http://$DEMO_HOST:$PORT/")
-        tab = waitForTitle("Demo site", 25_000)
-        note("  ${describeTab(tab)}")
-        shot("01b-https-only-back-to-safety")
-        beat()
-
-        // 2. The warning again, then continue to the HTTP site: allowed for this session, the
-        //    page loads over http.
-        note("\n2. Continue to HTTP site")
-        navigate("http://$DEMO_HOST:$PORT/")
-        tab = waitForUrl("zen://error", 25_000)
-        note("  ${describeTab(tab)}")
-        pressInterstitial(f, "Continue to HTTP site", "continue", "http://$DEMO_HOST:$PORT/")
-        tab = waitForTitle("Demo site", 25_000)
-        note("  ${describeTab(tab)}")
-        note("  ${describeHttpsOnly()}")
-        shot("02-https-only-continued")
-        beat()
-
-        // 3. The same site again: no question for the rest of the session.
-        note("\n3. the same site, another page: no question")
-        navigate("http://$DEMO_HOST:$PORT/headers")
-        tab = waitForTitle("Request headers", 25_000)
-        note("  ${describeTab(tab)}")
-        note("  page: ${pageText().replace('\n', '|')}")
-        beat()
-
-        // 4. Always: another plaintext site, allowed for good from the warning page.
-        note("\n4. HTTPS-only mode (always): allow a site for good")
-        setPrivacy("""{"httpsOnly":"always"}""")
-        navigate("http://$LEGACY_HOST:$PORT/")
-        tab = waitForUrl("zen://error", 25_000)
-        note("  ${describeTab(tab)}")
-        shot("03-https-only-always-warning")
-        pressInterstitial(f, "Always allow for this site", "continue-always", "http://$LEGACY_HOST:$PORT/")
-        tab = waitForTitle("Demo site", 25_000)
-        note("  ${describeTab(tab)}")
-        note("  ${describeHttpsOnly()}")
-        shot("04-https-only-always-allowed")
-        beat()
+        if (plaintextSites) httpsOnlyScenes(f)
+        else note("\n1-4. HTTPS-only mode: skipped – without DNS for the nip.io names there is no plaintext site here the mode upgrades")
 
         // 5. Off: plaintext loads as it is.
         note("\n5. HTTPS-only mode off")
         setPrivacy("""{"httpsOnly":"off"}""")
-        navigate("http://$PLAIN_HOST:$PORT/")
-        tab = waitForTitle("Demo site", 25_000)
+        navigate("http://$plainHost:$PORT/")
+        var tab = waitForTitle("Demo site", 25_000)
         note("  ${describeTab(tab)}")
         shot("05-https-only-off")
         beat()
@@ -205,7 +186,7 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
 
         // 9. Third-party cookies: block in private (the default) leaves a normal tab's frame its cookie.
         note("\n9. third-party cookies: block-private (default), normal tab")
-        navigate("http://$DEMO_HOST:$PORT/cookies")
+        navigate("http://$demoHost:$PORT/cookies")
         tab = waitForTitle("Cookies", 25_000)
         note("  ${describeTab(tab)}")
         note("  frame: ${frameReport()}")
@@ -215,7 +196,7 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
         // 10. Block all: the frame's cookie is neither sent nor readable.
         note("\n10. third-party cookies: block")
         setPrivacy("""{"thirdPartyCookies":"block"}""")
-        navigate("http://$DEMO_HOST:$PORT/cookies?block")
+        navigate("http://$demoHost:$PORT/cookies?block")
         tab = waitForTitle("Cookies", 25_000)
         note("  ${describeTab(tab)}")
         note("  frame: ${frameReport()}")
@@ -223,9 +204,9 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
         beat()
 
         // 11. The exception list names the site the user is on: its embedded sites get their cookies.
-        note("\n11. third-party cookies: block, with $DEMO_HOST on the exception list")
-        setPrivacy("""{"thirdPartyCookies":"block","thirdPartyCookieExceptions":["$DEMO_HOST"]}""")
-        navigate("http://$DEMO_HOST:$PORT/cookies?exception")
+        note("\n11. third-party cookies: block, with $demoHost on the exception list")
+        setPrivacy("""{"thirdPartyCookies":"block","thirdPartyCookieExceptions":["$demoHost"]}""")
+        navigate("http://$demoHost:$PORT/cookies?exception")
         tab = waitForTitle("Cookies", 25_000)
         note("  ${describeTab(tab)}")
         note("  frame: ${frameReport()}")
@@ -236,7 +217,7 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
         note("\n12. third-party cookies: block-private, private tab")
         setPrivacy("""{"thirdPartyCookies":"block-private","thirdPartyCookieExceptions":[]}""")
         val privateId = runCatching {
-            invoke("tab.create", """{"url":"http://$DEMO_HOST:$PORT/cookies?private","active":true,"containerId":"$PRIVATE_CONTAINER"}""").trim('"')
+            invoke("tab.create", """{"url":"http://$demoHost:$PORT/cookies?private","active":true,"containerId":"$PRIVATE_CONTAINER"}""").trim('"')
         }.getOrElse { e ->
             note("  tab.create failed: ${e.message}")
             null
@@ -254,7 +235,7 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
 
         // 13. GPC and DNT: off, then on; the request headers and what the page sees.
         note("\n13. GPC / DNT off")
-        navigate("http://$DEMO_HOST:$PORT/headers?off")
+        navigate("http://$demoHost:$PORT/headers?off")
         tab = waitForTitle("Request headers", 25_000)
         note("  ${describeTab(tab)}")
         note("  page: ${pageText().replace('\n', '|')}")
@@ -262,7 +243,7 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
         beat()
         note("\n14. GPC / DNT on")
         setPrivacy("""{"gpc":true,"dnt":true}""")
-        navigate("http://$DEMO_HOST:$PORT/headers?on")
+        navigate("http://$demoHost:$PORT/headers?on")
         tab = waitForTitle("Request headers", 25_000)
         note("  ${describeTab(tab)}")
         note("  page: ${pageText().replace('\n', '|')}")
@@ -270,9 +251,543 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
         shot("16-signals-on")
         beat()
 
+        // 15. Settings > Privacy and Security on a phone (design language v2 §10): the Settings
+        //     tab's section, every group rows under a 15/600 heading – value rows that open a
+        //     picker sheet, a field row with its sheet, action rows, switch rows – and the two
+        //     warning pages above were the v2 interstitials.
+        settingsScenes()
+
         note("\nend: ${describeSafeBrowsing(state().getJSONObject("privacy").getJSONObject("safeBrowsing"))}")
         note("done")
     }
+
+    /** Scenes 1–4: the warning page of a plaintext site the mode upgrades, answered each way. */
+    private fun httpsOnlyScenes(f: Finger) {
+        // 1. HTTPS-only mode (ask, the default): the upgrade of a plaintext-only site fails and
+        //    Zenium asks before loading it over http.
+        note("\n1. HTTPS-only mode (ask): a site https cannot reach")
+        navigate("http://$demoHost:$PORT/")
+        var tab = waitForUrl("zen://error", 25_000)
+        note("  ${describeTab(tab)}")
+        shot("01-https-only-warning")
+        beat()
+
+        // 1b. Back to safety: the page before the failed upgrade (WebView's own entry for the
+        //     failed https load sits in between and is stepped over).
+        note("\n1b. Back to safety from the warning")
+        pressInterstitial(f, "Back to safety", "back", "http://$demoHost:$PORT/")
+        tab = waitForTitle("Demo site", 25_000)
+        note("  ${describeTab(tab)}")
+        shot("01b-https-only-back-to-safety")
+        beat()
+
+        // 2. The warning again, then continue to the HTTP site: allowed for this session, the
+        //    page loads over http.
+        note("\n2. Continue to HTTP site")
+        navigate("http://$demoHost:$PORT/")
+        tab = waitForUrl("zen://error", 25_000)
+        note("  ${describeTab(tab)}")
+        pressInterstitial(f, "Continue to HTTP site", "continue", "http://$demoHost:$PORT/")
+        tab = waitForTitle("Demo site", 25_000)
+        note("  ${describeTab(tab)}")
+        note("  ${describeHttpsOnly()}")
+        shot("02-https-only-continued")
+        beat()
+
+        // 3. The same site again: no question for the rest of the session.
+        note("\n3. the same site, another page: no question")
+        navigate("http://$demoHost:$PORT/headers")
+        tab = waitForTitle("Request headers", 25_000)
+        note("  ${describeTab(tab)}")
+        note("  page: ${pageText().replace('\n', '|')}")
+        beat()
+
+        // 4. Always: another plaintext site, allowed for good from the warning page.
+        note("\n4. HTTPS-only mode (always): allow a site for good")
+        setPrivacy("""{"httpsOnly":"always"}""")
+        navigate("http://$legacyHost:$PORT/")
+        tab = waitForUrl("zen://error", 25_000)
+        note("  ${describeTab(tab)}")
+        shot("03-https-only-always-warning")
+        pressInterstitial(f, "Always allow for this site", "continue-always", "http://$legacyHost:$PORT/")
+        tab = waitForTitle("Demo site", 25_000)
+        note("  ${describeTab(tab)}")
+        note("  ${describeHttpsOnly()}")
+        shot("04-https-only-always-allowed")
+        beat()
+    }
+
+    /**
+     * Pick the plaintext sites: the `127.0.0.x.nip.io` names when the emulator's DNS answers
+     * them with the loopback address in the name (the demo server then serves them, and
+     * HTTPS-only mode – which leaves loopback itself alone – has sites to upgrade), the bare
+     * addresses otherwise, noted either way.
+     */
+    private fun chooseSites() {
+        val name = loopbackName(DEMO_IP)
+        val answer = runCatching { InetAddress.getByName(name).hostAddress }.getOrElse { "no answer (${it.javaClass.simpleName})" }
+        plaintextSites = answer == DEMO_IP
+        if (plaintextSites) {
+            demoHost = loopbackName(DEMO_IP)
+            legacyHost = loopbackName(LEGACY_IP)
+            plainHost = loopbackName(PLAIN_IP)
+            note("plaintext sites: $demoHost, $legacyHost, $plainHost ($name -> $answer; the server answers by Host)")
+        } else {
+            note("plaintext sites: $name -> $answer, so the loopback addresses stand in and HTTPS-only mode leaves them alone")
+        }
+    }
+
+    // --- Settings > Privacy and Security ----------------------------------------------------------
+
+    /**
+     * The protection rows of the Settings tab's Privacy and Security section (`protectionRows.tsx`,
+     * drawn by the tab). The rows of the pane are pressed through the accessibility tree the way
+     * the menu sheet demo picks its rows (the bounds a scrolled list reports lag behind on the
+     * emulator; a press there opens a sheet or flips a switch, and is not the claim of a sheet's
+     * touch). Inside every sheet a control is pressed by a real finger and what it did is asserted
+     * ([touchRowExpecting], the rule in [DemoHarness]); the tree's click stands in after a touch
+     * that did not take so the recording goes on, the fault failing the run at its end. Every
+     * step notes what the core's settings say afterwards; a row the tree does not carry is noted
+     * and skipped, never the end of the demo.
+     */
+    private fun settingsScenes() {
+        note("\n15. Settings > Privacy and Security (the Settings tab's section: rows under headings)")
+        setPrivacy("""{"gpc":false,"dnt":false,"httpsOnly":"ask","thirdPartyCookies":"block-private"}""")
+        if (!openPrivacySettings()) {
+            note("  (the Privacy and Security section never came up)")
+            return
+        }
+        // The tree has the section's rows before the screen does (software rendering).
+        beat()
+        shot("17-settings-security")
+        beat()
+
+        // 15a. Safe Browsing: the level through its picker sheet – no protection, then standard
+        //      again – the key's field sheet, then Update feeds now at work.
+        note("\n15a. Safe Browsing rows")
+        if (pressRow(LEVEL_LABEL)) {
+            if (waitForRow(LEVEL_OFF_LABEL, 8_000)) {
+                SystemClock.sleep(800)
+                shot("18-settings-safebrowsing-sheet")
+                // The picker sheet's injected touch (the rule in DemoHarness): No protection
+                // under a finger, and the core's setting must flip on it – a touch the scrim took
+                // closes the sheet with the level as it was.
+                if (!touchRowExpecting(LEVEL_OFF_LABEL, "safeBrowsingEnabled reads false") {
+                        privacySetting("safeBrowsingEnabled") == false
+                    }
+                ) {
+                    pressRow(LEVEL_OFF_LABEL)
+                }
+                awaitSheetGone(LEVEL_LABEL)
+                note("  safeBrowsingEnabled=${awaitPrivacySetting("safeBrowsingEnabled", false)} (No protection picked)")
+                shot("18b-settings-safebrowsing-off")
+                if (pressRow(LEVEL_LABEL) && waitForRow(LEVEL_STANDARD_LABEL, 8_000)) {
+                    SystemClock.sleep(600)
+                    // The way back is a finger too: Standard protection, and the setting flips again.
+                    if (!touchRowExpecting(LEVEL_STANDARD_LABEL, "safeBrowsingEnabled reads true") {
+                            privacySetting("safeBrowsingEnabled") == true
+                        }
+                    ) {
+                        pressRow(LEVEL_STANDARD_LABEL)
+                    }
+                    awaitSheetGone(LEVEL_LABEL)
+                }
+                note("  safeBrowsingEnabled=${awaitPrivacySetting("safeBrowsingEnabled", true)} (Standard protection picked)")
+            } else {
+                note("  (the picker sheet never showed '$LEVEL_OFF_LABEL')")
+                closeSheetIfOpen(LEVEL_LABEL)
+                note("  safeBrowsingEnabled=${privacySetting("safeBrowsingEnabled")}")
+            }
+        } else {
+            note("  (no value row '$LEVEL_LABEL')")
+        }
+        if (pressRow(API_KEY_LABEL)) {
+            if (waitFor("Save", 6_000) != null) {
+                SystemClock.sleep(800)
+                shot("18c-settings-api-key-sheet")
+                // The field sheet's injected touch (the rule in DemoHarness): a malformed key put
+                // in the field through the tree (the value is the set-up, not the claim), then
+                // Save under a finger, and the §9.12 validation line must come up for it – the
+                // §9.30 refusal, decided in the chrome without the network. A touch the scrim took
+                // closes the sheet with nothing said.
+                if (setEditable(API_KEY_LABEL, MALFORMED_KEY)) {
+                    val refused = touchRowExpecting("Save", "the validation line reads the malformed-key text") {
+                        findNode { it == API_KEY_INVALID_TEXT } != null
+                    }
+                    SystemClock.sleep(600)
+                    note("  Save with '$MALFORMED_KEY': refused=$refused, keyboard up=${imeShown()} (the refusal gives the field the focus)")
+                    shot("18d-settings-api-key-refused")
+                } else {
+                    note("  (the key's field is not in the tree; nothing typed)")
+                }
+                // Cancel: a finger first; the keyboard the refusal raised may cover the sheet's
+                // buttons on a lifted sheet the tree has not caught up with, so the tree's click
+                // stands in when the touch left the sheet up.
+                if (!touchTapLabel("Cancel") || !awaitSheetGone(API_KEY_LABEL, 4_000)) {
+                    note("  (Cancel through the tree: the touch did not close the key sheet)")
+                    if (!clickByLabel("Cancel")) back()
+                    awaitSheetGone(API_KEY_LABEL)
+                }
+            } else {
+                note("  (the key's field sheet never came up)")
+                closeSheetIfOpen(API_KEY_LABEL)
+            }
+            note("  safeBrowsingApiKey='${privacySetting("safeBrowsingApiKey")}' (the sheet cancelled, the malformed key never kept)")
+        } else {
+            note("  (no field row '$API_KEY_LABEL')")
+        }
+        showRow("Update feeds now")
+        if (pressRow("Update feeds now")) {
+            SystemClock.sleep(500)
+            var status = state().getJSONObject("privacy").getJSONObject("safeBrowsing")
+            note("  Update feeds now pressed: updating=${status.optBoolean("updating")}")
+            shot("19-settings-feeds-updating")
+            // The live feeds land before the next scene starts, so the rows read their result.
+            val deadline = SystemClock.uptimeMillis() + 30_000
+            while (status.optBoolean("updating") && SystemClock.uptimeMillis() < deadline) {
+                SystemClock.sleep(1_000)
+                status = state().getJSONObject("privacy").getJSONObject("safeBrowsing")
+            }
+            note("  after the refresh: ${describeSafeBrowsing(status)}")
+        } else {
+            note("  (no action row 'Update feeds now')")
+        }
+        beat()
+
+        // 15b. HTTPS-only mode: the value row opens the picker sheet; Always is picked from it.
+        note("\n15b. HTTPS-only mode: the value row and its picker sheet")
+        showRow("HTTPS-only mode")
+        if (pressRow("HTTPS-only mode")) {
+            val always = HTTPS_ALWAYS_LABEL
+            if (waitForRow(always, 8_000)) {
+                SystemClock.sleep(800)
+                shot("20-settings-https-only-sheet")
+                // The picker sheet's injected touch: Always under a finger, and the mode must
+                // read `always` in the core on it.
+                if (!touchRowExpecting(always, "httpsOnly reads always") { privacySetting("httpsOnly") == "always" }) {
+                    pressRow(always)
+                }
+                awaitSheetGone("HTTPS-only mode")
+                note("  httpsOnly=${awaitPrivacySetting("httpsOnly", "always")} (read once the sheet had gone)")
+            } else {
+                note("  (the picker sheet never showed '$always')")
+                closeSheetIfOpen("HTTPS-only mode")
+                note("  httpsOnly=${privacySetting("httpsOnly")}")
+            }
+            shot("21-settings-https-only-always")
+        } else {
+            note("  (no value row 'HTTPS-only mode')")
+        }
+        beat()
+
+        // 15c. The sites the warning pages above were answered for: one for the session, one for good.
+        note("\n15c. Sites allowed over http")
+        showRow("Sites allowed over http")
+        note("  ${describeHttpsOnly()}")
+        shot("22-settings-plaintext-sites")
+        beat()
+
+        // 15d. Secure DNS on Android is the system's Private DNS setting: the row leaves for it.
+        note("\n15d. Secure DNS: the Private DNS row")
+        showRow("Open Private DNS settings")
+        shot("23-settings-private-dns-row")
+        if (pressRow("Open Private DNS settings")) {
+            val left = awaitSystemWindow(10_000)
+            SystemClock.sleep(1_500)
+            note("  system window in front: $left")
+            shot("24-private-dns-system-screen")
+            back()
+            SystemClock.sleep(1_500)
+            ensureForeground()
+            SystemClock.sleep(1_500)
+            if (findNode { it == "Privacy and Security" } == null) openPrivacySettings()
+        } else {
+            note("  (no action row 'Open Private DNS settings')")
+        }
+        beat()
+
+        // 15e. Third-party cookies: the value row, the picker, block them everywhere.
+        note("\n15e. Third-party cookies: the value row and its picker sheet")
+        showRow("Third-party cookies")
+        if (pressRow("Third-party cookies")) {
+            if (waitForRow(COOKIES_BLOCK_LABEL, 8_000)) {
+                SystemClock.sleep(800)
+                shot("25-settings-cookies-sheet")
+                // The picker sheet's injected touch: Block under a finger, and the core's mode
+                // must read `block` on it.
+                if (!touchRowExpecting(COOKIES_BLOCK_LABEL, "thirdPartyCookies reads block") {
+                        privacySetting("thirdPartyCookies") == "block"
+                    }
+                ) {
+                    pressRow(COOKIES_BLOCK_LABEL)
+                }
+                awaitSheetGone("Third-party cookies")
+                note("  thirdPartyCookies=${awaitPrivacySetting("thirdPartyCookies", "block")} (read once the sheet had gone)")
+            } else {
+                note("  (the picker sheet never showed '$COOKIES_BLOCK_LABEL')")
+                closeSheetIfOpen("Third-party cookies")
+                note("  thirdPartyCookies=${privacySetting("thirdPartyCookies")}")
+            }
+        } else {
+            note("  (no value row 'Third-party cookies')")
+        }
+
+        // 15f. Related sites: Add a site opens its form sheet, a site typed and added; the new
+        //      item's sheet removes it again.
+        note("\n15f. Related sites: add and remove")
+        showRow("Add a site")
+        var added = false
+        if (pressRow("Add a site") && waitForRow("Site", 6_000)) {
+            SystemClock.sleep(800)
+            // The site goes into the field through the tree (the value is the set-up, not the
+            // claim; the chassis focuses Cancel as a form opens, so no keyboard is up).
+            val typed = setEditable("Site", RELATED_SITE)
+            if (typed) {
+                SystemClock.sleep(600)
+                shot("26-settings-add-site-sheet")
+                // The form sheet's injected touch (the rule in DemoHarness): Add site under a
+                // finger, and the site must land on the core's exception list on it.
+                added = touchRowExpecting("Add site", "thirdPartyCookieExceptions lists $RELATED_SITE") {
+                    privacySetting("thirdPartyCookieExceptions")?.toString() == RELATED_SITE_LIST
+                }
+                // After a touch that did not take, the tree's click so the recording goes on.
+                if (!added && clickByLabel("Add site", enabledOnly = true)) {
+                    added = awaitPrivacySetting("thirdPartyCookieExceptions", RELATED_SITE_LIST)?.toString() == RELATED_SITE_LIST
+                }
+            }
+            if (added) awaitSheetGone("Add a site") else closeSheetIfOpen("Add a site")
+        }
+        if (!added) {
+            note("  (the add sheet, its field or its button is not in the tree; the exception is set directly)")
+            setPrivacy("""{"thirdPartyCookieExceptions":["$RELATED_SITE"]}""")
+        }
+        note("  thirdPartyCookieExceptions=${awaitPrivacySetting("thirdPartyCookieExceptions", RELATED_SITE_LIST)}")
+        showRow(RELATED_SITE)
+        shot("26b-settings-related-sites")
+        if (pressRow(RELATED_SITE) && waitForRow("Remove $RELATED_SITE", 6_000)) {
+            SystemClock.sleep(800)
+            shot("26c-settings-related-site-sheet")
+            // The item sheet's injected touch: Remove under a finger, and the core's exception
+            // list must empty on it (the sheet leaves by itself once its item is gone).
+            if (!touchRowExpecting("Remove $RELATED_SITE", "thirdPartyCookieExceptions is empty") {
+                    privacySetting("thirdPartyCookieExceptions")?.toString() == "[]"
+                }
+            ) {
+                pressRow("Remove $RELATED_SITE")
+            }
+            awaitSheetGone(RELATED_SITE)
+            note("  removed: thirdPartyCookieExceptions=${awaitPrivacySetting("thirdPartyCookieExceptions", "[]")}")
+        } else {
+            note("  (no item '$RELATED_SITE' with a 'Remove $RELATED_SITE' action)")
+            closeSheetIfOpen(RELATED_SITE)
+        }
+        beat()
+
+        // 15g. Privacy signals: both switch rows on.
+        note("\n15g. Privacy signals")
+        showRow("Send a Global Privacy Control signal")
+        pressRow("Send a Global Privacy Control signal")
+        SystemClock.sleep(800)
+        pressRow("Send a Do Not Track request")
+        SystemClock.sleep(1_200)
+        note("  gpc=${privacySetting("gpc")} dnt=${privacySetting("dnt")}")
+        shot("27-settings-signals-on")
+        beat()
+
+        // Back to the demo's tab (the Settings tab stays, as a page tab does), the defaults back.
+        setPrivacy("""{"gpc":false,"dnt":false,"httpsOnly":"ask","thirdPartyCookies":"block-private","thirdPartyCookieExceptions":[]}""")
+        runCatching { invoke("tab.activate", """{"tabId":"tab_demo"}""") }
+        SystemClock.sleep(1_500)
+    }
+
+    /**
+     * Open the Settings tab on its Privacy and Security section, as a menu entry or a
+     * `zenium://settings/privacy` link does (`page.open`: the one Settings tab, reused); true
+     * once the section's first protection row is in the tree.
+     */
+    private fun openPrivacySettings(): Boolean {
+        invoke("page.open", """{"id":"settings","section":"privacy","openerTabId":"tab_demo"}""")
+        if (waitFor("Privacy and Security", 8_000) == null) {
+            note("  (the Settings tab did not open on Privacy and Security)")
+            return false
+        }
+        SystemClock.sleep(800)
+        return waitForRow(LEVEL_LABEL, 8_000)
+    }
+
+    /**
+     * Whether a node's words are the row labelled `label`: the label alone, or the label with the
+     * row's description run on after it (a switch, radio or value row the WebView reads as one
+     * node). A description starts a sentence, so a longer label that carries on in lowercase
+     * ("Block third-party cookies in private windows") is not taken for the shorter one.
+     */
+    private fun rowWords(label: String): (String) -> Boolean = { words ->
+        words == label || (words.startsWith(label) && words.substring(label.length).trimStart().let { rest ->
+            rest.isEmpty() || !rest.first().isLetter() || rest.first().isUpperCase()
+        })
+    }
+
+    /**
+     * Click the row that carries `label` (see [rowWords]): the node itself or a clickable within
+     * three levels above it – a row's button or its radio, never the pane behind a heading. A
+     * node the WebView reads as label and description together (a button row) is tried before
+     * a bare label, which is as often the group's heading as the row. False when no row took
+     * the click.
+     */
+    private fun pressRow(label: String): Boolean {
+        val candidates = findNodes(rowWords(label)).sortedBy { node ->
+            val words = node.text?.toString() ?: node.contentDescription?.toString()
+            if (words == label) 1 else 0
+        }
+        for (match in candidates) {
+            var node: AccessibilityNodeInfo? = match
+            var hops = 0
+            while (node != null && !node.isClickable && hops < 3) {
+                node = node.parent
+                hops++
+            }
+            if (node != null && node.isClickable && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
+        }
+        if (candidates.isNotEmpty()) note("  (a node reads '$label…' but nothing close above it is clickable)")
+        return false
+    }
+
+    /**
+     * The sheet flow's injected touch (the rule in [DemoHarness]): a real finger on the control
+     * inside the sheet that carries `label` ([rowWords]: an option or an action the WebView reads
+     * as label and description together), once its bounds hold still and inside the touchable
+     * window, then up to `timeoutMs` for `took` – what the control does, named by `effect`, read
+     * from the core's state or the tree, never "the sheet went away" – to hold. True when it held.
+     * No touch goes in when nothing on screen reads `label` within `findTimeoutMs`, or nothing of
+     * it is inside the touchable window: false, noted, and the caller reaches the state another
+     * way and says so. A touch that went in and did not take is a [touchFault] the run fails on
+     * once the recording is done, and false – the caller may still press the control through the
+     * tree so the recording goes on.
+     */
+    private fun touchRowExpecting(
+        label: String,
+        effect: String,
+        timeoutMs: Long = 6_000,
+        findTimeoutMs: Long = 8_000,
+        took: () -> Boolean
+    ): Boolean {
+        val node = awaitNode(findTimeoutMs, rowWords(label)) ?: run {
+            note("  (nothing on screen reads '$label' to touch)")
+            return false
+        }
+        val point = touchTapPoint(node) ?: run {
+            note("  (no part of '$label' is inside the touchable window; no touch went in)")
+            return false
+        }
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (took()) {
+                note("  the touch on '$label' at ${point.x.toInt()},${point.y.toInt()} took: $effect")
+                return true
+            }
+            SystemClock.sleep(150)
+        }
+        note("  TOUCH FAULT: the touch on '$label' at ${point.x.toInt()},${point.y.toInt()} did not take: not $effect within $timeoutMs ms")
+        touchFault("a touch on the sheet's '$label' did not take: not $effect within $timeoutMs ms")
+        return false
+    }
+
+    /**
+     * Wait for the sheet opened from the row `title` to have gone after a pick: a Settings sheet
+     * is up exactly while its handle button ([SHEET_HANDLE], the same on every one) is in the
+     * tree. The pick is applied at once, but the sheet slides down first, which takes seconds
+     * under the emulator's software rendering, and the store hears of the value through the
+     * bridge a moment later – so the value is polled for ([awaitPrivacySetting]) after this.
+     * True once the sheet has gone; false, noted, when it is still up after `timeoutMs`.
+     */
+    private fun awaitSheetGone(title: String, timeoutMs: Long = 15_000): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (findNode { it == SHEET_HANDLE } == null) return true
+            SystemClock.sleep(250)
+        }
+        note("  (the '$title' sheet is still up ${timeoutMs / 1_000} s after the press)")
+        return false
+    }
+
+    /**
+     * Poll the privacy setting `key` until it reads `expected` (compared as text: a flag, a word,
+     * a list) – the store hears of a pick through the bridge a moment after the sheet has gone –
+     * for up to `timeoutMs`; the value read last.
+     */
+    private fun awaitPrivacySetting(key: String, expected: Any, timeoutMs: Long = 6_000): Any? {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        var value = privacySetting(key)
+        while (value?.toString() != expected.toString() && SystemClock.uptimeMillis() < deadline) {
+            SystemClock.sleep(300)
+            value = privacySetting(key)
+        }
+        return value
+    }
+
+    /**
+     * Back out of the sheet opened from the row `title` should it still be up, and nothing when
+     * it is not; the section is reopened should back have taken it too.
+     */
+    private fun closeSheetIfOpen(title: String) {
+        if (findNode { it == SHEET_HANDLE } == null) return
+        back()
+        SystemClock.sleep(1_000)
+        if (findNode { it == "Privacy and Security" } == null) openPrivacySettings()
+    }
+
+    /** Poll for the row labelled `label` (see [rowWords]) for up to `timeoutMs`. */
+    private fun waitForRow(label: String, timeoutMs: Long): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (findNode(rowWords(label)) != null) return true
+            SystemClock.sleep(200)
+        }
+        return false
+    }
+
+    /** Scroll the row that carries `label` into view (the chrome scrolls its pane the least it has to). */
+    private fun showRow(label: String) {
+        val node = findNode(rowWords(label)) ?: run {
+            note("  (no node '$label' to scroll to)")
+            return
+        }
+        node.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.id)
+        SystemClock.sleep(1_500)
+    }
+
+    /**
+     * Put `text` into the field labelled `label` (its label element is the node before the
+     * editable one in the tree), through the accessibility tree; false when no editable node
+     * follows the label.
+     */
+    private fun setEditable(label: String, text: String): Boolean {
+        val root = ui.rootInActiveWindow ?: return false
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue.add(root)
+        var seenLabel = false
+        var visited = 0
+        while (queue.isNotEmpty() && visited < 6_000) {
+            val node = queue.removeFirst()
+            visited++
+            val words = node.text?.toString() ?: node.contentDescription?.toString()
+            if (words == label) seenLabel = true
+            if (node.isEditable && (seenLabel || words == label)) {
+                val arguments = Bundle().apply {
+                    putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+                }
+                val set = node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
+                SystemClock.sleep(900)
+                note("  field '$label' <- '$text': $set")
+                return set
+            }
+            for (i in 0 until node.childCount) node.getChild(i)?.let(queue::add)
+        }
+        return false
+    }
+
+    private fun privacySetting(key: String): Any? =
+        state().getJSONObject("settings").getJSONObject("privacy").opt(key)
 
     // --- the interstitials ----------------------------------------------------------------------
 
@@ -578,14 +1093,45 @@ class SafeBrowsingDemo : DemoHarness("safebrowsing-demo-state.json", "services-s
 
     companion object {
         private const val PORT = 18124
-        /** The site of most scenes; every `127.0.0.x` is a site of its own to the WebView. */
-        private const val DEMO_HOST = "127.0.0.2"
+        /**
+         * The addresses the server answers as; every `127.0.0.x` is a site of its own to the
+         * WebView. The plaintext sites of the HTTPS-only scenes are their `nip.io` names (see
+         * [chooseSites]); the tracker frame and the phishing host are the bare addresses.
+         */
+        private const val DEMO_IP = "127.0.0.2"
         private const val TRACKER_HOST = "127.0.0.3"
-        private const val LEGACY_HOST = "127.0.0.4"
+        private const val LEGACY_IP = "127.0.0.4"
         /** Listed by the phishing feed the demo seeds (see [seedMore]). */
         private const val PHISHING_HOST = "127.0.0.5"
-        private const val PLAIN_HOST = "127.0.0.6"
+        private const val PLAIN_IP = "127.0.0.6"
+
+        /**
+         * A public name for a loopback address: nip.io's wildcard DNS answers `<ip>.nip.io` with
+         * `<ip>`, and `nip.io` is a public suffix to both engines, so each name is its own site.
+         */
+        private fun loopbackName(ip: String): String = "$ip.nip.io"
         private const val PRIVATE_CONTAINER = "private"
+        /**
+         * The Settings tab's rows and picker options, as `PROTECTION_TEXT` (`lib/protectionUi.ts`),
+         * `HTTPS_ONLY_LABELS` and `THIRD_PARTY_COOKIE_LABELS` word them.
+         */
+        private const val LEVEL_LABEL = "Protection level"
+        private const val LEVEL_STANDARD_LABEL = "Standard protection"
+        private const val LEVEL_OFF_LABEL = "No protection"
+        private const val API_KEY_LABEL = "Google Safe Browsing API key"
+        private const val HTTPS_ALWAYS_LABEL = "Always use secure connections"
+        private const val COOKIES_BLOCK_LABEL = "Block third-party cookies"
+        /**
+         * A key the chrome refuses on its own (`isValidApiKey`: letters, digits, dashes and
+         * underscores only), and the §9.12 validation line it earns (`PROTECTION_TEXT.safeBrowsing.apiKey.invalid`).
+         */
+        private const val MALFORMED_KEY = "not a key!"
+        private const val API_KEY_INVALID_TEXT = "A key is letters, digits, dashes and underscores, up to 128 of them"
+        /** The related site the form sheet adds and the item sheet removes, and the list the core then holds. */
+        private const val RELATED_SITE = "accounts.example"
+        private const val RELATED_SITE_LIST = "[\"$RELATED_SITE\"]"
+        /** Every Settings sheet's handle button (`SettingsSheet`): in the tree exactly while a sheet is up. */
+        private const val SHEET_HANDLE = "Resize sheet"
 
         /**
          * A feed document as the core persists them (`FeedDocument` in `src/core/safebrowsing/document.ts`):
