@@ -18,6 +18,7 @@ import {
 import type { Bridge } from '../bridge'
 import {
   AndroidExtensions,
+  REQUEST_UPDATE_CHECK_THROTTLE_MS,
   UPDATE_CHECK_INTERVAL_MS,
   UPDATE_CHECK_STARTUP_DELAY_MS,
   idForUnpackedPath,
@@ -1112,6 +1113,76 @@ describe('AndroidExtensions: updates', () => {
     const h = await installed({ update: 'noupdate' })
     await Promise.all([h.ext.checkForUpdates(), h.ext.checkForUpdates()])
     expect(updateChecks(h.kt)).toHaveLength(1)
+  })
+
+  describe('runtime.requestUpdateCheck', () => {
+    it('installs the update it finds and says so with the version; the found update resets the throttle', async () => {
+      const h = await installed({ update: { crx: crx2, version: '1.1.0' } })
+      await expect(h.ext.requestUpdateCheck(ID)).resolves.toEqual({
+        status: 'update_available',
+        version: '1.1.0'
+      })
+      expect(h.ext.record(ID)?.version).toBe('1.1.0')
+      expect(h.runtime.events).toEqual([`detach ${ID}`, `attach ${ID} 1.1.0`])
+      // An extension's ask about itself is not the chrome's "checked for updates" stamp.
+      expect(h.registry().lastUpdateCheck).toBeNull()
+      expect(h.ext.updateCheck()).toEqual({ lastCheckedAt: null, checking: false })
+      expect(h.toasts).toEqual([])
+      // Straight after an update the next ask reaches the server again (Chrome resets its backoff).
+      await expect(h.ext.requestUpdateCheck(ID)).resolves.toEqual({ status: 'no_update' })
+      expect(updateChecks(h.kt)).toHaveLength(2)
+    })
+
+    it('answers no_update from the server and throttles the next ask for five hours', async () => {
+      const h = await installed({ update: 'noupdate' })
+      await expect(h.ext.requestUpdateCheck(ID)).resolves.toEqual({ status: 'no_update' })
+      expect(updateChecks(h.kt)).toHaveLength(1)
+      h.clock.now += REQUEST_UPDATE_CHECK_THROTTLE_MS - 1
+      await expect(h.ext.requestUpdateCheck(ID)).resolves.toEqual({ status: 'throttled' })
+      expect(updateChecks(h.kt)).toHaveLength(1)
+      h.clock.now += 1
+      await expect(h.ext.requestUpdateCheck(ID)).resolves.toEqual({ status: 'no_update' })
+      expect(updateChecks(h.kt)).toHaveLength(2)
+    })
+
+    it('is no_update when the server does not answer, and for an extension with nothing to update from', async () => {
+      const h = await installed({})
+      await expect(h.ext.requestUpdateCheck(ID)).resolves.toEqual({ status: 'no_update' })
+      expect(updateChecks(h.kt)).toHaveLength(1)
+      const pinned = await installed({ update: { crx: crx2, version: '1.1.0' } })
+      pinned.ext.setPinned(ID, true)
+      await expect(pinned.ext.requestUpdateCheck(ID)).resolves.toEqual({ status: 'no_update' })
+      expect(updateChecks(pinned.kt)).toEqual([])
+      expect(pinned.ext.record(ID)?.version).toBe('1.0.0')
+      await expect(pinned.ext.requestUpdateCheck('not-installed')).resolves.toEqual({
+        status: 'no_update'
+      })
+    })
+
+    it('joins an ask in flight and a registry-wide check that covers the extension: one request', async () => {
+      const h = await installed({ update: 'noupdate' })
+      const asks = await Promise.all([h.ext.requestUpdateCheck(ID), h.ext.requestUpdateCheck(ID)])
+      expect(asks).toEqual([{ status: 'no_update' }, { status: 'no_update' }])
+      expect(updateChecks(h.kt)).toHaveLength(1)
+
+      const later = await installed({ update: { crx: crx2, version: '1.1.0' } })
+      const all = later.ext.checkForUpdates()
+      await expect(later.ext.requestUpdateCheck(ID)).resolves.toEqual({
+        status: 'update_available',
+        version: '1.1.0'
+      })
+      await all
+      expect(updateChecks(later.kt)).toHaveLength(1)
+      expect(later.ext.record(ID)?.version).toBe('1.1.0')
+      // The other way round, the registry-wide check waits for the extension's own ask (no two
+      // installs of one extension side by side), then asks about everything.
+      const own = await installed({ update: 'noupdate' })
+      const ask = own.ext.requestUpdateCheck(ID)
+      await own.ext.checkForUpdates(WIN)
+      await expect(ask).resolves.toEqual({ status: 'no_update' })
+      expect(updateChecks(own.kt)).toHaveLength(2)
+      expect(own.toasts).toEqual([{ message: 'All extensions are up to date.', kind: 'info' }])
+    })
   })
 
   it('follows the schedule only while the app is in the foreground', async () => {

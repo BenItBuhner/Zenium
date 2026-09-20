@@ -54,10 +54,20 @@ class DnrRule(
     /** 0 = any, 1 = first party, 2 = third party. */
     private val domainType: Int,
     private val tabIds: Set<String>?,
-    private val excludedTabIds: Set<String>?
+    private val excludedTabIds: Set<String>?,
+    /**
+     * `responseHeaders` / `excludedResponseHeaders`: conditions on the response, which only the
+     * headers-received stage can evaluate ([EngineSnapshot.decide] with the response's headers,
+     * reached through [HeaderStage]'s relay of a document request). Null without such conditions.
+     */
+    private val responseHeaders: List<HeaderCondition>? = null,
+    private val excludedResponseHeaders: List<HeaderCondition>? = null
 ) {
     /** No `urlFilter`, `requestDomains` or `initiatorDomains`: the type conditions alone select requests. */
     private val unscoped: Boolean = pattern == null && requestDomains == null && initiatorDomains == null
+
+    /** The rule has response header conditions: [matches] is its request stage, [matchesHeaders] its header stage. */
+    val needsHeaders: Boolean = responseHeaders != null || excludedResponseHeaders != null
 
     /**
      * The rule's index in its set's [CompiledRules.rules] (resolution order, a stable sort of the
@@ -98,6 +108,13 @@ class DnrRule(
         }
         return pattern?.matches(req.url, req.urlLower, req.host, req.hostStart) ?: true
     }
+
+    /**
+     * The header stage of a [needsHeaders] rule against the response's headers (indexed by
+     * lowercase name, [HeaderCondition.index]); true for a rule without header conditions.
+     */
+    fun matchesHeaders(headers: Map<String, List<String>>): Boolean =
+        HeaderCondition.matchesStage(headers, responseHeaders, excludedResponseHeaders)
 
     /** The URL a `redirect` / `upgradeScheme` rule sends `url` to, or null when it has none. */
     fun target(url: String): String? = when (action) {
@@ -141,8 +158,6 @@ class DnrRule(
         /** [hasDomainOf] for a host given as a string (tests and one-off callers). */
         fun hasDomainOf(host: String, domains: Set<String>): Boolean = hasDomainOf(Domains.suffixesOf(host), domains)
 
-        private fun hasEntries(o: JSONObject, key: String): Boolean = (o.optJSONArray(key)?.length() ?: 0) > 0
-
         private fun strings(o: JSONObject, key: String): Set<String>? {
             val arr = o.optJSONArray(key) ?: return null
             val out = HashSet<String>(arr.length() * 2)
@@ -162,10 +177,12 @@ class DnrRule(
             val actionObj = o.optJSONObject("action") ?: return null
             val action = RuleAction.fromDnrName(actionObj.optString("type")) ?: return null
             val c = o.optJSONObject("condition") ?: JSONObject()
-            // Response header conditions need the headers-received stage the desktop engine has;
-            // `shouldInterceptRequest` decides before any response exists, so such a rule cannot be
-            // evaluated here (and evaluating it without its header condition would over-match).
-            if (hasEntries(c, "responseHeaders") || hasEntries(c, "excludedResponseHeaders")) return null
+            // Response header conditions are the headers-received stage's: `shouldInterceptRequest`
+            // decides before any response exists, so such a rule is kept apart (`needsHeaders`) and
+            // never decides at the request stage; a document request its other conditions select
+            // is relayed (`HeaderStage`) and the rule decided against the real response headers.
+            val responseHeaders = HeaderCondition.parse(c.optJSONArray("responseHeaders"))
+            val excludedResponseHeaders = HeaderCondition.parse(c.optJSONArray("excludedResponseHeaders"))
             val caseSensitive = c.optBoolean("isUrlFilterCaseSensitive", false)
             val pattern: UrlPattern? = when {
                 c.has("regexFilter") && !c.isNull("regexFilter") -> UrlPattern.regex(c.optString("regexFilter"), caseSensitive) ?: return null
@@ -199,7 +216,9 @@ class DnrRule(
                 excludedMethods = strings(c, "excludedRequestMethods"),
                 domainType = domainType,
                 tabIds = c.optJSONArray("tabIds")?.let { ints(it) },
-                excludedTabIds = c.optJSONArray("excludedTabIds")?.let { ints(it) }
+                excludedTabIds = c.optJSONArray("excludedTabIds")?.let { ints(it) },
+                responseHeaders = responseHeaders,
+                excludedResponseHeaders = excludedResponseHeaders
             )
         }
 
@@ -332,11 +351,21 @@ class Decision(
     /** Set id (or `filter-text` for list matches) and the rule id or filter that decided. */
     val matchedSet: String? = null,
     val matchedRule: Int = 0,
-    val matchedFilter: String? = null
+    val matchedFilter: String? = null,
+    /**
+     * A request-stage allow that a header-conditioned rule may still overturn once the
+     * response headers are in (`Decision.needsHeaders` in `rules.ts`): the host relays a document
+     * request so decided and asks again with the headers ([HeaderStage]).
+     */
+    val needsHeaders: Boolean = false
 ) {
     enum class Action { ALLOW, BLOCK, REDIRECT, UPGRADE }
 
     val isBlocked: Boolean get() = action == Action.BLOCK
+
+    /** This decision, marked [needsHeaders]. */
+    fun awaitingHeaders(): Decision =
+        if (needsHeaders) this else Decision(action, redirectUrl, matchedSet, matchedRule, matchedFilter, needsHeaders = true)
 
     companion object {
         val ALLOW = Decision(Action.ALLOW)

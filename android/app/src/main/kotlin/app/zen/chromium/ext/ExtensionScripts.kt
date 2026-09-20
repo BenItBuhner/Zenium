@@ -105,8 +105,17 @@ object ExtensionScripts {
     fun exec(token: String, extensionId: String, kind: String, payload: JSONObject, code: String?, funcSource: String?, argsJson: String?): String =
         execHead(token, extensionId, kind, payload) + execBody(code, funcSource, argsJson) + EXEC_TAIL
 
+    /**
+     * A document without the extension's bootstrap (one the runtime could not reach: loaded
+     * before the extension was attached, or a scheme it does not inject into) has no
+     * `__zenExtExec`; the caller hears Chrome's refusal for a page it cannot script, not
+     * `__zenExtExec is not a function`.
+     */
+    const val NO_ACCESS = "Cannot access contents of the page. Extension manifest must request permission to access the respective host."
+
     private fun execHead(token: String, extensionId: String, kind: String, payload: JSONObject): String =
-        "__zenExtExec(${JSONObject.quote(token)},${JSONObject.quote(extensionId)},${JSONObject.quote(kind)},$payload," +
+        "(typeof __zenExtExec===\"function\"?__zenExtExec:function(){throw new Error(${JSONObject.quote(NO_ACCESS)})})" +
+            "(${JSONObject.quote(token)},${JSONObject.quote(extensionId)},${JSONObject.quote(kind)},$payload," +
             "function(window,self,globalThis,chrome,browser){\n"
 
     private fun execBody(code: String?, funcSource: String?, argsJson: String?): String = when {
@@ -180,6 +189,24 @@ object ExtensionScripts {
      */
     fun lateBoot(bootstrap: String, lateConfigJson: String, debug: Boolean): String =
         documentStart(bootstrap, lateConfigJson, emptyList(), emptyMap(), debug)
+
+    /** True for a file the runtime serves as a script (`.js`, `.mjs`). */
+    fun isScriptPath(path: String): Boolean = mimeType(path) == "text/javascript"
+
+    /**
+     * A served module's text bracketed for a one-realm WebView: `globalThis.__zenExtModule(id)`
+     * shares the text's first line (line numbers, and so source maps, stay) and
+     * `__zenExtModuleEnd(id)` takes a line of its own after whatever the file ended in. While
+     * the module's body evaluates, the page's real `chrome` answers with the extension's (the
+     * bootstrap's accessor, `extensionModuleChrome.ts`); both calls are guarded, so the same
+     * text also runs where the brackets were never installed. The TypeScript twin is
+     * `wrapModuleText`; `extensionModuleChrome.test.ts` and `ExtensionScriptsTest` pin the shape.
+     */
+    fun moduleChromeWrap(text: String, extensionId: String): String {
+        val id = JSONObject.quote(extensionId)
+        return "globalThis.__zenExtModule&&globalThis.__zenExtModule($id);" + text +
+            "\n;globalThis.__zenExtModuleEnd&&globalThis.__zenExtModuleEnd($id);"
+    }
 
     /** `Content-Type` for a file inside the extension directory, by extension. */
     fun mimeType(path: String): String {

@@ -755,6 +755,13 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * of its own), its Install button is clicked from the page, and the target page then carries
      * the script's marker. `chrome.userScripts` on the phone is served without the desktop's
      * "Allow user scripts" reload, so the toggle is only set.
+     *
+     * The install is asynchronous in the manager (it stores the script, then closes its install
+     * tab), so the target is opened once the install tab has gone, or after [USERSCRIPT_INSTALL_MS]
+     * if the manager keeps it. A target page whose first document loaded before the script was
+     * in place is reloaded once inside the same deadline: the grade is about whether the runtime
+     * runs the script, not about which of the two documents came first. Both readings are kept
+     * (`target`, then `targetReload` when there was one).
      */
     private fun userscripts(row: Row, entry: JSONObject, installPage: Regex): Grade {
         coreInvoke("extension.setAllowUserScripts", JSONObject().put("id", row.id).put("allowed", true).toString())
@@ -783,19 +790,38 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             )
         )
         extra.put("click", click)
-        SystemClock.sleep(4_000)
+        val clicked = SystemClock.elapsedRealtime()
+        // The manager closes its install tab once the script is stored; that is the install landing.
+        val installTabGone = poll(USERSCRIPT_INSTALL_MS, 250) { if (installTab.key !in tabUrls()) true else null } == true
+        extra.put("installTabClosedMs", if (installTabGone) SystemClock.elapsedRealtime() - clicked else JSONObject.NULL)
+        if (!installTabGone) SystemClock.sleep(1_000)
         val bg = backgroundView(row.id)
         if (bg != null) {
             tabEval(bg, "(function(){window.__us=null;Promise.resolve().then(function(){return chrome.userScripts.getScripts()}).then(function(s){window.__us=JSON.stringify({registered:s.length})},function(e){window.__us=JSON.stringify({error:String(e&&e.message||e)})})})()")
             poll(8_000, 250) { val v = tabEval(bg, "window.__us"); if (v == "null") null else v }?.let { extra.put("userScripts", json(it)) }
         } else extra.put("userScripts", "no background view")
+        val marker = "JSON.stringify({pass: !!(document.documentElement && document.documentElement.dataset.userscript), title: document.title, " +
+            "dataset: (document.documentElement && document.documentElement.dataset.userscript) || null})"
         val target = createTab("$BASE/us-target.html")
         val targetView = waitForView(target)
-        val page = pollExpr(targetView, "JSON.stringify({pass: !!document.documentElement.dataset.userscript, title: document.title, dataset: document.documentElement.dataset.userscript || null})", 20_000)
-        extra.put("target", page).put("targetConsole", JSONArray(consoleOf(targetView).takeLast(10)))
+        val deadline = SystemClock.elapsedRealtime() + USERSCRIPT_EFFECT_MS
+        var page = pollExpr(targetView, marker, USERSCRIPT_FIRST_LOAD_MS)
+        extra.put("target", page)
+        if (!page.optBoolean("pass")) {
+            // The script may have landed after the first document loaded: one reload, same deadline.
+            tabEval(targetView, "location.reload()")
+            SystemClock.sleep(1_000)
+            page = pollExpr(targetView, marker, (deadline - SystemClock.elapsedRealtime()).coerceAtLeast(3_000))
+            extra.put("targetReload", page)
+        }
+        extra.put("targetConsole", JSONArray(consoleOf(targetView).takeLast(10)))
+        val readings = "first load ${extra.optJSONObject("target")?.toString()?.take(120)}" +
+            (extra.optJSONObject("targetReload")?.let { ", after reload ${it.toString().take(120)}" } ?: "")
         return Grade(
             if (page.optBoolean("pass")) "P" else "F",
-            "install page opened (${installTab.value.substringAfter(".ext.zenium.invalid").take(50)}), install click ${click.toString().take(120)}, userScripts: ${extra.opt("userScripts")}, target page: ${page.toString().take(160)}",
+            "install page opened (${installTab.value.substringAfter(".ext.zenium.invalid").take(50)}), install click ${click.toString().take(120)}, " +
+                "install tab ${if (installTabGone) "closed after ${extra.opt("installTabClosedMs")} ms" else "still open after ${USERSCRIPT_INSTALL_MS / 1000} s"}, " +
+                "userScripts: ${extra.opt("userScripts")}, target page: $readings",
             extra
         )
     }
@@ -1747,6 +1773,11 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val BACKGROUND_SETTLE_MS = 6_000L
         private const val POPUP_TIMEOUT_MS = 30_000L
         private const val OPTIONS_TIMEOUT_MS = 30_000L
+        /** A userscript manager's install landing: its install tab closing after the Install click. */
+        private const val USERSCRIPT_INSTALL_MS = 15_000L
+        /** The marker on the target's first document; the rest of [USERSCRIPT_EFFECT_MS] goes to the reload. */
+        private const val USERSCRIPT_FIRST_LOAD_MS = 20_000L
+        private const val USERSCRIPT_EFFECT_MS = 45_000L
         /**
          * What an account-backed extension's sign-in surface says (the account rows' core grade,
          * [popupLogin]); whole words, so a product name is not one ("Contact 1Password Support").

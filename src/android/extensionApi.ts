@@ -14,6 +14,7 @@ import { NATIVE_HOST_NOT_FOUND, type EngineContextKind } from '@core/extensions/
 import type { LocaleMessages } from '@core/extensions/api/i18n'
 import { globToRegExp, matchesAnyPattern } from '@core/extensions/api/matchPattern'
 import type { ExtensionRecord } from '@core/extensions/registry'
+import { presentExtensionUrl, toServedUrl } from '@core/extensions/runtime/extensionUrls'
 import type { RunAt, RuntimeManifest, ScriptWorld } from '@core/extensions/runtime/manifest'
 import {
   extensionOrigin,
@@ -25,6 +26,7 @@ import { ActiveTabGrants } from './extensionActiveTab'
 import { AndroidContextMenus } from './extensionContextMenus'
 import { AndroidCookies, type JarReading } from './extensionCookies'
 import type { AndroidDeclarativeNetRequest } from './extensionDnr'
+import type { RequestUpdateCheckAnswer } from './extensionHost'
 import type { AndroidIdentity } from './extensionIdentity'
 import { AndroidNotifications, type ShownNotification } from './extensionNotifications'
 
@@ -130,6 +132,8 @@ export interface ApiHost {
   /** `runtime.reload()` and `management.uninstallSelf()`: the store re-reads or removes the extension. */
   reload(id: string): Promise<void>
   uninstall(id: string): Promise<void>
+  /** `runtime.requestUpdateCheck()`: the store's update check for this one extension, Chrome's answer. */
+  requestUpdateCheck(id: string): Promise<RequestUpdateCheckAnswer>
   isEnabled(id: string): boolean
 }
 
@@ -622,7 +626,13 @@ export class ExtensionApi {
               return false
             if (q.url !== undefined) {
               const patterns = Array.isArray(q.url) ? q.url.map(String) : [String(q.url)]
-              if (!matchesAnyPattern(tab.url, patterns)) return false
+              // An extension-page tab's URL is Chrome's spelling; a pattern built from
+              // `runtime.getURL` (OneTab looks for its own list page that way) is the served one.
+              if (
+                !matchesAnyPattern(tab.url, patterns) &&
+                !matchesAnyPattern(toServedUrl(tab.url), patterns)
+              )
+                return false
             }
             if (q.windowId !== undefined && q.windowId !== -2 && q.windowId !== 1) return false
             if (q.currentWindow === false || q.lastFocusedWindow === false) return false
@@ -1258,13 +1268,21 @@ export class ExtensionApi {
       case 'reload':
         await this.host.reload(id)
         return undefined
+      // Chrome 109+ hands the callback one `{ status, version }`; the promise form resolves with it.
+      case 'requestUpdateCheck':
+        return this.host.requestUpdateCheck(id)
       case 'getContexts':
+        // An extension page's URL as Chrome spells it (`extensionUrls.ts`); its origin stays the
+        // served one, what `location.origin` answers inside the page, as for a message sender.
         return this.host.router.of(id).map((e) => ({
           contextId: e.id,
           contextType: contextTypeOf(e.context),
           documentId: e.id,
           documentOrigin: e.url ? safeOrigin(e.url) : '',
-          documentUrl: e.url,
+          documentUrl:
+            e.url && e.context !== 'content' && e.context !== 'userScript'
+              ? presentExtensionUrl(e.url)
+              : e.url,
           frameId: e.frameId,
           incognito: false,
           tabId: e.tabId ? this.tabs.chromeIdFor(e.tabId) : -1,

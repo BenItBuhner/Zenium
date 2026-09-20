@@ -1081,9 +1081,10 @@ describe('AndroidExtensionRuntime: an extension page open as a tab', () => {
       h.kt.to('bg1').filter((m) => m.t === 'deliver')
     expect(toBg()).toHaveLength(1)
     const sender = toBg()[0].sender as Record<string, unknown>
+    // The page names itself as Chrome spells it (extensionUrls.ts); `origin` stays the served one.
     expect(sender).toMatchObject({
       id: ID,
-      url: `${origin}/pages/options.html`,
+      url: `chrome-extension://${ID}/pages/options.html`,
       origin,
       frameId: 0,
       documentId: 'docP.1',
@@ -1096,6 +1097,18 @@ describe('AndroidExtensionRuntime: an extension page open as a tab', () => {
     const fromPopup = toBg().at(-1)?.sender as Record<string, unknown>
     expect(fromPopup.tab).toBeUndefined()
     expect(fromPopup.frameId).toBeUndefined()
+    // runtime.getContexts spells the pages the same way, the served origin as their origin.
+    const contexts = (await call(h, 'bg1', 'runtime', 'getContexts', [{}])).result as Array<
+      Record<string, unknown>
+    >
+    expect(contexts.find((c) => c.contextId === 'docP.1')).toMatchObject({
+      contextType: 'TAB',
+      documentUrl: `chrome-extension://${ID}/pages/options.html`,
+      documentOrigin: origin
+    })
+    expect(contexts.find((c) => c.contextId === 'pop1')?.documentUrl).toBe(
+      `chrome-extension://${ID}/popup.html`
+    )
     // The background's tabs.sendMessage to the tab reaches the page and its frame, not the popup.
     const tabId = h.runtime.api.tabs.chromeIdFor('t1')
     message(h, 'bg1', { t: 'msg', id: 10, target: { tabId, options: null }, data: 'hi' })
@@ -1400,6 +1413,32 @@ describe('AndroidExtensionRuntime: i18n.detectLanguage', () => {
       languages: []
     })
     expect(asked).toBe(1)
+  })
+})
+
+describe('AndroidExtensionRuntime: runtime.requestUpdateCheck', () => {
+  it("routes to the store and answers Chrome's shape; without a store there is nothing to install", async () => {
+    const h = harness()
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1')
+    const bare = await call(h, 'bg1', 'runtime', 'requestUpdateCheck', [])
+    expect(bare.ok).toBe(true)
+    expect(bare.result).toEqual({ status: 'no_update' })
+
+    const asked: string[] = []
+    h.runtime.store = {
+      record: () => undefined,
+      records: () => [],
+      reload: async () => {},
+      remove: async () => {},
+      requestUpdateCheck: async (id) => {
+        asked.push(id)
+        return { status: 'update_available', version: '2.0.0' }
+      }
+    }
+    const found = await call(h, 'bg1', 'runtime', 'requestUpdateCheck', [])
+    expect(found.result).toEqual({ status: 'update_available', version: '2.0.0' })
+    expect(asked).toEqual([ID])
   })
 })
 

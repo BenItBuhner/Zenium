@@ -26,6 +26,7 @@ import app.zen.chromium.blocking.BlockingTab
 import app.zen.chromium.blocking.Decision
 import app.zen.chromium.blocking.DecisionObserver
 import app.zen.chromium.blocking.Domains
+import app.zen.chromium.blocking.HeaderStage
 import app.zen.chromium.blocking.RedirectExecutor
 import app.zen.chromium.blocking.Request
 import app.zen.chromium.blocking.ResourceType
@@ -261,11 +262,27 @@ class Extensions(private val host: Host) {
     private val observer = DecisionObserver { tab, request, decision, elapsedNanos, cpuNanos -> onDecision(tab, request, decision, elapsedNanos, cpuNanos) }
     private val redirector = RedirectExecutor { tab, request, target, type -> redirect(target, request, type, tab) }
 
+    /**
+     * The engine's headers-received stage for documents ([HeaderStage]): its relay reads and
+     * writes the cookies of the tab's profile, since WebView neither sends its cookies with a
+     * fetch made here nor keeps the `Set-Cookie` of an intercepted response.
+     */
+    private val headerStage = HeaderStage(object : HeaderStage.CookieStore {
+        override fun cookieHeader(partition: String, url: String): String? =
+            runCatching { Profiles.cookieManager(partition).getCookie(url) }.getOrNull()?.ifEmpty { null }
+
+        override fun store(partition: String, url: String, setCookie: List<String>) {
+            val manager = runCatching { Profiles.cookieManager(partition) }.getOrNull() ?: return
+            for (cookie in setCookie) manager.setCookie(url, cookie)
+        }
+    })
+
     init {
         // The engine is the process's; the window's runtime is the one that hears it (a custom
         // tab has no extensions, its requests are still decided by the same snapshot).
         host.blocking.observer = observer
         host.blocking.redirector = redirector
+        host.blocking.headerStage = headerStage
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -1026,7 +1043,16 @@ class Extensions(private val host: Host) {
             if (backgroundDocument && request.isForMainFrame && ext.backgroundHtml != null && "$origin$path" == ext.backgroundUrl) {
                 return response("text/html", 200, "OK", ext.backgroundHtml.toByteArray())
             }
-            return serve(ext, path)
+            // A module a content script imports on a WebView without isolated worlds evaluates on
+            // the page's real global, where the `with` scope's `chrome` is not: the served text is
+            // bracketed so the bootstrap's accessor answers the extension's `chrome` while it runs
+            // (ExtensionScripts.moduleChromeWrap). A module request is a CORS one and carries the
+            // page's `Origin`; a classic `<script src>` (no-cors, no `Origin`) runs as a page script
+            // in Chrome too and is served as it is. Extension pages have their own `chrome`.
+            val moduleGraph = tab != null && extensionPage == null && !ownPage && !isolatedWorlds &&
+                ExtensionScripts.isScriptPath(path) &&
+                request.requestHeaders?.keys?.any { it.equals("Origin", ignoreCase = true) } == true
+            return serve(ext, path, if (moduleGraph) id else null)
         }
         // A fetch or XHR of an extension page to a host its permissions cover: Chrome skips CORS
         // there, the proxy stands in (CorsProxy). The request's `Origin` names the extension, so
@@ -1114,7 +1140,9 @@ class Extensions(private val host: Host) {
      * subresources are fetched here on the intercept thread and their body substituted. Non-GET
      * requests, and a target the fetch cannot stand in for, are let through unchanged.
      */
-    private fun redirect(location: String, request: WebResourceRequest, type: ResourceType, tab: BlockingTab): WebResourceResponse? {
+    private fun redirect(ruleTarget: String, request: WebResourceRequest, type: ResourceType, tab: BlockingTab): WebResourceResponse? {
+        // A rule may name the extension's own resource as Chrome spells it; the served origin answers.
+        val location = ExtensionUrls.toServed(ruleTarget)
         if (type == ResourceType.MAIN_FRAME || type == ResourceType.SUB_FRAME) {
             val html = "<!doctype html><meta charset=\"utf-8\"><script>location.replace(${JSONObject.quote(location)})</script>"
             return response("text/html", 200, "OK", html.toByteArray())
@@ -1163,14 +1191,16 @@ class Extensions(private val host: Host) {
         }.getOrNull()
     }
 
-    private fun serve(ext: Served, path: String): WebResourceResponse {
+    /** A file of the extension; with `moduleChromeFor`, a script bracketed for that extension's module graph. */
+    private fun serve(ext: Served, path: String, moduleChromeFor: String? = null): WebResourceResponse {
         if (path == GENERATED_BACKGROUND) {
             val html = ext.backgroundHtml ?: return notFound()
             return response("text/html", 200, "OK", html.toByteArray())
         }
         val file = fileIn(ext.dir, path) ?: return notFound()
         if (!file.isFile) return notFound()
-        val bytes = runCatching { file.readBytes() }.getOrNull() ?: return notFound()
+        var bytes = runCatching { file.readBytes() }.getOrNull() ?: return notFound()
+        if (moduleChromeFor != null) bytes = ExtensionScripts.moduleChromeWrap(String(bytes, Charsets.UTF_8), moduleChromeFor).toByteArray()
         return response(ExtensionScripts.mimeType(path), 200, "OK", bytes)
     }
 
@@ -1373,6 +1403,7 @@ class Extensions(private val host: Host) {
         // window's runtime may already have taken the seams over).
         if (host.blocking.observer === observer) host.blocking.observer = null
         if (host.blocking.redirector === redirector) host.blocking.redirector = null
+        if (host.blocking.headerStage === headerStage) host.blocking.headerStage = null
     }
 
     companion object {

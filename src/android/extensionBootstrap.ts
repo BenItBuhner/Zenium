@@ -29,6 +29,7 @@ import {
   type Any,
   type ShieldResult
 } from './extensionIsolation'
+import { installModuleChrome } from './extensionModuleChrome'
 import { createScriptRecovery, type ScriptRecovery } from './extensionScriptRecovery'
 import {
   importScriptsFor,
@@ -610,6 +611,10 @@ declare const __zenExtBoot: Boot
     } else {
       shieldWorld(ext, 'with')
       root = createScopeProxy(realWindow, builtins)
+      // A module the content script imports evaluates on the real global, not in the proxy's
+      // scope: the host brackets the served module text, and this accessor answers the
+      // extension's `chrome` there while the module's body runs (extensionModuleChrome.ts).
+      installModuleChrome(realWindow, (id) => scopes.get(`${id}/with/content`)?.chrome)
     }
     // A user-script world without `configureWorld({ messaging: true })` has no `chrome` at all.
     const engine = messaging ? makeEngine(ext, context, frame, root, isolation === 'world') : null
