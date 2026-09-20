@@ -118,8 +118,8 @@ export class Actions {
         if (target) tabs.copyUrl(target.id, true)
         return
       case 'tab.search':
-        // Reserved for Chrome's tab search (the chord is taken so it never runs something else).
-        return
+        // Chrome's tab search: the chrome opens the popover from the sidebar's top row.
+        return this.browser.emit('tabsearch.open', undefined, win)
       case 'glance.expand':
         return tabs.expandGlance(win)
 

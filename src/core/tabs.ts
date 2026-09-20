@@ -8,6 +8,7 @@ import type {
   Space,
   SplitLayout,
   Tab,
+  TabSearchCandidate,
   TabSection,
   WindowKind
 } from '../shared/types'
@@ -1802,11 +1803,25 @@ export class TabManager {
     this.browser.state.commit()
   }
 
+  /**
+   * Chrome's Duplicate (tabs-22): a copy right after the tab, in its container and folder, with
+   * its back/forward stack – and, through the entries' page state, its scroll position – not a
+   * bare load of the current URL. The stack is queued for the copy's page, which replays it
+   * when it is created (`createView`), as a reopened tab's is. An unloaded tab gives what it
+   * remembers of its stack; one with nothing remembered gets a plain load of its URL.
+   */
   duplicate(tabId: string, win: ZenWindow = this.windowFor(tabId)): Tab | undefined {
     const tab = this.tab(tabId)
     if (!tab) return undefined
+    const id = newId('tab')
+    const view = this.view(tabId)
+    const history = view
+      ? view.navigationEntries()
+      : (this.pendingNavigation.get(tabId) ?? this.browser.state.tabNavigation.get(tabId))
+    if (history && history.entries.length > 0) this.pendingNavigation.set(id, history)
     return this.createTab(
       {
+        id,
         url: tab.url,
         spaceId: win.activeSpace().id,
         containerId: tab.containerId,
@@ -2035,6 +2050,89 @@ export class TabManager {
     return this.isPrivate(tab) === target.isPrivate
   }
 
+  // ---------------------------------------------------------------------------
+  // Tab search (tabs-17)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * The window that shows a tab, or could: the one whose own space holds a local tab (a blank
+   * or private window's), else `win` itself for a tab shared with every synced window. Null for
+   * a tab `win` may not reach – another privacy, a local space of a window that is gone.
+   */
+  windowShowing(tab: Tab, win: ZenWindow): ZenWindow | null {
+    const m = this.model
+    const full = (w: ZenWindow): boolean => w.alive && !w.isClosing && w.chrome !== 'popup'
+    if (tab.spaceId && m.localSpaces[tab.spaceId]) {
+      return (
+        this.browser.allWindows().find((w) => full(w) && w.localSpace?.id === tab.spaceId) ?? null
+      )
+    }
+    // A tab shared by the synced windows, or local to one of them ("sync only pinned tabs").
+    if (!win.localSpace && tabVisibleIn(tab, win.id)) return win
+    return (
+      this.browser
+        .allWindows()
+        .filter((w) => full(w) && !w.localSpace && tabVisibleIn(tab, w.id))
+        .sort((a, b) => b.lastFocusedAt - a.lastFocusedAt)[0] ?? null
+    )
+  }
+
+  /**
+   * What `win`'s tab search lists (tabs-17): every tab it can switch to itself plus the tabs of
+   * every other window of the same privacy (Chrome keeps regular and Incognito tab search apart),
+   * each of those named after its window. Glance pages have no row of their own.
+   */
+  searchCandidates(win: ZenWindow): TabSearchCandidate[] {
+    const m = this.model
+    const out: TabSearchCandidate[] = []
+    const glances = new Set(
+      this.browser
+        .allWindows()
+        .map((w) => w.glance?.tabId)
+        .filter((id): id is string => Boolean(id))
+    )
+    for (const tab of Object.values(m.tabs)) {
+      if (glances.has(tab.id)) continue
+      if (this.isPrivate(tab) !== win.isPrivate) continue
+      const shown = this.windowShowing(tab, win)
+      if (!shown) {
+        // A tab of another window's model this one cannot show (a blank window's under
+        // "sync only pinned tabs" without a window of its own, a closed window's space).
+        continue
+      }
+      const other = shown !== win
+      out.push({
+        id: tab.id,
+        title: tab.customTitle ?? tab.title,
+        url: tab.url,
+        favicon: tab.favicon,
+        customIcon: tab.customIcon,
+        containerId: tab.containerId,
+        windowLabel: other ? this.browser.menus.windowLabel(shown) : null,
+        active: this.activeTabFor(shown)?.id === tab.id,
+        audible: tab.audible,
+        muted: tab.muted,
+        loading: tab.loading,
+        discarded: tab.discarded,
+        lastActiveAt: tab.lastActiveAt
+      })
+    }
+    return out.sort((a, b) => b.lastActiveAt - a.lastActiveAt)
+  }
+
+  /**
+   * Switch to a tab from tab search: in `win` when it can show it, else in the window that can,
+   * which comes to the front. Nothing for a tab `win` may not reach.
+   */
+  switchTo(tabId: string, win: ZenWindow): void {
+    const tab = this.tab(tabId)
+    if (!tab || this.isPrivate(tab) !== win.isPrivate) return
+    const target = this.windowShowing(tab, win)
+    if (!target) return
+    this.activateTab(tabId, target)
+    if (target !== win) target.host.focus()
+  }
+
   /** Other windows a tab could be moved to, most recently focused first (the tab menu). */
   windowsForMove(tabId: string, source: ZenWindow): ZenWindow[] {
     const tab = this.tab(tabId)
@@ -2098,9 +2196,23 @@ export class TabManager {
     if (content && key) this.dropTab(tabId, key, target)
     this.activateTab(tabId, target)
     this.showNeighbour(source, leaving, tabId)
+    this.closeIfEmptied(source)
     this.browser.state.commit()
     target.host.focus()
     return true
+  }
+
+  /**
+   * Chrome closes a window whose only tab went to another window – torn off, dropped into
+   * another window, or sent there from the tab menu. A blank or private window with nothing
+   * left does the same here (deferred: the drag that asked for the move may still be
+   * finishing). A synced window keeps its spaces and stays.
+   */
+  private closeIfEmptied(source: ZenWindow): void {
+    if (!source.localSpace || source.localSpace.tabIds.length > 0 || !source.alive) return
+    defer(() => {
+      if (source.alive) source.host.close()
+    })
   }
 
   /**
@@ -2193,13 +2305,7 @@ export class TabManager {
     }
     this.activateTab(tabId, win)
     this.showNeighbour(source, leaving, tabId)
-    // Chrome closes a window whose only tab was torn off; a blank window with nothing left does
-    // the same here (deferred: the drag that asked for this may still be finishing).
-    if (source.localSpace && source.localSpace.tabIds.length === 0 && source.alive) {
-      defer(() => {
-        if (source.alive) source.host.close()
-      })
-    }
+    this.closeIfEmptied(source)
     this.browser.state.commit()
     return win
   }

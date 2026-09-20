@@ -484,6 +484,71 @@ describe('drag between windows', () => {
     expect(f.browser.allWindows()).toHaveLength(2)
   })
 
+  it('a torn-off window emptied by dragging its tab back closes (Chrome), the first stays', async () => {
+    const f = fixture()
+    const a = f.browser.focusedWindow()
+    const first = f.openPage(a, 'https://example.com')
+    const second = f.openPage(a, 'https://example.org')
+    // Tear the second tab off into a window of its own …
+    drag(f, a, second.id, { x: 1500, y: 900 })
+    f.browser.handleCommand(a, 'tab.dragEnd', {
+      tabId: second.id,
+      x: 1500,
+      y: 900,
+      outcome: 'release'
+    })
+    const torn = f.browser.allWindows().find((w) => w !== a)
+    if (!torn) throw new Error('no new window')
+    const local = torn.localSpace
+    if (!local) throw new Error('a torn-off window has a local space')
+    expect(local.tabIds).toEqual([second.id])
+    // … and drag it back onto the first window (the pointer in the torn window's coordinates).
+    const tb = f.hostOf(torn).bounds
+    const back = { x: 600 - tb.x, y: 300 - tb.y }
+    drag(f, torn, second.id, back)
+    f.browser.handleCommand(a, 'tab.dragTarget', {
+      tabId: second.id,
+      key: `section:regular:${a.activeSpace().id}`
+    })
+    f.browser.handleCommand(torn, 'tab.dragEnd', { tabId: second.id, ...back, outcome: 'release' })
+    expect(a.activeSpace().tabIds).toEqual([first.id, second.id])
+    expect(local.tabIds).toEqual([])
+    // The emptied window goes once the drag has finished; the first window is untouched.
+    expect(f.hostOf(torn).closed).toBe(false)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(f.hostOf(torn).closed).toBe(true)
+    expect(f.hostOf(a).closed).toBe(false)
+    expect(f.browser.allWindows()).toEqual([a])
+  })
+
+  it('"Move Tab to Another Window" from the menu closes the blank window it empties', async () => {
+    const f = fixture()
+    const { a, b } = twoWindows(f)
+    f.openPage(a, 'https://example.com')
+    const theirs = f.openPage(b, 'https://example.org')
+    expect(b.localSpace?.tabIds).toEqual([theirs.id])
+    expect(f.browser.tabs.moveTabToWindow(theirs.id, a, null, b)).toBe(true)
+    expect(a.activeSpace().tabIds).toContain(theirs.id)
+    expect(a.selectedTabIn(a.activeSpace())).toBe(theirs.id)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(f.hostOf(b).closed).toBe(true)
+    expect(f.browser.allWindows()).toEqual([a])
+  })
+
+  it('a synced window keeps its spaces when its last tab goes to another window', async () => {
+    const f = fixture()
+    const { a, b } = twoWindows(f)
+    const only = f.openPage(a, 'https://example.com')
+    const local = b.localSpace
+    if (!local) throw new Error('a blank window has a local space')
+    expect(f.browser.tabs.moveTabToWindow(only.id, b, null, a)).toBe(true)
+    expect(local.tabIds).toEqual([only.id])
+    expect(a.activeSpace().tabIds).toEqual([])
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(f.hostOf(a).closed).toBe(false)
+    expect(f.browser.allWindows()).toHaveLength(2)
+  })
+
   it('ignores a target report from a window the drag is not over', () => {
     const f = fixture()
     const { a, b } = twoWindows(f)

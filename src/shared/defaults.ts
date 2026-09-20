@@ -301,6 +301,23 @@ export const FOLDER_COLORS: Record<FolderColor, string> = {
   grey: '#8a8f9c'
 }
 
+/**
+ * The nine colours in Chrome's order – the order its group editor lays the swatches out in and
+ * the order it hands them to new groups (grey first, then blue…). The desktop's folder editor
+ * bubble and the core's colour for a new folder follow it (tabs-13).
+ */
+export const FOLDER_COLOR_ORDER: readonly FolderColor[] = [
+  'grey',
+  'blue',
+  'red',
+  'yellow',
+  'green',
+  'pink',
+  'purple',
+  'cyan',
+  'orange'
+]
+
 /** Privacy- and productivity-focused sites, mirroring Zen's onboarding essentials picks. */
 export const ONBOARDING_ESSENTIALS: Array<{ title: string; url: string }> = [
   { title: 'Proton Mail', url: 'https://mail.proton.me/' },
