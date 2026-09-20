@@ -261,19 +261,6 @@
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
-  /*
-   * A message row (`V2Row` with a `tone`; §9.33's anatomy, §1's status ink only): the lead glyph
-   * and the description in the state's ink, the label in the text's, no fill and no border of
-   * its own.
-   */
-  .zen-v2-row[data-tone='danger'] .zen-v2-row-lead,
-  .zen-v2-description[data-tone='danger'] {
-    color: var(--v2-danger);
-  }
-  .zen-v2-row[data-tone='warn'] .zen-v2-row-lead,
-  .zen-v2-description[data-tone='warn'] {
-    color: var(--v2-warn);
-  }
   /* A value at the row's end: the same size, deemphasised. */
   .zen-v2-value {
     max-width: 60%;

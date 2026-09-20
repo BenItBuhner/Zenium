@@ -210,6 +210,7 @@ export function RowView({
           ref={row.trailing ? attachLineCount : undefined}
           data-row={row.id}
           data-static=""
+          data-tone={row.tone}
           className={cn(
             'zen-settings-row zen-v2-row',
             row.disabled && 'zen-settings-row-disabled',
@@ -221,12 +222,7 @@ export function RowView({
               {row.leading}
             </span>
           )}
-          <RowText
-            label={row.label}
-            description={row.description}
-            tone={row.tone}
-            caption={caption}
-          />
+          <RowText label={row.label} description={row.description} caption={caption} />
           {row.trailing && <span className="zen-settings-trailing">{row.trailing}</span>}
         </div>
       )
@@ -292,6 +288,7 @@ function PressableRow({
       aria-disabled={disabled || undefined}
       aria-busy={busy || undefined}
       data-row={row.id}
+      data-tone={row.tone}
       className={cn(
         'zen-settings-row zen-settings-row-pressable zen-v2-row',
         destructive && 'zen-settings-row-danger',
@@ -306,7 +303,7 @@ function PressableRow({
           {leading}
         </span>
       )}
-      <RowText label={row.label} description={description} tone={row.tone} caption={caption} />
+      <RowText label={row.label} description={description} caption={caption} />
       {trail && <span className="zen-settings-trailing">{trail}</span>}
     </button>
   )
@@ -314,28 +311,23 @@ function PressableRow({
 
 /**
  * Label on the first line, the description under it at 13/69 %, at most two lines (§9.2) – in
- * a §1 status ink when the row has a `tone`.
+ * a §1 status ink when the row carries a `tone` (`data-tone` on the row, the primitive's one
+ * attribute; the description's rule reads it through the row).
  */
 export function RowText({
   label,
   description,
-  tone,
   caption
 }: {
   label: string
   description?: string
-  tone?: 'warn' | 'danger'
   caption?: string
 }): JSX.Element {
   return (
     <span className="zen-settings-row-text">
       {caption && <span className="zen-settings-caption">{caption}</span>}
       <span className="zen-settings-label">{label}</span>
-      {description && (
-        <span className="zen-settings-description" data-tone={tone}>
-          {description}
-        </span>
-      )}
+      {description && <span className="zen-settings-description">{description}</span>}
     </span>
   )
 }

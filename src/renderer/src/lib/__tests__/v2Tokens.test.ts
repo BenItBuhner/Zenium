@@ -866,6 +866,36 @@ describe('the v2 primitives (§9.34)', () => {
     expect(panels).not.toMatch(/padding: var\(--v2-row-pad\)|padding: 12px 16px/)
     expect(panels).not.toMatch(/zen-toolbar-button|width: var\(--v2-icon-button\)/)
   })
+
+  it('paint a message row’s lead and description in the status ink through the row’s one data-tone (§9.33 in §1’s ink; pr-261)', () => {
+    // The tone is the row's attribute: the two rules sit beside the row rule in main.css,
+    // unlayered, and reach the lead glyph and the description THROUGH the row, so a consumer
+    // sets nothing on the span. Each states the status token and nothing else.
+    for (const [tone, token] of [
+      ['danger', '--v2-danger'],
+      ['warn', '--v2-warn']
+    ] as const) {
+      const selector = `.zen-v2-row[data-tone='${tone}'] .zen-v2-row-lead,\n.zen-v2-row[data-tone='${tone}'] .zen-v2-description`
+      const at = bare.indexOf(`\n${selector} {`)
+      expect(at, `rule "${selector}"`).toBeGreaterThanOrEqual(0)
+      expect(at).toBeGreaterThan(ruleAt('.zen-v2-row[data-static]'))
+      expect(nesting(at + 1)).toBe(0)
+      expect(bare.slice(at, bare.indexOf('\n}', at)).match(/^ {2}[a-z-]+:[^;]+;/gm)).toEqual([
+        `  color: var(${token});`
+      ])
+    }
+    // The span carries no tone of its own anywhere: no stylesheet colours `.zen-v2-description`
+    // or `.zen-v2-row-lead` by an attribute on the element, and the settings page's description
+    // reads the same row attribute (`.zen-settings-row[data-tone]`), not one on the span.
+    const root = fileURLToPath(new URL('../../', import.meta.url))
+    for (const file of readdirSync(root, { recursive: true, encoding: 'utf8' })
+      .map((f) => f.split('\\').join('/'))
+      .filter((f) => f.endsWith('.css')))
+      expect(readFileSync(join(root, file), 'utf8'), `${file} tones the span`).not.toMatch(
+        /\.zen-v2-(description|row-lead)\[data-tone|\.zen-settings-description\[data-tone/
+      )
+    expect(bare).toMatch(/\n\.zen-settings-row\[data-tone='danger'\] \.zen-settings-description \{/)
+  })
 })
 
 describe('the Settings drill-in pane (§10.2)', () => {

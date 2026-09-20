@@ -6180,6 +6180,22 @@
   }
 }
 /*
+ * The message row (§9.33's anatomy in §1's status ink only; pr-261): the row carries `data-tone`
+ * and its lead glyph and its description take the state's ink THROUGH the row – the label stays
+ * in the text's, the row keeps no fill and no border of its own, and a consumer sets the one
+ * attribute (`V2Row tone` on the desktop pane, `SettingsRow tone` on the phone, whose own text
+ * classes read the same attribute in the Settings block below). The tokens are the toast's and
+ * the field message's; no per-host colour.
+ */
+.zen-v2-row[data-tone='danger'] .zen-v2-row-lead,
+.zen-v2-row[data-tone='danger'] .zen-v2-description {
+  color: var(--v2-danger);
+}
+.zen-v2-row[data-tone='warn'] .zen-v2-row-lead,
+.zen-v2-row[data-tone='warn'] .zen-v2-description {
+  color: var(--v2-warn);
+}
+/*
  * A row in a clipped popover's scrolling body (§9.20, §1; pr-245 chassis (b)): the panel clips
  * at its edge (`.zen-bm-popover { overflow: hidden }`) and its body is a scroll container, so a
  * row that runs edge to edge has its ring's sides cut off – two horizontal bars where the ring
@@ -6966,11 +6982,15 @@
   display: block;
   -webkit-line-clamp: none;
 }
-/* A description that reports a status (a load error, a retirement notice): §1 status ink, text only. */
-.zen-settings-description[data-tone='warn'] {
+/*
+ * A description that reports a status (a load error, a retirement notice, the folder-lost
+ * sentence): §1 status ink, text only, read off the row's one `data-tone` – the primitive's
+ * attribute above – not off the span.
+ */
+.zen-settings-row[data-tone='warn'] .zen-settings-description {
   color: var(--v2-warn);
 }
-.zen-settings-description[data-tone='danger'] {
+.zen-settings-row[data-tone='danger'] .zen-settings-description {
   color: var(--v2-danger);
 }
 /* A sheet whose description is a load error (an extension's details, §9.23): the same ink. */

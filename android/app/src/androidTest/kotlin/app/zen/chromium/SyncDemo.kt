@@ -4,6 +4,7 @@ import android.graphics.PointF
 import android.graphics.Rect
 import android.os.Build
 import android.os.ParcelFileDescriptor
+import android.os.Process
 import android.os.SystemClock
 import android.provider.Settings
 import android.util.Base64
@@ -18,6 +19,7 @@ import org.json.JSONTokener
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import java.util.Locale
 
 /**
  * Records Settings › Sync on the phone (ID-08's UI, `pages/settings/sync.tsx`) end to end
@@ -45,12 +47,23 @@ import java.io.File
  * the page (the category, the folder row, Turn on sync, the toggle, Sync now, Turn off sync) are
  * touched too ([tapRow]), with a second finger at the row's rectangle in the chrome when the
  * tree's bounds trailed a scroll. Findings go to `<shotPrefix>-notes.txt` beside the stills.
+ *
+ * Frame stats (Bennett's rule of 2026-09-20: performance is a shipping requirement, every driver
+ * run records them): each of the PR's sheets is played once as a gesture scene – opened with a
+ * finger on its row, left to settle, dismissed with a back – between a `dumpsys gfxinfo
+ * <package> reset` and a `framestats` read ([scene]), and the app menu, a sheet main had before
+ * this PR, is played the same way first as the baseline. Per scene the total frames, the janky
+ * count and share and the 50th / 90th / 99th percentile frame times go to the notes (a table at
+ * the end); the raw dumps to `<shotPrefix>-framestats.txt`. Reported, not gated: the harness's
+ * gate on janky frames is the Android program's and is adopted when it lands.
  */
 @RunWith(AndroidJUnit4::class)
 class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-android", "sync-demo") {
     override val tag = "SyncDemo"
     private lateinit var server: DemoServer
     private lateinit var notes: File
+    private lateinit var frameDumps: File
+    private val frameScenes = LinkedHashMap<String, FrameScene?>()
     private var shots = 0
     private val startedAt = SystemClock.uptimeMillis()
     /** How many times the second device has written its file (its second round adds a bookmark). */
@@ -77,6 +90,10 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
     override fun warmUp() {
         notes = File(out, "services-sync-android-android-notes.txt")
         notes.writeText("Zenium Android sync demo\n\n")
+        frameDumps = File(out, "services-sync-android-android-framestats.txt")
+        frameDumps.writeText(
+            "dumpsys gfxinfo ${app.packageName} framestats, read after each gesture scene (the counters reset before it)\n\n"
+        )
         note("device ${Build.MODEL} (${Build.VERSION.SDK_INT}); demo server ${server.selfCheck()}")
         note("folder $FOLDER_PATH: ${shell("ls -ld $FOLDER_PATH").trim()}")
         // The Settings page is a chunk of its own that loads on its first open: pay for it off
@@ -94,6 +111,11 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
     }
 
     override fun demo() {
+        // 0. The frame baseline: the app menu, a sheet main had before this PR, opened with a
+        //    finger and dismissed with a back, its frames counted the way the PR's sheets' are.
+        note("\n0. the frame baseline: the app menu")
+        scene(SCENE_MENU) { openAndDismissMenu() }
+
         // 1. Settings › Sync through the app menu and the landing's category row.
         note("\n1. Settings › Sync")
         openSyncSettings()
@@ -105,8 +127,10 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
         grantFolder()
         snap("settings-folder-set")
 
-        // 3. Turn on sync: the passphrase sheet.
+        // 3. Turn on sync: the passphrase sheet – first as a frame scene (opened, dismissed), then
+        //    for real.
         note("\n3. the passphrase sheet")
+        scene(SCENE_PASSPHRASE) { openAndDismissSheet(TURN_ON_LABEL, "sync-turn-on", PASSPHRASE_TITLE) }
         turnOnSync(firstTime = true)
         snap("settings-connected")
         note("  ${describeSync()}")
@@ -129,24 +153,29 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
         snap("settings-devices")
         showLanded()
 
-        // 7. Turn off sync, this device's data removed from the folder.
+        // 7. Turn off sync, this device's data removed from the folder – the sheet first as a
+        //    frame scene, then for real.
         note("\n7. Turn off sync")
+        scene(SCENE_TURN_OFF) { openAndDismissSheet(TURN_OFF_LABEL, "sync-disconnect", TURN_OFF_TITLE) }
         turnOffSync()
         snap("settings-off")
         note("  tree: ${treeListing()}")
 
         // 8. The other device writes once more; set up again into the folder with its data: the
-        //    merge question, and what it wrote in the meantime landing on the answer.
+        //    merge question (its sheet a frame scene first), and what it wrote in the meantime
+        //    landing on the answer.
         note("\n8. the merge question")
         seedPeer()
         grantFolder()
         turnOnSync(firstTime = false)
         snap("settings-merge-pending")
+        scene(SCENE_MERGE) { openAndDismissSheet(MERGE_ROW_LABEL, "sync-merge", MERGE_TITLE) }
         answerMerge()
         revealRow(PEER_NAME)
         SystemClock.sleep(600)
         snap("settings-merged")
         note("  ${describeSync()}")
+        noteFrameTable()
         note("\ndone in ${(SystemClock.uptimeMillis() - startedAt) / 1000} s")
     }
 
@@ -877,6 +906,193 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
         SystemClock.sleep(1_000)
     }
 
+    // --- frame stats -----------------------------------------------------------------------------
+
+    /**
+     * One gesture scene's frames as HWUI counts them for the app's process: the `dumpsys gfxinfo`
+     * summary since the reset before the scene (every frame the window drew), and the times of
+     * the frames its `framestats` ring still held at the read, as a cross-check.
+     */
+    private class FrameScene(
+        val total: Int,
+        val janky: Int,
+        val jankyPercent: Double,
+        /** Android 12+'s second count, the pre-12 rule (a frame longer than the vsync period). */
+        val jankyLegacy: Int?,
+        val p50: Int,
+        val p90: Int,
+        val p99: Int,
+        /** FrameCompleted − IntendedVsync in ms for the ring's `Flags == 0` frames (the others are first frames or layout changes, out of the count by Android's own rule). */
+        val ringMs: List<Double>,
+        val elapsedMs: Long
+    )
+
+    /**
+     * Frame stats around one gesture scene: the process's HWUI counters reset before it
+     * (`dumpsys gfxinfo <package> reset`), the scene played, the counters read after it
+     * (`... framestats`) and the summary's total frames, janky count and share and 50th / 90th /
+     * 99th percentile frame times kept for the notes and the table at the end ([noteFrameTable]);
+     * the raw dump goes to the framestats file. A scene that did not play (its sheet never came or
+     * never went) is read all the same but not counted. The stats are the window's – the chrome
+     * WebView draws through the app's render thread, so its sheet's frames are these frames.
+     */
+    private fun scene(name: String, body: () -> Boolean) {
+        val pkg = app.packageName
+        shell("dumpsys gfxinfo $pkg reset")
+        SystemClock.sleep(400)
+        val started = SystemClock.uptimeMillis()
+        val played = body()
+        // The dismissal's last frames land before the read.
+        SystemClock.sleep(700)
+        val elapsed = SystemClock.uptimeMillis() - started
+        val dump = shell("dumpsys gfxinfo $pkg framestats")
+        val stats = parseGfxInfo(dump, elapsed)
+        frameScenes[name] = if (played) stats else null
+        frameDumps.appendText("=== $name (${if (played) "played" else "NOT played"}, $elapsed ms) ===\n$dump\n\n")
+        when {
+            stats == null -> note("  frames [$name]: no HWUI summary for $pkg in the dump (${dump.length} chars)")
+            played -> note("  frames [$name]: ${describe(stats)}")
+            else -> note("  frames [$name]: the scene did not play; ${describe(stats)} – not counted")
+        }
+    }
+
+    /**
+     * The baseline scene: the app menu (the sheet main had before this PR) under a finger on the
+     * bar's Menu button, settled, then a back. True when the sheet came and went.
+     */
+    private fun openAndDismissMenu(): Boolean {
+        if (sheetCount() != 0) closeSheets()
+        tapMenuButton()
+        if (waitFor(MENU_HANDLE_LABEL, 6_000) == null) {
+            note("  the app menu did not open under a finger")
+            return false
+        }
+        SystemClock.sleep(1_200)
+        return dismissScene(MENU_HANDLE_LABEL)
+    }
+
+    /**
+     * One of the PR's sheets as a scene: a finger on its page row (the same finger the flow uses,
+     * [tapRow]), the sheet settled, a back (the keyboard lowered first if it came up with the
+     * sheet). True when the sheet came and went – from the chrome and from the tree, so the
+     * flow's own finger on the row afterwards finds no stale title.
+     */
+    private fun openAndDismissSheet(rowLabel: String, rowId: String, title: String): Boolean {
+        if (!tapRow(rowLabel, rowId, timeoutMs = 10_000) { findByLabel(title) != null }) {
+            note("  the $rowLabel row did not open its sheet for the scene")
+            return false
+        }
+        SystemClock.sleep(1_200)
+        if (imeShown()) {
+            back()
+            awaitIme(shown = false, timeoutMs = 6_000)
+            note("  the keyboard came up with the sheet: lowered before the back")
+            SystemClock.sleep(400)
+        }
+        return dismissScene(title)
+    }
+
+    /** A back on the scene's sheet; true once no `.zen-sheet` is in the chrome and `label` has left the tree. */
+    private fun dismissScene(label: String): Boolean {
+        back()
+        val closed = awaitSettled({ sheetCount() == 0 }, 8_000)
+        val gone = waitForGone(label, 8_000)
+        SystemClock.sleep(600)
+        if (closed && gone) return true
+        note("  the sheet did not go on a back (chrome closed=$closed, tree gone=$gone)")
+        closeSheets()
+        waitForGone(label, 8_000)
+        return false
+    }
+
+    /**
+     * The HWUI summary for this process out of a `dumpsys gfxinfo <package> framestats` dump
+     * (the block headed `Graphics info for pid <ours>` when the package has more than one), and
+     * the frame times out of its PROFILEDATA rings; null without a summary.
+     */
+    private fun parseGfxInfo(dump: String, elapsedMs: Long): FrameScene? {
+        val blocks = dump.split("** Graphics info for pid ")
+        val mine = blocks.drop(1).firstOrNull { it.startsWith("${Process.myPid()} ") }
+            ?: blocks.drop(1).firstOrNull { "Total frames rendered:" in it }
+            ?: return null
+        fun int(pattern: String): Int? =
+            Regex(pattern, RegexOption.MULTILINE).find(mine)?.groupValues?.get(1)?.toIntOrNull()
+        val total = int("""^Total frames rendered: (\d+)""") ?: return null
+        val janky = Regex("""^Janky frames: (\d+) \((\d+(?:\.\d+)?)%\)""", RegexOption.MULTILINE).find(mine)
+        return FrameScene(
+            total = total,
+            janky = janky?.groupValues?.get(1)?.toIntOrNull() ?: 0,
+            jankyPercent = janky?.groupValues?.get(2)?.toDoubleOrNull() ?: 0.0,
+            jankyLegacy = int("""^Janky frames \(legacy\): (\d+) \("""),
+            p50 = int("""^50th percentile: (\d+)ms""") ?: -1,
+            p90 = int("""^90th percentile: (\d+)ms""") ?: -1,
+            p99 = int("""^99th percentile: (\d+)ms""") ?: -1,
+            ringMs = ringFrameTimes(mine),
+            elapsedMs = elapsedMs
+        )
+    }
+
+    /** FrameCompleted − IntendedVsync, in ms, for every `Flags == 0` row of every PROFILEDATA block (the columns found by name: they differ by release). */
+    private fun ringFrameTimes(block: String): List<Double> {
+        val times = ArrayList<Double>()
+        val lines = block.lines()
+        var i = 0
+        while (i < lines.size) {
+            if (lines[i].trim() != "---PROFILEDATA---") {
+                i++
+                continue
+            }
+            val header = lines.getOrNull(i + 1)?.split(',')?.map { it.trim() } ?: break
+            val flags = header.indexOf("Flags")
+            val vsync = header.indexOf("IntendedVsync")
+            val done = header.indexOf("FrameCompleted")
+            i += 2
+            while (i < lines.size && lines[i].trim() != "---PROFILEDATA---") {
+                val cells = lines[i].split(',')
+                if (flags >= 0 && vsync >= 0 && done >= 0 && cells.size > maxOf(flags, vsync, done)) {
+                    val flag = cells[flags].trim().toLongOrNull()
+                    val from = cells[vsync].trim().toLongOrNull()
+                    val to = cells[done].trim().toLongOrNull()
+                    if (flag == 0L && from != null && to != null && to > from) times.add((to - from) / 1_000_000.0)
+                }
+                i++
+            }
+            i++
+        }
+        return times
+    }
+
+    private fun describe(s: FrameScene): String {
+        val ring = if (s.ringMs.isEmpty()) "" else {
+            val sorted = s.ringMs.sorted()
+            fun at(p: Double) = "%.1f".format(Locale.US, sorted[((sorted.size - 1) * p).toInt()])
+            "; ring ${sorted.size} frames p50 ${at(0.5)} p90 ${at(0.9)} p99 ${at(0.99)} ms, ${sorted.count { it > 16.7 }} over 16.7"
+        }
+        return "${s.total} frames, ${s.janky} janky (${"%.1f".format(Locale.US, s.jankyPercent)} %)" +
+            (s.jankyLegacy?.let { ", $it by the pre-12 rule" } ?: "") +
+            ", p50 ${s.p50} ms, p90 ${s.p90} ms, p99 ${s.p99} ms, in ${s.elapsedMs} ms$ring"
+    }
+
+    /** The scenes as one table at the end of the notes: the app menu is the before, the PR's sheets the after. */
+    private fun noteFrameTable() {
+        note(
+            "\nframe stats (dumpsys gfxinfo ${app.packageName}: the counters reset before each scene and read after it; a scene is the sheet opened with a finger, settled, dismissed with a back; " +
+                "janky is HWUI's count of frames past their deadline; the app menu is the baseline main had before this PR)"
+        )
+        note("  %-22s %7s %16s %8s %8s %8s".format(Locale.US, "scene", "frames", "janky", "p50", "p90", "p99"))
+        for ((name, s) in frameScenes) {
+            if (s == null) {
+                note("  %-22s %s".format(Locale.US, name, "not played"))
+                continue
+            }
+            note(
+                "  %-22s %7d %16s %5d ms %5d ms %5d ms".format(
+                    Locale.US, name, s.total, "${s.janky} (${"%.1f".format(Locale.US, s.jankyPercent)} %)", s.p50, s.p90, s.p99
+                )
+            )
+        }
+    }
+
     // --- sheets ----------------------------------------------------------------------------------
 
     private fun sheetCount(): Int = chromeValue("String(document.querySelectorAll('.zen-sheet').length)").toIntOrNull() ?: -1
@@ -1125,6 +1341,11 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
         private const val MERGE_LABEL = "Merge"
         private const val REPLACE_LABEL = "Keep only this device\u2019s data"
         private const val CONTINUE_LABEL = "Continue"
+        // The frame scenes' names, as the notes' table and the PR body carry them.
+        private const val SCENE_MENU = "app menu (baseline)"
+        private const val SCENE_PASSPHRASE = "passphrase sheet"
+        private const val SCENE_TURN_OFF = "Turn off sync sheet"
+        private const val SCENE_MERGE = "merge sheet"
         private val PICKER_PACKAGES = setOf("com.android.documentsui", "com.google.android.documentsui", "com.android.permissioncontroller")
         // DocumentsUI's words and classes: the confirmation reads "Use this folder" from Android 11
         // ("Select" before), greyed on the storage root; the dialog it raises has Allow.

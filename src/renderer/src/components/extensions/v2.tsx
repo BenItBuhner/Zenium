@@ -264,7 +264,8 @@ export function V2TitleBlock({
  * surfaces' anatomy (§9.2, §9.18): the leading glyph and the text travel together and sit on the
  * first text line – the glyph (line − glyph) / 2 below the line's top – while whatever trails the
  * text centres on the row's height. A `tone` makes it a message row (§9.33's anatomy in §1's
- * ink only): the lead glyph and the description take the status ink, the label stays in the text's.
+ * ink only): one `data-tone` on the row, and main.css's row rule paints the lead glyph and the
+ * description in the status ink through it; the label stays in the text's.
  */
 export function V2Row({
   label,
@@ -292,11 +293,7 @@ export function V2Row({
         {Lead && <Lead className="zen-v2-row-lead" />}
         <span className="zen-v2-row-text">
           <span className="zen-v2-label">{label}</span>
-          {description && (
-            <span className="zen-v2-description" data-tone={tone}>
-              {description}
-            </span>
-          )}
+          {description && <span className="zen-v2-description">{description}</span>}
         </span>
       </span>
       {children}

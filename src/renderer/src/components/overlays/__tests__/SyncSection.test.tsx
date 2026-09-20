@@ -77,7 +77,9 @@ describe('the desktop Sync pane', () => {
       /<div class="zen-v2" data-testid="sync-folder-lost">([\s\S]*?)<\/div><\/div>/
     )?.[1]
     expect(notice).toBeTruthy()
-    // The shared row, static, toned – not a card: no border or fill class of its own.
+    // The shared row, static, toned – not a card: no border or fill class of its own. The tone
+    // is the row's one attribute; the lead and the description carry none of their own (the
+    // row rule in main.css paints them through it).
     expect(notice).toMatch(
       /<div class="zen-v2-row" data-static="" data-lines="2" data-tone="danger">/
     )
@@ -86,8 +88,9 @@ describe('the desktop Sync pane', () => {
       '<span class="zen-v2-label">The sync folder is no longer accessible</span>'
     )
     expect(notice).toContain(
-      '<span class="zen-v2-description" data-tone="danger">Choose it again to keep syncing.</span>'
+      '<span class="zen-v2-description">Choose it again to keep syncing.</span>'
     )
+    expect(notice?.match(/data-tone/g)).toHaveLength(1)
     expect(notice).toMatch(/<button type="button" class="zen-v2-button">Choose folder<\/button>/)
     expect(notice).not.toMatch(/red-|border-|rounded-|bg-/)
     // The engine's error is the sentence the row says: the status card shows the folder instead.
