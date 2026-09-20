@@ -853,10 +853,11 @@ export class Menus {
         run: () => void this.browser.share({ text: selection, tabId: tab.id }, win)
       })
     }
-    // Edge's Read aloud from a selection (EDGE-11): the selection first, then the rest of the
-    // article from there (Chrome reads the selection alone) – `readAloud.start { from:
-    // 'selection' }`, the core's model takes the selection from the page. Hosts with a speech
-    // host; any page, since a selection is text to read whether or not the page is an article.
+    // Read Aloud from a selection (EDGE-11 / GN-13): `readAloud.start { from: 'selection' }`,
+    // the core's model takes the selection from the page and reads it alone (Chrome's
+    // behaviour; Edge reads on past it to the article's end, which is an ask on the model's
+    // `selection` source). Hosts with a speech host; any page, since a selection is text to
+    // read whether or not the page is an article.
     if (this.browser.readAloud.available) {
       actions.push({
         id: 'readAloud',

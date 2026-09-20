@@ -59,6 +59,27 @@ describe('the Android page script and read aloud (A11Y-06; the core’s model, #
     expect(extraction.blocks.every((b) => Array.isArray(b.at.path))).toBe(true)
   })
 
+  it('answers readAloud.extract from the selection the action mode cleared (the toolbar’s Read Aloud)', () => {
+    // A long press selects a word; the touch on Read Aloud finishes the mode, which collapses the
+    // selection; the core's request reaches the document after that (`selectionMemory.ts`).
+    const text = document.querySelector('p')!.firstChild as Text
+    const range = document.createRange()
+    range.setStart(text, text.data.indexOf('ledger'))
+    range.setEnd(text, text.data.length)
+    const selection = document.getSelection()!
+    selection.removeAllRanges()
+    selection.addRange(range)
+    document.dispatchEvent(new Event('selectionchange'))
+    selection.collapseToEnd()
+    document.dispatchEvent(new Event('selectionchange'))
+    down({ type: 'readAloud', action: 'extract', requestId: 'ra2', from: 'selection', keep: null })
+    const extraction = sent().find((m) => m.type === 'readAloud')!.readAloud as ReadAloudExtraction
+    expect(extraction.requestId).toBe('ra2')
+    // Edge's behaviour: the selection first, then on to the end (the block cut to the selection's start).
+    expect(extraction.blocks.map((b) => b.text)).toEqual(['ledger did not care.'])
+    expect(document.getSelection()!.isCollapsed).toBe(true)
+  })
+
   it('takes the core’s highlight messages without an answer (painted, or nothing without the Highlight API)', () => {
     down({
       type: 'readAloud',

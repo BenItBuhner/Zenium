@@ -1631,7 +1631,7 @@ describe('the selection toolbar', () => {
     expect(h.browser.menus.selectionToolbar('tab_gone', 'quantum foam')).toEqual([])
   })
 
-  it('with a speech engine lists Read Aloud last in the bar and in the menu, and starts the core from the selection (Edge’s reading on)', async () => {
+  it('with a speech engine lists Read Aloud last in the bar and in the menu, and starts the core from the selection', async () => {
     expect(pageHarness(ANDROID, PHONE).browser.menus.selectionToolbar('t', 'quantum foam')).toEqual(
       []
     )
@@ -1652,7 +1652,7 @@ describe('the selection toolbar', () => {
       pageHarness(ANDROID, PHONE).menu(pageParams({ selectionText: 'quantum foam' }))
     ).not.toContain('Read Aloud')
     // The touch starts the core's one session from the selection: the page script is asked for
-    // the text from there (the selection first, then the rest of the article).
+    // the selection's text (the model reads the selection alone, as Chrome does).
     h.viewCalls.length = 0
     expect(h.browser.menus.runSelectionAction(h.tabId, 'readAloud', 'quantum foam')).toBe(true)
     await settle()

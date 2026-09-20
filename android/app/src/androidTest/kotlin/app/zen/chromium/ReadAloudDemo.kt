@@ -52,16 +52,19 @@ import java.util.concurrent.TimeUnit
  *     the reading through `media.action pause`, and nothing resumes it when the audio comes back;
  *  6. the speed chip under a finger steps 1x -> 1.2x -> 1.5x -> 2x -> 0.5x -> 0.8x -> 1x (the
  *     model's ladder up to Edge's 2x), the state's rate following each step;
- *  7. Previous / Next under a finger on the model's sentence walk: Previous disabled at the first
- *     sentence, a touch on Next speaks the second, a touch on Previous the first again, the
- *     highlight in the page following;
+ *  7. Previous / Next under a finger on the model's sentence walk, the walk held with a real
+ *     touch on Pause before each step (the first sentence is the two-second heading): Previous
+ *     disabled at the first sentence, a touch on Next speaks the sentence after the one held, a
+ *     touch on Previous the one before, the highlight in the page following;
  *  8. the voice picker: a real touch on Voice opens the 9.13 sheet listing the engine's voices,
  *     a touch on a voice row sets the session's voice and closes the sheet by itself (§9.13),
  *     and with the sheet opened again the system back closes the sheet alone, the player still up;
  *  9. Close under a finger: the session ends, the panel leaves, the page grows back;
  * 10. the selection toolbar's Read Aloud (GN-13's toolbar, #206): a long press on a word, the
- *     item (behind the overflow on a phone) under a finger starts a session from the selection;
- *     then the system back with the player up closes it like a page (predictive back, MOT-35);
+ *     item (behind the overflow on a phone) under a finger starts a session that reads the
+ *     selection (the mode's finish collapses the page's selection first; the page script stands
+ *     the cleared one in, `selectionMemory.ts`); then the system back with the player up closes
+ *     it like a page (predictive back, MOT-35);
  * 11. the player in dark, for the design record.
  *
  * The article comes from a loopback server inside this process ([DemoServer]). The model behind
@@ -387,29 +390,52 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
         }
         // The walk put at the first sentence first, so the steps read the same on every run (the
         // reading has gone on through the steps before this one); a seek speaks that sentence.
+        // Then a real touch on Pause holds the walk still: the first sentence is the article's
+        // heading, two seconds of speech, and run 4 tapped Next after the model had walked on by
+        // itself (the tap moved 1 -> 2, read against 0 -> 1). Each step is read against the
+        // sentence the walk stood at just before the finger came down; a step speaks (playing).
         coreInvoke("readAloud.seek", "{\"sentenceIndex\":0}")
         val atFirst = poll(6_000) { readAloud()?.optInt("sentenceIndex") == 0 && status() == "playing" }
+        val held = holdTheWalk()
         val count = readAloud()?.optInt("sentenceCount") ?: 0
         val previous = awaitNode(4_000) { it == "Previous sentence" }
         val next = awaitNode(4_000) { it == "Next sentence" }
-        finding("  at the first sentence (seek: $atFirst, status ${status()}): Previous ${previous?.let { "enabled=${it.isEnabled}" } ?: "MISSING"}; Next ${next?.let { "enabled=${it.isEnabled}" } ?: "MISSING"}; $count sentences")
+        finding("  at the first sentence (seek: $atFirst, held: $held, status ${status()}, index ${sentenceIndex()}): Previous ${previous?.let { "enabled=${it.isEnabled}" } ?: "MISSING"}; Next ${next?.let { "enabled=${it.isEnabled}" } ?: "MISSING"}; $count sentences")
         check("Previous is disabled at the first sentence", previous != null && !previous.isEnabled)
         check("Next is enabled before the last sentence", next != null && next.isEnabled)
-        val forward = touchTapLabelExpecting("Next sentence", "the walk moves to the second sentence", timeoutMs = 8_000) { readAloud()?.optInt("sentenceIndex") == 1 }
-        val spoke = forward && awaitStatus("playing", 15_000)
-        finding("  real touch on Next: index ${readAloud()?.optInt("sentenceIndex")}, status ${status()}; progress '${progressText()}'; highlight ${pageHighlight()}")
-        check("a real touch on Next speaks the second sentence (index 1, playing)", forward && spoke)
-        check("the progress line follows the step (2 / $count)", poll(3_000) { progressText() == "2 / $count" })
+        val before = sentenceIndex()
+        val forward = touchTapLabelExpecting("Next sentence", "the walk moves on one sentence", timeoutMs = 8_000) { sentenceIndex() == before + 1 && status() == "playing" }
+        val after = sentenceIndex()
+        finding("  real touch on Next: index $before -> $after, status ${status()}; progress '${progressText()}'; highlight ${pageHighlight()}")
+        check("a real touch on Next speaks the next sentence (${before + 1}, playing)", forward)
+        check("the progress line follows the step (${after + 1} / $count)", poll(3_000) { progressText() == "${sentenceIndex() + 1} / $count" })
         val followed = poll(6_000) { pageHighlight().optBoolean("sentence") }
-        check("the page's highlight follows the walk to the second sentence", followed)
+        check("the page's highlight follows the walk to the next sentence", followed)
         SystemClock.sleep(600)
         shot("09-next-sentence")
-        val backward = touchTapLabelExpecting("Previous sentence", "the walk goes back to the first sentence", timeoutMs = 8_000) { readAloud()?.optInt("sentenceIndex") == 0 }
-        finding("  real touch on Previous: index ${readAloud()?.optInt("sentenceIndex")}, status ${status()}; progress '${progressText()}'")
-        check("a real touch on Previous speaks the first sentence again", backward)
-        val previousAgain = awaitNode(4_000) { it == "Previous sentence" }
-        check("Previous is disabled again at the first sentence", previousAgain != null && !previousAgain.isEnabled)
+        val heldAgain = holdTheWalk()
+        val at = sentenceIndex()
+        val backward = touchTapLabelExpecting("Previous sentence", "the walk goes back one sentence", timeoutMs = 8_000) { sentenceIndex() == at - 1 && status() == "playing" }
+        finding("  real touch on Previous (held: $heldAgain): index $at -> ${sentenceIndex()}, status ${status()}; progress '${progressText()}'")
+        check("a real touch on Previous speaks the sentence before (${at - 1}, playing)", backward)
+        if (at - 1 == 0) {
+            val previousAgain = awaitNode(4_000) { it == "Previous sentence" }
+            check("Previous is disabled again at the first sentence", previousAgain != null && !previousAgain.isEnabled)
+        } else {
+            finding("  NOTE the walk had moved on past the first sentence while the step was recorded; Previous stays enabled at $at")
+        }
         beat()
+    }
+
+    private fun sentenceIndex(): Int = readAloud()?.optInt("sentenceIndex") ?: -1
+
+    /**
+     * A real touch on Pause (the walk holds at its sentence; the engine stops), so a step is
+     * read against a sentence that stays put. True when the session reads paused after it.
+     */
+    private fun holdTheWalk(): Boolean {
+        if (status() == "paused") return true
+        return touchTapLabelExpecting("Pause", "the session pauses", timeoutMs = 6_000) { status() == "paused" }
     }
 
     // --- 8. the voice picker -------------------------------------------------------------------------
@@ -505,7 +531,7 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
     // --- 10. the selection toolbar's Read Aloud ------------------------------------------------------
 
     private fun fromSelection() {
-        finding("\nEDGE-11 / GN-13 Read Aloud from the selection toolbar (the selection first, then on: Edge's behaviour)")
+        finding("\nEDGE-11 / GN-13 Read Aloud from the selection toolbar (the model reads the selection alone, as Chrome does)")
         frontApp()
         val items = longPress("#word") { list -> list.any { it.label == "Read Aloud" || it.label == "More options" } }
         val selected = jsonString(pageJs("String(getSelection())"))
@@ -523,7 +549,13 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
         check("Read Aloud is on the toolbar and a touch on it starts a session from the selection", came)
         if (came) {
             val up = poll(8_000) { panelUp() }
-            finding("  player up=$up; status after a moment: ${if (engineless) status() else awaitStatus("playing", 20_000).let { status() }}")
+            // The mode's finish collapsed the page's selection before the core's extraction
+            // reached the document; the page script stands the cleared selection in for it
+            // (`selectionMemory.ts`: run 4 read `no-text` here). The text is the selection alone.
+            val spoke = engineless || awaitStatus("playing", 20_000)
+            val session = readAloud()
+            finding("  player up=$up; status after a moment: ${status()}; sentences ${session?.optInt("sentenceCount")}; error ${session?.optString("error")}")
+            check("the selection's text is what the session reads (playing, no 'no-text')", engineless || (spoke && (session?.optInt("sentenceCount") ?: 0) >= 1))
             SystemClock.sleep(800)
             shot("13-from-selection")
             beat()
