@@ -1,4 +1,13 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
+import {
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+  existsSync,
+  mkdirSync,
+  lstatSync,
+  symlinkSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -120,5 +129,31 @@ describe('the shadow the engine loads for an unpacked folder', () => {
     expect(readFileSync(join(folder, 'manifest.json'), 'utf8')).toBe(original)
     expect(existsSync(join(folder, DECLARED_MANIFEST_FILE))).toBe(false)
     expect(declaredManifestPath(folder)).toBe(join(folder, 'manifest.json'))
+  })
+
+  it('copies the folder\u2019s files in (Chromium drops a content script that resolves outside the root)', async () => {
+    const root = tempDir()
+    const folder = join(tempDir(), 'probe')
+    mkdirSync(join(folder, 'lib'), { recursive: true })
+    writeFileSync(join(folder, 'manifest.json'), JSON.stringify(declared))
+    writeFileSync(join(folder, 'cs.js'), 'console.log("cs")')
+    writeFileSync(join(folder, 'lib', 'util.js'), 'export const x = 1')
+    // A link inside the developer's folder is followed, as Chrome follows it.
+    symlinkSync(join(folder, 'lib', 'util.js'), join(folder, 'linked.js'))
+
+    const shadow = await shadowUnpacked(root, idForUnpackedPath(folder), folder)
+    for (const relative of ['cs.js', join('lib', 'util.js'), 'linked.js', 'manifest.json']) {
+      const info = lstatSync(join(shadow, relative))
+      expect(info.isSymbolicLink(), relative).toBe(false)
+      expect(info.isFile(), relative).toBe(true)
+    }
+    expect(lstatSync(join(shadow, 'lib')).isDirectory()).toBe(true)
+    expect(readFileSync(join(shadow, 'cs.js'), 'utf8')).toBe('console.log("cs")')
+    expect(readFileSync(join(shadow, 'linked.js'), 'utf8')).toBe('export const x = 1')
+    expect(existsSync(join(shadow, CONTENT_SCRIPT_PRELUDE_FILE))).toBe(true)
+    // A rebuild replaces the shadow with the folder's current files.
+    writeFileSync(join(folder, 'cs.js'), 'console.log("cs2")')
+    expect(await shadowUnpacked(root, idForUnpackedPath(folder), folder)).toBe(shadow)
+    expect(readFileSync(join(shadow, 'cs.js'), 'utf8')).toBe('console.log("cs2")')
   })
 })
