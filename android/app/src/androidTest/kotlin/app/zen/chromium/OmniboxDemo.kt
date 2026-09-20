@@ -83,7 +83,7 @@ class OmniboxDemo : DemoHarness("omnibox-demo-state.json", "android-omnibox", "o
         tapPill()
         val header = awaitNode(8_000) { it == EDIT_LABEL } != null
         SystemClock.sleep(800)
-        closeUrlbar()
+        closeField()
         finding("warm-up: the editor opened once off camera (header ${if (header) "seen" else "NOT seen"})")
         // The Settings page is a chunk of its own that loads on its first open: pay for it too.
         val warm = coreInvoke("page.open", "{\"id\":\"settings\",\"section\":null}")
@@ -147,7 +147,7 @@ class OmniboxDemo : DemoHarness("omnibox-demo-state.json", "android-omnibox", "o
             back()
             SystemClock.sleep(1_500)
             ensureForeground()
-            closeUrlbar()
+            closeField()
         }
 
         // 4. Edit: the whole address into the field, caret at the end, keyboard kept.
@@ -234,7 +234,7 @@ class OmniboxDemo : DemoHarness("omnibox-demo-state.json", "android-omnibox", "o
             // desktop's rule, so the clipboard scene found no header and no row. Should the field
             // reopen on the text all the same, it is cleared once (the belt: the clipboard scene
             // starts from an empty field either way) and the findings say the rule is not in.
-            closeUrlbar()
+            closeField()
             SystemClock.sleep(800)
             tapPill()
             awaitChrome("!!document.querySelector('$FIELD')", 6_000)
@@ -251,7 +251,7 @@ class OmniboxDemo : DemoHarness("omnibox-demo-state.json", "android-omnibox", "o
                 if (!touchTapLabel(CLEAR_LABEL, timeoutMs = 4_000)) clickByLabel(CLEAR_LABEL)
                 SystemClock.sleep(600)
             }
-            closeUrlbar()
+            closeField()
         }
 
         // 6. OMN-14: a link copied from the page's long-press menu, then the pill: the clipboard row.
@@ -452,6 +452,18 @@ class OmniboxDemo : DemoHarness("omnibox-demo-state.json", "android-omnibox", "o
         Finger().tap(target.exactCenterX(), target.exactCenterY())
     }
 
+    /**
+     * The shared close of the field (DemoHarness.closeUrlField, by the chrome's state): a field
+     * left open, or a page a back reached, fails the run by name rather than the scene after it.
+     */
+    private fun closeField() {
+        val close = closeUrlField()
+        if (!close.ok) {
+            finding("  the field's close: ${close.describe()} ${verdict(false)}")
+            failures += "the field's close: ${close.describe()}"
+        }
+    }
+
     private fun fieldValue(): String = chromeValue("(document.querySelector('$FIELD')||{}).value||''")
 
     /**
@@ -462,7 +474,7 @@ class OmniboxDemo : DemoHarness("omnibox-demo-state.json", "android-omnibox", "o
      */
     private fun showBrewPage(): Boolean {
         val url = BREW_ORIGIN + "/"
-        closeUrlbar()
+        closeField()
         if (activeCoreTab()?.optString("id") != BREW_TAB_ID) {
             coreInvoke("tab.activate", "{\"tabId\":${JSONObject.quote(BREW_TAB_ID)}}")
             SystemClock.sleep(800)

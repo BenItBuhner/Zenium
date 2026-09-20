@@ -640,9 +640,18 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
             fieldLog.all { it <= 0.005 } && hideNumber() <= 0.005,
             "hide max ${fieldLog.maxOrNull() ?: 0.0} over ${fieldLog.size} frames, now ${hideValue()}, URL field open ${urlbarOpen()}"
         )
-        val fieldClosed = closeUrlField()
+        // The shared close (DemoHarness.closeUrlField): a back only against the chrome's own word
+        // that the field is open, and the page read before and after. On the fifth run's retry the
+        // old close's second back, blind, went to this tab at its first page and put a new tab
+        // page in its place: the rest of the top dock's claims read no page view. A page lost
+        // here fails this claim by name, and the claims after it say so too.
+        val close = closeUrlField()
         awaitIme(false)
-        finding("[$edge] the URL field ${if (fieldClosed) "closed" else "stayed open"} after back: gate open ${barAllowed()}, hide ${hideValue()}")
+        check(
+            "$edge: back closes the URL field and the page stays",
+            close.ok,
+            "${close.describe()}; gate open ${barAllowed()}, hide ${hideValue()}"
+        )
         settleBar(0.0, "$edge after the URL field")
         SystemClock.sleep(800)
 
@@ -676,24 +685,6 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
 
     /** The address pill's node in the tree (its label carries the address after a comma); null when it is not listed. */
     private fun pillNode(): AccessibilityNodeInfo? = findNode { it == PILL_LABEL || it.startsWith("$PILL_LABEL,") }
-
-    /**
-     * Back closes the URL field; whether it has is read off the chrome's own store, not the
-     * accessibility tree. The harness's `closeUrlbar` waits for the pill to be listed again and
-     * presses back once more when it is not, and on the fifth run's retry the tree trailed a
-     * 700 ms frame past its wait: the second back, with the field already closed, went to the
-     * page's tab at its first page and put a new tab page in its place, and the rest of the
-     * top dock's claims read no page view. One back; a second only once the store still says
-     * the field is open after a wait. True when the field is closed.
-     */
-    private fun closeUrlField(): Boolean {
-        repeat(2) {
-            if (!urlbarOpen()) return true
-            back()
-            if (awaitChrome(6_000) { !urlbarOpen() }) return true
-        }
-        return !urlbarOpen()
-    }
 
     /**
      * The overview at `edge`: a finger on the bar's Tabs button opens it over the page, and while
@@ -939,10 +930,6 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
     /** The chrome's gate for the bar (`barHideStore.allowed`): false while something holds the bar shown. */
     private fun barAllowed(): Boolean =
         chromeJs("(((window.__zenStores||{})['bar-hide']||{get:function(){return {}}}).get()||{}).allowed===true") == "true"
-
-    /** The URL field is open in the chrome (`uiStore.urlbar.open`). */
-    private fun urlbarOpen(): Boolean =
-        chromeJs("((((window.__zenStores||{}).ui||{get:function(){return {}}}).get()||{}).urlbar||{}).open===true") == "true"
 
     /** The tab overview is up in the chrome (`stageStore.overview.phase`, anything but closed). */
     private fun overviewOpen(): Boolean =

@@ -86,7 +86,8 @@ class FirstRunDemo : DemoHarness(stateAsset = null, shotPrefix = "firstrun", han
         // 3. A first page, arriving the way a link from another app does (the omnibox the first
         //    run ends in keeps no input focus for injected keys), once that omnibox is out of the
         //    way. The one-time gesture hint then comes up as a toast at the frame's bottom edge.
-        closeUrlbar()
+        val close = closeUrlField()
+        finding("the first run's omnibox closed by back, the tab kept ${verdict(close.ok)} (${close.describe()})")
         openLink("https://example.com/")
         SystemClock.sleep(5_000)
         shot("07-gesture-hint")
