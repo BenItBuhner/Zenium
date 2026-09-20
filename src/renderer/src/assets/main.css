@@ -34,7 +34,11 @@
   --zen-element-bg-hover: rgb(var(--zen-fg-rgb) / 0.12);
   --zen-element-bg-active: rgb(var(--zen-fg-rgb) / 0.16);
   --zen-border: rgb(var(--zen-fg-rgb) / 0.12);
-  --zen-muted: rgb(var(--zen-fg-rgb) / 0.6);
+  /*
+   * Secondary text is the ink at 69 %, the same role as `--v2-text-deemphasized` (design
+   * language v2 §1, §9.29): at 60 % it reached 4.5:1 only on near-white surfaces (a11y-30).
+   */
+  --zen-muted: rgb(var(--zen-fg-rgb) / 0.69);
   --zen-faint: rgb(var(--zen-fg-rgb) / 0.4);
   /*
    * The accent as ink (text, glyphs) and as a fill (the one primary control, a toggle that is

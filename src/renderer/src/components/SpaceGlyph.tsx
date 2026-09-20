@@ -31,12 +31,12 @@ export function SpaceGlyph({
       </span>
     )
   }
-  // A ring of ink, filled with the space's colour when one is given: the ring keeps the dot at
-  // the ink's contrast on whatever gradient is under it (a11y-30), where a ring drawn in the
-  // colour itself sat at 1.5:1 on a like-coloured window, and the colour still shows.
+  // A swatch of the space's colour with a 1 px hairline of the ink at 20 % (a11y-30; design
+  // language v2 §9.14): the hairline gives the colour an edge on a like-coloured window, where a
+  // ring drawn in the colour itself sat at 1.5:1, and keeps the dot a swatch, not a badge.
   return (
     <span
-      className={cn('inline-block rounded-full border-2 border-[var(--zen-fg)]', className)}
+      className={cn('inline-block rounded-full border border-[rgb(var(--zen-fg-rgb)/0.2)]', className)}
       style={{ width: size * 0.7, height: size * 0.7, background: dotColor }}
       aria-hidden
     />
