@@ -19,7 +19,10 @@ import {
   siteValue,
   stepZoom,
   withSiteOverride,
-  zoomLevelIndex
+  zoomLevelIndex,
+  siteZoom,
+  zoomSiteKey,
+  zoomValue
 } from '../pageControls'
 import type { PageControlsSettings, PageEnvironment } from '../types'
 
@@ -79,6 +82,22 @@ describe('per-site maps', () => {
     const id = 'dbepggeogbaibhgnhhndojpepiihcmeb'
     expect(siteKey(`chrome-extension://${id}/options.html`)).toBeNull()
     expect(siteKey(`https://${id}.ext.zenium.invalid/options.html`)).toBeNull()
+  })
+
+  it("keys zoom by host, as Chrome's zoom levels are, and looks it up exactly", () => {
+    expect(zoomSiteKey('https://en.wikipedia.org/wiki/Zen')).toBe('en.wikipedia.org')
+    expect(zoomSiteKey('HTTP://Mail.Google.com:8080/x')).toBe('mail.google.com')
+    expect(zoomSiteKey('http://localhost:3000/')).toBe('localhost')
+    expect(zoomSiteKey('zen://settings')).toBeNull()
+    expect(zoomSiteKey('file:///tmp/x.html')).toBeNull()
+    const sites = { 'wikipedia.org': 1.5, 'en.wikipedia.org': 1.25 }
+    expect(zoomValue(sites, 'https://en.wikipedia.org/')).toBe(1.25)
+    expect(zoomValue(sites, 'https://wikipedia.org/')).toBe(1.5)
+    expect(zoomValue(sites, 'https://fr.wikipedia.org/')).toBeUndefined()
+    expect(zoomValue(sites, 'zen://settings')).toBeUndefined()
+    const s = settings({ zoom: 1.1, siteZooms: sites })
+    expect(siteZoom(s, 'https://fr.wikipedia.org/')).toBe(1.1)
+    expect(siteZoom(s, 'https://en.wikipedia.org/')).toBe(1.25)
   })
 
   it('drops a value equal to the default, so lists only hold real exceptions', () => {

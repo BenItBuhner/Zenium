@@ -627,6 +627,7 @@ export function createPreviewBridge(): NativeBridge {
     'qr.layout': () => undefined,
     'qr.setTorch': ({ on }) => qr.setTorch(on === true),
     'qr.openSettings': () => console.info('[zen preview] app settings (camera)'),
+    'app.openKeyboardSettings': () => console.info('[zen preview] keyboard settings'),
     'externalProtocol.respond': ({ requestId, allow }) =>
       console.info('[zen preview] external protocol', requestId, allow ? 'allowed' : 'refused'),
     // The browser role, remembered per preview profile; the "role dialog" is a confirm().

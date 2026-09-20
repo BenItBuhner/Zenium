@@ -24,6 +24,8 @@ import type { WebAppInfo } from './webApp'
 import type { ContentDefault } from './contentSettings'
 import type { VoiceEvent, VoiceStartOutcome } from './voice'
 import type { QrEvent, QrStartOutcome } from './qrScan'
+import type { SpellcheckSettings, SpellcheckStatus } from './spellcheck'
+import type { ReaderPreferences } from './reader'
 
 export type Platform = 'linux' | 'win32' | 'darwin' | 'android'
 
@@ -103,6 +105,13 @@ export interface HostCapabilities {
    * sheet); hosts without them keep the plain zoom menu.
    */
   pageControls: boolean
+  /**
+   * Pages can be darkened algorithmically (Chrome Android's "Auto-darken web content", CT-18):
+   * the WebView's algorithmic darkening; Chromium's auto dark mode over the DevTools protocol on
+   * Electron. Both act only while the chrome itself is dark and leave pages with a dark style of
+   * their own to it. Settings › Look shows "Apply dark theme to sites" and the per-site list.
+   */
+  darkenSites: boolean
   /**
    * Extensions run, but their content scripts share the page's world (an Android WebView below
    * Chromium 146 has no isolated worlds; the emulation layer falls back to a scope proxy). Pages
@@ -1425,6 +1434,8 @@ export type ShortcutAction =
   | 'page.readerMode'
   | 'page.pip'
   | 'page.screenshot'
+  /** Edge's "Capture full page": the whole page, beyond the viewport, saved like a screenshot. */
+  | 'page.captureFullPage'
   | 'page.toggleMute'
   | 'zoom.in'
   | 'zoom.out'
@@ -1782,6 +1793,13 @@ export interface Settings {
   newTab: NewTabSettings
   /** The one-time gesture hint (a toast after the first page) has been shown (phones). */
   gestureHintDone: boolean
+  /**
+   * Spell checking of text fields: on / off and the dictionary languages (Settings › Languages).
+   * Absent in profiles from before it existed (`sanitizeSpellcheck` fills the defaults).
+   */
+  spellcheck: SpellcheckSettings
+  /** Reader View's text size, font, colour theme and column width (`zen://reader`). */
+  reader: ReaderPreferences
 }
 
 // ---------------------------------------------------------------------------
@@ -1895,7 +1913,7 @@ export interface PageControlsSettings {
   zoom: number
   /** Multiply the system font size (Android `fontScale`) into the default zoom. */
   zoomIncludesOsFontSize: boolean
-  /** Per-site zoom: domain → factor. */
+  /** Per-site zoom: host → factor (Chrome's zoom levels are per host, `zoomSiteKey`). */
   siteZooms: Record<string, number>
   /** Override `user-scalable=no` and `maximum-scale` so pinch zoom works everywhere. */
   forceZoom: boolean
@@ -1904,8 +1922,9 @@ export interface PageControlsSettings {
 /**
  * The page-controls policy a host keeps a copy of, so a navigation gets its user agent and its
  * viewport before the request leaves and before the document starts: the defaults already
- * resolved for this device, plus the sites that differ. Sites are registrable domains
- * (`siteKey`); a host matches a URL's host against them by suffix (`siteValue`).
+ * resolved for this device, plus the sites that differ. Desktop-site and darkening sites are
+ * registrable domains (`siteKey`); a host matches a URL's host against them by suffix
+ * (`siteValue`). Zoom sites are hosts (`zoomSiteKey`), matched exactly (`zoomValue`).
  */
 export interface PageRules {
   desktop: { default: boolean; sites: Record<string, boolean> }
@@ -2537,6 +2556,8 @@ export interface UIState {
   translate: TranslateUIState
   /** The device facts the page controls resolve against (screen class, peripherals, font scale). */
   pageEnvironment: PageEnvironment
+  /** Spell check on this host: its dictionaries and their state, or the Android limit. */
+  spellcheck: SpellcheckStatus
 }
 
 export interface FindResult {
@@ -3314,7 +3335,11 @@ export interface Commands {
     args: { tabId: string; section: string | null; replace?: boolean }
     result: void
   }
-  'page.screenshot': { args: { tabId: string }; result: void }
+  /**
+   * Save a screenshot of the page to Downloads: the visible area, or with `fullPage` the whole
+   * page beyond the viewport (Edge's "Capture full page"; the visible area when the host cannot).
+   */
+  'page.screenshot': { args: { tabId: string; fullPage?: boolean }; result: void }
   'page.print': { args: { tabId: string }; result: void }
   'page.savePage': { args: { tabId: string }; result: void }
   'page.viewSource': { args: { tabId: string }; result: void }
@@ -3351,6 +3376,19 @@ export interface Commands {
   'boost.stopZap': { args: { tabId: string }; result: void }
 
   'reader.toggle': { args: { tabId: string }; result: void }
+  /** Change Reader View's text preferences; every open reader page follows at once. */
+  'reader.setPreferences': { args: Partial<ReaderPreferences>; result: void }
+
+  /** Chrome's "Check the spelling of text fields". */
+  'spellcheck.setEnabled': { args: { enabled: boolean }; result: void }
+  /** Check (or stop checking) in one of the host's dictionary languages. */
+  'spellcheck.setLanguage': { args: { code: string; on: boolean }; result: void }
+  /** The custom dictionary (words added with "Add to Dictionary"), sorted. */
+  'spellcheck.words': { args: void; result: string[] }
+  'spellcheck.addWord': { args: { word: string }; result: boolean }
+  'spellcheck.removeWord': { args: { word: string }; result: boolean }
+  /** Android: the system's keyboard settings, where the spell checker that checks pages is set. */
+  'spellcheck.openKeyboardSettings': { args: void; result: void }
 
   'liveFolder.save': {
     args: {

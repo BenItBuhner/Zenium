@@ -52,7 +52,8 @@ function fakePlatform(io: StoreIO): Platform & {
     windows: true,
     updates: false,
     agents: false,
-    pageControls: false
+    pageControls: false,
+    darkenSites: false
   })
   return {
     pages,

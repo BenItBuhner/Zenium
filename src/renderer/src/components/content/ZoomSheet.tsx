@@ -2,7 +2,7 @@ import type { JSX } from 'react'
 import { useEffect, useRef } from 'react'
 import { X } from 'lucide-react'
 import type { UIState } from '@shared/types'
-import { formatZoom, siteKey, siteZoom } from '@shared/pageControls'
+import { formatZoom, siteZoom, zoomSiteKey } from '@shared/pageControls'
 import { run } from '@renderer/lib/api'
 import { useBackDismissal } from '@renderer/lib/back'
 import { SPRING_SNAPPY, SpringAnimation, reducedMotion } from '@renderer/lib/motion/spring'
@@ -28,7 +28,7 @@ export function ZoomSheet({ state, tabId }: { state: UIState; tabId: string }): 
   const tab = state.tabs[tabId]
   const url = tab?.url ?? ''
   const pc = state.settings.pageControls
-  const site = siteKey(url)
+  const site = zoomSiteKey(url)
   const factor = siteZoom(pc, url)
   const remembered = site !== null && pc.siteZooms[site] !== undefined
   const scale = pc.zoomIncludesOsFontSize ? state.pageEnvironment.fontScale || 1 : 1
