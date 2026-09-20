@@ -1,4 +1,10 @@
-import type { Container, ExtensionInfo, Tab } from '@shared/types'
+import type {
+  Container,
+  ExtensionInfo,
+  SearchEngine,
+  SearchEngineControl,
+  Tab
+} from '@shared/types'
 import { RuleEngine } from '@core/blocking/engine'
 import type { Browser } from '@core/browser'
 import type { StoreIO } from '@core/platform'
@@ -336,6 +342,11 @@ export interface Harness {
    * (`zen://pdf?id=…`) → the URL of the PDF it shows, which the tab reads as to extensions.
    */
   pdfDocuments: Map<string, string>
+  /**
+   * What the runtime told the search model (`state.setExtensionSearch`), every call in order:
+   * the attached extensions' engines and the control of the default.
+   */
+  search: Array<{ engines: SearchEngine[]; control: SearchEngineControl | null }>
   /** Write the debounced JSON documents out now and parse one of them. */
   saved: (name: string) => Record<string, unknown>
 }
@@ -393,6 +404,7 @@ export function harness(
     }
   } as unknown as ZenWindow
   const pdfDocuments = new Map<string, string>()
+  const search: Harness['search'] = []
   const browser = {
     platform: { io },
     state: {
@@ -401,7 +413,10 @@ export function harness(
         listeners.push(fn)
         return () => undefined
       },
-      commitVolatile: () => undefined
+      commitVolatile: () => undefined,
+      setExtensionSearch: (engines: SearchEngine[], control: SearchEngineControl | null) => {
+        search.push({ engines, control })
+      }
     },
     toast: (message: string) => {
       toasts.push(message)
@@ -477,6 +492,7 @@ export function harness(
     toasts,
     infos,
     pdfDocuments,
+    search,
     saved: (name) => {
       runtime.flushSync()
       return JSON.parse(files.get(name) ?? '{}') as Record<string, unknown>

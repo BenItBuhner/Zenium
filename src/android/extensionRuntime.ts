@@ -57,6 +57,11 @@ import {
 } from '@core/extensions/runtime/boot'
 import { DNR_OWNERSHIP, createDnrSink } from '@core/extensions/dnr/engineSink'
 import type { EngineDecisionAction } from '@core/extensions/dnr/sink'
+import {
+  resolveExtensionSearch,
+  searchProviderOf,
+  type InstalledSearchProvider
+} from '@core/extensions/searchProvider'
 import { parseRuntimeManifest } from '@core/extensions/runtime/manifest'
 import { extensionUrl, type RegisteredContentScript } from '@core/extensions/runtime/plan'
 import { MessageRouter, type Endpoint } from '@core/extensions/runtime/router'
@@ -417,6 +422,13 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
   /** Extensions whose `runtime.onInstalled` waits for the first background ready: previous version or null. */
   private readonly installEvents = new Map<string, string | null>()
   private readonly startupFired = new Set<string>()
+  /**
+   * `chrome_settings_overrides.search_provider` of each attached extension that declares one:
+   * the engines reach the browser's search model while the extension is attached (installed and
+   * enabled), and the most recently installed one asking for `is_default` holds the default, as
+   * Chrome's `SettingsOverridesAPI` does and the desktop's `SearchProviderApi` mirrors.
+   */
+  private readonly searchProviders = new Map<string, InstalledSearchProvider>()
   /** `tabId\u0000docId` → frame id, so every world of one sub-frame reports the same one. */
   private readonly frameIds = new Map<string, number>()
   private nextFrameId = 1
@@ -626,6 +638,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     // (an update, a reload) starts the rule state over from the new manifest.
     if (previous) this.dnr.unload(record.id)
     this.dnr.load(ext)
+    this.loadSearchProvider(record, raw)
     const installedVersion = this.data.installed[record.id]
     if (installedVersion !== manifest.version) {
       this.data.installed[record.id] = manifest.version
@@ -665,8 +678,27 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     this.updateObserving()
     // Its rule sets leave the engine with it (the store persists the removal).
     this.dnr.unload(id)
+    if (this.searchProviders.delete(id)) this.applySearchProviders()
     await this.bridge.call('ext.detach', { id })
     this.browser.state.commitVolatile()
+  }
+
+  /**
+   * The search engine `record`'s manifest declares (`chrome_settings_overrides.search_provider`)
+   * joins the browser's engines, and takes the default when the manifest asks for it and no
+   * later-installed extension holds it (`resolveExtensionSearch`); a re-attach re-reads it, a
+   * manifest without one leaves nothing behind.
+   */
+  private loadSearchProvider(record: ExtensionRecord, manifest: Record<string, unknown>): void {
+    const provider = searchProviderOf(manifest, record.id, record.name)
+    if (provider) this.searchProviders.set(record.id, { provider, installedAt: record.installedAt })
+    else if (!this.searchProviders.delete(record.id)) return
+    this.applySearchProviders()
+  }
+
+  private applySearchProviders(): void {
+    const { engines, control } = resolveExtensionSearch([...this.searchProviders.values()])
+    this.browser.state.setExtensionSearch(engines, control)
   }
 
   /**
