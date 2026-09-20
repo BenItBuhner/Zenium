@@ -1,0 +1,1019 @@
+package app.zen.chromium
+
+import android.app.UiAutomation
+import android.graphics.PointF
+import android.graphics.Rect
+import android.os.Build
+import android.os.SystemClock
+import android.util.Log
+import org.json.JSONArray
+import org.json.JSONObject
+import org.json.JSONTokener
+import java.io.File
+import java.io.FileInputStream
+import kotlin.math.roundToInt
+
+/**
+ * The new tab page's field becoming the omnibox (NTP-02 / MOT-08, design language v2 §11.8) on
+ * the emulator, under real fingers, judged frame by frame. The chrome samples itself once per
+ * animation frame while a scene runs ([SAMPLER]: the machine's phase, the two values on the
+ * root, the scroll, and the box and opacity of every incarnation of the field – the page's own,
+ * the double, the omnibox's field, the pill's slot) and hands the frames to [FakeboxMorph], the
+ * judge shared with the JVM tests (`FakeboxMorphJudgeTest`), whose verdicts are the lines of the
+ * findings file. A verdict that fails fails the run (`AssertionError` at the end, the recording
+ * and the stills kept); the frames of every scene are written next to the findings.
+ *
+ * The scenes, by driver (the two flags):
+ *  - [FakeboxMorphDemo] (`scrub = false, reduced = false`), the space page in portrait: a tap on
+ *    the field at rest with the bar docked below – the field flies to the omnibox above the
+ *    keyboard, whose rise moves the target under the segment – and its dismissal from open; the
+ *    same round trip unsampled for the `gfxinfo` frame cost; with the keyboard out of the way (the
+ *    IME disabled for the scene, since a back with it up goes to it), the predictive back gesture
+ *    committing while the field is still flying (a dismissal mid-flight), a tap on the double on
+ *    its way back (the closing turning round into an opening), and the gesture on the landed
+ *    omnibox: pulled and held, let go at the edge (cancelled, the field springs back), pulled and
+ *    committed (the field is already home: the bar closes at once); then the bar docked above,
+ *    the tap and the dismissal again; last the coordinator's question – how often does the
+ *    scrub engage on the space page? – measured: the page's overflow in portrait with the most
+ *    visited row full (eight tiles, the cap), again under the system font size at 1.3 (the
+ *    chrome's text does not follow it today, so the answer is expected to be the same), and
+ *    turned to landscape; wherever the page overflows past the travel the scrub runs once more
+ *    as a cheap second scene, and where it does not the findings say so.
+ *  - [FakeboxMorphScrubDemo] (`scrub = true`), the private page in landscape, where the page
+ *    overflows by the explainer's height: a steady finger scrolling the page carries the field –
+ *    with the bar below, the page's own field rides up one to one and hands over to the pill by a
+ *    cross-fade at the frame's top edge (§11.8 as amended); with the bar above, the double is
+ *    carried along the line to the pill's slot, rounding as it goes, and hands over over the last
+ *    three tenths – then the scroll back, and a tap on the field part way (from a scrubbed pose)
+ *    with its dismissal back to that pose. It needs the Chromium snapshot WebView (private tabs
+ *    need `MULTI_PROFILE`, which the API 34 image's WebView 113 lacks), the private demo's recipe.
+ *  - [FakeboxMorphReducedDemo] and [FakeboxMorphScrubReducedDemo] (`reduced = true`) run the
+ *    tap and the dismissal (and, on the private page, from a scrubbed pose) in a FRESH process
+ *    under `animator_duration_scale 0`: Chromium reads the scale into `prefers-reduced-motion`
+ *    once per process (the loading demo saw a live change ignored), so the wrapper script sets
+ *    it between drivers, and the driver refuses to run when the WebView does not report it
+ *    ([REDUCED_MOTION_NOT_REPORTED]: the script then forces the query through the WebView's
+ *    command-line file and runs the driver again). Under it the spring's part is a 120 ms fade
+ *    in place, nothing travels, and the scrub still follows the finger (§11.3).
+ *
+ * The bar's hide-on-scroll stays gated off on the page throughout (the two scroll-driven motions
+ * never meet, #200): every sample carries the gate and the value. Gesture navigation is turned
+ * on for the run (the predictive back is an edge swipe). See [DemoHarness] for the plumbing.
+ */
+abstract class FakeboxMorphDemoBase(
+    private val scrub: Boolean,
+    private val reduced: Boolean,
+    private val shotPrefix: String,
+    handshakeDir: String
+) : DemoHarness("fakebox-morph-demo-state.json", shotPrefix, handshakeDir) {
+    private lateinit var findings: File
+    private val failures = ArrayList<String>()
+    private var imeIds: List<String> = emptyList()
+    private var fontScaled = false
+    private var scenes = 0
+
+    /** The whole run: the harness's sequence, the device put back, the verdicts' failures thrown at the end. */
+    protected fun runMorphDemo() {
+        var fault: Throwable? = null
+        try {
+            runDemo()
+        } catch (e: Throwable) {
+            fault = e
+        } finally {
+            restoreDevice()
+            PrivateBrowsing.captureForRecording = false
+        }
+        if (failures.isNotEmpty() || fault != null) {
+            throw AssertionError(
+                "${failures.size} check(s) failed: ${failures.joinToString("; ")}" +
+                    (fault?.let { "; and: ${it.message}" } ?: "")
+            )
+        }
+    }
+
+    /** The most visited tiles the page shows (letter tiles: no favicons are fetched for the hosts). */
+    override fun seedMore(zen: File) {
+        val now = System.currentTimeMillis()
+        val history = STAMP.replace(readAsset("fakebox-morph-demo-history.json")) { m ->
+            val hours = m.groupValues[1].toLongOrNull() ?: 0L
+            (now - hours * 3_600_000L).toString()
+        }
+        File(zen, "history.json").writeText(history)
+    }
+
+    /** The predictive back is an edge swipe: gesture navigation (the shared script sets three buttons). */
+    override fun beforeLaunch() {
+        shell("cmd overlay disable com.android.internal.systemui.navbar.threebutton")
+        shell("cmd overlay enable com.android.internal.systemui.navbar.gestural")
+        // The recording must show the private surface (its window carries FLAG_SECURE otherwise).
+        if (scrub) PrivateBrowsing.captureForRecording = true
+        SystemClock.sleep(1_500)
+    }
+
+    private fun restoreDevice() {
+        if (imeIds.isNotEmpty()) enableIme()
+        if (fontScaled) fontScale(null)
+        ui.setRotation(UiAutomation.ROTATION_UNFREEZE)
+    }
+
+    // --- warm-up ---------------------------------------------------------------------------------
+
+    override fun warmUp() {
+        findings = File(out, "$shotPrefix-findings.txt")
+        findings.writeText(
+            "Zenium Android new tab page field morph (API ${Build.VERSION.SDK_INT}, ${width}x$height, density $density, " +
+                "${if (scrub) "the private page in landscape" else "the space page in portrait"}${if (reduced) ", reduced motion" else ""})\n" +
+                "Judged frame by frame by FakeboxMorphJudge (design language v2 §11.8); one line per check, PASS or FAIL.\n\n"
+        )
+        finding("start: ${describeActive()}; WebView ${webViewVersion()}")
+        val installed = jsString(SAMPLER)
+        finding("sampler: $installed")
+        if (activeCoreTab()?.optString("url") != BLANK_URL) {
+            coreInvoke("tab.new")
+            SystemClock.sleep(2_500)
+        }
+        if (scrub) openPrivatePage()
+        awaitChrome("!!document.querySelector('.zen-ntp-field')", 10_000)
+        SystemClock.sleep(1_500)
+        val g = readGeometry()
+        finding("page: ${describeGeometry(g)}")
+        val reducedNow = g.optBoolean("reduced")
+        finding("prefers-reduced-motion: $reducedNow (expected $reduced); animator_duration_scale ${shell("settings get global animator_duration_scale").trim()}")
+        // Before the recording handshake, so the wrapper script reads the marker in instrument.txt
+        // and takes the fallback (or stops) instead of recording scenes under the wrong form.
+        if (reduced && !reducedNow) error("$REDUCED_MOTION_NOT_REPORTED: the WebView reports prefers-reduced-motion false in a fresh process under animator_duration_scale 0")
+        if (!reduced && reducedNow) error("$REDUCED_MOTION_LEFT_ON: the WebView reports prefers-reduced-motion true; the animator scale or the command-line file was left over from a reduced run")
+        // The first morph pays for the layer's first layout and the omnibox's first open: off camera.
+        tapField()
+        awaitPhase("open", 8_000)
+        SystemClock.sleep(1_200)
+        val close = closeUrlField()
+        finding("warm-up morph: ${close.describe()}")
+        awaitPhase("rest", 6_000)
+        SystemClock.sleep(1_500)
+        finding("warm-up done: ${describeActive()}\n")
+    }
+
+    /**
+     * The private new tab page, turned to landscape (`UiAutomation.setRotation`, as LayoutDemo
+     * does: the activity keeps its instance and the chrome re-lays itself out): the explainer
+     * makes the page overflow, so the scroll can carry the field all the way to the pill's slot.
+     */
+    private fun openPrivatePage() {
+        val id = coreInvoke("tab.newPrivate", "{}")
+        finding("private tab: $id")
+        if (id == "null" || id.isEmpty()) error("the core offers no private tabs on this WebView (MULTI_PROFILE missing)")
+        SystemClock.sleep(2_500)
+        rotate(UiAutomation.ROTATION_FREEZE_90)
+    }
+
+    private fun rotate(rotation: Int) {
+        ui.setRotation(rotation)
+        SystemClock.sleep(5_000)
+        ensureForeground()
+        remeasureWindow()
+    }
+
+    /** The window's size after a rotation (the harness measured it in portrait). */
+    private fun remeasureWindow() {
+        val insets = windowInsets()
+        width = insets.windowWidth
+        height = insets.windowHeight
+        touchable = touchableBand(insets)
+        Log.i(tag, "window now ${width}x$height, touchable $touchable")
+    }
+
+    // --- the sequence ----------------------------------------------------------------------------
+
+    override fun demo() {
+        shot("00-rest")
+        when {
+            scrub && reduced -> scrubReducedScenes()
+            scrub -> scrubScenes()
+            reduced -> reducedScenes()
+            else -> morphScenes()
+        }
+        finding("\nend: ${describeActive()}; ${failures.size} check(s) failed")
+    }
+
+    /** The space page in portrait: both docks, the keyboard, the back gesture, the turn, the frame cost, the overflow question. */
+    private fun morphScenes() {
+        tapAndDismiss("bottom-rest", edge = "bottom", keyboard = true)
+        frameCost("bottom-cost")
+        disableIme()
+        midFlightBack("bottom-midflight-back")
+        turnRound("bottom-turn")
+        pulled("bottom-pulled")
+        enableIme()
+        dock("top")
+        tapAndDismiss("top-rest", edge = "top", keyboard = true)
+        frameCost("top-cost")
+        dock("bottom")
+        portraitOverflow()
+        landscapeOverflow()
+    }
+
+    /** The private page in landscape: the scrub at both docks, to the slot and back, and a tap part way. */
+    private fun scrubScenes() {
+        scrubToDock("bottom-scrub", edge = "bottom")
+        tapPartWay("bottom-partway", edge = "bottom")
+        dock("top")
+        scrubToDock("top-scrub", edge = "top")
+        tapPartWay("top-partway", edge = "top")
+        dock("bottom")
+    }
+
+    /** Reduced motion on the space page: the tap and the dismissal are fades in place, at both docks. */
+    private fun reducedScenes() {
+        tapAndDismiss("reduced-bottom", edge = "bottom", keyboard = true)
+        dock("top")
+        tapAndDismiss("reduced-top", edge = "top", keyboard = true)
+        dock("bottom")
+    }
+
+    /** Reduced motion on the private page: the scrub still follows the finger; a tap part way fades the double in place. */
+    private fun scrubReducedScenes() {
+        scrubToDock("reduced-bottom-scrub", edge = "bottom")
+        dock("top")
+        scrubToDock("reduced-top-scrub", edge = "top")
+        tapPartWay("reduced-top-partway", edge = "top")
+        dock("bottom")
+    }
+
+    // --- scenes ----------------------------------------------------------------------------------
+
+    /**
+     * A finger on the field at rest: the field flies to the omnibox (over the keyboard, whose rise
+     * moves the target under the segment at a bottom dock), lands, and the dismissal – the shared
+     * close, by the chrome's state: a back for the keyboard, one for the field – runs it home.
+     */
+    private fun tapAndDismiss(scene: String, edge: String, keyboard: Boolean) {
+        section("$scene: a tap on the field at rest, the bar docked $edge${if (keyboard) ", the keyboard rising" else ""}")
+        settleAtRest()
+        val g = geometry()
+        startSampling()
+        val touched = tapField()
+        val opened = awaitPhase("open", 8_000)
+        if (keyboard) awaitIme(shown = true, timeoutMs = 6_000)
+        SystemClock.sleep(900)
+        shot("$scene-open")
+        val opening = stopSampling(scene + "-opening")
+        finding("  touch at $touched; phase ${phaseNow()}; ${FakeboxMorph.describe(opening)}; keyboard inset ${imeInset()} px")
+        if (!opened) touchFault("the touch on the field did not open the omnibox ($scene)")
+        judge(scene, opening, reducedRun = reduced, g = g, opening = true)
+
+        startSampling()
+        val close = closeUrlField()
+        val rested = awaitPhase("rest", 6_000)
+        SystemClock.sleep(700)
+        shot("$scene-closed")
+        val closing = stopSampling(scene + "-closing")
+        finding("  ${close.describe()}; phase ${phaseNow()}; ${FakeboxMorph.describe(closing)}")
+        check(scene, "the shared close brought the field home", close.ok && rested, "close ${close.ok}, at rest $rested")
+        judge(scene, closing, reducedRun = reduced, g = g, opening = false)
+    }
+
+    /**
+     * The frame cost of a round trip (the reviewer's criterion for the run): `gfxinfo` reset, a
+     * tap, the landing, the dismissal, the return, then the stats – with the sampler off, so the
+     * numbers are the morph's own. On the emulator's software GPU the numbers say what the chrome
+     * asked for per frame, not what a phone would take.
+     */
+    private fun frameCost(scene: String) {
+        section("$scene: the frame cost of a tap and a dismissal (gfxinfo, unsampled)")
+        settleAtRest()
+        shell("dumpsys gfxinfo ${app.packageName} reset")
+        val started = SystemClock.uptimeMillis()
+        tapField()
+        awaitPhase("open", 8_000)
+        awaitIme(shown = true, timeoutMs = 4_000)
+        SystemClock.sleep(400)
+        closeUrlField()
+        awaitPhase("rest", 6_000)
+        val took = SystemClock.uptimeMillis() - started
+        SystemClock.sleep(300)
+        val stats = shell("dumpsys gfxinfo ${app.packageName}")
+        val summary = gfxSummary(stats)
+        finding("  round trip $took ms: $summary")
+        File(out, "$shotPrefix-gfxinfo-$scene.txt").writeText(stats)
+    }
+
+    /**
+     * The predictive back gesture committing while the field is still flying: a tap, and the
+     * edge swipe the moment the chrome owns the back (the omnibox is up under the field: the
+     * host polled every 10 ms, since the system routes the gesture to the app only once its
+     * callback stands), a fast flick lifted at once – the pull does not move a flying field
+     * (only an open one follows), the commit dismisses it from where it is: a closing segment
+     * from a point of the line. The flight is some 300 ms (`SPRING_SNAPPY` over the poses'
+     * distance), so the commit is a race with the spring: up to [ATTEMPTS] tries, the first that
+     * caught the field in flight (an opening -> closing frame pair) is the one judged.
+     */
+    private fun midFlightBack(scene: String) {
+        section("$scene: the back gesture committed mid-flight (the keyboard disabled for the scene)")
+        var caught: List<FakeboxMorph.Frame>? = null
+        var g: FakeboxMorph.Geometry? = null
+        for (attempt in 1..ATTEMPTS) {
+            settleAtRest()
+            g = geometry()
+            startSampling()
+            val tapped = SystemClock.uptimeMillis()
+            tapField()
+            val owned = awaitSurfaceFast(2_000)
+            val ownedAfter = SystemClock.uptimeMillis() - tapped
+            val edge = Finger()
+            edge.down(EDGE_X, height * 0.5f)
+            edge.moveBy(0.3f * width, 0f, 60)
+            edge.up()
+            val committedAfter = SystemClock.uptimeMillis() - tapped
+            val rested = awaitPhase("rest", 8_000)
+            SystemClock.sleep(700)
+            val frames = stopSampling("$scene-$attempt")
+            val turn = (1 until frames.size).firstOrNull { frames[it - 1].phase == "opening" && frames[it].phase == "closing" }
+            finding(
+                "  attempt $attempt: the chrome owned the back $owned after $ownedAfter ms, the flick was up after $committedAfter ms; " +
+                    "the flight turned ${if (turn == null) "NOWHERE (no opening -> closing frame pair: the field had landed)" else "at m ${"%.2f".format(frames[turn - 1].morph)} (${frames[turn].t} ms into the sampling)"}; " +
+                    "at rest $rested; ${FakeboxMorph.describe(frames)}"
+            )
+            if (turn != null && rested) {
+                shot("$scene-closed")
+                caught = frames
+                break
+            }
+            if (!rested) closeUrlField()
+        }
+        check(scene, "the commit caught the field in flight (within $ATTEMPTS attempts)", caught != null, if (caught == null) "every commit landed after the field had" else "caught")
+        val frames = caught ?: return
+        check(scene, "the gesture dismissed the omnibox from mid-flight", frames.last().phase == "rest" && !frames.last().urlbarOpen, "phase ${frames.last().phase}, urlbar open ${frames.last().urlbarOpen}")
+        judge(scene, frames, reducedRun = false, g = g!!, opening = null)
+    }
+
+    /**
+     * A tap on the double on its way back: the omnibox dismissed by a back, and once the field is
+     * near the page (the value under [TURN_AT]: the spring's tail, where the box still moves but
+     * slowly) a finger on the double – the closing turns into an opening with the velocity
+     * carried, and lands open. The double turns on a click, which wants the finger down and up
+     * on it: the tap is aimed a little ahead of the box, toward the page's field, where the box
+     * will be over the tap's 60 ms; up to [ATTEMPTS] tries, the first the judge sees turn round
+     * (`turnedRound`) is the one kept.
+     */
+    private fun turnRound(scene: String) {
+        section("$scene: a tap on the double on its way back turns it round")
+        var kept: List<FakeboxMorph.Frame>? = null
+        var g: FakeboxMorph.Geometry? = null
+        for (attempt in 1..ATTEMPTS) {
+            settleAtRest()
+            g = geometry()
+            tapField()
+            awaitPhase("open", 8_000)
+            SystemClock.sleep(600)
+            startSampling()
+            if (!awaitSurfaceFast(2_000)) finding("  the chrome does not own the back; the dismissal may not run")
+            back()
+            var turned: PointF? = null
+            var seen = ""
+            val deadline = SystemClock.uptimeMillis() + 3_000
+            while (SystemClock.uptimeMillis() < deadline) {
+                val s = snapshot()
+                val ph = s.optString("ph")
+                val m = s.optDouble("m", 1.0)
+                if (ph == "closing" && m < TURN_AT) {
+                    val box = s.optJSONObject("d") ?: break
+                    val rest = g.rest
+                    // Ahead of the box: the fraction of the way to the field's rest box it covers in about a tap.
+                    val cy = FakeboxMorph.lerp((box.getDouble("y") + box.getDouble("h") / 2).toFloat(), rest.cy, TAP_LEAD)
+                    turned = PointF((rest.cx * density), cy * density)
+                    seen = "m ${"%.2f".format(m)}"
+                    Finger().tap(turned.x, turned.y)
+                    break
+                }
+                if (ph == "rest") break
+                SystemClock.sleep(6)
+            }
+            val opened = awaitPhase("open", 8_000)
+            SystemClock.sleep(700)
+            val frames = stopSampling("$scene-$attempt")
+            val verdict = FakeboxMorph.turnedRound(frames)
+            finding("  attempt $attempt: tapped ${if (turned == null) "nowhere (the field was never caught closing under $TURN_AT)" else "at $turned ($seen)"}; open $opened; ${verdict.check}: ${verdict.detail}; ${FakeboxMorph.describe(frames)}")
+            if (verdict.ok && opened) {
+                shot("$scene-open")
+                kept = frames
+                break
+            }
+            if (opened) {
+                closeUrlField()
+                awaitPhase("rest", 6_000)
+            }
+        }
+        check(scene, "the field was caught on its way back and turned round (within $ATTEMPTS attempts)", kept != null, if (kept == null) "no attempt turned it" else "turned")
+        val frames = kept ?: return
+        report(scene, FakeboxMorph.turnedRound(frames))
+        report(scene, FakeboxMorph.oneSurface(frames))
+        report(scene, FakeboxMorph.noJump(frames))
+        report(scene, FakeboxMorph.onTheLine(frames, g!!))
+        report(scene, FakeboxMorph.landing(frames))
+        report(scene, FakeboxMorph.barStays(frames))
+        report(scene, FakeboxMorph.resolved(frames.last(), "open", true))
+        // Home again for the next scene.
+        closeUrlField()
+        awaitPhase("rest", 6_000)
+    }
+
+    /** [awaitSurface] at 10 ms: the flight is short, and the gesture must begin the moment the chrome owns the back. */
+    private fun awaitSurfaceFast(timeoutMs: Long): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (chromeSurfaceUp()) return true
+            SystemClock.sleep(10)
+        }
+        return chromeSurfaceUp()
+    }
+
+    /**
+     * The back gesture on the landed omnibox: pulled part way and held, the field follows the
+     * finger back toward the page (a still); let go at the edge, cancelled, it springs back to the
+     * omnibox; pulled again and committed, the value runs to 1 first (the field is home) and the
+     * bar closes at once – no scrim holding taps after the commit (the first-line's nit 2).
+     */
+    private fun pulled(scene: String) {
+        section("$scene: the back gesture on the landed omnibox – pulled and held, cancelled, then committed")
+        settleAtRest()
+        val g = geometry()
+        tapField()
+        awaitPhase("open", 8_000)
+        SystemClock.sleep(600)
+        startSampling()
+        if (!awaitSurface(true, 2_000)) finding("  the chrome does not own the back")
+        val f = Finger()
+        f.down(EDGE_X, height * 0.5f)
+        f.moveBy(0.28f * width, 0f, 520)
+        f.hold(900)
+        val held = snapshot()
+        shot("$scene-held")
+        // Back to the edge and off: the system cancels a gesture let go where it began.
+        f.moveBy(-(0.28f * width) + 4f, 0f, 320)
+        f.up()
+        SystemClock.sleep(1_200)
+        val cancelled = snapshot()
+        val frames1 = stopSampling(scene + "-cancel")
+        finding(
+            "  held: look '${held.optString("lk")}', value ${"%.2f".format(held.optDouble("m"))}; " +
+                "cancelled: phase ${cancelled.optString("ph")}, look '${cancelled.optString("lk")}', value ${"%.2f".format(cancelled.optDouble("m"))}; ${FakeboxMorph.describe(frames1)}"
+        )
+        check(scene, "held, the field followed the finger back", held.optString("lk") == "pulled" && held.optDouble("m") < 0.97, "look '${held.optString("lk")}', value ${"%.2f".format(held.optDouble("m"))}")
+        check(scene, "cancelled, the field sprang back to the omnibox", cancelled.optString("ph") == "open" && cancelled.optDouble("m") > 0.99 && cancelled.optString("lk") == "open", "phase ${cancelled.optString("ph")}, look '${cancelled.optString("lk")}', value ${"%.2f".format(cancelled.optDouble("m"))}")
+        report(scene, FakeboxMorph.oneSurface(frames1))
+        report(scene, FakeboxMorph.noJump(frames1))
+        report(scene, FakeboxMorph.onTheLine(frames1, g))
+        report(scene, FakeboxMorph.barStays(frames1))
+
+        startSampling()
+        val c = Finger()
+        c.down(EDGE_X, height * 0.5f)
+        c.moveBy(0.3f * width, 0f, 420)
+        c.hold(300)
+        c.up()
+        val committed = SystemClock.uptimeMillis()
+        val rested = awaitPhase("rest", 6_000)
+        val latency = SystemClock.uptimeMillis() - committed
+        SystemClock.sleep(600)
+        shot("$scene-committed")
+        val frames2 = stopSampling(scene + "-commit")
+        finding("  committed: at rest $rested after $latency ms (poll resolution ${POLL_MS} ms); ${FakeboxMorph.describe(frames2)}")
+        check(scene, "the commit closed the bar at once (no scrim held after it)", rested && latency < 400, "$latency ms to rest")
+        report(scene, FakeboxMorph.oneSurface(frames2))
+        report(scene, FakeboxMorph.noJump(frames2))
+        report(scene, FakeboxMorph.barStays(frames2))
+        frames2.lastOrNull()?.let { report(scene, FakeboxMorph.resolved(it, "", false)) }
+    }
+
+    /**
+     * A steady finger scrolling the page: from the top past the travel, holding part way for a
+     * still, released without a fling; then the same back to the top. With the bar below the
+     * page's field rides up one to one and hands over to the pill by a fade at the frame's top
+     * edge; with it above the double is carried along the line to the slot.
+     */
+    private fun scrubToDock(scene: String, edge: String) {
+        section("$scene: a steady finger scrolls the page, the field carried to the pill's slot, the bar docked $edge")
+        settleAtRest()
+        val g = geometry()
+        val travel = g.travel
+        val overflow = readGeometry().optDouble("overflow")
+        finding("  travel ${"%.1f".format(travel)} CSS px, the page overflows by ${"%.1f".format(overflow)} CSS px")
+        check(scene, "the page overflows past the travel", overflow >= travel + 8, "overflow ${"%.1f".format(overflow)}, travel ${"%.1f".format(travel)}")
+        val x = width * 0.5f
+        val startY = touchable.exactCenterY() + touchable.height() * 0.2f
+        val total = (travel + 40f) * density
+        startSampling()
+        val f = Finger()
+        f.down(x, startY)
+        f.moveBy(0f, -total * 0.5f, 900)
+        f.hold(700)
+        shot("$scene-half")
+        f.moveBy(0f, -total * 0.5f, 900)
+        f.hold(700)
+        shot("$scene-docked")
+        f.up()
+        SystemClock.sleep(900)
+        val up = stopSampling(scene + "-up")
+        val docked = snapshot()
+        finding("  scrolled to ${"%.1f".format(docked.optDouble("sc"))} CSS px: look '${docked.optString("lk")}', pill ${"%.2f".format(docked.optDouble("p"))}; ${FakeboxMorph.describe(up)}")
+        report(scene, FakeboxMorph.steadyFinger(up, g))
+        report(scene, if (g.dockBelow) FakeboxMorph.ridesWithPage(up, g) else FakeboxMorph.scrubOnTheLine(up, g))
+        report(scene, FakeboxMorph.docked(up, g))
+        report(scene, FakeboxMorph.oneSurface(up))
+        report(scene, FakeboxMorph.noJump(up, g))
+        report(scene, FakeboxMorph.barStays(up))
+
+        startSampling()
+        val b = Finger()
+        b.down(x, startY - total * 0.6f)
+        b.moveBy(0f, total * 0.6f + 20f * density, 1_100)
+        b.hold(600)
+        b.up()
+        SystemClock.sleep(900)
+        shot("$scene-back")
+        val down = stopSampling(scene + "-down")
+        val home = snapshot()
+        finding("  scrolled back to ${"%.1f".format(home.optDouble("sc"))} CSS px: look '${home.optString("lk").ifEmpty { "rest" }}'; ${FakeboxMorph.describe(down)}")
+        report(scene, if (g.dockBelow) FakeboxMorph.ridesWithPage(down, g) else FakeboxMorph.scrubOnTheLine(down, g))
+        report(scene, FakeboxMorph.oneSurface(down))
+        report(scene, FakeboxMorph.noJump(down, g))
+        down.lastOrNull()?.let { report(scene, FakeboxMorph.resolved(it, "", false)) }
+    }
+
+    /**
+     * A tap on the field part way through the scrub: the page scrolled to [PART_WAY] of the
+     * travel and left there (no fling), a finger on the field – the page's own, riding, at a
+     * bottom dock; the double at a top dock – and the segment sets out from the scrubbed pose
+     * along the line to the omnibox; the dismissal runs it back to that pose.
+     */
+    private fun tapPartWay(scene: String, edge: String) {
+        section("$scene: a tap on the field part way through the scrub, the bar docked $edge")
+        settleAtRest()
+        val g = geometry()
+        val x = width * 0.5f
+        val startY = touchable.exactCenterY() + touchable.height() * 0.2f
+        val f = Finger()
+        f.down(x, startY)
+        f.moveBy(0f, -PART_WAY * g.travel * density, 700)
+        f.hold(500)
+        f.up()
+        SystemClock.sleep(1_000)
+        val part = snapshot()
+        val s = g.scrubOf(part.optDouble("sc").toFloat())
+        finding("  scrolled to ${"%.1f".format(part.optDouble("sc"))} CSS px (s ${"%.2f".format(s)}), look '${part.optString("lk")}'")
+        check(scene, "the page is held part way", s > 0.15f && s < 0.95f && part.optString("ph") == "rest", "s ${"%.2f".format(s)}, phase ${part.optString("ph")}")
+        shot("$scene-partway")
+        startSampling()
+        val touched = tapField()
+        val opened = awaitPhase("open", 8_000)
+        awaitIme(shown = true, timeoutMs = 4_000)
+        SystemClock.sleep(900)
+        shot("$scene-open")
+        val opening = stopSampling(scene + "-opening")
+        finding("  touch at $touched; phase ${phaseNow()}; ${FakeboxMorph.describe(opening)}")
+        if (!opened) touchFault("the touch on the field part way did not open the omnibox ($scene)")
+        judge(scene, opening, reducedRun = reduced, g = g, opening = true)
+
+        startSampling()
+        val close = closeUrlField()
+        val rested = awaitPhase("rest", 6_000)
+        SystemClock.sleep(700)
+        shot("$scene-closed")
+        val closing = stopSampling(scene + "-closing")
+        val after = snapshot()
+        finding("  ${close.describe()}; phase ${after.optString("ph")}, look '${after.optString("lk")}', scroll ${"%.1f".format(after.optDouble("sc"))}; ${FakeboxMorph.describe(closing)}")
+        check(scene, "the dismissal returned the field to the scrubbed pose", close.ok && rested && after.optString("lk") == "scrub", "look '${after.optString("lk")}', scroll ${"%.1f".format(after.optDouble("sc"))}")
+        judge(scene, closing, reducedRun = reduced, g = g, opening = false)
+        // Back to the top for the next scene.
+        val b = Finger()
+        b.down(x, startY - PART_WAY * g.travel * density)
+        b.moveBy(0f, PART_WAY * g.travel * density + 30f * density, 700)
+        b.hold(400)
+        b.up()
+        SystemClock.sleep(1_000)
+    }
+
+    /**
+     * The coordinator's question, first half: does the space page overflow in PORTRAIT under any
+     * seed? The profile seeds the most visited row full (eight hosts, `MAX_NEW_TAB_SHORTCUTS`),
+     * measured as it stands; then under the system font size at 1.3 (`settings put system
+     * font_scale`; the activity takes the configuration change in place). The chrome pins the
+     * WebView's text zoom at 100 and reads `fontScale` only into the page zoom (A11Y-05 is
+     * another worker's), so the second measurement is expected to equal the first: measured
+     * rather than assumed, since the answer bears on how often the scrub engages. Where the page
+     * does overflow the scrub runs as a cheap second scene.
+     */
+    private fun portraitOverflow() {
+        section("portrait: does the space page overflow under any seed?")
+        settleAtRest()
+        val seeded = readGeometry()
+        val tiles = chromeJs("document.querySelectorAll('.zen-ntp-site').length")
+        finding("  eight most visited seeded ($tiles site tile(s) in the tree): ${describeGeometry(seeded)}")
+        fontScale("1.3")
+        val large = readGeometry()
+        finding("  system font size 1.3: ${describeGeometry(large)}")
+        shot("portrait-font-1.3")
+        val g = toGeometry(large)
+        val overflow = large.optDouble("overflow")
+        when {
+            g != null && overflow >= g.travel + 8 -> {
+                finding("  the page overflows past the travel in portrait under the large font: one scrub scene")
+                scrubToDock("portrait-scrub", edge = "bottom")
+            }
+            g != null && overflow > 4 -> {
+                finding("  the page overflows by ${"%.1f".format(overflow)} CSS px in portrait, short of the travel (${"%.1f".format(g.travel)}): the scrub engages part way only")
+                partialScrub("portrait-partial", g)
+            }
+            else -> finding("  the page does not overflow in portrait under either seed: the scrub never engages on the portrait space page")
+        }
+        fontScale(null)
+        val back = readGeometry()
+        finding("  font size back to 1.0: overflow ${"%.1f".format(back.optDouble("overflow"))} CSS px")
+    }
+
+    /**
+     * The coordinator's question, second half: turned to landscape the page is measured again
+     * (and, where it overflows past the travel, scrubbed once as a cheap second scene).
+     */
+    private fun landscapeOverflow() {
+        section("landscape: does the space page overflow?")
+        settleAtRest()
+        rotate(UiAutomation.ROTATION_FREEZE_90)
+        SystemClock.sleep(1_500)
+        val landscape = readGeometry()
+        finding("  landscape: ${describeGeometry(landscape)}")
+        shot("landscape-rest")
+        val g = toGeometry(landscape)
+        val overflow = landscape.optDouble("overflow")
+        if (g != null && overflow >= g.travel + 8) {
+            finding("  the page overflows past the travel in landscape: one scrub scene")
+            scrubToDock("landscape-scrub", edge = "bottom")
+        } else if (g != null && overflow > 4) {
+            finding("  the page overflows by ${"%.1f".format(overflow)} CSS px, short of the travel (${"%.1f".format(g.travel)}): the scrub engages part way only")
+            partialScrub("landscape-partial", g)
+        } else {
+            finding("  the page does not overflow in landscape either: the scrub never engages on the space page")
+        }
+        rotate(UiAutomation.ROTATION_FREEZE_0)
+    }
+
+    /** The system font size (`font_scale`), `null` for the default; the activity re-reads its configuration in place. */
+    private fun fontScale(scale: String?) {
+        if (scale == null) shell("settings delete system font_scale") else shell("settings put system font_scale $scale")
+        fontScaled = scale != null
+        SystemClock.sleep(3_000)
+        ensureForeground()
+        remeasureWindow()
+    }
+
+    /** A scrub that cannot reach the travel: the finger takes what overflow there is, and the field is judged part way. */
+    private fun partialScrub(scene: String, g: FakeboxMorph.Geometry) {
+        val x = width * 0.5f
+        val startY = touchable.exactCenterY() + touchable.height() * 0.2f
+        startSampling()
+        val f = Finger()
+        f.down(x, startY)
+        f.moveBy(0f, -(g.travel + 40f) * density, 900)
+        f.hold(700)
+        shot("$scene-held")
+        f.up()
+        SystemClock.sleep(900)
+        val frames = stopSampling(scene)
+        val at = snapshot()
+        finding("  scrolled to ${"%.1f".format(at.optDouble("sc"))} of ${"%.1f".format(g.travel)} CSS px: look '${at.optString("lk").ifEmpty { "rest" }}'; ${FakeboxMorph.describe(frames)}")
+        report(scene, FakeboxMorph.steadyFinger(frames, g))
+        report(scene, if (g.dockBelow) FakeboxMorph.ridesWithPage(frames, g) else FakeboxMorph.scrubOnTheLine(frames, g))
+        report(scene, FakeboxMorph.oneSurface(frames))
+        report(scene, FakeboxMorph.barStays(frames))
+        val b = Finger()
+        b.down(x, startY - g.travel * density)
+        b.moveBy(0f, (g.travel + 60f) * density, 900)
+        b.hold(400)
+        b.up()
+        SystemClock.sleep(900)
+    }
+
+    // --- the judge -------------------------------------------------------------------------------
+
+    /**
+     * The checks a segment's frames are held to: one surface, no pop, the line, monotone, the
+     * words' handover, the bar's gate on every segment; the landing (opening) or the return
+     * (closing); under reduced motion the fade in place instead of the line and the words.
+     * `opening` null: a sequence with both directions (the mid-flight turn).
+     */
+    private fun judge(scene: String, frames: List<FakeboxMorph.Frame>, reducedRun: Boolean, g: FakeboxMorph.Geometry, opening: Boolean?) {
+        if (frames.isEmpty()) {
+            fail(scene, "no frames were sampled")
+            return
+        }
+        report(scene, FakeboxMorph.oneSurface(frames, reducedRun))
+        report(scene, FakeboxMorph.barStays(frames))
+        if (reducedRun) {
+            report(scene, FakeboxMorph.reducedFade(frames))
+        } else {
+            report(scene, FakeboxMorph.noJump(frames))
+            report(scene, FakeboxMorph.onTheLine(frames, g))
+            report(scene, FakeboxMorph.monotoneSpring(frames))
+            // A flight cut short before the half (the mid-flight commit) has no handover to judge.
+            if (opening != null || frames.any { it.morph >= 0.5f }) report(scene, FakeboxMorph.wordsHandover(frames))
+            else finding("  [$scene] the words at the half: the flight turned before the half (peak m ${"%.2f".format(frames.maxOf { it.morph })}); nothing to judge")
+        }
+        when (opening) {
+            true -> {
+                if (!reducedRun) report(scene, FakeboxMorph.landing(frames))
+                report(scene, FakeboxMorph.resolved(frames.last(), "open", true))
+            }
+            false -> {
+                if (!reducedRun) report(scene, FakeboxMorph.returned(frames))
+                val last = frames.last()
+                report(scene, FakeboxMorph.resolved(last, if (last.scroll > 0.5f) last.look else "", false))
+            }
+            null -> {
+                report(scene, FakeboxMorph.returned(frames))
+                report(scene, FakeboxMorph.resolved(frames.last(), "", false))
+            }
+        }
+    }
+
+    private fun report(scene: String, v: FakeboxMorph.Verdict) {
+        finding("  [$scene] $v")
+        if (!v.ok) failures += "$scene: ${v.check} – ${v.detail}"
+    }
+
+    private fun check(scene: String, claim: String, ok: Boolean, detail: String) {
+        finding("  [$scene] $claim: $detail ${if (ok) "PASS" else "FAIL"}")
+        if (!ok) failures += "$scene: $claim ($detail)"
+    }
+
+    private fun fail(scene: String, detail: String) {
+        finding("  [$scene] $detail FAIL")
+        failures += "$scene: $detail"
+    }
+
+    // --- the chrome ------------------------------------------------------------------------------
+
+    private fun startSampling() {
+        jsString("window.__ntp.start()")
+        SystemClock.sleep(120)
+    }
+
+    /** Stop the sampler and parse its frames; the raw rows go next to the findings as `<prefix>-frames-<name>.txt`. */
+    private fun stopSampling(name: String): List<FakeboxMorph.Frame> {
+        val raw = jsString("window.__ntp.stop()")
+        scenes++
+        File(out, "$shotPrefix-frames-$name.txt").writeText(raw)
+        val rows = runCatching { JSONArray(raw) }.getOrElse {
+            Log.e(tag, "the sampler's frames did not parse: ${raw.take(200)}")
+            return emptyList()
+        }
+        return (0 until rows.length()).map { FakeboxMorph.parse(rows.getJSONObject(it)) }
+    }
+
+    private fun snapshot(): JSONObject = runCatching { JSONObject(jsString("window.__ntp.state()")) }.getOrElse { JSONObject() }
+
+    private fun phaseNow(): String = snapshot().let { "${it.optString("ph")}${it.optString("lk").takeIf { l -> l.isNotEmpty() }?.let { l -> " ($l)" } ?: ""}" }
+
+    private fun awaitPhase(phase: String, timeoutMs: Long): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (snapshot().optString("ph") == phase) return true
+            SystemClock.sleep(POLL_MS)
+        }
+        return snapshot().optString("ph") == phase
+    }
+
+    private fun readGeometry(): JSONObject = runCatching { JSONObject(jsString("window.__ntp.geometry()")) }.getOrElse { JSONObject() }
+
+    private fun geometry(): FakeboxMorph.Geometry = toGeometry(readGeometry()) ?: error("the page's geometry could not be read")
+
+    private fun toGeometry(o: JSONObject): FakeboxMorph.Geometry? {
+        val rest = o.optJSONObject("rest") ?: return null
+        val slot = o.optJSONObject("slot") ?: return null
+        return FakeboxMorph.Geometry(box(rest), box(slot), o.optDouble("frameTop", 0.0).toFloat())
+    }
+
+    private fun box(o: JSONObject) = FakeboxMorph.Box(o.optDouble("x").toFloat(), o.optDouble("y").toFloat(), o.optDouble("w").toFloat(), o.optDouble("h").toFloat())
+
+    private fun describeGeometry(o: JSONObject): String {
+        val g = toGeometry(o)
+        return "viewport ${o.optInt("vw")}x${o.optInt("vh")} CSS px, field ${g?.rest}, slot ${g?.slot}, frame top ${"%.1f".format(o.optDouble("frameTop"))}, " +
+            "overflow ${"%.1f".format(o.optDouble("overflow"))} CSS px, travel ${g?.travel?.let { "%.1f".format(it) }}, dock ${if (g?.dockBelow == true) "below" else "above"}"
+    }
+
+    /** A real finger on the middle of the page's field (its DOM box: the tree trails the page on the emulator). */
+    private fun tapField(): PointF? {
+        val s = snapshot()
+        val target = s.optJSONObject("pf")?.takeIf { s.optString("lk") != "scrub" || s.optJSONObject("d") == null } ?: s.optJSONObject("d") ?: s.optJSONObject("pf") ?: run {
+            Log.w(tag, "no field to tap")
+            return null
+        }
+        val p = PointF(((target.getDouble("x") + target.getDouble("w") / 2) * density).toFloat(), ((target.getDouble("y") + target.getDouble("h") * 0.5) * density).toFloat())
+        if (!touchable.contains(p.x.roundToInt(), p.y.roundToInt())) Log.w(tag, "the field's middle $p is outside the touchable window $touchable")
+        Finger().tap(p.x, p.y)
+        return p
+    }
+
+    /** The page unscrolled, the bar closed, the machine at rest, before a scene. */
+    private fun settleAtRest() {
+        if (urlbarOpen()) closeUrlField()
+        awaitPhase("rest", 6_000)
+        val s = snapshot()
+        if (s.optDouble("sc") > 0.5) {
+            jsString("(function(){var s=document.querySelector('.zen-ntp-scroll');if(s)s.scrollTop=0;return ''})()")
+            SystemClock.sleep(600)
+        }
+        SystemClock.sleep(900)
+    }
+
+    /** The bar's dock, through the core's settings (the Settings UI is another driver's claim). */
+    private fun dock(edge: String) {
+        settleAtRest()
+        coreInvoke("settings.update", "{\"phoneBarPosition\":${JSONObject.quote(edge)}}")
+        SystemClock.sleep(2_500)
+        val g = readGeometry()
+        finding("\nbar docked $edge: ${describeGeometry(g)}")
+        shot("dock-$edge")
+    }
+
+    private fun jsString(code: String): String {
+        val raw = chromeJs(code)
+        return runCatching { JSONTokener(raw).nextValue() as? String }.getOrNull() ?: raw
+    }
+
+    private fun awaitChrome(condition: String, timeoutMs: Long): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (chromeJs("!!($condition)") == "true") return true
+            SystemClock.sleep(200)
+        }
+        return false
+    }
+
+    // --- the device ------------------------------------------------------------------------------
+
+    /**
+     * The keyboard out of the way for the back gesture scenes: with the IME up a system back –
+     * gesture or key – goes to it and hides the keyboard, never reaching the chrome; a mid-flight
+     * commit needs the gesture to reach the chrome while the field flies. `ime disable` for every
+     * input method on the device; `ime enable` puts them back ([enableIme]).
+     */
+    private fun disableIme() {
+        imeIds = shell("ime list -s").lines().map { it.trim() }.filter { it.isNotEmpty() }
+        for (id in imeIds) shell("ime disable $id")
+        SystemClock.sleep(800)
+        finding("\nkeyboard disabled for the back gesture scenes: ${imeIds.joinToString()}")
+    }
+
+    private fun enableIme() {
+        for (id in imeIds) shell("ime enable $id")
+        imeIds = emptyList()
+        SystemClock.sleep(800)
+        finding("\nkeyboard enabled again")
+    }
+
+    private fun shell(command: String): String {
+        val fd = ui.executeShellCommand(command)
+        return FileInputStream(fd.fileDescriptor).bufferedReader().use { it.readText() }.also { fd.close() }
+    }
+
+    private fun webViewVersion(): String =
+        runCatching { app.packageManager.getPackageInfo(android.webkit.WebView.getCurrentWebViewPackage()!!.packageName, 0).versionName ?: "?" }.getOrDefault("?")
+
+    /** The lines of `dumpsys gfxinfo` that carry the frame cost: frames, janky share, percentiles. */
+    private fun gfxSummary(stats: String): String {
+        val wanted = listOf("Total frames rendered", "Janky frames", "50th percentile", "90th percentile", "95th percentile", "99th percentile", "Number Missed Vsync", "Number Slow UI thread", "Number Slow draw")
+        val lines = stats.lines().map { it.trim() }.filter { line -> wanted.any { line.startsWith(it) } }
+        return if (lines.isEmpty()) "no gfxinfo stats (${stats.length} chars)" else lines.joinToString("; ")
+    }
+
+    // --- the core --------------------------------------------------------------------------------
+
+    private fun describeActive(): String = activeCoreTab().let { "active ${it?.optString("id")} ${it?.optString("url")}, ${coreState().getJSONObject("tabs").length()} tabs" }
+
+    private fun section(title: String) = finding("\n$title")
+
+    private fun finding(line: String) {
+        Log.i(tag, line.trim())
+        findings.appendText(line + "\n")
+    }
+
+    companion object {
+        private const val BLANK_URL = "zen://blank"
+        /**
+         * The markers a failed precondition puts in `instrument.txt` before the recording handshake;
+         * `android-ntp-morph-demo.sh` reads them: on the first it forces the media query through the
+         * WebView's command-line file and runs the driver once more, on the second it stops.
+         */
+        const val REDUCED_MOTION_NOT_REPORTED = "REDUCED_MOTION_NOT_REPORTED"
+        const val REDUCED_MOTION_LEFT_ON = "REDUCED_MOTION_LEFT_ON"
+        /** Inside the system's gesture inset at the left edge. */
+        private const val EDGE_X = 2f
+        private const val POLL_MS = 40L
+        /** The interruption scenes race the spring (some 300 ms of flight): tries before the scene counts as failed. */
+        private const val ATTEMPTS = 3
+        /**
+         * The closing's value under which the double is caught for the turn: the spring's tail
+         * (`SPRING_SNAPPY` 420 / 40 is all but critically damped: .16 at about 170 ms, at rest by
+         * 320), where some 150 ms remain and the box covers a tenth of the travel per 60 ms tap.
+         */
+        private const val TURN_AT = 0.16
+        /** How far from the box's centre toward the field's rest box the turn's tap is aimed: where the box will be mid-tap. */
+        private const val TAP_LEAD = 0.4f
+        /** How far through the travel the page is scrolled for a tap part way. */
+        private const val PART_WAY = 0.45f
+        private val STAMP = Regex("\"\\{\\{now(?:-(\\d+)h)?\\}\\}\"")
+
+        /**
+         * The chrome-side sampler: one row per animation frame while it runs, as [FakeboxMorph.parse]
+         * reads it. Opacities are what a pixel of the element is drawn at – its own times every
+         * ancestor's, 0 under `visibility: hidden` – but the double's two looks and two contents,
+         * which are relative to the double's box; boxes are `getBoundingClientRect` in CSS px.
+         * `geometry()` reads the page's rest geometry (the field's natural box with the scroll
+         * folded out, the pill's slot, the frame's top edge) and the page's overflow; `state()` one
+         * reading of the machine for the driver's own steps.
+         */
+        private val SAMPLER = """
+            (function(){
+              if (window.__ntp) return 'ready';
+              var S = function(name){ var s = (window.__zenStores || {})[name]; return s && s.get ? s.get() : null; };
+              var num = function(v){ var n = parseFloat(v); return isNaN(n) ? 0 : n; };
+              var r2 = function(v){ return Math.round(v * 100) / 100; };
+              var box = function(el){ var r = el.getBoundingClientRect(); return { x: r2(r.left), y: r2(r.top), w: r2(r.width), h: r2(r.height) }; };
+              var own = function(el){ return el ? num(getComputedStyle(el).opacity) : 0; };
+              var eff = function(el, pseudo){
+                if (!el) return 0;
+                var cs = getComputedStyle(el, pseudo || null);
+                if (cs.visibility === 'hidden' || cs.display === 'none') return 0;
+                var o = num(cs.opacity);
+                var p = pseudo ? el : el.parentElement;
+                while (p && p !== document.documentElement) {
+                  var c = getComputedStyle(p);
+                  if (c.visibility === 'hidden' || c.display === 'none') return 0;
+                  o *= num(c.opacity);
+                  p = p.parentElement;
+                }
+                return r2(o);
+              };
+              var q = function(sel, root){ return (root || document).querySelector(sel); };
+              var BAR = '.zen-phone-bar:not([aria-hidden])';
+              var frames = [], start = 0, raf = 0;
+              var sample = function(now){
+                var root = document.documentElement, rs = getComputedStyle(root);
+                var fm = S('fakebox-morph') || {}, ui = S('ui') || {}, bh = S('bar-hide') || {};
+                var scroller = q('.zen-ntp-scroll'), dbl = q('.zen-fakebox'), pf = q('.zen-ntp-field'), of = q('.zen-omnibox-field');
+                var bar = q(BAR), pl = q(BAR + ' .zen-phone-pill'), sheet = q('.zen-omnibox-sheet');
+                var row = {
+                  t: Math.round(now - start), ph: fm.phase || '', lk: root.dataset.fakebox || '',
+                  m: num(rs.getPropertyValue('--zen-ntp-morph')), p: num(rs.getPropertyValue('--zen-ntp-pill')),
+                  sc: scroller ? r2(scroller.scrollTop) : 0, uo: !!(ui.urlbar && ui.urlbar.open),
+                  ib: num(rs.getPropertyValue('--zen-inset-bottom')),
+                  bar: bar ? eff(bar) : -1, sh: sheet ? eff(sheet) : -1, pg: scroller ? eff(scroller) : -1,
+                  ba: !!bh.allowed, bh: num(bh.progress)
+                };
+                if (dbl) {
+                  var fc = q('.zen-fakebox-field .zen-fakebox-content', dbl), fld = q('.zen-fakebox-field', dbl), om = q('.zen-fakebox-omni', dbl);
+                  row.d = { b: box(dbl), r: num(getComputedStyle(dbl).borderTopLeftRadius), l: eff(dbl),
+                    lf: own(q('.zen-fakebox-look-field', dbl)), lo: own(q('.zen-fakebox-look-omni', dbl)),
+                    fw: r2(own(fc) * own(fld)), ow: own(om), mv: dbl.hasAttribute('data-moving') };
+                }
+                if (pf) row.pf = { b: box(pf), o: eff(pf) };
+                if (of) {
+                  var ct = 0; for (var i = 0; i < of.children.length; i++) ct = Math.max(ct, eff(of.children[i]));
+                  row.of = { b: box(of), bd: eff(of, '::before'), ct: r2(ct) };
+                }
+                if (pl) {
+                  var w = 0; for (var j = 0; j < pl.children.length; j++) w = Math.max(w, eff(pl.children[j]));
+                  row.pl = { b: box(pl), aw: pl.classList.contains('zen-pill-away'), w: r2(w) };
+                }
+                frames.push(row);
+                raf = requestAnimationFrame(sample);
+              };
+              var pill = function(){ var e = q(BAR + ' .zen-phone-pill'); return e ? box(e) : null; };
+              window.__ntp = {
+                start: function(){ if (raf) cancelAnimationFrame(raf); frames = []; start = performance.now(); raf = requestAnimationFrame(sample); return 'started'; },
+                stop: function(){ if (raf) cancelAnimationFrame(raf); raf = 0; var out = JSON.stringify(frames); frames = []; return out; },
+                geometry: function(){
+                  var pf = q('.zen-ntp-field'), sc = q('.zen-ntp-scroll'), of = q('.zen-omnibox-field') || q(BAR + ' .zen-phone-bar-row');
+                  var ca = S('content-area') || {}; var area = ca.area || null;
+                  var rest = pf ? box(pf) : null; if (rest && sc) rest.y = r2(rest.y + sc.scrollTop);
+                  return JSON.stringify({ rest: rest, slot: pill(), omnibox: of ? box(of) : null, frameTop: area ? r2(area.y) : 0,
+                    overflow: sc ? r2(sc.scrollHeight - sc.clientHeight) : 0,
+                    frame: area ? { x: r2(area.x), y: r2(area.y), w: r2(area.width), h: r2(area.height) } : null,
+                    vw: window.innerWidth, vh: window.innerHeight,
+                    reduced: window.matchMedia('(prefers-reduced-motion: reduce)').matches });
+                },
+                state: function(){
+                  var fm = S('fakebox-morph') || {}, ui = S('ui') || {}, rs = getComputedStyle(document.documentElement);
+                  var sc = q('.zen-ntp-scroll'), dbl = q('.zen-fakebox'), pf = q('.zen-ntp-field');
+                  return JSON.stringify({ ph: fm.phase || '', lk: document.documentElement.dataset.fakebox || '',
+                    m: num(rs.getPropertyValue('--zen-ntp-morph')), p: num(rs.getPropertyValue('--zen-ntp-pill')),
+                    sc: sc ? r2(sc.scrollTop) : 0, uo: !!(ui.urlbar && ui.urlbar.open),
+                    d: dbl ? box(dbl) : null, pf: pf ? box(pf) : null, pl: pill() });
+                }
+              };
+              return 'installed';
+            })()
+        """.trimIndent()
+    }
+}
