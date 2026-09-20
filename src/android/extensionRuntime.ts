@@ -62,6 +62,7 @@ import {
   searchProviderOf,
   type InstalledSearchProvider
 } from '@core/extensions/searchProvider'
+import { stripJsonComments } from '@core/extensions/manifest'
 import { parseRuntimeManifest } from '@core/extensions/runtime/manifest'
 import { extensionUrl, type RegisteredContentScript } from '@core/extensions/runtime/plan'
 import { MessageRouter, type Endpoint } from '@core/extensions/runtime/router'
@@ -381,7 +382,13 @@ export function pickMessages(
     const text = locales[candidate]
     if (!text) continue
     try {
-      return JSON.parse(text) as LocaleMessages
+      // Chrome's JSON reader takes a UTF-8 BOM and comments in messages.json (Awesome Screenshot
+      // ships its `_locales/en/messages.json` with a BOM); a bare JSON.parse refuses both, and
+      // the extension would then run with no messages at all: `__MSG_extName__` for a name,
+      // '' from every `i18n.getMessage`.
+      const parsed: unknown = JSON.parse(stripJsonComments(text))
+      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed))
+        return parsed as LocaleMessages
     } catch {
       /* try the next locale */
     }
@@ -611,7 +618,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     })
     let raw: Record<string, unknown>
     try {
-      raw = JSON.parse(opened.manifest) as Record<string, unknown>
+      raw = JSON.parse(stripJsonComments(opened.manifest)) as Record<string, unknown>
     } catch (error) {
       throw new Error(`manifest.json: ${(error as Error).message}`)
     }

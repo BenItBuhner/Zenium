@@ -43,6 +43,10 @@ export class FakeKotlin implements RuntimeBridge {
   /** Every message the runtime sent to an endpoint, decoded. */
   readonly sent: Sent[] = []
   readonly manifests = new Map<string, Record<string, unknown>>()
+  /** The manifest's text as the file holds it, when a test wants it other than the JSON of `manifests`. */
+  readonly manifestTexts = new Map<string, string>()
+  /** `_locales/<locale>/messages.json` texts per install path, as `ext.open` hands them over. */
+  readonly locales = new Map<string, Record<string, string>>()
   readonly files = new Map<string, string>()
   /** Background pages Kotlin holds right now, by extension id. */
   readonly backgrounds = new Set<string>()
@@ -117,7 +121,10 @@ export class FakeKotlin implements RuntimeBridge {
       case 'ext.open': {
         const manifest = this.manifests.get(String(args.path))
         if (!manifest) throw new Error(`no manifest under ${args.path}`)
-        return { manifest: JSON.stringify(manifest), locales: {} }
+        return {
+          manifest: this.manifestTexts.get(String(args.path)) ?? JSON.stringify(manifest),
+          locales: this.locales.get(String(args.path)) ?? {}
+        }
       }
       case 'ext.configure': {
         const units = args.units as Array<{ key: string }>
