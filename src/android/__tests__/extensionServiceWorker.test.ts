@@ -604,8 +604,8 @@ describe("the worker page's self and globalThis answer as a worker's global", ()
       true
     ])
     // The page keeps its own document and storage.
-    expect(global.document.visibilityState).toBe('visible')
-    expect(global.localStorage.getItem('k')).toBe('page')
+    expect((global.document as { visibilityState: string }).visibilityState).toBe('visible')
+    expect((global.localStorage as { getItem(k: string): string }).getItem('k')).toBe('page')
   })
 
   it('a write the global refuses is kept, a delete of a missing member is a no-op, and the page is not touched', () => {
@@ -620,7 +620,7 @@ describe("the worker page's self and globalThis answer as a worker's global", ()
        [nav, self.navigator.userAgent, deleted, descriptor, Reflect.has(self, 'navigator')]`
     )
     expect(result).toEqual(['page', 'shim', true, undefined, true])
-    expect(global.navigator.userAgent).toBe('page')
+    expect((global.navigator as { userAgent: string }).userAgent).toBe('page')
   })
 
   it('platform methods run on the global, getters see it, constructors and identity hold', () => {

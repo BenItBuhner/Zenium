@@ -228,7 +228,11 @@ interface Harness {
 }
 
 function harness(
-  options: { registry?: string; nativeConfirm?: boolean; engineChromiumVersion?: string | null } = {}
+  options: {
+    registry?: string
+    nativeConfirm?: boolean
+    engineChromiumVersion?: string | null
+  } = {}
 ): Harness {
   const kt = new FakeKotlinStore()
   const files = new Map<string, string>()
@@ -1663,7 +1667,7 @@ describe('minimum_chrome_version', () => {
     expect(errors[0].message).toContain('Requires Chrome 120 or newer')
   })
 
-  it("says nothing when the WebView meets the minimum, or its version is unknown", async () => {
+  it('says nothing when the WebView meets the minimum, or its version is unknown', async () => {
     for (const engine of ['156.0.7300.0', '120.0.0.0', null]) {
       const h = harness({ engineChromiumVersion: engine })
       await storeFront(h.kt, { cws: needs120 })
