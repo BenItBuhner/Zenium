@@ -102,6 +102,15 @@
     align-items: center;
     gap: 12px;
     outline: none;
+    /*
+     * The row's accessible button takes the row's height (A11Y-01, 9.3): the row's own padding is
+     * folded into it – pulled out by the margins, given back as padding – so the box TalkBack
+     * frames and the finger hits is the 44 (64 for two lines) the row draws, while the text and
+     * the leading box stay exactly where the row's padding put them.
+     */
+    align-self: stretch;
+    margin: calc(-1 * var(--v2-row-pad)) 0;
+    padding: var(--v2-row-pad) 0;
   }
   .zen-phone-row:has(> .zen-list-main:focus-visible) {
     outline: 2px solid var(--v2-ring);

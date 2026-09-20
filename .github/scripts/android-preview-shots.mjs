@@ -772,11 +772,26 @@ async function inner(opts) {
       '| State | # | Role | Name | States | Target (w x h) | Element |',
       '|---|---|---|---|---|---|---|'
     ]
+    // A grouping role (a listbox, a tablist, a menu) is walked for its order, not for its box:
+    // its members are the targets; context rows (headings, dialogs, live regions) are no target.
+    const GROUPING = new Set(['listbox', 'menu', 'menubar', 'tablist'])
+    const flagged = (r) =>
+      r.order !== null && !GROUPING.has(r.role) && r.target && r.target !== 'ok'
     for (const r of auditRows) {
       if (r.offscreen) continue
-      const target = r.box ? `${r.box.w} x ${r.box.h}${r.target === 'ok' ? '' : ' **<44**'}` : '?'
+      const target = r.box ? `${r.box.w} x ${r.box.h}${flagged(r) ? ' **<44**' : ''}` : '?'
       lines.push(
         `| ${esc(r.label)} | ${r.order ?? '–'} | ${esc(r.role)}${r.states.level ? ` ${r.states.level}` : ''} | ${esc(r.name) || '**(none)**'} | ${esc(stateText(r.states))} | ${target} | \`${esc(r.locator)}\` |`
+      )
+    }
+    // The count per state, for a report: controls, how many are under 44 x 44, how many unnamed.
+    lines.push('', '| State | Controls | Under 44 x 44 | Unnamed |', '|---|---|---|---|')
+    for (const label of [...new Set(auditRows.map((r) => r.label))]) {
+      const controls = auditRows.filter(
+        (r) => r.label === label && r.order !== null && !r.offscreen
+      )
+      lines.push(
+        `| ${esc(label)} | ${controls.length} | ${controls.filter(flagged).length} | ${controls.filter((r) => !r.name).length} |`
       )
     }
     fs.writeFileSync(path.join(opts.audit, `${opts.prefix}audit.md`), lines.join('\n') + '\n')

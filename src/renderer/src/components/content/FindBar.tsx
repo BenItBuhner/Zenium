@@ -121,6 +121,8 @@ export function FindBar({
   const count = findCounter(text, result)
   // A tally still growing (the viewer reading its pages) is not "nothing found" yet.
   const noMatch = result !== null && result.matches === 0 && !result.searching
+  // The phone's buttons are 44 boxes (§9.3) beside the 40 field (§9.12) in the bar's 56 (§9.21);
+  // the keyboard hints stay with the desktop's tooltips (§9.31).
   const buttonClass = phone
     ? 'zen-toolbar-button h-11 w-11 rounded-[12px]'
     : 'zen-toolbar-button zen-find-button'
@@ -184,32 +186,32 @@ export function FindBar({
       <button
         type="button"
         className={buttonClass}
-        title={hint('Previous match', state, 'find.prev')}
+        title={phone ? undefined : hint('Previous match', state, 'find.prev')}
         aria-label="Previous match"
         onClick={() => search(text, false)}
         disabled={!text || noMatch}
       >
-        <ChevronUp className={glyphClass} />
+        <ChevronUp className={glyphClass} aria-hidden />
       </button>
       <button
         type="button"
         className={buttonClass}
-        title={hint('Next match', state, 'find.next')}
+        title={phone ? undefined : hint('Next match', state, 'find.next')}
         aria-label="Next match"
         onClick={() => search(text, true)}
         disabled={!text || noMatch}
       >
-        <ChevronDown className={glyphClass} />
+        <ChevronDown className={glyphClass} aria-hidden />
       </button>
       {!phone && <span className="flex-1" />}
       <button
         type="button"
         className={buttonClass}
-        title="Close (Esc)"
+        title={phone ? undefined : 'Close (Esc)'}
         aria-label="Close find bar"
         onClick={() => closeFindBar()}
       >
-        <X className={glyphClass} />
+        <X className={glyphClass} aria-hidden />
       </button>
     </div>
   )
