@@ -109,7 +109,7 @@ describe('parsePreviewSpec', () => {
         { kind: 'tap', text: 'Remove from Zenium' }
       ]
     })
-    expect(parsePreviewSpec('menu=app&sheet=extensions')).toEqual({ kind: 'menu' })
+    expect(parsePreviewSpec('menu=app&sheet=extensions')).toEqual({ kind: 'menu', menu: 'app' })
     expect(parsePreviewSpec('sheet=extensions&prompt=camera')).toEqual({
       kind: 'sheet',
       sheet: 'extensions'
