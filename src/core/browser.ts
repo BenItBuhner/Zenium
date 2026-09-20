@@ -111,7 +111,12 @@ import type { QrStartOutcome } from '../shared/qrScan'
 import { overlayForUrl } from '../shared/zenPages'
 import { openAllPrompt, sortedByNameOrder, toggledBookmarksBarMode } from '../shared/bookmarkViews'
 import { PageService } from './pages'
-import { buildSearchUrl, matchKeyword, sanitizeSearchEngines } from '../shared/search'
+import {
+  buildSearchUrl,
+  isPickableSearchEngine,
+  matchKeyword,
+  sanitizeSearchEngines
+} from '../shared/search'
 import { SearchEngineService } from './searchEngines'
 import { routeSharedIntent, type SharedIntent } from '../shared/shareTarget'
 import { copyConfirmation } from '../shared/clipboard'
@@ -1588,10 +1593,12 @@ export class Browser {
     win.host.focus()
   }
 
-  /** The user's search engine (the one picked in Settings, or the first one). */
+  /**
+   * The search engine in force: an installed extension's while one holds the default
+   * (`chrome_settings_overrides`), else the one picked in Settings, else the first one.
+   */
   defaultSearchEngine(): SearchEngine {
-    const engines = this.state.searchEngines
-    return engines.find((e) => e.id === this.state.settings.searchEngineId) ?? engines[0]
+    return this.state.defaultSearchEngine()
   }
 
   /**
@@ -2941,7 +2948,7 @@ export class Browser {
       'webapp.uninstall': ({ appId }) => this.webApps.uninstall(appId),
 
       'onboarding.complete': ({ searchEngineId, colorScheme, essentials }, win) => {
-        if (state.searchEngines.some((e) => e.id === searchEngineId))
+        if (isPickableSearchEngine(state.searchEngines, searchEngineId))
           state.settings.searchEngineId = searchEngineId
         state.settings.colorScheme = colorScheme
         this.platform.theme?.setSource(colorScheme)
@@ -3084,8 +3091,9 @@ export class Browser {
     s.unloadTimeoutMinutes = sanitizeUnloadTimeout(s.unloadTimeoutMinutes)
     s.essentialsMax = Math.max(1, Math.min(24, Math.round(s.essentialsMax)))
     // A default the profile no longer has an engine for (removed, or named by a peer's build that
-    // knows more engines) falls back to the shipped default; suggestions keep working.
-    if (!this.state.searchEngines.some((e) => e.id === s.searchEngineId))
+    // knows more engines), or an extension's engine (the default only through the extension's
+    // `is_default`, as in Chrome), falls back to the shipped default; suggestions keep working.
+    if (!isPickableSearchEngine(this.state.searchEngines, s.searchEngineId))
       s.searchEngineId = DEFAULT_SETTINGS.searchEngineId
     if (
       before.glance !== s.glanceEnabled ||

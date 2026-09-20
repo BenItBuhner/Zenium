@@ -764,9 +764,7 @@ export class Menus {
     { at, origin = { x: 0.5, y: 0.5 } }: SelectionPlaces = {}
   ): SelectionAction[] {
     const { tabs, state, translate } = this.browser
-    const engine =
-      state.searchEngines.find((e) => e.id === state.settings.searchEngineId) ??
-      state.searchEngines[0]
+    const engine = state.defaultSearchEngine()
     // The toolbar's tab opens in the background, with this tab as its opener: a back on it
     // returns here, like a link's "Open Link in New Tab" (the menu's opens in front, like Chrome).
     const open = (url: string, surface: SelectionSurface): void =>

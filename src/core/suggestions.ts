@@ -80,7 +80,7 @@ export class SuggestionService {
     const query = rawQuery.trim()
     const state = this.browser.state
     const engines = state.searchEngines
-    const defaultEngine = engines.find((e) => e.id === state.settings.searchEngineId) ?? engines[0]
+    const defaultEngine = state.defaultSearchEngine()
     const isPrivate = this.privateContext(currentTabId, win)
     const local = Boolean(win.localSpace)
 

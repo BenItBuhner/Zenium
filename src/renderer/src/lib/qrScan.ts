@@ -17,7 +17,7 @@ import {
   qrSubmission,
   reduceQr
 } from '@shared/qrScan'
-import { DEFAULT_SEARCH_ENGINES, buildSearchUrl } from '@shared/search'
+import { DEFAULT_SEARCH_ENGINES, buildSearchUrl, defaultSearchEngineOf } from '@shared/search'
 import type { Rect, SearchEngine } from '@shared/types'
 import { cmd, run } from './api'
 import { createStore } from './store'
@@ -77,11 +77,11 @@ const DEFAULT_IO: QrScanIo = {
 /** The profile's default engine as the core's snapshot has it (the shipped list before the first snapshot). */
 function defaultSearchEngine(): SearchEngine {
   const state = browserStore.get().state
-  const engines = state?.searchEngines ?? DEFAULT_SEARCH_ENGINES
-  return (
-    engines.find((e) => e.id === state?.settings.searchEngineId) ??
-    engines[0] ??
-    DEFAULT_SEARCH_ENGINES[0]!
+  if (!state) return DEFAULT_SEARCH_ENGINES[0]!
+  return defaultSearchEngineOf(
+    state.searchEngines,
+    state.settings.searchEngineId,
+    state.searchEngineControl
   )
 }
 

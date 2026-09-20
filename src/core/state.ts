@@ -36,6 +36,7 @@ import type {
   ResourceSnapshot,
   SafetyCheckResult,
   SearchEngine,
+  SearchEngineControl,
   SecurityPrompt,
   Settings,
   Shortcut,
@@ -63,7 +64,12 @@ import {
   sanitizePasswordSettings
 } from '../shared/defaults'
 import { sanitizePhoneBar } from '../shared/phoneBar'
-import { allSearchEngines, sanitizeSearchEngines } from '../shared/search'
+import {
+  allSearchEngines,
+  defaultSearchEngineOf,
+  isPickableSearchEngine,
+  sanitizeSearchEngines
+} from '../shared/search'
 import {
   applyShortcutOverrides,
   defaultShortcuts,
@@ -363,17 +369,58 @@ export class BrowserState {
     readAloud: null
   })
   /**
-   * The shipped engines plus the user's (`settings.searchEngines`: added by hand or discovered
-   * through OpenSearch, synced with the settings), rebuilt when the list changes.
+   * The shipped engines plus the installed extensions' (`chrome_settings_overrides`) plus the
+   * user's (`settings.searchEngines`: added by hand or discovered through OpenSearch, synced with
+   * the settings), rebuilt when either list changes.
    */
   get searchEngines(): SearchEngine[] {
     const user = this.settings.searchEngines
-    if (!this.enginesCache || this.enginesCache.user !== user) {
-      this.enginesCache = { user, list: allSearchEngines(user) }
+    const extension = this.extensionSearch.engines
+    if (
+      !this.enginesCache ||
+      this.enginesCache.user !== user ||
+      this.enginesCache.extension !== extension
+    ) {
+      this.enginesCache = { user, extension, list: allSearchEngines(user, extension) }
     }
     return this.enginesCache.list
   }
-  private enginesCache: { user: SearchEngine[] | undefined; list: SearchEngine[] } | null = null
+  private enginesCache: {
+    user: SearchEngine[] | undefined
+    extension: SearchEngine[]
+    list: SearchEngine[]
+  } | null = null
+
+  /**
+   * What the installed extensions declare (`chrome_settings_overrides.search_provider`): their
+   * engines, and the one holding the default if any. Set by the extension host on load and
+   * unload; never persisted here, the extension is the record.
+   */
+  private extensionSearch: { engines: SearchEngine[]; control: SearchEngineControl | null } = {
+    engines: [],
+    control: null
+  }
+
+  setExtensionSearch(engines: SearchEngine[], control: SearchEngineControl | null): void {
+    this.extensionSearch = { engines, control }
+    this.commit()
+  }
+
+  get searchEngineControl(): SearchEngineControl | null {
+    return this.extensionSearch.control
+  }
+
+  /**
+   * The engine a search goes to: the extension-controlled one while an extension holds the
+   * default, else the user's pick, else the first (`defaultSearchEngineOf`).
+   */
+  defaultSearchEngine(): SearchEngine {
+    return defaultSearchEngineOf(
+      this.searchEngines,
+      this.settings.searchEngineId,
+      this.extensionSearch.control
+    )
+  }
   readonly version: string
 
   private readonly store: JsonStore<Persisted>
@@ -678,7 +725,7 @@ export class BrowserState {
     )
     const bookmarkTree = new BookmarkTree(this.bookmarks)
     for (const tab of Object.values(m.tabs)) tab.bookmarked = bookmarkTree.hasUrl(tab.url)
-    if (!this.searchEngines.some((e) => e.id === this.settings.searchEngineId)) {
+    if (!isPickableSearchEngine(this.searchEngines, this.settings.searchEngineId)) {
       this.settings.searchEngineId = DEFAULT_SETTINGS.searchEngineId
     }
     for (const w of this.restoredWindows) {
@@ -794,6 +841,7 @@ export class BrowserState {
       settings,
       shortcuts: this.shortcuts,
       searchEngines: this.searchEngines,
+      searchEngineControl: this.extensionSearch.control,
       glance: win.glance,
       compactSidebarRevealed: win.compactSidebarRevealed,
       window: win.windowState(),

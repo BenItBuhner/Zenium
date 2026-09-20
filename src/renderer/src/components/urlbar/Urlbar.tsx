@@ -17,7 +17,13 @@ import {
   phoneBarForHost,
   phoneBarOffered
 } from '@shared/phoneBar'
-import { SEARCH_SCOPES, buildSearchUrl, completeWwwCom, matchKeyword } from '@shared/search'
+import {
+  SEARCH_SCOPES,
+  buildSearchUrl,
+  completeWwwCom,
+  defaultSearchEngineOf,
+  matchKeyword
+} from '@shared/search'
 import { internalPageAliasUrl } from '@shared/internalPages'
 import { ERROR_URL_PREFIX, displayUrl, isEmptyTabUrl, isNewTabUrl } from '@shared/url'
 import { qrScanAvailable } from '@shared/qrScan'
@@ -124,7 +130,11 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
   /** An IME composition is under way: nothing is completed inline until it is committed. */
   const composing = useRef(false)
   const engines = state.searchEngines
-  const defaultEngine = engines.find((e) => e.id === state.settings.searchEngineId) ?? engines[0]
+  const defaultEngine = defaultSearchEngineOf(
+    engines,
+    state.settings.searchEngineId,
+    state.searchEngineControl
+  )
   const tab = urlbar.tabId ? state.tabs[urlbar.tabId] : null
 
   // Keyword mode (`@ddg cats`, `@bookmarks foo`): the chip names where the search goes.
