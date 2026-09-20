@@ -114,6 +114,7 @@ import type { ViewEventPayloads } from './views'
  *  ext.configure { id, version, path, allowFileAccess, allowPrivate, units, served, debug }
  *                                           → { units: [{ key, chars, cached }], ms }
  *  ext.detach { id }
+ *  ext.expect { ids }                       the extensions about to be attached (a restored tab's page on one is held, not 404'd)
  *  ext.background.start / stop { id }, ext.popup.open { id, url, context, title }, ext.popup.close,
  *  ext.offscreen.open { id, url } / close { id }   chrome.offscreen's one hidden page per extension
  *  ext.hosts { id, hosts } (optional host permissions granted at runtime)
@@ -642,6 +643,15 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     this.dnr.unload(id)
     await this.bridge.call('ext.detach', { id })
     this.browser.state.commitVolatile()
+  }
+
+  /**
+   * Ahead of the attaches (before the browser restores its windows, so before any restored tab
+   * asks for a page): Kotlin holds a tab's document on one of these origins until the
+   * extension's configure serves it, and fails one of an extension that is not coming.
+   */
+  expect(ids: string[]): void {
+    this.bridge.send('ext.expect', { ids })
   }
 
   async reconfigure(record: ExtensionRecord): Promise<void> {

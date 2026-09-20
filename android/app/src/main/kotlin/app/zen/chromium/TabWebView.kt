@@ -180,6 +180,14 @@ class TabWebView(
     /** A certificate `onReceivedSslError` refused; the request's own failure follows and is the same news. */
     private var refusedCertificateUrl: String? = null
     /**
+     * The extension page the runtime answered with an empty document because it does not serve
+     * the extension ([refuseExtensionPage], set from the request's thread before the document
+     * can start): its `onPageStarted` reports the load as failed, `ERR_BLOCKED_BY_CLIENT`.
+     */
+    @Volatile private var refusedExtensionPage: String? = null
+    /** The URL of the last document `onPageStarted` announced (main thread). */
+    private var startedDocument: String? = null
+    /**
      * Certificates refused for resources that did not read as the page itself (another site's:
      * most likely a subresource, which Chrome blocks quietly), by URL, with the failure the
      * interstitial would show should the request turn out to be the main frame's after all
@@ -1137,6 +1145,55 @@ class TabWebView(
         super.loadUrl(url, additionalHttpHeaders)
     }
 
+    /**
+     * The runtime answered the main-frame request for `url`, an extension page it does not serve
+     * (the extension is not enabled, not installed, or not allowed in this private tab), with an
+     * empty document (`Extensions.intercept`, any thread): the page fails as Chrome fails such a
+     * page, `ERR_BLOCKED_BY_CLIENT`, as its document starts, the way a load WebView fails is
+     * reported right after its `onPageStarted`. The empty document then stands under the URL
+     * like WebView's own error page under a failed load's (see [failedUrl]).
+     */
+    fun refuseExtensionPage(url: String) {
+        refusedExtensionPage = url
+    }
+
+    /**
+     * The extension page on `url`, held on an empty document while its extension was about to
+     * be configured (`Extensions.releaseHeld` reloads the ones that came up), belongs to an
+     * extension that is not coming: it fails now, as [refuseExtensionPage] fails a page. Main
+     * thread; nothing when the tab has moved on since the request.
+     */
+    fun failExtensionPage(url: String) {
+        if (currentDocument != url) return
+        if (startedDocument != url) {
+            // The empty document has not started yet: it fails as it starts.
+            refusedExtensionPage = url
+            return
+        }
+        failStartedExtensionPage(url)
+    }
+
+    /**
+     * The empty document under `url` has started ([onPageStarted]): the failure goes to the core,
+     * whose `zen://error` page replaces the document, and the document's entry is stepped over on
+     * the way back ([interstitialUrl]) whether its commit is still to come (then through
+     * [failedUrl], as for a load WebView failed) or has happened.
+     */
+    private fun failStartedExtensionPage(url: String) {
+        if (awaitingCommit) failedUrl = url
+        else {
+            interstitial = true
+            interstitialUrl = url
+        }
+        loading = false
+        host.viewEvent(
+            tabId,
+            "failLoad",
+            json("code" to NetErrors.BLOCKED_BY_CLIENT, "description" to "ERR_BLOCKED_BY_CLIENT", "url" to ExtensionUrls.present(url))
+        )
+        host.backChanged()
+    }
+
     override fun reload() {
         rememberCurrentPage()
         url?.let(::switchDesktopModeFor)
@@ -1556,6 +1613,7 @@ class TabWebView(
             // for the failed load may commit only after this (see failedUrl).
             if (!url.startsWith(ERROR_PAGE_PREFIX)) failedUrl = null
             currentDocument = url
+            startedDocument = url
             applyMixedContentPolicy(host.privacy.flags, url)
             applyCookiePolicy(host.privacy.flags, url)
             // Without document-start scripts the signals arrive late, but they arrive.
@@ -1571,6 +1629,13 @@ class TabWebView(
             host.extensions?.onDocumentGone(this@TabWebView, url)
             host.viewEvent(tabId, "startLoading", null)
             if (muted) setMuted(true)
+            // An extension page the runtime refused: the empty document it answered with is
+            // starting, and the load fails here, as one WebView failed does right after its start.
+            // (Any other document starting means the refused one was given up: a later load of
+            // the same URL, once the extension is enabled, is not to fail on the stale word.)
+            val refused = refusedExtensionPage
+            refusedExtensionPage = null
+            if (url == refused) failStartedExtensionPage(url)
         }
 
         /**

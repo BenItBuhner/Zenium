@@ -161,6 +161,8 @@ class FakeKotlinStore {
 
 class FakeRuntime implements ExtensionRuntimeHooks {
   readonly events: string[] = []
+  /** Every hook in order, `expect` included (the `events` above leave it out for the older tests). */
+  readonly timeline: string[] = []
   /** A reason to refuse a record, or null to run it. */
   refuse: (record: ExtensionRecord) => string | null = () => null
   /** Set, an attach waits for it before it finishes (the Kotlin side opening and configuring). */
@@ -168,6 +170,7 @@ class FakeRuntime implements ExtensionRuntimeHooks {
 
   async attach(record: ExtensionRecord): Promise<void> {
     this.events.push(`attach ${record.id} ${record.version}`)
+    this.timeline.push(`attach ${record.id}`)
     if (this.attaching) await this.attaching
     const reason = this.refuse(record)
     if (reason) throw new Error(reason)
@@ -175,10 +178,16 @@ class FakeRuntime implements ExtensionRuntimeHooks {
 
   async detach(id: string): Promise<void> {
     this.events.push(`detach ${id}`)
+    this.timeline.push(`detach ${id}`)
   }
 
   async reconfigure(record: ExtensionRecord): Promise<void> {
     this.events.push(`reconfigure ${record.id}`)
+    this.timeline.push(`reconfigure ${record.id}`)
+  }
+
+  expect(ids: string[]): void {
+    this.timeline.push(`expect ${ids.join(',')}`)
   }
 }
 
@@ -951,6 +960,37 @@ describe('AndroidExtensions: managing installs', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
     // The manifest on disk was read back for the list.
     expect(next.ext.list()[0].name).toBe('Sample')
+  })
+
+  it('names the enabled extensions to the runtime at construction and closes the list when the start is over', async () => {
+    const h = await installed()
+    h.ext.flushSync()
+    const document = JSON.parse(h.files.get('extensions.json') ?? '{}') as {
+      extensions: ExtensionRecord[]
+    }
+    const [first] = document.extensions
+    const OTHER = 'b'.repeat(32)
+    const DISABLED = 'c'.repeat(32)
+    document.extensions.push(
+      { ...first, id: OTHER, path: first.path.replace(ID, OTHER) },
+      { ...first, id: DISABLED, path: first.path.replace(ID, DISABLED), enabled: false }
+    )
+    const next = harness({ registry: JSON.stringify(document) })
+    for (const [dir, request] of h.kt.installed) next.kt.installed.set(dir, request)
+    // The constructor runs before the browser restores its windows: the runtime hears which
+    // origins to hold a restored tab's page for before any tab can ask, and before any attach.
+    expect(next.runtime.timeline).toEqual([`expect ${ID},${OTHER}`])
+    next.runtime.refuse = (record) => (record.id === OTHER ? 'no worker' : null)
+    await next.ext.start()
+    // Once every attach settled, the failed one included, nothing more is coming: a page still
+    // held for the extension that did not come up fails.
+    expect(next.runtime.timeline).toEqual([
+      `expect ${ID},${OTHER}`,
+      `attach ${ID}`,
+      `attach ${OTHER}`,
+      'expect '
+    ])
+    expect(next.ext.list().find((info) => info.id === OTHER)?.error).toBe('no worker')
   })
 
   it('ignores a registry that is not one', () => {

@@ -205,7 +205,98 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             beat()
             snap("addons-all")
         }
+        // Last, as it starts the browser over: the restored extension-page tab.
+        if (chromeAnswers()) {
+            runCatching { restoredOptionsTab() }.onFailure {
+                Log.e(TAG, "the restored options tab check threw", it)
+                results.optJSONObject("restoredOptionsTab")?.put("crash", it.toString()) ?: results.put("restoredOptionsTab", JSONObject().put("crash", it.toString()))
+            }
+        }
         results.put("finishedAt", System.currentTimeMillis())
+    }
+
+    /**
+     * The restored extension-page tab: an options page open as a tab when the session ends must
+     * come back rendered, with the runtime attached, when the browser starts again. The core
+     * restores its windows (the active tab's view loads at once) before `extensions.start()`
+     * configures the runtime, so the restored tab asks for its document before its extension is
+     * served; the runtime holds the document and loads it again once the extension's configure
+     * completes (`Extensions.kt`, `HeldPages`). The start-over is forced with a second
+     * [launch]: a new activity, so a new host, a new chrome and a new core that reads the session
+     * back from disk (the process stays: the instrumentation shares it). The row is the first
+     * whose options page graded `P`, enabled again for this.
+     */
+    private fun restoredOptionsTab() {
+        val report = JSONObject()
+        results.put("restoredOptionsTab", report)
+        val entry = (0 until rows.length()).map { rows.getJSONObject(it) }.firstOrNull { row ->
+            row.optJSONObject("options")?.optString("verdict") == "P" && row.optJSONObject("options")?.optJSONObject("detail")?.optString("page", "")?.isNotEmpty() == true
+        }
+        if (entry == null) {
+            report.put("verdict", "n/m").put("note", "no row's options page graded P in this run")
+            return
+        }
+        val id = entry.getString("id")
+        val page = entry.getJSONObject("options").getJSONObject("detail").getString("page").trimStart('/')
+        val url = "chrome-extension://$id/$page"
+        report.put("id", id).put("name", entry.optString("name")).put("url", url)
+        val factor = speedFactor(entry)
+        report.put("speedFactor", factor)
+        coreInvoke("extension.setEnabled", JSONObject().put("id", id).put("enabled", true).toString())
+        poll(scaled(20_000, factor), 400) { extensions().firstOrNull { it.getString("id") == id }?.takeIf { it.getBoolean("enabled") } }
+            ?: error("$id did not come back enabled")
+        closeExtraTabs()
+        val tabId = createTab(url)
+        showTab(tabId)
+        val view = waitForView(tabId)
+        val drawn = poll(scaled(OPTIONS_TIMEOUT_MS, factor), 500) { if (rendered(view)) true else null }
+        SystemClock.sleep(1_200)
+        snap("restored-options-before")
+        report.put("before", json(tabEval(view, RESTORED_PAGE_REPORT)).put("rendered", drawn == true))
+        if (drawn != true) {
+            report.put("verdict", "n/m").put("note", "the options page did not render as a tab before the restart")
+            return
+        }
+        // The session file must name the tab before the start-over, or nothing is restored.
+        val state = File(app.filesDir, "zen/state.json")
+        val persisted = poll(10_000, 300) { if (state.isFile && state.readText().contains(url)) true else null }
+        report.put("persisted", persisted == true)
+        if (persisted != true) {
+            report.put("verdict", "n/m").put("note", "the session file did not name the tab within 10 s")
+            return
+        }
+        Log.i(TAG, "RESTORE: starting the browser over with $url active")
+        val since = SystemClock.uptimeMillis()
+        launch()
+        report.put("relaunchMs", SystemClock.uptimeMillis() - since)
+        // The restored session's active tab is the options page (by the URL the core spells).
+        val restoredId = poll(30_000, 500) {
+            runCatching { activeCoreTab() }.getOrNull()?.takeIf { it.optString("url").startsWith(url) }?.optString("id")
+        }
+        if (restoredId == null) {
+            report.put("verdict", "F").put("note", "no active tab on $url within 30 s of the restart; tabs: ${runCatching { tabUrls() }.getOrNull()}")
+            snap("restored-options-tab")
+            return
+        }
+        report.put("restoredTabId", restoredId)
+        val restored = waitForView(restoredId)
+        val rendered = poll(scaled(OPTIONS_TIMEOUT_MS, factor), 500) { if (rendered(restored)) true else null }
+        report.put("renderedMs", SystemClock.uptimeMillis() - since)
+        SystemClock.sleep(1_500)
+        snap("restored-options-tab")
+        val after = json(tabEval(restored, RESTORED_PAGE_REPORT))
+        val console = consoleOf(restored)
+        report.put("after", after).put("console", JSONArray(console.takeLast(20)))
+        val attached = after.optString("runtimeId") == id
+        val verdict = if (rendered == true && attached) "P" else if (rendered == true) "PARTIAL" else "F"
+        report.put("verdict", verdict).put(
+            "note",
+            if (rendered == true) "the restored tab rendered ${after.optInt("els")} elements ${(SystemClock.uptimeMillis() - since) / 1000} s after the restart" +
+                (if (attached) ", chrome.runtime.id is the extension's" else ", but chrome.runtime.id reads ${after.optString("runtimeId")}")
+            else "the restored tab did not render within ${scaled(OPTIONS_TIMEOUT_MS, factor) / 1000} s of the restart: ${after.toString().take(300)}"
+        )
+        Log.i(TAG, "RESTORE ${entry.optString("name")}: $verdict – ${report.optString("note")}")
+        write()
     }
 
     // --- one extension ---------------------------------------------------------------------------
@@ -1971,6 +2062,11 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 "var css=Array.prototype.slice.call(document.styleSheets).map(function(x){return x.href?x.href.replace(location.origin,''):'inline'});" +
                 "var c=typeof chrome==='object'&&chrome?Object.keys(chrome).sort():null;var rt=c&&chrome.runtime?{id:chrome.runtime.id,hasSendMessage:typeof chrome.runtime.sendMessage}:null;" +
                 "return JSON.stringify({readyState:document.readyState,url:location.href,title:document.title,scripts:s.slice(0,30),styleSheets:css.slice(0,15),chrome:c,runtime:rt,bodyHtml:document.body?document.body.innerHTML.length:-1,bodyStart:document.body?document.body.innerHTML.replace(/\\s+/g,' ').slice(0,300):'',hidden:document.body?document.body.hidden:null,bodyDisplay:document.body?getComputedStyle(document.body).display:null,visibility:document.visibilityState})})()"
+        /** An extension page's document after a restart: its size, its `readyState`, and the runtime's word on whose page it is. */
+        private const val RESTORED_PAGE_REPORT =
+            "(function(){var c=typeof chrome==='object'&&chrome&&chrome.runtime?chrome.runtime:null;" +
+                "return JSON.stringify({url:location.href,readyState:document.readyState,title:document.title,els:document.body?document.body.querySelectorAll('*').length:0," +
+                "text:document.body?document.body.innerText.replace(/\\s+/g,' ').trim().slice(0,120):'',runtimeId:c?String(c.id):null,getURL:c&&typeof c.getURL==='function'?c.getURL('x.html'):null})})()"
         /** What one extension's world sees on a page: the bootstrap's statistics and its `chrome`. */
         private const val WORLD_REPORT =
             "JSON.stringify({stats: window.__zenExtStats || null, chrome: typeof chrome, runtimeId: (typeof chrome === 'object' && chrome && chrome.runtime) ? chrome.runtime.id : null})"

@@ -23,6 +23,14 @@ export interface ExtensionRuntimeHooks {
    * `allowPrivate` or the manifest-derived fields after a reload. The runtime re-reads what it configures from them.
    */
   reconfigure(record: ExtensionRecord): Promise<void>
+  /**
+   * The extensions the store is about to attach: at construction the enabled records, before
+   * the browser restores its windows, so a restored tab on an extension page is held rather
+   * than answered with nothing while the attach is still reading files; `[]` once the start is
+   * over, so a page held for an extension that did not come up fails. Nothing to do for a host
+   * whose pages cannot ask ahead of the runtime.
+   */
+  expect?(ids: string[]): void
 }
 
 /** Before the runtime lands (or on hosts that only manage packages): installs are files and records. */

@@ -286,6 +286,9 @@ export class AndroidExtensions implements ExtensionHost {
       { idForPath: idForUnpackedPath, readManifest: () => null },
       this.now()
     )
+    // Before the browser restores its windows (the constructor runs ahead of `Browser.start`):
+    // the runtime holds a restored tab's extension page for these until `start()` attached them.
+    this.hooks.expect?.(this.registry.extensions.filter((r) => r.enabled).map((r) => r.id))
   }
 
   /** `files/zen/extensions`, absolute. */
@@ -307,6 +310,9 @@ export class AndroidExtensions implements ExtensionHost {
       if (record.enabled) await this.attach(record)
       void this.readDetails(record)
     }
+    // Every enabled extension is attached or failed: a page still held for one that did not
+    // come up fails now, as Chrome fails the page of an extension that is not enabled.
+    this.hooks.expect?.([])
     this.browser.state.commitVolatile()
     this.scheduleUpdateChecks()
     // A package another app handed over while the chrome was still booting. Not awaited: the

@@ -230,6 +230,16 @@ describe('AndroidExtensionRuntime: attaching records', () => {
     ])
   })
 
+  it('expect names the extensions about to be attached to Kotlin, ahead of the environment handshake', () => {
+    const h = harness()
+    h.runtime.expect([ID, 'b'.repeat(32)])
+    h.runtime.expect([])
+    // Sent as-is (fire and forget): the constructor runs before the windows are restored, and a
+    // restored tab's document request must find the ids already on the Kotlin side.
+    expect(h.kt.calledWith('ext.expect')).toEqual([{ ids: [ID, 'b'.repeat(32)] }, { ids: [] }])
+    expect(h.kt.calledWith('ext.env')).toEqual([])
+  })
+
   it('detach drops the endpoints and tells Kotlin; forget takes the persisted state and storage along', async () => {
     const h = harness()
     await h.runtime.attach(record(h))

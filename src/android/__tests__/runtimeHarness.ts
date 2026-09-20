@@ -125,6 +125,8 @@ export class FakeKotlin implements RuntimeBridge {
         this.backgrounds.delete(String(args.id))
         this.offscreens.delete(String(args.id))
         return undefined
+      case 'ext.expect':
+        return undefined
       case 'ext.background.start':
         this.backgrounds.add(String(args.id))
         return undefined
