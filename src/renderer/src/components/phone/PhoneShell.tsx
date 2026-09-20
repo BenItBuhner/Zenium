@@ -1,9 +1,9 @@
-import type { CSSProperties, JSX } from 'react'
+import type { CSSProperties, JSX, ReactNode } from 'react'
 import { useEffect, useRef } from 'react'
-import { AudioLines, Globe, Languages, Lock, Search, VenetianMask } from 'lucide-react'
+import { Globe, Search, VenetianMask } from 'lucide-react'
 import { internalPageOf } from '@shared/internalPages'
 import type { PhoneBarPosition, Space, Tab, UIState } from '@shared/types'
-import { displayHost, isWebPageUrl } from '@shared/url'
+import { displayHost } from '@shared/url'
 import { chromeGutter } from '@renderer/hooks/useTheme'
 import { run } from '@renderer/lib/api'
 import { setBarHideContext, showBar } from '@renderer/lib/barHide'
@@ -24,7 +24,8 @@ import { usePrivateSurface } from '@renderer/lib/privateSurface'
 import { isPrivateTab } from '@renderer/lib/privateTabs'
 import { activeSpace, activeTab } from '@renderer/lib/selectors'
 import { openSiteInfo } from '@renderer/lib/siteInfo'
-import { barStateOf, isTranslating, translateStateOf } from '@renderer/lib/translate'
+import { foldedChipsSpoken } from '@renderer/lib/pillChips'
+import { barStateOf } from '@renderer/lib/translate'
 import {
   closeBarEditor,
   closeTabsMenu,
@@ -46,12 +47,20 @@ import { Onboarding } from '../overlays/Onboarding'
 import { BlockedPopupsChip } from '../security/BlockedPopupsPanel'
 import { Favicon } from '../sidebar/Favicon'
 import { TabDialogs } from '../TabDialogs'
-import { BlockedChip } from '../urlbar/BlockedChip'
 import { PillChip } from '../urlbar/PillChip'
 import { Urlbar } from '../urlbar/Urlbar'
 import { BarButton } from './BarButton'
 import { barContext, barLayout } from './barItems'
 import { GroupStrip } from './GroupStrip'
+import {
+  ChipRun,
+  PILL_ANCHOR_ID,
+  PILL_SPACE_ID,
+  PillRuler,
+  phonePillChips,
+  usePillFold,
+  usePublishFold
+} from './pillChips'
 import { PhoneStage } from './PhoneStage'
 import { SpacesDrawer } from './SpacesDrawer'
 import { TabPreview } from './TabPreview'
@@ -509,69 +518,109 @@ export function PillContent({
         ? shown.title
         : displayHost(shown.url)
     : ''
-  // No lock over a certificate that failed verification (the interstitial, or the page the user
-  // proceeded to): the connection is not secure, as site information says.
-  const secure = shown?.url.startsWith('https://') && !shown.certificateError && !extension
   // An internal page (Settings): its glyph in the favicon slot and the page's name, no lock and
   // no site-information chip – there is no site (v2 §10.1); the registry says which glyph.
   const page = shown ? internalPageOf(shown.url) !== null : false
-  // Translation: the glyph is there once the page has been offered or translated (in the accent
-  // while the translation shows), as on the desktop pill at rest; other pages keep the pill clear.
-  const translation = shown && isWebPageUrl(shown.url) ? translateStateOf(state, shown.id) : null
-  const translateBarUp = shown ? barStateOf(state, shown.id) !== null : false
   // The private marker: the mask glyph in the pill's leading slot on every private tab, page or
   // none, at the phone's 20 (v2 §9.19; Chrome's incognito toolbar glyph).
   const privateMark = shown ? isPrivateTab(shown) : false
-  // Now playing (MW-16): the chip is there while a tab holds the media session – the tab the OS
-  // controls show, whichever pill is up – in the accent while it plays, muted while paused; it
-  // opens the in-app player, which switches to the tab when it is another one.
-  const session = mediaSession(state)
   const mediaSheetOpen = uiStore.use((s) => s.mediaSheet !== null)
+  // The chips after the address – the blocked count, the lock, a translate offer (in the accent
+  // while the translation shows), the Now playing chip (MW-16) – as data (`phonePillChips`), so
+  // the fold, the ghost, the ruler and the site-information sheet draw the same chips. Which of
+  // them stay is the fold's (v2 §9.29, OMN-02): the host keeps at least 120 px, chips beyond that
+  // fold into the site-information sheet, informational ones first, state-reporting ones last;
+  // the site-information glyph at the pill's start never folds – it opens the sheet they fold
+  // into. The pill is measured once per change (`usePillFold`), never per frame.
+  const chips = phonePillChips(state, shown, {
+    siteInfoOpen,
+    mediaSheetOpen,
+    activeTabId: tab?.id ?? null
+  })
+  const spanRef = useRef<HTMLSpanElement | null>(null)
+  const rulerRef = useRef<HTMLSpanElement | null>(null)
+  const spaceLabel = state.spaces.length > 1 ? space.icon || space.name : null
+  const signature = [
+    shown?.id ?? '',
+    page ? 'page' : privateMark ? 'mask' : shown ? 'site' : 'none',
+    spaceLabel ?? '',
+    ...chips.map((c) => `${c.id}:${c.measureKey}`)
+  ].join('|')
+  const fold = usePillFold(spanRef, rulerRef, chips, signature)
+  const staying = chips.filter((c) => fold.shown.includes(c.id))
+  const folded = chips.filter((c) => fold.folded.includes(c.id))
+  usePublishFold(interactive, shown?.id ?? null, fold.folded)
+  // What TalkBack hears at the address, the pill's one stop: the host, then the folded chips'
+  // states in the pill's order ("Address, example.com, 12 requests blocked, Now playing") – the
+  // states themselves rather than a count, so the stop tells what the pill would have shown.
+  const spoken = foldedChipsSpoken(folded.map((c) => c.spoken))
+  const addressLabel = url
+    ? spoken
+      ? `Address, ${url}, ${spoken}`
+      : `Address, ${url}`
+    : 'Search or enter address'
   const Control = interactive ? 'button' : 'span'
   const controlProps = interactive ? { type: 'button' as const } : {}
+  // The leading glyph, drawn ahead of the address with `order-first`; `inert` for its copy on
+  // the ruler. The chips are §9.3's 44 × 44 boxes over the glyph positions the pill has always
+  // had, the negative margins carrying the difference (#237), so only the targets grew.
+  const anchor = (inert: boolean): JSX.Element =>
+    shown && page ? (
+      <span
+        className="order-first -ml-1.5 -mr-2 flex h-8 w-8 shrink-0 items-center justify-center"
+        aria-hidden="true"
+      >
+        <Favicon tab={shown} size={16} />
+      </span>
+    ) : shown ? (
+      <PillChip
+        inert={inert}
+        label="Site information"
+        popup="dialog"
+        expanded={siteInfoOpen}
+        data-site-info
+        data-private-mark={privateMark || undefined}
+        className="order-first -ml-3 -mr-3.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-full"
+      >
+        {privateMark ? (
+          <VenetianMask className="h-5 w-5 shrink-0 opacity-60" strokeWidth={1.75} aria-hidden />
+        ) : (
+          <Favicon tab={shown} size={16} />
+        )}
+      </PillChip>
+    ) : (
+      <Search className="order-first h-4 w-4 shrink-0 opacity-60" />
+    )
+  const spaceMark = (hidden: boolean): JSX.Element | null =>
+    spaceLabel ? (
+      <span
+        className="max-w-[64px] shrink-0 truncate text-[11px] text-[var(--zen-muted)]"
+        aria-hidden={hidden || undefined}
+      >
+        {spaceLabel}
+      </span>
+    ) : null
   return (
     <span
       key={shown?.id ?? 'empty'}
-      className="zen-animate-fade flex min-w-0 flex-1 items-center gap-2"
+      ref={spanRef}
+      className="zen-animate-fade relative flex h-full min-w-0 flex-1 items-center gap-2"
       style={{ transform: shift ? `translateX(${shift}px)` : undefined }}
     >
       <Control
         {...controlProps}
         className="flex h-full min-w-0 flex-1 items-center text-left"
-        aria-label={interactive ? (url ? `Address, ${url}` : 'Search or enter address') : undefined}
+        aria-label={interactive ? addressLabel : undefined}
+        data-testid="pill-address"
       >
         <span
           className={cn('min-w-0 flex-1 truncate text-[14px]', !url && 'text-[var(--zen-muted)]')}
+          data-testid="pill-host"
         >
           {url || 'Search or enter address'}
         </span>
       </Control>
-      {shown && page ? (
-        <span
-          className="order-first -ml-1.5 -mr-2 flex h-8 w-8 shrink-0 items-center justify-center"
-          aria-hidden="true"
-        >
-          <Favicon tab={shown} size={16} />
-        </span>
-      ) : shown ? (
-        <PillChip
-          inert={!interactive}
-          label="Site information"
-          popup="dialog"
-          expanded={siteInfoOpen}
-          data-site-info
-          data-private-mark={privateMark || undefined}
-          className="order-first -ml-1.5 -mr-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
-        >
-          {privateMark ? (
-            <VenetianMask className="h-5 w-5 shrink-0 opacity-60" strokeWidth={1.75} aria-hidden />
-          ) : (
-            <Favicon tab={shown} size={16} />
-          )}
-        </PillChip>
-      ) : (
-        <Search className="order-first h-4 w-4 shrink-0 opacity-60" />
-      )}
+      {anchor(!interactive)}
       {/*
         The private marker (v2 §9.19): on a private tab the mask glyph takes the pill's leading
         slot in place of the favicon, page or none, the way Chrome's incognito toolbar carries its
@@ -581,62 +630,16 @@ export function PillContent({
         badge would cost the host its room on a phone; badges are for lists that mix private and
         normal items.
       */}
-      {shown && !page && !extension && state.capabilities.requestBlocking && (
-        <BlockedChip tab={shown} state={state} variant="phone" interactive={interactive} />
-      )}
-      {url && secure && !page && (
-        <PillChip
-          inert={!interactive}
-          label="Connection is secure"
-          popup="dialog"
-          expanded={siteInfoOpen}
-          data-site-info
-          className="-mx-1.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
-        >
-          <Lock className="h-3.5 w-3.5 opacity-50" />
-        </PillChip>
-      )}
-      {translation && (
-        <Control
-          {...controlProps}
-          aria-label={
-            interactive
-              ? translateBarUp
-                ? 'Hide the translation bar'
-                : 'Translate this page'
-              : undefined
-          }
-          data-translate
-          className={cn(
-            '-mx-1.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full',
-            isTranslating(translation) ? 'text-[var(--zen-accent)]' : 'opacity-50'
-          )}
-        >
-          <Languages className="h-3.5 w-3.5" />
-        </Control>
-      )}
-      {session && (
-        <PillChip
-          inert={!interactive}
-          label={session.playing ? 'Now playing' : 'Media paused'}
-          popup="dialog"
-          expanded={mediaSheetOpen}
-          data-media
-          data-testid="media-chip"
-          data-state={session.playing ? 'playing' : 'paused'}
-          className={cn(
-            '-mx-1.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full',
-            session.playing ? 'text-[var(--zen-accent)]' : 'opacity-50'
-          )}
-        >
-          <AudioLines className="h-3.5 w-3.5" />
-        </PillChip>
-      )}
-      {state.spaces.length > 1 && (
-        <span className="max-w-[64px] shrink-0 truncate text-[11px] text-[var(--zen-muted)]">
-          {space.icon || space.name}
-        </span>
-      )}
+      <ChipRun chips={staying} interactive={interactive} />
+      {spaceMark(false)}
+      <PillRuler
+        rulerRef={rulerRef}
+        items={[
+          [PILL_ANCHOR_ID, anchor(true)],
+          ...chips.map((c): [string, JSX.Element | ReactNode] => [c.id, c.render(false)]),
+          ...(spaceLabel ? [[PILL_SPACE_ID, spaceMark(true)] as [string, ReactNode]] : [])
+        ]}
+      />
     </span>
   )
 }

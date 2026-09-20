@@ -1837,6 +1837,43 @@
     box-shadow: var(--zen-shadow-2);
   }
   /*
+   * The pill's chip run (v2 §9.29, OMN-02; components/phone/pillChips.tsx): the chips after the
+   * address, on the pill's 8 px gap, each a 44 box laid over its 28 pitch by its own margins.
+   * The run is the containing block of its ghost: when the set changes, the run it showed is
+   * kept over the new one, anchored at the run's end like the run itself, and the change
+   * cross-fades on opacity over 120 ms in place (§11.4; the same under reduced motion – the
+   * fade is the change's only motion). The ghost is out of the flow and takes no touch; its
+   * copies are wrapped so each wrapper is exactly the copy's flow, the pitch the live chips
+   * stand on. The ruler is the same idea for measuring: an inert copy of every item the fold
+   * accounts for, hidden and out of the flow, laid out on the pill's gap so a wrapper's width
+   * is what the item takes in the pill. Both hold nothing a screen reader or a finger reaches.
+   */
+  .zen-pill-run {
+    position: relative;
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 8px;
+    height: 100%;
+  }
+  .zen-pill-run-ghost {
+    position: absolute;
+    top: 0;
+    right: 0;
+    pointer-events: none;
+  }
+  .zen-pill-ruler {
+    position: absolute;
+    top: 0;
+    left: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 100%;
+    visibility: hidden;
+    pointer-events: none;
+  }
+  /*
    * The phone's omnibox: the content frame becomes the suggestions surface – the space-tinted
    * panel over the window, blurred like every panel – and the field a raised card in the bar
    * band. Depth, not lines, separates them.

@@ -809,10 +809,14 @@ describe('phone pill (PillContent)', () => {
       )
       expect(focusable(el).length).toBe(0)
       expect(el.querySelectorAll('[aria-label]').length).toBe(0)
-      // A third hidden span beside the site icon's and the lock's, with no tap target on it.
+      // A second hidden span in the chip run beside the lock's, with no tap target on it; the
+      // site icon is its own hidden span ahead of the address.
       expect(el.querySelector('[data-media]')).toBeNull()
       const row = el.firstElementChild!
-      expect(row.querySelectorAll(':scope > span[aria-hidden]').length).toBe(3)
+      expect(row.querySelector(':scope > span[aria-hidden].order-first')).not.toBeNull()
+      const run = row.querySelector('[data-testid="pill-chips"]')!
+      expect(run.querySelectorAll('[data-chip] > span[aria-hidden]').length).toBe(2)
+      expect(run.querySelectorAll('button').length).toBe(0)
     })
   })
 })
