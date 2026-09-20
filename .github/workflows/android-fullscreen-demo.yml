@@ -23,10 +23,6 @@ name: Android fullscreen video demo
 # file only picks the driver.
 on:
   workflow_dispatch:
-  # TEMPORARY: the worker's token cannot dispatch; removed before the PR is marked ready.
-  push:
-    branches:
-      - cursor/android-fullscreen-capture-7f4a
 
 permissions:
   contents: read
