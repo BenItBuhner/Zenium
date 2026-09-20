@@ -1826,7 +1826,13 @@ export class Browser {
     newTab: boolean,
     tabId: string | null,
     background: boolean,
-    win: ZenWindow
+    win: ZenWindow,
+    extra: {
+      /** Shift+Enter, Ctrl+Shift+Enter, Shift+click: a new window of this window's kind. */
+      newWindow?: boolean
+      /** What was typed before the pick, for the shortcuts provider (never in private). */
+      learn?: { typed: string; title: string; kind?: 'url' | 'search' }
+    } = {}
   ): void {
     const text = input.trim()
     if (!text) return
@@ -1850,6 +1856,13 @@ export class Browser {
     const typed = this.typedToUrl(text)
     if (!typed) return
     const { url, upgradedFrom } = typed
+    this.learnShortcut(text, url, tabId, win, extra.learn)
+    if (extra.newWindow) {
+      // Shift+Enter: the destination in a new window of this window's kind (a private window
+      // opens another private one), the page here left as it is.
+      this.openUrlInWindow(url, win.isPrivate ? 'private' : win.kind, win)
+      return
+    }
     // `zenium://settings/…` typed into the bar: a chrome page opens (or reuses) its own tab with
     // the current tab as opener, whatever tab the text was typed into; a document page loads
     // like any document, in this tab or a new one, unless the window already shows the one it
@@ -1944,6 +1957,11 @@ export class Browser {
     if (keyword) {
       if (!keyword.query.trim()) return null
       return { url: buildSearchUrl(keyword.engine, keyword.query) }
+    }
+    // Chrome's legacy `?` prefix: what follows is searched, however much it looks like an address.
+    if (text.startsWith('?')) {
+      const terms = text.slice(1).trim()
+      return terms ? { url: buildSearchUrl(this.defaultSearchEngine(), terms) } : null
     }
     const url = inputToUrl(text)
     if (!url) return { url: buildSearchUrl(this.defaultSearchEngine(), text) }
@@ -2494,9 +2512,14 @@ export class Browser {
         state.commit()
       },
 
-      'urlbar.suggest': ({ query, tabId }, win) => this.suggestions.suggest(query, tabId, win),
-      'urlbar.submit': ({ input, newTab, tabId, background }, win) =>
-        this.submitUrlbar(input, newTab, tabId, Boolean(background), win),
+      'urlbar.suggest': ({ query, tabId, engineId }, win) =>
+        this.suggestions.suggest(query, tabId, win, { engineId }),
+      'urlbar.submit': ({ input, newTab, tabId, background, newWindow, learn }, win) =>
+        this.submitUrlbar(input, newTab, tabId, Boolean(background), win, {
+          newWindow: Boolean(newWindow),
+          learn
+        }),
+      'urlbar.forgetShortcut': ({ url }) => this.omniboxShortcuts.forgetUrl(url),
       'urlbar.pasteAndGo': ({ tabId }, win) => void this.pasteAndGo(tabId, false, win),
       'urlbar.pasteAndSearch': ({ tabId }, win) => void this.pasteAndGo(tabId, true, win),
       'urlbar.runCommand': ({ action }, win) =>

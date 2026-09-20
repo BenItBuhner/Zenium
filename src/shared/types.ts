@@ -3433,8 +3433,22 @@ export interface Commands {
       input: string
       newTab: boolean
       tabId: string | null
-      /** Alt+Enter in Firefox → open in new tab; Shift+Enter → new window (ignored). */
+      /** Alt+Shift+Enter, Ctrl+click, a middle click: a tab behind the current one. */
       background?: boolean
+      /** Shift+Enter, Ctrl+Shift+Enter, Shift+click: a new window of this window's kind. */
+      newWindow?: boolean
+      /**
+       * What the user typed before choosing this destination, for the shortcuts provider
+       * (omnibox-03): the next typing of it boosts the destination. Absent when nothing was
+       * typed (a zero-suggest pick) or the pick is not one to learn from.
+       */
+      learn?: {
+        typed: string
+        /** The row's title, shown on the boosted row; the query for a search. */
+        title: string
+        /** A search or an address; left to the core for the verbatim text. */
+        kind?: 'url' | 'search'
+      }
     }
     result: void
   }
