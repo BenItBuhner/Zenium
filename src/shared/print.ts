@@ -39,8 +39,8 @@ export interface PrinterDescription {
   duplex: boolean | null
 }
 
-/** CUPS `printer-type` bit for a printer that prints on both sides (`CUPS_PRINTER_DUPLEX`). */
-const CUPS_PRINTER_DUPLEX = 0x8000
+/** CUPS `printer-type` bit for a printer that prints on both sides (`CUPS_PRINTER_DUPLEX`, cups.h). */
+const CUPS_PRINTER_DUPLEX = 0x10
 /** CUPS `printer-type` bit for the server's default destination (`CUPS_PRINTER_DEFAULT`). */
 const CUPS_PRINTER_DEFAULT = 0x20000
 

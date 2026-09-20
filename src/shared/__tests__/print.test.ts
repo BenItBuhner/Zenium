@@ -241,8 +241,11 @@ describe('defaults and sanitising', () => {
 
 describe('destinations', () => {
   it('reads duplex from the CUPS printer-type bits', () => {
-    expect(printerDuplex({ 'printer-type': 0x8000 | 0x4 })).toBe(true)
-    expect(printerDuplex({ 'printer-type': '36' })).toBe(false)
+    // A CUPS server's own numbers: a duplex Generic PDF printer (0x101c) and cups-pdf (0x82f04c,
+    // the default, a variable page size but one side only).
+    expect(printerDuplex({ 'printer-type': 4124 })).toBe(true)
+    expect(printerDuplex({ 'printer-type': '8581196' })).toBe(false)
+    expect(printerDuplex({ 'printer-type': 0x8000 | 0x4 })).toBe(false)
     expect(printerDuplex({ system_driverinfo: 'x' })).toBeNull()
     expect(printerDuplex(undefined)).toBeNull()
   })
