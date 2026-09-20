@@ -109,16 +109,41 @@ object ReadAloudLogic {
     }
 
     /**
+     * What an utterance is handed to the engine with – the voice (`voiceId`, else the language's
+     * default), the language and the engine's rate ([speechRate]) – remembered per utterance, so
+     * a `speak` for one the engine already has can tell whether the core changed its mind.
+     */
+    data class Options(val voiceId: String?, val lang: String, val rate: Float)
+
+    /**
      * The one-utterance queue's rule. The core speaks one sentence per utterance: `speak`
      * replaces whatever is speaking, `prepare` queues the next sentence behind it so it starts
      * without a gap. An utterance the engine already has – the one speaking ([current]) or one
      * waiting behind it ([queued]) – is not spoken again: a `speak` for the current one would
      * restart the sentence (a prepared sentence the engine has just moved on to is the current
-     * one by then, and the core, hearing `end` then `start`, may ask for it anyway), and a
+     * one by then, and the core, hearing `end` then `start`, asks for it with `speak`), and a
      * `prepare` for a sentence already waiting would queue it twice.
+     *
+     * The one exception is a `speak` for the current utterance with OPTIONS the engine does not
+     * have for it ([enqueued] holds what each was handed over with): a speed or a voice changed
+     * while the sentence before spoke. The prepared sentence was queued with the old ones, so
+     * leaving it be would speak the whole next sentence at the old speed and the change would
+     * only be heard from the one after (N+2); the core promises the next sentence (N+1), Chrome
+     * applies a new speed at once. So the utterance is FLUSHed: restarted from its start – it has
+     * just begun – at the new speed, with the new voice.
      */
-    fun speakPlan(utteranceId: String, queue: String, current: String?, queued: Collection<String>): SpeakPlan = when {
-        utteranceId == current -> SpeakPlan.IGNORE
+    fun speakPlan(
+        utteranceId: String,
+        queue: String,
+        current: String?,
+        queued: Collection<String>,
+        options: Options? = null,
+        enqueued: Map<String, Options> = emptyMap()
+    ): SpeakPlan = when {
+        utteranceId == current -> {
+            val had = enqueued[utteranceId]
+            if (queue == QUEUE_FLUSH && options != null && had != null && had != options) SpeakPlan.FLUSH else SpeakPlan.IGNORE
+        }
         queue == QUEUE_ADD -> if (utteranceId in queued) SpeakPlan.IGNORE else SpeakPlan.ADD
         else -> SpeakPlan.FLUSH
     }

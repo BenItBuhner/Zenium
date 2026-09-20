@@ -155,6 +155,29 @@ class ReadAloudLogicTest {
         assertEquals(ReadAloudLogic.SpeakPlan.ADD, ReadAloudLogic.speakPlan("s1", ReadAloudLogic.QUEUE_ADD, null, emptyList()))
     }
 
+    @Test
+    fun aSpeedOrVoiceChangedDuringASentenceRestartsThePreparedNextOneWithIt() {
+        val old = ReadAloudLogic.Options("en-gb-x-gba-local", "en-GB", 1f)
+        val faster = old.copy(rate = 1.2f)
+        val otherVoice = old.copy(voiceId = "en-gb-x-rjs-local")
+        // Sentence 2 was prepared at 1x while sentence 1 spoke; the engine moved on to it, and the
+        // core's `speak(s2)` at the end of sentence 1 carries the chip's new speed: the utterance
+        // the engine has just begun is flushed and spoken again at 1.2x (N+1, not N+2).
+        val had = mapOf("s2" to old)
+        assertEquals(ReadAloudLogic.SpeakPlan.FLUSH, ReadAloudLogic.speakPlan("s2", ReadAloudLogic.QUEUE_FLUSH, "s2", emptyList(), faster, had))
+        assertEquals(ReadAloudLogic.SpeakPlan.FLUSH, ReadAloudLogic.speakPlan("s2", ReadAloudLogic.QUEUE_FLUSH, "s2", emptyList(), otherVoice, had))
+        // The same options: the gapless hand-off stands, nothing restarts.
+        assertEquals(ReadAloudLogic.SpeakPlan.IGNORE, ReadAloudLogic.speakPlan("s2", ReadAloudLogic.QUEUE_FLUSH, "s2", emptyList(), old.copy(), had))
+        // What the utterance was handed over with is not on record (never the case for one the
+        // engine has, but the rule stays on the safe side): no restart on a guess.
+        assertEquals(ReadAloudLogic.SpeakPlan.IGNORE, ReadAloudLogic.speakPlan("s2", ReadAloudLogic.QUEUE_FLUSH, "s2", emptyList(), faster, emptyMap()))
+        assertEquals(ReadAloudLogic.SpeakPlan.IGNORE, ReadAloudLogic.speakPlan("s2", ReadAloudLogic.QUEUE_FLUSH, "s2", emptyList(), null, had))
+        // A `prepare` never restarts anything, and another utterance's options are no reason to.
+        assertEquals(ReadAloudLogic.SpeakPlan.IGNORE, ReadAloudLogic.speakPlan("s2", ReadAloudLogic.QUEUE_ADD, "s2", emptyList(), faster, had))
+        assertEquals(ReadAloudLogic.SpeakPlan.FLUSH, ReadAloudLogic.speakPlan("s3", ReadAloudLogic.QUEUE_FLUSH, "s2", emptyList(), faster, had))
+        assertEquals(ReadAloudLogic.SpeakPlan.IGNORE, ReadAloudLogic.speakPlan("s3", ReadAloudLogic.QUEUE_ADD, "s2", listOf("s3"), faster, mapOf("s2" to old, "s3" to old)))
+    }
+
     // --- the events -------------------------------------------------------------------------------------
 
     @Test

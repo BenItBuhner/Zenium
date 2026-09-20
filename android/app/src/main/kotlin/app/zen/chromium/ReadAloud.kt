@@ -33,7 +33,11 @@ import java.util.Locale
  * `speech.speak` speaks ONE utterance – the core's one sentence – with the voice (`voiceId` =
  * `Voice.getName()`, else the engine's voice for `lang`) and the rate asked for: `queue: flush`
  * replaces whatever speaks (`QUEUE_FLUSH`), `queue: add` is the core's `prepare`, the next
- * sentence queued behind the current one so it starts without a gap (`QUEUE_ADD`). The engine's
+ * sentence queued behind the current one so it starts without a gap (`QUEUE_ADD`); when the core
+ * then `speak`s that prepared sentence with a speed or voice other than the one it was queued
+ * with (the chip tapped while the sentence before spoke), the just-begun utterance is flushed and
+ * spoken again with the change, so it is heard from the next sentence, not the one after
+ * ([ReadAloudLogic.speakPlan]). The engine's
  * [UtteranceProgressListener] comes back as `speech.event`s naming the utterance: `start`, `word`
  * from `onRangeStart` (API 26+, offsets within the utterance's text; an engine that reports no
  * ranges sends none and the core highlights sentences alone), `end` from `onDone`, `error` from
@@ -92,6 +96,8 @@ class ReadAloud(private val host: Host) {
     private var current: String? = null
     /** The utterances queued behind [current] (`prepare`), in the engine's order, until it moves on to them. */
     private val queued = ArrayDeque<String>()
+    /** What [current] and each of [queued] were handed to the engine with, for [ReadAloudLogic.speakPlan]'s restart rule. */
+    private val enqueued = HashMap<String, ReadAloudLogic.Options>()
     /** Counts the `stop`s, so a `speak` that waited on the engine's binding across one is dropped. */
     private var stops = 0
     private var destroyed = false
@@ -193,6 +199,7 @@ class ReadAloud(private val host: Host) {
         stops++
         current = null
         queued.clear()
+        enqueued.clear()
         val engine = tts ?: return
         if (state == EngineState.READY) runCatching { engine.stop() }
     }
@@ -276,6 +283,7 @@ class ReadAloud(private val host: Host) {
         defaultVoiceName = null
         current = null
         queued.clear()
+        enqueued.clear()
         runCatching { engine.stop() }
         runCatching { engine.shutdown() }
         if (state == EngineState.READY) state = EngineState.NONE
@@ -298,9 +306,18 @@ class ReadAloud(private val host: Host) {
 
     private fun speakNow(utteranceId: String, text: String, voiceId: String?, lang: String, rate: Double, queue: String) {
         val engine = tts ?: return
-        val plan = ReadAloudLogic.speakPlan(utteranceId, queue, current, queued)
-        if (plan == ReadAloudLogic.SpeakPlan.IGNORE) return
-        runCatching { engine.setSpeechRate(ReadAloudLogic.speechRate(rate)) }
+        val options = ReadAloudLogic.Options(voiceId?.takeIf { it in voicesByName }, lang, ReadAloudLogic.speechRate(rate))
+        val had = enqueued[utteranceId]
+        val plan = ReadAloudLogic.speakPlan(utteranceId, queue, current, queued, options, enqueued)
+        if (plan == ReadAloudLogic.SpeakPlan.IGNORE) {
+            Log.i(TAG, "speak $utteranceId: ${if (utteranceId == current) "the engine is on it" else "already queued"}; nothing to do")
+            return
+        }
+        // The engine's log line the demo driver reads (`ReadAloudDemo`): which utterance, how it
+        // was queued, at what rate; a restart of the current utterance names the change it heard.
+        val why = if (utteranceId == current && had != null) " (${describe(had)} -> ${describe(options)}: the current utterance restarted with the change)" else ""
+        Log.i(TAG, "speak $utteranceId: $plan at ${describe(options)}$why \"${text.take(40)}${if (text.length > 40) "…" else ""}\"")
+        runCatching { engine.setSpeechRate(options.rate) }
         applyVoice(engine, voiceId, lang)
         val clipped = ReadAloudLogic.clip(text, runCatching { TextToSpeech.getMaxSpeechInputLength() }.getOrDefault(4000))
         val mode = if (plan == ReadAloudLogic.SpeakPlan.FLUSH) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
@@ -313,12 +330,17 @@ class ReadAloud(private val host: Host) {
         if (plan == ReadAloudLogic.SpeakPlan.FLUSH) {
             current = utteranceId
             queued.clear()
+            enqueued.clear()
         } else if (current == null) {
             current = utteranceId
         } else {
             queued.addLast(utteranceId)
         }
+        enqueued[utteranceId] = options
     }
+
+    private fun describe(options: ReadAloudLogic.Options): String =
+        "${options.rate}x, ${options.voiceId?.let { "voice $it" } ?: "the ${options.lang.ifEmpty { "default" }} voice"}"
 
     /**
      * The voice the core chose (`voiceId`, a `Voice.getName()` from the list), else the engine's
@@ -361,7 +383,8 @@ class ReadAloud(private val host: Host) {
         override fun onStart(utteranceId: String?) = live(utteranceId) { id ->
             if (id != current) {
                 // The engine moved on to a prepared sentence by itself (anything queued before it is gone with it).
-                while (queued.isNotEmpty() && queued.first() != id) queued.removeFirst()
+                current?.let(enqueued::remove)
+                while (queued.isNotEmpty() && queued.first() != id) enqueued.remove(queued.removeFirst())
                 if (queued.isNotEmpty()) queued.removeFirst()
                 current = id
             }
@@ -396,6 +419,7 @@ class ReadAloud(private val host: Host) {
             } else {
                 queued.remove(id)
             }
+            enqueued.remove(id)
         }
     }
 
