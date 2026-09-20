@@ -173,13 +173,7 @@ export interface MediaSessionInfo {
 
 /** The actions a chrome player carries out itself; the host shows controls for these plus stop. */
 export type MediaSessionSourceAction =
-  | 'play'
-  | 'pause'
-  | 'stop'
-  | 'previoustrack'
-  | 'nexttrack'
-  | 'seekbackward'
-  | 'seekforward'
+  'play' | 'pause' | 'stop' | 'previoustrack' | 'nexttrack' | 'seekbackward' | 'seekforward'
 
 /**
  * Something that is not a page but plays – the read-aloud player – as a candidate for the media
