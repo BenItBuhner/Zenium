@@ -66,7 +66,9 @@ describe('AndroidPlatform.net.fetchText', () => {
           headers: { Accept: 'application/json' },
           timeoutMs: 1000,
           // No cap asked for: Kotlin's own limit (0).
-          maxBytes: 0
+          maxBytes: 0,
+          method: 'GET',
+          body: null
         }
       }
     ])

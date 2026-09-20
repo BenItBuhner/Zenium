@@ -25,6 +25,8 @@ import type {
   NewTabDeviceState,
   NewTabShortcut,
   PageDialog,
+  ScreenCaptureRequest,
+  ShareRequest,
   PasswordsStatus,
   PageEnvironment,
   PermissionPrompt,
@@ -206,6 +208,8 @@ export interface StateExtras {
   permissionPrompts: PermissionPrompt[]
   securityPrompts: SecurityPrompt[]
   pageDialogs: PageDialog[]
+  screenCaptureRequests: ScreenCaptureRequest[]
+  shareRequests: ShareRequest[]
   crashRestore: CrashRestoreOffer | null
   autofill: AutofillUIState
   blocking: BlockingStatus
@@ -336,6 +340,8 @@ export class BrowserState {
     permissionPrompts: [],
     securityPrompts: [],
     pageDialogs: [],
+    screenCaptureRequests: [],
+    shareRequests: [],
     crashRestore: null,
     autofill: emptyAutofillUIState(),
     blocking: emptyBlockingStatus(),

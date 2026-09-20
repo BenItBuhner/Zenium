@@ -10,6 +10,7 @@ import {
   hostOf,
   isFreshlyEmptied,
   permissionCheckDetails,
+  permissionName,
   permissionRequestDetails
 } from '../security'
 
@@ -65,7 +66,7 @@ describe('permissionRequestDetails', () => {
         't1'
       )
     ).toEqual({ tabId: 't1', mediaTypes: ['video'] })
-    // An empty device list says nothing: the core asks about both.
+    // An empty device list is not a device request (see permissionName): no rows named.
     expect(
       permissionRequestDetails(page, {
         isMainFrame: true,
@@ -73,6 +74,26 @@ describe('permissionRequestDetails', () => {
         mediaTypes: []
       })
     ).toEqual({})
+  })
+})
+
+describe('permissionName', () => {
+  const at = (mediaTypes?: Array<'video' | 'audio'>): Electron.MediaAccessPermissionRequest => ({
+    isMainFrame: true,
+    requestingUrl: 'https://meet.example',
+    ...(mediaTypes ? { mediaTypes } : {})
+  })
+
+  it("decides Electron's device-less media request (getDisplayMedia) as the screen-sharing row", () => {
+    expect(permissionName('media', at([]))).toBe('display-capture')
+  })
+
+  it('leaves camera / microphone requests and every other permission alone', () => {
+    expect(permissionName('media', at(['video']))).toBe('media')
+    expect(permissionName('media', at(['audio', 'video']))).toBe('media')
+    expect(permissionName('media', at())).toBe('media')
+    expect(permissionName('notifications', at())).toBe('notifications')
+    expect(permissionName('geolocation', at([]))).toBe('geolocation')
   })
 })
 

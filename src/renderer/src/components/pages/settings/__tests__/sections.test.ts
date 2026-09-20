@@ -89,6 +89,8 @@ const ANDROID: HostCapabilities = {
   pinShortcuts: false,
   translate: true,
   voiceSearch: false,
+  screenCapture: false,
+  shareSheet: false,
   selectionToolbar: true,
   popupSurface: false,
   qrScan: false

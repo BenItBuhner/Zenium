@@ -1,5 +1,5 @@
 import type { Browser } from './browser'
-import type { ZenWindow } from './window'
+import { surfaceMounted, type ZenWindow } from './window'
 import type {
   ChromeContextParams,
   MenuItemTemplate,
@@ -32,6 +32,7 @@ import { canRetryDownload, deleteFileToast, displayName } from '../shared/downlo
 import { languageName, sortedByName } from '../shared/languageNames'
 import { serialiseMenu } from './rendererMenus'
 import { dictionaryFor } from '../shared/spellcheck'
+import { installMenuLabel, openAppMenuLabel } from '../shared/webApp'
 import { isInFlight, isQuarantined } from './downloads'
 import { mayAutoOpen } from './downloads/danger'
 import { applicationMenu, menuSignature, runFromMenuBar } from './menuBar'
@@ -2230,23 +2231,29 @@ export class Menus {
   /**
    * "Add to Home screen" on hosts that pin shortcuts, for web pages outside private windows.
    * Inside the scope of an app that is already on the Home screen the item reads
-   * "Open <app>" and goes to the app's start URL instead (PWA-11).
+   * "Open <app>" and goes to the app's start URL instead (PWA-11). The install item is offered
+   * only where the window's chrome has an install surface up to take it (`ChromeSurface`: the
+   * phone's sheet; the desktop's dialog is UI work to come, and its menu item comes with it).
    */
   private homeScreenItems(active: Tab | undefined, win: ZenWindow): Template {
     const { webApps } = this.browser
     if (!active || !webApps.canPin(active, win)) return []
+    const surface = webApps.surface
     const pinned = webApps.pinnedFor(active.url)
     if (pinned) {
+      // Desktop: "Open in <app>" launches the app's own window (Chrome); the phone goes to the
+      // app's start URL in this tab.
       return [
         {
-          label: `Open ${pinned.name}`,
-          click: () => this.browser.tabs.navigate(active.id, pinned.startUrl)
+          label: openAppMenuLabel(surface, pinned.name),
+          click: () => webApps.launch(pinned.id, win)
         }
       ]
     }
+    if (!surfaceMounted(win, 'install')) return []
     return [
       {
-        label: 'Add to Home Screen',
+        label: installMenuLabel(surface, active.webApp),
         click: () => webApps.openInstall(active.id, win)
       }
     ]

@@ -1,4 +1,6 @@
 import type {
+  AppWindowInfo,
+  ChromeSurface,
   ContentCover,
   EventName,
   Events,
@@ -27,6 +29,17 @@ import {
   type WindowHost
 } from './platform'
 
+/**
+ * Whether `win`'s chrome has `surface` up to answer a page's request (`ZenWindow.surfaces`); a
+ * window that is gone – or a host object that never registered any – has none.
+ */
+export function surfaceMounted(
+  win: Pick<ZenWindow, 'surfaces'> | null | undefined,
+  surface: ChromeSurface
+): boolean {
+  return Boolean(win?.surfaces?.has(surface))
+}
+
 export interface WindowInit {
   id: string
   kind: WindowKind
@@ -45,6 +58,8 @@ export interface WindowInit {
   cascadeFrom?: ZenWindow
   /** The window this one was opened from (a popup's parent), when one was. */
   opener?: ZenWindow
+  /** The web app a standalone window (`chrome` `app`) shows; browser windows leave it out. */
+  app?: AppWindowInfo | null
 }
 
 /**
@@ -61,6 +76,8 @@ export class ZenWindow {
   readonly kind: WindowKind
   readonly chrome: WindowChrome
   readonly material: WindowMaterial
+  /** The web app of a standalone window (`chrome` `app`): name, icon and scope; else null. */
+  app: AppWindowInfo | null
   host!: WindowHost
   activeSpaceId: string
   /** Per-space selected tab of this window (falls back to the space's last selection). */
@@ -81,6 +98,12 @@ export class ZenWindow {
    * until the chrome says otherwise. The app menu and the command list are built for it.
    */
   formFactor: FormFactor = 'desktop'
+  /**
+   * The surfaces this window's chrome has mounted (`ui.surface`): the install prompt, the screen
+   * picker, the share sheet. A page's request for one that is absent is answered at once as a
+   * cancel (`surfaceMounted`) rather than held for a chrome that is not there.
+   */
+  readonly surfaces = new Set<ChromeSurface>()
   /**
    * The Settings recorder in this window's chrome is listening for a chord: key presses from the
    * chrome are its to capture, and no shortcut runs off them until it stops.
@@ -123,6 +146,7 @@ export class ZenWindow {
     this.kind = init.kind
     this.chrome = init.chrome
     this.material = init.material
+    this.app = init.app ?? null
     this.activeSpaceId = init.activeSpaceId
     this.localSpace = init.localSpace
     this.compactEnabled = init.compact
@@ -202,7 +226,8 @@ export class ZenWindow {
       fullscreen: alive ? this.host.isFullScreen() : false,
       focused: alive ? this.host.isFocused() : false,
       htmlFullscreenTabId: this.htmlFullscreenTabId,
-      prompt: this.prompt
+      prompt: this.prompt,
+      app: this.app
     }
   }
 
@@ -242,6 +267,8 @@ export class ZenWindow {
     // A maximised window keeps its normal bounds but may have moved to another display.
     this.savedDisplayId = this.host.displayId?.() ?? this.savedDisplayId
     if (this.kind === 'synced') this.browser.state.commit()
+    // An installed app's window opens where it last stood (Chrome remembers per app).
+    if (this.app?.appId) this.browser.webApps.rememberBounds(this.app.appId, this.savedBounds)
   }
 
   /** Maximised / fullscreen / focus flags changed. */
@@ -509,7 +536,9 @@ export class ZenWindow {
   /** Push the native window title (`<active tab title> - Zenium`) to the host; the host throttles. */
   updateTitle(): void {
     if (!this.alive) return
-    this.host.setTitle(formatWindowTitle(this.browser.tabs.activeTitleFor(this), this.isPrivate))
+    this.host.setTitle(
+      formatWindowTitle(this.browser.tabs.activeTitleFor(this), this.isPrivate, this.app?.name)
+    )
   }
 
   /** Whether the chrome currently covers the content (used by hosts for input routing). */

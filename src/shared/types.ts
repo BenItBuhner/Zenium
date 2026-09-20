@@ -20,7 +20,7 @@ import type {
   ThirdPartyCookiePrivateMode
 } from './privacy'
 import type { InternalPageId } from './internalPages'
-import type { WebAppInfo } from './webApp'
+import type { InstallSurface, WebAppInfo } from './webApp'
 import type { ContentDefault } from './contentSettings'
 import type { VoiceEvent, VoiceStartOutcome } from './voice'
 import type { QrEvent, QrStartOutcome } from './qrScan'
@@ -29,6 +29,7 @@ import type { SpellcheckSettings, SpellcheckStatus } from './spellcheck'
 import type { ReaderPreferences } from './reader'
 import type { PrintPreviewResult, PrintRunResult, PrintSessionInfo, PrintSettings } from './print'
 import type { PdfViewerCommand, PdfViewerReport } from './pdfViewerProtocol'
+import type { ShareFileInfo } from './share'
 
 export type Platform = 'linux' | 'win32' | 'darwin' | 'android'
 
@@ -41,6 +42,17 @@ export type Platform = 'linux' | 'win32' | 'darwin' | 'android'
  *  - `desktop` – everything else.
  */
 export type FormFactor = 'phone' | 'tablet' | 'desktop'
+
+/**
+ * A surface of the chrome that answers a page's request the core would otherwise hold open for
+ * it: the install prompt (`webapp.install`), the screen picker (`screenCaptureRequests`), the
+ * share sheet (`shareRequests`). The renderer registers each as its component mounts
+ * (`ui.surface`) and takes it back as it unmounts; while a window has none, the core answers the
+ * page at once the way a cancel would (Chrome's picker refused, its share cancelled, its install
+ * dialog dismissed) instead of waiting on a chrome that is not there – no call hangs behind a
+ * surface that has yet to land.
+ */
+export type ChromeSurface = 'install' | 'screenCapture' | 'share'
 
 /**
  * What the host can do for the chrome. The renderer adapts its UI to these rather than to the
@@ -186,6 +198,18 @@ export interface HostCapabilities {
    * `shared/qrScan.ts`). Off, no camera button shows anywhere.
    */
   qrScan: boolean
+  /**
+   * Pages may capture the screen (`getDisplayMedia`): the host asks the core's picker for the
+   * screen, window or tab to share (`ScreenCaptureRequest`). Desktop only; the mobile WebView
+   * has no `getDisplayMedia`.
+   */
+  screenCapture: boolean
+  /**
+   * The chrome draws Zenium's own share sheet (copy link, QR code, email, the system's sheet
+   * where the OS has one) for `navigator.share` and the menus' Share items – desktops, which
+   * have no share target of the OS's own. Hosts with `share` use the system sheet instead.
+   */
+  shareSheet: boolean
 }
 
 export interface Rect {
@@ -246,10 +270,30 @@ export type WindowKind = 'synced' | 'unsynced' | 'private'
 /** Which tabs new synced windows share: everything, pinned/essential only, or nothing. */
 export type WindowSyncMode = 'all' | 'pinned' | 'off'
 /**
- * What a window's chrome shows: the sidebar with spaces and tabs, or – for the sized windows
- * pages open with `window.open(url, name, 'width=…')` – a single toolbar row above the page.
+ * What a window's chrome shows: the sidebar with spaces and tabs; for the sized windows pages
+ * open with `window.open(url, name, 'width=…')` a single toolbar row above the page; for a web
+ * app launched standalone (`zenium --app=<url>`, an installed app's launcher) no browser chrome
+ * at all, only the app's own title bar (Chrome's app window).
  */
-export type WindowChrome = 'full' | 'popup'
+export type WindowChrome = 'full' | 'popup' | 'app'
+
+/**
+ * The web app a standalone window (`WindowChrome` `app`) is showing: its name and icon for the
+ * window's title bar, and the scope its pages stay within (a navigation out of it opens in a
+ * browser tab instead, as Chrome's app windows keep their app).
+ */
+export interface AppWindowInfo {
+  /** The installed app's name, or the launch URL's host when no record matches. */
+  name: string
+  /** The app's icon (a data or file URL), or null to show the page's favicon. */
+  icon: string | null
+  /** Absolute scope URL: the app's pages are those whose URL starts with it. */
+  scope: string
+  /** The installed app's id when the window belongs to one (`webapp.launch`), else null. */
+  appId: string | null
+  /** The URL a launcher of this app opens (`--app=<startUrl>`): the record's, else the page's. */
+  startUrl: string
+}
 /** System-drawn material behind a translucent chrome (Windows 11). */
 export type WindowMaterial = 'none' | 'mica'
 
@@ -2273,6 +2317,8 @@ export interface WindowState {
   htmlFullscreenTabId: string | null
   /** A window-modal question waiting for an answer ("Close N tabs?"), if any. */
   prompt: WindowPrompt | null
+  /** The web app a standalone window shows (`chrome` `app`); null for browser windows. */
+  app: AppWindowInfo | null
 }
 
 /**
@@ -2297,6 +2343,63 @@ export interface MediaState {
   /** The media session's tab: the one the OS controls show (the in-app player leads with it). */
   session?: boolean
 }
+
+// ---------------------------------------------------------------------------
+// Screen capture picker, share sheet
+// ---------------------------------------------------------------------------
+
+/** One thing a page may capture, as the picker shows it. */
+export interface ScreenCaptureSource {
+  /** The host's id (`screen:…`, `window:…`), or `tab:<tabId>` for a Zenium tab. */
+  id: string
+  name: string
+  kind: 'screen' | 'window' | 'tab'
+  /** A small still of the source (`data:` PNG), null when the host has none. */
+  thumbnail: string | null
+  /** The owning application's icon for windows, the favicon for tabs; null otherwise. */
+  icon: string | null
+}
+
+/**
+ * A page's `getDisplayMedia` call waiting on the picker (Chrome's "Choose what to share"): the
+ * chrome shows the sources by kind and answers with `screenCapture.respond`. One per tab.
+ */
+export interface ScreenCaptureRequest {
+  id: string
+  tabId: string
+  /** The site asking, as a display origin. */
+  origin: string
+  /** The page asked for audio as well. */
+  audio: boolean
+  /** The OS can hand a screen's sound along with its picture (the "Also share system audio" box). */
+  systemAudio: boolean
+  /** Still fetching the OS's list. */
+  loading: boolean
+  sources: ScreenCaptureSource[]
+  requestedAt: number
+}
+
+/** What a page or the browser asked to share, shown by the chrome's share sheet. */
+export interface ShareRequest {
+  id: string
+  /** The tab the share came from (`navigator.share`, or the menu's Share… on a page); null for a chrome share without one. */
+  tabId: string | null
+  windowId: string
+  /** The site whose page called `navigator.share`; null for the browser's own shares. */
+  origin: string | null
+  title: string
+  text: string
+  url: string
+  files: ShareFileInfo[]
+  /** An image a menu shares as a file (the host fetches it); null otherwise. */
+  imageUrl: string | null
+  /** The OS has a share sheet of its own to offer as a row (macOS). */
+  system: boolean
+  requestedAt: number
+}
+
+/** How the user answered the share sheet. */
+export type ShareAnswer = 'copy' | 'email' | 'save' | 'system' | 'dismiss'
 
 /** A tab from another window being dragged over this one (`tab.dragOver`). */
 export interface TabDragOver {
@@ -2647,6 +2750,10 @@ export interface UIState {
   securityPrompts: SecurityPrompt[]
   /** Pending `alert` / `confirm` / `prompt` and "Leave site?" dialogs of pages, oldest first. */
   pageDialogs: PageDialog[]
+  /** Pages waiting on the screen-capture picker, oldest first (one per tab). */
+  screenCaptureRequests: ScreenCaptureRequest[]
+  /** Shares waiting on this window's share sheet, oldest first. */
+  shareRequests: ShareRequest[]
   /** The pages of an unclean exit the chrome should offer to restore; null when there are none. */
   crashRestore: CrashRestoreOffer | null
   /** In-page autofill: save prompts, the account / address / card picker, entry counts. */
@@ -3093,17 +3200,33 @@ export interface Commands {
   'focus.chrome': { args: void; result: void }
   /** Renderer → host: a gesture reached a landmark (pick-up, midpoint, dock); vibrate briefly. */
   haptic: { args: { kind: HapticKind }; result: void }
+  /** The media hub's one button: pause a playing entry, play a paused one. */
   'media.toggle': { args: { tabId: string }; result: void }
   /**
    * The in-app player's controls: a Media Session action for the tab's page (its handler when it
    * registered one, the element otherwise), `seekto` with `seekTime` in seconds.
    */
   'media.action': {
-    args: { tabId: string; action: MediaSessionAction | 'toggle'; seekTime?: number }
+    args: {
+      tabId: string
+      action: MediaSessionAction | 'toggle'
+      seekTime?: number
+      /** `seekbackward` / `seekforward`: how far, in seconds (the page's default when absent). */
+      seekOffset?: number
+    }
     result: void
   }
   /** Picture-in-picture of the tab's video through the OS (`capabilities.pictureInPicture`); false when refused. */
   'media.pictureInPicture': { args: { tabId: string }; result: boolean }
+  /** The screen-capture picker's answer: the picked source (null cancels) and whether to add system audio. */
+  'screenCapture.respond': {
+    args: { id: string; sourceId: string | null; audio?: boolean }
+    result: void
+  }
+  /** The share sheet's answer. */
+  'share.respond': { args: { id: string; answer: ShareAnswer }; result: void }
+  /** Open the share sheet for a tab's page (its title and address), or for `payload`. */
+  'share.open': { args: { tabId?: string; payload?: SharePayload }; result: void }
 
   'split.create': { args: { tabIds: string[]; layout: SplitLayout }; result: void }
   'split.toggleLayout': { args: { layout: SplitLayout }; result: void }
@@ -3455,6 +3578,11 @@ export interface Commands {
   'window.fullscreenInset': { args: { bottom: number }; result: void }
   /** Renderer → main: the layout the chrome settled on (sent on start and whenever it changes). */
   'window.formFactor': { args: { formFactor: FormFactor }; result: void }
+  /**
+   * Renderer → main: a surface of this window's chrome mounted (or unmounted) – see
+   * `ChromeSurface`. The core holds a page's request open only for a window whose surface is up.
+   */
+  'ui.surface': { args: { surface: ChromeSurface; mounted: boolean }; result: void }
   /** Zen: a new synced window starts at the current space showing the same tabs. */
   'window.new': { args: void; result: void }
   /** Zen's "New blank window" (Ctrl+Shift+N): an independent, temporary tab list. */
@@ -3972,6 +4100,13 @@ export interface Commands {
   'webapp.cancelInstall': { args: { tabId: string }; result: void }
   /** The ambient banner went away: swiped (starts the cooldown) or timed out. */
   'webapp.dismissBanner': { args: { tabId: string; reason: 'swipe' | 'timeout' }; result: void }
+  /**
+   * Open an installed app (`PinnedWebApp.id`) the way its launcher does: in a standalone app
+   * window on hosts with windows (MW-23), as a tab at its start URL elsewhere.
+   */
+  'webapp.launch': { args: { appId: string }; result: void }
+  /** Remove an installed app: its launcher (where the host made one) and its record. */
+  'webapp.uninstall': { args: { appId: string }; result: void }
 }
 
 export type CommandName = keyof Commands
@@ -4161,9 +4296,19 @@ export interface Events {
   'webapp.bannerHide': { tabId: string }
   /**
    * The launcher confirmed a Home screen shortcut (NOT-20): the chrome toasts "Added <name> to
-   * Home screen" with an Open action that takes `tabId` to `url`, the shortcut's own.
+   * Home screen" with an Open action that takes `tabId` to `url`, the shortcut's own. On desktop
+   * (`surface` `desktop`) the app was installed as a launcher and – with a manifest – opened in
+   * its own window already, as Chrome does; the toast's Open then launches it (`webapp.launch`
+   * with `appId`).
    */
-  'webapp.pinned': { tabId: string | null; name: string; url: string | null }
+  'webapp.pinned': {
+    tabId: string | null
+    name: string
+    url: string | null
+    surface: InstallSurface
+    /** The installed app's id when the page had a manifest, else null (a plain shortcut). */
+    appId: string | null
+  }
 }
 
 export type EventName = keyof Events
@@ -4181,6 +4326,8 @@ export interface WebAppInstallPrompt {
   info: WebAppInfo | null
   /** Colour behind the letter tile (the manifest's theme colour or the space accent). */
   tint: string | null
+  /** Where the app lands – the copy follows it (`installSheetCopy`). */
+  surface: InstallSurface
 }
 
 export interface WebAppBanner {

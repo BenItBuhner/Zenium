@@ -1,9 +1,10 @@
-import type { Tab, WebAppBanner, WebAppInstallPrompt } from '../shared/types'
+import type { Rect, Tab, WebAppBanner, WebAppInstallPrompt } from '../shared/types'
 import { resolveTheme, rgbToHex } from '../shared/theme'
 import {
   BANNER_TIMEOUT_MS,
   displayIcon,
   fallbackShortcutTitle,
+  installFailedMessage,
   isInstallable,
   isWithinScope,
   launcherName,
@@ -16,13 +17,14 @@ import {
   shouldPrompt,
   tileColor,
   type EngagementRecord,
+  type InstallSurface,
   type PinnedWebApp,
   type WebAppInfo
 } from '../shared/webApp'
 import type { Browser } from './browser'
 import { getSpace } from './model'
 import type { PageMessage, ShortcutRequest, StoreIO } from './platform'
-import type { ZenWindow } from './window'
+import { surfaceMounted, type ZenWindow } from './window'
 
 /** The persisted document: shortcuts on the Home screen and how often each app was visited. */
 interface WebAppsDocument {
@@ -133,9 +135,89 @@ export class WebAppService {
     )
   }
 
+  /**
+   * Where an installed app lands: on hosts with windows it opens in a standalone window of its
+   * own from a desktop launcher (Chrome's installed apps); a one-window host puts a tile on the
+   * Home screen.
+   */
+  get surface(): InstallSurface {
+    return this.browser.state.capabilities.windows ? 'desktop' : 'homeScreen'
+  }
+
   /** The pinned app whose scope contains `url` (the app menu says "Open <name>" inside it). */
   pinnedFor(url: string): PinnedWebApp | null {
     return pinnedAppFor(url, this.pinned)
+  }
+
+  /** The installed app with this id, if it is still installed. */
+  pinnedById(appId: string): PinnedWebApp | null {
+    return this.pinned.find((p) => p.id === appId) ?? null
+  }
+
+  /**
+   * Open an installed app the way its launcher does: in an app window of its own on hosts with
+   * windows (MW-23), as a tab at its start URL elsewhere. An id that is no app's does nothing.
+   */
+  launch(appId: string, win?: ZenWindow): void {
+    const app = this.pinnedById(appId)
+    if (!app) return
+    if (this.surface === 'desktop') {
+      // An open window of the app comes forward rather than a second one (Chrome's behaviour).
+      const open = this.browser.allWindows().find((w) => w.app?.appId === app.id && !w.isClosing)
+      if (open) {
+        open.host.show()
+        open.host.focus()
+        return
+      }
+      const opened = this.browser.openAppWindow(app.startUrl, { from: win })
+      opened?.host.show()
+      opened?.host.focus()
+      return
+    }
+    const active = win ? this.browser.tabs.activeTabFor(win) : undefined
+    if (active && isWithinScope(active.url, app.scope))
+      this.browser.tabs.navigate(active.id, app.startUrl)
+    else this.browser.tabs.createTab({ url: app.startUrl, active: true }, win)
+  }
+
+  /**
+   * Remove an installed app: its launcher where the host made one, then the record; open
+   * windows of the app close (Chrome closes them on uninstall too).
+   */
+  async uninstall(appId: string): Promise<void> {
+    const app = this.pinnedById(appId)
+    if (!app) return
+    try {
+      await this.browser.platform.shortcuts?.unpin?.(app.id)
+    } catch {
+      /* the record goes either way; a stale launcher just opens the app as a page */
+    }
+    this.pinned = this.pinned.filter((p) => p.id !== appId)
+    this.save()
+    for (const w of this.browser.allWindows()) {
+      if (w.app?.appId === appId) {
+        w.closeApproved = true
+        w.host.close()
+      }
+    }
+    this.browser.state.commitVolatile()
+  }
+
+  /** An app window moved or resized: the next launch of the app opens where it stood. */
+  rememberBounds(appId: string, bounds: Rect | null): void {
+    const app = this.pinnedById(appId)
+    if (!app || !bounds) return
+    const b = app.bounds
+    if (
+      b &&
+      b.x === bounds.x &&
+      b.y === bounds.y &&
+      b.width === bounds.width &&
+      b.height === bounds.height
+    )
+      return
+    app.bounds = { ...bounds }
+    this.save()
   }
 
   /** Whether "Add to Home screen" applies to the tab: a web page, not private, host able. */
@@ -280,7 +362,7 @@ export class WebAppService {
     this.banners.set(tabId, info.id)
     const banner: WebAppBanner = {
       tabId,
-      name: launcherName(info),
+      name: launcherName(info, this.surface),
       origin: originOf(tab.url),
       icon: displayIcon(info),
       tint: this.tileColorFor(info, tab)
@@ -314,10 +396,15 @@ export class WebAppService {
   // Install sheet (PWA-01 / PWA-04)
   // ---------------------------------------------------------------------------
 
-  /** Open the install sheet (with a manifest) or the name-edit sheet (without). */
+  /**
+   * Open the install sheet (with a manifest) or the name-edit sheet (without). A window whose
+   * chrome has no install surface up (`ChromeSurface`: the phone's sheet; the desktop's dialog
+   * is UI work to come) settles the site's `prompt()` as dismissed at once, the answer Chrome's
+   * closed dialog gives, and shows nothing.
+   */
   openInstall(tabId: string, win: ZenWindow): void {
     const tab = this.browser.tabs.tab(tabId)
-    if (!this.canPin(tab, win) || !tab) {
+    if (!this.canPin(tab, win) || !tab || !surfaceMounted(win, 'install')) {
       this.settleSitePrompt(tabId, 'dismissed')
       return
     }
@@ -328,12 +415,13 @@ export class WebAppService {
     const info = tab.webApp
     const prompt: WebAppInstallPrompt = {
       tabId,
-      title: info ? launcherName(info) : fallbackShortcutTitle(tab.title, tab.url),
+      title: info ? launcherName(info, this.surface) : fallbackShortcutTitle(tab.title, tab.url),
       url: info?.startUrl ?? tab.url,
       origin: originOf(tab.url),
       icon: (info && displayIcon(info)) ?? tab.favicon,
       info,
-      tint: this.tileColorFor(info, tab)
+      tint: this.tileColorFor(info, tab),
+      surface: this.surface
     }
     this.browser.emit('webapp.install', prompt, win)
   }
@@ -350,7 +438,7 @@ export class WebAppService {
     const info = tab.webApp
     const name =
       title.replace(/\s+/g, ' ').trim().slice(0, 60) ||
-      (info ? launcherName(info) : fallbackShortcutTitle(tab.title, tab.url))
+      (info ? launcherName(info, this.surface) : fallbackShortcutTitle(tab.title, tab.url))
     const icon = info ? shortcutIcon(info) : null
     const request: ShortcutRequest = {
       id: info?.id ?? tab.url,
@@ -372,7 +460,7 @@ export class WebAppService {
     if (!ok) {
       this.pendingPins.delete(request.id)
       this.pendingApps.delete(request.id)
-      this.browser.toast("Couldn't add to Home screen", 'error', win)
+      this.browser.toast(installFailedMessage(this.surface), 'error', win)
       this.settleSitePrompt(tabId, 'dismissed')
     }
   }
@@ -385,29 +473,42 @@ export class WebAppService {
 
   /**
    * The launcher confirmed the shortcut (NOT-20): register the app, tell the page, and have the
-   * chrome toast "Added <name> to Home screen" with an Open action for the shortcut's URL.
+   * chrome toast "Added <name> to Home screen" with an Open action for the shortcut's URL. A
+   * desktop host confirms with the icon it kept (`details.icon`); an app with a manifest then
+   * opens in its own window at once and the installing tab goes with it, as Chrome moves the
+   * tab into the new app window.
    */
-  onPinned(id: string): void {
+  onPinned(id: string, details: { icon?: string | null } = {}): void {
     const pending = this.pendingPins.get(id)
     this.pendingPins.delete(id)
     const info = this.pendingApps.get(id)
     this.pendingApps.delete(id)
     const win = pending ? this.browser.tabs.windowFor(pending.tabId) : undefined
     const title = pending?.title ?? info?.name ?? 'Shortcut'
+    const surface = this.surface
     if (info) {
+      const previous = this.pinnedById(id)
       this.pinned = this.pinned.filter((p) => p.id !== id)
       this.pinned.push({
         id,
         name: title,
         startUrl: info.startUrl,
         scope: info.scope,
-        pinnedAt: this.now()
+        pinnedAt: this.now(),
+        icon: details.icon ?? previous?.icon ?? null,
+        bounds: previous?.bounds ?? null
       })
       this.save()
     }
     this.browser.emit(
       'webapp.pinned',
-      { tabId: pending?.tabId ?? null, name: title, url: pending?.url ?? info?.startUrl ?? null },
+      {
+        tabId: pending?.tabId ?? null,
+        name: title,
+        url: pending?.url ?? info?.startUrl ?? null,
+        surface,
+        appId: info ? id : null
+      },
       win
     )
     if (pending) {
@@ -416,6 +517,24 @@ export class WebAppService {
       this.browser.tabs.view(pending.tabId)?.postToPage?.({ type: 'webapp', action: 'installed' })
     }
     this.browser.state.commitVolatile()
+    if (info && surface === 'desktop' && pending) this.moveIntoAppWindow(pending.tabId, id)
+  }
+
+  /**
+   * Chrome's install: the page the user installed from carries on in the app's new window and
+   * its browser tab closes – unless the tab has meanwhile left the app, in which case the app
+   * window opens at its start URL and the tab stays.
+   */
+  private moveIntoAppWindow(tabId: string, appId: string): void {
+    const app = this.pinnedById(appId)
+    const tab = this.browser.tabs.tab(tabId)
+    if (!app) return
+    const inside = tab && isWithinScope(tab.url, app.scope)
+    const win = this.browser.openAppWindow(inside ? tab.url : app.startUrl)
+    if (!win) return
+    if (inside && tab) this.browser.tabs.closeTab(tab.id)
+    win.host.show()
+    win.host.focus()
   }
 
   /** A site's deferred `prompt()` learns how the sheet ended. */

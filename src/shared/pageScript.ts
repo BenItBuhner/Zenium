@@ -13,6 +13,7 @@ import type { NotificationHostMessage, NotificationPageRequest } from './notific
 import { installMediaTracking } from './mediaSessionScript'
 import { READER_MESSAGE_KEY } from './reader'
 import { PDF_VIEWER_ORIGIN, pdfReportOf, type PdfViewerReport } from './pdfViewerProtocol'
+import { INSTALL_PROMPT_EVENTS, type InstallPromptShimEvents } from './installPrompt'
 
 /**
  * Runs inside every web page. It implements the click behaviours Zen adds on top of the engine:
@@ -88,6 +89,13 @@ export interface WebAppHostMessage {
 export type PageScriptHostMessage =
   WebAppHostMessage | MediaSessionHostMessage | NotificationHostMessage
 
+/**
+ * The IPC channel the browser posts `PageHostMessage`s into a page on (Electron's
+ * `TabView.postToPage` → `preload/page.ts`): the web-app install events, media controls, share
+ * results and geolocation answers, told apart by `type`.
+ */
+export const PAGE_HOST_CHANNEL = 'zen:page-host'
+
 export interface PageScriptTransport {
   send(message: PageScriptMessage): void
   onFlags(listener: (flags: PageScriptFlags) => void): void
@@ -123,6 +131,13 @@ export interface PageScriptTransport {
    * parses the description itself (`shared/search`).
    */
   discoverSearchEngines?: boolean
+  /**
+   * Hosts whose page script runs in an isolated world (Electron): run
+   * `shared/installPrompt`'s shim in the page's main world, where the `beforeinstallprompt`
+   * event must be born for the page to call `prompt()` on it. Without it the polyfill runs
+   * inline (Android, whose script is in the page's world already).
+   */
+  installInstallPromptShim?(events: InstallPromptShimEvents): void
 }
 
 /** Keys that never count as a gesture in Chromium's user-activation model. */
@@ -622,6 +637,36 @@ function installWebApp(transport: PageScriptTransport): void {
   window.addEventListener('load', probe, { once: true })
 
   // --- beforeinstallprompt / appinstalled --------------------------------------------------------
+
+  if (transport.installInstallPromptShim) {
+    // The events live in the page's world (`shared/installPrompt`); this world relays.
+    const events = INSTALL_PROMPT_EVENTS
+    document.addEventListener(events.request, (e) => {
+      const detail = (e as CustomEvent<unknown>).detail
+      let kind: unknown = detail
+      if (typeof detail === 'string') {
+        try {
+          kind = (JSON.parse(detail) as { kind?: unknown }).kind
+        } catch {
+          return
+        }
+      }
+      if (kind === 'prompt' || kind === 'deferred') transport.send({ type: 'webapp', webapp: kind })
+    })
+    transport.onWebApp?.((message) => {
+      document.dispatchEvent(
+        new CustomEvent(events.result, {
+          detail: JSON.stringify({ action: message.action, outcome: message.outcome })
+        })
+      )
+    })
+    try {
+      transport.installInstallPromptShim(events)
+    } catch {
+      /* the main world refused the script; the manifest probe above still serves the menu */
+    }
+    return
+  }
 
   let pendingPrompt: ZenBeforeInstallPromptEvent | null = null
   let lastEvent: ZenBeforeInstallPromptEvent | null = null

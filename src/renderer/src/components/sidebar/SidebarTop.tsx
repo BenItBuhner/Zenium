@@ -134,8 +134,9 @@ export function NavRow({
     (s) => s.blockedPopupsPanel !== null && s.blockedPopupsPanel.tabId === tab?.id
   )
   // A popup (`window.open` with features) has Chrome's read-only location bar: the address and
-  // its chips show where the page is, but nothing can be typed into it.
-  const readOnly = state.window.chrome === 'popup'
+  // its chips show where the page is, but nothing can be typed into it. An app window shows
+  // its page the same way until its own title bar lands.
+  const readOnly = state.window.chrome === 'popup' || state.window.chrome === 'app'
   // An address or text dragged over the pill goes to the tab as typed (lib/dnd.ts, Chrome's
   // paste and go): the pill shows it will take the drop (§9.4) – or, read-only, that it cannot,
   // dimmed for as long as the drag is over the window.

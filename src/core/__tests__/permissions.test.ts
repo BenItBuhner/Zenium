@@ -70,7 +70,9 @@ describe('PermissionService: what is asked', () => {
     expect(await p.decide('fullscreen', PAGE)).toBe(true)
     expect(await p.decide('pointerLock', PAGE)).toBe(true)
     expect(await p.decide('usb', PAGE)).toBe(false)
-    expect(await p.decide('display-capture', PAGE)).toBe(false)
+    // Screen sharing has no prompt of its own: the picker (MW-19) is where the user decides.
+    expect(await p.decide('display-capture', PAGE)).toBe(true)
+    expect(await p.decide('midiSysex', PAGE)).toBe(false)
     expect(d.asked).toEqual([])
   })
 

@@ -77,7 +77,9 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
   const settings = state.settings
   const compact = settings.compactMode
   const sidebarSide = settings.sidebarSide
-  const popupChrome = state.window.chrome === 'popup'
+  // Toolbar-only windows: a page's sized popup, and – until the app title bar lands – a web
+  // app's standalone window, which has no sidebar either.
+  const popupChrome = state.window.chrome === 'popup' || state.window.chrome === 'app'
   // Blank / private windows never show onboarding (it belongs to the main profile window).
   const onboarding = !settings.onboardingDone && state.window.kind === 'synced' && !popupChrome
   const htmlFullscreen = state.window.htmlFullscreenTabId !== null
