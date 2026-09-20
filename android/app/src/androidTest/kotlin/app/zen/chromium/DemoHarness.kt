@@ -1011,8 +1011,12 @@ abstract class DemoHarness(
     protected val jankGate: JankBudget.Gate =
         JankBudget.Gate.parse(InstrumentationRegistry.getArguments().getString(JANK_GATE_ARGUMENT))
 
-    /** Every scene measured so far, in order; for a driver that wants to write them down itself. */
-    protected val scenes: List<FrameStats.Scene> get() = measuredScenes
+    /**
+     * Every scene measured so far, in order; for a driver that wants to write them down itself.
+     * (Named for the frames: `scenes` alone is a driver's own word for which of ITS scenes run,
+     * ChromeA11yDemo's `scenes` argument among them.)
+     */
+    protected val frameScenes: List<FrameStats.Scene> get() = measuredScenes
     private val measuredScenes = ArrayList<FrameStats.Scene>()
 
     /** The scenes over budget under a hard gate, each with its table; [runDemo] fails on them at the end. */
