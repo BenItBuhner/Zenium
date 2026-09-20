@@ -84,6 +84,9 @@ export class ForwardingEvents implements TabViewEvents {
   onProgress(progress: number): void {
     this.target?.onProgress(progress)
   }
+  onStartNavigation(url: string, sameDocument: boolean): void {
+    this.target?.onStartNavigation?.(url, sameDocument)
+  }
   onNavigated(url: string, inPage: boolean): void {
     this.target?.onNavigated(url, inPage)
   }

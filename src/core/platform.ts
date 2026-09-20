@@ -486,6 +486,13 @@ export interface TabViewEvents {
   onStopLoading(): void
   /** Load progress 0…1 from hosts that measure it (Android); optional between start and stop. */
   onProgress(progress: number): void
+  /**
+   * A main-frame navigation to `url` began (Electron's `did-start-navigation`), before any
+   * response: `sameDocument` for a pushState / hash change, which shows no throbber (tabs-41)
+   * although the frame's loading state toggles around it. Hosts that cannot tell need not call
+   * it: the throbber then waits from `onStartLoading` to the commit.
+   */
+  onStartNavigation?(url: string, sameDocument: boolean): void
   /** Main-frame navigation committed (`inPage` for pushState / hash changes). */
   onNavigated(url: string, inPage: boolean): void
   /**

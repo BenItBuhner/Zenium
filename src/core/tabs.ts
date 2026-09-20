@@ -471,16 +471,34 @@ export class TabManager {
     const ownerWindow = (): ZenWindow => this.windowFor(tabId)
 
     return {
+      // The throbber's two phases (tabs-41, Chrome's): "waiting" from the start of a load until
+      // its document commits (the server's first response), "loading" from there to the stop.
       onStartLoading: () =>
         update((t) => {
           t.loading = true
+          t.waiting = true
           t.progress = 0
+        }, true),
+      onStartNavigation: (_url, sameDocument) =>
+        update((t) => {
+          if (sameDocument) {
+            // A pushState / hash change is no load to the row, although Chromium toggles the
+            // frame's loading state around it: no throbber (Chrome's rule).
+            t.loading = false
+            t.waiting = false
+          } else {
+            // A further navigation inside a load (a redirecting script, a second click) waits for
+            // its own response again.
+            t.loading = true
+            t.waiting = true
+          }
         }, true),
       onStopLoading: () => {
         this.browser.governor.onLoadFinished(tabId)
         update((t) => {
           const v = view()
           t.loading = false
+          t.waiting = false
           t.progress = 1
           t.canGoBack = v?.canGoBack() ?? false
           t.canGoForward = v?.canGoForward() ?? false
@@ -497,6 +515,11 @@ export class TabManager {
         // A new document supersedes whatever challenge the previous request was waiting on,
         // and whatever permission question the previous page asked.
         if (!inPage) {
+          // The document committed: the first byte is in, the throbber turns to its loading
+          // phase (tabs-41).
+          update((t) => {
+            t.waiting = false
+          }, true)
           this.browser.security.cancelForTab(tabId)
           this.browser.permissionPrompts.cancelForTab(tabId)
           this.browser.permissions.onTabNavigated(tabId, url)
@@ -540,6 +563,7 @@ export class TabManager {
             t.errorCode = code
             t.certificateError = certificateError
             t.loading = false
+            t.waiting = false
             t.progress = 1
           })
         // The host's request engine refused the navigation on Safe Browsing's word.
@@ -618,6 +642,7 @@ export class TabManager {
           t.errorCode = CRASH_ERROR_CODE
           t.certificateError = null
           t.loading = false
+          t.waiting = false
           t.progress = 1
         })
         view()?.loadURL(errorPageUrl(CRASH_ERROR_CODE, code, target))
@@ -1116,6 +1141,7 @@ export class TabManager {
     tab.frozen = false
     tab.cpuThrottle = 1
     tab.loading = false
+    tab.waiting = false
     tab.progress = 0
     tab.audible = false
     tab.canGoBack = false
@@ -1298,6 +1324,7 @@ export class TabManager {
     tab.frozen = false
     tab.cpuThrottle = 1
     tab.loading = false
+    tab.waiting = false
     tab.title = view.getTitle() || this.titleFor(tab.url)
     if (tab.muted) view.setMuted(true)
     if (tab.zoom !== 1) view.setZoom(tab.zoom)
@@ -3031,6 +3058,7 @@ export class TabManager {
           tab.frozen = false
           tab.cpuThrottle = 1
           tab.loading = false
+          tab.waiting = false
           tab.progress = 0
           tab.audible = false
         }

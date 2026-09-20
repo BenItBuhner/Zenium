@@ -1585,6 +1585,33 @@
   .zen-spin {
     animation: zen-spin 900ms linear infinite;
   }
+  /*
+   * The tab row's throbber (tabs-41), Chrome's two phases on #125's 16 × 16, 2 px ring with the
+   * top quarter open: the muted ink turning backwards while the load waits for the server's
+   * first response, the accent turning forwards once the document is coming in (the colour
+   * eases over between them). The favicon that takes the ring's place fades back in over
+   * 150 ms from its insertion, landing on whatever opacity its own rules give it (the globe's
+   * 60 %, a sleeping row's 69 %). Reduced motion collapses both to the global 0.01 ms.
+   */
+  .zen-tab-throbber {
+    border-color: var(--zen-muted);
+    border-top-color: transparent;
+    animation: zen-spin 900ms linear infinite reverse;
+  }
+  /* The ease sits on the second phase only: the ring enters in its colours, never eased from
+     whatever stood there before. */
+  .zen-tab-throbber[data-phase='loading'] {
+    border-color: var(--zen-accent);
+    border-top-color: transparent;
+    animation-direction: normal;
+    transition: border-color 150ms var(--zen-ease);
+  }
+  .zen-tab-favicon-in {
+    transition: opacity 150ms var(--zen-ease);
+    @starting-style {
+      opacity: 0;
+    }
+  }
   .zen-toast {
     animation: zen-toast-in 180ms var(--zen-ease);
   }

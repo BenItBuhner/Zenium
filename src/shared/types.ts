@@ -373,6 +373,13 @@ export interface Tab {
   folderId: string | null
   loading: boolean
   /**
+   * The load is still waiting for the server's first response (tabs-41): true from the start of
+   * a load until its document commits, when the row's throbber turns from Chrome's muted
+   * "waiting" spin to the accent "loading" spin; false outside a load. A session's own (not
+   * persisted). Absent on records older than the field.
+   */
+  waiting?: boolean
+  /**
    * How far the current load has come, 0…1, for the progress bar. Hosts that measure it
    * (Android's `onProgressChanged`) report it as it grows; others only mark 0 at the start and
    * 1 at the end.

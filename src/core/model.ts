@@ -110,6 +110,7 @@ export function createTabRecord(
     windowId: init.windowId ?? null,
     folderId: init.folderId ?? null,
     loading: false,
+    waiting: false,
     progress: 0,
     canGoBack: false,
     canGoForward: false,

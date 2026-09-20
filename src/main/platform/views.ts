@@ -332,8 +332,11 @@ export class ElectronTabView implements TabView {
       if (ev.onWillNavigate(url)) event.preventDefault()
     })
     wc.on('did-start-navigation', (details) => {
+      if (!details.isMainFrame) return
+      // The row's throbber learns here whether the load is a same-document one (tabs-41).
+      ev.onStartNavigation?.(details.url, details.isSameDocument)
       // The page is unloading (its `beforeunload` let it): nothing is left to replay.
-      if (!details.isMainFrame || details.isSameDocument) return
+      if (details.isSameDocument) return
       this.leaveApproved = false
       this.hostNavigation = null
       this.pageIntent = null

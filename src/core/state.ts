@@ -600,6 +600,7 @@ export class BrowserState {
       })
       tab.splitGroupId = raw.splitGroupId ?? null
       tab.loading = false
+      tab.waiting = false
       tab.progress = 0
       tab.audible = false
       // Live capture is a session's own: a restored page holds no camera until it asks again.
@@ -929,6 +930,7 @@ export class BrowserState {
         .map((t) => ({
           ...t,
           loading: false,
+          waiting: false,
           progress: 0,
           audible: false,
           alert: null,
