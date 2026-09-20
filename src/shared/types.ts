@@ -24,7 +24,11 @@ import type { InstallSurface, WebAppInfo } from './webApp'
 import type { ContentDefault } from './contentSettings'
 import type { VoiceEvent, VoiceStartOutcome } from './voice'
 import type { QrEvent, QrStartOutcome } from './qrScan'
-import type { MediaPositionInfo, MediaSessionAction } from './mediaSession'
+import type {
+  MediaPositionInfo,
+  MediaSessionAction,
+  MediaSessionSourceKind
+} from './mediaSession'
 import type { SpellcheckSettings, SpellcheckStatus } from './spellcheck'
 import type { ReaderPreferences } from './reader'
 import type { PrintPreviewResult, PrintRunResult, PrintSessionInfo, PrintSettings } from './print'
@@ -2326,7 +2330,8 @@ export interface WindowState {
  * reports the Media Session (Android) also what the OS controls show – the page's metadata (or
  * the tab's title and site), the artwork, the position as of `positionAt` (epoch ms; the chrome
  * extrapolates from it at `playbackRate`), the actions the page handles, and whether the
- * window is in picture-in-picture for its video.
+ * window is in picture-in-picture for its video. A chrome player on the tab (the read-aloud
+ * player, `source: 'chrome'`) is the tab's entry while its page has no media of its own.
  */
 export interface MediaState {
   tabId: string
@@ -2342,6 +2347,8 @@ export interface MediaState {
   pictureInPicture?: boolean
   /** The media session's tab: the one the OS controls show (the in-app player leads with it). */
   session?: boolean
+  /** Whose media: the tab's page (absent or `page`), or a chrome player's on that tab (`chrome`: no seek without a position, no PiP). */
+  source?: MediaSessionSourceKind
 }
 
 // ---------------------------------------------------------------------------

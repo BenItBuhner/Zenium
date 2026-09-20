@@ -133,11 +133,20 @@ export interface MediaSessionHostMessage {
 }
 
 /**
+ * What a session plays: a page's media (`page`), or a player of the chrome's own (`chrome`: the
+ * read-aloud player, registered with `MediaSessionService.registerSource`), which has no video
+ * and no picture-in-picture.
+ */
+export type MediaSessionSourceKind = 'page' | 'chrome'
+
+/**
  * The session the core hands the host for its OS controls (the media notification, the lock
  * screen, PiP): one page's media, resolved – the metadata the page set or the tab's title and
- * site, the artwork picked, the position as of `positionAt` (epoch ms). Null takes it down.
+ * site, the artwork picked, the position as of `positionAt` (epoch ms) – or a chrome player's
+ * (`source: 'chrome'`). Null takes it down.
  */
 export interface MediaSessionInfo {
+  /** The content's tab: the page playing, or the page a chrome player reads (what the controls open). */
   tabId: string
   title: string
   artist: string
@@ -156,6 +165,54 @@ export interface MediaSessionInfo {
   fullscreen: boolean
   /** A private tab: the controls show no title, artist or artwork (Chrome's incognito notification). */
   private: boolean
+  /** A page's media, or a chrome player's (`video` false, no PiP: hosts skip their PiP paths). */
+  source: MediaSessionSourceKind
+  /** The chrome player's id (`read-aloud`) when `source` is `chrome`. */
+  sourceId?: string
+}
+
+/** The actions a chrome player carries out itself; the host shows controls for these plus stop. */
+export type MediaSessionSourceAction =
+  | 'play'
+  | 'pause'
+  | 'stop'
+  | 'previoustrack'
+  | 'nexttrack'
+  | 'seekbackward'
+  | 'seekforward'
+
+/**
+ * Something that is not a page but plays – the read-aloud player – as a candidate for the media
+ * session next to the pages' reports (`MediaSessionService.registerSource`): it reaches the OS
+ * controls and the in-app player by the same resolution, and their actions come back to it.
+ */
+export interface MediaSessionSource {
+  /** Stable id of the player (`read-aloud`); one session per id, a re-register replaces. */
+  id: string
+  /** The tab the content belongs to (the page being read): the OS controls open it, the in-app player lists it there. */
+  tabId: string
+  title: string
+  /** The second line: the site, a chapter, a voice name; '' for none. */
+  artist: string
+  artwork?: string | null
+  playing: boolean
+  /** The actions the player carries out; the host shows controls for these plus stop. */
+  actions: ReadonlyArray<MediaSessionSourceAction>
+  /** Optional: a position the OS may show (`duration`, `position` in seconds, `playbackRate`); null for none. */
+  position?: MediaPositionInfo | null
+  /** An action from the OS controls, the in-app player or the host's focus loss. */
+  onAction(
+    action: MediaSessionAction | 'toggle',
+    details: { seekOffset?: number; seekTime?: number }
+  ): void
+}
+
+/** What `registerSource` hands back: the player tells the engine what changed, and when it is gone. */
+export interface MediaSessionSourceHandle {
+  /** The source changed (title, playing, actions, position): the engine re-resolves and pushes. */
+  update(patch: Partial<Omit<MediaSessionSource, 'id' | 'onAction'>>): void
+  /** The player is gone: the source leaves the resolution; the session falls back to the pages'. */
+  release(): void
 }
 
 /** The stylesheet id / attribute the page script uses for `fill` (a test hook as much as a marker). */
