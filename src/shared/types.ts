@@ -3770,6 +3770,11 @@ export interface Events {
   'downloads.reveal': { id: string | null }
   /** Open the page zoom sheet for a tab (hosts with page controls). */
   'zoom.open': { tabId: string }
+  /**
+   * The app menu's Extensions row on a phone: the chrome opens its sheet of the extensions'
+   * actions (one row per enabled extension with an action; the desktop has the toolbar for it).
+   */
+  'extensions.open': void
   /** The host's recogniser reports while a voice search runs (after `voice.start` answered `listening`). */
   'voice.event': VoiceEvent
   /** The host's camera reports while a scan runs (after `qr.start` answered `scanning`). */

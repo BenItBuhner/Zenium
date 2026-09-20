@@ -2242,6 +2242,13 @@ export class Menus {
           label: 'Passwords',
           click: () => this.browser.emit('overlay.open', { kind: 'passwords' }, win)
         }),
+        // The phone's way to the extensions' actions (Firefox for Android's Extensions item, in
+        // the library block before the management page): the chrome's sheet of one row per
+        // action. The desktop has the toolbar buttons and the puzzle panel; its menu is unchanged.
+        ...when(phone && caps.extensions, {
+          label: 'Extensions',
+          click: () => this.browser.emit('extensions.open', undefined, win)
+        }),
         ...when(caps.extensions, {
           label: 'Add-ons and Themes',
           action: 'addons.open',

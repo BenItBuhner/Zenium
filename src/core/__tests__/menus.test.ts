@@ -436,15 +436,34 @@ describe('the app menu', () => {
     for (const label of DESKTOP_ONLY) expect(menu).not.toContain(label)
     // A phone without a printer path hides Print rather than greying it.
     expect(appMenu(harness({ ...ANDROID, print: false }, 'phone'))).not.toContain('Print…')
-    // A device build has the extension store: the management page is reachable from the menu,
-    // closing the library block in Firefox's order.
+    // A device build has the extension store: the actions sheet and the management page are
+    // reachable from the menu, closing the library block in Firefox's order.
     const withStore = appMenu(harness({ ...ANDROID, extensions: true }, 'phone'))
     const downloads = withStore.indexOf('Downloads')
-    expect(withStore.slice(downloads, downloads + 3)).toEqual([
+    expect(withStore.slice(downloads, downloads + 4)).toEqual([
       'Downloads',
       'Passwords',
+      'Extensions',
       'Add-ons and Themes'
     ])
+  })
+
+  it('offers the Extensions sheet on a phone with extensions only, and opens it through extensions.open', () => {
+    // The desktop has the toolbar and the puzzle panel for the actions: its menu is unchanged.
+    // The row follows the layout and the capability, not the platform, like the rest of the
+    // phone menu; a host without extensions has nothing to list.
+    expect(appMenu(harness(DESKTOP))).not.toContain('Extensions')
+    expect(appMenu(harness(DESKTOP, 'tablet'))).not.toContain('Extensions')
+    expect(appMenu(harness(ANDROID, 'phone'))).not.toContain('Extensions')
+    const h = harness({ ...ANDROID, extensions: true }, 'phone')
+    const menu = appMenu(h)
+    expect(menu).toContain('Extensions')
+    expect(menu.indexOf('Extensions')).toBeLessThan(menu.indexOf('Add-ons and Themes'))
+    h.sent.length = 0
+    h.shown()
+      .find((item) => item.label === 'Extensions')
+      ?.click?.()
+    expect(h.sent).toEqual(['extensions.open'])
   })
 
   it('closes the page group with the page controls where the host has them', () => {

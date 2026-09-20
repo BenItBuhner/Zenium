@@ -22,6 +22,7 @@ import {
   closeMenu,
   closeUrlbar,
   openBookmarkChrome,
+  openExtensionsSheet,
   openFindBar,
   openNewTabPageUrlbar,
   openNewTabShortcutDialog,
@@ -159,6 +160,10 @@ export function useMainEvents(): void {
       onEvent('zoom.open', ({ tabId }) => {
         closeUrlbar()
         openZoom(tabId)
+      }),
+      onEvent('extensions.open', () => {
+        closeUrlbar()
+        openExtensionsSheet()
       }),
       onEvent('toast', ({ message, kind }) => pushToast(message, kind)),
       onEvent('status', ({ text }) => uiStore.set({ statusText: text })),

@@ -1,5 +1,6 @@
 import type { JSX, ReactNode, RefObject } from 'react'
 import { useEffect, useId, useRef } from 'react'
+import { useEscape } from '@renderer/hooks/useEscape'
 import { useBackSurface } from '@renderer/lib/back'
 import { FrameDialogPortal, useFrameDialog } from '@renderer/lib/portals'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
@@ -79,16 +80,9 @@ function HostedSheet({
   })
   useReturnFocus()
   useFocusOnOpen(body, focus)
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape') return
-      e.preventDefault()
-      e.stopImmediatePropagation()
-      sheet.current?.dismiss()
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [sheet])
+  // Escape is the top popup's (§9.24): a sheet under another (the Extensions sheet under a
+  // row's long-press menu) leaves the key to the one on top until it has gone.
+  useEscape(dismiss)
   return (
     <BottomSheet
       ref={sheet}
