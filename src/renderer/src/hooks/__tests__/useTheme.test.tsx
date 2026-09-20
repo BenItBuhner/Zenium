@@ -5,13 +5,17 @@ import { createRoot, type Root } from 'react-dom/client'
 import type { Space, SpaceTheme, Tab, UIState } from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import {
+  PRIVATE_THEME,
   THEME_PRESETS,
   blendResolvedThemes,
+  luminance,
   resolveTheme,
   rgbToHex,
   themeCssVariables,
+  type RGB,
   type ResolvedTheme
 } from '@shared/theme'
+import { PRIVATE_ACCENT, PRIVATE_ACCENT_RGB } from '@shared/newTabPageScript'
 
 /*
  * The theme hook rendered for real on the phone (MOT-14, design language v2 §11.5): a private
@@ -372,5 +376,30 @@ describe('the theme blend (MOT-14, v2 §11.5)', () => {
     rerender(stateOn('r1', ocean))
     expect(frames.queue.size).toBe(0)
     expect(painted()).toBe(bgOf(resolveTheme(ocean, false)))
+  })
+})
+
+describe('the private theme the phone blends to', () => {
+  /** WCAG contrast of two opaque colours. */
+  const contrast = (a: RGB, b: RGB): number => {
+    const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x)
+    return (hi + 0.05) / (lo + 0.05)
+  }
+
+  it("carries the desktop private window's accent, the same rgb as the chrome's and the new tab page's", () => {
+    expect(rgbToHex(PRIVATE_RESOLVED.accent)).toBe(PRIVATE_ACCENT)
+    expect(PRIVATE_RESOLVED.accent.join(' ')).toBe(PRIVATE_ACCENT_RGB)
+    // The rest is the private theme resolved dark, as before.
+    const own = resolveTheme(PRIVATE_THEME, true)
+    expect({ ...PRIVATE_RESOLVED, accent: own.accent }).toEqual(own)
+    expect(PRIVATE_RESOLVED.isDark).toBe(true)
+  })
+
+  it("reads above the 3:1 floor on the private backdrop, where the theme's own accent did not (v2 §9.34's line, the button, the switch)", () => {
+    const own = resolveTheme(PRIVATE_THEME, true)
+    expect(contrast(own.accent, own.averageColor)).toBeLessThan(3)
+    expect(contrast(PRIVATE_RESOLVED.accent, PRIVATE_RESOLVED.averageColor)).toBeGreaterThan(6)
+    for (const stop of PRIVATE_RESOLVED.stops)
+      expect(contrast(PRIVATE_RESOLVED.accent, stop)).toBeGreaterThan(4.5)
   })
 })

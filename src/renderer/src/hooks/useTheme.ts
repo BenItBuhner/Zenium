@@ -7,6 +7,7 @@ import {
   resolveWallpaper,
   rgbToHex,
   themeCssVariables,
+  type RGB,
   type ResolvedTheme
 } from '@shared/theme'
 import type { FormFactor } from '@renderer/lib/formFactor'
@@ -27,10 +28,23 @@ import { activeSpace, isDarkScheme } from '@renderer/lib/selectors'
 export const THEME_BLEND_MS = 240
 
 /**
+ * The private accent, the desktop private window's (`.zen-window[data-window-kind='private']`
+ * in main.css, `PRIVATE_ACCENT` in the new tab page script; `useTheme.test` keeps them in step).
+ * The phone has no private window to take that override, so its private theme carries the
+ * accent itself: the theme's own `#5b3fa0` stands at 2.2:1 on the private backdrop, this one at
+ * 6.5:1 (5.9–7.0 against the gradient's stops), above the 3:1 floor for the segment's line
+ * (v2 §9.34), the primary button and the on switch's mix, which all draw in it.
+ */
+export const PRIVATE_ACCENT_RGB: RGB = [169, 139, 255]
+
+/**
  * The phone's private theme: Zen's deep purple, dark whatever the colour scheme (Chrome's
  * Incognito and Edge's InPrivate are dark in a light app too); the window surfaces blend to it.
  */
-export const PRIVATE_RESOLVED: ResolvedTheme = resolveTheme(PRIVATE_THEME, true)
+export const PRIVATE_RESOLVED: ResolvedTheme = {
+  ...resolveTheme(PRIVATE_THEME, true),
+  accent: PRIVATE_ACCENT_RGB
+}
 
 /**
  * Fired on `window` once the painted theme has flipped its polarity (the `isDark` side of the
