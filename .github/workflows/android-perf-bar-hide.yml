@@ -17,7 +17,7 @@ name: Android bar hide profile
 # and the main-thread work (the chrome renderer's style, layout, paint and script; the app's
 # traversals) is representative of a device.
 on:
-  # TEMPORARY (PERF-1 baseline dispatch 1 of 4): worker tokens cannot dispatch; removed in the next commit.
+  # TEMPORARY (PERF-1 profiling dispatch 3 of 4, the corrected baseline): worker tokens cannot dispatch; removed in the next commit.
   push:
     branches: [cursor/android-perf-bar-hide-95ab]
   workflow_dispatch:
