@@ -44,29 +44,44 @@ export class ElectronScreenCapture implements ScreenCaptureHost {
   }
 
   async sources(kinds: Array<'screen' | 'window'>): Promise<ScreenCaptureSource[]> {
-    const list = await desktopCapturer.getSources({
-      types: kinds,
-      thumbnailSize: THUMBNAIL_SIZE,
-      fetchWindowIcons: true
-    })
+    // Screens and windows are enumerated separately: on some Linux setups (a bare X server with
+    // no window manager, a portal that lists only what it granted) the window pass throws while
+    // screens are fine, and one call for both would lose the lot. Each pass stands alone.
     const out: ScreenCaptureSource[] = []
-    for (const source of list) {
-      const kind = source.id.startsWith('screen:') ? 'screen' : 'window'
-      this.names.set(source.id, source.name)
-      out.push({
-        id: source.id,
-        name: screenName(source, kind, list),
-        kind,
-        thumbnail: source.thumbnail.isEmpty()
-          ? null
-          : `data:image/jpeg;base64,${source.thumbnail.toJPEG(THUMBNAIL_JPEG_QUALITY).toString('base64')}`,
-        icon:
-          kind === 'window' && source.appIcon && !source.appIcon.isEmpty()
-            ? source.appIcon.toDataURL()
-            : null
-      })
+    for (const type of kinds) {
+      const list = await this.enumerate(type)
+      for (const source of list) {
+        const kind = source.id.startsWith('screen:') ? 'screen' : 'window'
+        this.names.set(source.id, source.name)
+        out.push({
+          id: source.id,
+          name: screenName(source, kind, list),
+          kind,
+          thumbnail: source.thumbnail.isEmpty()
+            ? null
+            : `data:image/jpeg;base64,${source.thumbnail.toJPEG(THUMBNAIL_JPEG_QUALITY).toString('base64')}`,
+          icon:
+            kind === 'window' && source.appIcon && !source.appIcon.isEmpty()
+              ? source.appIcon.toDataURL()
+              : null
+        })
+      }
     }
     return out
+  }
+
+  /** One type's sources; a pass that throws (no window manager, portal quirk) yields nothing. */
+  private async enumerate(type: 'screen' | 'window'): Promise<Electron.DesktopCapturerSource[]> {
+    try {
+      return await desktopCapturer.getSources({
+        types: [type],
+        thumbnailSize: THUMBNAIL_SIZE,
+        fetchWindowIcons: type === 'window'
+      })
+    } catch (error) {
+      console.warn(`[zen] screen capture: could not list ${type}s:`, (error as Error).message)
+      return []
+    }
   }
 
   private async handle(
