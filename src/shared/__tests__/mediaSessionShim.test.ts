@@ -371,7 +371,12 @@ describe('Media Session shim', () => {
     expect(
       isMediaReport({
         ...EMPTY_MEDIA_REPORT,
-        metadata: { title: 'x', artist: '', album: '', artwork: [{ src: 'a', sizes: '', type: '' }] }
+        metadata: {
+          title: 'x',
+          artist: '',
+          album: '',
+          artwork: [{ src: 'a', sizes: '', type: '' }]
+        }
       })
     ).toBe(true)
   })

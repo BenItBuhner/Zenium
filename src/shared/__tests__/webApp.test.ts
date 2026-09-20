@@ -366,7 +366,9 @@ describe('names', () => {
   it('launcherName prefers the short name on the Home screen', () => {
     expect(launcherName({ name: 'Sketch Studio', shortName: 'Sketch' })).toBe('Sketch')
     expect(launcherName({ name: 'Sketch Studio', shortName: null })).toBe('Sketch Studio')
-    expect(launcherName({ name: 'Sketch Studio', shortName: 'Sketch' }, 'homeScreen')).toBe('Sketch')
+    expect(launcherName({ name: 'Sketch Studio', shortName: 'Sketch' }, 'homeScreen')).toBe(
+      'Sketch'
+    )
   })
 
   it('launcherName prefers the full name on the desktop, like Chrome', () => {

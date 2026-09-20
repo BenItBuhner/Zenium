@@ -62,7 +62,11 @@ export function isMediaReport(value: unknown): value is MediaReport {
   if (r.position !== null) {
     if (!r.position || typeof r.position !== 'object') return false
     const p = r.position as Record<string, unknown>
-    if (!isFiniteNumber(p.duration) || !isFiniteNumber(p.position) || !isFiniteNumber(p.playbackRate))
+    if (
+      !isFiniteNumber(p.duration) ||
+      !isFiniteNumber(p.position) ||
+      !isFiniteNumber(p.playbackRate)
+    )
       return false
   }
   if (r.metadata === null) return true
@@ -234,8 +238,7 @@ export function installMediaSessionShim(
     doc.dispatchEvent(new CustomEvent(events.update, { detail: next }))
     // While playing, the position moves: a report every so often keeps a seek bar honest even
     // when the page never touches the session (the browser extrapolates in between).
-    const playing =
-      next.includes('"playing":true') || next.includes('"playbackState":"playing"')
+    const playing = next.includes('"playing":true') || next.includes('"playbackState":"playing"')
     if (playing && ticker === null) ticker = setInterval(() => report(true), 10_000)
     if (!playing && ticker !== null) {
       clearInterval(ticker)
