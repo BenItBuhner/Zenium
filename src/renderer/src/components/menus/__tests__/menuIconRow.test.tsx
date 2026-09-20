@@ -112,9 +112,9 @@ function appMenu(
     y: null,
     items: [
       item('menu_1_1', 'Forward', { glyph: 'forward', enabled: patch.forward ?? false }),
+      // The star is a plain item whose `checked` is the fill (a stateful glyph, not a checkbox).
       item('menu_1_2', patch.bookmarked ? 'Edit Bookmark' : 'Bookmark This Page', {
         glyph: 'star',
-        type: 'checkbox',
         checked: patch.bookmarked ?? false
       }),
       item('menu_1_3', 'Download Page', { glyph: 'download' }),
@@ -390,5 +390,25 @@ describe('on a mouse (the popover)', () => {
       'New Tab',
       'New Private Tab'
     ])
+  })
+
+  it('a bookmarked page’s star is a row without a check mark – the fill is state, not a ticked option', async () => {
+    viewportStore.set({ ...viewportStore.get(), coarse: false, formFactor: 'phone' })
+    const m: MenuDescriptor = {
+      ...appMenu({ bookmarked: true }),
+      items: [
+        ...appMenu({ bookmarked: true }).items,
+        item('menu_1_9', 'Desktop Site', { type: 'checkbox', checked: true })
+      ]
+    }
+    uiStore.set({ menu: m })
+    render(layer(m))
+    await settle()
+    const rows = [...document.querySelectorAll<HTMLElement>('button')]
+    const byText = (text: string): HTMLElement => rows.find((b) => b.textContent === text)!
+    // The popover's leading slot holds a check for a checked checkbox item alone: the per-site
+    // toggle gets one, the star – a plain item whose `checked` is the sheet's fill – does not.
+    expect(byText('Desktop Site').querySelector('svg')).not.toBeNull()
+    expect(byText('Edit Bookmark').querySelector('svg')).toBeNull()
   })
 })

@@ -2605,11 +2605,12 @@ export class Menus {
       },
       // The star (TB-16), with Chrome's flow as the phone's Bookmarks submenu ran it before: a
       // page that is not bookmarked is saved and toasted with Edit, a bookmarked one opens its
-      // editor. `checked` is the fill; the label says which of the two a press does.
+      // editor. `checked` is the fill; the label says which of the two a press does. A plain
+      // item, not a checkbox (§9.13: a stateful glyph, not a toggle): a press never unchecks it,
+      // and the mouse popover would otherwise mark a checked action row.
       {
         label: active?.bookmarked ? 'Edit Bookmark' : 'Bookmark This Page',
         glyph: 'star',
-        type: 'checkbox',
         action: 'bookmark.add',
         checked: Boolean(active?.bookmarked),
         enabled: Boolean(active) && this.browser.bookmarkable(active!.url),

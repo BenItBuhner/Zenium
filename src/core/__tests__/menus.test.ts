@@ -692,16 +692,22 @@ describe("the phone menu's icon row", () => {
     const star = (): MenuItemTemplate => h.row()[1]
     expect(star()).toMatchObject({
       label: 'Bookmark This Page',
-      type: 'checkbox',
       checked: false,
       enabled: true
     })
+    // A stateful glyph, not a toggle (§9.13): a plain item whose `checked` is the fill – never a
+    // checkbox, which the mouse popover would tick. The chrome gets `checked` either way.
+    expect(star().type).toBeUndefined()
+    appMenu(h)
+    expect(serialiseMenu(h.shown(), 'm').items[1]).toMatchObject({ type: 'normal', checked: false })
     const flow = vi.spyOn(h.browser, 'starTab')
     star().click?.()
     expect(flow).toHaveBeenCalledWith(h.tabId, h.win)
     // The star flow saved the page: the row's star is filled now and a press edits.
     expect(h.browser.tabs.tab(h.tabId)!.bookmarked).toBe(true)
     expect(star()).toMatchObject({ label: 'Edit Bookmark', checked: true, enabled: true })
+    appMenu(h)
+    expect(serialiseMenu(h.shown(), 'm').items[1]).toMatchObject({ type: 'normal', checked: true })
     // The bookmarks submenu has no second entry for it on the phone.
     appMenu(h)
     const bookmarks = h.shown().find((item) => item.label === 'Bookmarks')
