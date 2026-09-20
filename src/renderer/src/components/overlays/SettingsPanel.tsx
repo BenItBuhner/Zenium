@@ -412,7 +412,7 @@ function LookSection({
           </Row>
         </Group>
       )}
-      <Group title="Split View">
+      <Group title="Split view">
         <Row
           label="Split view drag and drop"
           hint="Drag a tab to the edge of the page to open it in a split view."
