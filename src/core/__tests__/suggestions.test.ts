@@ -60,11 +60,14 @@ function setup(
   const net = fakeNet(opts.resolver ?? true)
   // No extension holds an omnibox keyword: the URL bar's own sources answer.
   const extensions = { omniboxSuggest: async () => null }
+  // Nothing on the clipboard: the empty state (nothing typed) is the recent history alone.
+  const searchEngines = { peekClipboard: async () => 'none' as const }
   const browser = {
     state,
     bookmarks,
     history,
     extensions,
+    searchEngines,
     platform: { net }
   } as unknown as Browser
   const win = new ZenWindow(browser, {
