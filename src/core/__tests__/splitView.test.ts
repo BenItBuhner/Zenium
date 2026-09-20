@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { HostCapabilities, Platform as PlatformOs, Tab } from '../../shared/types'
 import { Browser } from '../browser'
+import { applicationMenu } from '../menuBar'
 import type {
   MenuHost,
   MenuItemTemplate,
@@ -192,5 +193,106 @@ describe('the active pane of a split (split-06)', () => {
     const lone = h.open('https://lone.example/')
     h.browser.actions.run('split.nextPane', { sourceTabId: null, win: h.win })
     expect(h.activeId()).toBe(lone.id)
+  })
+})
+
+/** Labels in order, separators as `-`. */
+const labels = (items: MenuItemTemplate[]): string[] =>
+  items.map((item) => (item.type === 'separator' ? '-' : (item.label ?? '')))
+
+function submenu(items: MenuItemTemplate[], label: string): MenuItemTemplate[] {
+  const item = items.find((i) => i.label === label)
+  if (!item?.submenu) throw new Error(`no submenu "${label}"`)
+  return item.submenu
+}
+
+function click(items: MenuItemTemplate[], label: string): void {
+  const item = items.find((i) => i.label === label)
+  if (!item?.click) throw new Error(`no clickable item "${label}"`)
+  item.click()
+}
+
+describe('the ways into a split (split-01)', () => {
+  it('the app menu has a Split View submenu: the layouts in the chords\u2019 order, then Unsplit View and New Empty Split View, each on its action', () => {
+    const h = harness()
+    h.open('https://a.example/')
+    h.browser.handleCommand(h.win, 'app.menu', {})
+    const items = submenu(h.shown(), 'Split View')
+    expect(labels(items)).toEqual([
+      'Grid',
+      'Vertical',
+      'Horizontal',
+      '-',
+      'Unsplit View',
+      'New Empty Split View'
+    ])
+    expect(items.map((i) => i.action)).toEqual([
+      'split.grid',
+      'split.vertical',
+      'split.horizontal',
+      undefined,
+      'split.unsplit',
+      'split.newEmpty'
+    ])
+    // The chord shows after each layout: the menu mirrors Ctrl+Alt+G / V / H.
+    expect(items.slice(0, 3).map((i) => i.accelerator)).toEqual([
+      'Ctrl+Alt+G',
+      'Ctrl+Alt+V',
+      'Ctrl+Alt+H'
+    ])
+    // Out of a split no layout is checked and there is nothing to unsplit.
+    expect(items.slice(0, 3).every((i) => i.type === 'checkbox' && i.checked === false)).toBe(true)
+    expect(items[4].enabled).toBe(false)
+  })
+
+  it('a layout item splits the active tab with the one below it; in a split the layout is checked and another turns it', () => {
+    const h = harness()
+    const a = h.open('https://a.example/')
+    const b = h.open('https://b.example/')
+    h.browser.tabs.activateTab(a.id, h.win)
+    h.browser.handleCommand(h.win, 'app.menu', {})
+    click(submenu(h.shown(), 'Split View'), 'Vertical')
+    const group = Object.values(h.browser.state.model.splitGroups)[0]
+    expect(group?.layout).toBe('vertical')
+    expect(group?.tabIds).toEqual([a.id, b.id])
+
+    h.browser.handleCommand(h.win, 'app.menu', {})
+    let items = submenu(h.shown(), 'Split View')
+    expect(items.find((i) => i.label === 'Vertical')?.checked).toBe(true)
+    expect(items.find((i) => i.label === 'Grid')?.checked).toBe(false)
+    expect(items.find((i) => i.label === 'Unsplit View')?.enabled).toBe(true)
+    click(items, 'Grid')
+    expect(h.browser.state.model.splitGroups[group!.id]?.layout).toBe('grid')
+
+    h.browser.handleCommand(h.win, 'app.menu', {})
+    items = submenu(h.shown(), 'Split View')
+    click(items, 'Unsplit View')
+    expect(Object.keys(h.browser.state.model.splitGroups)).toHaveLength(0)
+    expect(h.browser.tabs.tab(a.id)?.splitGroupId).toBeNull()
+  })
+
+  it('the macOS View menu carries the same submenu', () => {
+    const h = harness()
+    h.open('https://a.example/')
+    const view = submenu(applicationMenu(h.browser), 'View')
+    expect(labels(submenu(view, 'Split View'))).toEqual([
+      'Grid',
+      'Vertical',
+      'Horizontal',
+      '-',
+      'Unsplit View',
+      'New Empty Split View'
+    ])
+  })
+
+  it('the tab row menu keeps Split with Current Tab', () => {
+    const h = harness()
+    const a = h.open('https://a.example/')
+    const b = h.open('https://b.example/')
+    h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: a.id })
+    expect(labels(h.shown())).toContain('Split with Current Tab')
+    click(h.shown(), 'Split with Current Tab')
+    const group = Object.values(h.browser.state.model.splitGroups)[0]
+    expect(group?.tabIds.sort()).toEqual([a.id, b.id].sort())
   })
 })
