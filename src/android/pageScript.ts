@@ -5,6 +5,7 @@ import { installPasskeyObserver } from '@shared/passkeyObserver'
 import type { FormsCommand } from '@shared/forms'
 import type { MediaSessionHostMessage } from '@shared/mediaSession'
 import type { NotificationHostMessage } from '@shared/notifications'
+import type { ReadAloudHostMessage } from '@shared/readAloud'
 import { installNotificationPolyfill } from '@shared/notificationScript'
 import { downloadNameOf, rememberDownloadName, type DownloadNames } from './downloadNames'
 import { installViewportController, type PageRulesConfig } from './viewport'
@@ -102,6 +103,7 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
   let onWebApp: ((message: WebAppHostMessage) => void) | null = null
   let onMediaSession: ((message: MediaSessionHostMessage) => void) | null = null
   let onNotification: ((message: NotificationHostMessage) => void) | null = null
+  let onReadAloud: ((message: ReadAloudHostMessage) => void) | null = null
   const onMessage = (event: { data: string }): void => {
     try {
       const data = JSON.parse(event.data) as {
@@ -144,6 +146,9 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
         if (data.status !== undefined) message.status = data.status
         if (typeof data.id === 'string') message.id = data.id
         onNotification?.(message)
+      } else if (data.type === 'readAloud' && data.action) {
+        // The core's extraction request or highlight (`readAloudScript.ts` checks the fields).
+        onReadAloud?.(data as unknown as ReadAloudHostMessage)
       } else if (data.type === 'pageRules' && data.rules && topFrame) {
         const config: PageRulesConfig = {
           rules: data.rules,
@@ -206,6 +211,13 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
     },
     onMediaSession: (listener) => {
       onMediaSession = listener
+    },
+    // Read aloud (A11Y-06; services' model, #246): the core's `readAloud.extract` request is
+    // answered with the document's blocks and its `readAloud.highlight` messages are painted
+    // through the CSS Custom Highlight API. Kotlin posts to the main frame alone, so only the
+    // top document ever hears these; the answer rides the `pageMessage` view event like the rest.
+    onReadAloud: (listener) => {
+      onReadAloud = listener
     }
   })
 
