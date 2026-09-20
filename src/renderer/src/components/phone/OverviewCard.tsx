@@ -129,9 +129,10 @@ export function CardBody({
         </span>
         {tab.discarded && (
           // A sleeping page (CT-22): the moon the sidebar's row shows, at the deemphasised
-          // 69% with the title; the card's own tap wakes the page, so the glyph is a mark.
+          // 69% with the title, 16 like the favicon and the close glyph beside it (§9.3); the
+          // card's own tap wakes the page, so the glyph is a mark.
           <Moon
-            className="zen-overview-card-sleeping h-3.5 w-3.5 shrink-0"
+            className="zen-overview-card-sleeping h-4 w-4 shrink-0"
             aria-hidden
             data-sleeping=""
           />

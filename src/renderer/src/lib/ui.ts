@@ -1652,7 +1652,10 @@ export function closeClearBrowsingData(): void {
  * scrim alone (v2 §9.5, §11.5: one dim layer). The chrome layer's popovers and menus (the
  * translate selection popover, a menulist's list) count in `floatingChrome` and are the
  * extensions' counterpart's case
- * (`extensionChromeAloneOverContent`).
+ * (`extensionChromeAloneOverContent`); a menulist's list opened from inside one of these panels
+ * (the reader popover's font or theme menu, site information's) is floating chrome over a panel,
+ * still no dialog, so `floatingChrome` is left out of the reduced check too and the page under
+ * both stays undimmed.
  */
 export function panelAloneOverContent(ui: UiState): boolean {
   const popover = ui.autofillPrompt === 'popover'
@@ -1682,6 +1685,7 @@ export function panelAloneOverContent(ui: UiState): boolean {
       permissionPromptOpen: false,
       blockedPopupsPanel: null,
       securityPromptOpen: false,
+      floatingChrome: 0,
       autofillPrompt: popover ? null : ui.autofillPrompt
     })
   )

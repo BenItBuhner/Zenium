@@ -323,10 +323,9 @@ describe('Look and Feel › Sites behind the darkening capability', () => {
     const s = state({ ...DESKTOP, darkenSites: true }, 'linux')
     let markup = render(s)
     expect(markup).toContain('Apply dark theme to sites')
-    // With no exception yet the group says which menu item makes one: the darkening item alone.
-    expect(markup).toContain(
-      'No exceptions yet. Dark Theme for This Site in the menu remembers a site’s choice here.'
-    )
+    // With no exception yet the list is the one plain §9.17 row: one sentence, no full stop.
+    expect(markup).toContain('>No exceptions yet<')
+    expect(markup).not.toContain('No exceptions yet.')
     // The Android sheet's Desktop site row stays off the desktop.
     expect(markup).not.toContain('Desktop site')
 
@@ -350,10 +349,10 @@ describe('Look and Feel › Sites behind the darkening capability', () => {
     expect(markup).not.toContain('Site exceptions')
   })
 
-  it('has both rows and names both menu items on a host with page controls', () => {
+  it('has both rows, and the one plain empty row, on a host with page controls', () => {
     const markup = render(state(ANDROID, 'android'))
     expect(markup).toContain('Desktop site')
     expect(markup).toContain('Apply dark theme to sites')
-    expect(markup).toContain('Desktop Site and Dark Theme for This Site in the menu remember')
+    expect(markup).toContain('>No exceptions yet<')
   })
 })

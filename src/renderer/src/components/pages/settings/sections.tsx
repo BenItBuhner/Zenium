@@ -395,8 +395,9 @@ function lookSection({ state, set, pointer, openBarEditor }: SectionContext): Ro
         kind: 'switch',
         id: 'darken-sites',
         label: 'Apply dark theme to sites',
-        description:
-          'Sites without a dark theme get one while Zenium is dark. Dark Theme for This Site in the menu turns it off for one site.',
+        // One sentence: the 13/20 description clamps at two lines (§9.2), and where the menu's
+        // per-site choice goes is the Site exceptions group's description below.
+        description: 'Sites without a dark theme get one while Zenium is dark.',
         keywords: ['dark mode', 'auto dark', 'darken', 'night'],
         checked: pc.darkenSites,
         onChange: (v) => patchControls({ darkenSites: v })
@@ -946,8 +947,9 @@ export function sleepTimeoutLabel(minutes: number): string {
  * Sleeping tabs on a phone (CT-22), in Edge's words: the switch ("Save resources with sleeping
  * tabs"), the timeout as a choice on Edge's ladder – a stored value off it (an older profile's
  * 20 minutes) is listed in its place rather than shown as nothing – and the never-sleep sites
- * as a managed list, each with Remove and an Add sheet taking a site (a URL is cut down to its
- * host). Both dependent groups read at .4 while the switch is off (§10.4). A sleeping tab fades
+ * as a managed list ("No sites yet" while it is empty, §9.17), each with Remove, and an Add sheet
+ * in a group of its own taking a site (a URL is cut down to its host). Every dependent row reads
+ * at .4 while the switch is off (§10.4). A sleeping tab fades
  * in the tab overview and wakes when it is opened; memory pressure puts pages to sleep ahead of
  * the timeout whatever the switch says.
  */
@@ -1003,27 +1005,34 @@ function sleepingTabsGroups(s: Settings, set: (patch: Partial<Settings>) => void
       heading: 'Never put these sites to sleep',
       description:
         'Pages on these sites stay awake in the background – a chat, a player, a document you come back to.',
+      rows: sites.map((domain) =>
+        item(
+          `never-sleep:${domain}`,
+          domain,
+          undefined,
+          [
+            {
+              kind: 'action',
+              id: `never-sleep:${domain}:remove`,
+              label: 'Remove',
+              description: 'Pages on the site go to sleep like any other.',
+              onPress: () =>
+                set({
+                  unloadExcludedDomains: s.unloadExcludedDomains.filter((d) => d !== domain)
+                })
+            }
+          ],
+          { keywords, disabled: off }
+        )
+      ),
+      // The list's own empty state (§9.17): one plain row where its sites would be, so the Add
+      // action below is a group of its own, as the spell-check languages' is.
+      empty: 'No sites yet'
+    },
+    {
+      id: 'never-sleep-add',
+      heading: null,
       rows: [
-        ...sites.map((domain) =>
-          item(
-            `never-sleep:${domain}`,
-            domain,
-            undefined,
-            [
-              {
-                kind: 'action',
-                id: `never-sleep:${domain}:remove`,
-                label: 'Remove',
-                description: 'Pages on the site go to sleep like any other.',
-                onPress: () =>
-                  set({
-                    unloadExcludedDomains: s.unloadExcludedDomains.filter((d) => d !== domain)
-                  })
-              }
-            ],
-            { keywords, disabled: off }
-          )
-        ),
         {
           kind: 'action',
           id: 'never-sleep-add',

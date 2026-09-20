@@ -35,6 +35,16 @@ import { GLYPH } from '../security/glyph'
 const CHIP = '[data-reader-prefs-chip]'
 const TITLE_ID = 'reader-prefs-title'
 
+/**
+ * The chip while it is on screen: in a narrow pill it is one of the extras the pill folds away
+ * (`zen-pill-extra`, §9.29), still in the document but drawn nowhere, so a request from the app
+ * menu then reads as "no chip" – the popover hangs centred and Escape has no chip to go back to.
+ */
+function shownChip(): HTMLElement | null {
+  const chip = document.querySelector<HTMLElement>(CHIP)
+  return chip && chip.getClientRects().length > 0 ? chip : null
+}
+
 type Panel = NonNullable<ReturnType<typeof uiStore.get>['readerPreferences']>
 
 /**
@@ -167,7 +177,7 @@ function ReaderPreferencesPopover({
 }): JSX.Element {
   // The chip is measured as the popover opens, so a request from the menu finds it too.
   const [rects] = useState(() => {
-    const chip = document.querySelector(CHIP)
+    const chip = shownChip()
     const pill = document.querySelector('.zen-pill')
     const chipRect = anchor ?? (chip ? toRect(chip.getBoundingClientRect()) : null)
     return {
@@ -182,7 +192,7 @@ function ReaderPreferencesPopover({
       width={POPOVER_WIDTH.form}
       labelledBy={TITLE_ID}
       closing={closing}
-      anchorElement={() => document.querySelector<HTMLElement>(CHIP)}
+      anchorElement={shownChip}
       onClosed={(byKey) => closeReaderPreferences({ keepFocus: byKey })}
       data-reader-prefs-panel=""
       data-surface="page"

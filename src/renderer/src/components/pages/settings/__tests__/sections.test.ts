@@ -3111,17 +3111,29 @@ describe('CT-22: sleeping tabs in Tab Management on a phone, in Edge’s words',
     expect(group?.heading).toBe('Never put these sites to sleep')
     expect(group?.rows.map((r) => r.id)).toEqual([
       'never-sleep:chat.example',
-      'never-sleep:mail.example.com',
-      'never-sleep-add'
+      'never-sleep:mail.example.com'
     ])
     const remove = row(tabs, 'never-sleep:chat.example:remove')
     if (remove.kind !== 'action') throw new Error('not an action')
     remove.onPress?.()
     expect(c.patches.at(-1)).toEqual({ unloadExcludedDomains: ['mail.example.com'] })
 
+    // The Add action is a group of its own under the list, as the spell-check languages' is, so
+    // the list can be empty and say so (§9.17).
+    const groups = tabs.groups.map((g) => g.id)
+    expect(groups.indexOf('never-sleep-add')).toBe(groups.indexOf('never-sleep') + 1)
+    expect(tabs.groups.find((g) => g.id === 'never-sleep-add')?.heading).toBeNull()
     const add = row(tabs, 'never-sleep-add')
     if (add.kind !== 'action') throw new Error('not an action')
     expect(add.label).toBe('Add a site')
     expect(add.form?.title).toBe('Never put this site to sleep')
+  })
+
+  it('says "No sites yet" where the never-sleep list would be, with Add still there', () => {
+    const tabs = section('tabs', state({}, { unloadExcludedDomains: [] }))
+    const list = tabs.groups.find((g) => g.id === 'never-sleep')
+    expect(list?.rows).toEqual([])
+    expect(list?.empty).toBe('No sites yet')
+    expect(row(tabs, 'never-sleep-add').label).toBe('Add a site')
   })
 })

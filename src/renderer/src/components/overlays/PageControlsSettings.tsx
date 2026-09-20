@@ -9,6 +9,7 @@ import type {
 } from '@shared/types'
 import { formatZoom, zoomChoices, zoomKey } from '@shared/pageControls'
 import { run } from '@renderer/lib/api'
+import { EmptyRow } from '../siteControls/pane'
 import { Switch } from '../ui/switch'
 import { ZoomStepper } from '../ZoomStepper'
 import { Choice, Group, MENULIST_HEIGHT, Row } from './SettingsPrimitives'
@@ -60,9 +61,7 @@ export function SiteZoomsGroup({ s }: { s: Settings }): JSX.Element {
   const zooms = sorted(s.pageControls.siteZooms)
   return (
     <Group title="Sites with their own zoom">
-      {zooms.length === 0 && (
-        <Empty>No sites yet. Zooming a page remembers the zoom for its site here.</Empty>
-      )}
+      {zooms.length === 0 && <Empty>No sites yet</Empty>}
       {zooms.map(([domain, factor]) => (
         <SiteRow
           key={domain}
@@ -97,11 +96,6 @@ export function SitesGroups({
   const patch = patcher(s, set)
   const desktop = caps.pageControls ? sorted(pc.desktopSites) : []
   const darken = caps.darkenSites ? sorted(pc.darkenSiteExceptions) : []
-  const creators = [
-    caps.pageControls && 'Desktop Site',
-    caps.darkenSites && 'Dark Theme for This Site'
-  ].filter((x): x is string => typeof x === 'string')
-  const remembered = `${creators.join(' and ')} in the menu ${creators.length > 1 ? 'remember' : 'remembers'} a site’s choice here.`
   return (
     <>
       <Group title="Sites">
@@ -138,7 +132,7 @@ export function SitesGroups({
         )}
       </Group>
       <Group title="Site exceptions">
-        {desktop.length + darken.length === 0 && <Empty>No exceptions yet. {remembered}</Empty>}
+        {desktop.length + darken.length === 0 && <Empty>No exceptions yet</Empty>}
         {desktop.map(([domain, on]) => (
           <SiteRow
             key={`desktop:${domain}`}
@@ -246,10 +240,14 @@ function SiteRow({
   )
 }
 
-function Empty({ children }: { children: ReactNode }): JSX.Element {
-  return (
-    <div className="px-4 py-6 text-center text-[12.5px] text-[var(--zen-muted)]">{children}</div>
-  )
+/**
+ * An empty list in one of the pane's cards (§9.17): the shared plain row – 32 tall at the card's
+ * 16 gutter, one sentence 15 at 69% left-aligned like a row's label, no full stop. Which menu
+ * item fills the list (Desktop Site, Dark Theme for This Site, Zoom) has no line of its own until
+ * the legacy `Group` grows a description; the menu items are the only way in.
+ */
+function Empty({ children }: { children: string }): JSX.Element {
+  return <EmptyRow className="px-4">{children}</EmptyRow>
 }
 
 /** A description that belongs to the row above it but needs the group's full width. */

@@ -372,7 +372,10 @@ export function NavRow({
               // Edge's Immersive Reader "Text preferences" on its toolbar: a chip beside Reader
               // View's while an article is open, whose popup is the preferences popover;
               // `aria-expanded` follows it and `data-reader-prefs-chip` is what it hangs from
-              // and what its Escape hands the keyboard back to (§9.22).
+              // and what its Escape hands the keyboard back to (§9.22). In a narrow pill it goes
+              // with the other extras (`zen-pill-extra`, §9.29): it reports no state the page
+              // does not show itself, and the app menu's "Text Preferences…" and the reader
+              // page's own toolbar keep the surface reachable (the popover then hangs centred).
               <PillChip
                 label="Text preferences"
                 title="Text preferences"
@@ -380,7 +383,7 @@ export function NavRow({
                 expanded={readerPrefsOpen}
                 data-reader-prefs-chip=""
                 className={cn(
-                  'flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
+                  'zen-pill-extra flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
                   // The anchor keeps its pressed fill while its popover is up (§9.20).
                   readerPrefsOpen && 'bg-[var(--zen-element-bg-hover)] opacity-100'
                 )}

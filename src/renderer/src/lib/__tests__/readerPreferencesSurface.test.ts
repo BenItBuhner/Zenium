@@ -71,6 +71,17 @@ describe('the reader text preferences surface', () => {
     expect(panelAloneOverContent(idle())).toBe(false)
   })
 
+  it('draws no scrim while one of its menulists is open (the list is floating chrome, not a dialog)', async () => {
+    await openReaderPreferences('t1')
+    // The font or theme menulist's list counts in `floatingChrome` while it is down (§9.13); a
+    // popover with its menu open is still panels alone over the page (§9.5, §9.20: no scrim).
+    uiStore.set((s) => ({ floatingChrome: s.floatingChrome + 1 }))
+    expect(overlayCoversContent(idle())).toBe(true)
+    expect(panelAloneOverContent(idle())).toBe(true)
+    uiStore.set((s) => ({ floatingChrome: s.floatingChrome - 1 }))
+    expect(panelAloneOverContent(idle())).toBe(true)
+  })
+
   it('leaves the surface as it is on a second request for the same tab', async () => {
     await openReaderPreferences('t1', { x: 1, y: 1, width: 1, height: 1 })
     vi.mocked(cmd).mockClear()
