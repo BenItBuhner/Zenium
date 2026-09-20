@@ -214,7 +214,8 @@ export function useMainEvents(): void {
       }),
       onEvent('reader.preferences', ({ tabId }) => {
         // The app menu's "Text Preferences…" (the phone's way in, its pill having no chip): the
-        // popover hangs from the pill's chip when it is on screen, the sheet on a phone.
+        // popover hangs from the pill's chip when it is on screen and from the menu button while
+        // the chip is folded (§9.29; `openReaderPreferences` settles it), the sheet on a phone.
         closeUrlbar()
         void openReaderPreferences(tabId)
       }),

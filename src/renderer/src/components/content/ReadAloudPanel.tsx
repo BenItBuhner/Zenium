@@ -224,8 +224,13 @@ export function ReadAloudPanel({ session }: { session: ReadAloudState }): JSX.El
             if (!loading) run('readAloud.toggle', undefined)
           }}
         >
-          <Play className="zen-read-aloud-glyph-play" aria-hidden />
-          <Pause className="zen-read-aloud-glyph-pause" aria-hidden />
+          {/*
+            The transport's primary is told by its glyph alone (§9.3, §9.32): the solid play or
+            pause against the outlined skips, as the media hub's toggle and Chrome's global media
+            controls draw it – the fill on the glyph, its stroke kept.
+          */}
+          <Play className="zen-read-aloud-glyph-play" fill="currentColor" aria-hidden />
+          <Pause className="zen-read-aloud-glyph-pause" fill="currentColor" aria-hidden />
           {loading && <span className="zen-v2-spinner" aria-hidden />}
         </button>
         <button

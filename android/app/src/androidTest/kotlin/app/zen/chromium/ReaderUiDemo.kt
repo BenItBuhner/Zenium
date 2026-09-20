@@ -43,15 +43,27 @@ import java.util.concurrent.TimeUnit
  *  4. Everything again in dark, for the design record: the reader document (its theme following
  *     the colour scheme), the sheet with the extras, the player.
  *
+ * Frame stats ([FrameStats]; Bennett's rule of 2026-09-20, the Android program's PERF-3 scene
+ * names as #259's driver uses them): the app menu opened under a finger and dismissed with a
+ * back first, as the baseline (`menu-sheet-open` / `menu-sheet-close`), then the PR's own
+ * scenes – the Text preferences sheet's open under the finger on the menu's row, its pull to the
+ * expanded detent, and its dismiss on a back (`reader-prefs-sheet-open` / `-expand` / `-close`);
+ * the Lines in focus and Text spacing pickers' open from the menulist and the pick that closes
+ * them (`lines-in-focus-picker-open` / `-pick`, `text-spacing-picker-open` / `-pick`); the
+ * player docking on Listen to this article and leaving on Close (`read-aloud-player-dock` /
+ * `-close`). The table goes to `services-reader-android-frames.txt` and into the findings, the
+ * scenes to `reader-ui-frames.json.txt`, the raw dumps to `services-reader-android-framestats.txt`.
+ *
  * Every control pressed inside a sheet or the player is a real injected finger with an
  * assertion (#198's rule); the URL field, when a step leaves it open, is closed with
  * [closeUrlField] and its outcome read. See [DemoHarness] for the plumbing.
  */
 @RunWith(AndroidJUnit4::class)
-class ReaderUiDemo : DemoHarness("read-aloud-demo-state.json", "services-reader-android", "reader-ui-demo") {
+class ReaderUiDemo : DemoHarness("read-aloud-demo-state.json", MEDIA_PREFIX, "reader-ui-demo") {
     override val tag = "ReaderUiDemo"
     private lateinit var server: DemoServer
     private lateinit var findings: File
+    private lateinit var frames: FrameStats
     private var failures = 0
     private var shots = 0
     private val host get() = (activity as MainActivity).host
@@ -84,6 +96,7 @@ class ReaderUiDemo : DemoHarness("read-aloud-demo-state.json", "services-reader-
     override fun warmUp() {
         findings = File(out, "reader-ui-findings.txt")
         findings.writeText("Zenium Android reader UI checks (API ${Build.VERSION.SDK_INT}, ${width}x$height, density $density)\n\n")
+        frames = FrameStats(tag, app.packageName, out, MEDIA_PREFIX, ::shell)
         finding("demo server: ${server.selfCheck()}")
         val caps = coreState().getJSONObject("capabilities")
         finding("capabilities: readAloud=${caps.optBoolean("readAloud")}${if (engineless) " (OVERRIDDEN: no engine on this image)" else ""} phone=${caps.optBoolean("phone")}")
@@ -94,20 +107,66 @@ class ReaderUiDemo : DemoHarness("read-aloud-demo-state.json", "services-reader-
         val close = closeUrlField()
         finding("URL field at warm-up: ${close.describe()}")
         check("the URL field is closed (or was never open) before the recording", close.ok)
+        // The app menu once, off camera: the baseline scene reads a warm menu, as the Android
+        // program's does (#259's driver opens it in its warm-up the same way).
+        tapMenuButton()
+        if (waitFor(MENU_HANDLE_LABEL, 6_000) != null) {
+            SystemClock.sleep(800)
+            back()
+            awaitSurface(up = false, timeoutMs = 8_000)
+        }
         SystemClock.sleep(1_200)
     }
 
     override fun demo() {
-        snap("article")
-        beat()
-        if (!readerView()) {
-            finding("\nReader View never came up; nothing else can be recorded")
+        try {
+            snap("article")
+            beat()
+            baselineScenes()
+            if (!readerView()) {
+                finding("\nReader View never came up; nothing else can be recorded")
+                return
+            }
+            preferencesSheet()
+            readTheArticle()
+            dark()
+            finding("\nend: ${describeTab()}${if (failures == 0) "" else "; $failures FAIL"}")
+        } finally {
+            val table = frames.table(
+                "The PR's scenes: the Text preferences sheet (a §9.13 control panel over the reader document) opened from the app menu's row, pulled to its expanded detent and dismissed with a back; its Lines in focus and Text spacing pickers (§9.24 sheets over it) opened from the menulist and closed by the pick; the read-aloud player docking on Listen to this article and leaving on Close."
+            )
+            File(out, "$MEDIA_PREFIX-frames.txt").writeText(table)
+            // The shared pull step takes *.png / *.txt from the handshake dir: the JSON goes out as a .txt.
+            File(out, "reader-ui-frames.json.txt").writeText(frames.json().toString(2))
+            finding("\n$table")
+        }
+    }
+
+    // --- 0. the baseline scene: the app menu ------------------------------------------------------
+
+    /**
+     * The app menu – the sheet main had before this PR – under a finger on the bar's Menu button,
+     * settled, then dismissed with a back: the before the PR's scenes read against, as two
+     * readings under the Android program's names ([FrameStats]).
+     */
+    private fun baselineScenes() {
+        ensureForeground()
+        val opened = frames.scene("menu-sheet-open") {
+            tapMenuButton()
+            poll(6_000) { chromeSurfaceUp() && findByLabel(MENU_HANDLE_LABEL) != null }
+        }
+        check("PERF-3 baseline: the app menu opened under a finger (menu-sheet-open)", opened)
+        if (!opened) {
+            back()
+            awaitSurface(up = false, timeoutMs = 8_000)
             return
         }
-        preferencesSheet()
-        readTheArticle()
-        dark()
-        finding("\nend: ${describeTab()}${if (failures == 0) "" else "; $failures FAIL"}")
+        val closed = frames.scene("menu-sheet-close") {
+            back()
+            awaitSurface(up = false, timeoutMs = 8_000) && waitForGone(MENU_HANDLE_LABEL, 8_000)
+        }
+        check("PERF-3 baseline: the app menu went on a back (menu-sheet-close)", closed)
+        SystemClock.sleep(600)
     }
 
     // --- 1. Reader View: the document without its toolbar ------------------------------------------
@@ -150,7 +209,7 @@ class ReaderUiDemo : DemoHarness("read-aloud-demo-state.json", "services-reader-
 
     private fun preferencesSheet() {
         finding("\nEDGE-13 / §9.13 the Text preferences sheet (the app menu's Text Preferences…)")
-        if (!openSheet()) return
+        if (!openSheet(scenes = true)) return
         val rows = sheetRows()
         finding("  rows: $rows")
         check("the sheet's rows: Listen to this article, then Text size, Font, Colour theme, Column width, then Text spacing, Line focus, Lines in focus, Syllables",
@@ -186,12 +245,17 @@ class ReaderUiDemo : DemoHarness("read-aloud-demo-state.json", "services-reader-
         beat()
         // Lines in focus: 3 -> 5 through its picker sheet. A §9.13 control-panel row's tap target
         // is its control – the 40 menulist reading the value ("3 lines") – not the row's label.
+        // The picker's open and the pick that closes it (§9.13, #247) are a scene each.
         revealPrefix("Lines in focus")
-        val picker = touchControlExpecting("Lines in focus", "the Lines in focus picker lists 1 / 3 / 5 lines", timeoutMs = 6_000) { rowNode("5 lines") != null && rowNode("1 line") != null }
+        val picker = frames.scene("lines-in-focus-picker-open") {
+            touchControlExpecting("Lines in focus", "the Lines in focus picker lists 1 / 3 / 5 lines", timeoutMs = 6_000) { rowNode("5 lines") != null && rowNode("1 line") != null }
+        }
         if (picker) {
             SystemClock.sleep(800)
             snap("lines-in-focus-picker")
-            touchTapLabelExpecting("5 lines", "the document's data-line-focus reads 5 and the picker closed", timeoutMs = 6_000) { readerProbe().optString("lineFocus") == "5" && rowNode("1 line") == null }
+            frames.scene("lines-in-focus-picker-pick") {
+                touchTapLabelExpecting("5 lines", "the document's data-line-focus reads 5 and the picker closed", timeoutMs = 6_000) { readerProbe().optString("lineFocus") == "5" && rowNode("1 line") == null }
+            }
             probe = readerProbe()
             finding("  after 5 lines: document $probe; picker gone=${rowNode("1 line") == null}; the menulist reads ${menulistValue("Lines in focus")}")
             check("5 lines: the pick closes the picker on its own (§9.13) and the document's band is five lines", probe.optString("lineFocus") == "5" && rowNode("1 line") == null)
@@ -201,21 +265,27 @@ class ReaderUiDemo : DemoHarness("read-aloud-demo-state.json", "services-reader-
         // Text spacing: Normal -> Wider through its menulist (Column width has a "Wide" of its own;
         // "Wider" is spacing's alone).
         revealPrefix("Text spacing")
-        val spacing = touchControlExpecting("Text spacing", "the Text spacing picker lists Wider", timeoutMs = 6_000) { rowNode("Wider") != null }
+        val spacing = frames.scene("text-spacing-picker-open") {
+            touchControlExpecting("Text spacing", "the Text spacing picker lists Wider", timeoutMs = 6_000) { rowNode("Wider") != null }
+        }
         if (spacing) {
-            touchTapLabelExpecting("Wider", "the document's data-spacing reads wider", timeoutMs = 6_000) { readerProbe().optString("spacing") == "wider" }
+            frames.scene("text-spacing-picker-pick") {
+                touchTapLabelExpecting("Wider", "the document's data-spacing reads wider", timeoutMs = 6_000) { readerProbe().optString("spacing") == "wider" }
+            }
             probe = readerProbe()
             finding("  after Wider: document $probe")
             check("Text spacing Wider: the document's data-spacing wider (the stylesheet's letter, word and line spacing)", probe.optString("spacing") == "wider")
         } else {
             check("the Text spacing menulist opens its picker", false)
         }
+        // The band re-placed at the wider line height (readerExtras.ts's relayout on the root's
+        // typography change), before the still that records it.
         SystemClock.sleep(800)
         snap("preferences-sheet-wider-five-lines")
         beat()
-        // The system back closes the sheet alone; the document keeps its extras.
-        back()
-        val closed = poll(6_000) { findNode { it == "Text preferences" } == null && !chromeSurfaceUp() }
+        // The system back closes the sheet alone (the `reader-prefs-sheet-close` scene); the
+        // document keeps its extras.
+        val closed = backFromSheet(scene = true)
         probe = readerProbe()
         finding("  back: sheet gone=$closed; document $probe")
         check("back closes the sheet and the document keeps line focus 5, syllables, wider spacing", closed && probe.optString("lineFocus") == "5" && probe.optString("syllables") == "true" && probe.optString("spacing") == "wider")
@@ -229,12 +299,19 @@ class ReaderUiDemo : DemoHarness("read-aloud-demo-state.json", "services-reader-
     private fun readTheArticle() {
         finding("\nCT-13 / EDGE-11 Listen to this article from the sheet: the reader document read with the highlight in it")
         if (!openSheet()) return
-        touchTapLabelExpecting("Listen to this article", "a session starts from the reader document", timeoutMs = 10_000) { readAloud() != null }
+        // The finger on Listen, the sheet leaving and the player docking under the document are
+        // one scene (`read-aloud-player-dock`: the sheet's slide out and the docked panel's in).
+        var sheetGone = false
+        var panel = false
+        frames.scene("read-aloud-player-dock") {
+            touchTapLabelExpecting("Listen to this article", "a session starts from the reader document", timeoutMs = 10_000) { readAloud() != null }
+            sheetGone = poll(6_000) { findNode { it == "Listen to this article" } == null }
+            panel = poll(8_000) { panelUp() }
+            sheetGone && panel
+        }
         val session = readAloud()
         finding("  real touch on Listen to this article: session ${session?.let { "up: status=${it.optString("status")} source=${it.optString("source")} sentences=${it.optInt("sentenceCount")}" } ?: "MISSING"}")
         check("the session's source is the reader document (source: reader)", session?.optString("source") == "reader")
-        val sheetGone = poll(6_000) { findNode { it == "Listen to this article" } == null }
-        val panel = poll(8_000) { panelUp() }
         finding("  the sheet left=$sheetGone; the player docked=$panel (${panelBounds()})")
         check("the sheet leaves and the player docks under the reader document", sheetGone && panel)
         if (engineless) {
@@ -264,8 +341,12 @@ class ReaderUiDemo : DemoHarness("read-aloud-demo-state.json", "services-reader-
             snap("player-reader-paused")
             beat()
         }
-        touchTapLabelExpecting("Close", "the session ends", timeoutMs = 6_000) { readAloud() == null }
-        val gone = poll(6_000) { !panelUp() }
+        var gone = false
+        frames.scene("read-aloud-player-close") {
+            touchTapLabelExpecting("Close", "the session ends", timeoutMs = 6_000) { readAloud() == null }
+            gone = poll(6_000) { !panelUp() }
+            gone
+        }
         finding("  after Close: session=${readAloud()}; panel gone=$gone")
         check("Close ends the session and the player leaves", readAloud() == null && gone)
         beat()
@@ -306,24 +387,22 @@ class ReaderUiDemo : DemoHarness("read-aloud-demo-state.json", "services-reader-
 
     // --- the sheet ---------------------------------------------------------------------------------
 
-    /** The app menu's Text Preferences… under a finger; true once the sheet lists its rows. */
-    private fun openSheet(): Boolean {
-        val opened = openMenuItem("Text Preferences…")
-        if (!opened) {
-            finding("  the app menu did not list Text Preferences… on the reader page")
-            check("the app menu carries Text Preferences… on the reader page (the phone's way in, its pill having no chip)", false)
-            back()
+    /**
+     * The app menu's Text Preferences… under a finger; true once the sheet lists its rows. The
+     * menu's own open and pull are the harness's ([openMenuItem]'s steps, outside any scene);
+     * the finger on the row and the sheet coming up is the `reader-prefs-sheet-open` scene, the
+     * pull to the expanded detent `reader-prefs-sheet-expand` – once per run, on the first sheet
+     * (`scenes`); the later opens, the dark record's among them, play without a reading.
+     */
+    private fun openSheet(scenes: Boolean = false): Boolean {
+        tapMenuButton()
+        if (waitFor(MENU_HANDLE_LABEL, 6_000) == null) {
+            finding("  the app menu never opened on the reader page")
+            check("the app menu opens on the reader page", false)
             return false
         }
-        val up = poll(8_000) { rowNode("Text size") != null }
-        if (!up) touchFault("a touch on Text Preferences… opened no sheet")
-        check("a real touch on Text Preferences… opens the sheet", up)
-        SystemClock.sleep(1_000)
-        // The sheet opens at its peek, where the extras' rows sit below the fold and out of a
-        // finger's reach (the first run: no node for Syllables, Lines in focus clipped at the
-        // screen's bottom edge): pulled to its expanded detent by its handle, the way the app
-        // menu is (DemoHarness.openMenuItem), the nine rows fit the screen.
-        if (up) findByLabel(SHEET_HANDLE_LABEL)?.let { handle ->
+        SystemClock.sleep(1_200)
+        findByLabel(MENU_HANDLE_LABEL)?.let { handle ->
             Finger().apply {
                 down(handle.exactCenterX(), handle.exactCenterY())
                 moveBy(0f, -0.4f * height, 130)
@@ -331,7 +410,58 @@ class ReaderUiDemo : DemoHarness("read-aloud-demo-state.json", "services-reader-
             }
             SystemClock.sleep(2_000)
         }
+        if (reveal(MENU_ITEM) == null) {
+            finding("  the app menu did not list $MENU_ITEM on the reader page")
+            check("the app menu carries $MENU_ITEM on the reader page (the phone's way in, its pill having no chip)", false)
+            back()
+            return false
+        }
+        val sheetUp = { rowNode("Text size") != null }
+        val up = if (scenes) {
+            frames.scene("reader-prefs-sheet-open") { touchTapLabel(MENU_ITEM) && poll(8_000, sheetUp) }
+        } else {
+            touchTapLabel(MENU_ITEM) && poll(8_000, sheetUp)
+        }
+        if (!up) touchFault("a touch on $MENU_ITEM opened no sheet")
+        check("a real touch on $MENU_ITEM opens the sheet", up)
+        SystemClock.sleep(1_000)
+        // The sheet opens at its peek, where the extras' rows sit below the fold and out of a
+        // finger's reach (the first run: no node for Syllables, Lines in focus clipped at the
+        // screen's bottom edge): pulled to its expanded detent by its handle, the way the app
+        // menu is (DemoHarness.openMenuItem), the nine rows fit the screen.
+        if (up) {
+            val pull = {
+                val handle = findByLabel(SHEET_HANDLE_LABEL)
+                if (handle == null) {
+                    false
+                } else {
+                    val before = handle.top
+                    Finger().apply {
+                        down(handle.exactCenterX(), handle.exactCenterY())
+                        moveBy(0f, -0.4f * height, 130)
+                        up()
+                    }
+                    // Settled once the handle holds still above where it was.
+                    poll(4_000) { findByLabel(SHEET_HANDLE_LABEL)?.let { it.top < before - 40 * density } == true }
+                }
+            }
+            val pulled = if (scenes) frames.scene("reader-prefs-sheet-expand", pull) else pull()
+            if (scenes) finding("  the sheet pulled to its expanded detent by its handle: $pulled")
+            SystemClock.sleep(2_000)
+        }
         return up
+    }
+
+    /**
+     * The system back on the sheet, as the `reader-prefs-sheet-close` scene when `scene`; true
+     * once the sheet's title is gone and the host reports no surface.
+     */
+    private fun backFromSheet(scene: Boolean): Boolean {
+        val gone = {
+            back()
+            poll(6_000) { findNode { it == "Text preferences" } == null && !chromeSurfaceUp() }
+        }
+        return if (scene) frames.scene("reader-prefs-sheet-close", gone) else gone()
     }
 
     /**
@@ -557,6 +687,10 @@ class ReaderUiDemo : DemoHarness("read-aloud-demo-state.json", "services-reader-
         private const val PORT = 18148
         private const val ORIGIN = "http://127.0.0.1:$PORT"
         private const val TAB = "tab_demo"
+        /** The stills' and the frame files' prefix (the harness's `shotPrefix`). */
+        private const val MEDIA_PREFIX = "services-reader-android"
+        /** The app menu's row that opens the sheet (`core/menus.ts`; U+2026). */
+        private const val MENU_ITEM = "Text Preferences…"
         /** The player's `role=region` label (`ReadAloudPanel`). */
         private const val PANEL_LABEL = "Read aloud"
         /** The Text preferences sheet's handle (`ReaderPreferencesSheet`'s `handleLabel`). */

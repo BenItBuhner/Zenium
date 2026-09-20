@@ -146,6 +146,9 @@ export function NavRow({
   const readerPrefsOpen = uiStore.use(
     (s) => s.readerPreferences !== null && s.readerPreferences.tabId === tab?.id
   )
+  // The Text preferences popover hanging from the menu button (its chip folded away, §9.29):
+  // the button keeps the anchor's pressed fill while it is up (§9.20).
+  const readerPrefsFromMenu = uiStore.use((s) => s.readerPreferences?.opener === 'menu')
   // A popup (`window.open` with features) has Chrome's read-only location bar: the address and
   // its chips show where the page is, but nothing can be typed into it. (An app window draws
   // its title bar in place of this row, `app/AppTitleBar.tsx`; should the row ever stand in for
@@ -387,7 +390,7 @@ export function NavRow({
               // would spill under the media hub's button. The reader document carries no
               // toolbar of its own (§10.1: this popover is the one home of its controls), so
               // the app menu's "Text Preferences…" is the way in while the chip is folded (the
-              // popover then hangs centred).
+              // popover then hangs from the menu button, `lib/ui.ts`'s `openReaderPreferences`).
               <PillChip
                 label="Text preferences"
                 title="Text preferences"
@@ -527,7 +530,11 @@ export function NavRow({
       <button
         ref={menuButton}
         type="button"
-        className="zen-toolbar-button"
+        // Named for the Text preferences popover, which hangs from this button while the
+        // pill's chip is folded (§9.29) and lights it as its anchor meanwhile (§9.20); the
+        // button's own `aria-expanded` would be the menu's, and the menu is not open.
+        data-zen-app-menu-button
+        className={cn('zen-toolbar-button', readerPrefsFromMenu && 'bg-[var(--zen-element-bg)]')}
         title={hint('Menu', state, 'menu.app')}
         aria-haspopup="menu"
         onClick={() => openAppMenu(menuButton.current)}

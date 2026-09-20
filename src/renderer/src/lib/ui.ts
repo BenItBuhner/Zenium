@@ -271,10 +271,19 @@ export interface UiState {
   /**
    * Reader View's text preferences for a reader tab (CT-20): a popover under the pill's chip on
    * a mouse (`anchor` is the chip; null hangs it under the frame's top edge), the shared sheet
-   * on a phone. Opened by the chip, the app menu's "Text Preferences…" or the reader page's own
-   * toolbar; the page beneath is a picture that is taken again after every change.
+   * on a phone. Opened by the chip or the app menu's "Text Preferences…" (the reader document
+   * carries no toolbar, v2 §10.1); the page beneath is a picture that is taken again after every
+   * change. `anchor` and `bar` are what the desktop popover hangs from and the pill or row it
+   * sits in (§9.20), `opener` which control that is – the pill's chip, or the app menu's button
+   * while the chip is folded away (§9.29) – for its pressed fill and the keyboard's return
+   * (§9.22); all three null when nothing on screen opened it (the phone's sheet takes none).
    */
-  readerPreferences: { tabId: string; anchor: Rect | null } | null
+  readerPreferences: {
+    tabId: string
+    anchor: Rect | null
+    bar: Rect | null
+    opener: ReaderPreferencesOpener | null
+  } | null
   /**
    * A bookmark the manager should edit, or create (`id: null`) inside `parentId`; on phones the
    * editor sheet (the `bookmark.edit` event, the star toast's Edit).
@@ -1807,29 +1816,73 @@ export function closeZoomBubble(opts: { keepFocus?: boolean } = {}): void {
 // Reader View's text preferences over the page
 // ---------------------------------------------------------------------------
 
+/** What the desktop Text preferences popover hangs from (§9.20). */
+export type ReaderPreferencesOpener = 'chip' | 'menu'
+
+/** The pill's Text preferences chip; folded away in a narrow pill (`zen-pill-extra`, §9.29). */
+export const READER_PREFS_CHIP = '[data-reader-prefs-chip]'
+/** The toolbar row's app menu button: what a request from the menu hangs from while the chip is folded. */
+export const APP_MENU_BUTTON = '[data-zen-app-menu-button]'
+
+/** An element while it is drawn: one folded away by a container query is in the document with no box. */
+export function shownElement(selector: string): HTMLElement | null {
+  const el = document.querySelector<HTMLElement>(selector)
+  return el && el.getClientRects().length > 0 ? el : null
+}
+
 /**
- * "Text Preferences…" for a reader tab (the pill's chip, the app menu, the page's toolbar): the
- * surface comes up over a picture of the page, as the zoom bubble does, and the keyboard goes
- * into it. `anchor` is the chip it hangs from on a mouse; without one the popover hangs under
- * the frame's top edge. A second request for the tab whose surface is up puts it away (the
- * chip's toggle).
+ * "Text Preferences…" for a reader tab (the pill's chip, the app menu): the surface comes up
+ * over a picture of the page, as the zoom bubble does, and the keyboard goes into it. `pressed`
+ * is the chip's box when the chip was pressed; `readerPreferencesAnchor` settles what the
+ * popover hangs from either way. A second request for the tab whose surface is up leaves it as
+ * it is (the chip's own press while it is up is the chrome layer's light dismiss).
  */
 export async function openReaderPreferences(
   tabId: string,
-  anchor: DOMRect | Rect | null = null
+  pressed: DOMRect | Rect | null = null
 ): Promise<void> {
   const open = uiStore.get().readerPreferences
   if (open && open.tabId === tabId) return
   await captureActiveTab(tabId)
   run('focus.chrome', undefined)
-  uiStore.set({
-    readerPreferences: {
-      tabId,
-      anchor: anchor
-        ? { x: anchor.x, y: anchor.y, width: anchor.width, height: anchor.height }
-        : null
+  uiStore.set({ readerPreferences: { tabId, ...readerPreferencesAnchor(pressed) } })
+}
+
+/**
+ * Where the desktop popover hangs (§9.20: an anchored panel, its top on its bar's bottom edge,
+ * aligned to its anchor, the anchor lit while it is up): from the pill's chip – the one pressed,
+ * or the one a request from the app menu finds on screen – in the pill; else, the chip folded
+ * away in a narrow pill (§9.29), from the app menu's button that opened it, in its toolbar row,
+ * as the media hub's popover hangs from its button. Nothing on screen (compact mode, a phone,
+ * whose sheet takes no anchor) leaves all three null.
+ */
+function readerPreferencesAnchor(
+  pressed: DOMRect | Rect | null
+): Pick<NonNullable<UiState['readerPreferences']>, 'anchor' | 'bar' | 'opener'> {
+  const chipBox = pressed ?? shownElement(READER_PREFS_CHIP)?.getBoundingClientRect() ?? null
+  if (chipBox) {
+    const pill = document.querySelector('.zen-pill')
+    return {
+      anchor: rectOf(chipBox),
+      bar: pill ? rectOf(pill.getBoundingClientRect()) : null,
+      opener: 'chip'
     }
-  })
+  }
+  const button = shownElement(APP_MENU_BUTTON)
+  if (button) {
+    const row = button.closest('[data-bar]')
+    return {
+      anchor: rectOf(button.getBoundingClientRect()),
+      bar: row ? rectOf(row.getBoundingClientRect()) : null,
+      opener: 'menu'
+    }
+  }
+  return { anchor: null, bar: null, opener: null }
+}
+
+/** The four numbers of a box (a DOMRect carries more; only these are kept). */
+function rectOf(box: DOMRect | Rect): Rect {
+  return { x: box.x, y: box.y, width: box.width, height: box.height }
 }
 
 /**

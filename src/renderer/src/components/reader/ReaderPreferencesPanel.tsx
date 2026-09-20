@@ -1,7 +1,7 @@
 import type { JSX } from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { ALargeSmall, AudioLines, Minus, Plus } from 'lucide-react'
-import type { Rect, UIState } from '@shared/types'
+import type { UIState } from '@shared/types'
 import { READER_URL_PREFIX } from '@shared/url'
 import {
   READER_FONTS,
@@ -22,8 +22,15 @@ import {
 import { run } from '@renderer/lib/api'
 import { useBackSurface } from '@renderer/lib/back'
 import { viewportStore } from '@renderer/lib/formFactor'
-import { POPOVER_WIDTH, toRect, useFrameDialog } from '@renderer/lib/portals'
-import { closeReaderPreferences, readerPreferencesChanged, uiStore } from '@renderer/lib/ui'
+import { POPOVER_WIDTH, useFrameDialog } from '@renderer/lib/portals'
+import {
+  APP_MENU_BUTTON,
+  READER_PREFS_CHIP,
+  closeReaderPreferences,
+  readerPreferencesChanged,
+  shownElement,
+  uiStore
+} from '@renderer/lib/ui'
 import { useEscape } from '@renderer/hooks/useEscape'
 import { V2IconButton } from '../extensions/v2'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
@@ -38,19 +45,7 @@ import {
 } from '../siteControls/primitives'
 import { GLYPH } from '../security/glyph'
 
-/** The chip in the address pill the popover hangs from, and where Escape hands the keyboard back. */
-const CHIP = '[data-reader-prefs-chip]'
 const TITLE_ID = 'reader-prefs-title'
-
-/**
- * The chip while it is on screen: in a narrow pill it is one of the extras the pill folds away
- * (`zen-pill-extra`, §9.29), still in the document but drawn nowhere, so a request from the app
- * menu then reads as "no chip" – the popover hangs centred and Escape has no chip to go back to.
- */
-function shownChip(): HTMLElement | null {
-  const chip = document.querySelector<HTMLElement>(CHIP)
-  return chip && chip.getClientRects().length > 0 ? chip : null
-}
 
 type Panel = NonNullable<ReturnType<typeof uiStore.get>['readerPreferences']>
 
@@ -117,7 +112,7 @@ export function ReaderPreferencesPanel({
   return phone ? (
     <ReaderPreferencesSheet closing={closing}>{content}</ReaderPreferencesSheet>
   ) : (
-    <ReaderPreferencesPopover anchor={panel.anchor} closing={closing}>
+    <ReaderPreferencesPopover panel={panel} closing={closing}>
       {content}
     </ReaderPreferencesPopover>
   )
@@ -243,41 +238,37 @@ function Rows({
 }
 
 /**
- * Desktop: the chassis popover (§9.20) 400 wide, its top border on the pill's bottom edge and
- * start-aligned with the chip, placed by `placePopover`; the panel shadow, no scrim (§9.5). It
- * renders through the chrome layer and the layer's light dismiss puts it away: a press
- * anywhere else closes it and reaches nothing beneath, the chip's own press closes it and keeps
- * the focus. Focus moves to the first control on open, Tab wraps, and Escape closes it and hands
- * the keyboard back to the chip (§9.22). Without a chip (the app menu with the pill hidden) it
- * hangs centred under the frame's top edge.
+ * Desktop: the chassis popover (§9.20) 400 wide, hanging from what opened it as `lib/ui.ts`'s
+ * `openReaderPreferences` settled it – its top border on the pill's bottom edge and
+ * start-aligned with the chip; or, the chip folded away in a narrow pill (§9.29), on the toolbar
+ * row's bottom edge aligned to the app menu's button, which keeps its pressed fill meanwhile –
+ * placed by `placePopover`; the panel shadow, no scrim (§9.5). It renders through the chrome
+ * layer and the layer's light dismiss puts it away: a press anywhere else closes it and reaches
+ * nothing beneath, the opener's own press closes it and keeps the focus. Focus moves to the
+ * first control on open, Tab wraps, and Escape closes it and hands the keyboard back to the
+ * opener (§9.22). With nothing on screen to hang from (compact mode) it hangs under the frame's
+ * top edge.
  */
 function ReaderPreferencesPopover({
-  anchor,
+  panel,
   closing,
   children
 }: {
-  anchor: Rect | null
+  panel: Panel
   closing: boolean
   children: JSX.Element
 }): JSX.Element {
-  // The chip is measured as the popover opens, so a request from the menu finds it too.
-  const [rects] = useState(() => {
-    const chip = shownChip()
-    const pill = document.querySelector('.zen-pill')
-    const chipRect = anchor ?? (chip ? toRect(chip.getBoundingClientRect()) : null)
-    return {
-      anchor: chipRect,
-      bar: pill ? toRect(pill.getBoundingClientRect()) : chipRect
-    }
-  })
+  const opener = panel.opener
   return (
     <DesktopPopover
-      anchor={rects.anchor}
-      bar={rects.bar}
+      anchor={panel.anchor}
+      bar={panel.bar ?? panel.anchor}
       width={POPOVER_WIDTH.form}
       labelledBy={TITLE_ID}
       closing={closing}
-      anchorElement={shownChip}
+      anchorElement={() =>
+        opener ? shownElement(opener === 'menu' ? APP_MENU_BUTTON : READER_PREFS_CHIP) : null
+      }
       onClosed={(byKey) => closeReaderPreferences({ keepFocus: byKey })}
       data-reader-prefs-panel=""
       data-surface="page"
