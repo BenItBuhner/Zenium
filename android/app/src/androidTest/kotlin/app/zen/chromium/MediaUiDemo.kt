@@ -4,6 +4,8 @@ import android.graphics.Rect
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import org.json.JSONObject
+import org.json.JSONTokener
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -69,7 +71,7 @@ class MediaUiDemo : MediaDemoBase("services-android-media-android-ui") {
         openSheet()
         val title = awaitNode(6_000) { it == "Zenium demo track" }
         val artist = findNode { it.startsWith("The Zenium demo band") }
-        note("  sheet: title ${if (title != null) "shown" else "MISSING"}; detail \"${artist?.let(::label) ?: "MISSING"}\"; position slider ${if (slider() != null) "present" else "MISSING"}")
+        note("  sheet: title ${if (title != null) "shown" else "MISSING"}; detail \"${artist?.let(::label) ?: "MISSING"}\"; position slider ${if (chromeRect(SLIDER) != null) "present" else "MISSING"}")
         if (title == null) touchFault("the media sheet did not show the track's title")
         SystemClock.sleep(1_000)
         shot("03-sheet-playing")
@@ -136,34 +138,54 @@ class MediaUiDemo : MediaDemoBase("services-android-media-android-ui") {
     }
 
     /**
-     * A finger along the position slider: down on its thumb, a third of the way to the right,
+     * A finger along the position slider: down on its thumb, dragged to the middle of the track,
      * up. The sheet's Radix slider follows the pointer and commits where it let go
-     * (`media.action seekto`), so the page's position jumps well ahead of where it was.
+     * (`media.action seekto`), so the page's position lands at half the duration. The thumb and
+     * the track are placed from the chrome's own document (the first run found no range node
+     * for the slider in the WebView's accessibility tree; what the tree has goes to the notes),
+     * the finger is as real as every other.
      */
     private fun scrub() {
-        val thumb = slider() ?: run {
-            note("  no position slider in the tree; the scrub could not be tried")
-            touchFault("the media sheet's position slider was not in the accessibility tree")
+        val thumb = chromeRect("$SLIDER [role=\"slider\"]")
+        val track = chromeRect(SLIDER)
+        val rangeNode = findNodeWhere { it.rangeInfo != null }
+        note("  slider: thumb $thumb on track $track; the tree's range node: ${rangeNode?.className ?: "none"}${rangeNode?.rangeInfo?.let { " at ${it.current} of ${it.max}" } ?: ""}")
+        if (thumb == null || track == null || track.width() <= 0) {
+            touchFault("the media sheet's position slider was not in the chrome's document")
             return
         }
-        val from = steadyBounds(thumb) ?: return
+        val duration = mediaState(TAB)?.optJSONObject("position")?.optDouble("duration") ?: 0.0
         val before = field("t")?.toIntOrNull() ?: 0
-        val x0 = from.exactCenterX()
-        val y0 = from.exactCenterY()
-        val dx = (width * 0.3f).coerceAtMost(width - 60f - x0)
+        val x0 = thumb.exactCenterX()
+        val y0 = thumb.exactCenterY()
+        val target = track.left + track.width() * 0.5f
         Finger().apply {
             down(x0, y0)
-            moveBy(dx, 0f, 450)
+            moveBy(target - x0, 0f, 450)
             up()
         }
-        val took = poll(8_000) { (field("t")?.toIntOrNull() ?: 0) >= before + 12 }
-        note("  scrub from ${x0.toInt()},${y0.toInt()} by ${dx.toInt()} px: t $before -> ${field("t")} (took: $took); slider reads ${thumb.also { it.refresh() }.rangeInfo?.current}")
-        if (!took) touchFault("a scrub along the position slider did not seek the page (t $before -> ${field("t")})")
+        val expected = (duration * 0.5).toInt()
+        val took = poll(8_000) { (field("t")?.toIntOrNull() ?: 0).let { it in (expected - 6)..(expected + 10) } }
+        note("  scrub from ${x0.toInt()},${y0.toInt()} to ${target.toInt()},${y0.toInt()} (half the track, $expected s of $duration): t $before -> ${field("t")} (took: $took)")
+        if (!took) touchFault("a scrub to the middle of the position slider did not seek the page there (t $before -> ${field("t")}, expected about $expected)")
     }
 
-    /** The sheet's position slider (Radix's `role=slider` thumb, a SeekBar to the tree), or null. */
-    private fun slider(): AccessibilityNodeInfo? =
-        findNodeWhere { it.className?.toString() == "android.widget.SeekBar" && it.rangeInfo != null }
+    /** Where the first chrome element matching `selector` is on screen (device px), or null. */
+    private fun chromeRect(selector: String): Rect? {
+        val raw = chromeJs(
+            "(function(){var e=document.querySelector(${JSONObject.quote(selector)});if(!e)return null;" +
+                "var r=e.getBoundingClientRect();return JSON.stringify({x:r.left,y:r.top,w:r.width,h:r.height})})()"
+        )
+        val json = (JSONTokener(raw).nextValue() as? String)?.let { runCatching { JSONObject(it) }.getOrNull() } ?: return null
+        var origin = IntArray(2)
+        instrumentation.runOnMainSync { origin = IntArray(2).also(host.chrome::getLocationOnScreen) }
+        return Rect(
+            (origin[0] + json.getDouble("x") * density).toInt(),
+            (origin[1] + json.getDouble("y") * density).toInt(),
+            (origin[0] + (json.getDouble("x") + json.getDouble("w")) * density).toInt(),
+            (origin[1] + (json.getDouble("y") + json.getDouble("h")) * density).toInt()
+        )
+    }
 
     // --- 3. the video's Picture in picture row --------------------------------------------------
 
@@ -280,24 +302,33 @@ class MediaUiDemo : MediaDemoBase("services-android-media-android-ui") {
             shot("17-settings-notifications-blocked")
             beat()
         }
-        // The page's word: a fresh notify page reads the permission as denied.
+        // The page's word: a fresh notify page reads `Notification.permission` as denied. The
+        // polyfill's status comes from the browser a moment after the script installs (the
+        // page's title, written at once, still says default), so the live value is read.
         coreInvoke("tab.navigate", """{"tabId":"$TAB","input":"${server.origin}/notify?after=block"}""")
         coreInvoke("tab.activate", """{"tabId":"$TAB"}""")
         waitTitle(TAB, 15_000) { it.startsWith("NT|") }
+        val denied = poll(8_000) { pageJs("Notification.permission") == "\"denied\"" }
+        note("  the page under Block: Notification.permission reads ${pageJs("Notification.permission")} (title at load: ${title()})")
+        if (!denied) touchFault("the page did not read Notification.permission as denied under the Block default (reads ${pageJs("Notification.permission")})")
+        pageJs("document.title = document.title.replace(/permission:[a-z]+/, 'permission:' + Notification.permission)")
         SystemClock.sleep(1_000)
-        note("  the page under Block: ${title()} (Notification.permission)")
-        if (field("permission") != "denied") touchFault("the page did not read Notification.permission as denied under the Block default (page: ${title()})")
         shot("18-notify-page-denied")
         beat()
-        // Ask put back through the same rows, so the profile leaves as it came.
+        // Ask put back through the same rows (the Notifications sheet again, its picker's Ask
+        // under a finger), so the profile leaves as it came.
         coreInvoke("tab.activate", """{"tabId":$settingsTab}""")
         SystemClock.sleep(1_500)
+        if (rowNode("Default behaviour") == null) {
+            touchRowExpecting("Notifications", "the Notifications sheet is up again", 10_000) { rowNode("Default behaviour") != null }
+            SystemClock.sleep(1_000)
+        }
         if (rowNode("Default behaviour") != null && touchRowExpecting("Default behaviour", "the picker shows the Ask option", 8_000) { findByLabel("Ask") != null }) {
             touchTapLabelExpecting("Ask", "the core's default for notifications reads ask again", timeoutMs = 8_000) { defaultFor("notifications") == "ask" }
-            note("  after Ask: default=${defaultFor("notifications")}")
+            note("  after Ask: default=${defaultFor("notifications")}; row \"${rowText("Default behaviour")}\"")
         } else {
             coreInvoke("permissions.setDefault", """{"permission":"notifications","decision":"ask"}""")
-            note("  the Notifications sheet was not up any more; Ask put back through the core (default=${defaultFor("notifications")})")
+            note("  the Notifications sheet could not be reopened; Ask put back through the core (default=${defaultFor("notifications")})")
         }
         SystemClock.sleep(1_000)
         shot("19-settings-notifications-ask-again")
@@ -383,5 +414,7 @@ class MediaUiDemo : MediaDemoBase("services-android-media-android-ui") {
     companion object {
         private const val CHIP_PLAYING = "Now playing"
         private const val CHIP_PAUSED = "Media paused"
+        /** The sheet's position slider in the chrome's document (`SeekRow`, `data-testid`). */
+        private const val SLIDER = "[data-testid=\"media-position\"]"
     }
 }
