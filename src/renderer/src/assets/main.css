@@ -5767,6 +5767,19 @@
   transition: background 120ms var(--zen-ease);
 }
 /*
+ * A one-line row holding a control (§9.21): the larger of the row's base and the control plus 8,
+ * the 4 above and below being the row's own padding, not a list gap – 40 around a 32 menulist,
+ * field or button on a mouse and 48 around a 40 one on a phone, 36 / 52 around the icon
+ * buttons, the base `min-height` above still holding a row whose control is shorter than its
+ * line (pr-228 nit 2: `--v2-row-pad` around a control measured 44 / 64). The row carries
+ * `data-control` (`ListRow control`, siteControls/primitives.tsx) only while it is one line:
+ * a two-line row (52 / 64, §9.2) already holds a 32 / 40 control inside its lines on the row
+ * pad and takes no mark.
+ */
+.zen-v2-row[data-control] {
+  padding-block: 4px;
+}
+/*
  * The static row (§9.34): a row that is not a target – a permission warning, a Source value, an
  * "It can:" list, a version line – keeps the primitive for its geometry (height, padding,
  * `--v2-row-pad`, where its text and glyphs sit) and carries `data-static`, which turns off the
@@ -5809,6 +5822,18 @@
 }
 .zen-v2-field[aria-invalid='true'] {
   border-color: var(--v2-danger);
+}
+/*
+ * Invalid and focused: the invalid state wins over the ring. A text field's ring is the inset
+ * one (§1: −2 on text fields, where an outside ring would clip), which in dark lies over the
+ * 1 px danger border and hid it; the ring takes the danger ink itself (§1: status ink is shared
+ * by both families; §9.12: the validation reads in `--v2-danger`), the one rule for light and
+ * dark, so the field reads invalid focused or not – Firefox's in-content fields colour the
+ * focus outline the same way (`:user-invalid:focus-visible`). Its 2 px, offset and shape stay
+ * the shared ring's.
+ */
+.zen-v2-field[aria-invalid='true']:focus-visible {
+  outline-color: var(--v2-danger);
 }
 /* Disabled is one number on the whole control (§9.30), as `.zen-v2-button:disabled` above. */
 .zen-v2-field:disabled,
@@ -6044,9 +6069,12 @@
 
 /*
  * The shared plain radio (§9.34, §9.14): the checkbox-sized circle (16 on a mouse, 20 on a
- * phone), a hairline at 45 %, checked = an accent ring round a 6 px page-colour dot. In a row it
- * aligns with the first text line, not the row's centre (§9.2); its state is `aria-checked` on
- * itself or on the row that is the radio.
+ * phone), a hairline at 45 %, checked = an accent ring round a 6 px page-colour dot. The ring is
+ * an inset shadow, which is drawn inside the 1 px border: its spread is what is left of the box
+ * inside the border and around the dot, halved – (box − 2 − 6) / 2, 4 on a mouse and 6 on a
+ * phone – so the dot measures 6 on both (the #235 ruling; (box − 6) / 2 left a 4 px dot). In a
+ * row it aligns with the first text line, not the row's centre (§9.2); its state is
+ * `aria-checked` on itself or on the row that is the radio.
  */
 .zen-v2-radio {
   display: inline-flex;
@@ -6066,7 +6094,7 @@
 .zen-v2-radio[aria-checked='true'],
 [aria-checked='true'] > .zen-v2-radio {
   border-color: var(--v2-accent);
-  box-shadow: inset 0 0 0 calc((var(--v2-checkbox) - 6px) / 2) var(--v2-accent);
+  box-shadow: inset 0 0 0 calc((var(--v2-checkbox) - 2px - 6px) / 2) var(--v2-accent);
 }
 
 /*

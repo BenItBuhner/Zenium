@@ -250,6 +250,17 @@
   :root[data-theme='dark'] .zen-phone-field:focus-within {
     outline-offset: -2px;
   }
+  /*
+   * Invalid (9.12): the danger border `.zen-v2-field[aria-invalid='true']` draws (main.css), the
+   * state on the input the wrapper holds, where assistive technology reads it; and, focused, the
+   * ring in the danger ink as the shared field's, so dark's inset ring never covers the border.
+   */
+  .zen-phone-field:has(> input[aria-invalid='true']) {
+    border-color: var(--v2-danger);
+  }
+  .zen-phone-field:has(> input[aria-invalid='true']):focus-within {
+    outline-color: var(--v2-danger);
+  }
   /* Disabled is .4 on the whole control, glyph, text, fill and border together (9.30). */
   .zen-phone-field:has(> input:disabled) {
     opacity: 0.4;

@@ -937,20 +937,13 @@ export function ListRow({
       )}
     </>
   )
-  const height = description
-    ? 'min-h-[var(--v2-row-two-line)]'
-    : control
-      ? 'min-h-[max(var(--v2-row),calc(var(--v2-control)+8px))]'
-      : 'min-h-[var(--v2-row)]'
-  const padding = description ? 'py-[calc((var(--v2-row-two-line)-40px)/2)]' : 'py-1'
   // Both forms carry `zen-v2-row`: the button for the shared focus ring, and either so a
-  // `Rows` group can move the text inset of every row it holds.
-  const layout = cn(
-    'zen-v2-row flex w-full items-center gap-2.5 px-4 text-left',
-    height,
-    padding,
-    className
-  )
+  // `Rows` group can move the text inset of every row it holds. The row's height and padding
+  // are the primitive's (`.zen-v2-row`, main.css, §9.34): the base row on `--v2-row-pad`, and
+  // for a one-line row holding a control, `data-control` – the control plus 8 (§9.21). A
+  // two-line row (§9.2) already holds a control inside its lines and takes no mark.
+  const layout = cn('zen-v2-row flex w-full items-center gap-2.5 px-4 text-left', className)
+  const controlRow = control && !description ? '' : undefined
   if (onClick) {
     return (
       <button
@@ -965,6 +958,7 @@ export function ListRow({
         aria-expanded={ariaExpanded}
         aria-controls={ariaExpanded ? ariaControls : undefined}
         onClick={busy ? undefined : onClick}
+        data-control={controlRow}
         {...data}
       >
         {content}
@@ -976,6 +970,7 @@ export function ListRow({
       className={cn(layout, disabled && 'opacity-40')}
       aria-disabled={disabled || undefined}
       data-static=""
+      data-control={controlRow}
       {...data}
     >
       {content}

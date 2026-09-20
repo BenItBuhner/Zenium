@@ -821,6 +821,54 @@ describe('focus lands in a sheet held for the page’s cover (§9.22, regression
     expect(active()).toBe(byText('Cancel'))
     expect(sheet.contains(active())).toBe(true)
   })
+
+  it("a PhoneSheet picker (focus 'checked'): the current option when one is checked, else the first row (§9.13, §9.22)", async () => {
+    viewportStore.set({ ...viewportStore.get(), formFactor: 'phone' })
+    // A §9.13 picker sheet's shape: radio rows, the current one marked, as the PDF viewer's
+    // "Fit to width" picker or a settings picker on `PhoneSheet` lists them.
+    const picker = (checked: string | null): ReactElement => (
+      <>
+        <FrameDialogHost frame />
+        <PhoneSheet name="pdf-fit" title="Fit" focus="checked" onClose={() => {}}>
+          <div role="radiogroup" aria-label="Fit">
+            {['Fit to width', 'Fit to page', 'Actual size'].map((label) => (
+              <button
+                key={label}
+                type="button"
+                role="radio"
+                aria-checked={label === checked}
+                className="zen-v2-row"
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </PhoneSheet>
+      </>
+    )
+    let hold = holdCover()
+    render(picker('Fit to page'))
+    let sheet = sheets()[0]
+    expect(sheet.style.opacity).toBe('0')
+    expect(active()).toBe(byText('Fit to page'))
+    await hold.resolve()
+    act(() => frames.run(60))
+    expect(sheet.style.opacity).toBe('1')
+    expect(active()).toBe(byText('Fit to page'))
+    if (root) act(() => root!.unmount())
+    root = null
+
+    // Nothing checked yet: the first row, never the grabber or the dialog.
+    opener.focus()
+    hold = holdCover()
+    render(picker(null))
+    sheet = sheets()[0]
+    expect(active()).toBe(byText('Fit to width'))
+    await hold.resolve()
+    act(() => frames.run(60))
+    expect(active()).toBe(byText('Fit to width'))
+    expect(sheet.contains(active())).toBe(true)
+  })
 })
 
 /** A box `top` px down the layer and `height` tall, as `getBoundingClientRect` reports it. */

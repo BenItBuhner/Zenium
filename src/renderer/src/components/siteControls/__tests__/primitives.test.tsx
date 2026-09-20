@@ -562,6 +562,43 @@ describe('ListRow trailing values', () => {
   })
 })
 
+describe('ListRow holding a control (§9.21, pr-228 nit 2)', () => {
+  it('marks a one-line control row data-control for the primitive’s control + 8 padding, in both forms', () => {
+    const el = render(
+      <>
+        <ListRow label="Font" control trailing={<button type="button">Sans</button>} />
+        <ListRow
+          label="Reset"
+          control
+          onClick={() => undefined}
+          trailing={<button type="button">Reset</button>}
+        />
+        <ListRow label="Connection" trailing={<RowValue>Secure</RowValue>} />
+        <ListRow
+          label="Column width"
+          description="How wide the article runs"
+          control
+          trailing={<button type="button">Wide</button>}
+        />
+      </>
+    )
+    const rows = [...el.querySelectorAll<HTMLElement>('.zen-v2-row')]
+    expect(rows).toHaveLength(4)
+    const [oneLine, pressable, textOnly, twoLine] = rows
+    expect(oneLine.hasAttribute('data-control')).toBe(true)
+    expect(pressable.hasAttribute('data-control')).toBe(true)
+    // A text-only row is the base row on `--v2-row-pad`.
+    expect(textOnly.hasAttribute('data-control')).toBe(false)
+    // A two-line row (52 / 64) holds its control inside its lines and keeps the row pad.
+    expect(twoLine.hasAttribute('data-control')).toBe(false)
+    // The height and padding are the primitive's (main.css `.zen-v2-row`, `[data-control]`): no
+    // utility restates them – an unlayered rule beats a utility, so a restatement would only
+    // mislead a reader about which number wins.
+    for (const row of rows)
+      expect([...row.classList].filter((c) => /^(py-|min-h-)/.test(c))).toEqual([])
+  })
+})
+
 describe('Menulist in a busy form (§9.30)', () => {
   it('read-only keeps its value at full opacity and opens nothing', () => {
     const el = render(
