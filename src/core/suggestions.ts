@@ -505,6 +505,7 @@ export class SuggestionService {
         favicon: entry.favicon,
         targetId: null,
         fill: query,
+        deletable: true,
         relevance: base - out.length
       })
     }
@@ -580,7 +581,8 @@ export class SuggestionService {
         url: entry.url,
         favicon: entry.favicon,
         targetId: null,
-        fill: displayUrl(entry.url)
+        fill: displayUrl(entry.url),
+        deletable: true
       })
     }
     return rows

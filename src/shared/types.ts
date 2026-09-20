@@ -2985,7 +2985,11 @@ export interface Suggestion {
   inline?: boolean
   /** Chromium-style relevance the rows were ordered by (1300 is the verbatim query). */
   relevance?: number
-  /** The row's owner lets the user remove it (Delete; `omnibox.onDeleteSuggestion`). */
+  /**
+   * The row can be removed by the user (Shift+Delete, the hover X; omnibox-22): a history row,
+   * a remembered search, an omnibox row its extension marked deletable
+   * (`omnibox.onDeleteSuggestion`). Bookmarks and open tabs are not, as in Chrome.
+   */
   deletable?: boolean
 }
 
@@ -3452,6 +3456,8 @@ export interface Commands {
     }
     result: void
   }
+  /** The X on a remembered search (a shortcut row, omnibox-22): forget every shortcut to `url`. */
+  'urlbar.forgetShortcut': { args: { url: string }; result: void }
   'urlbar.runCommand': { args: { action: string }; result: void }
   /**
    * Chrome's URL-bar menu items: the clipboard's text goes where typed text would (a URL
