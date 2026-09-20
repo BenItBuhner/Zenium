@@ -180,18 +180,18 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
         if (hint != null) {
             val viewport = hint.optDouble("viewportHeight")
             val bottom = hint.optDouble("top") + hint.optDouble("height")
-            note("  hint $seenAt ms after the touch; at rest: $hint; top layer through popover: ${hint.optBoolean("popover")}")
-            check("the hint is along the bottom edge (a toast, not the top bubble)", viewport - bottom in 0.0..60.0 && hint.optDouble("top") > viewport / 2)
+            // The card's place is its layout's: a read that caught it moving (runs 4 and 5, on the
+            // emulator's stalled frames: the spring in or out is a translateY on the host element
+            // and nothing else) has the travel taken out again.
+            val travel = translateYOf(hint)
+            val restBottom = viewport - bottom + travel
+            note("  hint $seenAt ms after the touch; ${if (travel == 0.0) "at rest" else "read under translateY(${travel}px), its rest ${travel}px up"}: $hint; top layer through popover: ${hint.optBoolean("popover")}")
+            check("the hint is along the bottom edge (a toast, not the top bubble)", restBottom in 0.0..60.0 && hint.optDouble("top") - travel > viewport / 2)
             check("the hint is the one 44 px row", hint.optDouble("height") in 40.0..72.0)
             check("the hint wears the light palette", paletteOf(hint) == "light")
             // The lead's L1, the hint's half: its card against the page's viewport (the frame it is
-            // in), as the toast card is measured against its frame in step 6. The card's place is
-            // its layout's: a read that caught it moving (run 4's, on the emulator's stalled
-            // frames: the spring in or out is a translateY on the host element and nothing else)
-            // has the travel taken out again.
+            // in), as the toast card is measured against its frame in step 6.
             val vw = hint.optDouble("viewportWidth")
-            val travel = translateYOf(hint)
-            val restBottom = viewport - bottom + travel
             note("  L1: the hint's card: left ${hint.optDouble("left")}, right ${vw - hint.optDouble("left") - hint.optDouble("width")}, bottom $restBottom" +
                 (if (travel != 0.0) " (read ${viewport - bottom} under translateY(${travel}px))" else "") +
                 ", height ${hint.optDouble("height")}, width ${hint.optDouble("width")} of $vw")
@@ -654,14 +654,20 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
         return last
     }
 
-    /** The hint once its spring has landed (`translateY` within 2 px of 0, or no transform under reduced motion); null when it never does in time. */
+    /**
+     * The hint once its spring has landed (`translateY` within 2 px of 0, or no transform under
+     * reduced motion); when it never does in time – the emulator's stalls can spend the 2.8 s stand
+     * between two reads, so the spring out is under way before the spring in was seen landed – the
+     * read nearest its rest, whose travel the callers take out again. Null when there is no hint.
+     */
     private fun awaitHintAtRest(timeoutMs: Long): JSONObject? {
-        var last: JSONObject? = null
-        val landed = poll(timeoutMs) {
-            last = hint()
-            last != null && kotlin.math.abs(translateYOf(last!!)) < 2.0
+        var nearest: JSONObject? = null
+        poll(timeoutMs) {
+            val now = hint()
+            if (now != null && (nearest == null || kotlin.math.abs(translateYOf(now)) < kotlin.math.abs(translateYOf(nearest!!)))) nearest = now
+            now != null && kotlin.math.abs(translateYOf(now)) < 2.0
         }
-        return if (landed) last else null
+        return nearest
     }
 
     /** The hint's travel (`translateY`, px) at the read: 0 at rest or without a transform. */
