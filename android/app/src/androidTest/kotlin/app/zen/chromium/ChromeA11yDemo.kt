@@ -575,7 +575,12 @@ class ChromeA11yDemo : DemoHarness(
         val label = "scale-$zoom"
         val factor = (zoom.toIntOrNull() ?: 100) / 100.0
         clearChrome()
-        awaitPill { it.contains("example.com") }
+        // The bar and pill measured are the https page's, whatever tab the scenes before left
+        // current (run 2 measured a New Tab page: its pill is the plain field, no "Address" stop).
+        if (awaitPill(2_000) { it.contains("example.com") } == null) {
+            activateTab("tab_example")
+            awaitPill { it.contains("example.com") }
+        }
         SystemClock.sleep(1_000)
         // 1. The bar and the pill: 44 dp controls whatever the text does.
         val menu = bounds("Menu")
@@ -624,9 +629,17 @@ class ChromeA11yDemo : DemoHarness(
         if (openOverview()) {
             SystemClock.sleep(1_000)
             val close = bounds("Close Alpha")
+            val closeCss = domHeight(".zen-overview-card-close")
             val header = findNode { it.startsWith("Research, tab group") }?.let { Rect().also { r -> it.getBoundsInScreen(r) } }
-            finding("  [$label] card close ${close?.let { sz(it) }}, group header ${header?.let { sz(it) }}")
-            expect("[$label] a card's close holds 44 x 44", close != null && near44(close))
+            finding("  [$label] card close ${close?.let { sz(it) }} (CSS $closeCss), group header ${header?.let { sz(it) }}")
+            // The box is the design's 44 (CSS); the tree's reading is its enclosing device pixels
+            // and grows a pixel or two once the row's growth puts the box on a fractional edge
+            // (run 2 read 45 x 46 at 1.3 and 1.8), so the tree answers for the floor alone.
+            expect(
+                "[$label] a card's close holds 44 x 44 (CSS $closeCss; tree ${close?.let { sz(it) }})",
+                close != null && min(dp(close.width()), dp(close.height())) >= 44 - TOLERANCE && dp(close.height()) <= 44 + 2.5 &&
+                    (closeCss == null || abs(closeCss - 44) <= 0.5)
+            )
             overflowCheck(label, "overview")
             snap("$label-overview")
             back()
@@ -662,6 +675,11 @@ class ChromeA11yDemo : DemoHarness(
             File(out, "a11y-chrome-talkback.txt").writeText("TalkBack is not installed on this system image.\n")
             return
         }
+        // The bar's stops as the audit table has them are the https page's: run 2's scenes left
+        // a New Tab page current (its pill is the plain field, no chips), so the scene starts
+        // from example.com whatever came before it.
+        activateTab("tab_example")
+        awaitPill { it.contains("example.com") }
         shell("logcat -c")
         val version = enableTalkBack()
         bringToFront()
@@ -801,26 +819,90 @@ class ChromeA11yDemo : DemoHarness(
         else -> 44
     }
 
-    /** Every stop in the active window, depth first – the order TalkBack walks them. */
+    /**
+     * Every stop in the chrome's tree, depth first – the order TalkBack walks them.
+     *
+     * A page's WebView is a sibling of the chrome's under the host's root (`MainActivity` adds the
+     * chrome first, at the bottom of the stack; `TabHost` appends the tabs' views after it; an
+     * extension's background page sits before the chrome at one pixel). Its content is the page's,
+     * not the chrome's, and TalkBack walks it on its own, so only the chrome's subtree is audited
+     * (run 1 counted example.com's "Learn more" link as a chrome control). The chrome's node is
+     * chosen by [chromeHost]; a choice that yields no stop at all falls back to the whole window
+     * with a note, so a wrong one cannot empty the audit (run 2 audited nothing: it gated on the
+     * view id, which this WebView's node never carries).
+     */
     private fun walk(): List<Stop> {
         val root = ui.rootInActiveWindow ?: return emptyList()
         if (root.packageName?.toString() != app.packageName) {
             Log.w(tag, "the active window is ${root.packageName}, not the app's")
         }
+        val host = chromeHost(root)
+        val stops = collect(root, host)
+        if (stops.isNotEmpty() || host == null) return stops
+        note("[walk] the chrome's node ($hosts) had no stops: the whole window walked instead")
+        return collect(root, null)
+    }
+
+    /** The WebView nodes the last [chromeHost] saw and which it took as the chrome's, for the findings and the tree dumps. */
+    private var hosts = ""
+
+    /**
+     * The chrome's node in the tree: the first WebView of a real size in tree order – the stack's
+     * bottom, where `MainActivity` puts the chrome; a hidden extension page before it is one pixel
+     * (`Host.attachHidden`), the tabs' views come after it (`TabHost`). `R.id.zen_chrome`
+     * (`ChromeWebView.kt`) would name it outright and is taken when it is there, but a WebView's
+     * node is built by Chromium's own provider (`WebContentsAccessibilityImpl.createNodeForHost`),
+     * which copies the view's class, package, bounds, enabled and visible – not its id – so on
+     * this WebView every host node reads `id=none` and the place in the stack decides (run 2's
+     * gate on the id alone found nothing). The WebViews' own documents are not entered here: the
+     * view hierarchy above them is a few dozen nodes, the documents run to thousands.
+     */
+    private fun chromeHost(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        val webViews = ArrayList<AccessibilityNodeInfo>()
+        var visited = 0
+        fun visit(node: AccessibilityNodeInfo) {
+            if (++visited > WALK_LIMIT) return
+            if (node.className?.toString() == WEBVIEW_CLASS || isChromeWebView(node)) {
+                webViews += node
+                return
+            }
+            for (i in 0 until node.childCount) node.getChild(i)?.let { visit(it) }
+        }
+        visit(root)
+        val byId = webViews.firstOrNull { isChromeWebView(it) }
+        val byPlace = webViews.firstOrNull { node ->
+            // Screen px: the hidden page is 1 x 1, the chrome and a tab's view fill the window.
+            val b = Rect().also { node.getBoundsInScreen(it) }
+            b.width() >= 100 && b.height() >= 100
+        }
+        val chosen = byId ?: byPlace
+        val inventory = webViews.joinToString("; ") { node ->
+            val b = Rect().also { node.getBoundsInScreen(it) }
+            "${node.className} id=${node.viewIdResourceName ?: "none"} ${b.toShortString()} children=${node.childCount}" +
+                if (node == chosen) (if (byId != null) " <- the chrome, by id" else " <- the chrome, by place") else ""
+        }
+        val described = "${webViews.size} WebView node(s): ${inventory.ifBlank { "none" }}"
+        if (described != hosts) {
+            hosts = described
+            finding("  [walk] $described")
+        }
+        return chosen
+    }
+
+    /** The stops under `host` (the whole window when null), depth first. */
+    private fun collect(root: AccessibilityNodeInfo, host: AccessibilityNodeInfo?): List<Stop> {
         val stops = ArrayList<Stop>()
         var visited = 0
         var index = 0
         fun visit(node: AccessibilityNodeInfo, depth: Int, inChrome: Boolean) {
             if (++visited > WALK_LIMIT) return
-            // A page's WebView is a sibling of the chrome's in the window (Host.kt: the chrome at
-            // the bottom of the stack, the tabs' views above it); its content is the page's, not
-            // the chrome's, and TalkBack walks it on its own. Only the chrome is audited here:
-            // the chrome's view carries the id, and the document Chromium puts under it (the
-            // same class name, no id) is inside it, as an iframe of the chrome's would be.
             var inside = inChrome
-            if (node.className?.toString() == WEBVIEW_CLASS) {
-                if (isChromeWebView(node)) inside = true
-                else if (!inChrome) return
+            if (host != null && !inside) {
+                // Another WebView outside the chrome's is a page's (or a hidden extension page):
+                // not walked. The document Chromium puts under the chrome's view carries the same
+                // class name and is inside it, as an iframe of the chrome's would be.
+                if (node == host) inside = true
+                else if (node.className?.toString() == WEBVIEW_CLASS) return
             }
             val label = label(node)
             if (label.isNotBlank() && node.isVisibleToUser) {
@@ -911,6 +993,7 @@ class ChromeA11yDemo : DemoHarness(
         val text = buildString {
             appendLine("# $scene – the stops, depth first (the order TalkBack walks them)")
             appendLine("# window ${width}x$height, density $density; sizes in dp")
+            appendLine("# $hosts")
             for (stop in stops) {
                 appendLine("  ".repeat(stop.depth) + (if (stop.control) "#${stop.index} " else "· ") + describe(stop.node))
             }
