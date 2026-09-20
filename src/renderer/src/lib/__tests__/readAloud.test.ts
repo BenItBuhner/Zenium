@@ -5,6 +5,7 @@ vi.mock('@renderer/lib/api', () => ({ run: vi.fn(), cmd: vi.fn() }))
 
 import { run } from '@renderer/lib/api'
 import {
+  describeRate,
   errorText,
   formatProgress,
   formatRate,
@@ -81,6 +82,14 @@ describe('the speed chip', () => {
     expect(formatRate(1.2)).toBe('1.2×')
     expect(formatRate(0.5)).toBe('0.5×')
     expect(formatRate(1.5)).toBe('1.5×')
+  })
+
+  it('names the chip for a screen reader by the setting and the value as said (§9.34)', () => {
+    expect(describeRate(1)).toBe('Speed, 1 times')
+    expect(describeRate(1.2)).toBe('Speed, 1.2 times')
+    expect(describeRate(0.5)).toBe('Speed, 0.5 times')
+    // The painted label never leaks its glyph into the name.
+    for (const rate of READ_ALOUD_RATE_STEPS) expect(describeRate(rate)).not.toContain('×')
   })
 
   it('sizes the chip by its widest label, so every rung is as wide or narrower', () => {

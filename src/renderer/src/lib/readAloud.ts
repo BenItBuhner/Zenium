@@ -41,6 +41,15 @@ export function formatRate(rate: number): string {
 }
 
 /**
+ * The speed chip's accessible name (v2 §9.34): the setting, then the value as it is said –
+ * `Speed, 1.2 times` – so a screen reader names what the chip sets and where it stands, where
+ * the painted `1.2×` alone would be read as a bare number and a multiplication sign.
+ */
+export function describeRate(rate: number): string {
+  return `Speed, ${Number(rate.toFixed(2))} times`
+}
+
+/**
  * The widest of the chip's labels, `0.5×`: what sizes the chip, so it holds one width across the
  * ladder in whatever font the device draws (a `min-width` in pixels is right for one font only).
  * In tabular figures every four-character rung is as wide as this one; `1×` and `2×` are narrower

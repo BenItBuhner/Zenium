@@ -1631,7 +1631,7 @@ describe('the selection toolbar', () => {
     expect(h.browser.menus.selectionToolbar('tab_gone', 'quantum foam')).toEqual([])
   })
 
-  it('with a speech engine lists Read Aloud last in the bar and in the menu, and starts the core from the selection', async () => {
+  it('with a speech engine lists Listen last in the bar and in the menu, and starts the core from the selection', async () => {
     expect(pageHarness(ANDROID, PHONE).browser.menus.selectionToolbar('t', 'quantum foam')).toEqual(
       []
     )
@@ -1639,23 +1639,24 @@ describe('the selection toolbar', () => {
     expect(h.browser.menus.selectionToolbar(h.tabId, 'quantum foam')).toEqual([
       { id: 'search', title: 'Search Google' },
       { id: 'share', title: 'Share' },
-      { id: 'readAloud', title: 'Read Aloud' }
+      { id: 'readAloud', title: 'Listen' }
     ])
     expect(h.menu(pageParams({ selectionText: 'quantum foam' })).slice(0, 4)).toEqual([
       'Copy',
       'Search Google for “quantum foam”',
       'Share…',
-      'Read Aloud'
+      'Listen'
     ])
-    // Without an engine the menu has no such item either.
+    // Without an engine the menu has no such item either. (The item is worded "Listen", the app
+    // menu's verb, so that beside Google's process-text "Read aloud" the pair reads as two things.)
     expect(
       pageHarness(ANDROID, PHONE).menu(pageParams({ selectionText: 'quantum foam' }))
-    ).not.toContain('Read Aloud')
+    ).not.toContain('Listen')
     // Nor does the desktop's right-click menu with one: its read aloud is the services program's
     // own UI, and the item would start the phone's docked player in the desktop frame.
     const desktop = pageHarness({ ...DESKTOP, readAloud: true }, { speech: true })
     expect(desktop.browser.readAloud.available).toBe(true)
-    expect(desktop.menu(pageParams({ selectionText: 'quantum foam' }))).not.toContain('Read Aloud')
+    expect(desktop.menu(pageParams({ selectionText: 'quantum foam' }))).not.toContain('Listen')
     // The touch starts the core's one session from the selection: the page script is asked for
     // the selection's text (the model reads the selection alone, as Chrome does).
     h.viewCalls.length = 0

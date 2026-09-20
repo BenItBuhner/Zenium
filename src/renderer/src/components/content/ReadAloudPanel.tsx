@@ -7,6 +7,7 @@ import { useBackDismissal } from '@renderer/lib/back'
 import {
   errorText,
   formatProgress,
+  describeRate,
   formatRate,
   nextRate,
   READ_ALOUD_RATE_SIZER,
@@ -26,8 +27,11 @@ const VOICES_WAIT_MS = 2500
  * can be followed). Two rows – a bar header (§9.16, §9.23) with the text's title start-aligned
  * at 15/600 and the sentence progress trailing in tabular numerals, then the transport: previous
  * sentence, play / pause as one control whose glyph cross-fades (§11.4's in-place change), next
- * sentence, the speed chip (a hugging secondary button cycling `READ_ALOUD_RATE_STEPS`), the
- * voice picker (a §9.13 sheet of the host's voices) and close – as §9.3 icon buttons. While the
+ * sentence, the speed chip (§9.34: the plain `.zen-v2-button` cycling `READ_ALOUD_RATE_STEPS`,
+ * the value painted in `tabular-nums`, its `aria-label` the setting and the value as said –
+ * "Speed, 1.2 times"), the voice picker (a §9.13 sheet of the host's voices) and close – as §9.3
+ * icon buttons. Its shape follows its host (§9.32): the frame's radius on the top corners, a
+ * second card under the frame on the phone. While the
  * engine prepares (`loading`) the play control is busy, not disabled (§9.30: the spinner in the
  * glyph's place, `aria-busy`). A page surface (§9.29): `data-surface="page"`, the page family,
  * no tooltips (§9.31). Predictive back and Escape close it like a page; closing is
@@ -197,7 +201,7 @@ export function ReadAloudPanel({ session }: { session: ReadAloudState }): JSX.El
         <button
           type="button"
           className="zen-v2-button zen-read-aloud-chip shrink-0"
-          aria-label={`Speed ${formatRate(session.rate)}`}
+          aria-label={describeRate(session.rate)}
           onClick={() => run('readAloud.setRate', { rate: nextRate(session.rate) })}
         >
           {/* The widest label, unpainted, under the live one: one chip width across the ladder. */}

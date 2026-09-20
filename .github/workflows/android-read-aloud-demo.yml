@@ -8,7 +8,7 @@ name: Android read aloud demo
 # goes on behind the launcher on services' foreground service, the notification in the shade);
 # another app taking the audio pauses it; the speed chip's ladder, its first step heard from the
 # very next sentence in the host's log; Previous / Next under a finger with the walk held by
-# Pause; the voice picker with a voice chosen under a finger; Close; Read Aloud from the selection
+# Pause; the voice picker with a voice chosen under a finger; Close; Listen from the selection
 # toolbar (the document left collapsed); the player in dark; a second boot with the host saying
 # the device has no speech engine, both entries absent. The driver writes `read-aloud-findings.txt` with a PASS or FAIL
 # per check and fails when any did. Dispatch-only, like the other demos: it takes about ten

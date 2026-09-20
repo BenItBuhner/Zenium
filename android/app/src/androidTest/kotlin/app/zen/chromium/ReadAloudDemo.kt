@@ -52,7 +52,8 @@ import java.util.concurrent.TimeUnit
  *     player is where it was;
  *  5. another app taking the audio (a focus request from this process's second listener) pauses
  *     the reading through `media.action pause`, and nothing resumes it when the audio comes back;
- *  6. the speed chip ("1×", the multiplication sign) under a finger steps 1x -> 1.2x -> 1.5x ->
+ *  6. the speed chip ("1×", the multiplication sign; named "Speed, 1 times" for the screen
+ *     reader, §9.34) under a finger steps 1x -> 1.2x -> 1.5x ->
  *     2x -> 0.5x -> 0.8x -> 1x (the model's ladder up to Edge's 2x), the state's rate following
  *     each step; the first step taken while the engine speaks sentence N, and the host's log
  *     (`ZenReadAloud`) then showing the prepared N+1 flushed and spoken again at the new rate
@@ -65,7 +66,8 @@ import java.util.concurrent.TimeUnit
  *     a touch on a voice row sets the session's voice and closes the sheet by itself (§9.13),
  *     and with the sheet opened again the system back closes the sheet alone, the player still up;
  *  9. Close under a finger: the session ends, the panel leaves, the page grows back;
- * 10. the selection toolbar's Read Aloud (GN-13's toolbar, #206): a long press on a word, the
+ * 10. the selection toolbar's Listen (GN-13's toolbar, #206; our menu's verb, beside Google's own
+ *     "Read aloud" process-text item, which stays): a long press on a word, the
  *     item (behind the overflow on a phone) under a finger starts a session that reads the
  *     selection (`source: selection`; the mode's finish collapses the page's selection first,
  *     the page script stands the cleared one in, `selectionMemory.ts`, and the document is left
@@ -75,7 +77,7 @@ import java.util.concurrent.TimeUnit
  * 11. the player in dark, for the design record;
  * 12. no engine (interface 3.2): the app started again with the host saying the device has no
  *     speech engine, `capabilities.readAloud` off, neither Listen to This Page in the menu nor
- *     Read Aloud on the selection toolbar (Google's own process-text item left as it is).
+ *     Listen on the selection toolbar (Google's own process-text item left as it is).
  *
  * The article comes from a loopback server inside this process ([DemoServer]). The model behind
  * the player is services' `ReadAloudService` (#246): the page script's extraction of the
@@ -263,22 +265,22 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
         if (items == null) {
             check("the selection toolbar comes up for the no-engine check", false)
         } else {
-            val inBar = items.any { it.label == "Read Aloud" }
+            val inBar = items.any { it.label == TOOLBAR_ITEM }
             var inOverflow = false
             val more = items.find { it.label == "More options" }
             if (more != null) {
                 touchTapPoint(more.node)
                 SystemClock.sleep(1_200)
-                inOverflow = findInWindows { it == "Read Aloud" } != null
+                inOverflow = findInWindows { it == TOOLBAR_ITEM } != null
                 val system = findInWindows { it == "Read aloud" } != null
-                finding("  behind the overflow: ours ('Read Aloud') ${if (inOverflow) "PRESENT" else "absent"}; Google's process-text item ('Read aloud') ${if (system) "present (the system's, left alone)" else "absent"}")
+                finding("  behind the overflow: ours ('$TOOLBAR_ITEM') ${if (inOverflow) "PRESENT" else "absent"}; Google's process-text item ('Read aloud') ${if (system) "present (the system's, left alone)" else "absent"}")
                 shot("17-no-engine-toolbar")
                 findInWindows { it == "Close overflow" }?.let { touchTapPoint(it) } ?: back()
                 SystemClock.sleep(600)
             } else {
                 shot("17-no-engine-toolbar")
             }
-            check("the selection toolbar has no Read Aloud without an engine", !inBar && !inOverflow)
+            check("the selection toolbar has no $TOOLBAR_ITEM without an engine", !inBar && !inOverflow)
         }
         clearSelection()
         ReadAloud.availabilityOverride = null
@@ -467,8 +469,10 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
         frontApp()
         val before = rate()
         val label0 = chipLabel()
-        finding("  chip reads '$label0' (rate $before)")
-        check("the chip's label is the rate with the multiplication sign (§9.32, lead nit 2: '1×')", label0 == "Speed 1×")
+        val text0 = chipText()
+        finding("  chip paints '$text0', named '$label0' for the screen reader (rate $before)")
+        check("the chip's label is the rate with the multiplication sign (§9.32, lead nit 2: '1×')", text0 == "1×")
+        check("the chip's accessible name is the setting and the value as said (§9.34: 'Speed, 1 times')", label0 == "Speed, 1 times")
         // The first step is taken while the engine speaks, so the change can be heard from the
         // very next sentence: the tap lands during sentence N, and the host's log then shows the
         // prepared N+1 – queued at 1x while N spoke – flushed and spoken again at 1.2x the moment
@@ -489,7 +493,7 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
             // The sentence the finger came down in (read as the touch registers, so a sentence
             // ending while the chip was looked up does not shift the count).
             val n = sentenceIndex()
-            finding("  touch on '$label' -> rate ${rate()}, chip '${chipLabel()}'${if (i == 0) " (during sentence ${n + 1})" else ""}")
+            finding("  touch on '$label' -> rate ${rate()}, chip '${chipText()}' ('${chipLabel()}')${if (i == 0) " (during sentence ${n + 1})" else ""}")
             all = all && took
             if (i == 0 && speaking && !engineless) nextSentenceAtTheNewRate(n, expected, logBefore)
             if (i == 1) {
@@ -686,27 +690,27 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
         beat()
     }
 
-    // --- 10. the selection toolbar's Read Aloud ------------------------------------------------------
+    // --- 10. the selection toolbar's Listen ----------------------------------------------------------
 
     private fun fromSelection() {
-        finding("\nEDGE-11 / GN-13 Read Aloud from the selection toolbar (the model reads the selection alone, as Chrome does)")
+        finding("\nEDGE-11 / GN-13 $TOOLBAR_ITEM from the selection toolbar (the model reads the selection alone, as Chrome does)")
         frontApp()
-        val items = longPress("#word") { list -> list.any { it.label == "Read Aloud" || it.label == "More options" } }
+        val items = longPress("#word") { list -> list.any { it.label == TOOLBAR_ITEM || it.label == "More options" } }
         val selected = jsonString(pageJs("String(getSelection())"))
         finding("  long press on 'arithmetic': selection '$selected'; toolbar: ${items?.joinToString(" | ") { it.label } ?: "MISSING"}")
         if (items == null) {
             check("the selection toolbar comes up", false)
             return
         }
-        val inBar = items.find { it.label == "Read Aloud" }
+        val inBar = items.find { it.label == TOOLBAR_ITEM }
         val logBefore = hostLog().size
-        val point = inBar?.let { touchTapPoint(it.node) } ?: touchInOverflow(items, "Read Aloud")
-        finding("  real touch on Read Aloud ${point?.let { "at ${it.x.toInt()},${it.y.toInt()}${if (inBar == null) " (behind the overflow)" else ""}" } ?: "NOT POSSIBLE (item missing)"}")
+        val point = inBar?.let { touchTapPoint(it.node) } ?: touchInOverflow(items, TOOLBAR_ITEM)
+        finding("  real touch on $TOOLBAR_ITEM ${point?.let { "at ${it.x.toInt()},${it.y.toInt()}${if (inBar == null) " (behind the overflow)" else ""}" } ?: "NOT POSSIBLE (item missing)"}")
         val first = if (point == null) null else awaitSample(10_000) { it.optString("source") == "selection" }
         val came = first != null
         finding("  session: $first")
-        if (point != null && !came) touchFault("a touch on the toolbar's Read Aloud started no session from the selection")
-        check("Read Aloud is on the toolbar and a touch on it starts a session from the selection", came)
+        if (point != null && !came) touchFault("a touch on the toolbar's $TOOLBAR_ITEM started no session from the selection")
+        check("$TOOLBAR_ITEM is on the toolbar and a touch on it starts a session from the selection", came)
         if (first != null) {
             val up = poll(8_000) { panelUp() }
             // The mode's finish collapsed the page's selection before the core's extraction
@@ -833,7 +837,12 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
 
     private fun panelBounds(): Rect? = findNode { it == PANEL_LABEL }?.let { Rect().also(it::getBoundsInScreen) }
 
-    private fun chipLabel(): String? = findNode { it.startsWith("Speed ") }?.let(::label)
+    /** The speed chip's accessible name (`aria-label`, §9.34: "Speed, 1.2 times"), as the tree has it. */
+    private fun chipLabel(): String? = findNode { it.startsWith("Speed, ") }?.let(::label)
+
+    /** The speed chip's painted label (`1.2×`), read from the chrome's own document: the tree carries the accessible name alone. */
+    private fun chipText(): String =
+        jsonString(chromeJs("(function(){var e=document.querySelector('.zen-read-aloud-chip > span:not(.zen-read-aloud-chip-sizer)');return e?e.textContent:''})()"))
 
     /**
      * The play box's busy spinner's width in CSS px (`.zen-read-aloud-toggle > .zen-v2-spinner`),
@@ -1159,6 +1168,8 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
         private const val ORIGIN = "http://127.0.0.1:$PORT"
         private const val TAB = "tab_demo"
         private const val MENU_ITEM = "Listen to This Page"
+        /** Our selection-toolbar item (`Menus.selectionActions`): the menu's verb, beside Google's own "Read aloud". */
+        private const val TOOLBAR_ITEM = "Listen"
         /** The player's `role=region` label (`ReadAloudPanel`). */
         private const val PANEL_LABEL = "Read aloud"
         private const val SYSTEM_UI = "com.android.systemui"

@@ -8655,11 +8655,14 @@
   opacity: 0;
 }
 /*
- * Secondary button (§6) hugging its label: the control height, radius 6 under a finger, press
- * .98. The label is in tabular figures with the multiplication sign, and the chip holds one width
- * across the ladder's six values (§9.32, the lead's nit): the widest label (`0.5×`) sits under the
- * live one, unpainted, in the same grid cell, so the box is its width in whatever font the device
- * draws – the 56 is a floor for a narrow font, not the measure.
+ * The speed chip: the plain secondary button (§6) hugging its label, a modifier beside the
+ * primitive and no primitive of its own (§9.34: a button cycling up to six values names the
+ * setting and the value in its `aria-label`; larger or named sets go to the menulist). The control
+ * height, radius 6 under a finger, press .98. The label is in tabular figures with the
+ * multiplication sign, and the chip holds one width across the ladder's six values (§9.32, the
+ * lead's nit): the widest label (`0.5×`) sits under the live one, unpainted, in the same grid
+ * cell, so the box is its width in whatever font the device draws – the 56 is a floor for a
+ * narrow font, not the measure.
  */
 .zen-v2-button.zen-read-aloud-chip {
   display: inline-grid;
