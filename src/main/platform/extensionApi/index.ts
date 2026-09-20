@@ -500,14 +500,13 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     // A line from a worker whose wrapper was replaced meanwhile (the error console asks the
     // engine for one, which creates it bare) is the moment to wire the replacement.
     ses.serviceWorkers.on('console-message', (_event, { versionId }) => {
-      if (this.wiredWorkers.current(versionId, ses)) return
       if (isExtensionWorkerRunning(ses, versionId)) this.acquireWorker(versionId, ses)
     })
-    // A message from a worker whose wrapper is gone would otherwise fail before any handler of
-    // this router could see it: the wrapper is recreated, wired, ahead of Electron's dispatch.
-    acquireOnIncomingIpc(ses, (versionId) => {
-      if (!this.wiredWorkers.current(versionId, ses)) this.acquireWorker(versionId, ses)
-    })
+    // A message from a worker whose wrapper is gone from Electron's map (destroyed, or evicted by
+    // the finalizer of an older wrapper of the version) would otherwise fail before any handler
+    // of this router could see it: the map is checked and the wrapper recreated, wired, ahead of
+    // Electron's dispatch.
+    acquireOnIncomingIpc(ses, (versionId) => this.acquireWorker(versionId, ses))
     // Workers already running when the session is attached never announce themselves again.
     for (const versionId of runningExtensionWorkers(ses)) {
       if (this.acquireWorker(versionId, ses)) this.registry.workerStatus(versionId, ses, 'running')
