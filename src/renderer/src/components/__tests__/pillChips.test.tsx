@@ -235,7 +235,10 @@ describe('desktop pill (NavRow)', () => {
     // A page with a pop-up refused and a save prompt pending: every chip with a 16 px glyph up.
     const el = render(
       <NavRow
-        state={{ ...withBlocked(page, 1), autofill: { prompts: [savePrompt], picker: null } }}
+        state={{
+          ...state(page, [], [savePrompt]),
+          blockedPopups: withBlocked(page, 1).blockedPopups
+        }}
         tab={page}
         compact={false}
       />
