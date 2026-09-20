@@ -4,13 +4,16 @@ name: Android fullscreen video demo
 # hardware-accelerated Android emulator and uploads the video, the screenshots and the driver's
 # notes: a landscape WebM clip into fullscreen under a finger turning the screen to landscape
 # (the display's rotation, `dumpsys window`), the first-time exit hint along the bottom edge,
-# Back turning the screen back with the chrome fading in over 120 ms (sampled per frame), no hint
+# Back turning the screen back with the chrome fading in over 120 ms (sampled per frame) once the
+# page has landed, the page's resizes on the way logged (none beyond the portrait window), no hint
 # the second time, Home from fullscreen into picture-in-picture by itself (#223's auto-enter) and
-# the expand back into fullscreen landscape, a portrait clip that turns nothing; then the file
-# chooser: the capture input meeting the system's camera prompt (Don't allow: the picker alone and
-# the toast on why; While using the app: straight to the camera app, its shutter and Done under
-# fingers, the photo's name and size in the page) and the plain image input's chooser with Camera
-# beside the files (see FullscreenDemo).
+# the expand back inline, a portrait clip that turns nothing; then the file chooser: the capture
+# input meeting the system's camera prompt (Don't allow: the picker alone and the toast on why,
+# the toast card measured for the hint's twin; While using the app: straight to the camera app,
+# its shutter and Done under fingers, the photo's name and size in the page) and the plain image
+# input's chooser with Camera beside the files, the photo taken through it; then a same-origin
+# iframe's clip going fullscreen from its own document (the turn on the frame's report, the hint)
+# and a canvas going fullscreen with no video in it (the hint, no turn) (see FullscreenDemo).
 # The recipe: the media demo's. The hint is drawn in the page's top layer through the `popover`
 # attribute, which the API 34 image's WebView 113 predates (Chrome 114), so – as the media demos
 # do for other reasons – the demo runs on an AOSP image with a Chromium snapshot SystemWebView.apk
@@ -23,6 +26,10 @@ name: Android fullscreen video demo
 # file only picks the driver.
 on:
   workflow_dispatch:
+  # TEMPORARY: the worker's token cannot dispatch; removed before the PR is marked ready.
+  push:
+    branches:
+      - cursor/android-fullscreen-capture-7f4a
 
 permissions:
   contents: read

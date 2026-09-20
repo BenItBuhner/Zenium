@@ -28,28 +28,39 @@ import org.junit.runner.RunWith
  * Records fullscreen video and the file chooser's camera (MED-01, GN-20, OS-22) on the phone,
  * on the media demos' base ([MediaDemoBase]: the loopback page server, real fingers on a page's
  * button and on any window's node, picture-in-picture, the notes) with a page of its own
- * (`fullscreen-demo-page.html`): a landscape WebM clip (#223's), a portrait one, an
- * `<input type=file>` for images with the `capture` attribute and a plain one for images.
+ * (`fullscreen-demo-page.html`): a landscape WebM clip (#223's), a portrait one, a same-origin
+ * `<iframe>` with the landscape clip in its own document (`fullscreen-demo-embed.html`, an
+ * embedded player's shape), a canvas, an `<input type=file>` for images with the `capture`
+ * attribute and a plain one for images.
  *
  *  1. The landscape clip into fullscreen under a finger: the screen turns to landscape (the
  *     display's rotation, `dumpsys window`, the activity's `SENSOR_LANDSCAPE`) and the first-time
  *     exit hint stands along the bottom edge of the page, in its top layer.
  *  2. Back: the layer goes, the screen turns back, the chrome fades in over 120 ms (sampled per
- *     frame in the chrome), the hint is gone; the page's resize count says how often it relaid.
+ *     frame in the chrome), the hint is gone; the page's resize events are logged one by one –
+ *     none may lay it out beyond the portrait window (`TabHost.setBounds` refuses the chrome's
+ *     stale landscape frame, BH-32) – and the fade's start is placed against the page's landing.
  *  3. The same clip into fullscreen again: no hint the second time.
  *  4. Home while it plays fullscreen: #223's auto-enter into picture-in-picture, the engine's
  *     fullscreen ending as the window goes small (the layer and the orientation given back, the
  *     tab's view filling the small window); the app brought back shows the page inline, portrait.
  *  5. The portrait clip into fullscreen: the screen does not turn.
  *  6. The capture input, the camera refused at the system's prompt (a finger on Don't allow):
- *     the picker alone, and once it is cancelled the toast on why.
+ *     the picker alone, and once it is cancelled the toast on why – the chrome's toast card,
+ *     measured against its frame for the hint's twin to be held to (§9.33).
  *  7. The capture input again, While using the app under a finger: straight to the camera app
  *     (no chooser), its shutter and Done under fingers, the photo back in the page (name, size).
  *  8. The plain image input: the system chooser with Camera beside the files; Camera under a
- *     finger opens the camera app, Back cancels it, and the photo file it would have written is
- *     gone while the kept one from step 7 stays.
+ *     finger opens the camera app, its shutter and Done under fingers, the photo back in the page
+ *     through the chooser; the chooser again, Camera, and Back cancels it: the photo file it
+ *     would have written is gone while the kept ones stay.
  *  9. The once-key reset and the colour scheme flipped to dark through the core: the hint again,
  *     in the dark palette (the design still beside step 1's light one).
+ * 10. The embed: a finger on the iframe's clip takes it fullscreen from the frame's document (the
+ *     main document's fullscreen element is the `<iframe>`, with no video in its subtree): the
+ *     frame's own size report turns the screen, and the hint (its key reset) stands.
+ * 11. The canvas: fullscreen with no video in it: the hint (its key reset) stands all the same,
+ *     the screen does not turn.
  *
  * The emulator's camera is `-camera-back emulated` (the workflow), so the camera app has one; the
  * permission flow is real (CAMERA revoked after the install, `DEMO_REVOKE`). Every touch a step
@@ -65,10 +76,14 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
     @Test
     fun record() {
         val page = "text/html; charset=utf-8" to readAsset("fullscreen-demo-page.html").toByteArray()
+        val embed = "text/html; charset=utf-8" to readAsset("fullscreen-demo-embed.html").toByteArray()
         server = DemoServer(
             PORT,
             mapOf(
                 "/fullscreen" to page,
+                // The same origin as the page: the frame's document is the page's own, as a site's
+                // own player embed is; the fullscreen report the frame sends is the one A2 lets through.
+                "/embed" to embed,
                 "/land.webm" to ("video/webm" to readAssetBytes("media-demo-clip.webm")),
                 "/port.webm" to ("video/webm" to readAssetBytes("fullscreen-demo-portrait.webm"))
             )
@@ -119,6 +134,9 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
         poll(10_000) { pageJs("document.getElementById('land').videoWidth") != "0" && pageJs("document.getElementById('port').videoWidth") != "0" }
         note("clips: landscape ${pageJs("document.getElementById('land').videoWidth")}x${pageJs("document.getElementById('land').videoHeight")}, " +
             "portrait ${pageJs("document.getElementById('port').videoWidth")}x${pageJs("document.getElementById('port').videoHeight")}")
+        // The embed's document has the clip too; its size is the frame's own report (step 10).
+        poll(10_000) { embedState()?.optInt("videoWidth") ?: 0 > 0 }
+        note("embed: ${embedState()}")
         note("capture directory at start: ${captureFiles()}")
         Log.i(tag, "warm-up done")
     }
@@ -134,6 +152,8 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
         captureGranted()
         chooserWithCameraAndFiles()
         hintInTheDarkScheme()
+        embedFullscreenTurnsAndHints()
+        canvasFullscreenHints()
         note("\nend: fullscreenTab=${host.fullscreenTab?.tabId} rotation ${rotation()} requested ${requested()} capture directory ${captureFiles()}")
     }
 
@@ -164,6 +184,13 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
             check("the hint is along the bottom edge (a toast, not the top bubble)", viewport - bottom in 0.0..60.0 && hint.optDouble("top") > viewport / 2)
             check("the hint is the one 44 px row", hint.optDouble("height") in 40.0..72.0)
             check("the hint wears the light palette", paletteOf(hint) == "light")
+            // The lead's L1, the hint's half: its card against the page's viewport (the frame it is
+            // in), as the toast card is measured against its frame in step 6.
+            val vw = hint.optDouble("viewportWidth")
+            note("  L1: the hint's card: left ${hint.optDouble("left")}, right ${vw - hint.optDouble("left") - hint.optDouble("width")}, bottom ${viewport - bottom}, height ${hint.optDouble("height")}, width ${hint.optDouble("width")} of $vw")
+            check("L1: the hint's card is 8 px inside the viewport's sides and bottom, one 44 px row",
+                near(hint.optDouble("left"), TOAST_INSET) && near(vw - hint.optDouble("left") - hint.optDouble("width"), TOAST_INSET) &&
+                    near(viewport - bottom, TOAST_INSET) && near(hint.optDouble("height"), TOAST_ROW))
         }
         val turned = poll(10_000) { landscape() }
         note("  screen landscape ${SystemClock.uptimeMillis() - enteredAt} ms after the touch: $turned; rotation ${rotation()}; requestedOrientation ${requested()}; dumpsys window: ${dumpsysRotation()}")
@@ -207,18 +234,37 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
         check("the chrome is fully back", chromeOpacity() == "1")
         check("the hint left with the fullscreen", awaitHint(3_000, present = false) == null)
         val resizesAfter = field("resizes")?.toIntOrNull() ?: 0
-        note("  the page's resize events over the exit: ${resizesAfter - resizesBefore}; each (ms after the back, the viewport, fullscreen): ${resizeLog()}")
+        val resizes = resizeEntries()
+        note("  the page's resize events over the exit: ${resizesAfter - resizesBefore}; each (ms after the back, the viewport, fullscreen): ${resizeLog(resizes)}")
+        // The portrait window in CSS px (the emulator's 720 x 1600 at 1.75 is 411 x 914). Run 3's
+        // exit laid the page out 806 x 324 for ~0.9 s: the chrome's stale landscape measurement,
+        // which TabHost.setBounds now refuses; no frame may be wider or taller than the window.
+        val windowW = kotlin.math.ceil(width / density).toInt()
+        val windowH = kotlin.math.ceil(height / density).toInt()
+        val oversized = resizes.filter { it.optInt("w") > windowW + 1 || it.optInt("h") > windowH + 1 }
+        note("  the portrait window is ${windowW}x$windowH CSS px; frames beyond it: ${if (oversized.isEmpty()) "none" else resizeLog(oversized)}")
+        check("no resize laid the page out beyond the portrait window (TabHost.setBounds refuses the stale landscape frame, BH-32)", oversized.isEmpty())
+        // The lead's L2: the chrome's fade starts once the page has landed inline, not over the
+        // hand-back. The landing is the page's last resize out of fullscreen that fits the window;
+        // both clocks were started just before the back (the sampler's a few ms ahead).
+        val landing = resizes.lastOrNull { it.optInt("fs") == 0 && it.optInt("w") <= windowW + 1 && it.optInt("h") <= windowH + 1 }
+        val fadeAt = fades.firstOrNull(::isTheReturnFade)?.optInt("at")
+        note("  L2: the page's inline landing at ${landing?.optInt("at")} ms (${landing?.let { "${it.optInt("w")}x${it.optInt("h")}" }}); the fade's animate() at $fadeAt ms; " +
+            "the fade ${if (landing != null && fadeAt != null) (if (fadeAt >= landing.optInt("at")) "follows the landing by ${fadeAt - landing.optInt("at")} ms" else "leads the landing by ${landing.optInt("at") - fadeAt} ms") else "or the landing unread"}")
+        check("the chrome's fade starts on the page's landing, not before it (L2)", landing != null && fadeAt != null && fadeAt >= landing.optInt("at"))
     }
 
     /** The page's resize events since its last mark (`__resizeMark`), one entry each: when, the viewport's size, whether it was fullscreen. */
-    private fun resizeLog(): String {
+    private fun resizeEntries(): List<JSONObject> {
         val raw = pageJs("window.__resizeLog ? window.__resizeLog() : null")
-        val text = (JSONTokener(raw).nextValue() as? String) ?: return "none"
-        val all = runCatching { JSONArray(text) }.getOrNull() ?: return "none"
-        if (all.length() == 0) return "none"
+        val text = (JSONTokener(raw).nextValue() as? String) ?: return emptyList()
+        val all = runCatching { JSONArray(text) }.getOrNull() ?: return emptyList()
         return (0 until all.length()).mapNotNull { all.optJSONObject(it) }
-            .joinToString(" ") { "${it.optInt("at")}ms:${it.optInt("w")}x${it.optInt("h")}${if (it.optInt("fs") == 1) "(fullscreen)" else ""}" }
     }
+
+    private fun resizeLog(entries: List<JSONObject>): String =
+        if (entries.isEmpty()) "none"
+        else entries.joinToString(" ") { "${it.optInt("at")}ms:${it.optInt("w")}x${it.optInt("h")}${if (it.optInt("fs") == 1) "(fullscreen)" else ""}" }
 
     /** 3. Fullscreen again: no hint. */
     private fun secondTimeNoHint() {
@@ -299,6 +345,17 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
         back()
         check("the app is in front again", poll(8_000) { frontPackage() == app.packageName })
         check("the toast says why the camera was left out", awaitToastSeen(DENIED_TOAST, 10_000))
+        // The lead's L1: the chrome's toast card as this device lays it out, against its frame,
+        // beside the hint's twin from step 1 (`__hint`: the same insets and row are demanded).
+        val card = awaitToastCardAtRest(4_000)
+        note("  L1: the chrome's toast card at rest: $card")
+        if (card != null) {
+            check("L1: the toast card is 8 px inside its frame's sides and bottom, one 44 px row", cardInsetsAre(card, TOAST_INSET, TOAST_ROW))
+            check("L1: the toast card's radius, type and padding are §9.33's (8 px; 15/20 at 400; 3 px 14 px)",
+                card.optString("radius") == "8px" && card.optString("font") == "15px/20px 400" && card.optString("padding").startsWith("3px 14px"))
+        } else {
+            check("L1: the toast card is there to be measured", false)
+        }
         SystemClock.sleep(600)
         shot("11-refusal-toast")
         check("no file reached the page", field("file") == "none")
@@ -340,7 +397,11 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
         check("the kept photo is in the capture directory", captureFiles().size == 1)
     }
 
-    /** 8. The plain image input: Camera beside the files in the chooser; Camera under a finger, cancelled. */
+    /**
+     * 8. The plain image input: Camera beside the files in the chooser. First the round trip
+     * through Camera (the shutter, Done, the photo in the page: the `EXTRA_INITIAL_INTENTS`
+     * entry carries the output URI and its grant as Chrome's does); then Camera again, cancelled.
+     */
     private fun chooserWithCameraAndFiles() {
         note("\n8. the plain image input: the chooser")
         check("Choose an image is touched", tapPageButton("pick-label", "Choose an image", "the system chooser comes up", 12_000) { foreignInFront() })
@@ -352,27 +413,69 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
         check("the chooser offers Camera", cameraEntry != null)
         check("the chooser offers the files beside it", filesEntry != null)
         shot("15-chooser-camera-and-files")
+        val earlier = field("file")
+        val keptBefore = captureFiles()
+        if (cameraEntry == null) {
+            back()
+            poll(8_000) { frontPackage() == app.packageName }
+            check("the page still shows the earlier photo", field("file") == earlier)
+            shot("17-end")
+            return
+        }
+        // 8a. Camera, the shutter, Done: the photo reaches the page through the chooser.
+        check("Camera in the chooser opens the camera app", touchChooserCamera(cameraEntry))
+        SystemClock.sleep(3_000)
+        settleCameraApp()
+        shot("16-camera-from-chooser")
+        check("the camera app's shutter is touched (from the chooser)", touchCamera(SHUTTER_LABELS, SHUTTER_IDS, "the shutter"))
+        SystemClock.sleep(2_500)
+        val returned = poll(6_000) { field("file") != earlier && field("file") != "none" }
+        if (!returned) note("  Done touched: ${touchCamera(DONE_LABELS, DONE_IDS, "Done")}")
+        val delivered = poll(15_000) { field("file") != earlier && field("file") != "none" }
+        note("  the page after the chooser's Camera: file=${field("file")} size=${field("size")} type=${field("type")} count=${field("count")}; in front ${frontPackage()}")
+        check("the photo taken through the chooser's Camera reached the page", delivered)
+        check("it is a new camera output file (photo-<time>.jpg), not step 7's", field("file")?.matches(Regex("photo-\\d+\\.jpg")) == true && field("file") != earlier)
+        check("the photo has a size", (field("size")?.toLongOrNull() ?: 0L) > 0L)
+        check("the app is in front again", poll(8_000) { frontPackage() == app.packageName })
+        SystemClock.sleep(1_500)
+        shot("16b-chooser-photo-in-the-page")
         val kept = captureFiles()
-        if (cameraEntry != null) {
-            val point = touchTapPoint(cameraEntry)
-            val opened = point != null && poll(20_000) { frontPackage() == cameraApp }
-            if (point != null && !opened) touchFault("a touch on the chooser's Camera did not open the camera app")
-            check("Camera in the chooser opens the camera app", opened)
+        note("  capture directory: $kept (before: $keptBefore; both photos kept for their uploads)")
+        check("both kept photos are in the capture directory", kept.size == keptBefore.size + 1)
+        // 8b. The chooser again, Camera, Back: the file the cancelled capture would have written is gone.
+        val taken = field("file")
+        check("Choose an image is touched again", tapPageButton("pick-label", "Choose an image", "the chooser comes up again", 12_000) { foreignInFront() })
+        SystemClock.sleep(2_000)
+        val cameraAgain = awaitInWindows(8_000) { it == CAMERA_ENTRY }
+        check("the chooser offers Camera again", cameraAgain != null)
+        if (cameraAgain != null) {
+            check("Camera in the chooser opens the camera app again", touchChooserCamera(cameraAgain))
             SystemClock.sleep(2_000)
             settleCameraApp()
-            shot("16-camera-from-chooser")
             back()
             check("back cancels the camera", poll(10_000) { frontPackage() == app.packageName })
             SystemClock.sleep(1_500)
             val now = captureFiles()
-            note("  after the cancel: capture directory $now (before the chooser: $kept)")
-            check("the cancelled capture's file is gone, the kept photo stays", now == kept)
+            note("  after the cancel: capture directory $now (before this chooser: $kept)")
+            check("the cancelled capture's file is gone, the kept photos stay", now == kept)
         } else {
             back()
             poll(8_000) { frontPackage() == app.packageName }
         }
-        check("the page still shows the earlier photo", field("file")?.matches(Regex("photo-\\d+\\.jpg")) == true)
+        check("the page still shows the photo from the chooser", field("file") == taken)
         shot("17-end")
+    }
+
+    /** A real touch on the chooser's Camera entry, then the camera app in front; a touch fault when it went in for nothing. */
+    private fun touchChooserCamera(entry: AccessibilityNodeInfo): Boolean {
+        val point = touchTapPoint(entry) ?: run {
+            note("  the chooser's Camera has no bounds a finger can reach")
+            return false
+        }
+        val opened = poll(20_000) { frontPackage() == cameraApp }
+        if (!opened) touchFault("a touch on the chooser's Camera at ${point.x.toInt()},${point.y.toInt()} did not open the camera app")
+        else note("  finger on the chooser's Camera at ${point.x.toInt()},${point.y.toInt()}: the camera app in front")
+        return opened
     }
 
     /**
@@ -403,6 +506,83 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
         coreInvoke("settings.update", """{"colorScheme":"light"}""")
         SystemClock.sleep(1_500)
         shot("18-light-again")
+    }
+
+    /**
+     * 10. The embed (A2): a finger on the iframe's clip. The frame's document takes its video
+     * fullscreen; the main document's fullscreen element is the `<iframe>`, which has no video in
+     * its subtree, so the main frame's report is 0 x 0 and the turn rides the frame's own report,
+     * heard through `TabWebView.onPageMessage` and taken by `Host.fullscreenVideo` while the layer
+     * is up. The hint's key reset first: the hint is the layer's cue, embed or not (B3).
+     */
+    private fun embedFullscreenTurnsAndHints() {
+        note("\n10. the same-origin iframe's clip into fullscreen (an embedded player)")
+        coreInvoke("settings.update", """{"fullscreenHintDone":false}""")
+        check("the once-key is reset for the embed", poll(4_000) { !hintDone() })
+        SystemClock.sleep(800)
+        note("  before: ${embedState()}; page fs=${field("fs")} el=${field("el")}")
+        val touchedAt = SystemClock.uptimeMillis()
+        // The iframe fills with its clip, so the frame's box is the finger's target.
+        check("the embed's clip is touched", tapPageButton("embed", "Embedded player", "the frame's video goes fullscreen", 15_000) {
+            host.fullscreenTab?.tabId == TAB && embedState()?.optInt("fs") == 1
+        })
+        val seen = awaitHint(6_000, present = true)
+        val hint = if (seen == null) null else awaitHintAtRest(2_500) ?: seen
+        shot("19-embed-fullscreen-hint")
+        note("  ${SystemClock.uptimeMillis() - touchedAt} ms after the touch: host fullscreenTab=${host.fullscreenTab?.tabId}; the main document: fs=${field("fs")} el=${field("el")}; the frame: ${embedState()}")
+        check("the main document's fullscreen element is the iframe (no video of its own to report)", field("el") == "embed")
+        check("the frame's document has its video fullscreen", embedState()?.optString("el") == "v")
+        check("the hint stands for the embed's fullscreen", seen != null)
+        if (hint != null) note("  hint: $hint")
+        val turned = poll(10_000) { landscape() }
+        note("  screen landscape ${SystemClock.uptimeMillis() - touchedAt} ms after the touch: $turned; rotation ${rotation()}; requestedOrientation ${requested()}; dumpsys window: ${dumpsysRotation()}")
+        check("the screen turned to landscape on the frame's own size report", turned)
+        check("the activity asks for SENSOR_LANDSCAPE", requested() == ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE)
+        check("the host holds the orientation for the embed's video", host.fullscreenLandscape)
+        awaitHint(6_000, present = false)
+        SystemClock.sleep(600)
+        shot("20-embed-fullscreen-landscape")
+        back()
+        check("back leaves the embed's fullscreen", poll(10_000) { host.fullscreenTab == null })
+        check("the screen is portrait again", poll(10_000) { !landscape() })
+        check("the orientation is given back (UNSPECIFIED)", requested() == ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED)
+        check("the frame's document left fullscreen too", poll(5_000) { embedState()?.optInt("fs") == 0 })
+        SystemClock.sleep(2_000)
+        pageJs("(function(){var w=document.getElementById('embed').contentWindow;var v=w&&w.document.getElementById('v');if(v)v.pause()})()")
+        shot("21-after-embed")
+    }
+
+    /** 11. The canvas (B3): fullscreen with no video in it – the hint all the same, no turn. */
+    private fun canvasFullscreenHints() {
+        note("\n11. the canvas into fullscreen (no video: the hint is the layer's cue)")
+        coreInvoke("settings.update", """{"fullscreenHintDone":false}""")
+        check("the once-key is reset for the canvas", poll(4_000) { !hintDone() })
+        SystemClock.sleep(800)
+        check("the canvas is touched", tapPageButton("stage", "Canvas", "the canvas goes fullscreen", 15_000) {
+            host.fullscreenTab?.tabId == TAB && field("el") == "stage"
+        })
+        val seen = awaitHint(6_000, present = true)
+        val hint = if (seen == null) null else awaitHintAtRest(2_500) ?: seen
+        shot("22-canvas-fullscreen-hint")
+        note("  host fullscreenTab=${host.fullscreenTab?.tabId}; page fs=${field("fs")} el=${field("el")}; hint: $hint")
+        check("the hint stands for a fullscreen with no video in it", seen != null)
+        check("the once-key is set again", poll(4_000) { hintDone() })
+        val turned = poll(3_000) { landscape() }
+        note("  rotation ${rotation()} requested ${requested()} held=${host.fullscreenLandscape}")
+        check("the screen stays portrait for a fullscreen without a video", !turned)
+        check("the activity asks for nothing (UNSPECIFIED)", requested() == ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED)
+        awaitHint(6_000, present = false)
+        back()
+        check("back leaves the canvas's fullscreen", poll(10_000) { host.fullscreenTab == null })
+        SystemClock.sleep(1_500)
+        shot("23-end")
+    }
+
+    /** What the embed's document sees (`__embedState` through the top document; same origin). */
+    private fun embedState(): JSONObject? {
+        val raw = pageJs("window.__embed ? window.__embed() : null")
+        val text = (JSONTokener(raw).nextValue() as? String) ?: return null
+        return runCatching { JSONObject(text) }.getOrNull()
     }
 
     // --- the screen ------------------------------------------------------------------------------
@@ -470,6 +650,44 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
     }
 
     private fun hintDone(): Boolean = coreState().getJSONObject("settings").optBoolean("fullscreenHintDone")
+
+    // --- the toast card (the hint's original, for the lead's L1) ---------------------------------
+
+    /**
+     * The chrome's toast card (`.zen-message-toast`) as laid out, against the message layer it
+     * sits in (the content frame's box): its insets from the layer's sides and bottom, its size,
+     * and the computed radius, type, padding and hairline – the numbers the hint's twin carries
+     * by value (`@shared/toastCard`).
+     */
+    private fun toastCard(): JSONObject? {
+        val raw = chromeJs(
+            "(function(){var c=document.querySelector('.zen-message-toast');var l=document.querySelector('.zen-message-layer');if(!c||!l)return null;" +
+                "var r=c.getBoundingClientRect(),f=l.getBoundingClientRect(),s=getComputedStyle(c),t=c.querySelector('.zen-message-text'),ts=t?getComputedStyle(t):s;" +
+                "return JSON.stringify({left:r.left-f.left,right:f.right-r.right,bottom:f.bottom-r.bottom,width:r.width,height:r.height,frameWidth:f.width,frameHeight:f.height," +
+                "radius:s.borderRadius,shadow:s.boxShadow,font:ts.fontSize+'/'+ts.lineHeight+' '+ts.fontWeight,padding:s.padding,border:s.borderTopWidth,transform:s.transform,text:c.textContent})})()"
+        )
+        val text = (JSONTokener(raw).nextValue() as? String) ?: return null
+        return runCatching { JSONObject(text) }.getOrNull()
+    }
+
+    /** The toast card once its spring has landed (two reads 150 ms apart at the same place), or as last seen. */
+    private fun awaitToastCardAtRest(timeoutMs: Long): JSONObject? {
+        var last: JSONObject? = null
+        poll(timeoutMs) {
+            val a = toastCard() ?: return@poll false
+            SystemClock.sleep(150)
+            val b = toastCard() ?: return@poll false
+            last = b
+            near(a.optDouble("bottom"), b.optDouble("bottom")) && near(a.optDouble("left"), b.optDouble("left"))
+        }
+        return last
+    }
+
+    private fun cardInsetsAre(card: JSONObject, inset: Double, row: Double): Boolean =
+        near(card.optDouble("left"), inset) && near(card.optDouble("right"), inset) && near(card.optDouble("bottom"), inset) && near(card.optDouble("height"), row)
+
+    /** Within a CSS pixel: the emulator's density (1.75) rounds a device pixel into fractions. */
+    private fun near(a: Double, b: Double): Boolean = kotlin.math.abs(a - b) <= 1.0
 
     /**
      * The palette the hint wears, by its host's text colour (the panel sits in a closed shadow
@@ -655,6 +873,9 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
     }
 
     companion object {
+        /** The toast card's inset from its frame's edges and its row (§9.33, `@shared/toastCard`): what the hint's twin is held to (L1). */
+        private const val TOAST_INSET = 8.0
+        private const val TOAST_ROW = 44.0
         /** The chooser's entry for `ACTION_IMAGE_CAPTURE`: the camera app's label. */
         private const val CAMERA_ENTRY = "Camera"
         private val FILES_ENTRIES = listOf("Files", "Documents", "Gallery", "Photos", "Media")
