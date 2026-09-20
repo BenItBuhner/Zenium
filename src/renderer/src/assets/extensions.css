@@ -312,7 +312,12 @@
   /*
    * A form field (§9.12): label above, 4 to the field, the message (description or validation)
    * under it; actions that belong to the field follow it on a desktop and, on a phone, become a
-   * full-width row under the message, two peers splitting it with an 8 gap (§9.11).
+   * full-width row under the message, two peers splitting it with an 8 gap (§9.11). The 8
+   * between the field and its actions comes with the actions (pr-245 chassis (c)): the grid's
+   * empty `actions` track is 0 wide, but a column gap is drawn between the tracks whether or not
+   * one holds anything, and left a field without actions 8 short of its gutter. The wrappers
+   * render `.zen-v2-form-actions` only when there are actions, so the gap follows them. On a
+   * phone the grid is one column and has no column gap either way.
    */
   .zen-v2-form-field {
     display: grid;
@@ -322,8 +327,11 @@
       'control actions'
       'message message';
     align-items: center;
-    column-gap: 8px;
+    column-gap: 0;
     row-gap: 4px;
+  }
+  .zen-v2-form-field:has(> .zen-v2-form-actions) {
+    column-gap: 8px;
   }
   .zen-v2-field-label {
     grid-area: label;
