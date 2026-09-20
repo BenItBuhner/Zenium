@@ -296,6 +296,11 @@ export interface UiState {
   /** The Clear browsing data dialog (or sheet) is up over the page or over Settings. */
   clearBrowsingDataOpen: boolean
   /**
+   * Zenium's print preview (`zen://print`, `print/PrintPreviewDialog`): a frame dialog over the
+   * page in `tabId`, which it renders to a PDF and shows, with Chrome's options beside it.
+   */
+  printPreview: { tabId: string } | null
+  /**
    * An autofill prompt (save / update a login, save an address or card, pick a passkey account)
    * is up over the page, and how: a popover under the URL bar (no scrim), a sheet, or a dialog.
    */
@@ -468,6 +473,7 @@ export const uiStore = createStore<UiState>(
     barMenuOpen: false,
     permissionPromptOpen: false,
     clearBrowsingDataOpen: false,
+    printPreview: null,
     autofillPrompt: null,
     autofillPromptCollapsed: null,
     autofillPromptByHand: null,
@@ -822,6 +828,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.defaultBrowserPrompt &&
     !ui.install &&
     !ui.clearBrowsingDataOpen &&
+    !ui.printPreview &&
     !ui.autofillPrompt &&
     !ui.autofillEdit &&
     !ui.autofillPassphrase &&
@@ -878,6 +885,7 @@ export function invalidateSnapshot(): void {
     !ui.defaultBrowserPrompt &&
     !ui.install &&
     !ui.clearBrowsingDataOpen &&
+    !ui.printPreview &&
     !ui.autofillPrompt &&
     !ui.stageActive &&
     !ui.zoomBubble &&
@@ -1490,6 +1498,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.install !== null ||
     ui.mediaSheet !== null ||
     ui.clearBrowsingDataOpen ||
+    ui.printPreview !== null ||
     ui.autofillPrompt !== null ||
     ui.stageActive ||
     ui.zoomBubble !== null ||
@@ -1664,6 +1673,29 @@ export async function openClearBrowsingData(activeTabId: string | null): Promise
 export function closeClearBrowsingData(): void {
   if (!uiStore.get().clearBrowsingDataOpen) return
   uiStore.set({ clearBrowsingDataOpen: false })
+  invalidateSnapshot()
+  returnFocusToPage()
+}
+
+/**
+ * The print preview (`print/PrintPreviewDialog`, the `overlay.open` event with kind `print`
+ * from `core/print.ts`): a dialog through the frame dialog host over the page it prints, whose
+ * snapshot has to exist first for the scrim to dim. Ctrl+P on an open preview leaves it as it
+ * is, as Chrome's does.
+ */
+export async function openPrintPreview(tabId: string): Promise<void> {
+  if (uiStore.get().printPreview) return
+  await captureActiveTab(tabId)
+  run('focus.chrome', undefined)
+  uiStore.set({ printPreview: { tabId } })
+}
+
+/** The preview closed – Cancel, Escape, the scrim, a finished Print or Save, the tab going. */
+export function closePrintPreview(): void {
+  const open = uiStore.get().printPreview
+  if (!open) return
+  uiStore.set({ printPreview: null })
+  run('print.close', { tabId: open.tabId })
   invalidateSnapshot()
   returnFocusToPage()
 }

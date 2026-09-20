@@ -6,6 +6,7 @@ import { announce, findAnnouncement } from '@renderer/lib/announce'
 import { run } from '@renderer/lib/api'
 import { hint } from '@renderer/lib/shortcuts'
 import { useViewport } from '@renderer/lib/formFactor'
+import { isPdfViewerTab, pdfCommand, pdfViewerStore } from '@renderer/lib/pdfViewer'
 import { closeFindBar, uiStore, type UiState } from '@renderer/lib/ui'
 import { cn, findCounter } from '@renderer/lib/utils'
 
@@ -18,6 +19,10 @@ import { cn, findCounter } from '@renderer/lib/utils'
  * The query lives in the UI store (`findText`), so the bar keeps it across a remount, and each
  * opening arrives as a `findRequest`: Ctrl+F re-selects the query (or brings the page's selection
  * in), F3 / Ctrl+G step to the next or previous match at once.
+ *
+ * Over the inline PDF viewer (`zen://pdf`, `lib/pdfViewer.ts`) the same bar searches the
+ * document instead of the page's text: the query goes to the viewer as its `find` command and
+ * the count is the viewer's tally, growing as its pages are read (Chrome's find in a PDF).
  */
 export function FindBar({
   state,
@@ -36,15 +41,45 @@ export function FindBar({
   const barRef = useRef<HTMLDivElement>(null)
   /** The query the page's find session is for ('' between sessions): only it can be followed up. */
   const session = useRef('')
-  const result = state.findResult?.tabId === tabId ? state.findResult : null
+  const pdf = isPdfViewerTab(state, tabId)
+  const pdfFind = pdfViewerStore.use((s) => (pdf ? (s.reports[tabId]?.find ?? null) : null))
+  const result = pdf
+    ? pdfFind && pdfFind.query === text
+      ? {
+          tabId,
+          activeMatchOrdinal: pdfFind.current,
+          matches: pdfFind.total,
+          searching: pdfFind.searching
+        }
+      : null
+    : state.findResult?.tabId === tabId
+      ? { ...state.findResult, searching: false }
+      : null
   const phone = useViewport().formFactor === 'phone'
 
   const search = (value: string, forward: boolean): void => {
     // Stepping continues the session for that text; anything else starts one from the selection.
     const follow = value !== '' && session.current === value
     session.current = value
+    if (pdf) {
+      if (!value) pdfCommand(tabId, { kind: 'stopFind' })
+      else
+        pdfCommand(tabId, {
+          kind: 'find',
+          query: value,
+          direction: follow ? (forward ? 'next' : 'prev') : 'new'
+        })
+      return
+    }
     run('find.start', { tabId, text: value, forward, newSession: !follow })
   }
+
+  // The bar leaving the viewer takes its marks with it (the core's `find.stop` reaches the page's
+  // own find, which the viewer document does not use).
+  useEffect(() => {
+    if (!pdf) return
+    return () => pdfCommand(tabId, { kind: 'stopFind' })
+  }, [pdf, tabId])
 
   // Every opening focuses the field and selects the query so typing replaces it. A query that no
   // session is running for (the bar reopened with the last one, a selection came in) is searched
@@ -84,7 +119,8 @@ export function FindBar({
   }
 
   const count = findCounter(text, result)
-  const noMatch = result !== null && result.matches === 0
+  // A tally still growing (the viewer reading its pages) is not "nothing found" yet.
+  const noMatch = result !== null && result.matches === 0 && !result.searching
   const buttonClass = phone
     ? 'zen-toolbar-button h-11 w-11 rounded-[12px]'
     : 'zen-toolbar-button zen-find-button'

@@ -19,6 +19,7 @@ import { closeOverview, overviewIsOpen, stageStore } from '@renderer/lib/gesture
 import { closeSpacesDrawer } from '@renderer/lib/gestures/drawer'
 import { mediaSession } from '@renderer/lib/media'
 import { barFade } from '@renderer/lib/motion/recede'
+import { isPdfViewerTab } from '@renderer/lib/pdfViewer'
 import { usePrivateSurface } from '@renderer/lib/privateSurface'
 import { isPrivateTab } from '@renderer/lib/privateTabs'
 import { activeSpace, activeTab } from '@renderer/lib/selectors'
@@ -492,8 +493,16 @@ export function PillContent({
   // translation chip – it is neither a secure site nor an insecure one, whatever origin the
   // Android runtime serves it from (§10.1 applied to extension pages, `extensionPageChrome`).
   const extension = shown ? extensionPageChrome(shown.url, state.extensions) : null
-  // The site alone, as Chrome's omnibox shows it at rest: the path would only push it off the pill.
-  const url = shown ? (extension ? extension.name : displayHost(shown.url)) : ''
+  // The site alone, as Chrome's omnibox shows it at rest: the path would only push it off the
+  // pill. The PDF viewer page reads as its document (the file's name, then the title the
+  // document names), the way Chrome's tab does; there is no site to show.
+  const url = shown
+    ? extension
+      ? extension.name
+      : isPdfViewerTab(state, shown.id) && shown.title
+        ? shown.title
+        : displayHost(shown.url)
+    : ''
   // No lock over a certificate that failed verification (the interstitial, or the page the user
   // proceeded to): the connection is not secure, as site information says.
   const secure = shown?.url.startsWith('https://') && !shown.certificateError && !extension

@@ -354,9 +354,10 @@ describe('the viewer page', () => {
     })
     expect(taken).toBe(true)
     expect(f.scripts.at(-1)?.code).toBe(pdfCommandScript({ kind: 'goTo', page: 5 }))
-    // Leaving the viewer forgets the report; a tab without one takes no command.
+    // Leaving the viewer forgets the report (the tabs service says so as the navigation
+    // commits); a tab without one takes no command.
     f.browser.tabs.navigate(tab.id, 'https://example.test/elsewhere', { transition: 'typed' })
-    f.browser.pdf.onNavigated(tab.id, 'https://example.test/elsewhere')
+    f.browser.pdf.onNavigated(tab.id)
     expect(f.browser.pdf.report(tab.id)).toBeNull()
     expect(await f.browser.pdf.command(tab.id, { kind: 'rotate' })).toBe(false)
   })

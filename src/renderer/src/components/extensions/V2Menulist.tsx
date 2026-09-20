@@ -45,6 +45,7 @@ export function V2Menulist<T extends string>({
   onChange,
   disabled = false,
   readOnly = false,
+  autoFocus = false,
   className
 }: {
   /** What the list chooses (the accessible name of the control and the phone sheet's title). */
@@ -56,6 +57,8 @@ export function V2Menulist<T extends string>({
   disabled?: boolean
   /** A busy form's control (§9.30): full opacity, its value in place, opening nothing. */
   readOnly?: boolean
+  /** Takes the keyboard as it mounts: a form's first field (§9.22). */
+  autoFocus?: boolean
   className?: string
 }): JSX.Element {
   const [anchor, setAnchor] = useState<Anchor | null>(null)
@@ -82,6 +85,7 @@ export function V2Menulist<T extends string>({
         aria-expanded={anchor !== null || undefined}
         aria-readonly={readOnly || undefined}
         disabled={disabled}
+        autoFocus={autoFocus}
         onClick={(e) => {
           if (!readOnly) setAnchor(anchorOf(e.currentTarget))
         }}

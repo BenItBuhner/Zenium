@@ -1,6 +1,7 @@
 import type { OverlayKind } from '@shared/types'
 import { INTERNAL_PAGE_IDS, type InternalPageId } from '@shared/internalPages'
 import type { ThirdPartyCookieMode } from '@shared/privacy'
+import { isPreviewPdfVariant, type PreviewPdfVariant } from './previewPdf'
 
 /**
  * The overlays a preview state may open by name. Settings (with the Shortcuts and Sync overlays,
@@ -90,6 +91,10 @@ export interface PreviewDownloadSpec {
   deleted: boolean
   /** The file comes from the private container. */
   private: boolean
+  /** The tab whose own navigation produced the response (a PDF the viewer opens), if one did. */
+  sourceTabId?: string | null
+  /** The response came from the tab's navigation rather than a "Download link" (`core/pdf.ts`). */
+  navigation?: boolean
 }
 
 /** The most blocked pop-ups a preview seeds on the page (the list scrolls past a handful). */
@@ -213,6 +218,19 @@ export type PreviewState =
       /** The third-party cookie setting to put in place first; absent, the profile's stands. */
       cookies?: ThirdPartyCookieMode
       /** Steps taken once the surface is up (the overview's header menu, its question). */
+      then?: PreviewStep[]
+    }
+  | {
+      /**
+       * The active tab navigated to a PDF (`pdf=<variant>`, one of `PREVIEW_PDF_VARIANTS`): the
+       * stand-in downloader completes the file and the core opens it in the viewer page, whose
+       * bar is up under the pages.
+       */
+      kind: 'pdf'
+      variant: PreviewPdfVariant
+      /** The find bar opened over the viewer with this typed (`find=`; empty opens it blank). */
+      find?: string
+      /** Steps taken once the document has reported (the bar's controls, its sheets' rows). */
       then?: PreviewStep[]
     }
   | { kind: 'find'; text: string }
@@ -376,7 +394,10 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * #135 spelt them),
  * `autofill=<surface>` for one of PREVIEW_AUTOFILL staged with sample data (a manager surface is
  * the Settings tab on its Autofill section and takes `show=<text>` and `then=<steps>` like
- * `page`), `find=<text>` for the find bar with that text typed (`find=` opens it empty),
+ * `page`), `pdf=<variant>` for the active tab navigated to a sample PDF the viewer page opens
+ * (`sample`, `locked`, `broken`, `slow`; see `previewPdf.ts`; with `find=<text>` for the find
+ * bar over it and `then=<steps>` for the bar's controls: `tap:Contents`, `tap:Unlock;type:pdf-password=zenium`),
+ * `find=<text>` for the find bar with that text typed (`find=` opens it empty),
  * `pull=<n>` for the active page held pulled down at n percent of the refresh threshold
  * (`pull=refresh` pulls past it and lets go), `barhide=<n>` for the phone bar held n percent
  * of the way off its edge by a scroll (`barhide=hidden` scrolls it off and lets go, so it rests
@@ -406,11 +427,12 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * are up: `Show`, `Edit`, `Refine`). When several are given, `page` wins over
  * `extension-page`, that over `group`, `group` over `overlay`, `overlay` over `menu`, `menu`
  * over `sheet`, `sheet` over the permission `prompt`, that over `private`, `private` over
- * `autofill`, `autofill` over `find`, `find` over `pull`, `pull` over `barhide`, `barhide` over
- * `zoom`, `zoom` over `reader`, `reader` over `error`, `error` over the messages, the messages
- * over `webapp`, `webapp` over `media`, `media` over `download`, `download` over `popups`,
- * `popups` over the security `prompt`, that over `voice`, `voice` over `overview`, and
- * `overview` over `urlbar`. A leading `#` (the URL hash as read) is ignored.
+ * `autofill`, `autofill` over `pdf`, `pdf` over `find` (which it takes along), `find` over
+ * `pull`, `pull` over `barhide`, `barhide` over `zoom`, `zoom` over `reader`, `reader` over
+ * `error`, `error` over the messages, the messages over `webapp`, `webapp` over `media`,
+ * `media` over `download`, `download` over `popups`, `popups` over the security `prompt`,
+ * that over `voice`, `voice` over `overview`, and `overview` over `urlbar`. A leading `#`
+ * (the URL hash as read) is ignored.
  */
 export function parsePreviewSpec(spec: string): PreviewState {
   const params = new URLSearchParams(spec.startsWith('#') ? spec.slice(1) : spec)
@@ -492,7 +514,15 @@ export function parsePreviewSpec(spec: string): PreviewState {
     if (then.length > 0) state.then = then
     return state
   }
+  const pdf = params.get('pdf')
   const find = params.get('find')
+  if (pdf !== null && isPreviewPdfVariant(pdf)) {
+    const state: Extract<PreviewState, { kind: 'pdf' }> = { kind: 'pdf', variant: pdf }
+    if (find !== null) state.find = find
+    const then = parsePreviewSteps(params.get('then'))
+    if (then.length > 0) state.then = then
+    return state
+  }
   if (find !== null) return { kind: 'find', text: find }
   const pull = params.get('pull')
   if (pull === 'refresh') return { kind: 'pull', progress: PREVIEW_PULL_MAX, released: true }
