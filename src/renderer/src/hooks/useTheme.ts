@@ -75,6 +75,16 @@ interface BlendRun {
 }
 
 /**
+ * The frame the chrome keeps around the content (`--zen-padding`, CSS px): none borderless,
+ * slimmer on a phone. The one rule for it, so code that needs the number (the bar that hides on
+ * scroll takes the band minus this gutter as its travel, `lib/barHide.ts`) reads what the theme
+ * writes rather than the stylesheet's default it may find on the root before the theme has run.
+ */
+export function chromeGutter(formFactor: FormFactor, borderless: boolean): number {
+  return borderless ? 0 : formFactor === 'phone' ? 6 : 8
+}
+
+/**
  * Applies the active space's gradient theme to the document root. On the phone every change of
  * the window family's colour – the private theme while a private tab is in view (MOT-14), a
  * Space switch, the scheme – is the one 240 ms blend of §11.5, painted straight to the root's
@@ -191,7 +201,7 @@ export function useTheme(state: UIState, formFactor: FormFactor = 'desktop'): Re
     const borderless = state.settings.borderless || state.window.fullscreen
     // Phones keep a slimmer frame around the content card; the bottom bar sits right under it.
     const phone = formFactor === 'phone'
-    root.style.setProperty('--zen-padding', borderless ? '0px' : phone ? '6px' : '8px')
+    root.style.setProperty('--zen-padding', `${chromeGutter(formFactor, borderless)}px`)
     root.style.setProperty('--zen-content-radius', borderless ? '0px' : phone ? '14px' : '10px')
   }, [
     wallpaper,
