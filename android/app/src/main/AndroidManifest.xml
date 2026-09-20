@@ -140,7 +140,7 @@
             android:resizeableActivity="true"
             android:supportsPictureInPicture="true"
             android:windowSoftInputMode="adjustResize"
-            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|keyboard|navigation|uiMode|locale|layoutDirection|fontScale|colorMode">
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|keyboard|navigation|uiMode|locale|layoutDirection|fontScale|fontWeightAdjustment|colorMode">
             <!-- The launcher entry is one of the icon aliases below (Settings → Look and Feel → App
                  icon), which reach this activity through LauncherIconActivity; everything that
                  targets the activity itself keeps working whichever alias is on. Web links arrive

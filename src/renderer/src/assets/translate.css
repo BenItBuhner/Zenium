@@ -211,7 +211,7 @@
   background: var(--v2-border);
 }
 .zen-translate-result {
-  min-height: var(--v2-line-body);
+  min-height: var(--v2-line-body-box);
   font-size: var(--v2-font-body);
   line-height: var(--v2-line-body);
   white-space: pre-wrap;

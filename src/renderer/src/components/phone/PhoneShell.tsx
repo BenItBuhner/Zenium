@@ -2,6 +2,7 @@ import type { CSSProperties, JSX } from 'react'
 import { useEffect, useRef } from 'react'
 import { AudioLines, Globe, Languages, Lock, Search, VenetianMask } from 'lucide-react'
 import { internalPageOf } from '@shared/internalPages'
+import { securityIndicator } from '@shared/siteInfo'
 import type { PhoneBarPosition, Space, Tab, UIState } from '@shared/types'
 import { displayHost, isWebPageUrl } from '@shared/url'
 import { chromeGutter } from '@renderer/hooks/useTheme'
@@ -20,6 +21,7 @@ import { closeSpacesDrawer } from '@renderer/lib/gestures/drawer'
 import { mediaSession } from '@renderer/lib/media'
 import { barFade } from '@renderer/lib/motion/recede'
 import { isPdfViewerTab } from '@renderer/lib/pdfViewer'
+import { phoneAddressLabel } from '@renderer/lib/pillLabel'
 import { usePrivateSurface } from '@renderer/lib/privateSurface'
 import { isPrivateTab } from '@renderer/lib/privateTabs'
 import { activeSpace, activeTab } from '@renderer/lib/selectors'
@@ -436,11 +438,13 @@ export function PhoneBar({
         {/*
           The pill is a gesture surface, not a button: its site icon, address and lock are real
           buttons inside it, so TalkBack gets a node for each (a button's descendants would all
-          collapse into one). Taps are told apart in onTap by what was under the finger.
+          collapse into one). Taps are told apart in onTap by what was under the finger. The
+          surface itself carries no role and no name: a named container that takes clicks is a
+          TalkBack stop of its own ("Address") before the field inside it says the same and more
+          (#108's follow-up, A11Y-01), and nothing in it but its buttons may speak (the space
+          label is hidden from the tree, the address button says the space instead).
         */}
         <div
-          role="group"
-          aria-label={inert ? undefined : 'Address'}
           className={cn(
             'zen-phone-pill flex h-11 min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-full px-3.5 text-left',
             pillLook === 'docked' &&
@@ -527,18 +531,28 @@ export function PillContent({
   // opens the in-app player, which switches to the tab when it is another one.
   const session = mediaSession(state)
   const mediaSheetOpen = uiStore.use((s) => s.mediaSheet !== null)
+  // What TalkBack hears at the address: the host, then the connection's state as the core
+  // derives it (`securityIndicator`, OMN-02's states) – spoken here even where the phone pill
+  // draws no chip for it – then the space, when there is more than one (A11Y-01).
+  const indicator = shown
+    ? securityIndicator(shown.url, shown.errorCode ?? null, shown.certificateError ?? null)
+    : null
+  const spaceName = state.spaces.length > 1 ? space.name : null
   const Control = interactive ? 'button' : 'span'
   const controlProps = interactive ? { type: 'button' as const } : {}
+  // The chips are §9.3's 44 × 44 boxes over the glyph positions the pill has always had: each
+  // box is laid over the room its 32 predecessor took, the negative margins carrying the
+  // difference, so the address and the chips sit where they did and only the targets grew.
   return (
     <span
       key={shown?.id ?? 'empty'}
-      className="zen-animate-fade flex min-w-0 flex-1 items-center gap-2"
+      className="zen-animate-fade flex h-full min-w-0 flex-1 items-center gap-2"
       style={{ transform: shift ? `translateX(${shift}px)` : undefined }}
     >
       <Control
         {...controlProps}
         className="flex h-full min-w-0 flex-1 items-center text-left"
-        aria-label={interactive ? (url ? `Address, ${url}` : 'Search or enter address') : undefined}
+        aria-label={interactive ? phoneAddressLabel(url, indicator, spaceName) : undefined}
       >
         <span
           className={cn('min-w-0 flex-1 truncate text-[14px]', !url && 'text-[var(--zen-muted)]')}
@@ -561,7 +575,7 @@ export function PillContent({
           expanded={siteInfoOpen}
           data-site-info
           data-private-mark={privateMark || undefined}
-          className="order-first -ml-1.5 -mr-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
+          className="order-first -ml-3 -mr-3.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-full"
         >
           {privateMark ? (
             <VenetianMask className="h-5 w-5 shrink-0 opacity-60" strokeWidth={1.75} aria-hidden />
@@ -591,7 +605,7 @@ export function PillContent({
           popup="dialog"
           expanded={siteInfoOpen}
           data-site-info
-          className="-mx-1.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
+          className="-mx-3 flex h-11 w-11 shrink-0 items-center justify-center rounded-full"
         >
           <Lock className="h-3.5 w-3.5 opacity-50" />
         </PillChip>
@@ -608,7 +622,7 @@ export function PillContent({
           }
           data-translate
           className={cn(
-            '-mx-1.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full',
+            '-mx-3 flex h-11 w-11 shrink-0 items-center justify-center rounded-full',
             isTranslating(translation) ? 'text-[var(--zen-accent)]' : 'opacity-50'
           )}
         >
@@ -625,7 +639,7 @@ export function PillContent({
           data-testid="media-chip"
           data-state={session.playing ? 'playing' : 'paused'}
           className={cn(
-            '-mx-1.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full',
+            '-mx-3 flex h-11 w-11 shrink-0 items-center justify-center rounded-full',
             session.playing ? 'text-[var(--zen-accent)]' : 'opacity-50'
           )}
         >
@@ -633,7 +647,10 @@ export function PillContent({
         </PillChip>
       )}
       {state.spaces.length > 1 && (
-        <span className="max-w-[64px] shrink-0 truncate text-[11px] text-[var(--zen-muted)]">
+        <span
+          className="max-w-[64px] shrink-0 truncate text-[11px] text-[var(--zen-muted)]"
+          aria-hidden="true"
+        >
           {space.icon || space.name}
         </span>
       )}

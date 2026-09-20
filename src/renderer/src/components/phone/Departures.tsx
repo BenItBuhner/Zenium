@@ -6,7 +6,7 @@ import { groupColorChannels } from '@renderer/lib/groups'
 import { REDUCED_FADE_MS } from '@renderer/lib/motion/flip'
 import { reducedMotion, SPRING_SNAPPY, SpringAnimation } from '@renderer/lib/motion/spring'
 import { departed, departStore, releaseDepartures, type Departure } from './departureStore'
-import { GROUP_HEADER, GROUP_PAD, GroupBadge } from './GroupCard'
+import { GROUP_PAD, GroupBadge } from './GroupCard'
 import { CardBody } from './OverviewCard'
 
 /** Travel (px) of the exit spring: its progress is 1 − position / this. */
@@ -113,10 +113,7 @@ function Exit({ item, activeTabId }: { item: Departure; activeTabId: string | nu
         } as CSSProperties
       }
     >
-      <div
-        className="zen-group-header flex shrink-0 items-center gap-2 pl-3 pr-2"
-        style={{ height: GROUP_HEADER }}
-      >
+      <div className="zen-group-header flex shrink-0 items-center gap-2 pl-3 pr-2">
         <GroupBadge folder={item.folder} />
         <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{item.folder.name}</span>
         <span className="text-[12px] tabular-nums text-[var(--zen-muted)]">{item.tabs.length}</span>

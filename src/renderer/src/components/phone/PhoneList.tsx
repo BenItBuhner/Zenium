@@ -126,8 +126,9 @@ export function PhoneSearchField({
           ref={ref}
           type="search"
           value={value}
+          // The placeholder names the field (A11Y-01): the WebView reads a text field's label
+          // and its placeholder both, so a label with the same words was heard twice.
           placeholder={placeholder}
-          aria-label={placeholder}
           autoFocus={autoFocus}
           autoComplete="off"
           spellCheck={false}

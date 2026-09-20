@@ -1,5 +1,5 @@
 import type { JSX } from 'react'
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useId, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, ChevronDown } from 'lucide-react'
 import { useEscape } from '@renderer/hooks/useEscape'
@@ -171,6 +171,7 @@ function MenulistSheet<T extends string>({
 }: PopupProps<T>): JSX.Element | null {
   const ready = useFloatingChrome()
   const sheet = useRef<BottomSheetHandle>(null)
+  const titleId = useId()
   useEscape(() => sheet.current?.dismiss())
   if (!ready) return null
   return createPortal(
@@ -178,7 +179,12 @@ function MenulistSheet<T extends string>({
       ref={sheet}
       onDismissed={onClose}
       handleLabel="Resize"
-      header={<span className="zen-sheet-title">{label}</span>}
+      labelledBy={titleId}
+      header={
+        <h2 id={titleId} className="zen-sheet-title">
+          {label}
+        </h2>
+      }
     >
       {/*
         Radio rows (§9.13, §9.14), as the Settings sheets' (§9.34): each row is the shared
