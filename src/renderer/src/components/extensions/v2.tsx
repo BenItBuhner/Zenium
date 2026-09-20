@@ -231,6 +231,7 @@ export function V2TitleBlock({
   id,
   title,
   description,
+  descriptionId,
   glyph,
   scrolled,
   className
@@ -238,6 +239,8 @@ export function V2TitleBlock({
   id?: string
   title: ReactNode
   description?: ReactNode
+  /** The description's id, for a dialog's `aria-describedby`. */
+  descriptionId?: string
   /** A 16 glyph (an icon, an extension's own) at the title's start. */
   glyph?: ReactNode
   scrolled?: boolean
@@ -249,7 +252,11 @@ export function V2TitleBlock({
         {glyph}
         <span className="min-w-0 flex-1">{title}</span>
       </h2>
-      {description && <p className="zen-v2-title-block-description">{description}</p>}
+      {description && (
+        <p id={descriptionId} className="zen-v2-title-block-description">
+          {description}
+        </p>
+      )}
     </div>
   )
 }
