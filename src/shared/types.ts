@@ -1962,6 +1962,13 @@ export interface Settings {
   hideToolbarOnScroll: boolean
   glanceEnabled: boolean
   glanceTrigger: GlanceTrigger
+  /**
+   * Split view drag and drop (split-12): a tab dragged to an edge of the page opens in a split
+   * view there – the four edge zones over the page. Off, the edges are plain page (the drag
+   * tears the tab off there, as it does past the zones); the panes of a split on screen stay
+   * targets. Absent in profiles from before it existed (read as true).
+   */
+  splitEdgeZones: boolean
   pinnedCloseBehavior: PinnedCloseBehavior
   pinnedResetOnStartup: boolean
   thirdPartyOnPinned: ThirdPartyPinnedBehavior

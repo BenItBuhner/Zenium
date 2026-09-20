@@ -131,6 +131,7 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
     !(phone && ui.urlbar.open) &&
     !newTabPage
   const dropKey = dropStore.use((s) => s.key)
+  const dropOverPage = dropStore.use((s) => s.page)
   // The translate bar shares the frame with the live page, under the strips and directly above
   // the page; chrome that stands in for the page (panels, the gesture stage) takes the whole frame.
   const translateBar = barStateOf(state, tab?.id)
@@ -239,13 +240,16 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
                  * scrim is the frame dialog host's (the sheet's on a phone). On a phone the
                  * capture is drawn plain: the sheet's scrim, fading with the sheet's own progress
                  * over the receded frame, is the one dim layer (design language v2 draft §11.5)
-                 * – a second, timed fade here was seen stacking with it.
+                 * – a second, timed fade here was seen stacking with it. A tab drag dims the
+                 * page only while the pointer is over it, with the split targets (split-12,
+                 * BUG-011): a plain reorder in the strip leaves the page looking as it was.
                  */}
                 {!phone && !panelAloneOverContent(ui) && !extensionChromeAloneOverContent(ui) && (
                   <div
                     className={cn(
                       'absolute inset-0 bg-black/35 transition-opacity',
-                      ui.drag && 'bg-black/20'
+                      ui.drag && 'bg-black/20',
+                      ui.drag && !dropOverPage && 'opacity-0'
                     )}
                   />
                 )}
@@ -267,12 +271,14 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
                   viewport={area}
                 />
               ))}
-            {ui.drag && local && tab && (
+            {/* The split targets show once the pointer is over the page, not as the drag starts (split-12). */}
+            {ui.drag && dropOverPage && local && tab && (
               <SplitDropZones
                 dropKey={dropKey}
                 group={group}
                 area={local}
                 draggedTabId={ui.drag.tabId}
+                edges={state.settings.splitEdgeZones}
               />
             )}
             {glanceActive && state.glance && local && (
@@ -446,18 +452,22 @@ const ZONE_CLASS =
  * and Edge's edge drop), or to join the split shown here as a pane on that side. With a split
  * open each pane is a target too (Edge): the dragged tab takes the pane over from the tab shown
  * in it, or – dragged from another pane of the same split – swaps panes with it. The edge zones
- * lie over the panes and win where they overlap.
+ * lie over the panes and win where they overlap. Mounted only while the pointer is over the
+ * page (`dropStore.page`, split-12); `edges` off (Settings › Look and Feel › "Split view drag
+ * and drop") leaves the four edge zones out and keeps the panes.
  */
 function SplitDropZones({
   dropKey,
   group,
   area,
-  draggedTabId
+  draggedTabId,
+  edges
 }: {
   dropKey: string | null
   group: SplitGroup | null
   area: Rect
   draggedTabId: string
+  edges: boolean
 }): JSX.Element {
   const { coarse } = useViewport()
   const zone = (key: string, className: string, label: string): JSX.Element => (
@@ -497,14 +507,16 @@ function SplitDropZones({
         </div>
       ))}
       {/* The zones' frame lets the pointer through to the panes; the zones themselves take it. */}
-      <div className="pointer-events-none absolute inset-0 p-4">
-        <div className="relative h-full w-full">
-          {zone('left', 'left-0 top-[20%] bottom-[20%] w-[22%]', 'Split left')}
-          {zone('right', 'right-0 top-[20%] bottom-[20%] w-[22%]', 'Split right')}
-          {zone('top', 'top-0 left-[26%] right-[26%] h-[18%]', 'Split top')}
-          {zone('bottom', 'bottom-0 left-[26%] right-[26%] h-[18%]', 'Split bottom')}
+      {edges && (
+        <div className="pointer-events-none absolute inset-0 p-4">
+          <div className="relative h-full w-full">
+            {zone('left', 'left-0 top-[20%] bottom-[20%] w-[22%]', 'Split left')}
+            {zone('right', 'right-0 top-[20%] bottom-[20%] w-[22%]', 'Split right')}
+            {zone('top', 'top-0 left-[26%] right-[26%] h-[18%]', 'Split top')}
+            {zone('bottom', 'bottom-0 left-[26%] right-[26%] h-[18%]', 'Split bottom')}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   )
 }

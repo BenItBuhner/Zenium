@@ -359,3 +359,17 @@ describe('the ways into a split (split-01)', () => {
     expect(group?.tabIds.sort()).toEqual([a.id, b.id].sort())
   })
 })
+
+describe('the split view drag and drop switch (split-12)', () => {
+  it('is on by default, turns off and on again, and reads anything but false as on', () => {
+    const h = harness()
+    expect(h.browser.state.settings.splitEdgeZones).toBe(true)
+    h.browser.handleCommand(h.win, 'settings.update', { splitEdgeZones: false })
+    expect(h.browser.state.settings.splitEdgeZones).toBe(false)
+    expect(h.browser.state.snapshot(h.win).settings.splitEdgeZones).toBe(false)
+    h.browser.handleCommand(h.win, 'settings.update', {
+      splitEdgeZones: 'yes' as unknown as boolean
+    })
+    expect(h.browser.state.settings.splitEdgeZones).toBe(true)
+  })
+})

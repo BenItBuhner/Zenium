@@ -3101,6 +3101,7 @@ export class Browser {
       }
     }
     s.sidebarWidth = Math.max(160, Math.min(520, s.sidebarWidth))
+    s.splitEdgeZones = s.splitEdgeZones !== false
     s.unloadTimeoutMinutes = sanitizeUnloadTimeout(s.unloadTimeoutMinutes)
     s.essentialsMax = Math.max(1, Math.min(24, Math.round(s.essentialsMax)))
     // A default the profile no longer has an engine for (removed, or named by a peer's build that
