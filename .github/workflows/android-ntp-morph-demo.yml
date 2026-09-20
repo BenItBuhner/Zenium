@@ -34,6 +34,9 @@ name: Android new tab page morph demo
 # away under the driver, never when the driver failed.
 on:
   workflow_dispatch:
+  # Run 1's dispatch (the branch has no dispatch token): taken off again in the next commit.
+  push:
+    branches: [cursor/android-ntp-fakebox-morph-52eb]
 
 permissions:
   contents: read
