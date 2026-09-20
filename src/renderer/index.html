@@ -3,9 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <title>Zenium</title>
+    <!--
+      worker-src blob: is for the chrome's own inlined workers (pdf.js behind the print preview):
+      the packaged chrome is a file:// document, from which Chromium takes a worker only as a blob
+      the document made itself; the script bytes are still the bundle's own.
+    -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: http:; connect-src 'self' ws: http://localhost:*"
+      content="default-src 'self'; script-src 'self'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: http:; connect-src 'self' ws: http://localhost:*"
     />
   </head>
 

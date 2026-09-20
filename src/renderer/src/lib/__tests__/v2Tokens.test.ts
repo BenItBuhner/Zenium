@@ -160,7 +160,11 @@ const V2_FILES: ReadonlyArray<string> = [
   'components/siteControls/settingsRows.tsx',
   'components/overlays/SiteSettingsSection.tsx',
   'components/overlays/SafetyCheckSection.tsx',
-  'components/phone/PhoneShell.tsx'
+  'components/phone/PhoneShell.tsx',
+  // The print preview (#225's UI): the option column's headings and validation lines in the
+  // deemphasised and danger inks, the preview pane's notice and paging pill in the panel family.
+  'components/print/PrintPreviewDialog.tsx',
+  'components/print/PreviewPane.tsx'
 ]
 
 /** The text of the first `selector {` block found after `from`. */
