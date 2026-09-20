@@ -24,6 +24,7 @@ import type { WebAppInfo } from './webApp'
 import type { ContentDefault } from './contentSettings'
 import type { VoiceEvent, VoiceStartOutcome } from './voice'
 import type { QrEvent, QrStartOutcome } from './qrScan'
+import type { MediaPositionInfo, MediaSessionAction } from './mediaSession'
 import type { SpellcheckSettings, SpellcheckStatus } from './spellcheck'
 import type { ReaderPreferences } from './reader'
 
@@ -2190,9 +2191,27 @@ export interface WindowState {
   prompt: WindowPrompt | null
 }
 
+/**
+ * A tab with media: on every host the tab and whether it is audible; on hosts whose page script
+ * reports the Media Session (Android) also what the OS controls show – the page's metadata (or
+ * the tab's title and site), the artwork, the position as of `positionAt` (epoch ms; the chrome
+ * extrapolates from it at `playbackRate`), the actions the page handles, and whether the
+ * window is in picture-in-picture for its video.
+ */
 export interface MediaState {
   tabId: string
   playing: boolean
+  title?: string
+  artist?: string
+  album?: string
+  artwork?: string | null
+  video?: boolean
+  position?: MediaPositionInfo | null
+  positionAt?: number
+  actions?: MediaSessionAction[]
+  pictureInPicture?: boolean
+  /** The media session's tab: the one the OS controls show (the in-app player leads with it). */
+  session?: boolean
 }
 
 /** A tab from another window being dragged over this one (`tab.dragOver`). */
@@ -2968,6 +2987,16 @@ export interface Commands {
   /** Renderer → host: a gesture reached a landmark (pick-up, midpoint, dock); vibrate briefly. */
   haptic: { args: { kind: HapticKind }; result: void }
   'media.toggle': { args: { tabId: string }; result: void }
+  /**
+   * The in-app player's controls: a Media Session action for the tab's page (its handler when it
+   * registered one, the element otherwise), `seekto` with `seekTime` in seconds.
+   */
+  'media.action': {
+    args: { tabId: string; action: MediaSessionAction | 'toggle'; seekTime?: number }
+    result: void
+  }
+  /** Picture-in-picture of the tab's video through the OS (`capabilities.pictureInPicture`); false when refused. */
+  'media.pictureInPicture': { args: { tabId: string }; result: boolean }
 
   'split.create': { args: { tabIds: string[]; layout: SplitLayout }; result: void }
   'split.toggleLayout': { args: { layout: SplitLayout }; result: void }

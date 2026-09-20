@@ -1,12 +1,11 @@
-import {
-  installPageScript,
-  type PageScriptFlags,
-  type PageScriptHostMessage
-} from '@shared/pageScript'
+import { installPageScript, type PageScriptFlags, type WebAppHostMessage } from '@shared/pageScript'
 import type { PageRules } from '@shared/types'
 import { installFormsScript } from '@shared/formsScript'
 import { installPasskeyObserver } from '@shared/passkeyObserver'
 import type { FormsCommand } from '@shared/forms'
+import type { MediaSessionHostMessage } from '@shared/mediaSession'
+import type { NotificationHostMessage } from '@shared/notifications'
+import { installNotificationPolyfill } from '@shared/notificationScript'
 import { downloadNameOf, rememberDownloadName, type DownloadNames } from './downloadNames'
 import { installViewportController, type PageRulesConfig } from './viewport'
 
@@ -100,7 +99,9 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
   let onFlags: ((flags: PageScriptFlags) => void) | null = null
   let onZap: ((on: boolean) => void) | null = null
   let onForms: ((command: FormsCommand) => void) | null = null
-  let onWebApp: ((message: PageScriptHostMessage) => void) | null = null
+  let onWebApp: ((message: WebAppHostMessage) => void) | null = null
+  let onMediaSession: ((message: MediaSessionHostMessage) => void) | null = null
+  let onNotification: ((message: NotificationHostMessage) => void) | null = null
   const onMessage = (event: { data: string }): void => {
     try {
       const data = JSON.parse(event.data) as {
@@ -110,15 +111,40 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
         rules?: PageRules
         deviceWidth?: number
         command?: FormsCommand
-        action?: PageScriptHostMessage['action']
-        outcome?: PageScriptHostMessage['outcome']
+        action?: string
+        outcome?: WebAppHostMessage['outcome']
+        seekTime?: number
+        seekOffset?: number
+        status?: NotificationHostMessage['status']
+        id?: string
       }
       if (data.type === 'flags' && data.flags) onFlags?.(data.flags)
       else if (data.type === 'zap') onZap?.(Boolean(data.on))
       else if (data.type === 'forms' && data.command) onForms?.(data.command)
       else if (data.type === 'webapp' && data.action)
-        onWebApp?.({ type: 'webapp', action: data.action, outcome: data.outcome })
-      else if (data.type === 'pageRules' && data.rules && topFrame) {
+        onWebApp?.({
+          type: 'webapp',
+          action: data.action as WebAppHostMessage['action'],
+          outcome: data.outcome
+        })
+      else if (data.type === 'mediaSession' && data.action) {
+        const message: MediaSessionHostMessage = {
+          type: 'mediaSession',
+          action: data.action as MediaSessionHostMessage['action']
+        }
+        if (typeof data.seekTime === 'number') message.seekTime = data.seekTime
+        if (typeof data.seekOffset === 'number') message.seekOffset = data.seekOffset
+        if (typeof data.on === 'boolean') message.on = data.on
+        onMediaSession?.(message)
+      } else if (data.type === 'notification' && data.action) {
+        const message: NotificationHostMessage = {
+          type: 'notification',
+          action: data.action as NotificationHostMessage['action']
+        }
+        if (data.status !== undefined) message.status = data.status
+        if (typeof data.id === 'string') message.id = data.id
+        onNotification?.(message)
+      } else if (data.type === 'pageRules' && data.rules && topFrame) {
         const config: PageRulesConfig = {
           rules: data.rules,
           deviceWidth: typeof data.deviceWidth === 'number' ? data.deviceWidth : 0
@@ -175,6 +201,25 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
     },
     onWebApp: (listener) => {
       onWebApp = listener
+    },
+    onMediaSession: (listener) => {
+      onMediaSession = listener
     }
   })
+
+  // `Notification` for the pages: the WebView hides the API, the browser shows the shade's cards
+  // under the site's channel. Top frame only: an embedded frame's notifications are its own
+  // page's business in Chrome too (they come through the embedder's permission).
+  if (topFrame) {
+    try {
+      installNotificationPolyfill({
+        send: (message) => bridge.postMessage(JSON.stringify({ token: TOKEN, ...message })),
+        onNotification: (listener) => {
+          onNotification = listener
+        }
+      })
+    } catch {
+      /* a page that sealed `window` keeps going without notifications */
+    }
+  }
 })()
