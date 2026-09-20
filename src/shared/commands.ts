@@ -153,6 +153,12 @@ export const URLBAR_COMMANDS: CommandDescriptor[] = [
     action: 'page.screenshot'
   },
   {
+    id: 'captureFullPage',
+    label: 'Capture Full Page',
+    keywords: ['screenshot', 'capture', 'full page', 'web capture', 'long'],
+    action: 'page.captureFullPage'
+  },
+  {
     id: 'fullscreen',
     label: 'Toggle Fullscreen',
     keywords: ['fullscreen', 'full screen'],

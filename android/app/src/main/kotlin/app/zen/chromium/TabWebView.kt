@@ -1273,10 +1273,24 @@ class TabWebView(
         }
     }
 
-    /** Full-resolution PNG bytes of the page, or null. */
-    fun screenshot(callback: (ByteArray?) -> Unit) {
+    /**
+     * Full-resolution PNG bytes of the page, or null: the visible area, or with `fullPage` the
+     * whole document – the page scrolled in viewport-sized steps and the strips stitched
+     * (`PageCapture`, the agents' full-page path; a WebView never paints what is off screen), cut
+     * at the capture's height limit. A document the stitcher cannot read (no page script yet)
+     * comes back as the visible area, as it does for the agents.
+     */
+    fun screenshot(fullPage: Boolean = false, callback: (ByteArray?) -> Unit) {
         if (width <= 0 || height <= 0 || !isShown) {
             callback(null)
+            return
+        }
+        if (fullPage) {
+            capture(CapturePlan.MODE_FULL_PAGE, null, "png", 100) { result ->
+                val data = result?.optString("data")
+                val bytes = if (data.isNullOrEmpty()) null else runCatching { Base64.decode(data, Base64.DEFAULT) }.getOrNull()
+                if (bytes != null) callback(bytes) else screenshot(false, callback)
+            }
             return
         }
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
