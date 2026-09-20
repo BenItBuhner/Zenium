@@ -212,9 +212,10 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
 
         // 2. A short drag back up the page: the bar comes back one to one under the finger, and a
         //    slow release from under half way snaps it home.
+        framesSettled()
         Finger().apply {
             down(pageX, pageY)
-            moveBy(0f, SHORT_BACK * density, 500)
+            moveBy(0f, SHORT_BACK * density, SHORT_MS)
             hold(700)
             val held = hideNumber()
             check("$edge: a ${SHORT_BACK.roundToInt()} dp drag up the page brings the bar part of the way back under the finger", held in 0.02..0.6, "hide $held")
@@ -228,9 +229,10 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
         finding("[$edge] back: hide ${hideValue()}, page ${pageInnerHeight()} px, frame ${frameHeight()} px")
 
         // 3. Part way and let go, both sides of half way: the nearer end.
+        framesSettled()
         Finger().apply {
             down(pageX, pageY)
-            moveBy(0f, -MID_LOW * density, 450)
+            moveBy(0f, -MID_LOW * density, MID_LOW_MS)
             hold(700)
             val held = hideNumber()
             check("$edge: a ${MID_LOW.roundToInt()} dp drag holds the bar part way off", held in 0.05..0.5, "hide $held")
@@ -238,10 +240,10 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
             up()
         }
         check("$edge: a release from under half way snaps the bar home", awaitHide(SETTLE_MS) { it <= 0.005 }, "hide ${hideValue()}")
-        SystemClock.sleep(800)
+        framesSettled()
         Finger().apply {
             down(pageX, pageY)
-            moveBy(0f, -MID_HIGH * density, 450)
+            moveBy(0f, -MID_HIGH * density, SHORT_MS)
             hold(700)
             val held = hideNumber()
             check("$edge: a ${MID_HIGH.roundToInt()} dp drag holds the bar past half way", held in 0.5..0.97, "hide $held")
@@ -424,11 +426,15 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
         )
         shot("$edge-15-end-hidden")
 
-        // Back up from the end: the bar comes back one to one under the finger and snaps home from under half way.
+        // Back up from the end: the bar comes back one to one under the finger and snaps home from
+        // under half way. The still just taken is let land first: the fifth run's return here at
+        // the top dock began inside the frame the capture stretched to a second, and one event
+        // carried 27 px of the drag past the slop to the page (see [SHORT_MS]).
+        framesSettled()
         val returnLog = frameLog {
             Finger().apply {
                 down(pageX, pageY)
-                moveBy(0f, SHORT_BACK * density, 500)
+                moveBy(0f, SHORT_BACK * density, SHORT_MS)
                 hold(700)
                 val held = hideNumber()
                 check(
@@ -538,6 +544,16 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
         finding("$where: the bar rests at ${hideValue()}, not $target; chrome ${chromeBarHide()}; host ${hostBarHide()}; dragging it ${if (target == 0.0) "back" else "off"}")
         if (target == 0.0) toTop() else drag(-LONG * density, 500)
         if (!awaitHide(SETTLE_MS, near)) finding("$where: the bar still rests at ${hideValue()}; chrome ${chromeBarHide()}; host ${hostBarHide()}")
+    }
+
+    /**
+     * Before a short drag whose claim rides on how much of it one frame's input carries (see
+     * [SHORT_MS]): every still taken so far is on disk (the encoder shares the emulator's cores
+     * with the app) and the app has had a moment past the capture's frame.
+     */
+    private fun framesSettled() {
+        awaitShots()
+        SystemClock.sleep(1_200)
     }
 
     /**
@@ -671,7 +687,10 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
      */
     private fun overviewSequence(edge: String) {
         settleBar(0.0, "$edge before the overview")
-        val tabs = findByLabelPrefix(TABS_LABEL)
+        // The button's label carries its count in the brackets (`Tabs (1)`), so it is matched by its
+        // start; `findByLabelPrefix` is for labels that go on after a comma (`Address, …`) and
+        // found no button in the fifth run.
+        val tabs = findNode { it.startsWith(TABS_LABEL) }?.let { node -> Rect().also { node.getBoundsInScreen(it) } }
         var open = false
         if (tabs != null) {
             Finger().tap(tabs.exactCenterX(), tabs.exactCenterY())
@@ -1085,14 +1104,30 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
         /**
          * Finger travel in dp. The bar's travel is 50 CSS px (the 56 band less the phone's 6
          * gutter); the WebView eats the touch slop (8 dp) before the first scroll, so a drag moves
-         * the bar by about its length less 8. 320 is off many times over; 40 brings the bar about
-         * two thirds of the way back; 26 and 44 hold it about a third and three quarters of the
-         * way off.
+         * the bar by about its length less 8. 320 is off many times over; 50 brings the bar most of
+         * the way back; 26 and 48 hold it about a third and three quarters of the way off.
+         *
+         * The short drags are slow ([SHORT_MS]): a top-docked bar takes a drag's travel only once
+         * the page's own scroller has moved under the finger, so what the slop-crossing
+         * `MotionEvent` carries past the slop scrolls the page and not the bar ([BarHideShare]:
+         * the one cost against Chrome, a px or two of one input sample on a device). On the
+         * emulator's software GPU a frame runs 200 to 300 ms and the input queued through it
+         * arrives as one event, so that cost is the drag's speed times a frame: the fifth run's
+         * 40 dp return at 500 ms lost 27 of its 57 px past the slop to one such event at the top
+         * dock (`app_time_stats: avg=295ms max=1071ms` in the same second) and stopped at 0.66,
+         * past the snap's half way. At 1,500 ms a 300 ms frame costs 17 px at most: the return
+         * (50 dp, 87 px, 74 past the slop) lands the bar between 0.15 and 0.36, the low mid-way
+         * drag (26 dp, 32 past the slop, 1,200 ms) between 0.24 and 0.37, the high one (48 dp, 71
+         * past the slop) between 0.61 and 0.81 – each side of the 0.45 the release snaps on with
+         * room, at either dock (the bottom one follows the page's scroll and pays nothing).
          */
         private const val LONG = 320f
-        private const val SHORT_BACK = 40f
+        private const val SHORT_BACK = 50f
         private const val MID_LOW = 26f
-        private const val MID_HIGH = 44f
+        private const val MID_HIGH = 48f
+        /** How long the short drags take; the low mid-way one, shorter, takes [MID_LOW_MS]. */
+        private const val SHORT_MS = 1_500L
+        private const val MID_LOW_MS = 1_200L
         /** Inside the inner scroller: well past the slop, well short of the box's own end. */
         private const val INNER_DRAG = 120f
         /** Near the page's end: more than the half travel left, so the page reaches its end under the finger and the rest overscrolls. */
