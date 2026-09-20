@@ -23,6 +23,7 @@ import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { BookmarkAllTabsDialog } from './bookmarks/BookmarkAllTabsDialog'
 import { EditBookmarkDialog } from './bookmarks/EditBookmarkDialog'
+import { InstallDialogLayer } from './install/InstallDialog'
 import { StarDialog } from './bookmarks/StarDialog'
 import { NewTabShortcutDialog } from './newtab/NewTabShortcutDialog'
 import { BookmarkEditSheet } from './phone/BookmarkEditSheet'
@@ -122,6 +123,7 @@ export function TabDialogs({ state }: { state: UIState }): JSX.Element {
       )}
       <InstallLayer state={state} />
       {phone && <MediaLayer state={state} />}
+      <InstallDialogLayer state={state} />
       <AutofillPrompts state={state} />
       <AutofillEditor state={state} />
       <PassphraseDialog />

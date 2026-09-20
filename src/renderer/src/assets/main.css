@@ -4848,6 +4848,31 @@
     width: 100%;
     object-fit: cover;
   }
+  /*
+   * The desktop's install dialog (`install/InstallDialog.tsx`): a `--v2-dialog` whose title block
+   * brings its own 16 to the body (§9.23), so the body has none above, the dialog's 16 gutter to
+   * the sides, 16 between its parts (§9.7) and none below – the §9.11 footer's 16 above is that
+   * gap, hugging and right-aligned at the 8 gap, 16 to the edge. The body scrolls should the
+   * shots and a long description outgrow the frame; the footer stays.
+   */
+  .zen-install-dialog-body {
+    display: flex;
+    min-height: 0;
+    flex: 1;
+    flex-direction: column;
+    gap: 16px;
+    padding: 0 16px;
+    overflow-y: auto;
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
+  }
+  .zen-install-dialog-footer {
+    display: flex;
+    flex-shrink: 0;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 16px;
+  }
 }
 
 @layer components {
