@@ -24,6 +24,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.support.v4.media.MediaMetadataCompat
+import android.support.v4.media.session.MediaControllerCompat
 import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
 import android.util.Log
@@ -93,6 +94,12 @@ class MediaSessions(private val host: Host, private val io: Executor) {
     /** Whether this device has picture-in-picture at all (Android TV and some Go devices do not). */
     val pictureInPictureSupported: Boolean =
         context.packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
+
+    /** The browser holds the audio focus right now (a session is playing and the system granted it). */
+    val hasAudioFocus: Boolean get() = focusRequest != null
+
+    /** The session as the system sees it (its metadata and playback state), for diagnostics and the demos. */
+    val controller: MediaControllerCompat get() = session.controller
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(c: Context, intent: Intent) {

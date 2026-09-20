@@ -1,0 +1,59 @@
+name: Android media demo
+
+# Records the media engine on the phone: a page playing a track with Media Session metadata and
+# the media notification (the system's media player in the shade worked with real fingers, the
+# media buttons, the lock screen with the track going on), a video into picture-in-picture (on
+# request, its menu's Pause / Play under a finger, the auto-enter from fullscreen on Home, the
+# window's X pausing the video), the Notification API (the in-chrome prompt answered with a
+# finger, the site's own channel, a finger on the card bringing the tab up), private browsing
+# (its own profile, the secured window, the "Close all private tabs" card under a finger, the
+# wipe) and the session ending with its tab, on a hardware-accelerated Android emulator; uploads
+# the video, the screenshots and the driver's notes. Dispatch-only, like the other demos: it
+# takes about fifteen minutes and says nothing about a change being correct. Same caveats as the
+# gesture demo about frame rate and the software GPU (the renderer is the shared workflow's
+# default). The build, the emulator and the Gradle cache live in android-emulator-demo.yml; this
+# file only picks the driver.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - cursor/services-android-media-24d1
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-media-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Media demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver picks the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.MediaDemo
+        DEMO_DIR=media-demo
+        DEMO_OUT=artifacts/android-media-demo
+        DEMO_VIDEO=services-android-media-android-run.mp4
+      artifact-name: android-media-demo
+      artifact-path: artifacts/android-media-demo/
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed: a run is then spent on the demo rather than on the runner.
+  record-again:
+    name: Media demo, second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.MediaDemo
+        DEMO_DIR=media-demo
+        DEMO_OUT=artifacts/android-media-demo
+        DEMO_VIDEO=services-android-media-android-run.mp4
+      artifact-name: android-media-demo-second-boot
+      artifact-path: artifacts/android-media-demo/

@@ -1,0 +1,223 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Zenium media demo</title>
+<style>
+  html, body { margin: 0; min-height: 100%; font-family: sans-serif; background: #fff; color: #15141a; }
+  h1 { font-size: 22px; margin: 0; padding: 20px 20px 6px; }
+  p.lead { margin: 0; padding: 0 20px 12px; font-size: 15px; line-height: 1.4; color: #5a5866; }
+  button.big { display: block; box-sizing: border-box; width: calc(100% - 40px); margin: 10px 20px; height: 88px;
+    font-size: 24px; font-weight: 600; border: 0; border-radius: 16px; background: #1b4332; color: #fff; }
+  button.big.alt { background: #2d6a4f; }
+  button.big:active { filter: brightness(1.2); }
+  video, audio { display: block; box-sizing: border-box; width: calc(100% - 40px); margin: 10px 20px; }
+  video { background: #000; aspect-ratio: 16 / 9; }
+  pre#state { margin: 0; padding: 14px 20px; font-size: 13px; line-height: 1.5; color: #333; white-space: pre-wrap; word-break: break-all; }
+</style>
+</head>
+<body>
+<h1 id="heading"></h1>
+<p class="lead" id="lead"></p>
+<div id="controls"></div>
+<pre id="state"></pre>
+<script>
+(function () {
+  // Serves as four pages by path: /audio (a track with Media Session metadata), /video (a clip for
+  // picture-in-picture), /notify (the Notification API) and /private (a cookie and a storage key,
+  // to see what a private profile keeps). Everything the page sees goes into its title as
+  // `PREFIX|key:value|key:value`, which the demo driver reads from the browser core's state.
+  var path = location.pathname.replace(/\/+$/, '') || '/audio';
+  var params = new URLSearchParams(location.search);
+  var state = {};
+  var prefix = 'MD';
+  var render = function () {
+    var parts = [prefix];
+    Object.keys(state).forEach(function (k) { parts.push(k + ':' + state[k]); });
+    var title = parts.join('|');
+    document.title = title;
+    document.getElementById('state').textContent = title.split('|').join('\n');
+  };
+  var $ = function (id) { return document.getElementById(id); };
+  var button = function (id, label, alt) {
+    var b = document.createElement('button');
+    b.id = id;
+    b.className = 'big' + (alt ? ' alt' : '');
+    b.textContent = label;
+    $('controls').appendChild(b);
+    return b;
+  };
+  var artwork = [{ src: '/art.png', sizes: '256x256', type: 'image/png' }];
+
+  var trackMedia = function (media, kind) {
+    state.kind = kind;
+    state.state = 'paused';
+    state.t = 0;
+    state.last = 'none';
+    var update = function () {
+      state.state = media.paused ? 'paused' : 'playing';
+      state.t = Math.floor(media.currentTime || 0);
+      if (kind === 'video') {
+        state.size = (media.videoWidth || 0) + 'x' + (media.videoHeight || 0);
+        state.fs = (document.fullscreenElement === media || media.webkitDisplayingFullscreen) ? 1 : 0;
+      }
+      render();
+    };
+    ['play', 'playing', 'pause', 'ended', 'seeked', 'timeupdate', 'loadedmetadata', 'volumechange'].forEach(function (e) {
+      media.addEventListener(e, update);
+    });
+    document.addEventListener('fullscreenchange', update);
+    media.addEventListener('webkitbeginfullscreen', update);
+    media.addEventListener('webkitendfullscreen', update);
+    media.addEventListener('error', function () { state.error = media.error ? media.error.code : 'unknown'; render(); });
+    update();
+    return update;
+  };
+
+  var installSession = function (media, title, artist, album, update) {
+    if (!('mediaSession' in navigator)) { state.session = 'missing'; render(); return; }
+    var track = 1;
+    var setMetadata = function () {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: title + (track > 1 ? ' ' + track : ''),
+        artist: artist,
+        album: album,
+        artwork: artwork
+      });
+    };
+    setMetadata();
+    // The page handles the track buttons itself (a playlist), and leaves play, pause and the
+    // seeks to the browser's defaults, as most sites do.
+    navigator.mediaSession.setActionHandler('nexttrack', function () {
+      track += 1; state.last = 'nexttrack'; state.track = track; setMetadata(); media.currentTime = 0; update();
+    });
+    navigator.mediaSession.setActionHandler('previoustrack', function () {
+      track = Math.max(1, track - 1); state.last = 'previoustrack'; state.track = track; setMetadata(); media.currentTime = 0; update();
+    });
+    state.session = 'set';
+    state.track = track;
+    render();
+  };
+
+  if (path === '/audio') {
+    prefix = 'MD';
+    $('heading').textContent = 'Background audio';
+    $('lead').textContent = 'A two-minute track with Media Session metadata. Zenium shows it on the media notification, the lock screen and the headset buttons, and keeps playing behind other apps.';
+    var audio = document.createElement('audio');
+    audio.id = 'media';
+    audio.src = '/tone.wav';
+    audio.preload = 'auto';
+    audio.controls = true;
+    $('controls').appendChild(audio);
+    var playAudio = button('play', 'Play track');
+    var update = trackMedia(audio, 'audio');
+    audio.addEventListener('play', function () { playAudio.textContent = 'Pause track'; });
+    audio.addEventListener('pause', function () { playAudio.textContent = 'Play track'; });
+    playAudio.addEventListener('click', function () {
+      if (audio.paused) {
+        audio.play().catch(function (e) { state.error = 'play:' + e.name; render(); });
+      } else {
+        audio.pause();
+      }
+    });
+    installSession(audio, 'Zenium demo track', 'The Zenium demo band', 'Wave 3', update);
+  } else if (path === '/video') {
+    prefix = 'MD';
+    $('heading').textContent = 'Video and picture-in-picture';
+    $('lead').textContent = 'A looping clip. Playing, it can go into a small window over other apps; playing fullscreen, it goes there by itself when you leave for Home.';
+    var video = document.createElement('video');
+    video.id = 'media';
+    video.src = '/clip.mp4';
+    video.loop = true;
+    video.setAttribute('playsinline', '');
+    video.controls = true;
+    video.preload = 'auto';
+    $('controls').appendChild(video);
+    var playVideo = button('play', 'Play video');
+    var fullscreenVideo = button('fullscreen', 'Play fullscreen', true);
+    var updateVideo = trackMedia(video, 'video');
+    video.addEventListener('play', function () { playVideo.textContent = 'Pause video'; });
+    video.addEventListener('pause', function () { playVideo.textContent = 'Play video'; });
+    playVideo.addEventListener('click', function () {
+      if (video.paused) {
+        video.play().catch(function (e) { state.error = 'play:' + e.name; render(); });
+      } else {
+        video.pause();
+      }
+    });
+    fullscreenVideo.addEventListener('click', function () {
+      var play = video.paused ? video.play() : Promise.resolve();
+      play.catch(function (e) { state.error = 'play:' + e.name; render(); });
+      try {
+        if (video.requestFullscreen) {
+          video.requestFullscreen().catch(function (e) { state.error = 'fullscreen:' + e.name; render(); });
+        } else if (video.webkitEnterFullscreen) {
+          video.webkitEnterFullscreen();
+        } else {
+          state.error = 'fullscreen:unsupported'; render();
+        }
+      } catch (e) { state.error = 'fullscreen:' + e.name; render(); }
+    });
+    installSession(video, 'Zenium demo clip', 'The Zenium demo studio', '', updateVideo);
+  } else if (path === '/notify') {
+    prefix = 'NT';
+    $('heading').textContent = 'Web notifications';
+    $('lead').textContent = 'The page asks for permission the way any site does (Notification.requestPermission) and, allowed, posts a notification. Zenium shows it under a channel of the site\u2019s own; a tap comes back to the page and brings its tab up.';
+    state.permission = ('Notification' in window) ? Notification.permission : 'unsupported';
+    state.shown = 0;
+    state.clicked = 0;
+    state.closed = 0;
+    state.errors = 0;
+    render();
+    var notify = function () {
+      var n = new Notification('Zenium demo', {
+        body: 'Hello from a page in Zenium',
+        icon: '/art.png',
+        tag: 'demo'
+      });
+      n.addEventListener('show', function () { state.shown += 1; render(); });
+      n.addEventListener('click', function () { state.clicked += 1; render(); });
+      n.addEventListener('close', function () { state.closed += 1; render(); });
+      n.addEventListener('error', function () { state.errors += 1; render(); });
+    };
+    var ask = button('ask', 'Ask and notify');
+    ask.addEventListener('click', function () {
+      if (!('Notification' in window)) return;
+      Notification.requestPermission().then(function (p) {
+        state.permission = p;
+        render();
+        if (p === 'granted') notify();
+      });
+    });
+    var again = button('again', 'Notify again', true);
+    again.addEventListener('click', function () {
+      state.permission = Notification.permission;
+      render();
+      if (Notification.permission === 'granted') notify();
+    });
+    if (params.get('notify') === '1' && Notification.permission === 'granted') notify();
+  } else if (path === '/private') {
+    prefix = 'PV';
+    $('heading').textContent = 'Private tab';
+    $('lead').textContent = 'This page stores a cookie and a storage key when asked, and reports what it finds: a private tab keeps them on its own profile until the last private tab closes.';
+    if (params.get('set') === '1') {
+      document.cookie = 'zen=1; path=/; max-age=86400';
+      try { localStorage.setItem('zen', '1'); } catch (e) { /* storage refused */ }
+    }
+    var cookie = /(^|; )zen=1/.test(document.cookie);
+    var storage = false;
+    try { storage = localStorage.getItem('zen') === '1'; } catch (e) { /* storage refused */ }
+    state.cookie = cookie ? 'yes' : 'no';
+    state.storage = storage ? 'yes' : 'no';
+    render();
+  } else {
+    prefix = 'MD';
+    $('heading').textContent = 'Zenium media demo';
+    state.path = path;
+    render();
+  }
+})();
+</script>
+</body>
+</html>

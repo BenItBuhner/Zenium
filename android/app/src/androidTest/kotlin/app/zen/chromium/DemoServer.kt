@@ -67,21 +67,32 @@ class DemoServer(
             it.soTimeout = 10_000
             val request = it.getInputStream().bufferedReader()
             val line = request.readLine() ?: return
+            var range: String? = null
             while (true) {
                 val header = request.readLine()
                 if (header.isNullOrEmpty()) break
+                if (header.startsWith("Range:", ignoreCase = true)) range = header.substringAfter(':').trim()
             }
             val path = line.split(' ').getOrNull(1)?.substringBefore('?') ?: "/"
             delays[path]?.let { Thread.sleep(it) }
             val route = routes[path]
-            val status = if (route != null) "200 OK" else "404 Not Found"
             val (type, body) = route ?: ("text/plain; charset=utf-8" to "no such page: $path\n".toByteArray())
+            // A media element fetches its file in byte ranges (the header, then the part it plays,
+            // the part a seek lands in): a satisfiable `Range` gets that part as a 206, the way a
+            // real server answers, so a WAV or an MP4 is seekable in the WebView.
+            val part = if (route != null) range?.let { r -> byteRange(r, body.size) } else null
             val out = it.getOutputStream()
-            out.write(
-                ("HTTP/1.1 $status\r\nContent-Type: $type\r\nContent-Length: ${body.size}\r\n" +
-                    "Cache-Control: no-store\r\nConnection: close\r\n\r\n").toByteArray()
-            )
-            out.write(body)
+            val head = StringBuilder()
+            if (part != null) {
+                val (from, to) = part
+                head.append("HTTP/1.1 206 Partial Content\r\nContent-Range: bytes $from-$to/${body.size}\r\n")
+                    .append("Content-Length: ${to - from + 1}\r\n")
+            } else {
+                head.append("HTTP/1.1 ${if (route != null) "200 OK" else "404 Not Found"}\r\nContent-Length: ${body.size}\r\n")
+            }
+            head.append("Content-Type: $type\r\nAccept-Ranges: bytes\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n")
+            out.write(head.toString().toByteArray())
+            if (part != null) out.write(body, part.first, part.second - part.first + 1) else out.write(body)
             out.flush()
         }
     }
@@ -92,6 +103,32 @@ class DemoServer(
     }
 
     companion object {
+        /**
+         * The first and last byte a `Range` header (`bytes=from-to`, `bytes=from-`, `bytes=-last`)
+         * asks for out of `size`, clamped to the body; null when it names nothing satisfiable
+         * (the whole body goes as a 200 then).
+         */
+        fun byteRange(header: String, size: Int): Pair<Int, Int>? {
+            val spec = header.removePrefix("bytes=").split(',').firstOrNull()?.trim() ?: return null
+            val dash = spec.indexOf('-')
+            if (dash < 0 || size <= 0) return null
+            val fromText = spec.substring(0, dash)
+            val toText = spec.substring(dash + 1)
+            val from: Int
+            val to: Int
+            if (fromText.isEmpty()) {
+                val last = toText.toIntOrNull() ?: return null
+                if (last <= 0) return null
+                from = (size - last).coerceAtLeast(0)
+                to = size - 1
+            } else {
+                from = fromText.toIntOrNull() ?: return null
+                to = (toText.toIntOrNull() ?: (size - 1)).coerceAtMost(size - 1)
+            }
+            if (from < 0 || from > to || from >= size) return null
+            return from to to
+        }
+
         /** The four bytes of a dotted IPv4 address (no name lookup, which would go to the network). */
         private fun ipv4(address: String): ByteArray {
             val parts = address.split('.')

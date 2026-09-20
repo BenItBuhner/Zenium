@@ -96,6 +96,9 @@ class MediaPlaybackService : Service() {
         @Volatile
         private var instance: MediaPlaybackService? = null
 
+        /** Whether the service stands in the foreground right now (a playing session), for diagnostics and the demos. */
+        val inForeground: Boolean get() = instance?.foreground == true
+
         /**
          * Show `notification` as a playing session's: the service's notification, with the service
          * in the foreground. Already there, the notification is replaced in place. False when the
