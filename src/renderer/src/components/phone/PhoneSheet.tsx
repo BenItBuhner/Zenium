@@ -14,8 +14,11 @@ import { takeSheetOpener } from './phonePanel'
  * closes every popover while it is up. The sheet draws the stack's one scrim itself
  * (`ownScrim`, §9.24, §9.28), fading with its motion, and a press on that scrim is the consumed
  * dismiss of §9.20. The system back gesture and Escape dismiss it; focus moves into it as it
- * opens (§9.22) and, once it has gone, returns to the row that opened it (§9.24). The same
- * pattern as the Settings tab's sheets (#134), to be folded into one once that lands.
+ * opens (§9.22) and, once it has gone, returns to the row that opened it (§9.24). Its title comes
+ * in the chassis's two poses, picked by the consumer through `title.pose` ({@link SheetTitle}):
+ * the centred 48 header for a sheet of rows or a form, the start-aligned title block for a prompt
+ * that carries a description. The same pattern as the Settings tab's sheets (#134), to be folded
+ * into one once that lands.
  */
 
 /**
@@ -27,20 +30,30 @@ import { takeSheetOpener } from './phonePanel'
  */
 export type SheetFocus = 'first' | 'dialog'
 
+/**
+ * The sheet's title in one of its two poses, the consumer's choice (§9.16, §9.23):
+ *  - `header`: the chassis's 48 header for a sheet of rows or a form – the title 17/600 at
+ *    line-height 22 centred over the whole width, a 44 px control slot at either end
+ *    (`leading` / `trailing`: the consumer's `zen-sheet-header-control` with its `data-side`,
+ *    a Back chevron once a menu sheet has drilled into a submenu), §9.7's hairline once the body
+ *    has scrolled under it. It carries no description: a header sheet with a paragraph to say
+ *    is a title-block sheet.
+ *  - `block`: the start-aligned title block for a prompt (title, one paragraph, actions) – an
+ *    optional 20 px glyph on the title's start with no fill box behind it, the description 15
+ *    at 69 % on the body line 4 below, 16 to the footer. A phone sheet takes the block only when
+ *    it carries a description, so the description is the pose's, required.
+ * Both are drawn from the chassis's own slots: the header in `BottomSheet`'s `header` (part of
+ * the grip, above the scrolling body), the block as the first content of the body on the
+ * chassis's `.zen-sheet-title-block`, as every prompt sheet draws it.
+ */
+export type SheetTitle =
+  | { pose: 'header'; text: string; leading?: ReactNode; trailing?: ReactNode }
+  | { pose: 'block'; text: string; icon?: ReactNode; description: string }
+
 interface Props {
   /** For the back registry's logs. */
   name: string
-  title: string
-  /**
-   * A prompt (title, one paragraph, actions) opens on a title block instead of the 48 header
-   * (§9.23): the glyph on the title's start, the description 4 below.
-   */
-  prompt?: { icon?: ReactNode; description: string }
-  /**
-   * A control at the header's start (a Back chevron once a menu sheet has drilled into a
-   * submenu), on the 48 header only; `zen-sheet-header-control` with `data-side="leading"`.
-   */
-  leading?: ReactNode
+  title: SheetTitle
   focus: SheetFocus
   /** The sheet has left the screen. */
   onClose(): void
@@ -63,8 +76,6 @@ export function PhoneSheet(props: Props): JSX.Element {
 function HostedSheet({
   name,
   title,
-  prompt,
-  leading,
   focus,
   onClose,
   children,
@@ -72,6 +83,13 @@ function HostedSheet({
   handleLabel = 'Resize sheet',
   sheetRef
 }: Props): JSX.Element {
+  // The poses are exclusive (§9.23): a description belongs to the title block, never under the
+  // 48 header. The types say so for a typed consumer; this says so for everyone else.
+  if (title.pose === 'header' && 'description' in title) {
+    throw new Error(
+      `PhoneSheet "${name}": a description takes the title block (pose 'block', §9.23), not the 48 header`
+    )
+  }
   const own = useRef<BottomSheetHandle>(null)
   const sheet = sheetRef ?? own
   const body = useRef<HTMLDivElement>(null)
@@ -98,24 +116,25 @@ function HostedSheet({
       handleLabel={handleLabel}
       labelledBy={titleId}
       header={
-        prompt ? undefined : (
+        title.pose === 'header' ? (
           <>
-            {leading}
+            {title.leading}
             <h2 id={titleId} className="zen-sheet-title">
-              {title}
+              {title.text}
             </h2>
+            {title.trailing}
           </>
-        )
+        ) : undefined
       }
     >
       <div ref={body}>
-        {prompt && (
+        {title.pose === 'block' && (
           <div className="zen-sheet-title-block">
             <h2 id={titleId}>
-              {prompt.icon}
-              <span className="min-w-0 truncate">{title}</span>
+              {title.icon}
+              <span className="min-w-0 truncate">{title.text}</span>
             </h2>
-            <p>{prompt.description}</p>
+            <p>{title.description}</p>
           </div>
         )}
         {children}
