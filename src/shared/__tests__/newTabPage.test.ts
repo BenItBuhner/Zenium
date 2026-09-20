@@ -5,6 +5,7 @@ import {
   NEW_TAB_PAGE_STYLE,
   NEW_TAB_RULES_END,
   NEW_TAB_RULES_START,
+  PRIVATE_COOKIES,
   PRIVATE_EXPLAINER,
   newTabPageHtml,
   newTabSharedCss
@@ -197,5 +198,74 @@ describe('zen://newtab tokens', () => {
     expect(NEW_TAB_PAGE_STYLE).toMatch(
       /\.zen-ntp-private p \{ margin: 4px 0 0; color: var\(--v2-control-text-deemphasized\); \}/
     )
+  })
+
+  it('carries the private page\'s "Block third-party cookies" row: the shared row and switch in the window family', () => {
+    const html = newTabPageHtml()
+    // Under the title block, hidden until a private state shows it; the shared row's static
+    // form (§9.34: `data-static`, no role) holding a real switch button labelled by the row.
+    const explainer = html.indexOf('<section class="zen-ntp-private"')
+    const row = html.indexOf(
+      '<div class="zen-v2-row zen-ntp-cookies" id="zen-cookies" data-static hidden>'
+    )
+    expect(row).toBeGreaterThan(explainer)
+    expect(row).toBeLessThan(html.indexOf('<p class="zen-ntp-empty"'))
+    expect(html).toContain(
+      `<label class="zen-ntp-cookies-label" id="zen-cookies-label" for="zen-cookies-switch">${PRIVATE_COOKIES.label}</label>`
+    )
+    expect(html).toContain(
+      `<p class="zen-ntp-cookies-desc" id="zen-cookies-desc">${PRIVATE_COOKIES.description}</p>`
+    )
+    expect(html).toContain(
+      '<button type="button" class="zen-v2-switch" id="zen-cookies-switch" role="switch" aria-checked="false" aria-describedby="zen-cookies-desc"></button>'
+    )
+    // Sentence case, no dash; the locked copy names where the lock is.
+    expect(PRIVATE_COOKIES.label).toBe('Block third-party cookies')
+    expect(PRIVATE_COOKIES.description).toBe('Blocks third-party cookies in private windows')
+    expect(PRIVATE_COOKIES.lockedDescription).toBe(
+      'Blocked in every window by Settings > Privacy and Security'
+    )
+    for (const text of Object.values(PRIVATE_COOKIES)) expect(text).not.toMatch(/[—–]/)
+    // The row: the primitive's geometry (§9.21 padding from the token, the row's min height), the
+    // title block's measure 8 below it (§9.26), label 15 in the window ink, description 13 at 69 %.
+    expect(NEW_TAB_PAGE_STYLE).toMatch(
+      /\.zen-v2-row \{[^}]*min-height: var\(--v2-row\); padding: var\(--v2-row-pad\) 16px;[^}]*color: var\(--v2-control-text\);/
+    )
+    expect(NEW_TAB_PAGE_STYLE).toMatch(
+      /\.zen-ntp-cookies \{ width: min\(560px, 100%\); margin: 8px 0 0; \}/
+    )
+    expect(NEW_TAB_PAGE_STYLE).toMatch(/\.zen-ntp-private \{[^}]*width: min\(560px, 100%\);/)
+    expect(NEW_TAB_PAGE_STYLE).toMatch(
+      /\.zen-ntp-cookies-desc \{[^}]*-webkit-line-clamp: 2;[^}]*color: var\(--v2-control-text-deemphasized\);[^}]*font-size: var\(--v2-font-small\); line-height: var\(--v2-line-small\);/
+    )
+    // The switch: main.css's geometry (36 × 20, radius 10, a 16 thumb inset 2, travel 16, 150 ms)
+    // read in the window family – the window ink at 25 %, the surface's accent, the on-accent ink.
+    const primitive = mainCss.slice(mainCss.indexOf('\n.zen-v2-switch {'))
+    expect(primitive).toMatch(/width: 36px;\s+height: 20px;[^}]*border-radius: 10px;/)
+    expect(primitive).toMatch(
+      /\.zen-v2-switch::after \{[^}]*top: 2px;\s+left: 2px;\s+width: 16px;\s+height: 16px;/
+    )
+    expect(primitive).toMatch(/translateX\(16px\)/)
+    expect(NEW_TAB_PAGE_STYLE).toMatch(
+      /\.zen-v2-switch \{[^}]*width: 36px; height: 20px;[^}]*border-radius: 10px;\s+background: rgb\(var\(--zen-fg-rgb\) \/ 0\.25\);\s+transition: background 150ms var\(--zen-ease\);/
+    )
+    expect(NEW_TAB_PAGE_STYLE).toMatch(
+      /\.zen-v2-switch::after \{[^}]*top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;\s+background: var\(--v2-on-accent\);\s+transition: transform 150ms var\(--zen-ease\), background 150ms var\(--zen-ease\);/
+    )
+    expect(NEW_TAB_PAGE_STYLE).toMatch(
+      /\.zen-v2-switch\[aria-checked='true'\] \{ background: var\(--v2-control-accent\); \}/
+    )
+    expect(NEW_TAB_PAGE_STYLE).toMatch(
+      /\.zen-v2-switch\[aria-checked='true'\]::after \{ background: var\(--v2-on-accent\); transform: translateX\(16px\); \}/
+    )
+    // Disabled is §9.30's one number, and it does not animate: only the knob and track transition.
+    expect(NEW_TAB_PAGE_STYLE).toMatch(/\.zen-v2-switch:disabled \{ opacity: 0\.4; \}/)
+    const rowRules = NEW_TAB_PAGE_STYLE.slice(
+      NEW_TAB_PAGE_STYLE.indexOf('.zen-v2-row {'),
+      NEW_TAB_PAGE_STYLE.indexOf('.zen-v2-switch:disabled')
+    )
+    expect(rowRules).not.toMatch(/transition:[^;]*opacity/)
+    // Window family only: no page ink or fill on the row or the switch (§9.29).
+    expect(rowRules).not.toMatch(/--v2-(text|fill|page|accent)\b/)
   })
 })
