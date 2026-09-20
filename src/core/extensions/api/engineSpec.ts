@@ -673,7 +673,8 @@ export const NAMESPACE_PERMISSIONS: Record<string, string | null> = {
   debugger: 'debugger',
   topSites: 'topSites',
   tts: 'tts',
-  contentSettings: 'contentSettings'
+  contentSettings: 'contentSettings',
+  printerProvider: 'printerProvider'
 }
 
 /** Permissions that grant a namespace registered under another name. */
