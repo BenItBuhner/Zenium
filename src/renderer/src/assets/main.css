@@ -308,6 +308,7 @@
  */
 :root[data-theme='dark'] .zen-v2-button[data-primary]:focus-visible,
 :root[data-theme='dark'] .zen-v2-checkbox:checked:focus-visible,
+:root[data-theme='dark'] .zen-v2-checkbox[aria-checked='true']:focus-visible,
 :root[data-theme='dark'] .zen-v2-switch[aria-checked='true']:focus-visible,
 :root[data-theme='dark'] .zen-v2-radio[aria-checked='true']:focus-visible {
   outline-offset: 0;
@@ -3183,20 +3184,17 @@
    * The tab search popover (components/tabsearch/TabSearchPopover.tsx; tabs-17): the shared
    * `.zen-bm-popover` chrome and title block, the shared `.zen-v2-field` under the title, the
    * shared `.zen-v2-row` for every tab. Only what those do not say lives here: the section
-   * heading's beat (12 above, 4 below, the first 4 under the title block – the rows are two
-   * lines tall, so the Settings groups' 20 would read as a gap), the selected row (the
-   * keyboard's, the pointer's) in the row's own press fill, the query's matches in the heading
-   * weight with no highlight fill, the trailing glyphs in the deemphasised ink, and the close
-   * button shown for the selected row and when it has the focus alone, as Chrome shows its X.
+   * heading's ink (the shared `.zen-v2-heading` in the deemphasised ink; its beat – 12 above, 4
+   * below, the first 4 under the title block, since the rows are two lines tall and the Settings
+   * groups' 20 would read as a gap – is the unlayered modifier after the bookmark chrome's
+   * block, beside the primitive), the selected row (the keyboard's, the pointer's) in the row's
+   * own press fill, the query's matches in the heading weight with no highlight fill, the
+   * trailing glyphs in the deemphasised ink, and the close button shown for the selected row and
+   * when it has the focus alone, as Chrome shows its X.
    */
   .zen-tab-search-heading {
     flex-shrink: 0;
-    margin: 12px 0 4px;
-    padding: 0 16px;
     color: var(--v2-text-deemphasized);
-  }
-  .zen-tab-search-heading:first-child {
-    margin-top: 4px;
   }
   .zen-tab-search-row {
     flex-shrink: 0;
@@ -3847,6 +3845,19 @@
 .zen-bm-page > header > h2 {
   font-size: 22px;
   letter-spacing: -0.014em;
+}
+/*
+ * The tab search popover's section headings (components/tabsearch/TabSearchPopover.tsx) on the
+ * shared `.zen-v2-heading`: a popover's list of two-line rows takes a tighter beat than the
+ * primitive's 20 / 4 – 12 above, 4 below, the first 4 under the title block. A modifier on the
+ * primitive by specificity, unlayered as the primitive is (§9.34); the ink is in the layered
+ * block above.
+ */
+.zen-v2-heading.zen-tab-search-heading {
+  margin: 12px 0 4px;
+}
+.zen-v2-heading.zen-tab-search-heading:first-child {
+  margin-top: 4px;
 }
 
 @layer components {
@@ -4910,37 +4921,30 @@
 .zen-sheet[data-dragging='true'] .zen-ntp-customize .zen-v2-row:active {
   background: transparent;
 }
+/*
+ * The customise sheet's sections keep the shared heading's beat (`.zen-v2-heading`, the
+ * unlayered primitive in the Settings tab's block: 20 above and 4 below, section 10.3, the
+ * whole separation between groups – no gap between sections); the one thing this sheet says is
+ * that its first heading sits 8 under the sheet's header. Unlayered beside the primitive, as
+ * section 9.34 asks of a modifier: a layered exception would lose to it whatever its specificity.
+ */
+.zen-v2-section:first-child > .zen-v2-heading {
+  margin-top: 8px;
+}
 
 @layer components {
   /*
    * v2 controls (design language v2 draft, sections 2, 3, 6 and 10.4) inside the phone sheet
-   * chassis (`.zen-sheet` above, which is the v2 surface, header and grabber): the group heading
-   * and its section, the description, the control row. Built from the `--v2-*` tokens alone.
-   * Type: hierarchy by size, weights 400 and 600 only.
+   * chassis (`.zen-sheet` above, which is the v2 surface, header and grabber): the description
+   * and the control row. Built from the `--v2-*` tokens alone. Type: hierarchy by size, weights
+   * 400 and 600 only.
    *
-   * The row, the switch, the plain radio and the image radio card are the shared primitives
-   * (section 9.34: `.zen-v2-row`, `.zen-v2-switch`, `.zen-v2-radio`, `.zen-v2-card-radio`, one
-   * unlayered rule each in the Settings tab's block further down – the row padded by the
-   * `--v2-row-pad` token, 12 on a phone); the customise sheet mints none of its own. The heading
-   * is this sheet's (section 9.34: the first surface to land a primitive owns its rule).
+   * The row, the heading, the switch, the plain radio and the image radio card are the shared
+   * primitives (section 9.34: `.zen-v2-row`, `.zen-v2-heading`, `.zen-v2-switch`, `.zen-v2-radio`,
+   * `.zen-v2-card-radio`, one unlayered rule each in the Settings tab's block further down – the
+   * row padded by the `--v2-row-pad` token, 12 on a phone; the heading with its 20 / 4 beat);
+   * the customise sheet mints none of its own.
    */
-  .zen-v2-heading {
-    font-size: var(--v2-font-body);
-    font-weight: var(--v2-weight-heading);
-    line-height: var(--v2-line-body);
-  }
-  /*
-   * A group of rows in a sheet keeps the Settings pages' beat (section 10.3): its heading has 20
-   * above and 4 below, and the heading with its air is the whole separation between groups – no
-   * gap between sections. The first heading sits 8 under the sheet's header.
-   */
-  .zen-v2-section > .zen-v2-heading {
-    margin: 20px 0 4px;
-    padding: 0 16px;
-  }
-  .zen-v2-section:first-child > .zen-v2-heading {
-    margin-top: 8px;
-  }
   .zen-v2-description {
     font-size: var(--v2-font-small);
     line-height: var(--v2-line-small);
@@ -6043,7 +6047,10 @@
  * not on the row, whose hairline is structure (§0) – and the box inside that content stays at 1
  * so it does not compound to .16; the row says `aria-disabled`, which keeps the row primitive's
  * hover and press fill off it. Those two rules sit here, unlayered, because a layered exception
- * would lose to the unlayered `:disabled` above it.
+ * would lose to the unlayered `:disabled` above it. Besides the `<input>` read by `:checked`, the
+ * class styles a `role="checkbox"` span by `[aria-checked]` – on itself or on the row that is
+ * the checkbox for assistive technology and so cannot host a real input – as `.zen-v2-radio`
+ * does (§9.34).
  */
 .zen-v2-checkbox {
   appearance: none;
@@ -6065,11 +6072,15 @@
     background: var(--v2-fill);
   }
 }
-.zen-v2-checkbox:checked {
+.zen-v2-checkbox:checked,
+.zen-v2-checkbox[aria-checked='true'],
+[aria-checked='true'] > .zen-v2-checkbox {
   background: var(--v2-accent);
   border-color: var(--v2-accent);
 }
-.zen-v2-checkbox:checked::after {
+.zen-v2-checkbox:checked::after,
+.zen-v2-checkbox[aria-checked='true']::after,
+[aria-checked='true'] > .zen-v2-checkbox::after {
   content: '';
   width: calc(var(--v2-checkbox) - 4px);
   height: calc(var(--v2-checkbox) - 4px);
@@ -6386,8 +6397,28 @@
 }
 
 /*
- * Groups (§10.3): a 15/600 heading with 20 above and 4 below; the first sits 8 under the bar. A
- * heading block that carries a description ends 8 above its first row instead (§9.27).
+ * The shared group heading (§9.34, §9.26, §9.27, §10.3): 15/600 on the body line, sentence case,
+ * in the surface's ink, its text at the 16 gutter, with the phone beat that is the whole
+ * separation between groups – 20 above and 4 to its first row's box (heading text to the row's
+ * label reads 14–16 once the row's own 12 is added; the desktop's 8 to the box through a row's 6
+ * is the same rule, §9.27, the lead's #201 ruling). One unlayered rule that every consumer reads
+ * – the Settings tab's groups, the customise sheet's sections, the phone panels' day groups, a
+ * popover's list – so the beat is stated once; a surface whose heading sits differently (the
+ * first under a header at 8, a popover's tighter list) says so in an unlayered modifier beside
+ * the primitive by specificity, never a copy of the numbers. Nothing here about layout: a
+ * heading that carries an aside lays it out in its modifier.
+ */
+.zen-v2-heading {
+  margin: 20px 0 4px;
+  padding: 0 16px;
+  font-size: var(--v2-font-body);
+  font-weight: var(--v2-weight-heading);
+  line-height: var(--v2-line-body);
+}
+
+/*
+ * Groups (§10.3): the shared heading with its aside on the same line; the first sits 8 under the
+ * bar. A heading block that carries a description ends 8 above its first row instead (§9.27).
  */
 .zen-settings-groups {
   display: flex;
@@ -6397,16 +6428,12 @@
   display: flex;
   flex-direction: column;
 }
-.zen-settings-heading {
+/* What the Settings heading adds to the primitive: the aside laid out at the heading's gutter end. */
+.zen-v2-heading.zen-settings-heading {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
-  margin: 20px 0 4px;
-  padding: 0 16px;
-  font-size: var(--v2-font-body);
-  font-weight: var(--v2-weight-heading);
-  line-height: var(--v2-line-body);
 }
 /* The heading's aside (§10.3): a count or size at the gutter on the heading's line, 13 at 69 %, tabular. */
 .zen-settings-heading-aside {
@@ -6417,7 +6444,7 @@
   font-variant-numeric: tabular-nums;
   line-height: var(--v2-line-small);
 }
-.zen-settings-body > .zen-settings-group:first-child > .zen-settings-heading {
+.zen-settings-body > .zen-settings-group:first-child > .zen-v2-heading.zen-settings-heading {
   margin-top: 8px;
 }
 /* A live count in a description ("6 lists, 116,161 filters") is tabular (§4): it moves nothing when it changes. */
@@ -8217,12 +8244,16 @@
   .zen-v2-radio[aria-checked='true'],
   [aria-checked='true'] > .zen-v2-radio,
   .zen-v2-checkbox:checked,
+  .zen-v2-checkbox[aria-checked='true'],
+  [aria-checked='true'] > .zen-v2-checkbox,
   .zen-app-icon[aria-checked='true'] {
     border-color: Highlight;
     background-color: Highlight;
     color: HighlightText;
   }
-  .zen-v2-checkbox:checked::after {
+  .zen-v2-checkbox:checked::after,
+  .zen-v2-checkbox[aria-checked='true']::after,
+  [aria-checked='true'] > .zen-v2-checkbox::after {
     background-color: HighlightText;
   }
   .zen-v2-card-radio[aria-checked='true']:not(:focus-visible) {

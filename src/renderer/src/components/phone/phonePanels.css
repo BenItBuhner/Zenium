@@ -189,19 +189,12 @@
       calc(-1 * var(--v2-row-pad)) 0;
   }
   /*
-   * A group's heading (a day, "Recently closed"): the shared `.zen-v2-heading` (main.css, 9.34:
-   * 15/600 on the body line, 9.26), sentence case, with this list's beat as its modifier – 20
-   * above and 4 to its first row's box (9.27: heading text to the first label reads 14–16 on
-   * both platforms once the row's own 12 is added; the Settings tab's 20 / 4); the first sits 8
-   * under what stays put above the list, which the field's own 8 supplies. Its ink is the
-   * panel's, inherited.
+   * A group's heading (a day, "Recently closed") is the shared `.zen-v2-heading` (main.css, 9.34:
+   * 15/600 on the body line, 9.26, with its 20 above / 4 below beat, 9.27); its ink is the
+   * panel's, inherited. The one thing this list says about it – the first heading sits under
+   * what stays put above the list – is the `.zen-list-heading` modifier, unlayered after the
+   * layered block with the row's.
    */
-  .zen-v2-heading.zen-list-heading {
-    padding: 20px 16px 4px;
-  }
-  .zen-v2-heading.zen-list-heading:first-child {
-    padding-top: 0;
-  }
 
   /* A row being swiped away slides over the quiet fill carrying the trash glyph in the danger ink. */
   .zen-swipe {
@@ -366,4 +359,14 @@
 }
 .zen-swipe[data-moving='true'] .zen-v2-row.zen-phone-row:active {
   background: transparent;
+}
+/*
+ * What a list's group heading adds to the shared heading (9.34, the same form as the row's
+ * modifier above): nothing of the beat – the primitive's 20 above and 4 below stand between
+ * every group – except that the list's first heading sits under what stays put above the list,
+ * which the field's own 8 supplies. It is the first heading of the list, not the first child of
+ * its own `<section>`: every group's heading is that.
+ */
+.zen-phone-list > :first-child > .zen-v2-heading.zen-list-heading {
+  margin-top: 0;
 }
