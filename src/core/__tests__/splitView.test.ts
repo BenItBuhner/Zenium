@@ -212,6 +212,69 @@ function click(items: MenuItemTemplate[], label: string): void {
   item.click()
 }
 
+/** The deferred state broadcast has gone out (and with it what `afterBroadcast` queued). */
+const tick = (): Promise<void> => new Promise((r) => setImmediate(r))
+
+describe('the empty pane (split-04)', () => {
+  it('Ctrl+Shift+* with one tab opens an empty pane beside it; the URL bar follows the state that holds the split (BUG-040)', async () => {
+    const h = harness()
+    const a = h.open('https://a.example/')
+    h.sent.length = 0
+    h.browser.actions.run('split.newEmpty', { sourceTabId: null, win: h.win })
+    const group = Object.values(h.browser.state.model.splitGroups)[0]
+    expect(group).toBeDefined()
+    expect(group!.tabIds[0]).toBe(a.id)
+    expect(group!.tabIds).toHaveLength(2)
+    const blank = h.browser.tabs.tab(group!.tabIds[1])
+    expect(blank?.url).toBe('zen://blank')
+    expect(h.activeId()).toBe(blank?.id)
+    // The bar's request waits for the broadcast: the window must hold the split for the bar to
+    // open as the pane's field rather than over the whole frame.
+    expect(h.sent.some((e) => e.name === 'urlbar.toggle')).toBe(false)
+    await tick()
+    expect(h.sent.some((e) => e.name === 'urlbar.toggle')).toBe(true)
+  })
+
+  it('a chosen tab takes the empty pane over and the blank tab closes', () => {
+    const h = harness()
+    const a = h.open('https://a.example/')
+    const b = h.open('https://b.example/')
+    h.browser.tabs.activateTab(a.id, h.win)
+    h.browser.tabs.newEmptySplit(h.win)
+    const group = Object.values(h.browser.state.model.splitGroups)[0]!
+    const blank = group.tabIds[1]
+    expect(h.browser.handleCommand(h.win, 'split.pickTab', { paneTabId: blank, tabId: b.id })).toBe(
+      true
+    )
+    expect(h.browser.state.model.splitGroups[group.id]?.tabIds).toEqual([a.id, b.id])
+    expect(h.browser.tabs.tab(blank)).toBeUndefined()
+    expect(h.browser.tabs.tab(b.id)?.splitGroupId).toBe(group.id)
+    expect(h.activeId()).toBe(b.id)
+    // Nothing the user made was closed: the blank tab leaves no "Recently closed" entry.
+    expect(h.browser.state.snapshot(h.win).recentlyClosed).toHaveLength(0)
+  })
+
+  it('picks nothing for a pane that is not empty, a tab already in the split, or the pane itself', () => {
+    const h = harness()
+    const a = h.open('https://a.example/')
+    const b = h.open('https://b.example/')
+    const c = h.open('https://c.example/')
+    h.browser.tabs.activateTab(a.id, h.win)
+    h.browser.tabs.newEmptySplit(h.win)
+    const group = Object.values(h.browser.state.model.splitGroups)[0]!
+    const blank = group.tabIds[1]
+    const pick = (paneTabId: string, tabId: string): boolean =>
+      h.browser.handleCommand(h.win, 'split.pickTab', { paneTabId, tabId }) as boolean
+    expect(pick(a.id, b.id)).toBe(false)
+    expect(pick(blank, a.id)).toBe(false)
+    expect(pick(blank, blank)).toBe(false)
+    expect(h.browser.state.model.splitGroups[group.id]?.tabIds).toEqual([a.id, blank])
+    expect(pick(blank, c.id)).toBe(true)
+    expect(h.browser.state.model.splitGroups[group.id]?.tabIds).toEqual([a.id, c.id])
+    expect(h.browser.tabs.tab(b.id)?.splitGroupId).toBeNull()
+  })
+})
+
 describe('the ways into a split (split-01)', () => {
   it('the app menu has a Split View submenu: the layouts in the chords\u2019 order, then Unsplit View and New Empty Split View, each on its action', () => {
     const h = harness()

@@ -3411,6 +3411,11 @@ export interface Commands {
   'split.resize': { args: { groupId: string; sizes: number[] }; result: void }
   'split.newEmpty': { args: void; result: void }
   'split.addTab': { args: { groupId: string; tabId: string }; result: void }
+  /**
+   * "Choose a tab" in an empty pane (split-04): `tabId` takes the pane over from the blank tab
+   * `paneTabId` shown there, which closes. False when nothing changed.
+   */
+  'split.pickTab': { args: { paneTabId: string; tabId: string }; result: boolean }
 
   'glance.open': {
     args: { url: string; parentTabId: string; originX: number; originY: number }

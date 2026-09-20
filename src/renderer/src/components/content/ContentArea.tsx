@@ -10,7 +10,7 @@ import { useViewport } from '@renderer/lib/formFactor'
 import { SPLIT_GAP, SPLIT_GAP_TOUCH, splitPaneRects } from '@renderer/lib/layout'
 import { isPageTab } from '@renderer/lib/pages'
 import { isPdfViewerTab } from '@renderer/lib/pdfViewer'
-import { activeTab, isForeignTab } from '@renderer/lib/selectors'
+import { activeTab, isEmptySplitPane, isForeignTab } from '@renderer/lib/selectors'
 import { useChord } from '@renderer/lib/shortcuts'
 import { barStateOf } from '@renderer/lib/translate'
 import {
@@ -35,6 +35,7 @@ import { TranslateBar } from '../translate/TranslateBar'
 import { CoverImage } from './CoverImage'
 import { CrashRestoreBanner } from './CrashRestoreBanner'
 import { DefaultBrowserBanner } from './DefaultBrowserBanner'
+import { EmptyPane } from './EmptyPane'
 import { FindBar } from './FindBar'
 import { GlanceFrame } from './GlanceFrame'
 import { LoadProgress } from './LoadProgress'
@@ -90,7 +91,20 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
   )
   const local: Rect | null = area ? { x: 0, y: 0, width: area.width, height: area.height } : null
   // The phone shell draws the URL bar itself: its field sits in the bar band outside this frame.
-  const phone = useViewport().formFactor === 'phone'
+  const { formFactor, coarse } = useViewport()
+  const phone = formFactor === 'phone'
+  // The empty panes of the split on screen (split-04): the chrome draws each where its blank
+  // tab's view would be – the field, the "Choose a tab" button – and the URL bar opened for one
+  // floats in that pane's box rather than over the frame.
+  const emptyPanes =
+    group && local && !contentHidden && !glanceActive
+      ? splitPaneRects(local, group, coarse ? SPLIT_GAP_TOUCH : SPLIT_GAP).filter((p) =>
+          isEmptySplitPane(state, p.tabId)
+        )
+      : []
+  const urlbarArea =
+    (ui.urlbar.pane ? emptyPanes.find((p) => p.tabId === ui.urlbar.tabId)?.rect : undefined) ??
+    local
   // The phone's gesture stage draws its own cards where the page was; nothing to dim behind it.
   // Its URL bar covers the frame completely, so there is nothing to dim behind that either.
   const staged = ui.stageActive && !overlayCoversContentBesidesStage(ui)
@@ -240,6 +254,19 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
             {group && local && !contentHidden && !glanceActive && (
               <SplitChrome state={state} group={group} area={local} activeTabId={tab?.id ?? null} />
             )}
+            {group &&
+              area &&
+              emptyPanes.map((p) => (
+                <EmptyPane
+                  key={p.tabId}
+                  state={state}
+                  ui={ui}
+                  tabId={p.tabId}
+                  groupId={group.id}
+                  rect={p.rect}
+                  viewport={area}
+                />
+              ))}
             {ui.drag && local && tab && (
               <SplitDropZones
                 dropKey={dropKey}
@@ -261,7 +288,7 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
                 key={`${ui.urlbar.mode}-${ui.urlbar.tabId ?? 'new'}`}
                 state={state}
                 urlbar={ui.urlbar}
-                area={local}
+                area={urlbarArea}
               />
             )}
           </div>

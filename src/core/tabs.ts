@@ -45,6 +45,7 @@ import {
   extensionPageOf,
   httpsOnlyPageUrl,
   interstitialKindOf,
+  isBlankTabUrl,
   isEmptyTabUrl,
   isNavigableUrl,
   presentedUrl,
@@ -2700,7 +2701,7 @@ export class TabManager {
       )
       if (group) addTabToSplit(this.model, group.id, tab.id)
       this.activateTab(tab.id, win)
-      this.browser.emit('urlbar.toggle', { mode: 'edit', text: '' }, win)
+      this.openEmptyPaneField(win)
       return
     }
     const tab = this.createTab(
@@ -2709,7 +2710,19 @@ export class TabManager {
     )
     this.createSplit([active.id, tab.id], 'vertical', win)
     this.activateTab(tab.id, win)
-    this.browser.emit('urlbar.toggle', { mode: 'edit', text: '' }, win)
+    this.openEmptyPaneField(win)
+  }
+
+  /**
+   * The URL bar for the empty pane just made (split-04): once the window holds the split, so the
+   * bar opens as the pane's own field, floating in the pane beside the live page, and not over
+   * the whole frame (BUG-040: the split was there but hidden under the bar until the first
+   * address was typed).
+   */
+  private openEmptyPaneField(win: ZenWindow): void {
+    this.browser.state.afterBroadcast(() =>
+      this.browser.emit('urlbar.toggle', { mode: 'edit', text: '' }, win)
+    )
   }
 
   addToSplit(groupId: string, tabId: string): void {
@@ -2723,6 +2736,29 @@ export class TabManager {
       if (win) this.claim(tabId, win)
       this.browser.state.commit()
     }
+  }
+
+  /**
+   * "Choose a tab" in an empty pane (split-04, Edge's picker in the empty right pane): `tabId`
+   * takes the pane over from the blank tab shown there – as a tab dropped on the pane does
+   * (`replaceTabInSplit`, the tab moving into the split's space) – and is shown; the blank tab
+   * was the pane's placeholder, nothing the user made, so it closes rather than staying behind
+   * in the strip (an unvisited blank tab leaves no "Recently closed" entry). Only a blank tab of
+   * a split is a pane to fill: the picker is offered nowhere else.
+   */
+  pickTabForPane(paneTabId: string, tabId: string, win: ZenWindow): boolean {
+    const m = this.model
+    const pane = this.tab(paneTabId)
+    const tab = this.tab(tabId)
+    const group = pane?.splitGroupId ? m.splitGroups[pane.splitGroupId] : null
+    if (!pane || !tab || !group || !isBlankTabUrl(pane.url) || pane.id === tabId) return false
+    if (group.tabIds.includes(tabId)) return false
+    if (!this.browser.pages.splittable(tab) || !this.joinable(tab, group.spaceId, win)) return false
+    this.bringIntoSpace(tab, group.spaceId)
+    if (!replaceTabInSplit(m, group.id, pane.id, tabId)) return false
+    this.activateTab(tabId, win)
+    this.closeTab(pane.id, true, win)
+    return true
   }
 
   /**

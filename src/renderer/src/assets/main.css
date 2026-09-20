@@ -8583,6 +8583,19 @@
     font-family: var(--font-sans);
     font-size: 12px;
   }
+  /*
+   * The empty split pane's resting field (split-04, `EmptyPane`): the bar's surface above on
+   * the bar's own box, the field row's gap and gutter, the placeholder in the field's
+   * deemphasised ink – a press opens the bar and nothing moves. The keyboard's ring is the base
+   * layer's (a text field's inset ring, §1).
+   */
+  .zen-empty-pane-field {
+    gap: 12px;
+    padding: 0 16px;
+    color: var(--v2-text-deemphasized);
+    text-align: left;
+    cursor: text;
+  }
 }
 
 /*

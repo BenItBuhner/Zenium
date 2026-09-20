@@ -2470,6 +2470,7 @@ export class Browser {
       'split.resize': ({ groupId, sizes }) => tabs.resizeSplit(groupId, sizes),
       'split.newEmpty': (_a, win) => tabs.newEmptySplit(win),
       'split.addTab': ({ groupId, tabId }) => tabs.addToSplit(groupId, tabId),
+      'split.pickTab': ({ paneTabId, tabId }, win) => tabs.pickTabForPane(paneTabId, tabId, win),
 
       'glance.open': ({ url, parentTabId, originX, originY }, win) =>
         tabs.openGlance(url, parentTabId, originX, originY, win),
