@@ -23,6 +23,7 @@ import { DEFAULT_PAGE_CONTROLS } from './pageControls'
 import { DEFAULT_PRIVACY_SETTINGS } from './privacy'
 import { DEFAULT_SPELLCHECK } from './spellcheck'
 import { DEFAULT_READER_PREFERENCES } from './reader'
+import { DEFAULT_READ_ALOUD_SETTINGS } from './readAloud'
 
 /**
  * Off until the user turns it on in Settings → AI Agents; loopback only, approval required.
@@ -253,7 +254,8 @@ export const DEFAULT_SETTINGS: Settings = {
   newTab: structuredClone(DEFAULT_NEW_TAB_SETTINGS),
   gestureHintDone: false,
   spellcheck: structuredClone(DEFAULT_SPELLCHECK),
-  reader: structuredClone(DEFAULT_READER_PREFERENCES)
+  reader: structuredClone(DEFAULT_READER_PREFERENCES),
+  readAloud: structuredClone(DEFAULT_READ_ALOUD_SETTINGS)
 }
 
 /** Firefox's four default containers plus "No Container". */

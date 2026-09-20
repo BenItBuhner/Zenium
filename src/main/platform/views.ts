@@ -50,6 +50,7 @@ import type {
   AgentFrame,
   AgentInputEvent,
   InputModifier,
+  InsertedCssOrigin,
   KeyEventInput,
   NavigationIntent,
   PageFlags,
@@ -658,8 +659,8 @@ export class ElectronTabView implements TabView {
     return this.wc.executeJavaScript(code, true)
   }
 
-  insertCSS(css: string): Promise<string> {
-    return this.wc.insertCSS(css, { cssOrigin: 'user' })
+  insertCSS(css: string, origin: InsertedCssOrigin = 'user'): Promise<string> {
+    return this.wc.insertCSS(css, { cssOrigin: origin })
   }
 
   removeInsertedCSS(key: string): Promise<void> {

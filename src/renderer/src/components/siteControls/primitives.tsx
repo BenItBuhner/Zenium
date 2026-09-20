@@ -376,9 +376,11 @@ export interface DialogApi {
 /**
  * A dialog's width is one of the popover's (§9.20): 400 for a title block with a form or a
  * choice and its actions, 480 only for two columns or a table – never 320 and never a value
- * between.
+ * between. `frame` is the one dialog that is a workspace rather than a prompt – the print
+ * preview, Chrome's constrained window at the tab's size less a margin – which fills the
+ * content frame 32 px inside its edges.
  */
-export type DialogWidth = typeof POPOVER_WIDTH.form | typeof POPOVER_WIDTH.table
+export type DialogWidth = typeof POPOVER_WIDTH.form | typeof POPOVER_WIDTH.table | 'frame'
 
 /**
  * A v2 dialog (§2, §3, §9.5): the neutral surface at radius 12 with a hairline at one of the
@@ -393,6 +395,7 @@ export function DesktopDialog({
   onCancel,
   api,
   width = POPOVER_WIDTH.form,
+  initialFocus = 'first',
   className,
   children,
   ...data
@@ -402,22 +405,34 @@ export function DesktopDialog({
   /** Receives the dialog's own close, for footer buttons. */
   api?: RefObject<DialogApi | null>
   width?: DialogWidth
+  /**
+   * Where focus lands as the dialog paints (§9.22): its first focusable, the dialog itself
+   * (`tabIndex -1`), or an element of the caller's choosing – for a form whose rows arrive
+   * after the footer, the first field once it is there, the dialog until then – falling back
+   * to the dialog when the function finds nothing.
+   */
+  initialFocus?: 'first' | 'container' | ((root: HTMLElement) => HTMLElement | null)
   className?: string
   children: ReactNode
 } & DataAttributes): JSX.Element {
   const dialog = useRef<HTMLDivElement>(null)
   useImperativeHandle(api, () => ({ close: onCancel }), [onCancel])
   useFrameDialog({ onScrimPress: onCancel })
-  usePopover(dialog, { onClose: onCancel })
+  usePopover(dialog, {
+    onClose: onCancel,
+    initial:
+      typeof initialFocus === 'function' ? (root) => initialFocus(root) ?? root : initialFocus
+  })
 
   return (
     <div
       ref={dialog}
       className={cn(
         'zen-animate-pop flex max-h-[calc(100%-32px)] max-w-[calc(100%-32px)] flex-col overflow-hidden rounded-[var(--v2-radius-sheet)] border border-[var(--v2-border)] bg-[var(--v2-panel)] text-[var(--v2-text)] shadow-[var(--v2-shadow-sheet)] outline-none',
+        width === 'frame' && 'h-[calc(100%-64px)] w-[calc(100%-64px)]',
         className
       )}
-      style={{ width }}
+      style={width === 'frame' ? undefined : { width }}
       role="dialog"
       aria-modal="true"
       aria-labelledby={labelledBy}
@@ -845,6 +860,8 @@ export function ListRow({
   control = false,
   className,
   'aria-label': ariaLabel,
+  'aria-expanded': ariaExpanded,
+  'aria-controls': ariaControls,
   ...data
 }: {
   label: ReactNode
@@ -860,6 +877,9 @@ export function ListRow({
   control?: boolean
   className?: string
   'aria-label'?: string
+  /** A disclosure row (Chrome's "More settings"): what it opens, and whether it is open. */
+  'aria-expanded'?: boolean
+  'aria-controls'?: string
 } & DataAttributes): JSX.Element {
   const text = useRef<HTMLDivElement>(null)
   const [wrapped, setWrapped] = useState(false)
@@ -942,6 +962,8 @@ export function ListRow({
         disabled={disabled}
         aria-label={ariaLabel}
         aria-busy={busy || undefined}
+        aria-expanded={ariaExpanded}
+        aria-controls={ariaExpanded ? ariaControls : undefined}
         onClick={busy ? undefined : onClick}
         {...data}
       >
@@ -1002,7 +1024,8 @@ export type { MenulistOption }
  * rows flush under it on a mouse – its own light dismiss, arrow keys, Escape back to the control
  * – and a sheet of radio rows under a finger. This wrapper only sizes it for a row's trailing
  * slot: its own width, no less than 140, where the shared control fills its line. `readOnly`
- * is a busy form's (§9.30): the value in place at full opacity, opening nothing.
+ * is a busy form's (§9.30): the value in place at full opacity, opening nothing. `autoFocus`
+ * takes the keyboard as the control mounts (a form's first field arriving after its dialog).
  */
 export function Menulist<V extends string>({
   className,
@@ -1015,6 +1038,7 @@ export function Menulist<V extends string>({
   label: string
   disabled?: boolean
   readOnly?: boolean
+  autoFocus?: boolean
   className?: string
 }): JSX.Element {
   return <V2Menulist {...props} className={cn('w-auto min-w-[140px] shrink-0', className)} />
@@ -1034,6 +1058,8 @@ export function ChoiceRow<V extends string>({
   onChange,
   disabled = false,
   readOnly = false,
+  autoFocus = false,
+  controlClassName,
   leading
 }: {
   label: string
@@ -1044,6 +1070,10 @@ export function ChoiceRow<V extends string>({
   disabled?: boolean
   /** A busy form's row (§9.30): the menulist keeps its value at full opacity and opens nothing. */
   readOnly?: boolean
+  /** The form's first field: takes the keyboard as it mounts (§9.22). */
+  autoFocus?: boolean
+  /** The menulist's own classes – a column that gives every control one width (§9.13). */
+  controlClassName?: string
   leading?: ReactNode
 }): JSX.Element {
   return (
@@ -1061,6 +1091,8 @@ export function ChoiceRow<V extends string>({
           label={label}
           disabled={disabled}
           readOnly={readOnly}
+          autoFocus={autoFocus}
+          className={controlClassName}
         />
       }
     />

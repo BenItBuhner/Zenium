@@ -12,6 +12,7 @@ import { isPhone, viewportStore } from '@renderer/lib/formFactor'
 import { presentInstallBanner, retireInstallBanner } from '@renderer/lib/installBanner'
 import { onLayoutApplied, onViewDrawn } from '@renderer/lib/pageView'
 import { focusPane, releaseChromeFocus } from '@renderer/lib/panes'
+import { dropStalePdfReports, setPdfReport } from '@renderer/lib/pdfViewer'
 import { APP_MENU_EVENT } from '@renderer/lib/shortcuts'
 import { openSettings } from '@renderer/lib/pages'
 import {
@@ -31,6 +32,7 @@ import {
   openNewTabShortcutDialog,
   openInstallSheet,
   openOverlay,
+  openPrintPreview,
   openReaderPreferences,
   openUrlbar,
   openZoom,
@@ -103,8 +105,17 @@ export function useMainEvents(): void {
         closeUrlbar()
         void openNewTabShortcutDialog(request)
       }),
-      onEvent('overlay.open', ({ kind, folderId, section }) => {
+      onEvent('overlay.open', ({ kind, folderId, section, tabId }) => {
         const ui = uiStore.get()
+        // The print preview is a frame dialog over the tab it prints (`zen://print` has no panel
+        // of its own): the core opens a session for the tab and asks for its surface here.
+        if (kind === 'print') {
+          const target = tabId ?? currentActiveTabId()
+          if (!target) return
+          closeUrlbar()
+          void openPrintPreview(target)
+          return
+        }
         // Settings is a tab where the host has page tabs; the Shortcuts and Sync overlays are
         // its sections. The core routes its own callers through `page.open`; a stray request
         // for the overlay goes the same way (`openOverlay` refuses the kind on such a host).
@@ -178,6 +189,15 @@ export function useMainEvents(): void {
       onEvent('extensions.open', () => {
         closeUrlbar()
         openExtensionsSheet()
+      }),
+      // The PDF viewer document in a tab reported where it stands: the docked bar and the find
+      // bar draw from the report (lib/pdfViewer.ts).
+      onEvent('pdf.changed', ({ tabId, report }) => setPdfReport(tabId, report)),
+      // ...and a viewer tab that moved on (a page, another document) has no report until the
+      // new document's comes.
+      browserStore.subscribe(() => {
+        const state: UIState | null = browserStore.get().state
+        if (state) dropStalePdfReports(state)
       }),
       onEvent('reader.preferences', ({ tabId }) => {
         // The app menu's "Text Preferences…" (and the reader page's toolbar button on a phone):

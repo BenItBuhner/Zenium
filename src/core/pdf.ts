@@ -161,9 +161,13 @@ export class PdfViewerService {
     }
   }
 
-  /** The tab left the viewer (another document committed): its report is stale. */
-  onNavigated(tabId: string, url: string): void {
-    if (!pdfPageDownloadId(url)) this.reports.delete(tabId)
+  /**
+   * Another document committed in the tab – a page, or another PDF for the viewer – so the
+   * report is stale: the new document reports afresh once it is up (`onReport`), and until then
+   * the tab has none (the chrome shows its bar loading, not the last document's pages).
+   */
+  onNavigated(tabId: string): void {
+    this.reports.delete(tabId)
   }
 
   onTabRemoved(tabId: string): void {

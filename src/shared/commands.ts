@@ -217,7 +217,7 @@ export const URLBAR_COMMANDS: CommandDescriptor[] = [
     id: 'print',
     label: 'Print Page',
     keywords: ['print'],
-    action: 'page.print',
+    action: 'page.printPreview',
     requires: 'print'
   },
   {

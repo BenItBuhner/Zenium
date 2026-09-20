@@ -924,7 +924,7 @@ export class Menus {
   private pageGroup(tab: Tab, win: ZenWindow): Template {
     const { state, reader, translate } = this.browser
     const run = (
-      action: 'page.savePage' | 'page.print' | 'page.screenshot' | 'page.captureFullPage'
+      action: 'page.savePage' | 'page.printPreview' | 'page.screenshot' | 'page.captureFullPage'
     ): void => this.browser.actions.run(action, { sourceTabId: tab.id, win })
     const readerOpen = reader.isReaderUrl(tab.url)
     return [
@@ -935,7 +935,13 @@ export class Menus {
       },
       { label: 'Save Page As…', action: 'page.savePage', click: () => run('page.savePage') },
       ...(state.capabilities.print
-        ? [{ label: 'Print…', action: 'page.print' as const, click: () => run('page.print') }]
+        ? [
+            {
+              label: 'Print…',
+              action: 'page.printPreview' as const,
+              click: () => run('page.printPreview')
+            }
+          ]
         : []),
       { label: 'Take Screenshot', action: 'page.screenshot', click: () => run('page.screenshot') },
       {
@@ -2492,10 +2498,10 @@ export class Menus {
         ...this.homeScreenItems(active, win),
         ...when(caps.print, {
           label: 'Print…',
-          action: 'page.print',
+          action: 'page.printPreview',
           enabled: Boolean(active),
           click: () =>
-            active && this.browser.actions.run('page.print', { sourceTabId: active.id, win })
+            active && this.browser.actions.run('page.printPreview', { sourceTabId: active.id, win })
         }),
         {
           label: 'Save Page As…',

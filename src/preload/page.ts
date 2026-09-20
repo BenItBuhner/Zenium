@@ -170,7 +170,10 @@ if (process.isMainFrame) {
       onHost('webapp', (message) =>
         listener({ type: 'webapp', action: message.action, outcome: message.outcome })
       ),
-    installInstallPromptShim: (events) => inMainWorld(installInstallPromptShim, [events])
+    installInstallPromptShim: (events) => inMainWorld(installInstallPromptShim, [events]),
+    // Read aloud (CT-12 / CT-13): the extraction request and the highlight, in every document
+    // (the `zen://reader` page included, which the same code paints).
+    onReadAloud: (listener) => onHost('readAloud', listener)
   })
   installLeaveSite(send)
   const webPage = location.protocol === 'https:' || location.protocol === 'http:'

@@ -381,7 +381,7 @@ describe('printing', () => {
     const result = await f.browser.print.run(tab.id, settings, 2, f.win)
     expect(result).toEqual({
       ok: false,
-      error: 'Something went wrong. Check your printer and try again. (Printer offline)'
+      error: 'Couldn’t print – check your printer and try again (Printer offline)'
     })
   })
 

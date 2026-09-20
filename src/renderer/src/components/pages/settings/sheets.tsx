@@ -277,7 +277,9 @@ export function OptionsSheet({
       <div role="radiogroup" aria-label={row.label} className="zen-settings-sheet-rows">
         {optionGroups(row.options).map((group) => (
           <Fragment key={group.heading ?? ''}>
-            {group.heading !== null && <h3 className="zen-settings-heading">{group.heading}</h3>}
+            {group.heading !== null && (
+              <h3 className="zen-v2-heading zen-settings-heading">{group.heading}</h3>
+            )}
             {group.options.map((option) => (
               <RadioOption
                 key={option.value}

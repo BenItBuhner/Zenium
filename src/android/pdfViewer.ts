@@ -76,6 +76,12 @@ interface PageSlot {
 }
 
 const config = (window as unknown as { __zeniumPdfDocument?: ViewerConfig }).__zeniumPdfDocument
+/**
+ * The box the pages pan in, the size of the screen (`pdfPage.ts`): the viewer's scroll offset,
+ * viewport and page positions are all the scroller's, never the window's – a wide-viewport
+ * WebView grows the window's layout viewport past the screen once a page is wider than it.
+ */
+const scroller = document.getElementById('scroller') as HTMLDivElement
 const pagesRoot = document.getElementById('pages') as HTMLDivElement
 const status = document.getElementById('status') as HTMLDivElement
 
@@ -283,10 +289,12 @@ class Viewer {
     })
   }
 
+  /** Each page's band down the scroller, in css px from its top edge. */
   private bands(): PageBand[] {
+    const origin = scroller.getBoundingClientRect().top
     return this.slots.map((slot) => {
       const rect = slot.element.getBoundingClientRect()
-      return { top: rect.top, bottom: rect.bottom }
+      return { top: rect.top - origin, bottom: rect.bottom - origin }
     })
   }
 
@@ -385,12 +393,12 @@ class Viewer {
       return
     }
     const centre = focus?.centre ?? middleOf(viewportSize())
-    const point = focus?.point ?? { x: window.scrollX + centre.x, y: window.scrollY + centre.y }
+    const point = focus?.point ?? documentPoint(centre)
     this.zoom = zoom
     if (!keepFit) this.fit = null
     for (const slot of this.slots) this.sizeElement(slot)
     const scroll = scrollAfterZoom(point, from, zoom, centre)
-    window.scrollTo(scroll.x, scroll.y)
+    scroller.scrollTo(scroll.x, scroll.y)
     this.scheduleLayout()
     this.report()
   }
@@ -398,13 +406,17 @@ class Viewer {
   private goTo(page: number): void {
     const slot = this.slots[Math.round(page) - 1]
     if (!slot) return
-    const top = slot.element.getBoundingClientRect().top + window.scrollY - 8
-    window.scrollTo(window.scrollX, Math.max(0, top))
+    const top =
+      slot.element.getBoundingClientRect().top -
+      scroller.getBoundingClientRect().top +
+      scroller.scrollTop -
+      8
+    scroller.scrollTo(scroller.scrollLeft, Math.max(0, top))
     this.scheduleLayout()
   }
 
   private installGestures(): void {
-    window.addEventListener('scroll', () => this.scheduleLayout(), { passive: true })
+    scroller.addEventListener('scroll', () => this.scheduleLayout(), { passive: true })
     window.addEventListener('resize', () => {
       if (this.fit) this.zoom = this.fitted(this.fit)
       this.relayout()
@@ -455,9 +467,9 @@ class Viewer {
       this.pinch = null
       return
     }
-    this.pinch = pinchOf([e.touches[0], e.touches[1]], this.zoom, {
-      x: window.scrollX,
-      y: window.scrollY
+    this.pinch = pinchOf([e.touches[0], e.touches[1]].map(screenTouch), this.zoom, {
+      x: scroller.scrollLeft,
+      y: scroller.scrollTop
     })
     this.pinching = true
     this.pinched = null
@@ -469,10 +481,10 @@ class Viewer {
   private movePinch(e: TouchEvent): void {
     const pinch = this.pinch
     if (!pinch) return
-    const [a, b] = [e.touches[0], e.touches[1]]
-    const distance = Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY)
+    const [a, b] = [e.touches[0], e.touches[1]].map(screenPoint)
+    const distance = Math.hypot(b.x - a.x, b.y - a.y)
     const zoom = pinchZoom(pinch, distance)
-    const centre = { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 }
+    const centre = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }
     const dx = centre.x - pinch.centre.x
     const dy = centre.y - pinch.centre.y
     // The pages follow the fingers as a picture until they lift; then they are drawn afresh.
@@ -509,11 +521,8 @@ class Viewer {
     this.lastTap = null
     const fitted = this.fitted('width')
     const zoom = doubleTapZoom(this.zoom, fitted)
-    const centre = { x: touch.clientX, y: touch.clientY }
-    this.setZoom(zoom, {
-      point: { x: window.scrollX + centre.x, y: window.scrollY + centre.y },
-      centre
-    })
+    const centre = screenPoint(touch)
+    this.setZoom(zoom, { point: documentPoint(centre), centre })
     if (Math.abs(zoom - fitted) < 0.01) this.fit = 'width'
   }
 
@@ -780,16 +789,37 @@ function sizeOf(page: PDFPageProxy): PageSize {
 }
 
 /**
- * The layout viewport in CSS pixels: what the pages are fitted to and what "in view" is
- * measured against. The engine's own pinch zoom is off (the shell's `touch-action`), so it is
- * the area on screen; `innerWidth` would follow a visual viewport an emulated engine scales.
+ * The scroller's box in CSS pixels – the area on screen, since the scroller fills the window
+ * and the window never grows past the screen (`pdfPage.ts`): what the pages are fitted to and
+ * what "in view" is measured against. Neither `innerHeight` (a wide-viewport WebView's grown
+ * layout viewport) nor the visual viewport (an engine's own scale) stand in.
  */
 function viewportSize(): { width: number; height: number } {
   const root = document.documentElement
   return {
-    width: root.clientWidth || window.innerWidth,
-    height: root.clientHeight || window.innerHeight
+    width: scroller.clientWidth || root.clientWidth,
+    height: scroller.clientHeight || root.clientHeight
   }
+}
+
+/** A touch's position within the scroller's box. */
+function screenPoint(touch: { clientX: number; clientY: number }): { x: number; y: number } {
+  const box = scroller.getBoundingClientRect()
+  return { x: touch.clientX - box.left, y: touch.clientY - box.top }
+}
+
+/** [screenPoint] under a touch's own field names, for `pinchOf`. */
+function screenTouch(touch: { clientX: number; clientY: number }): {
+  clientX: number
+  clientY: number
+} {
+  const point = screenPoint(touch)
+  return { clientX: point.x, clientY: point.y }
+}
+
+/** The point of the pages under a position on screen: the scroller's offset added. */
+function documentPoint(screen: { x: number; y: number }): { x: number; y: number } {
+  return { x: scroller.scrollLeft + screen.x, y: scroller.scrollTop + screen.y }
 }
 
 function middleOf(size: { width: number; height: number }): { x: number; y: number } {

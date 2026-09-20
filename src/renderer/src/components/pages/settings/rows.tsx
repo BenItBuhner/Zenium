@@ -90,7 +90,7 @@ export function GroupList({
           aria-label={group.heading ?? undefined}
         >
           {group.heading !== null && (
-            <h3 className="zen-settings-heading">
+            <h3 className="zen-v2-heading zen-settings-heading">
               {group.heading}
               {group.aside && <span className="zen-settings-heading-aside">{group.aside}</span>}
             </h3>

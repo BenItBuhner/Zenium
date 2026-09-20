@@ -4,15 +4,26 @@ name: Android PDF viewer demo
 # uploads the video and screenshots: a page of the driver's loopback server links to a PDF it
 # sends as application/pdf; a finger on the link has the WebView hand the response to the
 # downloader and, complete, the tab shows the file in the viewer instead of the system chooser.
-# Then the viewer under real fingers and the chrome's commands: a pinch out zooms, Fit width
-# brings the pages back, a fling reaches the next page, find counts and marks the matches, the
-# outline leads to its page, Share brings the system share sheet and Open with the chooser.
-# PdfViewerDemo asserts on the viewer's report after every step and fails the run when a touch
-# or a command did not take. Dispatch-only, like the downloads demo: it takes about ten minutes
-# and says nothing about a change being correct. The build, the emulator and the Gradle cache
-# live in android-emulator-demo.yml; this file picks the driver and names the artifact.
+# Then the viewer's controls under real fingers (PdfViewerUiDemo, the default): a pinch out
+# zooms and the bar's zoom reads the percentage, the zoom sheet's Fit to width brings the pages
+# back, Go to page leads to a typed page, the find bar counts and steps through the matches, the
+# Contents sheet leads to its last page, the overflow's Rotate turns the pages and Open with
+# brings the system chooser, Share on the bar the share sheet. The engine's driver
+# (PdfViewerDemo, `driver: engine`) presses the same commands through the core instead. Either
+# asserts on the viewer's report after every step and fails the run when a touch or a command
+# did not take. Dispatch-only, like the downloads demo: it takes about ten minutes and says
+# nothing about a change being correct. The build, the emulator and the Gradle cache live in
+# android-emulator-demo.yml; this file picks the driver and names the artifact.
 on:
   workflow_dispatch:
+    inputs:
+      driver:
+        description: >-
+          Which driver runs: ui presses the viewer's bar and sheets with real fingers
+          (PdfViewerUiDemo); engine drives the viewer through the core's commands (PdfViewerDemo).
+        type: choice
+        options: [ui, engine]
+        default: ui
 
 permissions:
   contents: read
@@ -27,9 +38,10 @@ jobs:
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
       script: .github/scripts/android-gesture-demo.sh
-      # The shared driver chooses the demo from its environment (see the script's header).
+      # The shared driver chooses the demo from its environment (see the script's header). The UI
+      # driver unless the dispatch asked for the engine's; the artifact keeps its name either way.
       script-env: |
-        DEMO_CLASS=app.zen.chromium.PdfViewerDemo
+        DEMO_CLASS=app.zen.chromium.${{ inputs.driver == 'engine' && 'PdfViewerDemo' || 'PdfViewerUiDemo' }}
         DEMO_DIR=pdf-viewer-demo
         DEMO_OUT=artifacts/android-pdf-viewer-demo
         DEMO_VIDEO=android-pdf-viewer-demo.mp4

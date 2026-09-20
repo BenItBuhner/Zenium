@@ -103,6 +103,7 @@ import {
   type SpellcheckStatus
 } from '../shared/spellcheck'
 import { sanitizeReaderPreferences } from '../shared/reader'
+import { sanitizeReadAloudSettings, type ReadAloudState } from '../shared/readAloud'
 import {
   emptyNewTabDevice,
   migrateNewTabDevice,
@@ -224,6 +225,7 @@ export interface StateExtras {
   privacy: PrivacyStatus
   translate: TranslateUIState
   spellcheck: SpellcheckStatus
+  readAloud: ReadAloudState | null
 }
 
 /** Translation state of a host without an engine (and before the service exists). */
@@ -357,7 +359,8 @@ export class BrowserState {
     blocking: emptyBlockingStatus(),
     privacy: emptyPrivacyStatus(),
     translate: emptyTranslateState(),
-    spellcheck: UNAVAILABLE_SPELLCHECK
+    spellcheck: UNAVAILABLE_SPELLCHECK,
+    readAloud: null
   })
   /**
    * The shipped engines plus the user's (`settings.searchEngines`: added by hand or discovered
@@ -496,6 +499,7 @@ export class BrowserState {
     this.settings.privacy = sanitizePrivacySettings(data.settings?.privacy)
     this.settings.spellcheck = sanitizeSpellcheck(data.settings?.spellcheck)
     this.settings.reader = sanitizeReaderPreferences(data.settings?.reader)
+    this.settings.readAloud = sanitizeReadAloudSettings(data.settings?.readAloud)
     // The new tab page's one model (v5). The migration reads the desktop's first shape and the
     // phone's key, and runs before the sanitiser, which knows nothing of the earlier fields; it
     // reads its own result unchanged, so a migrated profile loads as it was written.

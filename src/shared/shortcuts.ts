@@ -860,19 +860,22 @@ const DEFS: Def[] = [
     chrome: { key: 'o', mods: ACCEL }
   },
   {
+    // Ctrl+P opens Zenium's print preview (the engine's own flow on a host without one).
     id: 'printKb',
-    action: 'page.print',
+    action: 'page.printPreview',
     group: 'pageOperations',
     label: 'Print…',
-    zen: { key: 'p', mods: ACCEL },
-    chrome: {
-      key: 'p',
-      mods: ACCEL,
-      extra: [
-        { key: 'p', mods: ACCEL_SHIFT, platforms: WINLIN },
-        { key: 'p', mods: META_ALT, platforms: MAC }
-      ]
-    }
+    ...both({ key: 'p', mods: ACCEL })
+  },
+  {
+    // Chrome's "Print using system dialog…": Ctrl+Shift+P (Cmd+Option+P on a Mac). Zen has no key
+    // for it (Ctrl+Shift+P is its private window); the preview's own link reaches it there.
+    id: 'printSystemKb',
+    action: 'page.print',
+    group: 'pageOperations',
+    label: 'Print Using System Dialog…',
+    zen: UNBOUND,
+    chrome: { key: 'p', mods: ACCEL_SHIFT, perPlatform: { darwin: { key: 'p', mods: META_ALT } } }
   },
   {
     id: 'key_viewSource',

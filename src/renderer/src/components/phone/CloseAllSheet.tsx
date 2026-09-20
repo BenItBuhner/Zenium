@@ -37,8 +37,10 @@ export function CloseAllSheet({
   return (
     <PhoneSheet
       name="overview-close-all"
-      title={`Close ${tabs}?`}
-      prompt={{
+      // A prompt: the title block (§9.23); its one paragraph is the description.
+      title={{
+        pose: 'block',
+        text: `Close ${tabs}?`,
         icon: <X className="h-5 w-5 shrink-0" strokeWidth={1.75} aria-hidden />,
         description: privateTabs
           ? 'Every private tab closes and the private session ends; its history, cookies and site data go with it. There is no undo.'
