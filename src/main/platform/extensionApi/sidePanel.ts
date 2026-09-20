@@ -4,6 +4,7 @@ import type { ZenWindow } from '../../../core/window'
 import {
   ERROR_NO_ACTIVE_WINDOW,
   ERROR_NO_PERMISSION,
+  SIDE_PANEL_SIDES,
   SidePanelError,
   SidePanelOptions,
   manifestPanelPath,
@@ -11,11 +12,14 @@ import {
   noPanelForWindow,
   noTab,
   noWindow,
+  normalizeCloseOptions,
   normalizeGetOptions,
   normalizeOpenOptions,
   normalizePanelBehavior,
   normalizePanelOptions,
   type PanelBehavior,
+  type PanelLayout,
+  type PanelOpenedInfo,
   type PanelOptions
 } from '../../../core/extensions/api/sidePanel'
 import type { PanelView, PanelViewHost } from './sidePanelBridge'
@@ -36,6 +40,8 @@ interface OpenPanel {
   view: PanelView
   /** The page loaded right now; null before the first load. */
   url: string | null
+  /** What `onOpened` announced for the page loaded right now (`onClosed` repeats it). */
+  shown: PanelOpenedInfo | null
 }
 
 /**
@@ -64,7 +70,9 @@ export class SidePanelApi {
     getOptions: (ctx, options) => this.getOptions(ctx, options),
     setPanelBehavior: (ctx, behavior) => this.setPanelBehavior(ctx, behavior),
     getPanelBehavior: (ctx) => this.getPanelBehavior(ctx),
-    open: (ctx, options) => this.open(ctx, options)
+    open: (ctx, options) => this.open(ctx, options),
+    close: (ctx, options) => this.closePanel(ctx, options),
+    getLayout: (ctx) => this.getLayout(ctx)
   }
 
   // ---------------------------------------------------------------------------
@@ -182,16 +190,77 @@ export class SidePanelApi {
     this.show(ctx.extension, win)
   }
 
+  /**
+   * `close(options)`: a no-op when the extension's panel is not showing there. With a `tabId`,
+   * Chrome (145 and later) closes a tab-specific panel and refuses when only the global one is
+   * open on that tab; Zenium's panel belongs to the window, so closing it for the tab takes the
+   * window's panel down.
+   */
+  private closePanel(ctx: ApiContext, raw: unknown): void {
+    this.requirePermission(ctx.extension)
+    const target = checked(() => normalizeCloseOptions(raw))
+    let win: ZenWindow | undefined
+    if (target.tabId !== undefined) {
+      const tab = this.host.model.zenTab(target.tabId)
+      win = tab ? this.host.model.windowOfTab(tab) : undefined
+      if (!tab || !win) throw new ApiError(noTab(target.tabId))
+      if (
+        target.windowId !== undefined &&
+        target.windowId !== WINDOW_ID_CURRENT &&
+        this.host.model.windowIdOf(win) !== target.windowId
+      ) {
+        throw new ApiError(noWindow(target.windowId))
+      }
+      if (this.panels.get(win.id)?.extensionId !== ctx.extensionId) return
+      if (!this.optionsFor(ctx.extension).effective(target.tabId).tabScoped) {
+        throw new ApiError(noPanelForTab(target.tabId))
+      }
+    } else {
+      const windowId = target.windowId!
+      win =
+        windowId === WINDOW_ID_CURRENT
+          ? (ctx.window ?? this.host.model.lastFocusedWindow())
+          : this.host.model.zenWindow(windowId)
+      if (!win) {
+        throw new ApiError(
+          windowId === WINDOW_ID_CURRENT ? ERROR_NO_ACTIVE_WINDOW : noWindow(windowId)
+        )
+      }
+      if (this.panels.get(win.id)?.extensionId !== ctx.extensionId) return
+    }
+    this.close(win)
+  }
+
+  /** The strip docks on the right of the page in every window. */
+  private getLayout(ctx: ApiContext): PanelLayout {
+    this.requirePermission(ctx.extension)
+    return { side: SIDE_PANEL_SIDES.RIGHT }
+  }
+
   // ---------------------------------------------------------------------------
   // What the panel shows
   // ---------------------------------------------------------------------------
 
   /** The page the extension's panel shows for the active tab of `win`, or null for none. */
   private urlFor(ext: LoadedExtension, win: ZenWindow): string | null {
+    return this.pageFor(ext, win)?.url ?? null
+  }
+
+  /**
+   * The page the extension's panel shows for the active tab of `win`, with what `onOpened` says
+   * about it (the tab only for a tab-specific panel, as in Chrome); null when the panel is off.
+   */
+  private pageFor(
+    ext: LoadedExtension,
+    win: ZenWindow
+  ): { url: string; info: PanelOpenedInfo } | null {
     const active = this.host.browser.tabs.activeTabFor(win)
     const tabId = active ? this.host.model.chromeTabId(active) : undefined
-    const { path } = this.optionsFor(ext).effective(tabId)
-    return path ? extensionUrl(ext.id, path) : null
+    const { path, tabScoped } = this.optionsFor(ext).effective(tabId)
+    if (!path) return null
+    const info: PanelOpenedInfo = { path, windowId: this.host.model.windowIdOf(win) }
+    if (tabScoped && tabId !== undefined) info.tabId = tabId
+    return { url: extensionUrl(ext.id, path), info }
   }
 
   /** An extension whose toolbar click opens the panel (and has a panel to open in `win`). */
@@ -252,7 +321,7 @@ export class SidePanelApi {
         }
       })
       if (!view) return
-      panel = { extensionId: ext.id, win, view, url: null }
+      panel = { extensionId: ext.id, win, view, url: null, shown: null }
       this.panels.set(win.id, panel)
     }
     this.refreshPanel(panel, true)
@@ -275,8 +344,16 @@ export class SidePanelApi {
     if (!panel) return false
     this.panels.delete(win.id)
     panel.view.close()
+    this.announceClosed(panel)
     this.host.commitUi()
     return true
+  }
+
+  /** `onClosed` for the page the panel was showing (nothing when it never showed one). */
+  private announceClosed(panel: OpenPanel): void {
+    if (!panel.shown) return
+    this.host.dispatch(panel.extensionId, 'sidePanel', 'onClosed', [panel.shown])
+    panel.shown = null
   }
 
   /** The chrome laid the panel strip out (or took it away): the view follows. */
@@ -305,13 +382,29 @@ export class SidePanelApi {
   private refreshPanel(panel: OpenPanel, focus: boolean): void {
     const ext = this.host.loaded(panel.extensionId)
     if (!ext || panel.view.destroyed()) return
-    const url = this.urlFor(ext, panel.win)
+    const page = this.pageFor(ext, panel.win)
     // No page for this tab: the strip collapses (the chrome sees `info` as null) and the view
-    // hides with it; the last page stays loaded for when the tab that shows it comes back.
-    if (!url) return
-    if (panel.url !== url) {
-      panel.url = url
-      panel.view.loadURL(url)
+    // hides with it; the last page stays loaded for when the tab that shows it comes back. The
+    // extension hears `onClosed` for the page that went away, as it would in Chrome, where a
+    // tab without a panel closes it.
+    if (!page) {
+      this.announceClosed(panel)
+      return
+    }
+    if (panel.url !== page.url) {
+      panel.url = page.url
+      panel.view.loadURL(page.url)
+    }
+    // A page coming up (the first one, or another tab's own panel) is an `onOpened`: Chrome
+    // fires it per panel entry shown, the tab-specific ones included.
+    if (
+      !panel.shown ||
+      panel.shown.path !== page.info.path ||
+      panel.shown.tabId !== page.info.tabId
+    ) {
+      if (panel.shown) this.announceClosed(panel)
+      panel.shown = page.info
+      this.host.dispatch(panel.extensionId, 'sidePanel', 'onOpened', [page.info])
     }
     if (focus) panel.view.focus()
   }

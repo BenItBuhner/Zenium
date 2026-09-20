@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Egress address (VPN proxy fixture)</title>
+  </head>
+  <body style="background: #ffffff; color: #111; font: 18px system-ui; padding: 40px">
+    <h1>Egress address</h1>
+    <p>
+      The public address this page's requests leave from, as two independent echo services see it.
+      A VPN extension that installed a proxy through <code>chrome.proxy</code> changes it.
+    </p>
+    <ul>
+      <li>ipify: <span id="ipify">pending</span></li>
+      <li>ifconfig.me: <span id="ifconfig">pending</span></li>
+    </ul>
+    <script>
+      window.__egress = { ipify: null, ifconfig: null, errors: [] }
+      function show(id, text) {
+        document.getElementById(id).textContent = text
+      }
+      function ask(id, url, pick) {
+        return fetch(url, { cache: 'no-store' })
+          .then(function (r) {
+            return r.text()
+          })
+          .then(function (t) {
+            var ip = pick(t).trim()
+            window.__egress[id] = ip
+            show(id, ip)
+          })
+          .catch(function (e) {
+            window.__egress.errors.push(id + ': ' + (e && e.message))
+            show(id, 'error: ' + (e && e.message))
+          })
+      }
+      window.__egressDone = Promise.all([
+        ask('ipify', 'https://api.ipify.org?format=json', function (t) {
+          return JSON.parse(t).ip
+        }),
+        ask('ifconfig', 'https://ifconfig.me/ip', function (t) {
+          return t
+        })
+      ])
+    </script>
+  </body>
+</html>

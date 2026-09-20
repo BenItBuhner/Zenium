@@ -28,6 +28,18 @@ export interface PermissionChange {
 }
 
 /**
+ * Rules extensions set (`chrome.contentSettings`), consulted before the user's answers as
+ * Chrome's extension provider ranks above its preference provider: the catalogue id of the
+ * permission (`geolocation`, `notifications`, `popups`…), the requesting URL and the request's
+ * details (the embedding page, for a frame). Null when no extension has a rule for the site.
+ */
+export type PermissionOverride = (
+  permission: string,
+  requestingUrl: string,
+  details?: PermissionRequestDetails
+) => ContentDefault | null
+
+/**
  * The "origin" of a permission's default decision (Chrome's content-setting default). Never a real
  * origin, so `listForOrigin` and `resetOrigin` cannot reach it.
  */
@@ -111,6 +123,7 @@ export class PermissionService {
   private readonly dismissals = new Map<string, number>()
   /** Requests answered from a stored allow this session, per key (the notification review). */
   private readonly hits = new Map<string, number>()
+  private override: PermissionOverride | null = null
 
   constructor(
     io: StoreIO,
@@ -170,11 +183,35 @@ export class PermissionService {
   ): ContentDefault {
     const origin = permissionSite(requestingUrl)
     if (!origin) return this.siteless(permission, requestingUrl)
+    const overridden = this.overridden(permission, requestingUrl, details)
+    if (overridden) return overridden
     const key = decisionKey(origin, permission, details)
     const stored = this.decisions[key]
     if (stored) return stored
     if (details?.tabId && this.sessionAllows.get(details.tabId)?.has(key)) return 'allow'
     return this.effectiveDefault(permission)
+  }
+
+  /**
+   * Extensions' content-setting rules rank above every answer of the user's (Chrome's order of
+   * providers); `setOverride` installs the provider, `overridesChanged` tells the listeners the
+   * affected permissions may resolve differently now (as a change of the defaults would).
+   */
+  setOverride(provider: PermissionOverride | null): void {
+    this.override = provider
+  }
+
+  overridesChanged(permissions: readonly string[]): void {
+    for (const permission of permissions) this.notify({ permission, origin: null })
+  }
+
+  private overridden(
+    permission: string,
+    requestingUrl: string,
+    details?: PermissionRequestDetails
+  ): ContentDefault | null {
+    if (!this.override) return null
+    return this.override(qualifiedPermission(permission, details), requestingUrl, details)
   }
 
   /**
@@ -199,6 +236,8 @@ export class PermissionService {
   ): PermissionDecision | null {
     const origin = permissionSite(requestingUrl)
     if (!origin) return null
+    const overridden = this.overridden(permission, requestingUrl, details)
+    if (overridden) return overridden === 'ask' ? null : overridden
     return (
       this.decisions[decisionKey(origin, permission, details)] ??
       this.defaultFor(permission) ??

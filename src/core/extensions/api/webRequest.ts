@@ -511,21 +511,94 @@ export function chromeRequestDetails(
 }
 
 // ---------------------------------------------------------------------------
+// onAuthRequired: a server's or proxy's challenge
+// ---------------------------------------------------------------------------
+
+/**
+ * A challenge as the engine reports it (Electron's `login` event: no request of the pipeline,
+ * so the host supplies the request-shaped fields it can know). `scheme` is the challenge's
+ * authentication scheme, lower case (`basic`, `digest`, `ntlm`, `negotiate`).
+ */
+export interface AuthChallenge {
+  requestId: string
+  url: string
+  method: string
+  tabId: number
+  type: ResourceType
+  timestamp: number
+  isProxy: boolean
+  scheme: string
+  realm: string
+  host: string
+  port: number
+}
+
+/** Chrome's details for `onAuthRequired`: the request fields plus the challenge. */
+export interface ChromeAuthRequiredDetails extends ChromeRequestDetails {
+  challenger: { host: string; port: number }
+  isProxy: boolean
+  scheme: string
+  realm?: string
+}
+
+/**
+ * The `onAuthRequired` details of a challenge: a 407 for a proxy's, a 401 for a server's, the
+ * challenger's host and port, the scheme and realm; the frame fields are the top frame's (the
+ * engine does not say which frame's request it was) and `responseHeaders` come only when asked
+ * for (empty: the engine keeps the response).
+ */
+export function chromeAuthRequiredDetails(
+  challenge: AuthChallenge,
+  spec: readonly ExtraInfoSpec[]
+): ChromeAuthRequiredDetails {
+  const out: ChromeAuthRequiredDetails = {
+    requestId: challenge.requestId,
+    url: challenge.url,
+    method: challenge.method,
+    frameId: 0,
+    parentFrameId: -1,
+    tabId: challenge.tabId,
+    type: challenge.type,
+    timeStamp: challenge.timestamp,
+    documentLifecycle: 'active',
+    frameType: 'outermost_frame',
+    statusLine: challenge.isProxy
+      ? 'HTTP/1.1 407 Proxy Authentication Required'
+      : 'HTTP/1.1 401 Unauthorized',
+    statusCode: challenge.isProxy ? 407 : 401,
+    challenger: { host: challenge.host, port: challenge.port },
+    isProxy: challenge.isProxy,
+    scheme: challenge.scheme
+  }
+  if (challenge.realm !== '') out.realm = challenge.realm
+  if (spec.includes('responseHeaders')) out.responseHeaders = []
+  return out
+}
+
+/** Chrome's `webRequest.AuthCredentials`. */
+export interface AuthCredentials {
+  username: string
+  password: string
+}
+
+// ---------------------------------------------------------------------------
 // Blocking answers
 // ---------------------------------------------------------------------------
 
-/** What a blocking listener's answer becomes for the multiplexer. */
+/** What a blocking listener's answer becomes for the multiplexer (or, for `onAuthRequired`, the challenge). */
 export interface BlockingAnswer {
   cancel?: boolean
   redirectUrl?: string
   requestHeaders?: Record<string, string>
   responseHeaders?: Record<string, string[]>
+  authCredentials?: AuthCredentials
 }
 
 /**
  * Chrome's `BlockingResponse`, reduced to what the event accepts: `cancel` everywhere,
  * `redirectUrl` in `onBeforeRequest` and `onHeadersReceived`, `requestHeaders` in
- * `onBeforeSendHeaders`, `responseHeaders` in `onHeadersReceived`. Fields the event does not
+ * `onBeforeSendHeaders`, `responseHeaders` in `onHeadersReceived`, `authCredentials` in
+ * `onAuthRequired`. Fields the event does not
  * take, malformed header lists and anything that is not an object are ignored, as Chrome
  * ignores them (it logs; the request proceeds).
  */
@@ -550,6 +623,12 @@ export function normalizeBlockingResponse(
   if (event === 'onHeadersReceived' && raw.responseHeaders !== undefined) {
     const headers = responseHeadersFrom(raw.responseHeaders)
     if (headers) out.responseHeaders = headers
+  }
+  if (event === 'onAuthRequired' && isRecord(raw.authCredentials)) {
+    const { username, password } = raw.authCredentials
+    if (typeof username === 'string' && typeof password === 'string') {
+      out.authCredentials = { username, password }
+    }
   }
   return Object.keys(out).length > 0 ? out : undefined
 }

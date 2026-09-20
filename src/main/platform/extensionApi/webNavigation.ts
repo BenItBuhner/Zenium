@@ -170,11 +170,17 @@ export class WebNavigationApi {
   // Event sources
   // ---------------------------------------------------------------------------
 
-  /** Follow a tab view's navigations for as long as it lives. */
+  /**
+   * Follow a tab view's navigations for as long as it lives. The frame states are kept from the
+   * first navigation on; the events go out only while the page is a tab of the model. A new tab
+   * page preloaded off screen under a placeholder id is not one yet (its load is as invisible to
+   * extensions as Chrome's preloaded NTP), and a tab id that `tabs.get` rejects would otherwise
+   * reach them (Zotero and AdGuard log "No tab with id" for every such navigation).
+   */
   attach(view: ElectronTabView): void {
     const wc = view.webContents
     if (wc.isDestroyed()) return
-    const tabId = (): number => this.tabIdFor(wc)
+    const tabId = (): number | null => this.tabIdFor(wc)
     view.onNavigationTarget = (source, url) => this.navigationTarget(source, url)
     this.consumePendingTarget(wc)
 
@@ -184,9 +190,11 @@ export class WebNavigationApi {
       if (!frame) return
       const state = this.stateOf(wc, frame)
       state.errorOccurred = false
+      const id = tabId()
+      if (id === null) return
       // The main frame's hint (reload / history / typed) is consumed by the commit below.
       this.emit('onBeforeNavigate', {
-        ...this.details(tabId(), frame, details.url, state),
+        ...this.details(id, frame, details.url, state),
         timeStamp: Date.now()
       })
     })
@@ -210,6 +218,7 @@ export class WebNavigationApi {
       }
       const transition = transitionFor(hint)
       const id = tabId()
+      if (id === null) return
       this.emit('onCommitted', {
         ...this.details(id, frame, url, state, processId, routingId, isMainFrame),
         timeStamp: Date.now(),
@@ -230,8 +239,10 @@ export class WebNavigationApi {
         isMainFrame,
         ...(isMainFrame ? view.takeNavigationHint() : {})
       }
+      const id = tabId()
+      if (id === null) return
       this.emit(fragment ? 'onReferenceFragmentUpdated' : 'onHistoryStateUpdated', {
-        ...this.details(tabId(), frame, url, state, processId, routingId, isMainFrame),
+        ...this.details(id, frame, url, state, processId, routingId, isMainFrame),
         timeStamp: Date.now(),
         ...transitionFor(hint)
       })
@@ -241,8 +252,10 @@ export class WebNavigationApi {
       if (wc.isDestroyed()) return
       const frame = wc.mainFrame
       const state = this.stateOf(wc, frame)
+      const id = tabId()
+      if (id === null) return
       this.emit('onDOMContentLoaded', {
-        ...this.details(tabId(), frame, frame.url, state),
+        ...this.details(id, frame, frame.url, state),
         timeStamp: Date.now()
       })
     })
@@ -251,8 +264,10 @@ export class WebNavigationApi {
       const frame = frameFromIds(processId, routingId) ?? (isMainFrame ? wc.mainFrame : null)
       const state = frame ? this.stateOf(wc, frame) : this.stateByIds(wc, processId, routingId)
       if (state.errorOccurred) return
+      const id = tabId()
+      if (id === null) return
       const url = frame?.url ?? state.url
-      const base = this.details(tabId(), frame, url, state, processId, routingId, isMainFrame)
+      const base = this.details(id, frame, url, state, processId, routingId, isMainFrame)
       // The engine has no DOMContentLoaded signal for sub-frames; Chrome fires it right before
       // `onCompleted`, which is where it lands here.
       if (!isMainFrame) this.emit('onDOMContentLoaded', { ...base, timeStamp: Date.now() })
@@ -263,8 +278,10 @@ export class WebNavigationApi {
       const frame = frameFromIds(processId, routingId) ?? (isMainFrame ? wc.mainFrame : null)
       const state = frame ? this.stateOf(wc, frame) : this.stateByIds(wc, processId, routingId)
       state.errorOccurred = true
+      const id = tabId()
+      if (id === null) return
       this.emit('onErrorOccurred', {
-        ...this.details(tabId(), frame, url, state, processId, routingId, isMainFrame),
+        ...this.details(id, frame, url, state, processId, routingId, isMainFrame),
         timeStamp: Date.now(),
         error: netErrorName(code, description)
       })
@@ -281,8 +298,10 @@ export class WebNavigationApi {
    */
   navigationTarget(source: WebContents, url: string): () => void {
     if (source.isDestroyed()) return () => undefined
+    const sourceTabId = this.tabIdFor(source)
+    if (sourceTabId === null) return () => undefined
     const target: PendingTarget = {
-      sourceTabId: this.tabIdFor(source),
+      sourceTabId,
       sourceFrameId: 0,
       sourceProcessId: source.mainFrame.processId,
       url,
@@ -300,7 +319,10 @@ export class WebNavigationApi {
     const now = Date.now()
     const live = this.pendingTargets.filter((t) => now - t.at <= PENDING_TARGET_TTL_MS)
     this.pendingTargets.splice(0, this.pendingTargets.length, ...live)
-    const tabUrl = this.host.model.zenTab(wc.id)?.url
+    const tab = this.host.model.zenTab(wc.id)
+    // A page that is not a tab (the preloaded new tab page) never is a navigation target.
+    if (!tab) return
+    const tabUrl = tab.url
     let index = -1
     for (let i = live.length - 1; i >= 0; i--) {
       if (tabUrl !== undefined && live[i].url !== tabUrl) continue
@@ -314,7 +336,7 @@ export class WebNavigationApi {
       sourceProcessId: target.sourceProcessId,
       sourceFrameId: target.sourceFrameId,
       url: target.url,
-      tabId: wc.id,
+      tabId: this.host.model.chromeTabId(tab),
       timeStamp: now
     }
     this.emit('onCreatedNavigationTarget', details)
@@ -324,9 +346,10 @@ export class WebNavigationApi {
   // Payloads and fan-out
   // ---------------------------------------------------------------------------
 
-  private tabIdFor(wc: WebContents): number {
+  /** The Chrome tab id of a page, or null when the page is not (yet) a tab of the model. */
+  private tabIdFor(wc: WebContents): number | null {
     const tab = this.host.model.zenTab(wc.id)
-    return tab ? this.host.model.chromeTabId(tab) : wc.id
+    return tab ? this.host.model.chromeTabId(tab) : null
   }
 
   private details(

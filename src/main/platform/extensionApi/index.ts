@@ -31,7 +31,9 @@ import type { PermissionSet } from '../../../core/extensions/api/permissions'
 import type { InvokeResult } from '../../../core/extensions/api/shim'
 import {
   API_SPEC,
+  CONTENT_SETTINGS_INTERNAL_METHODS,
   PRIVACY_INTERNAL_METHODS,
+  PROXY_INTERNAL_METHODS,
   STORAGE_INTERNAL_METHODS,
   STORAGE_METHODS,
   USER_SCRIPTS_INTERNAL_METHODS,
@@ -78,13 +80,18 @@ import { NotificationsApi } from './notifications'
 import { OmniboxApi } from './omnibox'
 import { PermissionsApi } from './permissions'
 import { PrivacyApi } from './privacy'
+import { ProxyApi } from './proxy'
+import { ContentSettingsApi } from './contentSettings'
 import { RuntimeApi } from './runtime'
 import { SessionsApi } from './sessions'
 import { SidePanelApi } from './sidePanel'
+import { DebuggerApi } from './debugger'
 import { electronPanelViewHost } from './sidePanelBridge'
 import { ApiStore } from './store'
 import { StorageApi } from './storage'
 import { TabGroupsApi } from './tabGroups'
+import { SystemDisplayApi } from './systemDisplay'
+import { electronDisplayScreen } from './systemDisplayBridge'
 import { TabsApi } from './tabs'
 import { TopSitesApi } from './topSites'
 import { TtsApi } from './tts'
@@ -185,14 +192,18 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   readonly declarativeNetRequest: DeclarativeNetRequestHostApi
   readonly webRequest: WebRequestApi
   readonly privacy: PrivacyApi
+  readonly proxy: ProxyApi
+  readonly contentSettings: ContentSettingsApi
   readonly bookmarks: BookmarksApi
   readonly history: HistoryApi
   readonly downloads: DownloadsApi
   /** `chrome.sessions` (recently closed); `sessions` is taken by the engine's session manager. */
   readonly recentlyClosed: SessionsApi
   readonly topSites: TopSitesApi
+  readonly systemDisplay: SystemDisplayApi
   readonly tabGroups: TabGroupsApi
   readonly sidePanel: SidePanelApi
+  readonly debugger: DebuggerApi
   readonly identity: IdentityApi
   readonly omnibox: OmniboxApi
   readonly browsingData: BrowsingDataApi
@@ -255,6 +266,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.webNavigation = new WebNavigationApi(this)
     this.contextMenus = new ContextMenusApi(this, this.activeTab)
     this.sidePanel = new SidePanelApi(this, electronPanelViewHost(this.model))
+    this.debugger = new DebuggerApi(this)
     this.commands = new CommandsApi(this, this.action, this.activeTab, this.sidePanel)
     this.notifications = new NotificationsApi(this)
     this.cookies = new CookiesApi(this)
@@ -267,11 +279,19 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     )
     this.webRequest = new WebRequestApi(this)
     this.privacy = new PrivacyApi(this)
+    this.proxy = new ProxyApi(this, {
+      configure: (hook) =>
+        this.sessions.configure((ses, containerId) =>
+          hook(ses, containerId === PRIVATE_CONTAINER_ID)
+        )
+    })
+    this.contentSettings = new ContentSettingsApi(this)
     this.bookmarks = new BookmarksApi(this)
     this.history = new HistoryApi(this)
     this.downloads = new DownloadsApi(this, downloadBridge)
     this.recentlyClosed = new SessionsApi(this)
     this.topSites = new TopSitesApi(this)
+    this.systemDisplay = new SystemDisplayApi(this, electronDisplayScreen())
     this.tabGroups = new TabGroupsApi(this)
     this.identity = new IdentityApi(electronAuthWindowHost(this.model))
     this.omnibox = new OmniboxApi(this)
@@ -296,13 +316,17 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       declarativeNetRequest: this.declarativeNetRequest.handlers,
       webRequest: this.webRequest.handlers,
       privacy: this.privacy.handlers,
+      proxy: this.proxy.handlers,
+      contentSettings: this.contentSettings.handlers,
       bookmarks: this.bookmarks.handlers,
       history: this.history.handlers,
       downloads: this.downloads.handlers,
       sessions: this.recentlyClosed.handlers,
       topSites: this.topSites.handlers,
+      'system.display': this.systemDisplay.handlers,
       tabGroups: this.tabGroups.handlers,
       sidePanel: this.sidePanel.handlers,
+      debugger: this.debugger.handlers,
       identity: this.identity.handlers,
       omnibox: this.omnibox.handlers,
       browsingData: this.browsingData.handlers,
@@ -388,6 +412,8 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
         // privacy values.
         this.declarativeNetRequest.installOrderChanged()
         this.privacy.installOrderChanged()
+        this.proxy.installOrderChanged()
+        this.contentSettings.installOrderChanged()
         return
       case 'enabled':
         this.tellOthers('onEnabled', event.id)
@@ -400,6 +426,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
         else this.privateAllowed.delete(event.id)
         this.declarativeNetRequest.sessionsChanged(event.id)
         this.privacy.privateAccessChanged()
+        this.proxy.privateAccessChanged()
         return
       case 'allowUserScripts':
         this.userScripts.setAllowed(event.id, event.allowed)
@@ -409,6 +436,8 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
         this.privateAllowed.delete(event.id)
         this.runtime.openUninstallUrl(event.id)
         this.privacy.forget(event.id)
+        this.proxy.forget(event.id)
+        this.contentSettings.forget(event.id)
         this.userScripts.uninstalled(event.id)
         this.store.forget(event.id)
         this.declarativeNetRequest.uninstalled(event.id)
@@ -557,6 +586,9 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     // After the permissions: the state exists only for extensions holding the permission.
     this.declarativeNetRequest.load(loaded)
     this.privacy.load(ext.id)
+    this.proxy.load(ext.id)
+    this.contentSettings.load(ext.id)
+    this.systemDisplay.load(loaded)
     this.userScripts.load(loaded, info?.allowUserScripts === true)
     // Existing tabs, bookmarks, downloads and folders are the baseline, not a burst of `onCreated`.
     if (!this.snapshot) {
@@ -586,12 +618,16 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.permissions.unload(ext.id)
     this.commands.unload(ext.id)
     this.sidePanel.unload(ext.id)
+    this.debugger.unload(ext.id)
+    this.systemDisplay.unload()
     this.identity.unload(ext.id)
     this.omnibox.unload(ext.id)
     this.tts.unload(ext.id)
     this.declarativeNetRequest.unload(ext.id)
     this.webRequest.unload(ext.id)
     this.privacy.unload(ext.id)
+    this.proxy.unload(ext.id)
+    this.contentSettings.unload(ext.id)
     this.userScripts.unload(ext.id)
     this.contextMenus.forget(ext.id)
     this.notifications.forget(ext.id)
@@ -680,10 +716,14 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
             ? (WEB_REQUEST_INTERNAL_METHODS as readonly string[]).includes(method)
             : routed === 'privacy'
               ? (PRIVACY_INTERNAL_METHODS as readonly string[]).includes(method)
-              : routed === 'userScripts' &&
-                  (USER_SCRIPTS_INTERNAL_METHODS as readonly string[]).includes(method)
-                ? true
-                : isSpecMethod(API_SPEC, namespace, method)
+              : routed === 'proxy'
+                ? (PROXY_INTERNAL_METHODS as readonly string[]).includes(method)
+                : routed === 'contentSettings'
+                  ? (CONTENT_SETTINGS_INTERNAL_METHODS as readonly string[]).includes(method)
+                  : routed === 'userScripts' &&
+                      (USER_SCRIPTS_INTERNAL_METHODS as readonly string[]).includes(method)
+                    ? true
+                    : isSpecMethod(API_SPEC, namespace, method)
       const handlers = this.namespaces[routed]
       if (!known || !handlers || !Object.prototype.hasOwnProperty.call(handlers, method)) {
         throw new ApiError(`${namespace}.${method} is not available in Zenium.`)

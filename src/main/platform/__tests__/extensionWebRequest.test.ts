@@ -571,3 +571,189 @@ describe('WebRequestApi blocking round trip', () => {
     expect(w.sent[0].args[1]).toBeNull()
   })
 })
+
+describe('WebRequestApi onAuthRequired', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  const proxyChallenge = {
+    url: 'https://page.example/',
+    isProxy: true,
+    scheme: 'Basic',
+    realm: 'VPN',
+    host: 'proxy.vpn.example',
+    port: 8080,
+    tabId: 'tab-1'
+  }
+
+  it('delivers the challenge in Chrome’s shape and sends the newest extension’s credentials', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(4242)
+    const w = world()
+    const mv3 = w.worker(MV3)
+    const mv2 = w.frame(MV2)
+    add(w, mv3, 'onAuthRequired', { urls: [] }, ['asyncBlocking'], 1)
+    add(w, mv2, 'onAuthRequired', { urls: [] }, ['blocking', 'responseHeaders'], 2)
+    // Nothing of this went to the session pipeline.
+    expect(w.pipeline.hooked).toEqual([])
+    const answer = w.api.authRequired(proxyChallenge)
+    expect(w.api.pendingAnswers).toBe(2)
+    expect(w.sent).toHaveLength(2)
+    expect(w.sent[0]).toMatchObject({
+      context: mv3,
+      namespace: 'webRequest',
+      event: 'onAuthRequired',
+      delivery: { unfiltered: false, matched: [1] }
+    })
+    expect(w.sent[0].args[0]).toEqual({
+      requestId: 'auth-1',
+      url: 'https://page.example/',
+      method: 'GET',
+      frameId: 0,
+      parentFrameId: -1,
+      tabId: 11,
+      type: 'main_frame',
+      timeStamp: 4242,
+      documentLifecycle: 'active',
+      frameType: 'outermost_frame',
+      statusLine: 'HTTP/1.1 407 Proxy Authentication Required',
+      statusCode: 407,
+      challenger: { host: 'proxy.vpn.example', port: 8080 },
+      isProxy: true,
+      scheme: 'basic',
+      realm: 'VPN'
+    })
+    // The MV2 listener asked for response headers: it gets an (empty) list.
+    expect(w.sent[1].args[0]).toMatchObject({ responseHeaders: [] })
+    const [mv3Token, mv2Token] = [w.sent[0].args[1], w.sent[1].args[1]]
+    expect(typeof mv3Token).toBe('number')
+    expect(typeof mv2Token).toBe('number')
+    w.api.answer(w.ctx(mv2), {
+      token: mv2Token,
+      response: { authCredentials: { username: 'old', password: 'pw2' } }
+    })
+    w.api.answer(w.ctx(mv3), {
+      token: mv3Token,
+      response: { authCredentials: { username: 'new', password: 'pw3' }, redirectUrl: 'x' }
+    })
+    // The MV3 extension was installed later: its credentials win, as in Chrome.
+    await expect(answer).resolves.toEqual({ credentials: { username: 'new', password: 'pw3' } })
+    expect(w.api.pendingAnswers).toBe(0)
+  })
+
+  it('cancels when any extension cancels, and leaves the dialog alone when none answers', async () => {
+    const w = world()
+    const mv3 = w.worker(MV3)
+    const mv2 = w.frame(MV2)
+    add(w, mv3, 'onAuthRequired', { urls: [] }, ['asyncBlocking'], 1)
+    add(w, mv2, 'onAuthRequired', { urls: [] }, ['blocking'], 2)
+    const cancelled = w.api.authRequired(proxyChallenge)
+    w.api.answer(w.ctx(mv3), {
+      token: w.sent[0].args[1],
+      response: { authCredentials: { username: 'u', password: 'p' } }
+    })
+    w.api.answer(w.ctx(mv2), { token: w.sent[1].args[1], response: { cancel: true } })
+    await expect(cancelled).resolves.toEqual({ cancel: true })
+    // Empty answers from everyone: the browser's own dialog takes over.
+    const nothing = w.api.authRequired(proxyChallenge)
+    w.api.answer(w.ctx(mv3), { token: w.sent[2].args[1], response: {} })
+    w.api.answer(w.ctx(mv2), { token: w.sent[3].args[1] })
+    await expect(nothing).resolves.toBeUndefined()
+    // Malformed credentials count as no answer.
+    const malformed = w.api.authRequired(proxyChallenge)
+    w.api.answer(w.ctx(mv3), {
+      token: w.sent[4].args[1],
+      response: { authCredentials: { username: 'u' } }
+    })
+    w.api.answer(w.ctx(mv2), {
+      token: w.sent[5].args[1],
+      response: { authCredentials: 'nope' }
+    })
+    await expect(malformed).resolves.toBeUndefined()
+  })
+
+  it('tells non-blocking listeners without waiting, and answers nothing when only they listen', async () => {
+    const w = world()
+    const mv3 = w.worker(MV3)
+    add(w, mv3, 'onAuthRequired', { urls: [] }, [], 1)
+    await expect(w.api.authRequired(proxyChallenge)).resolves.toBeUndefined()
+    expect(w.sent).toHaveLength(1)
+    expect(w.sent[0].args[1]).toBeNull()
+    expect(w.api.pendingAnswers).toBe(0)
+  })
+
+  it('skips extensions that may not see the request, filters that do not match, and other partitions', async () => {
+    const w = world()
+    const mv3 = w.worker(MV3)
+    const mv2 = w.frame(MV2)
+    add(w, mv3, 'onAuthRequired', { urls: ['*://*.vpn.example/*'] }, ['asyncBlocking'], 1)
+    add(w, mv2, 'onAuthRequired', { urls: [] }, ['blocking'], 2)
+    // The MV3 extension has no host access to secret.example; MV2 (all_urls) hears it.
+    const secret = w.api.authRequired({ ...proxyChallenge, url: 'https://secret.example/' })
+    expect(w.sent.map((s) => s.context)).toEqual([mv2])
+    w.api.answer(w.ctx(mv2), { token: w.sent[0].args[1], response: { cancel: true } })
+    await expect(secret).resolves.toEqual({ cancel: true })
+    // The MV3 listener's URL filter does not match the page; the MV2 one does.
+    const filtered = w.api.authRequired(proxyChallenge)
+    expect(w.sent).toHaveLength(2)
+    expect(w.sent[1].context).toBe(mv2)
+    w.api.answer(w.ctx(mv2), { token: w.sent[1].args[1] })
+    await expect(filtered).resolves.toBeUndefined()
+    // A challenge in a tab of a container the extensions are not loaded into reaches no one.
+    w.partitions.set(MV2, ['work'])
+    w.partitions.set(MV3, ['work'])
+    await expect(w.api.authRequired(proxyChallenge)).resolves.toBeUndefined()
+    expect(w.sent).toHaveLength(2)
+    // An unloaded extension is silent too.
+    w.partitions.set(MV2, ['default'])
+    w.loaded.delete(MV2)
+    await expect(w.api.authRequired(proxyChallenge)).resolves.toBeUndefined()
+    expect(w.sent).toHaveLength(2)
+  })
+
+  it('maps a challenge outside a tab to TAB_ID_NONE and a sub-resource type', async () => {
+    const w = world()
+    const mv2 = w.frame(MV2)
+    add(w, mv2, 'onAuthRequired', { urls: [] }, ['blocking'], 1)
+    const answer = w.api.authRequired({
+      url: 'https://api.example/data',
+      isProxy: false,
+      scheme: 'Digest',
+      realm: '',
+      host: 'api.example',
+      port: 443,
+      tabId: null
+    })
+    expect(w.sent[0].args[0]).toMatchObject({
+      tabId: -1,
+      type: 'other',
+      statusLine: 'HTTP/1.1 401 Unauthorized',
+      statusCode: 401,
+      isProxy: false,
+      scheme: 'digest',
+      challenger: { host: 'api.example', port: 443 }
+    })
+    expect(w.sent[0].args[0]).not.toHaveProperty('realm')
+    expect(w.sent[0].args[0]).not.toHaveProperty('responseHeaders')
+    w.api.answer(w.ctx(mv2), {
+      token: w.sent[0].args[1],
+      response: { authCredentials: { username: 'a', password: 'b' } }
+    })
+    await expect(answer).resolves.toEqual({ credentials: { username: 'a', password: 'b' } })
+  })
+
+  it('gives up on a listener that does not answer in time and drops dead contexts', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const w = world({ timeoutMs: 5 })
+    const mv3 = w.worker(MV3)
+    add(w, mv3, 'onAuthRequired', { urls: [] }, ['asyncBlocking'], 1)
+    await expect(w.api.authRequired(proxyChallenge)).resolves.toBeUndefined()
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect(warn.mock.calls[0][0]).toMatch(/blocking onAuthRequired listener did not answer/)
+    // The worker restarted: the stale registration goes.
+    w.worker(MV3)
+    await expect(w.api.authRequired(proxyChallenge)).resolves.toBeUndefined()
+    expect(w.api.listenerCount(MV3)).toBe(0)
+    expect(w.sent).toHaveLength(1)
+  })
+})
