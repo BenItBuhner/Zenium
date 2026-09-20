@@ -266,7 +266,7 @@ function accessKey(record: ExtensionRecord): string {
 
 /**
  * The store, as far as the runtime needs it (`runtime.reload`, `runtime.requestUpdateCheck`,
- * `management.uninstallSelf`).
+ * `management.uninstallSelf`, the word that an extension went idle).
  */
 export interface RuntimeStoreLink {
   record(id: string): ExtensionRecord | undefined
@@ -274,6 +274,11 @@ export interface RuntimeStoreLink {
   reload(id: string): Promise<void>
   remove(id: string): Promise<void>
   requestUpdateCheck(id: string): Promise<RequestUpdateCheckAnswer>
+  /**
+   * The extension has no page of its own open and its background is stopped (Chrome's
+   * `IsExtensionIdle`): the moment a staged update lands (`ExtensionRuntimeHooks.delaysUpdate`).
+   */
+  idle?(id: string): void
 }
 
 export interface AndroidExtensionRuntimeOptions {
@@ -652,6 +657,47 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
    */
   expect(ids: string[]): void {
     this.bridge.send('ext.expect', { ids })
+  }
+
+  /**
+   * Chrome's `ShouldDelayExtensionUpdate`: an extension with a persistent background page has
+   * its update delayed while the page listens for `runtime.onUpdateAvailable` (it will
+   * `runtime.reload()` when ready); any other has it delayed while it is not idle. The listener
+   * is the running page's, or the one persisted from an earlier run while the page comes back.
+   */
+  delaysUpdate(id: string): boolean {
+    if (!this.extensions.has(id)) return false
+    if (this.background.kind(id) === 'persistent') {
+      const key = 'runtime.onUpdateAvailable'
+      const ep = this.backgroundEps.get(id)
+      if (ep !== undefined) return this.listens(ep, key)
+      return this.background.persistedListeners(id).includes(key)
+    }
+    return !this.isIdle(id)
+  }
+
+  /** `runtime.onUpdateAvailable` with the staged version's manifest, as Chrome's `details`. */
+  updateAvailable(id: string, details: Record<string, unknown>): void {
+    if (!this.extensions.has(id)) return
+    this.emit(id, 'runtime', 'onUpdateAvailable', [details])
+  }
+
+  /**
+   * Chrome's `IsExtensionIdle`: no background host (the worker or event page stopped, its
+   * endpoint gone) and no frame of the extension's own (a popup, an options or other page, an
+   * offscreen document). Content scripts in tabs do not keep an extension busy.
+   */
+  isIdle(id: string): boolean {
+    if (this.background.state(id) !== 'stopped') return false
+    for (const endpoint of this.router.of(id))
+      if (endpoint.context !== 'content' && endpoint.context !== 'userScript') return false
+    return true
+  }
+
+  /** An endpoint of `id` went: the store hears when that left the extension idle. */
+  private noteIdle(id: string): void {
+    if (!this.extensions.has(id) || !this.isIdle(id)) return
+    this.store?.idle?.(id)
   }
 
   async reconfigure(record: ExtensionRecord): Promise<void> {
@@ -1470,6 +1516,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
   }
 
   onGone(eps: string[]): void {
+    const owners = new Set<string>()
     for (const ep of eps) {
       const endpoint = this.router.endpoint(ep)
       this.router.unregister(ep)
@@ -1485,8 +1532,12 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
         this.backgroundEps.delete(endpoint.extensionId)
         this.background.onGone(endpoint.extensionId)
       }
+      if (endpoint && endpoint.context !== 'content' && endpoint.context !== 'userScript')
+        owners.add(endpoint.extensionId)
     }
     this.updateObserving()
+    // The last page or the background of an extension went: a staged update may land now.
+    for (const id of owners) this.noteIdle(id)
   }
 
   onPopupClosed(): void {

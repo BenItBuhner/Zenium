@@ -31,6 +31,22 @@ export interface ExtensionRuntimeHooks {
    * whose pages cannot ask ahead of the runtime.
    */
   expect?(ids: string[]): void
+  /**
+   * Chrome's `ShouldDelayExtensionUpdate` for a running extension the store downloaded an
+   * update for: with a persistent background page, true while the page listens for
+   * `runtime.onUpdateAvailable` (the extension applies the update itself with
+   * `runtime.reload()`); otherwise true while the extension is busy (a page of its own open,
+   * its worker or event page running). A delayed update is staged on the record and applied
+   * once this turns false (`RuntimeStoreLink.idle`), at `runtime.reload()`, when the user asks
+   * for it, or at the next start. Without the hook nothing delays: updates land at once.
+   */
+  delaysUpdate?(id: string): boolean
+  /**
+   * An update was staged: `runtime.onUpdateAvailable` with the new version's manifest (Chrome's
+   * `details`, `version` among them) to the extension's contexts, its background woken for it
+   * when it registered a listener.
+   */
+  updateAvailable?(id: string, details: Record<string, unknown>): void
 }
 
 /** Before the runtime lands (or on hosts that only manage packages): installs are files and records. */

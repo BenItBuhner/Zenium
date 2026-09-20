@@ -67,6 +67,31 @@ export interface ExtensionRecord {
    * extension disabled until the user accepts them again; the host clears this on approval.
    */
   pendingWarnings: string[] | null
+  /**
+   * An update downloaded and unpacked but not applied yet (see [StagedUpdate]); absent or null
+   * when none waits.
+   */
+  staged?: StagedUpdate | null
+}
+
+/**
+ * An update found while the extension was running that Chrome would not install at once: with
+ * a background page, one whose page listens for `runtime.onUpdateAvailable` (the event told it,
+ * and it applies the update with `runtime.reload()` when it is ready); with a worker or no
+ * background, one whose extension is busy (a page open, the worker running) until it goes idle.
+ * The new version is unpacked next to the running one, so applying it is a swap of the record:
+ * at `runtime.reload()`, when the extension goes idle, when the user asks, or at the next start.
+ */
+export interface StagedUpdate {
+  version: string
+  /** The unpacked version directory, `<root>/<id>/<version>`. */
+  path: string
+  publisher: CrxPublisher | null
+  /** The record fields of the new manifest, read when the package was unpacked. */
+  fields: ManifestFields
+  /** Warning lines the new version adds over the approved one; `pendingWarnings` once applied. */
+  addedWarnings: string[]
+  stagedAt: number
 }
 
 export interface ExtensionRegistry {
@@ -322,7 +347,7 @@ function sanitizeRecord(entry: unknown, now: number): ExtensionRecord | null {
       ? r.publisher
       : null
   const installedAt = typeof r.installedAt === 'number' ? r.installedAt : now
-  return {
+  const record: ExtensionRecord = {
     id: r.id,
     source,
     path: r.path,
@@ -347,5 +372,42 @@ function sanitizeRecord(entry: unknown, now: number): ExtensionRecord | null {
     newTabPage: str(r.newTabPage) || null,
     newTabOverride: r.newTabOverride === true,
     pendingWarnings: Array.isArray(r.pendingWarnings) ? strings(r.pendingWarnings) : null
+  }
+  const staged = sanitizeStaged(r.staged, publisher)
+  return staged ? { ...record, staged } : record
+}
+
+function sanitizeStaged(entry: unknown, publisher: CrxPublisher | null): StagedUpdate | null {
+  if (!entry || typeof entry !== 'object') return null
+  const s = entry as Record<string, unknown>
+  if (typeof s.version !== 'string' || s.version.length === 0) return null
+  if (typeof s.path !== 'string' || s.path.length === 0) return null
+  const fields = (s.fields && typeof s.fields === 'object' ? s.fields : {}) as Record<
+    string,
+    unknown
+  >
+  return {
+    version: s.version,
+    path: s.path,
+    publisher:
+      s.publisher === 'chrome-web-store' ||
+      s.publisher === 'edge-add-ons' ||
+      s.publisher === 'unknown'
+        ? s.publisher
+        : publisher,
+    fields: {
+      version: str(fields.version, s.version),
+      manifestVersion: typeof fields.manifestVersion === 'number' ? fields.manifestVersion : 2,
+      name: str(fields.name),
+      description: str(fields.description),
+      permissions: strings(fields.permissions),
+      hostPermissions: strings(fields.hostPermissions),
+      optionsPage: str(fields.optionsPage) || null,
+      popup: str(fields.popup) || null,
+      newTabPage: str(fields.newTabPage) || null,
+      updateUrl: str(fields.updateUrl) || null
+    },
+    addedWarnings: strings(s.addedWarnings),
+    stagedAt: typeof s.stagedAt === 'number' ? s.stagedAt : 0
   }
 }

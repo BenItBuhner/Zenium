@@ -1452,6 +1452,108 @@ describe('AndroidExtensionRuntime: runtime.requestUpdateCheck', () => {
   })
 })
 
+describe('AndroidExtensionRuntime: runtime.onUpdateAvailable and the idle word to the store', () => {
+  function storeOf(h: Harness): string[] {
+    const idle: string[] = []
+    h.runtime.store = {
+      record: () => undefined,
+      records: () => [],
+      reload: async () => {},
+      remove: async () => {},
+      requestUpdateCheck: async () => ({ status: 'no_update' }),
+      idle: (id) => idle.push(id)
+    }
+    return idle
+  }
+
+  it("delays an update while the worker runs or a page of the extension's own is open, not for content scripts", async () => {
+    const h = harness()
+    const idle = storeOf(h)
+    await h.runtime.attach(record(h))
+    // The attach starts the worker (Chrome's start at browser start): busy from the first moment.
+    expect(h.runtime.background.state(ID)).toBe('starting')
+    expect(h.runtime.isIdle(ID)).toBe(false)
+    expect(h.runtime.delaysUpdate(ID)).toBe(true)
+    backgroundUp(h, 'bg1')
+    expect(h.runtime.delaysUpdate(ID)).toBe(true)
+    // The worker idles out and is reported gone: idle, and the store hears it once.
+    h.tick(30_000)
+    h.runtime.onGone(['bg1'])
+    expect(h.runtime.background.state(ID)).toBe('stopped')
+    expect(h.runtime.delaysUpdate(ID)).toBe(false)
+    expect(idle).toEqual([ID])
+    // A popup keeps the extension busy; a content script does not.
+    hello(h, 'pop1', 'popup', { url: `https://${ID}.ext.zenium.invalid/popup.html` })
+    expect(h.runtime.delaysUpdate(ID)).toBe(true)
+    hello(h, 'doc1.n.abcdefgh', 'content')
+    h.runtime.onGone(['pop1'])
+    expect(h.runtime.delaysUpdate(ID)).toBe(false)
+    expect(idle).toEqual([ID, ID])
+    // A content script going says nothing: it never made the extension busy.
+    h.runtime.onGone(['doc1.n.abcdefgh'])
+    expect(idle).toEqual([ID, ID])
+    // Not attached, nothing delays.
+    await h.runtime.detach(ID)
+    expect(h.runtime.delaysUpdate(ID)).toBe(false)
+  })
+
+  it('a background going while a page stays open is no idle yet; the page closing is', async () => {
+    const h = harness()
+    const idle = storeOf(h)
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1')
+    hello(h, 'opt1', 'page', { url: `https://${ID}.ext.zenium.invalid/options.html` })
+    h.tick(30_000)
+    h.runtime.onGone(['bg1'])
+    expect(idle).toEqual([])
+    expect(h.runtime.delaysUpdate(ID)).toBe(true)
+    h.runtime.onGone(['opt1'])
+    expect(idle).toEqual([ID])
+  })
+
+  it("raises runtime.onUpdateAvailable with the staged manifest in the extension's contexts and wakes a worker that listened for it", async () => {
+    const h = harness()
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1', ['runtime.onUpdateAvailable'])
+    hello(h, 'opt1', 'page', { url: `https://${ID}.ext.zenium.invalid/options.html` })
+    message(h, 'opt1', { t: 'listen', event: 'runtime.onUpdateAvailable', on: true })
+    const details = { manifest_version: 3, name: 'Sample', version: '1.1.0' }
+    h.runtime.updateAvailable(ID, details)
+    expect(events(h, 'bg1', 'runtime.onUpdateAvailable')).toMatchObject([{ args: [details] }])
+    expect(events(h, 'opt1', 'runtime.onUpdateAvailable')).toMatchObject([{ args: [details] }])
+    // Stopped, the worker persisted the listener: the event starts it and waits for ready.
+    h.tick(30_000)
+    h.runtime.onGone(['bg1', 'opt1'])
+    h.runtime.updateAvailable(ID, details)
+    expect(h.runtime.background.state(ID)).toBe('starting')
+    backgroundUp(h, 'bg2', ['runtime.onUpdateAvailable'])
+    expect(events(h, 'bg2', 'runtime.onUpdateAvailable')).toMatchObject([{ args: [details] }])
+    // An extension the runtime does not run hears nothing.
+    h.runtime.updateAvailable(ID2, details)
+  })
+
+  it('with a persistent page, delays only while the page listens for runtime.onUpdateAvailable', async () => {
+    const h = harness()
+    const mv2 = manifest({
+      manifest_version: 2,
+      permissions: ['storage', 'https://example.com/*'],
+      host_permissions: undefined,
+      background: { scripts: ['bg.js'], persistent: true },
+      action: undefined,
+      browser_action: { default_popup: 'popup.html' }
+    })
+    await h.runtime.attach(record(h, {}, mv2))
+    backgroundUp(h, 'bg1')
+    // Running but not listening: Chrome installs at once, the page restarts anyway.
+    expect(h.runtime.background.kind(ID)).toBe('persistent')
+    expect(h.runtime.delaysUpdate(ID)).toBe(false)
+    message(h, 'bg1', { t: 'listen', event: 'runtime.onUpdateAvailable', on: true })
+    expect(h.runtime.delaysUpdate(ID)).toBe(true)
+    message(h, 'bg1', { t: 'listen', event: 'runtime.onUpdateAvailable', on: false })
+    expect(h.runtime.delaysUpdate(ID)).toBe(false)
+  })
+})
+
 describe('AndroidExtensionRuntime: native messaging', () => {
   it('sendNativeMessage fails as Chrome does for a host that does not exist', async () => {
     const h = harness()
