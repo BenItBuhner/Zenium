@@ -2,6 +2,7 @@ import type { JSX } from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useMediaSeek } from '@renderer/hooks/useMediaSeek'
 import {
+  Film,
   Music,
   Pause,
   PictureInPicture2,
@@ -33,6 +34,7 @@ import { browserStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { V2IconButton, V2TitleBlock } from '../extensions/v2'
 import { Slider } from '../ui/slider'
+import { V2_GLYPH } from '../v2/controls'
 import { MEDIA_HUB_BUTTON } from './MediaHubButton'
 
 const TITLE_ID = 'zen-mhub-title'
@@ -147,17 +149,18 @@ function Player({
       aria-label={title}
     >
       <div className="zen-mhub-now">
+        {/* The players' one artwork tile: the phone sheet's rule, the §9.3 glyph without a picture. */}
         {artwork ? (
           <img
-            className="zen-mhub-art"
+            className="zen-media-art"
             src={artwork}
             alt=""
             draggable={false}
             onError={() => setBroken(true)}
           />
         ) : (
-          <span className="zen-mhub-art zen-mhub-art-empty" aria-hidden>
-            <Music />
+          <span className="zen-media-art zen-media-art-empty" aria-hidden>
+            {media.video ? <Film className={V2_GLYPH} /> : <Music className={V2_GLYPH} />}
           </span>
         )}
         <button

@@ -17,7 +17,7 @@ import {
   toRect,
   viewportSize
 } from '@renderer/lib/portals'
-import { qrSymbol } from '@renderer/lib/qr'
+import { qrLayout, qrSymbol } from '@renderer/lib/qr'
 import { sharePreview, shareTargets } from '@renderer/lib/share'
 import { cn } from '@renderer/lib/utils'
 import { V2TitleBlock } from '../extensions/v2'
@@ -26,8 +26,10 @@ import { V2TitleBlock } from '../extensions/v2'
 const PILL = '.zen-pill'
 /** A list of targets without trailing controls (§9.20). */
 const WIDTH = POPOVER_WIDTH.list
-/** The QR's tile: the symbol's side in CSS px, inside the tile's 8 px padding. */
-const QR_SIZE = 160
+/** The QR's tile: 160 border-box under §6's card edge. */
+const QR_TILE = 160
+/** Inside the tile's 1 px hairline: the white the symbol is drawn on, at whole pixels a module. */
+const QR_INNER = QR_TILE - 2
 
 /**
  * The desktop's share sheet (MW-21) as a §9.20 popover: the share surface of a host with one
@@ -53,7 +55,8 @@ export function ShareLayer({ state }: { state: UIState }): JSX.Element | null {
  * "Share this page" for the menu's – stays put while the body scrolls under it (§9.7). The body:
  * what is shared (its title and link or text, and the files' count and size), the link's QR
  * code on a white tile (the symbol keeps black on white in either scheme, as a scanner and
- * Chrome's QR bubble want; the tile's border and radius are the card's), then the targets as
+ * Chrome's QR bubble want; the tile's border and radius are the card's; every module a whole
+ * number of pixels, the tile's white taking the remainder around the quiet zone), then the targets as
  * shared rows with a leading 16 glyph – Copy link (or Copy text), Email, Save when the share
  * carries files or an image, and "More…" for the OS's own sheet where there is one (macOS). A
  * row answers the request (`share.respond`) and the popover leaves with it; Escape, a press
@@ -92,6 +95,7 @@ function SharePopover({
 
   const preview = sharePreview(request)
   const qr = useMemo(() => qrSymbol(request.url), [request.url])
+  const qrBox = qr ? qrLayout(qr.size, QR_INNER) : null
   const targets = shareTargets(request)
   const files = request.files.length
   if (!ready) return null
@@ -131,19 +135,22 @@ function SharePopover({
               </div>
             )}
           </div>
-          {qr && (
+          {qr && qrBox && (
             <div className="zen-share-qr" data-share-qr="">
               <svg
-                viewBox={`0 0 ${qr.size} ${qr.size}`}
-                width={QR_SIZE}
-                height={QR_SIZE}
+                viewBox={`0 0 ${QR_INNER} ${QR_INNER}`}
+                width={QR_TILE}
+                height={QR_TILE}
                 shapeRendering="crispEdges"
                 role="img"
                 aria-label={`QR code for ${request.url}`}
               >
                 {/* The symbol's own colours, content not chrome: a scanner wants black on white. */}
-                <rect width={qr.size} height={qr.size} fill="#fff" />
-                <path d={qr.path} fill="#000" />
+                <rect width={QR_INNER} height={QR_INNER} fill="#fff" />
+                {/* A whole number of pixels a module, centred; the white around it is padding. */}
+                <g transform={`translate(${qrBox.offset} ${qrBox.offset}) scale(${qrBox.scale})`}>
+                  <path d={qr.path} fill="#000" />
+                </g>
               </svg>
             </div>
           )}

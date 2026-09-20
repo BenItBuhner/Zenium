@@ -881,9 +881,10 @@
   /*
    * A web app's standalone window (`app/AppTitleBar.tsx`, MW-23): its one row of chrome is the
    * toolbar row's height on the window surface – the app's 16 icon and the title in the window
-   * ink at the sidebar's size, medium, 8 apart, 12 in from the leading edge (Chrome's app frame
-   * puts them where its tab strip would start) – with the menu button and the window's buttons
-   * trailing at the toolbar's 4. The row drags the window; the buttons take the pointer.
+   * ink at the sidebar's size and the body weight (§4: chrome text at 400, as a sidebar tab's
+   * title; hierarchy by size, not weight), 8 apart, 12 in from the leading edge (Chrome's app
+   * frame puts them where its tab strip would start) – with the menu button and the window's
+   * buttons trailing at the toolbar's 4. The row drags the window; the buttons take the pointer.
    */
   .zen-app-titlebar {
     display: flex;
@@ -904,7 +905,7 @@
     min-width: 0;
     flex: 1;
     font-size: var(--zen-sidebar-font);
-    font-weight: var(--v2-weight-button);
+    font-weight: var(--v2-weight-body);
     line-height: var(--v2-line-small);
   }
 
@@ -4982,14 +4983,16 @@
    * the shared segment follows at the 16 gutter and is the pane's sticky header: no line under
    * it at rest, §9.7's hairline once the cards scroll under it (the border is there transparent
    * so nothing moves when it shows). The pane is a fixed box – 16 padding, two rows of cards
-   * tall – so switching panes moves nothing, and scrolls past two rows; while the OS's list is out it
-   * holds the §9.30 spinner centred, and a pane with nothing to offer its one line at 69%. A card
-   * is the image radio (§9.34: the 2 px accent outline outside its edge) at 4 padding with the
-   * picture in a 16:9 box – letterboxed on the fill, its radius the card's less the 4 padding,
-   * concentric – and the 13 caption under it; the
-   * only screen is one card the pane wide. The footer is §9.11's: hugging, right-aligned, the 8
-   * gap; the system-audio checkbox leads it, its box centred on the line rather than on a row's
-   * first text line.
+   * tall – so switching panes moves nothing, and scrolls past two rows. A pane with nothing to
+   * offer says so in §9.17's one line, 15 at 69%, top-anchored with its line 32 under the
+   * segment (the pane's 16 and 16 of its own; never centred in the free height) and left-aligned
+   * at the pane's gutter like a row's label; while the OS's list is out the §9.30 spinner takes
+   * the same place on that line, one anchor for both. A card is the image radio (§9.34: the 2 px
+   * accent outline outside its edge) at 4 padding with the picture in a 16:9 box – letterboxed on
+   * the fill, its radius the card's less the 4 padding, concentric – and the 13 caption under it,
+   * the cards 8 apart as the other image-radio grids (§9.14, §10.4); the only screen is one card
+   * the pane wide. The footer is §9.11's: hugging, right-aligned, the 8 gap; the system-audio
+   * checkbox leads it, its box centred on the line rather than on a row's first text line.
    */
   .zen-scpick-panes {
     border-bottom: 1px solid transparent;
@@ -5008,9 +5011,9 @@
   }
   .zen-scpick-state {
     display: flex;
-    flex: 1;
+    min-height: var(--v2-line-body);
     align-items: center;
-    justify-content: center;
+    margin-top: 16px;
     color: var(--v2-text-deemphasized);
     font-size: var(--v2-font-body);
     line-height: var(--v2-line-body);
@@ -5018,7 +5021,7 @@
   .zen-scpick-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 12px;
+    gap: 8px;
     align-content: start;
   }
   .zen-scpick-grid[data-columns='1'] {
@@ -5107,8 +5110,9 @@
    * controls) as a §9.20 popover at 400 under the toolbar row. The body runs from the title
    * block's 16 (§9.23) with one player per tab, parted by air alone – 28 from one's transport
    * to the next one's artwork, no line (§9.7) – each at the 16 gutter with 12 between its parts:
-   * the now-playing line – the artwork as a 56 tile at
-   * the inner radius (a note glyph on the fill without one) beside the title at 15/600 and the
+   * the now-playing line – the artwork as the players' one 56 tile (`.zen-media-art`, the phone
+   * sheet's rule below: the card radius on the card fill, the card hairline and the §9.3 glyph
+   * when there is no picture) beside the title at 15/600 and the
    * artist · site line at 13 at 69%, the pair a button to the tab with the row's press fill,
    * picture-in-picture trailing as a §9.3 icon button – then §10.4's slider row for the position
    * (the zoom row's track and thumb, `.zen-zoom-slider`, the times at its ends in `tabular-nums`
@@ -5136,26 +5140,6 @@
     display: flex;
     align-items: center;
     gap: 12px;
-  }
-  .zen-mhub-art {
-    display: flex;
-    width: 56px;
-    height: 56px;
-    flex-shrink: 0;
-    align-items: center;
-    justify-content: center;
-    overflow: hidden;
-    border-radius: var(--v2-radius-inner);
-    background: var(--v2-fill);
-    object-fit: cover;
-  }
-  .zen-mhub-art-empty {
-    color: var(--v2-text-deemphasized);
-  }
-  .zen-mhub-art-empty > svg {
-    width: 24px;
-    height: 24px;
-    stroke-width: 1.5;
   }
   /* The title pair is the way to the tab: a button the text's size, its press fill 4 out. */
   .zen-mhub-text {
@@ -5257,6 +5241,11 @@
     gap: 16px;
     padding: 0 16px;
   }
+  /*
+   * The artwork tile – one rule for both in-app players, the phone sheet's and the desktop hub's
+   * (`media/MediaHubPopover.tsx`): 56 at the card radius on the card fill, the picture covering
+   * it; without one, the card hairline and the §9.3 row glyph (20 on the phone, 16 on desktop).
+   */
   .zen-media-art {
     display: flex;
     width: 56px;

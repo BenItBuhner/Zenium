@@ -196,7 +196,8 @@ describe('MediaHubPopover', () => {
     expect(players.map((p) => p.dataset.mediaPlayer)).toEqual(['t1', 't2'])
 
     const [first, second] = players
-    expect(first!.querySelector('img.zen-mhub-art')!.getAttribute('src')).toBe(
+    // The artwork tile is the one both players draw (the phone sheet's `.zen-media-art`).
+    expect(first!.querySelector('img.zen-media-art')!.getAttribute('src')).toBe(
       'data:image/png;base64,AAAA'
     )
     expect(first!.querySelector('.zen-mhub-name')!.textContent).toBe('Nocturne')
@@ -207,9 +208,12 @@ describe('MediaHubPopover', () => {
       '0:10',
       '2:00'
     ])
-    // A page without metadata: the tab's title and its site, a note for the artwork.
-    expect(second!.querySelector('img.zen-mhub-art')).toBeNull()
-    expect(second!.querySelector('.zen-mhub-art-empty')).not.toBeNull()
+    // A page without metadata: the tab's title and its site, the kind's §9.3 glyph for the artwork
+    // (a film strip for video, as the phone sheet draws it; a note otherwise).
+    expect(second!.querySelector('img.zen-media-art')).toBeNull()
+    const empty = second!.querySelector('.zen-media-art-empty svg')!
+    expect(empty.classList.contains('lucide-film')).toBe(true)
+    expect(empty.classList.contains('h-[var(--v2-icon)]')).toBe(true)
     expect(second!.querySelector('.zen-mhub-name')!.textContent).toBe('A film')
     expect(second!.querySelector('.zen-mhub-detail')!.textContent).toBe('video.example.com')
 

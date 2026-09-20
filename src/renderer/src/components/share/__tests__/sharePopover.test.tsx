@@ -12,6 +12,7 @@ vi.mock('@renderer/lib/api', () => ({
 
 import { run } from '@renderer/lib/api'
 import { closeAllPopovers } from '@renderer/lib/portals'
+import { qrSymbol } from '@renderer/lib/qr'
 import { sharePreview, shareTargets } from '@renderer/lib/share'
 import { uiStore } from '@renderer/lib/ui'
 import { ShareLayer } from '../SharePopover'
@@ -178,6 +179,13 @@ describe('ShareLayer as the share surface', () => {
     const qr = panel.querySelector('[data-share-qr] svg')!
     expect(qr.getAttribute('aria-label')).toBe('QR code for https://news.example/story')
     expect(qr.querySelector('path')!.getAttribute('d')).toMatch(/^M/)
+    // The tile is 160 under its hairline, the symbol drawn on the 158 inside it at a whole number
+    // of pixels a module (a 26-byte link is a version-2 symbol: 25 + 8 quiet = 33 modules, 4 px
+    // each, 13 of the tile's white on either side), never a fraction that crispEdges rounds unevenly.
+    expect(qr.getAttribute('width')).toBe('160')
+    expect(qr.getAttribute('viewBox')).toBe('0 0 158 158')
+    expect(qrSymbol('https://news.example/story')!.size).toBe(33)
+    expect(qr.querySelector('g')!.getAttribute('transform')).toBe('translate(13 13) scale(4)')
     expect([...panel.querySelectorAll('[data-share-target]')].map((b) => b.textContent)).toEqual([
       'Copy link',
       'Email'

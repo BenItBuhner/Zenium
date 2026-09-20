@@ -278,7 +278,9 @@ const KIND_GLYPH = { screen: Monitor, window: AppWindow, tab: Globe } as const
  * One source as an image radio card: its picture – the OS's still for a screen or window, the
  * tab's own card picture for a tab – letterboxed in a 16:9 box (a tab's page picture, cropped
  * from its top instead), the kind's glyph in its place while there is none; under it the
- * owning app's icon or the tab's favicon at 16 and the name on one line.
+ * owning app's icon or the tab's favicon at 16 and the name on one line. An icon that fails to
+ * load gives way to the kind's glyph too (as the app title bar's icon does), so the caption never
+ * carries an empty slot.
  */
 function SourceTile({
   source,
@@ -300,6 +302,8 @@ function SourceTile({
   const tabId = source.kind === 'tab' ? source.id.slice(4) : null
   const cover = useThumbnail(tabId, { cover: true })
   const picture = source.kind === 'tab' ? cover : source.thumbnail
+  const [iconBroken, setIconBroken] = useState(false)
+  const icon = source.icon && !iconBroken ? source.icon : null
   const Glyph = KIND_GLYPH[source.kind]
   return (
     <button
@@ -318,8 +322,14 @@ function SourceTile({
         {picture ? <img src={picture} alt="" draggable={false} /> : <Glyph />}
       </span>
       <span className="zen-scpick-caption">
-        {source.icon ? (
-          <img className="zen-scpick-icon" src={source.icon} alt="" draggable={false} />
+        {icon ? (
+          <img
+            className="zen-scpick-icon"
+            src={icon}
+            alt=""
+            draggable={false}
+            onError={() => setIconBroken(true)}
+          />
         ) : (
           <Glyph className="zen-scpick-icon" />
         )}

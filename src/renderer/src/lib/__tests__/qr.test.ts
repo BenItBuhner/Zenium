@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { QR_QUIET_ZONE, qrSymbol } from '../qr'
+import { QR_QUIET_ZONE, qrLayout, qrSymbol } from '../qr'
 
 /*
  * The share popover's QR code (lib/qr.ts): Nayuki's encoder as an SVG path on a four-module
@@ -39,5 +39,23 @@ describe('qrSymbol', () => {
     expect(large.size).toBeGreaterThan(small.size)
     expect(qrSymbol('')).toBeNull()
     expect(qrSymbol('x'.repeat(3000))).toBeNull()
+  })
+})
+
+describe('qrLayout', () => {
+  it('draws whole pixels a module, centred at a whole offset, the tile taking the remainder', () => {
+    // 33 modules in 158: 4 a module (132), 26 over, 13 each side.
+    expect(qrLayout(33, 158)).toEqual({ scale: 4, offset: 13 })
+    // 29 modules: 5 a module (145), 13 over – 6 here and 7 on the far side, never 6.5.
+    expect(qrLayout(29, 158)).toEqual({ scale: 5, offset: 6 })
+    // 37 modules: 4 a module (148), 5 each side.
+    expect(qrLayout(37, 158)).toEqual({ scale: 4, offset: 5 })
+    // Exactly filling: no padding.
+    expect(qrLayout(79, 158)).toEqual({ scale: 2, offset: 0 })
+  })
+
+  it('fills the tile fractionally only for a symbol denser than a pixel a module', () => {
+    expect(qrLayout(158, 158)).toEqual({ scale: 1, offset: 0 })
+    expect(qrLayout(185, 158)).toEqual({ scale: 158 / 185, offset: 0 })
   })
 })

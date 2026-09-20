@@ -243,6 +243,12 @@ describe('ScreenPicker', () => {
     const other = tile(el, 'tab:t2')!
     expect(other.querySelector('.zen-scpick-thumb img')).toBeNull()
     expect(other.querySelector('.zen-scpick-thumb svg')).not.toBeNull()
+    // A favicon that fails to load gives way to the kind's glyph: no empty slot in the caption.
+    act(() => {
+      thisTab.querySelector('img.zen-scpick-icon')!.dispatchEvent(new Event('error'))
+    })
+    expect(thisTab.querySelector('img.zen-scpick-icon')).toBeNull()
+    expect(thisTab.querySelector('svg.zen-scpick-icon')).not.toBeNull()
     click(paneTab(el, 'screen'))
     expect(
       tile(el, 'screen:1')!.querySelector<HTMLImageElement>('.zen-scpick-thumb img')!.src

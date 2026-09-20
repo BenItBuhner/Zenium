@@ -33,3 +33,18 @@ export function qrSymbol(text: string): QrSymbol | null {
   }
   return { size: code.size + 2 * QR_QUIET_ZONE, path: parts.join('') }
 }
+
+/**
+ * Where a symbol of `size` modules sits in a tile `inner` px square so that every module is one
+ * whole number of pixels wide – `crispEdges` rounds each module's edges on its own otherwise, and
+ * a module lands 4 px wide beside one of 5: `scale` px per module is the largest whole number
+ * that fits, and the tile's own white absorbs the remainder as padding around the quiet zone,
+ * the symbol centred at a whole `offset` (a spare pixel goes to the far side, never to a half).
+ * A symbol denser than a pixel per module (past version 37 in a 158 tile) fills the tile
+ * fractionally instead: whole beats clipped, and it is not scannable at that size either way.
+ */
+export function qrLayout(size: number, inner: number): { scale: number; offset: number } {
+  if (size > inner) return { scale: inner / size, offset: 0 }
+  const scale = Math.floor(inner / size)
+  return { scale, offset: Math.floor((inner - scale * size) / 2) }
+}
