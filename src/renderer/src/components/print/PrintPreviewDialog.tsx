@@ -103,7 +103,7 @@ function PrintDialog({ tabId, state }: { tabId: string; state: UIState }): JSX.E
       {/* The column comes first in the tree so the keyboard lands on Destination, as in Chrome;
           the row is reversed so the pages sit on the start side, as Chrome draws them. */}
       <div
-        className="flex w-[400px] shrink-0 flex-col border-l border-[var(--v2-border)]"
+        className="flex w-[400px] shrink-0 flex-col"
         data-testid="print-options"
       >
         <TitleBlock

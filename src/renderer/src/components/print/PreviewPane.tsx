@@ -164,7 +164,7 @@ export function PreviewPane({
       {showPages && pages.length > 1 && (
         <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
           <div
-            className="pointer-events-auto flex items-center gap-1 rounded-full border border-[var(--v2-border)] bg-[var(--v2-panel)] p-0.5 text-[13px] leading-5 text-[var(--v2-text)] shadow-[var(--v2-shadow-panel)]"
+            className="pointer-events-auto flex items-center gap-1 rounded-full bg-[var(--v2-panel)] p-0.5 text-[13px] leading-5 text-[var(--v2-text)] shadow-[var(--v2-shadow-panel)]"
             data-testid="print-preview-paging"
           >
             <button
@@ -229,7 +229,7 @@ function Notice({
     <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-6">
       <div
         className={cn(
-          'flex max-w-[360px] items-center gap-2 rounded-[var(--v2-radius-card)] border border-[var(--v2-border)] bg-[var(--v2-panel)] px-4 py-3 text-[15px] leading-5 shadow-[var(--v2-shadow-panel)]',
+          'flex max-w-[360px] items-center gap-2 rounded-[var(--v2-radius-card)] bg-[var(--v2-panel)] px-4 py-3 text-[15px] leading-5 shadow-[var(--v2-shadow-panel)]',
           danger ? 'text-[var(--v2-danger)]' : 'text-[var(--v2-text)]'
         )}
         role={danger ? 'alert' : 'status'}
