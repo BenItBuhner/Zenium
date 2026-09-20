@@ -58,6 +58,7 @@ import { ModService } from './mods'
 import { SiteInfoService } from './siteInfo'
 import { TranslateService } from './translate/service'
 import { PageControls } from './pageControls'
+import { SpellcheckService } from './spellcheck'
 import { FindMemory } from './find'
 import { FullscreenService } from './fullscreen'
 import { WebAppService } from './webapp'
@@ -79,7 +80,9 @@ import {
   createSpace,
   cycleSpace,
   deleteFolder,
+  folderTabs,
   getSpace,
+  nextFolderColor,
   orderedTabsForSpace,
   reorderContainer,
   reorderSpace,
@@ -99,6 +102,7 @@ import { copyConfirmation } from '../shared/clipboard'
 import { IMAGE_URL_PREFIX } from '../shared/zenPages'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
 import {
+  DEFAULT_SETTINGS,
   ONBOARDING_ESSENTIALS,
   sanitizeAutofillSettings,
   sanitizePasswordSettings,
@@ -114,6 +118,8 @@ import { sanitizePromoState } from '../shared/defaultBrowser'
 import { sanitizeBlockingSettings } from '../shared/blocking'
 import { isShortcutPreset } from '../shared/shortcuts'
 import { sanitizePrivacySettings } from '../shared/privacy'
+import { sanitizeSpellcheck } from '../shared/spellcheck'
+import { sanitizeReaderPreferences, type ReaderPreferences } from '../shared/reader'
 import type { ExtensionHost, Governor, PageMessage, Platform, SyncHost } from './platform'
 import { JsonStore } from './store/JsonStore'
 
@@ -145,10 +151,12 @@ const FOCUS_CHROME_EVENTS = new Set<EventName>([
   'space.edit',
   'tab.startRename',
   'folder.startRename',
+  'folder.edit',
   'tab.editPinnedUrl',
   'tab.pickIcon',
   'menu.show',
   'menu.app',
+  'tabsearch.open',
   'bookmark.star',
   'bookmark.edit',
   'webapp.install',
@@ -228,6 +236,7 @@ export class Browser {
   readonly translate: TranslateService
   /** Desktop site, dark theme for sites and page zoom, remembered per site (Chrome's page controls). */
   readonly pageControls: PageControls
+  readonly spellcheck: SpellcheckService
   /** The last find-in-page query per tab and profile-wide (what the bar reopens with). */
   readonly find = new FindMemory()
   /** Fullscreen hints (F11, a page's element) and the Esc hold that leaves the window's fullscreen. */
@@ -338,6 +347,7 @@ export class Browser {
     this.blocking = new BlockingService(this)
     this.protection = new ProtectionService(this)
     this.translate = new TranslateService(this)
+    this.spellcheck = new SpellcheckService(this)
     this.privacy = new PrivacyService(this)
     this.webApps = new WebAppService(this, platform.io)
     this.mediaSession = new MediaSessionService(this)
@@ -367,7 +377,8 @@ export class Browser {
       autofill: this.autofill.uiState(),
       blocking: this.blocking.status(),
       privacy: this.protection.status(),
-      translate: this.translate.uiState()
+      translate: this.translate.uiState(),
+      spellcheck: this.spellcheck.uiState()
     })
     this.handlers = this.commandHandlers()
   }
@@ -807,6 +818,7 @@ export class Browser {
     this.autofill.start()
     this.defaultBrowser.start()
     this.translate.start()
+    this.spellcheck.start()
     this.syncShortcuts()
     this.pageControls.push()
     this.state.commit()
@@ -1177,6 +1189,12 @@ export class Browser {
     }
   }
 
+  /**
+   * A new folder – a tab group (tabs-13) – in the space, wearing the next free colour as
+   * Chrome's new groups do unless the caller picked one. Unless `rename` is off (a folder made
+   * by a gesture), the chrome then shows the folder's editor: the group editor bubble on
+   * desktop, the inline rename on the phone.
+   */
   createFolder(
     spaceId: string,
     name: string,
@@ -1184,17 +1202,64 @@ export class Browser {
     win?: ZenWindow,
     options: { color?: FolderColor; rename?: boolean } = {}
   ): Folder {
-    const folder = createFolder(this.state.model, spaceId, name, icon, options.color)
+    const color = options.color ?? nextFolderColor(this.state.model, spaceId)
+    const folder = createFolder(this.state.model, spaceId, name, icon, color)
     this.state.commit()
-    if (options.rename !== false) this.emit('folder.startRename', { folderId: folder.id }, win)
+    if (options.rename !== false) this.editFolder(folder.id, win)
     return folder
   }
 
+  /**
+   * Show the folder's editor in the chrome (`folder.edit`), once the state that holds the folder
+   * has gone out: the bubble hangs from the folder's header row and shows the folder's own name
+   * and colour, so it must not arrive ahead of them.
+   */
+  private editFolder(folderId: string, win?: ZenWindow): void {
+    this.state.afterBroadcast(() => this.emit('folder.edit', { folderId }, win))
+  }
+
+  /** Chrome's "Add tab to new group": a new folder around the tab, its editor open. */
   newFolderWithTab(spaceId: string, tabId: string, win?: ZenWindow): void {
-    const folder = createFolder(this.state.model, spaceId, 'New Folder', '📁')
+    const folder = createFolder(
+      this.state.model,
+      spaceId,
+      'New Folder',
+      '📁',
+      nextFolderColor(this.state.model, spaceId)
+    )
     this.tabs.moveToFolder(tabId, folder.id)
     this.state.commit()
-    this.emit('folder.startRename', { folderId: folder.id }, win)
+    this.editFolder(folder.id, win)
+  }
+
+  /**
+   * Chrome's "New tab in group" (tabs-13): a new tab at the end of the folder – after its last
+   * member, in that member's container – active, with the new tab page (or the URL bar) as any
+   * new tab. Resolves with the tab's id.
+   */
+  newTabInFolder(folderId: string, win: ZenWindow = this.focusedWindow()): string {
+    const folder = this.state.model.folders[folderId]
+    if (!folder) throw new Error('Folder not found')
+    const members = folderTabs(this.state.model, folderId)
+    const last = members[members.length - 1]
+    const created = this.tabs.createTab(
+      {
+        url: this.newTab.homeUrl() ?? BLANK_URL,
+        spaceId: folder.spaceId,
+        active: true,
+        afterTabId: last?.id,
+        containerId: last?.containerId,
+        folderId
+      },
+      win
+    )
+    if (folder.collapsed) this.updateFolder(folderId, { collapsed: false })
+    if (this.newTab.enabled) {
+      this.state.afterBroadcast(() => this.emit('newtab.opened', { tabId: created.id }, win))
+    } else {
+      this.emit('urlbar.toggle', { mode: 'edit', text: '' }, win)
+    }
+    return created.id
   }
 
   updateFolder(
@@ -1827,6 +1892,13 @@ export class Browser {
       this.webApps.handleMessage(tabId, message)
       return
     }
+    if (message.type === 'reader') {
+      // Only a reader page of the tab's own may change the preferences (the page script relays
+      // the message from `zen:` documents alone; the tab's URL is the second check).
+      if (this.reader.isReaderUrl(tab.url))
+        this.reader.setPreferences(message.reader as Partial<ReaderPreferences>)
+      return
+    }
     if (message.type === 'zap') {
       if (typeof message.selector === 'string') this.boosts.onZapped(tabId, message.selector)
       return
@@ -2039,6 +2111,8 @@ export class Browser {
       'tab.dragEnd': ({ tabId, x, y, outcome }, win) => this.tabDrag.end(tabId, x, y, outcome, win),
       'drop.open': ({ inputs, key }, win) => this.openDropped(inputs, key, win),
       'tab.moveToNewWindow': ({ tabId }, win) => void tabs.moveTabToNewWindow(tabId, null, win),
+      'tab.searchCandidates': (_args, win) => tabs.searchCandidates(win),
+      'tab.switchTo': ({ tabId }, win) => tabs.switchTo(tabId, win),
       'tab.reopenClosed': (_a, win) => this.session.reopenClosed(win),
       'tab.navigationEntries': ({ tabId }) => tabs.navigationEntries(tabId),
       'tab.goToIndex': ({ tabId, index }) => tabs.goToIndex(tabId, index),
@@ -2103,6 +2177,7 @@ export class Browser {
       'folder.update': ({ folderId, patch }) => this.updateFolder(folderId, patch),
       'folder.delete': ({ folderId, unpack }) => this.deleteFolder(folderId, unpack),
       'folder.contextMenu': ({ folderId }, win) => this.menus.showFolderContextMenu(folderId, win),
+      'folder.newTab': ({ folderId }, win) => this.newTabInFolder(folderId, win),
       'newtab.contextMenu': (_a, win) => this.menus.showNewTabContextMenu(win),
       'newtab.tileContextMenu': ({ url, title }, win) =>
         this.menus.showTopSiteContextMenu(url, title, win),
@@ -2375,8 +2450,11 @@ export class Browser {
       'window.openUrl': ({ url, kind }, win) => this.openUrlInWindow(url, kind, win),
       'window.moveTabsToSpace': ({ spaceId }, win) => tabs.moveLocalTabsToSpace(win, spaceId),
 
-      'page.screenshot': ({ tabId }, win) =>
-        this.actions.run('page.screenshot', { sourceTabId: tabId, win }),
+      'page.screenshot': ({ tabId, fullPage }, win) =>
+        this.actions.run(fullPage ? 'page.captureFullPage' : 'page.screenshot', {
+          sourceTabId: tabId,
+          win
+        }),
       'page.print': ({ tabId }, win) => this.actions.run('page.print', { sourceTabId: tabId, win }),
       'page.savePage': ({ tabId }, win) =>
         this.actions.run('page.savePage', { sourceTabId: tabId, win }),
@@ -2417,6 +2495,7 @@ export class Browser {
       'boost.stopZap': ({ tabId }) => this.boosts.stopZap(tabId),
 
       'reader.toggle': ({ tabId }, win) => this.reader.toggle(tabId, win),
+      'reader.setPreferences': (patch) => this.reader.setPreferences(patch),
 
       'liveFolder.save': ({ folderId, name, config }, win) => {
         let id = folderId
@@ -2567,6 +2646,13 @@ export class Browser {
       'translate.removeModel': ({ from, to }) => this.translate.removeModel({ from, to }),
       'translate.models': () => this.translate.modelInfo(),
       'translate.engineResponse': (response) => this.translate.onRelayResponse(response),
+
+      'spellcheck.setEnabled': ({ enabled }) => this.spellcheck.setEnabled(enabled),
+      'spellcheck.setLanguage': ({ code, on }) => this.spellcheck.setLanguage(code, on),
+      'spellcheck.words': () => this.spellcheck.words(),
+      'spellcheck.addWord': ({ word }) => this.spellcheck.addWord(word),
+      'spellcheck.removeWord': ({ word }) => this.spellcheck.removeWord(word),
+      'spellcheck.openKeyboardSettings': () => this.spellcheck.openKeyboardSettings(),
       'webapp.openInstall': ({ tabId }, win) => this.webApps.openInstall(tabId, win),
       'webapp.pin': ({ tabId, title }, win) => this.webApps.pin(tabId, title, win),
       'webapp.cancelInstall': ({ tabId }) => this.webApps.cancelInstall(tabId),
@@ -2619,7 +2705,9 @@ export class Browser {
       updates: JSON.stringify(s.updates),
       blocking: s.blocking,
       privacy: JSON.stringify(s.privacy),
-      autofill: `${JSON.stringify(s.passwords)}${JSON.stringify(s.autofill)}`
+      autofill: `${JSON.stringify(s.passwords)}${JSON.stringify(s.autofill)}`,
+      spellcheck: JSON.stringify(s.spellcheck),
+      reader: JSON.stringify(s.reader)
     }
     for (const [key, value] of Object.entries(patch)) {
       if (value === undefined) continue
@@ -2675,6 +2763,16 @@ export class Browser {
           ...s.privacy,
           ...(value as Partial<Settings['privacy']>)
         })
+      } else if (key === 'spellcheck' && value && typeof value === 'object') {
+        s.spellcheck = sanitizeSpellcheck({
+          ...s.spellcheck,
+          ...(value as Partial<Settings['spellcheck']>)
+        })
+      } else if (key === 'reader' && value && typeof value === 'object') {
+        s.reader = sanitizeReaderPreferences({
+          ...s.reader,
+          ...(value as Partial<Settings['reader']>)
+        })
       } else if (key === 'newTab' && value && typeof value === 'object') {
         // A one-section patch (`modules: { greeting: true }`) must not drop the other sections.
         const incoming = value as Partial<Settings['newTab']>
@@ -2695,7 +2793,7 @@ export class Browser {
       }
     }
     s.sidebarWidth = Math.max(160, Math.min(520, s.sidebarWidth))
-    s.unloadTimeoutMinutes = Math.max(1, Math.min(24 * 60, Math.round(s.unloadTimeoutMinutes)))
+    s.unloadTimeoutMinutes = sanitizeUnloadTimeout(s.unloadTimeoutMinutes)
     s.essentialsMax = Math.max(1, Math.min(24, Math.round(s.essentialsMax)))
     if (
       before.glance !== s.glanceEnabled ||
@@ -2725,6 +2823,8 @@ export class Browser {
     if (before.privacy !== JSON.stringify(s.privacy)) this.protection.onSettingsChanged()
     if (before.autofill !== `${JSON.stringify(s.passwords)}${JSON.stringify(s.autofill)}`)
       this.autofill.onSettingsChanged()
+    if (before.spellcheck !== JSON.stringify(s.spellcheck)) this.spellcheck.onSettingsChanged()
+    if (before.reader !== JSON.stringify(s.reader)) this.reader.onPreferencesChanged()
     this.state.commit()
   }
 
@@ -2737,4 +2837,13 @@ export class Browser {
 
 function clamp01(v: number): number {
   return Math.max(0, Math.min(1, Number.isFinite(v) ? v : 0.5))
+}
+
+/**
+ * The sleeping-tabs timeout in minutes, half a minute to a day in half-minute steps: Edge's
+ * ladder starts at 30 seconds, so a half is the smallest value that is stored.
+ */
+function sanitizeUnloadTimeout(minutes: number): number {
+  if (!Number.isFinite(minutes)) return DEFAULT_SETTINGS.unloadTimeoutMinutes
+  return Math.max(0.5, Math.min(24 * 60, Math.round(minutes * 2) / 2))
 }

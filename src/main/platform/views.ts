@@ -5,7 +5,9 @@ import {
   clipboard,
   dialog,
   nativeImage,
+  nativeTheme,
   net,
+  screen,
   type BrowserWindow,
   type BrowserWindowConstructorOptions,
   type LoadURLOptions,
@@ -38,9 +40,11 @@ import {
   type PageDialogCall
 } from '../../shared/pageDialogIpc'
 import type { FormsCommand } from '../../shared/forms'
+import { defer } from '../../core/platform'
 import type {
   AgentCapture,
   AgentCaptureOptions,
+  ScreenshotOptions,
   AgentFrame,
   AgentInputEvent,
   InputModifier,
@@ -200,6 +204,12 @@ export class ElectronTabView implements TabView {
   /** What the page itself was about to do, as its preload reported it (`navigate-intent`). */
   private pageIntent: { at: number; intent: NavigationIntent } | null = null
   private unloadCheck: UnloadCheck | null = null
+  /**
+   * The core asked for the keyboard (`focus()`) and the page has not answered yet. A tab being
+   * activated is focused first and shown when the chrome reports the layout, a frame or two
+   * later: its `focus` event arrives while it is still hidden, and is its own.
+   */
+  private keyboardAsked = false
 
   constructor(
     readonly view: WebContentsView,
@@ -208,6 +218,27 @@ export class ElectronTabView implements TabView {
     this.wc = this.view.webContents
     this.webContentsId = this.wc.id
     this.view.setVisible(false)
+    this.wc.on('blur', () => {
+      this.keyboardAsked = false
+      const win = this.win
+      if (win) this.owner.keyboardLeft(win, this.wc)
+    })
+    this.wc.on('focus', () => {
+      const asked = this.keyboardAsked
+      this.keyboardAsked = false
+      if (asked || this.visible) return
+      // A page that is not on screen took the keyboard without the core asking for it. Electron
+      // 44 gives a new WebContentsView the keyboard once its renderer is up, hidden or not, so a
+      // tab opened in the background (a middle-clicked link, `target=_blank`) would leave the
+      // next Ctrl+1..9 or Ctrl+W with a page nobody sees: a hidden widget drops its key events.
+      // Deferred, and asked again then: the core may activate this very tab meanwhile.
+      defer(() => {
+        const win = this.win
+        if (!win || this.visible || this.keyboardAsked) return
+        if (this.wc.isDestroyed() || !this.wc.isFocused()) return
+        this.owner.keyboardTaken(win, this.wc)
+      })
+    })
   }
 
   get webContents(): WebContents {
@@ -657,6 +688,7 @@ export class ElectronTabView implements TabView {
   }
 
   focus(): void {
+    this.keyboardAsked = true
     this.wc.focus()
   }
 
@@ -683,7 +715,9 @@ export class ElectronTabView implements TabView {
     this.detach()
     this.host = target
     const win = this.win
-    if (win) win.contentView.addChildView(this.view)
+    if (!win) return
+    this.owner.watchKeyboard(win)
+    win.contentView.addChildView(this.view)
   }
 
   detach(): void {
@@ -791,12 +825,36 @@ export class ElectronTabView implements TabView {
     }
   }
 
-  async screenshot(fileName: string): Promise<string | null> {
+  /**
+   * The visible area through `capturePage`, or the whole document through the DevTools
+   * protocol (`captureBeyondViewport`, cut at `MAX_CAPTURE_HEIGHT`); a full page the debugger
+   * cannot paint (DevTools holds it, the page is gone) falls back to the visible area.
+   */
+  async screenshot(fileName: string, options: ScreenshotOptions = {}): Promise<string | null> {
     try {
-      const image = await this.wc.capturePage()
-      if (image.isEmpty()) return null
+      let png: Buffer | null = null
+      if (options.fullPage) {
+        try {
+          const capture = await this.captureWithDevtools(
+            { mode: 'fullPage', format: 'png' },
+            'image/png',
+            fullPagePaint(
+              this.wc.getZoomFactor(),
+              Math.max(...screen.getAllDisplays().map((d) => d.scaleFactor), 1)
+            )
+          )
+          png = Buffer.from(capture.data, 'base64')
+        } catch {
+          /* the visible area below */
+        }
+      }
+      if (!png) {
+        const image = await this.wc.capturePage()
+        if (image.isEmpty()) return null
+        png = nativeImage.createFromBuffer(image.toPNG()).toPNG()
+      }
       const filePath = join(downloadDir(), fileName)
-      await writeFile(filePath, nativeImage.createFromBuffer(image.toPNG()).toPNG())
+      await writeFile(filePath, png)
       return filePath
     } catch {
       return null
@@ -956,6 +1014,91 @@ export class ElectronTabView implements TabView {
   /** Whether the current session was opened by `withDebugger` (and is ours to close). */
   private cdpAttachedHere = false
 
+  // --- dark theme for sites (CT-18) -------------------------------------------------
+
+  /** The core's policy for this page's site ("Apply dark theme to sites" and its exceptions). */
+  private darkening = false
+  /** What the page is rendered with right now (the policy while the chrome is dark). */
+  private darkeningApplied = false
+  /** Resolves once the override in flight has been sent (the next change waits for it). */
+  private darkeningTurn: Promise<void> = Promise.resolve()
+
+  /**
+   * Dark theme for sites: Chromium's auto dark mode over the DevTools protocol
+   * (`Emulation.setAutoDarkModeOverride`), the engine behind Chrome Android's "Auto-darken web
+   * content" – the page's colours are inverted and its images left alone, and a page with a dark
+   * style of its own (`color-scheme: dark`) is left to it. Like the WebView's algorithmic
+   * darkening it acts only while the chrome is dark (`nativeTheme` follows the Appearance
+   * setting; a flip re-applies through the host). Chromium's `WebContentsForceDark` feature
+   * switch would darken Zenium's own chrome too, hence the per-page override.
+   *
+   * The debugger stays attached while the override is on: an emulation override belongs to the
+   * session and goes with it. `withDebugger` shares the attachment with captures and input.
+   */
+  setDarkening(on: boolean): void {
+    this.darkening = on
+    this.refreshDarkening()
+  }
+
+  /** The chrome's scheme or the policy changed: bring the page in line. */
+  refreshDarkening(): void {
+    if (this.wc.isDestroyed()) return
+    const wanted = this.darkening && nativeTheme.shouldUseDarkColors
+    if (wanted === this.darkeningApplied) return
+    this.darkeningApplied = wanted
+    this.darkeningTurn = this.darkeningTurn.then(() => this.sendDarkening(wanted)).catch(() => {})
+  }
+
+  /** Whether the override counts as one pending action in `cdpPending` (its hold). */
+  private darkeningHold = false
+
+  private async sendDarkening(on: boolean): Promise<void> {
+    if (this.wc.isDestroyed()) return
+    const dbg = this.wc.debugger
+    if (on) {
+      // Take a hold of the debugger for as long as the override is on.
+      if (!this.darkeningHold) {
+        if (this.cdpPending === 0 && !dbg.isAttached()) {
+          try {
+            dbg.attach('1.3')
+            this.cdpAttachedHere = true
+          } catch {
+            this.darkeningApplied = false
+            return
+          }
+        }
+        this.cdpPending++
+        this.darkeningHold = true
+      }
+      try {
+        await dbg.sendCommand('Emulation.setAutoDarkModeOverride', { enabled: true })
+        return
+      } catch {
+        /* the page went away, or the debugger is not ours: release the hold, retry on the next change */
+        this.darkeningApplied = false
+      }
+    } else {
+      try {
+        if (dbg.isAttached()) await dbg.sendCommand('Emulation.setAutoDarkModeOverride', {})
+      } catch {
+        /* already gone */
+      }
+    }
+    if (!this.darkeningHold) return
+    this.darkeningHold = false
+    this.cdpPending--
+    if (this.cdpPending === 0 && this.cdpAttachedHere) {
+      this.cdpAttachedHere = false
+      if (!this.wc.isDestroyed() && dbg.isAttached()) {
+        try {
+          dbg.detach()
+        } catch {
+          /* already detached */
+        }
+      }
+    }
+  }
+
   setBackgroundThrottling(allowed: boolean): void {
     if (!this.wc.isDestroyed()) this.wc.setBackgroundThrottling(allowed)
   }
@@ -1052,9 +1195,15 @@ export class ElectronTabView implements TabView {
     }
   }
 
+  /**
+   * `paint.scale` multiplies the CSS pixels of the clip (1 for the agents, who reason in CSS
+   * pixels; the page zoom for a person's full-page screenshot); `paint.maxHeight` cuts the
+   * document in CSS pixels.
+   */
   private captureWithDevtools(
     options: AgentCaptureOptions,
-    mimeType: string
+    mimeType: string,
+    paint: { scale: number; maxHeight: number } = { scale: 1, maxHeight: MAX_CAPTURE_HEIGHT }
   ): Promise<AgentCapture> {
     return this.withDebugger(async (dbg) => {
       const metrics = (await dbg.sendCommand('Page.getLayoutMetrics')) as {
@@ -1063,6 +1212,7 @@ export class ElectronTabView implements TabView {
         cssLayoutViewport?: { clientWidth: number; clientHeight: number }
       }
       const content = metrics.cssContentSize ?? metrics.contentSize ?? { width: 0, height: 0 }
+      const maxHeight = Math.max(1, Math.min(paint.maxHeight, MAX_CAPTURE_HEIGHT))
       const clip =
         options.mode === 'region' && options.region
           ? { ...options.region, scale: 1 }
@@ -1070,8 +1220,8 @@ export class ElectronTabView implements TabView {
               x: 0,
               y: 0,
               width: Math.max(1, Math.round(content.width)),
-              height: Math.max(1, Math.min(Math.round(content.height), MAX_CAPTURE_HEIGHT)),
-              scale: 1
+              height: Math.max(1, Math.min(Math.round(content.height), maxHeight)),
+              scale: paint.scale
             }
       const result = (await dbg.sendCommand('Page.captureScreenshot', {
         format: options.format,
@@ -1092,6 +1242,25 @@ export class ElectronTabView implements TabView {
 
 /** Chromium refuses textures much taller than this; very long pages are cut, not failed. */
 const MAX_CAPTURE_HEIGHT = 12_000
+/** The same limit in painted pixels, for a capture at the page's zoom on a scaled display. */
+const MAX_CAPTURE_PIXELS = 16_000
+
+/**
+ * How a person's full-page screenshot is painted: at the page's zoom, as the visible area's
+ * `capturePage` is (the protocol adds the display's scale on its own), and cut in CSS pixels
+ * so the whole picture stays under Chromium's texture height on the most scaled display.
+ */
+export function fullPagePaint(
+  zoom: number,
+  displayScale: number
+): { scale: number; maxHeight: number } {
+  const z = Number.isFinite(zoom) && zoom > 0 ? zoom : 1
+  const d = Number.isFinite(displayScale) && displayScale > 0 ? displayScale : 1
+  return {
+    scale: z,
+    maxHeight: Math.max(1, Math.min(MAX_CAPTURE_HEIGHT, Math.floor(MAX_CAPTURE_PIXELS / (z * d))))
+  }
+}
 
 /** The parts of `Security.visibleSecurityStateChanged` the site-information sheet uses. */
 interface SecurityStateParams {
@@ -1313,11 +1482,59 @@ export class ElectronTabViewHost implements TabViewHost {
   private readonly byTabId = new Map<string, ElectronTabView>()
   private readonly tabIds = new Map<number, string>()
   private readonly viewListeners = new Set<(view: ElectronTabView) => void>()
+  /** Per window, the page or chrome that last lost the keyboard – a hidden page gives it back there. */
+  private readonly lastKeyboard = new WeakMap<BrowserWindow, WebContents>()
+  private readonly keyboardWatched = new WeakSet<BrowserWindow>()
 
   constructor(
     private readonly sessions: SessionManager,
     readonly downloads: SaveAsDownloads | null = null
-  ) {}
+  ) {
+    // Dark theme for sites acts only while the chrome is dark: a scheme flip (the OS, the
+    // Appearance setting) turns every page's override on or off.
+    nativeTheme.on('updated', () => {
+      for (const view of this.byWebContentsId.values()) view.refreshDarkening()
+    })
+  }
+
+  /** Follow the window's own chrome for the keyboard, as every tab page in it is followed. */
+  watchKeyboard(win: BrowserWindow): void {
+    if (this.keyboardWatched.has(win)) return
+    this.keyboardWatched.add(win)
+    win.webContents.on('blur', () => this.keyboardLeft(win, win.webContents))
+  }
+
+  keyboardLeft(win: BrowserWindow, contents: WebContents): void {
+    this.lastKeyboard.set(win, contents)
+  }
+
+  /**
+   * A page not on screen has the keyboard: back to the page or chrome that lost it, when that
+   * is still something the user can see; the chrome otherwise (its shortcuts always work).
+   */
+  keyboardTaken(win: BrowserWindow, taker: WebContents): void {
+    if (win.isDestroyed()) return
+    if (!win.isFocused()) {
+      // Focusing a page focuses its window as well (Linux, macOS): when the user is in another
+      // window, the keyboard stays there and the hidden page is looked at again on their return.
+      win.once('focus', () => {
+        const view = this.byWebContentsId.get(taker.id)
+        if (view && !view.isVisible() && !taker.isDestroyed() && taker.isFocused()) {
+          this.keyboardTaken(win, taker)
+        }
+      })
+      return
+    }
+    const previous = this.lastKeyboard.get(win)
+    const view = previous ? this.byWebContentsId.get(previous.id) : undefined
+    const visible =
+      previous !== undefined &&
+      !previous.isDestroyed() &&
+      previous !== taker &&
+      (previous === win.webContents || (view !== undefined && view.isVisible()))
+    if (visible) previous.focus()
+    else win.webContents.focus()
+  }
 
   createView(tab: Tab, events: TabViewEvents, host: WindowHost): TabView {
     const view = new ElectronTabView(

@@ -21,6 +21,8 @@ import { DEFAULT_PROMO_STATE } from './defaultBrowser'
 import { DEFAULT_BLOCKING_SETTINGS } from './blocking'
 import { DEFAULT_PAGE_CONTROLS } from './pageControls'
 import { DEFAULT_PRIVACY_SETTINGS } from './privacy'
+import { DEFAULT_SPELLCHECK } from './spellcheck'
+import { DEFAULT_READER_PREFERENCES } from './reader'
 
 /**
  * Off until the user turns it on in Settings → AI Agents; loopback only, approval required.
@@ -247,7 +249,9 @@ export const DEFAULT_SETTINGS: Settings = {
   shortcutPreset: 'chrome',
   privacy: structuredClone(DEFAULT_PRIVACY_SETTINGS),
   newTab: structuredClone(DEFAULT_NEW_TAB_SETTINGS),
-  gestureHintDone: false
+  gestureHintDone: false,
+  spellcheck: structuredClone(DEFAULT_SPELLCHECK),
+  reader: structuredClone(DEFAULT_READER_PREFERENCES)
 }
 
 /** Firefox's four default containers plus "No Container". */
@@ -300,6 +304,23 @@ export const FOLDER_COLORS: Record<FolderColor, string> = {
   red: '#ee5f5b',
   grey: '#8a8f9c'
 }
+
+/**
+ * The nine colours in Chrome's order – the order its group editor lays the swatches out in and
+ * the order it hands them to new groups (grey first, then blue…). The desktop's folder editor
+ * bubble and the core's colour for a new folder follow it (tabs-13).
+ */
+export const FOLDER_COLOR_ORDER: readonly FolderColor[] = [
+  'grey',
+  'blue',
+  'red',
+  'yellow',
+  'green',
+  'pink',
+  'purple',
+  'cyan',
+  'orange'
+]
 
 /** Privacy- and productivity-focused sites, mirroring Zen's onboarding essentials picks. */
 export const ONBOARDING_ESSENTIALS: Array<{ title: string; url: string }> = [

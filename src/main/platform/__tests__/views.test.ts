@@ -1,11 +1,28 @@
 import { describe, expect, it, vi } from 'vitest'
+import { EventEmitter } from 'node:events'
 import type { Tab } from '../../../shared/types'
 import type { TabViewEvents, WindowHost, WindowOpenTicket } from '../../../core/platform'
 import type { SessionManager } from '../sessions'
-import { ElectronTabViewHost, type ElectronTabView } from '../views'
+import { ElectronTabViewHost, fullPagePaint, type ElectronTabView } from '../views'
 
 /** The options every `WebContentsView` in the test was constructed with, in order. */
 const constructed: Array<Record<string, unknown>> = []
+
+/**
+ * Which page has the keyboard. `takeKeyboard` moves it the way Chromium does: the holder gets
+ * `blur`, the taker `focus`.
+ */
+const { keyboard, takeKeyboard } = vi.hoisted(() => {
+  const keyboard = { current: null as { emit(event: string): unknown } | null }
+  const takeKeyboard = (taker: { emit(event: string): unknown }): void => {
+    const previous = keyboard.current
+    if (previous === taker) return
+    keyboard.current = taker
+    previous?.emit('blur')
+    taker.emit('focus')
+  }
+  return { keyboard, takeKeyboard }
+})
 
 vi.mock('electron', async () => {
   const { EventEmitter } = await import('node:events')
@@ -61,6 +78,15 @@ vi.mock('electron', async () => {
       this.loaded.push(url)
       return Promise.resolve()
     }
+    /** How often the page was given the keyboard. */
+    focusCalls = 0
+    focus(): void {
+      this.focusCalls++
+      takeKeyboard(this)
+    }
+    isFocused(): boolean {
+      return keyboard.current === this
+    }
     close(): void {
       this.closed = true
       this.emit('destroyed')
@@ -82,12 +108,61 @@ vi.mock('electron', async () => {
     get webContents(): FakeWebContents | undefined {
       return this.contents
     }
-    setVisible(): undefined {
-      return undefined
+    private visible = false
+    setVisible(visible: boolean): void {
+      this.visible = visible
+    }
+    getVisible(): boolean {
+      return this.visible
     }
   }
-  return { WebContentsView: FakeWebContentsView }
+  /** The view host follows the chrome's scheme for dark theme for sites; light and quiet here. */
+  const nativeTheme = Object.assign(new EventEmitter(), { shouldUseDarkColors: false })
+  return { WebContentsView: FakeWebContentsView, nativeTheme }
 })
+
+/** A window's chrome page: the keyboard's home when no page on screen has it. */
+class FakeChrome extends EventEmitter {
+  focusCalls = 0
+  isDestroyed(): boolean {
+    return false
+  }
+  focus(): void {
+    this.focusCalls++
+    takeKeyboard(this)
+  }
+}
+
+/** A BrowserWindow as `attachTo` sees it: its chrome page, its `contentView`, its focus. */
+class FakeBrowserWindow extends EventEmitter {
+  focused = true
+  readonly children: unknown[] = []
+  readonly contentView = {
+    children: this.children,
+    addChildView: (view: unknown): void => {
+      this.children.push(view)
+    },
+    removeChildView: (view: unknown): void => {
+      const at = this.children.indexOf(view)
+      if (at >= 0) this.children.splice(at, 1)
+    }
+  }
+  constructor(readonly webContents: FakeChrome) {
+    super()
+  }
+  isDestroyed(): boolean {
+    return false
+  }
+  isFocused(): boolean {
+    return this.focused
+  }
+}
+
+function fakeWindow(): WindowHost & { win: FakeBrowserWindow; chrome: FakeChrome } {
+  const chrome = new FakeChrome()
+  const win = new FakeBrowserWindow(chrome)
+  return { win, chrome } as unknown as WindowHost & { win: FakeBrowserWindow; chrome: FakeChrome }
+}
 
 /** A page Chromium made for a script `window.open`, before any tab adopted it. */
 async function guestWebContents(): Promise<Electron.WebContents> {
@@ -114,6 +189,157 @@ describe('ElectronTabViewHost', () => {
 
     expect(host.tabIdForWebContents(wc)).toBeUndefined()
     expect(host.viewForWebContents(wc)).toBeUndefined()
+  })
+})
+
+/**
+ * Electron 44 gives a new WebContentsView the keyboard once its renderer is up, hidden or not,
+ * so a tab opened in the background (a middle-clicked link) would leave the next Ctrl+1 or
+ * Ctrl+W with a page that is not on screen. A hidden page that finds itself with the keyboard
+ * gives it back to whoever lost it (tabs-31).
+ */
+describe('a hidden tab page and the keyboard', () => {
+  type Page = { focusCalls: number; emit(event: string): unknown }
+  const pageOf = (view: ElectronTabView): Page => view.webContents as unknown as Page
+  const settle = (): Promise<void> => new Promise((r) => setImmediate(r))
+  const setup = (): {
+    host: ElectronTabViewHost
+    window: ReturnType<typeof fakeWindow>
+    background: () => ElectronTabView
+  } => {
+    keyboard.current = null
+    const host = new ElectronTabViewHost(sessions)
+    const window = fakeWindow()
+    let n = 0
+    const background = (): ElectronTabView =>
+      host.createView(
+        { id: `tab_bg${++n}`, containerId: 'default' } as Tab,
+        noEvents,
+        window
+      ) as ElectronTabView
+    return { host, window, background }
+  }
+
+  it('gives the keyboard back to the chrome that lost it', async () => {
+    const { window, background } = setup()
+    window.chrome.focus()
+    const bg = background()
+    // The background page's renderer comes up and takes the keyboard.
+    takeKeyboard(pageOf(bg))
+    expect(keyboard.current).toBe(pageOf(bg))
+    await settle()
+    expect(keyboard.current).toBe(window.chrome)
+    expect(window.chrome.focusCalls).toBe(2)
+  })
+
+  it('gives it back to the page on screen that lost it', async () => {
+    const { window, background } = setup()
+    const shown = background()
+    shown.setVisible(true)
+    shown.focus()
+    const bg = background()
+    takeKeyboard(pageOf(bg))
+    await settle()
+    expect(keyboard.current).toBe(pageOf(shown))
+    expect(pageOf(shown).focusCalls).toBe(2)
+    expect(window.chrome.focusCalls).toBe(0)
+  })
+
+  it('falls back to the chrome when the page that lost it is off screen too', async () => {
+    const { window, background } = setup()
+    const hidden = background()
+    hidden.focus()
+    const bg = background()
+    takeKeyboard(pageOf(bg))
+    await settle()
+    expect(keyboard.current).toBe(window.chrome)
+    expect(pageOf(hidden).focusCalls).toBe(1)
+  })
+
+  it('leaves a page alone that is shown by the time it is checked (a tab being activated)', async () => {
+    const { window, background } = setup()
+    window.chrome.focus()
+    const next = background()
+    takeKeyboard(pageOf(next))
+    next.setVisible(true)
+    await settle()
+    expect(keyboard.current).toBe(pageOf(next))
+    expect(window.chrome.focusCalls).toBe(1)
+  })
+
+  it('leaves a hidden page alone whose keyboard the core asked for (shown a frame later)', async () => {
+    const { window, background } = setup()
+    window.chrome.focus()
+    const next = background()
+    // `focusContent` on activation: the chrome reports the layout that shows the page later.
+    next.focus()
+    expect(keyboard.current).toBe(pageOf(next))
+    await settle()
+    expect(keyboard.current).toBe(pageOf(next))
+    expect(window.chrome.focusCalls).toBe(1)
+    // The answer was consumed: the next unasked focus while hidden is given back again.
+    window.chrome.focus()
+    takeKeyboard(pageOf(next))
+    await settle()
+    expect(keyboard.current).toBe(window.chrome)
+    expect(window.chrome.focusCalls).toBe(3)
+  })
+
+  it('leaves it alone when the core asks for it between the event and the check', async () => {
+    const { window, background } = setup()
+    window.chrome.focus()
+    const next = background()
+    takeKeyboard(pageOf(next))
+    // Ctrl+2 lands on the tab that just came up: `focus()` on a page that already has it.
+    next.focus()
+    await settle()
+    expect(keyboard.current).toBe(pageOf(next))
+    expect(window.chrome.focusCalls).toBe(1)
+  })
+
+  it('waits for the user to come back to a window that is not focused', async () => {
+    const { window, background } = setup()
+    window.chrome.focus()
+    window.win.focused = false
+    const bg = background()
+    takeKeyboard(pageOf(bg))
+    await settle()
+    // Nothing yet: focusing the chrome would pull the window to the front.
+    expect(keyboard.current).toBe(pageOf(bg))
+    expect(window.chrome.focusCalls).toBe(1)
+    window.win.focused = true
+    window.win.emit('focus')
+    expect(keyboard.current).toBe(window.chrome)
+    expect(window.chrome.focusCalls).toBe(2)
+  })
+
+  it('does nothing once the keyboard has moved on or the page is gone', async () => {
+    const { window, background } = setup()
+    window.chrome.focus()
+    const bg = background()
+    takeKeyboard(pageOf(bg))
+    // Something else (the core showing a tab) already took it back.
+    window.chrome.focus()
+    await settle()
+    expect(window.chrome.focusCalls).toBe(2)
+    const late = background()
+    takeKeyboard(pageOf(late))
+    late.destroy()
+    await settle()
+    expect(window.chrome.focusCalls).toBe(2)
+  })
+
+  it('is quiet for a view whose window is gone', async () => {
+    keyboard.current = null
+    const host = new ElectronTabViewHost(sessions)
+    const view = host.createView(
+      { id: 'tab_late', containerId: 'default' } as Tab,
+      noEvents,
+      detachedWindow
+    ) as ElectronTabView
+    expect(() => takeKeyboard(pageOf(view))).not.toThrow()
+    await settle()
+    expect(keyboard.current).toBe(pageOf(view))
   })
 })
 
@@ -279,5 +505,29 @@ describe('ElectronTabViewHost.openTicket', () => {
     expect(host.tabIdForWebContents(result)).toBe('tab_popup')
     // The browser starts the navigation itself (Electron only does so for windows it creates).
     expect((result as unknown as { loaded: string[] }).loaded).toEqual(['https://example.com/new'])
+  })
+})
+
+/**
+ * Capture Full Page paints the document at the page's zoom, as Take Screenshot's `capturePage`
+ * does, and cuts it so the painted picture stays under Chromium's texture height whatever the
+ * zoom and the display's scale (the protocol multiplies the clip by the latter on its own).
+ */
+describe('fullPagePaint', () => {
+  it('paints at the page zoom and keeps the agents’ cut at 100 percent on a plain display', () => {
+    expect(fullPagePaint(1, 1)).toEqual({ scale: 1, maxHeight: 12_000 })
+    expect(fullPagePaint(1.25, 1)).toEqual({ scale: 1.25, maxHeight: 12_000 })
+  })
+
+  it('shortens the cut as the zoom and the display scale grow, in CSS pixels', () => {
+    expect(fullPagePaint(2, 1)).toEqual({ scale: 2, maxHeight: 8_000 })
+    // A Retina display: the protocol paints twice the CSS pixels.
+    expect(fullPagePaint(1, 2)).toEqual({ scale: 1, maxHeight: 8_000 })
+    expect(fullPagePaint(1.5, 2)).toEqual({ scale: 1.5, maxHeight: 5_333 })
+  })
+
+  it('treats a zoom or scale it cannot read as 100 percent', () => {
+    expect(fullPagePaint(Number.NaN, 0)).toEqual({ scale: 1, maxHeight: 12_000 })
+    expect(fullPagePaint(-1, Number.POSITIVE_INFINITY)).toEqual({ scale: 1, maxHeight: 12_000 })
   })
 })

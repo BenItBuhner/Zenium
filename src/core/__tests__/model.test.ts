@@ -11,11 +11,14 @@ import {
   deleteFolder,
   dissolveSplitGroup,
   essentialsForSpace,
+  folderTabs,
+  foldersOf,
   getSpace,
   insertTabIntoSpace,
   isSplitSide,
   loadProgressAfter,
   moveTab,
+  nextFolderColor,
   nextTabAfterClose,
   orderedTabsForSpace,
   pinnedTabs,
@@ -29,7 +32,7 @@ import {
   splitPlacement,
   type Model
 } from '../model'
-import { DEFAULT_CONTAINERS } from '../../shared/defaults'
+import { DEFAULT_CONTAINERS, FOLDER_COLOR_ORDER, FOLDER_COLORS } from '../../shared/defaults'
 import type { Tab } from '../../shared/types'
 
 function makeModel(): Model {
@@ -343,6 +346,57 @@ describe('spaces & folders', () => {
     b.folderId = folder2.id
     expect(deleteFolder(m, folder2.id, false)).toEqual([b.id])
     expect(m.folders[folder2.id]).toBeUndefined()
+  })
+
+  it('creates a folder with its colour and open, and keeps a colourless one colourless', () => {
+    const m = makeModel()
+    const blue = createFolder(m, m.spaces[0].id, 'Docs', '📁', 'blue')
+    expect(blue).toMatchObject({ name: 'Docs', icon: '📁', color: 'blue', collapsed: false })
+    const plain = createFolder(m, m.spaces[0].id, 'Misc', '📂')
+    expect('color' in plain).toBe(false)
+    expect(foldersOf(m, m.spaces[0].id).map((f) => f.id)).toEqual([blue.id, plain.id])
+  })
+
+  it('gives a new group the first colour no group of its space has yet, as Chrome does', () => {
+    const m = makeModel()
+    const space = m.spaces[0].id
+    const palette = FOLDER_COLOR_ORDER
+    // Chrome's order, grey first, every colour once.
+    expect(palette[0]).toBe('grey')
+    expect([...palette].sort()).toEqual(Object.keys(FOLDER_COLORS).sort())
+    expect(nextFolderColor(m, space)).toBe('grey')
+    createFolder(m, space, 'A', '📁', palette[0])
+    createFolder(m, space, 'B', '📁', palette[1])
+    expect(nextFolderColor(m, space)).toBe(palette[2])
+    // A gap left by a group that changed colour is filled before moving on.
+    createFolder(m, space, 'C', '📁', palette[3])
+    expect(nextFolderColor(m, space)).toBe(palette[2])
+    // Other spaces' groups do not count.
+    const other = createSpace('Other', '')
+    m.spaces.push(other)
+    expect(nextFolderColor(m, other.id)).toBe(palette[0])
+  })
+
+  it('cycles through the palette again once every colour of the space is taken', () => {
+    const m = makeModel()
+    const space = m.spaces[0].id
+    const palette = FOLDER_COLOR_ORDER
+    for (const color of palette) createFolder(m, space, color, '📁', color)
+    expect(nextFolderColor(m, space)).toBe(palette[0])
+    createFolder(m, space, 'again', '📁', palette[0])
+    expect(nextFolderColor(m, space)).toBe(palette[1])
+  })
+
+  it('lists a folder’s tabs in the space’s order and nothing for a folder that is gone', () => {
+    const m = makeModel()
+    const folder = createFolder(m, m.spaces[0].id, 'Docs', '📁')
+    const a = addTab(m, 'https://a.test', { folderId: folder.id })
+    addTab(m, 'https://loose.test')
+    const b = addTab(m, 'https://b.test', { folderId: folder.id })
+    expect(folderTabs(m, folder.id).map((t) => t.id)).toEqual([a.id, b.id])
+    moveTab(m, b, { section: 'regular', index: 0 }, 12)
+    expect(folderTabs(m, folder.id).map((t) => t.id)).toEqual([b.id, a.id])
+    expect(folderTabs(m, 'folder:missing')).toEqual([])
   })
 })
 

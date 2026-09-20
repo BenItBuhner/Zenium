@@ -361,7 +361,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "view.print" -> { tab?.let(::print); reply(null) }
             "view.savePage" -> if (tab == null) reply(null) else savePage(tab, args.str("name"), reply)
             "view.snapshot" -> if (tab == null) reply(null) else tab.snapshot(reply)
-            "view.screenshot" -> if (tab == null) reply(null) else tab.screenshot { png -> saveToDownloads(args.str("name"), "image/png", png, reply) }
+            "view.screenshot" -> if (tab == null) reply(null) else tab.screenshot(args.bool("fullPage")) { png -> saveToDownloads(args.str("name"), "image/png", png, reply) }
             "view.capture" -> if (tab == null) reply(null) else tab.capture(args.str("mode", "viewport"), args.optJSONObject("region"), args.str("format", "jpeg"), args.optInt("quality", -1), reply)
             "view.certificate" -> reply(tab?.certificateInfo())
 
@@ -403,6 +403,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "app.share" -> share.share(args, reply)
             "app.openAppLinkSettings" -> { openAppLinkSettings(); reply(null) }
             "app.openPrivateDnsSettings" -> { openPrivateDnsSettings(); reply(null) }
+            "app.openKeyboardSettings" -> { openKeyboardSettings(); reply(null) }
             "externalProtocol.respond" -> { externalProtocols.respond(args.str("requestId"), args.bool("allow")); reply(null) }
             "app.isDefaultBrowser" -> reply(DefaultBrowser.isDefault(activity))
             "app.requestDefaultBrowser" -> activity.requestDefaultBrowser(reply)
@@ -678,6 +679,23 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      */
     private fun openPrivateDnsSettings() {
         for (action in listOf(Settings.ACTION_WIRELESS_SETTINGS, Settings.ACTION_SETTINGS)) {
+            try {
+                activity.startActivity(Intent(action))
+                return
+            } catch (e: ActivityNotFoundException) {
+                // The next screen down is on every device.
+            }
+        }
+    }
+
+    /**
+     * Android's keyboard settings: the WebView has no spellchecker of the browser's own – its text
+     * fields are checked by the system's spell checker service, which is chosen (and switched on)
+     * next to the keyboards – so that is where "Spell check" in Settings leads (CT-07's limit).
+     * The main Settings screen is the fallback on devices that lack the action.
+     */
+    private fun openKeyboardSettings() {
+        for (action in listOf(Settings.ACTION_INPUT_METHOD_SETTINGS, Settings.ACTION_SETTINGS)) {
             try {
                 activity.startActivity(Intent(action))
                 return

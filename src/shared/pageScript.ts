@@ -11,6 +11,7 @@ import { MANIFEST_FIELDS, type RawWebAppManifest } from './webApp'
 import type { MediaReport, MediaSessionHostMessage } from './mediaSession'
 import type { NotificationHostMessage, NotificationPageRequest } from './notifications'
 import { installMediaTracking } from './mediaSessionScript'
+import { READER_MESSAGE_KEY } from './reader'
 
 /**
  * Runs inside every web page. It implements the click behaviours Zen adds on top of the engine:
@@ -44,6 +45,7 @@ export interface PageScriptMessage {
     | 'focus'
     | 'webapp'
     | 'notification'
+    | 'reader'
   url?: string
   x?: number
   y?: number
@@ -61,6 +63,8 @@ export interface PageScriptMessage {
   manifest?: RawWebAppManifest | null
   /** `notification`: the `Notification` polyfill's request (see `shared/notifications`). */
   notification?: NotificationPageRequest
+  /** `reader`: the text preferences a `zen://reader` page's toolbar changed (a partial). */
+  reader?: unknown
 }
 
 /** Browser → page messages for the web-app polyfill (mirrors `PageHostMessage` in the core). */
@@ -166,6 +170,7 @@ export function installPageScript(transport: PageScriptTransport): void {
   installActivationReporter(transport)
   if (transport.reportBlockedPopups) installPopupObserver(transport)
   installInterstitialRelay(transport)
+  installReaderRelay(transport)
   if (transport.onHint) installHint(transport.onHint.bind(transport))
   if (transport.onWebApp) installWebApp(transport)
 
@@ -323,6 +328,22 @@ function installInterstitialRelay(transport: PageScriptTransport): void {
     const { action, url } = message
     if (typeof action !== 'string' || !actions.has(action) || typeof url !== 'string') return
     transport.send({ type: 'interstitial', action: action as InterstitialAction, url })
+  })
+}
+
+/**
+ * The `zen://reader` page posts its toolbar's changes to the text preferences on the window;
+ * only a document of Zenium's own scheme may relay them (a web page cannot rewrite the setting).
+ * The core validates the patch (`readerPreferencesPatch`) before it saves anything.
+ */
+function installReaderRelay(transport: PageScriptTransport): void {
+  if (location.protocol !== 'zen:') return
+  window.addEventListener('message', (e: MessageEvent) => {
+    if (e.source !== window) return
+    const data = e.data as { [READER_MESSAGE_KEY]?: unknown } | null
+    const patch = data && typeof data === 'object' ? data[READER_MESSAGE_KEY] : undefined
+    if (!patch || typeof patch !== 'object') return
+    transport.send({ type: 'reader', reader: patch })
   })
 }
 

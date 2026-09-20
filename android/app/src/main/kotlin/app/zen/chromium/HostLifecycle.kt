@@ -97,9 +97,14 @@ class HostLifecycle(private val clock: () -> Long = System::currentTimeMillis) {
             "(function(){var r=document.getElementById('root');" +
                 "return document.visibilityState+':'+(r&&r.childElementCount>0?'ok':'empty')})()"
 
-        /** `ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN` and `TRIM_MEMORY_BACKGROUND`, without the Android dependency. */
+        /** `ComponentCallbacks2.TRIM_MEMORY_*`, without the Android dependency. */
+        const val TRIM_MEMORY_RUNNING_MODERATE = 5
+        const val TRIM_MEMORY_RUNNING_LOW = 10
+        const val TRIM_MEMORY_RUNNING_CRITICAL = 15
         const val TRIM_MEMORY_UI_HIDDEN = 20
         const val TRIM_MEMORY_BACKGROUND = 40
+        const val TRIM_MEMORY_MODERATE = 60
+        const val TRIM_MEMORY_COMPLETE = 80
 
         /**
          * Whether a memory trim at `level` should drop the back previews. Only once the app is on
@@ -107,5 +112,21 @@ class HostLifecycle(private val clock: () -> Long = System::currentTimeMillis) {
          * the previews are what makes the first back gesture after a wake look right.
          */
         fun trimDropsSnapshots(level: Int): Boolean = level >= TRIM_MEMORY_BACKGROUND
+
+        /**
+         * How pressing a memory trim at `level` is for the pages (sleeping tabs, CT-22): the core
+         * puts hidden pages to sleep ahead of their timeout on `"low"` and every hidden page on
+         * `"critical"`; `null` is no pressure. The two families of levels are not ordered by
+         * severity, hence the table: in the foreground, RUNNING_LOW means the device is short and
+         * RUNNING_CRITICAL that background processes are being killed (Zenium's could be next once
+         * it leaves the screen); on the LRU list, MODERATE is the middle of it and COMPLETE its
+         * end. RUNNING_MODERATE, UI_HIDDEN and BACKGROUND alone are not pressure: the user may be
+         * right back, and a page put to sleep for nothing is a reload for nothing.
+         */
+        fun memoryPressure(level: Int): String? = when (level) {
+            TRIM_MEMORY_RUNNING_LOW, TRIM_MEMORY_MODERATE -> "low"
+            TRIM_MEMORY_RUNNING_CRITICAL, TRIM_MEMORY_COMPLETE -> "critical"
+            else -> null
+        }
     }
 }

@@ -23,10 +23,15 @@ import type {
 } from './platform'
 import type { ZenWindow } from './window'
 
+/** How often the sleeping-tabs timeout is checked on hosts without a resource governor. */
+export const SLEEP_CHECK_MS = 30_000
+
 /**
  * Governor for hosts without process metrics or a DevTools protocol (Android). Background loads
- * start immediately, nothing is ever frozen or throttled; only Zen's plain tab-unloading timeout
- * is honoured, the same way it was before the governor existed.
+ * start immediately, nothing is ever frozen or throttled; sleeping tabs are the plain timeout
+ * (`tabs.unloadInactive`, checked every half minute so the shortest timeout on Edge's ladder,
+ * 30 seconds, is honoured) plus the host's memory-pressure signal
+ * (`tabs.unloadForMemoryPressure`, from `onTrimMemory`).
  */
 export class NoopGovernor implements Governor {
   private timer: ReturnType<typeof setInterval> | null = null
@@ -34,7 +39,9 @@ export class NoopGovernor implements Governor {
   constructor(private readonly browser: Browser) {}
 
   start(): void {
-    if (!this.timer) this.timer = setInterval(() => this.browser.tabs.unloadInactive(), 60_000)
+    if (!this.timer) {
+      this.timer = setInterval(() => this.browser.tabs.unloadInactive(), SLEEP_CHECK_MS)
+    }
   }
 
   stop(): void {

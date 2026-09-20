@@ -37,6 +37,8 @@ import {
   uiStore
 } from '@renderer/lib/ui'
 import { activeTab } from '@renderer/lib/selectors'
+import { openGroupEditor } from '@renderer/lib/groupEditor'
+import { toggleTabSearch } from '@renderer/lib/tabSearch'
 import { openTranslateSelection } from '@renderer/lib/translate'
 import { browserStore } from '@renderer/lib/ui'
 import { voiceEvent } from '@renderer/lib/voiceSearch'
@@ -134,6 +136,12 @@ export function useMainEvents(): void {
         const ui = uiStore.get()
         if (ui.findOpen && ui.findTabId === tabId) openFindBar(tabId, text)
       }),
+      onEvent('tabsearch.open', () => {
+        // Chrome's tab search (tabs-17): a popover of the sidebar layouts; a phone has the tab
+        // switcher's own search.
+        if (isPhone()) return
+        toggleTabSearch()
+      }),
       onEvent('menu.app', () => {
         // The menu button claims the request when it is on screen (it takes the focus and opens
         // the menu from itself, so Escape leaves the keyboard on it); otherwise the menu opens
@@ -158,6 +166,12 @@ export function useMainEvents(): void {
       onEvent('tab.dragOver', (over) => remoteDragOver(over)),
       onEvent('tab.startRename', ({ tabId }) => uiStore.set({ renamingTabId: tabId })),
       onEvent('folder.startRename', ({ folderId }) => uiStore.set({ renamingFolderId: folderId })),
+      onEvent('folder.edit', ({ folderId }) => {
+        // Chrome's group editor bubble (tabs-13) beside the folder's header; the phone's group
+        // sheet holds the colours, so a new group there starts its inline rename as before.
+        if (isPhone()) uiStore.set({ renamingFolderId: folderId })
+        else openGroupEditor(folderId)
+      }),
       onEvent('tab.editPinnedUrl', ({ tabId }) => uiStore.set({ editingPinnedUrlTabId: tabId })),
       onEvent('tab.pickIcon', ({ tabId }) => uiStore.set({ iconPickerTabId: tabId })),
       onEvent('bookmark.star', (star) => {

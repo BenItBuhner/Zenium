@@ -25,6 +25,8 @@ import type { ContentDefault } from './contentSettings'
 import type { VoiceEvent, VoiceStartOutcome } from './voice'
 import type { QrEvent, QrStartOutcome } from './qrScan'
 import type { MediaPositionInfo, MediaSessionAction } from './mediaSession'
+import type { SpellcheckSettings, SpellcheckStatus } from './spellcheck'
+import type { ReaderPreferences } from './reader'
 
 export type Platform = 'linux' | 'win32' | 'darwin' | 'android'
 
@@ -104,6 +106,13 @@ export interface HostCapabilities {
    * sheet); hosts without them keep the plain zoom menu.
    */
   pageControls: boolean
+  /**
+   * Pages can be darkened algorithmically (Chrome Android's "Auto-darken web content", CT-18):
+   * the WebView's algorithmic darkening; Chromium's auto dark mode over the DevTools protocol on
+   * Electron. Both act only while the chrome itself is dark and leave pages with a dark style of
+   * their own to it. Settings › Look shows "Apply dark theme to sites" and the per-site list.
+   */
+  darkenSites: boolean
   /**
    * Extensions run, but their content scripts share the page's world (an Android WebView below
    * Chromium 146 has no isolated worlds; the emulation layer falls back to a scope proxy). Pages
@@ -1426,6 +1435,8 @@ export type ShortcutAction =
   | 'page.readerMode'
   | 'page.pip'
   | 'page.screenshot'
+  /** Edge's "Capture full page": the whole page, beyond the viewport, saved like a screenshot. */
+  | 'page.captureFullPage'
   | 'page.toggleMute'
   | 'zoom.in'
   | 'zoom.out'
@@ -1619,6 +1630,13 @@ export interface NewTabPageState {
   backgroundImage: string | null
   /** The host can open an image file picker. */
   canPickImage: boolean
+  /**
+   * A private window's page only: the "Block third-party cookies" switch (Chrome's Incognito
+   * new-tab toggle), `PrivacyStatus.privateThirdPartyCookies` – `blocked` is its position,
+   * `locked` that Settings blocks them in every window, so it is on and disabled. Absent on a
+   * regular page; inert for anything else that reads the state.
+   */
+  privateThirdPartyCookies?: { blocked: boolean; locked: boolean }
 }
 
 /**
@@ -1656,6 +1674,11 @@ export type NewTabPageAction =
     }
   /** The Customize button: Settings opens on its New Tab section. */
   | { type: 'customize' }
+  /**
+   * The private page's "Block third-party cookies" switch was flipped: `privacy.thirdPartyCookiesPrivate`
+   * becomes `block` (on) or `allow` (off) – never `default` – and changes private windows only.
+   */
+  | { type: 'set-private-third-party-cookies'; blocked: boolean }
 
 /**
  * What the browser tells a new tab page besides its state: a menu item picked in the chrome
@@ -1771,6 +1794,13 @@ export interface Settings {
   newTab: NewTabSettings
   /** The one-time gesture hint (a toast after the first page) has been shown (phones). */
   gestureHintDone: boolean
+  /**
+   * Spell checking of text fields: on / off and the dictionary languages (Settings › Languages).
+   * Absent in profiles from before it existed (`sanitizeSpellcheck` fills the defaults).
+   */
+  spellcheck: SpellcheckSettings
+  /** Reader View's text size, font, colour theme and column width (`zen://reader`). */
+  reader: ReaderPreferences
 }
 
 // ---------------------------------------------------------------------------
@@ -1884,7 +1914,7 @@ export interface PageControlsSettings {
   zoom: number
   /** Multiply the system font size (Android `fontScale`) into the default zoom. */
   zoomIncludesOsFontSize: boolean
-  /** Per-site zoom: domain → factor. */
+  /** Per-site zoom: host → factor (Chrome's zoom levels are per host, `zoomSiteKey`). */
   siteZooms: Record<string, number>
   /** Override `user-scalable=no` and `maximum-scale` so pinch zoom works everywhere. */
   forceZoom: boolean
@@ -1893,8 +1923,9 @@ export interface PageControlsSettings {
 /**
  * The page-controls policy a host keeps a copy of, so a navigation gets its user agent and its
  * viewport before the request leaves and before the document starts: the defaults already
- * resolved for this device, plus the sites that differ. Sites are registrable domains
- * (`siteKey`); a host matches a URL's host against them by suffix (`siteValue`).
+ * resolved for this device, plus the sites that differ. Desktop-site and darkening sites are
+ * registrable domains (`siteKey`); a host matches a URL's host against them by suffix
+ * (`siteValue`). Zoom sites are hosts (`zoomSiteKey`), matched exactly (`zoomValue`).
  */
 export interface PageRules {
   desktop: { default: boolean; sites: Record<string, boolean> }
@@ -2544,6 +2575,8 @@ export interface UIState {
   translate: TranslateUIState
   /** The device facts the page controls resolve against (screen class, peripherals, font scale). */
   pageEnvironment: PageEnvironment
+  /** Spell check on this host: its dictionaries and their state, or the Android limit. */
+  spellcheck: SpellcheckStatus
 }
 
 export interface FindResult {
@@ -2764,6 +2797,8 @@ export interface Commands {
       pinned?: boolean
       essential?: boolean
       afterTabId?: string
+      /** The folder (tab group) the new tab belongs to; one of the space's folders. */
+      folderId?: string
     }
     result: string
   }
@@ -2844,6 +2879,16 @@ export interface Commands {
   'tab.moveToNewWindow': { args: { tabId: string }; result: void }
   /** Restore the newest recently closed entry (a window entry as a whole window). */
   'tab.reopenClosed': { args: void; result: void }
+  /**
+   * The tabs this window's tab search (Ctrl+Shift+A) lists: every tab of every window that
+   * shares the window's privacy, most recently active first. The renderer matches and ranks them.
+   */
+  'tab.searchCandidates': { args: void; result: TabSearchCandidate[] }
+  /**
+   * Switch to a tab from tab search: in this window when it can show it, else in the window that
+   * does (a blank or private window's own tab), which is brought to the front.
+   */
+  'tab.switchTo': { args: { tabId: string }; result: void }
   /** The tab's back/forward stack for the long-press list on the back / forward buttons. */
   'tab.navigationEntries': { args: { tabId: string }; result: NavigationSnapshot }
   'tab.goToIndex': { args: { tabId: string; index: number }; result: void }
@@ -2918,6 +2963,11 @@ export interface Commands {
   }
   'folder.delete': { args: { folderId: string; unpack: boolean }; result: void }
   'folder.contextMenu': { args: { folderId: string }; result: void }
+  /**
+   * Chrome's "New tab in group" (tabs-13): a new tab at the end of the folder, active, in the
+   * folder's space and the container of its last member. Resolves with the new tab's id.
+   */
+  'folder.newTab': { args: { folderId: string }; result: string }
   'newtab.contextMenu': { args: void; result: void }
   /** Long-press on a phone new tab page tile: pin / unpin, remove, open in a new tab. */
   'newtab.tileContextMenu': { args: { url: string; title: string }; result: void }
@@ -3314,7 +3364,11 @@ export interface Commands {
     args: { tabId: string; section: string | null; replace?: boolean }
     result: void
   }
-  'page.screenshot': { args: { tabId: string }; result: void }
+  /**
+   * Save a screenshot of the page to Downloads: the visible area, or with `fullPage` the whole
+   * page beyond the viewport (Edge's "Capture full page"; the visible area when the host cannot).
+   */
+  'page.screenshot': { args: { tabId: string; fullPage?: boolean }; result: void }
   'page.print': { args: { tabId: string }; result: void }
   'page.savePage': { args: { tabId: string }; result: void }
   'page.viewSource': { args: { tabId: string }; result: void }
@@ -3351,6 +3405,19 @@ export interface Commands {
   'boost.stopZap': { args: { tabId: string }; result: void }
 
   'reader.toggle': { args: { tabId: string }; result: void }
+  /** Change Reader View's text preferences; every open reader page follows at once. */
+  'reader.setPreferences': { args: Partial<ReaderPreferences>; result: void }
+
+  /** Chrome's "Check the spelling of text fields". */
+  'spellcheck.setEnabled': { args: { enabled: boolean }; result: void }
+  /** Check (or stop checking) in one of the host's dictionary languages. */
+  'spellcheck.setLanguage': { args: { code: string; on: boolean }; result: void }
+  /** The custom dictionary (words added with "Add to Dictionary"), sorted. */
+  'spellcheck.words': { args: void; result: string[] }
+  'spellcheck.addWord': { args: { word: string }; result: boolean }
+  'spellcheck.removeWord': { args: { word: string }; result: boolean }
+  /** Android: the system's keyboard settings, where the spell checker that checks pages is set. */
+  'spellcheck.openKeyboardSettings': { args: void; result: void }
 
   'liveFolder.save': {
     args: {
@@ -3760,6 +3827,11 @@ export interface Events {
    */
   'menu.app': void
   /**
+   * Ctrl+Shift+A (or the menu item) asked for tab search: the chrome opens the popover from the
+   * sidebar's top row with the keyboard in its field (`tab.searchCandidates` lists the tabs).
+   */
+  'tabsearch.open': void
+  /**
    * The user zoomed a page (keyboard, Ctrl+wheel, the menu, the bubble's own controls): the
    * chrome shows the zoom bubble for the tab. `factor` is the page's effective zoom; `siteKey`
    * the site the factor is remembered for, null for a page that zooms on its own.
@@ -3799,6 +3871,13 @@ export interface Events {
    */
   'tab.dragOver': TabDragOver | null
   'folder.startRename': { folderId: string }
+  /**
+   * Show the folder's editor (tabs-13): Chrome opens its group editor bubble when a group is
+   * made from the tab menu and from the group header's own menu. The desktop chrome opens the
+   * bubble beside the folder's header row; the phone, whose group sheet holds the colours, starts
+   * the inline rename on the group card.
+   */
+  'folder.edit': { folderId: string }
   /** Open the pinned-URL editor for a pinned/essential tab. */
   'tab.editPinnedUrl': { tabId: string }
   /** Open the emoji/icon picker for a tab. */
@@ -3983,3 +4062,29 @@ export interface ClosedEntrySummary {
 
 /** The pre-visit-model name; new code uses `ClosedTabEntry`. */
 export type ClosedTab = ClosedTabEntry
+
+/**
+ * One tab the tab search popover can switch to (tabs-17): what its row shows and what the
+ * renderer matches on. `windowLabel` names the other window a tab lives in (a blank or private
+ * window's own tab, named by its active tab as the "Move Tab to Another Window" submenu names
+ * windows); null for a tab this window shows itself.
+ */
+export interface TabSearchCandidate {
+  id: string
+  /** The user's name for the tab when it has one, else the page's title. */
+  title: string
+  url: string
+  favicon: string | null
+  /** The user's emoji for the tab ("Change Icon…"), shown in place of the favicon. */
+  customIcon: string | null
+  containerId: string
+  windowLabel: string | null
+  /** The tab this window (or the window the tab lives in) shows right now. */
+  active: boolean
+  /** Playing sound (or muted while it would): the "Audio and video" section. */
+  audible: boolean
+  muted: boolean
+  loading: boolean
+  discarded: boolean
+  lastActiveAt: number
+}

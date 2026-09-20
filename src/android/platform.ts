@@ -151,6 +151,7 @@ export function androidCapabilities({
     defaultBrowser: true,
     requestBlocking: true,
     pageControls: true,
+    darkenSites: true,
     reducedExtensionIsolation: extensions && !isolatedWorlds,
     // One window: private browsing is a tab in it, on a throwaway WebView profile.
     privateTabs: profiles,
@@ -353,6 +354,12 @@ export interface HostEventPayloads {
   pause: void
   /** The window is coming back on screen after being hidden (screen off, another app in front). */
   resume: void
+  /**
+   * The system is short of memory (`onTrimMemory`, graded by `HostLifecycle.memoryPressure`):
+   * hidden pages go to sleep ahead of their timeout, all of them when the process is about to
+   * be killed.
+   */
+  memoryPressure: { level: 'low' | 'critical' }
   /** A page view's visibility change (`view.setVisible`) is on screen (`Host.setTabVisible`). */
   'view.drawn': { tabId: string; visible: boolean }
   /** Kotlin took a tab card picture and has it on disk (`Thumbnails.kt`). */
@@ -926,7 +933,8 @@ export class AndroidPlatform implements Platform {
       showItemInFolder: () => bridge.send('download.showAll'),
       share: (payload) => bridge.call('app.share', payload),
       openAppLinkSettings: () => bridge.send('app.openAppLinkSettings'),
-      openPrivateDnsSettings: () => bridge.send('app.openPrivateDnsSettings')
+      openPrivateDnsSettings: () => bridge.send('app.openPrivateDnsSettings'),
+      openKeyboardSettings: () => bridge.send('app.openKeyboardSettings')
     }
     this.externalProtocols = {
       respond: (requestId, allow) => bridge.send('externalProtocol.respond', { requestId, allow })
@@ -1230,6 +1238,11 @@ export class AndroidPlatform implements Platform {
         // chrome returns to; Kotlin asks its WebViews for a fresh frame alongside.
         this.zenWindow?.relayout()
         return
+      case 'memoryPressure': {
+        const p = payload as HostEventPayloads['memoryPressure']
+        browser.tabs.unloadForMemoryPressure(p.level === 'critical' ? 'critical' : 'low')
+        return
+      }
       case 'download.started': {
         const p = payload as HostEventPayloads['download.started']
         const containerId = p.containerId || DEFAULT_CONTAINER_ID

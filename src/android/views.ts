@@ -15,6 +15,7 @@ import { zenPageHtml, type ImagePageLookup, type ReaderPageLookup } from '@share
 import type {
   AgentCapture,
   AgentCaptureOptions,
+  ScreenshotOptions,
   AgentInputEvent,
   FindResultInfo,
   KeyEventInput,
@@ -569,8 +570,17 @@ export class AndroidTabView implements TabView {
     return this.bridge.call<string | null>('view.snapshot', { tabId: this.tabId })
   }
 
-  screenshot(fileName: string): Promise<string | null> {
-    return this.bridge.call<string | null>('view.screenshot', { tabId: this.tabId, name: fileName })
+  /**
+   * The visible area, or with `fullPage` the whole document: Kotlin scrolls the page in
+   * viewport-sized steps and stitches the strips (`PageCapture`), the same path as the agents'
+   * full-page capture, and saves the PNG to Downloads.
+   */
+  screenshot(fileName: string, options: ScreenshotOptions = {}): Promise<string | null> {
+    return this.bridge.call<string | null>('view.screenshot', {
+      tabId: this.tabId,
+      name: fileName,
+      fullPage: options.fullPage === true
+    })
   }
 
   /**

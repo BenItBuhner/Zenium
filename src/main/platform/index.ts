@@ -87,6 +87,7 @@ import {
 import { ElectronBlocking, ElectronBundledLists, bundledListsDirectory } from './blocking'
 import { supportsWindowMaterial } from './appShell'
 import { ElectronPrivacy } from './privacy'
+import { ElectronSpellcheck } from './spellcheck'
 
 export const ELECTRON_CAPABILITIES: HostCapabilities = {
   windowControls: true,
@@ -116,6 +117,7 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   requestBlocking: true,
   reducedExtensionIsolation: false,
   pageControls: false,
+  darkenSites: true,
   // Private browsing is a window of its own on desktop (`windows`).
   privateTabs: false,
   secureDns: true,
@@ -161,6 +163,8 @@ export class ElectronPlatform implements Platform {
   /** The webRequest multiplexer and text matcher; created with the browser in `start`. */
   requestBlocking!: ElectronBlocking
   readonly translate: ElectronTranslateHost
+  /** Chromium's per-session spellchecker, one setting for every session. */
+  readonly spellcheck: ElectronSpellcheck
   /** Default-browser status and registration on Windows, macOS and Linux. */
   readonly defaultBrowser = new ElectronDefaultBrowser()
   readonly newTabBackground: ElectronNewTabBackground
@@ -180,6 +184,7 @@ export class ElectronPlatform implements Platform {
       focusedChromeWebContents((id) => this.windows.windowForWebContents(id) !== undefined)
     )
     this.sessions = new SessionManager(buildUserAgent())
+    this.spellcheck = new ElectronSpellcheck(this.sessions)
     this.downloads = new ElectronDownloads(
       () => {
         const downloads = resolveDownloadSettings(this.browser.state.settings)
@@ -480,7 +485,6 @@ export class ElectronPlatform implements Platform {
       this.downloads.attach(ses, containerId, (sourceTabId) =>
         browser.onDownloadStarted(sourceTabId)
       )
-      ses.setSpellCheckerLanguages(['en-US'])
       if (this.sessions.isPersistent(containerId)) {
         webstore.attach(ses)
         extensionApi.attachSession(ses, containerId)

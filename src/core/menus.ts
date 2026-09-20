@@ -28,9 +28,11 @@ import { bookmarkUrlCount, isBookmarkRoot } from '../shared/bookmarks'
 import { fileExtension, resolveDownloadSettings } from '../shared/downloads'
 import { canRetryDownload, deleteFileToast, displayName } from '../shared/downloadsShell'
 import { languageName, sortedByName } from '../shared/languageNames'
+import { dictionaryFor } from '../shared/spellcheck'
 import { isInFlight, isQuarantined } from './downloads'
 import { mayAutoOpen } from './downloads/danger'
 import { applicationMenu, menuSignature, runFromMenuBar } from './menuBar'
+import { folderTabs } from './model'
 
 type Template = MenuItemTemplate[]
 
@@ -124,6 +126,8 @@ export function tidySeparators(template: Template): Template {
 const SELECTION_LABEL_MAX = 50
 /** Chrome lists at most five spelling suggestions. */
 const SPELLING_SUGGESTIONS_MAX = 5
+/** The "Spell check" submenu lists the user's languages, not every dictionary there is. */
+const SPELLCHECK_MENU_LANGUAGES_MAX = 8
 
 /**
  * Context menus. Zen (Firefox) uses native-styled menus everywhere; the core builds the templates
@@ -236,6 +240,10 @@ export class Menus {
       const tail =
         selection && !params.misspelledWord ? this.selectionGroup(tab, selection, win).slice(1) : []
       groups.push(this.editGroup(params, { tail }))
+      // Chrome's "Spell check" submenu, its own group after the editing items, on hosts with a
+      // spellchecker of the browser's own.
+      const spellcheck = this.spellcheckSubmenu(win)
+      if (spellcheck) groups.push([spellcheck])
     } else if (selection) {
       groups.push(this.selectionGroup(tab, selection, win, { x: params.x, y: params.y }))
     }
@@ -590,9 +598,65 @@ export class Menus {
     if (items.length === 0) items.push({ label: 'No Spelling Suggestions', enabled: false })
     items.push({
       label: 'Add to Dictionary',
-      click: () => view.addWordToDictionary(params.misspelledWord)
+      // The profile's one custom dictionary (every session), not this view's session alone.
+      click: () => void this.browser.spellcheck.addWord(params.misspelledWord, view)
     })
     return items
+  }
+
+  /**
+   * Chrome's "Spell check" submenu of an editable field: the languages the fields are checked
+   * in (checked) and the user's other languages with a dictionary (unchecked), each a toggle;
+   * then "Check the spelling of text fields" and the way to Settings › Languages. Null on a host
+   * without a spellchecker of its own (Android) and on one that follows the OS's languages
+   * (macOS), where the item would have nothing to offer.
+   */
+  private spellcheckSubmenu(win: ZenWindow): MenuItemTemplate | null {
+    const { spellcheck, state, translate } = this.browser
+    const status = spellcheck.uiState()
+    if (!status.available || status.systemLanguages) return null
+    const checked = new Set(spellcheck.languages())
+    const available = status.languages.map((l) => l.code)
+    // The user's languages: the ones checked now, the UI locales' dictionaries and the
+    // languages they read (the translate preferences), in that order, without repeats.
+    const candidates = [
+      ...checked,
+      ...this.browser.platform.spellcheck!.locales,
+      ...translate.uiState().preferences.preferred
+    ]
+    const codes: string[] = []
+    for (const candidate of candidates) {
+      const code = dictionaryFor(candidate, available)
+      if (code && !codes.includes(code)) codes.push(code)
+      if (codes.length === SPELLCHECK_MENU_LANGUAGES_MAX) break
+    }
+    const nameOf = new Map(status.languages.map((l) => [l.code, l.name]))
+    const enabled = state.settings.spellcheck.enabled
+    const languages: Template = codes.map((code) => ({
+      label: nameOf.get(code) ?? code,
+      type: 'checkbox',
+      checked: checked.has(code),
+      enabled,
+      click: () => spellcheck.setLanguage(code, !checked.has(code))
+    }))
+    return {
+      label: 'Spell Check',
+      submenu: [
+        ...languages,
+        ...(languages.length > 0 ? [{ type: 'separator' as const }] : []),
+        {
+          label: 'Check the Spelling of Text Fields',
+          type: 'checkbox',
+          checked: enabled,
+          click: () => spellcheck.setEnabled(!enabled)
+        },
+        { type: 'separator' },
+        {
+          label: 'Language Settings',
+          click: () => void this.browser.pages.open('settings', 'languages', win)
+        }
+      ]
+    }
   }
 
   /**
@@ -826,8 +890,9 @@ export class Menus {
   /** The page's own actions: bookmark, save, print, screenshot, Reader View, Translate Page. */
   private pageGroup(tab: Tab, win: ZenWindow): Template {
     const { state, reader, translate } = this.browser
-    const run = (action: 'page.savePage' | 'page.print' | 'page.screenshot'): void =>
-      this.browser.actions.run(action, { sourceTabId: tab.id, win })
+    const run = (
+      action: 'page.savePage' | 'page.print' | 'page.screenshot' | 'page.captureFullPage'
+    ): void => this.browser.actions.run(action, { sourceTabId: tab.id, win })
     const readerOpen = reader.isReaderUrl(tab.url)
     return [
       {
@@ -840,6 +905,11 @@ export class Menus {
         ? [{ label: 'Print…', action: 'page.print' as const, click: () => run('page.print') }]
         : []),
       { label: 'Take Screenshot', action: 'page.screenshot', click: () => run('page.screenshot') },
+      {
+        label: 'Capture Full Page',
+        action: 'page.captureFullPage',
+        click: () => run('page.captureFullPage')
+      },
       {
         label: readerOpen ? 'Exit Reader View' : 'Enter Reader View',
         enabled: readerOpen || reader.canRead(tab),
@@ -1200,26 +1270,35 @@ export class Menus {
       ...(local
         ? []
         : [
-            {
-              label: 'Move to Folder',
-              enabled: !tab.essential && !tab.pinned,
-              submenu: [
-                ...folders.map((f) => ({
-                  label: `${f.icon} ${f.name}`,
-                  type: 'checkbox' as const,
-                  checked: tab.folderId === f.id,
-                  click: () => tabs.moveToFolder(tabId, tab.folderId === f.id ? null : f.id)
-                })),
-                ...(folders.length ? [{ type: 'separator' as const }] : []),
-                {
-                  label: 'New Folder…',
+            // Chrome's group items (context-menus-91): "Add tab to new group" while the space
+            // has no folder, else "Add tab to group ›" – a new folder first, then the space's
+            // folders, the tab's own checked – and "Remove from group" beside it.
+            folders.length === 0
+              ? {
+                  label: 'Add Tab to New Folder',
+                  enabled: !tab.essential && !tab.pinned,
                   click: () => this.browser.newFolderWithTab(space.id, tabId, win)
+                }
+              : {
+                  label: 'Move to Folder',
+                  enabled: !tab.essential && !tab.pinned,
+                  submenu: [
+                    {
+                      label: 'New Folder…',
+                      click: () => this.browser.newFolderWithTab(space.id, tabId, win)
+                    },
+                    { type: 'separator' as const },
+                    ...folders.map((f) => ({
+                      label: `${f.icon} ${f.name}`,
+                      type: 'checkbox' as const,
+                      checked: tab.folderId === f.id,
+                      click: () => tabs.moveToFolder(tabId, tab.folderId === f.id ? null : f.id)
+                    }))
+                  ]
                 },
-                ...(tab.folderId
-                  ? [{ label: 'Remove from Folder', click: () => tabs.moveToFolder(tabId, null) }]
-                  : [])
-              ]
-            },
+            ...(tab.folderId
+              ? [{ label: 'Remove from Folder', click: () => tabs.moveToFolder(tabId, null) }]
+              : []),
             {
               label: 'Add Route for Domain',
               enabled: Boolean(domain) && !state.settings.spaceRouting[domain],
@@ -1228,12 +1307,14 @@ export class Menus {
           ]),
       ...(caps.windows
         ? [
+            // Chrome's pair (tabs-23, context-menus-93): the second lists the other windows by
+            // their active tab, most recently focused first, and is greyed with none to go to.
             {
               label: 'Move Tab to New Window',
               click: () => void tabs.moveTabToNewWindow(tabId, null, win)
             },
             {
-              label: 'Move to Window',
+              label: 'Move Tab to Another Window',
               enabled: otherWindows.length > 0,
               submenu: otherWindows.map((w) => ({
                 label: this.windowLabel(w),
@@ -1561,8 +1642,8 @@ export class Menus {
     if (win) this.browser.tabs.switchSpace(spaceId, win)
   }
 
-  /** How a window is named in "Move to Window": its active tab, like Chrome's submenu. */
-  private windowLabel(win: ZenWindow): string {
+  /** How a window is named in "Move Tab to Another Window" and tab search: its active tab, like Chrome's submenu. */
+  windowLabel(win: ZenWindow): string {
     const title = this.browser.tabs.activeTitleFor(win)?.trim()
     const label = title ? (title.length > 60 ? `${title.slice(0, 57)}…` : title) : 'Empty window'
     return win.isPrivate ? `${label} (Private)` : label
@@ -1573,11 +1654,22 @@ export class Menus {
     const folder = state.model.folders[folderId]
     if (!folder) return
     const live = this.browser.liveFolders.get(folderId)
+    const count = folderTabs(state.model, folderId).length
     this.popup(
       [
+        // Chrome's group editor bubble (tabs-13): name, colour and the group's actions in one
+        // surface beside the header; the desktop chrome draws it, the phone its group sheet.
+        {
+          label: 'Edit Folder…',
+          click: () => this.browser.emit('folder.edit', { folderId }, win)
+        },
         {
           label: 'Rename Folder…',
           click: () => this.browser.emit('folder.startRename', { folderId }, win)
+        },
+        {
+          label: 'New Tab in Folder',
+          click: () => this.browser.newTabInFolder(folderId, win)
         },
         {
           label: folder.collapsed ? 'Expand Folder' : 'Collapse Folder',
@@ -1620,8 +1712,14 @@ export class Menus {
               }
             ]) as Template),
         { type: 'separator' },
+        // Chrome's Ungroup and Close group: the tabs stay, or go (to the recently closed list).
         { label: 'Unpack Folder', click: () => this.browser.deleteFolder(folderId, true) },
-        { label: 'Delete Folder', click: () => this.browser.deleteFolder(folderId, false) }
+        {
+          label: count
+            ? `Close Folder (${count} ${count === 1 ? 'Tab' : 'Tabs'})`
+            : 'Delete Folder',
+          click: () => this.browser.deleteFolder(folderId, false)
+        }
       ],
       win,
       'folder'
@@ -2114,6 +2212,13 @@ export class Menus {
     this.popup(
       [
         { label: 'New Tab', action: 'tab.new', click: () => this.browser.openNewTab(win) },
+        // Chrome's tab search (tabs-17): a popover of the sidebar layouts; the phone's tab
+        // switcher searches on its own.
+        ...desktop({
+          label: 'Search Tabs…',
+          action: 'tab.search',
+          click: () => this.browser.emit('tabsearch.open', undefined, win)
+        }),
         // Hosts without private windows (Android) keep the private session in tabs: New Private
         // Tab is Chrome's second item, and Close Private Tabs ends the session while one is open.
         ...when(caps.privateTabs, {
@@ -2304,8 +2409,16 @@ export class Menus {
           click: () =>
             active && this.browser.actions.run('page.screenshot', { sourceTabId: active.id, win })
         },
+        {
+          label: 'Capture Full Page',
+          action: 'page.captureFullPage',
+          enabled: Boolean(active),
+          click: () =>
+            active &&
+            this.browser.actions.run('page.captureFullPage', { sourceTabId: active.id, win })
+        },
         // Phone slot: "Add to Home Screen" (W1-7) goes here, ahead of the page controls.
-        ...when(caps.pageControls, ...this.pageControlItems(active)),
+        ...when(caps.pageControls || caps.darkenSites, ...this.pageControlItems(active)),
         { type: 'separator' },
         ...when(caps.resourceGovernor, {
           label: 'Resources',
@@ -2364,19 +2477,21 @@ export class Menus {
    * This Site" is its exception. Both act on the active tab's site, so they wait for a web page.
    */
   private pageControlItems(active: Tab | undefined): Template {
-    const { pageControls } = this.browser
+    const { pageControls, state } = this.browser
     const web = Boolean(active) && siteKey(active!.url) !== null
-    const items: Template = [
-      {
+    const items: Template = []
+    if (state.capabilities.pageControls) {
+      items.push({
         label: 'Desktop Site',
         type: 'checkbox',
         enabled: web,
         checked: web && pageControls.isDesktop(active!),
         click: () =>
           active && pageControls.setDesktopSite(active.id, !pageControls.isDesktop(active))
-      }
-    ]
-    if (pageControls.settings.darkenSites) {
+      })
+    }
+    // The per-site exception shows once the setting is on, on every host that can darken.
+    if (state.capabilities.darkenSites && pageControls.settings.darkenSites) {
       items.push({
         label: 'Dark Theme for This Site',
         type: 'checkbox',

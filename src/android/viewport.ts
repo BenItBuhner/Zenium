@@ -3,6 +3,7 @@ import {
   needsViewportMeta,
   rewriteViewport,
   siteValue,
+  zoomValue,
   type ViewportRewriteOptions
 } from '@shared/pageControls'
 
@@ -28,7 +29,7 @@ export interface PageRulesConfig {
 export function controlsFor(config: PageRulesConfig, url: string): ViewportRewriteOptions {
   const { rules } = config
   const web = /^https?:\/\//i.test(url)
-  const base = web ? (siteValue(rules.zoom.sites, url) ?? rules.zoom.default) : 1
+  const base = web ? (zoomValue(rules.zoom.sites, url) ?? rules.zoom.default) : 1
   const zoom = web ? Math.round(base * (rules.zoom.scale || 1) * 1000) / 1000 : 1
   return {
     zoom: zoom > 0 && Number.isFinite(zoom) ? zoom : 1,
