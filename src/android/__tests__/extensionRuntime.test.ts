@@ -1670,6 +1670,32 @@ describe('AndroidExtensionRuntime: chrome.permissions', () => {
   })
 })
 
+describe('AndroidExtensionRuntime: chrome.system.storage', () => {
+  it('answers Chrome\u2019s shape over no devices for an extension declaring the permission', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['system.storage', 'storage'] })))
+    backgroundUp(h, 'bg1')
+    expect((await call(h, 'bg1', 'system.storage', 'getInfo', [])).result).toEqual([])
+    expect((await call(h, 'bg1', 'system.storage', 'ejectDevice', ['0123'])).result).toBe(
+      'no_such_device'
+    )
+    expect(await call(h, 'bg1', 'system.storage', 'getAvailableCapacity', ['0123'])).toMatchObject({
+      ok: false,
+      error: 'Error occurred when querying available capacity.'
+    })
+  })
+
+  it('refuses an extension that did not declare it with Chrome\u2019s no-permission error', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['storage'] })))
+    backgroundUp(h, 'bg1')
+    expect(await call(h, 'bg1', 'system.storage', 'getInfo', [])).toMatchObject({
+      ok: false,
+      error: "The extension does not have the 'system.storage' permission."
+    })
+  })
+})
+
 describe('AndroidExtensionRuntime: popups and options', () => {
   it('opens the manifest popup as a sheet, or raises action.onClicked when there is none', async () => {
     const h = harness()

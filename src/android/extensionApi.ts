@@ -13,6 +13,11 @@ import {
 import { NATIVE_HOST_NOT_FOUND, type EngineContextKind } from '@core/extensions/api/engine'
 import type { LocaleMessages } from '@core/extensions/api/i18n'
 import { globToRegExp, matchesAnyPattern } from '@core/extensions/api/matchPattern'
+import {
+  answerSystemStorage,
+  SYSTEM_STORAGE_NO_PERMISSION_ERROR,
+  SYSTEM_STORAGE_PERMISSION
+} from '@core/extensions/api/systemStorage'
 import { normalizeInjection, type UserScriptInjection } from '@core/extensions/api/userScripts'
 import type { ExtensionRecord } from '@core/extensions/registry'
 import { presentExtensionUrl, toServedUrl } from '@core/extensions/runtime/extensionUrls'
@@ -568,6 +573,17 @@ export class ExtensionApi {
       case 'idle':
         if (method === 'queryState') return 'active'
         break
+      case 'system.storage':
+        // No storage devices to show, as on the desktop (there the engine's own namespace is
+        // withheld because it crashes; here there is none to begin with): Chrome's shape, for
+        // an extension that declared the permission (a declared optional one is granted by
+        // `permissions.request` above without a prompt).
+        if (
+          !ext.manifest.permissions.includes(SYSTEM_STORAGE_PERMISSION) &&
+          !ext.manifest.optionalPermissions.includes(SYSTEM_STORAGE_PERMISSION)
+        )
+          throw new Error(SYSTEM_STORAGE_NO_PERMISSION_ERROR)
+        return answerSystemStorage(method, args)
       case 'extension':
         // The store's record carries both toggles (the runtime scopes tabs, events and rules by them).
         if (method === 'isAllowedFileSchemeAccess') return ext.record.allowFileAccess === true

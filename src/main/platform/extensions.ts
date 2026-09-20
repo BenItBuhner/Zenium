@@ -36,7 +36,7 @@ import {
   type ExtensionPackage,
   type UpdateCheckResult
 } from '../../core/extensions/install'
-import { manifestIssueReport } from '../../core/extensions/errorConsole'
+import { manifestIssueReport, withheldPermissionReport } from '../../core/extensions/errorConsole'
 import {
   ChromePrompts,
   type ConfirmInstall,
@@ -77,13 +77,22 @@ import {
   type WebstoreInstallStatus
 } from '../../core/extensions/webstorePrivate'
 import {
+  hasWithheldPermissions,
+  noWithheldPermissions,
+  restoreWithheldPermissions,
+  withheldPermissionNames,
+  withheldPermissionsOf,
+  type WithheldPermissions
+} from '../../core/extensions/withheldPermissions'
+import {
+  declaredManifestPath,
   downloadFromStores,
   downloadUpdate,
   electronStoreFetch,
-  ensureContentScriptPrelude,
   idForUnpackedPath,
   packageFromFile,
   parseStoreRef,
+  prepareInstallDir,
   pruneOldVersions,
   removeInstalledFiles,
   removeShadow,
@@ -106,6 +115,12 @@ interface Manifest {
   icons?: Record<string, string>
   action?: { default_popup?: string; default_icon?: string | Record<string, string> }
   browser_action?: { default_popup?: string; default_icon?: string | Record<string, string> }
+}
+
+/** The lists `restoreWithheldPermissions` puts the declaration back into. */
+interface PermissionLists {
+  permissions?: unknown
+  optional_permissions?: unknown
 }
 
 /** Chrome's popup limits: the document sizes the view between these, the frame follows. */
@@ -191,6 +206,12 @@ export class ExtensionService implements ExtensionHost {
   private readonly loadedById = new Map<string, Extension>()
   /** Why an extension is not running (`ExtensionInfo.error`): the load's failure message. */
   private readonly errors = new Map<string, string>()
+  /**
+   * What each extension declared that the engine's manifest does not carry
+   * (`ExtensionInfo.withheld`), read from the manifest as declared at every load, so `list()`
+   * restores the declaration over the engine's copy without touching the disk.
+   */
+  private readonly withheld = new Map<string, WithheldPermissions>()
   /** Chrome's "Errors" per extension (`ExtensionInfo.errors`), for the extensions the registry knows. */
   private readonly console = new ExtensionErrorConsole({
     accept: (id) => this.record(id) !== undefined
@@ -323,8 +344,17 @@ export class ExtensionService implements ExtensionHost {
       this.loadFailed(record, 'manifest.json not found')
       return
     }
-    if (fresh) this.reportManifestWarnings(record)
-    const path = await this.loadPathFor(record)
+    // From the manifest as declared: an install directory's `manifest.json` is the engine's copy
+    // once it has been loaded (`prepareInstallDir`), the declaration is kept beside it.
+    const withheld = withheldPermissionsOf(readManifest(record.path))
+    this.withheld.set(record.id, withheld)
+    if (fresh) {
+      this.reportManifestWarnings(record)
+      for (const permission of withheldPermissionNames(withheld))
+        this.console.report(record.id, withheldPermissionReport(record.id, permission))
+    }
+    const path = await this.loadPathFor(record, withheld)
+    if (!path) return
     for (const [, ses] of this.sessions.persistent()) {
       try {
         const ext =
@@ -344,25 +374,41 @@ export class ExtensionService implements ExtensionHost {
   }
 
   /**
-   * The directory the engine loads for a record: the install directory itself, made to carry the
-   * content-script storage prelude when it was written before the prelude existed; for an
-   * unpacked folder its shadow (`shadowUnpacked`), the folder itself when the shadow cannot be
-   * built (the extension then runs without `storage.sync` in its content scripts, as before).
+   * The directory the engine loads for a record: the install directory itself, brought to the
+   * current layout when it was written by an earlier Zenium (`prepareInstallDir`: the
+   * content-script storage prelude, the withheld permissions out of the engine's manifest); for
+   * an unpacked folder its shadow (`shadowUnpacked`). When neither can be done the folder itself
+   * is loaded as is (the extension then runs without `storage.sync` in its content scripts, as
+   * before), unless its manifest declares a permission the engine must not see: that load is
+   * refused (`null`, reported as the load's failure), since the engine would crash the browser.
    */
-  private async loadPathFor(record: ExtensionRecord): Promise<string> {
+  private async loadPathFor(
+    record: ExtensionRecord,
+    withheld: WithheldPermissions
+  ): Promise<string | null> {
+    let problem: string
     if (record.source === 'unpacked') {
       try {
         return await shadowUnpacked(this.root, record.id, record.path)
       } catch (error) {
-        console.warn(
-          `[zen] extensions: could not shadow ${record.path}, loading it as is:`,
-          (error as Error).message
-        )
-        return record.path
+        problem = `could not shadow ${record.path}: ${(error as Error).message}`
       }
+    } else {
+      if (await prepareInstallDir(record.path)) return record.path
+      problem = `could not prepare ${record.path} for the engine`
     }
-    await ensureContentScriptPrelude(record.path)
-    return record.path
+    if (!hasWithheldPermissions(withheld)) {
+      console.warn(`[zen] extensions: ${problem}, loading it as is`)
+      return record.path
+    }
+    const names = withheldPermissionNames(withheld)
+      .map((p) => `'${p}'`)
+      .join(', ')
+    this.loadFailed(
+      record,
+      `Zenium could not withhold ${names} from the manifest and did not load the extension (${problem}).`
+    )
+    return null
   }
 
   private loadFailed(record: ExtensionRecord, message: string): void {
@@ -380,7 +426,7 @@ export class ExtensionService implements ExtensionHost {
   private reportManifestWarnings(record: ExtensionRecord): void {
     let raw: unknown
     try {
-      raw = JSON.parse(stripJsonComments(readFileSync(join(record.path, 'manifest.json'), 'utf8')))
+      raw = JSON.parse(stripJsonComments(readFileSync(declaredManifestPath(record.path), 'utf8')))
     } catch {
       return
     }
@@ -436,7 +482,12 @@ export class ExtensionService implements ExtensionHost {
   list(): ExtensionInfo[] {
     return this.registry.extensions.map((record) => {
       const ext = this.loadedById.get(record.id)
-      const manifest = (ext?.manifest as Manifest | undefined) ?? readManifest(record.path)
+      // The engine's manifest lacks what was withheld; the declaration is put back for the
+      // warnings (a disabled extension's manifest is read as declared).
+      const withheld = this.withheld.get(record.id) ?? noWithheldPermissions()
+      const manifest = ext
+        ? restoreWithheldPermissions(ext.manifest as Manifest & PermissionLists, withheld)
+        : readManifest(record.path)
       const update = this.updates.get(record.id) ?? NO_UPDATE_INFO
       const commands = ext && this.api ? this.api.commandsInfo(ext.id) : null
       return {
@@ -466,6 +517,7 @@ export class ExtensionService implements ExtensionHost {
         newTabPage: record.newTabPage,
         newTabOverride: record.newTabOverride,
         warnings: permissionWarningLines(manifest ?? {}, warningPlatform()),
+        withheld: ext ? withheld : withheldPermissionsOf(manifest),
         pendingWarnings: record.pendingWarnings,
         updateState: update.state,
         availableVersion: update.availableVersion,
@@ -823,6 +875,7 @@ export class ExtensionService implements ExtensionHost {
     this.unload(record)
     this.registry.extensions = this.registry.extensions.filter((r) => r !== record)
     this.errors.delete(record.id)
+    this.withheld.delete(record.id)
     this.console.forget(record.id)
     this.updates.delete(record.id)
     if (record.source === 'unpacked')
@@ -1549,13 +1602,14 @@ function browserWindowOf(win: ZenWindow | undefined): Electron.BrowserWindow | u
 }
 
 /**
- * The manifest with its `__MSG_` strings resolved from `_locales` (so a disabled extension still
- * has its name), comments stripped like Chrome does.
+ * The manifest as declared (`declaredManifestPath`: not the engine's rewritten copy) with its
+ * `__MSG_` strings resolved from `_locales` (so a disabled extension still has its name),
+ * comments stripped like Chrome does.
  */
 export function readManifest(path: string): Manifest | null {
   try {
     const raw = JSON.parse(
-      stripJsonComments(readFileSync(join(path, 'manifest.json'), 'utf8'))
+      stripJsonComments(readFileSync(declaredManifestPath(path), 'utf8'))
     ) as Manifest & Record<string, unknown>
     if (!raw.default_locale) return raw
     const bundles = localeFallbackChain(null, raw.default_locale).map((locale) => {
