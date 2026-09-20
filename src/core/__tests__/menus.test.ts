@@ -1651,6 +1651,11 @@ describe('the selection toolbar', () => {
     expect(
       pageHarness(ANDROID, PHONE).menu(pageParams({ selectionText: 'quantum foam' }))
     ).not.toContain('Read Aloud')
+    // Nor does the desktop's right-click menu with one: its read aloud is the services program's
+    // own UI, and the item would start the phone's docked player in the desktop frame.
+    const desktop = pageHarness({ ...DESKTOP, readAloud: true }, { speech: true })
+    expect(desktop.browser.readAloud.available).toBe(true)
+    expect(desktop.menu(pageParams({ selectionText: 'quantum foam' }))).not.toContain('Read Aloud')
     // The touch starts the core's one session from the selection: the page script is asked for
     // the selection's text (the model reads the selection alone, as Chrome does).
     h.viewCalls.length = 0

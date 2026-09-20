@@ -144,8 +144,10 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
   // panel hides, the session goes on (the OS controls still carry it), and it returns when they
   // close. The PDF viewer's bar keeps the slot on its tab (a document there is the viewer's,
   // not an article). The panel is the session's tab's: another tab in front shows no player.
+  // The phone's panel alone: the desktop's read aloud is the services program's own UI, and
+  // the desktop frame must not grow a phone panel for a session its menus start.
   const readAloud = state.readAloud
-  const readAloudTabId = readAloud?.tabId ?? null
+  const readAloudTabId = phone ? (readAloud?.tabId ?? null) : null
   useEffect(() => {
     if (!readAloudTabId) return
     const current = uiStore.get()
@@ -153,6 +155,7 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
     if (current.zoomTabId) closeZoom()
   }, [readAloudTabId])
   const readAloudDocked =
+    phone &&
     readAloud !== null &&
     tab !== null &&
     readAloud.tabId === tab.id &&
