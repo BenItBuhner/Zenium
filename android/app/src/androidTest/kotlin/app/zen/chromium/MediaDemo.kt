@@ -60,7 +60,9 @@ import kotlin.math.sin
  *  5. the session ends with its tab: the notification and the service go when the tab closes.
  *
  * The pages come from a loopback server inside this process ([DemoServer]; the track and the
- * artwork are generated here, the clip is an asset) and report what they see through their
+ * artwork are generated here, the clip is an asset – VP8 / Vorbis in WebM, the free codecs every
+ * Chromium build decodes: the snapshot WebView the demo runs on is built without the
+ * proprietary ones and refuses an H.264 MP4 with `NotSupportedError`) and report what they see through their
  * titles (`MD|kind:audio|state:playing|t:12|last:nexttrack`), which the driver reads from the
  * core's state. Everything measured goes to `<shotPrefix>-notes.txt` next to the stills. Every
  * control pressed – on the page, in a sheet, in the shade, on the lock screen, on the
@@ -87,7 +89,7 @@ class MediaDemo : DemoHarness("media-demo-state.json", "services-android-media-a
                 "/notify" to page,
                 "/private" to page,
                 "/tone.wav" to ("audio/wav" to tone()),
-                "/clip.mp4" to ("video/mp4" to readAssetBytes("media-demo-clip.mp4")),
+                "/clip.webm" to ("video/webm" to readAssetBytes("media-demo-clip.webm")),
                 "/art.png" to ("image/png" to art())
             )
         ).also { it.start() }
@@ -302,6 +304,7 @@ class MediaDemo : DemoHarness("media-demo-state.json", "services-android-media-a
 
     private fun videoStep() {
         note("\n3. video: picture-in-picture (MW-08)")
+        frontApp()
         coreInvoke("tab.navigate", """{"tabId":"$TAB","input":"${server.origin}/video"}""")
         waitTitle(TAB, 20_000) { it.startsWith("MD|kind:video") }
         SystemClock.sleep(1_500)
@@ -400,6 +403,7 @@ class MediaDemo : DemoHarness("media-demo-state.json", "services-android-media-a
             bringToFront()
         }
         awaitPip(false, 8_000)
+        frontApp()
         ensureForeground()
         SystemClock.sleep(1_500)
         if (host.fullscreenTab != null) {
@@ -417,6 +421,7 @@ class MediaDemo : DemoHarness("media-demo-state.json", "services-android-media-a
 
     private fun notificationStep() {
         note("\n4. web notifications: the page asks, the prompt answers, the site's own channel, the tap (MW-05)")
+        frontApp()
         coreInvoke("tab.navigate", """{"tabId":"$TAB","input":"${server.origin}/notify"}""")
         waitTitle(TAB, 20_000) { it.startsWith("NT|") }
         SystemClock.sleep(1_500)
@@ -489,6 +494,7 @@ class MediaDemo : DemoHarness("media-demo-state.json", "services-android-media-a
 
     private fun privateStep() {
         note("\n5. private browsing: its own profile, the secured window, the 'Close all private tabs' card, the wipe (ID-07)")
+        frontApp()
         coreInvoke("tab.navigate", """{"tabId":"$TAB","input":"${server.origin}/private?set=1"}""")
         waitTitle(TAB, 20_000) { it.startsWith("PV|") }
         note("  normal tab, its cookie stored on the default profile: ${describeTab(TAB)}; FLAG_SECURE=${secure()}")
@@ -551,6 +557,7 @@ class MediaDemo : DemoHarness("media-demo-state.json", "services-android-media-a
 
     private fun closeStep() {
         note("\n6. the session ends with its tab (MW-07)")
+        frontApp()
         coreInvoke("tab.navigate", """{"tabId":"$TAB","input":"${server.origin}/audio"}""")
         waitTitle(TAB, 20_000) { it.startsWith("MD|kind:audio") }
         SystemClock.sleep(1_000)
@@ -936,12 +943,33 @@ class MediaDemo : DemoHarness("media-demo-state.json", "services-android-media-a
     }
 
     /** The app's task to the front: an activity in picture-in-picture expands, a stopped one comes back. */
+    /**
+     * The browser's task to the front, through the shell: an activity start from this process
+     * while the app stands behind the launcher is a background start the system may refuse
+     * (Android 10+); `am start` from the shell is not. The activity is `singleTask`, so the
+     * running instance comes forward (and a picture-in-picture window expands).
+     */
     private fun bringToFront() {
-        val intent = Intent(app, MainActivity::class.java)
-            .setAction(Intent.ACTION_MAIN)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-        runCatching { app.startActivity(intent) }.onFailure { note("  startActivity refused: $it") }
+        val started = shell(
+            "am start -W -a android.intent.action.MAIN -f 0x20000000 -n ${app.packageName}/${MainActivity::class.java.name}"
+        )
+        if (!started.contains("Status: ok")) note("  am start: ${started.trim().lines().joinToString(" | ")}")
         SystemClock.sleep(1_500)
+    }
+
+    /**
+     * The app in front before a step touches its page, whatever the last step left on the
+     * screen: the launcher after Home, the shade, a lock screen. The harness's `ensureForeground`
+     * only presses Back, which does nothing to a launcher; a touch on a page that is not on the
+     * screen lands on whatever is (a run's "Ask and notify" once tapped the launcher's wallpaper).
+     */
+    private fun frontApp() {
+        if (ui.rootInActiveWindow?.packageName?.toString() == app.packageName && !inPip()) return
+        closeShade()
+        bringToFront()
+        val front = poll(8_000) { ui.rootInActiveWindow?.packageName?.toString() == app.packageName && !inPip() }
+        note("  the app brought to the front for the step: $front")
+        SystemClock.sleep(1_000)
     }
 
     private fun secure(): Boolean {
