@@ -1,0 +1,466 @@
+package app.zen.chromium
+
+import android.content.Intent
+import android.graphics.Rect
+import android.os.Build
+import android.os.SystemClock
+import android.speech.tts.TextToSpeech
+import android.util.Log
+import android.view.accessibility.AccessibilityNodeInfo
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import org.json.JSONObject
+import org.json.JSONTokener
+import org.junit.Test
+import org.junit.runner.RunWith
+import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+
+/**
+ * The `android-reader-ui-demo` workflow: the reader document's controls on the phone after the
+ * document lost its toolbar (§10.1; CT-13, EDGE-13, EDGE-11), on the read-aloud demo's article
+ * ([DemoServer], `read-aloud-demo-page.html`) and profile. Writes `reader-ui-findings.txt` next
+ * to the stills (a `PASS` or `FAIL` per check; the run fails at its end when any did, or when a
+ * touch did not take):
+ *
+ *  1. Reader View from the app menu (a real touch): the `zen://reader` document comes up with the
+ *     title, the byline and the reading time, and with no toolbar in it (the four segmented
+ *     groups are off the document; the Text preferences sheet is their one home). The pill at
+ *     rest stays the favicon, the host and the one site-information glyph: no reader chip.
+ *  2. The app menu's Text Preferences… (the phone's way in): the §9.13 sheet with the read-aloud
+ *     row first, the four picker rows, then the extras – Text spacing, Line focus, Lines in
+ *     focus, Syllables. Real touches: Line focus on (the document's `data-line-focus` reads 3
+ *     and the page script's masks are in the document), Syllables on (`data-syllables`, the
+ *     marks in the text), Lines in focus from 3 to 5 lines through its picker sheet (§9.13: the
+ *     pick closes the sheet by itself), Text spacing to Wider (`data-spacing`).
+ *  3. A phone read of the reader article: a real touch on the sheet's Listen to this article
+ *     starts a session with `source: reader` (the sheet leaves; the player docks under the
+ *     document); the engine speaks the reader document's sentences with the sentence highlight
+ *     painted into the reader document itself, the line focus band following the sentence read;
+ *     Pause under a finger; Close under a finger ends the session.
+ *  4. Everything again in dark, for the design record: the reader document (its theme following
+ *     the colour scheme), the sheet with the extras, the player.
+ *
+ * Every control pressed inside a sheet or the player is a real injected finger with an
+ * assertion (#198's rule); the URL field, when a step leaves it open, is closed with
+ * [closeUrlField] and its outcome read. See [DemoHarness] for the plumbing.
+ */
+@RunWith(AndroidJUnit4::class)
+class ReaderUiDemo : DemoHarness("read-aloud-demo-state.json", "services-reader-android", "reader-ui-demo") {
+    override val tag = "ReaderUiDemo"
+    private lateinit var server: DemoServer
+    private lateinit var findings: File
+    private var failures = 0
+    private var shots = 0
+    private val host get() = (activity as MainActivity).host
+    private var engineless = false
+
+    @Test
+    fun record() {
+        server = DemoServer(
+            PORT,
+            mapOf("/" to ("text/html; charset=utf-8" to readAsset("read-aloud-demo-page.html").toByteArray()))
+        ).also { it.start() }
+        try {
+            runDemo()
+        } finally {
+            server.close()
+            ReadAloud.availabilityOverride = null
+        }
+        if (failures > 0) throw AssertionError("$failures reader UI check(s) failed; see reader-ui-findings.txt")
+    }
+
+    override fun beforeLaunch() {
+        // Without a speech engine the sheet's Listen row would be gone with the capability; the
+        // override keeps the sheet's shape on record, and the read step expects the error state.
+        engineless = runCatching {
+            app.packageManager.queryIntentServices(Intent(TextToSpeech.Engine.INTENT_ACTION_TTS_SERVICE), 0).isEmpty()
+        }.getOrDefault(true)
+        if (engineless) ReadAloud.availabilityOverride = true
+    }
+
+    override fun warmUp() {
+        findings = File(out, "reader-ui-findings.txt")
+        findings.writeText("Zenium Android reader UI checks (API ${Build.VERSION.SDK_INT}, ${width}x$height, density $density)\n\n")
+        finding("demo server: ${server.selfCheck()}")
+        val caps = coreState().getJSONObject("capabilities")
+        finding("capabilities: readAloud=${caps.optBoolean("readAloud")}${if (engineless) " (OVERRIDDEN: no engine on this image)" else ""} phone=${caps.optBoolean("phone")}")
+        awaitLoaded("$ORIGIN/")
+        val readerable = poll(15_000) { tab()?.optBoolean("readerable") == true }
+        finding("article: ${describeTab()}; readerable=$readerable")
+        check("the reader core finds the article readerable (what enables Reader View)", readerable)
+        val close = closeUrlField()
+        finding("URL field at warm-up: ${close.describe()}")
+        check("the URL field is closed (or was never open) before the recording", close.ok)
+        SystemClock.sleep(1_200)
+    }
+
+    override fun demo() {
+        snap("article")
+        beat()
+        if (!readerView()) {
+            finding("\nReader View never came up; nothing else can be recorded")
+            return
+        }
+        preferencesSheet()
+        readTheArticle()
+        dark()
+        finding("\nend: ${describeTab()}${if (failures == 0) "" else "; $failures FAIL"}")
+    }
+
+    // --- 1. Reader View: the document without its toolbar ------------------------------------------
+
+    private fun readerView(): Boolean {
+        finding("\nCT-13 / §10.1 Reader View from the app menu: the document carries no toolbar")
+        val opened = openMenuItem("Reader View")
+        if (!opened) {
+            check("the app menu lists Reader View for the article", false)
+            back()
+            return false
+        }
+        val entered = poll(15_000) { isReader() }
+        finding("  real touch on Reader View: ${describeTab()}")
+        if (!entered) {
+            touchFault("a touch on Reader View did not open the reader document")
+            return false
+        }
+        val mounted = poll(15_000) { readerProbe().optString("title").isNotEmpty() }
+        val probe = readerProbe()
+        finding("  the reader document: $probe")
+        check("the reader document renders the title, the byline and the reading time", mounted && probe.optString("title").startsWith("The lighthouse keeper") && probe.optBoolean("byline") && probe.optBoolean("readingTime"))
+        check("the document carries no toolbar of its own (§10.1)", mounted && !probe.optBoolean("toolbar"))
+        val pill = pillProbe()
+        finding("  the pill at rest: $pill")
+        check("the pill at rest is the favicon, the host and one site-information glyph: no reader chip", pill.optInt("chips") == 1 && pill.optInt("siteInfo") == 1 && pill.optInt("readerChip") == 0)
+        SystemClock.sleep(1_000)
+        snap("reader-document")
+        beat()
+        return true
+    }
+
+    // --- 2. the Text preferences sheet with the extras ---------------------------------------------
+
+    private fun preferencesSheet() {
+        finding("\nEDGE-13 / §9.13 the Text preferences sheet (the app menu's Text Preferences…)")
+        if (!openSheet()) return
+        val rows = sheetRows()
+        finding("  rows: $rows")
+        check("the sheet's rows: Listen to this article, then Text size, Font, Colour theme, Column width, then Text spacing, Line focus, Lines in focus, Syllables",
+            rows.indexOf("Listen to this article") == 0 && listOf("Text size", "Font", "Colour theme", "Column width", "Text spacing", "Line focus", "Lines in focus", "Syllables").all { it in rows } && rows.indexOf("Text spacing") < rows.indexOf("Line focus") && rows.indexOf("Line focus") < rows.indexOf("Lines in focus") && rows.indexOf("Lines in focus") < rows.indexOf("Syllables"))
+        val heights = menulistHeights()
+        finding("  the picker menulists' heights (CSS px): $heights")
+        check("the sheet's menulists are the phone's 40 px controls", heights.isNotEmpty() && heights.all { Math.abs(it - 40.0) <= 1.0 })
+        val linesDisabled = switchRow("Lines in focus")?.isEnabled == false || rowNode("Lines in focus")?.let { !it.isEnabled } == true
+        finding("  at rest: Line focus ${switchState("Line focus")}, Syllables ${switchState("Syllables")}; Lines in focus enabled=${!linesDisabled}")
+        check("the extras rest off with Lines in focus disabled under Line focus", switchState("Line focus") == "false" && switchState("Syllables") == "false")
+        snap("preferences-sheet")
+        beat()
+
+        // Line focus on: a real touch on the switch row.
+        touchTapLabelExpecting("Line focus", "the reader document carries data-line-focus 3", timeoutMs = 6_000, prefix = true) { readerProbe().optString("lineFocus") == "3" }
+        var probe = readerProbe()
+        finding("  after Line focus: switch ${switchState("Line focus")}; document $probe")
+        check("Line focus on: settings.reader.lineFocus 3, the document's data-line-focus 3 and the page script's masks in it", switchState("Line focus") == "true" && probe.optString("lineFocus") == "3" && probe.optInt("masks") >= 2)
+        // Syllables on.
+        touchTapLabelExpecting("Syllables", "the reader document carries data-syllables", timeoutMs = 6_000, prefix = true) { readerProbe().optString("syllables") == "true" }
+        probe = readerProbe()
+        finding("  after Syllables: switch ${switchState("Syllables")}; document $probe")
+        check("Syllables on: the document's data-syllables true and the page script's marks in the text", switchState("Syllables") == "true" && probe.optString("syllables") == "true" && probe.optInt("marks") > 0)
+        snap("preferences-sheet-extras-on")
+        beat()
+        // Lines in focus: 3 -> 5 through its picker sheet.
+        val picker = touchTapLabelExpecting("Lines in focus", "the Lines in focus picker lists 1 / 3 / 5 lines", timeoutMs = 6_000, prefix = false, findTimeoutMs = 8_000) { rowNode("5 lines") != null && rowNode("1 line") != null }
+        if (picker) {
+            SystemClock.sleep(800)
+            snap("lines-in-focus-picker")
+            touchTapLabelExpecting("5 lines", "the document's data-line-focus reads 5 and the picker closed", timeoutMs = 6_000) { readerProbe().optString("lineFocus") == "5" && rowNode("1 line") == null }
+            probe = readerProbe()
+            finding("  after 5 lines: document $probe; picker gone=${rowNode("1 line") == null}; row reads ${rowText("Lines in focus")}")
+            check("5 lines: the pick closes the picker on its own (§9.13) and the document's band is five lines", probe.optString("lineFocus") == "5" && rowNode("1 line") == null)
+        } else {
+            check("the Lines in focus row opens its picker", false)
+        }
+        // Text spacing: Normal -> Wider (Column width has a "Wide" of its own; "Wider" is spacing's alone).
+        val spacing = touchTapLabelExpecting("Text spacing", "the Text spacing picker lists Wider", timeoutMs = 6_000) { rowNode("Wider") != null }
+        if (spacing) {
+            touchTapLabelExpecting("Wider", "the document's data-spacing reads wider", timeoutMs = 6_000) { readerProbe().optString("spacing") == "wider" }
+            probe = readerProbe()
+            finding("  after Wider: document $probe")
+            check("Text spacing Wider: the document's data-spacing wider (the stylesheet's letter, word and line spacing)", probe.optString("spacing") == "wider")
+        } else {
+            check("the Text spacing row opens its picker", false)
+        }
+        snap("preferences-sheet-wider-five-lines")
+        beat()
+        // The system back closes the sheet alone; the document keeps its extras.
+        back()
+        val closed = poll(6_000) { findNode { it == "Text preferences" } == null && !chromeSurfaceUp() }
+        probe = readerProbe()
+        finding("  back: sheet gone=$closed; document $probe")
+        check("back closes the sheet and the document keeps line focus 5, syllables, wider spacing", closed && probe.optString("lineFocus") == "5" && probe.optString("syllables") == "true" && probe.optString("spacing") == "wider")
+        SystemClock.sleep(800)
+        snap("reader-line-focus-syllables")
+        beat()
+    }
+
+    // --- 3. a phone read of the reader article -----------------------------------------------------
+
+    private fun readTheArticle() {
+        finding("\nCT-13 / EDGE-11 Listen to this article from the sheet: the reader document read with the highlight in it")
+        if (!openSheet()) return
+        touchTapLabelExpecting("Listen to this article", "a session starts from the reader document", timeoutMs = 10_000) { readAloud() != null }
+        val session = readAloud()
+        finding("  real touch on Listen to this article: session ${session?.let { "up: status=${it.optString("status")} source=${it.optString("source")} sentences=${it.optInt("sentenceCount")}" } ?: "MISSING"}")
+        check("the session's source is the reader document (source: reader)", session?.optString("source") == "reader")
+        val sheetGone = poll(6_000) { findNode { it == "Listen to this article" } == null }
+        val panel = poll(8_000) { panelUp() }
+        finding("  the sheet left=$sheetGone; the player docked=$panel (${panelBounds()})")
+        check("the sheet leaves and the player docks under the reader document", sheetGone && panel)
+        if (engineless) {
+            val error = poll(20_000) { status() == "error" }
+            finding("  no engine on this image: status ${status()} (error=$error)")
+            check("without an engine the player shows its error line", error)
+            snap("player-reader-error")
+        } else {
+            val playing = poll(30_000) { status() == "playing" }
+            val s = readAloud()
+            finding("  status -> playing: $playing; session=$s")
+            check("the engine speaks the reader document (playing; more than one sentence)", playing && (s?.optInt("sentenceCount") ?: 0) > 1)
+            val painted = poll(8_000) { readerHighlight().optBoolean("sentence") }
+            val hl = readerHighlight()
+            finding("  the reader document's highlight (CSS Custom Highlight API, the core's page script): $hl")
+            check("the sentence highlight is painted into the reader document itself", painted)
+            val band = poll(8_000) { readerProbe().optInt("bandTop", -1) > 0 }
+            finding("  the line focus band: ${readerProbe()}")
+            check("the line focus band follows the sentence being read (the masks leave a window on it)", band)
+            SystemClock.sleep(1_000)
+            snap("player-reader-playing")
+            beat()
+            touchTapLabelExpecting("Pause", "the session reads paused", timeoutMs = 6_000) { status() == "paused" }
+            finding("  after Pause: status=${status()} progress '${progressText()}'")
+            check("a real touch on Pause pauses the reading", status() == "paused")
+            SystemClock.sleep(600)
+            snap("player-reader-paused")
+            beat()
+        }
+        touchTapLabelExpecting("Close", "the session ends", timeoutMs = 6_000) { readAloud() == null }
+        val gone = poll(6_000) { !panelUp() }
+        finding("  after Close: session=${readAloud()}; panel gone=$gone")
+        check("Close ends the session and the player leaves", readAloud() == null && gone)
+        beat()
+    }
+
+    // --- 4. dark ---------------------------------------------------------------------------------
+
+    private fun dark() {
+        finding("\ndesign record: the reader document, the sheet and the player in dark")
+        shell("cmd uimode night yes")
+        coreInvoke("settings.update", "{\"colorScheme\":\"dark\"}")
+        SystemClock.sleep(4_000)
+        ensureForeground()
+        val probe = readerProbe()
+        finding("  the reader document in dark: $probe")
+        check("the reader's Default theme follows the colour scheme (the document paints dark: ${probe.optString("bg")})", probe.optString("scheme") == "dark" && probe.optString("bg").startsWith("rgb(24, 24, 28)"))
+        snap("reader-document-dark")
+        beat()
+        if (openSheet()) {
+            SystemClock.sleep(800)
+            snap("preferences-sheet-dark")
+            beat()
+            touchTapLabelExpecting("Listen to this article", "a session starts in dark", timeoutMs = 10_000) { readAloud() != null }
+            val up = poll(8_000) { panelUp() }
+            if (!engineless) poll(20_000) { status() == "playing" }
+            finding("  dark: session=${readAloud()}; player up=$up")
+            check("dark: Listen to this article docks the player", up)
+            SystemClock.sleep(1_200)
+            snap("player-reader-dark")
+            beat()
+            touchTapLabelExpecting("Close", "the session ends", timeoutMs = 6_000) { readAloud() == null }
+            SystemClock.sleep(1_200)
+        }
+        shell("cmd uimode night no")
+        coreInvoke("settings.update", "{\"colorScheme\":\"light\"}")
+        SystemClock.sleep(1_500)
+    }
+
+    // --- the sheet ---------------------------------------------------------------------------------
+
+    /** The app menu's Text Preferences… under a finger; true once the sheet lists its rows. */
+    private fun openSheet(): Boolean {
+        val opened = openMenuItem("Text Preferences…")
+        if (!opened) {
+            finding("  the app menu did not list Text Preferences… on the reader page")
+            check("the app menu carries Text Preferences… on the reader page (the phone's way in, its pill having no chip)", false)
+            back()
+            return false
+        }
+        val up = poll(8_000) { rowNode("Text size") != null }
+        if (!up) touchFault("a touch on Text Preferences… opened no sheet")
+        check("a real touch on Text Preferences… opens the sheet", up)
+        SystemClock.sleep(1_000)
+        return up
+    }
+
+    /** The sheet's row labels in order, from the chrome's own document. */
+    private fun sheetRows(): List<String> {
+        val raw = jsonString(chromeJs(
+            "(function(){var r=document.querySelector('[data-reader-prefs-rows]');if(!r)return '[]';" +
+                "return JSON.stringify(Array.from(r.querySelectorAll('.zen-v2-row')).map(function(e){var l=e.querySelector('.truncate');return l?(l.textContent||'').trim():''}).filter(Boolean))})()"
+        ))
+        return runCatching { val a = org.json.JSONArray(raw); (0 until a.length()).map { a.getString(it) }.distinct() }.getOrDefault(emptyList())
+    }
+
+    private fun menulistHeights(): List<Double> {
+        val raw = jsonString(chromeJs(
+            "(function(){var r=document.querySelector('[data-reader-prefs-rows]');if(!r)return '[]';" +
+                "return JSON.stringify(Array.from(r.querySelectorAll('.zen-v2-menulist')).map(function(m){return m.getBoundingClientRect().height}))})()"
+        ))
+        return runCatching { val a = org.json.JSONArray(raw); (0 until a.length()).map { a.getDouble(it) } }.getOrDefault(emptyList())
+    }
+
+    /** The `aria-checked` of the switch row reading `label` (`"true"` / `"false"`), from the chrome's document. */
+    private fun switchState(label: String): String = jsonString(chromeJs(
+        "(function(){var rows=Array.from(document.querySelectorAll('[data-reader-prefs-rows] [role=switch]'));" +
+            "var r=rows.find(function(e){return (e.textContent||'').indexOf(${JSONObject.quote(label)})===0});return r?String(r.getAttribute('aria-checked')):''})()"
+    ))
+
+    private fun switchRow(label: String): AccessibilityNodeInfo? = findNodeWhere { node ->
+        node.isCheckable && ((node.text ?: node.contentDescription)?.toString()?.startsWith(label) == true)
+    }
+
+    private fun rowText(label: String): String = rowNode(label)?.let { (it.text ?: it.contentDescription)?.toString() }.orEmpty()
+
+    /** The row (or control) reading `label`: the clickable node reading it alone or with a description after it. */
+    private fun rowNode(label: String): AccessibilityNodeInfo? {
+        val reads = { node: AccessibilityNodeInfo ->
+            val text = (node.text ?: node.contentDescription)?.toString()
+            text != null && (text == label || text.startsWith("$label ") || text.startsWith("$label\n"))
+        }
+        return findNodeWhere { node -> node.isClickable && reads(node) } ?: findNodeWhere(reads)
+    }
+
+    // --- the player ----------------------------------------------------------------------------------
+
+    private fun readAloud(): JSONObject? = coreState().optJSONObject("readAloud")
+    private fun status(): String = readAloud()?.optString("status").orEmpty()
+    private fun panelUp(): Boolean = findNode { it == PANEL_LABEL } != null || findNode { it == "Previous sentence" } != null
+    private fun panelBounds(): Rect? = findNode { it == PANEL_LABEL }?.let { Rect().also(it::getBoundsInScreen) }
+    private fun progressText(): String =
+        jsonString(chromeJs("(function(){var e=document.querySelector('.zen-read-aloud-progress');return e?e.textContent.trim():''})()"))
+
+    // --- the pill ------------------------------------------------------------------------------------
+
+    /** The phone pill's chips, from the chrome's document: how many, the site-information glyph, any reader chip. */
+    private fun pillProbe(): JSONObject {
+        val raw = jsonString(chromeJs(
+            "(function(){var p=document.querySelector('.zen-phone-pill');if(!p)return '{}';" +
+                "return JSON.stringify({chips:p.querySelectorAll('[data-pill-chip]').length,siteInfo:p.querySelectorAll('[data-site-info]').length," +
+                "readerChip:p.querySelectorAll('[data-reader-prefs-chip]').length,text:(p.textContent||'').trim().slice(0,40)})})()"
+        ))
+        return runCatching { JSONObject(raw) }.getOrDefault(JSONObject())
+    }
+
+    // --- the reader document --------------------------------------------------------------------------
+
+    private fun isReader(): Boolean = tab()?.optString("url")?.startsWith("zen://reader") == true
+
+    /**
+     * What the reader document shows, from inside it: the title, whether the byline and the
+     * reading time are there, whether any toolbar is (there must be none), the extras' root
+     * attributes and what the page script painted for them (the line focus masks, the syllable
+     * marks, the band's top), the theme the document resolved to.
+     */
+    private fun readerProbe(): JSONObject {
+        val raw = pageJs(
+            "(function(){var d=document,r=d.documentElement;var meta=d.querySelector('header .meta');var top=d.querySelector('.zen-focus-mask[data-edge=\"top\"]');" +
+                "return JSON.stringify({title:(d.querySelector('header h1')||{}).textContent||'',byline:!!(meta&&/Zenium read-aloud demo|127\\.0\\.0\\.1/.test(meta.textContent)),readingTime:!!(meta&&/min read/.test(meta.textContent))," +
+                "toolbar:!!d.querySelector('nav.toolbar, .toolbar, [data-set], [data-size]'),lineFocus:r.getAttribute('data-line-focus')||'0',syllables:r.getAttribute('data-syllables')||'false'," +
+                "spacing:r.getAttribute('data-spacing')||'normal',masks:d.querySelectorAll('.zen-focus-mask').length,marks:d.querySelectorAll('.zen-syl').length," +
+                "bandTop:top?Math.round(top.getBoundingClientRect().height):-1,theme:r.getAttribute('data-theme')||''," +
+                "bg:getComputedStyle(d.body).backgroundColor,scheme:matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'})})()"
+        )
+        return runCatching { JSONObject(jsonString(raw)) }.getOrDefault(JSONObject())
+    }
+
+    private fun readerHighlight(): JSONObject {
+        val raw = pageJs(
+            "(function(){var h=window.CSS&&CSS.highlights;return JSON.stringify({api:!!h," +
+                "sentence:!!(h&&h.has('zenium-read-sentence')),word:!!(h&&h.has('zenium-read-word'))})})()"
+        )
+        return runCatching { JSONObject(jsonString(raw)) }.getOrDefault(JSONObject())
+    }
+
+    /** Evaluate in the demo tab's page (the reader document once Reader View is on); the raw JSON-encoded result. */
+    private fun pageJs(code: String): String {
+        var result = ""
+        val latch = CountDownLatch(1)
+        instrumentation.runOnMainSync {
+            val view = host.tabs.get(TAB)
+            if (view == null) latch.countDown()
+            else view.evaluateJavascript(code) { value ->
+                result = value ?: ""
+                latch.countDown()
+            }
+        }
+        latch.await(10, TimeUnit.SECONDS)
+        return result
+    }
+
+    private fun jsonString(raw: String): String = runCatching { JSONTokener(raw).nextValue() as? String }.getOrNull() ?: raw
+
+    private fun tab(): JSONObject? = coreState().getJSONObject("tabs").optJSONObject(TAB)
+
+    private fun describeTab(): String {
+        val tab = tab() ?: return "tab $TAB gone"
+        return "url=${tab.optString("url").take(60)} title=\"${tab.optString("title").take(50)}…\" readerable=${tab.optBoolean("readerable")}"
+    }
+
+    private fun awaitLoaded(url: String, timeoutMs: Long = 20_000) {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            val tab = tab()
+            if (tab != null && tab.optString("url") == url && !tab.optBoolean("loading")) {
+                SystemClock.sleep(800)
+                return
+            }
+            SystemClock.sleep(400)
+        }
+        finding("  the article never finished loading: ${describeTab()}")
+    }
+
+    private fun shell(command: String): String = runCatching {
+        val fd = ui.executeShellCommand(command)
+        android.os.ParcelFileDescriptor.AutoCloseInputStream(fd).use { it.readBytes().toString(Charsets.UTF_8) }
+    }.getOrElse { "shell failed: $it" }
+
+    // --- findings -------------------------------------------------------------------------------------
+
+    private fun snap(name: String) = shot("%02d-%s".format(++shots, name))
+
+    private fun poll(timeoutMs: Long, condition: () -> Boolean): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (condition()) return true
+            SystemClock.sleep(200)
+        }
+        return condition()
+    }
+
+    private fun check(what: String, ok: Boolean) {
+        if (!ok) failures++
+        finding("  ${if (ok) "PASS" else "FAIL"}: $what")
+    }
+
+    private fun finding(line: String) {
+        Log.i(tag, line)
+        findings.appendText(line + "\n")
+    }
+
+    companion object {
+        private const val PORT = 18148
+        private const val ORIGIN = "http://127.0.0.1:$PORT"
+        private const val TAB = "tab_demo"
+        /** The player's `role=region` label (`ReadAloudPanel`). */
+        private const val PANEL_LABEL = "Read aloud"
+    }
+}

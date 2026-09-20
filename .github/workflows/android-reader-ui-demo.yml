@@ -1,0 +1,57 @@
+name: Android reader UI demo
+
+# Records the reader document's controls on the phone after the document lost its toolbar
+# (§10.1; parity rows CT-13, EDGE-13, EDGE-11): Reader View from the app menu under a real touch
+# (the document with its title, byline and reading time and no toolbar; the pill at rest the
+# favicon, the host and the one site-information glyph), the app menu's Text Preferences… opening
+# the §9.13 sheet – the read-aloud row, the four picker rows, Text spacing, Line focus, Lines in
+# focus, Syllables – with real fingers on Line focus, Syllables, the Lines in focus picker and
+# the Text spacing picker (the document's root attributes and the page script's masks and marks
+# following each), Listen to this article reading the reader document with the sentence
+# highlight painted into it and the line focus band following, Pause and Close under a finger,
+# then the document, the sheet and the player in dark. The driver writes `reader-ui-findings.txt`
+# with a PASS or FAIL per check and fails when any did. Dispatch-only, like the other demos. The
+# build, the emulator and the Gradle cache live in android-emulator-demo.yml; this file only
+# picks the driver and the demo it runs. The image stays the shared default (Google APIs, API
+# 34): that is where the speech engine is.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-reader-ui-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Reader UI demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.ReaderUiDemo
+        DEMO_DIR=reader-ui-demo
+        DEMO_OUT=artifacts/android-reader-ui-demo
+        DEMO_VIDEO=services-reader-android-demo.mp4
+      artifact-name: android-reader-ui-demo
+      artifact-path: artifacts/android-reader-ui-demo/
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed: a run is then spent on the demo rather than on the runner.
+  record-again:
+    name: Reader UI demo, second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.ReaderUiDemo
+        DEMO_DIR=reader-ui-demo
+        DEMO_OUT=artifacts/android-reader-ui-demo
+        DEMO_VIDEO=services-reader-android-demo.mp4
+      artifact-name: android-reader-ui-demo-second-boot
+      artifact-path: artifacts/android-reader-ui-demo/
