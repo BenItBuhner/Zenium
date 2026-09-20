@@ -27,10 +27,12 @@ export interface LandingState {
   placed: ReadonlyMap<string, Placement>
   /** The size the host last drew each view at, in CSS px. */
   sized: ReadonlyMap<string, { width: number; height: number }>
+  /** How many placement reports the chrome has made: a landing tells the reports since it began by this. */
+  reports: number
 }
 
 export const landingStore = createStore<LandingState>(
-  { settling: undefined, placed: new Map(), sized: new Map() },
+  { settling: undefined, placed: new Map(), sized: new Map(), reports: 0 },
   'fullscreen-landing'
 )
 
@@ -69,14 +71,29 @@ export function hasLanded(state: LandingState, tabId: string): boolean {
  * The chrome is back from `tabId`'s fullscreen and has not laid the page out inline yet: the
  * placement kept from before the fullscreen is no word on where the view goes now. The host's
  * word on the size it has drawn stands (the view is at it, whatever the chrome asks next).
+ * Returns the count of placement reports so far, for `landingLost` to tell the reports since
+ * the landing began from none yet.
  */
-export function beginLanding(tabId: string): void {
+export function beginLanding(tabId: string): number {
   landingStore.set((prev) => {
     if (!prev.placed.has(tabId)) return {}
     const placed = new Map(prev.placed)
     placed.delete(tabId)
     return { placed }
   })
+  return landingStore.get().reports
+}
+
+/**
+ * `tabId`'s landing is not coming: the chrome has reported its placements since the landing
+ * began (`since`, `beginLanding`'s count) and the report did not name the tab. The report names
+ * every view the chrome wants on screen, so a tab left out of it has no placement to land on –
+ * it is gone (a page that closed itself while fullscreen, a tab the host or the core closed at
+ * the exit) or another tab has the screen – and the return that waited for it would sit at
+ * nothing until `LANDING_TIMEOUT_MS`; it fades at once instead.
+ */
+export function landingLost(state: LandingState, tabId: string, since: number): boolean {
+  return state.reports > since && !state.placed.has(tabId)
 }
 
 /**
@@ -114,7 +131,8 @@ function afterFrames(count: number, then: () => void): void {
 /**
  * The chrome reported these placements, laid out while the bars were `settling` or not. The
  * report names every view the chrome wants on screen, so it replaces what was kept; a size
- * drawn for a view no longer placed goes with it.
+ * drawn for a view no longer placed goes with it. Each report counts (`reports`), a report of
+ * no placements too: a landing that finds its tab left out since it began is lost.
  */
 export function notePlacements(
   placements: ReadonlyArray<{ tabId: string; rect: Rect }>,
@@ -125,7 +143,7 @@ export function notePlacements(
     for (const p of placements) placed.set(p.tabId, { rect: p.rect, settled: settling !== true })
     const sized = new Map<string, { width: number; height: number }>()
     for (const [tabId, size] of prev.sized) if (placed.has(tabId)) sized.set(tabId, size)
-    return { placed, sized }
+    return { placed, sized, reports: prev.reports + 1 }
   })
 }
 

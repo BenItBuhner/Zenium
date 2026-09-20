@@ -4,6 +4,7 @@ import {
   beginLanding,
   hasLanded,
   LANDING_TIMEOUT_MS,
+  landingLost,
   landingReported,
   landingStore
 } from '@renderer/lib/fullscreenLanding'
@@ -24,17 +25,22 @@ export function fadeInChrome(el: HTMLElement): Animation | null {
  * The chrome `el` is back from `tabId`'s fullscreen: held at nothing until the page's view has
  * landed (`lib/fullscreenLanding.ts`: the bars at rest, the chrome's placement laid out on them,
  * the host's frame at that size), then the fade. A host without a word on landings (no
- * `settling` on its insets) has the fade at once; a landing that never comes has it at
- * `LANDING_TIMEOUT_MS`. Returns what ends the return: the hold released, the fade cancelled.
+ * `settling` on its insets) has the fade at once; so has a tab whose landing is not coming – the
+ * chrome's first placements since the exit leave it out, because the page closed itself while
+ * fullscreen or was closed at the exit, or another tab has the screen (`landingLost`); a landing
+ * that never comes has it at `LANDING_TIMEOUT_MS`. Returns what ends the return: the hold
+ * released, the fade cancelled.
  */
 export function returnChrome(el: HTMLElement, tabId: string): () => void {
-  beginLanding(tabId)
+  const since = beginLanding(tabId)
   let animation: Animation | null = null
   let unsubscribe: (() => void) | null = null
   let deadline: ReturnType<typeof setTimeout> | null = null
-  const landed = (): boolean => {
+  const due = (): boolean => {
     const state = landingStore.get()
-    return !landingReported(state) || hasLanded(state, tabId)
+    return (
+      !landingReported(state) || hasLanded(state, tabId) || landingLost(state, tabId, since)
+    )
   }
   const fade = (): void => {
     unsubscribe?.()
@@ -45,11 +51,11 @@ export function returnChrome(el: HTMLElement, tabId: string): () => void {
     el.style.opacity = ''
     animation = fadeInChrome(el)
   }
-  if (landed()) fade()
+  if (due()) fade()
   else {
     el.style.opacity = '0'
     unsubscribe = landingStore.subscribe(() => {
-      if (landed()) fade()
+      if (due()) fade()
     })
     deadline = setTimeout(fade, LANDING_TIMEOUT_MS)
   }
@@ -67,7 +73,8 @@ export function returnChrome(el: HTMLElement, tabId: string): () => void {
  * bar and the pill return to where they were) full motion has no other form – so the page is
  * laid out once, as the chrome's frames are placed, and nothing but opacity moves. The fade runs
  * once the page's view has landed (§11.5: on the landing, not over the platform's shrink), the
- * chrome held at nothing until then. A layout effect: the hold is on before the returned
+ * chrome held at nothing until then – or at once when the page is gone at the exit and no
+ * landing is coming (`returnChrome`). A layout effect: the hold is on before the returned
  * chrome's first paint, so it is never seen at full strength first. The first showing of the
  * chrome (no fullscreen before it) is not a return and does not fade.
  */

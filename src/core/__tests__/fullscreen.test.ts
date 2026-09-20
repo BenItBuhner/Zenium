@@ -263,6 +263,41 @@ describe('the hint for a page in fullscreen', () => {
   })
 })
 
+describe('a page gone while in fullscreen', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  it('ends the window’s HTML fullscreen when its tab is closed, without a leave from the host', () => {
+    // The host's own leave on the tear-down (Android drops the view and exits its fullscreen
+    // layer on `view.destroy`) reaches a view the core has dropped and is not heard; the
+    // window must not keep a fullscreen tab id that names no tab, its chrome away for good.
+    const { browser, platform, win } = start()
+    const other = browser.tabs.createTab({ url: 'https://example.com/a', active: true }, win)
+    const tab = browser.tabs.createTab({ url: 'https://example.com/video', active: true }, win)
+    const page = platform.pages.get(tab.id)!
+    page.events.onEnterHtmlFullscreen()
+    expect(win.htmlFullscreenTabId).toBe(tab.id)
+    browser.tabs.closeTab(tab.id, true, win)
+    expect(win.htmlFullscreenTabId).toBeNull()
+    expect(win.windowState().htmlFullscreenTabId).toBeNull()
+    expect(win.selectedTabIn(win.activeSpace())).toBe(other.id)
+    // The hint due for the fullscreen is not shown to a page that is gone.
+    vi.advanceTimersByTime(HINT_DELAY_MS)
+    expect(page.hints).toEqual([])
+  })
+
+  it('ends it when the tab is put to sleep, and leaves another window’s fullscreen alone', () => {
+    const { browser, platform, win } = start()
+    browser.tabs.createTab({ url: 'https://example.com/a', active: true }, win)
+    const tab = browser.tabs.createTab({ url: 'https://example.com/video', active: true }, win)
+    platform.pages.get(tab.id)!.events.onEnterHtmlFullscreen()
+    expect(win.htmlFullscreenTabId).toBe(tab.id)
+    browser.tabs.discard(tab.id)
+    expect(win.htmlFullscreenTabId).toBeNull()
+    expect(browser.tabs.tab(tab.id)?.discarded).toBe(true)
+  })
+})
+
 describe("the window's fullscreen (F11)", () => {
   beforeEach(() => vi.useFakeTimers())
   afterEach(() => vi.useRealTimers())
