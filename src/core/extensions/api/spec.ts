@@ -13,10 +13,17 @@ import {
   CONTENT_SETTING_TYPES,
   CONTENT_SETTING_TYPE_NAMES
 } from './contentSettings'
+import { OFFSCREEN_PERMISSION, OFFSCREEN_REASON_CONSTANTS } from './offscreen'
 import { PRIVACY_METHODS, PRIVACY_SETTING_NAMES } from './privacy'
 import { PROXY_SETTING } from './proxy'
 import { SYSTEM_DISPLAY_PERMISSION } from './systemDisplay'
 import { SYSTEM_STORAGE_CONSTANTS, SYSTEM_STORAGE_PERMISSION } from './systemStorage'
+import {
+  DESKTOP_CAPTURE_PERMISSION,
+  DESKTOP_CAPTURE_SOURCE_TYPE_CONSTANTS,
+  TAB_CAPTURE_PERMISSION,
+  TAB_CAPTURE_STATE_CONSTANTS
+} from './tabCapture'
 import { USER_SCRIPTS_UNAVAILABLE_ERROR } from './userScripts'
 
 export type ParamType = 'integer' | 'number' | 'string' | 'boolean' | 'object' | 'array' | 'any'
@@ -872,6 +879,47 @@ export const API_SPEC: ApiSpec = {
   // The panel is Zenium's own view beside the page; the options follow Chrome's default-plus-per-tab
   // rules. `onOpened` / `onClosed` (Chrome 140 / 142) follow the view showing and going away;
   // `getLayout` reports the side the strip docks on.
+  // Electron has the binding, but its `ExtensionHost` takes the browser down when the document
+  // touches media devices (`core/extensions/api/offscreen.ts`): the browser layer hosts the
+  // document itself and answers the namespace, the engine's copy replaced in place.
+  offscreen: {
+    methods: {
+      createDocument: { params: [object('parameters')] },
+      closeDocument: { params: [] },
+      hasDocument: { params: [] }
+    },
+    events: {},
+    constants: { Reason: OFFSCREEN_REASON_CONSTANTS },
+    manifestVersion: 3,
+    permissions: [OFFSCREEN_PERMISSION]
+  },
+  // Neither binding exists on Electron (its feature list is a subset of Chrome's). The stream
+  // ids come from the engine's page capture; `capture` runs `getUserMedia` on the context side
+  // as Chrome's binding does, so the shim replaces it there (`core/extensions/api/tabCapture.ts`).
+  tabCapture: {
+    methods: {
+      capture: { params: [object('options')] },
+      getCapturedTabs: { params: [] },
+      getMediaStreamId: { params: [object('options', true)] }
+    },
+    events: { onStatusChanged: {} },
+    constants: { TabCaptureState: TAB_CAPTURE_STATE_CONSTANTS },
+    permissions: [TAB_CAPTURE_PERMISSION]
+  },
+  // `chooseDesktopMedia` answers its request id synchronously and its callback with the picker's
+  // choice; Zenium has no picker for an extension's call yet, so the answer is Chrome's cancel
+  // (an empty stream id). The shim shapes the call; the host checks the arguments.
+  desktopCapture: {
+    methods: {
+      chooseDesktopMedia: {
+        params: [{ name: 'sources', type: 'array' }, object('targetTab', true)]
+      },
+      cancelChooseDesktopMedia: { params: [integer('desktopMediaRequestId')] }
+    },
+    events: {},
+    constants: { DesktopCaptureSourceType: DESKTOP_CAPTURE_SOURCE_TYPE_CONSTANTS },
+    permissions: [DESKTOP_CAPTURE_PERMISSION]
+  },
   sidePanel: {
     methods: {
       setOptions: { params: [object('options')] },
@@ -1148,6 +1196,13 @@ export const CONTENT_SETTINGS_INTERNAL_METHODS = CONTENT_SETTING_METHODS
  * to the content scripts. Not a member of `chrome.userScripts`, but routed like one.
  */
 export const USER_SCRIPTS_INTERNAL_METHODS = ['sendMessage'] as const
+
+/**
+ * The calls the shim makes around a consuming document's `getUserMedia` for `tabCapture`
+ * (`core/extensions/api/tabCapture.ts`): the engine's id for a stream id this layer answered,
+ * and the state the call reached. Not members of `chrome.tabCapture`, but routed like ones.
+ */
+export { TAB_CAPTURE_INTERNAL_METHODS } from './tabCapture'
 
 /** Storage areas the host implements; the engine's `local` and `session` stay native for data. */
 export const STORAGE_AREAS = ['local', 'sync', 'session', 'managed'] as const

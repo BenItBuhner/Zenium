@@ -1070,6 +1070,11 @@ export class AndroidExtensions implements ExtensionHost {
     // Nothing of the store's is open; the runtime closes its own popup.
   }
 
+  popupOpen(): boolean {
+    // The runtime's popup sheet is the engine's own; `action.openPopup` there is the engine's too.
+    return false
+  }
+
   /** The chrome answered a prompt `confirmInstall` raised through its sheet. */
   respondPrompt(requestId: string, accept: boolean): void {
     this.prompts.respond(requestId, accept)

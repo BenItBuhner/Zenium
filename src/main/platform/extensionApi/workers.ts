@@ -11,6 +11,15 @@ import type { ServiceWorkerMain, Session } from 'electron'
  * `running-status-changed` when the worker itself kept running. So the handlers are installed on
  * acquisition: every wrapper the router obtains, from wherever, is wired exactly once, and a
  * wrapper found destroyed is replaced by asking the engine again.
+ *
+ * The held wrapper is not the last word either: Electron's `ServiceWorkerMain` destructor runs
+ * `Destroy()`, which erases the version's map entry whichever wrapper holds it by then. A wrapper
+ * destroyed earlier (the worker it was made for died, the version object with it) is finalized
+ * by a later garbage collection and evicts the live, wired wrapper of the version's next run,
+ * with no status change; from then on every message of the worker reaches an empty map ('No
+ * handler registered', the storm from Hola's worker 14 s after its restart). So an acquisition
+ * asks the map first, with the lookup Electron's own dispatch uses, and a wrapper the map no
+ * longer holds is replaced by a fresh one, wired, ahead of the dispatch.
  */
 export class WiredWorkers {
   /** The wired wrapper of every version, by worker key. */
@@ -36,12 +45,22 @@ export class WiredWorkers {
   }
 
   /**
-   * The wired wrapper of a version: the one held while it lives, else the engine's current one
-   * (created on demand for a live version), wired. Undefined when the version is gone.
+   * The wired wrapper of a version: the one Electron's map holds (the one its dispatch will find),
+   * wired if it is bare; without that lookup, the one held while it lives; else the engine's
+   * current one (created on demand for a live version, a starting one included), wired.
+   * Undefined when the version is gone.
    */
   acquire(versionId: number, session: Session): ServiceWorkerMain | undefined {
-    const held = this.current(versionId, session)
-    if (held) return held
+    const mapped = mappedWrapper(session, versionId)
+    if (mapped === undefined) {
+      const held = this.current(versionId, session)
+      if (held) return held
+    } else if (mapped && !mapped.isDestroyed()) {
+      return this.wire(mapped, session) ? mapped : undefined
+    } else {
+      // The map lost the version's wrapper: whatever is held is evicted and would never be found.
+      this.release(versionId, session)
+    }
     let fresh: ServiceWorkerMain | undefined
     try {
       fresh = session.serviceWorkers.getWorkerFromVersionID(versionId)
@@ -63,6 +82,23 @@ export class WiredWorkers {
   /** The version stopped: its key is free (a later run of it re-acquires the wrapper, wired once). */
   release(versionId: number, session: Session): void {
     this.byKey.delete(workerKey(versionId, session))
+  }
+}
+
+/**
+ * The wrapper Electron's version map holds for `versionId`, looked up the way its IPC dispatch
+ * does (`_getWorkerFromVersionIDIfExists`, never creating one): null when the map holds none,
+ * undefined when this Electron has no such lookup (the held wrapper is trusted then).
+ */
+function mappedWrapper(session: Session, versionId: number): ServiceWorkerMain | null | undefined {
+  const context = session.serviceWorkers as unknown as {
+    _getWorkerFromVersionIDIfExists?: (versionId: number) => ServiceWorkerMain | undefined
+  }
+  if (typeof context._getWorkerFromVersionIDIfExists !== 'function') return undefined
+  try {
+    return context._getWorkerFromVersionIDIfExists(versionId) ?? null
+  } catch {
+    return undefined
   }
 }
 

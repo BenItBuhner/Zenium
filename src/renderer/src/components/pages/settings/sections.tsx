@@ -1215,7 +1215,9 @@ function privacySection(ctx: SectionContext): RowGroup[] {
  */
 function searchSection({ state, set }: SectionContext): RowGroup[] {
   const s = state.settings
-  const engines = state.searchEngines
+  // An extension's engine (`chrome_settings_overrides`) is not the user's to pick or remove; it
+  // is the default only through the extension, which the URL bar follows (`defaultSearchEngineOf`).
+  const engines = state.searchEngines.filter((e) => e.source !== 'extension')
   const own = engines.filter((e) => e.source === 'custom' || e.source === 'discovered')
   const glyph = (e: SearchEngine): ReactNode => <EngineGlyph engine={e} />
   /**

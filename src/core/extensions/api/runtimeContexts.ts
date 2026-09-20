@@ -152,16 +152,17 @@ export function matchesContextFilter(context: ExtensionContext, filter: ContextF
 /**
  * The `contextType` of an extension document from where it is shown (the registry's kind) and
  * its URL: the manifest's `devtools_page` and `side_panel` pages have their own types, an
- * offscreen document (`offscreen.createDocument`) too; every other page shown outside a tab or
- * popup counts as a tab, like Chrome's fallback.
+ * offscreen document (`offscreen.createDocument`, hosted by the browser layer) too; every other
+ * page shown outside a tab or popup counts as a tab, like Chrome's fallback.
  */
 export function contextTypeOf(
-  kind: 'tab' | 'popup' | 'background' | 'options' | 'other',
+  kind: 'tab' | 'popup' | 'background' | 'options' | 'offscreen' | 'other',
   url: string,
   manifest: { devtools_page?: unknown; side_panel?: unknown }
 ): ContextType {
   if (kind === 'background') return 'BACKGROUND'
   if (kind === 'popup') return 'POPUP'
+  if (kind === 'offscreen') return 'OFFSCREEN_DOCUMENT'
   const path = pathOf(url)
   if (path !== null) {
     if (

@@ -117,6 +117,15 @@ class FakeServiceWorkers {
     this.wrappers.delete(versionId)
   }
 
+  /**
+   * `~ServiceWorkerMain()` of an older, destroyed wrapper of the version, run by a later garbage
+   * collection: `Destroy()` erases the version's key, evicting the live wrapper that holds it
+   * now. That wrapper is neither destroyed nor told; the map just no longer finds it.
+   */
+  evictWrapper(versionId: number): void {
+    this.wrappers.delete(versionId)
+  }
+
   /** The version is gone for good (redundant and stopped, or released after stopping). */
   dropVersion(versionId: number): void {
     this.destroyWrapper(versionId)
@@ -258,6 +267,57 @@ describe('WiredWorkers', () => {
     expect(install).toHaveBeenCalledTimes(1)
   })
 
+  it('replaces a held wrapper the map no longer finds, although it is alive and wired', () => {
+    const { engine, session, wired, install } = setup()
+    engine.live.set(11, SCOPE)
+    engine.running.add(11)
+    const first = wired.acquire(11, session)!
+    expect(wired.current(11, session)).toBe(first)
+
+    engine.evictWrapper(11)
+    expect(first.isDestroyed()).toBe(false)
+    // `current` still answers the evicted one: it never asks the engine.
+    expect(wired.current(11, session)).toBe(first)
+    const second = wired.acquire(11, session)
+    expect(second).toBeDefined()
+    expect(second).not.toBe(first)
+    expect(engine._getWorkerFromVersionIDIfExists(11)).toBe(second)
+    expect((second as unknown as FakeWorker).ipc.handlers.has(CALL)).toBe(true)
+    expect(install).toHaveBeenCalledTimes(2)
+    expect(wired.current(11, session)).toBe(second)
+    // Settled: the map's wrapper is the held one, nothing more is created.
+    expect(wired.acquire(11, session)).toBe(second)
+    expect(engine.created).toHaveLength(2)
+  })
+
+  it('wires the bare wrapper the map holds instead of trusting the held one', () => {
+    const { engine, session, wired, install } = setup()
+    engine.live.set(11, SCOPE)
+    const first = wired.acquire(11, session)!
+    // Electron destroys the wrapper and, asked by someone else, hands out a bare one.
+    engine.destroyWrapper(11)
+    const bare = engine.getWorkerFromVersionID(11)!
+    expect(bare.ipc.handlers.has(CALL)).toBe(false)
+    expect(wired.acquire(11, session)).toBe(asMain(bare))
+    expect(bare.ipc.handlers.has(CALL)).toBe(true)
+    expect(install).toHaveBeenCalledTimes(2)
+    expect(first.isDestroyed()).toBe(true)
+    expect(engine.created).toHaveLength(2)
+  })
+
+  it('trusts the held wrapper when Electron offers no map lookup', () => {
+    const engine = new FakeServiceWorkers()
+    Object.defineProperty(engine, '_getWorkerFromVersionIDIfExists', { value: undefined })
+    const session = fakeSession(engine)
+    const install = vi.fn((worker: ServiceWorkerMain) => worker.ipc.handle(CALL, () => undefined))
+    const wired = new WiredWorkers(install)
+    engine.live.set(11, SCOPE)
+    const first = wired.acquire(11, session)!
+    engine.evictWrapper(11)
+    expect(wired.acquire(11, session)).toBe(first)
+    expect(engine.created).toHaveLength(1)
+  })
+
   it('keys wrappers by session, since version ids repeat across partitions', () => {
     const { engine, session, wired } = setup()
     const other = new FakeServiceWorkers()
@@ -306,6 +366,37 @@ describe('acquireOnIncomingIpc', () => {
     // A wrapper that is present is left alone.
     expect(ses.invokeFromWorker(11, CALL)).toBe(`${CALL}: ok`)
     expect(engine.created).toHaveLength(2)
+  })
+
+  it('repairs the map before dispatch when the finalizer of an older wrapper evicted the live one', () => {
+    const { engine, session, wired, install } = setup()
+    const ses = session as unknown as FakeSession
+    acquireOnIncomingIpc(session, (versionId) => wired.acquire(versionId, session))
+    engine.live.set(11, SCOPE)
+    engine.running.add(11)
+    // Boot: the worker's first run dies with its version object; the wrapper is destroyed.
+    const boot = engine.getWorkerFromVersionID(11)!
+    wired.wire(asMain(boot), session)
+    engine.destroyWrapper(11)
+    // Restart of the same version: a fresh wrapper is wired, the worker's calls go through.
+    expect(ses.invokeFromWorker(11, CALL)).toBe(`${CALL}: ok`)
+    const restarted = engine.created[1]!
+    expect(wired.current(11, session)).toBe(asMain(restarted))
+    expect(ses.invokeFromWorker(11, CALL)).toBe(`${CALL}: ok`)
+
+    // A garbage collection finalizes the boot wrapper: its `Destroy()` erases the version's key.
+    engine.evictWrapper(11)
+    expect(restarted.isDestroyed()).toBe(false)
+    expect(wired.current(11, session)).toBe(asMain(restarted))
+    // Held wrapper trusted alone, Electron finds nothing: the storm ('No handler registered').
+    expect(engine._getWorkerFromVersionIDIfExists(11)).toBeUndefined()
+    // The map is checked ahead of dispatch: a third wrapper, wired, answers the call.
+    expect(ses.invokeFromWorker(11, CALL)).toBe(`${CALL}: ok`)
+    expect(engine.created).toHaveLength(3)
+    expect(wired.current(11, session)).toBe(asMain(engine.created[2]!))
+    expect(install).toHaveBeenCalledTimes(3)
+    expect(ses.invokeFromWorker(11, CALL)).toBe(`${CALL}: ok`)
+    expect(engine.created).toHaveLength(3)
   })
 
   it('lets a call from a version that is gone fail as before', () => {

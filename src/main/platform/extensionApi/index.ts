@@ -36,6 +36,7 @@ import {
   PROXY_INTERNAL_METHODS,
   STORAGE_INTERNAL_METHODS,
   STORAGE_METHODS,
+  TAB_CAPTURE_INTERNAL_METHODS,
   USER_SCRIPTS_INTERNAL_METHODS,
   WEB_REQUEST_INTERNAL_METHODS,
   isSpecMethod
@@ -81,12 +82,15 @@ import { electronAuthWindowHost } from './identityBridge'
 import { ManagementApi } from './management'
 import { ApiModel, type ModelSnapshot } from './model'
 import { NotificationsApi } from './notifications'
+import { OffscreenApi } from './offscreen'
+import { electronOffscreenDocumentHost } from './offscreenBridge'
 import { OmniboxApi } from './omnibox'
 import { PermissionsApi } from './permissions'
 import { PrivacyApi } from './privacy'
 import { ProxyApi } from './proxy'
 import { ContentSettingsApi } from './contentSettings'
 import { RuntimeApi } from './runtime'
+import { SearchProviderApi } from './searchProvider'
 import { SessionsApi } from './sessions'
 import { SidePanelApi } from './sidePanel'
 import { DebuggerApi } from './debugger'
@@ -97,6 +101,8 @@ import { TabGroupsApi } from './tabGroups'
 import { SystemDisplayApi } from './systemDisplay'
 import { electronDisplayScreen } from './systemDisplayBridge'
 import { SystemStorageApi } from './systemStorage'
+import { TabCaptureApi } from './tabCapture'
+import { electronStreamRegistrar } from './tabCaptureBridge'
 import { TabsApi } from './tabs'
 import { TopSitesApi } from './topSites'
 import { TtsApi } from './tts'
@@ -209,9 +215,14 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   readonly systemStorage: SystemStorageApi
   readonly tabGroups: TabGroupsApi
   readonly sidePanel: SidePanelApi
+  readonly offscreen: OffscreenApi
+  /** `chrome.tabCapture` and `chrome.desktopCapture`; the platform's media permission gate. */
+  readonly tabCapture: TabCaptureApi
   readonly debugger: DebuggerApi
   readonly identity: IdentityApi
   readonly omnibox: OmniboxApi
+  /** `chrome_settings_overrides.search_provider`: manifest-driven, no namespace of its own. */
+  readonly searchProvider: SearchProviderApi
   readonly browsingData: BrowsingDataApi
   readonly tts: TtsApi
   readonly userScripts: UserScriptsApi
@@ -272,6 +283,8 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.webNavigation = new WebNavigationApi(this)
     this.contextMenus = new ContextMenusApi(this, this.activeTab)
     this.sidePanel = new SidePanelApi(this, electronPanelViewHost(this.model))
+    this.offscreen = new OffscreenApi(electronOffscreenDocumentHost())
+    this.tabCapture = new TabCaptureApi(this, this.activeTab, electronStreamRegistrar())
     this.debugger = new DebuggerApi(this)
     this.commands = new CommandsApi(this, this.action, this.activeTab, this.sidePanel)
     this.notifications = new NotificationsApi(this)
@@ -302,6 +315,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.tabGroups = new TabGroupsApi(this)
     this.identity = new IdentityApi(electronAuthWindowHost(this.model))
     this.omnibox = new OmniboxApi(this)
+    this.searchProvider = new SearchProviderApi(this)
     this.browsingData = new BrowsingDataApi(this, electronDataClearer)
     this.tts = new TtsApi(this, sharedSpeechEngine())
     this.userScripts = new UserScriptsApi(this, this.webNavigation)
@@ -334,6 +348,9 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       'system.storage': this.systemStorage.handlers,
       tabGroups: this.tabGroups.handlers,
       sidePanel: this.sidePanel.handlers,
+      offscreen: this.offscreen.handlers,
+      tabCapture: this.tabCapture.handlers,
+      desktopCapture: this.tabCapture.desktopHandlers,
       debugger: this.debugger.handlers,
       identity: this.identity.handlers,
       omnibox: this.omnibox.handlers,
@@ -487,14 +504,13 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     // A line from a worker whose wrapper was replaced meanwhile (the error console asks the
     // engine for one, which creates it bare) is the moment to wire the replacement.
     ses.serviceWorkers.on('console-message', (_event, { versionId }) => {
-      if (this.wiredWorkers.current(versionId, ses)) return
       if (isExtensionWorkerRunning(ses, versionId)) this.acquireWorker(versionId, ses)
     })
-    // A message from a worker whose wrapper is gone would otherwise fail before any handler of
-    // this router could see it: the wrapper is recreated, wired, ahead of Electron's dispatch.
-    acquireOnIncomingIpc(ses, (versionId) => {
-      if (!this.wiredWorkers.current(versionId, ses)) this.acquireWorker(versionId, ses)
-    })
+    // A message from a worker whose wrapper is gone from Electron's map (destroyed, or evicted by
+    // the finalizer of an older wrapper of the version) would otherwise fail before any handler
+    // of this router could see it: the map is checked and the wrapper recreated, wired, ahead of
+    // Electron's dispatch.
+    acquireOnIncomingIpc(ses, (versionId) => this.acquireWorker(versionId, ses))
     // Workers already running when the session is attached never announce themselves again.
     for (const versionId of runningExtensionWorkers(ses)) {
       if (this.acquireWorker(versionId, ses)) this.registry.workerStatus(versionId, ses, 'running')
@@ -593,6 +609,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.commands.load(loaded)
     this.sidePanel.load(loaded)
     this.omnibox.load(loaded)
+    this.searchProvider.load(loaded)
     // After the permissions: the state exists only for extensions holding the permission.
     this.declarativeNetRequest.load(loaded)
     this.privacy.load(ext.id)
@@ -628,10 +645,13 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.permissions.unload(ext.id)
     this.commands.unload(ext.id)
     this.sidePanel.unload(ext.id)
+    this.offscreen.unload(ext.id)
+    this.tabCapture.unload(ext.id)
     this.debugger.unload(ext.id)
     this.systemDisplay.unload()
     this.identity.unload(ext.id)
     this.omnibox.unload(ext.id)
+    this.searchProvider.unload(ext.id)
     this.tts.unload(ext.id)
     this.declarativeNetRequest.unload(ext.id)
     this.webRequest.unload(ext.id)
@@ -733,7 +753,10 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
                   : routed === 'userScripts' &&
                       (USER_SCRIPTS_INTERNAL_METHODS as readonly string[]).includes(method)
                     ? true
-                    : isSpecMethod(API_SPEC, namespace, method)
+                    : routed === 'tabCapture' &&
+                        (TAB_CAPTURE_INTERNAL_METHODS as readonly string[]).includes(method)
+                      ? true
+                      : isSpecMethod(API_SPEC, namespace, method)
       const handlers = this.namespaces[routed]
       if (!known || !handlers || !Object.prototype.hasOwnProperty.call(handlers, method)) {
         throw new ApiError(`${namespace}.${method} is not available in Zenium.`)
@@ -818,6 +841,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     if (this.views.tabIdForWebContents(wc) || this.model.popupForTabId(wc.id)) return 'tab'
     if (wc.getType() === 'backgroundPage') return 'background'
     if (this.sidePanel.hosts(wc)) return 'other'
+    if (this.offscreen.hosts(wc)) return 'offscreen'
     const popup = this.action.clickState(ctx.extensionId, ctx.window ?? this.lastWindow()).popup
     if (popup && hello.url.split('#')[0] === extensionUrl(ctx.extensionId, popup)) return 'popup'
     return ctx.window ? 'popup' : 'other'
@@ -1047,6 +1071,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       if (next.tabs.has(zenId)) continue
       this.action.tabRemoved(before.chrome.id)
       this.activeTab.tabRemoved(before.chrome.id)
+      this.tabCapture.tabRemoved(before.chrome.id)
       this.declarativeNetRequest.tabRemoved(before.chrome.id)
       this.sidePanel.tabRemoved(before.chrome.id)
     }

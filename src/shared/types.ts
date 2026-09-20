@@ -1494,10 +1494,23 @@ export interface DownloadSettings {
 
 /**
  * Where an engine came from: shipped with Zenium (`DEFAULT_SEARCH_ENGINES`), added by hand in
- * Settings > Search ("Add search engine"), or discovered on a visited page through its
- * OpenSearch description (Chrome's "Recently visited" engines).
+ * Settings > Search ("Add search engine"), discovered on a visited page through its OpenSearch
+ * description (Chrome's "Recently visited" engines), or declared by an installed extension
+ * (`chrome_settings_overrides.search_provider`; lives with the extension, never in the settings,
+ * and cannot be picked by the user, as in Chrome).
  */
-export type SearchEngineSource = 'default' | 'custom' | 'discovered'
+export type SearchEngineSource = 'default' | 'custom' | 'discovered' | 'extension'
+
+/**
+ * An extension holding the default search engine (`chrome_settings_overrides.search_provider`
+ * with `is_default`): Chrome's "An extension is controlling this setting". The user's own pick
+ * (`settings.searchEngineId`) is kept underneath and returns when the extension goes.
+ */
+export interface SearchEngineControl {
+  engineId: string
+  extensionId: string
+  extensionName: string
+}
 
 export interface SearchEngine {
   id: string
@@ -2808,6 +2821,8 @@ export interface UIState {
   settings: Settings
   shortcuts: Shortcut[]
   searchEngines: SearchEngine[]
+  /** The extension holding the default search engine, if one does (`defaultSearchEngineOf`). */
+  searchEngineControl: SearchEngineControl | null
   glance: GlanceState | null
   compactSidebarRevealed: boolean
   window: WindowState

@@ -6,7 +6,8 @@ import {
   net,
   webContents,
   type Extension,
-  type Session
+  type Session,
+  type WebContents
 } from 'electron'
 import { existsSync, promises as fs, readFileSync } from 'node:fs'
 import { basename, extname, join } from 'node:path'
@@ -103,6 +104,7 @@ import {
 } from './extensionStore'
 import type { ExtensionApiHooks } from './extensionApi'
 import { ExtensionErrorConsole } from './extensionErrors'
+import { liveWebContents } from './popupContents'
 import type { SessionManager } from './sessions'
 import type { ElectronWindow } from './window'
 
@@ -231,7 +233,14 @@ export class ExtensionService implements ExtensionHost {
   private readonly changeListeners = new Set<(event: RegistryEvent) => void>()
   private readonly iconCache = new Map<string, string | null>()
   /** The open action popup; `shown` once its view is visible (at once without a renderer frame). */
-  private popup: { id: string; view: WebContentsView; win: ZenWindow; shown: boolean } | null = null
+  private popup: {
+    id: string
+    view: WebContentsView
+    /** Taken at creation: `view.webContents` reads undefined once the document destroyed itself. */
+    wc: WebContents
+    win: ZenWindow
+    shown: boolean
+  } | null = null
   private checking: Promise<void> | null = null
   private updateTimer: ReturnType<typeof setInterval> | null = null
   /** Install and permission prompts put to the renderer's dialog, waiting for its answer. */
@@ -1400,8 +1409,8 @@ export class ExtensionService implements ExtensionHost {
       })
     }
     bw.contentView.addChildView(view)
-    this.popup = { id: record.id, view, win, shown: !frame }
     const wc = view.webContents
+    this.popup = { id: record.id, view, wc, win, shown: !frame }
     const report = (width: number, height: number): void => {
       if (this.popup?.view !== view) return
       const size = {
@@ -1470,30 +1479,40 @@ export class ExtensionService implements ExtensionHost {
       this.closePopup()
       return { action: 'deny' }
     })
+    // The document closed itself (`window.close()`, as Chrome's popups may): the popup is over
+    // for the chrome and for `action.openPopup`, which Chrome refuses while one shows.
+    wc.on('destroyed', () => {
+      if (this.popup?.view === view) this.closePopup()
+    })
     void wc
       .loadURL(`chrome-extension://${ext.id}/${popupPath.replace(/^\/+/, '')}`)
       .catch(() => undefined)
   }
 
+  popupOpen(): boolean {
+    return this.popup !== null && liveWebContents(this.popup.wc) !== null
+  }
+
   resizePopup(bounds: Rect, visible: boolean): void {
     const popup = this.popup
-    if (!popup || popup.view.webContents.isDestroyed()) return
+    const wc = popup ? liveWebContents(popup.wc) : null
+    if (!popup || !wc) return
     popup.view.setBounds(roundRect(bounds))
     popup.view.setVisible(visible)
     popup.shown = visible
-    if (visible) popup.view.webContents.focus()
+    if (visible) wc.focus()
   }
 
   /** `reason` is `'escape'` for the key the document trapped: the renderer returns focus to the anchor. */
   closePopup(reason?: 'escape'): void {
     if (!this.popup) return
-    const { id, view, win } = this.popup
+    const { id, view, wc, win } = this.popup
     this.popup = null
     if (win.alive) {
       ;(win.host as ElectronWindow).win.contentView.removeChildView(view)
       this.browser.emit('extension.popupClosed', reason ? { id, reason } : { id }, win)
     }
-    if (!view.webContents.isDestroyed()) view.webContents.close()
+    liveWebContents(wc)?.close()
   }
 
   // ---------------------------------------------------------------------------

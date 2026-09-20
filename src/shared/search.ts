@@ -1,4 +1,4 @@
-import type { SearchEngine, SearchEngineSource } from './types'
+import type { SearchEngine, SearchEngineControl, SearchEngineSource } from './types'
 
 /**
  * Zen ships Google, DuckDuckGo and Wikipedia by default and lets you pick Google, DuckDuckGo or
@@ -79,23 +79,51 @@ const MAX_ENGINE_URL = 2048
 const MAX_FAVICON = 8 * 1024
 
 /**
- * Every engine the profile offers: the shipped ones first, then the user's own in the order they
- * were added, then the discovered ones newest visit first. The user's list never shadows a
+ * Every engine the profile offers: the shipped ones first, then the installed extensions'
+ * (`chrome_settings_overrides.search_provider`, install order), then the user's own in the order
+ * they were added, then the discovered ones newest visit first. The user's list never shadows a
  * shipped id.
  */
-export function allSearchEngines(user: readonly SearchEngine[] | undefined): SearchEngine[] {
+export function allSearchEngines(
+  user: readonly SearchEngine[] | undefined,
+  extension: readonly SearchEngine[] = []
+): SearchEngine[] {
   const shipped = new Set(DEFAULT_SEARCH_ENGINES.map((e) => e.id))
   const own = (user ?? []).filter((e) => !shipped.has(e.id))
   const custom = own.filter((e) => e.source !== 'discovered')
   const discovered = own
     .filter((e) => e.source === 'discovered')
     .sort((a, b) => (b.visitedAt ?? 0) - (a.visitedAt ?? 0))
-  return [...DEFAULT_SEARCH_ENGINES, ...custom, ...discovered]
+  return [...DEFAULT_SEARCH_ENGINES, ...extension, ...custom, ...discovered]
 }
 
 /** The engine `id` names, or the profile's default (the shipped default when that is gone too). */
 export function engineById(engines: readonly SearchEngine[], id: string): SearchEngine {
   return engines.find((e) => e.id === id) ?? engines[0]
+}
+
+/**
+ * The engine a search goes to: the one an extension holds the default with (`control`) while it
+ * is installed and its engine listed, else the user's pick (`settings.searchEngineId`), else the
+ * first one. One resolution for the core (submit, suggestions, menus) and the chrome (the URL
+ * bar's glyph and hint), so they never disagree.
+ */
+export function defaultSearchEngineOf(
+  engines: readonly SearchEngine[],
+  pickedId: string,
+  control: SearchEngineControl | null | undefined
+): SearchEngine {
+  const controlled = control ? engines.find((e) => e.id === control.engineId) : undefined
+  return controlled ?? engineById(engines, pickedId)
+}
+
+/**
+ * Whether `id` names an engine the user may pick as the default: a shipped, added or discovered
+ * one. An extension's engine is not (Chrome's `TemplateURLService::CanMakeDefault` refuses an
+ * extension-controlled engine); it is the default only through the extension's `is_default`.
+ */
+export function isPickableSearchEngine(engines: readonly SearchEngine[], id: string): boolean {
+  return engines.some((e) => e.id === id && e.source !== 'extension')
 }
 
 /**
