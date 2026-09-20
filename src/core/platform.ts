@@ -1447,6 +1447,12 @@ export interface ExtensionHost {
   /** Move the open popup view (and show it once the renderer's frame has popped in). */
   resizePopup(bounds: Rect, visible: boolean): void
   closePopup(): void
+  /**
+   * Whether an action popup is up right now. Chrome refuses `chrome.action.openPopup()` while
+   * one shows ("Failed to open popup."): a popup whose worker answers its first message with
+   * `openPopup` would otherwise replace itself forever.
+   */
+  popupOpen(): boolean
   /** The `chrome.sidePanel` a window shows beside its page right now (for `UIState.sidePanel`). */
   sidePanel(win: ZenWindow): SidePanelInfo | null
   /** Open an extension's side panel in `win`, or close it when that extension's panel is showing. */

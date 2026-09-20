@@ -1459,9 +1459,18 @@ export class ExtensionService implements ExtensionHost {
       this.closePopup()
       return { action: 'deny' }
     })
+    // The document closed itself (`window.close()`, as Chrome's popups may): the popup is over
+    // for the chrome and for `action.openPopup`, which Chrome refuses while one shows.
+    wc.on('destroyed', () => {
+      if (this.popup?.view === view) this.closePopup()
+    })
     void wc
       .loadURL(`chrome-extension://${ext.id}/${popupPath.replace(/^\/+/, '')}`)
       .catch(() => undefined)
+  }
+
+  popupOpen(): boolean {
+    return this.popup !== null && !this.popup.view.webContents.isDestroyed()
   }
 
   resizePopup(bounds: Rect, visible: boolean): void {

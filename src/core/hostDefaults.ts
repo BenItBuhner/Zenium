@@ -150,6 +150,9 @@ export class NoExtensions implements ExtensionHost {
   }
   resizePopup(): void {}
   closePopup(): void {}
+  popupOpen(): boolean {
+    return false
+  }
   sidePanel(): SidePanelInfo | null {
     return null
   }

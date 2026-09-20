@@ -213,6 +213,10 @@ export class ActionApi {
     const values = this.effective(ctx.extension, tabId)
     if (!values.popup) throw new ApiError('Extension has no popup on the active tab.')
     if (!values.enabled) throw new ApiError('Extension is disabled on the active tab.')
+    // Chrome does not replace a popup that is showing (any extension's): the call fails. A
+    // popup whose worker answers its opening message with `openPopup` (Screencastify signed
+    // out) would otherwise be torn down and recreated on every load.
+    if (this.host.browser.extensions.popupOpen()) throw new ApiError('Failed to open popup.')
     this.host.openPopup(ctx.extensionId, win)
   }
 
