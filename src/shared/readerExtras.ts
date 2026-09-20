@@ -377,7 +377,8 @@ export class LineFocus {
    */
   relayout(): void {
     if (!this.active) return
-    if (this.anchor) this.anchor = { lineTop: this.anchor.lineTop, lineHeight: this.defaultLineHeight() }
+    if (this.anchor)
+      this.anchor = { lineTop: this.anchor.lineTop, lineHeight: this.defaultLineHeight() }
     this.place()
   }
 

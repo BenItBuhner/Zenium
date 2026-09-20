@@ -396,9 +396,11 @@ describe('installReaderExtras', () => {
 
     // A band anchored by a click takes the new line height too (no caret API here: the anchor
     // is the click's own y at the article's line height).
-    document.querySelector('article p')?.dispatchEvent(
-      new MouseEvent('click', { bubbles: true, clientX: 100, clientY: 300, button: 0 })
-    )
+    document
+      .querySelector('article p')
+      ?.dispatchEvent(
+        new MouseEvent('click', { bubbles: true, clientX: 100, clientY: 300, button: 0 })
+      )
     expect(extras.lineFocus.band()).toEqual({ top: 300 - 80, bottom: 300 + 120 })
     vi.spyOn(window, 'getComputedStyle').mockReturnValue({
       lineHeight: '30px',
