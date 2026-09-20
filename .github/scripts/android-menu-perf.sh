@@ -2,8 +2,10 @@
 # The performance program's menu sheet profile (perf-program.md, PERF-2): runs MenuSheetPerfDemo
 # through the shared driver script, then reads what it captured into one Markdown report.
 #
-# Before the driver: the Perfetto config (android-perf-trace.pbtxt) goes to /data/local/tmp,
-# where the instrumentation starts `perfetto` on it around its scenes. The driver runs its
+# Before the driver: the Perfetto config (android-perf-trace.pbtxt) goes to
+# /data/misc/perfetto-configs (the one directory the shell may write and `perfetto` may read;
+# under /data/local/tmp SELinux refused perfetto the file, silently: run 35540328965), where the
+# instrumentation starts `perfetto` on it around its scenes. The driver runs its
 # measured scenes in the warm-up, before the recorder rolls, so the handshake is given the time
 # they take (DEMO_HANDSHAKE_S); the recorded part is the short sequence for the media.
 #
@@ -23,12 +25,15 @@ export DEMO_CLASS=app.zen.chromium.MenuSheetPerfDemo
 export DEMO_DIR=menu-perf-demo
 export DEMO_OUT=${DEMO_OUT:-artifacts/android-menu-perf}
 export DEMO_VIDEO=${DEMO_VIDEO:-android-menu-perf.mp4}
-export DEMO_HANDSHAKE_S=${DEMO_HANDSHAKE_S:-1500}
+export DEMO_HANDSHAKE_S=${DEMO_HANDSHAKE_S:-1800}
 app_id=io.github.benitbuhner.zenium.debug
 mkdir -p "$DEMO_OUT"
 
 adb wait-for-device
-adb push .github/scripts/android-perf-trace.pbtxt /data/local/tmp/menu-perf.pbtxt
+adb shell rm -f /data/local/tmp/menu-perf.pbtxt || true
+adb push .github/scripts/android-perf-trace.pbtxt /data/misc/perfetto-configs/menu-perf.pbtxt \
+  || echo "the Perfetto config could not be pushed to /data/misc/perfetto-configs; the driver falls back to the atrace form"
+adb shell ls -l /data/misc/perfetto-configs/ || true
 # A stale trace from an earlier boot must not pass for this run's.
 adb shell rm -f /data/misc/perfetto-traces/menu-perf.perfetto-trace || true
 adb shell getprop ro.build.version.release > "$DEMO_OUT/android-version.txt" 2>&1 || true

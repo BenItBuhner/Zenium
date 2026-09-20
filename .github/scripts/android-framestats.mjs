@@ -25,7 +25,9 @@ import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 const dir = process.argv[2] || '.'
-const jsonOut = process.argv.includes('--json') ? process.argv[process.argv.indexOf('--json') + 1] : null
+const jsonOut = process.argv.includes('--json')
+  ? process.argv[process.argv.indexOf('--json') + 1]
+  : null
 
 const STAGES = [
   ['vsync-delay', 'IntendedVsync', 'HandleInputStart'],
@@ -69,9 +71,15 @@ function parseDump(text) {
   const blocks = text.split('---PROFILEDATA---')
   for (let i = 1; i < blocks.length; i += 2) {
     const lines = blocks[i].trim().split('\n')
-    const header = lines[0].split(',').map((s) => s.trim()).filter(Boolean)
+    const header = lines[0]
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
     for (const line of lines.slice(1)) {
-      const cells = line.split(',').map((s) => s.trim()).filter((s) => s !== '')
+      const cells = line
+        .split(',')
+        .map((s) => s.trim())
+        .filter((s) => s !== '')
       if (cells.length < header.length - 1) continue
       const row = {}
       header.forEach((name, j) => (row[name] = Number(cells[j])))
@@ -90,9 +98,22 @@ function stageOf(frame) {
   return stages
 }
 
+/**
+ * The display's frame interval (ms). HWUI's dump has the FrameInterval and FrameStartTime
+ * columns the other way round from its header (the interval, 16666666 ns at 60 Hz, sits under
+ * FrameStartTime; a timestamp under FrameInterval – run 35540328965 read the timestamp as the
+ * interval and found no frame long). Take whichever of the two is a plausible interval.
+ */
+function frameInterval(frames) {
+  for (const f of frames) {
+    for (const v of [f.FrameInterval, f.FrameStartTime]) if (v > 1e6 && v < 1e9) return ms(v)
+  }
+  return 16.667
+}
+
 function analyse(frames) {
   const totals = frames.map((f) => ms(f.FrameCompleted - f.IntendedVsync)).sort((a, b) => a - b)
-  const interval = frames.length ? ms(frames[0].FrameInterval || 16666667) : 16.667
+  const interval = frameInterval(frames)
   const long = frames.filter((f) => ms(f.FrameCompleted - f.IntendedVsync) > interval)
   const longStage = {}
   const stageSumLong = {}
@@ -123,13 +144,19 @@ function analyse(frames) {
     max: totals.length ? totals[totals.length - 1] : NaN,
     mean: totals.length ? totals.reduce((a, b) => a + b, 0) / totals.length : NaN,
     longStage: ranked.map(([k, n]) => ({ stage: k, count: n, share: n / (long.length || 1) })),
-    stageMeanLong: Object.fromEntries(Object.entries(stageSumLong).map(([k, v]) => [k, ms(v) / (long.length || 1)])),
-    stageMeanAll: Object.fromEntries(Object.entries(stageSumAll).map(([k, v]) => [k, ms(v) / (frames.length || 1)]))
+    stageMeanLong: Object.fromEntries(
+      Object.entries(stageSumLong).map(([k, v]) => [k, ms(v) / (long.length || 1)])
+    ),
+    stageMeanAll: Object.fromEntries(
+      Object.entries(stageSumAll).map(([k, v]) => [k, ms(v) / (frames.length || 1)])
+    )
   }
 }
 
 const results = {}
-const files = readdirSync(dir).filter((f) => /^framestats-.*\.txt$/.test(f)).sort()
+const files = readdirSync(dir)
+  .filter((f) => /^framestats-.*\.txt$/.test(f))
+  .sort()
 for (const file of files) {
   const scene = file.replace(/^framestats-/, '').replace(/\.txt$/, '')
   const text = readFileSync(join(dir, file), 'utf8')
@@ -156,7 +183,11 @@ for (const file of files) {
     }
     if (kind !== 'end') (byKind[kind] ||= []).push(...fresh)
   }
-  results[scene] = { hwui: lastSummary, all: analyse(all), byKind: Object.fromEntries(Object.entries(byKind).map(([k, v]) => [k, analyse(v)])) }
+  results[scene] = {
+    hwui: lastSummary,
+    all: analyse(all),
+    byKind: Object.fromEntries(Object.entries(byKind).map(([k, v]) => [k, analyse(v)]))
+  }
 }
 
 function stageText(a) {
@@ -168,7 +199,8 @@ function stageText(a) {
 }
 
 let md = ''
-md += '| scene | frames | > 16.7 ms (HWUI janky) | p50 | p90 | p95 | p99 | max | long stage (share of long frames, mean in them) |\n'
+md +=
+  '| scene | frames | > 16.7 ms (HWUI janky) | p50 | p90 | p95 | p99 | max | long stage (share of long frames, mean in them) |\n'
 md += '|---|---|---|---|---|---|---|---|---|\n'
 for (const [scene, r] of Object.entries(results)) {
   const a = r.all
@@ -176,7 +208,8 @@ for (const [scene, r] of Object.entries(results)) {
   md += `| ${scene} | ${a.frames} | ${a.long} (${fmt(a.longPct, 0)} %)${hw} | ${fmt(a.p50)} | ${fmt(a.p90)} | ${fmt(a.p95)} | ${fmt(a.p99)} | ${fmt(a.max, 0)} | ${stageText(a)} |\n`
 }
 md += '\nBy half-cycle kind (frames drawn from the touch to the settled sheet or page):\n\n'
-md += '| scene | step | frames | > 16.7 ms | p50 | p90 | p99 | max | long stage |\n|---|---|---|---|---|---|---|---|---|\n'
+md +=
+  '| scene | step | frames | > 16.7 ms | p50 | p90 | p99 | max | long stage |\n|---|---|---|---|---|---|---|---|---|\n'
 for (const [scene, r] of Object.entries(results)) {
   for (const [kind, a] of Object.entries(r.byKind)) {
     md += `| ${scene} | ${kind} | ${a.frames} | ${a.long} (${fmt(a.longPct, 0)} %) | ${fmt(a.p50)} | ${fmt(a.p90)} | ${fmt(a.p99)} | ${fmt(a.max, 0)} | ${stageText(a)} |\n`

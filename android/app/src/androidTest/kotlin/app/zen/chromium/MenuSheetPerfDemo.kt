@@ -3,6 +3,7 @@ package app.zen.chromium
 import android.graphics.PointF
 import android.graphics.Rect
 import android.os.Build
+import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.os.Trace
 import android.util.Log
@@ -22,6 +23,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
@@ -35,6 +37,12 @@ import kotlin.math.roundToInt
  * Scenes (each `cycles` times, ten by default):
  *  - `<page>-open-close`: tap Menu, the sheet comes up; tap the scrim, it goes.
  *  - `<page>-drag`: with the menu up, the grabber dragged to the expanded detent and back.
+ *  - `article-<variant>`: the open / close again (half the cycles) with one thing switched off
+ *    from the probe, to put a number on each part of the recede: `radius-off` (the content
+ *    frame's corner does not grow with `--zen-recede`), `recede-off` (nothing consumes
+ *    `--zen-recede`: the frame does not scale, the bar does not fade; the root write stays),
+ *    `rootwrite-off` (the chassis's per-frame write of `--zen-recede` on the root is dropped
+ *    too). Test-only styles and a shim on the root's inline style; the product code is as built.
  *
  * What is captured, per scene, into the handshake directory (the workflow pulls it):
  *  - `framestats-<scene>.txt`: `dumpsys gfxinfo <app> reset` before the scene, `framestats` after
@@ -43,16 +51,20 @@ import kotlin.math.roundToInt
  *  - `webview-<scene>.json.gz`: the chrome WebView's own Chromium trace for the scene through
  *    `android.webkit.TracingController` (blink, cc, v8, the scheduler, input and the DevTools
  *    timeline categories): the chrome renderer's main thread frame by frame – style recalc,
- *    layout, paint, script – and the compositor.
+ *    layout, paint, script – and the compositor. The scene's start / end user-timing marks are
+ *    inside the trace: the trace is started first, then the probe marks the scene.
  *  - `chrome-<scene>.json.txt`: what a probe in the chrome saw (test-only, put in from here):
- *    every pointer down / up, one sample per animation frame of the inline `--zen-recede` while
- *    a sheet is on the way, long tasks, and the Event Timing entries.
+ *    every pointer down / up, one sample per animation frame of the inline `--zen-recede`, the
+ *    sheet's inline transform and height while a sheet is on the way, the moments the sheet and
+ *    the page's picture were mounted and unmounted, long tasks, and the Event Timing entries.
  *  - `scenes.txt`: each scene's clocks (CLOCK_BOOTTIME for the Perfetto trace, CLOCK_MONOTONIC
  *    for the WebView trace) so the readers can cut the traces without markers.
  * One Perfetto system trace spans all the scenes (`sched gfx view input wm am binder_driver
  * dalvik` and the SurfaceFlinger frame timeline), started from here when the workflow has left
- * its config at `/data/local/tmp/menu-perf.pbtxt`, with `Trace.beginAsyncSection` marks per
- * scene and per half-cycle from this process (the `app` atrace category).
+ * its config at `/data/misc/perfetto-configs/menu-perf.pbtxt` (the one directory the shell may
+ * write and `perfetto` may read: run 35540328965 had it under /data/local/tmp and SELinux
+ * refused perfetto the file, silently), with `Trace.beginAsyncSection` marks per scene and per
+ * half-cycle from this process (the `app` atrace category).
  *
  * The scenes run in the warm-up, before the recorder rolls: `screenrecord` composes a second
  * copy of every frame on the emulator's software GPU and would be measured too. The recorded
@@ -60,7 +72,8 @@ import kotlin.math.roundToInt
  * the `android-menu-perf` workflow; see [DemoHarness] for the plumbing.
  *
  * Instrumentation arguments: `cycles` (default 10), `live` (`0` skips the real-network pass),
- * `webviewTrace` and `perfetto` (`0` skips that capture).
+ * `variants` (`0` skips the ablation scenes), `webviewTrace` and `perfetto` (`0` skips that
+ * capture).
  */
 @RunWith(AndroidJUnit4::class)
 class MenuSheetPerfDemo : DemoHarness("menu-perf-demo-state.json", "menu-perf", "menu-perf-demo") {
@@ -68,6 +81,7 @@ class MenuSheetPerfDemo : DemoHarness("menu-perf-demo-state.json", "menu-perf", 
     private val args = InstrumentationRegistry.getArguments()
     private val cycles = args.getString("cycles")?.toIntOrNull()?.coerceIn(1, 50) ?: 10
     private val livePass = args.getString("live") != "0"
+    private val variants = args.getString("variants") != "0"
     private val webviewTrace = args.getString("webviewTrace") != "0"
     private val perfetto = args.getString("perfetto") != "0"
     private lateinit var server: DemoServer
@@ -79,6 +93,8 @@ class MenuSheetPerfDemo : DemoHarness("menu-perf-demo-state.json", "menu-perf", 
     private var cookie = 1
     /** Where the grabber was at the collapsed detent, for the drag back down. */
     private var restHandle: PointF? = null
+    /** The sheet's inline height (CSS px) at the collapsed detent, read once the menu has landed. */
+    private var restHeight = 0.0
 
     @Test
     fun record() {
@@ -136,14 +152,21 @@ class MenuSheetPerfDemo : DemoHarness("menu-perf-demo-state.json", "menu-perf", 
 
         perfettoStart()
         try {
-            scene("github-open-close") { openCloseCycles("github-open-close") }
+            scene("github-open-close") { openCloseCycles("github-open-close", cycles) }
             scene("github-drag") { dragCycles("github-drag") }
 
             navigate("$ORIGIN/article.html")
             openMenu()
             closeMenu()
-            scene("article-open-close") { openCloseCycles("article-open-close") }
+            scene("article-open-close") { openCloseCycles("article-open-close", cycles) }
             scene("article-drag") { dragCycles("article-drag") }
+
+            if (variants) {
+                val half = (cycles / 2).coerceAtLeast(3)
+                variant("article-radius-off", RADIUS_OFF_CSS) { openCloseCycles("article-radius-off", half) }
+                variant("article-recede-off", RECEDE_OFF_CSS) { openCloseCycles("article-recede-off", half) }
+                variant("article-rootwrite-off", RECEDE_OFF_CSS, muteRoot = true) { openCloseCycles("article-rootwrite-off", half) }
+            }
 
             if (livePass) {
                 val live = navigate(LIVE_URL, timeoutMs = 60_000)
@@ -151,7 +174,7 @@ class MenuSheetPerfDemo : DemoHarness("menu-perf-demo-state.json", "menu-perf", 
                     SystemClock.sleep(4_000)
                     openMenu()
                     closeMenu()
-                    scene("live-github-open-close") { openCloseCycles("live-github-open-close") }
+                    scene("live-github-open-close") { openCloseCycles("live-github-open-close", cycles) }
                 } else {
                     finding("live pass skipped: $LIVE_URL did not load (no network on this emulator?)")
                 }
@@ -180,14 +203,14 @@ class MenuSheetPerfDemo : DemoHarness("menu-perf-demo-state.json", "menu-perf", 
         shot("menu-closed")
     }
 
-    private fun openCloseCycles(scene: String) {
-        for (i in 1..cycles) {
+    private fun openCloseCycles(scene: String, n: Int) {
+        for (i in 1..n) {
             mark("open", i)
             val opened = openMenu()
             unmark("open", i)
             dumpFramestats(scene, "$i-open")
             if (!opened) {
-                finding("$scene cycle $i: the menu did not come up; skipping the close")
+                finding("$scene cycle $i: the menu did not come up (${poseText()}); skipping the close")
                 back()
                 SystemClock.sleep(1_500)
                 continue
@@ -197,7 +220,7 @@ class MenuSheetPerfDemo : DemoHarness("menu-perf-demo-state.json", "menu-perf", 
             val closed = closeMenu()
             unmark("close", i)
             dumpFramestats(scene, "$i-close")
-            if (!closed) finding("$scene cycle $i: the menu did not go on the scrim press")
+            if (!closed) finding("$scene cycle $i: the menu did not go on the scrim press (${poseText()})")
             SystemClock.sleep(600)
         }
     }
@@ -215,7 +238,7 @@ class MenuSheetPerfDemo : DemoHarness("menu-perf-demo-state.json", "menu-perf", 
             unmark("drag-up", i)
             dumpFramestats(scene, "$i-up")
             if (!up) {
-                finding("$scene pair $i: the sheet did not reach the expanded detent (${recedeValue()})")
+                finding("$scene pair $i: the sheet did not reach the expanded detent (${poseText()}, rest $restHeight)")
             }
             SystemClock.sleep(500)
             mark("drag-down", i)
@@ -223,7 +246,7 @@ class MenuSheetPerfDemo : DemoHarness("menu-perf-demo-state.json", "menu-perf", 
             unmark("drag-down", i)
             dumpFramestats(scene, "$i-down")
             if (!down) {
-                finding("$scene pair $i: the drag down did not land at the collapsed detent")
+                finding("$scene pair $i: the drag down did not land at the collapsed detent (${poseText()}, rest $restHeight)")
                 if (!awaitSurface(up = true, timeoutMs = 500)) {
                     finding("$scene pair $i: the sheet went; opening it again")
                     SystemClock.sleep(1_000)
@@ -236,14 +259,59 @@ class MenuSheetPerfDemo : DemoHarness("menu-perf-demo-state.json", "menu-perf", 
         dumpFramestats(scene, "close")
     }
 
+    /** The open / close scene with a test-only style (and, `muteRoot`, without the root's `--zen-recede` write). */
+    private fun variant(name: String, css: String, muteRoot: Boolean = false, body: () -> Unit) {
+        chromeJs("window.__zenPerf&&window.__zenPerf.variant(${JSONObject.quote(css)})")
+        if (muteRoot) chromeJs("window.__zenPerf&&window.__zenPerf.muteRoot(true)")
+        SystemClock.sleep(800)
+        // One cycle off the record: the styles take, and the first frame under them is paid for.
+        openMenu()
+        closeMenu()
+        try {
+            scene(name, body)
+        } finally {
+            chromeJs("window.__zenPerf&&window.__zenPerf.muteRoot(false)")
+            chromeJs("window.__zenPerf&&window.__zenPerf.variant('')")
+            SystemClock.sleep(800)
+        }
+    }
+
     // --- the moves -----------------------------------------------------------------------------------
 
-    /** A finger on the Menu button; true once the sheet is up and the recede has landed at 1. */
+    /** A finger on the Menu button; true once the sheet is up and at rest at its detent. */
     private fun openMenu(): Boolean {
-        val button = findByLabel(MENU_LABEL) ?: Rect((width - 52 * density).roundToInt(), (pillY - 22 * density).roundToInt(), (width - 8 * density).roundToInt(), (pillY + 22 * density).roundToInt())
+        val button = menuButton()
         Finger().tap(button.exactCenterX(), button.exactCenterY())
         if (!awaitSurface(up = true, timeoutMs = 8_000)) return false
-        return awaitRecede(SETTLE_MS) { it >= 0.995 }
+        val landed = awaitPose(SETTLE_MS) { pose ->
+            // The recede at 1 says so first; a variant without the root write goes by the sheet's own stillness.
+            pose.recede >= 0.995 || (pose.sheet && pose.height > 0 && pose.still)
+        }
+        if (landed) sheetPose()?.let { if (it.height > 0) restHeight = it.height }
+        return landed
+    }
+
+    /**
+     * The bar's Menu button: from the chrome's own layout (fast; the accessibility tree of a
+     * page like github.com takes seconds to walk on the emulator), else by label, else where
+     * the default bar has it.
+     */
+    private fun menuButton(): Rect {
+        val raw = chromeJs(
+            "(function(){var b=document.querySelector('.zen-phone-bar [aria-label=\"$MENU_LABEL\"]')||document.querySelector('[aria-label=\"$MENU_LABEL\"]');" +
+                "if(!b)return '';var r=b.getBoundingClientRect();if(!r.width)return '';return r.left+','+r.top+','+r.width+','+r.height})()"
+        )
+        val text = (JSONTokener(raw).nextValue() as? String).orEmpty()
+        val parts = text.split(',').mapNotNull { it.toFloatOrNull() }
+        if (parts.size == 4) {
+            return Rect(
+                (parts[0] * density).roundToInt(),
+                (parts[1] * density).roundToInt(),
+                ((parts[0] + parts[2]) * density).roundToInt(),
+                ((parts[1] + parts[3]) * density).roundToInt()
+            )
+        }
+        return findByLabel(MENU_LABEL) ?: Rect((width - 52 * density).roundToInt(), (pillY - 22 * density).roundToInt(), (width - 8 * density).roundToInt(), (pillY + 22 * density).roundToInt())
     }
 
     /** A finger on the scrim above the sheet; true once the sheet has gone and the recede is back at 0. */
@@ -252,7 +320,7 @@ class MenuSheetPerfDemo : DemoHarness("menu-perf-demo-state.json", "menu-perf", 
         // Well above any detent of the menu and below the status bar: the page's upper third.
         Finger().tap(width * 0.5f, insets.top + (height - insets.top) * 0.22f)
         if (!awaitSurface(up = false, timeoutMs = 8_000)) return false
-        val landed = awaitRecede(SETTLE_MS) { it <= 0.005 }
+        val landed = awaitPose(SETTLE_MS) { pose -> !pose.sheet || (pose.recede <= 0.005 && pose.still) }
         // The live page comes back and its picture goes once the host has drawn it: part of the close.
         SystemClock.sleep(900)
         return landed
@@ -287,65 +355,77 @@ class MenuSheetPerfDemo : DemoHarness("menu-perf-demo-state.json", "menu-perf", 
         return awaitDetent(expanded = false)
     }
 
-    private fun handle(): PointF? =
-        waitFor(MENU_HANDLE_LABEL, 3_000)?.let { PointF(it.exactCenterX(), it.exactCenterY()) } ?: run {
-            // The tree lags the emulator; read the sheet's own box from the chrome.
-            val raw = chromeJs("(function(){var s=document.querySelector('.zen-sheet');if(!s)return '';var r=s.getBoundingClientRect();return r.left+','+r.top+','+r.width})()")
-            val text = (JSONTokener(raw).nextValue() as? String).orEmpty()
-            val parts = text.split(',').mapNotNull { it.toFloatOrNull() }
-            if (parts.size == 3) PointF((parts[0] + parts[2] / 2) * density, (parts[1] + 14) * density) else null
-        }
+    private fun handle(): PointF? {
+        // The chrome's own layout first: the accessibility tree lags the emulator by seconds.
+        val raw = chromeJs("(function(){var s=document.querySelector('.zen-sheet');if(!s)return '';var r=s.getBoundingClientRect();return r.left+','+r.top+','+r.width})()")
+        val text = (JSONTokener(raw).nextValue() as? String).orEmpty()
+        val parts = text.split(',').mapNotNull { it.toFloatOrNull() }
+        if (parts.size == 3 && parts[2] > 0) return PointF((parts[0] + parts[2] / 2) * density, (parts[1] + 14) * density)
+        return waitFor(MENU_HANDLE_LABEL, 3_000)?.let { PointF(it.exactCenterX(), it.exactCenterY()) }
+    }
 
-    /** Wait for the sheet's spring to land at the detent asked for: the chrome's word on its resting detent. */
+    /**
+     * Wait for the sheet's spring to land at the detent asked for. Between its detents the sheet
+     * changes height (lib/motion/sheet.ts), so the detent is read from the sheet's inline height
+     * against the height it rested at when the menu came up: the expanded detent stands at least
+     * half a detent gap (`SHEET_MIN_DETENT_GAP` / 2) taller, the collapsed one within a few px.
+     * (Run 35540328965 judged it by the sheet's top against the screen's middle, and the menu's
+     * peek – 52 % of the layer – already stands above that: every drag read as expanded.)
+     */
     private fun awaitDetent(expanded: Boolean): Boolean {
         val deadline = SystemClock.uptimeMillis() + SETTLE_MS
         while (SystemClock.uptimeMillis() < deadline) {
             SystemClock.sleep(200)
             if (!chromeSurfaceUp()) return false
-            val pose = sheetPose()
-            if (pose != null && pose.second && pose.first == expanded) return true
+            val pose = sheetPose() ?: continue
+            if (!pose.sheet || !pose.still || pose.height <= 0) continue
+            val atExpanded = pose.height >= restHeight + 48
+            val atCollapsed = abs(pose.height - restHeight) <= 6
+            if (expanded && atExpanded) return true
+            if (!expanded && atCollapsed) return true
         }
         return false
     }
 
-    /**
-     * (expanded, at rest) from the chrome: at rest when two frames' inline transforms agree; expanded
-     * when the sheet's top is in the upper half of the layer.
-     */
-    private fun sheetPose(): Pair<Boolean, Boolean>? {
-        val raw = chromeJs(
-            "(function(){var s=document.querySelector('.zen-sheet');if(!s)return '';" +
-                "var r=s.getBoundingClientRect();" +
-                "return (r.top<window.innerHeight*0.5?1:0)+','+(window.__zenPerf&&window.__zenPerf.still()?1:0)})()"
-        )
-        val text = (JSONTokener(raw).nextValue() as? String).orEmpty()
-        val parts = text.split(',')
-        if (parts.size != 2) return null
-        return (parts[0] == "1") to (parts[1] == "1")
-    }
-
     // --- the chrome's word ---------------------------------------------------------------------------
 
-    /** The inline `--zen-recede` on the chrome's root (what the chassis writes each frame): 0 when unset. */
-    private fun recedeValue(): String {
-        val raw = chromeJs("document.documentElement.style.getPropertyValue('--zen-recede')")
-        return (JSONTokener(raw).nextValue() as? String)?.ifEmpty { "0" } ?: "0"
+    private class Pose(val sheet: Boolean, val height: Double, val recede: Double, val still: Boolean)
+
+    /** The sheet's inline height and the root's inline `--zen-recede` (what the chassis writes each frame), from the probe. */
+    private fun sheetPose(): Pose? {
+        val raw = chromeJs("window.__zenPerf?window.__zenPerf.pose():''")
+        val text = (JSONTokener(raw).nextValue() as? String).orEmpty()
+        if (text.isEmpty()) return null
+        return try {
+            val o = JSONObject(text)
+            Pose(o.optInt("s") == 1, o.optDouble("h", 0.0), o.optDouble("p", 0.0), o.optBoolean("still"))
+        } catch (_: Exception) {
+            null
+        }
     }
 
-    private fun awaitRecede(timeoutMs: Long, settled: (Double) -> Boolean): Boolean {
+    private fun poseText(): String = sheetPose()?.let { "sheet ${if (it.sheet) "up" else "away"}, height ${it.height}, recede ${it.recede}, ${if (it.still) "still" else "moving"}" } ?: "no probe"
+
+    private fun awaitPose(timeoutMs: Long, settled: (Pose) -> Boolean): Boolean {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         while (SystemClock.uptimeMillis() < deadline) {
-            if (settled(recedeValue().toDoubleOrNull() ?: 0.0)) return true
+            val pose = sheetPose()
+            if (pose != null && settled(pose)) return true
             SystemClock.sleep(200)
         }
         return false
     }
 
     /**
-     * The probe in the chrome (test-only): pointer taps, one sample of the inline `--zen-recede` and
-     * the sheet's inline transform per animation frame while a sheet is on the way (from the tap
-     * until the value rests, so the frame intervals of the spring are on record), long tasks and
-     * Event Timing entries. Reads inline styles only – nothing here forces a style pass.
+     * The probe in the chrome (test-only): pointer taps; one sample per animation frame of the
+     * inline `--zen-recede`, the sheet's inline transform and height while a sheet is on the way
+     * (from the tap until the values rest, so the frame intervals of the spring are on record);
+     * the moments the sheet layer and the page's picture (the snapshot `img`) are mounted and
+     * unmounted, from a MutationObserver – the React commits of the open, on the DOM's clock;
+     * long tasks and Event Timing entries. Every mark is also a `performance.mark`, so it is in
+     * the WebView trace (`blink.user_timing`). Reads inline styles only – nothing here forces a
+     * style pass. The variants (`variant`, `muteRoot`) are test-only styles and a shim over the
+     * root's inline `setProperty`; nothing is written into the product.
      */
     private fun installProbe() {
         chromeJs(
@@ -356,16 +436,25 @@ document.addEventListener('pointerdown',function(e){P.taps.push({t:performance.n
 document.addEventListener('pointerup',function(e){P.taps.push({t:performance.now(),k:'up',x:e.clientX,y:e.clientY});arm()},{capture:true,passive:true});
 try{new PerformanceObserver(function(l){l.getEntries().forEach(function(e){P.long.push({t:e.startTime,d:e.duration})})}).observe({type:'longtask'})}catch(_){}
 try{new PerformanceObserver(function(l){l.getEntries().forEach(function(e){P.events.push({t:e.startTime,d:e.duration,n:e.name,p:e.processingStart-e.startTime,q:e.processingEnd-e.processingStart})})}).observe({type:'event',durationThreshold:16})}catch(_){}
-function sample(t){var s=document.querySelector('.zen-sheet');var p=root.style.getPropertyValue('--zen-recede');var tr=s?s.style.transform:'';
-var key=p+'|'+tr+'|'+(s?1:0);if(key===last)quiet++;else quiet=0;last=key;
-P.motion.push({t:t,p:p===''?-1:+p,tr:tr,s:s?1:0});
+function isSheet(n){return n.matches('[data-sheet-layer]')||!!n.querySelector('[data-sheet-layer]')}
+function isCover(n){return (n.tagName==='IMG'&&/^(data:|blob:)/.test(n.getAttribute('src')||''))||!!n.querySelector('img[src^="data:"],img[src^="blob:"]')}
+try{new MutationObserver(function(ms){for(var i=0;i<ms.length;i++){var a=ms[i].addedNodes,r=ms[i].removedNodes,j,n;
+for(j=0;j<a.length;j++){n=a[j];if(n.nodeType!==1)continue;if(isSheet(n))P.mark('sheet-mounted');if(isCover(n))P.mark('cover-mounted')}
+for(j=0;j<r.length;j++){n=r[j];if(n.nodeType!==1)continue;if(isSheet(n))P.mark('sheet-unmounted');if(isCover(n))P.mark('cover-unmounted')}}}).observe(document.body,{childList:true,subtree:true})}catch(_){}
+function sample(t){var s=document.querySelector('.zen-sheet');var p=root.style.getPropertyValue('--zen-recede');var tr=s?s.style.transform:'';var h=s?s.style.height:'';
+var key=p+'|'+tr+'|'+h+'|'+(s?1:0);if(key===last)quiet++;else quiet=0;last=key;
+P.motion.push({t:t,p:p===''?-1:+p,tr:tr,h:h,s:s?1:0});
 if((s||quiet<24)&&P.motion.length<6000)requestAnimationFrame(sample);else running=false}
 function arm(){if(running)return;running=true;quiet=0;requestAnimationFrame(sample)}
 P.arm=arm;P.still=function(){return !running||quiet>=6};
-P.begin=function(name){P.scene=name;P.taps=[];P.motion=[];P.long=[];P.events=[];P.marks=[];try{performance.mark('menu-perf:'+name+':start')}catch(_){}P.marks.push({t:performance.now(),n:name+':start'})};
+P.pose=function(){var s=document.querySelector('.zen-sheet');var p=root.style.getPropertyValue('--zen-recede');return JSON.stringify({s:s?1:0,h:s?(parseFloat(s.style.height)||0):0,p:p===''?0:+p,still:P.still()})};
 P.mark=function(n){try{performance.mark('menu-perf:'+n)}catch(_){}P.marks.push({t:performance.now(),n:n})};
-P.end=function(){try{performance.mark('menu-perf:'+P.scene+':end')}catch(_){}P.marks.push({t:performance.now(),n:P.scene+':end'});
-return JSON.stringify({scene:P.scene,origin:performance.timeOrigin,taps:P.taps,motion:P.motion,long:P.long,events:P.events,marks:P.marks})};
+P.begin=function(name){P.scene=name;P.taps=[];P.motion=[];P.long=[];P.events=[];P.marks=[];P.mark(name+':start')};
+P.end=function(){P.mark(P.scene+':end');return JSON.stringify({scene:P.scene,origin:performance.timeOrigin,taps:P.taps,motion:P.motion,long:P.long,events:P.events,marks:P.marks})};
+var vs=null;P.variant=function(css){if(vs){vs.remove();vs=null}if(css){vs=document.createElement('style');vs.id='zen-perf-variant';vs.textContent=css;document.head.appendChild(vs)}};
+var st=root.style;var setP=st.setProperty.bind(st);var muted=false;
+try{Object.defineProperty(st,'setProperty',{configurable:true,writable:true,value:function(n,v,pr){if(muted&&n==='--zen-recede')return;return setP(n,v,pr)}})}catch(_){}
+P.muteRoot=function(on){muted=!!on;if(!on)return;try{st.removeProperty('--zen-recede')}catch(_){}};
 })()"""
         )
     }
@@ -381,8 +470,9 @@ return JSON.stringify({scene:P.scene,origin:performance.timeOrigin,taps:P.taps,m
         finding("== scene $name")
         shell("dumpsys gfxinfo $pkg reset")
         File(out, "framestats-$name.txt").writeText("")
-        chromeJs("window.__zenPerf&&window.__zenPerf.begin(${JSONObject.quote(name)})")
+        // The trace first, then the scene's start mark, so the mark is inside the trace.
         val started = webviewTraceStart()
+        chromeJs("window.__zenPerf&&window.__zenPerf.begin(${JSONObject.quote(name)})")
         val startBoot = SystemClock.elapsedRealtimeNanos()
         val startMono = System.nanoTime()
         val startUptime = SystemClock.uptimeMillis()
@@ -426,12 +516,14 @@ return JSON.stringify({scene:P.scene,origin:performance.timeOrigin,taps:P.taps,m
 
     private fun webviewTraceStart(): Boolean {
         if (!webviewTrace) return false
+        // The previous scene's trace may still be writing out: give it its time rather than share it.
+        val deadline = SystemClock.uptimeMillis() + 60_000
+        while (SystemClock.uptimeMillis() < deadline && isTracing()) SystemClock.sleep(500)
         var ok = false
         instrumentation.runOnMainSync {
             val controller = TracingController.getInstance()
             if (controller.isTracing) {
-                finding("webview trace: a session was already running")
-                ok = true
+                finding("webview trace: a session was already running; the scene shares it")
                 return@runOnMainSync
             }
             val config = TracingConfig.Builder()
@@ -448,6 +540,12 @@ return JSON.stringify({scene:P.scene,origin:performance.timeOrigin,taps:P.taps,m
         // The renderers take a moment to learn the categories.
         if (ok) SystemClock.sleep(600)
         return ok
+    }
+
+    private fun isTracing(): Boolean {
+        var tracing = false
+        instrumentation.runOnMainSync { tracing = TracingController.getInstance().isTracing }
+        return tracing
     }
 
     private fun webviewTraceStop(name: String) {
@@ -468,24 +566,24 @@ return JSON.stringify({scene:P.scene,origin:performance.timeOrigin,taps:P.taps,m
             finding("webview trace: nothing to stop for $name")
             return
         }
-        if (!closed.await(90, TimeUnit.SECONDS)) finding("webview trace: $name did not finish writing in 90 s")
+        if (!closed.await(180, TimeUnit.SECONDS)) finding("webview trace: $name did not finish writing in 180 s")
         finding("webview trace: $name ${file.length() / 1024} KB")
     }
 
     private fun perfettoStart() {
         if (!perfetto) return
-        val config = "/data/local/tmp/menu-perf.pbtxt"
-        val present = !shell("ls $config").contains("No such file")
+        val present = !shell("ls $CONFIG_PATH").contains("No such file")
         val command = if (present) {
-            "perfetto --background --txt -c $config -o $TRACE_PATH"
+            "perfetto --background --txt -c $CONFIG_PATH -o $TRACE_PATH"
         } else {
             // No config from the workflow: the lightweight atrace form, without the frame timeline.
-            "perfetto --background -t 900s -o $TRACE_PATH --app $pkg sched gfx view input wm am binder_driver dalvik"
+            "perfetto --background -t 1800s -o $TRACE_PATH --app $pkg sched gfx view input wm am binder_driver dalvik"
         }
-        val output = shell(command).trim()
+        val (output, error) = shellWithError(command)
         perfettoPid = output.lines().lastOrNull { it.trim().toIntOrNull() != null }?.trim()
             ?: shell("pidof perfetto").trim().split(' ').firstOrNull { it.toIntOrNull() != null }
-        finding("perfetto: ${if (present) "workflow config" else "lightweight atrace config"}, pid ${perfettoPid ?: "?"}: ${output.take(200)}")
+        finding("perfetto: ${if (present) "workflow config" else "lightweight atrace config"}, pid ${perfettoPid ?: "?"}: ${output.trim().take(200)}${if (error.isNotBlank()) " / stderr: ${error.trim().take(300)}" else ""}")
+        if (perfettoPid == null) finding("perfetto: no trace this run")
     }
 
     private fun perfettoStop() {
@@ -538,19 +636,54 @@ return JSON.stringify({scene:P.scene,origin:performance.timeOrigin,taps:P.taps,m
         return FileInputStream(fd.fileDescriptor).bufferedReader().use { it.readText() }.also { fd.close() }
     }
 
+    /**
+     * The same with the command's stderr, where the platform gives it (API 31+): `perfetto`
+     * refused a config with one line there and nothing on stdout (run 35540328965).
+     */
+    private fun shellWithError(command: String): Pair<String, String> {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return shell(command) to ""
+        val fds: Array<ParcelFileDescriptor> = ui.executeShellCommandRwe(command)
+        fds[1].close()
+        val err = StringBuilder()
+        val reader = Thread {
+            try {
+                FileInputStream(fds[2].fileDescriptor).bufferedReader().use { err.append(it.readText()) }
+            } catch (_: Exception) {
+            }
+        }
+        reader.start()
+        val output = FileInputStream(fds[0].fileDescriptor).bufferedReader().use { it.readText() }
+        reader.join(5_000)
+        fds[0].close()
+        fds[2].close()
+        return output to err.toString()
+    }
+
     companion object {
         private const val PORT = 18135
         private const val ORIGIN = "http://127.0.0.1:$PORT"
         private const val TAB_ID = "tab_perf"
         private const val LIVE_URL = "https://github.com/BenItBuhner/Zenium"
+        private const val CONFIG_PATH = "/data/misc/perfetto-configs/menu-perf.pbtxt"
         private const val TRACE_PATH = "/data/misc/perfetto-traces/menu-perf.perfetto-trace"
         /** The longest a spring is given to land on the emulator. */
         private const val SETTLE_MS = 8_000L
+        /**
+         * The chrome renderer's main thread and compositor. Not the invalidation-tracking
+         * category: its arguments are stripped from a release WebView's trace anyway, and on
+         * the github.com copy it filled the ring and made a 7 MB trace of a 12-minute scene
+         * (run 35540328965); nor viz / gpu, whose emulator numbers are the software GPU's.
+         */
         private val WEBVIEW_CATEGORIES = listOf(
-            "blink", "blink.user_timing", "cc", "v8", "renderer.scheduler", "input", "viz", "gpu",
-            "devtools.timeline", "disabled-by-default-devtools.timeline",
-            "disabled-by-default-devtools.timeline.frame",
-            "disabled-by-default-devtools.timeline.invalidationTracking"
+            "blink", "blink.user_timing", "cc", "v8", "renderer.scheduler", "input",
+            "devtools.timeline", "disabled-by-default-devtools.timeline"
         )
+        /** The frame's corner stays at rest while everything else recedes. */
+        private const val RADIUS_OFF_CSS =
+            ":root[data-form-factor='phone'] .zen-content-frame{border-radius:var(--zen-content-radius)!important}"
+        /** Nothing consumes `--zen-recede`: the frame and its edge layers do not scale, the bar does not fade. */
+        private const val RECEDE_OFF_CSS =
+            ":root[data-form-factor='phone'] .zen-content-frame,:root[data-form-factor='phone'] .zen-load-progress-layer,:root[data-form-factor='phone'] .zen-message-frame{transform:none!important;border-radius:var(--zen-content-radius)!important}" +
+                ":root[data-form-factor='phone'] .zen-phone-bar[data-edge='bottom']{opacity:1!important}"
     }
 }
