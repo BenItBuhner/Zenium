@@ -257,7 +257,8 @@ describe('LineFocus', () => {
       { top: 524, height: 24 }
     ] as unknown as DOMRectList)
     focus.follow(range)
-    expect(focus.band()).toEqual({ top: 500 - 24, bottom: 500 + 2 * 24 })
+    // The fragment (24) sits centred in its 30px line: the line's top is 497.
+    expect(focus.band()).toEqual({ top: 497 - LINE, bottom: 497 + 2 * LINE })
     focus.follow(null)
     const rest = Math.round(VIEW_HEIGHT * LINE_FOCUS_REST)
     expect(focus.band()).toEqual({ top: rest - LINE, bottom: rest + 2 * LINE })
@@ -395,7 +396,8 @@ describe('installReaderExtras', () => {
       word: null,
       mode: 'sentence'
     })
-    expect(extras.lineFocus.band()).toEqual({ top: 620, bottom: 620 + 26 })
+    // A 26px fragment in a 30px line: the line starts 2px above it.
+    expect(extras.lineFocus.band()).toEqual({ top: 618, bottom: 618 + 30 })
 
     paintHighlight(document, {
       type: 'readAloud',

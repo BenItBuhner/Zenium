@@ -447,15 +447,34 @@ export class LineFocus {
     return 30
   }
 
-  /** The first line of a range: its top and height in the view, or null when it has no box. */
+  /**
+   * The first line of a range: its top and height in the view, or null when it has no box. A
+   * range's first client rect is its text fragment's box (the font's content area), shorter than
+   * the line it sits in; the line is the text's computed line height, the fragment centred in it.
+   */
   private lineOf(range: Range): Placement | null {
     try {
       const rects = range.getClientRects()
       const rect = rects.length > 0 ? rects[0] : range.getBoundingClientRect()
       if (!rect || rect.height <= 0) return null
-      return { lineTop: rect.top, lineHeight: rect.height }
+      const lineHeight = Math.max(rect.height, this.lineHeightAt(range.startContainer))
+      return { lineTop: rect.top - (lineHeight - rect.height) / 2, lineHeight }
     } catch {
       return null
+    }
+  }
+
+  /** The computed line height of the text at `node` (its nearest element's), or 0 when unknown. */
+  private lineHeightAt(node: Node): number {
+    const view = this.doc.defaultView
+    if (!view) return 0
+    const el = node.nodeType === 1 ? (node as Element) : node.parentElement
+    if (!el) return 0
+    try {
+      const lineHeight = parseFloat(view.getComputedStyle(el).lineHeight)
+      return Number.isFinite(lineHeight) && lineHeight > 0 ? lineHeight : 0
+    } catch {
+      return 0
     }
   }
 
