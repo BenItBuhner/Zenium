@@ -624,7 +624,7 @@ class PrivateTabsDemo : DemoHarness("private-demo-state.json", "private", "priva
         val guardWithCard = guardNow()
         expect("FLAG_SECURE is on the window with the private tab in view, beside the card", guardWithCard && host.privateSurface)
         shot("26-private-tab-card-up")
-        finding("card with the first private tab $g1: ${describeCard(card1)}; FLAG_SECURE ${verdict(guardWithCard)}, private surface ${host.privateSurface}")
+        finding("card with the first private tab $g1: ${describeCard(card1)}; FLAG_SECURE ${onOff(guardWithCard)}, private surface ${host.privateSurface}")
         navigateByTyping(g1, "$ORIGIN/")
         SystemClock.sleep(1_200)
         tapPage(g1, "#bake")
@@ -650,7 +650,7 @@ class PrivateTabsDemo : DemoHarness("private-demo-state.json", "private", "priva
         expect("FLAG_SECURE stays on with the overview on the Private pane", guardOnPane && host.privateSurface)
         shot("27-overview-private-two-cards")
         val clearsBefore = profileClears().size
-        finding("overview on '${pane()}', cards ${cards()}; FLAG_SECURE ${verdict(guardOnPane)}; profile.clear calls so far $clearsBefore")
+        finding("overview on '${pane()}', cards ${cards()}; FLAG_SECURE ${onOff(guardOnPane)}; profile.clear calls so far $clearsBefore")
 
         val cardNode = openShade { it == PrivateSession.TITLE }
         expect("the shade shows the Close all private tabs card", cardNode != null)
@@ -689,7 +689,7 @@ class PrivateTabsDemo : DemoHarness("private-demo-state.json", "private", "priva
         )
         expect("the history has nothing of the private page", runCatching { JSONArray(historyOfSecret).length() }.getOrDefault(-1) == 0)
         finding(
-            "after the card: private tabs ${anyPrivateTab()}, card ${describeCard(privateCard())}, FLAG_SECURE ${verdict(guardAfterCard)}, " +
+            "after the card: private tabs ${anyPrivateTab()}, card ${describeCard(privateCard())}, FLAG_SECURE ${onOff(guardAfterCard)}, " +
                 "private surface ${host.privateSurface}, pane '${pane()}', cards ${cards()}, chrome dark ${host.themeDark}, " +
                 "private profile ${privateProfileState()}, profile.clear calls $clears, recently closed $recentlyClosed, " +
                 "history for 'secret' $historyOfSecret"
@@ -736,7 +736,7 @@ class PrivateTabsDemo : DemoHarness("private-demo-state.json", "private", "priva
         shot("31-relaunched-stale-card-gone")
         finding(
             "after the start: new host ${host !== hostBeforeStale}, card ${describeCard(privateCard())}, private tabs ${anyPrivateTab()}, " +
-                "FLAG_SECURE ${verdict(guardAfterStart)}, private surface ${host.privateSurface}, private profile ${privateProfileState()}"
+                "FLAG_SECURE ${onOff(guardAfterStart)}, private surface ${host.privateSurface}, private profile ${privateProfileState()}"
         )
         finding("\nchecks failed: ${failures.size}${if (failures.isEmpty()) "" else " – " + failures.joinToString("; ")}")
     }
@@ -1647,6 +1647,9 @@ class PrivateTabsDemo : DemoHarness("private-demo-state.json", "private", "priva
     }
 
     private fun verdict(ok: Boolean) = if (ok) "PASS" else "FAIL"
+
+    /** A state's word in the findings, where PASS and FAIL are the checks' alone: the guard read off is "off", not a failure. */
+    private fun onOff(on: Boolean) = if (on) "on" else "off"
 
     private fun finding(line: String) {
         Log.i(tag, line.trim())

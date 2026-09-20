@@ -34,11 +34,6 @@ name: Android private tabs demo
 # android-emulator-demo.yml; this file picks the driver and the engine.
 on:
   workflow_dispatch:
-  # Run 4 of PR #203 (scene g, the private session's card beside the guard, and the six driver
-  # fixes after run 3), on its final head; the next commit takes this trigger off again.
-  push:
-    branches:
-      - cursor/android-private-tabs-ac7a
 
 permissions:
   contents: read
