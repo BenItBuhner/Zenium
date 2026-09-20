@@ -234,6 +234,8 @@ describe('the landing list', () => {
   const page = INTERNAL_PAGES.settings
 
   it('separates Zen features from Sync and Updates, and those from About (v2 §10.2)', () => {
+    // The tablet layout: Sync (the desktop panel's section serves the two-pane page) and Keyboard
+    // Shortcuts are listed there and not on the phone.
     const runs = landingRuns(page, availableSections(page, ALL, 'tablet')).map((run) =>
       run.map((s) => s.id)
     )
@@ -241,7 +243,7 @@ describe('the landing list', () => {
     expect(runs[0][0]).toBe('look')
     expect(runs[0]).not.toContain('sync')
     expect(runs[0]).not.toContain('accessibility')
-    expect(runs[1]).toEqual(['sync', 'accessibility', 'updates'])
+    expect(runs[1]).toEqual(['sync', 'accessibility', 'shortcuts', 'updates'])
     expect(runs[2]).toEqual(['about'])
   })
 
