@@ -74,6 +74,17 @@ describe('the Zen preset (Linux/Windows)', () => {
     expect(key('zen-new-empty-split-view')).toEqual(ctrl('*', { shift: true }))
   })
 
+  it('moves between the panes of a split on Ctrl+Alt+Shift+Arrow in both presets (the space chords with Shift)', () => {
+    for (const preset of ['zen', 'chrome'] as const) {
+      expect(key('zen-split-view-next-pane', 'linux', preset)).toEqual(
+        ctrl('ArrowRight', { alt: true, shift: true })
+      )
+      expect(key('zen-split-view-previous-pane', 'linux', preset)).toEqual(
+        ctrl('ArrowLeft', { alt: true, shift: true })
+      )
+    }
+  })
+
   it('keeps the Zen extras: copy URL, pin toggle, glance expand, blank window', () => {
     expect(key('zen-copy-url')).toEqual(ctrl('c', { shift: true }))
     expect(key('zen-copy-url-markdown')).toEqual(ctrl('c', { shift: true, alt: true }))

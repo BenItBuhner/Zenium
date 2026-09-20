@@ -1607,6 +1607,8 @@ export type ShortcutAction =
   | 'split.horizontal'
   | 'split.unsplit'
   | 'split.newEmpty'
+  | 'split.nextPane'
+  | 'split.prevPane'
   | 'tab.copyUrl'
   | 'tab.copyUrlMarkdown'
   | 'tab.togglePin'
