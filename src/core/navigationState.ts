@@ -18,7 +18,7 @@ import { isKeepableHostState } from './session'
  * snapshot has no blob – every desktop tab, a private tab, a truncated list – has no document,
  * and one it had is removed. There is no backup: a lost or corrupt blob is the URL fallback,
  * nothing worse. `StoreIO` cannot list a folder, so `navigation/index.json` keeps the ids that
- * have a document, for the sweep at load (`load`).
+ * have a document, for the sweep of a run's first fire (`load`, `takeIndex`).
  */
 
 /** The dirty set is written this long after its first change (one timer, not one per tab). */
@@ -160,8 +160,19 @@ export class NavigationStateStore {
   private readonly dirty = new Set<string>()
   /** The `(list, hostState)` pair each document holds, so the same pair is not written twice. */
   private readonly written = new Map<string, { list: string; hostState: string }>()
-  /** Ids that have a document, as far as this run knows (the index at load, then every write). */
+  /**
+   * The ids the index is to list: every document that exists or may exist. An id joins on a
+   * write and leaves once its removal has landed, never before – the index may name a document
+   * that is gone (the next sweep finds nothing to remove), never miss one that is there.
+   */
   private readonly ids = new Set<string>()
+  /** Removals in flight, by id. */
+  private readonly removing = new Set<string>()
+  /** A removal landed since the index was last written: it is to shrink. */
+  private indexShrunk = false
+  /** The ids `state.json` referred to at load, kept until the index is taken in (`takeIndex`). */
+  private referenced: ReadonlySet<string> | null = null
+  private indexTaken = false
   /** The ids the index on disk lists (sorted, joined); `null` once a write of it failed. */
   private indexOnDisk: string | null = ''
   /** Tabs whose document was asked for this run: the join happens once per tab. */
@@ -178,31 +189,23 @@ export class NavigationStateStore {
   ) {}
 
   /**
-   * Once at load, after `state.json` was read: take the index in and remove the documents of
-   * ids that `referenced` (the open tabs with a stack and the recently-closed tabs) does not
-   * name. Documents themselves are not read here – one at a time, when a tab is restored
-   * (`hostStateFor`). A missing or corrupt index means nothing to sweep.
+   * Once at load, after `state.json` was read: `referenced` names the tabs whose stacks it
+   * holds (the open tabs with a stack and the recently-closed tabs). Nothing is read here – on
+   * Android a folder document is a synchronous bridge read, and the boot path stays as it is.
+   * The index comes in at the first fire (`takeIndex`), and the documents of ids `referenced`
+   * does not name go then; documents themselves are read one at a time, when a tab is restored
+   * (`hostStateFor`).
    */
   load(referenced: ReadonlySet<string>): void {
     this.ids.clear()
     this.written.clear()
     this.joined.clear()
     this.dirty.clear()
-    const listed = this.readIndex()
-    if (listed === null) {
-      this.indexOnDisk = ''
-      return
-    }
-    // An index with entries that are not ids is rewritten at the next fire.
-    this.indexOnDisk = listed.clean ? indexKey(listed.ids) : null
-    const orphans: Op[] = []
-    for (const id of listed.ids) {
-      if (referenced.has(id)) this.ids.add(id)
-      else orphans.push({ id, name: navigationDocumentName(id), text: null })
-    }
-    if (orphans.length > 0) this.run(orphans)
-    // The index shrinks by the swept ids at the next fire.
-    if (orphans.length > 0 || !listed.clean) this.schedule()
+    this.removing.clear()
+    this.indexShrunk = false
+    this.referenced = new Set(referenced)
+    this.indexTaken = false
+    this.indexOnDisk = ''
   }
 
   /**
@@ -230,24 +233,31 @@ export class NavigationStateStore {
     this.joined.add(tabId)
     const doc = this.readDocument(tabId)
     if (doc === null) return undefined
-    // Whatever the index said, there is a document: a later removal must know.
+    // Whatever the index says, there is a document: a later removal must know.
     this.ids.add(tabId)
     this.written.set(tabId, { list: doc.list, hostState: doc.hostState })
     return doc.list === navigationListFingerprint(snapshot) ? doc.hostState : undefined
   }
 
-  /** Write the dirty set now; resolves once the documents have landed. */
+  /** Write the dirty set now; resolves once the documents, and an index shrunk by removals, have landed. */
   async flush(): Promise<void> {
     if (this.frozen) return
     this.cancelTimer()
     this.run(this.plan())
     await this.chain
+    if (this.frozen || !this.indexShrunk) return
+    const index = this.indexText()
+    if (index === null) return
+    this.cancelTimer()
+    this.run([{ id: null, name: NAVIGATION_STATE_INDEX, text: index }])
+    await this.chain
   }
 
   /**
-   * Shutdown: the dirty set's documents are written synchronously. A removal has no synchronous
-   * form (`StoreIO.remove`); it goes asynchronously, and a document it did not reach is caught by
-   * the sweep of the next load or by the fingerprint check.
+   * Shutdown: the dirty set's documents and the index are written synchronously. A removal has
+   * no synchronous form (`StoreIO.remove`); it goes asynchronously, and a document it did not
+   * reach stays listed in the index for the sweep of the next load, or is caught by the
+   * fingerprint check.
    */
   flushSync(): void {
     if (this.frozen) return
@@ -285,14 +295,14 @@ export class NavigationStateStore {
    * (harmless) rather than a document the sweep never hears of.
    */
   private plan(): Op[] {
-    const ops: Op[] = []
+    const ops = this.takeIndex()
     for (const id of this.dirty) {
       if (!isSafeId(id)) continue
       const snapshot = this.resolve(id)
       const hostState = snapshot?.hostState
       if (!snapshot || !isKeepableHostState(hostState)) {
         this.written.delete(id)
-        if (this.ids.delete(id)) ops.push({ id, name: navigationDocumentName(id), text: null })
+        if (this.ids.has(id) && !this.removing.has(id)) ops.push(this.removal(id))
         continue
       }
       const list = navigationListFingerprint(snapshot)
@@ -300,6 +310,9 @@ export class NavigationStateStore {
       if (last && last.list === list && last.hostState === hostState) continue
       this.written.set(id, { list, hostState })
       this.ids.add(id)
+      // A removal still in flight lands before this write (the chain is in order) and must not
+      // take the id off the index when it does.
+      this.removing.delete(id)
       const doc: NavigationStateDocument = { version: NAVIGATION_STATE_VERSION, list, hostState }
       ops.push({ id, name: navigationDocumentName(id), text: JSON.stringify(doc) })
     }
@@ -309,8 +322,37 @@ export class NavigationStateStore {
     return ops
   }
 
+  /**
+   * Once per run, at the first plan: the index comes in, and every document it lists that
+   * neither `state.json` referred to at load nor a touch since has spoken for is removed (the
+   * sweep). A missing or corrupt index means nothing to sweep.
+   */
+  private takeIndex(): Op[] {
+    if (this.indexTaken) return []
+    this.indexTaken = true
+    const referenced = this.referenced
+    this.referenced = null
+    const listed = this.readIndex()
+    if (listed === null) return []
+    // An index with entries that are not ids is rewritten at this fire.
+    this.indexOnDisk = listed.clean ? indexKey(listed.ids) : null
+    const ops: Op[] = []
+    for (const id of listed.ids) {
+      this.ids.add(id)
+      if (referenced === null || referenced.has(id) || this.dirty.has(id)) continue
+      ops.push(this.removal(id))
+    }
+    return ops
+  }
+
+  private removal(id: string): Op {
+    this.removing.add(id)
+    return { id, name: navigationDocumentName(id), text: null }
+  }
+
   /** The index document when the id set differs from what is on disk, else null. */
   private indexText(): string | null {
+    this.indexShrunk = false
     const ids = [...this.ids].sort()
     const key = ids.join('\n')
     if (key === this.indexOnDisk) return null
@@ -332,11 +374,16 @@ export class NavigationStateStore {
   private async apply(op: Op): Promise<void> {
     if (op.text !== null) {
       await this.io.write(op.name, op.text)
-    } else if (this.io.remove) {
-      await this.io.remove(op.name)
-    } else {
-      // Hosts without `remove` get the tombstone convention: not a document, so never joined.
-      await this.io.write(op.name, '{}')
+      return
+    }
+    if (this.io.remove) await this.io.remove(op.name)
+    // Hosts without `remove` get the tombstone convention: not a document, so never joined.
+    else await this.io.write(op.name, '{}')
+    // Landed: the id leaves the index at the next fire (unless a write of it is on its way).
+    if (op.id !== null && this.removing.delete(op.id)) {
+      this.ids.delete(op.id)
+      this.indexShrunk = true
+      this.schedule()
     }
   }
 
@@ -356,10 +403,10 @@ export class NavigationStateStore {
       this.indexOnDisk = null
       return
     }
-    this.written.delete(op.id)
-    // A document that would not go stays listed, for the sweep of a later load.
-    if (op.text === null) this.ids.add(op.id)
-    this.indexOnDisk = null
+    // A document that would not go stays listed (the sweep of a later load tries again); one
+    // that would not land is written again at the next touch.
+    if (op.text === null) this.removing.delete(op.id)
+    else this.written.delete(op.id)
   }
 
   /** The ids the index lists; `clean` when every entry was an id and none twice. */
@@ -381,7 +428,7 @@ export class NavigationStateStore {
   private parse(name: string): unknown {
     try {
       const text = this.io.readSync(name)
-      if (text === null || text === '') return null
+      if (typeof text !== 'string' || text === '') return null
       return JSON.parse(text) as unknown
     } catch (error) {
       console.warn(`[zenium] navigation state: could not read ${name}:`, error)

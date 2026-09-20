@@ -411,7 +411,8 @@ export class BrowserState {
       this.uncleanExit = data.cleanExit === false
     }
     this.ensureValid()
-    // The blobs' folder: its index comes in, and the documents nothing refers to any more go.
+    // The blobs' folder hears which ids the session refers to; the documents of the others go at
+    // the store's first fire (nothing is read here).
     this.navigationState.load(
       new Set([...this.tabNavigation.keys(), ...closedTabIds(this.recentlyClosed)])
     )

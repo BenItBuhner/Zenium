@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type {
-  ClosedTabEntry,
   HostCapabilities,
   NavigationSnapshot,
   Platform as PlatformOs,
@@ -8,7 +7,7 @@ import type {
 } from '../../shared/types'
 import { PRIVATE_CONTAINER_ID } from '../../shared/types'
 import { Browser } from '../browser'
-import { createSpace, createTabRecord } from '../model'
+import { createTabRecord } from '../model'
 import {
   closedNavigationOf,
   closedTabIds,
@@ -249,11 +248,14 @@ describe('navigationListFingerprint', () => {
       })
     ).toBe(a)
     expect(navigationListFingerprint({ ...stack, index: 0 })).not.toBe(a)
+    expect(navigationListFingerprint({ entries: [...stack.entries].reverse(), index: 1 })).not.toBe(
+      a
+    )
     expect(
-      navigationListFingerprint({ entries: [...stack.entries].reverse(), index: 1 })
-    ).not.toBe(a)
-    expect(
-      navigationListFingerprint({ entries: [...stack.entries, { url: 'x:y', title: '' }], index: 1 })
+      navigationListFingerprint({
+        entries: [...stack.entries, { url: 'x:y', title: '' }],
+        index: 1
+      })
     ).not.toBe(a)
     // Entry boundaries are part of the name: "ab" + "c" is not "a" + "bc".
     expect(
@@ -423,10 +425,12 @@ describe('NavigationStateStore', () => {
     await store.flush()
     expect(io.documents()).toEqual([NAVIGATION_STATE_INDEX])
     expect(index(io)).toEqual([])
+    // An id leaves the index once its removal has landed, never before: the index may name a
+    // document that is gone, never miss one that is there.
     expect(io.log.slice(3)).toEqual([
-      `write ${NAVIGATION_STATE_INDEX}`,
       'remove navigation/tab_a.json',
-      'remove navigation/tab_b.json'
+      'remove navigation/tab_b.json',
+      `write ${NAVIGATION_STATE_INDEX}`
     ])
     // A tab that never had a document is not removed.
     store.touch('tab_c')
@@ -457,22 +461,32 @@ describe('NavigationStateStore', () => {
     const store = storeOn(io, snapshots)
     store.touch('tab_a')
     store.flushSync()
-    expect(io.log).toEqual([`writeSync ${NAVIGATION_STATE_INDEX}`, 'writeSync navigation/tab_a.json'])
+    expect(io.log).toEqual([
+      `writeSync ${NAVIGATION_STATE_INDEX}`,
+      'writeSync navigation/tab_a.json'
+    ])
     expect(document(io, 'tab_a')?.hostState).toBe(blob)
     store.touch('tab_b')
     await store.flush()
-    expect(io.log.slice(2)).toEqual([`write ${NAVIGATION_STATE_INDEX}`, 'write navigation/tab_b.json'])
+    expect(io.log.slice(2)).toEqual([
+      `write ${NAVIGATION_STATE_INDEX}`,
+      'write navigation/tab_b.json'
+    ])
     // The timer a touch started is cancelled by the flush: nothing fires later.
     await vi.advanceTimersByTimeAsync(NAVIGATION_STATE_WRITE_DELAY_MS * 2)
     expect(io.log).toHaveLength(4)
-    // A removal at flushSync goes asynchronously (StoreIO has no synchronous remove).
+    // A removal at flushSync goes asynchronously (StoreIO has no synchronous remove); the index
+    // still lists the id until the removal has landed and the next fire writes it.
     snapshots.set('tab_a', stack)
     store.touch('tab_a')
     store.flushSync()
-    expect(io.log.slice(4)).toEqual([`writeSync ${NAVIGATION_STATE_INDEX}`])
+    expect(io.log).toHaveLength(4)
     await Promise.resolve()
     await Promise.resolve()
-    expect(io.log.slice(5)).toEqual(['remove navigation/tab_a.json'])
+    expect(io.log.slice(4)).toEqual(['remove navigation/tab_a.json'])
+    expect(index(io)).toEqual(['tab_a', 'tab_b'])
+    await vi.advanceTimersByTimeAsync(NAVIGATION_STATE_WRITE_DELAY_MS)
+    expect(io.log.slice(5)).toEqual([`write ${NAVIGATION_STATE_INDEX}`])
     expect(index(io)).toEqual(['tab_b'])
   })
 
@@ -510,12 +524,16 @@ describe('NavigationStateStore', () => {
 
     it('gives nothing for another list, a missing document or a corrupt one', () => {
       const other = withDocument(navigationListFingerprint({ ...stack, index: 0 }))
-      expect(storeOn(other, new Map([['tab_a', stack]])).hostStateFor('tab_a', stack)).toBeUndefined()
+      expect(
+        storeOn(other, new Map([['tab_a', stack]])).hostStateFor('tab_a', stack)
+      ).toBeUndefined()
 
       const missing = memoryIo({
         [NAVIGATION_STATE_INDEX]: JSON.stringify({ version: 1, ids: ['tab_a'] })
       })
-      expect(storeOn(missing, new Map([['tab_a', stack]])).hostStateFor('tab_a', stack)).toBeUndefined()
+      expect(
+        storeOn(missing, new Map([['tab_a', stack]])).hostStateFor('tab_a', stack)
+      ).toBeUndefined()
 
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
       try {
@@ -531,7 +549,9 @@ describe('NavigationStateStore', () => {
             [NAVIGATION_STATE_INDEX]: JSON.stringify({ version: 1, ids: ['tab_a'] }),
             'navigation/tab_a.json': text
           })
-          expect(storeOn(io, new Map([['tab_a', stack]])).hostStateFor('tab_a', stack)).toBeUndefined()
+          expect(
+            storeOn(io, new Map([['tab_a', stack]])).hostStateFor('tab_a', stack)
+          ).toBeUndefined()
         }
       } finally {
         warn.mockRestore()
@@ -567,7 +587,10 @@ describe('NavigationStateStore', () => {
     it('removes the documents of ids the index lists but nothing refers to, and keeps the rest', async () => {
       const doc = JSON.stringify({ version: 1, list: 'abc', hostState: blob })
       const io = memoryIo({
-        [NAVIGATION_STATE_INDEX]: JSON.stringify({ version: 1, ids: ['tab_open', 'tab_closed', 'tab_gone', 'tab_lost'] }),
+        [NAVIGATION_STATE_INDEX]: JSON.stringify({
+          version: 1,
+          ids: ['tab_open', 'tab_closed', 'tab_gone', 'tab_lost']
+        }),
         'navigation/tab_open.json': doc,
         'navigation/tab_closed.json': doc,
         'navigation/tab_gone.json': doc
@@ -592,7 +615,12 @@ describe('NavigationStateStore', () => {
 
     it('a missing or corrupt index means nothing to sweep, and no index is written for nothing', async () => {
       const doc = JSON.stringify({ version: 1, list: 'abc', hostState: blob })
-      for (const text of [undefined, 'oops', '{"version":1}', JSON.stringify({ version: 1, ids: 'x' })]) {
+      for (const text of [
+        undefined,
+        'oops',
+        '{"version":1}',
+        JSON.stringify({ version: 1, ids: 'x' })
+      ]) {
         const files: Record<string, string> = { 'navigation/tab_gone.json': doc }
         if (text !== undefined) files[NAVIGATION_STATE_INDEX] = text
         const io = memoryIo(files)
@@ -622,6 +650,86 @@ describe('NavigationStateStore', () => {
       expect(io.documents()).toEqual([NAVIGATION_STATE_INDEX, 'navigation/tab_ok.json'])
       expect(index(io)).toEqual(['tab_ok'])
       expect(store.hostStateFor('../evil', stack)).toBeUndefined()
+    })
+
+    it('reads nothing at load (the boot path): the index comes in at the first fire, once', async () => {
+      vi.useFakeTimers()
+      const io = memoryIo({
+        [NAVIGATION_STATE_INDEX]: JSON.stringify({ version: 1, ids: ['tab_gone'] }),
+        'navigation/tab_gone.json': JSON.stringify({ version: 1, list: 'abc', hostState: blob })
+      })
+      const reads: string[] = []
+      const counted = {
+        ...io,
+        readSync: (name: string) => {
+          reads.push(name)
+          return io.readSync(name)
+        }
+      } as MemoryIo
+      const snapshots = new Map<string, NavigationSnapshot | null>([['tab_a', withHost]])
+      const store = new NavigationStateStore(counted, (id) => snapshots.get(id) ?? null)
+      store.load(new Set(['tab_a']))
+      expect(reads).toEqual([])
+      expect(io.log).toEqual([])
+      // A run in which nothing is touched sweeps nothing: the next one does.
+      await vi.advanceTimersByTimeAsync(NAVIGATION_STATE_WRITE_DELAY_MS * 2)
+      expect(reads).toEqual([])
+      store.touch('tab_a')
+      await vi.advanceTimersByTimeAsync(NAVIGATION_STATE_WRITE_DELAY_MS)
+      expect(reads).toEqual([NAVIGATION_STATE_INDEX])
+      expect(io.log).toEqual([
+        `write ${NAVIGATION_STATE_INDEX}`,
+        'remove navigation/tab_gone.json',
+        'write navigation/tab_a.json'
+      ])
+      // The orphan stayed listed until its removal landed; the index shrinks at the fire after.
+      expect(index(io)).toEqual(['tab_a', 'tab_gone'])
+      await vi.advanceTimersByTimeAsync(NAVIGATION_STATE_WRITE_DELAY_MS)
+      expect(index(io)).toEqual(['tab_a'])
+      expect(reads).toEqual([NAVIGATION_STATE_INDEX])
+      store.touch('tab_a')
+      await vi.advanceTimersByTimeAsync(NAVIGATION_STATE_WRITE_DELAY_MS)
+      expect(reads).toEqual([NAVIGATION_STATE_INDEX])
+      expect(io.log).toHaveLength(4)
+    })
+
+    it('a document written while its removal is in flight stays in the index', async () => {
+      const io = memoryIo()
+      let release: () => void = () => undefined
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const remove = io.remove
+      if (!remove) throw new Error('the fixture removes')
+      const slow = {
+        ...io,
+        remove: async (name: string) => {
+          await gate
+          await remove(name)
+        }
+      } as MemoryIo
+      const snapshots = new Map<string, NavigationSnapshot | null>([['tab_a', withHost]])
+      const store = new NavigationStateStore(slow, (id) => snapshots.get(id) ?? null)
+      store.load(new Set())
+      store.touch('tab_a')
+      await store.flush()
+      expect(index(io)).toEqual(['tab_a'])
+      // The blob goes: a removal starts and hangs. Then a new blob arrives for the same tab.
+      snapshots.set('tab_a', stack)
+      store.touch('tab_a')
+      const pending = store.flush()
+      snapshots.set('tab_a', { ...withHost, hostState: 'bmV3' })
+      store.touch('tab_a')
+      const later = store.flush()
+      release()
+      await pending
+      await later
+      expect(document(io, 'tab_a')?.hostState).toBe('bmV3')
+      expect(index(io)).toEqual(['tab_a'])
+      expect(io.log.slice(2)).toEqual([
+        'remove navigation/tab_a.json',
+        'write navigation/tab_a.json'
+      ])
     })
   })
 
@@ -669,7 +777,7 @@ describe('NavigationStateStore', () => {
 // ---------------------------------------------------------------------------
 
 function stateOn(io: MemoryIo): BrowserState {
-  const s = new BrowserState(io, {} as Platform, {} as HostCapabilities, '0.0')
+  const s = new BrowserState(io, 'linux', {} as HostCapabilities, '0.0')
   s.load()
   return s
 }
@@ -691,8 +799,16 @@ describe('state.json without host state', () => {
     const s = stateOn(io)
     const open = openTab(s, 'https://example.com/article')
     s.tabNavigation.set(open.id, withHost)
-    const closedTab = createTabRecord({ spaceId: null, containerId: 'default', url: 'https://c.test/' })
-    const windowTab = createTabRecord({ spaceId: null, containerId: 'default', url: 'https://w.test/' })
+    const closedTab = createTabRecord({
+      spaceId: null,
+      containerId: 'default',
+      url: 'https://c.test/'
+    })
+    const windowTab = createTabRecord({
+      spaceId: null,
+      containerId: 'default',
+      url: 'https://w.test/'
+    })
     const closed = closedTabEntry(closedTab, placement, withHost, 5)
     const window = closedWindowEntry(
       'synced',
@@ -775,7 +891,11 @@ describe('state.json without host state', () => {
     const first = stateOn(io)
     const open = openTab(first, 'https://example.com/article')
     first.tabNavigation.set(open.id, withHost)
-    const closedTab = createTabRecord({ spaceId: null, containerId: 'default', url: 'https://c.test/' })
+    const closedTab = createTabRecord({
+      spaceId: null,
+      containerId: 'default',
+      url: 'https://c.test/'
+    })
     first.recentlyClosed = [closedTabEntry(closedTab, placement, withHost, 5)]
     first.navigationState.touch(open.id)
     first.navigationState.touch(closedTab.id)
@@ -907,18 +1027,26 @@ describe('host state documents across the tab lifecycle', () => {
     await flushed(f)
     expect(document(io, tab.id)?.hostState).toBe(blob)
     for (let i = 0; i < RECENTLY_CLOSED_MAX - 1; i++) {
-      const t = createTabRecord({ spaceId: null, containerId: 'default', url: `https://s${i}.test/` })
+      const t = createTabRecord({
+        spaceId: null,
+        containerId: 'default',
+        url: `https://s${i}.test/`
+      })
       f.browser.session.pushTab(closedTabEntry(t, placement, stack, i))
     }
     await flushed(f)
     expect(f.browser.state.recentlyClosed).toHaveLength(RECENTLY_CLOSED_MAX)
     expect(document(io, tab.id)?.hostState).toBe(blob)
-    const last = createTabRecord({ spaceId: null, containerId: 'default', url: 'https://last.test/' })
+    const last = createTabRecord({
+      spaceId: null,
+      containerId: 'default',
+      url: 'https://last.test/'
+    })
     f.browser.session.pushTab(closedTabEntry(last, placement, stack, 99))
     await flushed(f)
-    expect(f.browser.state.recentlyClosed.some((e) => e.kind === 'tab' && e.tab.id === tab.id)).toBe(
-      false
-    )
+    expect(
+      f.browser.state.recentlyClosed.some((e) => e.kind === 'tab' && e.tab.id === tab.id)
+    ).toBe(false)
     expect(io.documents()).toEqual([NAVIGATION_STATE_INDEX])
   })
 
@@ -982,10 +1110,16 @@ describe('host state documents across the tab lifecycle', () => {
     const first = fixture(io)
     const a = first.browser.tabs.createTab({ url: 'https://example.com/', active: true }, first.win)
     navigated(first, a.id, withHost)
-    const b = first.browser.tabs.createTab({ url: 'https://example.com/', active: false }, first.win)
+    const b = first.browser.tabs.createTab(
+      { url: 'https://example.com/', active: false },
+      first.win
+    )
     first.browser.tabs.ensureLoaded(b.id, first.win)
     navigated(first, b.id, { ...withHost, hostState: 'b2xk' })
-    const c = first.browser.tabs.createTab({ url: 'https://example.com/', active: false }, first.win)
+    const c = first.browser.tabs.createTab(
+      { url: 'https://example.com/', active: false },
+      first.win
+    )
     first.browser.tabs.ensureLoaded(c.id, first.win)
     navigated(first, c.id, { ...withHost, hostState: 'Y29ycnVwdA==' })
     first.browser.shutdown()
@@ -1021,8 +1155,8 @@ describe('host state documents across the tab lifecycle', () => {
     navigated(second, c.id, stack)
     await flushed(second)
     expect(io.log.slice(reads).filter((l) => l.startsWith('write navigation/'))).toEqual([
-      `write ${NAVIGATION_STATE_INDEX}`,
-      `write ${navigationDocumentName(b.id)}`
+      `write ${navigationDocumentName(b.id)}`,
+      `write ${NAVIGATION_STATE_INDEX}`
     ])
     expect(document(io, b.id)?.hostState).toBe('bmV3')
     expect(io.log.slice(reads)).toContain(`remove ${navigationDocumentName(c.id)}`)
@@ -1031,7 +1165,10 @@ describe('host state documents across the tab lifecycle', () => {
   it('a closed tab reopened after a relaunch gets its blob back by the closed tab’s id', async () => {
     const io = memoryIo()
     const first = fixture(io)
-    const tab = first.browser.tabs.createTab({ url: 'https://example.com/', active: true }, first.win)
+    const tab = first.browser.tabs.createTab(
+      { url: 'https://example.com/', active: true },
+      first.win
+    )
     navigated(first, tab.id, withHost)
     first.browser.tabs.closeTab(tab.id, true, first.win)
     first.browser.shutdown()
