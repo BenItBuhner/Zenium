@@ -1,3 +1,5 @@
+// Test fixtures: the core itself never touches Node's file or database APIs.
+// eslint-disable-next-line no-restricted-imports
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import type { HostCapabilities } from '../../../shared/types'

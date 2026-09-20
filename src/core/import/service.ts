@@ -158,7 +158,7 @@ export class ImportService {
     try {
       if (source.browser === 'file') await this.runFile(progress, win)
       else await this.runBrowser(progress, abort.signal)
-      progress.status = abort.signal.aborted ? 'cancelled' : 'done'
+      progress.status = abort.signal.aborted ? 'cancelled' : progress.error ? 'failed' : 'done'
     } catch (error) {
       progress.status = 'failed'
       progress.error = messageOf(error)
@@ -172,7 +172,7 @@ export class ImportService {
 
   /** Stop after the kind in flight; the kinds not reached get no result. */
   cancel(): boolean {
-    if (!this.abort || !this.running) return false
+    if (!this.abort || !this.running || this.abort.signal.aborted) return false
     this.abort.abort()
     return true
   }

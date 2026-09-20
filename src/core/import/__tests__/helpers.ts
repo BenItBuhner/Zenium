@@ -1,3 +1,5 @@
+// Test fixtures: the core itself never touches Node's file or database APIs.
+// eslint-disable-next-line no-restricted-imports
 import { DatabaseSync } from 'node:sqlite'
 import type { ImportDatabase, ImportFileKind, ImportHost, ImportTempCopy } from '../../platform'
 
@@ -19,7 +21,12 @@ export function memoryDatabase(build: SqlBuilder): ImportDatabase & { native: Da
   build(db)
   return {
     native: db,
-    all: (sql) => db.prepare(sql).all() as Record<string, unknown>[],
+    all: (sql) => {
+      // WebKit microsecond stamps pass 2^53: node:sqlite throws unless integers come as BigInts.
+      const statement = db.prepare(sql)
+      statement.setReadBigInts(true)
+      return statement.all() as Record<string, unknown>[]
+    },
     close: () => db.close()
   }
 }
@@ -305,7 +312,11 @@ export class FakeImportHost implements ImportHost {
         copies.push(null)
         continue
       }
-      if (entry.kind === 'locked') throw fail(entry.code, path)
+      if (entry.kind === 'locked') {
+        // A host that fails mid-copy leaves nothing behind (the contract the Electron host keeps).
+        await this.removeTemp(dir)
+        throw fail(entry.code, path)
+      }
       const copy = `${dir}/${path.split('/').pop()}`
       this.entries.set(copy, { ...entry })
       copies.push(copy)
