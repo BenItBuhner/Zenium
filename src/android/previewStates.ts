@@ -59,6 +59,7 @@ import {
   type FilterListStatus,
   type TrackingLevel
 } from '@shared/blocking'
+import { syncSetupStore } from '@renderer/lib/syncSetup'
 import { cancelVoiceSearch, startVoiceSearch } from '@renderer/lib/voiceSearch'
 import { cancelQrScan, startQrScan } from '@renderer/lib/qrScan'
 import type { HostGlobal } from './boot'
@@ -159,7 +160,7 @@ const QR_EVENT_MARGIN_MS = 250
  * it over a new tab, `clip=<text>` seeds the stand-in clipboard for the clipboard row, `then=`
  * presses its controls: `tap:Show`, `tap:Edit`, `tap:Refine`). `rules=<n>` on any spec seeds n
  * remembered site permissions for Settings › Security; `blocking=<variant>` may accompany any
- * spec too (see `seedBlocking`).
+ * spec too (see `seedBlocking`), as may `sync=<variant>` for Settings › Sync (see `seedSync`).
  * It comes in as the URL hash, `http://localhost:41734/#overlay=history`, or as
  * `window.postMessage({ zenPreview: 'find=coffee' }, '*')`, which also re-applies an unchanged
  * state. Once applied it is echoed in `<html data-preview-state>` so a driver can wait for it;
@@ -190,6 +191,7 @@ function apply(browser: Browser, spec: string): void {
     // are answered as a dismissal, the way a press outside would.
     unseedBlocking()
     unseedExtensions()
+    unseedSync()
     unseedMedia()
     closeOverlay()
     closeMenu()
@@ -555,9 +557,11 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
   const params = new URLSearchParams(spec.startsWith('#') ? spec.slice(1) : spec)
   const blocking = params.get('blocking')
   const extensions = params.get('extensions')
+  const sync = params.get('sync')
   const seed = (): void => {
     if (blocking) seedBlocking(blocking)
     if (extensions) seedExtensions(extensions)
+    if (sync) seedSync(sync)
   }
   const finish = (): void => {
     seed()
@@ -985,6 +989,101 @@ function seedExtensions(variant: string): void {
 function unseedExtensions(): void {
   extensionsSeed?.()
   extensionsSeed = null
+}
+
+// ---------------------------------------------------------------------------
+// Sync, seeded
+// ---------------------------------------------------------------------------
+
+/** Lets go of the sync state the current spec holds over the core's pushes. */
+let syncSeed: (() => void) | null = null
+
+/** The tree the `chosen` variant has picked: a Drive folder, as the system picker names one. */
+const SYNC_FIXTURE_TREE =
+  'content://com.android.externalstorage.documents/tree/primary%3ADrive%2FZenium'
+
+/**
+ * Settings › Sync in states this stand-in host cannot reach (it has no folder to pick and no
+ * other device): the chrome's copy of the browser state is patched with the engine's status,
+ * and patched again over every state the core pushes while the spec stands. Variants: `off`
+ * (nothing set up, no folder chosen), `chosen` (the setup draft holds a picked tree, so Turn on
+ * sync is live and its sheet has a folder to set up), `on` (connected: two other devices, last
+ * synced five minutes ago), `empty` (connected, no other device yet), `syncing` (a sync
+ * running), `error` (the last sync failed), `lost` (the folder's permission is gone) and
+ * `merge` (the first sync waits on the merge question). The scope stays the core's, so a tapped
+ * toggle shows its new state.
+ */
+function seedSync(variant: string): void {
+  unseedSync()
+  syncSetupStore.set({ folder: variant === 'chosen' ? SYNC_FIXTURE_TREE : null })
+  let seeded: UIState | null = null
+  const patch = (): void => {
+    const state = browserStore.get().state
+    if (!state || state === seeded) return
+    seeded = syncFixture(state, variant, Date.now())
+    browserStore.set({ state: seeded })
+  }
+  patch()
+  syncSeed = browserStore.subscribe(patch)
+}
+
+/** Stop holding a seeded sync state over the core's pushes; the setup draft goes with it. */
+function unseedSync(): void {
+  syncSeed?.()
+  syncSeed = null
+  syncSetupStore.set({ folder: null })
+}
+
+export function syncFixture(state: UIState, variant: string, now: number): UIState {
+  const base = state.sync
+  const deviceName = 'Pixel 8'
+  if (variant === 'off' || variant === 'chosen') {
+    return {
+      ...state,
+      sync: {
+        ...base,
+        enabled: false,
+        folder: null,
+        folderName: null,
+        folderLost: false,
+        deviceName,
+        lastSyncAt: null,
+        lastError: null,
+        syncing: false,
+        devices: [],
+        pendingMerge: false
+      }
+    }
+  }
+  const lost = variant === 'lost'
+  const merge = variant === 'merge'
+  const devices =
+    variant === 'empty' || merge
+      ? []
+      : [
+          { id: 'device-laptop', name: 'Work laptop', lastSeen: now - 2 * HOUR_MS },
+          { id: 'device-desktop', name: 'Home desktop', lastSeen: now - 3 * 60_000 }
+        ]
+  return {
+    ...state,
+    sync: {
+      ...base,
+      enabled: true,
+      folder: SYNC_FIXTURE_TREE,
+      folderName: 'Zenium',
+      folderLost: lost,
+      deviceName,
+      lastSyncAt: merge ? null : now - 5 * 60_000,
+      lastError: lost
+        ? 'The sync folder is no longer accessible. Choose it again to keep syncing.'
+        : variant === 'error'
+          ? 'Could not read the folder: the drive is not mounted'
+          : null,
+      syncing: variant === 'syncing',
+      devices,
+      pendingMerge: merge
+    }
+  }
 }
 
 /**
