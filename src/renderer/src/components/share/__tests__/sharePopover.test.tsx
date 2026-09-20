@@ -13,6 +13,7 @@ vi.mock('@renderer/lib/api', () => ({
 import { run } from '@renderer/lib/api'
 import { closeAllPopovers } from '@renderer/lib/portals'
 import { sharePreview, shareTargets } from '@renderer/lib/share'
+import { uiStore } from '@renderer/lib/ui'
 import { ShareLayer } from '../SharePopover'
 
 /*
@@ -20,7 +21,8 @@ import { ShareLayer } from '../SharePopover'
  * a share sheet – registered through `ui.surface` there and never elsewhere – showing, for the
  * oldest request of the window, what is shared, the link's QR code, and the targets as rows in
  * Chrome's order (Copy link / Copy text, Email, Save for files or an image, More… for the OS's
- * sheet on macOS); a row answers the request once, Escape and an outside press dismiss it.
+ * sheet on macOS); a row answers the request once, Escape and an outside press dismiss it. It
+ * overhangs the content frame, so it paints once the page's view has given way to its picture.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -67,6 +69,14 @@ function popover(): HTMLElement | null {
 function click(target: Element | null): void {
   act(() => {
     target?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+  })
+}
+
+/** The page's capture lands and the popover takes its first paint. */
+async function settle(): Promise<void> {
+  await act(async () => {
+    await Promise.resolve()
+    await Promise.resolve()
   })
 }
 
@@ -144,12 +154,16 @@ describe('ShareLayer as the share surface', () => {
     expect(popover()).toBeNull()
   })
 
-  it('shows the oldest request: its title block, preview, QR code and rows in order', () => {
+  it('shows the oldest request: its title block, preview, QR code and rows in order, once the page has given way', async () => {
     render(
       <ShareLayer
         state={stateWith([REQUEST, { ...REQUEST, id: 'share-2', title: 'Later', requestedAt: 2 }])}
       />
     )
+    // Not before the page's picture is in place: the popover overhangs the content frame.
+    expect(popover()).toBeNull()
+    await settle()
+    expect(uiStore.get().floatingChrome).toBe(1)
     const panel = popover()!
     expect(panel.getAttribute('role')).toBe('dialog')
     expect(panel.style.width).toBe('320px')
@@ -170,10 +184,14 @@ describe('ShareLayer as the share surface', () => {
     ])
     // The first target has the keyboard (§9.22).
     expect(document.activeElement).toBe(panel.querySelector('[data-share-target="copy"]'))
+    act(() => root!.unmount())
+    root = null
+    expect(uiStore.get().floatingChrome).toBe(0)
   })
 
-  it('titles a share from the menu "Share this page" and draws no QR code without a link', () => {
+  it('titles a share from the menu "Share this page" and draws no QR code without a link', async () => {
     render(<ShareLayer state={stateWith([{ ...REQUEST, origin: null, url: '' }])} />)
+    await settle()
     const panel = popover()!
     expect(panel.querySelector('h2')!.textContent).toBe('Share this page')
     expect(panel.querySelector('.zen-v2-title-block-description')).toBeNull()
@@ -181,8 +199,9 @@ describe('ShareLayer as the share surface', () => {
     expect(panel.querySelector('.zen-share-preview-detail')!.textContent).toBe('Read this')
   })
 
-  it('a row answers the request once; Escape dismisses it', () => {
+  it('a row answers the request once; Escape dismisses it', async () => {
     render(<ShareLayer state={stateWith([REQUEST])} />)
+    await settle()
     const copy = popover()!.querySelector('[data-share-target="copy"]')
     click(copy)
     click(copy)
@@ -194,6 +213,7 @@ describe('ShareLayer as the share surface', () => {
     root = null
     vi.mocked(run).mockClear()
     render(<ShareLayer state={stateWith([REQUEST])} />)
+    await settle()
     act(() => {
       popover()!.dispatchEvent(
         new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })

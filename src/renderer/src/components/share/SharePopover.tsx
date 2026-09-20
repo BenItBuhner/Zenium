@@ -3,6 +3,7 @@ import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Paperclip } from 'lucide-react'
 import type { Rect, ShareAnswer, ShareRequest, UIState } from '@shared/types'
 import { useChromeSurface } from '@renderer/hooks/useChromeSurface'
+import { useFloatingChrome } from '@renderer/hooks/useFloatingChrome'
 import { usePopover } from '@renderer/hooks/usePopover'
 import { run } from '@renderer/lib/api'
 import { useLightDismiss } from '@renderer/lib/popoverStore'
@@ -19,7 +20,6 @@ import {
 import { qrSymbol } from '@renderer/lib/qr'
 import { sharePreview, shareTargets } from '@renderer/lib/share'
 import { cn } from '@renderer/lib/utils'
-import { useScrolled } from '../bookmarks/popover'
 import { V2TitleBlock } from '../extensions/v2'
 
 /** The address pill the popover hangs from (Chrome's share bubble hangs from the omnibox). */
@@ -58,14 +58,23 @@ export function ShareLayer({ state }: { state: UIState }): JSX.Element | null {
  * carries files or an image, and "More…" for the OS's own sheet where there is one (macOS). A
  * row answers the request (`share.respond`) and the popover leaves with it; Escape, a press
  * anywhere else, a resize and another popover opening dismiss it, which a page hears as
- * `AbortError`. Focus moves to the first row and Tab wraps (§9.22).
+ * `AbortError`. Focus moves to the first row and Tab wraps (§9.22). The popover overhangs the
+ * content frame, so the page's view gives way to its picture while it is up (`useFloatingChrome`)
+ * and the popover holds its first paint until the picture is in place.
  */
-function SharePopover({ request, state }: { request: ShareRequest; state: UIState }): JSX.Element {
+function SharePopover({
+  request,
+  state
+}: {
+  request: ShareRequest
+  state: UIState
+}): JSX.Element | null {
   const panelRef = useRef<HTMLDivElement>(null)
-  const bodyRef = useRef<HTMLDivElement>(null)
-  const scrolled = useScrolled(bodyRef)
+  // The body's scroll, read inline: the body mounts after the first paint is released.
+  const [scrolled, setScrolled] = useState(false)
   const pill = usePillRect(state)
   const box = place(pill)
+  const ready = useFloatingChrome()
 
   // The answer goes once: the request leaves the state with it and this unmounts.
   const answered = useRef(false)
@@ -78,13 +87,14 @@ function SharePopover({ request, state }: { request: ShareRequest; state: UIStat
     [request.id]
   )
   const dismiss = useCallback(() => answer('dismiss'), [answer])
-  usePopover(panelRef, { onClose: dismiss })
+  usePopover(panelRef, { onClose: dismiss, active: ready })
   useLightDismiss(panelRef, dismiss, { anchor: () => document.querySelector(PILL) })
 
   const preview = sharePreview(request)
   const qr = useMemo(() => qrSymbol(request.url), [request.url])
   const targets = shareTargets(request)
   const files = request.files.length
+  if (!ready) return null
   return (
     <ChromePortal>
       <div
@@ -103,7 +113,10 @@ function SharePopover({ request, state }: { request: ShareRequest; state: UIStat
           description={request.origin ? `${request.origin} wants to share` : undefined}
           scrolled={scrolled}
         />
-        <div ref={bodyRef} className="zen-bm-popover-body zen-share-body">
+        <div
+          className="zen-bm-popover-body zen-share-body"
+          onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 0)}
+        >
           <div className="zen-share-preview">
             <div className="zen-share-preview-title">{preview.title}</div>
             {preview.detail && (
