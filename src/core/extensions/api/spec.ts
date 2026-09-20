@@ -293,7 +293,14 @@ export const API_SPEC: ApiSpec = {
       }
     }
   },
-  action: { methods: ACTION_METHODS, events: { onClicked: {} }, manifestVersion: 3 },
+  // `onUserSettingsChanged` (Chrome 130) is `action`'s alone: the toolbar pin of an MV2
+  // `browserAction` has no event. Zenium pins every action, so it exists and never fires (Meta
+  // Ads Data Advisor's worker init dereferences it before its side panel behaviour).
+  action: {
+    methods: ACTION_METHODS,
+    events: { onClicked: {}, onUserSettingsChanged: {} },
+    manifestVersion: 3
+  },
   browserAction: { methods: ACTION_METHODS, events: { onClicked: {} }, manifestVersion: 2 },
   alarms: {
     methods: {

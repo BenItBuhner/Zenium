@@ -158,6 +158,19 @@ describe('installExtensionApi', () => {
     expect(g.chrome.browserAction).toBeUndefined()
   })
 
+  it('gives action its onUserSettingsChanged event (Chrome 130), which browserAction lacks', () => {
+    installExtensionApi(host, API_SPEC)
+    const fn = vi.fn()
+    g.chrome.action.onUserSettingsChanged.addListener(fn)
+    expect(g.chrome.action.onUserSettingsChanged.hasListener(fn)).toBe(true)
+    // Every action sits on the toolbar here, so the event exists and stays quiet.
+    expect(fn).not.toHaveBeenCalled()
+    installNativeGlobals(2)
+    installExtensionApi(host, API_SPEC)
+    expect(g.chrome.browserAction.onClicked.addListener).toBeTypeOf('function')
+    expect(g.chrome.browserAction.onUserSettingsChanged).toBeUndefined()
+  })
+
   it('routes the part-2 namespaces to the host and answers cookies.getPartitionKey itself', async () => {
     installExtensionApi(host, API_SPEC)
     host.respond = (namespace, method) => {
