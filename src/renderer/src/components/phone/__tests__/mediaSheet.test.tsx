@@ -18,6 +18,7 @@ Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const { MediaLayer } = await import('../MediaSheet')
+const { FrameDialogHost } = await import('@renderer/lib/portals')
 const { uiStore } = await import('@renderer/lib/ui')
 const { viewportStore } = await import('@renderer/lib/formFactor')
 
@@ -108,13 +109,20 @@ function state(
 let root: Root | null = null
 let host: HTMLElement | null = null
 
+/** The layer where `TabDialogs` mounts it: in the frame's dialog host, which the sheet portals into. */
 function render(s: UIState): void {
   if (!root) {
     host = document.createElement('div')
     document.body.appendChild(host)
     root = createRoot(host)
   }
-  act(() => root!.render(<MediaLayer state={s} />))
+  act(() =>
+    root!.render(
+      <FrameDialogHost frame>
+        <MediaLayer state={s} />
+      </FrameDialogHost>
+    )
+  )
 }
 
 /** The sheet up for `t1`'s media, its wait for the page's cover over (at once, with no page). */

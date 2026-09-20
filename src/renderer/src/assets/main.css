@@ -7655,24 +7655,21 @@
 }
 
 /*
- * The sheets a row opens (§9.13, §9.16, §9.23–9.25) on the phone chassis (`.zen-sheet` above:
- * the neutral surface, radius 12, the 48 header, §9.7's hairline once the body has scrolled, the
- * one black scrim): a title block in place of the header when the sheet has a description. The
- * layer lives in the frame's dialog host, outside the page host, so it states the page's type
- * and row padding itself.
- */
-.zen-settings-sheet-layer {
-  font-size: var(--v2-font-body);
-  line-height: var(--v2-line-body);
-  user-select: none;
-}
-/*
- * The edge takes no layout (§9.25: 16 from the sheet's outer edge, border included, to every
- * text and control edge): the chassis border goes and a pseudo-element draws the same hairline
- * on the top and sides, following the radius, so a row's 16 gutter is 16 from the outer edge.
+ * The sheets a row opens (§9.13, §9.16, §9.23–9.25): the phone's shared `PhoneSheet`
+ * (components/phone/PhoneSheet.tsx) on the chassis (`.zen-sheet` above: the neutral surface,
+ * radius 12, the 48 header or the title block when the sheet has a description, §9.7's hairline
+ * once the body has scrolled, the one black scrim), with this class on the panel for what is the
+ * Settings tab's. The sheet lives in the frame's dialog host, outside the page host, so the panel
+ * states the page's type itself. The edge takes no layout (§9.25: 16 from the sheet's outer
+ * edge, border included, to every text and control edge): the chassis border goes and a
+ * pseudo-element draws the same hairline on the top and sides, following the radius, so a row's
+ * 16 gutter is 16 from the outer edge.
  */
 .zen-sheet.zen-settings-sheet {
   border: 0;
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+  user-select: none;
 }
 .zen-sheet.zen-settings-sheet::before {
   content: '';

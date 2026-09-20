@@ -3460,7 +3460,11 @@ function modsSection({ state }: SectionContext): RowGroup[] {
               label: 'Remove Mod',
               button: 'Remove…',
               destructive: true,
-              confirm: { title: `Remove ${mod.name}?`, action: 'Remove' },
+              confirm: {
+                title: `Remove ${mod.name}?`,
+                description: 'Its CSS stops applying to the browser.',
+                action: 'Remove'
+              },
               onPress: () => run('mod.remove', { id: mod.id })
             }
           ],
