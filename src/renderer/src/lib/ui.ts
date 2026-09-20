@@ -2,6 +2,7 @@ import type { LucideIcon } from 'lucide-react'
 import type {
   BookmarkNodeType,
   ContentCover,
+  DefaultBrowserRequestSource,
   ExtensionPromptRequest,
   ExternalProtocolRequest,
   MenuDescriptor,
@@ -370,6 +371,12 @@ export interface UiState {
   downloadsOpen: boolean
   /** The default-browser promo (sheet or dialog) is up over a capture of the page. */
   defaultBrowserPrompt: boolean
+  /**
+   * The desktop's default-browser prompt has been asked for – "Make default" on the strip – and
+   * says what the OS will do before the hand-off (`DefaultBrowserPrompt.tsx`): where it was
+   * asked from, or null. `defaultBrowserPrompt` goes true once it is up over the page's picture.
+   */
+  defaultBrowserAsk: DefaultBrowserRequestSource | null
   /** "Add to Home screen": the install sheet (manifest) or the name-edit sheet, when open. */
   install: WebAppInstallPrompt | null
   /**
@@ -501,6 +508,7 @@ export const uiStore = createStore<UiState>(
     tabsMenu: null,
     downloadsOpen: false,
     defaultBrowserPrompt: false,
+    defaultBrowserAsk: null,
     install: null,
     mediaSheet: null,
     translateSelection: null,

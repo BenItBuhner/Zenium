@@ -1,9 +1,17 @@
 import type { JSX } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { Globe } from 'lucide-react'
+import { appIconVariant } from '@shared/appIcon'
+import type { DefaultBrowserRequestSource } from '@shared/types'
 import { usePopover } from '@renderer/hooks/usePopover'
 import { cmd, run } from '@renderer/lib/api'
 import { useBackSurface } from '@renderer/lib/back'
+import {
+  DEFAULT_BROWSER_PROMPT_TITLE,
+  describeDefaultBrowserRequest,
+  dismissDefaultBrowserBanner,
+  requestDefaultBrowser
+} from '@renderer/lib/defaultBrowser'
 import { useViewport } from '@renderer/lib/formFactor'
 import { FrameDialogPortal, POPOVER_WIDTH, useFrameDialog } from '@renderer/lib/portals'
 import { activeTab } from '@renderer/lib/selectors'
@@ -15,11 +23,12 @@ import {
   uiStore
 } from '@renderer/lib/ui'
 import { V2Button, V2TitleBlock } from '../extensions/v2'
+import { AppIconImage } from '../overlays/AppIconPicker'
 import { PhoneSheet } from '../phone/PhoneSheet'
 import type { BottomSheetHandle } from '../sheet/BottomSheet'
 
 /** Sentence case, as every sheet and prompt title (v2 §9.1). */
-const TITLE = 'Make Zenium your default browser'
+const TITLE = DEFAULT_BROWSER_PROMPT_TITLE
 const BODY =
   'Links from other apps open in Zenium, in your Spaces, with your Boosts and settings. Android asks you to confirm.'
 /** The prompt waits for the page under it to load before going up over its capture, at most this long. */
@@ -53,8 +62,27 @@ const START_GRACE_MS = 400
  * moment it hands over to the host (its rules do not change), while the sheet stays up with its
  * button busy until the host's promise settles, and leaves then; the core taking the prompt
  * down for any other reason slides the sheet away.
+ *
+ * The desktop has no campaign: its strip under the toolbar asks (`DefaultBrowserBanner`), and
+ * its "Make default" raises the same composition as a dialog that says what the OS will do
+ * before the hand-off (`AskDialog`, `ui.defaultBrowserAsk`).
  */
 export function DefaultBrowserLayer(): JSX.Element | null {
+  const ask = uiStore.use((s) => s.defaultBrowserAsk)
+  return (
+    <>
+      <CampaignLayer />
+      {ask && (
+        <FrameDialogPortal>
+          <AskDialog source={ask} />
+        </FrameDialogPortal>
+      )}
+    </>
+  )
+}
+
+/** The core's campaign (`defaultBrowser.prompt === 'sheet'`): the sheet on touch, the dialog on a mouse. */
+function CampaignLayer(): JSX.Element | null {
   const due = browserStore.use((s) => s.state?.defaultBrowser.prompt === 'sheet')
   const viewport = useViewport()
   // The prompt is on screen: from the capture's end until it has left.
@@ -271,6 +299,108 @@ function HostedDialog({ due, onGone }: PromoProps): JSX.Element {
         </V2Button>
         <V2Button variant="primary" data-accept busy={busy} onClick={() => void setDefault()}>
           Set as default
+        </V2Button>
+      </div>
+    </div>
+  )
+}
+
+/** How long the desktop prompt waits for the page's picture before it shows over a blank one. */
+const SNAPSHOT_WAIT_MS = 250
+
+/**
+ * The desktop's prompt, raised by "Make default" on the strip: the §9.23 composition on a
+ * `--v2-dialog` at the form width (§9.20) over the frame's §9.5 scrim – the app icon at 48 at
+ * the top of the block, the title, one sentence saying what this OS does once the user says yes
+ * (`describeDefaultBrowserRequest`: Windows opens Default apps for the user to finish there,
+ * macOS asks itself, Linux registers and asks nothing), then the §9.11 footer, Not now and the
+ * primary. Focus lands on the primary; Escape, the scrim and Not now close it and focus goes
+ * back to the strip's button (§9.22); "Make default" hands over to the OS (`requestDefaultBrowser`,
+ * whose refusal is a toast) and takes the strip down for this release – the request may stay
+ * out for as long as the user takes in the system's own UI, so the dialog does not wait for it.
+ * Like every frame dialog it goes up over the page's picture (`captureActiveTab`, then
+ * `defaultBrowserPrompt` has the host hide the view) and the chassis keeps its panel through
+ * the pop exit (#188).
+ */
+function AskDialog({ source }: { source: DefaultBrowserRequestSource }): JSX.Element {
+  const ref = useRef<HTMLDivElement>(null)
+  const state = browserStore.use((s) => s.state)
+  const tabId = state ? (activeTab(state)?.id ?? null) : null
+  // The dialog holds its first paint until the page's picture is in place, then takes focus.
+  const [active, setActive] = useState(false)
+  // "Make default" taken: the strip is gone with the dialog, so focus goes to the page instead.
+  const chosen = useRef(false)
+  // What had focus when the dialog was asked for – the strip's button – or nothing of the chrome's.
+  const [opener] = useState<HTMLElement | null>(() =>
+    document.activeElement instanceof HTMLElement && document.activeElement !== document.body
+      ? document.activeElement
+      : null
+  )
+
+  useEffect(() => {
+    let gone = false
+    void Promise.race([
+      captureActiveTab(tabId),
+      new Promise<void>((resolve) => setTimeout(resolve, SNAPSHOT_WAIT_MS))
+    ]).then(() => {
+      if (gone) return
+      run('focus.chrome', undefined)
+      uiStore.set({ defaultBrowserPrompt: true })
+      setActive(true)
+    })
+    return () => {
+      gone = true
+      if (uiStore.get().defaultBrowserPrompt) uiStore.set({ defaultBrowserPrompt: false })
+      invalidateSnapshot()
+      // `usePopover` has put focus back on the opener by now; when there is none to go back to
+      // (the strip went with the choice, or the page had focus), the page takes it.
+      if (chosen.current || !opener?.isConnected) returnFocusToPage()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once, for the tab it opened on
+  }, [])
+
+  const close = (): void => {
+    if (uiStore.get().defaultBrowserAsk !== null) uiStore.set({ defaultBrowserAsk: null })
+  }
+  const accept = (): void => {
+    if (chosen.current) return
+    chosen.current = true
+    void requestDefaultBrowser(source)
+    if (source === 'banner' && state) dismissDefaultBrowserBanner(state)
+    close()
+  }
+  useFrameDialog({ onScrimPress: close })
+  usePopover(ref, {
+    onClose: close,
+    active,
+    initial: (root) => root.querySelector<HTMLElement>('[data-accept]')
+  })
+  const platform = state?.platform ?? 'linux'
+  return (
+    <div
+      ref={ref}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="zen-default-browser-ask-title"
+      aria-describedby="zen-default-browser-ask-description"
+      data-default-browser-ask={source}
+      className="zen-v2 zen-v2-dialog zen-animate-pop flex max-w-[calc(100%-32px)] flex-col"
+      style={{ width: POPOVER_WIDTH.form }}
+    >
+      <AppIconImage
+        variant={appIconVariant(state?.settings.appIcon)}
+        className="zen-default-browser-prompt-icon"
+      />
+      <V2TitleBlock
+        id="zen-default-browser-ask-title"
+        title={TITLE}
+        description={describeDefaultBrowserRequest(platform)}
+        descriptionId="zen-default-browser-ask-description"
+      />
+      <div className="flex justify-end gap-2 px-4 pb-4">
+        <V2Button onClick={close}>Not now</V2Button>
+        <V2Button variant="primary" data-accept onClick={accept}>
+          Make default
         </V2Button>
       </div>
     </div>

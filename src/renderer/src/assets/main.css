@@ -400,19 +400,24 @@
  * `.zen-v2-button-label`, `.zen-v2-spinner` in extensions.css, imported above).
  */
 /*
- * On the window (the first run and the tab overview's backdrop, `data-surface="window"`) the
- * secondary reads the window family through the control roles (§9.29): a fill of the window's
- * ink, not the page's – beside the rule and unlayered like it, since a layered override would
- * lose to it. The primary keeps the rule's `--v2-accent`, the clamped mix, for its contrast on a
- * gradient of the accent's own hue.
+ * On the window (the first run, the tab overview's backdrop and the content frame's strips,
+ * `data-surface="window"`) the secondary reads the window family through the control roles
+ * (§9.29): a fill of the window's ink, not the page's – beside the rule and unlayered like it,
+ * since a layered override would lose to it. The primary keeps the rule's `--v2-accent`, the
+ * clamped mix, for its contrast on a gradient of the accent's own hue. The strip is a mouse
+ * surface, so its secondary's hover is the window's hover fill (the shared hover rule reads the
+ * page's).
  */
 .zen-firstrun .zen-v2-button:not([data-primary]),
-.zen-overview .zen-v2-button:not([data-primary]) {
+.zen-overview .zen-v2-button:not([data-primary]),
+.zen-frame-strip .zen-v2-button:not([data-primary]) {
   background: var(--v2-control-fill);
   color: var(--v2-control-text);
 }
 .zen-firstrun .zen-v2-button:not([data-primary]):active:not(:disabled),
-.zen-overview .zen-v2-button:not([data-primary]):active:not(:disabled) {
+.zen-overview .zen-v2-button:not([data-primary]):active:not(:disabled),
+.zen-frame-strip .zen-v2-button:not([data-primary]):hover:not(:disabled),
+.zen-frame-strip .zen-v2-button:not([data-primary]):active:not(:disabled) {
   background: var(--v2-control-fill-hover);
 }
 /*
@@ -8209,10 +8214,11 @@
 }
 
 /*
- * Settings → Default Browser and the "Make Zenium your default browser" strip, on design
- * language v2 (docs/design-language-v2-draft.md §1–§3, §9): a flat card with a 1 px border, the
- * shared v2 button above, and rows that grow around their control (§9.21). v1 motion only. They
- * read the token block and nothing else.
+ * Settings → Default Browser and the "Make Zenium your default browser" strip, with the desktop's
+ * default-browser prompt, on design language v2 (docs/design-language-v2-draft.md §1–§3, §9): a
+ * flat card with a 1 px border, the shared v2 button above, rows that grow around their control
+ * (§9.21), the strip as a window surface (§9.29). v1 motion only. They read the token block and
+ * nothing else.
  */
 @layer components {
   /* The frame's strips ("Make Zenium your default browser", "Restore pages?") stay in layout but
@@ -8288,6 +8294,53 @@
   }
   .zen-default-browser-ok {
     color: var(--v2-ok);
+  }
+  /*
+   * A strip across the top of the content frame (content/DefaultBrowserBanner.tsx): a window
+   * surface (§9.29, `data-surface="window"` on it) – the theme's ink on `--v2-window-fill` – with
+   * §9.7's hairline at its bottom edge, the one line it draws. It grows around its 32 px buttons
+   * to 40 (§9.21: the 4 above and below are its own padding), 16 px gutters, the sentence at 15
+   * on 20 in the full ink (an action's line, not supplementary text), the buttons 8 apart.
+   */
+  .zen-frame-strip {
+    position: relative;
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 8px;
+    min-height: calc(var(--v2-control) + 8px);
+    padding: 4px var(--v2-card-padding);
+    color: var(--v2-control-text);
+    background: var(--v2-window-fill);
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
+  }
+  /* The hairline is the bottom pixel of the 40, as a sticky title block draws its own (§9.7). */
+  .zen-frame-strip::after {
+    content: '';
+    position: absolute;
+    inset: auto 0 0 0;
+    height: 1px;
+    background: var(--v2-border);
+  }
+  .zen-frame-strip-text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /*
+   * The desktop prompt's app icon (defaultbrowser/DefaultBrowserPrompt.tsx): 48, at the top of
+   * the title block – 16 in from the dialog's edges, 16 to the title under it, the block's own
+   * rhythm (§9.23). Content drawn inside chrome: it keeps the icon's own colours (§9.29).
+   */
+  .zen-default-browser-prompt-icon {
+    display: block;
+    flex-shrink: 0;
+    width: 48px;
+    height: 48px;
+    margin: var(--v2-card-padding) var(--v2-card-padding) 0;
   }
 }
 
