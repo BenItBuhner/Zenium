@@ -55,6 +55,7 @@ import { clearDepartures, depart, rectOf } from './departureStore'
 import { DEFAULT_FOLDER_ICON, GroupCard } from './GroupCard'
 import { CARD_HEADER, CARD_RADIUS, CardBody, OverviewCard } from './OverviewCard'
 import { OverviewSheet, type SheetAction } from './OverviewSheet'
+import { PaneSlot, PaneStills, type PaneStill } from './PaneSlot'
 import { noteSheetOpener } from './phonePanel'
 import { RecentlyClosedSheet } from './RecentlyClosedSheet'
 import { TabPreview } from './TabPreview'
@@ -165,6 +166,16 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     privateCountBefore.current = privateCount
     if (before > 0 && privateCount === 0 && picked === 'private') pickOverviewPane('tabs')
   }, [privateCount, picked])
+
+  // A pane switch is a cross-fade (v2 §11.4): the pane that leaves is kept in view as a still
+  // fading out over its slot while the next fades in – `PaneSlot` takes the still as the pane
+  // goes, `PaneStills` draws it until its 120 ms are up.
+  const [stills, setStills] = useState<PaneStill[]>([])
+  const leavePane = useCallback((still: PaneStill) => setStills((s) => [...s, still]), [])
+  const stillDone = useCallback(
+    (key: number) => setStills((s) => s.filter((still) => still.key !== key)),
+    []
+  )
 
   // While a card is dragged its stand-in sits in the slot under the finger, not where the tab
   // is: the grid shows the order the drop would make, and glides into it as the slot moves.
@@ -785,72 +796,80 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
             </button>
           </header>
           {hasPrivate && <PaneSegment pane={pane} onPick={pickOverviewPane} />}
-          {!privatePane && state.spaces.length > 1 && (
-            <SpaceStrip spaces={state.spaces} activeId={space.id} />
-          )}
-          {privatePane && count === 0 ? (
-            <PrivateEmpty />
-          ) : (
-            <div
-              // Each pane is a grid of its own: the one that comes up fades in over the backdrop
-              // (v2 §11, a 120 ms state change) and the cells start fresh with it.
-              key={pane}
-              ref={(el) => {
-                scrollRef.current = el
-                return fadeGrid(el)
-              }}
-              className="zen-overview-grid zen-overview-pane min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-3 pb-4 pt-1"
-              data-pane={pane}
-              // The card the page morphs into is scrolled into view: keep it clear of the fades.
-              style={{
-                touchAction: 'pan-y',
-                overscrollBehavior: 'contain',
-                scrollPaddingBlock: 16
-              }}
-              onScroll={measure}
-            >
-              {essentials.length > 0 && (
-                <div className="mb-3 flex flex-wrap gap-2">
-                  {essentials.map((tab) => (
-                    <button
-                      key={tab.id}
-                      type="button"
-                      className="zen-essential h-12 w-12"
-                      data-active={tab.id === active?.id}
-                      data-discarded={tab.discarded}
-                      aria-label={tabTitle(tab)}
-                      onClick={() => pick(tab)}
-                    >
-                      <Favicon tab={tab} size={22} />
-                    </button>
-                  ))}
-                </div>
-              )}
+          <PaneSlot
+            // Each pane is a slot's worth of its own – the space strip, the grid or the empty
+            // explainer – coming up fresh on a 120 ms fade in while the still of the pane before
+            // fades out over the same slot (v2 §11.4); the cells start fresh with it.
+            pane={pane}
+            root={rootRef}
+            onLeave={leavePane}
+            className="zen-overview-pane relative flex min-h-0 flex-1 flex-col"
+          >
+            {!privatePane && state.spaces.length > 1 && (
+              <SpaceStrip spaces={state.spaces} activeId={space.id} />
+            )}
+            {privatePane && count === 0 ? (
+              <PrivateEmpty />
+            ) : (
               <div
-                className="grid gap-3"
-                style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
+                ref={(el) => {
+                  scrollRef.current = el
+                  return fadeGrid(el)
+                }}
+                className="zen-overview-grid min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-3 pb-4 pt-1"
+                data-pane={pane}
+                // The card the page morphs into is scrolled into view: keep it clear of the fades.
+                style={{
+                  touchAction: 'pan-y',
+                  overscrollBehavior: 'contain',
+                  scrollPaddingBlock: 16
+                }}
+                onScroll={measure}
               >
-                {pinned.map(card)}
-                {groupCards.map(({ folder, tabs, gone }) => (
-                  <GroupCard
-                    key={folder.id}
-                    folder={folder}
-                    tabs={tabs}
-                    card={card}
-                    columns={columns}
-                    onMenu={(f) => setSheet({ kind: 'group', folderId: f.id })}
-                    forming={tabs.length > 0 && forming(folder, tabs)}
-                    dissolving={tabs.length === 0}
-                    held={gone?.count}
-                    onDissolved={dissolvedGroup}
-                    onRelease={subscribeRelease}
-                  />
-                ))}
-                {loose.map(card)}
-                <NewTabCard pane={pane} />
+                {essentials.length > 0 && (
+                  <div className="mb-3 flex flex-wrap gap-2">
+                    {essentials.map((tab) => (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        className="zen-essential h-12 w-12"
+                        data-active={tab.id === active?.id}
+                        data-discarded={tab.discarded}
+                        aria-label={tabTitle(tab)}
+                        onClick={() => pick(tab)}
+                      >
+                        <Favicon tab={tab} size={22} />
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <div
+                  className="grid gap-3"
+                  style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
+                >
+                  {pinned.map(card)}
+                  {groupCards.map(({ folder, tabs, gone }) => (
+                    <GroupCard
+                      key={folder.id}
+                      folder={folder}
+                      tabs={tabs}
+                      card={card}
+                      columns={columns}
+                      onMenu={(f) => setSheet({ kind: 'group', folderId: f.id })}
+                      forming={tabs.length > 0 && forming(folder, tabs)}
+                      dissolving={tabs.length === 0}
+                      held={gone?.count}
+                      onDissolved={dissolvedGroup}
+                      onRelease={subscribeRelease}
+                    />
+                  ))}
+                  {loose.map(card)}
+                  <NewTabCard pane={pane} />
+                </div>
               </div>
-            </div>
-          )}
+            )}
+          </PaneSlot>
+          <PaneStills stills={stills} onDone={stillDone} />
         </div>
         <Departures state={state} activeTabId={active?.id ?? null} />
         <LiftGhost state={state} activeTabId={active?.id ?? null} />
@@ -1253,7 +1272,7 @@ function PaneSegment({
 function PrivateEmpty(): JSX.Element {
   return (
     <div
-      className="zen-overview-pane relative min-h-0 flex-1"
+      className="relative min-h-0 flex-1"
       data-pane="private"
       data-testid="overview-private-empty"
     >

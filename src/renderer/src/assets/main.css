@@ -2258,13 +2258,14 @@
     display: none;
   }
   /*
-   * The overview's panes (TAB-02, TAB-03): the one coming up fades in over the backdrop – a 120 ms
-   * state change (v2 §11.4: content changing in place on a window strip cross-fades on opacity,
-   * no slide and no cut), which reduced motion keeps (the sheet's closing block holds these
-   * durations past its cut) – while the window surfaces blend to the pane's theme (§11.5). The
-   * Tabs | Private segment above them is the shared `.zen-v2-segment` primitive (§9.34, with the
-   * other primitives at the end of the sheet), in the window family through the overview's
-   * `data-surface="window"`.
+   * The overview's panes (TAB-02, TAB-03): a pane switch is a cross-fade – the one coming up
+   * fades in over 120 ms while a still of the one leaving fades out over the same slot for the
+   * same 120 ms (`PaneSlot`, on the Web Animations API) – a state change in place (v2 §11.4:
+   * content changing in place on a window strip cross-fades on opacity, no slide and no cut),
+   * which reduced motion keeps (the sheet's closing block holds these durations past its cut) –
+   * while the window surfaces blend to the pane's theme (§11.5). The Tabs | Private segment above
+   * them is the shared `.zen-v2-segment` primitive (§9.34, with the other primitives at the end
+   * of the sheet), in the window family through the overview's `data-surface="window"`.
    */
   .zen-overview-pane {
     animation: zen-fade 120ms var(--zen-ease);
@@ -7844,8 +7845,8 @@
   /*
    * The overview's panes and the segment primitive (TAB-02, TAB-03; §9.34): content changing in
    * place on a window strip fades the same under reduced motion (v2 §11.4) – a pane coming up
-   * keeps its 120 ms fade, a segment's ink and its line their 120 ms; neither moves in full
-   * motion either.
+   * keeps its 120 ms fade (the still of the one leaving its 120 ms out, in `PaneSlot`), a
+   * segment's ink and its line their 120 ms; neither moves in full motion either.
    */
   .zen-overview-pane {
     animation-duration: 120ms !important;

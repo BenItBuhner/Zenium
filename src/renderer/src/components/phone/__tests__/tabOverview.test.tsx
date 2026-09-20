@@ -128,8 +128,11 @@ const AREA = { x: 0, y: 0, width: 220, height: 600 }
  * loose cards below, the New Tab card last.
  */
 const GRID = 'grid'
+/** The pane's slot (the strip and the grid or the explainer), under the header and the segment. */
+const SLOT = 'slot'
 const DEFAULT_LAYOUT: Array<[string, DOMRect]> = [
   [GRID, new DOMRect(0, 0, 220, 600)],
+  [SLOT, new DOMRect(4, 56, 212, 600)],
   [`group:${GROUP}`, new DOMRect(0, 0, 220, 170)],
   ['m1', new DOMRect(10, 36, 100, 130)],
   ['m2', new DOMRect(120, 36, 100, 130)],
@@ -146,6 +149,7 @@ const bodyHeights = new Map<string, number>()
 const measured = HTMLElement.prototype.getBoundingClientRect
 HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement): DOMRect {
   if (this.classList.contains('zen-overview-grid')) return layout.get(GRID)!
+  if (this.classList.contains('zen-overview-pane')) return layout.get(SLOT)!
   const key = this.closest('[data-cell]')?.getAttribute('data-cell')
   return (key ? layout.get(key) : undefined) ?? measured.call(this)
 }
@@ -1427,7 +1431,9 @@ describe('the private pane', () => {
     expect(cellKeys()).toEqual(['p2', NEW_TAB_CELL])
 
     // The last one closes: back to the Tabs pane, the pick released to it.
-    render(withPrivate(stateOf([tab('a', 'https://a.example/'), tab('b', 'https://b.example/')], [])))
+    render(
+      withPrivate(stateOf([tab('a', 'https://a.example/'), tab('b', 'https://b.example/')], []))
+    )
     expect(privateTabsStore.get().pane).toBe('tabs')
     expect(selected('tabs')).toBe(true)
     expect(grid().dataset.pane).toBe('tabs')
@@ -1447,7 +1453,9 @@ describe('the private pane', () => {
     expect(privateTabsStore.get().pane).toBeNull()
     expect(selected('private')).toBe(true)
     // The core closes p1 and brings a regular tab into view; nothing is picked, so the pane follows.
-    render(withPrivate(stateOf([tab('a', 'https://a.example/'), tab('b', 'https://b.example/')], [])))
+    render(
+      withPrivate(stateOf([tab('a', 'https://a.example/'), tab('b', 'https://b.example/')], []))
+    )
     expect(privateTabsStore.get().pane).toBeNull()
     expect(selected('tabs')).toBe(true)
     expect(cellKeys()).toEqual(['a', 'b', NEW_TAB_CELL])
@@ -1631,6 +1639,175 @@ describe('the private pane', () => {
     expect(commands()).toEqual([
       ['tab.move', { tabId: 'a', spaceId: SPACE, section: 'regular', index: 3 }]
     ])
+  })
+
+  /*
+   * A pane switch is a cross-fade (v2 §11.4): the pane leaving is kept in view as a still of
+   * itself fading 1 → 0 over 120 ms, in the slot it stood in, while the next pane comes up on
+   * its own 120 ms fade in (the stylesheet's, pinned in (F)); the same under reduced motion.
+   */
+  const stills = (): HTMLElement[] => [
+    ...host!.querySelectorAll<HTMLElement>('[data-testid="overview-pane-still"]')
+  ]
+  /** A stand-in for `element.animate()` that records each call and can finish them all. */
+  const recordFades = (): {
+    fades: Array<{ el: HTMLElement; frames: unknown; options: KeyframeAnimationOptions }>
+    finish: () => void
+    restore: () => void
+  } => {
+    const proto = HTMLElement.prototype as { animate?: unknown }
+    const had = proto.animate
+    const fades: Array<{ el: HTMLElement; frames: unknown; options: KeyframeAnimationOptions }> = []
+    const ends: Array<() => void> = []
+    proto.animate = function (
+      this: HTMLElement,
+      frames: unknown,
+      options: KeyframeAnimationOptions
+    ): { onfinish: (() => void) | null; cancel: () => void } {
+      fades.push({ el: this, frames, options })
+      const fade = { onfinish: null as (() => void) | null, cancel: () => undefined }
+      ends.push(() => fade.onfinish?.())
+      return fade
+    }
+    return {
+      fades,
+      finish: () => act(() => ends.splice(0).forEach((end) => end())),
+      restore: () => {
+        proto.animate = had
+      }
+    }
+  }
+
+  it('a pane switch cross-fades: a still of the pane leaving fades out over its slot while the next pane fades in, 120 ms each', () => {
+    const { fades, finish, restore } = recordFades()
+    try {
+      render(mixed())
+      expect(stills()).toEqual([])
+      grid().scrollTop = 40
+
+      act(() => segment('private').click())
+      // The private grid is up, fresh, on the stylesheet's fade in.
+      expect(grid().dataset.pane).toBe('private')
+      expect(grid().closest('.zen-overview-pane')).not.toBeNull()
+      expect(cellKeys()).toEqual(['p1', 'p2', NEW_TAB_CELL])
+      // Over its slot, a still of the Tabs pane as it stood: its grid scrolled where it was,
+      // out of the way of touch and of assistive technology, none of its hooks left on it.
+      const [still] = stills()
+      expect(stills()).toHaveLength(1)
+      expect(still.getAttribute('aria-hidden')).toBe('true')
+      expect(still.hasAttribute('inert')).toBe(true)
+      expect(still.style.pointerEvents || still.className).toMatch(/none|pointer-events-none/)
+      expect([still.style.left, still.style.top, still.style.width, still.style.height]).toEqual([
+        '4px',
+        '56px',
+        '212px',
+        '600px'
+      ])
+      const stillGrid = still.querySelector<HTMLElement>('[data-pane="tabs"]')!
+      expect(stillGrid).not.toBeNull()
+      expect(stillGrid.scrollTop).toBe(40)
+      expect(still.textContent).toContain('a')
+      expect(still.querySelector('[data-cell], [data-testid], .zen-overview-grid')).toBeNull()
+      expect(still.querySelector('.zen-overview-pane')).toBeNull()
+      // The still is no cell of the FLIP set: the set is the private grid's alone.
+      expect(cellKeys()).toEqual(['p1', 'p2', NEW_TAB_CELL])
+      // Its fade: 1 → 0 over the pane's 120 ms, held at 0 until it is taken down.
+      // (StrictMode replays the effect that starts it – the first is cancelled – so more than
+      // one call lands on the one still; every one is the same fade.)
+      expect(fades.length).toBeGreaterThan(0)
+      for (const fade of fades) {
+        expect(fade.el).toBe(still)
+        expect(fade.frames).toEqual([{ opacity: 1 }, { opacity: 0 }])
+        expect(fade.options).toMatchObject({ duration: REDUCED_FADE_MS, fill: 'forwards' })
+      }
+      finish()
+      expect(stills()).toEqual([])
+
+      // Back to Tabs: the still is the private pane's.
+      act(() => segment('tabs').click())
+      expect(stills()).toHaveLength(1)
+      expect(stills()[0].querySelector('[data-pane="private"]')).not.toBeNull()
+      expect(grid().dataset.pane).toBe('tabs')
+      finish()
+      expect(stills()).toEqual([])
+    } finally {
+      restore()
+    }
+  })
+
+  it('the pane following the tab in view cross-fades the same when the core moves it; the explainer too', () => {
+    const { finish, restore } = recordFades()
+    try {
+      const state = mixed()
+      state.spaces[0].activeTabId = 'p1'
+      render(state)
+      expect(selected('private')).toBe(true)
+      // The private tabs close and a regular tab comes into view: the pane follows, over a
+      // still of the private grid.
+      render(
+        withPrivate(stateOf([tab('a', 'https://a.example/'), tab('b', 'https://b.example/')], []))
+      )
+      expect(selected('tabs')).toBe(true)
+      expect(stills()).toHaveLength(1)
+      expect(stills()[0].querySelector('[data-pane="private"]')).not.toBeNull()
+      finish()
+
+      // Private picked with none open: the explainer comes up over a still of the Tabs grid,
+      // and leaves the same way.
+      act(() => segment('private').click())
+      expect(host!.querySelector('[data-testid="overview-private-empty"]')).not.toBeNull()
+      expect(stills()).toHaveLength(1)
+      finish()
+      act(() => segment('tabs').click())
+      expect(stills()[0].textContent).toContain('No private tabs')
+      expect(host!.querySelector('[data-testid="overview-private-empty"]')).toBeNull()
+      finish()
+      expect(stills()).toEqual([])
+    } finally {
+      restore()
+    }
+  })
+
+  it('under reduced motion the cross-fade is the same 120 ms, and without the Web Animations API the still leaves on a timer', () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({ matches: query.includes('reduce') }))
+    const { fades, finish, restore } = recordFades()
+    try {
+      render(mixed())
+      act(() => segment('private').click())
+      expect(stills()).toHaveLength(1)
+      expect(fades[0].frames).toEqual([{ opacity: 1 }, { opacity: 0 }])
+      expect(fades[0].options.duration).toBe(REDUCED_FADE_MS)
+      finish()
+      expect(stills()).toEqual([])
+    } finally {
+      restore()
+    }
+    // No `animate`: the still is taken down when its 120 ms are up.
+    const proto = HTMLElement.prototype as { animate?: unknown }
+    const had = proto.animate
+    proto.animate = undefined
+    try {
+      act(() => segment('tabs').click())
+      expect(stills()).toHaveLength(1)
+      act(() => elapse(REDUCED_FADE_MS - 1))
+      expect(stills()).toHaveLength(1)
+      act(() => elapse(1))
+      expect(stills()).toEqual([])
+    } finally {
+      proto.animate = had
+    }
+  })
+
+  it('a host without private tabs never switches panes, so nothing is ever kept in view', () => {
+    const { fades, restore } = recordFades()
+    try {
+      render(stateOf([tab('a', 'https://a.example/')], []))
+      render(stateOf([tab('a', 'https://a.example/'), tab('b', 'https://b.example/')], []))
+      expect(stills()).toEqual([])
+      expect(fades).toEqual([])
+    } finally {
+      restore()
+    }
   })
 })
 
