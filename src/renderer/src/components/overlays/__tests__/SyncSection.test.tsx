@@ -108,6 +108,13 @@ describe('the desktop Sync pane', () => {
     expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>[\s\S]*?Sync\s+now<\/button>/)
   })
 
+  it('reads the status line the phone page reads: the age lower case after "Last synced" (§9.1)', () => {
+    expect(markup(sync())).toContain('Last synced 1 min ago')
+    expect(markup(sync({ lastSyncAt: Date.now() }))).toContain('Last synced just now')
+    expect(markup(sync({ syncing: true }))).toContain('Syncing…')
+    expect(markup(sync({ lastSyncAt: null }))).toContain('Waiting for first sync')
+  })
+
   it('Choose folder on the notice runs the picker and hands the chosen folder to the engine; a dismissed picker does nothing', async () => {
     mount = document.createElement('div')
     document.body.appendChild(mount)

@@ -886,15 +886,31 @@ describe('the v2 primitives (§9.34)', () => {
     }
     // The span carries no tone of its own anywhere: no stylesheet colours `.zen-v2-description`
     // or `.zen-v2-row-lead` by an attribute on the element, and the settings page's description
-    // reads the same row attribute (`.zen-settings-row[data-tone]`), not one on the span.
+    // and its leading glyph read the same row attribute (`.zen-settings-row[data-tone]`), not
+    // one on the span or a class on the glyph.
     const root = fileURLToPath(new URL('../../', import.meta.url))
     for (const file of readdirSync(root, { recursive: true, encoding: 'utf8' })
       .map((f) => f.split('\\').join('/'))
       .filter((f) => f.endsWith('.css')))
       expect(readFileSync(join(root, file), 'utf8'), `${file} tones the span`).not.toMatch(
-        /\.zen-v2-(description|row-lead)\[data-tone|\.zen-settings-description\[data-tone/
+        /\.zen-v2-(description|row-lead)\[data-tone|\.zen-settings-(description|glyph)\[data-tone/
       )
-    expect(bare).toMatch(/\n\.zen-settings-row\[data-tone='danger'\] \.zen-settings-description \{/)
+    for (const [tone, token] of [
+      ['danger', '--v2-danger'],
+      ['warn', '--v2-warn']
+    ] as const) {
+      for (const part of [
+        '.zen-settings-description',
+        '.zen-settings-leading > .zen-settings-glyph'
+      ]) {
+        const selector = `.zen-settings-row[data-tone='${tone}'] ${part}`
+        const at = bare.indexOf(`\n${selector} {`)
+        expect(at, `rule "${selector}"`).toBeGreaterThanOrEqual(0)
+        expect(bare.slice(at, bare.indexOf('\n}', at)).match(/^ {2}[a-z-]+:[^;]+;/gm)).toEqual([
+          `  color: var(${token});`
+        ])
+      }
+    }
   })
 })
 

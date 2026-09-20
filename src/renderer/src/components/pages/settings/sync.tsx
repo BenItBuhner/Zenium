@@ -98,9 +98,10 @@ const FOLDER_KEYWORDS = [
 function connectedGroups(sync: SyncStatus): RowGroup[] {
   const status: SettingsRow[] = []
   if (sync.folderLost) {
-    // The §9.17 / §9.33 message row: the state's glyph in the danger ink on the label's line,
-    // the way out as the description in the same ink, and nothing to press – the folder row
-    // under it is the follow-up (§9.17: a group's next row is its action).
+    // The §9.17 / §9.33 message row: the state's glyph on the label's line and the way out as
+    // the description, both in the danger ink through the row's one `tone` (the glyph carries
+    // no ink class of its own), and nothing to press – the folder row under it is the follow-up
+    // (§9.17: a group's next row is its action).
     status.push({
       kind: 'info',
       id: 'sync-folder-lost',
@@ -108,7 +109,7 @@ function connectedGroups(sync: SyncStatus): RowGroup[] {
       description: SYNC_COPY.folderLostHint,
       tone: 'danger',
       keywords: ['error', 'lost', 'revoked'],
-      leading: <FolderX className="zen-settings-glyph zen-settings-danger" aria-hidden="true" />
+      leading: <FolderX className="zen-settings-glyph" aria-hidden="true" />
     })
   }
   if (sync.pendingMerge) {

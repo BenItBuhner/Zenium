@@ -1007,15 +1007,17 @@ const SYNC_FIXTURE_TREE =
  * other device): the chrome's copy of the browser state is patched with the engine's status,
  * and patched again over every state the core pushes while the spec stands. Variants: `off`
  * (nothing set up, no folder chosen), `chosen` (the setup draft holds a picked tree, so Turn on
- * sync is live and its sheet has a folder to set up), `on` (connected: two other devices, last
- * synced five minutes ago), `empty` (connected, no other device yet), `syncing` (a sync
- * running), `error` (the last sync failed), `lost` (the folder's permission is gone) and
- * `merge` (the first sync waits on the merge question). The scope stays the core's, so a tapped
- * toggle shows its new state.
+ * sync is live and its sheet has a folder to set up), `busy` (`chosen`, with the engine's
+ * `sync.setup` held open so the passphrase sheet stays on its §9.30 busy form once sent), `on`
+ * (connected: two other devices, last synced five minutes ago), `empty` (connected, no other
+ * device yet), `syncing` (a sync running), `error` (the last sync failed), `lost` (the folder's
+ * permission is gone) and `merge` (the first sync waits on the merge question). The scope stays
+ * the core's, so a tapped toggle shows its new state.
  */
 function seedSync(variant: string): void {
   unseedSync()
-  syncSetupStore.set({ folder: variant === 'chosen' ? SYNC_FIXTURE_TREE : null })
+  const chosen = variant === 'chosen' || variant === 'busy'
+  syncSetupStore.set({ folder: chosen ? SYNC_FIXTURE_TREE : null })
   let seeded: UIState | null = null
   const patch = (): void => {
     const state = browserStore.get().state
@@ -1024,7 +1026,12 @@ function seedSync(variant: string): void {
     browserStore.set({ state: seeded })
   }
   patch()
-  syncSeed = browserStore.subscribe(patch)
+  const unpatch = browserStore.subscribe(patch)
+  const release = holdSetup(variant)
+  syncSeed = () => {
+    unpatch()
+    release()
+  }
 }
 
 /** Stop holding a seeded sync state over the core's pushes; the setup draft goes with it. */
@@ -1034,10 +1041,33 @@ function unseedSync(): void {
   syncSetupStore.set({ folder: null })
 }
 
+/**
+ * While the `busy` fixture stands the chrome's bridge takes `sync.setup` and never answers it,
+ * the way a slow key derivation over a slow tree would look: the passphrase form stays busy
+ * (fields read-only, the primary's spinner, Cancel at .4) for as long as the sheet is up. The
+ * call is left pending on release – the sheet closes with the state, and the form goes with it.
+ * Every other command goes through. Returns the undo.
+ */
+function holdSetup(variant: string): () => void {
+  if (variant !== 'busy') return () => undefined
+  const zen = window.zen
+  const invoke = zen.invoke
+  zen.invoke = <K extends CommandName>(
+    name: K,
+    args: CommandArgs<K>
+  ): Promise<CommandResult<K>> => {
+    if (name === 'sync.setup') return new Promise<CommandResult<K>>(() => undefined)
+    return invoke(name, args)
+  }
+  return () => {
+    if (zen.invoke !== invoke) zen.invoke = invoke
+  }
+}
+
 export function syncFixture(state: UIState, variant: string, now: number): UIState {
   const base = state.sync
   const deviceName = 'Pixel 8'
-  if (variant === 'off' || variant === 'chosen') {
+  if (variant === 'off' || variant === 'chosen' || variant === 'busy') {
     return {
       ...state,
       sync: {

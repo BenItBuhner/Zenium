@@ -94,8 +94,17 @@ export const SYNC_SCOPES: ReadonlyArray<{ key: keyof SyncScope; label: string; h
 /** The one-line status of a connected device: syncing, the last sync's age, or the wait for the first. */
 export function syncStatusLine(sync: SyncStatus, now = Date.now()): string {
   if (sync.syncing) return SYNC_COPY.syncing
-  if (sync.lastSyncAt) return `Last synced ${relativeTime(sync.lastSyncAt, now)}`
+  if (sync.lastSyncAt) return `Last synced ${midSentence(relativeTime(sync.lastSyncAt, now))}`
   return SYNC_COPY.firstSync
+}
+
+/**
+ * An age after "Last synced": `relativeTime` opens a line of its own on a device row ("Just
+ * now"), so it capitalises; after a phrase the word is lower case (§9.1). A count or a date
+ * starts with a digit and is left as it is.
+ */
+function midSentence(age: string): string {
+  return age.charAt(0).toLowerCase() + age.slice(1)
 }
 
 /**

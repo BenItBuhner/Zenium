@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { isValidElement } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
   ExtensionErrorEntry,
@@ -3320,6 +3321,10 @@ describe('ID-08’s Sync category on a phone', () => {
     expect(now.tone).toBeUndefined()
     now.onPress?.()
     expect(invoke).toHaveBeenCalledWith('sync.now', undefined)
+    // After the phrase the age is lower case (§9.1); "Just now" keeps its capital only where it
+    // opens a line of its own, the device rows'.
+    const fresh = row(section('sync', syncState(connected({ lastSyncAt: Date.now() }))), 'sync-now')
+    expect(fresh.description).toBe('Last synced just now')
 
     // The folder row shows the tree's display name and re-chooses through the picker; the chosen
     // tree goes to the engine at once (there is no draft once sync is on).
@@ -3393,7 +3398,9 @@ describe('ID-08’s Sync category on a phone', () => {
       description: 'Choose it again to keep syncing.',
       tone: 'danger'
     })
-    expect(notice.leading).toBeTruthy()
+    // The glyph takes the danger ink through the row's one tone: no ink class of its own.
+    if (!isValidElement<{ className?: string }>(notice.leading)) throw new Error('no glyph')
+    expect(notice.leading.props.className).toBe('zen-settings-glyph')
     // The status line does not repeat the sentence the row above already says.
     const now = row(model, 'sync-now')
     if (now.kind !== 'action') throw new Error('not an action')

@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { CloudOff, FolderOpen, FolderX, RefreshCw } from 'lucide-react'
 import type { UIState } from '@shared/types'
 import { cmd, run } from '@renderer/lib/api'
-import { SYNC_COPY, SYNC_SCOPES } from '@renderer/lib/syncSetup'
+import { SYNC_COPY, SYNC_SCOPES, syncStatusLine } from '@renderer/lib/syncSetup'
 import { relativeTime } from '@renderer/lib/utils'
 import { V2Button, V2Row } from '../extensions/v2'
 import { Button } from '../ui/button'
@@ -171,13 +171,7 @@ function Connected({ state }: { state: UIState }): JSX.Element {
       <section className="zen-squircle overflow-hidden rounded-xl border border-[var(--zen-border)]">
         <div className="flex items-center gap-3 border-b border-[var(--zen-border)] px-4 py-3">
           <div className="min-w-0 flex-1">
-            <div className="text-[13px]">
-              {sync.syncing
-                ? 'Syncing…'
-                : sync.lastSyncAt
-                  ? `Last synced ${relativeTime(sync.lastSyncAt)}`
-                  : 'Waiting for first sync'}
-            </div>
+            <div className="text-[13px]">{syncStatusLine(sync)}</div>
             <div
               className="truncate text-[11.5px] text-[var(--zen-muted)]"
               title={sync.folder ?? ''}

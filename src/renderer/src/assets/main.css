@@ -6993,6 +6993,17 @@
 .zen-settings-row[data-tone='danger'] .zen-settings-description {
   color: var(--v2-danger);
 }
+/*
+ * The leading glyph of the same row (§9.33's mark on the label's line): the same ink through the
+ * same attribute, so a message row sets its tone once – the phone's glyph slot is the settings
+ * page's `.zen-settings-leading`, which the primitive's `.zen-v2-row-lead` rule does not reach.
+ */
+.zen-settings-row[data-tone='warn'] .zen-settings-leading > .zen-settings-glyph {
+  color: var(--v2-warn);
+}
+.zen-settings-row[data-tone='danger'] .zen-settings-leading > .zen-settings-glyph {
+  color: var(--v2-danger);
+}
 /* A sheet whose description is a load error (an extension's details, §9.23): the same ink. */
 .zen-settings-sheet .zen-sheet-title-block p[data-tone='danger'] {
   color: var(--v2-danger);
