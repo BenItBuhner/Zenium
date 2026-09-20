@@ -1309,14 +1309,16 @@ export function extensionPageDocument(page: PreviewExtensionPage): string {
 export const PREVIEW_VOICE_EVENT = 'zen-preview-voice'
 
 /**
- * The stand-in text-to-speech engine's voices (`speech.voices`), shaped as `ReadAloud.kt` reports
- * Google's: `id` the engine's voice name, the engine's default first, then by quality; a few
- * languages so the picker's "Other languages" group shows; one network voice.
+ * The stand-in text-to-speech engine's voices (`speech.voices`), shaped and named as
+ * `ReadAloud.kt` reports Google's (`ReadAloudLogic.voices`): `id` the engine's voice name, the
+ * row's name the locale as the device's language spells it, numbered in rank order where the
+ * locale has more than one voice and plain where it has one; the engine's default first, then by
+ * quality; a few languages so the picker's "Other languages" group shows; one network voice.
  */
 export const PREVIEW_VOICES: ReadAloudVoice[] = [
   {
     id: 'en-gb-x-gba-local',
-    name: 'English (United Kingdom) · Voice 1',
+    name: 'English (United Kingdom) 1',
     lang: 'en-GB',
     local: true,
     quality: 'high',
@@ -1324,49 +1326,49 @@ export const PREVIEW_VOICES: ReadAloudVoice[] = [
   },
   {
     id: 'en-gb-x-rjs-local',
-    name: 'English (United Kingdom) · Voice 2',
+    name: 'English (United Kingdom) 2',
     lang: 'en-GB',
     local: true,
     quality: 'normal'
   },
   {
     id: 'en-us-x-iom-local',
-    name: 'English (United States) · Voice 1',
+    name: 'English (United States) 1',
     lang: 'en-US',
     local: true,
     quality: 'high'
   },
   {
     id: 'en-us-x-tpd-network',
-    name: 'English (United States) · Voice 2',
+    name: 'English (United States) 2',
     lang: 'en-US',
     local: false,
     quality: 'high'
   },
   {
     id: 'en-au-x-aua-local',
-    name: 'English (Australia) · Voice 1',
+    name: 'English (Australia)',
     lang: 'en-AU',
     local: true,
     quality: 'normal'
   },
   {
     id: 'de-de-x-deb-local',
-    name: 'Deutsch (Deutschland) · Stimme 1',
+    name: 'German (Germany)',
     lang: 'de-DE',
     local: true,
     quality: 'high'
   },
   {
     id: 'fr-fr-x-frb-local',
-    name: 'Français (France) · Voix 1',
+    name: 'French (France)',
     lang: 'fr-FR',
     local: true,
     quality: 'normal'
   },
   {
     id: 'es-es-x-eea-local',
-    name: 'Español (España) · Voz 1',
+    name: 'Spanish (Spain)',
     lang: 'es-ES',
     local: true,
     quality: 'normal'

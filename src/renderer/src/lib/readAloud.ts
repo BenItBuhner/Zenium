@@ -41,6 +41,16 @@ export function formatRate(rate: number): string {
 }
 
 /**
+ * The widest of the chip's labels, `0.5×`: what sizes the chip, so it holds one width across the
+ * ladder in whatever font the device draws (a `min-width` in pixels is right for one font only).
+ * In tabular figures every four-character rung is as wide as this one; `1×` and `2×` are narrower
+ * and centre in the same box.
+ */
+export const READ_ALOUD_RATE_SIZER: string = READ_ALOUD_RATE_STEPS.map(formatRate).reduce(
+  (widest, label) => (label.length > widest.length ? label : widest)
+)
+
+/**
  * The header's trailing value: the sentence being read over the count, `9 / 42`; empty before
  * the count is known or the first sentence has begun (the model's -1).
  */

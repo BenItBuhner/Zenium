@@ -8572,8 +8572,8 @@
  *
  * Play / pause is one control (§11.4: a change in place is a 120 ms fade, nothing that moves
  * across): both glyphs sit in the same box and cross-fade on `data-playing`, a touch of scale
- * so the arriving glyph settles; busy (§9.30) hides both under the 16 px spinner. Reduced
- * motion keeps the 120 ms (the closing block below). `will-change` only while the panel moves
+ * so the arriving glyph settles; busy (§9.30) hides both under the 20 px spinner. Reduced
+ * motion keeps the 120 ms fade and cuts the scale (the closing block below). `will-change` only while the panel moves
  * (`data-moving`, §9.33); the reduced-motion fade is written per frame by the component.
  */
 .zen-read-aloud {
@@ -8613,7 +8613,11 @@
   padding-top: 4px;
   padding-bottom: 4px;
 }
-/* Busy (§9.30) on an icon button: the 16 px spinner where the glyph was, the glyph unpainted. */
+/*
+ * Busy (§9.30) on an icon button: the spinner where the glyph was, at the glyph's size – "16 px
+ * on desktop, 20 on the phone, the row glyph sizes of §9.3" (`--v2-icon`; the primitive itself
+ * is fixed at 16) – the glyph unpainted.
+ */
 .zen-read-aloud-toggle,
 .zen-read-aloud-voice {
   position: relative;
@@ -8623,6 +8627,8 @@
   position: absolute;
   inset: 0;
   margin: auto;
+  width: var(--v2-icon);
+  height: var(--v2-icon);
 }
 .zen-read-aloud-toggle[aria-busy='true'] > svg,
 .zen-read-aloud-voice[aria-busy='true'] > svg {
@@ -8648,12 +8654,26 @@
 .zen-read-aloud-toggle[aria-busy='true'] > svg {
   opacity: 0;
 }
-/* Secondary button (§6) hugging its label: the control height, radius 6 under a finger, press .98. */
+/*
+ * Secondary button (§6) hugging its label: the control height, radius 6 under a finger, press
+ * .98. The label is in tabular figures with the multiplication sign, and the chip holds one width
+ * across the ladder's six values (§9.32, the lead's nit): the widest label (`0.5×`) sits under the
+ * live one, unpainted, in the same grid cell, so the box is its width in whatever font the device
+ * draws – the 56 is a floor for a narrow font, not the measure.
+ */
 .zen-v2-button.zen-read-aloud-chip {
+  display: inline-grid;
+  place-items: center;
   min-width: 56px;
   padding: 0 12px;
   margin-right: 8px;
   font-variant-numeric: tabular-nums;
+}
+.zen-read-aloud-chip > span {
+  grid-area: 1 / 1;
+}
+.zen-read-aloud-chip-sizer {
+  visibility: hidden;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -8710,9 +8730,13 @@
   .zen-v2-segment > [role='tab']::after {
     transition-duration: 120ms !important;
   }
-  /* Read aloud's play / pause glyph swap is a change in place (§11.4): its 120 ms fade stays. */
+  /*
+   * Read aloud's play / pause glyph swap is a change in place (§11.4): its 120 ms fade stays,
+   * the settling scale cuts (§11.3: a transition other than opacity is ≤ 1 ms; the list is
+   * opacity, then transform).
+   */
   .zen-read-aloud-toggle > svg {
-    transition-duration: 120ms !important;
+    transition-duration: 120ms, 1ms !important;
   }
 }
 

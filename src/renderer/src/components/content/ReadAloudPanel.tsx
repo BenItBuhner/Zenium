@@ -4,7 +4,14 @@ import { AudioLines, Pause, Play, SkipBack, SkipForward, X } from 'lucide-react'
 import type { ReadAloudState, ReadAloudVoicesResult } from '@shared/readAloud'
 import { cmd, run } from '@renderer/lib/api'
 import { useBackDismissal } from '@renderer/lib/back'
-import { errorText, formatProgress, formatRate, nextRate, voiceRow } from '@renderer/lib/readAloud'
+import {
+  errorText,
+  formatProgress,
+  formatRate,
+  nextRate,
+  READ_ALOUD_RATE_SIZER,
+  voiceRow
+} from '@renderer/lib/readAloud'
 import { uiStore } from '@renderer/lib/ui'
 import { OptionsSheet } from '../pages/settings/sheets'
 import { DockedPanelMotion } from './dockedMotion'
@@ -132,14 +139,20 @@ export function ReadAloudPanel({ session }: { session: ReadAloudState }): JSX.El
       data-surface="page"
       data-status={session.status}
     >
-      {/* A bar header (§9.23): the title at the 16 gutter, the live progress trailing at 16 (§9.16). */}
+      {/*
+       * A bar header (§9.23): the title at the 16 gutter, the progress trailing at 16 (§9.16).
+       * The counter is not a live region: it changes with every sentence, and announcing "5 / 25"
+       * over the speech would talk over what a screen reader's user is listening to – the
+       * highlight and the OS controls carry the progress. The error line is announced once, when
+       * the counter gives way to it.
+       */}
       <div className="zen-read-aloud-header flex items-center gap-3 px-4">
         <span className="zen-read-aloud-title min-w-0 flex-1 truncate">{session.title}</span>
         {progress && (
           <span
             className="zen-read-aloud-progress shrink-0"
             data-tone={failed ? 'danger' : undefined}
-            aria-live="polite"
+            aria-live={failed ? 'polite' : 'off'}
           >
             {progress}
           </span>
@@ -187,7 +200,11 @@ export function ReadAloudPanel({ session }: { session: ReadAloudState }): JSX.El
           aria-label={`Speed ${formatRate(session.rate)}`}
           onClick={() => run('readAloud.setRate', { rate: nextRate(session.rate) })}
         >
-          {formatRate(session.rate)}
+          {/* The widest label, unpainted, under the live one: one chip width across the ladder. */}
+          <span className="zen-read-aloud-chip-sizer" aria-hidden="true">
+            {READ_ALOUD_RATE_SIZER}
+          </span>
+          <span>{formatRate(session.rate)}</span>
         </button>
         <button
           type="button"

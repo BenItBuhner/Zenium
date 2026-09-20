@@ -9,6 +9,7 @@ import {
   formatProgress,
   formatRate,
   nextRate,
+  READ_ALOUD_RATE_SIZER,
   READ_ALOUD_RATE_STEPS,
   voiceOptions,
   voiceRow
@@ -80,6 +81,13 @@ describe('the speed chip', () => {
     expect(formatRate(1.2)).toBe('1.2×')
     expect(formatRate(0.5)).toBe('0.5×')
     expect(formatRate(1.5)).toBe('1.5×')
+  })
+
+  it('sizes the chip by its widest label, so every rung is as wide or narrower', () => {
+    expect(READ_ALOUD_RATE_SIZER).toBe('0.5×')
+    for (const rate of READ_ALOUD_RATE_STEPS) {
+      expect(formatRate(rate).length).toBeLessThanOrEqual(READ_ALOUD_RATE_SIZER.length)
+    }
   })
 })
 
