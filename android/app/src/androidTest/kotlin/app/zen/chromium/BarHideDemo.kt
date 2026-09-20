@@ -640,9 +640,8 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
             fieldLog.all { it <= 0.005 } && hideNumber() <= 0.005,
             "hide max ${fieldLog.maxOrNull() ?: 0.0} over ${fieldLog.size} frames, now ${hideValue()}, URL field open ${urlbarOpen()}"
         )
-        closeUrlbar()
+        val fieldClosed = closeUrlField()
         awaitIme(false)
-        val fieldClosed = awaitChrome(6_000) { !urlbarOpen() }
         finding("[$edge] the URL field ${if (fieldClosed) "closed" else "stayed open"} after back: gate open ${barAllowed()}, hide ${hideValue()}")
         settleBar(0.0, "$edge after the URL field")
         SystemClock.sleep(800)
@@ -677,6 +676,24 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
 
     /** The address pill's node in the tree (its label carries the address after a comma); null when it is not listed. */
     private fun pillNode(): AccessibilityNodeInfo? = findNode { it == PILL_LABEL || it.startsWith("$PILL_LABEL,") }
+
+    /**
+     * Back closes the URL field; whether it has is read off the chrome's own store, not the
+     * accessibility tree. The harness's `closeUrlbar` waits for the pill to be listed again and
+     * presses back once more when it is not, and on the fifth run's retry the tree trailed a
+     * 700 ms frame past its wait: the second back, with the field already closed, went to the
+     * page's tab at its first page and put a new tab page in its place, and the rest of the
+     * top dock's claims read no page view. One back; a second only once the store still says
+     * the field is open after a wait. True when the field is closed.
+     */
+    private fun closeUrlField(): Boolean {
+        repeat(2) {
+            if (!urlbarOpen()) return true
+            back()
+            if (awaitChrome(6_000) { !urlbarOpen() }) return true
+        }
+        return !urlbarOpen()
+    }
 
     /**
      * The overview at `edge`: a finger on the bar's Tabs button opens it over the page, and while
@@ -995,7 +1012,9 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
      */
     private fun pageRect(id: String): Rect? {
         val raw = pageJs("JSON.stringify((r=>({x:r.left,y:r.top,w:r.width,h:r.height}))(document.getElementById('$id').getBoundingClientRect()))")
-        val text = JSONTokener(raw).nextValue() as? String ?: return null
+        // A page that never answered gives "" (no view for the tab): null, not a parse error that
+        // ends the run with its remaining claims unread (the fifth run's retry).
+        val text = runCatching { JSONTokener(raw).nextValue() as? String }.getOrNull() ?: return null
         val rect = runCatching { JSONObject(text) }.getOrNull() ?: return null
         var left = 0
         var top = 0
