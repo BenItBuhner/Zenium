@@ -20,6 +20,7 @@ import type {
   Tab,
   TabSection
 } from '../shared/types'
+import { FOLDER_COLOR_ORDER } from '../shared/defaults'
 import { newId } from '../shared/ids'
 import { BLANK_URL, titleForUrl } from '../shared/url'
 
@@ -463,6 +464,30 @@ export function createFolder(
   if (color) folder.color = color
   model.folders[folder.id] = folder
   return folder
+}
+
+/** The folders (tab groups) of a space, in the sidebar's order. */
+export function foldersOf(model: Model, spaceId: string): Folder[] {
+  return Object.values(model.folders).filter((f) => f.spaceId === spaceId)
+}
+
+/**
+ * The colour a new group of the space wears (tabs-13): as Chrome picks it, the first of the
+ * nine in Chrome's order no other group of the space has yet, cycling once they are all taken.
+ */
+export function nextFolderColor(model: Model, spaceId: string): FolderColor {
+  const palette = FOLDER_COLOR_ORDER
+  const used = foldersOf(model, spaceId).map((f) => f.color ?? null)
+  return palette.find((c) => !used.includes(c)) ?? palette[used.length % palette.length]
+}
+
+/** The folder's tabs in the space's order, the collapsed header's count and the group's members. */
+export function folderTabs(model: Model, folderId: string): Tab[] {
+  const folder = model.folders[folderId]
+  if (!folder) return []
+  const space = model.spaces.find((s) => s.id === folder.spaceId)
+  const ordered = space ? space.tabIds.map((id) => model.tabs[id]).filter(Boolean) : []
+  return ordered.filter((t) => t.folderId === folderId)
 }
 
 export function deleteFolder(model: Model, folderId: string, unpack: boolean): string[] {

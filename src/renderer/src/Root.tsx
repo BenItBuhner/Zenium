@@ -8,7 +8,9 @@ import { NewTabGrowLayer } from './components/newtab/NewTabGrowLayer'
 import { ExternalProtocolLayer } from './components/protocol/ExternalProtocolSheet'
 import { QrScanLayer } from './components/qr/QrScanSheet'
 import { BarEditorLayer } from './components/phone/BarEditorSheet'
+import { GroupEditorLayer } from './components/sidebar/GroupEditorBubble'
 import { SiteInfoLayer } from './components/siteinfo/SiteInfoSheet'
+import { TabSearchLayer } from './components/tabsearch/TabSearchPopover'
 import { VoiceSearchLayer } from './components/voice/VoiceSearchSheet'
 import { SheetPresence } from './lib/motion/presence'
 import { TranslateSelectionLayer } from './components/translate/SelectionPopover'
@@ -26,6 +28,8 @@ export function Root(): JSX.Element {
       <DefaultBrowserLayer />
       <SiteInfoLayer />
       <TranslateSelectionLayer />
+      <TabSearchLayer />
+      <GroupEditorLayer />
       <BarEditorLayer />
       <DownloadBubbleLayer />
       <MenuLayer />

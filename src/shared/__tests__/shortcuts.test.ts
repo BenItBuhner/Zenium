@@ -196,9 +196,10 @@ describe('the Chrome preset', () => {
     expect(chrome('key_appMenu', 'darwin')).toBeNull()
   })
 
-  it('hides the reserved tab search row but keeps its chord', () => {
+  it('shows the tab search row on Ctrl+Shift+A', () => {
     const search = defaultShortcuts('linux', 'chrome').find((s) => s.id === 'key_tabSearch')
-    expect(search?.hidden).toBe(true)
+    expect(search?.hidden).toBeUndefined()
+    expect(search?.label).toBe('Search Tabs')
     expect(
       matchShortcut(defaultShortcuts('linux', 'chrome'), {
         key: 'A',
