@@ -48,7 +48,11 @@ function pair(): {
   } = {}
   const page: Any = { navigator: {} }
   const worker = new EventTarget() as EventTarget & Any
-  const clientSend = (message: ServiceWorkerMessage): void => {
+  // The bridge carries JSON text: nothing but what JSON keeps survives the hop.
+  const json = (message: ServiceWorkerMessage): ServiceWorkerMessage =>
+    JSON.parse(JSON.stringify(message)) as ServiceWorkerMessage
+  const clientSend = (sent: ServiceWorkerMessage): void => {
+    const message = json(sent)
     wire.push(`client ${message.op}`)
     if (message.op === 'post')
       ends.sw?.receive({
@@ -62,7 +66,8 @@ function pair(): {
       })
     else ends.sw?.receive({ t: 'sw', ...message })
   }
-  const workerSend = (message: ServiceWorkerMessage): void => {
+  const workerSend = (sent: ServiceWorkerMessage): void => {
+    const message = json(sent)
     wire.push(`worker ${message.op}`)
     if (message.op === 'post') {
       expect(message.to).toBe('pop1')
@@ -209,6 +214,49 @@ describe('navigator.serviceWorker in a page and the worker globals, joined by th
     expect(pongs).toEqual(['pong'])
     await (clients.openWindow as (u: string) => Promise<unknown>)('/manage.html')
     expect(opened).toEqual([`${ORIGIN}/manage.html`])
+    channel.port1.close()
+  })
+
+  it("a port named inside the data arrives as the very port of the event's transfer list", async () => {
+    // Stylus: the worker asks a page for a worker port over a channel port; the page answers
+    // `{ id, res: port2 }` with `[port2]` transferred and the worker calls `res.postMessage`.
+    const { page, worker } = pair()
+    const container = (page.navigator as Any).serviceWorker as Any
+    container.onmessage = (event: MessageEvent): void => {
+      const [reply] = event.ports
+      reply.onmessage = (m: MessageEvent): void => {
+        const { id } = m.data as { id: number }
+        const chan = new MessageChannel()
+        chan.port1.onmessage = (w: MessageEvent): void => {
+          chan.port1.postMessage({ id: (w.data as { id: number }).id, res: 'built' })
+        }
+        reply.postMessage({ id, res: chan.port2 }, [chan.port2])
+      }
+    }
+    const clients = worker.clients as Any
+    const [client] = (await (clients.matchAll as () => Promise<Any[]>)()) as Any[]
+    const channel = new MessageChannel()
+    const answers: unknown[] = []
+    channel.port1.onmessage = (m: MessageEvent): void => {
+      answers.push(m.data)
+    }
+    ;(client.postMessage as (m: unknown, t: unknown[]) => void)(null, [channel.port2])
+    channel.port1.postMessage({ id: 1, args: ['getWorkerPort', '/js/worker.js'] })
+    await until(() => answers.length === 1)
+    const { res } = answers[0] as { id: number; res: MessagePort }
+    expect(res).toBeInstanceOf(MessagePort)
+    // What the worker got in `res` is what it can talk on.
+    const built: unknown[] = []
+    res.onmessage = (m: MessageEvent): void => {
+      built.push(m.data)
+    }
+    res.postMessage({ id: 7, args: ['build'] })
+    await until(() => built.length === 1)
+    expect(built).toEqual([{ id: 7, res: 'built' }])
+    // A port that is not in the transfer list cannot be cloned, as on the platform.
+    expect(() => encodePayload({ p: new MessageChannel().port1 })).toThrow(/cloned/)
+    expect(decodePayload({ __zenPort: 3 }, [])).toBeNull()
+    res.close()
     channel.port1.close()
   })
 
