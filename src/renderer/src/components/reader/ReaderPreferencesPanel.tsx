@@ -1,17 +1,22 @@
 import type { JSX } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ALargeSmall, Minus, Plus } from 'lucide-react'
+import { ALargeSmall, AudioLines, Minus, Plus } from 'lucide-react'
 import type { Rect, UIState } from '@shared/types'
 import { READER_URL_PREFIX } from '@shared/url'
 import {
   READER_FONTS,
   READER_FONT_LABELS,
   READER_FONT_SIZES,
+  READER_LINE_FOCUS,
+  READER_LINE_FOCUS_LABELS,
+  READER_SPACINGS,
+  READER_SPACING_LABELS,
   READER_THEMES,
   READER_THEME_LABELS,
   READER_WIDTHS,
   READER_WIDTH_LABELS,
   stepReaderFontSize,
+  type ReaderLineFocus,
   type ReaderPreferences
 } from '@shared/reader'
 import { run } from '@renderer/lib/api'
@@ -27,6 +32,8 @@ import {
   DesktopPopover,
   ListRow,
   RowValue,
+  Separator,
+  SwitchRow,
   TitleBlock
 } from '../siteControls/primitives'
 import { GLYPH } from '../security/glyph'
@@ -47,15 +54,22 @@ function shownChip(): HTMLElement | null {
 
 type Panel = NonNullable<ReturnType<typeof uiStore.get>['readerPreferences']>
 
+/** The focus band the switch turns on: the size last chosen this session, Edge's three lines before that. */
+let lastLineFocus: ReaderLineFocus = 3
+
 /**
- * Reader View's text preferences (CT-20; Chrome's Reading mode panel, Edge's Immersive Reader
- * "Text preferences"): the text size on its ladder with A− / A+, the font, the colour theme and
- * the column width, one setting for every reader page. On a mouse a 400 px popover under the
+ * Reader View's text preferences (CT-20, CT-13, EDGE-13; Chrome's Reading mode panel, Edge's
+ * Immersive Reader "Text preferences" and "Reading preferences"): the one home for everything
+ * the reader document offers (v2 §10.1 – the document itself draws no toolbar): read aloud's
+ * start, the text size on its ladder with A− / A+, the font, the colour theme, the column
+ * width and the text spacing, then the immersive-reader extras – line focus with its band size
+ * and syllables – one setting for every reader page. On a mouse a 400 px popover under the
  * pill's chip (v2 draft §9.20) – rows with trailing controls (§9.21) under a title block (§9.23);
- * on a phone the shared bottom sheet with its 48 header (§9.16). Every change goes through
- * `reader.setPreferences`, which saves it and pushes it to the open reader pages; the page under
- * the surface is a picture, taken again after each change so the article is seen as it now
- * reads. The surface leaves by itself when its tab stops being a reader page or closes.
+ * on a phone the shared bottom sheet with its 48 header (§9.16), a control panel that draws its
+ * controls (§9.13). Every change goes through `reader.setPreferences`, which saves it and pushes
+ * it to the open reader pages; the page under the surface is a picture, taken again after each
+ * change so the article is seen as it now reads. The surface leaves by itself when its tab
+ * stops being a reader page or closes.
  */
 export function ReaderPreferencesPanel({
   state,
@@ -69,7 +83,15 @@ export function ReaderPreferencesPanel({
   const reader = Boolean(tab && tab.url.startsWith(READER_URL_PREFIX))
   const prefs = state.settings.reader
   // The page has taken the change (the state came back with it): its picture is taken again.
-  const key = `${prefs.fontSize}|${prefs.font}|${prefs.theme}|${prefs.width}`
+  const key = [
+    prefs.fontSize,
+    prefs.font,
+    prefs.theme,
+    prefs.width,
+    prefs.spacing,
+    prefs.lineFocus,
+    prefs.syllables
+  ].join('|')
   const first = useRef(true)
   useEffect(() => {
     if (first.current) {
@@ -83,7 +105,15 @@ export function ReaderPreferencesPanel({
   }, [])
   // The tab was closed or left Reader View under the surface: the owner starts the exit.
   const closing = !reader
-  const content = <Rows prefs={prefs} onChange={change} />
+  // Read aloud's start (CT-13): the row ends the surface – the player docks under the page and
+  // the article is what to look at – and the core reads the reader document from its top.
+  const listen = state.capabilities.readAloud
+    ? () => {
+        closeReaderPreferences()
+        run('readAloud.start', { tabId: panel.tabId, from: 'reader' })
+      }
+    : null
+  const content = <Rows prefs={prefs} onChange={change} onListen={listen} />
   return phone ? (
     <ReaderPreferencesSheet closing={closing}>{content}</ReaderPreferencesSheet>
   ) : (
@@ -94,22 +124,39 @@ export function ReaderPreferencesPanel({
 }
 
 /**
- * The four settings, one composition on both platforms: the size as a stepper row – A− and A+
- * as the shared icon buttons (§9.3) with the size in px between them, the ends disabled at .4
- * (§9.30) – then a menulist row each for the font, the colour theme and the column width
- * (§9.13, a sheet of radio rows under a finger).
+ * The rows, one composition on both platforms (§9.13's control panel): Listen to this article
+ * first – an action row with the read-aloud glyph, on hosts with a speech engine – then the
+ * text: the size as a stepper row – A− and A+ as the shared icon buttons (§9.3) with the size
+ * in px between them, the ends disabled at .4 (§9.30) – and a menulist row each for the font,
+ * the colour theme, the column width and the spacing (§9.13, a sheet of radio rows under a
+ * finger); then the extras: line focus as a switch row (§10.4) with the band size a dependent
+ * menulist row – laid out at .4 while the focus is off – and syllables as a switch row.
  */
 function Rows({
   prefs,
-  onChange
+  onChange,
+  onListen
 }: {
   prefs: ReaderPreferences
   onChange: (patch: Partial<ReaderPreferences>) => void
+  onListen: (() => void) | null
 }): JSX.Element {
   const smallest = READER_FONT_SIZES[0]
   const largest = READER_FONT_SIZES[READER_FONT_SIZES.length - 1]
+  const focusOn = prefs.lineFocus !== 0
   return (
     <div className="flex flex-col" data-reader-prefs-rows="">
+      {onListen && (
+        <>
+          <ListRow
+            label="Listen to this article"
+            leading={<AudioLines className={GLYPH} aria-hidden />}
+            onClick={onListen}
+            data-reader-pref="listen"
+          />
+          <Separator />
+        </>
+      )}
       <ListRow
         label="Text size"
         control
@@ -152,6 +199,44 @@ function Rows({
         value={prefs.width}
         options={READER_WIDTHS.map((value) => ({ value, label: READER_WIDTH_LABELS[value] }))}
         onChange={(width) => onChange({ width })}
+      />
+      <ChoiceRow
+        label="Text spacing"
+        value={prefs.spacing}
+        options={READER_SPACINGS.map((value) => ({ value, label: READER_SPACING_LABELS[value] }))}
+        onChange={(spacing) => onChange({ spacing })}
+      />
+      <Separator />
+      <SwitchRow
+        label="Line focus"
+        description="Dim everything but the lines being read"
+        checked={focusOn}
+        onChange={(on) => {
+          if (!on) lastLineFocus = prefs.lineFocus
+          onChange({ lineFocus: on ? lastLineFocus : 0 })
+        }}
+        data-reader-pref="lineFocus"
+      />
+      <ChoiceRow
+        label="Lines in focus"
+        value={String(focusOn ? prefs.lineFocus : lastLineFocus) as `${ReaderLineFocus}`}
+        options={READER_LINE_FOCUS.filter((value) => value !== 0).map((value) => ({
+          value: String(value) as `${ReaderLineFocus}`,
+          label: READER_LINE_FOCUS_LABELS[value]
+        }))}
+        disabled={!focusOn}
+        onChange={(value) => {
+          const lineFocus = Number(value) as ReaderLineFocus
+          lastLineFocus = lineFocus
+          onChange({ lineFocus })
+        }}
+      />
+      <SwitchRow
+        label="Syllables"
+        description="Mark the breaks between syllables"
+        checked={prefs.syllables}
+        onChange={(syllables) => onChange({ syllables })}
+        data-reader-pref="syllables"
       />
     </div>
   )

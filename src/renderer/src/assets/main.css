@@ -8576,14 +8576,29 @@
  * motion keeps the 120 ms fade and cuts the scale (the closing block below). `will-change` only while the panel moves
  * (`data-moving`, §9.33); the reduced-motion fade is written per frame by the component.
  */
+/*
+ * The player's shape is its host's (§9.32, the lead's amendment on #240): inside the content
+ * frame on a desktop or tablet – the §9.7 hairline its top edge, no radius of its own, one row
+ * `--v2-control` + 8 tall like the find bar with the header leading and the transport trailing;
+ * on the phone a second card under the frame – the frame's radius on its top corners, two rows,
+ * 8 under the transport before the bar band. One DOM, laid out by the form factor.
+ */
 .zen-read-aloud {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
   background: var(--v2-panel);
   color: var(--v2-text);
   border-top: 1px solid var(--v2-border);
-  border-radius: var(--v2-radius-sheet) var(--v2-radius-sheet) 0 0;
   font-size: var(--v2-font-body);
   line-height: var(--v2-line-body);
   font-weight: var(--v2-weight-body);
+}
+:root[data-form-factor='phone'] .zen-read-aloud {
+  flex-direction: column;
+  align-items: stretch;
+  padding-bottom: 8px;
+  border-radius: var(--v2-radius-sheet) var(--v2-radius-sheet) 0 0;
 }
 .zen-read-aloud[data-moving] {
   will-change: transform, opacity;
@@ -8593,6 +8608,21 @@
 }
 .zen-read-aloud-header {
   min-height: calc(var(--v2-icon-button) + 4px);
+}
+/* In the one-row form the header takes what the transport leaves, the title truncating first. */
+:root:not([data-form-factor='phone']) .zen-read-aloud-header {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+:root:not([data-form-factor='phone']) .zen-read-aloud-controls {
+  flex: 0 0 auto;
+  padding-right: 8px;
+}
+/* The desktop's voice menulist: the §9.13 control at a bounded width, the voice's name truncating. */
+.zen-v2-menulist.zen-read-aloud-voice-list {
+  width: 176px;
+  min-width: 0;
+  margin-right: 8px;
 }
 /* A docked panel's title (§9.32): start-aligned, 15/600 – a bar's label, not a sheet's 17/600 title. */
 .zen-read-aloud-title {

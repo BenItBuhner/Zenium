@@ -5,7 +5,9 @@ import {
   type ReadAloudVoice,
   type ReadAloudVoicesResult
 } from '@shared/readAloud'
+import { languageName } from '@shared/languageNames'
 import { run } from '@renderer/lib/api'
+import type { MenulistOption } from '@renderer/components/extensions/V2Menulist'
 import type { RowOption, ValueRow } from '@renderer/components/pages/settings/model'
 
 /**
@@ -129,4 +131,41 @@ function voiceDescription(voice: ReadAloudVoice): string {
   if (voice.quality === 'high') parts.push('High quality')
   else if (voice.quality === 'low') parts.push('Low quality')
   return parts.join(' · ')
+}
+
+/** The desktop voice control's label while the list is on its way, and while the session has no voice yet. */
+export const VOICE_PLACEHOLDER = 'Voice'
+
+/**
+ * The desktop player's voice menulist (§9.13's popover of 28 px rows, one line each): the
+ * voices for the text's language first under their names, then the other languages' voices
+ * with their language after the name – the popover has no headings and its rows no second
+ * line, so the language rides on the label. Before the list arrives, or while the session has
+ * no voice among them, one placeholder row holds the control's label.
+ */
+export function voiceMenulistOptions(
+  voices: ReadAloudVoicesResult | null,
+  lang: string,
+  current: string
+): MenulistOption<string>[] {
+  const base = baseLanguage(lang)
+  const same: MenulistOption<string>[] = []
+  const other: MenulistOption<string>[] = []
+  for (const voice of voices?.voices ?? []) {
+    if (baseLanguage(voice.lang) === base) same.push({ value: voice.id, label: voice.name })
+    else other.push({ value: voice.id, label: `${voice.name} · ${languageName(voice.lang)}` })
+  }
+  const options = [...same, ...other]
+  if (!options.some((option) => option.value === current)) {
+    options.unshift({ value: '', label: voices ? VOICE_PLACEHOLDER : `${VOICE_PLACEHOLDER}…` })
+  }
+  return options
+}
+
+/** The voice the desktop control shows: the session's, else the model's default for the language, else none. */
+export function currentVoiceId(
+  session: ReadAloudState,
+  voices: ReadAloudVoicesResult | null
+): string {
+  return session.voiceId ?? voices?.byLanguage[session.lang] ?? ''
 }

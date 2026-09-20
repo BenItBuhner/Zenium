@@ -188,6 +188,29 @@ describe('the Settings panel on hosts without page controls', () => {
     expect(markup).toContain('Look and Feel')
   })
 
+  it('lists Accessibility on a desktop with a speech engine, holding Read aloud alone (CT-12)', () => {
+    const s = state({ ...DESKTOP, readAloud: true }, 'linux')
+    s.settings = {
+      ...DEFAULT_SETTINGS,
+      readAloud: { rate: 1.5, voiceByLanguage: {}, highlight: 'sentence' }
+    }
+    expect(navLabels(render(s)).slice(0, 2)).toEqual(['Look and Feel', 'Accessibility'])
+    uiStore.set({ overlaySection: 'accessibility' })
+    const markup = render(s)
+    // The pane: its title, the two groups of the shared builder, the voice list still on its way.
+    expect(markup).toContain('data-testid="accessibility-pane"')
+    expect(markup).toContain('Read aloud')
+    expect(markup).toContain('Speed')
+    expect(markup).toContain('1.5×')
+    expect(markup).toContain('Highlight while reading')
+    expect(markup).toContain('Sentence')
+    expect(markup).toContain('Voices')
+    expect(markup).toContain('Looking for voices…')
+    // The phone's zoom groups stay off the desktop.
+    expect(markup).not.toContain('Default zoom')
+    expect(markup).not.toContain('Page zoom')
+  })
+
   it('lists Accessibility after Look and Feel on a host with page controls', () => {
     const labels = navLabels(render(state(ANDROID, 'android')))
     expect(labels.slice(0, 2)).toEqual(['Look and Feel', 'Accessibility'])

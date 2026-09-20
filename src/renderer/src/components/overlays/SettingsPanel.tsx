@@ -122,9 +122,15 @@ const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
   { id: 'about', label: 'About' }
 ]
 
-/** Sections that only make sense on hosts with the matching feature. */
-const SECTION_CAPABILITY: Partial<Record<SettingsSection, keyof HostCapabilities>> = {
-  accessibility: 'pageControls',
+/**
+ * Sections that only make sense on hosts with the matching feature; a list names alternatives
+ * (Accessibility holds the page zoom of a host with page controls and Read aloud's rows of one
+ * with a speech engine, and shows with either).
+ */
+const SECTION_CAPABILITY: Partial<
+  Record<SettingsSection, keyof HostCapabilities | readonly (keyof HostCapabilities)[]>
+> = {
+  accessibility: ['pageControls', 'readAloud'],
   newtab: 'newTabPage',
   resources: 'resourceGovernor',
   autofill: 'passwords',
@@ -150,7 +156,8 @@ function availableSections(caps: HostCapabilities, platform: Platform): typeof S
   return SECTIONS.filter((s) => {
     if (s.id === 'default-browser' && !hasDefaultBrowserSection(platform)) return false
     const cap = SECTION_CAPABILITY[s.id]
-    return !cap || caps[cap]
+    if (cap === undefined) return true
+    return typeof cap === 'string' ? caps[cap] : cap.some((c) => caps[c])
   })
 }
 

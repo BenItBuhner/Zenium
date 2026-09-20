@@ -9,9 +9,12 @@ import type {
 } from '@shared/types'
 import { formatZoom, zoomChoices, zoomKey } from '@shared/pageControls'
 import { run } from '@renderer/lib/api'
-import { EmptyRow } from '../siteControls/pane'
+import { useReadAloudVoices } from '@renderer/lib/readAloudVoices'
+import { readAloudGroups } from '../pages/settings/sections'
+import { EmptyRow, Pane } from '../siteControls/pane'
 import { Switch } from '../ui/switch'
 import { ZoomStepper } from '../ZoomStepper'
+import { ModelGroups } from './ModelGroups'
 import { Choice, Group, MENULIST_HEIGHT, Row } from './SettingsPrimitives'
 
 /**
@@ -156,6 +159,13 @@ export function SitesGroups({
   )
 }
 
+/**
+ * Settings › Accessibility: the page zoom groups on a host with page controls (the phone's
+ * tablet layout), and Read aloud on a host with a speech engine – the Settings builder's
+ * groups (`readAloudGroups`, the phone's rows too) drawn with the desktop pane's primitives.
+ * On the desktop, which keeps zoom in the menu and under Appearance, Read aloud is the whole
+ * section and takes the pane's title.
+ */
 export function AccessibilitySection({
   state,
   set
@@ -163,6 +173,31 @@ export function AccessibilitySection({
   state: UIState
   set: SetSettings
 }): JSX.Element {
+  const caps = state.capabilities
+  const readAloudVoices = useReadAloudVoices(caps.readAloud)
+  const readAloud = caps.readAloud ? (
+    <ModelGroups groups={readAloudGroups({ state, readAloudVoices })} />
+  ) : null
+  if (!caps.pageControls) {
+    return (
+      <Pane
+        title="Accessibility"
+        description="Have pages read to you, in the voice and at the speed you choose."
+        data-testid="accessibility-pane"
+      >
+        {readAloud}
+      </Pane>
+    )
+  }
+  return (
+    <>
+      <PageZoomGroups state={state} set={set} />
+      {readAloud}
+    </>
+  )
+}
+
+function PageZoomGroups({ state, set }: { state: UIState; set: SetSettings }): JSX.Element {
   const s = state.settings
   const pc = s.pageControls
   const patch = patcher(s, set)

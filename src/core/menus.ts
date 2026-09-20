@@ -851,23 +851,23 @@ export class Menus {
         run: () => void this.browser.share({ text: selection, tabId: tab.id }, win)
       })
     }
-    // Listen to a selection (EDGE-11 / GN-13): `readAloud.start { from: 'selection' }`, the
-    // core's model takes the selection from the page and reads it alone (Chrome's behaviour;
-    // Edge reads on past it to the article's end, which is an ask on the model's `selection`
-    // source). Hosts with a speech host; any page, since a selection is text to read whether
-    // or not the page is an article. The phone's item, on both of its surfaces: the player it
-    // starts is the phone's docked one, and the desktop's read aloud is the services program's
-    // own UI, so the desktop's context menu is left without it. Worded "Listen", the app
-    // menu's own verb ("Listen to This Page"), so that beside the system's process-text item
-    // ("Read aloud", Google's, which stays) the pair reads as two things (the lead, #240).
-    if (win.formFactor === 'phone' && this.browser.readAloud.available) {
+    // Listen to a selection (EDGE-11 / GN-13). Hosts with a speech host; any page, since a
+    // selection is text to read whether or not the page is an article. Worded "Listen", the
+    // app menu's own verb ("Listen to This Page"), so that beside the system's process-text
+    // item ("Read aloud", Google's, which stays) the pair reads as two things (the lead, #240).
+    // The phone's item, on both of its surfaces, reads the selection alone (Chrome's behaviour,
+    // as W3-7 built it); the desktop's right-click item reads on from the selection to the
+    // document's end (Edge's "Read aloud selection", the model's `selection-on` of #257), since
+    // a mouse selection is mostly a place to start from. Both dock the shared player.
+    if (this.browser.readAloud.available) {
+      const from = win.formFactor === 'phone' ? 'selection' : 'selection-on'
       actions.push({
         id: 'readAloud',
         label: 'Listen',
         title: 'Listen',
         menu: true,
         toolbar: true,
-        run: () => void this.browser.readAloud.start({ tabId: tab.id, from: 'selection' })
+        run: () => void this.browser.readAloud.start({ tabId: tab.id, from })
       })
     }
     return actions
@@ -2488,11 +2488,12 @@ export class Menus {
           label: 'Text Preferences…',
           click: () => active && this.browser.emit('reader.preferences', { tabId: active.id }, win)
         }),
-        // Chrome's "Listen to this page" (A11Y-06; Title Case like the menu's other items): the
-        // phone's menu on hosts with a speech host, enabled by the reader core's readability
-        // signal exactly as Reader View is (`reader.canRead`: the page is readerable, or it is
-        // the reader's own document, which the core then reads as `source: 'reader'`).
-        ...when(phone && this.browser.readAloud.available, {
+        // Chrome's "Listen to this page" (A11Y-06; Title Case like the menu's other items): on
+        // hosts with a speech host, enabled by the reader core's readability signal exactly as
+        // Reader View is (`reader.canRead`: the page is readerable, or it is the reader's own
+        // document, which the core then reads as `source: 'reader'`). The player it docks is
+        // the one component on both hosts, in the frame's shape on each (§9.32).
+        ...when(this.browser.readAloud.available, {
           label: 'Listen to This Page',
           enabled: Boolean(active) && this.browser.reader.canRead(active),
           click: () => active && void this.browser.readAloud.start({ tabId: active.id })

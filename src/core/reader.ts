@@ -73,9 +73,11 @@ export class ReaderService {
   }
 
   /**
-   * Change the text preferences (CT-20): from a reader page's own toolbar (relayed by the page
-   * script), the chrome's reader sheet / popover, or a settings patch. Saved with the profile and
-   * pushed to every open reader page, so a second reader tab follows the first.
+   * Change the text preferences (CT-20, EDGE-13): from the chrome's Text preferences sheet /
+   * popover (the one home, v2 §10.1; the reader document draws no toolbar of its own), a
+   * settings patch, or a `zen:` document's own message (relayed by the page script, kept for a
+   * document that grows a control). Saved with the profile and pushed to every open reader
+   * page, so a second reader tab follows the first.
    */
   setPreferences(patch: Partial<ReaderPreferences>): void {
     const clean = readerPreferencesPatch(patch)

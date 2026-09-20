@@ -2,18 +2,23 @@ import type { JSX } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AudioLines, Pause, Play, SkipBack, SkipForward, X } from 'lucide-react'
 import type { ReadAloudState, ReadAloudVoicesResult } from '@shared/readAloud'
-import { cmd, run } from '@renderer/lib/api'
+import { run } from '@renderer/lib/api'
 import { useBackDismissal } from '@renderer/lib/back'
+import { viewportStore } from '@renderer/lib/formFactor'
 import {
+  currentVoiceId,
   errorText,
   formatProgress,
   describeRate,
   formatRate,
   nextRate,
   READ_ALOUD_RATE_SIZER,
+  voiceMenulistOptions,
   voiceRow
 } from '@renderer/lib/readAloud'
+import { loadReadAloudVoices, useReadAloudVoices } from '@renderer/lib/readAloudVoices'
 import { uiStore } from '@renderer/lib/ui'
+import { V2Menulist } from '../extensions/V2Menulist'
 import { OptionsSheet } from '../pages/settings/sheets'
 import { DockedPanelMotion } from './dockedMotion'
 
@@ -24,18 +29,22 @@ const VOICES_WAIT_MS = 2500
  * Read aloud's player (A11Y-06 / EDGE-11), docked under the live page the way the find bar and
  * the zoom sheet are (v2 §9.32: the one docked slot, one panel at a time, the frame shortening
  * through the layout reporter while the page stays live so the highlight the core paints in it
- * can be followed). Two rows – a bar header (§9.16, §9.23) with the text's title start-aligned
- * at 15/600 and the sentence progress trailing in tabular numerals, then the transport: previous
- * sentence, play / pause as one control whose glyph cross-fades (§11.4's in-place change), next
- * sentence, the speed chip (§9.34: the plain `.zen-v2-button` cycling `READ_ALOUD_RATE_STEPS`,
- * the value painted in `tabular-nums`, its `aria-label` the setting and the value as said –
- * "Speed, 1.2 times"), the voice picker (a §9.13 sheet of the host's voices) and close – as §9.3
- * icon buttons. Its shape follows its host (§9.32): the frame's radius on the top corners, a
- * second card under the frame on the phone. While the
- * engine prepares (`loading`) the play control is busy, not disabled (§9.30: the spinner in the
- * glyph's place, `aria-busy`). A page surface (§9.29): `data-surface="page"`, the page family,
- * no tooltips (§9.31). Predictive back and Escape close it like a page; closing is
- * `readAloud.stop` – the session ends, the highlight goes.
+ * can be followed). A bar header (§9.16, §9.23) with the text's title start-aligned at 15/600
+ * and the sentence progress trailing in tabular numerals, and the transport: previous sentence,
+ * play / pause as one control whose glyph cross-fades (§11.4's in-place change), next sentence,
+ * the speed chip (§9.34: the plain `.zen-v2-button` cycling `READ_ALOUD_RATE_STEPS`, the value
+ * painted in `tabular-nums`, its `aria-label` the setting and the value as said – "Speed, 1.2
+ * times"), the voice control and close – as §9.3 icon buttons. One component on both hosts, its
+ * shape its host's (§9.32): on the phone two rows on a second card under the frame – the frame's
+ * radius on the top corners – with the voice control an icon button opening a §9.13 sheet of the
+ * host's voices; on a desktop one row inside the content frame on the §9.7 hairline, no radius
+ * of its own, `--v2-control` + 8 tall like the find bar, the header leading and the transport
+ * trailing, and the voice control the 32 px §9.13 menulist naming the voice, its list the
+ * anchored popover (the sheet under a coarse pointer). While the engine prepares (`loading`)
+ * the play control is busy, not disabled (§9.30: the spinner in the glyph's place,
+ * `aria-busy`). A page surface (§9.29): `data-surface="page"`, the page family, no tooltips
+ * (§9.31). Predictive back and Escape close it like a page; closing is `readAloud.stop` – the
+ * session ends, the highlight goes.
  *
  * It renders `UIState.readAloud` and drives the `readAloud.*` commands; the model behind them –
  * the text, the sentence walker, the voices per language, the media session that keeps it
@@ -46,6 +55,10 @@ const VOICES_WAIT_MS = 2500
 export function ReadAloudPanel({ session }: { session: ReadAloudState }): JSX.Element | null {
   const ref = useRef<HTMLDivElement>(null)
   const motion = useRef<DockedPanelMotion | null>(null)
+  const phone = viewportStore.use((s) => s.formFactor === 'phone')
+  // The desktop's menulist names the voice as it renders, so the list is asked for as the
+  // panel mounts (and again for another language); the phone's picker asks when it opens.
+  const listed = useReadAloudVoices(!phone, session.lang)
   const [voices, setVoices] = useState<ReadAloudVoicesResult | null>(null)
   const [fetchingVoices, setFetchingVoices] = useState(false)
   const [pickingVoice, setPickingVoice] = useState(false)
@@ -126,18 +139,45 @@ export function ReadAloudPanel({ session }: { session: ReadAloudState }): JSX.El
       setPickingVoice(true)
     }
     const timer = window.setTimeout(() => open(null), VOICES_WAIT_MS)
-    void cmd('readAloud.voices', undefined)
-      .then((result) => {
-        setVoices(result)
-        open(result)
-      })
-      .catch(() => open({ voices: [], byLanguage: {} }))
+    void loadReadAloudVoices().then((result) => {
+      setVoices(result)
+      open(result)
+    })
   }
+
+  // The desktop's voice control: the §9.13 menulist at the control height, naming the voice in
+  // use (the model's per-language default until the session names its own), its list the
+  // text's language's voices first. A pick is `readAloud.setVoice`, saved for the language.
+  const voiceControl = phone ? (
+    <button
+      type="button"
+      className="zen-v2-icon-button zen-read-aloud-voice"
+      aria-label="Voice"
+      aria-haspopup="dialog"
+      aria-expanded={pickingVoice}
+      aria-busy={fetchingVoices || undefined}
+      onClick={openVoices}
+    >
+      <AudioLines aria-hidden />
+      {fetchingVoices && <span className="zen-v2-spinner" aria-hidden />}
+    </button>
+  ) : (
+    <V2Menulist
+      label="Voice"
+      value={currentVoiceId(session, listed)}
+      options={voiceMenulistOptions(listed, session.lang, currentVoiceId(session, listed))}
+      onChange={(voiceId) => {
+        if (voiceId) run('readAloud.setVoice', { voiceId })
+      }}
+      readOnly={listed === null}
+      className="zen-read-aloud-voice-list"
+    />
+  )
 
   return (
     <div
       ref={ref}
-      className="zen-read-aloud shrink-0 pb-2"
+      className="zen-read-aloud shrink-0"
       role="region"
       aria-label="Read aloud"
       data-surface="page"
@@ -210,18 +250,7 @@ export function ReadAloudPanel({ session }: { session: ReadAloudState }): JSX.El
           </span>
           <span>{formatRate(session.rate)}</span>
         </button>
-        <button
-          type="button"
-          className="zen-v2-icon-button zen-read-aloud-voice"
-          aria-label="Voice"
-          aria-haspopup="dialog"
-          aria-expanded={pickingVoice}
-          aria-busy={fetchingVoices || undefined}
-          onClick={openVoices}
-        >
-          <AudioLines aria-hidden />
-          {fetchingVoices && <span className="zen-v2-spinner" aria-hidden />}
-        </button>
+        {voiceControl}
         <button type="button" className="zen-v2-icon-button" aria-label="Close" onClick={leave}>
           <X />
         </button>
