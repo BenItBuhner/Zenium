@@ -142,7 +142,7 @@ function Rows({
       />
       <ChoiceRow
         label="Colour theme"
-        description="Default follows Zenium’s colour scheme."
+        description="Default follows Zenium’s colour scheme"
         value={prefs.theme}
         options={READER_THEMES.map((value) => ({ value, label: READER_THEME_LABELS[value] }))}
         onChange={(theme) => onChange({ theme })}
