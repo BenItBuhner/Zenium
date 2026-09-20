@@ -6,9 +6,12 @@ import org.json.JSONObject
  * The session the core hands the host for the OS controls (`MediaSessionInfo` in
  * `src/shared/mediaSession.ts`), parsed: one page's media, resolved – the metadata the page set
  * through `navigator.mediaSession` or the tab's title and site, the artwork picked, where
- * playback stood at [positionAt] (epoch ms), the actions the page handles itself.
+ * playback stood at [positionAt] (epoch ms), the actions the page handles itself – or a player
+ * of the chrome's own ([source] `chrome`: the read-aloud player, on the tab it reads), which
+ * has no video and never goes into picture-in-picture.
  */
 class MediaSessionInfo(
+    /** The content's tab: the page playing, or the page a chrome player reads (what a tap opens). */
     val tabId: String,
     val title: String,
     val artist: String,
@@ -32,10 +35,17 @@ class MediaSessionInfo(
     /** The element is fullscreen in its page. */
     val fullscreen: Boolean,
     /** A private tab: the controls show no title, artist or artwork. */
-    val private: Boolean
+    val private: Boolean,
+    /** What plays: a page's media ([SOURCE_PAGE], what an older core sends without the field) or a chrome player ([SOURCE_CHROME]). */
+    val source: String = SOURCE_PAGE,
+    /** The chrome player's id (`read-aloud`) when [source] is [SOURCE_CHROME]. */
+    val sourceId: String? = null
 ) {
     /** Whether the controls may move playback: a known, finite duration (Chrome offers no seek on a live stream). */
     val seekable: Boolean get() = hasPosition && duration > 0 && duration.isFinite()
+
+    /** A player of the chrome's own (read aloud), not a page's element: no video, no picture-in-picture. */
+    val chrome: Boolean get() = source == SOURCE_CHROME
 
     /** Where playback stands `now` (epoch ms): moved on at the playback rate while playing, never past the end. */
     fun positionMs(now: Long): Long {
@@ -47,6 +57,11 @@ class MediaSessionInfo(
     }
 
     companion object {
+        /** A page's media. */
+        const val SOURCE_PAGE = "page"
+        /** A player of the chrome's own (`MediaSessionService.registerSource`). */
+        const val SOURCE_CHROME = "chrome"
+
         fun parse(json: JSONObject?): MediaSessionInfo? {
             if (json == null) return null
             val tabId = json.strOrNull("tabId") ?: return null
@@ -69,7 +84,9 @@ class MediaSessionInfo(
                 positionAt = json.num("positionAt").toLong(),
                 actions = (0 until actions.length()).mapNotNullTo(HashSet()) { actions.optString(it).takeIf(String::isNotEmpty) },
                 fullscreen = json.bool("fullscreen"),
-                private = json.bool("private")
+                private = json.bool("private"),
+                source = json.strOrNull("source")?.takeIf { it.isNotEmpty() } ?: SOURCE_PAGE,
+                sourceId = json.strOrNull("sourceId")?.takeIf { it.isNotEmpty() }
             )
         }
     }
@@ -137,10 +154,19 @@ object MediaControls {
         return picked.filter { it >= 0 }.sorted().take(3).toIntArray()
     }
 
-    /** The picture-in-picture window's buttons: play / pause, with previous and next when the page handles them (Chrome's set). */
-    fun pictureInPictureControls(session: MediaSessionInfo): List<MediaControl> = controls(session).filter {
-        it == MediaControl.PLAY || it == MediaControl.PAUSE || it == MediaControl.PREVIOUS || it == MediaControl.NEXT
-    }
+    /**
+     * Whether the window's picture-in-picture is this session's to have at all: a page's media
+     * (its video, once it plays); never a chrome player's, which has no picture – the window's
+     * params are then those of no session, and `media.pip` is refused.
+     */
+    fun pictureInPictureEligible(session: MediaSessionInfo?): Boolean = session != null && !session.chrome
+
+    /** The picture-in-picture window's buttons: play / pause, with previous and next when the page handles them (Chrome's set); none for a chrome player. */
+    fun pictureInPictureControls(session: MediaSessionInfo): List<MediaControl> =
+        if (session.chrome) emptyList()
+        else controls(session).filter {
+            it == MediaControl.PLAY || it == MediaControl.PAUSE || it == MediaControl.PREVIOUS || it == MediaControl.NEXT
+        }
 
     /**
      * The Media Session action a control sends, with the details the page's default handler
@@ -168,10 +194,11 @@ object MediaControls {
 
     /**
      * Whether the window should go into picture-in-picture by itself when the user leaves for
-     * Home: Chrome does it for a video playing fullscreen, and for nothing else.
+     * Home: Chrome does it for a video playing fullscreen, and for nothing else (a chrome player
+     * has no video, whatever its fields say).
      */
     fun autoEnterPictureInPicture(session: MediaSessionInfo?): Boolean =
-        session != null && session.video && session.playing && session.fullscreen
+        session != null && !session.chrome && session.video && session.playing && session.fullscreen
 
     /** The picture-in-picture window's aspect ratio: the video's, within what Android accepts (1:2.39 … 2.39:1). */
     fun aspectRatio(width: Int, height: Int): Pair<Int, Int> {

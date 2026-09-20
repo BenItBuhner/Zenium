@@ -24,7 +24,9 @@ class MediaControlsTest {
         playbackRate: Double = 1.0,
         positionAt: Long = 1_000_000L,
         width: Int = 0,
-        height: Int = 0
+        height: Int = 0,
+        source: String = MediaSessionInfo.SOURCE_PAGE,
+        sourceId: String? = null
     ) = MediaSessionInfo(
         tabId = "t1",
         title = title,
@@ -42,8 +44,24 @@ class MediaControlsTest {
         positionAt = positionAt,
         actions = actions,
         fullscreen = fullscreen,
-        private = private
+        private = private,
+        source = source,
+        sourceId = sourceId
     )
+
+    /** The read-aloud player's session as the core sends it: a chrome source on the tab it reads, no video, no position. */
+    private fun readAloud(playing: Boolean = true, actions: Set<String> = setOf("play", "pause", "stop", "previoustrack", "nexttrack")) =
+        session(
+            playing = playing,
+            video = false,
+            actions = actions,
+            hasPosition = false,
+            duration = 0.0,
+            title = "An article",
+            artist = "news.example",
+            source = MediaSessionInfo.SOURCE_CHROME,
+            sourceId = "read-aloud"
+        )
 
     // --- parsing what the core sends -------------------------------------------------------------
 
@@ -83,6 +101,32 @@ class MediaControlsTest {
         assertTrue(info.fullscreen)
         assertFalse(info.private)
         assertTrue(info.seekable)
+        // A page's session, said so or (an older core) not at all.
+        assertEquals(MediaSessionInfo.SOURCE_PAGE, info.source)
+        assertFalse(info.chrome)
+        assertNull(info.sourceId)
+    }
+
+    @Test
+    fun parsesWhoseSessionItIs() {
+        val page = MediaSessionInfo.parse(JSONObject().put("tabId", "t").put("source", "page"))!!
+        assertEquals("page", page.source)
+        assertFalse(page.chrome)
+        assertNull(page.sourceId)
+        val chrome = MediaSessionInfo.parse(
+            JSONObject().put("tabId", "t").put("source", "chrome").put("sourceId", "read-aloud").put("playing", true)
+        )!!
+        assertEquals("chrome", chrome.source)
+        assertTrue(chrome.chrome)
+        assertEquals("read-aloud", chrome.sourceId)
+        assertEquals("t", chrome.tabId)
+        assertTrue(chrome.playing)
+        // An empty or null source is a page's; an empty id is none.
+        assertFalse(MediaSessionInfo.parse(JSONObject().put("tabId", "t").put("source", ""))!!.chrome)
+        assertFalse(MediaSessionInfo.parse(JSONObject().put("tabId", "t").put("source", JSONObject.NULL))!!.chrome)
+        assertNull(MediaSessionInfo.parse(JSONObject().put("tabId", "t").put("source", "chrome").put("sourceId", ""))!!.sourceId)
+        // A chrome source still needs its tab: the controls open it.
+        assertNull(MediaSessionInfo.parse(JSONObject().put("source", "chrome").put("sourceId", "read-aloud")))
     }
 
     @Test
@@ -191,6 +235,46 @@ class MediaControlsTest {
         val s = session(playing = true, video = true, actions = setOf("previoustrack", "nexttrack"))
         assertEquals(listOf(MediaControl.PREVIOUS, MediaControl.PAUSE, MediaControl.NEXT), MediaControls.pictureInPictureControls(s))
         assertEquals(listOf(MediaControl.PLAY), MediaControls.pictureInPictureControls(session(playing = false, video = true)))
+    }
+
+    // --- a chrome player's session (the read-aloud player) ------------------------------------------
+
+    @Test
+    fun aChromePlayerCarriesItsOwnButtonsAndNoSeekWithoutAPosition() {
+        // Playing: previous, pause, next – no seek buttons (no position), as the OS controls show it.
+        assertEquals(listOf(MediaControl.PREVIOUS, MediaControl.PAUSE, MediaControl.NEXT), MediaControls.controls(readAloud()))
+        // Paused: play in the middle, with Chrome's dismiss.
+        assertEquals(
+            listOf(MediaControl.PREVIOUS, MediaControl.PLAY, MediaControl.NEXT, MediaControl.STOP),
+            MediaControls.controls(readAloud(playing = false))
+        )
+        // Play / pause alone when the player declares no track buttons.
+        assertEquals(listOf(MediaControl.PAUSE), MediaControls.controls(readAloud(actions = setOf("play", "pause"))))
+        assertFalse(readAloud().seekable)
+        // The collapsed notification keeps the track buttons around pause.
+        assertArrayEquals(intArrayOf(0, 1, 2), MediaControls.compact(MediaControls.controls(readAloud())))
+        // What it says: the player's title and its second line; its buttons name its tab.
+        assertEquals("An article", MediaControls.title(readAloud()))
+        assertEquals("news.example", MediaControls.text(readAloud()))
+        assertEquals("t1", MediaControls.payload(readAloud().tabId, MediaControl.NEXT).getString("tabId"))
+        assertEquals("nexttrack", MediaControls.payload(readAloud().tabId, MediaControl.NEXT).getString("action"))
+    }
+
+    @Test
+    fun aChromePlayerNeverGoesIntoPictureInPicture() {
+        val player = readAloud()
+        assertTrue(player.chrome)
+        assertFalse(MediaControls.pictureInPictureEligible(player))
+        assertFalse(MediaControls.pictureInPictureEligible(null))
+        assertTrue(MediaControls.pictureInPictureEligible(session()))
+        // No buttons for a small window it never gets, whatever it declares.
+        assertEquals(emptyList<MediaControl>(), MediaControls.pictureInPictureControls(player))
+        // Not even a chrome session that (wrongly) claims a fullscreen playing video enters on Home.
+        val claims = session(video = true, playing = true, fullscreen = true, source = MediaSessionInfo.SOURCE_CHROME, sourceId = "read-aloud")
+        assertFalse(MediaControls.autoEnterPictureInPicture(claims))
+        assertEquals(emptyList<MediaControl>(), MediaControls.pictureInPictureControls(claims))
+        // The page's own rule is untouched.
+        assertTrue(MediaControls.autoEnterPictureInPicture(session(video = true, playing = true, fullscreen = true)))
     }
 
     @Test

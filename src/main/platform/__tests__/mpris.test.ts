@@ -20,7 +20,8 @@ const SESSION: MediaSessionInfo = {
   positionAt: T0,
   actions: ['play', 'pause', 'seekto', 'nexttrack'],
   fullscreen: false,
-  private: false
+  private: false,
+  source: 'page'
 }
 const TAB = {
   title: 'Song – Player',

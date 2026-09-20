@@ -444,14 +444,12 @@ class SettingsTabDemo : DemoHarness("settings-tab-demo-state.json", "android-set
             val focused = chromeValue("String(document.activeElement===document.querySelector('$URLBAR_FIELD'))") == "true"
             shot("14-pill-editing")
             finding("  editor ${if (editing) "up" else "NOT UP"}, field focused $focused; pill text '$text' ${verdict(text == "zenium://settings/look")}")
-            // The keyboard, then the editor: two backs at most. This tab came from the deep link
-            // (fromIntent), so a back at its landing would hand the user to the sender and leave
-            // the app – the editor is closed by count, never by a loop that looks for the pill.
-            if (imeShown()) {
-                back()
-                awaitIme(shown = false, timeoutMs = 4_000)
-            }
-            if (urlbarOpen()) back()
+            // The keyboard, then the editor, by the shared close (DemoHarness.closeUrlField): a
+            // back only against the chrome's own word that the editor is up, never one that looks
+            // for the pill. This tab came from the deep link (fromIntent), so a back at its landing
+            // would hand the user to the sender and leave the app; the close names a page it moved.
+            val close = closeUrlField()
+            finding("  editor closed by back, the tab kept ${verdict(close.ok)} (${close.describe()})")
             SystemClock.sleep(1_500)
         }
 
@@ -537,10 +535,6 @@ class SettingsTabDemo : DemoHarness("settings-tab-demo-state.json", "android-set
         finger = null
         f.up()
     }
-
-    /** The chrome's address editor is up (its field is mounted only while editing). */
-    private fun urlbarOpen(): Boolean =
-        chromeValue("String(!!document.querySelector('$URLBAR_FIELD'))") == "true"
 
     /** The browser's own window is the one in front (not the launcher, not a system dialog). */
     private fun appInFront(): Boolean = ui.rootInActiveWindow?.packageName?.toString() == app.packageName

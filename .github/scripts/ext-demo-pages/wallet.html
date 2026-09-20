@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Wallet provider page (MetaMask fixture)</title>
+  </head>
+  <body style="background: #ffffff; color: #111; font: 18px system-ui; padding: 40px">
+    <h1>Wallet provider page</h1>
+    <p>
+      A dapp's first question: is there an EIP-1193 provider on <code>window.ethereum</code>? A
+      wallet extension's page-world script answers it before the page runs.
+    </p>
+    <ul>
+      <li>window.ethereum: <span id="provider">pending</span></li>
+      <li>isMetaMask: <span id="is-metamask">pending</span></li>
+      <li>eth_chainId: <span id="chain">pending</span></li>
+      <li>eip6963 announcements: <span id="eip6963">0</span></li>
+    </ul>
+    <script>
+      window.__wallet = { provider: false, isMetaMask: false, chainId: null, announced: [] }
+      function set(id, text) {
+        document.getElementById(id).textContent = text
+      }
+      window.addEventListener('eip6963:announceProvider', function (event) {
+        var name = event.detail && event.detail.info ? event.detail.info.name : 'unknown'
+        window.__wallet.announced.push(name)
+        set('eip6963', window.__wallet.announced.join(', '))
+      })
+      window.dispatchEvent(new Event('eip6963:requestProvider'))
+      function probe() {
+        var eth = window.ethereum
+        if (!eth) return false
+        window.__wallet.provider = true
+        window.__wallet.isMetaMask = eth.isMetaMask === true
+        set('provider', 'present')
+        set('is-metamask', String(eth.isMetaMask === true))
+        if (typeof eth.request === 'function') {
+          eth
+            .request({ method: 'eth_chainId' })
+            .then(function (id) {
+              window.__wallet.chainId = id
+              set('chain', String(id))
+            })
+            .catch(function (e) {
+              set('chain', 'error: ' + (e && e.message))
+            })
+        }
+        return true
+      }
+      if (!probe()) {
+        window.addEventListener('ethereum#initialized', probe, { once: true })
+        var tries = 0
+        var timer = setInterval(function () {
+          if (probe() || ++tries > 40) clearInterval(timer)
+        }, 250)
+      }
+    </script>
+  </body>
+</html>

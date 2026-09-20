@@ -7,12 +7,14 @@ vi.mock('../api', () => ({
 }))
 
 import type { WebAppInstallPrompt } from '@shared/types'
-import { run } from '../api'
+import { cmd, run } from '../api'
 import {
   chromeNeedsKeyboard,
   closeClearBrowsingData,
+  closeMediaSheet,
   openClearBrowsingData,
   openInstallSheet,
+  openMediaSheet,
   overlayCoversContent,
   panelAloneOverContent,
   uiStore,
@@ -31,9 +33,11 @@ afterEach(() => {
     starDialog: null,
     snapshot: null,
     snapshotTabId: null,
-    install: null
+    install: null,
+    mediaSheet: null
   })
   vi.mocked(run).mockClear()
+  vi.mocked(cmd).mockClear()
 })
 
 const INSTALL_PROMPT: WebAppInstallPrompt = {
@@ -57,6 +61,23 @@ describe('the install sheet', () => {
     await openInstallSheet(INSTALL_PROMPT)
     expect(idle().install?.tabId).toBe('t1')
     expect(run).toHaveBeenCalledWith('focus.chrome', undefined)
+  })
+})
+
+describe('the media sheet', () => {
+  it('holds a picture of the tab on screen, not of the media’s tab, and shows the media’s tab', async () => {
+    vi.mocked(cmd).mockResolvedValueOnce('data:image/jpeg;base64,AAAA' as never)
+    // The media plays in t1 while t2 is on screen: the recede starts on t2's page, and the
+    // capture is named for it, so the host hides that view and no other.
+    await openMediaSheet('t1', 't2')
+    expect(cmd).toHaveBeenCalledWith('overlay.snapshot', { tabId: 't2' })
+    expect(cmd).not.toHaveBeenCalledWith('overlay.snapshot', { tabId: 't1' })
+    expect(idle().snapshotTabId).toBe('t2')
+    expect(idle().mediaSheet).toBe('t1')
+    expect(overlayCoversContent(idle())).toBe(true)
+    expect(run).toHaveBeenCalledWith('focus.chrome', undefined)
+    closeMediaSheet()
+    expect(idle().mediaSheet).toBeNull()
   })
 })
 

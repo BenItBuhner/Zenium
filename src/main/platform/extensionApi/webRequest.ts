@@ -1,25 +1,30 @@
 import type {
-  BlockingResponse,
   ListenerOptions,
   WebRequestDetails,
   WebRequestEvent,
   WebRequestListener
 } from '../blocking'
+import type { ResourceType } from '../../../core/blocking/rules'
 import {
   BLOCKING_ANSWER_TIMEOUT_MS,
   BLOCKING_PERMISSION_ERROR,
   WEB_REQUEST_EVENT_NAMES,
   canAccessRequest,
+  chromeAuthRequiredDetails,
   chromeRequestDetails,
   compileRequestFilter,
   normalizeBlockingResponse,
   normalizeRequestListener,
   requestFilterMatches,
+  type AuthChallenge,
+  type AuthCredentials,
+  type BlockingAnswer,
   type CompiledRequestFilter,
   type RequestListenerSpec,
   type WebRequestEventName
 } from '../../../core/extensions/api/webRequest'
 import type { EventDelivery } from '../../../core/extensions/api/shim'
+import { DEFAULT_CONTAINER_ID } from '../../../shared/types'
 import type { FrameContext, WorkerContext } from './contexts'
 import {
   ApiError,
@@ -48,6 +53,23 @@ export interface WebRequestListenerHost {
 
 type Context = FrameContext | WorkerContext
 
+/**
+ * A server's or proxy's authentication challenge, as the engine's `login` event reports it,
+ * with the Zenium tab whose page the request belongs to (null for a request outside a tab).
+ */
+export interface HostAuthChallenge {
+  url: string
+  isProxy: boolean
+  scheme: string
+  realm: string
+  host: string
+  port: number
+  tabId: string | null
+}
+
+/** What the extensions decided about a challenge: credentials to send, or to give up. */
+export type AuthChallengeAnswer = { credentials: AuthCredentials } | { cancel: true }
+
 /** One `addListener` of one context, as the shim registered it. */
 interface Registration {
   /** The shim's id of the listener, per context; deliveries are addressed to it. */
@@ -65,7 +87,7 @@ interface Registration {
 interface Pending {
   extensionId: string
   event: WebRequestEventName
-  resolve: (answer: BlockingResponse | undefined) => void
+  resolve: (answer: BlockingAnswer | undefined) => void
   timer: ReturnType<typeof setTimeout>
 }
 
@@ -89,6 +111,13 @@ const PERMISSIONS = ['webRequest', 'webRequestBlocking']
  * return value, which the pipeline applies (`cancel`, `redirectUrl`, `requestHeaders`,
  * `responseHeaders`). An answer that does not arrive within the timeout leaves the request
  * unchanged. Only MV2 extensions holding `webRequestBlocking` may block, as in Chrome.
+ *
+ * `onAuthRequired` has no hook in the session pipeline: the engine reports a server's or
+ * proxy's challenge once per request through its `login` event, and the browser layer asks the
+ * extensions first (`authRequired`) before its own dialog. A `blocking` / `asyncBlocking`
+ * listener (any extension holding `webRequestAuthProvider`, the way the VPN extensions supply
+ * their proxy credentials) answers with `authCredentials` or `cancel`; the answers merge as
+ * Chrome's do (any cancel cancels, else the newest installed extension's credentials).
  */
 export class WebRequestApi {
   private listenerHost: WebRequestListenerHost | null = null
@@ -96,6 +125,7 @@ export class WebRequestApi {
   private readonly registrations = new Map<string, Map<string, Map<number, Registration>>>()
   private readonly pending = new Map<number, Pending>()
   private tokens = 0
+  private authChallenges = 0
   /** Extensions already warned about a blocking listener that did not answer in time. */
   private readonly warned = new Set<string>()
 
@@ -243,7 +273,7 @@ export class WebRequestApi {
   private hook(registration: Registration): void {
     if (!this.listenerHost || registration.off) return
     const event = registration.event
-    // Electron has no `onAuthRequired` hook on the session (`app.on('login')` is not per request).
+    // The session pipeline has no `onAuthRequired`: the engine's `login` event feeds `authRequired`.
     if (event === 'onAuthRequired') return
     const options: ListenerOptions = {
       registrant: registration.extensionId,
@@ -282,7 +312,7 @@ export class WebRequestApi {
   private fire(
     registration: Registration,
     details: WebRequestDetails
-  ): BlockingResponse | undefined | Promise<BlockingResponse | undefined> {
+  ): BlockingAnswer | undefined | Promise<BlockingAnswer | undefined> {
     const { extensionId, event, context } = registration
     if (!this.host.registry.isLive(context)) {
       this.drop(registration)
@@ -308,8 +338,97 @@ export class WebRequestApi {
       this.host.registry.sendTo(context, 'webRequest', event, [chrome, null], delivery)
       return undefined
     }
+    return this.awaitAnswer(registration, chrome, delivery)
+  }
+
+  // ---------------------------------------------------------------------------
+  // onAuthRequired
+  // ---------------------------------------------------------------------------
+
+  /**
+   * A challenge came in: every live `onAuthRequired` listener whose extension may see the
+   * request hears about it; the blocking ones are waited for (each within the timeout) and
+   * their answers merge as Chrome's `MergeOnAuthRequiredResponses`: a `cancel` from any
+   * extension gives the challenge up, otherwise the highest-ranked (newest installed)
+   * `authCredentials` are sent. Undefined leaves the challenge to the browser's own dialog.
+   */
+  async authRequired(challenge: HostAuthChallenge): Promise<AuthChallengeAnswer | undefined> {
+    const zenTab = challenge.tabId === null ? undefined : this.host.model.tab(challenge.tabId)
+    const partition = zenTab?.containerId ?? DEFAULT_CONTAINER_ID
+    const place = this.placeOf(challenge.tabId)
+    const type: ResourceType = zenTab && zenTab.url === challenge.url ? 'main_frame' : 'other'
+    const details: AuthChallenge = {
+      requestId: `auth-${++this.authChallenges}`,
+      url: challenge.url,
+      method: 'GET',
+      tabId: place.tabId,
+      type,
+      timestamp: Date.now(),
+      isProxy: challenge.isProxy,
+      scheme: challenge.scheme.toLowerCase(),
+      realm: challenge.realm,
+      host: challenge.host,
+      port: challenge.port
+    }
+    const request = { url: challenge.url, type, initiator: null }
+    const asked: Array<{ extensionId: string; answer: Promise<BlockingAnswer | undefined> }> = []
+    for (const [extensionId, byContext] of this.registrations) {
+      if (!this.host.loaded(extensionId)) continue
+      if (!this.host.partitionsOf(extensionId).includes(partition)) continue
+      if (!canAccessRequest((url) => this.host.hostAccess(extensionId, url), request, extensionId))
+        continue
+      for (const own of byContext.values()) {
+        for (const registration of own.values()) {
+          if (registration.event !== 'onAuthRequired') continue
+          if (!this.host.registry.isLive(registration.context)) {
+            this.drop(registration)
+            continue
+          }
+          if (!requestFilterMatches(registration.filter, { url: challenge.url, type, ...place }))
+            continue
+          const chrome = chromeAuthRequiredDetails(details, registration.spec.extraInfoSpec)
+          const delivery: EventDelivery = { unfiltered: false, matched: [registration.id] }
+          if (!registration.spec.blocking) {
+            this.host.registry.sendTo(
+              registration.context,
+              'webRequest',
+              'onAuthRequired',
+              [chrome, null],
+              delivery
+            )
+            continue
+          }
+          asked.push({
+            extensionId,
+            answer: this.awaitAnswer(registration, chrome, delivery)
+          })
+        }
+      }
+    }
+    if (asked.length === 0) return undefined
+    const answers = await Promise.all(asked.map((a) => a.answer))
+    let best: { rank: number; credentials: AuthCredentials } | null = null
+    for (let i = 0; i < asked.length; i++) {
+      const answer = answers[i]
+      if (!answer) continue
+      if (answer.cancel) return { cancel: true }
+      const credentials = answer.authCredentials
+      if (!credentials) continue
+      const rank = this.priorityOf(asked[i].extensionId)
+      if (!best || rank > best.rank) best = { rank, credentials }
+    }
+    return best ? { credentials: best.credentials } : undefined
+  }
+
+  /** Deliver a blocking event to its listener and wait for the shim's answer (or the timeout). */
+  private awaitAnswer(
+    registration: Registration,
+    chrome: unknown,
+    delivery: EventDelivery
+  ): Promise<BlockingAnswer | undefined> {
+    const { extensionId, event, context } = registration
     const token = ++this.tokens
-    const answer = new Promise<BlockingResponse | undefined>((resolve) => {
+    const answer = new Promise<BlockingAnswer | undefined>((resolve) => {
       const timer = setTimeout(() => {
         this.pending.delete(token)
         this.timedOut(extensionId, event)
