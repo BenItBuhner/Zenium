@@ -19,6 +19,7 @@ import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
 import androidx.test.runner.lifecycle.Stage
 import androidx.webkit.WebViewCompat
 import app.zen.chromium.blocking.Blocking
+import app.zen.chromium.ext.ExtensionUrls
 import app.zen.chromium.ext.ExtensionWebView
 import org.json.JSONArray
 import org.json.JSONObject
@@ -271,16 +272,21 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val since = SystemClock.uptimeMillis()
         launch()
         report.put("relaunchMs", SystemClock.uptimeMillis() - since)
-        // The restored session's active tab is the options page (by the URL the core spells).
-        val restoredId = poll(30_000, 500) {
-            runCatching { activeCoreTab() }.getOrNull()?.takeIf { it.optString("url").startsWith(url) }?.optString("id")
+        // The restored session's active tab is the options page, in whichever of the two
+        // spellings the core carries for it (the session file names Chrome's; the tab model
+        // takes the WebView's served origin back at the commit: `TabWebView.doUpdateVisitedHistory`
+        // reports the raw URL over `navState()`'s presented one), as the core's own
+        // `extensionPageOf` treats them.
+        val restoredTab = poll(30_000, 500) {
+            runCatching { activeCoreTab() }.getOrNull()?.takeIf { ExtensionUrls.present(it.optString("url")).startsWith(url) }
         }
-        if (restoredId == null) {
+        if (restoredTab == null) {
             report.put("verdict", "F").put("note", "no active tab on $url within 30 s of the restart; tabs: ${runCatching { tabUrls() }.getOrNull()}")
             snap("restored-options-tab")
             return
         }
-        report.put("restoredTabId", restoredId)
+        val restoredId = restoredTab.optString("id")
+        report.put("restoredTabId", restoredId).put("restoredUrl", restoredTab.optString("url"))
         val restored = waitForView(restoredId)
         val rendered = poll(scaled(OPTIONS_TIMEOUT_MS, factor), 500) { if (rendered(restored)) true else null }
         report.put("renderedMs", SystemClock.uptimeMillis() - since)
@@ -949,9 +955,13 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
 
     /**
      * The page's uncaught errors and their stacks: the fixture's own (`window.__errors`, from its
-     * first inline script on) and the runtime's debug capture (`__zenExtStats.errors`, from
+     * first inline script on), the runtime's debug capture (`__zenExtStats.errors`, from
      * document start on, with the throwing inline script's source for an error a console line
-     * gives as `<document URL>:1`), each marked with where it was kept.
+     * gives as `<document URL>:1`) and the errors of the sub-frames the runtime left alone
+     * (`__zenExtStats.frameErrors`: an error inside such a frame never reaches the page's own
+     * `error` listeners), each marked with where it was kept. One `stats` entry carries the
+     * frames the runtime left alone and the shield's state; without the runtime's capture on the
+     * page (no `__zenExtStats`), one `none` entry says so.
      */
     private fun targetErrors(view: WebView): JSONArray =
         runCatching {
@@ -960,7 +970,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                     tabEval(
                         view,
                         "JSON.stringify([].concat((window.__errors||[]).slice(0,6).map(function(e){e=Object.assign({},e);e.kept='page';return e})," +
-                            "((window.__zenExtStats&&window.__zenExtStats.errors)||[]).slice(0,6).map(function(e){e=Object.assign({},e);e.kept='runtime';return e})))"
+                            "((window.__zenExtStats&&window.__zenExtStats.errors)||[]).slice(0,6).map(function(e){e=Object.assign({},e);e.kept='runtime';return e})," +
+                            "((window.__zenExtStats&&window.__zenExtStats.frameErrors)||[]).slice(0,6).map(function(e){e=Object.assign({},e);e.kept='frame';return e})," +
+                            "window.__zenExtStats?[{kept:'stats',untouchedFrames:window.__zenExtStats.untouchedFrames||[],trustedTypes:window.__zenExtStats.trustedTypes,applied:window.__zenExtStats.applied,groups:(window.__zenExtStats.groups||[]).length}]" +
+                            ":[{kept:'none',message:'no __zenExtStats on the page'}]))"
                     )
                 ).nextValue() as? String ?: "[]"
             )

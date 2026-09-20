@@ -257,6 +257,71 @@ declare const __zenExtBoot: Boot
     return { url, isTopFrame, precursorUrl }
   }
 
+  /**
+   * Debug: one uncaught error as the sweep reads it, with the stack and, for an inline script
+   * (`document.currentScript` without `src`, still running while the event is dispatched), the
+   * source around the throw; `frame` names a sub-frame's document, null for this one.
+   */
+  function bootErrorStat(event: Event, frame: string | null): BootErrorStat | null {
+    if (!('message' in event) || typeof event.message !== 'string') return null
+    const err = event as ErrorEvent
+    const cause = err.error as { stack?: unknown } | null | undefined
+    let inline: string | null = null
+    const current = document.currentScript
+    if (current && !(current as HTMLScriptElement).src) {
+      const text = current.textContent ?? ''
+      let at = 0
+      for (let line = 1; line < err.lineno && at >= 0; line += 1) at = text.indexOf('\n', at) + 1
+      at = Math.max(0, at + err.colno - 1)
+      inline = text.slice(Math.max(0, at - 240), at) + ' >>> ' + text.slice(at, at + 160)
+    }
+    return {
+      message: err.message,
+      source: err.filename,
+      line: err.lineno,
+      column: err.colno,
+      stack:
+        cause && typeof cause === 'object' && typeof cause.stack === 'string'
+          ? cause.stack.slice(0, 1200)
+          : null,
+      at: performance.now(),
+      inline,
+      frame
+    }
+  }
+
+  /**
+   * Debug: the uncaught errors of a sub-frame this copy leaves alone go onto the parent's stats
+   * (`frameErrors`). Such an error never reaches the parent's `error` listeners, and its console
+   * line does not name the frame; the frame's own window is where it can be caught, and a
+   * listener there leaves the frame's globals and prototypes as they were.
+   */
+  function watchUntouchedFrame(frame: FrameContext): void {
+    const parentStatsNow = (): BootStats | undefined => {
+      try {
+        return (window.parent as unknown as { __zenExtStats?: BootStats }).__zenExtStats
+      } catch {
+        return undefined
+      }
+    }
+    const stats = parentStatsNow()
+    if (stats) {
+      const seen = (stats.untouchedFrames ??= [])
+      if (seen.length < 24) seen.push(`${frame.url} < ${frame.precursorUrl ?? '-'}`)
+    }
+    window.addEventListener(
+      'error',
+      (event) => {
+        const parentStats = parentStatsNow()
+        if (!parentStats) return
+        const list = (parentStats.frameErrors ??= [])
+        const record = bootErrorStat(event, frame.url)
+        if (record && list.length < 12) list.push(record)
+      },
+      true
+    )
+  }
+
   function makeEngine(
     ext: ExtensionBoot,
     context: EngineContextKind,
@@ -481,7 +546,10 @@ declare const __zenExtBoot: Boot
   // fallback with no declaration opting in) this copy leaves nothing behind: no transport, no
   // slots, no listeners. A later unit that does inject there installs the runtime itself.
   const first = decideFrameBoot(content.extension, frame, content.late === true)
-  if (!first.touch) return
+  if (!first.touch) {
+    if (boot.debug && !frame.isTopFrame) watchUntouchedFrame(frame)
+    return
+  }
   /** The frame's prototypes stay the page's: no Trusted Types shield here (frameBoot.ts). */
   const pristine = first.pristine
   const attached: ExtensionBoot[] = []
@@ -553,29 +621,8 @@ declare const __zenExtBoot: Boot
     window.addEventListener(
       'error',
       (event) => {
-        if (errors.length >= 12 || !('message' in event) || typeof event.message !== 'string')
-          return
-        const err = event as ErrorEvent
-        const cause = err.error as { stack?: unknown } | null | undefined
-        let inline: string | null = null
-        const current = document.currentScript
-        if (current && !(current as HTMLScriptElement).src && err.lineno === 1) {
-          const text = current.textContent ?? ''
-          const at = Math.max(0, err.colno - 1)
-          inline = text.slice(Math.max(0, at - 240), at) + ' >>> ' + text.slice(at, at + 160)
-        }
-        errors.push({
-          message: err.message,
-          source: err.filename,
-          line: err.lineno,
-          column: err.colno,
-          stack:
-            cause && typeof cause === 'object' && typeof cause.stack === 'string'
-              ? cause.stack.slice(0, 1200)
-              : null,
-          at: performance.now(),
-          inline
-        })
+        const record = bootErrorStat(event, null)
+        if (record && errors.length < 12) errors.push(record)
       },
       true
     )

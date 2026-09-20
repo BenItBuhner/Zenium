@@ -118,6 +118,18 @@ export interface BootStats {
    * script `<document URL>:1` only.
    */
   errors?: BootErrorStat[]
+  /**
+   * The same for the sub-frames the bootstrap left alone (an inherited-origin frame under the
+   * `with` fallback with no declaration opting in): an uncaught error inside such a frame is
+   * dispatched to the frame's own window, never to the parent's listeners, so the frame's copy
+   * of the bootstrap records it here, on the parent's stats.
+   */
+  frameErrors?: BootErrorStat[]
+  /**
+   * The sub-frames the bootstrap left alone, `"<frame URL> < <precursor URL>"` each, in the
+   * order their copies ran (the sweep's proof that the frame filter met a given frame).
+   */
+  untouchedFrames?: string[]
 }
 
 export interface BootErrorStat {
@@ -130,6 +142,8 @@ export interface BootErrorStat {
   at: number
   /** The throwing inline script's text around the column (`document.currentScript`). */
   inline: string | null
+  /** The sub-frame's document URL when the error is a sub-frame's; null for the document's own. */
+  frame: string | null
 }
 
 export type PageContext = 'background' | 'popup' | 'options' | 'offscreen' | 'page'
