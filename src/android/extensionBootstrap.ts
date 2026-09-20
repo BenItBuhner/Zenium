@@ -43,6 +43,7 @@ import {
 } from './extensionServiceWorker'
 import type { ClaimedTransport, TransportJanitor } from './extensionTransport'
 import { installCorsProxy } from './extensionCorsProxy'
+import { installExtensionUrlRewrite } from './extensionFrameUrls'
 
 /**
  * The extension bootstrap Kotlin injects at document start into tab WebViews (content mode) and
@@ -438,6 +439,9 @@ declare const __zenExtBoot: Boot
       postBody: (ticket, body) => engine.post({ t: 'proxyBody', ticket, body }),
       nextTicket: () => `${endpointId}:${++ticketSeq}`
     })
+    // What the page spells `chrome-extension://<id>/...` by hand (a frame's src, an image's, a
+    // script's) loads from the served origin: the WebView has no such scheme (extensionFrameUrls.ts).
+    installExtensionUrlRewrite(window)
 
     if (context === 'background' && workerScript) {
       // `self` and `globalThis` answer as a worker's global does (`workerSelf`: no `window`
@@ -453,7 +457,8 @@ declare const __zenExtBoot: Boot
       }
       // Service-worker globals the MV3 script expects; `importScripts` is synchronous by
       // contract, so it is a synchronous XHR to the extension origin and a classic script
-      // element of this page (the generated background page carries no CSP that would refuse it).
+      // element of this page (the generated background page carries no CSP that would refuse it);
+      // what the element throws, the page reports to `window` and the call throws to its caller.
       pageWindow.importScripts = importScriptsFor({
         origin,
         base: location.href,
@@ -463,7 +468,8 @@ declare const __zenExtBoot: Boot
           xhr.send()
           return { status: xhr.status, text: xhr.responseText }
         },
-        document
+        document,
+        errors: window
       })
       const worker = installServiceWorkerGlobals(pageWindow, {
         origin,

@@ -66,7 +66,7 @@
 /* A field of a few lines (a street address): the field's border and type, sized by its rows, no grip. */
 textarea.zen-v2-field {
   height: auto;
-  padding: calc((var(--v2-control) - var(--v2-line-body)) / 2 - 1px) 12px;
+  padding: calc((var(--v2-control) - var(--v2-line-body-box)) / 2 - 1px) 12px;
   line-height: var(--v2-line-body);
   resize: none;
 }
@@ -208,7 +208,7 @@ textarea.zen-v2-field {
   flex-shrink: 0;
   width: var(--v2-icon);
   height: var(--v2-icon);
-  margin-top: calc((var(--v2-line-heading) - var(--v2-icon)) / 2);
+  margin-top: calc((var(--v2-line-heading-box) - var(--v2-icon)) / 2);
   align-items: center;
   justify-content: center;
 }
@@ -247,7 +247,7 @@ textarea.zen-v2-field {
   align-items: flex-start;
 }
 .zen-sheet-title-block .zen-v2-af-title-glyph {
-  margin-top: calc((var(--v2-line-heading) - var(--v2-icon)) / 2);
+  margin-top: calc((var(--v2-line-heading-box) - var(--v2-icon)) / 2);
 }
 .zen-sheet-title-block .zen-v2-af-title {
   font: inherit;
@@ -329,7 +329,7 @@ textarea.zen-v2-field {
   flex-shrink: 0;
   width: 16px;
   height: 16px;
-  margin-top: calc((var(--v2-line-body) - 16px) / 2);
+  margin-top: calc((var(--v2-line-body-box) - 16px) / 2);
 }
 .zen-v2-af-field-row {
   display: flex;
@@ -399,7 +399,7 @@ textarea.zen-v2-field {
   flex-shrink: 0;
   width: var(--v2-icon);
   height: var(--v2-icon);
-  margin-top: calc((var(--v2-line-body) - var(--v2-icon)) / 2);
+  margin-top: calc((var(--v2-line-body-box) - var(--v2-icon)) / 2);
   align-items: center;
   justify-content: center;
   color: var(--v2-text-deemphasized);
@@ -661,7 +661,7 @@ textarea.zen-v2-field {
   flex-shrink: 0;
   width: var(--v2-icon);
   height: var(--v2-icon);
-  margin-top: calc((var(--v2-line-heading) - var(--v2-icon)) / 2);
+  margin-top: calc((var(--v2-line-heading-box) - var(--v2-icon)) / 2);
   color: var(--v2-text-deemphasized);
 }
 .zen-v2-af-card-title {
@@ -777,11 +777,11 @@ textarea.zen-v2-field {
  */
 .zen-v2-af-pane-row[data-wrapped] > .zen-v2-af-pane-actions {
   align-self: flex-start;
-  margin-top: calc((var(--v2-line-body) - var(--v2-icon-button)) / 2);
+  margin-top: calc((var(--v2-line-body-box) - var(--v2-icon-button)) / 2);
 }
 .zen-v2-af-pane-row[data-wrapped] > .zen-v2-menulist {
   align-self: flex-start;
-  margin-top: calc((var(--v2-line-body) - var(--v2-control)) / 2);
+  margin-top: calc((var(--v2-line-body-box) - var(--v2-control)) / 2);
 }
 /* The empty state in a card (§9.17): one plain static row, the sentence at 15 and 69% where a label would be. */
 .zen-v2-af-pane-empty {

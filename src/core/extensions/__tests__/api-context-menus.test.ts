@@ -15,6 +15,7 @@ import {
   MenuRegistry,
   actionMenuEntriesFor,
   formatMenuError,
+  hasLazyBackground,
   menuEntriesFor,
   menuItemMatchesClick,
   normalizeCreateProperties,
@@ -363,5 +364,111 @@ describe('onClickData', () => {
     expect(onClickData(parent, click(), { wasChecked: false, checked: false })).not.toHaveProperty(
       'checked'
     )
+  })
+})
+
+describe('persisted items (Chrome MenuManager storage)', () => {
+  it('flattens the tree parents first and restores it in order with the check state', () => {
+    const registry = new MenuRegistry(EXT)
+    registry.create(props({ id: 'p', title: 'Parent' }))
+    registry.create(props({ id: 'c1', title: 'Child %s', parentId: 'p', contexts: ['selection'] }))
+    registry.create(props({ id: 'box', type: 'checkbox', title: 'Box', checked: true }))
+    registry.create(props({ id: 'r1', type: 'radio', title: 'R1' }))
+    registry.create(props({ id: 'r2', type: 'radio', title: 'R2', checked: true }))
+    registry.create(props({ id: 7, type: 'separator' }))
+    registry.create(
+      props({
+        id: 'img',
+        title: 'Img',
+        contexts: ['image'],
+        targetUrlPatterns: ['*://*/*.png'],
+        documentUrlPatterns: ['https://*.example.com/*'],
+        visible: false,
+        enabled: false
+      })
+    )
+    const persisted = registry.toPersisted()
+    expect(persisted.map((item) => item.id)).toEqual(['p', 'c1', 'box', 'r1', 'r2', 7, 'img'])
+    expect(persisted[1]).toMatchObject({
+      parentId: 'p',
+      contexts: ['selection'],
+      title: 'Child %s'
+    })
+    expect(persisted[2]).toMatchObject({ type: 'checkbox', checked: true })
+    expect(persisted[6]).toMatchObject({
+      visible: false,
+      enabled: false,
+      targetUrlPatterns: ['*://*/*.png'],
+      documentUrlPatterns: ['https://*.example.com/*']
+    })
+    // Survives a JSON round trip (a Set would not).
+    const restored = new MenuRegistry(EXT)
+    expect(restored.restore(JSON.parse(JSON.stringify(persisted)))).toBe(7)
+    expect(restored.toPersisted()).toEqual(persisted)
+    expect(restored.topLevelIds()).toEqual(['p', 'box', 'r1', 'r2', 7, 'img'])
+    expect(restored.get('p')?.children).toEqual(['c1'])
+    expect(restored.get('r1')?.checked).toBe(false)
+    expect(restored.get('r2')?.checked).toBe(true)
+    // A restored item is an item: creating its id again is Chrome's duplicate-id error.
+    expect(() => restored.create(props({ id: 'p' }))).toThrow(
+      formatMenuError(ERROR_DUPLICATE_ID, 'p')
+    )
+  })
+
+  it('skips entries that are not items, exist already or lost their parent', () => {
+    const registry = new MenuRegistry(EXT)
+    registry.create(props({ id: 'mine', title: 'Recreated first' }))
+    const added = registry.restore([
+      null,
+      { id: 'mine', type: 'normal', title: 'Stored copy' },
+      {
+        id: 'orphan',
+        type: 'normal',
+        title: 'Orphan',
+        checked: false,
+        contexts: ['page'],
+        visible: true,
+        enabled: true,
+        parentId: 'gone',
+        documentUrlPatterns: [],
+        targetUrlPatterns: []
+      },
+      {
+        id: 'ok',
+        type: 'normal',
+        title: 'Ok',
+        checked: false,
+        contexts: ['all'],
+        visible: true,
+        enabled: true,
+        parentId: null,
+        documentUrlPatterns: [],
+        targetUrlPatterns: []
+      },
+      { id: 'bad-context', type: 'normal', title: 'x', contexts: ['nope'] }
+    ])
+    expect(added).toBe(1)
+    expect(registry.get('mine')?.title).toBe('Recreated first')
+    expect(registry.get('orphan')).toBeUndefined()
+    expect(registry.get('ok')?.contexts.has('all')).toBe(true)
+    expect(registry.restore('not a list')).toBe(0)
+  })
+
+  it('persists for MV3 workers and MV2 event pages, not for persistent background pages', () => {
+    expect(
+      hasLazyBackground({ manifest_version: 3, background: { service_worker: 'bg.js' } })
+    ).toBe(true)
+    expect(
+      hasLazyBackground({
+        manifest_version: 2,
+        background: { scripts: ['bg.js'], persistent: false }
+      })
+    ).toBe(true)
+    expect(hasLazyBackground({ manifest_version: 2, background: { scripts: ['bg.js'] } })).toBe(
+      false
+    )
+    expect(hasLazyBackground({ manifest_version: 2, background: { page: 'bg.html' } })).toBe(false)
+    expect(hasLazyBackground({ manifest_version: 3 })).toBe(false)
+    expect(hasLazyBackground({ manifest_version: 3, background: null })).toBe(false)
   })
 })

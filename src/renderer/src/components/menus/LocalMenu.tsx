@@ -1,5 +1,5 @@
 import type { JSX } from 'react'
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useId, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { LucideIcon } from 'lucide-react'
 import { useEscape } from '@renderer/hooks/useEscape'
@@ -148,6 +148,7 @@ function PopoverMenu({
 
 function SheetMenu({ items, title, onClose }: Props): JSX.Element {
   const sheet = useRef<BottomSheetHandle>(null)
+  const titleId = useId()
   useEscape(() => sheet.current?.dismiss())
   const withIcons = items.some((item) => !isSeparator(item) && item.icon)
   return (
@@ -155,7 +156,16 @@ function SheetMenu({ items, title, onClose }: Props): JSX.Element {
       ref={sheet}
       onDismissed={onClose}
       handleLabel="Resize menu"
-      header={title ? <span className="zen-sheet-title">{title}</span> : undefined}
+      // The dialog is named by its title row; a menu with no title is "Menu" to the tree.
+      labelledBy={title ? titleId : undefined}
+      label={title ? undefined : 'Menu'}
+      header={
+        title ? (
+          <h2 id={titleId} className="zen-sheet-title">
+            {title}
+          </h2>
+        ) : undefined
+      }
     >
       <div className="zen-v2 flex flex-col pb-1">
         {items.map((entry) =>
@@ -171,7 +181,7 @@ function SheetMenu({ items, title, onClose }: Props): JSX.Element {
               onClick={() => sheet.current?.dismiss(() => entry.onSelect())}
             >
               {withIcons && (
-                <span className="flex h-5 w-5 shrink-0 items-center justify-center">
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center" aria-hidden>
                   {entry.icon && <entry.icon className="h-5 w-5" />}
                 </span>
               )}

@@ -148,7 +148,9 @@ class MainActivity : BrowserActivity() {
     /**
      * What the page controls need to know about the device (`PageEnvironment` in the core): a
      * large screen or a keyboard and mouse make "desktop site" the automatic default, and the
-     * system font scale can be folded into the default zoom.
+     * system font scale can be folded into the default zoom. The chrome's own text follows the
+     * same setting: `textZoom` is the factor its WebView draws text at (`ChromeTextScale`; the
+     * chrome grows its line boxes by it) and `fontWeightAdjustment` the bold-text setting.
      */
     fun environment(): JSONObject {
         val c = resources.configuration
@@ -160,7 +162,9 @@ class MainActivity : BrowserActivity() {
         return json(
             "largeScreen" to (c.smallestScreenWidthDp >= 600),
             "pointerAndKeyboard" to (keyboard && mouse),
-            "fontScale" to c.fontScale.toDouble()
+            "fontScale" to c.fontScale.toDouble(),
+            "textZoom" to ChromeTextScale.zoomFactor(ChromeTextScale.textZoomPercent(resources)),
+            "fontWeightAdjustment" to ChromeTextScale.fontWeightAdjustment(c)
         )
     }
 
@@ -329,6 +333,9 @@ class MainActivity : BrowserActivity() {
         super.onConfigurationChanged(newConfig)
         // The chrome re-measures itself; nothing to do but let WebViews relayout.
         root.requestLayout()
+        // The system font size changed: the chrome's text takes the new zoom first, then hears the
+        // factor (and the bold-text setting) with the environment below and grows its line boxes.
+        host.chrome.applyTextScale()
         // A dock, a keyboard, a fold or a font-size change may move the page controls' defaults.
         host.chrome.hostEvent("environment", environment())
     }

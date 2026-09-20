@@ -171,6 +171,10 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
       <div
         className="zen-content-frame relative flex h-full min-h-0 flex-col overflow-hidden"
         data-staged={staged || undefined}
+        // A phone panel takes the whole frame (OverlayShell): what it covers – a chrome page's
+        // own rows and headings, the find bar – leaves the accessibility tree with it (§9.22:
+        // nothing focusable is left behind; A11Y-01: TalkBack's order is the visual order).
+        inert={phone && ui.overlay !== 'none' ? true : undefined}
       >
         {(crashRestore || banner) && (
           // Under a desktop overlay panel the strips keep their height (the viewport under them
