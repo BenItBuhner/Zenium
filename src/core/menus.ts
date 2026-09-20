@@ -92,7 +92,13 @@ export interface SelectionToolbarItem {
  * of `Menus.selectionActions`. The menu keeps that order throughout (Translate Selection before
  * Share, as on the desktop).
  */
-const SELECTION_TOOLBAR_ORDER: readonly string[] = ['search', 'glance', 'share', 'translate']
+const SELECTION_TOOLBAR_ORDER: readonly string[] = [
+  'search',
+  'glance',
+  'share',
+  'translate',
+  'readAloud'
+]
 
 function toolbarRank(id: string): number {
   const rank = SELECTION_TOOLBAR_ORDER.indexOf(id)
@@ -845,6 +851,20 @@ export class Menus {
         menu: true,
         toolbar: true,
         run: () => void this.browser.share({ text: selection, tabId: tab.id }, win)
+      })
+    }
+    // Edge's Read aloud from a selection (EDGE-11): the selection first, then the rest of the
+    // article from there (Chrome reads the selection alone) – `readAloud.start { from:
+    // 'selection' }`, the core's model takes the selection from the page. Hosts with a speech
+    // host; any page, since a selection is text to read whether or not the page is an article.
+    if (this.browser.readAloud.available) {
+      actions.push({
+        id: 'readAloud',
+        label: 'Read Aloud',
+        title: 'Read Aloud',
+        menu: true,
+        toolbar: true,
+        run: () => void this.browser.readAloud.start({ tabId: tab.id, from: 'selection' })
       })
     }
     return actions
@@ -2464,6 +2484,15 @@ export class Menus {
         ...when(Boolean(active) && this.browser.reader.isReaderUrl(active!.url), {
           label: 'Text Preferences…',
           click: () => active && this.browser.emit('reader.preferences', { tabId: active.id }, win)
+        }),
+        // Chrome's "Listen to this page" (A11Y-06; Title Case like the menu's other items): the
+        // phone's menu on hosts with a speech host, enabled by the reader core's readability
+        // signal exactly as Reader View is (`reader.canRead`: the page is readerable, or it is
+        // the reader's own document, which the core then reads as `source: 'reader'`).
+        ...when(phone && this.browser.readAloud.available, {
+          label: 'Listen to This Page',
+          enabled: Boolean(active) && this.browser.reader.canRead(active),
+          click: () => active && void this.browser.readAloud.start({ tabId: active.id })
         }),
         ...when(this.browser.translate.available, {
           label: 'Translate Page…',
