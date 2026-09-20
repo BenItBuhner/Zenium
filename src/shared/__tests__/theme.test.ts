@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
   CAPTION_HEIGHT,
+  DARK_INK,
+  LIGHT_INK,
   PRIVATE_THEME,
   THEME_PRESETS,
   blendResolvedThemes,
   captionColors,
   colorToWheel,
+  contrastRatio,
   cssColorToHex,
   deriveColors,
   hexToRgb,
@@ -21,6 +24,7 @@ import {
   themeCssVariables,
   themeInk,
   toMonochrome,
+  wantsLightInk,
   wheelToColor
 } from '../theme'
 
@@ -55,6 +59,30 @@ describe('colour utilities', () => {
     expect(isDarkColor([20, 20, 20])).toBe(true)
     expect(isDarkColor([240, 240, 240])).toBe(false)
   })
+
+  it('the window takes the ink with more contrast on it, so a mid-tone takes dark ink (a11y-30)', () => {
+    // #c581a0 (luminance 0.30) reads as dark, yet the light ink sits at 2.6:1 on it, the dark ink at 5.5:1.
+    expect(isDarkColor([197, 129, 160])).toBe(true)
+    expect(wantsLightInk([[197, 129, 160]])).toBe(false)
+    expect(contrastRatio(DARK_INK, [197, 129, 160])).toBeGreaterThan(4.5)
+    expect(contrastRatio(LIGHT_INK, [197, 129, 160])).toBeLessThan(3)
+    // A colour under the crossover (luminance 0.19) takes light ink.
+    expect(wantsLightInk([[100, 100, 110]])).toBe(true)
+    // The worst stop decides for a gradient: a mid-tone next to a dark stop takes dark ink.
+    expect(
+      wantsLightInk([
+        [197, 129, 160],
+        [139, 97, 216]
+      ])
+    ).toBe(false)
+    expect(
+      wantsLightInk([
+        [40, 40, 60],
+        [90, 60, 140]
+      ])
+    ).toBe(true)
+    expect(wantsLightInk([])).toBe(false)
+  })
 })
 
 describe('harmony algorithms', () => {
@@ -83,6 +111,22 @@ describe('resolveTheme', () => {
   it('falls back to the base colours without a theme', () => {
     expect(resolveTheme(null, false).isDark).toBe(false)
     expect(resolveTheme(null, true).isDark).toBe(true)
+  })
+
+  it('a saturated gradient at full strength takes the ink that reads on its worst stop (a11y-30)', () => {
+    // Orange to violet on a light scheme: the window's mid-tones average a luminance of 0.30,
+    // which the old 0.45 threshold called dark and painted white ink on at 2.6:1.
+    const loud = { ...makeTheme('#ff7828', ['#5a1ec8']), opacity: 1 }
+    const light = resolveTheme(loud, false)
+    expect(light.isDark).toBe(false)
+    expect(themeInk(light)).toEqual(DARK_INK)
+    // The dark scheme mutes the same colours towards black, where light ink still reads.
+    expect(resolveTheme(loud, true).isDark).toBe(true)
+    // The presets at their default strength keep the polarity of the scheme.
+    for (const { theme } of THEME_PRESETS) {
+      expect(resolveTheme(theme, false).isDark).toBe(false)
+      expect(resolveTheme(theme, true).isDark).toBe(true)
+    }
   })
 
   it('produces a linear gradient for multi-colour themes and a solid for one colour', () => {

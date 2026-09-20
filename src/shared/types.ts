@@ -280,6 +280,11 @@ export interface SpaceTheme {
   monochrome: boolean
   /** Gradient rotation in degrees. */
   rotation: number
+  /**
+   * A theme muted for one scheme whatever the OS uses: the private window's purple stays dark
+   * under a light scheme, the way an Incognito window does, so its light ink keeps reading on it.
+   */
+  scheme?: 'light' | 'dark'
 }
 
 // ---------------------------------------------------------------------------
