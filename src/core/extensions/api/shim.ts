@@ -1004,6 +1004,31 @@ export function installExtensionApi(
     return result
   }
 
+  /**
+   * A `contentSettings.ContentSetting`: `get` / `set` / `clear` take details and route as
+   * `<namespace>.<method>(type, details)`; `getResourceIdentifiers` takes only the callback.
+   * No event: Chrome's has none.
+   */
+  function contentSetting(namespace: string, type: string): object {
+    const result: Record<string, unknown> = {}
+    for (const method of ['get', 'set', 'clear']) {
+      const qualified = `contentSettings.ContentSetting.${method}(object details, optional function callback)`
+      define(result, method, function (...raw: unknown[]): unknown {
+        const callback = takeCallback(raw)
+        const [details] = normalizeArgs(qualified, raw, [{ name: 'details', type: 'object' }])
+        return settle(qualified, invoke(namespace, method, [type, details]), callback)
+      })
+    }
+    const identifiers =
+      'contentSettings.ContentSetting.getResourceIdentifiers(optional function callback)'
+    define(result, 'getResourceIdentifiers', function (...raw: unknown[]): unknown {
+      const callback = takeCallback(raw)
+      normalizeArgs(identifiers, raw, [])
+      return settle(identifiers, invoke(namespace, 'getResourceIdentifiers', [type]), callback)
+    })
+    return result
+  }
+
   // ---------------------------------------------------------------------------
   // userScripts: the worlds' messaging arrives on runtime.onUserScriptMessage / onUserScriptConnect
   // ---------------------------------------------------------------------------
@@ -1365,6 +1390,10 @@ export function installExtensionApi(
     for (const setting of nsSpec.ownSettings ?? []) {
       const value = chromeSetting(namespace, null, setting)
       for (const target of targets) define(target, setting, value)
+    }
+    for (const type of nsSpec.contentSettings ?? []) {
+      const value = contentSetting(namespace, type)
+      for (const target of targets) define(target, type, value)
     }
     for (const [name, value] of Object.entries(nsSpec.constants ?? {})) {
       for (const target of targets) {

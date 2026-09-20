@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import type { StoreIO } from '../../../core/platform'
 import { JsonStore } from '../../../core/store/JsonStore'
 import type { Alarm } from '../../../core/extensions/api/alarms'
+import type { ContentSettingRule } from '../../../core/extensions/api/contentSettings'
 import type { PermissionSet } from '../../../core/extensions/api/permissions'
 import type { ScopedValues } from '../../../core/extensions/api/privacy'
 import type { StorageItems } from '../../../core/extensions/api/storage'
@@ -24,6 +25,8 @@ interface PersistedApi {
   privacy?: Record<string, Record<string, ScopedValues>>
   /** `chrome.proxy.settings` values per extension (canonical configs as JSON text), by scope. */
   proxy?: Record<string, ScopedValues>
+  /** `chrome.contentSettings` rules per extension, by type name (regular scope only). */
+  contentSettings?: Record<string, Record<string, ContentSettingRule[]>>
 }
 
 function emptyPersisted(): PersistedApi {
@@ -36,7 +39,8 @@ function emptyPersisted(): PersistedApi {
     workerEvents: {},
     sidePanelOnActionClick: {},
     privacy: {},
-    proxy: {}
+    proxy: {},
+    contentSettings: {}
   }
 }
 
@@ -152,6 +156,17 @@ export class ApiStore {
     this.save()
   }
 
+  contentSettingRules(extensionId: string): Record<string, ContentSettingRule[]> {
+    return this.data.contentSettings?.[extensionId] ?? {}
+  }
+
+  setContentSettingRules(extensionId: string, rules: Record<string, ContentSettingRule[]>): void {
+    const all = this.data.contentSettings ?? (this.data.contentSettings = {})
+    if (Object.keys(rules).length === 0) delete all[extensionId]
+    else all[extensionId] = rules
+    this.save()
+  }
+
   /** The extension is gone for good: drop everything about it. */
   forget(extensionId: string): void {
     delete this.data.installed[extensionId]
@@ -162,6 +177,7 @@ export class ApiStore {
     delete this.data.sidePanelOnActionClick?.[extensionId]
     delete this.data.privacy?.[extensionId]
     delete this.data.proxy?.[extensionId]
+    delete this.data.contentSettings?.[extensionId]
     this.save()
     this.syncStores.get(extensionId)?.store.write({})
     this.setUserScripts(extensionId, null)

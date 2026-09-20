@@ -31,6 +31,7 @@ import type { PermissionSet } from '../../../core/extensions/api/permissions'
 import type { InvokeResult } from '../../../core/extensions/api/shim'
 import {
   API_SPEC,
+  CONTENT_SETTINGS_INTERNAL_METHODS,
   PRIVACY_INTERNAL_METHODS,
   PROXY_INTERNAL_METHODS,
   STORAGE_INTERNAL_METHODS,
@@ -80,6 +81,7 @@ import { OmniboxApi } from './omnibox'
 import { PermissionsApi } from './permissions'
 import { PrivacyApi } from './privacy'
 import { ProxyApi } from './proxy'
+import { ContentSettingsApi } from './contentSettings'
 import { RuntimeApi } from './runtime'
 import { SessionsApi } from './sessions'
 import { SidePanelApi } from './sidePanel'
@@ -189,6 +191,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   readonly webRequest: WebRequestApi
   readonly privacy: PrivacyApi
   readonly proxy: ProxyApi
+  readonly contentSettings: ContentSettingsApi
   readonly bookmarks: BookmarksApi
   readonly history: HistoryApi
   readonly downloads: DownloadsApi
@@ -279,6 +282,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
           hook(ses, containerId === PRIVATE_CONTAINER_ID)
         )
     })
+    this.contentSettings = new ContentSettingsApi(this)
     this.bookmarks = new BookmarksApi(this)
     this.history = new HistoryApi(this)
     this.downloads = new DownloadsApi(this, downloadBridge)
@@ -309,6 +313,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       webRequest: this.webRequest.handlers,
       privacy: this.privacy.handlers,
       proxy: this.proxy.handlers,
+      contentSettings: this.contentSettings.handlers,
       bookmarks: this.bookmarks.handlers,
       history: this.history.handlers,
       downloads: this.downloads.handlers,
@@ -403,6 +408,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
         this.declarativeNetRequest.installOrderChanged()
         this.privacy.installOrderChanged()
         this.proxy.installOrderChanged()
+        this.contentSettings.installOrderChanged()
         return
       case 'enabled':
         this.tellOthers('onEnabled', event.id)
@@ -426,6 +432,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
         this.runtime.openUninstallUrl(event.id)
         this.privacy.forget(event.id)
         this.proxy.forget(event.id)
+        this.contentSettings.forget(event.id)
         this.userScripts.uninstalled(event.id)
         this.store.forget(event.id)
         this.declarativeNetRequest.uninstalled(event.id)
@@ -575,6 +582,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.declarativeNetRequest.load(loaded)
     this.privacy.load(ext.id)
     this.proxy.load(ext.id)
+    this.contentSettings.load(ext.id)
     this.userScripts.load(loaded, info?.allowUserScripts === true)
     // Existing tabs, bookmarks, downloads and folders are the baseline, not a burst of `onCreated`.
     if (!this.snapshot) {
@@ -612,6 +620,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.webRequest.unload(ext.id)
     this.privacy.unload(ext.id)
     this.proxy.unload(ext.id)
+    this.contentSettings.unload(ext.id)
     this.userScripts.unload(ext.id)
     this.contextMenus.forget(ext.id)
     this.notifications.forget(ext.id)
@@ -702,10 +711,12 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
               ? (PRIVACY_INTERNAL_METHODS as readonly string[]).includes(method)
               : routed === 'proxy'
                 ? (PROXY_INTERNAL_METHODS as readonly string[]).includes(method)
-                : routed === 'userScripts' &&
-                    (USER_SCRIPTS_INTERNAL_METHODS as readonly string[]).includes(method)
-                  ? true
-                  : isSpecMethod(API_SPEC, namespace, method)
+                : routed === 'contentSettings'
+                  ? (CONTENT_SETTINGS_INTERNAL_METHODS as readonly string[]).includes(method)
+                  : routed === 'userScripts' &&
+                      (USER_SCRIPTS_INTERNAL_METHODS as readonly string[]).includes(method)
+                    ? true
+                    : isSpecMethod(API_SPEC, namespace, method)
       const handlers = this.namespaces[routed]
       if (!known || !handlers || !Object.prototype.hasOwnProperty.call(handlers, method)) {
         throw new ApiError(`${namespace}.${method} is not available in Zenium.`)

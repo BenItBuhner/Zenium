@@ -8,6 +8,11 @@
  * defined when the engine does not already provide them (Electron's implementation of those
  * works), everything else replaces the engine's inert binding in place.
  */
+import {
+  CONTENT_SETTING_METHODS,
+  CONTENT_SETTING_TYPES,
+  CONTENT_SETTING_TYPE_NAMES
+} from './contentSettings'
 import { PRIVACY_METHODS, PRIVACY_SETTING_NAMES } from './privacy'
 import { PROXY_SETTING } from './proxy'
 import { USER_SCRIPTS_UNAVAILABLE_ERROR } from './userScripts'
@@ -104,6 +109,13 @@ export interface NamespaceSpec {
    */
   ownSettings?: readonly string[]
   /**
+   * `contentSettings`: `contentSettings.ContentSetting`s that are members of the namespace
+   * (`contentSettings.cookies`, `contentSettings.javascript`, …), each with `get` / `set` /
+   * `clear` / `getResourceIdentifiers` and no event, routed as `<namespace>.<method>(type,
+   * details)`.
+   */
+  contentSettings?: readonly string[]
+  /**
    * `userScripts`: Chrome hides the namespace behind a per-extension toggle ("Allow user
    * scripts"). While `ShimOptions.toggles[key]` is false, reading `chrome.<namespace>` throws
    * `error` (extensions feature-detect it with `try { chrome.userScripts } catch {}`); the host
@@ -137,6 +149,24 @@ const ACTION_METHODS: Record<string, MethodSpec> = {
   isEnabled: { params: [integer('tabId', true)] },
   getUserSettings: { params: [] },
   openPopup: { params: [object('options', true)] }
+}
+
+/** Chrome's names for the value enums of `contentSettings` where they differ from the type's. */
+const CONTENT_SETTING_ENUM_NAMES: Readonly<Record<string, string>> = {
+  unsandboxedPlugins: 'PpapiBrokerContentSetting',
+  automaticDownloads: 'MultipleAutomaticDownloadsContentSetting'
+}
+
+/** `contentSettings.CookiesContentSetting = { ALLOW, BLOCK, SESSION_ONLY }` and the like. */
+function contentSettingEnums(): Record<string, Record<string, string>> {
+  const out: Record<string, Record<string, string>> = {}
+  for (const type of CONTENT_SETTING_TYPES) {
+    const name =
+      CONTENT_SETTING_ENUM_NAMES[type.name] ??
+      `${type.name[0].toUpperCase()}${type.name.slice(1)}ContentSetting`
+    out[name] = Object.fromEntries(type.values.map((value) => [value.toUpperCase(), value]))
+  }
+  return out
 }
 
 export const API_SPEC: ApiSpec = {
@@ -733,6 +763,20 @@ export const API_SPEC: ApiSpec = {
     },
     permissions: ['identity']
   },
+  // Per-site content settings as rules of an extension (patterns, a value, a scope), one
+  // `ContentSetting` object per type; the rules rank above the user's own answers in the
+  // permission store, as Chrome's extension provider does. The enum constants are Chrome's
+  // (`Scope`, and one `<Type>ContentSetting` per type with its values).
+  contentSettings: {
+    methods: {},
+    events: {},
+    contentSettings: CONTENT_SETTING_TYPE_NAMES,
+    constants: {
+      Scope: { REGULAR: 'regular', INCOGNITO_SESSION_ONLY: 'incognito_session_only' },
+      ...contentSettingEnums()
+    },
+    permissions: ['contentSettings']
+  },
   // A DevTools protocol session on a tab over the engine's per-page debugger: Chrome's rules on
   // who may attach to what, one extension per tab, `onEvent` for the protocol's notifications
   // (with the `sessionId` of a flattened child target), `onDetach` when the tab goes or the
@@ -1042,6 +1086,13 @@ export const PRIVACY_INTERNAL_METHODS = PRIVACY_METHODS
  * of `chrome.proxy`, but routed like one (with the setting's name first).
  */
 export const PROXY_INTERNAL_METHODS = PRIVACY_METHODS
+
+/**
+ * The calls the shim makes on behalf of a `contentSettings.<type>` object's `get` / `set` /
+ * `clear` / `getResourceIdentifiers`: not members of `chrome.contentSettings`, but routed like
+ * one (with the type's name first).
+ */
+export const CONTENT_SETTINGS_INTERNAL_METHODS = CONTENT_SETTING_METHODS
 
 /**
  * The call the shim makes on behalf of `tabs.sendMessage` for an extension holding
