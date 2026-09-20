@@ -2,6 +2,8 @@ package app.zen.chromium
 
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.UiAutomation
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.graphics.Rect
 import android.os.Build
@@ -9,18 +11,23 @@ import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.util.Base64
 import android.util.Log
+import android.view.InputDevice
+import android.view.InputEvent
+import android.view.MotionEvent
 import android.view.View
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityManager
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import java.lang.reflect.Method
 import java.util.Calendar
 import kotlin.math.abs
 import kotlin.math.min
@@ -46,9 +53,20 @@ import kotlin.math.roundToInt
  *
  * TalkBack itself is not the proof: the emulator has no audio, and the API 34 Google APIs image
  * may or may not carry it. When `com.google.android.marvin.talkback` is installed the last scene
- * switches it on, moves its focus along the bar the way a swipe does (`ACTION_ACCESSIBILITY_FOCUS`)
- * and writes down the focus events and whatever TalkBack logs; when it is not, the driver says so
- * and the tree stands. Driven by the `android-a11y-chrome-demo` workflow. See [DemoHarness].
+ * switches it on and drives its linear navigation – swipes right injected into the accessibility
+ * input filter, what a finger does – along the bar (the pill one stop, then its chips), over a
+ * card and its Close, and past the app menu's last row (the modality probe), reading where its
+ * focus lands after each; where the injected swipe does not reach it, the focus is moved with
+ * `ACTION_ACCESSIBILITY_FOCUS` node by node as run 2 did, and the report says which. When TalkBack
+ * is not on the image the driver says so and the tree stands.
+ *
+ * The `scenes` instrumentation argument (`DEMO_SCENES` in the workflow) picks the run: `all` (the
+ * default) is the audit above on the Google APIs image, whose WebView 113 has no multi-profile
+ * and so no private tabs; `private` is the one scene the audit could not walk there – a private
+ * tab opened, the pill's private mark, the overview's Tabs / Private segment (#203) and the
+ * menu's private rows – for the workflow's second job on an AOSP image with a Chromium snapshot
+ * WebView swapped in (as the private tabs demo runs). Driven by the `android-a11y-chrome-demo`
+ * workflow. See [DemoHarness].
  */
 @RunWith(AndroidJUnit4::class)
 class ChromeA11yDemo : DemoHarness(
@@ -126,19 +144,29 @@ class ChromeA11yDemo : DemoHarness(
         return cal.timeInMillis
     }
 
+    /** Which scenes run (`scenes` argument): `all`, or `private` for the multi-profile WebView job. */
+    private val scenes: String by lazy { InstrumentationRegistry.getArguments().getString("scenes", "all") ?: "all" }
+
     override fun warmUp() {
         ensureForeground()
         finding("demo server: ${server.selfCheck()}")
         awaitNode(10_000) { it.startsWith("$PILL_LABEL,") }
         SystemClock.sleep(2_000)
         calibrate()
+        seedClipboard()
         finding(
             "window ${width}x$height density $density (44 dp = ${(44 * density).roundToInt()} px); " +
-                "WebView ${webViewPackage()}; TalkBack ${if (talkBackInstalled()) "installed" else "not on this image"}"
+                "WebView ${webViewPackage()}; TalkBack ${if (talkBackInstalled()) "installed" else "not on this image"}; " +
+                "capabilities.privateTabs ${privateTabsCapability()}; scenes $scenes"
         )
     }
 
     override fun demo() {
+        if (scenes == "private") {
+            scene("private") { privateScene() }
+            writeReport()
+            return
+        }
         scene("bar") { barScene() }
         scene("pill") { pillStatesScene() }
         scene("strip") { stripScene() }
@@ -147,6 +175,7 @@ class ChromeA11yDemo : DemoHarness(
         scene("menu") { menuScene() }
         scene("settings") { settingsScene() }
         scene("history") { historyScene() }
+        scene("inert") { inertScene() }
         scene("bookmarks") { bookmarksScene() }
         scene("find") { findScene() }
         scene("zoom") { zoomScene() }
@@ -154,6 +183,23 @@ class ChromeA11yDemo : DemoHarness(
         scene("talkback") { talkBackScene() }
         writeReport()
     }
+
+    /**
+     * A link on the clipboard, put there from the app's own process while it is in front (Android
+     * 10+ lets the foreground app alone read the clipboard, and the peek reads the description),
+     * so the URL bar's clipboard row (#208) is on the empty field's list for the omnibox scene.
+     */
+    private fun seedClipboard() {
+        instrumentation.runOnMainSync {
+            app.getSystemService(ClipboardManager::class.java)
+                .setPrimaryClip(ClipData.newPlainText("Zenium accessibility demo", CLIP_URL))
+        }
+        SystemClock.sleep(500)
+        finding("clipboard: $CLIP_URL (peek says '${coreInvoke("clipboard.peek")}')")
+    }
+
+    private fun privateTabsCapability(): Boolean =
+        runCatching { coreState().getJSONObject("capabilities").optBoolean("privateTabs") }.getOrDefault(false)
 
     /** One scene: its own failures are recorded, the chrome cleared, and the run goes on. */
     private fun scene(name: String, body: () -> Unit) {
@@ -245,9 +291,15 @@ class ChromeA11yDemo : DemoHarness(
                 Want("Share", "Button"),
                 Want("Copy link", "Button"),
                 Want("Edit", "Button"),
-                Want("Search or enter address", "EditText", listOf("editable"), prefix = true)
+                Want("Search or enter address", "EditText", listOf("editable"), prefix = true),
+                // #208's clipboard row on the empty field: the kind from the clip's description
+                // ("Link you copied" once the system has classified the text, "Text you copied"
+                // before), and its Show, a `--v2-control` text button, as the option's sibling.
+                Want("you copied", "", contains = true),
+                Want("Show", "Button")
             )
         )
+        clipboardRowScene()
         instrumentation.sendStringSync(QUERY)
         awaitNode(12_000) { it == "Clear" }
         awaitNode(12_000) { it.startsWith(QUERY) }
@@ -266,6 +318,162 @@ class ChromeA11yDemo : DemoHarness(
         closeField()
     }
 
+    /** The clipboard row's Show under a finger: the option then reads the link it held, its Show gone (#208). */
+    private fun clipboardRowScene() {
+        val row = walk().firstOrNull { it.control && it.label.contains("you copied") }
+        if (row == null) {
+            fail("[omnibox-header] the clipboard row is not on the empty field's list (the peek said '${coreInvoke("clipboard.peek")}')")
+            return
+        }
+        finding("  [omnibox-header] clipboard row: ${describe(row.node)}")
+        if (!touchTapLabel("Show")) {
+            fail("[omnibox-header] no touch landed on the clipboard row's Show")
+            return
+        }
+        val revealed = awaitNode(6_000) { it.startsWith(CLIP_URL) }
+        expect("[omnibox-header] Show reveals the link on the clipboard in the row: '${revealed?.let { label(it) }}'", revealed != null)
+        expect("[omnibox-header] the revealed row's Show is gone", awaitChrome(3_000) { findNode { it == "Show" } == null })
+        snap("omnibox-clipboard")
+    }
+
+    /**
+     * The content frame under a panel (A11Y-01, second pass): with the Settings tab up and the
+     * History panel over it, the tab's rows are `inert` and leave the tree; the panel closed, they
+     * are back.
+     */
+    private fun inertScene() {
+        if (!openSettingsTab()) return
+        awaitNode(10_000) { it == "Look and Feel" } ?: run {
+            fail("[inert] the Settings tab's rows never showed")
+            return
+        }
+        val before = walk().count { it.control && (it.label == "Look and Feel" || it.label.startsWith("Find in Settings")) }
+        if (!openMenuItem("History")) {
+            fail("[inert] History did not open over the Settings tab")
+            return
+        }
+        awaitNode(10_000) { it.startsWith("Search history") }
+        SystemClock.sleep(1_200)
+        val under = walk().filter { it.control && (it.label == "Look and Feel" || it.label.startsWith("Find in Settings") || it.label == "Tab Management") }
+        finding("  [inert] Settings rows in the tree before the panel: $before; with History up: ${under.map { it.label }}")
+        expect("[inert] the Settings tab's rows leave the tree under the History panel (inert)", before > 0 && under.isEmpty())
+        expect("[inert] the panel's own rows are in the tree", walk().any { it.control && it.label.startsWith("Search history") })
+        snap("inert-history-over-settings")
+        back()
+        awaitSurface(up = false, timeoutMs = 6_000)
+        val back = awaitNode(8_000) { it == "Look and Feel" }
+        expect("[inert] the Settings tab's rows are back once the panel is closed", back != null)
+    }
+
+    /**
+     * A private tab's chrome (#203, the reviewer's nit 6), on a WebView with multi-profile – the
+     * `private` job's snapshot WebView; WebView 113 has none and the audit's Google APIs run says
+     * so: New Private Tab from the app menu under a finger; the bar on the private new tab page;
+     * a private page's pill saying address and state with the mask in its leading slot (the
+     * site-information chip, no "Private" badge, §9.19); the overview on its Private pane with
+     * the Tabs / Private segment (`role=tablist`, `role=tab`, `aria-selected`, 44 targets), the
+     * card saying title, place and count and its Close, the segment switched by a finger each
+     * way; the menu's private rows; Close Private Tabs ending the session.
+     */
+    private fun privateScene() {
+        if (!privateTabsCapability()) {
+            fail("[private] capabilities.privateTabs is false on this WebView (${webViewPackage()}): no private tab to walk")
+            return
+        }
+        if (!openMenuSheet()) return
+        audit("private-menu", listOf(Want("New Tab", "Button"), Want(MENU_NEW_PRIVATE, "Button")))
+        if (reveal(MENU_NEW_PRIVATE) == null || !touchTapLabel(MENU_NEW_PRIVATE)) {
+            fail("[private] the menu's $MENU_NEW_PRIVATE could not be touched")
+            return
+        }
+        expect("[private] $MENU_NEW_PRIVATE opens a private tab", awaitChrome(10_000) { privateActive() })
+        expect("[private] the private new tab page explains itself", waitFor(PRIVATE_TITLE, 8_000) != null)
+        SystemClock.sleep(1_500)
+        audit(
+            "private-ntp",
+            listOf(
+                Want("Search or enter address", "", prefix = true),
+                Want("New tab", "Button"),
+                Want("Tabs (", "ToggleButton", listOf("pressed=false"), prefix = true),
+                Want("Menu", "Button")
+            )
+        )
+        // A private page: the pill reads address and state as on any page; the mask sits in the
+        // leading slot, which stays the site-information chip.
+        val tabId = activeCoreTab()?.optString("id").orEmpty()
+        coreInvoke("tab.navigate", "{\"tabId\":${JSONObject.quote(tabId)},\"input\":\"https://example.com/\"}")
+        val pill = awaitPill(15_000) { it.contains("example.com") }
+        SystemClock.sleep(1_000)
+        expect("[private] the pill on a private page reads the address and the state: '$pill'", pill?.contains(SECURE) == true)
+        expect("[private] the pill carries no 'Private' badge (§9.19: the mask in the site-information chip says it)", findNode { it == "Private" } == null)
+        audit(
+            "private-bar",
+            listOf(
+                Want("$PILL_LABEL, example.com, $SECURE", "Button"),
+                Want(SITE_INFO, "Button"),
+                Want(SECURE, "Button"),
+                Want("New tab", "Button"),
+                Want("Tabs (", "ToggleButton", prefix = true),
+                Want("Menu", "Button")
+            )
+        )
+        if (openOverview()) {
+            audit(
+                "private-overview",
+                listOf(
+                    Want("Spaces", "Button"),
+                    Want("More", "Button"),
+                    Want("Tabs", "Tab"),
+                    Want("Private", "Tab", listOf("selected")),
+                    Want("Example Domain, tab 1 of 1", "Button", prefix = true),
+                    Want("Close Example Domain", "Button")
+                )
+            )
+            val card = walk().firstOrNull { it.control && it.label.startsWith("Example Domain, tab 1 of 1") }
+            expect("[private] the private card is the current one: '${card?.label}'", card?.label?.endsWith(", current") == true)
+            if (touchTapLabel("Tabs")) {
+                SystemClock.sleep(1_500)
+                val tabs = walk().firstOrNull { it.control && it.label == "Tabs" }
+                expect(
+                    "[private] a finger on the segment's Tabs shows the regular pane: Tabs ${tabs?.states}, Alpha's card ${findNode { it.startsWith("Alpha, tab ") } != null}",
+                    tabs?.states?.contains("selected") == true && findNode { it.startsWith("Alpha, tab ") } != null
+                )
+                snap("private-overview-tabs-pane")
+                if (touchTapLabel("Private")) {
+                    SystemClock.sleep(1_500)
+                    val private = walk().firstOrNull { it.control && it.label == "Private" }
+                    expect(
+                        "[private] and its Private brings the private pane back: Private ${private?.states}",
+                        private?.states?.contains("selected") == true && findNode { it.startsWith("Example Domain, tab 1 of 1") } != null
+                    )
+                } else {
+                    fail("[private] no touch landed on the segment's Private")
+                }
+            } else {
+                fail("[private] no touch landed on the segment's Tabs")
+            }
+            back()
+            awaitChrome(8_000) { !overviewOpen() }
+        }
+        if (openMenuSheet()) {
+            audit("private-menu-session", listOf(Want(MENU_NEW_PRIVATE, "Button"), Want(MENU_CLOSE_PRIVATE, "Button")))
+            if (reveal(MENU_CLOSE_PRIVATE) != null && touchTapLabel(MENU_CLOSE_PRIVATE)) {
+                expect("[private] $MENU_CLOSE_PRIVATE ends the session", awaitChrome(10_000) { !anyPrivateTab() })
+            } else {
+                fail("[private] the menu's $MENU_CLOSE_PRIVATE could not be touched")
+            }
+        }
+    }
+
+    private fun privateActive(): Boolean =
+        runCatching { activeCoreTab()?.optString("containerId") == Profiles.PRIVATE_CONTAINER }.getOrDefault(false)
+
+    private fun anyPrivateTab(): Boolean {
+        val tabs = coreState().getJSONObject("tabs")
+        for (key in tabs.keys()) if (tabs.optJSONObject(key)?.optString("containerId") == Profiles.PRIVATE_CONTAINER) return true
+        return false
+    }
+
     /** The overview: segment, cards with place and count, their close buttons, the group's header, the header menu; then a card closed for the toast. */
     private fun overviewScene() {
         if (!openOverview()) return
@@ -276,7 +484,8 @@ class ChromeA11yDemo : DemoHarness(
                 Want("Spaces", "Button"),
                 Want("More", "Button", listOf("expanded=false")),
                 // The Tabs / Private segment draws only where the WebView has multi-profile
-                // (`capabilities.privateTabs`); WebView 113 on the CI image has not.
+                // (`capabilities.privateTabs`); WebView 113 on the Google APIs image has not, so
+                // the `private` run on the snapshot WebView walks it ([privateScene]).
                 Want("Tabs", "Tab", listOf("selected"), optional = true),
                 Want("Private", "Tab", optional = true),
                 Want("Research, tab group, 3 tabs", "Button", listOf("expanded=true")),
@@ -532,43 +741,71 @@ class ChromeA11yDemo : DemoHarness(
      */
     private fun fontScaleScene() {
         measureScale("100")
+        // A mark on the chrome's document before the first change: a configuration change re-zooms
+        // the WebView's text in place (`fontScale` in `configChanges`, `applyTextScale` writes
+        // `textZoom`), so the same document – with its mark – is there after each.
+        val marker = "run3-${SystemClock.uptimeMillis()}"
+        chromeJs("document.documentElement.dataset.a11yMarker=${JSONObject.quote(marker)}")
         for (scale in listOf("1.3", "2.0")) {
             shell("settings put system font_scale $scale")
             val zoom = awaitTextZoom { it != "100" && it.isNotEmpty() && it != lastZoom }
             finding("  font_scale $scale → data-text-zoom '$zoom' (textZoom ${chromeTextZoom()})")
             expect("the chrome's text zoom followed font_scale $scale: '$zoom'", zoom.toIntOrNull()?.let { it >= (if (scale == "1.3") 128 else 160) } ?: false)
+            val kept = chromeValue("document.documentElement.dataset.a11yMarker||''")
+            expect("font_scale $scale re-zoomed the chrome in place, no reload (the mark '$marker' is still on the document: '$kept')", kept == marker)
             SystemClock.sleep(2_000)
             measureScale(zoom)
+            // Bold text with the large scale (both settings at once): the weights read 700 / 900.
+            if (scale == "2.0") boldText(zoom)
             lastZoom = zoom
         }
         shell("settings put system font_scale 1.0")
         val back = awaitTextZoom { it == "100" || it.isEmpty() }
         expect("font_scale 1.0 brings the chrome back to 100: '$back'", back == "100" || back.isEmpty())
+        val kept = chromeValue("document.documentElement.dataset.a11yMarker||''")
+        expect("font_scale 1.0 re-zoomed the chrome in place too (mark '$kept')", kept == marker)
         lastZoom = "100"
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            shell("settings put secure font_weight_adjustment 300")
-            val bold = awaitChrome(10_000) { chromeValue("document.documentElement.dataset.boldText||''") == "true" }
-            val adjustment = chromeValue("getComputedStyle(document.documentElement).getPropertyValue('--zen-font-weight-adjustment').trim()")
-            val body = chromeValue("getComputedStyle(document.body).fontWeight")
-            val medium = chromeValue("(function(){var e=document.querySelector('.font-medium');return e?getComputedStyle(e).fontWeight:'(none on screen)'})()")
-            finding("  font_weight_adjustment 300 → data-bold-text $bold; --zen-font-weight-adjustment '$adjustment'; body weight '$body'; a .font-medium's weight '$medium'")
-            expect("the bold-text setting reaches the chrome as --zen-font-weight-adjustment 300 (the body's 400 becomes 700)", bold && adjustment == "300" && body == "700")
-            SystemClock.sleep(1_500)
-            snap("bold-text-bar")
-            if (openSettingsTab()) {
-                awaitNode(8_000) { it == "Look and Feel" }
-                SystemClock.sleep(1_000)
-                snap("bold-text-settings")
-                clearChrome()
-            }
-            shell("settings put secure font_weight_adjustment 0")
-            awaitChrome(8_000) { chromeValue("document.documentElement.dataset.boldText||''") == "" }
-        } else {
+        boldText("100")
+    }
+
+    /**
+     * The bold-text setting on at the text zoom in force (A11Y-05): `--zen-font-weight-adjustment`
+     * 300 on the root, the body's 400 read as 700 and a heading's 600 as 900 (the lead's +300
+     * clamped at 900, v2 §4), the bar and Settings photographed; then off again.
+     */
+    private fun boldText(zoom: String) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
             note("font_weight_adjustment needs API 31; this image is API ${Build.VERSION.SDK_INT}")
+            return
         }
+        val label = if (zoom == "100") "bold-text" else "scale-$zoom-bold-text"
+        shell("settings put secure font_weight_adjustment 300")
+        val bold = awaitChrome(10_000) { chromeValue("document.documentElement.dataset.boldText||''") == "true" }
+        val adjustment = chromeValue("getComputedStyle(document.documentElement).getPropertyValue('--zen-font-weight-adjustment').trim()")
+        val body = chromeValue("getComputedStyle(document.body).fontWeight")
+        val medium = chromeValue("(function(){var e=document.querySelector('.font-medium');return e?getComputedStyle(e).fontWeight:'(none on screen)'})()")
+        finding("  [$label] font_weight_adjustment 300 → data-bold-text $bold; --zen-font-weight-adjustment '$adjustment'; body weight '$body'; a .font-medium's weight '$medium'")
+        expect("[$label] the bold-text setting reaches the chrome as --zen-font-weight-adjustment 300 (the body's 400 becomes 700)", bold && adjustment == "300" && body == "700")
+        SystemClock.sleep(1_500)
+        snap("$label-bar")
+        if (openSettingsTab()) {
+            awaitNode(8_000) { it == "Look and Feel" }
+            SystemClock.sleep(1_000)
+            val heading = chromeValue("(function(){var e=document.querySelector('h1, [role=\"heading\"]');return e?getComputedStyle(e).fontWeight:''})()")
+            val row = chromeValue("(function(){var e=document.querySelector('[data-page] nav button, [data-page] nav a');return e?getComputedStyle(e).fontWeight:''})()")
+            finding("  [$label] Settings heading weight '$heading', a row's weight '$row'")
+            expect("[$label] a heading's 600 reads 900 under bold text (clamped), a row's 400 reads 700", heading == "900" && row == "700")
+            overflowCheck(label, "settings")
+            snap("$label-settings")
+            clearChrome()
+        }
+        shell("settings put secure font_weight_adjustment 0")
+        awaitChrome(8_000) { chromeValue("document.documentElement.dataset.boldText||''") == "" }
     }
 
     private var lastZoom = "100"
+    /** The group badge's horizontal spill (scrollWidth - clientWidth) read at zoom 100, the later zooms' measure. */
+    private var badgeSpillAt100: Double? = null
 
     /** The bar, Settings, the omnibox, the overview and the menu sheet at the current text zoom, measured and photographed. */
     private fun measureScale(zoom: String) {
@@ -591,6 +828,15 @@ class ChromeA11yDemo : DemoHarness(
         expect("[$label] the pill's field holds 44 tall", field != null && abs(dp(field.height()) - 44) <= TOLERANCE)
         val tokens = chromeValue(TOKENS_JS)
         finding("  [$label] tokens $tokens")
+        // The pill's host text sits centred in the 44 control and is not clipped (the lead's nit 3).
+        val pillText = chromeValue(PILL_TEXT_JS).split(',').mapNotNull { it.toDoubleOrNull() }
+        if (pillText.size == 4) {
+            val (controlH, textH, offset, spill) = pillText
+            finding("  [$label] pill text: control ${controlH.roundToInt()} tall, text box ${"%.1f".format(textH)}, centre offset ${"%.1f".format(offset)}, vertical spill ${spill.roundToInt()}")
+            expect("[$label] the pill's host text is centred in its control and not clipped (offset ${"%.1f".format(offset)}, spill ${spill.roundToInt()})", abs(offset) <= 1.5 && spill <= 1 && textH <= controlH + 0.5)
+        } else {
+            note("[$label] the pill's text box could not be read: '$pillText'")
+        }
         snap("$label-bar")
         // 2. Settings: the rows grow from their line box (§9.21: line + 24).
         if (openSettingsTab()) {
@@ -620,7 +866,9 @@ class ChromeA11yDemo : DemoHarness(
             SystemClock.sleep(1_500)
             val rows = suggestionRows()
             finding("  [$label] suggestion rows ${rows.map { dp(it.bounds.height()) }} (line box ${20 * factor} + 24)")
-            expect("[$label] suggestion rows grow from the line box", rows.isNotEmpty() && rows.all { dp(it.bounds.height()) >= 20 * factor + 24 - 2.5 })
+            // One line at every scale (the lead's rule: suggestion rows stay one line), so exactly
+            // the line box plus 24, not more.
+            expect("[$label] suggestion rows grow from the line box and stay one line", rows.isNotEmpty() && rows.all { abs(dp(it.bounds.height()) - (20 * factor + 24)) <= 2.5 })
             overflowCheck(label, "omnibox")
             snap("$label-omnibox")
             closeField()
@@ -640,6 +888,32 @@ class ChromeA11yDemo : DemoHarness(
                 close != null && min(dp(close.width()), dp(close.height())) >= 44 - TOLERANCE && dp(close.height()) <= 44 + 2.5 &&
                     (closeCss == null || abs(closeCss - 44) <= 0.5)
             )
+            // The card's title row: one line to 1.3, two from 1.5 (the lead's call), the header
+            // `--zen-overview-card-header` = lines x small-box + 24: 44 / 50 / 96 at 100 / 130 / 180.
+            val lines = if (factor >= 1.5) 2 else 1
+            val wantCardHeader = 24 + lines * 20 * factor
+            val cardHeader = domHeight("header.zen-overview-card-header")
+            val cardHeaderToken = chromeValue("getComputedStyle(document.documentElement).getPropertyValue('--zen-overview-card-header').trim()")
+            finding("  [$label] card header CSS $cardHeader (--zen-overview-card-header '$cardHeaderToken'; $lines line(s): 24 + $lines x ${20 * factor} = $wantCardHeader)")
+            expect("[$label] the card header is its title lines' boxes plus 24 ($cardHeader vs $wantCardHeader)", cardHeader != null && abs(cardHeader - wantCardHeader) <= 0.5)
+            // The group card's title row grows from its one line like every row (nit 2):
+            // `--zen-overview-group-header` = small-box + 24: 44 / 50 / 60.
+            val groupHeader = domHeight(".zen-group-header")
+            finding("  [$label] group header CSS $groupHeader (tree ${header?.let { sz(it) }}; 20 x $factor + 24 = ${20 * factor + 24})")
+            expect("[$label] the group header is its line box plus 24 ($groupHeader vs ${20 * factor + 24})", groupHeader != null && abs(groupHeader - (20 * factor + 24)) <= 0.5)
+            // The group's emoji badge holds as a glyph in its 16 box (nit 1): 14 at every zoom.
+            val badge = chromeValue(BADGE_JS).split(',').mapNotNull { it.toDoubleOrNull() }
+            if (badge.size == 4) {
+                val (fontSize, boxW, spillW, spillH) = badge
+                finding("  [$label] group badge: font-size ${"%.2f".format(fontSize)} px in a ${boxW.roundToInt()} box, spill ${spillW.roundToInt()} x ${spillH.roundToInt()} (at 100: ${badgeSpillAt100 ?: "this"})")
+                // The glyph reads 14 whatever the zoom, and its box holds what it held at the
+                // default size (an emoji's advance runs a pixel or two past 16 at every size; the
+                // nit is the zoom adding to it: run 2 read +7 at 1.3 and +15 at 1.8).
+                val at100 = badgeSpillAt100 ?: spillW.also { badgeSpillAt100 = it }
+                expect("[$label] the group badge's emoji holds as a 14 glyph in its 16 box (font-size ${"%.2f".format(fontSize)}, spill ${spillW.roundToInt()} vs ${at100.roundToInt()} at 100)", abs(fontSize - 14) <= 0.6 && abs(spillW - at100) <= 1 && spillH <= 1)
+            } else {
+                note("[$label] no group badge on screen to measure ('$badge')")
+            }
             overflowCheck(label, "overview")
             snap("$label-overview")
             back()
@@ -666,8 +940,17 @@ class ChromeA11yDemo : DemoHarness(
     }
 
     /**
-     * TalkBack on for one scene when the image has it: the focus moved along the bar as a swipe
-     * does, the focus events and TalkBack's own log lines written down; off again after.
+     * TalkBack on for one scene when the image has it, its linear navigation driven the way a
+     * finger drives it – a swipe right per stop, the finger's events handed to the accessibility
+     * input filter ([filterSwipe]), where the touch explorer reads the gesture and TalkBack moves
+     * its focus – along the bar from Back at both docks (the pill one stop that says address and
+     * state, its chips their own, in dock order), over a card and its Close in the overview (two
+     * stops, then the next card), and past the app menu's last row (the modality probe: where
+     * the focus lands when the sheet's rows run out – the page WebView is a sibling view the
+     * chrome's `inert` cannot reach, the host follow-up F1). Where the filter cannot be reached
+     * (API < 33, or the test API hidden from the run) the focus is moved node by node with
+     * `ACTION_ACCESSIBILITY_FOCUS`, as run 2 did, and the report says which. The focus events
+     * and TalkBack's own log lines are written down; TalkBack is off again after.
      */
     private fun talkBackScene() {
         if (!talkBackInstalled()) {
@@ -688,39 +971,214 @@ class ChromeA11yDemo : DemoHarness(
         ui.serviceInfo = info
         SystemClock.sleep(2_000)
         val manager = app.getSystemService(AccessibilityManager::class.java)
-        finding("  TalkBack $version; touch exploration ${manager.isTouchExplorationEnabled}; services ${enabledServices()}")
+        val bySwipe = filterInjector != null
+        val how = if (bySwipe) "swipes right into the accessibility input filter" else "ACTION_ACCESSIBILITY_FOCUS node by node ($filterUnavailable)"
+        finding("  TalkBack $version; touch exploration ${manager.isTouchExplorationEnabled}; services ${enabledServices()}; linear navigation by $how")
         synchronized(events) { events.setLength(0) }
-        val stops = listOf("Back", "$PILL_LABEL,", SITE_INFO, SECURE, "New tab", "Tabs (", "Menu")
-        val spoken = ArrayList<String>()
-        for ((i, stop) in stops.withIndex()) {
-            val node = findNode { it == stop || it.startsWith(stop) } ?: continue
-            val ok = node.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)
-            SystemClock.sleep(2_200)
-            val focused = findNode { it == stop || it.startsWith(stop) }?.isAccessibilityFocused == true
-            spoken += "${label(node)} → action $ok, focused $focused"
-            if (i == 1 || i == 5) snap("talkback-focus-${slug(label(node))}")
+        val report = StringBuilder()
+        report.appendLine("# TalkBack scene")
+        report.appendLine("TalkBack $version; touch exploration ${manager.isTouchExplorationEnabled}; services ${enabledServices()}")
+        report.appendLine("Linear navigation by $how.")
+        try {
+            // 1. The bar at the bottom dock, then at the top.
+            barWalk("bottom", report)
+            coreInvoke("settings.update", """{"phoneBarPosition":"top"}""")
+            SystemClock.sleep(2_500)
+            calibrate()
+            barWalk("top", report)
+            coreInvoke("settings.update", """{"phoneBarPosition":"bottom"}""")
+            SystemClock.sleep(2_500)
+            calibrate()
+            // 2. A card and its Close in the overview.
+            cardWalk(report)
+            // 3. Past the menu's last row.
+            modalityProbe(report)
+        } finally {
+            val log = shell("logcat -d -v time | grep -iE 'talkback|speechcontroller|feedbackcontroller|utterance' | tail -n 200")
+            report.appendLine()
+            report.appendLine("## Accessibility events while the focus moved")
+            synchronized(events) { report.append(events) }
+            report.appendLine()
+            report.appendLine("## TalkBack in logcat (release TalkBack logs no speech; whatever it wrote is here)")
+            report.appendLine(log.ifBlank { "(nothing)" })
+            File(out, "a11y-chrome-talkback.txt").writeText(report.toString())
+            info.flags = info.flags and AccessibilityServiceInfo.FLAG_REQUEST_TOUCH_EXPLORATION_MODE.inv()
+            ui.serviceInfo = info
+            disableTalkBack()
+            bringToFront()
         }
-        finding("  accessibility focus along the bar: ${spoken.joinToString("; ")}")
-        expect("the accessibility focus lands on each of the bar's stops in dock order", spoken.size == stops.size && spoken.all { it.endsWith("focused true") })
-        val log = shell("logcat -d -v time | grep -iE 'talkback|speechcontroller|feedbackcontroller|utterance' | tail -n 200")
-        val report = buildString {
-            appendLine("# TalkBack scene")
-            appendLine("TalkBack $version; touch exploration ${manager.isTouchExplorationEnabled}; services ${enabledServices()}")
-            appendLine()
-            appendLine("## Focus moves (ACTION_ACCESSIBILITY_FOCUS, what a swipe right does)")
-            spoken.forEach { appendLine("- $it") }
-            appendLine()
-            appendLine("## Accessibility events while the focus moved")
-            synchronized(events) { append(events) }
-            appendLine()
-            appendLine("## TalkBack in logcat (release TalkBack logs no speech; whatever it wrote is here)")
-            appendLine(log.ifBlank { "(nothing)" })
+    }
+
+    /**
+     * From Back, one move per control of the bar and one more: the stops TalkBack lands on, in
+     * order, against the tree's own order of the bar's controls (the dock order the bar scene
+     * audited); the pill is one of them, saying address and state, and nothing reads plain
+     * "Address".
+     */
+    private fun barWalk(dock: String, report: StringBuilder) {
+        clearChrome()
+        awaitPill { it.contains("example.com") }
+        SystemClock.sleep(1_000)
+        val tree = walk().filter { it.control }.map { it.label }
+        val landed = linearWalk("bar-$dock", from = { it == "Back" }, moves = tree.size, report)
+        finding("  [talkback $dock dock] the tree's controls: $tree")
+        finding("  [talkback $dock dock] the focus landed on: $landed")
+        val pillStops = landed.filter { it.startsWith("$PILL_LABEL,") || it == PILL_LABEL }
+        expect("[talkback $dock dock] the pill is one stop, saying address and state: $pillStops", pillStops.size == 1 && pillStops[0].startsWith("$PILL_LABEL, example.com, $SECURE"))
+        expect("[talkback $dock dock] no stop reads plain '$PILL_LABEL' (no container stop)", landed.none { it == PILL_LABEL })
+        val chrome = landed.takeWhile { it in tree }
+        expect(
+            "[talkback $dock dock] the swipes land on the bar's controls in the tree's dock order (${chrome.size} of ${tree.size}): ${verdictOf(chrome, tree)}",
+            chrome.size == tree.size && chrome == tree
+        )
+        if (landed.size > chrome.size) finding("  [talkback $dock dock] past the bar's last control the focus went to: '${landed[chrome.size]}'")
+        snap("talkback-$dock-dock")
+    }
+
+    private fun verdictOf(landed: List<String>, tree: List<String>): String =
+        if (landed == tree) "the same" else "landed $landed, tree $tree"
+
+    /** In the overview: from the Alpha card, the next stop is its Close, the one after the next card. */
+    private fun cardWalk(report: StringBuilder) {
+        if (!openOverview()) return
+        awaitNode(8_000) { it.startsWith("Alpha, tab ") }
+        val landed = linearWalk("card", from = { it.startsWith("Alpha, tab ") }, moves = 2, report)
+        finding("  [talkback card] the focus landed on: $landed")
+        expect("[talkback card] the card is a stop saying title, place and count: '${landed.getOrNull(0)}'", landed.getOrNull(0)?.let { Regex("^Alpha, tab \\d+ of \\d+").containsMatchIn(it) } == true)
+        expect("[talkback card] its Close is the next stop, naming the tab: '${landed.getOrNull(1)}'", landed.getOrNull(1) == "Close Alpha")
+        expect("[talkback card] then the next card: '${landed.getOrNull(2)}'", landed.getOrNull(2)?.let { Regex(", tab \\d+ of \\d+").containsMatchIn(it) } == true)
+        snap("talkback-card-close")
+        back()
+        awaitChrome(8_000) { !overviewOpen() }
+    }
+
+    /**
+     * The modality probe (F1): the app menu up, the focus on its last row, one swipe right more.
+     * The chrome behind a sheet is `inert` (the chassis holds it), so the next stop can only be a
+     * page's WebView – a sibling Android view outside the chrome's DOM – or nothing. Recorded, not
+     * asserted: the host's follow-up.
+     */
+    private fun modalityProbe(report: StringBuilder) {
+        if (!openMenuSheet()) return
+        val rows = walk().filter { it.control }
+        val last = rows.lastOrNull() ?: run {
+            fail("[talkback menu] the menu's rows are not in the tree")
+            return
         }
-        File(out, "a11y-chrome-talkback.txt").writeText(report)
-        info.flags = info.flags and AccessibilityServiceInfo.FLAG_REQUEST_TOUCH_EXPLORATION_MODE.inv()
-        ui.serviceInfo = info
-        disableTalkBack()
-        bringToFront()
+        reveal(last.label)
+        val landed = linearWalk("menu", from = { it == last.label }, moves = 2, report)
+        finding("  [talkback menu] from the menu's last row '${last.label}' the focus went to: ${landed.drop(1)}")
+        val outside = landed.drop(1).filter { it.isNotBlank() && rows.none { row -> row.label == it } }
+        val where = when {
+            landed.drop(1).all { it.isBlank() } -> "nowhere (the focus stayed, or cleared)"
+            outside.isNotEmpty() -> "stops outside the menu: $outside – the page's content when these are its words (the page WebView is a sibling view the chrome's inert cannot reach: F1, the host's follow-up)"
+            else -> "the menu's own rows again: ${landed.drop(1)}"
+        }
+        finding("  [talkback menu] past the last row the focus lands on $where")
+        note("[talkback menu] modality probe (F1): past the menu's last row the focus lands on $where")
+        report.appendLine("- modality probe: past '${last.label}' the focus went to $where")
+        snap("talkback-menu-past-last")
+        back()
+        awaitSurface(up = false, timeoutMs = 6_000)
+    }
+
+    /**
+     * The focus put on the `from` node, then `moves` moves forward (a swipe right through the
+     * input filter, or the next control in the tree given the focus when the filter is out of
+     * reach), the label of the node TalkBack's focus rests on after each written down. An empty
+     * label is a move after which nothing in the window held the accessibility focus.
+     */
+    private fun linearWalk(scene: String, from: (String) -> Boolean, moves: Int, report: StringBuilder): List<String> {
+        val landed = ArrayList<String>()
+        val start = findNode(from) ?: run {
+            fail("[talkback $scene] the starting node is not in the tree")
+            return landed
+        }
+        start.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)
+        SystemClock.sleep(1_800)
+        landed += focusedLabel()
+        report.appendLine()
+        report.appendLine("## $scene: from '${landed[0]}'")
+        for (i in 1..moves) {
+            if (filterInjector != null) {
+                filterSwipe(right = true)
+            } else {
+                val controls = walk().filter { it.control }
+                val at = controls.indexOfFirst { it.label == landed.last() }
+                controls.getOrNull(at + 1)?.node?.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)
+            }
+            SystemClock.sleep(1_600)
+            val label = focusedLabel()
+            landed += label
+            report.appendLine("- move $i → '${label.ifBlank { "(no accessibility focus in the window)" }}'")
+        }
+        return landed
+    }
+
+    /** The label of the node holding the accessibility focus in the active window, or "". */
+    private fun focusedLabel(): String =
+        runCatching { ui.findFocus(AccessibilityNodeInfo.FOCUS_ACCESSIBILITY) }.getOrNull()?.let { label(it) } ?: ""
+
+    /**
+     * `UiAutomation.injectInputEventToInputFilter` (API 33), the one way an injected touch
+     * reaches TalkBack: the standard injection skips the accessibility input filter by design (a
+     * feedback-loop guard), so a swipe sent that way is a page scroll, never a gesture. It is a
+     * `@TestApi`, out of the SDK stubs and hidden from reflection unless the run's `am instrument`
+     * carries `--no-hidden-api-checks` (the workflow's `DEMO_INSTRUMENT_FLAGS`); null with the
+     * reason in [filterUnavailable] when it cannot be had.
+     */
+    private val filterInjector: Method? by lazy {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            filterUnavailable = "API ${Build.VERSION.SDK_INT} has no input-filter injection"
+            return@lazy null
+        }
+        runCatching { UiAutomation::class.java.getMethod("injectInputEventToInputFilter", InputEvent::class.java) }
+            .onFailure { filterUnavailable = "injectInputEventToInputFilter is hidden from this run: $it" }
+            .getOrNull()
+    }
+    private var filterUnavailable = ""
+
+    /**
+     * One finger's swipe across the middle of the screen, handed to the accessibility input
+     * filter event by event in real time: 4 cm in 140 ms (the touch explorer wants the first
+     * centimetre inside 150 ms and each next one inside 350, else it is touch exploration).
+     * TalkBack's default for a swipe right is the next item, for a swipe left the previous.
+     */
+    private fun filterSwipe(right: Boolean) {
+        val inject = filterInjector ?: return
+        val distance = min(width * 0.45f, 250 * density)
+        val fromX = if (right) (width - distance) / 2 else (width + distance) / 2
+        val y = height * 0.5f
+        val downTime = SystemClock.uptimeMillis()
+        fun send(action: Int, x: Float) {
+            val properties = MotionEvent.PointerProperties().apply {
+                id = 0
+                toolType = MotionEvent.TOOL_TYPE_FINGER
+            }
+            val coords = MotionEvent.PointerCoords().apply {
+                this.x = x
+                this.y = y
+                pressure = 1f
+                size = 1f
+            }
+            val event = MotionEvent.obtain(
+                downTime, SystemClock.uptimeMillis(), action, 1, arrayOf(properties), arrayOf(coords),
+                0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0
+            )
+            try {
+                inject.invoke(ui, event)
+            } finally {
+                event.recycle()
+            }
+        }
+        send(MotionEvent.ACTION_DOWN, fromX)
+        val steps = 14
+        for (i in 1..steps) {
+            SystemClock.sleep(10)
+            send(MotionEvent.ACTION_MOVE, fromX + (if (right) distance else -distance) * i / steps)
+        }
+        SystemClock.sleep(10)
+        send(MotionEvent.ACTION_UP, fromX + if (right) distance else -distance)
     }
 
     // --- the audit -------------------------------------------------------------------------------
@@ -1377,8 +1835,13 @@ class ChromeA11yDemo : DemoHarness(
         const val WEBVIEW_CLASS = "android.webkit.WebView"
         const val TALKBACK_PACKAGE = "com.google.android.marvin.talkback"
         const val TALKBACK_SERVICE = "$TALKBACK_PACKAGE/$TALKBACK_PACKAGE.TalkBackService"
+        /** The link put on the clipboard for #208's row (`seedClipboard`). */
+        const val CLIP_URL = "https://example.com/clipboard"
+        const val MENU_NEW_PRIVATE = "New Private Tab"
+        const val MENU_CLOSE_PRIVATE = "Close Private Tabs"
+        const val PRIVATE_TITLE = "You're browsing privately"
         /** `--v2-control` text buttons (§9.11 / §9.33) and a prompt's actions: 40 tall by design, not 44. */
-        val TEXT_BUTTONS_40 = setOf("Undo", "Reset", "Share", "Copy link", "Edit", "Make default", "Install", "Add", "Cancel", "Block")
+        val TEXT_BUTTONS_40 = setOf("Undo", "Reset", "Share", "Copy link", "Edit", "Make default", "Install", "Add", "Cancel", "Block", "Show")
 
         /** The toast card as the DOM has it: role, live region, text, its buttons' labels and boxes (CSS px). */
         val TOAST_JS = """
@@ -1396,6 +1859,31 @@ class ChromeA11yDemo : DemoHarness(
                 text: (card.querySelector('.zen-message-text') || {}).textContent || '',
                 buttons: buttons
               });
+            })()
+        """.trimIndent()
+
+        /**
+         * The pill's host text against its control: the control's height, the text box's height,
+         * the text's centre offset from the control's (CSS px, + is lower) and the text box's
+         * vertical spill (scrollHeight - clientHeight) – "" when no address pill is up.
+         */
+        val PILL_TEXT_JS = """
+            (function () {
+              var c = document.querySelector('[aria-label^="Address, "]');
+              if (!c) return '';
+              var s = c.querySelector('span');
+              if (!s) return '';
+              var a = c.getBoundingClientRect(), b = s.getBoundingClientRect();
+              return [a.height, b.height, (b.top + b.bottom) / 2 - (a.top + a.bottom) / 2, s.scrollHeight - s.clientHeight].join(',');
+            })()
+        """.trimIndent()
+
+        /** A group card's emoji badge: its computed font-size (px, after the text zoom), its box width, its spill (scroll - client) in width and height. */
+        val BADGE_JS = """
+            (function () {
+              var e = document.querySelector('.zen-group-badge');
+              if (!e) return '';
+              return [parseFloat(getComputedStyle(e).fontSize), e.getBoundingClientRect().width, e.scrollWidth - e.clientWidth, e.scrollHeight - e.clientHeight].join(',');
             })()
         """.trimIndent()
 
