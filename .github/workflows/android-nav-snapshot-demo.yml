@@ -12,8 +12,8 @@ name: Android navigation snapshot demo
 # meanwhile. The driver reads each outcome off the host's WebView, the core's state and its own
 # page server (findings text in the artifact; the run fails on a FAIL). The same instrumentation
 # run also takes the hostState round trip on bare WebViews (NavigationStateWebViewTest: a list
-# saved, encoded and restored into a fresh WebView, an internal page on top of one, the
-# refusals), so a failure there fails the run too. Dispatch-only, like the tab close demo: it takes a few minutes
+# saved, encoded and restored into a fresh WebView, two internal pages on one under their names,
+# the refusals), so a failure there fails the run too. Dispatch-only, like the tab close demo: it takes a few minutes
 # and says nothing about a change being correct. The build, the emulator and the Gradle cache
 # live in android-emulator-demo.yml; this file only picks the driver.
 on:
