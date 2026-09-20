@@ -66,7 +66,7 @@ export function chromeReference(platform: Platform): ReferenceBinding[] {
     ref('d', ACCEL, 'Bookmark this page', ['bookmark.add']),
     ref('d', ACCEL_SHIFT, 'Bookmark all open tabs', ['bookmark.allTabs']),
     ref('b', ACCEL_SHIFT, 'Show or hide the bookmarks bar', ['bookmark.toggleBar']),
-    ref('p', ACCEL, 'Print', ['page.print']),
+    ref('p', ACCEL, 'Print', ['page.printPreview']),
     ref('s', ACCEL, 'Save page as', ['page.savePage']),
     ref('o', ACCEL, 'Open a file', ['page.openFile']),
     ref('Delete', ACCEL_SHIFT, 'Clear browsing data'),
