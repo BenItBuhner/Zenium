@@ -8577,9 +8577,12 @@
   }
   .zen-omnibox-row {
     height: 50px;
-    gap: 12px;
+    gap: 8px;
     padding: 0 10px;
     border-radius: var(--v2-radius-card);
+  }
+  .zen-omnibox-row-body {
+    gap: 12px;
   }
   .zen-omnibox-row:hover {
     background: color-mix(in srgb, var(--v2-fill) 50%, transparent);
@@ -8587,6 +8590,17 @@
   .zen-omnibox-row[data-selected='true'],
   .zen-omnibox-row[data-selected='true']:hover {
     background: var(--v2-fill);
+  }
+  /*
+   * The keyword chip (omnibox-08, -26) slides in from the glyph's side over Chrome's ~150 ms;
+   * the global reduced-motion rule cuts it to a frame. It is a pill chip (a button) in the
+   * badge look, so a click can leave keyword mode.
+   */
+  .zen-omnibox-keyword-chip {
+    animation: zen-omnibox-chip-in 150ms var(--zen-ease);
+  }
+  button.zen-omnibox-keyword-chip:hover {
+    color: var(--v2-text);
   }
   .zen-omnibox-row-icon {
     width: var(--v2-icon);
@@ -8636,6 +8650,54 @@
     font-family: var(--font-sans);
     font-size: 12px;
   }
+}
+@keyframes zen-omnibox-chip-in {
+  from {
+    opacity: 0;
+    transform: translateX(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+/*
+ * The dropdown's modifiers on the shared unlayered primitives (§9.34), unlayered by specificity
+ * as the Refine arrow's above – a layered rule cannot recolour an unlayered primitive.
+ *
+ * The row's remove X (omnibox-22): the shared 28 px icon button at the row's trailing edge, kept
+ * in the layout so the title and host never jump, shown on hover, on the highlighted row and
+ * while the keyboard is on it (Tab, omnibox-50); Chrome's hover-only X on removable rows.
+ */
+.zen-v2-icon-button.zen-omnibox-remove {
+  visibility: hidden;
+  color: var(--v2-text-deemphasized);
+}
+.zen-omnibox-row:hover .zen-v2-icon-button.zen-omnibox-remove,
+.zen-omnibox-row[data-selected='true'] .zen-v2-icon-button.zen-omnibox-remove,
+.zen-omnibox-row[data-action-focused] .zen-v2-icon-button.zen-omnibox-remove,
+.zen-v2-icon-button.zen-omnibox-remove:focus-visible {
+  visibility: visible;
+}
+.zen-v2-icon-button.zen-omnibox-remove:hover:not(:disabled),
+.zen-v2-icon-button.zen-omnibox-remove:active:not(:disabled) {
+  color: var(--v2-text);
+  background: color-mix(in srgb, var(--v2-text) 10%, transparent);
+}
+/*
+ * A group's heading in the list (zero-suggest's "Recent searches", omnibox-20): the shared
+ * `.zen-v2-heading` at a popover list's beat – 12 above, 4 below, 4 under the field's hairline
+ * when it comes first – as the tab search popover's; in the dropdown's deemphasised label ink at
+ * the rows' 10 gutter, so it lines up with their glyphs.
+ */
+.zen-v2-heading.zen-omnibox-heading {
+  margin: 12px 0 4px;
+  padding: 0 10px;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+}
+.zen-v2-heading.zen-omnibox-heading:first-child {
+  margin-top: 4px;
 }
 
 /*

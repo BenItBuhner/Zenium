@@ -6,6 +6,7 @@ import type {
   PhoneBarLayout,
   PhoneBarPosition,
   Rect,
+  SearchEngine,
   Suggestion,
   Tab,
   UIState
@@ -22,6 +23,7 @@ import {
   buildSearchUrl,
   completeWwwCom,
   defaultSearchEngineOf,
+  matchEngineWord,
   matchKeyword
 } from '@shared/search'
 import { internalPageAliasUrl } from '@shared/internalPages'
@@ -33,12 +35,23 @@ import { cmd, run } from '@renderer/lib/api'
 import { useBackDismissal } from '@renderer/lib/back'
 import { dropStore } from '@renderer/lib/drag'
 import { viewportStore } from '@renderer/lib/formFactor'
-import { URLBAR_LEAVE_EVENT } from '@renderer/lib/panes'
+import { URLBAR_LEAVE_EVENT, toolbarControlBesideAddress } from '@renderer/lib/panes'
 import { startQrScan } from '@renderer/lib/qrScan'
 import { closeUrlbar, uiStore, type UrlbarState } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { startVoiceSearch } from '@renderer/lib/voiceSearch'
 import { isShareableUrl, showsPageHeader } from './omniboxHeader'
+import {
+  arrowStep,
+  clickTarget,
+  escapeIntent,
+  pageStep,
+  selectionAfterRemoval,
+  submitTarget,
+  tabStep,
+  type OpenWhere
+} from './omniboxKeys'
+import { PillChip } from './PillChip'
 import { suggestionIcon } from './suggestionIcon'
 
 interface Props {
@@ -112,6 +125,26 @@ function hasCompletionTail(el: HTMLInputElement): boolean {
   )
 }
 
+/**
+ * Keyword mode held as state (tab-to-search, Ctrl+K, `?`; omnibox-08, -26): the engine the
+ * field searches with, and the text Backspace on the empty field brings back – the keyword or
+ * name the user typed (`@ddg`, `youtube`), `?`, or nothing for the Ctrl+K search mode.
+ */
+interface KeywordMode {
+  engine: SearchEngine
+  typed: string
+}
+
+/** The id of a row's trailing control, the target Tab moves the keyboard to (omnibox-50). */
+const rowActionId = (row: number, action: number): string =>
+  `zen-omnibox-row-${row}-action-${action}`
+
+/** A row the user can remove (the X, Shift+Delete): the core says so (`deletable`). */
+const removable = (row: Suggestion): boolean => Boolean(row.deletable)
+
+/** Rows that come from the user's own typing or pages, worth remembering as shortcuts. */
+const LEARNABLE_KINDS = new Set<Suggestion['kind']>(['url', 'history', 'search', 'entity'])
+
 export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
   const phone = Boolean(phoneEdge)
   const [text, setText] = useState(() => initialTextFor(state, urlbar, phone))
@@ -122,11 +155,27 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
    */
   const [clip, setClip] = useState<ClipboardContent | null>(null)
   const [selected, setSelected] = useState(-1)
+  /**
+   * The highlighted row's control the keyboard is on (`-1`: the field itself; `0…`: the row's
+   * trailing controls, Tab moves through them) – omnibox-50's row-action cycling.
+   */
+  const [action, setAction] = useState(-1)
+  /** Escape's first stage (omnibox-50): the rows are put away, the typed text kept. */
+  const [popupClosed, setPopupClosed] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const fadeResults = useFadeEdges<HTMLUListElement>({ axis: 'y' })
   const requestSeq = useRef(0)
   /** What the user typed, without any inline completion the field shows after it. */
   const lastTyped = useRef(text)
+  /**
+   * The same, as state, for the row pick and the submit (the shortcuts provider learns what
+   * was typed, omnibox-03): the row callbacks stay clear of the field's refs.
+   */
+  const [typedText, setTypedText] = useState(text)
+  const rememberTyped = (value: string): void => {
+    lastTyped.current = value
+    setTypedText(value)
+  }
   /** An IME composition is under way: nothing is completed inline until it is committed. */
   const composing = useRef(false)
   const engines = state.searchEngines
@@ -136,20 +185,33 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
     state.searchEngineControl
   )
   const tab = urlbar.tabId ? state.tabs[urlbar.tabId] : null
+  // Ctrl+K / Ctrl+E open the bar in search mode: keyword mode for the default engine, the chip
+  // up from the start and nothing to bring back on Backspace (Chrome's).
+  const [keywordMode, setKeywordMode] = useState<KeywordMode | null>(() =>
+    urlbar.mode === 'search' ? { engine: defaultEngine, typed: '' } : null
+  )
 
-  // Keyword mode (`@ddg cats`, `@bookmarks foo`): the chip names where the search goes.
-  const keyword = useMemo(() => matchKeyword(text.trimStart(), engines), [text, engines])
-  const engine = keyword?.kind === 'engine' ? keyword.engine : defaultEngine
+  // Keyword mode from the text (`@ddg cats`, `@bookmarks foo`): the chip names where the search
+  // goes. The state's keyword mode (above) takes precedence: the field then holds the terms alone.
+  const textKeyword = useMemo(
+    () => (keywordMode ? null : matchKeyword(text.trimStart(), engines)),
+    [keywordMode, text, engines]
+  )
+  const engine =
+    keywordMode?.engine ?? (textKeyword?.kind === 'engine' ? textKeyword.engine : defaultEngine)
   const scopeLabel =
-    keyword?.kind === 'scope'
-      ? (SEARCH_SCOPES.find((s) => s.scope === keyword.scope)?.label ?? keyword.scope)
+    textKeyword?.kind === 'scope'
+      ? (SEARCH_SCOPES.find((s) => s.scope === textKeyword.scope)?.label ?? textKeyword.scope)
       : null
   // The scope labels already read "Search bookmarks" / "Search history" / "Search tabs".
-  const chipLabel = keyword
-    ? keyword.kind === 'engine'
-      ? `Search ${keyword.engine.name}`
-      : scopeLabel
-    : null
+  const chipLabel = keywordMode
+    ? `Search ${keywordMode.engine.name}`
+    : textKeyword
+      ? textKeyword.kind === 'engine'
+        ? `Search ${textKeyword.engine.name}`
+        : scopeLabel
+      : null
+  const inKeyword = keywordMode !== null || textKeyword !== null
 
   useEffect(() => {
     const el = inputRef.current
@@ -168,14 +230,28 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once, on mount
   }, [])
 
+  // The state's keyword mode, readable from the fetch callback without re-creating it per change
+  // (`enterKeywordMode` writes it ahead of the state, so its own fetch already sees the engine).
+  const modeRef = useRef(keywordMode)
+  useLayoutEffect(() => {
+    modeRef.current = keywordMode
+  }, [keywordMode])
+
   const fetchSuggestions = useCallback(
-    async (query: string, autofill: boolean) => {
+    async (query: string, autofill: boolean, engine?: SearchEngine | null) => {
       const seq = ++requestSeq.current
-      const list = await cmd('urlbar.suggest', { query, tabId: urlbar.tabId }).catch(
-        () => [] as Suggestion[]
-      )
+      // The engine the rows are for: the one given (entering or leaving keyword mode, ahead of
+      // the state), else the keyword mode's.
+      const engineId = engine === undefined ? modeRef.current?.engine.id : engine?.id
+      const list = await cmd('urlbar.suggest', {
+        query,
+        tabId: urlbar.tabId,
+        ...(engineId ? { engineId } : {})
+      }).catch(() => [] as Suggestion[])
       if (seq !== requestSeq.current) return
       setResults(list)
+      setPopupClosed(false)
+      setAction(-1)
       // A fresh list may carry a fresh clipboard row: what was revealed is not vouched for.
       setClip(null)
       const first = list[0]
@@ -229,7 +305,7 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
       el.setSelectionRange(start + typed.length, start + typed.length)
       el.focus()
       const grew = value.length > lastTyped.current.length && value.startsWith(lastTyped.current)
-      lastTyped.current = value
+      rememberTyped(value)
       setText(value)
       void fetchSuggestions(value, grew && !/\s/.test(value))
     }
@@ -237,21 +313,9 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
     return () => window.removeEventListener('zen-urlbar-type', onType)
   }, [fetchSuggestions])
 
-  const onChange = (e: React.ChangeEvent<HTMLInputElement>): void => {
-    const value = e.target.value
-    const grew = value.length > lastTyped.current.length && value.startsWith(lastTyped.current)
-    const caretAtEnd = e.target.selectionStart === value.length
-    lastTyped.current = value
-    setText(value)
-    setSelected(-1)
-    // A deletion, an edit in the middle or a composition in progress never re-inlines.
-    const native = e.nativeEvent as Event & { isComposing?: boolean }
-    void fetchSuggestions(value, grew && caretAtEnd && !composing.current && !native.isComposing)
-  }
-
   /** Put `value` in the field with the caret at its end, as the text the user now "typed". */
   const setTyped = (value: string, refetch: boolean): void => {
-    lastTyped.current = value
+    rememberTyped(value)
     setText(value)
     const el = inputRef.current
     if (el) {
@@ -261,25 +325,114 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
     if (refetch) void fetchSuggestions(value, false)
   }
 
+  /**
+   * Into keyword mode for `engine` (tab-to-search, omnibox-08): the chip comes up, the field
+   * holds `rest` alone (what was typed after the keyword, usually nothing) and `typed` is what
+   * Backspace on the empty field brings back. The rows are the engine's from here on.
+   */
+  const enterKeywordMode = (engine: SearchEngine, typed: string, rest = ''): void => {
+    setKeywordMode({ engine, typed })
+    setSelected(-1)
+    setAction(-1)
+    rememberTyped(rest)
+    setText(rest)
+    void fetchSuggestions(rest, false, engine)
+  }
+
+  /**
+   * Out of keyword mode: Backspace on the empty field and Escape bring the typed keyword back
+   * (`@ddg`, the engine's name, `?`); the Ctrl+K search mode has none, so the terms stay.
+   */
+  const exitKeywordMode = (): void => {
+    const mode = keywordMode
+    if (!mode) return
+    setKeywordMode(null)
+    setSelected(-1)
+    setAction(-1)
+    const value = mode.typed || text
+    setTyped(value, false)
+    void fetchSuggestions(value, false, null)
+  }
+
+  const onChange = (e: React.ChangeEvent<HTMLInputElement>): void => {
+    const value = e.target.value
+    // Chrome's legacy `?` prefix: typed first, it is search mode for the default engine; what
+    // follows is the query, however much it looks like an address (omnibox-26).
+    if (!keywordMode && !phone && value.startsWith('?') && !lastTyped.current.startsWith('?')) {
+      enterKeywordMode(defaultEngine, '?', value.slice(1).trimStart())
+      return
+    }
+    // An engine's keyword or host followed by Space enters keyword mode for it (Tab does the
+    // same, and takes the engine's name too, in `onKeyDown`); `@bookmarks ` and the other
+    // scopes stay text, as today.
+    if (!keywordMode && !phone && /\s$/.test(value) && !/\s/.test(value.trimStart().slice(0, -1))) {
+      const word = value.trim()
+      const engine = word ? matchEngineWord(word, engines) : null
+      if (engine) {
+        enterKeywordMode(engine, word)
+        return
+      }
+    }
+    const grew = value.length > lastTyped.current.length && value.startsWith(lastTyped.current)
+    const caretAtEnd = e.target.selectionStart === value.length
+    rememberTyped(value)
+    setText(value)
+    setSelected(-1)
+    setAction(-1)
+    setPopupClosed(false)
+    // A deletion, an edit in the middle or a composition in progress never re-inlines.
+    const native = e.nativeEvent as Event & { isComposing?: boolean }
+    void fetchSuggestions(value, grew && caretAtEnd && !composing.current && !native.isComposing)
+  }
+
   const clear = (): void => {
     setTyped('', true)
     inputRef.current?.focus()
   }
 
-  // A picked keyword row (`@d` → `@ddg `) becomes the typed text once the pick has rendered: the
-  // row's click handler itself stays clear of the field's refs.
-  const [keywordFill, setKeywordFill] = useState<{ fill: string; seq: number } | null>(null)
+  // A picked scope row (`@b` → `@bookmarks `) becomes the typed text once the pick has rendered,
+  // and a picked engine row's keyword mode (its state set at the pick) gets its rows: the row's
+  // click handler itself stays clear of the field's refs, this effect works them.
+  const [keywordFill, setKeywordFill] = useState<{
+    fill: string
+    engine?: SearchEngine
+    seq: number
+  } | null>(null)
   useEffect(() => {
     if (!keywordFill) return
-    const { fill } = keywordFill
+    const { fill, engine } = keywordFill
     lastTyped.current = fill
     const el = inputRef.current
     if (el) {
       el.value = fill
       el.setSelectionRange(fill.length, fill.length)
     }
-    void fetchSuggestions(fill, false)
+    void fetchSuggestions(fill, false, engine)
   }, [keywordFill, fetchSuggestions])
+
+  // The caret to the field's end once a highlight has put a row's text in it (`highlight`, which
+  // the row callbacks reach and so stays clear of the field's refs).
+  const [caretSeq, setCaretSeq] = useState(0)
+  useLayoutEffect(() => {
+    if (caretSeq === 0) return
+    const el = inputRef.current
+    el?.setSelectionRange(el.value.length, el.value.length)
+  }, [caretSeq])
+
+  // The keyboard follows the highlight's action (omnibox-50): onto the row's control when Tab
+  // reaches one, back into the field when it leaves it – the field keeps its caret at the end.
+  const lastAction = useRef(-1)
+  useEffect(() => {
+    const was = lastAction.current
+    lastAction.current = action
+    if (action >= 0) {
+      document.getElementById(rowActionId(selected, action))?.focus()
+    } else if (was >= 0) {
+      const el = inputRef.current
+      el?.focus()
+      el?.setSelectionRange(el.value.length, el.value.length)
+    }
+  }, [action, selected])
 
   // A new-tab draft is shared by every new tab page, as it is for the bar without a tab.
   const draftKey = tab && urlbar.mode !== 'new-tab' ? `${tab.id}|${tab.url}` : 'new'
@@ -339,18 +492,31 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
     return !tab || (urlbar.mode === 'new-tab' && !overNewTabPage)
   }
 
+  /**
+   * Open `item` (or the field's text) where `where` says (omnibox-24, -25): this tab, a new
+   * foreground tab, a background tab, a new window. In keyword mode the verbatim text is the
+   * engine's search. What the user typed goes along for the shortcuts provider (omnibox-03) –
+   * a page or a search they chose for it is boosted the next time they type it.
+   */
   const submit = (
     item: Suggestion | null,
-    opts: { newTab?: boolean; background?: boolean; input?: string } = {}
+    opts: { where?: OpenWhere; input?: string } = {}
   ): void => {
+    const where = opts.where ?? 'current'
     const value = (opts.input ?? text).trim()
-    const newTab = opts.newTab || submitsToNewTab()
-    const navigate = (input: string): void =>
+    const newTab = where === 'tab' || where === 'background' || submitsToNewTab()
+    const typed = typedText.trim()
+    const navigate = (
+      input: string,
+      learn?: { title: string; kind?: 'url' | 'search' } | null
+    ): void =>
       run('urlbar.submit', {
         input,
-        newTab,
+        newTab: where === 'window' ? false : newTab,
         tabId: tab?.id ?? null,
-        background: opts.background
+        background: where === 'background',
+        newWindow: where === 'window',
+        ...(learn && typed ? { learn: { typed, ...learn } } : {})
       })
     if (item) {
       switch (item.kind) {
@@ -363,18 +529,33 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
         case 'command':
           if (item.targetId) run('urlbar.runCommand', { action: item.targetId })
           break
-        case 'engine':
-          // A keyword to complete (`@d` → `@ddg `): the field enters keyword mode and stays open.
+        case 'engine': {
+          // A keyword to complete: an engine's row enters keyword mode for it (the chip up, the
+          // field emptied); a scope's (`@b` → `@bookmarks `) becomes the typed text. The bar
+          // stays open either way.
+          const picked = engines.find((e) => e.id === item.targetId)
+          if (picked) {
+            // As `enterKeywordMode`, the state here and the field's refs in the effect.
+            setKeywordMode({ engine: picked, typed: item.title })
+            setSelected(-1)
+            setAction(-1)
+            setText('')
+            setTypedText('')
+            setKeywordFill({ fill: '', engine: picked, seq: ++keywordSeq })
+            return
+          }
           setText(item.fill)
+          setTypedText(item.fill)
           setKeywordFill({ fill: item.fill, seq: ++keywordSeq })
           return
+        }
         case 'omnibox':
           // The keyword-prefixed text goes back whole: the extension takes it from there.
           navigate(item.fill)
           break
         case 'bookmark':
           // Through the bookmark so its "last used" date is recorded.
-          if (item.targetId && !opts.background) {
+          if (item.targetId && where !== 'background' && where !== 'window') {
             run('bookmark.open', { id: item.targetId, newTab, tabId: tab?.id ?? null })
             break
           }
@@ -383,14 +564,26 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
         case 'search':
           // `@bookmarks foo` / `@history foo`: the typed text carries the scope the core acts on.
           if (item.id === 'scope') navigate(value)
-          else if (item.url) navigate(item.url)
+          else if (item.url) navigate(item.url, { title: item.title, kind: 'search' })
           break
         default:
-          if (item.url) navigate(item.url)
+          if (item.url)
+            navigate(
+              item.url,
+              LEARNABLE_KINDS.has(item.kind) ? { title: item.title, kind: 'url' } : null
+            )
       }
     } else {
       if (!value) return
-      navigate(value)
+      if (keywordMode) {
+        // The terms alone are in the field: the engine's search, learned as one for the default
+        // engine's search mode (`?`, Ctrl+K), not for an explicit keyword.
+        const isDefault = keywordMode.engine.id === defaultEngine.id
+        navigate(
+          buildSearchUrl(keywordMode.engine, value),
+          isDefault ? { title: value, kind: 'search' } : null
+        )
+      } else navigate(value, { title: value })
     }
     drafts.delete(draftKey)
     drafts.delete('new')
@@ -461,24 +654,79 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
   /** Refine (OMN-09): the row's text into the field as typed, suggestions refreshed, no submit. */
   const refine = (item: Suggestion): void => setTyped(item.fill, true)
 
-  const removeHistoryRow = (index: number): boolean => {
+  /**
+   * Remove row `index` (Shift+Delete, the X; omnibox-22): a history row and its entry, a
+   * remembered search, an omnibox row its extension marked deletable. No confirmation; the
+   * highlight moves to the row that takes its place instead of clearing (Chrome).
+   */
+  const removeRow = (index: number): boolean => {
     const row = results[index]
-    if (!row || row.kind !== 'history' || !row.url) return false
-    run('history.delete', { url: row.url })
-    setResults((r) => r.filter((_, i) => i !== index))
-    setSelected(-1)
-    setTyped(lastTyped.current, false)
+    if (!row || !removable(row)) return false
+    if (row.kind === 'history' && row.url) run('history.delete', { url: row.url })
+    else if (row.kind === 'omnibox') run('urlbar.deleteSuggestion', { input: row.fill })
+    else if (row.url) run('urlbar.forgetShortcut', { url: row.url })
+    else return false
+    const remaining = results.filter((_, i) => i !== index)
+    setResults(remaining)
+    const next = selectionAfterRemoval(index, remaining.length)
+    setAction(-1)
+    highlight(next, remaining)
     return true
   }
 
-  const removeOmniboxRow = (index: number): boolean => {
-    const row = results[index]
-    if (!row || row.kind !== 'omnibox' || !row.deletable) return false
-    run('urlbar.deleteSuggestion', { input: row.fill })
-    setResults((r) => r.filter((_, i) => i !== index))
-    setSelected(-1)
-    setTyped(lastTyped.current, false)
-    return true
+  /**
+   * Put the highlight on row `index` (`-1`: none), the field showing the row's text with the
+   * caret at its end, or what was typed again when no row is highlighted.
+   */
+  const highlight = (index: number, rows: Suggestion[] = results): void => {
+    setSelected(index)
+    const row = index >= 0 ? rows[index] : null
+    const fill = row ? row.fill || row.url || typedText : typedText
+    setText(fill)
+    setCaretSeq((n) => n + 1)
+  }
+
+  const moveSelection = (dir: 1 | -1): void => {
+    setAction(-1)
+    highlight(arrowStep(selected, results.length, dir))
+  }
+
+  /** PageDown / PageUp: as many rows as the list shows at once, the whole list when it fits. */
+  const movePage = (dir: 1 | -1): void => {
+    const list = document.getElementById('zen-omnibox-results')
+    const row = list?.querySelector<HTMLElement>('li')
+    const pageSize =
+      list && row && row.offsetHeight > 0
+        ? Math.max(1, Math.floor(list.clientHeight / row.offsetHeight))
+        : results.length
+    setAction(-1)
+    highlight(pageStep(selected, results.length, dir, pageSize))
+  }
+
+  /**
+   * Tab out of the bar (omnibox-50, Chrome's Tab past the popup's last row): the bar goes away
+   * as on Escape – draft kept – and the keyboard lands on the toolbar control beside the address
+   * (after it forwards, before it backwards). With no toolbar row the keyboard returns to the page.
+   */
+  const leaveToToolbar = (dir: 1 | -1): void => {
+    const target = toolbarControlBesideAddress(dir === 1 ? 'next' : 'prev')
+    close(true, target !== null)
+    target?.focus()
+  }
+
+  /** How many trailing controls each row has, for Tab's walk (omnibox-50). */
+  const rowActions = (): number[] =>
+    popupClosed ? [] : results.map((row) => (removable(row) && !phone ? 1 : 0))
+
+  /** Tab / Shift+Tab from the field or from a row's control. */
+  const tabKey = (shift: boolean): void => {
+    const intent = tabStep(selected, action, rowActions(), shift ? -1 : 1)
+    if (intent.kind === 'leave') {
+      leaveToToolbar(intent.dir)
+      return
+    }
+    if (intent.selected !== selected) highlight(intent.selected)
+    setAction(intent.action)
   }
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
@@ -491,86 +739,156 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
     switch (e.key) {
       case 'Escape': {
         e.preventDefault()
+        // Over a page the field rests at its address; over none (a new tab, search mode) there
+        // is nothing to revert to and the bar closes keeping its draft, as before.
         const pageText = tab && urlbar.mode === 'edit' ? restTextFor(tab, phone) : null
-        if (pageText !== null && text !== pageText) {
-          // Esc restores the page's address (selected, read from the start) and closes the popup;
-          // a second Esc closes the bar. The draft is gone with the edit. On the phone the rest
-          // state is the empty, search-ready field.
-          requestSeq.current++
-          drafts.delete(draftKey)
-          lastTyped.current = pageText
-          setText(pageText)
-          setResults([])
-          setSelected(-1)
-          if (el) {
-            el.value = pageText
-            el.setSelectionRange(0, pageText.length, 'backward')
-            el.scrollLeft = 0
+        const intent = escapeIntent({
+          keywordMode: keywordMode !== null,
+          // The phone's sheet has no popup stage: its rows are the sheet.
+          popupOpen: !phone && results.length > 0 && !popupClosed,
+          atRestText: pageText === null || text === pageText
+        })
+        switch (intent) {
+          case 'exit-keyword':
+            exitKeywordMode()
+            return
+          case 'close-popup':
+            // The rows go, what was typed stays; the next key brings them back.
+            requestSeq.current++
+            setPopupClosed(true)
+            setAction(-1)
+            setSelected(-1)
+            setTyped(lastTyped.current, false)
+            return
+          case 'revert': {
+            // Esc restores the page's address (selected, read from the start); a further Esc
+            // closes the bar. The draft is gone with the edit. On the phone the rest state is
+            // the empty, search-ready field.
+            const rest = pageText ?? ''
+            requestSeq.current++
+            drafts.delete(draftKey)
+            rememberTyped(rest)
+            setText(rest)
+            setResults([])
+            setSelected(-1)
+            setAction(-1)
+            if (el) {
+              el.value = rest
+              el.setSelectionRange(0, rest.length, 'backward')
+              el.scrollLeft = 0
+            }
+            return
           }
-          return
+          case 'close-bar':
+            close(pageText === null)
+            return
         }
-        close(pageText === null)
         return
       }
       case 'Tab': {
-        // Tab accepts the inline completion (design language v2 §9.22); otherwise it moves the
-        // selection like the arrows.
+        e.preventDefault()
+        // Tab accepts the inline completion (design language v2 §9.22).
         if (el && hasCompletionTail(el) && !e.shiftKey) {
-          e.preventDefault()
           setTyped(el.value, true)
           return
         }
-        if (results.length === 0) return
-        e.preventDefault()
-        moveSelection(e.shiftKey ? -1 : 1)
+        // An engine's keyword, host or name then Tab: keyword mode for it (tab-to-search).
+        if (!e.shiftKey && !keywordMode && !phone && selected < 0) {
+          const word = text.trim()
+          const picked = word && !/\s/.test(word) ? matchEngineWord(word, engines, true) : null
+          if (picked) {
+            enterKeywordMode(picked, word)
+            return
+          }
+        }
+        if (phone) {
+          // The sheet has no toolbar to leave for: Tab walks the rows, wrapping, as before.
+          if (results.length > 0) moveSelection(e.shiftKey ? -1 : 1)
+          return
+        }
+        tabKey(e.shiftKey)
         return
       }
       case 'ArrowDown':
       case 'ArrowUp':
         if (results.length === 0) return
         e.preventDefault()
+        // After Escape put the popup away, an arrow brings the rows back and moves on.
+        if (popupClosed) {
+          setPopupClosed(false)
+          if (e.key === 'ArrowDown' && selected === -1) {
+            highlight(0)
+            return
+          }
+        }
         moveSelection(e.key === 'ArrowUp' ? -1 : 1)
+        return
+      case 'PageDown':
+      case 'PageUp':
+        if (results.length === 0 || phone) return
+        e.preventDefault()
+        setPopupClosed(false)
+        movePage(e.key === 'PageDown' ? 1 : -1)
         return
       case 'ArrowRight':
       case 'End':
         // The caret collapses to the end natively; the completion is now what was typed.
-        if (el && hasCompletionTail(el) && !e.shiftKey) lastTyped.current = el.value
+        if (el && hasCompletionTail(el) && !e.shiftKey) rememberTyped(el.value)
+        return
+      case 'Backspace':
+        // Backspace on the empty query leaves keyword mode and brings the keyword text back.
+        if (keywordMode && text === '') {
+          e.preventDefault()
+          exitKeywordMode()
+        }
         return
       case 'Enter': {
         e.preventDefault()
-        if (e.ctrlKey || e.metaKey) {
-          // Ctrl+Enter: `www.` and `.com` around what was typed, never the completion.
+        const { where, wwwCom } = submitTarget({
+          ctrl: e.ctrlKey || e.metaKey,
+          shift: e.shiftKey,
+          alt: e.altKey
+        })
+        if (wwwCom) {
+          // Ctrl+Enter: `www.` and `.com` around what was typed, never the completion nor a
+          // highlighted row (BUG-015); Ctrl+Shift+Enter opens that in a new window.
           const typed = el && hasCompletionTail(el) ? lastTyped.current : text
-          submit(null, { input: completeWwwCom(typed), newTab: e.altKey })
+          submit(null, { input: completeWwwCom(typed), where })
           return
         }
-        submit(selected >= 0 ? results[selected] : null, {
-          newTab: e.altKey,
-          background: e.altKey && e.shiftKey
-        })
+        submit(selected >= 0 && !popupClosed ? results[selected] : null, { where })
         return
       }
       case 'Delete':
-        // Shift+Delete removes the highlighted history row (Chrome); plain Delete does too when a
-        // row is highlighted, since the field's caret then has nothing to delete. An omnibox row
-        // its extension marked deletable goes the same way (`omnibox.onDeleteSuggestion`).
-        if (selected >= 0 && (removeHistoryRow(selected) || removeOmniboxRow(selected)))
-          e.preventDefault()
+        // Shift+Delete removes the highlighted removable row (Chrome); plain Delete does too when
+        // a row is highlighted, since the field's caret then has nothing to delete.
+        if (selected >= 0 && !popupClosed && removeRow(selected)) e.preventDefault()
         return
     }
   }
 
-  const moveSelection = (dir: 1 | -1): void => {
-    const next = selected + dir
-    const wrapped = next < -1 ? results.length - 1 : next >= results.length ? -1 : next
-    setSelected(wrapped)
-    const el = inputRef.current
-    if (!el) return
-    const row = wrapped >= 0 ? results[wrapped] : null
-    const fill = row ? row.fill || row.url || lastTyped.current : lastTyped.current
-    el.value = fill
-    setText(fill)
-    requestAnimationFrame(() => el.setSelectionRange(fill.length, fill.length))
+  /** Keys on a row's control (the X): Tab walks on, Escape returns to the field, arrows move. */
+  const onActionKeyDown = (e: React.KeyboardEvent<HTMLElement>): void => {
+    if (action < 0) return
+    switch (e.key) {
+      case 'Tab':
+        e.preventDefault()
+        tabKey(e.shiftKey)
+        return
+      case 'Escape':
+        e.preventDefault()
+        setAction(-1)
+        return
+      case 'ArrowDown':
+      case 'ArrowUp':
+        e.preventDefault()
+        moveSelection(e.key === 'ArrowUp' ? -1 : 1)
+        return
+      case 'Delete':
+        e.preventDefault()
+        removeRow(selected)
+        return
+    }
   }
 
   const floating = !urlbar.attached
@@ -587,30 +905,58 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
     }
   }, [floating, area, width])
 
-  const placeholder =
-    keyword || urlbar.mode === 'search' ? `Search with ${engine.name}` : 'Search or enter address'
+  const placeholder = inKeyword ? `Search with ${engine.name}` : 'Search or enter address'
   // The field's native context menu ("Paste and Go") acts on the tab a submit would: the current
   // one while editing, a new one from the new-tab bar (`data-zen-menu`, read by the main process).
   const menuTabId = urlbar.mode === 'new-tab' || !tab ? undefined : tab.id
 
   const rows = (sheet: boolean): JSX.Element[] =>
-    results.map((item, i) => (
-      <SuggestionRow
-        key={item.id}
-        id={`zen-omnibox-row-${i}`}
-        item={item}
-        selected={i === selected}
-        sheet={sheet}
-        onPick={(e) => {
-          if (item.kind === 'clipboard') void pickClip()
-          else submit(item, { newTab: e.altKey || e.button === 1 })
-        }}
-        // The phone's trailing controls (OMN-09, OMN-14); the desktop list is as it was.
-        onRefine={sheet && refinable(item) ? refine : undefined}
-        clip={item.kind === 'clipboard' ? clip : undefined}
-        onReveal={sheet && item.kind === 'clipboard' && !clip ? revealClip : undefined}
-      />
-    ))
+    results.flatMap((item, i) => {
+      const row = (
+        <SuggestionRow
+          key={item.id}
+          id={`zen-omnibox-row-${i}`}
+          item={item}
+          selected={i === selected}
+          sheet={sheet}
+          onPick={(e) => {
+            if (item.kind === 'clipboard') void pickClip()
+            else
+              submit(item, {
+                where: clickTarget({
+                  button: e.button,
+                  ctrl: e.ctrlKey || e.metaKey,
+                  shift: e.shiftKey,
+                  alt: e.altKey
+                })
+              })
+          }}
+          // The desktop's remove X (omnibox-22) on the rows the core marks removable; the
+          // phone's trailing controls (OMN-09, OMN-14) are as they were.
+          onRemove={!sheet && removable(item) ? () => removeRow(i) : undefined}
+          removeId={rowActionId(i, 0)}
+          actionFocused={!sheet && i === selected && action === 0}
+          onActionKeyDown={onActionKeyDown}
+          onRefine={sheet && refinable(item) ? refine : undefined}
+          clip={item.kind === 'clipboard' ? clip : undefined}
+          onReveal={sheet && item.kind === 'clipboard' && !clip ? revealClip : undefined}
+        />
+      )
+      // A group's heading over its first row (zero-suggest's "Recent searches", omnibox-20):
+      // the shared v2 heading at a popover list's beat, as the tab search popover's.
+      const heading =
+        !sheet && item.group && item.group !== results[i - 1]?.group ? (
+          <li
+            key={`group-${item.group}`}
+            role="presentation"
+            className="zen-v2-heading zen-omnibox-heading"
+            data-testid="urlbar-group-heading"
+          >
+            {item.group}
+          </li>
+        ) : null
+      return heading ? [heading, row] : [row]
+    })
 
   const activeRow = selected >= 0 ? `zen-omnibox-row-${selected}` : undefined
   // An address or text dragged over the field goes where a submit would (lib/dnd.ts, Chrome's
@@ -757,15 +1103,39 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
           className="zen-omnibox-input-row flex shrink-0 items-center"
           data-drop-into={dropInto || undefined}
         >
-          {chipLabel ? (
-            <span className="zen-omnibox-badge" data-keyword-chip title={chipLabel}>
-              {chipLabel}
-            </span>
-          ) : (
-            <span className="zen-omnibox-engine" title={`Search engine: ${engine.name}`}>
-              {engine.glyph}
-            </span>
-          )}
+          {/* The engine's glyph replaces the default's in keyword mode (omnibox-08). */}
+          <span className="zen-omnibox-engine" title={`Search engine: ${engine.name}`}>
+            {engine.glyph}
+          </span>
+          {chipLabel &&
+            // The keyword chip (omnibox-08, -26): the pill chip chassis in the badge look the
+            // dropdown already has; slid in over 150 ms as Chrome's. A click leaves keyword mode
+            // (Backspace on the empty field and Escape do for the keyboard); the `@scope` text
+            // chip has nothing to leave, so it stays inert.
+            (keywordMode ? (
+              <PillChip
+                key={keywordMode.engine.id}
+                label={`${chipLabel}. Leave keyword mode`}
+                title="Leave keyword mode"
+                className="zen-omnibox-badge zen-omnibox-keyword-chip"
+                data-keyword-chip=""
+                onPointerDown={keepFocus}
+                onActivate={() => {
+                  exitKeywordMode()
+                  inputRef.current?.focus()
+                }}
+              >
+                {chipLabel}
+              </PillChip>
+            ) : (
+              <span
+                className="zen-omnibox-badge zen-omnibox-keyword-chip"
+                data-keyword-chip=""
+                title={chipLabel}
+              >
+                {chipLabel}
+              </span>
+            ))}
           <input
             ref={inputRef}
             value={text}
@@ -780,7 +1150,7 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
             role="combobox"
             aria-label="Search or enter address"
             aria-autocomplete="both"
-            aria-expanded={results.length > 0}
+            aria-expanded={results.length > 0 && !popupClosed}
             aria-controls="zen-omnibox-results"
             aria-activedescendant={activeRow}
             data-zen-menu="urlbar"
@@ -789,7 +1159,7 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
           />
           {tab && urlbar.mode === 'edit' && <span className="zen-omnibox-badge">Current tab</span>}
         </div>
-        {results.length > 0 && (
+        {results.length > 0 && !popupClosed && (
           <ul
             ref={fadeResults}
             id="zen-omnibox-results"
@@ -1105,6 +1475,10 @@ function SuggestionRow({
   selected,
   sheet,
   onPick,
+  onRemove,
+  removeId,
+  actionFocused,
+  onActionKeyDown,
   onRefine,
   clip,
   onReveal
@@ -1116,6 +1490,15 @@ function SuggestionRow({
   /** A row of the phone sheet: touch height (44), the desktop list keeps v2's 50. */
   sheet: boolean
   onPick: (e: React.MouseEvent) => void
+  /**
+   * The desktop row's remove X (omnibox-22): shown on hover, on the highlighted row and while
+   * it has the keyboard; `removeId` is its element id, the target Tab moves the keyboard to.
+   */
+  onRemove?: () => void
+  removeId?: string
+  /** The X has the keyboard (Tab reached it, omnibox-50); the row keeps its highlight. */
+  actionFocused?: boolean
+  onActionKeyDown?: (e: React.KeyboardEvent<HTMLElement>) => void
   /** A query row's Refine arrow (OMN-09): the row's text into the field, nothing submitted. */
   onRefine?: (item: Suggestion) => void
   /** The clipboard row's content once revealed (OMN-14); the row then shows it. */
@@ -1208,29 +1591,61 @@ function SuggestionRow({
       </li>
     )
   }
+  // As the sheet's row: the option is the row's body, its remove X a sibling in the row (a
+  // button inside an option would be presentational to assistive technology), the row itself
+  // carrying the highlight and the hover across its whole width.
   return (
     <li
-      id={id}
-      role="option"
-      aria-selected={selected}
+      role="presentation"
       className="zen-omnibox-row flex shrink-0 cursor-default items-center"
       data-selected={selected}
       data-kind={item.kind}
-      {...pointerProps}
+      data-action-focused={actionFocused || undefined}
     >
-      <span className="zen-omnibox-row-icon flex shrink-0 items-center justify-center">{icon}</span>
-      <span className="zen-omnibox-row-title">{item.title}</span>
-      {item.subtitle && (
-        <span className="zen-omnibox-row-host">
-          <span aria-hidden="true"> — </span>
-          {item.subtitle}
+      <div
+        id={id}
+        role="option"
+        aria-selected={selected}
+        className="zen-omnibox-row-body flex h-full min-w-0 flex-1 items-center"
+        {...pointerProps}
+      >
+        <span className="zen-omnibox-row-icon flex shrink-0 items-center justify-center">
+          {icon}
         </span>
-      )}
-      {item.kind === 'tab' && (
-        <span className="zen-omnibox-row-hint">
-          Switch to tab
-          <ArrowRight className="h-3.5 w-3.5" />
-        </span>
+        <span className="zen-omnibox-row-title">{item.title}</span>
+        {item.subtitle && (
+          <span className="zen-omnibox-row-host">
+            <span aria-hidden="true"> — </span>
+            {item.subtitle}
+          </span>
+        )}
+        {item.kind === 'tab' && (
+          <span className="zen-omnibox-row-hint">
+            Switch to tab
+            <ArrowRight className="h-3.5 w-3.5" />
+          </span>
+        )}
+      </div>
+      {onRemove && (
+        // The 28 px v2 icon button at the row's trailing edge (§9.34), up on hover, on the
+        // highlighted row and while it has the keyboard; Chrome removes without confirmation.
+        <button
+          type="button"
+          id={removeId}
+          tabIndex={-1}
+          className="zen-v2-icon-button zen-omnibox-remove"
+          aria-label="Remove suggestion"
+          title="Remove suggestion"
+          data-testid="urlbar-remove-suggestion"
+          onPointerDown={keepFocus}
+          onClick={(e) => {
+            e.stopPropagation()
+            onRemove()
+          }}
+          onKeyDown={onActionKeyDown}
+        >
+          <X aria-hidden="true" />
+        </button>
       )}
     </li>
   )

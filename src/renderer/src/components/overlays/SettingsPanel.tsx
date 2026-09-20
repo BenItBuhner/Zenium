@@ -801,6 +801,25 @@ function SearchSection({
           onCheckedChange={(v) => set({ searchSuggestions: v })}
         />
       </Row>
+      {/* Suggestion privacy (omnibox-45): the local sources each behind their own switch. */}
+      <Row
+        label="Show history suggestions"
+        hint="Pages you visited, and completing an address you typed before."
+      >
+        <Switch
+          checked={state.settings.historySuggestions !== false}
+          onCheckedChange={(v) => set({ historySuggestions: v })}
+        />
+      </Row>
+      <Row
+        label="Show bookmark suggestions"
+        hint="Bookmarks whose title or address matches what you type."
+      >
+        <Switch
+          checked={state.settings.bookmarkSuggestions !== false}
+          onCheckedChange={(v) => set({ bookmarkSuggestions: v })}
+        />
+      </Row>
       <Row
         label="Always show full URLs"
         hint="Keep the scheme and www. in the address bar instead of hiding them."

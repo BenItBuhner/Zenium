@@ -643,6 +643,35 @@ export function matchKeywordWord(word: string, engines: SearchEngine[]): Keyword
 }
 
 /**
+ * The engine a single typed word names, what Tab or Space after it enters keyword mode for
+ * (tab-to-search, omnibox-08): its `@keyword` (and `@id`, `@name`) or the host it searches at
+ * (`duckduckgo.com`, Chrome's own keywords), and with `byName` its name too (`duckduckgo`,
+ * case and inner spaces aside) – Chrome offers the name as a Tab hint but takes only the exact
+ * keyword on Space, so "google maps" stays a query. Null for anything else, and for a word with
+ * spaces.
+ */
+export function matchEngineWord(
+  word: string,
+  engines: readonly SearchEngine[],
+  byName = false
+): SearchEngine | null {
+  const w = word.trim().toLowerCase()
+  if (!w || /\s/.test(w)) return null
+  for (const engine of engines) {
+    if (engineKeywords(engine).includes(w)) return engine
+    const host = engineHost(engine)?.toLowerCase()
+    if (host && (host === w || `www.${host}` === w)) return engine
+    if (!byName) continue
+    const name = engine.name
+      .toLowerCase()
+      .replace(/\s*\(.*\)\s*$/, '')
+      .replace(/\s+/g, '')
+    if (name && name === w) return engine
+  }
+  return null
+}
+
+/**
  * Detect a `@keyword query` prefix (the keyword, a space, then what to search): an engine
  * keyword or one of the built-in scopes. Returns the match with the remaining query, or null.
  * `@ddg` alone (no space yet) is not a match: the user may still be typing the word.
