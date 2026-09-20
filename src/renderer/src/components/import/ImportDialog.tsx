@@ -1,7 +1,7 @@
 import type { JSX } from 'react'
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { CircleAlert, Info } from 'lucide-react'
-import type { ImportKind, ImportProgress, ImportSource, UIState } from '@shared/types'
+import type { ImportKind, ImportProgress, UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import {
   IMPORT_TITLE,
