@@ -1,0 +1,55 @@
+name: Android sync demo
+
+# Records Settings › Sync on a hardware-accelerated Android emulator against the real engine and
+# a real document tree (ID-08's UI): the Sync category from the app menu's Settings, the sync
+# folder granted through the system's folder picker with a finger, the passphrase sheet, a
+# toggle flipped, a second device's file seeded into the tree by the driver itself (SyncPeer:
+# the same scrypt and AES-GCM as the engine's), Sync now with its records landing and the device
+# appearing in the list, Turn off sync with the wipe-remote checkbox row, and the merge question
+# on setting up again. Dispatch-only, like the other demos: it takes about ten minutes and says
+# nothing about a change being correct. The build, the emulator and the Gradle cache live in
+# android-emulator-demo.yml; this file only picks the driver and the demo it runs.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - cursor/services-sync-android-ui-24d1
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-sync-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Sync demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.SyncDemo
+        DEMO_DIR=sync-demo
+        DEMO_OUT=artifacts/android-sync-demo
+        DEMO_VIDEO=services-sync-android-android-demo.mp4
+      artifact-name: android-sync-demo
+      artifact-path: artifacts/android-sync-demo/
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed: a run is then spent on the demo rather than on the runner.
+  record-again:
+    name: Sync demo, second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.SyncDemo
+        DEMO_DIR=sync-demo
+        DEMO_OUT=artifacts/android-sync-demo
+        DEMO_VIDEO=services-sync-android-android-demo.mp4
+      artifact-name: android-sync-demo-second-boot
+      artifact-path: artifacts/android-sync-demo/
