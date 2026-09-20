@@ -132,6 +132,22 @@ df -h / /tmp
 monitor_pid=$!
 
 if [ "${DEMO_PREPARED:-0}" != 1 ]; then
+# Optional: run the demo on a Chromium snapshot WebView instead of the image's own (see
+# android-webview-swap.sh; needs an AOSP image booted with -writable-system). A demo that asks
+# for it depends on the newer engine (the media demo: the API 34 image's WebView 113 keeps no
+# profiles, so the core offers no private tabs on it, and its media / notification behaviour is
+# years behind), so a swap that does not take fails the run here, before the driver, with the
+# reason in the log.
+if [ -n "${WEBVIEW_APK:-}" ]; then
+  cp -f "$(dirname "$WEBVIEW_APK")/REVISIONS.json" "$out/webview-REVISIONS.json" 2> /dev/null || true
+  if ! bash .github/scripts/android-webview-swap.sh "$WEBVIEW_APK" "$out"; then
+    echo "::error::the WebView swap did not take; the demo needs the snapshot WebView"
+    adb shell dumpsys webviewupdate > "$out/webviewupdate.txt" 2>&1 || true
+    kill "$monitor_pid" 2> /dev/null || true
+    exit 1
+  fi
+  adb shell dumpsys webviewupdate > "$out/webviewupdate.txt" 2>&1 || true
+fi
 # The same 411 CSS px wide layout a Pixel 6 gets, at 2.3x fewer pixels: the emulator renders,
 # snapshots and records through a software GPU, and every pixel costs.
 adb shell wm size 720x1600

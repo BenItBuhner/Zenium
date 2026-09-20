@@ -10,6 +10,10 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- A page playing audio keeps playing behind other apps: the media notification's service
+         (MediaPlaybackService.kt) holds the process up as one of the mediaPlayback kind. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <!-- The chrome's gesture haptics (a tab card picked up in the overview). -->
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- In-app updates: hand a downloaded release APK to the package installer. -->
@@ -115,6 +119,7 @@
             android:exported="true"
             android:launchMode="singleTask"
             android:resizeableActivity="true"
+            android:supportsPictureInPicture="true"
             android:windowSoftInputMode="adjustResize"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|keyboard|navigation|uiMode|locale|layoutDirection|fontScale|colorMode">
             <!-- The launcher entry is one of the icon aliases below (Settings → Look and Feel → App
@@ -314,9 +319,23 @@
         </activity-alias>
         <!-- app-icon-aliases:end -->
 
+        <!-- The pages' media on the OS controls (MediaSessions.kt): the media-style notification's
+             foreground service, so a page playing audio keeps playing behind other apps and under
+             the lock screen, as Chrome's does. Nothing else starts it; it stops with the session. -->
+        <service
+            android:name=".MediaPlaybackService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
         <!-- The launcher's confirmation that a Home-screen shortcut was pinned (Shortcuts.kt). -->
         <receiver
             android:name=".ShortcutPinnedReceiver"
+            android:exported="false" />
+
+        <!-- "Close all private tabs" on the private session's notification (PrivateSession.kt); in the
+             manifest so a press on a card that outlived the process still takes the card down. -->
+        <receiver
+            android:name=".PrivateSessionReceiver"
             android:exported="false" />
 
         <provider
