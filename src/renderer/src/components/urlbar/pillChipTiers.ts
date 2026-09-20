@@ -3,9 +3,11 @@
  * (design language v2 §9.29's tier; Chrome's LocationBarView lays its decorations out the same
  * way). The chips have a priority: the site icon always; then the chips that report a state the
  * user cannot otherwise see (blocked pop-ups, a save prompt's key) – never hidden; then the
- * star; then the blocking shield (its count is not a state, §9.29: the site information the
- * site icon opens carries it); then the zoom chip; the informational chips (translate, Reader
- * View) lowest. The address truncates first – down to `MIN_ADDRESS_WIDTH` – and only then do
+ * star; then the zoom chip (a per-page deviation the user has to undo); then the blocking
+ * shield (its count is not a state, §9.29: the site information the site icon opens carries
+ * it, and it marks the same state on every page); the informational chips (translate, Reader
+ * View) lowest. Hiding order, first to last: translate and Reader View, shield, zoom, star
+ * (design lead's ruling on #267, §9.29). The address truncates first – down to `MIN_ADDRESS_WIDTH` – and only then do
  * the chips hide, from the lowest priority up; once one does not fit, none below it shows. A
  * hidden chip's action stays reachable from the app menu and the tab's menu (Bookmark, Zoom,
  * Translate Page, Reader View) and from the site information (the blocking state).
@@ -20,8 +22,8 @@ export const CHIP_PRIORITY: readonly ChipTier[] = [
   'site',
   'state',
   'star',
-  'shield',
   'zoom',
+  'shield',
   'info'
 ]
 

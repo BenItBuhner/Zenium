@@ -28,8 +28,8 @@ const inner = (pillWidth: number): number => pillWidth - PILL_PADDING
 const ids = (s: ReadonlySet<string>): string[] => [...s].sort()
 
 describe('the pill chip overflow rule (M8)', () => {
-  it('orders the tiers: site, state, star, shield, zoom, informational', () => {
-    expect(CHIP_PRIORITY).toEqual(['site', 'state', 'star', 'shield', 'zoom', 'info'])
+  it('orders the tiers: site, state, star, zoom, shield, informational (§9.29)', () => {
+    expect(CHIP_PRIORITY).toEqual(['site', 'state', 'star', 'zoom', 'shield', 'info'])
   })
 
   it('hides nothing before the pill has been measured', () => {
