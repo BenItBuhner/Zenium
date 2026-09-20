@@ -1256,6 +1256,78 @@ export interface BookmarkImportResult {
   folderId: string
 }
 
+// ---------------------------------------------------------------------------
+// Import from other browsers (Chrome's "Import bookmarks and settings", ID-23)
+// ---------------------------------------------------------------------------
+
+export type ImportKind = 'bookmarks' | 'history' | 'passwords'
+
+/** `file`: a Netscape bookmarks HTML or a passwords CSV the user picks (every host). */
+export type ImportBrowser = 'chrome' | 'chromium' | 'edge' | 'firefox' | 'safari' | 'file'
+
+/**
+ * A browser profile on this machine (or a file source) the import dialog lists. Discovered by the
+ * desktop host's `ImportHost`; Android has no other browser's data to read and offers files only.
+ */
+export interface ImportSource {
+  /** `<browser>:<profileId>`, or `file:bookmarks` / `file:passwords`. */
+  id: string
+  browser: ImportBrowser
+  /** "Google Chrome", "Microsoft Edge", "Firefox", "Safari", "Bookmarks HTML file". */
+  browserName: string
+  /** The profile directory's name (`Default`, `Profile 2`, `abcd1234.default-release`). */
+  profileId: string
+  /** The profile's display name ("Person 1"); the browser's name when it has a single profile. */
+  name: string
+  /** The account signed into the profile, when the browser records one. */
+  email?: string
+  /** The profile directory (empty for a file source). */
+  path: string
+  /**
+   * The browser holds its profile lock right now (`SingletonLock`, Firefox's `lock`). Chrome and
+   * Edge still read fine from a copy; Firefox's places database is refused while it runs.
+   */
+  running: boolean
+  /** What this source can provide, in the dialog's order. */
+  kinds: ImportKind[]
+  /** Kinds this source cannot provide here, each with the way round (Chrome's CSV export…). */
+  limits: Partial<Record<ImportKind, string>>
+}
+
+/** What one kind of an import did; the counts are items, never bytes. */
+export interface ImportKindOutcome {
+  /** Items written into Zenium. */
+  imported: number
+  /** Skipped: already saved, or seen twice in the same import. */
+  duplicates: number
+  /** Skipped: could not be decrypted or decoded (Chrome's v11 logins without the keyring secret). */
+  unreadable: number
+  /** Skipped: no usable URL or value. */
+  invalid: number
+  /** The failure that stopped this kind (a lock refusal names the browser); null when it ran. */
+  error: string | null
+  /** Where the data came from when not the browser's live store (Firefox's bookmark backup). */
+  note?: string
+}
+
+export type ImportStatus = 'running' | 'done' | 'failed' | 'cancelled'
+
+/** The running or last finished import (`UIState.import`; `import.dismiss` clears it). */
+export interface ImportProgress {
+  source: ImportSource
+  kinds: ImportKind[]
+  status: ImportStatus
+  /** The kind being read or written right now. */
+  current: ImportKind | null
+  results: Partial<Record<ImportKind, ImportKindOutcome>>
+  /** A failure of the whole run (the profile vanished, the file could not be read); null otherwise. */
+  error: string | null
+  /** The folder the bookmarks landed in (the result's "Show" target); null when none were imported. */
+  folderId: string | null
+  startedAt: number
+  finishedAt: number | null
+}
+
 export type DownloadState = 'progressing' | 'paused' | 'completed' | 'cancelled' | 'interrupted'
 
 export type DownloadDangerLevel = 'safe' | 'suspicious' | 'dangerous'
@@ -2826,6 +2898,8 @@ export interface UIState {
    * word, speed and voice (`shared/readAloud.ts`); null without a session.
    */
   readAloud: ReadAloudState | null
+  /** The import from another browser or file that is running or just finished; null otherwise. */
+  import: ImportProgress | null
 }
 
 export interface FindResult {
@@ -3575,6 +3649,19 @@ export interface Commands {
   'bookmark.import': { args: void; result: BookmarkImportResult | null }
   /** Netscape bookmark HTML export through the host's save dialog. */
   'bookmark.export': { args: void; result: boolean }
+
+  /** The browsers and files an import can come from, freshly probed (profiles, locks). */
+  'import.sources': { args: void; result: ImportSource[] }
+  /**
+   * Import the chosen kinds from a source (`ImportSource.id`); one import runs at a time and its
+   * progress is `UIState.import`. Resolves with the finished progress, or null for an unknown
+   * source or nothing to import.
+   */
+  'import.run': { args: { source: string; kinds: ImportKind[] }; result: ImportProgress | null }
+  /** Stop the running import after the kind in flight; false when none runs. */
+  'import.cancel': { args: void; result: boolean }
+  /** Drop the finished import from `UIState.import` (the dialog closed). */
+  'import.dismiss': { args: void; result: void }
 
   'download.pause': { args: { id: string }; result: void }
   'download.resume': { args: { id: string }; result: void }
