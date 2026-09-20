@@ -366,11 +366,17 @@ export function androidAdaptiveIconXml(variant: AppIconVariant): string {
 `
 }
 
+/** The launcher's long-press shortcuts (`src/main/shortcuts/shortcuts.xml`, written per variant); the system reads them off the launcher entry. */
+export const ANDROID_SHORTCUTS_META =
+  '<meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />'
+
 /**
  * One launcher alias per variant, only the default enabled in the manifest; `LauncherIcon.kt`
  * flips them at runtime. They target `LauncherIconActivity`, which starts `MainActivity` in a
  * task of its own: a task rooted at an alias would be removed the moment that alias is disabled.
- * Deep links, share and search intents stay on `MainActivity` itself.
+ * Deep links, share and search intents stay on `MainActivity` itself. Each alias carries the
+ * static shortcuts' meta-data: the system parses `android.app.shortcuts` off the activity that
+ * holds the launcher entry, and an alias has meta-data of its own, not its target's.
  */
 export function manifestAliasesBlock(
   variants: readonly AppIconVariant[],
@@ -389,6 +395,7 @@ ${indent}    <intent-filter>
 ${indent}        <action android:name="android.intent.action.MAIN" />
 ${indent}        <category android:name="android.intent.category.LAUNCHER" />
 ${indent}    </intent-filter>
+${indent}    ${ANDROID_SHORTCUTS_META}
 ${indent}</activity-alias>`
   })
   return `${indent}${MANIFEST_BEGIN} (${GENERATED}) -->\n${aliases.join('\n')}\n${indent}${MANIFEST_END}`

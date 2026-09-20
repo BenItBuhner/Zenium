@@ -35,7 +35,6 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         view.visibility = View.GONE
         container.addView(view, FrameLayout.LayoutParams(0, 0))
         views[tabId] = view
-        host.onViewsChanged()
         return view
     }
 
@@ -49,7 +48,6 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         view.backTransition?.abort()
         host.snapshots.forget(tabId)
         (view.parent as? ViewGroup)?.removeView(view)
-        host.onViewsChanged()
         return view
     }
 
@@ -75,7 +73,6 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         view.translationX = 0f
         container.addView(view, FrameLayout.LayoutParams(0, 0))
         views[viewId] = view
-        host.onViewsChanged()
         host.hostEvent("view.adopt", json("viewId" to viewId, "parentTabId" to null, "active" to true))
     }
 
@@ -100,7 +97,6 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         // pictured first: the card an undo brings back shows the page as it was left.
         view.captureThumbnail()
         drop(view)
-        host.onViewsChanged()
         host.viewEvent(tabId, "destroyed", null)
     }
 
@@ -117,7 +113,6 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         for (view in views.values.toList()) drop(view)
         views.clear()
         host.snapshots.clear()
-        host.onViewsChanged()
     }
 
     /** Tear a view down (already removed from [views]); the chrome is not told. */
@@ -158,7 +153,6 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         dead.cover.reset()
         container.addView(fresh, if (index >= 0) index else -1, lp ?: FrameLayout.LayoutParams(0, 0))
         views[tabId] = fresh
-        host.onViewsChanged()
         return true
     }
 
@@ -209,9 +203,7 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         // GONE views neither draw nor receive input; JS keeps running so background audio, like
         // in Zen, carries on until the core unloads the tab.
         val next = if (visible) View.VISIBLE else View.GONE
-        if (view.visibility == next) return
-        view.visibility = next
-        host.onViewsChanged()
+        if (view.visibility != next) view.visibility = next
     }
 
     fun bringToFront(tabId: String) {
@@ -246,10 +238,7 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
                 view.visibility = if (before.visible) View.VISIBLE else View.GONE
             }
         }
-        if (tabId == null) {
-            host.onViewsChanged()
-            return
-        }
+        if (tabId == null) return
         val view = views[tabId] ?: return
         val lp = (view.layoutParams as? FrameLayout.LayoutParams) ?: FrameLayout.LayoutParams(0, 0)
         filled = Filled(tabId, FrameLayout.LayoutParams(lp), view.visibility == View.VISIBLE, view.radiusPx, view.cover.topTarget, view.cover.bottomTarget)
@@ -258,6 +247,5 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         view.cover.set(0f, 0f, snap = true)
         view.visibility = View.VISIBLE
         view.bringToFront()
-        host.onViewsChanged()
     }
 }

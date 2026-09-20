@@ -241,6 +241,24 @@ class BootHandoffTest {
     }
 
     @Test
+    fun `a cap under the inline limit bounds the download too`() {
+        // An OpenSearch description's 64 KB cap: the read stops inside the inline loop, within a
+        // buffer of the cap, rather than going on to the inline limit and spilling.
+        var served = 0
+        val endless = object : java.io.InputStream() {
+            override fun read(): Int { served++; return 'x'.code }
+            override fun read(b: ByteArray, off: Int, len: Int): Int { served += len; b.fill('x'.code.toByte(), off, off + len); return len }
+        }
+        val failure = runCatching { handoff.readBody(endless, inlineLimit = 256 * 1024, maxBytes = 64 * 1024) }.exceptionOrNull()
+        assertTrue("$failure", failure is java.io.IOException)
+        assertTrue("served $served bytes", served <= 64 * 1024 + 64 * 1024)
+        assertTrue(spill.listFiles().isNullOrEmpty())
+        // At the cap exactly, inline as before.
+        val atCap = handoff.readBody(ByteArrayInputStream(ByteArray(64 * 1024) { 'y'.code.toByte() }), inlineLimit = 256 * 1024, maxBytes = 64 * 1024)
+        assertEquals(64 * 1024, (atCap as BootHandoff.Body.Inline).text.length)
+    }
+
+    @Test
     fun `only a live token names a spill file`() {
         File(spill, "not-a-token.txt").writeText("secret")
         assertEquals(404, handoff.spilled("not-a-token.txt").status)

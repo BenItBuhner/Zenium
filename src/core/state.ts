@@ -61,7 +61,7 @@ import {
   sanitizePasswordSettings
 } from '../shared/defaults'
 import { sanitizePhoneBar } from '../shared/phoneBar'
-import { DEFAULT_SEARCH_ENGINES } from '../shared/search'
+import { allSearchEngines, sanitizeSearchEngines } from '../shared/search'
 import {
   applyShortcutOverrides,
   defaultShortcuts,
@@ -343,7 +343,18 @@ export class BrowserState {
     translate: emptyTranslateState(),
     spellcheck: UNAVAILABLE_SPELLCHECK
   })
-  searchEngines: SearchEngine[] = DEFAULT_SEARCH_ENGINES
+  /**
+   * The shipped engines plus the user's (`settings.searchEngines`: added by hand or discovered
+   * through OpenSearch, synced with the settings), rebuilt when the list changes.
+   */
+  get searchEngines(): SearchEngine[] {
+    const user = this.settings.searchEngines
+    if (!this.enginesCache || this.enginesCache.user !== user) {
+      this.enginesCache = { user, list: allSearchEngines(user) }
+    }
+    return this.enginesCache.list
+  }
+  private enginesCache: { user: SearchEngine[] | undefined; list: SearchEngine[] } | null = null
   readonly version: string
 
   private readonly store: JsonStore<Persisted>
@@ -441,6 +452,12 @@ export class BrowserState {
     this.settings.mutedHosts = Array.isArray(this.settings.mutedHosts)
       ? this.settings.mutedHosts.filter((h): h is string => typeof h === 'string' && h !== '')
       : []
+    // The user's engines (Settings > Search, OpenSearch discovery); the default among them is
+    // never dropped by the caps. `repair()` below falls the default back if its engine is gone.
+    this.settings.searchEngines = sanitizeSearchEngines(
+      data.settings?.searchEngines,
+      typeof data.settings?.searchEngineId === 'string' ? data.settings.searchEngineId : undefined
+    )
     this.settings.privacy = sanitizePrivacySettings(data.settings?.privacy)
     this.settings.spellcheck = sanitizeSpellcheck(data.settings?.spellcheck)
     this.settings.reader = sanitizeReaderPreferences(data.settings?.reader)

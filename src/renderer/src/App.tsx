@@ -2,6 +2,7 @@ import type { JSX } from 'react'
 import { useCallback, useEffect, useRef } from 'react'
 import { Minimize } from 'lucide-react'
 import type { Events, Rect, UIState } from '@shared/types'
+import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import type { ResolvedTheme } from '@shared/theme'
 import { bookmarksBarVisible } from '@shared/bookmarkViews'
 import { formatBinding } from '@shared/shortcuts'
@@ -25,6 +26,7 @@ import { cn } from '@renderer/lib/utils'
 import { useCaptionOverlay } from '@renderer/hooks/useCaptionOverlay'
 import { useMainEvents } from '@renderer/hooks/useMainEvents'
 import { useTheme } from '@renderer/hooks/useTheme'
+import { Announcer } from './components/Announcer'
 import { BookmarksBar } from './components/bookmarks/BookmarksBar'
 import { captionBandInMain } from '@renderer/lib/layout'
 import { ContentArea } from './components/content/ContentArea'
@@ -62,6 +64,8 @@ export function App(): JSX.Element {
       )}
       {/* The extension popup's frame is a popover: it renders through the chrome layer. */}
       <PopupFrame />
+      {/* The one status region a screen reader hears tab switches, downloads, find and zoom from. */}
+      <Announcer />
     </>
   )
 }
@@ -441,9 +445,11 @@ function useGlobalKeys(state: UIState): void {
     return () => window.removeEventListener('keydown', onKey)
   }, [state.glance])
 
-  // A multi-selection belongs to one space; drop it when the space changes.
+  // A multi-selection belongs to one space; drop it when the space changes. So does the tab
+  // strip's roving tab stop: the new space's active row is the stop (lib/tabStrip.ts).
   useEffect(() => {
     clearTabSelection()
+    if (uiStore.get().stripFocus !== null) uiStore.set({ stripFocus: null })
   }, [state.activeSpaceId])
 
   // Sidebar collapse toggle (Zen's "Toggle Sidebar" action).
@@ -461,18 +467,20 @@ function useGlobalKeys(state: UIState): void {
  * Closing the bar first keeps the toggle from swallowing the request while it is open.
  * The phone opens its own new tab page instead (the WebView has no `zen://newtab` yet) – grown
  * out of the control that asked for it when the event says where that was (`detail.origin`,
- * window coordinates).
+ * window coordinates), and a private one when the event names the private container
+ * (`detail.containerId`; the tabs quick menu and the overview's private pane).
  */
 function useNewTabEvent(): void {
   useEffect(() => {
     const onNewTab = (e: Event): void => {
+      const detail = (e as CustomEvent<{ origin?: Rect; containerId?: string } | undefined>).detail
       if (isPhone()) {
-        const origin = (e as CustomEvent<{ origin?: Rect } | undefined>).detail?.origin ?? null
-        void openNewTabPage(origin)
+        void openNewTabPage(detail?.origin ?? null, { containerId: detail?.containerId })
         return
       }
       closeUrlbar()
-      run('tab.new', undefined)
+      if (detail?.containerId === PRIVATE_CONTAINER_ID) run('tab.newPrivate', {})
+      else run('tab.new', undefined)
     }
     window.addEventListener('zen-new-tab', onNewTab)
     return () => window.removeEventListener('zen-new-tab', onNewTab)

@@ -21,10 +21,18 @@ import {
 import { internalPageOf } from '@shared/internalPages'
 import type { Tab, UIState } from '@shared/types'
 import { securityIndicator, type IndicatorState } from '@shared/siteInfo'
-import { addressParts, displayUrl, fullUrl, getDomain } from '@shared/url'
+import {
+  addressParts,
+  displayUrl,
+  fullUrl,
+  getDomain,
+  isWebPageUrl,
+  presentedUrl
+} from '@shared/url'
 import { useElementWidth } from '@renderer/hooks/useElementWidth'
 import { run } from '@renderer/lib/api'
 import { chromeDropStore } from '@renderer/lib/dnd'
+import { extensionPageChrome } from '@renderer/lib/extensions/pages'
 import { dropStore } from '@renderer/lib/drag'
 import { blockedPopupsOf, closeBlockedPopups, openBlockedPopups } from '@renderer/lib/security'
 import { isPrivateWindow } from '@renderer/lib/selectors'
@@ -36,6 +44,7 @@ import { cn } from '@renderer/lib/utils'
 import { AutofillChip } from '../autofill/AutofillChip'
 import { StarChip } from '../bookmarks/StarChip'
 import { useBookmarkTree } from '../bookmarks/tree'
+import { ExtensionIcon } from '../extensions/ExtensionIcon'
 import { ToolbarActions } from '../extensions/ToolbarActions'
 import { useLongPress } from '../phone/useLongPress'
 import { BlockedChip } from '../urlbar/BlockedChip'
@@ -106,7 +115,11 @@ export function NavRow({
     tab?.certificateError ?? null
   )
   const isPrivate = isPrivateWindow(state)
-  const isWebPage = Boolean(tab && /^https?:/.test(tab.url))
+  // A page of the web gets the site chips; an extension page is not one, whatever origin the
+  // Android runtime serves it from (v2 §10.1 applied to extension pages): its icon takes the
+  // site icon's place, titled for what it is, and no lock, shield, reader or translation chip.
+  const isWebPage = Boolean(tab && isWebPageUrl(tab.url))
+  const extension = tab ? extensionPageChrome(tab.url, state.extensions) : null
   const isReader = Boolean(tab?.url.startsWith('zen://reader'))
   const boosted = Boolean(
     tab && isWebPage && state.boosts.some((b) => b.domain === getDomain(tab.url) && b.enabled)
@@ -167,6 +180,9 @@ export function NavRow({
       // on SidebarTop's root.)
       data-bar={compact ? undefined : ''}
       data-zen-nav-row
+      // The toolbar pane of the F6 rotation (lib/panes.ts): F6 lands on the address, Shift+Alt+T
+      // on the first enabled control.
+      data-pane="toolbar"
     >
       <NavigationButton
         tab={tab}
@@ -214,7 +230,7 @@ export function NavRow({
             'zen-squircle zen-pill group/pill mx-0.5 flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-[10px] bg-[var(--zen-element-bg)] px-2.5 text-left',
             !readOnly && 'hover:bg-[var(--zen-element-bg-hover)]'
           )}
-          title={tab?.url ?? 'Search or enter address'}
+          title={tab ? presentedUrl(tab.url) : 'Search or enter address'}
           data-zen-menu="urlpill"
           data-zen-menu-tab={tab?.id}
           data-readonly={readOnly || undefined}
@@ -298,7 +314,8 @@ export function NavRow({
                 data-indicator={indicator.state}
                 className={cn(
                   'order-first -ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)] hover:opacity-100',
-                  indicator.state === 'certificate-error' && 'text-[var(--zen-danger)] opacity-100'
+                  indicator.state === 'certificate-error' && 'text-[var(--zen-danger)] opacity-100',
+                  extension && 'opacity-100'
                 )}
                 onActivate={(e) => {
                   const chip = e.currentTarget
@@ -310,7 +327,11 @@ export function NavRow({
                   )
                 }}
               >
-                <IndicatorGlyph state={indicator.state} scheme={tab.url.split(':')[0] ?? ''} />
+                {extension ? (
+                  <ExtensionIcon icon={extension.icon} size={16} box={16} />
+                ) : (
+                  <IndicatorGlyph state={indicator.state} scheme={tab.url.split(':')[0] ?? ''} />
+                )}
               </PillChip>
             ) : (
               <Search className="order-first h-3 w-3 shrink-0 opacity-60" />
@@ -318,7 +339,7 @@ export function NavRow({
             {tab && isWebPage && state.capabilities.requestBlocking && (
               <BlockedChip tab={tab} state={state} variant="desktop" />
             )}
-            {tab && (tab.readerable || isReader) && (
+            {tab && !extension && (tab.readerable || isReader) && (
               <PillChip
                 label="Reader View"
                 title={hint(

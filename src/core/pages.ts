@@ -21,6 +21,11 @@
  * frame, so a chrome page opens as its `overlay` from the same entry point: every caller –
  * menus, commands, typed URLs, deep links – goes through {@link PageService.open} and the
  * platform decides the presentation. Document pages are tabs on every host.
+ *
+ * A page tab is never private, as Chrome keeps chrome:// pages out of Incognito: asked from a
+ * private window it opens in a regular window ({@link PageService.tabWindowFor}), asked from a
+ * private tab it takes the default container – the private window or tab is left as it was, so
+ * the private session still ends when the last of them closes.
  */
 import type { ZenWindow } from './window'
 import type { Browser } from './browser'
@@ -36,7 +41,7 @@ import {
   parseInternalPageUrl,
   sameInternalPage
 } from '../shared/internalPages'
-import type { Tab } from '../shared/types'
+import { DEFAULT_CONTAINER_ID, type Tab } from '../shared/types'
 import { titleForUrl } from '../shared/url'
 import { orderedTabsForSpace, tabVisibleIn } from './model'
 
@@ -123,7 +128,9 @@ export class PageService {
    * toolbar-only popup (a page's sized `window.open`) the popup's opener – the full window it
    * came from, else the full window used last. A popup has no sidebar or strip to hold a
    * second tab, and Chrome opens chrome://settings from a popup in its opener as well. The
-   * popup itself only when no full window is alive.
+   * popup itself only when no full window is alive. A private window is a host like any other
+   * here – a page's overlay stays over the private window that asked – and only a page *tab*
+   * leaves it ({@link tabWindowFor}).
    */
   hostWindowFor(win: ZenWindow): ZenWindow {
     if (win.chrome !== 'popup') return win
@@ -133,15 +140,37 @@ export class PageService {
   }
 
   /**
+   * The window a page *tab* opens in when asked from `win`: its host window
+   * ({@link hostWindowFor}) when that is a regular window; from a private window – or a popup
+   * whose openers are private, a private page's sized `window.open` – the regular full window
+   * used last, as Chrome opens Settings asked from an Incognito window in a regular window. An
+   * internal page never lives in the private container, so the private window holds no tab of
+   * it and its session still ends when the window closes. Null when no regular window is alive
+   * ({@link open} makes one). A host with one window has no private window: there a private
+   * *tab* asks, and the container rule in {@link open} applies instead.
+   */
+  tabWindowFor(win: ZenWindow): ZenWindow | null {
+    const host = this.hostWindowFor(win)
+    if (!host.isPrivate) return host
+    const regular = this.browser.allWindows().filter((w) => !w.isPrivate && w.chrome !== 'popup')
+    return regular.sort((a, b) => b.lastFocusedAt - a.lastFocusedAt)[0] ?? null
+  }
+
+  /**
    * Open a page. A `singleton` page that the window already has is focused – one per window, as
    * Firefox's `switchToTabHavingURI` keeps one about:preferences (v2 §10.1), switching space
    * when it lives in another – and moved to `section` when one is given (`undefined` keeps it
    * where it is, `null` is the landing page); otherwise a new tab opens next to its opener,
    * which it remembers for back (`Tab.openerTabId`; `fromIntent` marks a deep link another app
    * sent, `Tab.fromIntent`). Asked from a popup window the page opens in the popup's opener
-   * ({@link hostWindowFor}), brought to the front, with no opener tab (the popup's tab is not in
-   * that window). A chrome page on a host without page tabs opens as its overlay. Returns the
-   * tab id; null for an overlay or an unregistered page.
+   * ({@link hostWindowFor}), and asked from a private window in the regular window used last,
+   * or a new one when none is open ({@link tabWindowFor}) – brought to the front either way,
+   * with no opener tab (the asking window's tab is not in that window), the asking window left
+   * as it was. A page tab never takes the private container: from a private tab (a host with
+   * private tabs in its one window) it opens as a regular-container tab that still remembers
+   * the private tab as its opener. A chrome page on a host without page tabs opens as its
+   * overlay, over the asking window (or a popup's opener) – private or not. Returns the tab id;
+   * null for an overlay or an unregistered page.
    */
   open(
     id: string,
@@ -153,23 +182,27 @@ export class PageService {
     const page = Object.prototype.hasOwnProperty.call(this.pages, id) ? this.pages[id] : undefined
     if (!page || !this.available(page)) return null
     const asked = win
-    win = this.hostWindowFor(asked)
-    const rerouted = win !== asked
-    if (rerouted) openerTabId = null
-    // A page sent to another window is brought to the front there.
-    const raise = (): void => {
-      if (rerouted && win.alive) win.host.focus()
-    }
     if (page.render === 'chrome' && !this.asTabs) {
+      win = this.hostWindowFor(asked)
       if (page.overlay) {
         this.browser.emit(
           'overlay.open',
           { kind: page.overlay, section: section ?? undefined },
           win
         )
-        raise()
+        // An overlay sent to another window is brought to the front there.
+        if (win !== asked && win.alive) win.host.focus()
       }
       return null
+    }
+    // A page tab: in a regular window – the popup's opener, the private window's regular
+    // neighbour, or a new regular window when none is open (what Ctrl+N makes from `asked`).
+    win = this.tabWindowFor(asked) ?? this.browser.createWindow({ kind: 'synced', from: asked })
+    const rerouted = win !== asked
+    if (rerouted) openerTabId = null
+    // A page sent to another window is brought to the front there.
+    const raise = (): void => {
+      if (rerouted && win.alive) win.host.focus()
     }
     const tabs = this.browser.tabs
     const existing = page.singleton ? this.findInWindow(page, win) : undefined
@@ -187,7 +220,9 @@ export class PageService {
         url,
         active: true,
         afterTabId: opener && !opener.essential ? opener.id : undefined,
-        containerId: opener?.containerId,
+        // Never the private container (Chrome keeps chrome:// pages out of Incognito): from a
+        // private tab the page is a regular-container tab, the private tab left as it is.
+        containerId: opener && tabs.isPrivate(opener) ? DEFAULT_CONTAINER_ID : opener?.containerId,
         openerTabId: opener?.id,
         fromIntent: Boolean(opts.fromIntent)
       },
@@ -223,10 +258,10 @@ export class PageService {
    * A navigation the `TabManager` was asked to make in `tabId`. True when the page service took
    * it: the URL names a chrome page – the tab moves to that section when it already shows the
    * page, else the page opens in its own tab with `tabId` as opener (Chrome Android leaves the
-   * current tab alone when `chrome://settings` is typed into it) – or a `singleton` document
-   * page that another tab of the window already shows, which is focused and navigated instead.
-   * False when the tab should simply load the URL: a site, a document, or a document page that
-   * belongs in this tab.
+   * current tab alone when `chrome://settings` is typed into it; from a private window that tab
+   * is in a regular window, {@link open}) – or a `singleton` document page that another tab of
+   * the window already shows, which is focused and navigated instead. False when the tab should
+   * simply load the URL: a site, a document, or a document page that belongs in this tab.
    */
   routeNavigation(tabId: string, url: string): boolean {
     const ref = this.parse(url)

@@ -42,14 +42,15 @@ import {
   ERROR_URL_PREFIX,
   errorPageCertificate,
   errorPageUrl,
+  extensionPageOf,
   httpsOnlyPageUrl,
   interstitialKindOf,
   isEmptyTabUrl,
   isNavigableUrl,
+  presentedUrl,
   safeBrowsingPageUrl,
   titleForUrl
 } from '../shared/url'
-import { internalPageAliasUrl } from '../shared/internalPages'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
 import { describeNetError, HTTP_FALLBACK_CODES, overlayForUrl } from '../shared/zenPages'
@@ -68,6 +69,12 @@ export type { PageFlags } from './platform'
 
 /** Hidden pages kept awake when memory runs low (`unloadForMemoryPressure`): the recent few. */
 export const KEEP_UNDER_PRESSURE = 3
+
+/** Where the keyboard goes after a tab is activated or closed (`tab.activate` / `tab.close`). */
+export interface TabFocusOptions {
+  /** The keyboard stays in the chrome (the tab strip) instead of moving into the page. */
+  keepFocus?: boolean
+}
 
 /**
  * Owns the live page for every loaded tab and implements Zen's tab behaviours on top of the pure
@@ -90,6 +97,12 @@ export class TabManager {
   private readonly pendingNavigation = new Map<string, NavigationSnapshot>()
   /** Tabs under a window's or the app's unload check: a page that goes is unloaded, not closed. */
   private readonly unloadChecks = new Set<string>()
+  /**
+   * The focus options of a `requestClose` in flight: its unload check closes the page, and a
+   * page that does not object is gone at once, so the tab closes through `onViewGone` – with
+   * these, so a close from the keyboard in the tab strip keeps the keyboard there.
+   */
+  private readonly closeIntents = new Map<string, TabFocusOptions>()
   /** How the next committed navigation of a tab came about (for the history record). */
   private readonly pendingTransition = new Map<string, HistoryTransition>()
 
@@ -453,7 +466,7 @@ export class TabManager {
       },
       onTitleUpdated: (title) =>
         update((t) => {
-          t.title = title || titleForUrl(t.url)
+          t.title = title || this.titleFor(t.url)
           if (!this.isPrivate(t)) this.browser.history.updateTitle(t.url, t.title)
         }),
       onFaviconUpdated: (favicons) =>
@@ -599,6 +612,7 @@ export class TabManager {
       onContextMenu: (params) =>
         this.browser.menus.showPageContextMenu(tabId, params, ownerWindow()),
       onKey: (input) => this.browser.keys.handle(input, tabId, ownerWindow()),
+      onFocused: () => this.browser.emit('focus.page', { tabId }, ownerWindow()),
       onTargetUrl: (url) => this.browser.emit('status', { text: url }, ownerWindow()),
       onDomReady: () => {
         this.sendPageFlags(tabId)
@@ -663,12 +677,29 @@ export class TabManager {
     this.pendingTransition.delete(tabId)
     if (!url || tab.url === url) return
     tab.url = url
-    tab.title = view.getTitle() || titleForUrl(url)
+    tab.title = view.getTitle() || this.titleFor(url)
     this.browser.state.commit()
   }
 
   isPrivate(tab: Tab): boolean {
     return tab.containerId === PRIVATE_CONTAINER_ID
+  }
+
+  /**
+   * The title a page has until – or unless – its document reports one: `titleForUrl`'s, except
+   * that a page of an installed extension is named after the extension rather than its id (v2
+   * §10.1 applied to extension pages), in either form the address takes.
+   */
+  private titleFor(url: string): string {
+    const page = extensionPageOf(url)
+    if (page) {
+      const name = this.browser.extensions
+        .list()
+        .find((e) => e.id === page.id)
+        ?.name.trim()
+      if (name) return name
+    }
+    return titleForUrl(url)
   }
 
   private onNavigated(tabId: string, view: TabView, url: string, inPage = false): void {
@@ -681,7 +712,7 @@ export class TabManager {
     tab.certificateError = this.certificateErrorOf(tab, url)
     this.followSiteMute(tab, view, tab.url, url)
     tab.url = url
-    tab.title = view.getTitle() || titleForUrl(url)
+    tab.title = view.getTitle() || this.titleFor(url)
     tab.canGoBack = view.canGoBack()
     tab.canGoForward = view.canGoForward()
     tab.bookmarked = this.browser.bookmarks.has(url)
@@ -1003,7 +1034,8 @@ export class TabManager {
       folderId: opts.folderId ?? null,
       openerTabId: opts.openerTabId && m.tabs[opts.openerTabId] ? opts.openerTabId : null,
       fromIntent: Boolean(opts.fromIntent),
-      muted: this.siteMuted(opts.url ?? BLANK_URL)
+      muted: this.siteMuted(opts.url ?? BLANK_URL),
+      title: this.titleFor(opts.url ?? BLANK_URL)
     })
     tab.windowId = this.ownerWindowIdFor(tab, space, win)
     m.tabs[tab.id] = tab
@@ -1108,7 +1140,7 @@ export class TabManager {
     tab.frozen = false
     tab.cpuThrottle = 1
     tab.loading = false
-    tab.title = view.getTitle() || titleForUrl(tab.url)
+    tab.title = view.getTitle() || this.titleFor(tab.url)
     if (tab.muted) view.setMuted(true)
     if (tab.zoom !== 1) view.setZoom(tab.zoom)
     return this.eventsFor(tabId)
@@ -1143,7 +1175,7 @@ export class TabManager {
       this.discard(tabId)
       return
     }
-    this.closeTab(tabId, true, owner)
+    this.closeTab(tabId, true, owner, this.closeIntents.get(tabId) ?? {})
   }
 
   // ---------------------------------------------------------------------------
@@ -1186,10 +1218,22 @@ export class TabManager {
    * `beforeunload` handler objects gets to ask "Leave site?" first, and the tab stays when the
    * user says so. Resolves true once the tab is closed.
    */
-  async requestClose(tabId: string, force = false, win?: ZenWindow): Promise<boolean> {
-    if (!(await this.confirmUnload(tabId))) return false
-    this.closeTab(tabId, force, win)
-    return true
+  async requestClose(
+    tabId: string,
+    force = false,
+    win?: ZenWindow,
+    opts: TabFocusOptions = {}
+  ): Promise<boolean> {
+    // The unload check closes a page that does not object: the tab then goes through
+    // `onViewGone`, which reads the options here.
+    this.closeIntents.set(tabId, opts)
+    try {
+      if (!(await this.confirmUnload(tabId))) return false
+      this.closeTab(tabId, force, win, opts)
+      return true
+    } finally {
+      this.closeIntents.delete(tabId)
+    }
   }
 
   /**
@@ -1259,7 +1303,16 @@ export class TabManager {
     else if (this.settings.windowSync !== 'pinned') tab.windowId = null
   }
 
-  activateTab(tabId: string, win: ZenWindow = this.browser.focusedWindow()): void {
+  /**
+   * Make `tabId` the active tab of its space. The page then takes the keyboard, unless
+   * `keepFocus`: activated from the keyboard in the tab strip, the strip keeps it (Chrome's
+   * pane focus stays on the strip until Escape).
+   */
+  activateTab(
+    tabId: string,
+    win: ZenWindow = this.browser.focusedWindow(),
+    opts: TabFocusOptions = {}
+  ): void {
     const m = this.model
     const tab = this.tab(tabId)
     if (!tab || !tabVisibleIn(tab, win.id)) return
@@ -1302,7 +1355,7 @@ export class TabManager {
     this.browser.governor.wakeVisible(win)
     win.findResult = null
     this.browser.state.commit()
-    win.focusContent()
+    if (!opts.keepFocus) win.focusContent()
   }
 
   switchSpace(
@@ -1342,9 +1395,11 @@ export class TabManager {
 
   /**
    * Close a tab. For pinned/essential tabs Zen applies `pinnedCloseBehavior` instead of really
-   * closing (default: reset to the pinned URL, unload and switch to the next tab).
+   * closing (default: reset to the pinned URL, unload and switch to the next tab). `opts` go to
+   * the activation of the neighbour that takes the closed tab's place in `win` (`keepFocus`:
+   * closed with Delete in the tab strip, the strip keeps the keyboard).
    */
-  closeTab(tabId: string, force = false, win?: ZenWindow): void {
+  closeTab(tabId: string, force = false, win?: ZenWindow, opts: TabFocusOptions = {}): void {
     const m = this.model
     const tab = this.tab(tabId)
     if (!tab) return
@@ -1371,7 +1426,7 @@ export class TabManager {
             true,
             source.id
           )
-          if (next) this.activateTab(next, source)
+          if (next) this.activateTab(next, source, opts)
         }
         this.browser.state.commit()
         return
@@ -1417,7 +1472,7 @@ export class TabManager {
     if (closed) this.browser.session.pushTab(closed)
     for (const { w, s, next } of reselect) {
       w.select(s, next)
-      if (w.activeSpaceId === s.id && next) this.activateTab(next, w)
+      if (w.activeSpaceId === s.id && next) this.activateTab(next, w, w === source ? opts : {})
       // A toolbar-only popup has no sidebar to open another tab from: like Chrome's, it closes
       // with its last tab (deferred – the close may be arriving from the page going away).
       else if (!next && w.chrome === 'popup') {
@@ -1548,7 +1603,7 @@ export class TabManager {
       return
     }
     tab.url = url
-    tab.title = titleForUrl(url)
+    tab.title = this.titleFor(url)
     tab.errorCode = null
     tab.certificateError = null
     if (opts.upgradedFrom) this.httpsUpgraded.set(tabId, `http://${opts.upgradedFrom}`)
@@ -1782,7 +1837,7 @@ export class TabManager {
     if (tab.url !== tab.pinnedUrl) {
       if (tab.discarded) {
         tab.url = tab.pinnedUrl
-        tab.title = tab.customTitle ?? titleForUrl(tab.url)
+        tab.title = tab.customTitle ?? this.titleFor(tab.url)
       } else {
         this.navigate(tabId, tab.pinnedUrl)
       }
@@ -2717,10 +2772,11 @@ export class TabManager {
     const tab = this.tab(tabId)
     if (!tab) return
     // An error page copies the address it stands in for; an internal page its user-facing
-    // `zenium://` alias (`zen://` never leaves `tab.url`).
+    // `zenium://` alias (`zen://` never leaves `tab.url`); an extension page its
+    // `chrome-extension://` address, never the Android runtime's emulated origin.
     const url = tab.url.startsWith(ERROR_URL_PREFIX)
       ? (safeParam(tab.url, 'url') ?? tab.url)
-      : internalPageAliasUrl(tab.url)
+      : presentedUrl(tab.url)
     // The one copy desktop has always confirmed, in its own words.
     this.browser.copyText(
       markdown ? `[${tab.customTitle ?? tab.title}](${url})` : url,

@@ -280,6 +280,11 @@ export interface SpaceTheme {
   monochrome: boolean
   /** Gradient rotation in degrees. */
   rotation: number
+  /**
+   * A theme muted for one scheme whatever the OS uses: the private window's purple stays dark
+   * under a light scheme, the way an Incognito window does, so its light ink keeps reading on it.
+   */
+  scheme?: 'light' | 'dark'
 }
 
 // ---------------------------------------------------------------------------
@@ -1326,6 +1331,13 @@ export interface DownloadSettings {
 // Search
 // ---------------------------------------------------------------------------
 
+/**
+ * Where an engine came from: shipped with Zenium (`DEFAULT_SEARCH_ENGINES`), added by hand in
+ * Settings > Search ("Add search engine"), or discovered on a visited page through its
+ * OpenSearch description (Chrome's "Recently visited" engines).
+ */
+export type SearchEngineSource = 'default' | 'custom' | 'discovered'
+
 export interface SearchEngine {
   id: string
   name: string
@@ -1335,6 +1347,21 @@ export interface SearchEngine {
   keyword: string
   /** Simple glyph shown in the URL bar. */
   glyph: string
+  /** Absent on the shipped engines (read as `default`). */
+  source?: SearchEngineSource
+  /** The site's icon, for the engine picker's rows; null when the site offered none. */
+  favicon?: string | null
+  /** A discovered engine: when its site was last visited (orders "Recently visited"). */
+  visitedAt?: number
+}
+
+/** What the clipboard holds, read from its description only (never its content). */
+export type ClipboardPeekKind = 'url' | 'text' | 'image' | 'none'
+
+/** The clipboard's content, read on the user's reveal tap; `kind` says what the text is. */
+export interface ClipboardContent {
+  kind: 'url' | 'text' | 'none'
+  text: string
 }
 
 // ---------------------------------------------------------------------------
@@ -1369,6 +1396,21 @@ export interface KeyBinding {
  * of either.
  */
 export type ShortcutPreset = 'chrome' | 'zen'
+
+/**
+ * The chrome's keyboard panes, in F6 order (Chrome's tab strip → toolbar → bookmarks bar → side
+ * panel → web contents). `page` is the active tab's view; the others are regions of the chrome
+ * document, marked `data-pane` on their root.
+ */
+export type PaneId = 'tabs' | 'toolbar' | 'bookmarks' | 'sidepanel' | 'page'
+
+/**
+ * What a pane shortcut asked for: the next / previous pane, or a named one. `from` is where the
+ * key was pressed – a page's view or the chrome document – which the core knows and the chrome
+ * cannot tell (its document reports itself focused while a sibling page view holds the keyboard).
+ */
+export type FocusPaneRequest =
+  { move: 'next' | 'prev'; from: 'chrome' | 'page' } | { pane: 'toolbar' | 'bookmarks' }
 
 export type ShortcutAction =
   | 'compact.toggle'
@@ -1433,6 +1475,17 @@ export type ShortcutAction =
   | 'nav.reloadSkipCache'
   | 'nav.home'
   | 'nav.stop'
+  /**
+   * Keyboard panes (Chrome's F6 rotation, `BrowserView::GetAccessiblePanes`): the keyboard moves
+   * to the next or previous pane of the chrome that is on screen – tab strip, toolbar, bookmarks
+   * bar, side panel, page – or straight to the toolbar's first control (Shift+Alt+T) or the
+   * bookmarks bar (Shift+Alt+B). The renderer decides where the keyboard is and where it goes
+   * (`focus.pane`); see `renderer/lib/panes.ts`.
+   */
+  | 'focus.nextPane'
+  | 'focus.prevPane'
+  | 'focus.toolbar'
+  | 'focus.bookmarksBar'
   | 'urlbar.focus'
   | 'urlbar.search'
   | 'urlbar.pasteAndGo'
@@ -1740,6 +1793,12 @@ export interface Settings {
    */
   mutedHosts: string[]
   searchEngineId: string
+  /**
+   * The engines the user added (Settings > Search) or that visited pages offered through
+   * OpenSearch (`source: 'discovered'`, ordered by `visitedAt`), on top of the shipped ones;
+   * synced with the settings. Absent in profiles from before it existed (read as none).
+   */
+  searchEngines?: SearchEngine[]
   searchSuggestions: boolean
   /**
    * Chrome's "Always show full URLs": the address pill keeps the scheme and `www.` instead of
@@ -2627,6 +2686,12 @@ export type SuggestionKind =
   | 'entity'
   /** A `chrome.omnibox` row: the input belongs to an extension whose keyword starts it. */
   | 'omnibox'
+  /**
+   * What the clipboard holds, offered on an empty field (Chrome's "Link you copied" / "Text
+   * you copied"): the row names the kind only, read from the clip's description; the content is
+   * read once, on the reveal or the pick (`clipboard.read`). `targetId` is the kind.
+   */
+  | 'clipboard'
 
 export interface Suggestion {
   id: string
@@ -2693,6 +2758,18 @@ export interface MenuItemDescriptor {
   submenu: MenuItemDescriptor[] | null
   /** A destructive row ("Delete"), drawn in the danger ink. */
   danger?: boolean
+}
+
+/**
+ * Where a chrome element's context menu opens, from the `contextmenu` event that asked for it
+ * (Chrome's rule): a right-click opens it at the pointer; Shift+F10 and the Menu key open it at
+ * the focused element – Chromium raises the event at the element's middle – in keyboard mode,
+ * so its first item starts selected and the arrow keys take over at once. Chrome CSS pixels.
+ */
+export interface MenuAnchor {
+  x?: number
+  y?: number
+  keyboard?: boolean
 }
 
 export interface MenuDescriptor {
@@ -2822,8 +2899,13 @@ export interface Commands {
     }
     result: string
   }
-  'tab.activate': { args: { tabId: string }; result: void }
-  'tab.close': { args: { tabId: string; force?: boolean }; result: void }
+  /**
+   * `keepFocus`: the keyboard stays where it is – the tab strip, when a row was activated or
+   * closed with Enter, Space or Delete there (Chrome keeps the strip focused until Escape) –
+   * instead of moving into the page as it does for a click.
+   */
+  'tab.activate': { args: { tabId: string; keepFocus?: boolean }; result: void }
+  'tab.close': { args: { tabId: string; force?: boolean; keepFocus?: boolean }; result: void }
   /**
    * A private tab in this window (`capabilities.privateTabs`): the in-memory private container,
    * no history, no persisted downloads; its session is wiped when the last private tab closes.
@@ -2930,7 +3012,7 @@ export interface Commands {
     args: { kind: 'desktop' | 'darken' | 'zoom'; domain: string }
     result: void
   }
-  'tab.contextMenu': { args: { tabId: string }; result: void }
+  'tab.contextMenu': { args: { tabId: string } & MenuAnchor; result: void }
   'tab.toggleDevtools': { args: { tabId: string }; result: void }
   'tab.copyUrl': { args: { tabId: string; markdown?: boolean }; result: void }
   'tab.setIcon': { args: { tabId: string; icon: string | null }; result: void }
@@ -2939,7 +3021,7 @@ export interface Commands {
   /** Alt+click on a sidebar tab: split it with (or separate it from) the active tab. */
   'tab.altClick': { args: { tabId: string }; result: void }
   /** Context menu for several selected tabs (Ctrl / Shift+click in the sidebar). */
-  'tab.selectionContextMenu': { args: { tabIds: string[] }; result: void }
+  'tab.selectionContextMenu': { args: { tabIds: string[] } & MenuAnchor; result: void }
 
   'space.create': {
     args: { name: string; icon: string; containerId: string; theme: SpaceTheme | null }
@@ -2961,7 +3043,7 @@ export interface Commands {
   'space.unloadOthers': { args: void; result: void }
   'space.togglePinnedCollapsed': { args: { spaceId: string }; result: void }
   'space.closeUnpinned': { args: { spaceId?: string }; result: void }
-  'space.contextMenu': { args: { spaceId: string }; result: void }
+  'space.contextMenu': { args: { spaceId: string } & MenuAnchor; result: void }
 
   'folder.create': {
     args: {
@@ -2982,13 +3064,13 @@ export interface Commands {
     result: void
   }
   'folder.delete': { args: { folderId: string; unpack: boolean }; result: void }
-  'folder.contextMenu': { args: { folderId: string }; result: void }
+  'folder.contextMenu': { args: { folderId: string } & MenuAnchor; result: void }
   /**
    * Chrome's "New tab in group" (tabs-13): a new tab at the end of the folder, active, in the
    * folder's space and the container of its last member. Resolves with the new tab's id.
    */
   'folder.newTab': { args: { folderId: string }; result: string }
-  'newtab.contextMenu': { args: void; result: void }
+  'newtab.contextMenu': { args: MenuAnchor | void; result: void }
   /** Long-press on a phone new tab page tile: pin / unpin, remove, open in a new tab. */
   'newtab.tileContextMenu': { args: { url: string; title: string }; result: void }
   /**
@@ -3172,7 +3254,7 @@ export interface Commands {
   /** Open the history page (`zen://history`). */
   'history.open': { args: void; result: void }
   /** Context menu of a history row (open in new tab / window / private window, copy, remove…). */
-  'history.contextMenu': { args: { visitId: string; url: string }; result: void }
+  'history.contextMenu': { args: { visitId: string; url: string } & MenuAnchor; result: void }
   /** Menu of a day heading on the history page (delete the day). */
   'history.dayMenu': { args: { dayKey: string; count: number }; result: void }
 
@@ -3190,6 +3272,23 @@ export interface Commands {
     args: { text: string; sensitive?: boolean; confirmation?: string }
     result: void
   }
+  /**
+   * The URL bar's clipboard row (Chrome's "Link you copied"): `peek` names what the clipboard
+   * holds from its description alone and never reads the content; `read` reads it once, on the
+   * user's reveal or pick; `markUsed` says the user opened the clip through the row (the pick),
+   * so `peek` does not offer it again until the clipboard changes. Hosts without the bridge
+   * answer `none` / no text / offer it again.
+   */
+  'clipboard.peek': { args: void; result: ClipboardPeekKind }
+  'clipboard.read': { args: void; result: ClipboardContent }
+  'clipboard.markUsed': { args: void; result: void }
+  /**
+   * Settings > Search: add an engine by hand (`%s` in `url` stands for the query), forget one
+   * the user added or a page offered, or make one the default. The shipped engines cannot be
+   * removed; `search.remove` on the default falls back to the shipped default.
+   */
+  'search.addEngine': { args: { name: string; url: string }; result: string }
+  'search.removeEngine': { args: { id: string }; result: void }
 
   /**
    * Ctrl+T, the sidebar's New Tab button, double-click on the sidebar: a tab at `zen://newtab`
@@ -3258,6 +3357,8 @@ export interface Commands {
       folderId: string
       x: number
       y: number
+      /** Opened with Shift+F10 or the Menu key: the first item starts selected (`MenuAnchor`). */
+      keyboard?: boolean
       /** The bar and its folder panels get Chrome's bar menu (open targets, "Show bookmarks bar"). */
       surface?: 'manager' | 'bar'
     }
@@ -3539,7 +3640,22 @@ export interface Commands {
   }
   'extension.closePopup': { args: void; result: void }
   /** Context menu of an extension's toolbar button (its `contextMenus` items plus Zenium's). */
-  'extension.actionContextMenu': { args: { id: string; x?: number; y?: number }; result: void }
+  'extension.actionContextMenu': { args: { id: string } & MenuAnchor; result: void }
+  /**
+   * The items an extension adds to its own action's context menu (`chrome.contextMenus` items
+   * with the `action` context, in Chrome's layout: check states, submenus, separators), for the
+   * phone's long-press menu sheet, which shows them above the browser's rows as Chrome does
+   * (the desktop's native menu gets the same items through `extension.actionContextMenu`). Each
+   * item's `id` is a handle for `extension.actionMenuClick`; a fresh request retires the
+   * previous handles. Empty when the extension adds none.
+   */
+  'extension.actionMenuItems': { args: { id: string }; result: MenuItemDescriptor[] }
+  /**
+   * The user picked one of the items `extension.actionMenuItems` answered: the extension's
+   * `contextMenus.onClicked` fires with Chrome's `OnClickData` for the `action` context and the
+   * active tab, as a pick in the desktop's menu does.
+   */
+  'extension.actionMenuClick': { args: { id: string; itemId: string }; result: void }
   /** Empties the extension's error console (`ExtensionInfo.errors`). */
   'extension.clearErrors': { args: { id: string }; result: void }
   // ---- PROVISIONAL: extensions UI (PR #68) ------------------------------------------------------
@@ -3897,6 +4013,19 @@ export interface Events {
    */
   'tabsearch.open': void
   /**
+   * A shortcut asked the keyboard to move panes (F6, Shift+F6, Shift+Alt+T, Shift+Alt+B). The
+   * renderer works out the pane the keyboard is in and the one it goes to among those on screen,
+   * and asks the core for the chrome's or the page's focus accordingly (`focus.chrome`,
+   * `focus.content`).
+   */
+  'focus.pane': FocusPaneRequest
+  /**
+   * A page's view took the keyboard (the user clicked or tabbed into it, or the core gave it the
+   * focus): whatever control the chrome document had focused is stale – it would keep its focus
+   * ring, and count as the keyboard's place for F6 – and is let go.
+   */
+  'focus.page': { tabId: string }
+  /**
    * The user zoomed a page (keyboard, Ctrl+wheel, the menu, the bubble's own controls): the
    * chrome shows the zoom bubble for the tab. `factor` is the page's effective zoom; `siteKey`
    * the site the factor is remembered for, null for a page that zooms on its own.
@@ -3914,6 +4043,11 @@ export interface Events {
   'downloads.reveal': { id: string | null }
   /** Open the page zoom sheet for a tab (hosts with page controls). */
   'zoom.open': { tabId: string }
+  /**
+   * The app menu's Extensions row on a phone: the chrome opens its sheet of the extensions'
+   * actions (one row per enabled extension with an action; the desktop has the toolbar for it).
+   */
+  'extensions.open': void
   /** The host's recogniser reports while a voice search runs (after `voice.start` answered `listening`). */
   'voice.event': VoiceEvent
   /** The host's camera reports while a scan runs (after `qr.start` answered `scanning`). */
@@ -4001,8 +4135,12 @@ export interface Events {
   // ---- PROVISIONAL: extensions UI (PR #68), see the matching block in `Commands` --------------
   /** The popup's document asked for this size (CSS px); the renderer fits its frame around it. */
   'extension.popupSize': { id: string; width: number; height: number }
-  /** Main closed the popup itself (blur, Escape inside it, a link opened a tab). */
-  'extension.popupClosed': { id: string }
+  /**
+   * Main closed the popup itself (blur, Escape inside it, a link opened a tab). `reason` is
+   * `'escape'` when the document trapped the key: focus then goes back to the anchor (§9.22),
+   * where every other close leaves it where the close put it.
+   */
+  'extension.popupClosed': { id: string; reason?: 'escape' }
   /** Ask before an install or update; the renderer answers with `extension.confirmInstall`. */
   extensionInstallRequest: ExtensionPromptRequest
   /** Ask before granting permissions; the renderer answers with `extension.respondPermissionRequest`. */

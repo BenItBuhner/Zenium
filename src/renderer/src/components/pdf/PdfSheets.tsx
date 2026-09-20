@@ -243,7 +243,7 @@ export function PdfGoToPageSheet({
   onClose: () => void
 }): JSX.Element {
   const sheet = useRef<BottomSheetHandle>(null)
-  const fieldId = useId()
+  const fieldId = 'pdf-goto-page'
   const [text, setText] = useState(String(page))
   const target = parsePageNumber(text, pageCount)
   const invalid = text.trim() !== '' && target === null
@@ -313,7 +313,7 @@ export function PdfPasswordSheet({
   onClose: () => void
 }): JSX.Element {
   const sheet = useRef<BottomSheetHandle>(null)
-  const fieldId = useId()
+  const fieldId = 'pdf-password'
   const errorId = useId()
   const report = pdfViewerStore.use((s) => s.reports[tabId] ?? null)
   const [password, setPassword] = useState('')

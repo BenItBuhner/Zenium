@@ -2,7 +2,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, createElement, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import type { AutofillPrompt, BookmarkNode, Space, Tab, UIState } from '@shared/types'
+import {
+  PRIVATE_CONTAINER_ID,
+  type AutofillPrompt,
+  type BookmarkNode,
+  type Space,
+  type Tab,
+  type UIState
+} from '@shared/types'
 
 /*
  * The chips inside the URL pill (design language v2 §9.22): the address first, then every chip
@@ -21,7 +28,7 @@ const { NavRow, SidebarTop } = await import('../sidebar/SidebarTop')
 const { Toolbar } = await import('../Toolbar')
 const { PillContent } = await import('../phone/PhoneShell')
 const { PillChip } = await import('../urlbar/PillChip')
-const { openUrlbar, uiStore } = await import('@renderer/lib/ui')
+const { browserStore, openUrlbar, uiStore } = await import('@renderer/lib/ui')
 const { closeSiteInfo, siteInfoStore } = await import('@renderer/lib/siteInfo')
 const { defaultShortcuts } = await import('@shared/shortcuts')
 
@@ -188,6 +195,7 @@ afterEach(() => {
   host?.remove()
   root = null
   host = null
+  browserStore.set({ state: null })
 })
 
 describe('desktop pill (NavRow)', () => {
@@ -543,6 +551,113 @@ describe('phone pill (PillContent)', () => {
     const http = tab('http://example.com/')
     const el = render(<PillContent state={state(http)} tab={http} space={space} interactive />)
     expect(labels(focusable(el))).toEqual(['Address, example.com', 'Site information'])
+  })
+
+  it('names an extension’s page after the extension, its icon in the slot, no lock or translate chip (§10.1)', () => {
+    // Both forms the tab's URL takes: Chrome's scheme, and the origin the Android runtime
+    // serves the page from – which is never shown, not even as a host.
+    const id = 'dbepggeogbaibhgnhhndojpepiihcmeb'
+    const icon = 'data:image/png;base64,icon'
+    const vimium = {
+      id,
+      name: 'Vimium',
+      icon,
+      enabled: true
+    } as unknown as UIState['extensions'][number]
+    for (const url of [
+      `chrome-extension://${id}/pages/options.html`,
+      `https://${id}.ext.zenium.invalid/pages/options.html`
+    ]) {
+      const page = tab(url, { title: 'Vimium Options' })
+      const s = { ...state(page), extensions: [vimium] }
+      // The translation engine offered the page: a website would show the translate chip.
+      s.translate = { available: true, tabs: { [page.id]: { status: 'offered' } } } as never
+      // The favicon slot reads the window's list (the same state, through the store; the store's
+      // other readers want the sidebar's collections too).
+      browserStore.set({ state: { ...s, folders: {}, essentialTabIds: [], glance: null } })
+      const el = render(<PillContent state={s} tab={page} space={space} interactive />)
+      expect(labels(focusable(el))).toEqual(['Address, Vimium', 'Site information'])
+      expect(el.textContent).toContain('Vimium')
+      expect(el.textContent).not.toContain(id)
+      expect(el.textContent).not.toContain('.ext.zenium.invalid')
+      expect(el.querySelector('[data-translate]')).toBeNull()
+      expect(el.querySelector('img')?.getAttribute('src')).toBe(icon)
+      act(() => root?.unmount())
+      host?.remove()
+    }
+    // The control: the same offer on a website shows the translate chip.
+    const site = tab('https://example.com/')
+    const s = state(site)
+    s.translate = { available: true, tabs: { [site.id]: { status: 'offered' } } } as never
+    const el = render(<PillContent state={s} tab={site} space={space} interactive />)
+    expect(el.querySelector('[data-translate]')).not.toBeNull()
+  })
+
+  it('says "Extension page" for an extension the chrome does not know, never the id, still without a lock', () => {
+    const id = 'dbepggeogbaibhgnhhndojpepiihcmeb'
+    const page = tab(`https://${id}.ext.zenium.invalid/pages/options.html`)
+    const el = render(<PillContent state={state(page)} tab={page} space={space} interactive />)
+    expect(labels(focusable(el))).toEqual(['Address, Extension page', 'Site information'])
+    expect(el.textContent).toContain('Extension page')
+    expect(el.textContent).not.toContain(id)
+    expect(el.textContent).not.toContain('.ext.zenium.invalid')
+    // The puzzle glyph, not a letter of the id.
+    expect(el.querySelector('svg.zen-ext-icon-glyph')).not.toBeNull()
+  })
+
+  /*
+   * The private marker (v2 §9.19): the mask glyph in the leading slot on every private tab, page
+   * or none, in place of the favicon; the slot stays the site-information chip.
+   */
+  describe('on a private tab', () => {
+    const privatePage = tab('https://example.com/some/path', {
+      containerId: PRIVATE_CONTAINER_ID,
+      favicon: 'data:image/png;base64,AAAA'
+    })
+
+    it('puts the mask in the leading slot in place of the favicon, on a page as on an empty tab', () => {
+      for (const t of [privatePage, tab('zen://newtab', { containerId: PRIVATE_CONTAINER_ID })]) {
+        const el = render(<PillContent state={state(t)} tab={t} space={space} interactive />)
+        const slot = el.querySelector<HTMLElement>('[data-site-info].order-first')!
+        expect(slot.hasAttribute('data-private-mark')).toBe(true)
+        expect(slot.querySelector('svg.lucide-venetian-mask')).not.toBeNull()
+        expect(slot.querySelector('img, .zen-tab-favicon')).toBeNull()
+        act(() => root?.unmount())
+        host?.remove()
+      }
+    })
+
+    it('keeps the slot a site-information chip (the pill opens the sheet from it), and carries no badge', () => {
+      const el = render(
+        <PillContent state={state(privatePage)} tab={privatePage} space={space} interactive />
+      )
+      const order = focusable(el)
+      expect(labels(order)).toEqual([
+        'Address, example.com',
+        'Site information',
+        'Connection is secure'
+      ])
+      expectChip(order[1], 'Site information')
+      expect(order[1].getAttribute('aria-haspopup')).toBe('dialog')
+      // The pill's tap recogniser routes a tap on a `data-site-info` target to the site information.
+      expect(order[1].hasAttribute('data-site-info')).toBe(true)
+      expect(order[1].hasAttribute('data-private-mark')).toBe(true)
+      act(() => uiStore.set({ siteInfoOpen: true }))
+      expect(order[1].getAttribute('aria-expanded')).toBe('true')
+      expect(el.querySelector('.zen-v2-badge')).toBeNull()
+      expect(el.textContent).not.toContain('Private')
+    })
+
+    it('shows the favicon, not the mask, on a regular tab beside it', () => {
+      const regular = tab('https://example.com/', { favicon: 'data:image/png;base64,AAAA' })
+      const el = render(
+        <PillContent state={state(regular)} tab={regular} space={space} interactive />
+      )
+      const slot = el.querySelector<HTMLElement>('[data-site-info].order-first')!
+      expect(slot.hasAttribute('data-private-mark')).toBe(false)
+      expect(slot.querySelector('svg.lucide-venetian-mask')).toBeNull()
+      expect(slot.querySelector('img')).not.toBeNull()
+    })
   })
 
   it('draws the ghost pill with nothing focusable or announced', () => {

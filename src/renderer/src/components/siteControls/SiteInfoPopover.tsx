@@ -12,6 +12,8 @@ import {
   type SiteSecurity
 } from '@shared/siteInfo'
 import { cmd, run } from '@renderer/lib/api'
+import { manageExtension } from '@renderer/lib/extensions/manage'
+import { extensionPageChrome, extensionPageLine } from '@renderer/lib/extensions/pages'
 import { POPOVER_WIDTH } from '@renderer/lib/portals'
 import { dismissSiteInfo, refreshSiteInfo, siteInfoStore } from '@renderer/lib/siteInfo'
 import {
@@ -146,6 +148,53 @@ export function SiteInfoPopover({
   // Local files share one permissions site (#139), so a decision of theirs shows here too; a
   // local file with none has only the title block, and the footer sits under its 16 (§9.20).
   const rows = site.web || permissions.length > 0
+
+  // A page of an extension (v2 §10.1 applied to extension pages): no site, no connection to
+  // describe – the popover says whose page it is and leads to the extension's details.
+  const extension =
+    site.state === 'extension' ? extensionPageChrome(tab.url, state.extensions) : null
+  if (extension) {
+    return (
+      <DesktopPopover
+        anchor={anchor}
+        bar={bar}
+        width={POPOVER_WIDTH.form}
+        labelledBy={titleId}
+        closing={closing}
+        onClosed={onClosed}
+        onDismiss={onDismiss}
+        anchorElement={siteChip}
+        data-testid="site-info"
+        data-level="overview"
+      >
+        {() => (
+          <Level key="extension" direction="none" className="min-h-0">
+            <TitleBlock
+              id={titleId}
+              glyph={<Favicon tab={tab} size={16} />}
+              title="Extension page"
+              description={extensionPageLine(extension)}
+            />
+            <Body>
+              <ListRow
+                label={extension.extension ? 'Manage extension' : 'Manage extensions'}
+                chevron
+                onClick={() => {
+                  onDismiss()
+                  manageExtension(extension.id, tab.id)
+                }}
+              />
+            </Body>
+            <Footer count={1} hairline>
+              <V2Button disabled={busy} onClick={reload} aria-label="Reload page">
+                Reload
+              </V2Button>
+            </Footer>
+          </Level>
+        )}
+      </DesktopPopover>
+    )
+  }
 
   return (
     <DesktopPopover

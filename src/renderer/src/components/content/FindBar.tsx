@@ -2,7 +2,9 @@ import type { JSX } from 'react'
 import { useEffect, useRef } from 'react'
 import { ChevronDown, ChevronUp, X } from 'lucide-react'
 import type { UIState } from '@shared/types'
+import { announce, findAnnouncement } from '@renderer/lib/announce'
 import { run } from '@renderer/lib/api'
+import { hint } from '@renderer/lib/shortcuts'
 import { useViewport } from '@renderer/lib/formFactor'
 import { isPdfViewerTab, pdfCommand, pdfViewerStore } from '@renderer/lib/pdfViewer'
 import { closeFindBar, uiStore, type UiState } from '@renderer/lib/ui'
@@ -44,6 +46,7 @@ export function FindBar({
   const result = pdf
     ? pdfFind && pdfFind.query === text
       ? {
+          tabId,
           activeMatchOrdinal: pdfFind.current,
           matches: pdfFind.total,
           searching: pdfFind.searching
@@ -92,6 +95,14 @@ export function FindBar({
     inputRef.current?.select()
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runs per request; the rest is read as it stands then
   }, [request?.seq])
+
+  // Each count the page reports is said through the chrome's status region ("3 of 12 matches",
+  // "No matches"), as Chrome's find bar announces its count; the count in the field is plain text.
+  useEffect(() => {
+    const words = findAnnouncement(text, result)
+    if (words) announce(words)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- per result; the query is read as it stands then
+  }, [result?.activeMatchOrdinal, result?.matches, result === null])
 
   // Under a fullscreen page the view is drawn by the main process; it makes room for the bar.
   useEffect(() => {
@@ -166,7 +177,6 @@ export function FindBar({
               ? 'shrink-0 pl-2 text-[13px] tabular-nums text-[var(--zen-muted)]'
               : 'zen-find-count'
           }
-          role="status"
         >
           {count}
         </span>
@@ -174,7 +184,7 @@ export function FindBar({
       <button
         type="button"
         className={buttonClass}
-        title="Previous (Shift+Enter)"
+        title={hint('Previous match', state, 'find.prev')}
         aria-label="Previous match"
         onClick={() => search(text, false)}
         disabled={!text || noMatch}
@@ -184,7 +194,7 @@ export function FindBar({
       <button
         type="button"
         className={buttonClass}
-        title="Next (Enter)"
+        title={hint('Next match', state, 'find.next')}
         aria-label="Next match"
         onClick={() => search(text, true)}
         disabled={!text || noMatch}

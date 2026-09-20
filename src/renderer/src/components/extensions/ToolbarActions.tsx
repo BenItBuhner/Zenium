@@ -6,6 +6,7 @@ import { useFloatingChrome } from '@renderer/hooks/useFloatingChrome'
 import { usePopover } from '@renderer/hooks/usePopover'
 import { anchorOf, placeUnder, popOrigin, type Anchor } from '@renderer/lib/anchor'
 import { run } from '@renderer/lib/api'
+import { contextMenuAnchor } from '@renderer/lib/menuKeys'
 import { badgeLabel, badgeStyle } from '@renderer/lib/extensions/badge'
 import { closeExtensionPopup, openExtensionPopup } from '@renderer/lib/extensions/popup'
 import { openedFromKeyboard } from '@renderer/lib/popover'
@@ -132,7 +133,7 @@ function ActionButton({ ext }: { ext: ExtensionInfo }): JSX.Element {
           // The core's menu (#104): the extension's own `contextMenus` items, then Zenium's.
           e.preventDefault()
           closeExtensionPopup()
-          run('extension.actionContextMenu', { id: ext.id, x: e.clientX, y: e.clientY })
+          run('extension.actionContextMenu', { id: ext.id, ...contextMenuAnchor(e) })
         }}
       >
         <ExtensionIcon icon={actionIcon(ext)} size={16} box={16} />

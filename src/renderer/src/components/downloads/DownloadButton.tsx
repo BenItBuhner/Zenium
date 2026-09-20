@@ -4,6 +4,7 @@ import type { UIState } from '@shared/types'
 import { allPaused, progressBarFor } from '@shared/downloadsShell'
 import { downloadsEngine } from '@renderer/lib/downloadsEngine'
 import { downloadButtonVisible, downloadsUi, toggleDownloadBubble } from '@renderer/lib/downloads'
+import { hint } from '@renderer/lib/shortcuts'
 import { cn } from '@renderer/lib/utils'
 import { bubbleEntry } from './focus'
 
@@ -60,7 +61,8 @@ export function DownloadButton({
         'zen-toolbar-button zen-dl-button-toolbar relative',
         open && 'bg-[var(--zen-element-bg)]'
       )}
-      title={label}
+      // The tooltip carries the chord (a11y-26); the name stays the state line alone.
+      title={hint(label, state, 'downloads.open')}
       aria-label={label}
       aria-expanded={open}
       aria-haspopup="dialog"

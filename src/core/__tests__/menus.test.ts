@@ -6,6 +6,7 @@ import type {
   Settings,
   SharePayload
 } from '../../shared/types'
+import { PRIVATE_CONTAINER_ID } from '../../shared/types'
 import { searchCommands, type CommandContext } from '../../shared/commands'
 import { resolveDownloadSettings } from '../../shared/downloads'
 import { buildSearchUrl } from '../../shared/search'
@@ -15,6 +16,7 @@ import type {
   ClipboardHost,
   MenuHost,
   MenuItemTemplate,
+  MenuPopupOptions,
   Platform,
   SpellcheckHost,
   StoreIO,
@@ -158,6 +160,8 @@ interface Harness {
   shown: () => MenuItemTemplate[]
   /** How many popups the host was asked for. */
   popups: () => number
+  /** The options of the last popup: where it opened and whether the keyboard asked for it. */
+  where: () => MenuPopupOptions | null
   /** Every call a tab view received, as `method(args)`. */
   viewCalls: string[]
   /** What the host's clipboard says on `readText`. */
@@ -196,6 +200,7 @@ function harness(
 ): Harness {
   const opts: HarnessOptions = typeof options === 'string' ? { formFactor: options } : options
   let last: MenuItemTemplate[] = []
+  let lastOptions: MenuPopupOptions | null = null
   let count = 0
   const viewCalls: string[] = []
   const clipboardText = { value: '' }
@@ -221,8 +226,9 @@ function harness(
     }
   }
   const menus: MenuHost = {
-    popup: (items) => {
+    popup: (items, options) => {
       last = items
+      lastOptions = options
       count += 1
     }
   }
@@ -297,6 +303,7 @@ function harness(
     win,
     shown: () => last,
     popups: () => count,
+    where: () => lastOptions,
     viewCalls,
     clipboardText,
     sent,
@@ -432,6 +439,7 @@ describe('the app menu', () => {
     expect(appMenu(harness(ANDROID, 'phone'))).toEqual([
       'New Tab',
       'New Private Tab',
+      'Close Private Tabs',
       'New Space…',
       '-',
       'Bookmarks',
@@ -472,12 +480,17 @@ describe('the app menu', () => {
     )
     const h = harness(ANDROID, 'phone')
     expect(appMenu(h)).toContain('New Private Tab')
-    // Nothing to close until a private tab is open.
-    expect(appMenu(h)).not.toContain('Close Private Tabs')
+    // Nothing to close until a private tab is open: the row stays, greyed (v2 §9.17 – a menu
+    // row whose count is zero is disabled, not hidden), and comes alive with the first one.
+    const closeRow = (): MenuItemTemplate | undefined => {
+      appMenu(h)
+      return h.shown().find((item) => item.label === 'Close Private Tabs')
+    }
+    expect(closeRow()).toMatchObject({ enabled: false })
     h.browser.handleCommand(h.win, 'tab.newPrivate', {})
-    expect(appMenu(h)).toContain('Close Private Tabs')
+    expect(closeRow()).toMatchObject({ enabled: true })
     h.browser.handleCommand(h.win, 'tab.closePrivate', undefined)
-    expect(appMenu(h)).not.toContain('Close Private Tabs')
+    expect(closeRow()).toMatchObject({ enabled: false })
   })
 
   it('on a phone follows the capabilities, not the platform name', () => {
@@ -488,15 +501,34 @@ describe('the app menu', () => {
     for (const label of DESKTOP_ONLY) expect(menu).not.toContain(label)
     // A phone without a printer path hides Print rather than greying it.
     expect(appMenu(harness({ ...ANDROID, print: false }, 'phone'))).not.toContain('Print…')
-    // A device build has the extension store: the management page is reachable from the menu,
-    // closing the library block in Firefox's order.
+    // A device build has the extension store: the actions sheet and the management page are
+    // reachable from the menu, closing the library block in Firefox's order.
     const withStore = appMenu(harness({ ...ANDROID, extensions: true }, 'phone'))
     const downloads = withStore.indexOf('Downloads')
-    expect(withStore.slice(downloads, downloads + 3)).toEqual([
+    expect(withStore.slice(downloads, downloads + 4)).toEqual([
       'Downloads',
       'Passwords',
+      'Extensions',
       'Add-ons and Themes'
     ])
+  })
+
+  it('offers the Extensions sheet on a phone with extensions only, and opens it through extensions.open', () => {
+    // The desktop has the toolbar and the puzzle panel for the actions: its menu is unchanged.
+    // The row follows the layout and the capability, not the platform, like the rest of the
+    // phone menu; a host without extensions has nothing to list.
+    expect(appMenu(harness(DESKTOP))).not.toContain('Extensions')
+    expect(appMenu(harness(DESKTOP, 'tablet'))).not.toContain('Extensions')
+    expect(appMenu(harness(ANDROID, 'phone'))).not.toContain('Extensions')
+    const h = harness({ ...ANDROID, extensions: true }, 'phone')
+    const menu = appMenu(h)
+    expect(menu).toContain('Extensions')
+    expect(menu.indexOf('Extensions')).toBeLessThan(menu.indexOf('Add-ons and Themes'))
+    h.sent.length = 0
+    h.shown()
+      .find((item) => item.label === 'Extensions')
+      ?.click?.()
+    expect(h.sent).toEqual(['extensions.open'])
   })
 
   it('closes the page group with the page controls where the host has them', () => {
@@ -1189,6 +1221,25 @@ describe('the page context menu', () => {
     expect(menu).not.toContain('Open Link in New Private Window')
     expect(menu).toContain('Share Link…')
   })
+
+  it('offers Open Link in Private Tab only where private browsing is a tab (Android)', () => {
+    const params = pageParams({ linkURL: 'https://example.org/next' })
+    expect(pageHarness(DESKTOP).menu(params)).not.toContain('Open Link in Private Tab')
+    const h = pageHarness(ANDROID)
+    const menu = h.menu(params)
+    expect(menu.indexOf('Open Link in Private Tab')).toBe(menu.indexOf('Open Link in New Tab') + 1)
+    expect(menu).not.toContain('Open Link in New Private Window')
+    h.click('Open Link in Private Tab')
+    const opened = Object.values(h.browser.state.model.tabs).find(
+      (t) => t.url === 'https://example.org/next'
+    )
+    expect(opened?.containerId).toBe(PRIVATE_CONTAINER_ID)
+    expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(opened?.id)
+    // Without the capability (an old WebView) the item stays out, as the windows items do.
+    expect(pageHarness({ ...ANDROID, privateTabs: false }).menu(params)).not.toContain(
+      'Open Link in Private Tab'
+    )
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -1852,6 +1903,97 @@ describe('the download row menu', () => {
     const before = h.popups()
     h.browser.handleCommand(h.win, 'download.contextMenu', { id: 'dl-missing' })
     expect(h.popups()).toBe(before)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Where a menu opens for the keyboard (Shift+F10, the Menu key; a11y-08)
+// ---------------------------------------------------------------------------
+
+describe('a menu asked for from the keyboard', () => {
+  /** The page sits to the right of the sidebar: its coordinates are offset in the window's. */
+  const placePage = (h: PageHarness): void =>
+    h.win.applyLayout({
+      placements: [{ tabId: h.tabId, rect: { x: 300, y: 60, width: 900, height: 700 }, radius: 8 }],
+      glance: null,
+      contentHidden: false
+    })
+
+  it("a page's menu opens at the focused element or caret, in the window's coordinates, first item selected", () => {
+    const h = pageHarness()
+    placePage(h)
+    h.menu(pageParams({ x: 100, y: 200, menuSourceType: 'keyboard' }))
+    expect(h.where()).toMatchObject({ source: 'page', x: 400, y: 260, keyboard: true })
+  })
+
+  it("a page's menu from the pointer opens at the pointer, which the host does by itself", () => {
+    const h = pageHarness()
+    placePage(h)
+    h.menu(pageParams({ x: 100, y: 200, menuSourceType: 'mouse' }))
+    expect(h.where()).toMatchObject({ source: 'page' })
+    expect(h.where()).not.toHaveProperty('x')
+    expect(h.where()).not.toHaveProperty('keyboard')
+    h.menu(pageParams({ x: 100, y: 200 }))
+    expect(h.where()).not.toHaveProperty('keyboard')
+  })
+
+  it('a page the chrome has not placed still gets keyboard mode', () => {
+    const h = pageHarness()
+    h.menu(pageParams({ x: 100, y: 200, menuSourceType: 'keyboard' }))
+    expect(h.where()).toMatchObject({ source: 'page', keyboard: true })
+    expect(h.where()).not.toHaveProperty('x')
+  })
+
+  it("the URL bar's menu opens at the caret for Shift+F10, at the pointer otherwise", async () => {
+    const h = pageHarness()
+    await h.browser.menus.showChromeContextMenu(
+      chromeParams({
+        target: 'urlbar',
+        tabId: h.tabId,
+        isEditable: true,
+        editFlags: ALL_EDITS,
+        x: 420,
+        y: 18,
+        keyboard: true
+      }),
+      h.win
+    )
+    expect(h.where()).toMatchObject({ source: 'urlbar', x: 420, y: 18, keyboard: true })
+    await h.browser.menus.showChromeContextMenu(
+      chromeParams({ target: 'urlbar', tabId: h.tabId, isEditable: true, editFlags: ALL_EDITS }),
+      h.win
+    )
+    expect(h.where()).not.toHaveProperty('keyboard')
+    expect(h.where()).not.toHaveProperty('x')
+  })
+
+  it("the chrome's rows pass their anchor through the commands: at the row, keyboard mode", () => {
+    const h = pageHarness()
+    const space = h.win.activeSpace()
+    h.browser.handleCommand(h.win, 'tab.contextMenu', {
+      tabId: h.tabId,
+      x: 120,
+      y: 240,
+      keyboard: true
+    })
+    expect(h.where()).toMatchObject({ source: 'tab', x: 120, y: 240, keyboard: true })
+    h.browser.handleCommand(h.win, 'space.contextMenu', { spaceId: space.id, x: 30, y: 900 })
+    expect(h.where()).toMatchObject({ source: 'space', x: 30, y: 900 })
+    expect(h.where()).not.toHaveProperty('keyboard')
+    const folderId = h.browser.createFolder(space.id, 'Work', '📁', h.win).id
+    h.browser.handleCommand(h.win, 'folder.contextMenu', {
+      folderId,
+      x: 100,
+      y: 300,
+      keyboard: true
+    })
+    expect(h.where()).toMatchObject({ source: 'folder', x: 100, y: 300, keyboard: true })
+    h.browser.handleCommand(h.win, 'newtab.contextMenu', { x: 90, y: 500, keyboard: true })
+    expect(h.where()).toMatchObject({ source: 'newtab', x: 90, y: 500, keyboard: true })
+    // A right-click's command without an anchor is the pointer's, as before.
+    h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: h.tabId })
+    expect(h.where()).toMatchObject({ source: 'tab' })
+    expect(h.where()).not.toHaveProperty('x')
   })
 })
 

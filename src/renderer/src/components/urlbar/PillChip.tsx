@@ -84,7 +84,9 @@ export function PillChip({
       aria-haspopup={popup}
       aria-expanded={popup ? Boolean(expanded) : undefined}
       aria-pressed={pressed}
-      className={cn(className)}
+      // The keyboard on a chip lifts it to full ink: chips rest at 70 % and a ring drawn at that
+      // opacity would not read against the pill (a11y-10).
+      className={cn('focus-visible:opacity-100', className)}
       onClick={
         onActivate &&
         ((e) => {
