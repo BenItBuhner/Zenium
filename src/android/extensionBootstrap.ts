@@ -457,7 +457,8 @@ declare const __zenExtBoot: Boot
       }
       // Service-worker globals the MV3 script expects; `importScripts` is synchronous by
       // contract, so it is a synchronous XHR to the extension origin and a classic script
-      // element of this page (the generated background page carries no CSP that would refuse it).
+      // element of this page (the generated background page carries no CSP that would refuse it);
+      // what the element throws, the page reports to `window` and the call throws to its caller.
       pageWindow.importScripts = importScriptsFor({
         origin,
         base: location.href,
@@ -467,7 +468,8 @@ declare const __zenExtBoot: Boot
           xhr.send()
           return { status: xhr.status, text: xhr.responseText }
         },
-        document
+        document,
+        errors: window
       })
       const worker = installServiceWorkerGlobals(pageWindow, {
         origin,

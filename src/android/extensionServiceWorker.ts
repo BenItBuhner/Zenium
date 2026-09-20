@@ -402,6 +402,19 @@ export interface ScriptDocument {
   documentElement: ScriptParent | null
 }
 
+/** What a script element's failure reaches the page as: the `ErrorEvent` of its parse or run. */
+export interface ScriptErrorEvent {
+  error?: unknown
+  message?: string
+  preventDefault(): void
+}
+
+/** The page the script elements report to (`window`), or a test's stand-in for it. */
+export interface ScriptErrorTarget {
+  addEventListener(type: 'error', listener: (event: ScriptErrorEvent) => void): void
+  removeEventListener(type: 'error', listener: (event: ScriptErrorEvent) => void): void
+}
+
 export interface ImportScriptsOptions {
   origin: string
   /** The worker script's URL; relative imports resolve against it, as in a worker. */
@@ -410,6 +423,12 @@ export interface ImportScriptsOptions {
   fetchText: (url: string) => { status: number; text: string }
   /** The page standing in for the worker. */
   document: ScriptDocument
+  /**
+   * Where the page reports what a script element throws; with it, an imported file's parse or
+   * run error is the caller's exception, as a worker's `importScripts` makes it. Without it the
+   * error stays the page's uncaught one.
+   */
+  errors?: ScriptErrorTarget
 }
 
 /**
@@ -418,8 +437,14 @@ export interface ImportScriptsOptions {
  * lexical environment with the worker script and the other imports, as the files of a worker
  * do, so a top-level `const`, `let` or `class` of an imported file is there for the next one
  * (Enhancer for YouTube's `config.js` is `const config = {...}`, read by its worker; an indirect
- * eval kept those declarations to itself and the worker threw `config is not defined`). What an
- * imported file throws is reported as the page's uncaught error rather than thrown here.
+ * eval kept those declarations to itself and the worker threw `config is not defined`).
+ *
+ * What an imported file throws while it is parsed or run is `importScripts`' own exception, as
+ * in a worker: the page reports a script element's failure as its uncaught error instead, so the
+ * call listens for that report while the element runs, keeps it off the console and throws it,
+ * and the files after it do not run. OrbitNote's wrapper imports an ES module among its files
+ * inside a `try` and logs the SyntaxError Chrome throws it; here the error was the worker's
+ * uncaught one and the wrapper's `catch` never saw it.
  */
 export function importScriptsFor(options: ImportScriptsOptions): (...urls: string[]) => void {
   return (...urls: string[]): void => {
@@ -433,8 +458,22 @@ export function importScriptsFor(options: ImportScriptsOptions): (...urls: strin
       if (!parent) throw new Error(`importScripts: ${url} has no document to run in`)
       const script = options.document.createElement('script')
       script.textContent = `${text}\n//# sourceURL=${absolute}`
-      parent.appendChild(script)
-      script.remove()
+      let thrown: { error: unknown } | null = null
+      const report = (event: ScriptErrorEvent): void => {
+        if (thrown) return
+        thrown = {
+          error: event.error ?? new Error(event.message ?? `importScripts: ${url} failed`)
+        }
+        event.preventDefault()
+      }
+      options.errors?.addEventListener('error', report)
+      try {
+        parent.appendChild(script)
+      } finally {
+        options.errors?.removeEventListener('error', report)
+        script.remove()
+      }
+      if (thrown) throw (thrown as { error: unknown }).error
     }
   }
 }
