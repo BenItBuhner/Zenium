@@ -284,8 +284,11 @@ describe('the media sheet', () => {
     // The slider is the §10.4 row (the zoom row's), the position spoken as times, ending at the duration.
     const slider = q('[data-testid="media-position"]')!
     expect(slider.classList.contains('zen-zoom-slider')).toBe(true)
-    expect(slider.getAttribute('aria-valuetext')).toBe('0:30 of 2:00')
+    // The name and the spoken value sit on Radix's thumb, the `role="slider"` node that carries
+    // `aria-valuenow` (A11Y-01): the root is the row that draws the track.
     const thumb = slider.querySelector('[role="slider"]')
+    expect(thumb?.getAttribute('aria-label')).toBe('Position')
+    expect(thumb?.getAttribute('aria-valuetext')).toBe('0:30 of 2:00')
     expect(thumb?.getAttribute('aria-valuemax')).toBe('120')
     expect(thumb?.getAttribute('aria-valuenow')).toBe('30')
   })

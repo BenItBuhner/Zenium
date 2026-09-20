@@ -26,6 +26,12 @@
 #   WEBVIEW_APK – a Chromium snapshot SystemWebView.apk to swap in for the image's own WebView
 #                 before anything else (android-webview-swap.sh: an AOSP image booted with
 #                 -writable-system); the run fails when the swap does not take
+#   DEMO_SCENES – which of a driver's scenes run, passed to the instrumentation as the `scenes`
+#                 argument (`all` by default; ChromeA11yDemo's `private` is the one scene its
+#                 audit needs a multi-profile WebView for); drivers without scenes ignore it
+#   DEMO_INSTRUMENT_FLAGS – extra flags for `am instrument` (`--no-hidden-api-checks` lets a
+#                 driver reach a @TestApi such as UiAutomation's input-filter injection, which
+#                 hands a swipe to TalkBack the way a finger's does)
 #
 # Handshake with the driver, through files in the app's private storage (readable via run-as):
 #   files/<DEMO_DIR>/record     – written by the driver once its warm-up is done
@@ -204,7 +210,8 @@ adb logcat -c || true
 adb logcat -v time > "$out/logcat.txt" &
 logcat_pid=$!
 
-adb shell am instrument -w -e class "$demo_class" -e theme "${DEMO_THEME:-light}" "$runner" > "$out/instrument.txt" 2>&1 &
+# shellcheck disable=SC2086 # DEMO_INSTRUMENT_FLAGS is a list of flags, split on purpose
+adb shell am instrument -w ${DEMO_INSTRUMENT_FLAGS:-} -e class "$demo_class" -e theme "${DEMO_THEME:-light}" -e scenes "${DEMO_SCENES:-all}" "$runner" > "$out/instrument.txt" 2>&1 &
 driver_pid=$!
 
 ready=0

@@ -3,6 +3,7 @@ import { useRef } from 'react'
 import { Moon, VenetianMask, X } from 'lucide-react'
 import type { Tab } from '@shared/types'
 import { useOnScreen } from '@renderer/hooks/useOnScreen'
+import { closeTabLabel, tabCardLabel } from '@renderer/lib/overviewLabels'
 import { PRIVATE_TAB_PLACEHOLDER, useTabMasked } from '@renderer/lib/privateLock'
 import { tabTitle } from '@renderer/lib/selectors'
 import { cn } from '@renderer/lib/utils'
@@ -13,8 +14,6 @@ import { liftStore, useCardLift, type CardLiftOptions } from './useCardLift'
 
 /** Corner radius of a tab card; the page morphs from the content radius to this. */
 export const CARD_RADIUS = 14
-/** Height of a card's title row. */
-export const CARD_HEADER = 40
 /**
  * How far past the grid's edges a card counts as on screen, as a share of the grid's height
  * (`useOnScreen` measures from the card's scroller): about a row of cards, so the pictures of
@@ -27,6 +26,12 @@ const CARD_LOOKAHEAD = '35% 0px'
 interface Props {
   tab: Tab
   active: boolean
+  /**
+   * The card's place among the pane's tabs, for what TalkBack says of it ("tab 2 of 7",
+   * `tabCardLabel`): 1-based, in the grid's order.
+   */
+  position: number
+  count: number
   /** The hero stands in for this card while the page morphs into it. */
   hidden: boolean
   onPick: (tab: Tab) => void
@@ -48,6 +53,8 @@ interface Props {
 export function OverviewCard({
   tab,
   active,
+  position,
+  count,
   hidden,
   onPick,
   onClose,
@@ -85,7 +92,7 @@ export function OverviewCard({
         data-discarded={tab.discarded || undefined}
         data-masked={masked || undefined}
         style={style}
-        aria-label={tab.discarded ? `${name} – sleeping` : name}
+        aria-label={tabCardLabel(name, position, count, active, tab.discarded === true)}
         onPointerDown={handlers.onPointerDown}
         onPointerMove={handlers.onPointerMove}
         onPointerUp={handlers.onPointerUp}
@@ -98,8 +105,28 @@ export function OverviewCard({
           if (e.key === 'Enter' || e.key === ' ') onPick(tab)
         }}
       >
-        <CardBody tab={tab} closable={Boolean(onClose)} onClose={onClose} visible={visible} />
+        <CardBody tab={tab} closable={onClose ? 'space' : false} visible={visible} />
       </div>
+      {/*
+        The close sits beside the card's button, not inside it: this WebView reads a focusable,
+        named node as one leaf and drops a button nested in it from the tree (A11Y-01, the device
+        driver's run 1), so a nested Close was never a TalkBack stop. It is laid over the header's
+        end, the 44 the body keeps clear for it, and looks the same as the ghost's drawn one.
+      */}
+      {onClose && (
+        <button
+          type="button"
+          className="zen-toolbar-button zen-overview-card-close absolute right-0 top-0 h-8 w-8 rounded-[10px]"
+          style={style}
+          aria-label={closeTabLabel(name)}
+          onClick={(e) => {
+            e.stopPropagation()
+            onClose(tab)
+          }}
+        >
+          <X className="h-4 w-4" />
+        </button>
+      )}
     </div>
   )
 }
@@ -114,21 +141,27 @@ export function OverviewCard({
 export function CardBody({
   tab,
   closable = true,
-  onClose,
   visible = true
 }: {
   tab: Tab
-  closable?: boolean
-  onClose?: (tab: Tab) => void
+  /**
+   * `true` draws a close glyph that does nothing (a ghost, a departing card); `'space'` keeps the
+   * glyph's 44 clear for the real button `OverviewCard` lays over it; `false` gives the row to
+   * the title.
+   */
+  closable?: boolean | 'space'
   visible?: boolean
 }): JSX.Element {
   const masked = useTabMasked(tab)
   return (
     <>
-      <header
-        className="flex shrink-0 items-center gap-2 pl-3 pr-1"
-        style={{ height: CARD_HEADER }}
-      >
+      {/*
+        The close is the phone's 44 icon button (§9.3, main.css's phone rule on
+        `.zen-toolbar-button`), flush with the card's edge so the whole box stays inside the
+        card's clip; the row is its 44 (`CARD_HEADER`, §9.21), drawn from
+        `--zen-overview-card-header` so it grows with the system font size (A11Y-05).
+      */}
+      <header className="zen-overview-card-header flex shrink-0 items-center gap-2 pl-3 pr-0">
         <span className="zen-overview-card-favicon flex shrink-0">
           {masked ? (
             <VenetianMask className="h-4 w-4 opacity-60" strokeWidth={1.75} aria-hidden />
@@ -149,18 +182,13 @@ export function CardBody({
             data-sleeping=""
           />
         )}
-        {closable && (
-          <button
-            type="button"
-            className="zen-toolbar-button h-8 w-8 rounded-[10px]"
-            aria-label="Close tab"
-            onClick={(e) => {
-              e.stopPropagation()
-              onClose?.(tab)
-            }}
-          >
+        {closable === true && (
+          <span aria-hidden className="zen-toolbar-button h-8 w-8 rounded-[10px]">
             <X className="h-4 w-4" />
-          </button>
+          </span>
+        )}
+        {closable === 'space' && (
+          <span aria-hidden className="zen-toolbar-button zen-overview-card-close-space h-8 w-8" />
         )}
       </header>
       <div className="zen-overview-card-preview relative min-h-0 flex-1 overflow-hidden">
