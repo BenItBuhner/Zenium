@@ -15,12 +15,28 @@ import kotlin.random.Random
  * through [TextEngine.parse], the connectivity-probes golden fixture, two `ext:` sets shaped
  * like uBlock Origin Lite's static and dynamic rules (big `requestDomains`, `||host^`, regexes
  * with optional separators, initiator-only and excluded-only conditions, tab ids, methods, case
- * sensitivity, `|` literals, partitions, response header conditions the parsers skip), a `user`
- * set and `builtin:site-exceptions`; the index loaded through [IndexReader] as the engine loads
- * it and through [RuleSetInfo.parse] as the fixtures do. Every decision must be the same rule,
- * target and filter, not just the same
- * effect: `matchedRule` feeds `getMatchedRules` and `onRuleMatchedDebug`, and two equal
- * redirects must name the target the desktop names. Adopted from the services review of #164.
+ * sensitivity, `|` literals, partitions, response header conditions), a `user` set and
+ * `builtin:site-exceptions`; the index loaded through [IndexReader] as the engine loads it and
+ * through [RuleSetInfo.parse] as the fixtures do. Every decision must be the same rule, target
+ * and filter, not just the same effect: `matchedRule` feeds `getMatchedRules` and
+ * `onRuleMatchedDebug`, and two equal redirects must name the target the desktop names. Adopted
+ * from the services review of #164.
+ *
+ * Both stages are compared, as the desktop's `indexDifferential.test.ts` compares them: the
+ * request stage for every probe, and the headers-received stage – `decide(req, headers)` against
+ * `decideLinear(req, headers)` with a response's headers indexed as the relay indexes them
+ * ([HeaderCondition.index]) – for every probe whose request-stage allow asked for it
+ * ([Decision.needsHeaders], the relay's second decision) and for one probe in four regardless.
+ * The corpus's three header-conditioned rules (an `x-ads` presence block, a `content-type`
+ * -excluded allow, Stylus's `.user.css` redirect on `content-type: text/css*`) sit on hosts and a
+ * path shape the generated URLs rarely produce, so a fixed set of targeted probes puts each
+ * through every header map, and the pass asserts what it saw: requests decided twice, header-stage
+ * decisions by a header-conditioned rule, a block and a redirect among them, a header stage that
+ * differs from its request stage and one that is the same (the relay's `sameMatch`), and the
+ * stages' contract (section 6.2 of the blocking rule interface note): a header-conditioned rule
+ * never decides the request stage, a header stage that names another match names a
+ * header-conditioned rule, and a request the request stage did not flag decides the same with
+ * any headers.
  */
 class IndexDifferentialTest {
     private fun repoRoot(): File {
@@ -50,6 +66,27 @@ class IndexDifferentialTest {
             a.matchedRule == b.matchedRule && a.matchedFilter == b.matchedFilter && a.needsHeaders == b.needsHeaders
 
     private fun show(d: Decision) = "${d.action} url=${d.redirectUrl} set=${d.matchedSet} rule=${d.matchedRule} filter=${d.matchedFilter} headers=${d.needsHeaders}"
+
+    /**
+     * Response headers as the relay hands them to the engine (`HeaderStage.relay`): a fetch's
+     * `headerFields` – the status line under a null key, names in the wire's case – through
+     * [HeaderCondition.index], which drops the status line and lowercases the names. Between them
+     * they satisfy and fail each of the corpus's header conditions (`x-ads` present or absent,
+     * `content-type` a CSS type, HTML, another type, absent); the last carries both in mixed case.
+     */
+    private val headerMaps: List<Map<String, List<String>>> = listOf(
+        mapOf("X-Ads" to listOf("1")),
+        mapOf("Content-Type" to listOf("text/css; charset=utf-8")),
+        mapOf("Content-Type" to listOf("text/html")),
+        mapOf("Content-Type" to listOf("application/json")),
+        emptyMap(),
+        mapOf("X-ADS" to listOf("banner"), "CONTENT-type" to listOf("TEXT/CSS"), "Set-Cookie" to listOf("a=1", "b=2"))
+    ).map { wire ->
+        val fields = LinkedHashMap<String?, List<String>?>()
+        fields[null] = listOf("HTTP/1.1 200 OK")
+        fields.putAll(wire)
+        HeaderCondition.index(fields)
+    }
 
     private fun rule(id: Int, action: String, condition: JSONObject, priority: Int = 1, redirect: String? = null): JSONObject {
         val a = JSONObject().put("type", action)
@@ -147,8 +184,9 @@ class IndexDifferentialTest {
         a.put(rule(id++, "block", JSONObject().put("urlFilter", "|https://").put("requestMethods", JSONArray(listOf("post"))).put("resourceTypes", JSONArray(listOf("xmlhttprequest")))))
         a.put(rule(id++, "block", JSONObject().put("urlFilter", "^track|pixel^")))  // `|` literal inside a filter
         a.put(rule(id++, "block", JSONObject().put("urlFilter", "*/img/*banner*").put("excludedNonUniqueHosts", true)))
-        // Header-conditioned rules need the desktop's headers-received stage: both readers parse
-        // them out, so they count in `declared` but never in the snapshot.
+        // Header-conditioned rules: decided at the headers-received stage only (`decide` with the
+        // response's headers, which the relay reaches for documents); the request stage marks an
+        // allow they could overturn `needsHeaders` and never names them.
         a.put(rule(id++, "block", JSONObject().put("urlFilter", "||${hosts[13]}^").put("responseHeaders", headerConditions("x-ads"))))
         a.put(rule(id++, "allow", JSONObject().put("requestDomains", JSONArray(listOf(hosts[14]))).put("excludedResponseHeaders", headerConditions("content-type", "text/html*")), priority = 3))
         for (i in 0 until 1200) {
@@ -269,10 +307,91 @@ class IndexDifferentialTest {
         val extraHosts = listOf("ads.example", "www.ads.example", "localhost", "127.0.0.1", "intranet", "accounts.google.com", "www.gstatic.com", "x.example", "cdn.x.example")
         val allHosts = listHosts + extraHosts
 
+        // The corpus's header-conditioned rules by set, from the JSON: the request stage never names one.
+        val headerRuleIds = HashMap<String, Set<Int>>()
+        for (s in 0 until setsJson.length()) {
+            val set = setsJson.getJSONObject(s)
+            val rules = set.getJSONArray("rules")
+            val ids = (0 until rules.length()).map { rules.getJSONObject(it) }.filter { isHeaderConditioned(it) }.map { it.getInt("id") }.toSet()
+            if (ids.isNotEmpty()) headerRuleIds[set.getString("id")] = ids
+        }
+        assertEquals(headerConditioned, headerRuleIds.values.sumOf { it.size })
+        fun byHeaderRule(d: Decision) = d.matchedSet != null && headerRuleIds[d.matchedSet]?.contains(d.matchedRule) == true
+
         var total = 0
         var decidedByRule = 0
         var redirected = 0
+        // The header-stage pass: what the linear reference decided (the index agreed, or `mismatches` says where not).
+        var decidedTwice = 0  // header-stage decisions after a request-stage allow with `needsHeaders` (the relay's second decision)
+        var direct = 0  // header-stage decisions of probes that arrived there regardless of `needsHeaders`
+        var headerStageNamed = 0  // header-stage decisions naming a set (a rule or a filter)
+        var headerStageByRule = 0  // header-stage decisions naming a header-conditioned rule
+        var headerStageBlocks = 0  // ... a block among them
+        var headerStageRedirects = 0  // ... a redirect with its target among them
+        var differing = 0  // of `decidedTwice`: another match than the request stage's (the relay reports it)
+        var sameAsRequestStage = 0  // of `decidedTwice`: the request stage's match again (the relay's `sameMatch`, reported once)
         val mismatches = ArrayList<String>()
+        val violations = ArrayList<String>()
+
+        fun describe(req: Request, headers: Map<String, List<String>>?) =
+            "${req.url} type=${req.type} mask=${Integer.toHexString(req.typeMask)} doc=${req.documentUrl} method=${req.method} tab=${req.tabId} partition=${req.partition} headers=${headers ?: "none"}"
+
+        /** One stage of one request through both resolutions; `headers` null at the request stage. */
+        fun check(req: Request, headers: Map<String, List<String>>?, indexed: Decision, linear: Decision) {
+            if (!same(indexed, linear) && mismatches.size < 40) {
+                mismatches.add("${describe(req, headers)}\n    index : ${show(indexed)}\n    linear: ${show(linear)}")
+            }
+            if (headers == null) {
+                for (d in listOf(indexed, linear)) {
+                    if (byHeaderRule(d) && violations.size < 40) violations.add("a header-conditioned rule decided the request stage: ${describe(req, null)}\n    ${show(d)}")
+                }
+            }
+        }
+
+        /**
+         * One request through the stages as the host takes them: the request stage always; the
+         * header stage – for each of `maps`, as the relay would with the response's headers –
+         * when the request stage's allow asked for it (`needsHeaders`) or when the probe
+         * `arrivesDirectly` at the header stage, `needsHeaders` or not (the desktop differential's
+         * one request in four), so the header branch of `Resolution.claim` runs for rules that
+         * raised `lateEffective` and for the header-conditioned allow that did not.
+         */
+        fun probe(req: Request, maps: List<Map<String, List<String>>>, arrivesDirectly: Boolean) {
+            val early = snap.decideLinear(req)
+            check(req, null, snap.decide(req), early)
+            total++
+            if (early.matchedSet != null) decidedByRule++
+            if (early.redirectUrl != null) redirected++
+            if (!early.needsHeaders && !arrivesDirectly) return
+            for (headers in maps) {
+                val late = snap.decideLinear(req, headers)
+                check(req, headers, snap.decide(req, headers), late)
+                if (arrivesDirectly) direct++
+                if (late.matchedSet != null) headerStageNamed++
+                if (byHeaderRule(late)) {
+                    headerStageByRule++
+                    if (late.action == Decision.Action.BLOCK) headerStageBlocks++
+                    if (late.action == Decision.Action.REDIRECT && late.redirectUrl != null) headerStageRedirects++
+                }
+                if (early.needsHeaders) {
+                    decidedTwice++
+                    if (HeaderStage.sameMatch(late, early)) sameAsRequestStage++ else differing++
+                }
+                if (violations.size < 40) {
+                    // The stages' contract (6.2): a header stage that names another match than the
+                    // request stage's names a header-conditioned rule (a late allow yields), and a
+                    // request the request stage did not flag decides the same with any headers – no
+                    // relay is owed where the header stage could change nothing.
+                    if (!HeaderStage.sameMatch(late, early) && !byHeaderRule(late)) {
+                        violations.add("the header stage named another match than a header-conditioned rule: ${describe(req, headers)}\n    request: ${show(early)}\n    headers: ${show(late)}")
+                    }
+                    if (!early.needsHeaders && !same(early, late)) {
+                        violations.add("the header stage changed a decision the request stage did not flag: ${describe(req, headers)}\n    request: ${show(early)}\n    headers: ${show(late)}")
+                    }
+                }
+            }
+        }
+
         repeat(12_000) {
             val h = if (random.nextInt(4) == 0) pick(extraHosts) else allHosts[random.nextInt(allHosts.size)]
             val scheme = if (random.nextInt(5) == 0) "http" else "https"
@@ -291,18 +410,63 @@ class IndexDifferentialTest {
                 else -> "https://${allHosts[random.nextInt(allHosts.size)]}/${pick(words)}"  // third party (mostly)
             }
             val req = Request(url, type, doc, pick(methods), tabId = tabs[random.nextInt(tabs.size)], typeMask = mask, partition = partitions[random.nextInt(partitions.size)])
-            val indexed = snap.decide(req)
-            val linear = snap.decideLinear(req)
-            total++
-            if (linear.matchedSet != null) decidedByRule++
-            if (linear.redirectUrl != null) redirected++
-            if (!same(indexed, linear) && mismatches.size < 40) {
-                mismatches.add("$url type=$type mask=${Integer.toHexString(mask)} doc=$doc method=${req.method} tab=${req.tabId} partition=${req.partition}\n    index : ${show(indexed)}\n    linear: ${show(linear)}")
-            }
+            // The response's headers, should the header stage be reached, and whether it is reached regardless.
+            val headers = headerMaps[random.nextInt(headerMaps.size)]
+            probe(req, listOf(headers), arrivesDirectly = random.nextInt(4) == 0)
         }
+
+        // Targeted probes: the header-conditioned rules sit on hosts and a path shape the generated
+        // URLs rarely produce – `.user.css` navigations (set B's redirect on `content-type:
+        // text/css*`), documents and frames on hosts[13] (set A's `x-ads` block), requests on
+        // hosts[14] (set A's allow on everything but HTML) – so each goes through every map: on
+        // hosts the other sets speak for too (the user set's allow on hosts[0] and block on
+        // hosts[7], the site exception on hosts[11]), in partitions the sets are and are not scoped
+        // to, with a query the anchored regex rejects, over `http:` (the request stage blocks the
+        // navigation outright), as subresources the relay never carries but the engine decides,
+        // and on hosts[13] as a `.user.css` navigation both header rules select (rank breaks the tie).
+        val targeted = ArrayList<Request>()
+        val adsHost = listHosts[13]
+        val allowHost = listHosts[14]
+        for (h in listOf("x.example", "cdn.x.example", "intranet", "accounts.google.com", listHosts[0], listHosts[7], listHosts[11], adsHost, allowHost, listHosts[42])) {
+            targeted.add(Request("https://$h/hello.user.css", ResourceType.MAIN_FRAME, null, "GET", tabId = "tab-7", partition = "default"))
+            targeted.add(Request("https://$h/themes/Dark.user.css", ResourceType.MAIN_FRAME, null, "GET", partition = "work"))
+        }
+        targeted.add(Request("https://x.example/hello.user.css", ResourceType.MAIN_FRAME, null, "GET", partition = "private"))
+        targeted.add(Request("https://x.example/hello.user.css", ResourceType.MAIN_FRAME, null, "GET", partition = null))
+        targeted.add(Request("https://x.example/hello.user.css?v=3", ResourceType.MAIN_FRAME, null, "GET", partition = "default"))
+        targeted.add(Request("http://x.example/hello.user.css", ResourceType.MAIN_FRAME, null, "GET", partition = "default"))
+        targeted.add(Request("https://x.example/hello.user.css", ResourceType.MAIN_FRAME, null, "POST", partition = "default"))
+        targeted.add(Request("https://x.example/hello.user.css", ResourceType.SUB_FRAME, "https://news.example/", partition = "default"))
+        targeted.add(Request("https://x.example/hello.user.css", ResourceType.STYLESHEET, "https://x.example/", partition = "default"))
+        for (partition in listOf("default", "work", "private", null)) {
+            targeted.add(Request("https://$adsHost/", ResourceType.MAIN_FRAME, null, "GET", partition = partition))
+        }
+        targeted.add(Request("https://$adsHost/news/story.html?id=7", ResourceType.MAIN_FRAME, null, "GET", tabId = "tab-9", partition = "default"))
+        targeted.add(Request("https://www.$adsHost/index.html", ResourceType.MAIN_FRAME, null, "GET", partition = "default"))
+        targeted.add(Request("http://$adsHost/", ResourceType.MAIN_FRAME, null, "GET", partition = "default"))
+        targeted.add(Request("https://$adsHost/frame.html", ResourceType.SUB_FRAME, "https://news.example/story", partition = "default"))
+        targeted.add(Request("https://$adsHost/frame.html", ResourceType.SUB_FRAME, "https://$adsHost/", partition = "default"))
+        targeted.add(Request("https://$adsHost/a.js", ResourceType.SCRIPT, "https://news.example/story", partition = "default"))
+        targeted.add(Request("https://$adsHost/site.css", ResourceType.STYLESHEET, "https://news.example/story", partition = "default"))
+        targeted.add(Request("https://$adsHost/font.woff2", ResourceType.FONT, "https://$adsHost/", partition = "work"))
+        targeted.add(Request("https://$allowHost/", ResourceType.MAIN_FRAME, null, "GET", partition = "default"))
+        targeted.add(Request("https://$allowHost/frame.html", ResourceType.SUB_FRAME, "https://news.example/story", partition = "default"))
+        targeted.add(Request("https://$allowHost/lib.js", ResourceType.SCRIPT, "https://news.example/story", partition = "default"))
+        targeted.add(Request("https://$allowHost/style.css", ResourceType.STYLESHEET, "https://$allowHost/", partition = "default"))
+        for (req in targeted) probe(req, headerMaps, arrivesDirectly = true)
+
         assertTrue("decided something: $decidedByRule of $total", decidedByRule > 500)
         assertTrue("redirected something: $redirected", redirected > 50)
+        assertTrue("decided twice (needsHeaders, then with headers): $decidedTwice", decidedTwice > 20)
+        assertTrue("arrived at the header stage directly: $direct", direct > 20)
+        assertTrue("header-stage decisions naming a rule: $headerStageNamed", headerStageNamed > 20)
+        assertTrue("header-stage decisions by a header-conditioned rule: $headerStageByRule", headerStageByRule > 20)
+        assertTrue("header-stage blocks by a header-conditioned rule: $headerStageBlocks", headerStageBlocks >= 1)
+        assertTrue("header-stage redirects by a header-conditioned rule: $headerStageRedirects", headerStageRedirects >= 1)
+        assertTrue("header stage differing from the request stage: $differing", differing >= 1)
+        assertTrue("header stage the same as the request stage (the relay's sameMatch): $sameAsRequestStage", sameAsRequestStage >= 1)
         assertTrue("mismatches:\n" + mismatches.joinToString("\n"), mismatches.isEmpty())
+        assertTrue("invariants:\n" + violations.joinToString("\n"), violations.isEmpty())
     }
 
     /**
