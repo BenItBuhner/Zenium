@@ -4,6 +4,7 @@ import type { UIState } from '@shared/types'
 import { mediaHubEntries, mediaHubLabel, mediaHubUi, toggleMediaHub } from '@renderer/lib/mediaHub'
 import { openedFromKeyboard } from '@renderer/lib/popover'
 import { cn } from '@renderer/lib/utils'
+import { TOOLBAR_STROKE } from '../v2/controls'
 
 /** The button the hub's popover hangs from and returns the keyboard to (§9.22). */
 export const MEDIA_HUB_BUTTON = '[data-zen-media-hub-button]'
@@ -31,7 +32,7 @@ export function MediaHubButton({ state }: { state: UIState }): JSX.Element | nul
       aria-haspopup="dialog"
       onClick={() => toggleMediaHub({ fromKeyboard: openedFromKeyboard() })}
     >
-      <SquarePlay className="h-4 w-4" strokeWidth={1.5} />
+      <SquarePlay className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} />
       {entries.some((m) => m.playing) && <span className="zen-mhub-dot" aria-hidden />}
     </button>
   )

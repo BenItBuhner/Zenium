@@ -22,6 +22,15 @@ import { cn } from '@renderer/lib/utils'
 export const V2_GLYPH =
   'h-[var(--v2-icon)] w-[var(--v2-icon)] shrink-0 [stroke-width:var(--v2-icon-stroke)]'
 
+/**
+ * The stroke of a 16 px glyph in the desktop toolbar row and the app title bar (§9.3: one stroke
+ * per size, 1.5 at 16 – the `--v2-icon-stroke` token's desktop value; pr-245 chassis (d)). The
+ * window's `.zen-toolbar-button`s and pill chips size their glyphs in utilities (`h-4 w-4`)
+ * rather than with `V2_GLYPH`, so each passes this as Lucide's `strokeWidth` prop – the SVG
+ * attribute a reviewer reads – instead of drawing Lucide's default 2 beside a 1.5 neighbour.
+ */
+export const TOOLBAR_STROKE = 1.5
+
 export type V2ButtonVariant = 'primary' | 'secondary' | 'danger'
 
 export interface V2ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {

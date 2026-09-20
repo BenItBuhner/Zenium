@@ -29,6 +29,7 @@ const { NavRow, SidebarTop } = await import('../sidebar/SidebarTop')
 const { Toolbar } = await import('../Toolbar')
 const { PillContent } = await import('../phone/PhoneShell')
 const { PillChip } = await import('../urlbar/PillChip')
+const { TOOLBAR_STROKE } = await import('../v2/controls')
 const { browserStore, openUrlbar, uiStore } = await import('@renderer/lib/ui')
 const { closeSiteInfo, siteInfoStore } = await import('@renderer/lib/siteInfo')
 const { defaultShortcuts } = await import('@shared/shortcuts')
@@ -224,6 +225,31 @@ describe('desktop pill (NavRow)', () => {
     for (const [i, chip] of order.slice(1).entries()) expectChip(chip, labels(order.slice(1))[i]!)
     // The site icon is drawn ahead of the field, after it in the DOM.
     expect(order[1].className).toContain('order-first')
+  })
+
+  // Design language v2 §9.3: one stroke per toolbar row – every 16 px glyph in the row (the
+  // navigation buttons, the puzzle piece, the menu, the pill's 16 px chips) at the desktop's
+  // 1.5, the `--v2-icon-stroke` token's value, not Lucide's default 2 beside it (the #245
+  // review's chassis item (d)); the SVG attribute, which is what a reviewer reads off the DOM.
+  it('draws every 16 px glyph in the row at the toolbar stroke', () => {
+    // A page with a pop-up refused and a save prompt pending: every chip with a 16 px glyph up.
+    const el = render(
+      <NavRow
+        state={{ ...withBlocked(page, 1), autofill: { prompts: [savePrompt], picker: null } }}
+        tab={page}
+        compact={false}
+      />
+    )
+    const glyphs = Array.from(el.querySelectorAll<SVGElement>('[data-zen-nav-row] svg')).filter(
+      (svg) => svg.classList.contains('h-4')
+    )
+    // Back, forward, reload, the blocked pop-ups chip, the key chip, the star and the menu (the
+    // puzzle piece, the downloads and media buttons wait on an extension, a download, a player).
+    expect(el.querySelector('[aria-label="Pop-up blocked"]')).not.toBeNull()
+    expect(el.querySelector('[data-af-chip]')).not.toBeNull()
+    expect(glyphs.length).toBe(7)
+    for (const svg of glyphs) expect(svg.getAttribute('stroke-width')).toBe(String(TOOLBAR_STROKE))
+    expect(TOOLBAR_STROKE).toBe(1.5)
   })
 
   it('exposes what each chip opens and whether it is open', () => {
