@@ -28,7 +28,7 @@ Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 const { NEW_TAB_CELL, TabOverview } = await import('../TabOverview')
 const { activeLiftPointer, cancelLift, liftStore } = await import('../useCardLift')
 const { privateTabsStore, resetOverviewPane } = await import('@renderer/lib/privateTabs')
-const { tabCount } = await import('../barItems')
+const { BAR_ITEMS, barContext, tabCount } = await import('../barItems')
 const { PRIVATE_CONTAINER_ID } = await import('@shared/types')
 const { clearDepartures, departStore } = await import('../departureStore')
 const { GROUP_HEADER, GROUP_PAD } = await import('../GroupCard')
@@ -1333,6 +1333,26 @@ describe('the private pane', () => {
     expect(tabCount(one)).toBe(1)
   })
 
+  it("the bar's New tab keeps the mode: a private tab from a private tab, a regular one from a regular tab", () => {
+    const button = document.createElement('button')
+    button.getBoundingClientRect = () => new DOMRect(10, 700, 48, 48)
+    const state = mixed()
+    const requests = newTabRequests(() =>
+      BAR_ITEMS['new-tab'].run(barContext(state, false), button)
+    )
+    expect(requests).toEqual([
+      { origin: { x: 10, y: 700, width: 48, height: 48 }, containerId: undefined }
+    ])
+
+    state.spaces[0].activeTabId = 'p1'
+    const fromPrivate = newTabRequests(() =>
+      BAR_ITEMS['new-tab'].run(barContext(state, false), button)
+    )
+    expect(fromPrivate).toEqual([
+      { origin: { x: 10, y: 700, width: 48, height: 48 }, containerId: PRIVATE_CONTAINER_ID }
+    ])
+  })
+
   it('opens on the pane of the tab in view: a private tab up, the private pane – without a pick', () => {
     const state = mixed()
     state.spaces[0].activeTabId = 'p1'
@@ -1419,6 +1439,136 @@ describe('the private pane', () => {
     expect(labels).toContain('Close other tabs (3)')
     // No grouping on the private pane: the session is not a workspace.
     expect(labels).not.toContain('New group')
+  })
+
+  /*
+   * A drag on the private pane rearranges its cards like the Tabs pane's (Chrome's incognito grid
+   * allows it) and does nothing else: a card's middle is no merge target and no group is made.
+   * The browser's index counts the space's whole regular section, the regular tabs between the
+   * private ones included.
+   */
+  it('a private card dragged past another lands right after it: a move in the space track, no group', () => {
+    // The space's track: p1, a, p2, b, p3 (private tabs interleaved with the regular ones).
+    render(
+      withPrivate(
+        stateOf(
+          [
+            privateTab('p1', 'https://one.example/'),
+            tab('a', 'https://a.example/'),
+            privateTab('p2', 'https://two.example/'),
+            tab('b', 'https://b.example/'),
+            privateTab('p3', 'https://three.example/')
+          ],
+          []
+        )
+      )
+    )
+    expect(selected('private')).toBe(true)
+    expect(cellKeys()).toEqual(['p1', 'p2', 'p3', NEW_TAB_CELL])
+    place('p1', 0, 0)
+    place('p2', 110, 0)
+    place('p3', 0, 140)
+    place(NEW_TAB_CELL, 110, 140)
+
+    pickUp('p1')
+    // Over p3's middle: on the regular pane that would merge the two; here it targets nothing.
+    const middle = at('p3', 0.5, 0.5)
+    drag(middle.x, middle.y)
+    expect(liftStore.get().target).toBeNull()
+    // Its trailing edge: the slot after it.
+    const trailing = at('p3', 0.9, 0.5)
+    drag(trailing.x, trailing.y)
+    expect(liftStore.get().target).toBeNull()
+    act(() => elapse(SLOT_DWELL_MS))
+    expect(liftStore.get().slot).toEqual({ folderId: null, index: 2 })
+    // The stand-in shows the order the drop would make.
+    expect(cellKeys()).toEqual(['p2', 'p3', 'p1', NEW_TAB_CELL])
+    letGo(trailing.x, trailing.y)
+    // p1 goes to the end of the space's regular tabs (index 4 of a, p2, b, p3); no folder command.
+    expect(commands()).toEqual([
+      ['tab.move', { tabId: 'p1', spaceId: SPACE, section: 'regular', index: 4 }]
+    ])
+    const moved = withPrivate(
+      stateOf(
+        [
+          tab('a', 'https://a.example/'),
+          privateTab('p2', 'https://two.example/'),
+          tab('b', 'https://b.example/'),
+          privateTab('p3', 'https://three.example/'),
+          privateTab('p1', 'https://one.example/')
+        ],
+        []
+      )
+    )
+    // p1 is still the tab in view, so the overview stays on its pane.
+    moved.spaces[0].activeTabId = 'p1'
+    land(moved)
+    expect(liftStore.get()).toMatchObject({ phase: 'idle', tabId: null, target: null, slot: null })
+    expect(cellKeys()).toEqual(['p2', 'p3', 'p1', NEW_TAB_CELL])
+  })
+
+  it('a private card dragged before another lands right before it in the space track', () => {
+    render(
+      withPrivate(
+        stateOf(
+          [
+            privateTab('p1', 'https://one.example/'),
+            tab('a', 'https://a.example/'),
+            privateTab('p2', 'https://two.example/'),
+            tab('b', 'https://b.example/'),
+            privateTab('p3', 'https://three.example/')
+          ],
+          []
+        )
+      )
+    )
+    place('p1', 0, 0)
+    place('p2', 110, 0)
+    place('p3', 0, 140)
+    place(NEW_TAB_CELL, 110, 140)
+    pickUp('p3')
+    const leading = at('p1', 0.1, 0.5)
+    drag(leading.x, leading.y)
+    act(() => elapse(SLOT_DWELL_MS))
+    expect(liftStore.get().slot).toEqual({ folderId: null, index: 0 })
+    letGo(leading.x, leading.y)
+    // Right before p1, which heads the track: index 0.
+    expect(commands()).toEqual([
+      ['tab.move', { tabId: 'p3', spaceId: SPACE, section: 'regular', index: 0 }]
+    ])
+  })
+
+  it('on the Tabs pane the index skips the private tabs between the regular ones', () => {
+    // The space's track: a, p1, b, p2, c: the Tabs pane shows a, b, c.
+    render(
+      withPrivate(
+        stateOf(
+          [
+            tab('a', 'https://a.example/'),
+            privateTab('p1', 'https://one.example/'),
+            tab('b', 'https://b.example/'),
+            privateTab('p2', 'https://two.example/'),
+            tab('c', 'https://c.example/')
+          ],
+          []
+        )
+      )
+    )
+    expect(cellKeys()).toEqual(['a', 'b', 'c', NEW_TAB_CELL])
+    place('a', 0, 0)
+    place('b', 110, 0)
+    place('c', 0, 140)
+    place(NEW_TAB_CELL, 110, 140)
+    pickUp('a')
+    const leading = at('c', 0.1, 0.5)
+    drag(leading.x, leading.y)
+    act(() => elapse(SLOT_DWELL_MS))
+    expect(liftStore.get().slot).toEqual({ folderId: null, index: 1 })
+    letGo(leading.x, leading.y)
+    // Right before c, which is fourth in the track without a (p1, b, p2, c): index 3, not 1.
+    expect(commands()).toEqual([
+      ['tab.move', { tabId: 'a', spaceId: SPACE, section: 'regular', index: 3 }]
+    ])
   })
 })
 

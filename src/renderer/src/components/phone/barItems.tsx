@@ -22,7 +22,12 @@ import { run } from '@renderer/lib/api'
 import { openSpacesDrawer } from '@renderer/lib/gestures/drawer'
 import { toggleOverview } from '@renderer/lib/gestures/stage'
 import { prepareNewTabGrow } from '@renderer/lib/newtab'
-import { activeTabIsPrivate, privateTabsOf, tabsOnPane } from '@renderer/lib/privateTabs'
+import {
+  activeTabIsPrivate,
+  isPrivateTab,
+  privateTabsOf,
+  tabsOnPane
+} from '@renderer/lib/privateTabs'
 import { activeSpace, activeTab, essentialsFor, tabsOf } from '@renderer/lib/selectors'
 import { openFindBar, openOverlay, openUrlbar } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
@@ -156,12 +161,16 @@ export const BAR_ITEMS: Record<PhoneBarItemId, BarItem> = {
     label: 'New tab',
     glyph: () => <Plus className={glyph} />,
     // The new tab page grows out of this button (MOT-03): the page behind is captured as the
-    // finger lands, and the button's bounds travel with the event as the surface's origin.
+    // finger lands, and the button's bounds travel with the event as the surface's origin. The
+    // new tab keeps the mode: from a private tab it is a private tab (the grow lands on the
+    // private new tab page), as the desktop private window's and Chrome's incognito strip's "+"
+    // keep theirs; the mode is left through the overview's Tabs pane or Close Private Tabs.
     press: prepareNewTabGrow,
-    run: (_ctx, target) => {
+    run: ({ tab }, target) => {
       const r = target?.getBoundingClientRect()
       const origin = r ? { x: r.left, y: r.top, width: r.width, height: r.height } : undefined
-      window.dispatchEvent(new CustomEvent('zen-new-tab', { detail: { origin } }))
+      const containerId = tab && isPrivateTab(tab) ? tab.containerId : undefined
+      window.dispatchEvent(new CustomEvent('zen-new-tab', { detail: { origin, containerId } }))
     }
   },
   menu: {
