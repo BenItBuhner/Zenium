@@ -15,6 +15,7 @@ import {
   siteZoom,
   stepZoom,
   withSiteOverride,
+  zoomSiteKey,
   type ResolvedPageControls
 } from '../shared/pageControls'
 import type { Browser } from './browser'
@@ -26,13 +27,21 @@ import type { TabView } from './platform'
  * service owns the stored maps, hands hosts their copy of the policy (`PageRules`) and applies
  * the resolved values to live pages.
  *
- * Zoom memory is on every host: a factor set on one tab of a site goes to every tab of the site
- * and is written to the settings, so the site opens at it after a relaunch (Chrome's per-host
- * zoom levels; the key here is the registrable domain, `siteKey`, as for the other controls).
- * Desktop site, darkening and the rules push are the full page controls of the Android host
+ * Zoom memory is on every host: a factor set on one tab of a host goes to every tab of the host
+ * and is written to the settings, so the host opens at it after a relaunch (Chrome's zoom
+ * levels, keyed by host as its `HostZoomMap` is – `zoomSiteKey`; desktop site and darkening are
+ * per registrable domain, `siteKey`, as Chrome's content settings are). Desktop site, darkening
+ * and the rules push are the full page controls of the Android host
  * (`capabilities.pageControls`); the desktop keeps Chromium's own user agent and colours.
  * Pages that are not web pages (internal pages, files) keep the host's plain per-tab zoom.
  */
+/** The pages a change re-applies to: a site's (desktop site, darkening) or a host's (zoom). */
+type SiteMatch = { site: string; host?: undefined } | { host: string; site?: undefined }
+
+function matches(only: SiteMatch, url: string): boolean {
+  return only.host !== undefined ? zoomSiteKey(url) === only.host : siteKey(url) === only.site
+}
+
 export class PageControls {
   constructor(private readonly browser: Browser) {}
 
@@ -79,7 +88,7 @@ export class PageControls {
 
   /** Whether the tab's page has a remembered site zoom (a web page); other pages zoom per tab. */
   remembersZoom(tab: Tab): boolean {
-    return siteKey(tab.url) !== null
+    return zoomSiteKey(tab.url) !== null
   }
 
   // ---------------------------------------------------------------------------
@@ -120,6 +129,7 @@ export class PageControls {
   onViewCreated(tab: Tab, view: TabView): void {
     if (!this.enabled && !isWebPage(tab.url)) {
       if (tab.zoom !== 1) view.setZoom(tab.zoom)
+      this.undarken(view)
       return
     }
     tab.zoom = this.applyTo(view, tab.url)
@@ -133,36 +143,51 @@ export class PageControls {
   onNavigated(tab: Tab, view: TabView): void {
     if (!this.enabled && !isWebPage(tab.url)) {
       tab.zoom = view.getZoom()
+      this.undarken(view)
       return
     }
     tab.zoom = this.applyTo(view, tab.url)
   }
 
-  /** Apply the resolved controls for `url` to a live page; returns the effective zoom. */
+  /**
+   * A page that is not a web page is never darkened – `zen://reader` has a theme of its own, an
+   * error page and a file have Zenium's – and the override a darkened web page left on the view
+   * outlives the navigation, so it is taken off here.
+   */
+  private undarken(view: TabView): void {
+    if (this.darkening) view.setDarkening?.(false)
+  }
+
+  /** Whether pages can be darkened on this host (the "Apply dark theme to sites" rows). */
+  get darkening(): boolean {
+    return this.browser.state.capabilities.darkenSites
+  }
+
+  /**
+   * Apply the resolved controls for `url` to a live page; returns the effective zoom. Darkening
+   * is its own capability (the desktop has it without the rest of the page controls); the host
+   * acts on it only while its chrome is dark.
+   */
   private applyTo(view: TabView, url: string): number {
     const r = this.resolve(url)
     view.setZoom(r.zoom)
-    if (this.enabled) {
-      view.setDarkening?.(r.darken)
-      view.setDesktopMode?.(r.desktop)
-    }
+    if (this.darkening) view.setDarkening?.(r.darken)
+    if (this.enabled) view.setDesktopMode?.(r.desktop)
     return r.zoom
   }
 
   /**
-   * Re-apply to every live page (a policy or device change), or to every page of one site (its
-   * zoom changed); desktop mode waits for its next load.
+   * Re-apply to every live page (a policy or device change), or to every page `only` picks out
+   * (the pages of the site or host whose control changed); desktop mode waits for its next load.
    */
-  private applyAll(onlySite?: string): void {
+  private applyAll(only?: SiteMatch): void {
     for (const [tabId, view] of this.browser.tabs.allViews()) {
       const tab = this.browser.tabs.tab(tabId)
       if (!tab || view.isDestroyed()) continue
-      const key = siteKey(tab.url)
-      if (onlySite ? key !== onlySite : !this.enabled && !key) continue
+      if (only ? !matches(only, tab.url) : !this.enabled && !isWebPage(tab.url)) continue
       tab.zoom = this.applyTo(view, tab.url)
     }
   }
-
   // ---------------------------------------------------------------------------
   // Commands
   // ---------------------------------------------------------------------------
@@ -174,11 +199,11 @@ export class PageControls {
    */
   setZoomFactor(tabId: string, factor: number): void {
     const tab = this.browser.tabs.tab(tabId)
-    const key = tab ? siteKey(tab.url) : null
+    const key = tab ? zoomSiteKey(tab.url) : null
     if (!tab || !key) return
     const s = this.settings
     s.siteZooms = withSiteOverride(s.siteZooms, key, clampZoom(factor), s.zoom)
-    this.afterChange(key)
+    this.afterChange({ host: key })
     this.browser.emit(
       'zoom.changed',
       { tabId, factor: tab.zoom, siteKey: key },
@@ -189,7 +214,7 @@ export class PageControls {
   /** Zoom in / out along the host's ladder (keyboard shortcuts, Ctrl+wheel, the sheet's steppers). */
   adjustZoom(tabId: string, direction: number): void {
     const tab = this.browser.tabs.tab(tabId)
-    if (!tab || !siteKey(tab.url)) return
+    if (!tab || !zoomSiteKey(tab.url)) return
     this.setZoomFactor(tabId, stepZoom(this.siteZoomOf(tab), direction, this.zoomLevels))
   }
 
@@ -210,7 +235,7 @@ export class PageControls {
       on,
       desktopByDefault(s, this.environment)
     )
-    this.afterChange(key)
+    this.afterChange({ site: key })
     // Only the tab the user asked in reloads; other tabs of the site follow on their next load.
     this.browser.tabs.reload(tabId)
   }
@@ -222,10 +247,10 @@ export class PageControls {
     if (!tab || !key) return
     const s = this.settings
     s.darkenSiteExceptions = withSiteOverride(s.darkenSiteExceptions, key, on, s.darkenSites)
-    this.afterChange(key)
+    this.afterChange({ site: key })
   }
 
-  /** The per-site lists in Settings: one exception goes away. */
+  /** The per-site lists in Settings: one exception goes away (`domain` is a host for zoom). */
   forgetSite(kind: 'desktop' | 'darken' | 'zoom', domain: string): void {
     const s = this.settings
     const maps = {
@@ -239,7 +264,7 @@ export class PageControls {
     if (kind === 'desktop') s.desktopSites = next as Record<string, boolean>
     else if (kind === 'darken') s.darkenSiteExceptions = next as Record<string, boolean>
     else s.siteZooms = next as Record<string, number>
-    this.afterChange(domain)
+    this.afterChange(kind === 'zoom' ? { host: domain } : { site: domain })
   }
 
   /** A patch from the Settings surface (defaults, toggles); the maps are kept as they are. */
@@ -250,10 +275,10 @@ export class PageControls {
     if (before !== JSON.stringify(s.pageControls)) this.onSettingsChanged()
   }
 
-  private afterChange(site: string): void {
+  private afterChange(only: SiteMatch): void {
     this.browser.state.settings.pageControls = sanitizePageControls(this.settings)
     this.push()
-    this.applyAll(site)
+    this.applyAll(only)
     this.browser.state.commit()
   }
 

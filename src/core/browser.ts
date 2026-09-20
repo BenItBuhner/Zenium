@@ -58,6 +58,7 @@ import { ModService } from './mods'
 import { SiteInfoService } from './siteInfo'
 import { TranslateService } from './translate/service'
 import { PageControls } from './pageControls'
+import { SpellcheckService } from './spellcheck'
 import { FindMemory } from './find'
 import { FullscreenService } from './fullscreen'
 import { WebAppService } from './webapp'
@@ -99,6 +100,7 @@ import { copyConfirmation } from '../shared/clipboard'
 import { IMAGE_URL_PREFIX } from '../shared/zenPages'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
 import {
+  DEFAULT_SETTINGS,
   ONBOARDING_ESSENTIALS,
   sanitizeAutofillSettings,
   sanitizePasswordSettings,
@@ -114,6 +116,8 @@ import { sanitizePromoState } from '../shared/defaultBrowser'
 import { sanitizeBlockingSettings } from '../shared/blocking'
 import { isShortcutPreset } from '../shared/shortcuts'
 import { sanitizePrivacySettings } from '../shared/privacy'
+import { sanitizeSpellcheck } from '../shared/spellcheck'
+import { sanitizeReaderPreferences, type ReaderPreferences } from '../shared/reader'
 import type { ExtensionHost, Governor, PageMessage, Platform, SyncHost } from './platform'
 import { JsonStore } from './store/JsonStore'
 
@@ -230,6 +234,7 @@ export class Browser {
   readonly translate: TranslateService
   /** Desktop site, dark theme for sites and page zoom, remembered per site (Chrome's page controls). */
   readonly pageControls: PageControls
+  readonly spellcheck: SpellcheckService
   /** The last find-in-page query per tab and profile-wide (what the bar reopens with). */
   readonly find = new FindMemory()
   /** Fullscreen hints (F11, a page's element) and the Esc hold that leaves the window's fullscreen. */
@@ -336,6 +341,7 @@ export class Browser {
     this.blocking = new BlockingService(this)
     this.protection = new ProtectionService(this)
     this.translate = new TranslateService(this)
+    this.spellcheck = new SpellcheckService(this)
     this.privacy = new PrivacyService(this)
     this.webApps = new WebAppService(this, platform.io)
     this.state.extras = (win) => ({
@@ -363,7 +369,8 @@ export class Browser {
       autofill: this.autofill.uiState(),
       blocking: this.blocking.status(),
       privacy: this.protection.status(),
-      translate: this.translate.uiState()
+      translate: this.translate.uiState(),
+      spellcheck: this.spellcheck.uiState()
     })
     this.handlers = this.commandHandlers()
   }
@@ -794,6 +801,7 @@ export class Browser {
     this.autofill.start()
     this.defaultBrowser.start()
     this.translate.start()
+    this.spellcheck.start()
     this.syncShortcuts()
     this.pageControls.push()
     this.state.commit()
@@ -1865,6 +1873,13 @@ export class Browser {
       this.webApps.handleMessage(tabId, message)
       return
     }
+    if (message.type === 'reader') {
+      // Only a reader page of the tab's own may change the preferences (the page script relays
+      // the message from `zen:` documents alone; the tab's URL is the second check).
+      if (this.reader.isReaderUrl(tab.url))
+        this.reader.setPreferences(message.reader as Partial<ReaderPreferences>)
+      return
+    }
     if (message.type === 'zap') {
       if (typeof message.selector === 'string') this.boosts.onZapped(tabId, message.selector)
       return
@@ -2399,8 +2414,11 @@ export class Browser {
       'window.openUrl': ({ url, kind }, win) => this.openUrlInWindow(url, kind, win),
       'window.moveTabsToSpace': ({ spaceId }, win) => tabs.moveLocalTabsToSpace(win, spaceId),
 
-      'page.screenshot': ({ tabId }, win) =>
-        this.actions.run('page.screenshot', { sourceTabId: tabId, win }),
+      'page.screenshot': ({ tabId, fullPage }, win) =>
+        this.actions.run(fullPage ? 'page.captureFullPage' : 'page.screenshot', {
+          sourceTabId: tabId,
+          win
+        }),
       'page.print': ({ tabId }, win) => this.actions.run('page.print', { sourceTabId: tabId, win }),
       'page.savePage': ({ tabId }, win) =>
         this.actions.run('page.savePage', { sourceTabId: tabId, win }),
@@ -2441,6 +2459,7 @@ export class Browser {
       'boost.stopZap': ({ tabId }) => this.boosts.stopZap(tabId),
 
       'reader.toggle': ({ tabId }, win) => this.reader.toggle(tabId, win),
+      'reader.setPreferences': (patch) => this.reader.setPreferences(patch),
 
       'liveFolder.save': ({ folderId, name, config }, win) => {
         let id = folderId
@@ -2591,6 +2610,13 @@ export class Browser {
       'translate.removeModel': ({ from, to }) => this.translate.removeModel({ from, to }),
       'translate.models': () => this.translate.modelInfo(),
       'translate.engineResponse': (response) => this.translate.onRelayResponse(response),
+
+      'spellcheck.setEnabled': ({ enabled }) => this.spellcheck.setEnabled(enabled),
+      'spellcheck.setLanguage': ({ code, on }) => this.spellcheck.setLanguage(code, on),
+      'spellcheck.words': () => this.spellcheck.words(),
+      'spellcheck.addWord': ({ word }) => this.spellcheck.addWord(word),
+      'spellcheck.removeWord': ({ word }) => this.spellcheck.removeWord(word),
+      'spellcheck.openKeyboardSettings': () => this.spellcheck.openKeyboardSettings(),
       'webapp.openInstall': ({ tabId }, win) => this.webApps.openInstall(tabId, win),
       'webapp.pin': ({ tabId, title }, win) => this.webApps.pin(tabId, title, win),
       'webapp.cancelInstall': ({ tabId }) => this.webApps.cancelInstall(tabId),
@@ -2643,7 +2669,9 @@ export class Browser {
       updates: JSON.stringify(s.updates),
       blocking: s.blocking,
       privacy: JSON.stringify(s.privacy),
-      autofill: `${JSON.stringify(s.passwords)}${JSON.stringify(s.autofill)}`
+      autofill: `${JSON.stringify(s.passwords)}${JSON.stringify(s.autofill)}`,
+      spellcheck: JSON.stringify(s.spellcheck),
+      reader: JSON.stringify(s.reader)
     }
     for (const [key, value] of Object.entries(patch)) {
       if (value === undefined) continue
@@ -2699,6 +2727,16 @@ export class Browser {
           ...s.privacy,
           ...(value as Partial<Settings['privacy']>)
         })
+      } else if (key === 'spellcheck' && value && typeof value === 'object') {
+        s.spellcheck = sanitizeSpellcheck({
+          ...s.spellcheck,
+          ...(value as Partial<Settings['spellcheck']>)
+        })
+      } else if (key === 'reader' && value && typeof value === 'object') {
+        s.reader = sanitizeReaderPreferences({
+          ...s.reader,
+          ...(value as Partial<Settings['reader']>)
+        })
       } else if (key === 'newTab' && value && typeof value === 'object') {
         // A one-section patch (`modules: { greeting: true }`) must not drop the other sections.
         const incoming = value as Partial<Settings['newTab']>
@@ -2719,7 +2757,7 @@ export class Browser {
       }
     }
     s.sidebarWidth = Math.max(160, Math.min(520, s.sidebarWidth))
-    s.unloadTimeoutMinutes = Math.max(1, Math.min(24 * 60, Math.round(s.unloadTimeoutMinutes)))
+    s.unloadTimeoutMinutes = sanitizeUnloadTimeout(s.unloadTimeoutMinutes)
     s.essentialsMax = Math.max(1, Math.min(24, Math.round(s.essentialsMax)))
     if (
       before.glance !== s.glanceEnabled ||
@@ -2749,6 +2787,8 @@ export class Browser {
     if (before.privacy !== JSON.stringify(s.privacy)) this.protection.onSettingsChanged()
     if (before.autofill !== `${JSON.stringify(s.passwords)}${JSON.stringify(s.autofill)}`)
       this.autofill.onSettingsChanged()
+    if (before.spellcheck !== JSON.stringify(s.spellcheck)) this.spellcheck.onSettingsChanged()
+    if (before.reader !== JSON.stringify(s.reader)) this.reader.onPreferencesChanged()
     this.state.commit()
   }
 
@@ -2761,4 +2801,13 @@ export class Browser {
 
 function clamp01(v: number): number {
   return Math.max(0, Math.min(1, Number.isFinite(v) ? v : 0.5))
+}
+
+/**
+ * The sleeping-tabs timeout in minutes, half a minute to a day in half-minute steps: Edge's
+ * ladder starts at 30 seconds, so a half is the smallest value that is stored.
+ */
+function sanitizeUnloadTimeout(minutes: number): number {
+  if (!Number.isFinite(minutes)) return DEFAULT_SETTINGS.unloadTimeoutMinutes
+  return Math.max(0.5, Math.min(24 * 60, Math.round(minutes * 2) / 2))
 }

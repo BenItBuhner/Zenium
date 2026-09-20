@@ -21,6 +21,8 @@ import { DEFAULT_PROMO_STATE } from './defaultBrowser'
 import { DEFAULT_BLOCKING_SETTINGS } from './blocking'
 import { DEFAULT_PAGE_CONTROLS } from './pageControls'
 import { DEFAULT_PRIVACY_SETTINGS } from './privacy'
+import { DEFAULT_SPELLCHECK } from './spellcheck'
+import { DEFAULT_READER_PREFERENCES } from './reader'
 
 /**
  * Off until the user turns it on in Settings → AI Agents; loopback only, approval required.
@@ -247,7 +249,9 @@ export const DEFAULT_SETTINGS: Settings = {
   shortcutPreset: 'chrome',
   privacy: structuredClone(DEFAULT_PRIVACY_SETTINGS),
   newTab: structuredClone(DEFAULT_NEW_TAB_SETTINGS),
-  gestureHintDone: false
+  gestureHintDone: false,
+  spellcheck: structuredClone(DEFAULT_SPELLCHECK),
+  reader: structuredClone(DEFAULT_READER_PREFERENCES)
 }
 
 /** Firefox's four default containers plus "No Container". */

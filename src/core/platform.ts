@@ -60,6 +60,7 @@ import type { InterstitialAction } from '../shared/interstitial'
 import type { PrivacyFlags, SafeBrowsingHit } from '../shared/privacy'
 import type { RawWebAppManifest, ShortcutIconKind } from '../shared/webApp'
 import type { VoiceStartOutcome } from '../shared/voice'
+import type { SpellcheckDictionaryStatus } from '../shared/spellcheck'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
 import type { AgentHttpRequest, AgentHttpResponse } from './agent/http'
@@ -143,6 +144,8 @@ export interface PageMessage {
     | 'forms'
     /** The page script posted the web app manifest, or the site's `beforeinstallprompt` moves. */
     | 'webapp'
+    /** A `zen://reader` page's toolbar changed the text preferences (`reader`). */
+    | 'reader'
   url?: string
   x?: number
   y?: number
@@ -165,6 +168,8 @@ export interface PageMessage {
   webapp?: 'manifest' | 'deferred' | 'prompt'
   manifestUrl?: string
   manifest?: RawWebAppManifest | null
+  /** `reader`: the changed keys, as the page sent them (the core validates them). */
+  reader?: unknown
 }
 
 /** Messages the browser posts into a page for its page script (the web-app polyfill). */
@@ -343,6 +348,11 @@ export interface AgentCaptureOptions {
   mode: 'viewport' | 'fullPage' | 'region'
   region?: Rect
   format: 'jpeg' | 'png'
+}
+
+/** What `TabView.screenshot` saves: the visible area (default) or the whole page. */
+export interface ScreenshotOptions {
+  fullPage?: boolean
 }
 
 export interface AgentCapture {
@@ -561,8 +571,12 @@ export interface TabView {
   savePage(suggestedName: string): Promise<string | null>
   /** Downscaled JPEG data URL of the current paint, for the dimmed preview behind overlays. */
   snapshot(): Promise<string | null>
-  /** Full-resolution PNG saved to the downloads location; resolves with the saved path. */
-  screenshot(fileName: string): Promise<string | null>
+  /**
+   * Full-resolution PNG saved to the downloads location; resolves with the saved path. The
+   * visible area, or with `fullPage` the whole document beyond the viewport (hosts that cannot
+   * paint beyond it – the debugger taken by DevTools – save the visible area instead).
+   */
+  screenshot(fileName: string, options?: ScreenshotOptions): Promise<string | null>
   copyImageAt(x: number, y: number): Promise<boolean>
   replaceMisspelling(word: string): void
   addWordToDictionary(word: string): void
@@ -922,6 +936,39 @@ export interface ShellHost {
    * without a resolver of their own (`capabilities.secureDns` false).
    */
   openPrivateDnsSettings?(): void
+  /**
+   * The OS's keyboard settings (Android's "On-screen keyboard"), where the spell checker that
+   * checks the WebView's fields is chosen; for hosts without a spellchecker of the browser's own.
+   */
+  openKeyboardSettings?(): void
+}
+
+/**
+ * The host's spellchecker: Chromium's per-session Hunspell checker on Electron (Windows, Linux;
+ * dictionaries download from Chromium's CDN on a language's first use), the OS's checker with the
+ * OS's languages on macOS. Android's WebView has none of the browser's own – the system spell
+ * checker service the keyboard settings name checks its fields – so that host leaves this out,
+ * and Settings shows the limit with `ShellHost.openKeyboardSettings`.
+ */
+export interface SpellcheckHost {
+  /**
+   * The host follows the OS's languages and ignores the list it is given (macOS): the languages
+   * are shown, not chosen.
+   */
+  readonly systemLanguages: boolean
+  /** The UI languages (BCP-47), most preferred first: a fresh profile checks in the first with a dictionary. */
+  readonly locales: readonly string[]
+  /** Every dictionary code the host can check in (`session.availableSpellCheckerLanguages`). */
+  availableLanguages(): string[]
+  /** Check (or stop checking) the fields, in these languages, in every session present and future. */
+  apply(enabled: boolean, languages: readonly string[]): void
+  /** A dictionary's download and initialisation as Chromium reports them, by language code. */
+  onDictionaryStatus(listener: (code: string, status: SpellcheckDictionaryStatus) => void): void
+  /** The custom dictionary – the words "Add to Dictionary" collected – one per profile. */
+  listWords(): Promise<string[]>
+  /** False when the word was there already (or is not a word). */
+  addWord(word: string): Promise<boolean>
+  removeWord(word: string): Promise<boolean>
 }
 
 /**
@@ -1618,6 +1665,8 @@ export interface Platform {
   readabilitySource(file: 'Readability.js' | 'Readability-readerable.js'): string | null
   /** Offline page translation; hosts without it report the feature as unavailable. */
   readonly translate?: TranslateHost
+  /** Spell checking of text fields; hosts without a checker of their own leave it out. */
+  readonly spellcheck?: SpellcheckHost
   /** Host-backed services; omit for the built-in no-op versions. */
   createGovernor?(browser: Browser): Governor
   createExtensions?(browser: Browser): ExtensionHost

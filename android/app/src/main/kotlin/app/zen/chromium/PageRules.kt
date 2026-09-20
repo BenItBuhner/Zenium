@@ -10,8 +10,10 @@ import kotlin.math.roundToInt
  * before the document starts – the core's own decision arrives a round trip later and is applied
  * on top for anything this mirror cannot decide (a per-tab override, an internal page).
  *
- * Sites are registrable domains; a URL's host matches by suffix, the longest domain winning,
- * exactly like `siteValue` in `src/shared/pageControls.ts`. Pure and unit-tested.
+ * Desktop-site and darkening sites are registrable domains; a URL's host matches by suffix, the
+ * longest domain winning, exactly like `siteValue` in `src/shared/pageControls.ts`. Zoom is kept
+ * by host, as Chrome's `HostZoomMap` keeps it, and looked up by the host itself (`zoomValue`).
+ * Pure and unit-tested.
  */
 class PageRules(
     val desktopDefault: Boolean,
@@ -31,10 +33,10 @@ class PageRules(
 
     fun darken(url: String): Boolean = if (!isWebPage(url)) false else siteValue(darkenSites, url) ?: darkenDefault
 
-    /** The effective factor: the site's (or the default) times the scale, to three decimals. */
+    /** The effective factor: the host's (or the default) times the scale, to three decimals. */
     fun zoom(url: String): Double {
         if (!isWebPage(url)) return 1.0
-        val base = siteValue(zoomSites, url) ?: zoomDefault
+        val base = zoomValue(zoomSites, url) ?: zoomDefault
         return (base * zoomScale * 1000).roundToInt() / 1000.0
     }
 
@@ -44,6 +46,12 @@ class PageRules(
         val NONE = PageRules(false, emptyMap(), false, emptyMap(), 1.0, emptyMap(), 1.0, false)
 
         fun isWebPage(url: String): Boolean = url.startsWith("http://", true) || url.startsWith("https://", true)
+
+        /** The zoom stored for the host of `url` itself (`zoomSiteKey` in the shared module). */
+        fun zoomValue(sites: Map<String, Double>, url: String): Double? {
+            val host = hostOf(url) ?: return null
+            return sites[host]
+        }
 
         /** The host of `url` matched by suffix against `sites`; the longest matching domain wins. */
         fun <T> siteValue(sites: Map<String, T>, url: String): T? {

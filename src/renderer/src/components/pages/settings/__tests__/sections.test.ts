@@ -78,6 +78,7 @@ const ANDROID: HostCapabilities = {
   requestBlocking: true,
   reducedExtensionIsolation: false,
   pageControls: true,
+  darkenSites: true,
   privateTabs: true,
   secureDns: false,
   newTabPage: false,

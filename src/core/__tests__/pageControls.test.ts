@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import type { HostCapabilities, PageRules, Platform as PlatformOs } from '../../shared/types'
 import { Browser } from '../browser'
-import type { AppHost, Platform, StoreIO, TabView, TabViewHost, WindowHost } from '../platform'
+import type {
+  AppHost,
+  Platform,
+  StoreIO,
+  TabView,
+  TabViewEvents,
+  TabViewHost,
+  WindowHost
+} from '../platform'
 import type { ZenWindow } from '../window'
 
 /** In-memory documents; `state.json` is what the settings round-trip through. */
@@ -32,6 +40,9 @@ interface Recorded {
   darken: boolean[]
   loads: string[]
   reloads: number
+  events: TabViewEvents
+  /** The page committed a navigation to `url` (what the engine reports through the events). */
+  navigate: (url: string) => void
 }
 
 type Host = 'android' | 'desktop'
@@ -47,7 +58,8 @@ interface Sent {
  */
 function fakePlatform(
   io: StoreIO,
-  host: Host = 'android'
+  host: Host = 'android',
+  darkenSites: boolean = host === 'android'
 ): Platform & { rules: PageRules[]; records: Map<string, Recorded>; sent: Sent[] } {
   const rules: PageRules[] = []
   const records = new Map<string, Recorded>()
@@ -56,7 +68,8 @@ function fakePlatform(
     windows: host === 'desktop',
     updates: false,
     agents: false,
-    pageControls: host === 'android'
+    pageControls: host === 'android',
+    darkenSites
   })
   return {
     rules,
@@ -80,13 +93,26 @@ function fakePlatform(
         })
     },
     views: stub<TabViewHost>({
-      createView: (tab) => {
-        const record: Recorded = { zoom: [], desktop: [], darken: [], loads: [], reloads: 0 }
+      createView: (tab, events) => {
+        let url = tab.url
+        const record: Recorded = {
+          zoom: [],
+          desktop: [],
+          darken: [],
+          loads: [],
+          reloads: 0,
+          events,
+          navigate: (next: string) => {
+            url = next
+            events.onNavigated(next, false)
+          }
+        }
         records.set(tab.id, record)
         let zoom = 1
         return stub<TabView>({
           isDestroyed: () => false,
           isVisible: () => false,
+          getURL: () => url,
           getZoom: () => zoom,
           setZoom: (factor: number) => {
             zoom = factor
@@ -114,14 +140,15 @@ function fakePlatform(
 
 function start(
   io = memoryIo(),
-  host: Host = 'android'
+  host: Host = 'android',
+  darkenSites: boolean = host === 'android'
 ): {
   browser: Browser
   platform: ReturnType<typeof fakePlatform>
   win: ZenWindow
   io: ReturnType<typeof memoryIo>
 } {
-  const platform = fakePlatform(io, host)
+  const platform = fakePlatform(io, host, darkenSites)
   const browser = new Browser(platform)
   browser.start()
   const win = browser.allWindows()[0] as ZenWindow
@@ -154,7 +181,7 @@ describe('page controls in the browser', () => {
     expect(platform.rules).toHaveLength(2)
   })
 
-  it('remembers zoom per site, applies it to the live page and persists it', async () => {
+  it('remembers zoom per host, applies it to the live page and persists it', async () => {
     const { browser, platform, win, io } = start()
     const tab = browser.tabs.createTab(
       { url: 'https://en.wikipedia.org/wiki/Zen', active: true },
@@ -164,10 +191,10 @@ describe('page controls in the browser', () => {
     expect(last(record.zoom)).toBe(1)
 
     browser.handleCommand(win, 'tab.setZoomFactor', { tabId: tab.id, factor: 1.5 })
-    expect(browser.state.settings.pageControls.siteZooms).toEqual({ 'wikipedia.org': 1.5 })
+    expect(browser.state.settings.pageControls.siteZooms).toEqual({ 'en.wikipedia.org': 1.5 })
     expect(last(record.zoom)).toBe(1.5)
     expect(browser.tabs.tab(tab.id)!.zoom).toBe(1.5)
-    expect(last(platform.rules)!.zoom.sites).toEqual({ 'wikipedia.org': 1.5 })
+    expect(last(platform.rules)!.zoom.sites).toEqual({ 'en.wikipedia.org': 1.5 })
 
     // The keyboard steps walk the zoom table from the site's factor.
     browser.handleCommand(win, 'tab.setZoom', { tabId: tab.id, delta: 1 })
@@ -180,7 +207,7 @@ describe('page controls in the browser', () => {
     await new Promise((r) => setImmediate(r))
     await browser.state.flush()
     expect(JSON.parse(io.files['state.json']).settings.pageControls.siteZooms).toEqual({
-      'wikipedia.org': 1.25
+      'en.wikipedia.org': 1.25
     })
   })
 
@@ -263,27 +290,36 @@ describe('page controls in the browser', () => {
 })
 
 describe('zoom memory on the desktop', () => {
-  it('remembers a zoom per site and applies it to every tab of the site', () => {
+  it('remembers a zoom per host and applies it to every tab of the host', () => {
     const { browser, platform, win } = start(memoryIo(), 'desktop')
     const tab = browser.tabs.createTab({ url: 'https://en.wikipedia.org/', active: true }, win)
-    const other = browser.tabs.createTab({ url: 'https://de.wikipedia.org/', active: false }, win)
+    const other = browser.tabs.createTab(
+      { url: 'https://en.wikipedia.org/wiki/Zen', active: false },
+      win
+    )
+    // Chrome's zoom levels are per host: another subdomain of the same site keeps its own.
+    const sibling = browser.tabs.createTab({ url: 'https://de.wikipedia.org/', active: false }, win)
     const elsewhere = browser.tabs.createTab({ url: 'https://example.com/', active: false }, win)
 
     browser.handleCommand(win, 'tab.setZoom', { tabId: tab.id, delta: 1 })
-    expect(browser.state.settings.pageControls.siteZooms).toEqual({ 'wikipedia.org': 1.1 })
+    expect(browser.state.settings.pageControls.siteZooms).toEqual({ 'en.wikipedia.org': 1.1 })
     expect(last(platform.records.get(tab.id)!.zoom)).toBe(1.1)
     expect(last(platform.records.get(other.id)!.zoom)).toBe(1.1)
     expect(browser.tabs.tab(other.id)!.zoom).toBe(1.1)
+    expect(last(platform.records.get(sibling.id)!.zoom)).toBe(1)
     expect(last(platform.records.get(elsewhere.id)!.zoom)).toBe(1)
     expect(zoomChanges(platform)).toEqual([
-      { tabId: tab.id, factor: 1.1, siteKey: 'wikipedia.org' }
+      { tabId: tab.id, factor: 1.1, siteKey: 'en.wikipedia.org' }
     ])
 
-    // A tab of the site opened later starts at the remembered factor.
-    const later = browser.tabs.createTab({ url: 'https://fr.wikipedia.org/', active: false }, win)
+    // A tab of the host opened later starts at the remembered factor.
+    const later = browser.tabs.createTab(
+      { url: 'https://en.wikipedia.org/wiki/Tea', active: false },
+      win
+    )
     expect(last(platform.records.get(later.id)!.zoom)).toBe(1.1)
 
-    // Reset takes the site back to the default zoom and forgets the exception.
+    // Reset takes the host back to the default zoom and forgets the exception.
     browser.handleCommand(win, 'tab.setZoom', { tabId: other.id, delta: null })
     expect(browser.state.settings.pageControls.siteZooms).toEqual({})
     expect(last(platform.records.get(tab.id)!.zoom)).toBe(1)
@@ -298,6 +334,44 @@ describe('zoom memory on the desktop', () => {
     expect(record.desktop).toEqual([])
     expect(record.darken).toEqual([])
     expect(platform.rules).toEqual([])
+  })
+
+  it('darkens sites on a desktop host that can, without the rest of the page controls', () => {
+    // Electron's shape: no desktop-site switch or rules of its own, but the DevTools override.
+    const { browser, platform, win } = start(memoryIo(), 'desktop', true)
+    const tab = browser.tabs.createTab({ url: 'https://github.com/', active: true }, win)
+    const record = platform.records.get(tab.id)!
+    expect(record.desktop).toEqual([])
+    expect(last(record.darken)).toBe(false)
+    browser.handleCommand(win, 'settings.update', { pageControls: { darkenSites: true } })
+    expect(last(record.darken)).toBe(true)
+    browser.handleCommand(win, 'tab.setDarkenSite', { tabId: tab.id, on: false })
+    expect(last(record.darken)).toBe(false)
+    expect(browser.state.settings.pageControls.darkenSiteExceptions).toEqual({
+      'github.com': false
+    })
+    expect(platform.rules).toEqual([])
+  })
+
+  it('takes the darkening off a page that leaves the web for the reader or an error page', () => {
+    // The DevTools override outlives a navigation, and zen://reader has a theme of its own (a
+    // sepia article came out inverted before the page was undarkened on the way in).
+    const { browser, platform, win } = start(memoryIo(), 'desktop', true)
+    browser.handleCommand(win, 'settings.update', { pageControls: { darkenSites: true } })
+    const tab = browser.tabs.createTab({ url: 'https://example.com/story', active: true }, win)
+    const record = platform.records.get(tab.id)!
+    expect(last(record.darken)).toBe(true)
+    record.navigate('zen://reader?url=https%3A%2F%2Fexample.com%2Fstory')
+    expect(last(record.darken)).toBe(false)
+    // Back on the web the site's rule applies again.
+    record.navigate('https://example.com/next')
+    expect(last(record.darken)).toBe(true)
+    // A restored reader tab is created undarkened as well.
+    const reader = browser.tabs.createTab(
+      { url: 'zen://reader?url=https%3A%2F%2Fexample.com%2Fother', active: false },
+      win
+    )
+    expect(platform.records.get(reader.id)!.darken).toEqual([false])
   })
 
   it("climbs Chrome's presets to 500 percent and down to 25", () => {

@@ -117,11 +117,36 @@ export function isWebPage(url: string): boolean {
   return /^https?:\/\//i.test(url)
 }
 
-/** The key a site is remembered under (its registrable domain), or null for non-web pages. */
+/**
+ * The key a site is remembered under for desktop site and darkening (its registrable domain,
+ * the `[*.]example.com` pattern Chrome's per-site content settings use), or null for non-web
+ * pages.
+ */
 export function siteKey(url: string): string | null {
   if (!isWebPage(url)) return null
   const domain = getDomain(url)
   return domain || null
+}
+
+/**
+ * The key a page's zoom is remembered under: its host, as Chrome's `HostZoomMap` keys zoom
+ * levels (`en.wikipedia.org` and `fr.wikipedia.org` are zoomed apart, `mail.google.com` does not
+ * take `docs.google.com` with it; the scheme and port do not count). Null for non-web pages.
+ */
+export function zoomSiteKey(url: string): string | null {
+  if (!isWebPage(url)) return null
+  try {
+    const host = new URL(url).hostname.toLowerCase()
+    return host || null
+  } catch {
+    return null
+  }
+}
+
+/** A host's zoom in the stored map: an exact host match (the mirror of `zoomSiteKey`). */
+export function zoomValue(sites: Record<string, number>, url: string): number | undefined {
+  const key = zoomSiteKey(url)
+  return key ? sites[key] : undefined
 }
 
 /**
@@ -175,9 +200,9 @@ export function resolveDarkening(settings: PageControlsSettings, url: string): b
   return settings.darkenSiteExceptions[key] ?? settings.darkenSites
 }
 
-/** The factor stored for a site (its own, or the default) – before the system font size. */
+/** The factor stored for a page's host (its own, or the default) – before the system font size. */
 export function siteZoom(settings: PageControlsSettings, url: string): number {
-  const key = siteKey(url)
+  const key = zoomSiteKey(url)
   if (!key) return 1
   return settings.siteZooms[key] ?? settings.zoom
 }
@@ -208,7 +233,8 @@ export function resolvePageControls(
 
 /**
  * The policy in the shape hosts keep (`PageRules`): every default resolved for this device, the
- * exceptions as they are stored. `zoom.sites` stay exact factors; hosts multiply `scale` in.
+ * exceptions as they are stored. `zoom.sites` stay exact factors keyed by host (`zoomValue`
+ * looks them up); hosts multiply `scale` in.
  */
 export function pageRulesFor(
   settings: PageControlsSettings,
@@ -227,9 +253,10 @@ export function pageRulesFor(
 }
 
 /**
- * How a host looks a site up in the rules: the URL's host matched by suffix against the stored
- * registrable domains (`www.example.co.uk` is on the site `example.co.uk`). Kotlin mirrors this
- * in `PageRules.kt`; keeping the lookup this simple is what makes the mirror safe.
+ * How a host looks a site up in the desktop-site and darkening rules: the URL's host matched by
+ * suffix against the stored registrable domains (`www.example.co.uk` is on the site
+ * `example.co.uk`). Zoom is the exception (`zoomValue`: the host itself). Kotlin mirrors both in
+ * `PageRules.kt`; keeping the lookups this simple is what makes the mirror safe.
  */
 export function siteValue<T>(sites: Record<string, T>, url: string): T | undefined {
   let host: string
