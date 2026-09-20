@@ -8,10 +8,10 @@ name: TEMPORARY - compat round 4 sweep trigger
 # commit message carries `[sweep]`, so a before run (the first commit, no runtime change) and an
 # after run (the final head) measure the same thing the dispatched sweep would.
 #
-# Second before run: the first (run 35507200692) crashed the browser process on row 11, AdGuard
-# AdBlocker (bgnkhhnnamicmpeenaelnjfhikgbkllg), out of Java heap while Kotlin quoted a 21 MB
-# ruleset file into one bridge answer; that row's before reading is the crash, and the thirty
-# rows behind it are measured here without it, on the same runtime plus the tab-URL spelling fix.
+# Before runs: the first (35507200692) crashed the browser process on row 11, AdGuard AdBlocker
+# (bgnkhhnnamicmpeenaelnjfhikgbkllg), out of Java heap while Kotlin quoted a 21 MB ruleset file
+# into one bridge answer; the second (35508604947) measured the thirty rows behind it without
+# it. After runs carry all thirty-one rows: the rulesets are read through the asset loader now.
 on:
   push:
     branches:
@@ -34,7 +34,7 @@ jobs:
       artifact-name: android-ext-compat-sweep
       artifact-path: artifacts/android-ext-compat-sweep/
       script-env: |
-        SWEEP_ONLY=ghbmnnjooekpmoecnnnilnnbdlolhkhi,efaidnbmnnnibpcajpcglclefindmkaj,fheoggkfdfchfphceeifdbepaooicaho,lmjegmlicamnimmfhcmpkclmigmmcbeh,gighmmpiobklfepjocnamgkkbiglidom,inomeogfingihgjfjlpeplalcfajhgai,ppnbnpeolgkicgegkbkbjmhlideopiji,jlhmfgmfgeifomenelglieieghnjghma,ecnphlgnajanjnkcmbpancdjoidceilk,inoeonmfapjbbkmdafoankkfajkcphgd,fcoeoabgfenejglbffodgkkbkcdhcgfn,majdfhpaihoncoakbjgbdhglocklcgno,fjoaledfpmneenckfbpdfhkmimnjocfa,ljglajjnnkapghbckkcmodicjhacbfhk,nkbihfbeogaeaoehlefnkodbefgpgknn,nenlahapcbofgnanklpelkaejcehkggg,cmedhionkhpnakcndndgjdbohmhepckk,ihcjicgdanjaechkgeegckofjjedodee,llbcnfanfmjhpedaedhbcnpgeepdnnok,fdpohaocaechififmbbbbbknoalclacl,oocalimimngaihdkbihfgmpkcpnmlaoa,mmeijimgabbpbgpdklnllpncmdofkcpn,bhghoamapcdpbohphigoooaddinpkbai,kgjfgplpablkjnlkjmjdecgdpfankdle,eiaeiblijfjekdanodkjadfinkhbfgcd,ekhagklcjbdpajgpjgmbionohlpdbjgc,flliilndjeohchalpbbcdekjklbdgfkk,omghfjlpggmjjaagoclmmobgdodcjboh,caljgklbbfbcjjanaijlacgncafpegll,dhdgffkkebhmkfjojejmpbldmpobfkfo
+        SWEEP_ONLY=ghbmnnjooekpmoecnnnilnnbdlolhkhi,efaidnbmnnnibpcajpcglclefindmkaj,fheoggkfdfchfphceeifdbepaooicaho,lmjegmlicamnimmfhcmpkclmigmmcbeh,gighmmpiobklfepjocnamgkkbiglidom,inomeogfingihgjfjlpeplalcfajhgai,ppnbnpeolgkicgegkbkbjmhlideopiji,jlhmfgmfgeifomenelglieieghnjghma,ecnphlgnajanjnkcmbpancdjoidceilk,bgnkhhnnamicmpeenaelnjfhikgbkllg,inoeonmfapjbbkmdafoankkfajkcphgd,fcoeoabgfenejglbffodgkkbkcdhcgfn,majdfhpaihoncoakbjgbdhglocklcgno,fjoaledfpmneenckfbpdfhkmimnjocfa,ljglajjnnkapghbckkcmodicjhacbfhk,nkbihfbeogaeaoehlefnkodbefgpgknn,nenlahapcbofgnanklpelkaejcehkggg,cmedhionkhpnakcndndgjdbohmhepckk,ihcjicgdanjaechkgeegckofjjedodee,llbcnfanfmjhpedaedhbcnpgeepdnnok,fdpohaocaechififmbbbbbknoalclacl,oocalimimngaihdkbihfgmpkcpnmlaoa,mmeijimgabbpbgpdklnllpncmdofkcpn,bhghoamapcdpbohphigoooaddinpkbai,kgjfgplpablkjnlkjmjdecgdpfankdle,eiaeiblijfjekdanodkjadfinkhbfgcd,ekhagklcjbdpajgpjgmbionohlpdbjgc,flliilndjeohchalpbbcdekjklbdgfkk,omghfjlpggmjjaagoclmmobgdodcjboh,caljgklbbfbcjjanaijlacgncafpegll,dhdgffkkebhmkfjojejmpbldmpobfkfo
       timeout-minutes: 210
 
   modern-webview:
@@ -50,7 +50,7 @@ jobs:
       script-env: |
         WEBVIEW_APK=artifacts/webview/SystemWebView.apk
         SOFT_FAIL=1
-        SWEEP_ONLY=ghbmnnjooekpmoecnnnilnnbdlolhkhi,efaidnbmnnnibpcajpcglclefindmkaj,fheoggkfdfchfphceeifdbepaooicaho,lmjegmlicamnimmfhcmpkclmigmmcbeh,gighmmpiobklfepjocnamgkkbiglidom,inomeogfingihgjfjlpeplalcfajhgai,ppnbnpeolgkicgegkbkbjmhlideopiji,jlhmfgmfgeifomenelglieieghnjghma,ecnphlgnajanjnkcmbpancdjoidceilk,inoeonmfapjbbkmdafoankkfajkcphgd,fcoeoabgfenejglbffodgkkbkcdhcgfn,majdfhpaihoncoakbjgbdhglocklcgno,fjoaledfpmneenckfbpdfhkmimnjocfa,ljglajjnnkapghbckkcmodicjhacbfhk,nkbihfbeogaeaoehlefnkodbefgpgknn,nenlahapcbofgnanklpelkaejcehkggg,cmedhionkhpnakcndndgjdbohmhepckk,ihcjicgdanjaechkgeegckofjjedodee,llbcnfanfmjhpedaedhbcnpgeepdnnok,fdpohaocaechififmbbbbbknoalclacl,oocalimimngaihdkbihfgmpkcpnmlaoa,mmeijimgabbpbgpdklnllpncmdofkcpn,bhghoamapcdpbohphigoooaddinpkbai,kgjfgplpablkjnlkjmjdecgdpfankdle,eiaeiblijfjekdanodkjadfinkhbfgcd,ekhagklcjbdpajgpjgmbionohlpdbjgc,flliilndjeohchalpbbcdekjklbdgfkk,omghfjlpggmjjaagoclmmobgdodcjboh,caljgklbbfbcjjanaijlacgncafpegll,dhdgffkkebhmkfjojejmpbldmpobfkfo
+        SWEEP_ONLY=ghbmnnjooekpmoecnnnilnnbdlolhkhi,efaidnbmnnnibpcajpcglclefindmkaj,fheoggkfdfchfphceeifdbepaooicaho,lmjegmlicamnimmfhcmpkclmigmmcbeh,gighmmpiobklfepjocnamgkkbiglidom,inomeogfingihgjfjlpeplalcfajhgai,ppnbnpeolgkicgegkbkbjmhlideopiji,jlhmfgmfgeifomenelglieieghnjghma,ecnphlgnajanjnkcmbpancdjoidceilk,bgnkhhnnamicmpeenaelnjfhikgbkllg,inoeonmfapjbbkmdafoankkfajkcphgd,fcoeoabgfenejglbffodgkkbkcdhcgfn,majdfhpaihoncoakbjgbdhglocklcgno,fjoaledfpmneenckfbpdfhkmimnjocfa,ljglajjnnkapghbckkcmodicjhacbfhk,nkbihfbeogaeaoehlefnkodbefgpgknn,nenlahapcbofgnanklpelkaejcehkggg,cmedhionkhpnakcndndgjdbohmhepckk,ihcjicgdanjaechkgeegckofjjedodee,llbcnfanfmjhpedaedhbcnpgeepdnnok,fdpohaocaechififmbbbbbknoalclacl,oocalimimngaihdkbihfgmpkcpnmlaoa,mmeijimgabbpbgpdklnllpncmdofkcpn,bhghoamapcdpbohphigoooaddinpkbai,kgjfgplpablkjnlkjmjdecgdpfankdle,eiaeiblijfjekdanodkjadfinkhbfgcd,ekhagklcjbdpajgpjgmbionohlpdbjgc,flliilndjeohchalpbbcdekjklbdgfkk,omghfjlpggmjjaagoclmmobgdodcjboh,caljgklbbfbcjjanaijlacgncafpegll,dhdgffkkebhmkfjojejmpbldmpobfkfo
       setup-script: |
         base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
         rev=$(curl -fsSL "$base/LAST_CHANGE")
