@@ -16,6 +16,25 @@ type CheckDetails = Parameters<
 const FRESH_SAVE_MS = 30_000
 
 /**
+ * The permission an Electron request is decided as. Electron reports a `getDisplayMedia` call
+ * as a `media` request naming no device – a screen, window or tab track is neither the camera
+ * nor the microphone – so an empty device list is the screen-sharing row (`display-capture`),
+ * whose consent is the picker itself: the row's Allow puts the picker up, its Deny refuses
+ * without one. Read as camera-and-microphone it would prompt for devices the page never asked
+ * for.
+ */
+export function permissionName(permission: string, details: RequestDetails): string {
+  if (
+    permission === 'media' &&
+    'mediaTypes' in details &&
+    Array.isArray(details.mediaTypes) &&
+    details.mediaTypes.length === 0
+  )
+    return 'display-capture'
+  return permission
+}
+
+/**
  * What the core's prompt needs to know about an Electron permission request: the tab it queues
  * under, the embedding page for requests from frames, the capture devices of a media request,
  * the external URL of a protocol launch, the file of a File System Access request.

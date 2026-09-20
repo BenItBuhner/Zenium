@@ -84,6 +84,7 @@ import { attachWebAuthnHandlers, configurePlatformAuthenticators } from './webau
 import {
   attachSecurityHandlers,
   permissionCheckDetails,
+  permissionName,
   permissionRequestDetails
 } from './security'
 import { ElectronBlocking, ElectronBundledLists, bundledListsDirectory } from './blocking'
@@ -562,10 +563,13 @@ export class ElectronPlatform implements Platform {
 
   private attachPermissions(ses: Session): void {
     const { permissions, external } = this.browser
-    ses.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    ses.setPermissionRequestHandler((webContents, rawPermission, callback, details) => {
       const url = details.requestingUrl || webContents?.getURL() || ''
       const tabId = webContents ? this.views.tabIdForWebContents(webContents) : undefined
       const request = permissionRequestDetails(webContents, details, tabId)
+      // A `getDisplayMedia` call arrives as `media` without devices: the screen-sharing row,
+      // whose Allow hands the call to the picker (`screenCapture.attach`) instead of a prompt.
+      const permission = permissionName(rawPermission, details)
       // Chromium does not tell us whether a page's launch of another application had a
       // gesture, so the core's own activation tracking decides: without one the launch is
       // listed with the tab's blocked pop-ups instead of prompting.
